@@ -18,6 +18,26 @@ host text or private identities. An allocation shortfall is reported as observed
 it grants no reset, reboot, restart or V2-activation clearance. Incomplete reads,
 changing allocation, identity changes and close failures produce no success receipt.
 
+For a confirmed allocation shortfall, `reboot-host-for-hugepages` selects exactly one
+permanent worker with `reboot-longhorn-v2-host-<worker>`. It requires the loaded
+reservation, unused native huge pages, disabled V2, the complete fixed migration roster, all V1
+volumes fully redundant, and all three database clusters healthy. It records the
+original node, hardware, boot, encrypted EPHEMERAL partition, storage disks and
+database identities before an owned cordon and an eviction-based drain. Two fresh
+checks of complete redundancy, databases and original storage precede durable
+reboot intent. The single reboot request has no reset or disk-wipe selector.
+An unfinished or unreadable peer journal, another worker's cordon, or lost proof
+of a peer's recorded recovery prevents starting the next worker.
+
+Recovery never repeats an uncertain reboot. It requires a changed boot with the
+same node, hardware, OS, encrypted partition, registered disks and database system
+identities, 1,024 native 2 MiB pages, matching 2 GiB Kubernetes capacity, clear node
+pressure and full V1 redundancy. Only its own cordon is released and read back.
+Dispatch each worker separately and verify platform recovery before the next one.
+An interrupted run keeps its journal and cordon; a new first-attempt main dispatch
+may adopt it only after the previous run has ended. This operation enables no V2
+storage and removes no iSCSI support.
+
 The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
 platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCSI.
 

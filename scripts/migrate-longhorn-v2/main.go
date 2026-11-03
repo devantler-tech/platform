@@ -25,6 +25,8 @@ func main() {
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":
 		authorization = authorizeHostMemory(os.Getenv, target)
+	case "reboot-host-for-hugepages":
+		authorization = authorizeHostReboot(os.Getenv, target)
 	case "inventory-storage-root":
 		authorization = authorizeStorageRoot(os.Getenv, target)
 	case "inventory-storage-layout":
@@ -124,6 +126,18 @@ func main() {
 		if err = p.prepare(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "Unused temporary preparation held:", err)
 			fmt.Fprintln(os.Stderr, "Preserve its journal and owned cordon; uncertain resets are never replayed.")
+			os.Exit(1)
+		}
+		return
+	}
+	if operation == "reboot-host-for-hugepages" {
+		h := hostMemoryReboot{c: client{run: execute, context: "admin@prod"}, target: target, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}
+		if err = h.run(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "Host memory maintenance held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve its journal and owned cordon; uncertain reboot requests are never repeated.")
+			os.Exit(1)
+		}
+		if _, err = fmt.Fprintln(os.Stdout, "Host memory maintenance recovered with original storage identities, native allocation, advertised capacity and database identity proved."); err != nil {
 			os.Exit(1)
 		}
 		return
