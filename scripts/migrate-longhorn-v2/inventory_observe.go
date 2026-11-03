@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -51,6 +53,14 @@ func (c client) inventoryProjection(ctx context.Context, target string) (invento
 			return inventoryProjection{}, nil, err
 		}
 	}
+	selectionDigest := ""
+	if !inventoryTarget.MatchString(target) {
+		var err error
+		target, selectionDigest, err = resolveTemporaryInventoryTarget(target, nodes, c.inventoryPools)
+		if err != nil {
+			return inventoryProjection{}, nil, err
+		}
+	}
 	var node, lh object
 	for _, item := range nodes {
 		if text(item, "metadata", "name") == target {
@@ -65,6 +75,10 @@ func (c client) inventoryProjection(ctx context.Context, target string) (invento
 	p, err := projectInventory(target, node, lh, replicas)
 	if err != nil {
 		return inventoryProjection{}, nil, err
+	}
+	if selectionDigest != "" {
+		digest := sha256.Sum256([]byte(selectionDigest + ":" + p.Digest))
+		p.Digest = hex.EncodeToString(digest[:])
 	}
 	for _, item := range nodes {
 		if text(item, "metadata", "name") == target {
@@ -124,7 +138,7 @@ func observeReplicaInventory(ctx context.Context, c client, target string, facto
 	}
 	first, err := reader.ListReplicas(ctx)
 	if err != nil {
-		return inventoryReceipt{}, stageListingBefore
+		return inventoryReceipt{}, errors.Join(stageListingBefore, err)
 	}
 	firstReport, err := longhorninventory.Analyze(first, before.Replicas)
 	if err != nil {
@@ -132,7 +146,7 @@ func observeReplicaInventory(ctx context.Context, c client, target string, facto
 	}
 	second, err := reader.ListReplicas(ctx)
 	if err != nil {
-		return inventoryReceipt{}, stageListingAfter
+		return inventoryReceipt{}, errors.Join(stageListingAfter, err)
 	}
 	after, node, err := c.inventoryProjection(ctx, target)
 	if err != nil {
@@ -154,6 +168,9 @@ func observeReplicaInventory(ctx context.Context, c client, target string, facto
 	}
 	if report.Digest != firstReport.Digest {
 		return inventoryReceipt{}, stageListingConsistency
+	}
+	if inventoryTemporarySelection.MatchString(target) && !report.EmptyAndAccounted {
+		return inventoryReceipt{}, stageOwnershipAfter
 	}
 	if !active() {
 		return inventoryReceipt{}, stageDeadline

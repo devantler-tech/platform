@@ -428,7 +428,7 @@ func TestBenchmarkTagsSurviveAMovedResourceVersion(t *testing.T) {
 			apply()
 			return nil
 		})
-		if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", true); err != nil || *calls != 3 {
+		if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", "uid-prod-worker-1", true); err != nil || *calls != 3 {
 			t.Fatalf("err %v after %d patches", err, *calls)
 		}
 	})
@@ -437,21 +437,21 @@ func TestBenchmarkTagsSurviveAMovedResourceVersion(t *testing.T) {
 			apply()
 			return errors.New("external command failed")
 		})
-		if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", true); err != nil || *calls != 1 {
+		if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", "uid-prod-worker-1", true); err != nil || *calls != 1 {
 			t.Fatalf("err %v after %d patches", err, *calls)
 		}
 	})
 	t.Run("a first read of an owned node never writes", func(t *testing.T) {
 		for _, owner := range []string{"someone-else", tag} {
 			c, calls := setup([]any{tag}, owner, func(int, func()) error { return nil })
-			if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", true); err == nil || *calls != 0 {
+			if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", "uid-prod-worker-1", true); err == nil || *calls != 0 {
 				t.Fatalf("owner %s: err %v after %d patches", owner, err, *calls)
 			}
 		}
 	})
 	t.Run("retries stop at their bound", func(t *testing.T) {
 		c, calls := setup([]any{}, "", func(int, func()) error { return errors.New("external command failed") })
-		if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", true); err == nil || *calls != refreshAttempts {
+		if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", "uid-prod-worker-1", true); err == nil || *calls != refreshAttempts {
 			t.Fatalf("err %v after %d patches", err, *calls)
 		}
 	})

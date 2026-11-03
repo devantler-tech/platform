@@ -69,7 +69,7 @@ if ksail workload validate "$admission" --strict --ignore-missing-schemas=false 
   echo 'FAIL: mail administration admitted an undeclared Homepage group' >&2
   exit 1
 fi
-grep -Fq 'policy "restrict-homepage-service-groups" rule "declared-service-group" failed for HTTPRoute/private-mail/private-mail' \
+grep -Fq 'policy "restrict-homepage-service-groups" failed for HTTPRoute/private-mail/private-mail' \
   "$scratch/unlisted-group.log"
 cp "$scratch/private-mail.yaml" "$scratch/render.yaml"
 

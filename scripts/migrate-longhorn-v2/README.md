@@ -4,12 +4,25 @@ The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
 platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCSI.
 
 This tool lands in stages (platform#5655). Today it has `refresh-clients`, `prepare-worker` and the
-benchmarks. `refresh-clients` holds until the V2 migration pool is in
-`ksail.prod.yaml`, the fixed migration workers are Ready and the host huge-page
-settings are loaded. Worker preparation is below and is dormant; temporary capacity follows in its own change.
+benchmarks. `refresh-clients` holds until the fixed migration workers are Ready and the host
+huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
+capacity follows in its own change.
 
-Dispatch only the merged workflow on `main`. Select `refresh-clients` with
-`refresh-longhorn-v2-clients`. It verifies the live host allocation and modules,
+When a replica-directory observation holds, `inventory-storage-root` inspects the fixed
+parent `/var/lib/longhorn` directory. Use the same fixed node selections with the matching
+confirmation `inventory-longhorn-storage-root-<selection>`. It brackets two complete native
+metadata listings with the same node, hardware, boot, API-inventory and source checks.
+The receipt reports counts, known directory-presence flags and a metadata digest; it grants
+no reset clearance. A file named `replicas` remains distinguishable from a directory with that
+name. Closed native failure categories identify transport, metadata or entry-validation holds
+without printing provider errors, file names or file contents. A failed replica listing never
+becomes an empty listing, and parent observations do not establish historical recoverability.
+
+Dispatch only the merged workflow on `main`. Run `refresh-clients` promptly after
+`talos/workers/enable-longhorn-v2.yaml` deploys: the hosts then hold the pages, but kubelet
+still counts them as free memory, so an unrelated kubelet restart could reject Pods.
+Select `refresh-clients` with
+`refresh-longhorn-v2-clients`. It verifies the live host allocation and that each kernel module is usable, loaded or built in,
 restarts only kubelet where capacity is stale, and requires every worker to report
 2 GiB of 2 MiB huge pages. Containers and disks are preserved. Kubelet would reject
 any Pod that no longer fits once huge pages count, so when a permanent worker's Pods
@@ -77,8 +90,7 @@ Kubernetes worker before host configuration can be trusted or a host command can
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes
 that worker's `EPHEMERAL` partition, so it is the one destructive step in this tool. Nothing on the
-cluster enables it yet: it holds with no write until the V2 pool is in `ksail.prod.yaml`, the
-temporary V1 pool accepts replicas, the worker layout is loaded by Talos, the raw-disk defaults are
+cluster enables it yet: it holds with no write until the temporary V1 pool accepts replicas, the worker layout is loaded by Talos, the raw-disk defaults are
 on the Node, huge pages are ready and Longhorn's V2 engine is on. Those land in later changes
 (platform#5655).
 
@@ -160,3 +172,16 @@ snapshot, backup, proof of historical recoverability or permission to wipe. An
 unmatched directory must be investigated and preserved before any rebuild. The
 existing preparation operation still requires its separate preservation and
 recovery gates; this inventory operation does not authorize it.
+
+To inspect unused temporary capacity, select `temporary-v1-1`,
+`temporary-v1-2` or `temporary-v2-1` with the same `inventory-replicas`
+operation and `inventory-longhorn-replicas-<selection>` confirmation. These
+are ordinal selections from the sorted, complete pool roster in the reviewed
+`ksail.prod.yaml`, not hostnames. Both observations must retain every pool
+member's identity and boot state. A changed roster holds the observation.
+
+Temporary storage must still be fenced, unregistered and without placed
+replicas. Its native listing must be empty and accounted for; unexpected
+directories hold the observation. This can inform a later reviewed decision
+to reuse capacity for V2. It changes no disk, pool, host setting or volume,
+and does not authorize preparing a temporary worker through `prepare-worker`.

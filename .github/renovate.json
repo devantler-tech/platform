@@ -388,6 +388,12 @@
       "matchPackageNames": ["helm.sh/helm/v4"],
       "allowedVersions": "/^v?4\\.2\\.4$/",
       "automerge": false
+    },
+    {
+      "description": "The Kopia reader (internal/backupcatalogue) replaces github.com/kopia/kopia with the exact project-velero/kopia commit the deployed Velero's own go.mod pins, so it reads the backup format production writes. That fork is pinned by pseudo-version, and semver ranks every v0.0.0 pseudo-version below every tag, so Renovate offers the older v0.19.0-velero.1 (February 2025, 390 commits behind the pin, December 2025) as a minor update with automerge on. Only a compile error stops that downgrade. The pin moves with Velero instead: when a Velero bump changes the fork commit in its go.mod, change it here in one reviewed change. scripts/tests/test-velero-kopia-renovate-pin.sh fails once the replacement is no longer a pseudo-version, which is when this rule can go.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/project-velero/kopia"],
+      "enabled": false
     }
   ],
   "ignorePaths": [

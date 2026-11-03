@@ -69,14 +69,20 @@ func TestCapacityActivationBindsPoolIdentityAndCurrentHardware(t *testing.T) {
 	}
 }
 
-// main reads this before any preparation step, so a dispatch holds with no write
-// until the V2 pool lands. Whoever adds that pool replaces this test on purpose.
-func TestPreparationStaysDormantUntilTheV2PoolLands(t *testing.T) {
+// main reads this before any migration step, so a checked-in pool outside the
+// safety boundary holds every dispatch. A dispatch that gets past it still holds
+// before any write until temporary storage is enabled: see
+// TestBeginHoldsBeforeJournalWhenTemporaryStorageIsNotEnabled.
+func TestCheckedInCapacityResolvesBothFixedPools(t *testing.T) {
 	config, err := os.ReadFile("../../ksail.prod.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = configuredMigrationPools(config); err == nil {
-		t.Fatal("the reviewed configuration now resolves both pools; re-prove what a dispatch can reach")
+	pools, err := configuredMigrationPools(config)
+	if err != nil {
+		t.Fatal("checked-in capacity is outside the migration safety boundary:", err)
+	}
+	if pools["v1"].count != 2 || pools["v2"].count != 1 {
+		t.Fatalf("checked-in migration pools changed size: v1=%d v2=%d", pools["v1"].count, pools["v2"].count)
 	}
 }

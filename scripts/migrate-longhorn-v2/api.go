@@ -35,8 +35,9 @@ func execute(ctx context.Context, input []byte, program string, args ...string) 
 }
 
 type client struct {
-	run     command
-	context string
+	run            command
+	context        string
+	inventoryPools map[string]migrationPool
 }
 
 var kubeName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)

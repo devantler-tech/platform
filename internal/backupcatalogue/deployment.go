@@ -36,23 +36,26 @@ func observeBoundDeployment(ctx context.Context, namespace string, expected Poli
 	}
 	documents, err := load(ctx)
 	if err != nil || !contextActive(ctx) {
-		return Catalogue{}, errReadHeld
+		return Catalogue{}, observationFailure{"deployment-read-before"}
 	}
 	before, err := bindDeployment(namespace, expected, documents)
 	if err != nil {
-		return Catalogue{}, errReadHeld
+		return Catalogue{}, observationFailure{"deployment-bind-before"}
 	}
 	result, err := read(ctx, before.policy, before.accessKey, before.secretKey, before.password, parent, transport)
 	if err != nil || !contextActive(ctx) {
-		return Catalogue{}, errReadHeld
+		return Catalogue{}, observationFailure{"repository-metadata"}
 	}
 	documents, err = load(ctx)
 	if err != nil || !contextActive(ctx) {
-		return Catalogue{}, errReadHeld
+		return Catalogue{}, observationFailure{"deployment-read-after"}
 	}
 	after, err := bindDeployment(namespace, expected, documents)
-	if err != nil || before.digest != after.digest || !contextActive(ctx) {
-		return Catalogue{}, errReadHeld
+	if err != nil || !contextActive(ctx) {
+		return Catalogue{}, observationFailure{"deployment-bind-after"}
+	}
+	if before.digest != after.digest {
+		return Catalogue{}, observationFailure{"deployment-changed"}
 	}
 	return result, nil
 }

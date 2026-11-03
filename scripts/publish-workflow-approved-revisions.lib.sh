@@ -271,8 +271,12 @@ done <"$CANONICAL_SET"
 while IFS= read -r canonical_entry; do
   canonical_consumer="$(printf '%s\n' "$canonical_entry" | jq -r .consumer)"
   canonical_publisher="$(printf '%s\n' "$canonical_entry" | jq -r .publication.publisherIdentity)"
-  [ "$(lookup "$canonical" "$canonical_consumer")" = "${canonical_publisher##*@}" ] ||
-    refuse "$canonical_consumer: canonical-only publisher differs from its exact approval"
+  canonical_pin="${canonical_publisher##*@}"
+  canonical_approved="$(lookup "$canonical" "$canonical_consumer")"
+  case "$canonical_approved" in
+    "$canonical_pin"|"($canonical_pin|"*")"|"("*"|$canonical_pin)") ;;
+    *) refuse "$canonical_consumer: canonical-only publisher is not an exact approved member" ;;
+  esac
 done < <(printf '%s\n' "$canonical_only" | jq -c '.bindings[]')
 
 # canonical_ref_ok <ref> → success when <ref> is one 40-hex commit, or exactly two distinct ones
