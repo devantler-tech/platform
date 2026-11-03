@@ -8,10 +8,11 @@ import (
 	"strings"
 )
 
-func receivingAliases(names []string, domain string) map[string]any {
+// receivingAliasesFor renders only the selected native alias representation.
+func receivingAliasesFor(names []string, domain, enabledField string) map[string]any {
 	aliases := make(map[string]any, len(names))
 	for i, name := range names {
-		aliases[strconv.Itoa(i)] = map[string]any{"name": name, "domainId": domain, "enabled": true, "description": nil}
+		aliases[strconv.Itoa(i)] = map[string]any{"name": name, "domainId": domain, enabledField: true, "description": nil}
 	}
 	return aliases
 }
@@ -24,7 +25,7 @@ type receivingAlias struct {
 
 // Native List<EmailAlias> is a numeric-keyed object. Its ordering is not an
 // address identity, but every entry and native field must be accounted for.
-func canonicalReceivingAliases(raw any) ([]receivingAlias, error) {
+func canonicalReceivingAliasesFor(raw any, enabledField string) ([]receivingAlias, error) {
 	entries, ok := raw.(map[string]any)
 	if !ok || len(entries) > 16 {
 		return nil, errConfiguration
@@ -38,7 +39,7 @@ func canonicalReceivingAliases(raw any) ([]receivingAlias, error) {
 		}
 		name, nok := entry["name"].(string)
 		domain, dok := entry["domainId"].(string)
-		enabled, eok := entry["enabled"].(bool)
+		enabled, eok := entry[enabledField].(bool)
 		description, present := entry["description"]
 		if !nok || !localPattern.MatchString(name) || strings.Contains(name, "..") || strings.HasSuffix(name, ".") || !dok || domain == "" || !eok || !present {
 			return nil, errConfiguration
@@ -79,11 +80,20 @@ func receivingAliasesMatch(want, actual any) bool {
 			return reflect.DeepEqual(want, actual)
 		}
 	}
-	w, err := canonicalReceivingAliases(want)
+	// The desired plan, rather than an untrusted response, selects the schema.
+	enabledField := "enabled"
+	if entries, ok := want.(map[string]any); ok {
+		if first, ok := entries["0"].(map[string]any); ok {
+			if _, exists := first["enable"]; exists {
+				enabledField = "enable"
+			}
+		}
+	}
+	w, err := canonicalReceivingAliasesFor(want, enabledField)
 	if err != nil {
 		return false
 	}
-	a, err := canonicalReceivingAliases(actual)
+	a, err := canonicalReceivingAliasesFor(actual, enabledField)
 	return err == nil && reflect.DeepEqual(w, a)
 }
 
@@ -133,6 +143,10 @@ func receivingObjects(methods [][]json.RawMessage, object, tag string) ([]map[st
 // child, before the first native apply. A standalone plan is only a snapshot;
 // the native CLI offers no plan-level revision/ifInState precondition.
 func validateRecipientOwnership(raw []byte, v inputs) error {
+	profile, err := schemaFor(v.RuntimeVersion)
+	if err != nil {
+		return err
+	}
 	if v.MaintainerAliases == nil {
 		return nil
 	}
@@ -202,13 +216,13 @@ func validateRecipientOwnership(raw []byte, v inputs) error {
 			if target != "" && domain == target && wanted[strings.ToLower(name)] && !retained {
 				return errConfiguration
 			}
-			aliases, err := canonicalReceivingAliases(owner["aliases"])
+			aliases, err := canonicalReceivingAliasesFor(owner["aliases"], profile.aliasEnabled)
 			if err != nil {
 				return errConfiguration
 			}
 			if retained {
 				maintainerSeen = true
-				if len(aliases) > 0 && !receivingAliasesMatch(receivingAliases(v.MaintainerAliases, target), owner["aliases"]) {
+				if len(aliases) > 0 && !receivingAliasesMatch(receivingAliasesFor(v.MaintainerAliases, target, profile.aliasEnabled), owner["aliases"]) {
 					return errConfiguration
 				}
 			} else {
