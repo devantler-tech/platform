@@ -232,7 +232,7 @@ func exercise(ctx context.Context, image, config string, wantSpool bool) (result
 		}
 	}
 	if observed.response != nil {
-		defer observed.response.Body.Close()
+		defer func() { _ = observed.response.Body.Close() }()
 	}
 	if observed.err != nil || string(observed.body) != prefix || observed.response.StatusCode != http.StatusOK {
 		return fmt.Errorf("stream prefix or response changed: %v", observed.err)
@@ -256,7 +256,7 @@ func exercise(ctx context.Context, image, config string, wantSpool bool) (result
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil || resp.StatusCode != http.StatusServiceUnavailable || string(body) != "fixture upstream unavailable" || resp.Header.Get("X-Fixture-Response") != "preserved" {
 		return fmt.Errorf("upstream failure propagation changed: %v", err)

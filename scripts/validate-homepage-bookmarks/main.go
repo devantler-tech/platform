@@ -33,6 +33,8 @@ var configFiles = []string{
 func main() { os.Exit(run(os.Args[1:], os.Stdout)) }
 
 func run(args []string, out io.Writer) (status int) {
+	// bufio.Writer keeps its first write error and Flush returns it, so the
+	// writes below discard their own results and the deferred Flush decides.
 	buffer := bufio.NewWriter(out)
 	out = buffer
 	defer func() {
@@ -41,27 +43,27 @@ func run(args []string, out io.Writer) (status int) {
 		}
 	}()
 	if len(args) != 2 {
-		fmt.Fprintln(out, "::error::usage: validate-homepage-bookmarks <config-map.yaml> <k8s-root>")
+		_, _ = fmt.Fprintln(out, "::error::usage: validate-homepage-bookmarks <config-map.yaml> <k8s-root>")
 		return 2
 	}
 	data, err := os.ReadFile(args[0])
 	if err != nil {
-		fmt.Fprintf(out, "::error::missing or unreadable: %s\n", args[0])
+		_, _ = fmt.Fprintf(out, "::error::missing or unreadable: %s\n", args[0])
 		return 2
 	}
 	info, err := os.Stat(args[1])
 	if err != nil || !info.IsDir() {
-		fmt.Fprintf(out, "::error::missing k8s root: %s\n", args[1])
+		_, _ = fmt.Fprintf(out, "::error::missing k8s root: %s\n", args[1])
 		return 2
 	}
 	var manifest map[string]any
 	if err := decode(data, &manifest); err != nil {
-		fmt.Fprintf(out, "::error::cannot parse %s: %s\n", args[0], err)
+		_, _ = fmt.Fprintf(out, "::error::cannot parse %s: %s\n", args[0], err)
 		return 2
 	}
 	values, ok := manifest["data"].(map[string]any)
 	if manifest == nil || !ok {
-		fmt.Fprintln(out, "::error::manifest and data must be YAML mappings")
+		_, _ = fmt.Fprintln(out, "::error::manifest and data must be YAML mappings")
 		return 2
 	}
 	var missing []string
@@ -75,25 +77,25 @@ func run(args []string, out io.Writer) (status int) {
 		if strings.HasSuffix(key, ".yaml") && strings.TrimSpace(body) != "" {
 			var value any
 			if err := decode([]byte(body), &value); err != nil {
-				fmt.Fprintf(out, "::error::cannot parse %s: %s\n", key, err)
+				_, _ = fmt.Fprintf(out, "::error::cannot parse %s: %s\n", key, err)
 				return 2
 			}
 		}
 	}
 	if len(missing) > 0 {
-		fmt.Fprintf(out, "::error::%s missing from %s; Homepage exits without every config file\n", strings.Join(missing, ", "), args[0])
+		_, _ = fmt.Fprintf(out, "::error::%s missing from %s; Homepage exits without every config file\n", strings.Join(missing, ", "), args[0])
 		return 1
 	}
 	parsed := make(map[string]any)
 	for _, key := range []string{"bookmarks.yaml", "settings.yaml", "services.yaml"} {
 		body, ok := values[key].(string)
 		if !ok || strings.TrimSpace(body) == "" {
-			fmt.Fprintf(out, "::error::%s missing from %s\n", key, args[0])
+			_, _ = fmt.Fprintf(out, "::error::%s missing from %s\n", key, args[0])
 			return 1
 		}
 		var value any
 		if err := decode([]byte(body), &value); err != nil {
-			fmt.Fprintf(out, "::error::cannot parse %s: %s\n", key, err)
+			_, _ = fmt.Fprintf(out, "::error::cannot parse %s: %s\n", key, err)
 			return 2
 		}
 		parsed[key] = value
@@ -101,18 +103,18 @@ func run(args []string, out io.Writer) (status int) {
 	services := make(map[string]bool)
 	serviceGroups, ok := parsed["services.yaml"].([]any)
 	if !ok {
-		fmt.Fprintln(out, "::error::unsupported service group structure")
+		_, _ = fmt.Fprintln(out, "::error::unsupported service group structure")
 		return 2
 	}
 	for _, group := range serviceGroups {
 		object, ok := group.(map[string]any)
 		if !ok || len(object) == 0 {
-			fmt.Fprintln(out, "::error::unsupported service group structure")
+			_, _ = fmt.Fprintln(out, "::error::unsupported service group structure")
 			return 2
 		}
 		for name, value := range object {
 			if _, ok := value.([]any); !ok || strings.TrimSpace(name) == "" {
-				fmt.Fprintln(out, "::error::unsupported service group structure")
+				_, _ = fmt.Fprintln(out, "::error::unsupported service group structure")
 				return 2
 			}
 			services[name] = true
@@ -147,7 +149,7 @@ func run(args []string, out io.Writer) (status int) {
 		return nil
 	})
 	if err != nil {
-		fmt.Fprintf(out, "::error::cannot read service groups: %s\n", err)
+		_, _ = fmt.Fprintf(out, "::error::cannot read service groups: %s\n", err)
 		return 2
 	}
 	layout := make(map[string]bool)
@@ -161,13 +163,13 @@ func run(args []string, out io.Writer) (status int) {
 	problems, entries, groups := validate(parsed["bookmarks.yaml"], services, layout)
 	if len(problems) > 0 {
 		sort.Strings(problems)
-		fmt.Fprintf(out, "::error::%d homepage bookmark violation(s):\n", len(problems))
+		_, _ = fmt.Fprintf(out, "::error::%d homepage bookmark violation(s):\n", len(problems))
 		for _, problem := range problems {
-			fmt.Fprintf(out, "  %s\n", problem)
+			_, _ = fmt.Fprintf(out, "  %s\n", problem)
 		}
 		return 1
 	}
-	fmt.Fprintf(out, "✓ %d homepage bookmark(s) in %d group(s) valid.\n", entries, groups)
+	_, _ = fmt.Fprintf(out, "✓ %d homepage bookmark(s) in %d group(s) valid.\n", entries, groups)
 	return 0
 }
 

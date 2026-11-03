@@ -78,7 +78,7 @@ func TestObservationHealthReportsStatusWithoutAuthenticationOrRedirects(t *testi
 	for _, status := range []int{200, 401, 403, 503, 302} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			targetReads := 0
-			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { targetReads++ }))
+			target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { targetReads++ }))
 			defer target.Close()
 			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != "GET" || r.URL.Path != "/healthz/ready" || r.Header.Get("Authorization") != "" {

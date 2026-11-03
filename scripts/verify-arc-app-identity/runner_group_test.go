@@ -170,13 +170,13 @@ func (f *groupFixture) handler(t *testing.T) http.HandlerFunc {
 		}
 		// Copy responses so a one-response fault does not silently rewrite remote state.
 		encoded, _ := json.Marshal(value)
-		var copy map[string]any
-		_ = json.Unmarshal(encoded, &copy)
+		var clone map[string]any
+		_ = json.Unmarshal(encoded, &clone)
 		if f.mutate != nil {
-			f.mutate(path, copy)
+			f.mutate(path, clone)
 		}
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(copy)
+		_ = json.NewEncoder(w).Encode(clone)
 	}
 }
 

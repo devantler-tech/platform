@@ -1,3 +1,6 @@
+// Package longhorninventory observes a Talos node's Longhorn storage through
+// read-only native Talos APIs and reduces it to counters and commitments. It
+// never reads file contents, follows links or reports private identities.
 package longhorninventory
 
 import (
@@ -11,11 +14,14 @@ import (
 	"unicode/utf8"
 )
 
+// Bounds on one observation: a listing or replica set larger than either is
+// refused rather than truncated.
 const (
 	MaxEntries       = 16384
 	MaxMetadataBytes = 4 << 20
 )
 
+// Entry is the metadata of one immediate child of an observed directory.
 type Entry struct {
 	Name           string
 	Mode           uint32
@@ -24,15 +30,21 @@ type Entry struct {
 	Size, Modified int64
 }
 
+// Listing is a directory's immediate children; Complete is false when the
+// observation ended early.
 type Listing struct {
 	Entries  []Entry
 	Complete bool
 }
 
+// Replica is one replica identity from the Longhorn API and the data directory
+// it owns.
 type Replica struct {
 	Name, UID, Directory string
 }
 
+// Report reconciles the replica directory with the API's replicas as counts
+// and a digest; UnmatchedNames is never serialized.
 type Report struct {
 	Directories, Files, Matched, Unmatched, Missing int
 	EmptyAndAccounted                               bool

@@ -13,6 +13,8 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/resources/block"
 )
 
+// BlockLayoutReport summarizes the EPHEMERAL and raw Longhorn volumes' phase,
+// size and encryption properties, without device paths or identities.
 type BlockLayoutReport struct {
 	VolumeStatuses, DiscoveredVolumes                           int
 	EphemeralPhase                                              string
@@ -26,6 +28,8 @@ type BlockLayoutReport struct {
 	Digest                                                      string
 }
 
+// ListBlockLayout reads the block layout twice and reports it only when both
+// complete reads agree.
 func (n Native) ListBlockLayout(ctx context.Context) (BlockLayoutReport, error) {
 	ctx, cancel, err := n.requestContext(ctx)
 	if err != nil {

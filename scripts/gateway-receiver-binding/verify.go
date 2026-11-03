@@ -22,7 +22,7 @@ func secretMatches(raw []byte, b binding) bool {
 func probePublic(ctx context.Context, ip string) error {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+	transport.DialContext = func(ctx context.Context, _, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil || port != "443" || (host != "platform.devantler.tech" && host != "vault.platform.devantler.tech") {
 			return nil, errors.New("public-target")

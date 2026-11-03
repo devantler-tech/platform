@@ -131,17 +131,17 @@ func parseInstalled(input io.Reader) ([]rule, error) {
 func compare(policy string, input io.Reader, _ io.Writer, diagnostic io.Writer) int {
 	expected, err := parsePolicy([]byte(policy))
 	if err != nil {
-		fmt.Fprintln(diagnostic, "could not parse declared verification policy")
+		_, _ = fmt.Fprintln(diagnostic, "could not parse declared verification policy")
 		return 2
 	}
 	actual, err := parseInstalled(input)
 	if err != nil {
-		fmt.Fprintln(diagnostic, "could not parse complete installed verification decisions")
+		_, _ = fmt.Fprintln(diagnostic, "could not parse complete installed verification decisions")
 		return 2
 	}
 	if !reflect.DeepEqual(expected, actual) {
 		// Do not include actual node specs, issuers, subjects or certificates.
-		fmt.Fprintln(diagnostic, "installed verification decisions differ from declared policy")
+		_, _ = fmt.Fprintln(diagnostic, "installed verification decisions differ from declared policy")
 		return 1
 	}
 	return 0
@@ -153,7 +153,7 @@ func compare(policy string, input io.Reader, _ io.Writer, diagnostic io.Writer) 
 // use the node's actual decisions rather than that lossy intermediate form.
 func observeResources(kind string, input io.Reader, output, diagnostic io.Writer) int {
 	if kind != "imageverificationrules.security.talos.dev" && kind != "tuftrustedroots.security.talos.dev" {
-		fmt.Fprintln(diagnostic, "unsupported resource observation")
+		_, _ = fmt.Fprintln(diagnostic, "unsupported resource observation")
 		return 2
 	}
 	type observation struct {
@@ -180,7 +180,7 @@ func observeResources(kind string, input io.Reader, output, diagnostic io.Writer
 			break
 		}
 		if err != nil || resource.Metadata.ID == "" || seen[resource.Metadata.ID] {
-			fmt.Fprintln(diagnostic, "invalid or duplicate resource identity")
+			_, _ = fmt.Fprintln(diagnostic, "invalid or duplicate resource identity")
 			return 2
 		}
 		seen[resource.Metadata.ID] = true
@@ -193,7 +193,7 @@ func observeResources(kind string, input io.Reader, output, diagnostic io.Writer
 	}
 	encoded, err := json.Marshal(observations)
 	if err != nil {
-		fmt.Fprintln(diagnostic, "could not encode complete resource observations")
+		_, _ = fmt.Fprintln(diagnostic, "could not encode complete resource observations")
 		return 2
 	}
 	if _, err := output.Write(append(encoded, '\n')); err != nil {
@@ -207,12 +207,12 @@ func run(args []string, input io.Reader, output, diagnostic io.Writer) int {
 		return observeResources(args[1], input, output, diagnostic)
 	}
 	if len(args) != 2 || (args[0] != "normalize" && args[0] != "compare") {
-		fmt.Fprintln(diagnostic, "usage: validate-image-verification-policy <normalize|compare> <policy.yaml> | resources <resource-type>")
+		_, _ = fmt.Fprintln(diagnostic, "usage: validate-image-verification-policy <normalize|compare> <policy.yaml> | resources <resource-type>")
 		return 2
 	}
 	data, err := os.ReadFile(args[1])
 	if err != nil {
-		fmt.Fprintln(diagnostic, "could not read declared verification policy")
+		_, _ = fmt.Fprintln(diagnostic, "could not read declared verification policy")
 		return 2
 	}
 	if args[0] == "compare" {
@@ -220,7 +220,7 @@ func run(args []string, input io.Reader, output, diagnostic io.Writer) int {
 	}
 	rules, err := parsePolicy(data)
 	if err != nil {
-		fmt.Fprintln(diagnostic, "could not parse declared verification policy")
+		_, _ = fmt.Fprintln(diagnostic, "could not parse declared verification policy")
 		return 2
 	}
 	if err := json.NewEncoder(output).Encode(rules); err != nil {

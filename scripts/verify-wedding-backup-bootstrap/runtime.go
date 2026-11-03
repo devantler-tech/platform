@@ -24,7 +24,7 @@ type client struct {
 
 func esoPolicy(run, nsUID string) (object, error) {
 	if !digits.MatchString(run) || !uuid.MatchString(nsUID) {
-		return nil, refused
+		return nil, errRefused
 	}
 	ns := "wedding-bootstrap-" + run
 	m := meta(ns, "external-secrets", run)
@@ -34,7 +34,7 @@ func esoPolicy(run, nsUID string) (object, error) {
 
 func (k client) call(ns string, input []byte, args ...string) ([]byte, error) {
 	if !digits.MatchString(k.run) || (ns != "" && ns != "wedding-bootstrap-"+k.run && ns != "external-secrets") {
-		return nil, refused
+		return nil, errRefused
 	}
 	prefix := []string{"--context", "admin@prod", "--request-timeout=30s"}
 	if ns != "" {
@@ -45,24 +45,24 @@ func (k client) call(ns string, input []byte, args ...string) ([]byte, error) {
 func (k client) get(ns, kind, name string) (object, error) {
 	b, err := k.call(ns, nil, "get", kind, name, "--ignore-not-found=true", "-o", "json")
 	if err != nil {
-		return nil, refused
+		return nil, errRefused
 	}
 	if len(bytes.TrimSpace(b)) == 0 {
 		return nil, nil
 	}
 	var o object
 	if json.Unmarshal(b, &o) != nil || o == nil {
-		return nil, refused
+		return nil, errRefused
 	}
 	return o, nil
 }
 func (k client) create(o object) error {
-	if str(o, "metadata", "namespace") != "wedding-bootstrap-"+k.run && !(str(o, "kind") == "Namespace" && str(o, "metadata", "name") == "wedding-bootstrap-"+k.run) && !(str(o, "kind") == "CiliumNetworkPolicy" && str(o, "metadata", "namespace") == "external-secrets" && str(o, "metadata", "name") == "wedding-bootstrap-"+k.run) {
-		return refused
+	if str(o, "metadata", "namespace") != "wedding-bootstrap-"+k.run && (str(o, "kind") != "Namespace" || str(o, "metadata", "name") != "wedding-bootstrap-"+k.run) && (str(o, "kind") != "CiliumNetworkPolicy" || str(o, "metadata", "namespace") != "external-secrets" || str(o, "metadata", "name") != "wedding-bootstrap-"+k.run) {
+		return errRefused
 	}
 	b, err := json.Marshal(o)
 	if err != nil {
-		return refused
+		return errRefused
 	}
 	_, err = k.call("", b, "create", "-f", "-", "-o", "name")
 	return err
@@ -79,31 +79,31 @@ func removeOwned(k client, ns, kind, name, expectedUID string) error {
 		return nil
 	}
 	if !owned(o, name, ns, k.run) || (expectedUID != "" && str(o, "metadata", "uid") != expectedUID) {
-		return refused
+		return errRefused
 	}
 	var url string
 	switch kind {
 	case "namespaces":
 		if ns != "" || name != "wedding-bootstrap-"+k.run {
-			return refused
+			return errRefused
 		}
 		url = "/api/v1/namespaces/" + name
 	case "secrets":
 		if ns != "wedding-bootstrap-"+k.run || name != projectedSecret {
-			return refused
+			return errRefused
 		}
 		url = "/api/v1/namespaces/" + ns + "/secrets/" + name
 	case "ciliumnetworkpolicies":
 		if ns != "external-secrets" || name != "wedding-bootstrap-"+k.run {
-			return refused
+			return errRefused
 		}
 		url = "/apis/cilium.io/v2/namespaces/" + ns + "/ciliumnetworkpolicies/" + name
 	default:
-		return refused
+		return errRefused
 	}
 	body, _ := json.Marshal(object{"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": object{"uid": str(o, "metadata", "uid")}, "propagationPolicy": "Foreground"})
 	if _, err = k.call("", body, "delete", "--raw="+url, "-f", "-"); err != nil {
-		return refused
+		return errRefused
 	}
 	// ESO can recreate a Secret immediately. Wait for the deleted UID, rather
 	// than waiting forever for its replacement to disappear by name.
@@ -119,7 +119,7 @@ func cleanup(k client, nsUID string) error {
 		return err
 	}
 	if n != nil && (!owned(n, ns, "", k.run) || (nsUID != "" && str(n, "metadata", "uid") != nsUID)) {
-		return refused
+		return errRefused
 	}
 	if n != nil {
 		nsUID = str(n, "metadata", "uid")
@@ -131,11 +131,11 @@ func cleanup(k client, nsUID string) error {
 	if p != nil {
 		refs, _ := at(p, "metadata", "ownerReferences").([]any)
 		if !owned(p, ns, "external-secrets", k.run) || len(refs) != 1 {
-			return refused
+			return errRefused
 		}
 		owner, ok := refs[0].(map[string]any)
 		if !ok || str(owner, "kind") != "Namespace" || str(owner, "name") != ns || !uuid.MatchString(str(owner, "uid")) || (nsUID != "" && str(owner, "uid") != nsUID) {
-			return refused
+			return errRefused
 		}
 		if err = removeOwned(k, "external-secrets", "ciliumnetworkpolicies", ns, str(p, "metadata", "uid")); err != nil {
 			return err
@@ -147,7 +147,7 @@ func cleanup(k client, nsUID string) error {
 	for _, target := range [][3]string{{"", "namespaces", ns}, {"external-secrets", "ciliumnetworkpolicies", ns}} {
 		o, err := k.get(target[0], target[1], target[2])
 		if err != nil || o != nil {
-			return refused
+			return errRefused
 		}
 	}
 	return nil
@@ -161,7 +161,7 @@ type bao struct {
 
 func (b bao) request(method, path, token string, input object, want int) (object, error) {
 	if !regexp.MustCompile(`^http://127\.0\.0\.1:[1-9][0-9]{0,4}$`).MatchString(b.url) || !strings.HasPrefix(path, "/v1/") {
-		return nil, refused
+		return nil, errRefused
 	}
 	payload, _ := json.Marshal(input)
 	if input == nil {
@@ -169,7 +169,7 @@ func (b bao) request(method, path, token string, input object, want int) (object
 	}
 	req, err := http.NewRequestWithContext(b.ctx, method, b.url+path, bytes.NewReader(payload))
 	if err != nil {
-		return nil, refused
+		return nil, errRefused
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
@@ -177,19 +177,19 @@ func (b bao) request(method, path, token string, input object, want int) (object
 	}
 	resp, err := b.http.Do(req)
 	if err != nil {
-		return nil, refused
+		return nil, errRefused
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1048577))
 	if err != nil || len(body) > 1048576 || resp.StatusCode != want {
-		return nil, refused
+		return nil, errRefused
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
 		return object{}, nil
 	}
 	var result object
 	if json.Unmarshal(body, &result) != nil {
-		return nil, refused
+		return nil, errRefused
 	}
 	return result, nil
 }
@@ -201,15 +201,15 @@ func (b bao) initialize() (string, error) {
 	keys, _ := init["keys_base64"].([]any)
 	root := str(init, "root_token")
 	if len(keys) != 1 || root == "" {
-		return "", refused
+		return "", errRefused
 	}
 	key, ok := keys[0].(string)
 	if !ok || key == "" {
-		return "", refused
+		return "", errRefused
 	}
 	unsealed, err := b.request("PUT", "/v1/sys/unseal", "", object{"key": key}, 200)
 	if err != nil || unsealed["sealed"] != false {
-		return "", refused
+		return "", errRefused
 	}
 	if _, err = b.request("POST", "/v1/sys/mounts/secret", root, object{"type": "kv", "options": object{"version": "2"}}, 204); err != nil {
 		return "", err
@@ -229,14 +229,14 @@ path "auth/token/lookup-self" { capabilities = ["read"] }`
 	}
 	value := str(token, "auth", "client_token")
 	if value == "" {
-		return "", refused
+		return "", errRefused
 	}
 	return value, nil
 }
 
 func forward(ctx context.Context, run string) (string, func(), error) {
 	if !digits.MatchString(run) {
-		return "", nil, refused
+		return "", nil, errRefused
 	}
 	fctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(fctx, "kubectl", "--context", "admin@prod", "--namespace", "wedding-bootstrap-"+run, "port-forward", "--address=127.0.0.1", "pod/openbao", "0:8200")
@@ -245,11 +245,11 @@ func forward(ctx context.Context, run string) (string, func(), error) {
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
-		return "", nil, refused
+		return "", nil, errRefused
 	}
 	if cmd.Start() != nil {
 		cancel()
-		return "", nil, refused
+		return "", nil, errRefused
 	}
 	ports := make(chan string, 1)
 	finished := make(chan struct{})
@@ -278,13 +278,13 @@ func forward(ctx context.Context, run string) (string, func(), error) {
 		return "http://127.0.0.1:" + p, stop, nil
 	case <-finished:
 		cancel()
-		return "", nil, refused
+		return "", nil, errRefused
 	case <-ctx.Done():
 		stop()
-		return "", nil, refused
+		return "", nil, errRefused
 	case <-time.After(45 * time.Second):
 		stop()
-		return "", nil, refused
+		return "", nil, errRefused
 	}
 }
 func waitFor(k client, predicate func() (bool, error)) error {
@@ -300,7 +300,7 @@ func waitFor(k client, predicate func() (bool, error)) error {
 		}
 		select {
 		case <-ctx.Done():
-			return refused
+			return errRefused
 		case <-time.After(2 * time.Second):
 		}
 	}
@@ -315,7 +315,6 @@ func ready(o object) bool {
 	}
 	return false
 }
-func number(o object, keys ...string) int { n, _ := at(o, keys...).(float64); return int(n) }
 
 func newClient(ctx context.Context, run string) client {
 	return client{ctx: ctx, run: run, command: func(ctx context.Context, args []string, input []byte) ([]byte, error) {
@@ -326,7 +325,7 @@ func newClient(ctx context.Context, run string) client {
 		var stdout bytes.Buffer
 		cmd.Stdout = &limitedWriter{writer: &stdout, remaining: 1048576}
 		if cmd.Run() != nil {
-			return nil, refused
+			return nil, errRefused
 		}
 		return stdout.Bytes(), nil
 	}}
