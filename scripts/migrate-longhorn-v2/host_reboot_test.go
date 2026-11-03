@@ -100,7 +100,7 @@ func (f *hostRebootFixture) run(ctx context.Context, input []byte, program strin
 		return nil, nil
 	}
 	if program == "talosctl" && len(args) == 5 && args[1] == "get" && args[2] == "kernelparamspec" {
-		if args[3] != "sysctl.vm.nr_hugepages" {
+		if args[3] != "proc.sys.vm.nr_hugepages" {
 			f.base.t.Fatal("host configuration read escaped the single public parameter")
 		}
 		return json.Marshal(object{"metadata": object{"namespace": "runtime", "id": args[3]}, "spec": object{"value": f.desired}})
@@ -277,30 +277,38 @@ func TestUncertainHostRebootCannotBeRepeated(t *testing.T) {
 }
 
 func TestHostRebootCannotStartWhileAnotherWorkerHasAnUnfinishedJournal(t *testing.T) {
-	f, h := hostRebootAPI(t)
-	if _, err := h.initialize(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	_, r, err := h.read(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	peer, storage := f.base.s.nodes[1], f.base.s.storageNodes[1]
-	r.Target, r.Phase = "prod-worker-2", "reboot-requested"
-	r.NodeUID, r.ProviderID, r.MachineUUID = text(peer, "metadata", "uid"), text(peer, "spec", "providerID"), text(peer, "status", "nodeInfo", "systemUUID")
-	r.OriginalBootID, r.LonghornUID, r.OriginalDiskUUID = text(peer, "status", "nodeInfo", "bootID"), text(storage, "metadata", "uid"), hostRegisteredDiskUUID(storage)
-	if r.validate("prod-worker-2") != nil {
-		t.Fatal("peer fixture did not represent a valid pending request")
-	}
-	encoded, err := json.Marshal(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.peerJournal = resource("longhorn-v2-host-memory-prod-worker-2")
-	f.peerJournal["metadata"].(object)["namespace"] = "longhorn-system"
-	f.peerJournal["data"] = object{"record": string(encoded)}
-	if h.run(context.Background()) == nil || f.reboots != 0 || f.drains != 0 || value(f.base.node, "spec", "unschedulable") == true {
-		t.Fatal("another worker was disrupted before the earlier reboot was proven complete")
+	for _, phase := range []string{"draining", "reboot-requested"} {
+		t.Run(phase, func(t *testing.T) {
+			f, h := hostRebootAPI(t)
+			if _, err := h.initialize(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			_, r, err := h.read(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			peer, storage := f.base.s.nodes[1], f.base.s.storageNodes[1]
+			r.Target, r.Phase = "prod-worker-2", phase
+			r.NodeUID, r.ProviderID, r.MachineUUID = text(peer, "metadata", "uid"), text(peer, "spec", "providerID"), text(peer, "status", "nodeInfo", "systemUUID")
+			r.OriginalBootID, r.LonghornUID, r.OriginalDiskUUID = text(peer, "status", "nodeInfo", "bootID"), text(storage, "metadata", "uid"), hostRegisteredDiskUUID(storage)
+			if r.validate("prod-worker-2") != nil {
+				t.Fatal("peer fixture did not represent a valid pending request")
+			}
+			encoded, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.peerJournal = resource("longhorn-v2-host-memory-prod-worker-2")
+			f.peerJournal["metadata"].(object)["namespace"] = "longhorn-system"
+			f.peerJournal["data"] = object{"record": string(encoded)}
+			f.base.cm = nil
+			if h.run(context.Background()) == nil || f.reboots != 0 || f.drains != 0 || value(f.base.node, "spec", "unschedulable") == true {
+				t.Fatal("another worker was disrupted before the earlier reboot was proven complete")
+			}
+			if f.base.cm != nil {
+				t.Fatal("a refused peer dispatch left a new journal that blocks the original worker's recovery")
+			}
+		})
 	}
 }
 

@@ -268,7 +268,7 @@ func (h hostMemoryReboot) targetState(ctx context.Context, r hostRebootRecord) (
 	if err != nil || text(volume, "spec", "uuid") != r.EphemeralUUID || text(volume, "spec", "phase") != "ready" || text(volume, "spec", "encryptionProvider") != "luks2" {
 		return nil, "", errHostMemory
 	}
-	setting, err := h.c.talosResource(ctx, address, "kernelparamspec", "sysctl.vm.nr_hugepages")
+	setting, err := h.c.talosResource(ctx, address, "kernelparamspec", "proc.sys.vm.nr_hugepages")
 	if err != nil || text(setting, "metadata", "namespace") != "runtime" || text(setting, "spec", "value") != "1024" {
 		return nil, "", errHostMemory
 	}
@@ -323,6 +323,11 @@ func (h hostMemoryReboot) initialize(ctx context.Context) (hostRebootRecord, err
 	memory, err := h.memory(ctx)
 	if err != nil || memory.PersistentPages >= 1024 || memory.TotalPages != memory.PersistentPages || memory.FreePages != memory.TotalPages || memory.PageSizeKiB != 2048 || memory.ReservedPages != 0 || memory.SurplusPages != 0 {
 		return hostRebootRecord{}, errors.New("native allocation no longer proves an unused huge-page shortfall; inspect host memory before a reboot")
+	}
+	// A refused dispatch must not leave a second unfinished journal that would
+	// prevent the original worker from resuming its own maintenance.
+	if err = h.peersClear(ctx, s.nodes); err != nil {
+		return hostRebootRecord{}, err
 	}
 	return r, h.write(ctx, nil, r)
 }
