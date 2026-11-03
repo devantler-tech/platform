@@ -17,12 +17,12 @@ on:
         description: The guarded migration step to run
         required: true
         type: choice
-        options: [prepare-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas]
+        options: [prepare-worker, prepare-unused-temporary-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas, inventory-storage-root, inventory-storage-layout, inspect-host-memory, reboot-host-for-hugepages]
       node:
-        description: Permanent storage worker for preparation or read-only inventory
+        description: Permanent worker or fixed temporary-worker selection for the chosen operation
         required: false
         type: choice
-        options: [prod-worker-1, prod-worker-2, prod-worker-3]
+        options: [prod-worker-1, prod-worker-2, prod-worker-3, temporary-v1-1, temporary-v1-2, temporary-v2-1]
       confirm:
         description: "Type the exact confirmation documented for the selected operation"
         required: true
@@ -80,8 +80,23 @@ jobs:
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
               ;;
+            prepare-unused-temporary-worker)
+              [[ "${LONGHORN_V2_NODE}" =~ ^temporary-v1-[12]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-unused-longhorn-v2-${LONGHORN_V2_NODE}" ]]
+              ;;
             inventory-replicas)
-              [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-replicas-${LONGHORN_V2_NODE}" ]]
+              [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-replicas-${LONGHORN_V2_NODE}" ]]
+              ;;
+            inspect-host-memory)
+              [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "inspect-longhorn-v2-host-memory-${LONGHORN_V2_NODE}" ]]
+              ;;
+            reboot-host-for-hugepages)
+              [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "reboot-longhorn-v2-host-${LONGHORN_V2_NODE}" ]]
+              ;;
+            inventory-storage-root)
+              [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-root-${LONGHORN_V2_NODE}" ]]
+              ;;
+            inventory-storage-layout)
+              [[ "${LONGHORN_V2_NODE}" =~ ^temporary-(v1-[12]|v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-layout-${LONGHORN_V2_NODE}" ]]
               ;;
             refresh-clients)
               [[ "${LONGHORN_V2_CONFIRM}" == refresh-longhorn-v2-clients ]]

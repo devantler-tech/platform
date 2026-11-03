@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -75,7 +76,13 @@ func collectServers(ctx context.Context, client *http.Client, token string) ([]s
 	// The account limit is ten, below this fifty-entry request. Anything that
 	// needs another page cannot qualify for a free slot; never treat it as empty.
 	if page.Servers == nil || len(page.Servers) > 9 || p.Page == nil || *p.Page != 1 || p.PerPage == nil || *p.PerPage != 50 || p.LastPage == nil || *p.LastPage != 1 || !bytes.Equal(bytes.TrimSpace(p.NextPage), []byte("null")) || p.Total == nil || *p.Total != len(page.Servers) {
-		return nil, errors.New("provider inventory is incomplete or exceeds migration capacity")
+		// Report only the bounded count and guard outcomes, never provider
+		// identities, response values, credentials or a raw payload.
+		return nil, fmt.Errorf("provider inventory is incomplete or exceeds migration capacity: servers=%d servers_present=%t within_capacity=%t page_valid=%t per_page_valid=%t last_page_valid=%t next_page_terminal=%t total_present=%t total_matches=%t",
+			len(page.Servers), page.Servers != nil, len(page.Servers) <= 9,
+			p.Page != nil && *p.Page == 1, p.PerPage != nil && *p.PerPage == 50,
+			p.LastPage != nil && *p.LastPage == 1, bytes.Equal(bytes.TrimSpace(p.NextPage), []byte("null")),
+			p.Total != nil, p.Total != nil && *p.Total == len(page.Servers))
 	}
 	return page.Servers, nil
 }

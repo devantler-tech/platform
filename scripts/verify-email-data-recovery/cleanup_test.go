@@ -22,7 +22,7 @@ func cleanupKey(kind, ns, name string) string { return kind + "/" + ns + "/" + n
 func (a *cleanupAPI) call(_ context.Context, input []byte, args ...string) ([]byte, error) {
 	switch args[0] {
 	case "get":
-		kind, ns := args[1], ""
+		kind, ns := fixtureReadKind(args[1]), ""
 		for _, arg := range args {
 			if strings.HasPrefix(arg, "--namespace=") {
 				ns = strings.TrimPrefix(arg, "--namespace=")

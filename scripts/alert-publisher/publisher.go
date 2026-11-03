@@ -145,9 +145,10 @@ type githubAPI interface {
 	write(context.Context, operation) error
 }
 type publisher struct {
-	dir string
-	api githubAPI
-	now func() time.Time
+	dir   string
+	api   githubAPI
+	now   func() time.Time
+	store journalStore
 }
 
 func opaqueID() (string, error) {
@@ -188,12 +189,16 @@ func (p *publisher) run(ctx context.Context, e *observation) error {
 			return errInput
 		}
 	}
-	unlock, err := lockStore(ctx, p.dir)
+	store := p.store
+	if store == nil {
+		store = localJournalStore{dir: p.dir}
+	}
+	session, err := store.Open(ctx)
 	if err != nil {
 		return err
 	}
-	defer unlock()
-	s, err := readJournal(p.dir)
+	defer session.Close()
+	s, err := session.Read(ctx)
 	if err != nil {
 		return err
 	}
@@ -223,7 +228,7 @@ func (p *publisher) run(ctx context.Context, e *observation) error {
 				s.Pending = append(s.Pending, operation{ID: id, Episode: old.Episode, Route: e.Route, State: e.State, CreatedAt: now})
 			}
 			s.Routes[e.Route] = old
-			if err = saveJournal(p.dir, s); err != nil {
+			if err = session.Save(ctx, s); err != nil {
 				return err
 			}
 		}
@@ -245,11 +250,11 @@ func (p *publisher) run(ctx context.Context, e *observation) error {
 		}
 		if op.Sent {
 			if err = p.api.verify(ctx); err != nil {
-				return p.deferRead(err, &s, op)
+				return p.deferRead(ctx, session, err, &s, op)
 			}
 			r, findErr := p.api.find(ctx, op)
 			if findErr != nil {
-				return p.deferRead(findErr, &s, op)
+				return p.deferRead(ctx, session, findErr, &s, op)
 			}
 			if r.Issue == 0 {
 				return errAmbiguous
@@ -270,7 +275,7 @@ func (p *publisher) run(ctx context.Context, e *observation) error {
 			state.Issue = r.Issue
 			s.Routes[op.Route] = state
 			s.Pending = s.Pending[1:]
-			if err = saveJournal(p.dir, s); err != nil {
+			if err = session.Save(ctx, s); err != nil {
 				return err
 			}
 			continue
@@ -283,7 +288,7 @@ func (p *publisher) run(ctx context.Context, e *observation) error {
 		if op.Issue > 0 && op.State == "firing" {
 			open, openErr := p.api.isOpen(ctx, op.Issue)
 			if openErr != nil {
-				return p.deferRead(openErr, &s, op)
+				return p.deferRead(ctx, session, openErr, &s, op)
 			}
 			if !open {
 				op.Issue = 0
@@ -293,7 +298,7 @@ func (p *publisher) run(ctx context.Context, e *observation) error {
 			return errQuarantined
 		}
 		if err = p.api.verify(ctx); err != nil {
-			return p.deferRead(err, &s, op)
+			return p.deferRead(ctx, session, err, &s, op)
 		}
 		now = p.now().UTC()
 		day := now.Format("2006-01-02")
@@ -310,8 +315,26 @@ func (p *publisher) run(ctx context.Context, e *observation) error {
 		s.AttemptCount++
 		// A crash at any point after this commit is an ambiguous write, never
 		// permission to repeat a POST. The next run reconciles its exact marker.
-		if err = saveJournal(p.dir, s); err != nil {
+		if err = session.Save(ctx, s); err != nil {
 			return err
+		}
+		// Remote persistence may wait across midnight, uncertainty expiry or
+		// cancellation. A saved intent never authorizes crossing those bounds.
+		now = p.now().UTC()
+		if ctx.Err() != nil {
+			return errStore
+		}
+		if now.Sub(op.CreatedAt) > 7*24*time.Hour {
+			return errQuarantined
+		}
+		if now.Format("2006-01-02") != day {
+			op.Sent = false
+			op.RetryAt = now.Add(time.Minute)
+			s.Pending[0] = op
+			if session.Save(ctx, s) != nil {
+				return errStore
+			}
+			return &retryError{after: op.RetryAt}
 		}
 		err = p.api.write(ctx, op)
 		if err != nil {
@@ -320,7 +343,7 @@ func (p *publisher) run(ctx context.Context, e *observation) error {
 				op.Sent = false
 				op.RetryAt = retry.after
 				s.Pending[0] = op
-				if saveJournal(p.dir, s) != nil {
+				if session.Save(ctx, s) != nil {
 					return errStore
 				}
 			}
@@ -331,7 +354,7 @@ func (p *publisher) run(ctx context.Context, e *observation) error {
 	return nil
 }
 
-func (p *publisher) deferRead(err error, s *journal, op operation) error {
+func (p *publisher) deferRead(ctx context.Context, session journalSession, err error, s *journal, op operation) error {
 	if errors.Is(err, errQuarantined) {
 		return err
 	}
@@ -341,7 +364,7 @@ func (p *publisher) deferRead(err error, s *journal, op operation) error {
 	}
 	op.RetryAt = retry.after
 	s.Pending[0] = op
-	if saveJournal(p.dir, *s) != nil {
+	if session.Save(ctx, *s) != nil {
 		return errStore
 	}
 	return retry
@@ -387,7 +410,6 @@ func lockStore(ctx context.Context, dir string) (func(), error) {
 	}
 }
 func readJournal(dir string) (journal, error) {
-	var s journal
 	path := filepath.Join(dir, "state.json")
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -401,6 +423,14 @@ func readJournal(dir string) (journal, error) {
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
+		return journal{}, errStore
+	}
+	return decodeJournal(b)
+}
+
+func decodeJournal(b []byte) (journal, error) {
+	var s journal
+	if len(b) > 128*1024 {
 		return journal{}, errStore
 	}
 	d := json.NewDecoder(strings.NewReader(string(b)))

@@ -68,6 +68,53 @@ func TestCompleteBoundedProviderRead(t *testing.T) {
 	}
 }
 
+func TestProviderEnvelopeHoldExplainsFailedGuardsWithoutPayload(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(map[string]any)
+		guard  string
+	}{
+		{"missing inventory", func(v map[string]any) { v["servers"] = nil }, "servers_present=false"},
+		{"capacity", func(v map[string]any) {
+			values := v["servers"].([]any)
+			v["servers"] = append(values, values[0], values[0])
+			v["meta"].(map[string]any)["pagination"].(map[string]any)["total_entries"] = 10
+		}, "servers=10 servers_present=true within_capacity=false"},
+		{"wrong page", func(v map[string]any) { pagination(v)["page"] = 2 }, "page_valid=false"},
+		{"missing page", func(v map[string]any) { delete(pagination(v), "page") }, "page_valid=false"},
+		{"wrong page size", func(v map[string]any) { pagination(v)["per_page"] = 25 }, "per_page_valid=false"},
+		{"missing page size", func(v map[string]any) { delete(pagination(v), "per_page") }, "per_page_valid=false"},
+		{"additional pages", func(v map[string]any) { pagination(v)["last_page"] = 2 }, "last_page_valid=false"},
+		{"unknown last page", func(v map[string]any) { pagination(v)["last_page"] = nil }, "last_page_valid=false"},
+		{"continuation", func(v map[string]any) { pagination(v)["next_page"] = 2 }, "next_page_terminal=false"},
+		{"missing continuation", func(v map[string]any) { delete(pagination(v), "next_page") }, "next_page_terminal=false"},
+		{"unknown total", func(v map[string]any) { pagination(v)["total_entries"] = nil }, "total_present=false total_matches=false"},
+		{"count mismatch", func(v map[string]any) { pagination(v)["total_entries"] = 9 }, "total_present=true total_matches=false"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := providerResponse(t, func(v map[string]any) {
+				v["servers"].([]any)[0].(map[string]any)["name"] = "private-provider-name-canary"
+				tc.mutate(v)
+			})
+			servers, err := collectServers(context.Background(), providerClient(t, body, 200), "private-test-token")
+			if err == nil || servers != nil {
+				t.Fatal("invalid provider envelope accepted")
+			}
+			if !strings.Contains(err.Error(), tc.guard) {
+				t.Fatalf("hold did not identify failed guard %q: %v", tc.guard, err)
+			}
+			if len(err.Error()) > 350 || strings.Contains(err.Error(), "private-provider-name-canary") || strings.Contains(err.Error(), "private-test-token") {
+				t.Fatal("provider diagnostic escaped its bounded public fields")
+			}
+		})
+	}
+}
+
+func pagination(v map[string]any) map[string]any {
+	return v["meta"].(map[string]any)["pagination"].(map[string]any)
+}
+
 func TestIncompleteProviderReadCannotGrantHeadroom(t *testing.T) {
 	cases := map[string]func(map[string]any){
 		"continuation":         func(v map[string]any) { v["meta"].(map[string]any)["pagination"].(map[string]any)["next_page"] = 2 },

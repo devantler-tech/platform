@@ -80,6 +80,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 🔍 Lint module tidiness guards
+        run: shellcheck scripts/check-go-modules-tidy.sh scripts/tests/test-go-modules-tidy.sh
+
+      - name: 🧪 Exercise module tidiness refusals offline
+        run: bash scripts/tests/test-go-modules-tidy.sh
+
+      - name: 🧹 Verify every tracked Go module is tidy
+        run: bash scripts/check-go-modules-tidy.sh
+
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5
         shell: bash
@@ -160,6 +169,7 @@ jobs:
               - 'scripts/private-mail-config/**'
               - 'scripts/verify-email-data-recovery/**'
               - '.github/workflows/verify-email-data-recovery.yaml'
+              - '.github/workflows/observe-email-data-recovery.yaml'
               - 'ksail.yaml'
               - 'ksail.prod.yaml'
               - '.sops.yaml'
@@ -1318,6 +1328,13 @@ jobs:
           shellcheck scripts/tests/test-controller-helm-sdk-renovate-pin.sh
           bash scripts/tests/test-controller-helm-sdk-renovate-pin.sh
 
+      # The Kopia reader follows Velero's own fork pin, a pseudo-version that
+      # semver ranks below every older tag, so Renovate must not offer it.
+      - name: 📌 Validate the Velero Kopia Renovate pin
+        run: |
+          shellcheck scripts/tests/test-velero-kopia-renovate-pin.sh
+          bash scripts/tests/test-velero-kopia-renovate-pin.sh
+
       # The web-app compiler check requires the KRO Go module to match the
       # controller's chart tag, so Renovate must move both together (#5204).
       - name: 📌 Validate the KRO Renovate group
@@ -1850,7 +1867,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.23"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -3082,7 +3099,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.23"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3516,7 +3533,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.23"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3698,7 +3715,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@0966f4b015e85ef14be37411d424a7028a858550 # v19.0.8
+        uses: devantler-tech/.github/actions/validate-naming@f6f8c96641f21c98e6ffc841bc6f3859cce0525b # v20.0.1
 
       - name: Confirm naming validation completed
         env:
@@ -4509,7 +4526,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.23"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -4640,7 +4657,8 @@ jobs:
         deploy-prod,
       ]
     if: always()
-    permissions: {}
+    permissions:
+      actions: read
     steps:
       - name: 🧩 Require complete selected WebApp compilation
         env:
@@ -4713,8 +4731,9 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@0966f4b015e85ef14be37411d424a7028a858550 # v19.0.8
+        uses: devantler-tech/.github/actions/aggregate-job-checks@15e2fb1af4b5525ff96202661ca4b87d6affade0 # v19.1.1
         with:
+          check-workflow-startup: "true"
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate-repository-guards.result }}
