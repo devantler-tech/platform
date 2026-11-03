@@ -87,6 +87,13 @@ The repository has static manifest checks, Go tests and linters, and MegaLinter.
 
 The unconditional required `validate-go-package-style` job uses Revive v1.16.0 with package context and the same default rules. `go run ./scripts/check-go-package-style` discovers every tracked Go file, checks its complete package context and includes fallback files excluded by native platform/build tags. Missing, linked, untracked or unreadable source and mismatched linter/toolchain versions fail closed. Both production and required CI wait for this job; run its discovery/refusal tests with `go test ./scripts/check-go-package-style`.
 
+Complete Go validation uses two fixed, isolated matrix partitions. They run
+every compiled credential-refresh test, example and fuzz seed exactly once,
+and every other root package once. Both results must succeed before production
+or required CI can pass. Run `bash scripts/tests/test-run-go-regressions.sh` for
+routing and failure controls; `bash scripts/run-go-regressions.sh all` is the
+unpartitioned diagnostic path with the same workers and per-package deadline.
+
 For manifest changes, validate with:
 
 ```bash
@@ -136,11 +143,16 @@ The complete cluster-policy fixtures and offline regressions run in fixed suites
 
 The Talos gate renders both roles, applies the reviewed KSail post-installer kernel-argument fold, then validates both. Production's extension path clears `extraKernelArgs` and pins the UKI command line; the local path without extensions is unchanged. The unconditional pin check and real offline positive/invalid-patch controls are documented in [`scripts/reconcile-talos-kernel-args/README.md`](scripts/reconcile-talos-kernel-args/README.md). The pin check compares the pinned KSail release's fold inputs by content with the audited sets, so a KSail bump needs a new source audit of this fold only when one of those inputs changed.
 
-The complete offline Flux credential-bridge family runs in `validate-flux-bridge`
+The offline Flux credential-bridge shell controls run in `validate-flux-bridge`
 alongside manifest validation on pull requests selected by the existing `k8s` or
 `bridge_validation` filters. Required CI accepts success for a selected family
 and an intentional skip otherwise, rejecting missing selection evidence. The
-family is PR-only and is not a merge-group production prerequisite.
+shell job is PR-only and is not a merge-group production prerequisite. The
+complete `scripts/tests/refresh-flux-ghcr-auth` Go package runs once through
+`validate-go-regressions` on every PR and merge group. Required CI and production
+deployment require that unconditional job to succeed; the selected shell job
+does not repeat its Go tests. The workflow regression checks real Go package
+discovery so a nested module cannot silently remove the bridge from `./...`.
 
 The complete nested-RGD template regression runs alongside manifest validation
 in the read-only `validate-rgd-templates` PR job, selected by `k8s`. Required CI
