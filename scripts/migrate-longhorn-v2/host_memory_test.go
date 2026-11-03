@@ -30,9 +30,13 @@ func TestHostMemoryCountersPreserveAnObservedAllocationShortfall(t *testing.T) {
 }
 
 func TestHostMemoryObserverBindsCountersToNativeHostAndBoot(t *testing.T) {
-	for _, scenario := range []string{"stable shortfall", "unassigned replacement", "API changed", "storage changed", "boot changed", "close failed", "memory read failed", "allocation changed"} {
+	for _, scenario := range []string{"stable shortfall", "unassigned replacement", "missing registered disk", "API changed", "storage changed", "boot changed", "close failed", "memory read failed", "allocation changed"} {
 		t.Run(scenario, func(t *testing.T) {
 			node, storage, replicas := inventoryFixture()
+			if scenario == "missing registered disk" {
+				storage["spec"].(object)["disks"] = object{}
+				storage["status"].(object)["diskStatus"] = object{}
+			}
 			if scenario == "unassigned replacement" {
 				replicas[0]["spec"].(object)["nodeID"] = ""
 				if _, err := projectInventory("prod-worker-1", node, storage, replicas); err == nil {
@@ -100,7 +104,8 @@ func TestHostMemoryObserverBindsCountersToNativeHostAndBoot(t *testing.T) {
 				}, nil
 			})
 			wantObservation := scenario == "stable shortfall" || scenario == "unassigned replacement"
-			if !closed || reader.listCalls != 0 || (err == nil) != wantObservation {
+			wantClosed := scenario != "missing registered disk"
+			if closed != wantClosed || reader.listCalls != 0 || (err == nil) != wantObservation {
 				t.Fatal("host counter observation lost its boundary:", err)
 			}
 			encoded, _ := json.Marshal(receipt)

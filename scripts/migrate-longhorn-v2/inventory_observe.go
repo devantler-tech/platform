@@ -46,7 +46,11 @@ func (c client) hostMemoryProjection(ctx context.Context, target string) (invent
 	if !inventoryTarget.MatchString(target) {
 		return inventoryProjection{}, nil, errInventory
 	}
-	return c.storageProjection(ctx, target, false)
+	projection, node, err := c.storageProjection(ctx, target, false)
+	if err != nil || !projection.Registered {
+		return inventoryProjection{}, nil, errInventory
+	}
+	return projection, node, nil
 }
 
 // storageProjection shares node, hardware, disk and endpoint identity checks.
