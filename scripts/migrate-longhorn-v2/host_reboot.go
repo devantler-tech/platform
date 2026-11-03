@@ -232,9 +232,10 @@ func (h hostMemoryReboot) databases(ctx context.Context, expected map[string]hos
 	return result, nil
 }
 
-// waitDrainRecovery gives an unchanged database quorum a bounded startup window
-// after eviction. Changed ownership, source, target identity, peer maintenance or
-// other safety evidence fails immediately; the final two fresh checks still run.
+// waitDrainRecovery bounds ordinary attachment and database startup after
+// eviction. Attachment transitions require three preserved healthy copies and
+// known runtime states. Changed identities, failed evidence or peer maintenance
+// fail immediately; the final two fresh checks still run.
 func (h hostMemoryReboot) waitDrainRecovery(ctx context.Context, r hostRebootRecord) error {
 	return waitReadyWithin(ctx, 20*time.Minute, func(ctx context.Context) error {
 		if _, err := h.owned(ctx, r); err != nil {
@@ -245,7 +246,7 @@ func (h hostMemoryReboot) waitDrainRecovery(ctx context.Context, r hostRebootRec
 			return errors.Join(errReadinessTerminal, errHostMemory)
 		}
 		s, _, err := h.healthy(ctx, r.Databases)
-		if err != nil && !errors.Is(err, errHostDatabasesRecovering) {
+		if err != nil && !errors.Is(err, errHostDatabasesRecovering) && !errors.Is(err, errHostStorageTransition) {
 			return errors.Join(errReadinessTerminal, err)
 		}
 		if peerErr := h.peersClear(ctx, s.nodes); peerErr != nil {
@@ -266,7 +267,11 @@ func (h hostMemoryReboot) healthy(ctx context.Context, expected map[string]hostD
 	if err != nil {
 		return inventory{}, nil, err
 	}
-	if verifyCapacityRoster(s.nodes, h.pools, false) != nil || verifyRedundancy(s) != nil {
+	if verifyCapacityRoster(s.nodes, h.pools, false) != nil {
+		return inventory{}, nil, errHostMemory
+	}
+	storageErr := verifyHostDrainRedundancy(s)
+	if storageErr != nil && !errors.Is(storageErr, errHostStorageTransition) {
 		return inventory{}, nil, errHostMemory
 	}
 	for _, v := range s.volumes {
@@ -278,7 +283,10 @@ func (h hostMemoryReboot) healthy(ctx context.Context, expected map[string]hostD
 		return inventory{}, nil, err
 	}
 	databases, err := h.databases(ctx, expected)
-	return s, databases, err
+	if err != nil && !errors.Is(err, errHostDatabasesRecovering) {
+		return inventory{}, nil, err
+	}
+	return s, databases, errors.Join(storageErr, err)
 }
 
 // targetState binds the live endpoint to the original hardware, registered disk

@@ -380,6 +380,97 @@ func TestHostRebootWaitsForTheOriginalDatabaseQuorumAfterDrain(t *testing.T) {
 	}
 }
 
+func setHostDrainAttachmentTransition(f *hostRebootFixture, state string) func() {
+	volume := f.base.s.volumes[0]
+	name := text(volume, "metadata", "name")
+	volume["status"].(object)["state"] = state
+	volume["status"].(object)["robustness"] = "unknown"
+	var engine object
+	for _, candidate := range f.base.s.engines {
+		if text(candidate, "spec", "volumeName") == name {
+			engine = candidate
+			break
+		}
+	}
+	if engine == nil {
+		f.base.t.Fatal("fixture has no active engine")
+	}
+	modes := value(engine, "status", "replicaModeMap")
+	engine["status"].(object)["currentState"] = "starting"
+	if state == "detaching" {
+		engine["status"].(object)["currentState"] = "stopping"
+	}
+	engine["status"].(object)["replicaModeMap"] = object{}
+	return func() {
+		volume["status"].(object)["state"] = "attached"
+		volume["status"].(object)["robustness"] = "healthy"
+		engine["status"].(object)["currentState"] = "running"
+		engine["status"].(object)["replicaModeMap"] = modes
+	}
+}
+
+func TestHostRebootWaitsForAProvenPostDrainAttachmentTransition(t *testing.T) {
+	for _, state := range []string{"attaching", "detaching"} {
+		t.Run(state, func(t *testing.T) {
+			f, h := hostRebootAPI(t)
+			reads := 0
+			f.afterDrain = func() {
+				restore := setHostDrainAttachmentTransition(f, state)
+				f.afterDatabaseRead = func() {
+					reads++
+					if reads == 2 {
+						restore()
+					}
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			if err := h.run(ctx); err != nil || reads < 2 || f.reboots != 1 {
+				t.Fatal("normal asynchronous attachment prevented the guarded reboot:", err)
+			}
+		})
+	}
+}
+
+func TestHostDrainTransitionDoesNotHideOtherStorageOrPeerFailures(t *testing.T) {
+	for _, mode := range []string{"lost other copy", "engine error", "replica error", "replica mode error", "faulted volume", "unreadable peer"} {
+		t.Run(mode, func(t *testing.T) {
+			f, h := hostRebootAPI(t)
+			reads := 0
+			f.afterDatabaseRead = func() { reads++ }
+			f.afterDrain = func() {
+				setHostDrainAttachmentTransition(f, "attaching")
+				switch mode {
+				case "lost other copy":
+					other := text(f.base.s.volumes[1], "metadata", "name")
+					for _, replica := range f.base.s.replicas {
+						if text(replica, "spec", "volumeName") == other {
+							replica["spec"].(object)["healthyAt"] = ""
+							break
+						}
+					}
+				case "engine error":
+					f.base.s.engines[0]["status"].(object)["currentState"] = "error"
+				case "replica error":
+					f.base.s.replicas[0]["status"].(object)["currentState"] = "error"
+				case "replica mode error":
+					f.base.s.engines[0]["status"].(object)["replicaModeMap"] = object{text(f.base.s.replicas[0], "metadata", "name"): "ERR"}
+				case "faulted volume":
+					f.base.s.volumes[0]["status"].(object)["robustness"] = "faulted"
+				case "unreadable peer":
+					f.peerJournal = resource("longhorn-v2-host-memory-prod-worker-2")
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			err := h.run(ctx)
+			if !errors.Is(err, errReadinessTerminal) || f.reboots != 0 || (mode == "unreadable peer" && reads != 1) || (mode != "unreadable peer" && reads != 0) {
+				t.Fatal("attachment retry hid a different failed safety check:", err)
+			}
+		})
+	}
+}
+
 func TestHostRebootPreservesItsCordonWhenDrainRecoveryTimesOut(t *testing.T) {
 	f, h := hostRebootAPI(t)
 	f.afterDrain = func() { f.databases[0]["status"].(object)["readyInstances"] = float64(2) }

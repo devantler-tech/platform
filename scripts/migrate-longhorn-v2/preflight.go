@@ -123,9 +123,31 @@ func verifyRedundancy(s inventory) error {
 // profile proves two copies outside the single rebooted worker before returning
 // that verified host to scheduling; it never establishes maintenance completion.
 func verifyHealthyCopies(s inventory, required int, excludedNode string) error {
+	return verifyStorageCopies(s, required, excludedNode, false)
+}
+
+var errHostStorageTransition = errors.New("post-drain volume attachment is still settling")
+
+// verifyHostDrainRedundancy distinguishes an ordinary attachment transition
+// from failed evidence without allowing that transition to satisfy readiness.
+func verifyHostDrainRedundancy(s inventory) error {
+	return verifyStorageCopies(s, 3, "", true)
+}
+
+// transitionalInstanceState accepts only known startup/shutdown states while
+// preserving existing healthy-copy evidence; error and unknown remain failures.
+func transitionalInstanceState(state string) bool {
+	return state == "running" || state == "stopped" || state == "starting" || state == "stopping"
+}
+
+// verifyStorageCopies checks every volume before reporting a retryable drain
+// transition. Transitional volumes still need three distinct healthy recorded
+// copies on ready disks, known engine/replica states, and no failed replica mode.
+// Final readiness always uses the stable-state profile through verifyHealthyCopies.
+func verifyStorageCopies(s inventory, required int, excludedNode string, draining bool) error {
 	fullRedundancy := required == 3 && excludedNode == ""
 	returningHost := required == 2 && inventoryTarget.MatchString(excludedNode)
-	if !fullRedundancy && !returningHost {
+	if !fullRedundancy && !returningHost || draining && !fullRedundancy {
 		return errors.New("unsupported storage redundancy profile")
 	}
 	if len(s.volumes) == 0 {
@@ -144,14 +166,16 @@ func verifyHealthyCopies(s inventory, required int, excludedNode string) error {
 			return err
 		}
 	}
+	transitioning := false
 	for _, v := range s.volumes {
 		engine := text(v, "spec", "dataEngine")
 		if engine != "v1" && engine != "v2" || value(v, "spec", "numberOfReplicas") != float64(3) {
 			return errors.New("volume engine or required redundancy is outside the migration contract")
 		}
 		state, health := text(v, "status", "state"), text(v, "status", "robustness")
+		transition := draining && (state == "attaching" || state == "detaching")
 		attached := state == "attached" && (health == "healthy" || returningHost && health == "degraded")
-		suitable := attached || state == "detached" && (health == "healthy" || health == "unknown")
+		suitable := attached || state == "detached" && (health == "healthy" || health == "unknown") || transition && (health == "healthy" || health == "unknown" || health == "degraded")
 		if !suitable {
 			return errors.New("volume health is not suitable for node maintenance")
 		}
@@ -166,7 +190,8 @@ func verifyHealthyCopies(s inventory, required int, excludedNode string) error {
 		}
 		if currentEngine == nil || text(currentEngine, "spec", "dataEngine") != engine ||
 			state == "attached" && text(currentEngine, "status", "currentState") != "running" ||
-			state == "detached" && text(currentEngine, "status", "currentState") != "stopped" {
+			state == "detached" && text(currentEngine, "status", "currentState") != "stopped" ||
+			transition && !transitionalInstanceState(text(currentEngine, "status", "currentState")) {
 			return errors.New("the volume's current engine identity and state are not proven")
 		}
 		modes, _ := value(currentEngine, "status", "replicaModeMap").(map[string]any)
@@ -195,11 +220,21 @@ func verifyHealthyCopies(s inventory, required int, excludedNode string) error {
 				state == "detached" && current != "stopped" {
 				continue
 			}
+			if transition {
+				mode, present := modes[text(r, "metadata", "name")]
+				if !transitionalInstanceState(current) || present && mode != "RW" && mode != "WO" {
+					continue
+				}
+			}
 			copies[node] = true
 		}
 		if len(copies) < required {
 			return errors.New("the required healthy copies on distinct eligible nodes are not proven for every volume")
 		}
+		transitioning = transitioning || transition
+	}
+	if transitioning {
+		return errHostStorageTransition
 	}
 	return nil
 }

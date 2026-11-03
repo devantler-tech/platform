@@ -28,8 +28,11 @@ The live `block-if-contains-last-replica` policy and target V1 instance-manager
 ownership are verified on each health read. Only that ready storage Pod is kept
 running during drain; a workload impersonating its selector label fails admission.
 Application evictions keep the normal disruption-budget checks. After
-drain, the unchanged database quorum has up to 20 minutes to finish replacement
-startup. Changed identities, lost quorum or other safety evidence stop the wait;
+drain, known attachment transitions and the unchanged database quorum share up
+to 20 minutes to settle. Attaching or detaching volumes must still retain three
+healthy copies on ready disks with known engine and replica states. Peer ownership
+is checked during this wait. Changed identities, lost quorum, failed runtime
+states or other safety evidence stop the wait;
 a timeout preserves the cordon without requesting a reboot. Two fresh checks of
 complete redundancy, databases and original storage still precede durable
 reboot intent. The single reboot request has no reset or disk-wipe selector.
