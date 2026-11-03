@@ -424,11 +424,13 @@ if [[ -n "${DENIAL_POD_RUNTIME_IMAGE:-}" ]]; then
   (cd "${root_dir}" && CGO_ENABLED=0 GOOS=linux go build -o "${real}/s3-access-denied-stub" ./scripts/tests/s3-access-denied-stub)
   chmod -R a+rwX "${real}"
   real_rc=0
+  # A credential the local stub refuses by design; it unlocks nothing.
+  stub_endpoint='http://REFUSEDBYSTUB:refused-by-stub-secret@127.0.0.1:9000' # secretlint-disable-line @secretlint/secretlint-rule-basicauth
   # shellcheck disable=SC2016 # expanded by the container's shell
   docker run --rm --network none --read-only --user 65532:65532 \
     --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:rw,size=8m \
     --entrypoint /tools/sh -v "${real}:${real}" -e "OUT=${real}" -e MC_CONFIG_DIR=/tmp/mc \
-    -e 'MC_HOST_dedicated=http://REFUSEDBYSTUB:refused-by-stub-secret@127.0.0.1:9000' \
+    -e "MC_HOST_dedicated=${stub_endpoint}" \
     "${DENIAL_POD_RUNTIME_IMAGE}" -c '
       "${OUT}/s3-access-denied-stub" 127.0.0.1:9000 "${OUT}/ready" "${OUT}/requests" 2>"${OUT}/stub.err" &
       i=0
@@ -565,7 +567,8 @@ new_case() {
     status:{readyInstances:3,conditions:[{type:"Ready",status:"True"},{type:"ContinuousArchiving",status:"True"}]}}' >"${CASE}/cluster.json"
   store platform-backups coroot-db-backup-r2 | jq '.spec.configuration.destinationPath="s3://platform-backups/cnpg/coroot-db"' >"${CASE}/store-coroot-db.json"
   store wedding-db-backups wedding-db-backup-r2-dedicated >"${CASE}/store-wedding-db-dedicated.json"
-  jq -n '{kind:"Secret",metadata:{name:"wedding-db-backup-r2-dedicated",namespace:"wedding-app",uid:"source-uid",resourceVersion:"17"},data:{ACCESS_KEY_ID:"ZGVkaWNhdGVkLWlk",SECRET_ACCESS_KEY:"ZGVkaWNhdGVkLXNlY3JldA==",REGION:"YXV0bw=="}}' >"${CASE}/dedicated-secret.json"
+  # The data values are base64 of "dedicated-id", "dedicated-secret" and "auto".
+  jq -n '{kind:"Secret",metadata:{name:"wedding-db-backup-r2-dedicated",namespace:"wedding-app",uid:"source-uid",resourceVersion:"17"},data:{ACCESS_KEY_ID:"ZGVkaWNhdGVkLWlk",SECRET_ACCESS_KEY:"ZGVkaWNhdGVkLXNlY3JldA==",REGION:"YXV0bw=="}}' >"${CASE}/dedicated-secret.json" # betterleaks:allow
   printf 'Succeeded' >"${CASE}/phase"
   cp "${work_dir}/passing-pod.log" "${CASE}/pod.log"
 }

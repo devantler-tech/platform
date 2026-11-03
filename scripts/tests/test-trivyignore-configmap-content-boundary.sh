@@ -45,7 +45,7 @@ readonly ISSUED_PREFIX_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?(gh[pousr]
 # ANCHORED AT BOTH ENDS, with the path segments restricted to the lowercase class an image
 # reference is actually limited to. Matching only a host-like PREFIX excluded any credential that
 # merely begins host-like, which is a fail-open in the guard rather than a cosmetic gap:
-# `hooks.slack.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx` matched both expressions,
+# a Slack webhook (`hooks.slack.com/services/T00000000/B00000000/…`) matched both expressions,
 # so a live Slack webhook added to an excepted ConfigMap would be discarded before the opaque-value
 # check and KSV-01010 would stay suppressed over it. Measured 2026-08-30; the
 # "hostname-prefixed credential" fixture below pins it.
@@ -246,7 +246,7 @@ check_fixture no no "k8s registry image reference" 'registry.k8s.io/kube-state-m
 # yes), which is what distinguishes it from the two image references above; the uppercase path
 # segments are what an image reference may not contain.
 check_fixture yes no "hostname-prefixed credential (slack webhook)" \
-  'hooks.slack.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx'
+  "$(mk 'hooks.slack' '.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx')"
 
 # The case the naive fix (dropping `/` from the value class) would have broken: a standard-base64
 # credential containing `/` must still be caught.

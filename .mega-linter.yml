@@ -353,6 +353,12 @@ SPELL_CSPELL_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
 SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
 MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: \.agents/.*
 
+# The only HTML file here is a byte-exact copy of the released Hubble UI v0.13.6 entry point, which
+# check-hubble-ui-streaming's regression test reads and requires unaltered, minifier output included.
+# Restyling it would test a page upstream never shipped, so the HTML linters skip that one fixture.
+HTML_DJLINT_FILTER_REGEX_EXCLUDE: scripts/check-hubble-ui-streaming/testdata/frontend-v0\.13\.6-index\.html
+HTML_HTMLHINT_FILTER_REGEX_EXCLUDE: scripts/check-hubble-ui-streaming/testdata/frontend-v0\.13\.6-index\.html
+
 # The generic YAML tooling is scoped off the manifest tree, and kubeconform is what governs it
 # instead. That tree is owned by kustomize, Flux and ksail and holds vendored upstream operator
 # manifests: prettier rewrote kubevirt-operator.yaml across 16,493 lines and CI committed it.
