@@ -10,6 +10,44 @@ import (
 	"testing"
 )
 
+func TestBackupRefreshCleanupBelongsToTheParentShell(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repositoryRoot(), "scripts/refresh-email-recovery-backup.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix, _, ok := strings.Cut(string(raw), "\n[[ ${BASH_VERSINFO")
+	if !ok {
+		t.Fatal("missing dispatch boundary")
+	}
+	// Bash can terminate an asynchronous child before it resets its inherited EXIT
+	// handler. Reinstall that native handler in a real child to select the otherwise
+	// scheduling-dependent window, then exercise the actual cleanup function.
+	command := exec.Command("bash", "-c", prefix+`
+work="$FIXTURE/work"
+mkdir "$work"
+sleep 60 &
+watchers=("$!")
+watch_pid="${watchers[0]}"
+inherited=$(trap -p EXIT)
+( eval "$inherited"; exit 0 )
+[[ -d "$work" ]] || { printf 'child removed parent workspace\n'; exit 1; }
+kill -0 "$watch_pid" || { printf 'child stopped parent watch\n'; exit 1; }
+cleanup
+watchers=()
+trap - EXIT
+[[ ! -e "$work" ]] || { printf 'parent retained its workspace\n'; exit 1; }
+if kill -0 "$watch_pid" 2>/dev/null; then
+  printf 'parent retained its watch\n'; exit 1
+fi
+printf 'BACKUP_CLEANUP_OWNER=PASS child=REFUSED parent=VERIFIED\n'
+`)
+	command.Env = append(os.Environ(), "FIXTURE="+t.TempDir())
+	output, err := command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "BACKUP_CLEANUP_OWNER=PASS child=REFUSED parent=VERIFIED") {
+		t.Fatalf("cleanup ownership: %v: %s", err, output)
+	}
+}
+
 func TestBackupRefreshRequiresTheOwnedCompletedSnapshotAndMirror(t *testing.T) {
 	for _, scenario := range []string{"complete", "owned-unfinished", "owned-complete", "foreign-unfinished", "jobs-read-failed", "jobs-partial", "active", "image", "pvc", "changed", "create-unknown", "failed", "replacement", "pod-missing"} {
 		t.Run(scenario, func(t *testing.T) {
