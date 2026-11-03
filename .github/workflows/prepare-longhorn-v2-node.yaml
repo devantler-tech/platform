@@ -17,7 +17,7 @@ on:
         description: The guarded migration step to run
         required: true
         type: choice
-        options: [prepare-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas, inventory-storage-root, inventory-storage-layout, inspect-host-memory]
+        options: [prepare-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas, inventory-storage-root, inventory-storage-layout, inspect-host-memory, reboot-host-for-hugepages]
       node:
         description: Permanent worker to prepare, or a fixed read-only inventory selection
         required: false
@@ -85,6 +85,9 @@ jobs:
               ;;
             inspect-host-memory)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "inspect-longhorn-v2-host-memory-${LONGHORN_V2_NODE}" ]]
+              ;;
+            reboot-host-for-hugepages)
+              [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "reboot-longhorn-v2-host-${LONGHORN_V2_NODE}" ]]
               ;;
             inventory-storage-root)
               [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-root-${LONGHORN_V2_NODE}" ]]
