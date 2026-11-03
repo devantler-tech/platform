@@ -17,7 +17,7 @@ on:
         description: The guarded migration step to run
         required: true
         type: choice
-        options: [prepare-worker, prepare-unused-temporary-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas, inventory-storage-root, inventory-storage-layout, inspect-host-memory, reboot-host-for-hugepages]
+        options: [prepare-worker, prepare-unused-temporary-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas, inventory-storage-root, inventory-storage-layout, inspect-host-memory, reboot-host-for-hugepages, register-temporary-v2-storage]
       node:
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
         required: false
@@ -103,6 +103,9 @@ jobs:
               ;;
             benchmark-v1|benchmark-v2)
               [[ "${LONGHORN_V2_CONFIRM}" == benchmark-longhorn-storage ]]
+              ;;
+            register-temporary-v2-storage)
+              [[ "${LONGHORN_V2_CONFIRM}" == register-longhorn-v2-temporary-storage ]]
               ;;
             *) exit 1 ;;
           esac

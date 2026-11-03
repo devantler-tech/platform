@@ -108,7 +108,7 @@ func VerifyNode(n Object, pool Pool) error {
 
 // Eligible grants no writes. Readers still enforce ordinary compute-node
 // exclusion on false, and treat every returned error as a hold.
-func Eligible(data []byte, n, lh Object) (bool, error) {
+func Eligible(data []byte, n, lh, activation Object) (bool, error) {
 	enabled := text(lh, "metadata", "labels", EnabledLabel)
 	if enabled == "" {
 		return false, nil
@@ -138,12 +138,15 @@ func Eligible(data []byte, n, lh Object) (bool, error) {
 		return false, errors.New("migration disk scope is incomplete")
 	}
 	var disk Object
-	if role == "v1" {
+	if role == "v1" && disks["longhorn-v2"] == nil {
 		disk, _ = disks["migration-v1"].(map[string]any)
 		if text(disk, "path") != "/var/lib/longhorn" || text(disk, "diskType") != "filesystem" {
 			return false, errors.New("migration filesystem differs from its reviewed scope")
 		}
 	} else {
+		if role == "v1" && !registeredRawTransition(n, lh, activation) {
+			return false, errors.New("migration raw transition lacks its completed identity-bound registration")
+		}
 		disk, _ = disks["longhorn-v2"].(map[string]any)
 		if text(disk, "path") != "/dev/mapper/luks2-r-longhorn" || text(disk, "diskType") != "block" || text(disk, "diskDriver") != "aio" {
 			return false, errors.New("migration raw disk differs from its reviewed scope")
