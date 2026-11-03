@@ -251,6 +251,19 @@ func TestTemporaryInventoryNativeWorkflowGuardPreservesResetBoundary(t *testing.
 		operation, node, ref, attempt, confirm string
 		allowed                                bool
 	}{
+		{"prepare-unused-temporary-worker", "temporary-v1-1", "refs/heads/main", "1", "prepare-unused-longhorn-v2-temporary-v1-1", true},
+		{"prepare-unused-temporary-worker", "temporary-v1-2", "refs/heads/main", "1", "prepare-unused-longhorn-v2-temporary-v1-2", true},
+		{"prepare-unused-temporary-worker", "temporary-v2-1", "refs/heads/main", "1", "prepare-unused-longhorn-v2-temporary-v2-1", false},
+		{"prepare-unused-temporary-worker", "prod-worker-1", "refs/heads/main", "1", "prepare-unused-longhorn-v2-prod-worker-1", false},
+		{"prepare-unused-temporary-worker", "temporary-v1-1", "refs/heads/feature", "1", "prepare-unused-longhorn-v2-temporary-v1-1", false},
+		{"prepare-unused-temporary-worker", "temporary-v1-1", "refs/heads/main", "2", "prepare-unused-longhorn-v2-temporary-v1-1", false},
+		{"prepare-unused-temporary-worker", "temporary-v1-1", "refs/heads/main", "1", "inventory-longhorn-replicas-temporary-v1-1", false},
+		{"reboot-host-for-hugepages", "prod-worker-1", "refs/heads/main", "1", "reboot-longhorn-v2-host-prod-worker-1", true},
+		{"reboot-host-for-hugepages", "temporary-v1-1", "refs/heads/main", "1", "reboot-longhorn-v2-host-temporary-v1-1", false},
+		{"reboot-host-for-hugepages", "prod-worker-4", "refs/heads/main", "1", "reboot-longhorn-v2-host-prod-worker-4", false},
+		{"reboot-host-for-hugepages", "prod-worker-1", "refs/heads/feature", "1", "reboot-longhorn-v2-host-prod-worker-1", false},
+		{"reboot-host-for-hugepages", "prod-worker-1", "refs/heads/main", "2", "reboot-longhorn-v2-host-prod-worker-1", false},
+		{"reboot-host-for-hugepages", "prod-worker-1", "refs/heads/main", "1", "prepare-longhorn-v2-prod-worker-1", false},
 		{"inventory-storage-layout", "temporary-v1-1", "refs/heads/main", "1", "inventory-longhorn-storage-layout-temporary-v1-1", true},
 		{"inventory-storage-layout", "temporary-v2-1", "refs/heads/main", "1", "inventory-longhorn-storage-layout-temporary-v2-1", true},
 		{"inventory-storage-layout", "prod-worker-1", "refs/heads/main", "1", "inventory-longhorn-storage-layout-prod-worker-1", false},
