@@ -16,9 +16,10 @@ import (
 
 type blockLayoutFixture struct {
 	state.CoreStateReader
-	t     *testing.T
-	calls int
-	mode  string
+	t        *testing.T
+	calls    int
+	mode     string
+	rawPhase *block.VolumePhase
 }
 
 func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, options ...state.ListOption) (resource.List, error) {
@@ -38,6 +39,9 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 		*eph.TypedSpec() = block.VolumeStatusSpec{Phase: block.VolumePhaseReady, Type: block.VolumeTypePartition, UUID: "private-ephemeral-canary", Location: "/dev/sda6", ParentLocation: "/dev/sda", MountLocation: "/dev/dm-0", Size: 150 << 30, EncryptionProvider: block.EncryptionProviderLUKS2, EncryptionLockedToState: true, ConfiguredEncryptionKeys: []string{"nodeID"}}
 		raw := block.NewVolumeStatus(block.NamespaceName, "r-longhorn")
 		raw.TypedSpec().Phase = block.VolumePhaseWaiting
+		if f.rawPhase != nil {
+			raw.TypedSpec().Phase = *f.rawPhase
+		}
 		if f.mode == "changed" && f.calls > 2 {
 			raw.TypedSpec().Phase = block.VolumePhaseReady
 		}
@@ -90,6 +94,33 @@ func TestNativeBlockLayoutReportsObservedStateWithoutPrivateIdentities(t *testin
 			encoded, _ := json.Marshal(report)
 			if strings.Contains(string(encoded), "canary") || strings.Contains(string(encoded), "/dev/") || f.calls != 4 || report.EphemeralPhase != "ready" || !report.EphemeralLUKS2 || !report.EphemeralNodeIDOnly || report.EphemeralSizeBytes != 150<<30 || !report.RawPresent || report.RawPhase != "waiting" || report.RawSizeBytes != 0 || report.RawDiscoveredPartitions != 0 || len(report.Digest) != 64 {
 				t.Fatal("observed block state lost scope, leaked identity or invented allocation:", report)
+			}
+		})
+	}
+}
+
+func TestNativeBlockLayoutDistinguishesKnownAllocationPhases(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		phase block.VolumePhase
+		want  string
+	}{
+		{"waiting", block.VolumePhaseWaiting, "waiting"},
+		{"failed", block.VolumePhaseFailed, "failed"},
+		{"missing", block.VolumePhaseMissing, "missing"},
+		{"located", block.VolumePhaseLocated, "located"},
+		{"provisioned", block.VolumePhaseProvisioned, "provisioned"},
+		{"prepared", block.VolumePhasePrepared, "prepared"},
+		{"ready", block.VolumePhaseReady, "ready"},
+		{"closed", block.VolumePhaseClosed, "closed"},
+		{"unknown negative", block.VolumePhase(-1), "other"},
+		{"unknown future", block.VolumePhase(99), "other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &blockLayoutFixture{t: t, mode: "stable", rawPhase: &tc.phase}
+			report, err := (Native{API: fileAPI{}, Target: "10.0.0.8", Blocks: f}).ListBlockLayout(context.Background())
+			if err != nil || report.RawPhase != tc.want || f.calls != 4 || report.RawSizeBytes != 0 || report.RawDiscoveredPartitions != 0 {
+				t.Fatalf("known state was hidden or allocation was invented: phase=%s error=%v", report.RawPhase, err)
 			}
 		})
 	}

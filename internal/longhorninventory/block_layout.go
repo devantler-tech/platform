@@ -104,6 +104,18 @@ func (n Native) readBlockLayout(ctx context.Context) ([]byte, BlockLayoutReport,
 			phase = "ready"
 		case block.VolumePhaseWaiting:
 			phase = "waiting"
+		case block.VolumePhaseFailed:
+			phase = "failed"
+		case block.VolumePhaseMissing:
+			phase = "missing"
+		case block.VolumePhaseLocated:
+			phase = "located"
+		case block.VolumePhaseProvisioned:
+			phase = "provisioned"
+		case block.VolumePhasePrepared:
+			phase = "prepared"
+		case block.VolumePhaseClosed:
+			phase = "closed"
 		}
 		nodeIDOnly := len(s.ConfiguredEncryptionKeys) == 1 && s.ConfiguredEncryptionKeys[0] == "nodeID"
 		switch id {
