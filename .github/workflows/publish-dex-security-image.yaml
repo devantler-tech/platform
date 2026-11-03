@@ -7,6 +7,9 @@ on:
       - .github/workflows/publish-dex-security-image.yaml
       - scripts/build-dex-security-image.sh
       - scripts/check-dex-binary/**
+      - go.mod
+      - go.sum
+      - .github/scripts/setup-supply-chain-tools.sh
       - k8s/bases/infrastructure/controllers/dex/DexSecurity.Dockerfile
       - k8s/bases/infrastructure/controllers/dex/dex-v2.46.1-network.patch
       - k8s/bases/infrastructure/controllers/dex/IMAGE-NOTICE
@@ -16,6 +19,9 @@ on:
       - .github/workflows/publish-dex-security-image.yaml
       - scripts/build-dex-security-image.sh
       - scripts/check-dex-binary/**
+      - go.mod
+      - go.sum
+      - .github/scripts/setup-supply-chain-tools.sh
       - k8s/bases/infrastructure/controllers/dex/DexSecurity.Dockerfile
       - k8s/bases/infrastructure/controllers/dex/dex-v2.46.1-network.patch
       - k8s/bases/infrastructure/controllers/dex/IMAGE-NOTICE
@@ -91,9 +97,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      contents: read
-      packages: write
-      id-token: write
+      contents: read # Check out reviewed source and its verified tool installer.
+      packages: write # Push the verified distribution and attestations to GHCR.
+      id-token: write # Obtain the main-workflow identity for keyless Cosign signing.
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2

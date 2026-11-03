@@ -5,11 +5,38 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+// TestPublicationSelectsBuildToolChanges prevents a successful PR build from
+// hiding checker-module or signing-tool changes until an unrelated release.
+func TestPublicationSelectsBuildToolChanges(t *testing.T) {
+	var workflow struct {
+		On map[string]struct {
+			Paths []string `yaml:"paths"`
+		} `yaml:"on"`
+	}
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "publish-dex-security-image.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []string{"pull_request", "push"} {
+		for _, input := range []string{"go.mod", "go.sum", ".github/scripts/setup-supply-chain-tools.sh"} {
+			t.Run(event+"/"+input, func(t *testing.T) {
+				if !slices.Contains(workflow.On[event].Paths, input) {
+					t.Fatalf("%s does not select a build with changed input %s", event, input)
+				}
+			})
+		}
+	}
+}
 
 // TestPublisherRetainsTheProducingAttempt runs the real artifact-naming step
 // and resolves its declared transfer across two different attempt contexts.
