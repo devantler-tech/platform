@@ -28,6 +28,40 @@ func TestMegaLinterKeepsNativePackageStyleEnabled(t *testing.T) {
 	}
 }
 
+func TestMegaLinterRequiresNativeFixtureRefusals(t *testing.T) {
+	data, err := os.ReadFile("../../.mega-linter.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Commands []struct {
+			Command  string `yaml:"command"`
+			CWD      string `yaml:"cwd"`
+			Secured  *bool  `yaml:"secured_env"`
+			Before   *bool  `yaml:"run_before_linters"`
+			Continue *bool  `yaml:"continue_if_failed"`
+		} `yaml:"PRE_COMMANDS"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"bash scripts/tests/test-betterleaks-fixture-boundary.sh", "bash scripts/tests/test-secretlint-fixture-boundary.sh"} {
+		count := 0
+		for _, step := range config.Commands {
+			if step.Command != command {
+				continue
+			}
+			if step.CWD != "workspace" || step.Secured == nil || !*step.Secured || step.Before == nil || !*step.Before || step.Continue == nil || *step.Continue {
+				t.Fatal("native fixture proof must precede linters, hide credentials and stop on failure")
+			}
+			count++
+		}
+		if count != 1 {
+			t.Fatalf("require exactly one native fixture refusal proof: %s", command)
+		}
+	}
+}
+
 func TestNativeCNPGSchemaBoundaryIsRequired(t *testing.T) {
 	workflow := readRegressionWorkflow(t)
 	job := workflow.Jobs["validate-repository-guards"]

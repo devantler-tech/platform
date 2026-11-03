@@ -1,0 +1,61 @@
+title = "Platform secret scanning"
+
+[extend]
+useDefault = true
+
+# Numeric container identity, not a curl credential. Match rule, path AND value.
+[[allowlists]]
+description = "Container execution identity in the native observation proof"
+targetRules = ["curl-auth-user"]
+condition = "AND"
+paths = ['''^\.github/workflows/validate-coroot-security-progress\.yaml$''']
+regexTarget = "secret"
+regexes = ['''^65532:65532$''']
+
+[[allowlists]]
+description = "Synthetic local-server authentication and refusal controls"
+targetRules = ["curl-auth-user"]
+condition = "AND"
+paths = ['''^scripts/tests/test-private-mail-server\.sh$''']
+regexTarget = "secret"
+regexes = ['''^fixture:(private-mail-fixture-only|wrong-fixture-password)$''']
+
+[[allowlists]]
+description = "Synthetic local configuration-recovery control"
+targetRules = ["curl-auth-user"]
+condition = "AND"
+paths = ['''^scripts/tests/test-private-mail-configuration\.sh$''']
+regexTarget = "secret"
+regexes = ['''^fixture:private-mail-recovery-fixture-only$''']
+
+[[allowlists]]
+description = "Synthetic webhook used to prove scanner content boundaries"
+targetRules = ["slack-webhook-url"]
+condition = "AND"
+paths = ['''^scripts/tests/test-trivyignore-configmap-content-boundary\.sh$''']
+regexTarget = "secret"
+regexes = ['''^hooks\.slack\.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx$''']
+
+[[allowlists]]
+description = "Encoded synthetic identity controls"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^scripts/prove-kyverno-cache-recovery/credentials_test\.go$''']
+regexTarget = "secret"
+regexes = ['''^(cHJvYmU6cHJpdmF0ZS10ZXN0LXRva2Vu|b3RoZXI6dG9rZW4=)$''']
+
+[[allowlists]]
+description = "Encoded synthetic credential for the local denial stub"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^scripts/tests/test-verify-wedding-backup-denial\.sh$''']
+regexTarget = "secret"
+regexes = ['''^ZGVkaWNhdGVkLXNlY3JldA==$''']
+
+[[allowlists]]
+description = "Public Go module checksums in the reviewed source patch"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^k8s/bases/infrastructure/controllers/kyverno/background-v1\.19\.2-downstream-cleanup\.patch$''']
+regexTarget = "secret"
+regexes = ['''^(LiyJx32VU3cwQfLchn/513qKhc25hq0pEANYJoWNnnI=|eMw0Xo\+IfbbMlKmW7aHvpyQRv9RCXuWx/vs8AD\+0x9A=)$''']

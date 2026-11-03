@@ -44,6 +44,20 @@ GO_REVIVE_CLI_EXECUTABLE:
   - bash
   - scripts/revive-package-context.sh
 
+# Prove the exact fixture boundaries with the same installed native engines.
+# Fail before linting when a version, inherited default or refusal proof drifts.
+PRE_COMMANDS:
+  - command: bash scripts/tests/test-betterleaks-fixture-boundary.sh
+    cwd: workspace
+    secured_env: true
+    run_before_linters: true
+    continue_if_failed: false
+  - command: bash scripts/tests/test-secretlint-fixture-boundary.sh
+    cwd: workspace
+    secured_env: true
+    run_before_linters: true
+    continue_if_failed: false
+
 EXCLUDED_DIRECTORIES:
   - megalinter-reports
   - report
