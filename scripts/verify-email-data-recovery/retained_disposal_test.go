@@ -5,11 +5,28 @@ import (
 	"context"
 	"encoding/base64"
 	"io"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/devantler-tech/platform/internal/namespaceinventory"
 )
+
+func TestRetainedDisposalCommandRefusesForeignDispatchBeforeAccess(t *testing.T) {
+	if os.Getenv("EMAIL_DISPOSAL_CHILD") == "1" {
+		os.Args = []string{"verify-email-data-recovery", "--dispose-retained"}
+		main()
+		return
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestRetainedDisposalCommandRefusesForeignDispatchBeforeAccess$")
+	command.Env = []string{"EMAIL_DISPOSAL_CHILD=1", "PATH=/nonexistent"}
+	output, err := command.CombinedOutput()
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != 2 || string(output) != "EMAIL_RETAINED_DISPOSAL=UNVERIFIED stage=dispatch cleanup=NOT_STARTED\n" {
+		t.Fatalf("disposal command lost refusal boundary: %q", output)
+	}
+}
 
 func TestRetainedInventoryRefusesForeignGroupWithAllowedKindAndName(t *testing.T) {
 	for _, tc := range []struct{ kind, name, resource string }{{"ServiceAccount", "default", "serviceaccounts"}, {"ConfigMap", "kube-root-ca.crt", "configmaps"}, {"NetworkPolicy", "default-deny", "networkpolicies.networking.k8s.io"}, {"Secret", "storage-key", "secrets"}} {
