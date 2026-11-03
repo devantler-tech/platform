@@ -90,6 +90,8 @@ func loadInputs(dir string) (inputs, error) {
 		}
 		var target *string
 		switch name {
+		case "runtimeVersion":
+			target = &v.RuntimeVersion
 		case "domain":
 			target = &v.Domain
 		case "hostname":
@@ -124,6 +126,9 @@ func loadInputs(dir string) (inputs, error) {
 		}
 		*target.value = string(b)
 	}
+	if seen["runtimeVersion"] && v.RuntimeVersion == "" {
+		return fail()
+	}
 	if _, err = render(v); err != nil {
 		return fail()
 	}
@@ -153,7 +158,7 @@ func command(args []string, log io.Writer) int {
 		v.UseProxyClientIP = *proxy.value
 	}
 	inventory, err := privateInput(*dir, "listener-inventory.json", 65536)
-	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
+	if err != nil || validateInventoryFor(inventory, v.RuntimeVersion) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return fail()
 	}
 	v.accountIDs, err = managedAccountIDs(inventory, v)
