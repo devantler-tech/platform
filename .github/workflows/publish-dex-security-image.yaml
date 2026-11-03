@@ -1,0 +1,147 @@
+name: Publish Dex Security Image
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-dex-security-image.yaml
+      - scripts/build-dex-security-image.sh
+      - scripts/check-dex-binary/**
+      - k8s/bases/infrastructure/controllers/dex/DexSecurity.Dockerfile
+      - k8s/bases/infrastructure/controllers/dex/dex-v2.46.1-network.patch
+      - k8s/bases/infrastructure/controllers/dex/IMAGE-NOTICE
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-dex-security-image.yaml
+      - scripts/build-dex-security-image.sh
+      - scripts/check-dex-binary/**
+      - k8s/bases/infrastructure/controllers/dex/DexSecurity.Dockerfile
+      - k8s/bases/infrastructure/controllers/dex/dex-v2.46.1-network.patch
+      - k8s/bases/infrastructure/controllers/dex/IMAGE-NOTICE
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/devantler-tech/platform-dex
+  IMAGE_TAG: v2.46.1-security.1-${{ github.sha }}
+
+jobs:
+  verify:
+    name: Verify native Dex distribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      archive_sha: ${{ steps.build.outputs.archive_sha }}
+      image_id: ${{ steps.build.outputs.image_id }}
+      binary_sha: ${{ steps.build.outputs.binary_sha }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - name: Check out reviewed platform source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out pinned Dex release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dexidp/dex
+          ref: 75eb19238e10fc4750e7efb05a4031b254b04029
+          path: upstream
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up reviewed Go compiler
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache: false
+      - name: Build, scan and exercise exact distribution
+        id: build
+        run: bash scripts/build-dex-security-image.sh upstream "${IMAGE}:${IMAGE_TAG}"
+      - name: Retain the verified image without rebuilding
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dex-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dex-image.tar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Publish verified Dex bytes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - name: Check out reviewed platform source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download this run's verified image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dex-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dex-verified
+      - name: Check archive and native image identity
+        env:
+          ARCHIVE_SHA: ${{ needs.verify.outputs.archive_sha }}
+          IMAGE_ID: ${{ needs.verify.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          [[ "${ARCHIVE_SHA}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${IMAGE_ID}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "${ARCHIVE_SHA}" "${RUNNER_TEMP}/dex-verified/dex-image.tar" | sha256sum --check
+          docker load --input "${RUNNER_TEMP}/dex-verified/dex-image.tar"
+          test "$(docker image inspect --format '{{.Id}}' "${IMAGE}:${IMAGE_TAG}")" = "${IMAGE_ID}"
+      - name: Install checksum-verified supply-chain tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
+      - name: Inventory the verified distribution
+        run: syft "docker:${IMAGE}:${IMAGE_TAG}" --output "cyclonedx-json=${RUNNER_TEMP}/dex-sbom.json"
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push, sign and verify this distribution
+        env:
+          ARCHIVE_SHA: ${{ needs.verify.outputs.archive_sha }}
+          IMAGE_ID: ${{ needs.verify.outputs.image_id }}
+          BINARY_SHA: ${{ needs.verify.outputs.binary_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${BINARY_SHA}" =~ ^[0-9a-f]{64}$ ]]
+          docker push "${IMAGE}:${IMAGE_TAG}"
+          digest_ref="$(docker image inspect --format '{{json .RepoDigests}}' "${IMAGE}:${IMAGE_TAG}" | jq -er --arg prefix "${IMAGE}@sha256:" 'map(select(startswith($prefix))) | if length == 1 then .[0] else error("ambiguous digest") end')"
+          cosign sign --yes "${digest_ref}"
+          jq -n --arg revision "${GITHUB_SHA}" --arg imageId "${IMAGE_ID}" --arg binarySha "${BINARY_SHA}" \
+            --arg archiveSha "${ARCHIVE_SHA}" --arg run "${GITHUB_RUN_ID}" \
+            '{sourceRevision:$revision,upstreamRevision:"75eb19238e10fc4750e7efb05a4031b254b04029",patchedSourceTree:"6ba6ad659479412f2a33c391e6c64a3cfcc3f05c",imageId:$imageId,binarySha256:$binarySha,verifiedArchiveSha256:$archiveSha,workflowRunId:$run}' \
+            > "${RUNNER_TEMP}/dex-build.json"
+          cosign attest --yes --predicate "${RUNNER_TEMP}/dex-build.json" --type https://devantler.tech/attestations/dex-build/v1 "${digest_ref}"
+          cosign attest --yes --predicate "${RUNNER_TEMP}/dex-sbom.json" --type cyclonedx "${digest_ref}"
+          identity=https://github.com/devantler-tech/platform/.github/workflows/publish-dex-security-image.yaml@refs/heads/main
+          cosign verify --certificate-identity "${identity}" --certificate-oidc-issuer https://token.actions.githubusercontent.com "${digest_ref}"
+          for type in https://devantler.tech/attestations/dex-build/v1 cyclonedx; do
+            cosign verify-attestation --type "${type}" --certificate-identity "${identity}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com "${digest_ref}" > /dev/null
+          done
+          printf 'Published and verified: %s\n' "${digest_ref}"

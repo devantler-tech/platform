@@ -1,0 +1,14 @@
+Dex v2.46.1, upstream revision 75eb19238e10fc4750e7efb05a4031b254b04029
+https://github.com/dexidp/dex
+
+The Platform distribution updates golang.org/x/net from v0.59.0 to v0.60.0.
+The source patch and build procedure are in devantler-tech/platform.
+It retains Dex's compiled connectors and storage backends, including SQLite.
+The image launches Dex directly: gomplate templates and the upstream container
+entrypoint are not included. Supply an already-rendered native Dex configuration.
+Dex's own environment expansion remains available.
+
+Dex and its bundled web files retain the upstream Apache-2.0 license. Third-party
+dependency license and notice files copied by Go's vendor operation are included
+alongside the upstream license. The runtime base retains its own notices.
+This modified image is maintained by Devantler Tech, not by the Dex project.
