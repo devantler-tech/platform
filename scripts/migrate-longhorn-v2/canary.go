@@ -34,6 +34,7 @@ type canaryRun struct {
 	journalUID                               string
 	csi                                      *csiCapture
 	sourceClaim, sourceVolume, snapshotClass object
+	kopiaRepository                          object
 }
 
 // canaryWorkload binds recovery evidence to both reviewed payload commands.
@@ -292,13 +293,17 @@ func (p *canaryRun) transfer(ctx context.Context, desired, pod object, expectedS
 		if err != nil {
 			return err
 		}
+		repositories, err := p.c.list(ctx, "backuprepositories.velero.io", "velero")
+		if err != nil {
+			return err
+		}
 		if kind == "Restore" {
 			pod, err = p.c.get(ctx, "pod", "longhorn-canary-v2-"+p.run, "fio", false)
 			if err != nil {
 				return err
 			}
 		}
-		snapshot, err = verifyCanaryTransfer(transfers, parent, pod, expectedSnapshot, sourceNS)
+		snapshot, err = p.verifyFilesystemTransfer(repositories, transfers, parent, pod, expectedSnapshot, sourceNS)
 		return err
 	})
 	return parent, snapshot, err

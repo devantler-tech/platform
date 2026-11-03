@@ -89,6 +89,8 @@ resourceModifierRules:
   - operation: replace
     path: /spec/storageClassName
     value: "%s"
+  - operation: remove
+    path: /spec/volumeName
 - conditions:
     groupResource: pods
     resourceNameRegex: "^fio$"

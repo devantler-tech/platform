@@ -119,7 +119,11 @@ three-replica V2 backend, compare the original bytes and sentinel, then reattach
 the same V2 backend from a second permanent worker and compare again.
 
 Backup metadata alone cannot pass either probe. Filesystem recovery binds the
-native PodVolumeBackup and PodVolumeRestore; CSI recovery binds the DataUpload,
+native PodVolumeBackup and PodVolumeRestore to the same Ready Kopia repository
+UID and specification, selected by Velero's source-namespace, storage-location
+and repository-type key. Kopia does not use the Restic-only repository identifier.
+The restored claim's source PV binding is removed before independent V2
+provisioning. CSI recovery binds the DataUpload,
 DataDownload, claim, PV and Longhorn backend, including short-lived scratch
 identities captured by bounded native list/watch streams. Successful cleanup is
 verified before the journal records completion. Any failed or interrupted probe

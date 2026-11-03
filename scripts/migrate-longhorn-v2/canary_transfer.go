@@ -30,7 +30,7 @@ func verifyCanaryTransfer(transfers []object, parent, pod object, expectedSnapsh
 		matched++
 		if !owned || text(transfer, "metadata", "namespace") != "velero" || text(transfer, "spec", "pod", "uid") != text(pod, "metadata", "uid") ||
 			text(transfer, "spec", "pod", "namespace") != text(pod, "metadata", "namespace") || text(transfer, "spec", "pod", "name") != "fio" ||
-			text(transfer, "spec", "volume") != "data" || text(transfer, "spec", "backupStorageLocation") != "default" || text(transfer, "spec", "repoIdentifier") == "" || text(transfer, "spec", "uploaderType") != "kopia" {
+			text(transfer, "spec", "volume") != "data" || text(transfer, "spec", "backupStorageLocation") != "default" || text(transfer, "spec", "repoIdentifier") != "" || text(transfer, "spec", "uploaderType") != "kopia" {
 			return "", errors.New("canary data transfer belongs to another pod, volume, repository or operation")
 		}
 		if err := cleanVeleroResult(transfer); err != nil {

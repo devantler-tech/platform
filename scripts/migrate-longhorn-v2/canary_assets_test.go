@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	"sigs.k8s.io/yaml"
 )
 
@@ -53,6 +55,35 @@ func TestCanaryRestoresOnlyItsOwnFilesystemDataOntoV2(t *testing.T) {
 	}
 	if err := yaml.Unmarshal([]byte(rules), &native); err != nil {
 		t.Fatal("modifier cannot decode Velero's native string-valued JSON patches:", err)
+	}
+	// The backup excludes PVs, so the modifier receives a claim still bound to
+	// its V1 source PV. Apply the emitted RFC 6902 operations to that real shape.
+	var operations []object
+	for _, patch := range native.ResourceModifierRules[0].Patches {
+		op := object{"op": patch.Operation, "path": patch.Path}
+		if patch.Value != "" {
+			op["value"] = patch.Value
+		}
+		operations = append(operations, op)
+	}
+	encoded, err := json.Marshal(operations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch, err := jsonpatch.DecodePatch(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := patch.Apply([]byte(`{"spec":{"storageClassName":"lh-canary-v1-1234","volumeName":"source-v1-pv"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claim object
+	if err := json.Unmarshal(restored, &claim); err != nil {
+		t.Fatal(err)
+	}
+	if value(claim, "spec", "volumeName") != nil || text(claim, "spec", "storageClassName") != "lh-canary-v2-1234" {
+		t.Fatal("restored claim retains its source PV binding instead of provisioning V2 storage")
 	}
 	for _, required := range []string{"longhorn-canary-v1-1234", "^fio-data$", "^fio$", "/spec/storageClassName", "lh-canary-v2-1234", "operation: test"} {
 		if !strings.Contains(rules, required) {
