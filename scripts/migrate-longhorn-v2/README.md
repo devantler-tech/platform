@@ -8,6 +8,16 @@ benchmarks. `refresh-clients` holds until the fixed migration workers are Ready 
 huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
 capacity follows in its own change.
 
+When a replica-directory observation holds, `inventory-storage-root` inspects the fixed
+parent `/var/lib/longhorn` directory. Use the same fixed node selections with the matching
+confirmation `inventory-longhorn-storage-root-<selection>`. It brackets two complete native
+metadata listings with the same node, hardware, boot, API-inventory and source checks.
+The receipt reports counts, known directory-presence flags and a metadata digest; it grants
+no reset clearance. A file named `replicas` remains distinguishable from a directory with that
+name. Closed native failure categories identify transport, metadata or entry-validation holds
+without printing provider errors, file names or file contents. A failed replica listing never
+becomes an empty listing, and parent observations do not establish historical recoverability.
+
 Dispatch only the merged workflow on `main`. Run `refresh-clients` promptly after
 `talos/workers/enable-longhorn-v2.yaml` deploys: the hosts then hold the pages, but kubelet
 still counts them as free memory, so an unrelated kubelet restart could reject Pods.

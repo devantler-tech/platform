@@ -66,7 +66,11 @@ func (stage inventoryStage) Unwrap() error { return errInventory }
 func inventoryFailureMessage(err error) string {
 	var stage inventoryStage
 	if errors.As(err, &stage) {
-		return stage.Error()
+		message := stage.Error()
+		if code := longhorninventory.FailureCode(err); code != "unknown" {
+			message += " Native diagnostic=" + code + "."
+		}
+		return message
 	}
 	return stageUnknown.Error()
 }
