@@ -5,8 +5,12 @@ umask 077
 stage=dispatch
 work=''
 watchers=()
+readonly owner_bashpid="$BASHPID"
 fail() { printf 'EMAIL_BACKUP_REFRESH=UNVERIFIED stage=%s\n' "$stage" >&2; exit 2; }
 cleanup() {
+  # A terminated watch may inherit this EXIT handler before Bash resets it.
+  # Only the parent owns the workspace and the watch processes.
+  [[ "$BASHPID" == "$owner_bashpid" ]] || return 0
   for pid in "${watchers[@]}"; do kill "$pid" 2>/dev/null || true; done
   for pid in "${watchers[@]}"; do wait "$pid" 2>/dev/null || true; done
   if [[ -n "$work" ]]; then rm -rf "$work"; fi
