@@ -17,6 +17,9 @@ source. Its observation-only receipt contains counters and commitments, never ra
 host text or private identities. An allocation shortfall is reported as observed;
 it grants no reset, reboot, restart or V2-activation clearance. Incomplete reads,
 changing allocation, identity changes and close failures produce no success receipt.
+Unassigned replacement replicas do not prevent this counter-only observation.
+Replica inventories still require complete placement, and reboot recovery still
+requires two intact peer copies before scheduling and full redundancy afterward.
 
 For a confirmed allocation shortfall, `reboot-host-for-hugepages` selects exactly one
 permanent worker with `reboot-longhorn-v2-host-<worker>`. It requires the loaded
