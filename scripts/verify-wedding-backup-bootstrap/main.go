@@ -67,8 +67,8 @@ func readObject(filename string) (object, error) {
 	if err != nil {
 		return nil, errRefused
 	}
-	real, err := filepath.EvalSymlinks(a)
-	if err != nil || real != a {
+	physicalPath, err := filepath.EvalSymlinks(a)
+	if err != nil || physicalPath != a {
 		return nil, errRefused
 	}
 	s, err := os.Lstat(a)

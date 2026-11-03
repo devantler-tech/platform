@@ -6,7 +6,53 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+func TestMegaLinterKeepsNativePackageStyleEnabled(t *testing.T) {
+	data, err := os.ReadFile("../../.mega-linter.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Executable []string `yaml:"GO_REVIVE_CLI_EXECUTABLE"`
+		Disabled   []string `yaml:"DISABLE_LINTERS"`
+		Advisory   []string `yaml:"DISABLE_ERRORS_LINTERS"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(config.Executable, []string{"bash", "scripts/revive-package-context.sh"}) || slices.Contains(config.Disabled, "GO_REVIVE") || slices.Contains(config.Advisory, "GO_REVIVE") {
+		t.Fatal("native Revive must remain a hard gate through the complete package adapter")
+	}
+}
+
+func TestNativeCNPGSchemaBoundaryIsRequired(t *testing.T) {
+	workflow := readRegressionWorkflow(t)
+	job := workflow.Jobs["validate-repository-guards"]
+	if job.If != "" || job.Continue != nil || len(job.Needs) != 0 {
+		t.Fatal("schema provenance and native refusal proof must run unconditionally")
+	}
+	for _, name := range []string{"deploy-prod", "ci-required-checks"} {
+		if !slices.Contains(workflow.Jobs[name].Needs, "validate-repository-guards") {
+			t.Fatalf("%s can bypass schema boundary validation", name)
+		}
+	}
+	wanted := "bash scripts/tests/schemas/update-cloudnative-pg-cluster.sh --check-committed\nnpm exec --yes --package=v8r@6.1.0 -- bash scripts/tests/test-v8r-cnpg-schema.sh"
+	count := 0
+	for _, step := range job.Steps {
+		if strings.TrimSpace(step.Run) == wanted {
+			if step.If != "" || step.Continue != nil || step.WorkingDirectory != "" || len(step.Env) != 0 {
+				t.Fatal("schema proof must use the real root configuration without redirection")
+			}
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatal("require one pinned native CNPG schema proof and complete schema provenance check")
+	}
+}
 
 func TestCompletePackageStyleIsAnIndependentRequiredGate(t *testing.T) {
 	workflow := readRegressionWorkflow(t)
@@ -26,6 +72,7 @@ func TestCompletePackageStyleIsAnIndependentRequiredGate(t *testing.T) {
 	for _, command := range []string{
 		"go install github.com/mgechev/revive@v1.16.0",
 		"go test -timeout 1m ./scripts/check-go-package-style",
+		"bash scripts/tests/test-revive-package-context.sh",
 		"go run ./scripts/check-go-package-style",
 	} {
 		found := -1

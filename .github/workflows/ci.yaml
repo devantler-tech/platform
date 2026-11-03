@@ -134,6 +134,9 @@ jobs:
       - name: 🧪 Prove complete package discovery and refusals
         run: go test -timeout 1m ./scripts/check-go-package-style
 
+      - name: 🧪 Prove the native scanner adapter retains unselected sources
+        run: bash scripts/tests/test-revive-package-context.sh
+
       - name: 🧹 Lint every tracked Go source with package context
         run: go run ./scripts/check-go-package-style
 
@@ -979,6 +982,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - name: 📌 Install the reviewed schema parser
+        env:
+          GOBIN: ${{ runner.temp }}/schema-proof-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+
+      - name: 🧩 Verify the complete CNPG schema and native filename boundary
+        run: |
+          bash scripts/tests/schemas/update-cloudnative-pg-cluster.sh --check-committed
+          npm exec --yes --package=v8r@6.1.0 -- bash scripts/tests/test-v8r-cnpg-schema.sh
 
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5

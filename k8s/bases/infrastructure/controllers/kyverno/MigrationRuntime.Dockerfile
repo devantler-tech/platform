@@ -30,6 +30,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
 # adjudication and removal as scripts/tests/tenant-webapp-admission/.govulncheck-allow.txt
 # (platform#5154). The list must match exactly: another advisory fails the build, and so does
 # an empty list, because that means the report was not read or the record needs removing here.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
     && timeout 300s govulncheck ./cmd/platform-migrate \
     && timeout 120s govulncheck -mode=binary -format json /out/kubectl-kyverno > /tmp/binary-scan.json \
@@ -44,6 +45,6 @@ FROM reg.kyverno.io/kyverno/kyverno-cli:v1.19.2@sha256:322ec5044d600930cb3af0e56
 COPY --from=builder --chmod=0755 /out/kubectl-kyverno /ko-app/kubectl-kyverno
 # Match the released migration Job's explicit execution identity.
 USER 65534:65534
-ENTRYPOINT ["/ko-app/kubectl-kyverno"]
 RUN ["/ko-app/kubectl-kyverno", "--version"]
+ENTRYPOINT ["/ko-app/kubectl-kyverno"]
 RUN ["/ko-app/kubectl-kyverno", "migrate", "--help"]

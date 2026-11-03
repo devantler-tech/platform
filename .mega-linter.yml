@@ -37,6 +37,13 @@ FLAVOR_SUGGESTIONS: false
 IGNORE_GITIGNORED_FILES: true
 REPORTERS_MARKDOWN_SUMMARY_TYPE: sections
 
+# Keep the native engine and its default rules. Explicit file targets discard
+# package context; the adapter scans the complete tracked inventory as packages
+# and retains platform/build-tag files omitted by native directory discovery.
+GO_REVIVE_CLI_EXECUTABLE:
+  - bash
+  - scripts/revive-package-context.sh
+
 EXCLUDED_DIRECTORIES:
   - megalinter-reports
   - report

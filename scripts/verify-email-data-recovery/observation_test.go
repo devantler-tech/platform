@@ -110,7 +110,8 @@ func TestObservationCommandRefusesForeignDispatchBeforeAccess(t *testing.T) {
 		return
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestObservationCommandRefusesForeignDispatchBeforeAccess$")
-	cmd.Env = []string{"EMAIL_OBSERVATION_CHILD=1", "PATH=/nonexistent"}
+	// Preserve the exact stderr proof when the child is coverage-instrumented.
+	cmd.Env = []string{"EMAIL_OBSERVATION_CHILD=1", "PATH=/nonexistent", "GOCOVERDIR=" + t.TempDir()}
 	output, err := cmd.CombinedOutput()
 	exit, ok := err.(*exec.ExitError)
 	if !ok || exit.ExitCode() != 2 || string(output) != "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=dispatch\n" {

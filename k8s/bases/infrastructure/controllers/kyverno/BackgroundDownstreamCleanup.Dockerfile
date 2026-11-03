@@ -29,6 +29,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
 # above fails the build if that package is ever compiled in. The list must match exactly: another
 # advisory fails the build, and so does an empty list, because that means the report was not read
 # or a record needs removing here.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
     && timeout 600s govulncheck ./cmd/background-controller \
     && timeout 300s govulncheck -mode=binary -format json /out/background-controller > /tmp/binary-scan.json \

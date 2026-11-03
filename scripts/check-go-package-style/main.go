@@ -28,8 +28,12 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) != 1 {
-		return errors.New("usage: check-go-package-style (from the repository root)")
+	selected := []string(nil)
+	if len(os.Args) > 1 {
+		if len(os.Args) < 3 || os.Args[1] != "--from-megalinter" {
+			return errors.New("usage: check-go-package-style [--from-megalinter tracked.go ...]")
+		}
+		selected = os.Args[2:]
 	}
 	binary, err := exec.LookPath("revive")
 	if err != nil {
@@ -67,6 +71,11 @@ func run() error {
 		return fmt.Errorf("discover tracked Go sources: %w", err)
 	}
 	paths := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+	for _, path := range selected {
+		if !slices.Contains(paths, path) {
+			return errors.New("the caller selected an unknown or untracked Go source")
+		}
+	}
 	args, directories, fallbacks, err := targets(root, paths, build.Default)
 	if err != nil {
 		return err
@@ -74,7 +83,7 @@ func run() error {
 	if _, err := fmt.Fprintf(os.Stdout, "REVIVE tracked=%d directories=%d fallback-files=%d\n", len(paths), directories, fallbacks); err != nil {
 		return err
 	}
-	command = exec.Command(binary, append([]string{"-set_exit_status"}, args...)...)
+	command = exec.Command(binary, append([]string{"-set_exit_status", "--"}, args...)...)
 	command.Dir = root
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := command.Run(); err != nil {
@@ -100,7 +109,7 @@ func targets(root string, paths []string, context build.Context) ([]string, int,
 	}
 	tracked, dirs := map[string]bool{}, map[string]bool{}
 	for _, path := range paths {
-		if path == "" || filepath.IsAbs(path) || filepath.Clean(path) != path || strings.HasPrefix(path, "..") || !strings.HasSuffix(path, ".go") || tracked[path] {
+		if path == "" || filepath.IsAbs(path) || filepath.Clean(path) != path || strings.HasPrefix(path, "..") || strings.ContainsAny(path, "\r\n\t") || !strings.HasSuffix(path, ".go") || tracked[path] {
 			return nil, 0, 0, errors.New("invalid or duplicate tracked Go path")
 		}
 		absolute := filepath.Join(root, path)
