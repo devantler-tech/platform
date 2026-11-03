@@ -12,8 +12,9 @@ builds a reviewed Dex release with the narrow dependency correction in
 [`dex-v2.46.1-network.patch`](dex-v2.46.1-network.patch). It verifies the exact
 upstream commit and patched tree, runs the upstream command, server, memory-store
 and OIDC connector tests, then compiles a static executable with SQLite support.
-The small runtime contains that executable, upstream web files, CA certificates
-and license notices. It accepts native Dex configuration and launches directly;
+The runtime contains that musl-linked executable, upstream web files, CA
+certificates, license notices and a passive source archive covering the patched
+upstream and vendored dependencies. It accepts native Dex configuration and launches directly;
 gomplate templates are outside this distribution's contract.
 
 The admission command runs the pinned scanner on the actual executable itself.

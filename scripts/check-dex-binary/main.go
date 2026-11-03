@@ -235,12 +235,24 @@ func nativeTLS(binary, web string) error {
 	return nativeTLSFloor(binary, web, "1.3")
 }
 
-func nativeTLSFloor(binary, web, floor string) error {
+func nativeTLSFloor(binary, web, floor string) (resultErr error) {
 	fixture, err := os.MkdirTemp("", "dex-tls-")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(fixture)
+	defer func() {
+		if resultErr != nil && resultErr.Error() != "Dex discarded its configured TLS floor" {
+			// This process only receives the fictional configuration below. Keep
+			// bounded failure diagnostics useful without retaining its private key.
+			if body, err := os.ReadFile(filepath.Join(fixture, "dex.log")); err == nil {
+				if len(body) > 4096 {
+					body = body[len(body)-4096:]
+				}
+				fmt.Fprintf(os.Stderr, "Fictional native fixture diagnostics: %q\n", body)
+			}
+		}
+		_ = os.RemoveAll(fixture)
+	}()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return err
@@ -258,23 +270,33 @@ func nativeTLSFloor(binary, web, floor string) error {
 		return err
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	certPath, keyPath := filepath.Join(fixture, "cert.pem"), filepath.Join(fixture, "key.pem")
+	// Dex watches its certificate directory. Keep transient SQLite journals
+	// outside that watch, matching separate certificate and data projections.
+	tlsDir, dbDir := filepath.Join(fixture, "tls"), filepath.Join(fixture, "database")
+	for _, directory := range []string{tlsDir, dbDir} {
+		if err := os.Mkdir(directory, 0700); err != nil {
+			return err
+		}
+	}
+	certPath, keyPath := filepath.Join(tlsDir, "cert.pem"), filepath.Join(tlsDir, "key.pem")
 	if err := os.WriteFile(certPath, certPEM, 0600); err != nil {
 		return err
 	}
 	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
 		return err
 	}
-	addresses := make([]string, 2)
-	for i := range addresses {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return err
+	listeners, err := reserveEndpoints(2)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for _, listener := range listeners {
+			_ = listener.Close()
 		}
-		addresses[i] = l.Addr().String()
-		if err := l.Close(); err != nil {
-			return err
-		}
+	}()
+	addresses := make([]string, len(listeners))
+	for i, listener := range listeners {
+		addresses[i] = listener.Addr().String()
 	}
 	issuer := "https://" + addresses[0] + "/dex"
 	config := fmt.Sprintf(`issuer: %s
@@ -295,7 +317,7 @@ grpc:
   tlsMinVersion: %q
 frontend:
   dir: %s
-`, issuer, filepath.Join(fixture, "dex.db"), addresses[0], certPath, keyPath, floor, addresses[1], certPath, keyPath, floor, web)
+`, issuer, filepath.Join(dbDir, "dex.db"), addresses[0], certPath, keyPath, floor, addresses[1], certPath, keyPath, floor, web)
 	configPath := filepath.Join(fixture, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
 		return err
@@ -309,6 +331,11 @@ frontend:
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "serve", configPath)
 	cmd.Stdout, cmd.Stderr = log, log
+	for _, listener := range listeners {
+		if err := listener.Close(); err != nil {
+			return err
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -368,6 +395,21 @@ frontend:
 		}
 	}
 	return nil
+}
+
+func reserveEndpoints(count int) ([]net.Listener, error) {
+	var listeners []net.Listener
+	for i := 0; i < count; i++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			for _, reserved := range listeners {
+				_ = reserved.Close()
+			}
+			return nil, err
+		}
+		listeners = append(listeners, listener)
+	}
+	return listeners, nil
 }
 
 func exerciseTLS(address string, good *tls.Config) error {

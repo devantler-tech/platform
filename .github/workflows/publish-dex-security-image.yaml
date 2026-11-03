@@ -64,6 +64,10 @@ jobs:
         with:
           go-version: 1.27.3
           cache: false
+      - name: Install the static musl compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
       - name: Build, scan and exercise exact distribution
         id: build
         run: bash scripts/build-dex-security-image.sh upstream "${IMAGE}:${IMAGE_TAG}"

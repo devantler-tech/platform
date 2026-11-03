@@ -23,8 +23,9 @@ CGO_ENABLED=1 go -C "$source_dir" test -mod=readonly -timeout=5m ./cmd/dex ./ser
 git -C "$source_dir" diff --exit-code
 [[ -z $(git -C "$source_dir" ls-files --others --exclude-standard) ]]
 mkdir "$source_dir/dist"
-# Static libc preserves SQLite without adding a second dynamic runtime to the image.
-CGO_ENABLED=1 go -C "$source_dir" build -mod=readonly -trimpath -tags netgo,osusergo \
+# Use musl's static runtime, preserving SQLite without introducing glibc into
+# the distribution. Go handles network and user lookups directly.
+CC=musl-gcc CGO_ENABLED=1 go -C "$source_dir" build -mod=readonly -trimpath -tags netgo,osusergo \
   -ldflags '-X main.version=v2.46.1-devantler.1 -linkmode external -extldflags "-static"' \
   -o "$source_dir/dist/dex" ./cmd/dex
 file "$source_dir/dist/dex" | grep -q 'statically linked'
@@ -43,12 +44,24 @@ go -C "$source_dir" mod vendor
 mkdir -p "$source_dir/dist/licenses"
 cp "$source_dir/LICENSE" "$source_dir/dist/licenses/LICENSE"
 cp "$root/k8s/bases/infrastructure/controllers/dex/IMAGE-NOTICE" "$source_dir/dist/licenses/NOTICE"
+cp "$(go env GOROOT)/LICENSE" "$source_dir/dist/licenses/GO-LICENSE"
+cp "$(go env GOROOT)/PATENTS" "$source_dir/dist/licenses/GO-PATENTS"
+cp /usr/share/doc/musl/copyright "$source_dir/dist/licenses/MUSL-COPYRIGHT"
+cp -L /usr/share/doc/libgcc-s1/copyright "$source_dir/dist/licenses/GCC-RUNTIME-COPYRIGHT"
+cp /usr/share/common-licenses/GPL-3 "$source_dir/dist/licenses/GPL-3"
+cp /usr/share/common-licenses/LGPL-3 "$source_dir/dist/licenses/LGPL-3"
+cp /usr/share/common-licenses/LGPL-2.1 "$source_dir/dist/licenses/LGPL-2.1"
 (
   cd "$source_dir"
   find vendor -type f \( -iname 'license*' -o -iname 'copying*' -o -iname 'notice*' -o -iname 'copyright*' -o -iname 'authors*' \) -print0 |
     xargs -0 -r cp --parents --target-directory=dist/licenses
 )
 [[ $(find "$source_dir/dist/licenses/vendor" -type f | wc -l) -gt 0 ]]
+# Supply the complete patched upstream and vendored dependency sources, including
+# MPL-covered dependency files, alongside their notices. This is passive data;
+# no source helper or second executable is introduced into the runtime.
+tar --exclude=./.git --exclude=./dist --exclude=./bin --exclude=./tmp \
+  -czf "$source_dir/dist/licenses/source.tar.gz" -C "$source_dir" .
 mkdir "$RUNNER_TEMP/dex-context"
 cp -R "$source_dir/dist" "$source_dir/web" "$RUNNER_TEMP/dex-context/"
 docker build --file "$root/k8s/bases/infrastructure/controllers/dex/DexSecurity.Dockerfile" \

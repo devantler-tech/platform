@@ -1,10 +1,33 @@
 package main
 
 import (
+	"net"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestNativeEndpointsStayReservedUntilHandoff(t *testing.T) {
+	listeners, err := reserveEndpoints(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		for _, listener := range listeners {
+			listener.Close()
+		}
+	}()
+	if len(listeners) != 2 || listeners[0].Addr().String() == listeners[1].Addr().String() {
+		t.Fatal("native HTTPS and gRPC endpoints must be distinct")
+	}
+	for _, listener := range listeners {
+		other, err := net.Listen("tcp", listener.Addr().String())
+		if err == nil {
+			other.Close()
+			t.Fatal("endpoint released before native process handoff")
+		}
+	}
+}
 
 func TestNativeTLSFloorControls(t *testing.T) {
 	binary, web := os.Getenv("DEX_NATIVE_BINARY"), os.Getenv("DEX_NATIVE_WEB")
