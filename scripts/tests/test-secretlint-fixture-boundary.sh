@@ -20,11 +20,17 @@ scan() {
     echo "FAIL: native Secretlint returned $status, expected $expected" >&2
     exit 1
   fi
-  if [ "$expected" = 0 ]; then
-    jq -e 'length == 1 and all(.[]; .messages | length == 0)' "$work/report.json" >/dev/null
-  else
-    jq -e 'length == 1 and any(.[]; any(.messages[]; .ruleId == "@secretlint/secretlint-rule-basicauth" and .messageId == "BasicAuth"))' "$work/report.json" >/dev/null
-  fi
+  node - "$work/report.json" "$expected" <<'NODE'
+const fs = require('node:fs');
+const [path, expected] = process.argv.slice(2);
+const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+const valid = Array.isArray(report) && report.length === 1
+  && Array.isArray(report[0].messages) && (expected === '0'
+    ? report[0].messages.length === 0
+    : report[0].messages.some(row => row.ruleId === '@secretlint/secretlint-rule-basicauth'
+      && row.messageId === 'BasicAuth'));
+if (!valid) throw new Error('native Secretlint report did not establish the expected control');
+NODE
 }
 
 scan "$root/scripts/tests/test-verify-wedding-backup-denial.sh" "$work/default.json" 1

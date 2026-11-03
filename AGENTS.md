@@ -93,6 +93,9 @@ and every other root package once. Both results must succeed before production
 or required CI can pass. Run `bash scripts/tests/test-run-go-regressions.sh` for
 routing and failure controls; `bash scripts/run-go-regressions.sh all` is the
 unpartitioned diagnostic path with the same workers and per-package deadline.
+The credential-refresh package also defaults to those eight workers when the
+shared Go test and coverage jobs omit `-parallel`; an explicit worker limit
+always takes precedence. Package and fixture-command deadlines are unchanged.
 
 For manifest changes, validate with:
 

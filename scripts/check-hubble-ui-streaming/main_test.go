@@ -11,7 +11,8 @@ import (
 func TestReleasedFrontendEntryPoint(t *testing.T) {
 	// Extracted without execution from /app/index.html in the pinned public
 	// Hubble UI v0.13.6 image. Its minifier omits the optional opening html tag.
-	body, err := os.ReadFile("testdata/frontend-v0.13.6-index.html")
+	// This golden response is opaque captured data, never authored/formatted HTML.
+	body, err := os.ReadFile("testdata/frontend-v0.13.6-index.html.golden")
 	if err != nil {
 		t.Fatal(err)
 	}

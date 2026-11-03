@@ -18,14 +18,19 @@ scan() {
   (cd "$directory" && "$engine" --redact dir -c "$selected_config" --report-format json --report-path "$work/report.json" .) >"$work/engine.log" 2>&1 || status=$?
   if [ "$status" != "$expected" ]; then
     echo "FAIL: native $rule control returned $status, expected $expected" >&2
-    jq 'map({RuleID,File,StartLine})' "$work/report.json" >&2
     exit 1
   fi
-  if [ "$expected" = 0 ]; then
-    jq -e 'length == 0' "$work/report.json" >/dev/null
-  else
-    jq -e --arg rule "$rule" 'length > 0 and any(.[]; .RuleID == $rule)' "$work/report.json" >/dev/null
-  fi
+  # Node is supplied by the pinned MegaLinter image; jq is not.
+  node - "$work/report.json" "$expected" "$rule" <<'NODE'
+const fs = require('node:fs');
+const [path, expected, rule] = process.argv.slice(2);
+const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+// Betterleaks serializes its nil finding slice as null on a clean scan.
+const valid = expected === '0'
+  ? report === null || (Array.isArray(report) && report.length === 0)
+  : Array.isArray(report) && report.length > 0 && report.some(row => row.RuleID === rule);
+if (!valid) throw new Error('native Betterleaks report did not establish the expected control');
+NODE
 }
 
 payload() {

@@ -17,5 +17,6 @@ ARG VERSION=unknown
 RUN go build -mod=readonly -ldflags "-X main.version=$VERSION" -o /out/coroot .
 
 FROM ghcr.io/coroot/coroot:1.29.1@sha256:7f5aa2982ff789f95d8326b35cafad3d127bb44669eed94a90a6baa563c342af
+USER 65534:65534
 COPY --from=builder --chmod=0755 /out/coroot /usr/bin/coroot
 RUN ["/usr/bin/coroot", "--help"]

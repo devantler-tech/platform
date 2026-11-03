@@ -8,5 +8,6 @@ ARG VERSION=unknown
 RUN go build -mod=readonly -ldflags "-X main.version=$VERSION" -o /out/coroot-cluster-agent .
 
 FROM ghcr.io/coroot/coroot-cluster-agent:1.11.8@sha256:a5bdb68c23fac361de19531cac8e9a0fcef4692ea10edac3d2ef9e6769414de7
+USER 65534:65534
 COPY --from=builder --chmod=0755 /out/coroot-cluster-agent /usr/bin/coroot-cluster-agent
 RUN ["/usr/bin/coroot-cluster-agent", "--help"]
