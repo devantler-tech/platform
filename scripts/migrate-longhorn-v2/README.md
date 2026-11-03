@@ -17,14 +17,87 @@ source. Its observation-only receipt contains counters and commitments, never ra
 host text or private identities. An allocation shortfall is reported as observed;
 it grants no reset, reboot, restart or V2-activation clearance. Incomplete reads,
 changing allocation, identity changes and close failures produce no success receipt.
+Unassigned replacement replicas do not prevent this counter-only observation.
+Replica inventories still require complete placement, and reboot recovery still
+requires two intact peer copies before scheduling and full redundancy afterward.
+
+For a confirmed allocation shortfall, `reboot-host-for-hugepages` selects exactly one
+permanent worker with `reboot-longhorn-v2-host-<worker>`. It requires the loaded
+reservation, unused native huge pages, disabled V2, the complete fixed migration roster, all V1
+volumes fully redundant, and all three database clusters healthy. It records the
+original node, hardware, boot, encrypted EPHEMERAL partition, storage disks and
+database identities before an owned cordon and an eviction-based application drain.
+The live `block-if-contains-last-replica` policy and target V1 instance-manager
+ownership are verified on each health read. Only that ready storage Pod is kept
+running during drain; a workload impersonating its selector label fails admission.
+Application evictions keep the normal disruption-budget checks. After
+drain, known attachment transitions and the unchanged database quorum share up
+to 20 minutes to settle. Attaching or detaching volumes must still retain three
+healthy copies on ready disks with known engine and replica states. Peer ownership
+is checked during this wait. Changed identities, lost quorum, failed runtime
+states or other safety evidence stop the wait;
+a timeout preserves the cordon without requesting a reboot. Two fresh checks of
+complete redundancy, databases and original storage still precede durable
+reboot intent. The single reboot request has no reset or disk-wipe selector.
+An unfinished or unreadable peer journal, another worker's cordon, or lost proof
+of a peer's recorded recovery prevents starting the next worker.
+
+Recovery never repeats an uncertain reboot. It requires a changed boot with the
+same node, hardware, OS, encrypted partition, registered disks and database system
+identities, 1,024 native 2 MiB pages, matching 2 GiB Kubernetes capacity, clear node
+pressure and two intact copies outside the target before restoring scheduling.
+That intermediate check permits a degraded attached volume only with two live
+read-write peer replicas; final acceptance still requires healthy volumes and all three copies.
+The verified new boot is journaled as `returning`, and only the owned cordon is
+released so Longhorn can recreate its instance manager. The maintenance marker
+and unfinished journal remain until full V1 redundancy and database health return;
+a timeout at this stage leaves the node schedulable under that retained marker.
+Only then is the marker removed and recovery recorded. Both release steps are read back.
+Dispatch each worker separately and verify platform recovery before the next one.
+An interrupted run keeps its journal and cordon; a new first-attempt main dispatch
+may adopt it only after the previous run has ended. This operation enables no V2
+storage and removes no iSCSI support.
 
 The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
 platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCSI.
 
-This tool lands in stages (platform#5655). Today it has `refresh-clients`, `prepare-worker` and the
-benchmarks. `refresh-clients` holds until the fixed migration workers are Ready and the host
+This tool lands in stages (platform#5655). It includes `refresh-clients`, `prepare-worker`,
+`prepare-unused-temporary-worker`, read-only replica inventories and the benchmarks.
+`refresh-clients` holds until the fixed migration workers are Ready and the host
 huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
 capacity follows in its own change.
+
+For the unused temporary-worker route (platform#5787), finish the client refresh and the
+cleaned V1 baseline first. Select `prepare-unused-temporary-worker`, `temporary-v1-1` or
+`temporary-v1-2`, and the matching confirmation `prepare-unused-longhorn-v2-temporary-v1-1`
+or `prepare-unused-longhorn-v2-temporary-v1-2`. Each selection is resolved from the complete,
+reviewed two-member V1 pool and one-member V2 pool. The fresh V2 pool has no reset operation.
+
+This operation wipes **only the selected temporary worker's EPHEMERAL partition** and reboots
+it. Its separate journal binds the original node UID, provider and hardware identities, boot,
+encrypted partition UUID, and native storage commitments. It requires unregistered, fenced
+Longhorn storage with no placed replicas, complete native parent-directory and block-resource
+inventories, and no allocated raw partition. Only the recognized engine, metadata, log and
+socket cache directories may remain; a replica entry, backing images, any file, unknown entry,
+incomplete read or changed identity holds the run. The original encrypted partition is checked
+before each parent listing. A missing replica-path error is never interpreted as empty storage.
+An allocation in `failed` state qualifies only when its previous phase was `waiting` or
+`missing`, its type is a partition, every allocation size, location and identity field is
+empty, and complete physical discovery contains no raw or other user partition. A failure
+after locating, provisioning or opening a device holds the run. Provider error messages do
+not establish absence. These checks accompany both parent reads and the unchanged API,
+hardware, boot and original-partition bindings; observation-only receipts grant no reset clearance.
+All three temporary workers receive owned scale-down protection before the selected worker is
+cordoned. Drain uses eviction and respects disruption budgets. Two fresh storage observations
+after drain precede the recorded reset intent.
+
+Recovery from `reset-requested` only observes post-state. An uncertain response never causes a
+second reset. A new boot and encrypted EPHEMERAL UUID, the reviewed 96 GiB encrypted raw
+partition, loaded configuration and huge-page readiness must be observed before releasing the
+owned cordon. CPX42 workers retain their larger root capacity; the permanent-worker root-size
+cap does not apply to this separate profile. The raw disk remains unregistered and fenced;
+storage activation and volume migration follow separately. Original storage replicas remain on
+the permanent workers throughout this preparation route.
 
 When a replica-directory observation holds, `inventory-storage-root` inspects the fixed
 parent `/var/lib/longhorn` directory. Use the same fixed node selections with the matching
@@ -106,10 +179,26 @@ Each Kubernetes patch tests the observed UID and resource version, and Pod evict
 carry a UID precondition. Talos reads must report the same hardware UUID as the selected
 Kubernetes worker before host configuration can be trusted or a host command can run.
 
+## Benchmark retirement safeguards
+
+Recovery builds per-run admission policies from all seven original resource UID receipts. One
+protects the retained PV's original claim and backend handle; one keeps the original backend
+detached after its Kubernetes status clears naturally; and one keeps the recorded engines,
+replicas, frontends and attachment objects stopped under a fresh recovery checkpoint. These
+policies permit normal stopped-state and finalizer updates, and reject replacement identities,
+new attachments, restarts and changes to the original ownership chain.
+
+The builders return unbound policies. A recovery workflow still needs complete dependency
+inventories, activation proof on every serving API server, UID/resource-version checkpoint
+writes, and direct instance-manager observations under stable controller and process identities.
+The instance-manager registry is an observation of native runtime state, not an independent
+disk or kernel audit. The builders and stopped-state checks alone do not authorize backend
+retirement. Complete that recovery path before dispatching a benchmark.
+
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes
-that worker's `EPHEMERAL` partition, so it is the one destructive step in this tool. Nothing on the
+that worker's `EPHEMERAL` partition and requires the separate permanent-worker safeguards. Nothing on the
 cluster enables it yet: it holds with no write until the temporary V1 pool accepts replicas, the worker layout is loaded by Talos, the raw-disk defaults are
 on the Node, huge pages are ready and Longhorn's V2 engine is on. Those land in later changes
 (platform#5655).
@@ -146,13 +235,18 @@ a rerun. A prepared receipt is revalidated against live state.
 Prepared means the worker and its encrypted disk layout passed these checks. V2 activation, a
 canary, backup and restore, and application acceptance remain separate gates.
 
-Run offline checks with:
+Run the local checks with:
 
 ```sh
 go test -race ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
 actionlint .github/workflows/prepare-longhorn-v2-node.yaml
 zizmor --offline .github/workflows/prepare-longhorn-v2-node.yaml
 ```
+
+The Go checks make no cluster calls, but a clean module cache needs network access to the
+configured Go module proxy and checksum database. This includes the native admission proof's
+nested module at `testdata/retirement-fence-proof`; its committed `go.sum` is required. Populate
+both modules' dependencies before running in a network-restricted environment.
 
 The workflow's read-only test job runs on PRs and merge groups. Production credentials are
 restored only for a confirmed manual dispatch from main. Host configuration and provider

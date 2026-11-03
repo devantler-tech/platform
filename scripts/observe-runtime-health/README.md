@@ -16,7 +16,9 @@ become a clean snapshot. The dedicated alerts query propagates database errors
 that the overview's context otherwise hides.
 
 Application issues, log-error **patterns**, and risks refer to a fixed one-hour
-window. Log-pattern counts are application-audit findings, not a complete raw-log
+window. Absolute request timestamps use Coroot's epoch-millisecond convention.
+Window edges match its whole-second resolution, including in the reported snapshot.
+Log-pattern counts are application-audit findings, not a complete raw-log
 event count. Alert counts are current observations; the firing total retains
 the greater of the dedicated query and the per-severity overview peaks during
 collection. The unresolved total includes the dedicated query's complete count,

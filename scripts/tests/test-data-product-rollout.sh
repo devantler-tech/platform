@@ -45,6 +45,12 @@ if [[ "${MODE:-}" == hang || "${MODE:-}" == preflight-timeout ]]; then
     sleep 2
   fi
 fi
+# Reproduce a loaded runner reaching the public check after its old three-second
+# budget. The deadline-retry case must exercise a real request before judging it.
+if [[ "${MODE:-}" == dropped-at-deadline && ! -e "$FIXTURE/slow-preflight" ]]; then
+  : >"$FIXTURE/slow-preflight"
+  sleep 4
+fi
 # A timeout alone cannot prove a mutated snapshot was rejected on a busy host.
 # Record actual projection/predicate rejection before accepting that control.
 for argument in "$@"; do
@@ -61,6 +67,17 @@ done
 exec "$REAL_JQ" "$@"
 SH
 chmod +x "${scratch}/bin/jq"
+
+# Only the deadline-retry fixture uses a logical clock. Keep setup at time zero,
+# then leave exactly one second after the first failed public request. The real
+# fetch/remaining functions must refuse its retry; no production seam is added.
+# Other fixtures retain the real clock, including preflight and child cleanup.
+cat >"${scratch}/deadline-clock.sh" <<'SH'
+if [[ "$0" == "$ROLLOUT_FIXTURE_SCRIPT" ]]; then
+  set -T
+  trap 'if [[ -f "$FIXTURE/public-deadline" && -n "${deadline:-}" ]]; then SECONDS=$((deadline - 1)); else SECONDS=0; fi' DEBUG
+fi
+SH
 
 # Production derives the expected state from the checked-out Helm declaration,
 # never from the live object being judged. Keep that read explicit in fixtures.
@@ -386,7 +403,7 @@ case "${MODE:-}" in
       exit 28
     fi
     ;;
-  dropped-at-deadline) sleep "$transfer_seconds"; printf '000'; exit 56 ;;
+  dropped-at-deadline) : >"$FIXTURE/public-deadline"; printf '000'; exit 56 ;;
   slow-public) sleep 0.55 ;;
   connection-reset) printf '000'; printf 'PRIVATE-ERROR-CANARY: private upstream\n' >&2; exit 56 ;;
   invalid-http-status) printf '503PRIVATE-ERROR-CANARY'; exit 0 ;;
@@ -437,9 +454,11 @@ run_case() {
     cp "${scratch}/healthy/"*.json "$fixture/"
   }
   if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset && "$mode" != unsafe-storage ]]; then timeout_seconds=3; fi
-  local probe_runtime="$child"
+  local probe_runtime="$child" shell_init=''
+  if [[ "$mode" == dropped-at-deadline ]]; then shell_init="${scratch}/deadline-clock.sh"; fi
   if [[ -f "$fixture/expected-probe-runtime" ]]; then probe_runtime=$(cat "$fixture/expected-probe-runtime"); fi
   PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
+    BASH_ENV="$shell_init" ROLLOUT_FIXTURE_SCRIPT="$script" \
     EXPECTED_HELM_FILE="${root_dir}/k8s/bases/apps/data-product-controller/helm-release.yaml" \
     EXPECTED_CHART_FILE="${root_dir}/k8s/bases/apps/data-product-controller/oci-repository.yaml" \
     EXPECTED_PUBLISHER_FILE="${root_dir}/k8s/bases/apps/data-product-controller/deployment-publisher-review.yaml" \
@@ -620,10 +639,12 @@ jq -e '.complete == true and .productInventory == "unavailable"' "${scratch}/inv
 for mode in inventory-clean inventory-ui inventory-forbidden; do
   if grep -Eq 'INVENTORY-NAME-CANARY|tenant-canary|PRIVATE-ERROR-CANARY' "${scratch}/${mode}/stdout"; then fail "$mode: the receipt exposed inventory values"; fi
 done
-# A retry never extends the deadline, and the refusal keeps the cause it could not retry.
-run_case dropped-at-deadline fail dropped-at-deadline 3
-# Which refusal fires first depends on the second the budget ran out in; both keep the cause.
-jq -e '(.failure == "deadline_exceeded" or .failure == "public_contract_incomplete") and .curlExit == 56' "${scratch}/dropped-at-deadline/stdout" >/dev/null ||
+# Setup deliberately exceeds the old three-second budget. Once a request has
+# failed, the logical clock leaves one second: enough to retain the cause, but
+# never enough to start the retry. The ordinary process watchdog stays bounded.
+run_case dropped-at-deadline fail dropped-at-deadline 30
+jq -e '(.failure == "deadline_exceeded" or .failure == "public_contract_incomplete") and .phase == "public_contract" and
+  .role == "sample_health" and .reason == "transport_failed" and .httpStatus == 0 and .curlExit == 56' "${scratch}/dropped-at-deadline/stdout" >/dev/null ||
   fail 'a retry the deadline forbids lost its curl exit'
 [[ $(wc -l <"${scratch}/dropped-at-deadline/urls") -eq 1 ]] || fail 'a retry ran past the deadline'
 run_case receipt-invalid-status fail invalid-http-status 15
