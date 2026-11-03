@@ -32,6 +32,9 @@ type inventoryReceipt struct {
 	Report              longhorninventory.Report `json:"report"`
 }
 
+// inventoryProjection binds a complete Kubernetes storage observation to the
+// selected physical node and reviewed pool roster. A preparation journal permits
+// only its own identity-bound cordon in the observation view.
 func (c client) inventoryProjection(ctx context.Context, target string) (inventoryProjection, object, error) {
 	var nodes, storage, replicas []object
 	for _, query := range []struct {
@@ -54,12 +57,20 @@ func (c client) inventoryProjection(ctx context.Context, target string) (invento
 		}
 	}
 	selectionDigest := ""
+	var projectionErr error
+	nodes, projectionErr = temporaryInventoryNodes(nodes, c.inventoryPreparation)
+	if projectionErr != nil {
+		return inventoryProjection{}, nil, projectionErr
+	}
 	if !inventoryTarget.MatchString(target) {
 		var err error
 		target, selectionDigest, err = resolveTemporaryInventoryTarget(target, nodes, c.inventoryPools)
 		if err != nil {
 			return inventoryProjection{}, nil, err
 		}
+	}
+	if c.inventoryPreparation != nil && target != c.inventoryPreparation.Target {
+		return inventoryProjection{}, nil, errInventory
 	}
 	var node, lh object
 	for _, item := range nodes {
