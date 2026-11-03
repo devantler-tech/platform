@@ -18,11 +18,15 @@ import (
 func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 	policy := readYAML(t, "k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml")
 	evaluator := newImagePolicyEvaluator(t, policy)
+	identityPublisher := "https://github.com/devantler-tech/business-site/.github/workflows/publish-identity.yaml@refs/heads/main"
 	tests := []struct {
 		repository, attestor, subject string
 	}{
 		{analysisRepository, "publishksailanalysis", analysisPublisher},
 		{mailRepository, "publishprivatemail", mailPublisher},
+		{"ghcr.io/devantler-tech/business-site-identity", "publishcustomeridentity", identityPublisher},
+		{"ghcr.io/devantler-tech/business-site-identity-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/business-site-identity/helper", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{mailRepository + "-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{analysisRepository + "-other", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/wedding-app", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
@@ -58,6 +62,12 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 						{"unsigned", "", "", fixture.attestor == ""},
 						{"wrong issuer", fixture.subject, "https://other.example", fixture.attestor == ""},
 						{"cross workflow signer", crossSigner(fixture.subject), githubIssuer, fixture.attestor == ""},
+						{"customer identity signer", identityPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcustomeridentity"},
+						{"shared app signer", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40), githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
+						{"identity wrong workflow", strings.Replace(identityPublisher, "publish-identity.yaml", "publish-runtime.yaml", 1), githubIssuer, fixture.attestor == ""},
+						{"identity tag ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/tags/v4.20.0", 1), githubIssuer, fixture.attestor == ""},
+						{"identity pull request ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/pull/1/merge", 1), githubIssuer, fixture.attestor == ""},
+						{"identity lookalike branch", identityPublisher + "-other", githubIssuer, fixture.attestor == ""},
 						{"checkpoint signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcorootcheckpoint"},
 						{"reports signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-reports-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernoreports"},
 						{"migrate signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-migration-runtime.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernomigrate"},

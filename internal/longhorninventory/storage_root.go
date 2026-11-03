@@ -80,7 +80,7 @@ func FailureCode(err error) string {
 		return "unknown"
 	}
 	switch failure.code {
-	case "request", "transport", "not-found", "permission", "unimplemented", "stream", "bounds", "metadata", "entry-error", "entry-shape", "structure":
+	case "request", "transport", "not-found", "permission", "unimplemented", "stream", "bounds", "metadata", "entry-error", "entry-shape", "structure", "block-client", "block-list", "block-shape", "block-change":
 		return failure.code
 	}
 	return "unknown"

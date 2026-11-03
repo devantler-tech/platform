@@ -23,7 +23,7 @@ func approvedBackupControllerImage(image string) bool {
 	return regexp.MustCompile(`^(docker\.io/)?velero/velero:v1\.18\.4(@sha256:[0-9a-f]{64})?$`).MatchString(image)
 }
 func (d *recoveryDriver) list(ctx context.Context, kind, ns, selector string) ([]object, error) {
-	args := []string{"get", kind, "--namespace=" + ns, "-o=json"}
+	args := []string{"get", veleroReadResource(kind), "--namespace=" + ns, "-o=json"}
 	if selector != "" {
 		args = append(args, "--selector="+selector)
 	}

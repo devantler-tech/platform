@@ -798,6 +798,14 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 		"image != 'ghcr.io/devantler-tech/ksail-analysis-runner'",
 		"image == 'ghcr.io/devantler-tech/ksail-analysis-runner'",
 		"verifyImageSignatures(image, [attestors.publishksailanalysis])",
+		"^https://github\\.com/devantler-tech/business-site/\\.github/workflows/publish-identity\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/business-site-identity'",
+		"!image.startsWith('ghcr.io/devantler-tech/business-site-identity:')",
+		"!image.startsWith('ghcr.io/devantler-tech/business-site-identity@')",
+		"image == 'ghcr.io/devantler-tech/business-site-identity'",
+		"image.startsWith('ghcr.io/devantler-tech/business-site-identity:')",
+		"image.startsWith('ghcr.io/devantler-tech/business-site-identity@')",
+		"verifyImageSignatures(image, [attestors.publishcustomeridentity])",
 		"image.startsWith('ghcr.io/devantler-tech/ksail')",
 	} {
 		requireContains(t, policy, expected)
