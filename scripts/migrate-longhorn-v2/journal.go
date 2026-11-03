@@ -10,21 +10,28 @@ import (
 )
 
 type journal struct {
-	Schema        int    `json:"schema"`
-	Target        string `json:"target"`
-	Source        string `json:"source"`
-	OwnerRun      string `json:"ownerRun"`
-	Phase         string `json:"phase"`
-	NodeUID       string `json:"nodeUID"`
-	ProviderID    string `json:"providerID"`
-	MachineUUID   string `json:"machineUUID"`
-	LonghornUID   string `json:"longhornUID"`
-	EphemeralUUID string `json:"ephemeralUUID"`
-	OriginalDisks object `json:"originalDisks"`
+	Schema             int    `json:"schema"`
+	Target             string `json:"target"`
+	Source             string `json:"source"`
+	OwnerRun           string `json:"ownerRun"`
+	Phase              string `json:"phase"`
+	NodeUID            string `json:"nodeUID"`
+	ProviderID         string `json:"providerID"`
+	MachineUUID        string `json:"machineUUID"`
+	LonghornUID        string `json:"longhornUID"`
+	EphemeralUUID      string `json:"ephemeralUUID"`
+	OriginalDisks      object `json:"originalDisks"`
+	TemporarySelection string `json:"temporarySelection,omitempty"`
+	NativeEmptyDigest  string `json:"nativeEmptyDigest,omitempty"`
+	OriginalBootID     string `json:"originalBootID,omitempty"`
+	RawVolumeAbsent    bool   `json:"rawVolumeAbsent,omitempty"`
 }
 
+// validateJournal requires complete original identities and a known procedure
+// phase. Its disjoint schemas keep permanent V1-disk records separate from
+// temporary-worker records carrying positive empty-storage evidence.
 func validateJournal(j journal, target string) error {
-	if j.Schema != 1 || j.Target != target || !regexp.MustCompile(`^prod-worker-[123]$`).MatchString(target) ||
+	if j.Target != target ||
 		!regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(j.Source) || !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(j.OwnerRun) ||
 		j.NodeUID == "" || !regexp.MustCompile(`^hcloud://[1-9][0-9]*$`).MatchString(j.ProviderID) || j.MachineUUID == "" || j.LonghornUID == "" || j.EphemeralUUID == "" {
 		return errors.New("journal does not bind the exact original storage identities")
@@ -33,6 +40,18 @@ func validateJournal(j journal, target string) error {
 	case "evacuating", "draining", "reset-requested", "prepared":
 	default:
 		return errors.New("journal phase is outside the node-preparation procedure")
+	}
+	if j.Schema == 2 {
+		if !regexp.MustCompile(`^autoscale-longhorn-v1-[0-9a-f]{16}$`).MatchString(target) ||
+			(j.TemporarySelection != "temporary-v1-1" && j.TemporarySelection != "temporary-v1-2") ||
+			!regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(j.NativeEmptyDigest) || !inventoryBoot.MatchString(j.OriginalBootID) ||
+			!j.RawVolumeAbsent || j.OriginalDisks == nil || len(j.OriginalDisks) != 0 {
+			return errors.New("temporary preparation lacks its separate empty-storage identity proof")
+		}
+		return nil
+	}
+	if j.Schema != 1 || !inventoryTarget.MatchString(target) || j.TemporarySelection != "" || j.NativeEmptyDigest != "" || j.OriginalBootID != "" || j.RawVolumeAbsent {
+		return errors.New("journal schema and preparation scope do not match")
 	}
 	if len(j.OriginalDisks) != 1 {
 		return errors.New("node preparation requires exactly the original V1 filesystem disk")
@@ -47,13 +66,28 @@ func validateJournal(j journal, target string) error {
 }
 
 type preparation struct {
-	c             client
-	target, name  string
-	source, owner string
-	j             journal
-	pools         map[string]migrationPool
+	c                  client
+	target, name       string
+	source, owner      string
+	j                  journal
+	pools              map[string]migrationPool
+	temporarySelection string
 }
 
+// validateRecord binds a structurally valid journal to the explicitly selected
+// preparation profile and, for temporary workers, its fixed journal name.
+func (p preparation) validateRecord(j journal) error {
+	if err := validateJournal(j, p.target); err != nil {
+		return err
+	}
+	if p.temporarySelection != j.TemporarySelection || (j.Schema == 2 && p.name != "longhorn-v2-prepare-"+j.TemporarySelection) {
+		return errors.New("journal does not match the explicitly selected preparation profile")
+	}
+	return nil
+}
+
+// readRecord decodes exactly one strict journal and validates its original
+// identities against the selected preparation profile before it can be used.
 func (p preparation) readRecord(ctx context.Context) (object, journal, error) {
 	cm, err := p.c.get(ctx, "configmap", "longhorn-system", p.name, true)
 	if err != nil || cm == nil {
@@ -69,7 +103,7 @@ func (p preparation) readRecord(ctx context.Context) (object, journal, error) {
 	if d.Decode(&extra) != io.EOF {
 		return nil, journal{}, errors.New("node-preparation journal is not singular")
 	}
-	return cm, j, validateJournal(j, p.target)
+	return cm, j, p.validateRecord(j)
 }
 
 // reviewedWorkflowPath accepts the bare path GitHub returns today and the suffixed
@@ -79,13 +113,16 @@ func reviewedWorkflowPath(path string) bool {
 	return path == workflow || path == workflow+"@main" || path == workflow+"@refs/heads/main"
 }
 
+// claimRecord creates a validated journal on current main or adopts a former
+// owner only after its reviewed first-attempt workflow is proven terminal.
+// Adoption preserves the recorded phase and original storage identities.
 func (p *preparation) claimRecord(ctx context.Context, initial journal) error {
 	cm, j, err := p.readRecord(ctx)
 	if err != nil {
 		return err
 	}
 	if cm == nil {
-		if err = validateJournal(initial, p.target); err != nil {
+		if err = p.validateRecord(initial); err != nil {
 			return err
 		}
 		if err = sourceCurrent(ctx, p.c.run, p.source); err != nil {

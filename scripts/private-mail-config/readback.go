@@ -91,7 +91,7 @@ func policyMatches(want, actual any, key string) bool {
 		return receivingAliasesMatch(want, actual)
 	}
 	switch key {
-	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events", "roleIds", "defaultUserRoleIds", "redirectUris", "requireScopes":
+	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events", "roleIds", "defaultUserRoleIds", "defaultAdminRoleIds", "redirectUris", "requireScopes":
 		return reflect.DeepEqual(want, actual)
 	}
 	if wm, ok := want.(map[string]any); ok {
@@ -205,6 +205,7 @@ func (m management) objects(ctx context.Context, object string, properties []str
 	return objects, nil
 }
 
+// resolved maps creation references in values and map keys to native IDs.
 func resolved(v any, ids map[string]string) any {
 	switch x := v.(type) {
 	case string:
@@ -214,6 +215,11 @@ func resolved(v any, ids map[string]string) any {
 	case map[string]any:
 		r := make(map[string]any, len(x))
 		for k, v := range x {
+			if strings.HasPrefix(k, "#") {
+				if id, ok := ids[strings.TrimPrefix(k, "#")]; ok {
+					k = id
+				}
+			}
 			r[k] = resolved(v, ids)
 		}
 		return r
@@ -271,7 +277,7 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 					if op.Object == "Certificate" {
 						identity = policyMatches(fields["certificate"], actual["certificate"], "")
 					}
-					if op.Object == "Application" {
+					if op.Object == "Application" || op.Object == "Role" {
 						identity = fields["description"] != nil && reflect.DeepEqual(fields["description"], actual["description"])
 					}
 					if identity {
