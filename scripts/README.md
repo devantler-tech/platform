@@ -49,6 +49,9 @@ record of how a procedure works.
   a manual workflow. Its `--preflight` mode alone needs no credentials.
 - [`prove-scoped-package-access`](prove-scoped-package-access/README.md) — a
   manual CI experiment on registry access.
+- [`observe-longhorn-namespace-inventory`](observe-longhorn-namespace-inventory/README.md)
+  — a protected metadata observation before benchmark cleanup work. It
+  authorizes no deletion.
 - [`replace-wedding-standby`](replace-wedding-standby/README.md) — a
   production database repair that needs the maintainer's approval for each run.
 
