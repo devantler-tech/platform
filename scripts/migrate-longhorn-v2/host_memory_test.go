@@ -30,10 +30,16 @@ func TestHostMemoryCountersPreserveAnObservedAllocationShortfall(t *testing.T) {
 }
 
 func TestHostMemoryObserverBindsCountersToNativeHostAndBoot(t *testing.T) {
-	for _, scenario := range []string{"stable shortfall", "API changed", "boot changed", "close failed", "memory read failed", "allocation changed"} {
+	for _, scenario := range []string{"stable shortfall", "unassigned replacement", "API changed", "storage changed", "boot changed", "close failed", "memory read failed", "allocation changed"} {
 		t.Run(scenario, func(t *testing.T) {
 			node, storage, replicas := inventoryFixture()
-			nodeReads, pageReads := 0, 0
+			if scenario == "unassigned replacement" {
+				replicas[0]["spec"].(object)["nodeID"] = ""
+				if _, err := projectInventory("prod-worker-1", node, storage, replicas); err == nil {
+					t.Fatal("ordinary replica accounting accepted unresolved placement")
+				}
+			}
+			nodeReads, storageReads, pageReads := 0, 0, 0
 			c := client{context: "admin@prod", run: func(_ context.Context, input []byte, program string, args ...string) ([]byte, error) {
 				if input != nil || !hostMemoryReadAllowed(program, args...) {
 					t.Fatal("host observer escaped fixed read-only scope")
@@ -62,6 +68,10 @@ func TestHostMemoryObserverBindsCountersToNativeHostAndBoot(t *testing.T) {
 						node["metadata"].(object)["uid"] = "replacement"
 					}
 				case "--raw=" + inventoryStorageNodes:
+					storageReads++
+					if scenario == "storage changed" && storageReads > 1 {
+						storage["metadata"].(object)["uid"] = "replacement"
+					}
 					api, items = "longhorn.io/v1beta2", []any{storage}
 				case "--raw=" + inventoryReplicas:
 					api, kind, items = "longhorn.io/v1beta2", "ReplicaList", []any{replicas[0]}
@@ -70,6 +80,11 @@ func TestHostMemoryObserverBindsCountersToNativeHostAndBoot(t *testing.T) {
 				}
 				return json.Marshal(object{"apiVersion": api, "kind": kind, "metadata": object{"resourceVersion": "1"}, "items": items})
 			}}
+			if scenario == "unassigned replacement" {
+				if _, _, err := c.inventoryProjection(t.Context(), "prod-worker-1"); err == nil {
+					t.Fatal("replica observer lost its complete ownership boundary")
+				}
+			}
 			reader := &replicaReaderFixture{changeBoot: scenario == "boot changed"}
 			closed := false
 			receipt, err := observeHostMemory(context.Background(), c, "prod-worker-1", func(_ context.Context, address string) (nativeReplicaReader, func() error, error) {
@@ -84,7 +99,8 @@ func TestHostMemoryObserverBindsCountersToNativeHostAndBoot(t *testing.T) {
 					return nil
 				}, nil
 			})
-			if !closed || reader.listCalls != 0 || (err == nil) != (scenario == "stable shortfall") {
+			wantObservation := scenario == "stable shortfall" || scenario == "unassigned replacement"
+			if !closed || reader.listCalls != 0 || (err == nil) != wantObservation {
 				t.Fatal("host counter observation lost its boundary:", err)
 			}
 			encoded, _ := json.Marshal(receipt)
