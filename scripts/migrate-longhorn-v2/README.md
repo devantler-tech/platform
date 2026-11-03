@@ -1,5 +1,23 @@
 # Prepare Longhorn V2 workers
 
+`inventory-storage-layout` adds read-only native block metadata to the storage-root
+observation for a fixed temporary worker. Confirm it with
+`inventory-longhorn-storage-layout-<selection>`. Two complete, bounded native volume
+status and physical-discovery collections must agree inside the unchanged node,
+hardware and boot bracket. Its schema-2 observation-only receipt reports sizes,
+phases, encryption properties and counts, while withholding device paths and
+identities. It grants no reset clearance and never treats a failed read as absence.
+The original root-only mode keeps its existing scope and schema.
+
+`inspect-host-memory` is a read-only diagnostic for a fixed permanent worker,
+confirmed with `inspect-longhorn-v2-host-memory-<worker>`. It reads only the native
+huge-page allocation and selected `/proc/meminfo` counters, bracketed by unchanged
+Kubernetes, storage, hardware and kernel-boot identity and the current reviewed
+source. Its observation-only receipt contains counters and commitments, never raw
+host text or private identities. An allocation shortfall is reported as observed;
+it grants no reset, reboot, restart or V2-activation clearance. Incomplete reads,
+changing allocation, identity changes and close failures produce no success receipt.
+
 The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
 platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCSI.
 
@@ -8,8 +26,23 @@ benchmarks. `refresh-clients` holds until the fixed migration workers are Ready 
 huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
 capacity follows in its own change.
 
-Dispatch only the merged workflow on `main`. Select `refresh-clients` with
-`refresh-longhorn-v2-clients`. It verifies the live host allocation and modules,
+When a replica-directory observation holds, `inventory-storage-root` inspects the fixed
+parent `/var/lib/longhorn` directory. Use the same fixed node selections with the matching
+confirmation `inventory-longhorn-storage-root-<selection>`. It brackets two complete native
+metadata listings with the same node, hardware, boot, API-inventory and source checks.
+The receipt reports counts, known directory-presence flags and a metadata digest; it grants
+no reset clearance. A file named `replicas` remains distinguishable from a directory with that
+name. Closed native failure categories identify transport, metadata or entry-validation holds
+without printing provider errors, file names or file contents. A failed replica listing never
+becomes an empty listing, and parent observations do not establish historical recoverability.
+
+Dispatch only the merged workflow on `main`. Run `refresh-clients` promptly after
+`talos/workers/enable-longhorn-v2.yaml` deploys. That configuration requests the pages;
+the refresh must prove the actual allocation before changing kubelet capacity. Until
+capacity is refreshed, kubelet can still count reserved pages as free memory, so an
+unrelated kubelet restart could reject Pods.
+Select `refresh-clients` with
+`refresh-longhorn-v2-clients`. It verifies the live host allocation and that each kernel module is usable, loaded or built in,
 restarts only kubelet where capacity is stale, and requires every worker to report
 2 GiB of 2 MiB huge pages. Containers and disks are preserved. Kubelet would reject
 any Pod that no longer fits once huge pages count, so when a permanent worker's Pods
@@ -180,3 +213,16 @@ snapshot, backup, proof of historical recoverability or permission to wipe. An
 unmatched directory must be investigated and preserved before any rebuild. The
 existing preparation operation still requires its separate preservation and
 recovery gates; this inventory operation does not authorize it.
+
+To inspect unused temporary capacity, select `temporary-v1-1`,
+`temporary-v1-2` or `temporary-v2-1` with the same `inventory-replicas`
+operation and `inventory-longhorn-replicas-<selection>` confirmation. These
+are ordinal selections from the sorted, complete pool roster in the reviewed
+`ksail.prod.yaml`, not hostnames. Both observations must retain every pool
+member's identity and boot state. A changed roster holds the observation.
+
+Temporary storage must still be fenced, unregistered and without placed
+replicas. Its native listing must be empty and accounted for; unexpected
+directories hold the observation. This can inform a later reviewed decision
+to reuse capacity for V2. It changes no disk, pool, host setting or volume,
+and does not authorize preparing a temporary worker through `prepare-worker`.

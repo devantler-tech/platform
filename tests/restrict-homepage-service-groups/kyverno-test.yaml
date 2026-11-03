@@ -13,7 +13,6 @@ resources:
 results:
   # --- declared service groups pass ---
   - policy: restrict-homepage-service-groups
-    rule: declared-service-group
     resources:
       - observability/declared-group
       - longhorn-system/storage-group
@@ -25,10 +24,8 @@ results:
       - longhorn-system/longhorn
     kind: HTTPRoute
     result: pass
-
   # --- undeclared, missing, bookmark-named, mis-cased and retired groups are denied ---
   - policy: restrict-homepage-service-groups
-    rule: declared-service-group
     resources:
       - doggy-countdown/undeclared-group
       - whoami/missing-group
@@ -39,22 +36,31 @@ results:
       - openbao/retired-security-group
       - client-site/retired-business-group
       - client-site/retired-clients-group
+      - whoami/empty-group
     kind: HTTPRoute
     result: fail
-
   # --- the precondition's negative control: routes that never opted in ---
   - policy: restrict-homepage-service-groups
-    rule: declared-service-group
     resources:
       - whoami/not-opted-in
       - whoami/discovery-disabled
+      - whoami/no-annotations
+      - whoami/opt-in-wrong-case
     kind: HTTPRoute
     result: skip
-
   # --- Ingress is guarded identically ---
   - policy: restrict-homepage-service-groups
-    rule: declared-service-group
     resources:
       - whoami/ingress-undeclared-group
     kind: Ingress
     result: fail
+  - policy: restrict-homepage-service-groups
+    resources:
+      - whoami/ingress-declared-group
+    kind: Ingress
+    result: pass
+  - policy: restrict-homepage-service-groups
+    resources:
+      - whoami/ingress-not-opted-in
+    kind: Ingress
+    result: skip
