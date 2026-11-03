@@ -1,5 +1,23 @@
 # Prepare Longhorn V2 workers
 
+`inventory-storage-layout` adds read-only native block metadata to the storage-root
+observation for a fixed temporary worker. Confirm it with
+`inventory-longhorn-storage-layout-<selection>`. Two complete, bounded native volume
+status and physical-discovery collections must agree inside the unchanged node,
+hardware and boot bracket. Its schema-2 observation-only receipt reports sizes,
+phases, encryption properties and counts, while withholding device paths and
+identities. It grants no reset clearance and never treats a failed read as absence.
+The original root-only mode keeps its existing scope and schema.
+
+`inspect-host-memory` is a read-only diagnostic for a fixed permanent worker,
+confirmed with `inspect-longhorn-v2-host-memory-<worker>`. It reads only the native
+huge-page allocation and selected `/proc/meminfo` counters, bracketed by unchanged
+Kubernetes, storage, hardware and kernel-boot identity and the current reviewed
+source. Its observation-only receipt contains counters and commitments, never raw
+host text or private identities. An allocation shortfall is reported as observed;
+it grants no reset, reboot, restart or V2-activation clearance. Incomplete reads,
+changing allocation, identity changes and close failures produce no success receipt.
+
 The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
 platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCSI.
 
@@ -46,7 +64,8 @@ Dispatch only the merged workflow on `main`. Run `refresh-clients` promptly afte
 `talos/workers/enable-longhorn-v2.yaml` deploys. That configuration requests the pages;
 the refresh must prove the actual allocation before changing kubelet capacity. Until
 capacity is refreshed, kubelet can still count reserved pages as free memory, so an
-unrelated kubelet restart could reject Pods. Select `refresh-clients` with
+unrelated kubelet restart could reject Pods.
+Select `refresh-clients` with
 `refresh-longhorn-v2-clients`. It verifies the live host allocation and that each kernel module is usable, loaded or built in,
 restarts only kubelet where capacity is stale, and requires every worker to report
 2 GiB of 2 MiB huge pages. Containers and disks are preserved. Kubelet would reject

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	cosiresource "github.com/cosi-project/runtime/pkg/resource"
-	"github.com/cosi-project/runtime/pkg/state"
 	"github.com/devantler-tech/platform/internal/longhorninventory"
 	talos "github.com/siderolabs/talos/pkg/machinery/client"
 	"github.com/siderolabs/talos/pkg/machinery/resources/block"
@@ -15,7 +14,7 @@ import (
 
 type unusedTemporaryReader struct {
 	nativeReplicaReader
-	blocks                 state.CoreStateReader
+	blocks                 longhorninventory.BlockCollections
 	address, ephemeralUUID string
 }
 
