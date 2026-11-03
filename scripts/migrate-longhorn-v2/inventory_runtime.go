@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cosi-project/runtime/api/v1alpha1"
+
 	"github.com/devantler-tech/platform/internal/longhorninventory"
 	talos "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
@@ -158,7 +160,8 @@ func newInventoryReader(ctx context.Context, address string) (nativeReplicaReade
 	if err != nil {
 		return nil, nil, errInventory
 	}
-	return longhorninventory.Native{API: connection.MachineClient, Target: address}, connection.Close, nil
+	blocks := longhorninventory.BoundedBlocks{API: v1alpha1.NewStateClient(connection.Conn()), Target: address}
+	return longhorninventory.Native{API: connection.MachineClient, Target: address, Blocks: blocks}, connection.Close, nil
 }
 
 func runReplicaInventory(ctx context.Context, target, source, runID string) error {

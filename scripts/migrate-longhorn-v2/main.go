@@ -22,6 +22,8 @@ func main() {
 		authorization = authorizeHostMemory(os.Getenv, target)
 	case "inventory-storage-root":
 		authorization = authorizeStorageRoot(os.Getenv, target)
+	case "inventory-storage-layout":
+		authorization = authorizeStorageLayout(os.Getenv, target)
 	default:
 		authorization = authorizeRefresh(os.Getenv)
 	}
@@ -31,6 +33,13 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == "inventory-storage-layout" {
+		if err := runStorageLayoutInventory(ctx, target, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
+			fmt.Fprintln(os.Stderr, inventoryFailureMessage(err))
+			os.Exit(1)
+		}
+		return
+	}
 	if operation == "inspect-host-memory" {
 		if err := runHostMemory(ctx, target, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
 			fmt.Fprintln(os.Stderr, inventoryFailureMessage(err))

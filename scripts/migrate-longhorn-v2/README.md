@@ -1,5 +1,14 @@
 # Prepare Longhorn V2 workers
 
+`inventory-storage-layout` adds read-only native block metadata to the storage-root
+observation for a fixed temporary worker. Confirm it with
+`inventory-longhorn-storage-layout-<selection>`. Two complete, bounded native volume
+status and physical-discovery collections must agree inside the unchanged node,
+hardware and boot bracket. Its schema-2 observation-only receipt reports sizes,
+phases, encryption properties and counts, while withholding device paths and
+identities. It grants no reset clearance and never treats a failed read as absence.
+The original root-only mode keeps its existing scope and schema.
+
 `inspect-host-memory` is a read-only diagnostic for a fixed permanent worker,
 confirmed with `inspect-longhorn-v2-host-memory-<worker>`. It reads only the native
 huge-page allocation and selected `/proc/meminfo` counters, bracketed by unchanged
