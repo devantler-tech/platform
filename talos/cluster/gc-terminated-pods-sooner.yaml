@@ -1,3 +1,4 @@
+---
 # Terminated-pod garbage collection (kube-controller-manager PodGC).
 #
 # Kubernetes only reaps terminated pods (phase Succeeded/Failed whose owner

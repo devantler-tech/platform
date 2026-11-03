@@ -1,3 +1,4 @@
+---
 name: CD
 
 # Manual-only. Production deploys happen automatically in the CI merge queue
@@ -5,7 +6,7 @@ name: CD
 # direct-push-to-main case, which has no merge_group event to deploy. Run it
 # by hand from the Actions tab. (Dropped the 'v*' release-tag trigger — it
 # re-deployed what the merge queue had already shipped.)
-on:
+"on":
   workflow_dispatch:
     inputs:
       verify-wedding-backup-staging:

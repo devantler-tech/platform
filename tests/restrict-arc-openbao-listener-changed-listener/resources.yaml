@@ -1,3 +1,4 @@
+---
 # The listener in openbao with the listener with client certificates no longer disabled.
 apiVersion: v1
 kind: ConfigMap

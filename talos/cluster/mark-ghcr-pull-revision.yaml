@@ -1,3 +1,4 @@
+---
 # Non-secret rotation marker for the node-level GHCR pull credential.
 #
 # KSail redacts RegistryAuthConfig credentials when it fingerprints Talos

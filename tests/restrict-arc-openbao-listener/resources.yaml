@@ -1,3 +1,4 @@
+---
 # The audited listener, byte for byte as
 # k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml
 # ships it.
