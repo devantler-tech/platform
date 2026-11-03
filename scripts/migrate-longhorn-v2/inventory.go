@@ -78,6 +78,9 @@ func inventoryFailureMessage(err error) string {
 	return stageUnknown.Error()
 }
 
+// projectInventory validates the observed node, disk registrations and replica
+// bindings before committing their identities. Unregistered temporary nodes must
+// retain the reviewed pool identity and an explicitly empty, fenced storage view.
 func projectInventory(target string, node, storage object, replicas []object) (inventoryProjection, error) {
 	p := inventoryProjection{BootID: text(node, "status", "nodeInfo", "bootID"), StorageUID: text(storage, "metadata", "uid")}
 	if (!inventoryTarget.MatchString(target) && !inventoryTemporaryNode.MatchString(target)) || !inventoryBoot.MatchString(p.BootID) ||
