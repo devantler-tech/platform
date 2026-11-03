@@ -100,16 +100,19 @@ and annotations; they cannot force orphaning by removing that finalizer.
 The existing platform-owned `flux-system/wedding-app` pilot is an exact
 exception, not a wildcard namespace exemption.
 
-KRO 0.9.2 identifies children through ApplySet and `kro.run/instance-*` labels,
-not WebApp owner references. Child admission therefore checks their complete
-placement/identity and refuses updates that would adopt an unlabelled or
+KRO 0.9.4 identifies children through ApplySet and `kro.run/instance-*` labels,
+not WebApp owner references, and its apply path adopts an existing unlabelled
+object. Child admission therefore checks their complete placement/identity and
+refuses updates that would adopt an unlabelled or
 foreign-owned Deployment, Service or HTTPRoute. Non-controller writers must
 preserve reserved ownership labels. Controller updates may change provenance
 such as `kro.run/kro-version`, while instance/node/ApplySet identity remains fixed.
 Existing hostname, secret-store and
 network admission remain in force; KRO has no hostname bypass.
 
-KRO's pinned deletion path does not itself verify child ownership. Deletion
+KRO's pinned deletion path does not itself verify child ownership: it deletes every
+object carrying the parent's ApplySet membership label, with a UID precondition that
+only guards against a recreate between listing and deleting. Deletion
 admission additionally requires complete old child ownership, a read of the
 labelled parent's matching UID, and that parent's deletion timestamp. This
 prevents failed collision/rollback from deleting an unowned workload or another
