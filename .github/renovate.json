@@ -4,6 +4,7 @@
   "dependencyDashboard": false,
   "assigneesFromCodeOwners": true,
   "minimumReleaseAge": "7 days",
+  "postUpdateOptions": ["gomodTidy"],
   "flux": {
     "managerFilePatterns": ["/^k8s/.+\\.ya?ml$/"]
   },
