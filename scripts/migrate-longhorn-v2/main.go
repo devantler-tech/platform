@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// main admits explicit migration operations through their distinct confirmations
+// and protected workflow identities before constructing any production client.
 func main() {
 	operation := os.Getenv("LONGHORN_V2_OPERATION")
 	target := os.Getenv("LONGHORN_V2_NODE")

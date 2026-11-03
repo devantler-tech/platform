@@ -19,6 +19,8 @@ type hostMemoryReboot struct {
 	inspect               func(context.Context) (hostMemoryReport, error)
 }
 
+// authorizeHostReboot requires a separate confirmation for the fixed permanent
+// worker selection, then applies the shared protected-workflow admission gate.
 func authorizeHostReboot(getenv func(string) string, target string) error {
 	if !inventoryTarget.MatchString(target) || getenv("LONGHORN_V2_NODE") != target || getenv("LONGHORN_V2_OPERATION") != "reboot-host-for-hugepages" {
 		return errHostMemory
@@ -50,11 +52,15 @@ type hostDatabaseIdentity struct{ UID, SystemID string }
 
 var hostSystemID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
+// identity supplies the existing worker validator with immutable bindings; the
+// reboot record retains its own operation phases and storage-preservation proof.
 func (r hostRebootRecord) identity() journal {
 	return journal{Schema: 1, Target: r.Target, Source: r.Source, OwnerRun: r.OwnerRun, Phase: "draining", NodeUID: r.NodeUID, ProviderID: r.ProviderID,
 		MachineUUID: r.MachineUUID, LonghornUID: r.LonghornUID, EphemeralUUID: r.EphemeralUUID, OriginalDisks: r.OriginalDisks}
 }
 
+// validate rejects incomplete or out-of-profile records before their phase can authorize
+// an action, including incomplete original storage and database identities.
 func (r hostRebootRecord) validate(target string) error {
 	if r.Version != 1 || validateJournal(r.identity(), target) != nil || r.OriginalDiskUUID == "" || !inventoryBoot.MatchString(r.OriginalBootID) || r.OSImage == "" || r.Architecture != "amd64" || len(r.Databases) != 3 {
 		return errHostMemory
@@ -79,6 +85,8 @@ func (r hostRebootRecord) validate(target string) error {
 	return nil
 }
 
+// hostRegisteredDiskUUID accepts the single registered V1 filesystem disk.
+// Recording its identity separately detects replacement behind an unchanged path.
 func hostRegisteredDiskUUID(storage object) string {
 	disks, ok := value(storage, "spec", "disks").(object)
 	statuses, statusOK := value(storage, "status", "diskStatus").(object)
@@ -99,6 +107,8 @@ func hostRegisteredDiskUUID(storage object) string {
 
 func (h hostMemoryReboot) name() string { return "longhorn-v2-host-memory-" + h.target }
 
+// peersClear prevents a new disruption while another worker has an unfinished
+// request or has lost its recovery proof. Recovery of this worker stays possible.
 func (h hostMemoryReboot) peersClear(ctx context.Context, nodes []object) error {
 	byName, err := indexed(nodes)
 	if err != nil {
@@ -127,6 +137,8 @@ func (h hostMemoryReboot) peersClear(ctx context.Context, nodes []object) error 
 	return nil
 }
 
+// read accepts only the fixed journal object and a singular, validated record.
+// A malformed or mis-scoped response cannot supply a later patch destination.
 func (h hostMemoryReboot) read(ctx context.Context) (object, hostRebootRecord, error) {
 	cm, err := h.c.get(ctx, "configmap", "longhorn-system", h.name(), true)
 	if err != nil || cm == nil {
@@ -149,6 +161,8 @@ func (h hostMemoryReboot) read(ctx context.Context) (object, hostRebootRecord, e
 	return cm, r, nil
 }
 
+// write persists intent only for the current reviewed source and run. Existing
+// records retain the API object's UID and resource-version preconditions.
 func (h hostMemoryReboot) write(ctx context.Context, cm object, r hostRebootRecord) error {
 	if cm != nil && (text(cm, "metadata", "name") != h.name() || text(cm, "metadata", "namespace") != "longhorn-system") {
 		return errHostMemory
@@ -174,6 +188,8 @@ func (h hostMemoryReboot) write(ctx context.Context, cm object, r hostRebootReco
 	return err
 }
 
+// owned rebinds the complete journal and current main immediately before a
+// worker mutation, so an intervening takeover or state change holds the action.
 func (h hostMemoryReboot) owned(ctx context.Context, expected hostRebootRecord) (object, error) {
 	cm, actual, err := h.read(ctx)
 	if err != nil || cm == nil || !reflect.DeepEqual(expected, actual) || actual.OwnerRun != h.owner || actual.Source != h.source {
@@ -182,6 +198,8 @@ func (h hostMemoryReboot) owned(ctx context.Context, expected hostRebootRecord) 
 	return cm, sourceCurrent(ctx, h.c.run, h.source)
 }
 
+// databases requires every declared database cluster to be fully healthy and
+// preserves its cluster and system identities across the maintenance operation.
 func (h hostMemoryReboot) databases(ctx context.Context, expected map[string]hostDatabaseIdentity) (map[string]hostDatabaseIdentity, error) {
 	items, err := h.c.list(ctx, "clusters.postgresql.cnpg.io", "*")
 	if err != nil || len(items) != 3 {
@@ -204,6 +222,8 @@ func (h hostMemoryReboot) databases(ctx context.Context, expected map[string]hos
 	return result, nil
 }
 
+// healthy gates this pre-V2 operation on the full migration roster, complete V1
+// redundancy and database health. Every call collects a fresh API inventory.
 func (h hostMemoryReboot) healthy(ctx context.Context, expected map[string]hostDatabaseIdentity) (inventory, map[string]hostDatabaseIdentity, error) {
 	setting, err := h.c.get(ctx, "settings.longhorn.io", "longhorn-system", "v2-data-engine", false)
 	if err != nil || text(setting, "metadata", "name") != "v2-data-engine" || text(setting, "metadata", "namespace") != "longhorn-system" || text(setting, "value") != "false" {
@@ -225,6 +245,8 @@ func (h hostMemoryReboot) healthy(ctx context.Context, expected map[string]hostD
 	return s, databases, err
 }
 
+// targetState binds the live endpoint to the original hardware, registered disk
+// and encrypted filesystem. Only this operation's cordon may accompany recovery.
 func (h hostMemoryReboot) targetState(ctx context.Context, r hostRebootRecord) (object, string, error) {
 	n, err := h.c.get(ctx, "node", "", h.target, false)
 	if err != nil {
@@ -253,6 +275,8 @@ func (h hostMemoryReboot) targetState(ctx context.Context, r hostRebootRecord) (
 	return n, address, nil
 }
 
+// memory uses the native observer's unchanged API, hardware and boot bracket.
+// The injected inspection boundary lets flow tests exercise recovery deadlines.
 func (h hostMemoryReboot) memory(ctx context.Context) (hostMemoryReport, error) {
 	if h.inspect != nil {
 		return h.inspect(ctx)
@@ -261,6 +285,8 @@ func (h hostMemoryReboot) memory(ctx context.Context) (hostMemoryReport, error) 
 	return receipt.Report, err
 }
 
+// initialize records an unused allocation shortfall and original identities
+// before any cordon or eviction. A completed or busy allocation cannot start it.
 func (h hostMemoryReboot) initialize(ctx context.Context) (hostRebootRecord, error) {
 	s, databases, err := h.healthy(ctx, nil)
 	if err != nil {
@@ -301,6 +327,8 @@ func (h hostMemoryReboot) initialize(ctx context.Context) (hostRebootRecord, err
 	return r, h.write(ctx, nil, r)
 }
 
+// run coordinates one journaled reboot and proves recovery before releasing its
+// cordon. A saved reboot-requested phase resumes observation without redelivery.
 func (h hostMemoryReboot) run(ctx context.Context) error {
 	if !inventoryTarget.MatchString(h.target) {
 		return errHostMemory
