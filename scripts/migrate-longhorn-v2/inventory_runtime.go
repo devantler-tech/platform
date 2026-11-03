@@ -126,6 +126,9 @@ func newInventoryReader(ctx context.Context, address string) (nativeReplicaReade
 	return openInventoryReader(ctx, address, "")
 }
 
+// openInventoryReader opens a node-bound native client using the protected
+// workflow's memory-backed credentials and bounded block API. The unused-worker
+// profile additionally verifies its original partition before directory reads.
 func openInventoryReader(ctx context.Context, address, unusedEphemeralUUID string) (nativeReplicaReader, func() error, error) {
 	directory := os.Getenv("LONGHORN_V2_CREDENTIAL_DIR")
 	if !regexp.MustCompile(`^/dev/shm/longhorn-v2\.[A-Za-z0-9]+$`).MatchString(directory) || os.Getenv("TALOSCONFIG") != filepath.Join(directory, "talosconfig") {

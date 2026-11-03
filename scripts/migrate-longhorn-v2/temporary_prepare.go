@@ -16,6 +16,9 @@ type temporaryPreparation struct {
 	reader inventoryReaderFactory
 }
 
+// prepare advances the separately journaled unused-worker profile, recording reset
+// intent before its single request and accepting recovery only after native proof.
+// A resumed reset request observes recovery without issuing another reset.
 func (p *temporaryPreparation) prepare(ctx context.Context) error {
 	if err := p.beginUnused(ctx); err != nil {
 		return err
@@ -86,6 +89,9 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 	return nil
 }
 
+// unusedCapacity checks the fixed pool roster, reserved migration budget and
+// hugepage capacity, tolerating only this journal's own cordon during preparation.
+// Once pinned, every temporary pool member must retain the migration-owned pin.
 func (p temporaryPreparation) unusedCapacity(s inventory, pinned bool) error {
 	if err := verifyRebuildBudget(p.target, s); err != nil {
 		return err
@@ -121,6 +127,9 @@ func (p temporaryPreparation) unusedCapacity(s inventory, pinned bool) error {
 	return nil
 }
 
+// beginUnused binds the fixed selection to its original physical and storage
+// identities. New journals require a cleaned baseline and positive empty-storage
+// evidence; existing journals must pass profile-specific adoption checks.
 func (p *temporaryPreparation) beginUnused(ctx context.Context) error {
 	cm, _, err := p.readRecord(ctx)
 	if err != nil {
@@ -187,6 +196,9 @@ func (p *temporaryPreparation) beginUnused(ctx context.Context) error {
 	return p.claimRecord(ctx, p.j)
 }
 
+// observeUnused brackets complete native storage observations with current-source
+// and API identity checks, then commits the original encrypted partition and
+// cache-only parent directory evidence into the journal's digest.
 func (p temporaryPreparation) observeUnused(ctx context.Context, owned bool) (string, error) {
 	if err := sourceCurrent(ctx, p.c.run, p.source); err != nil {
 		return "", err
@@ -237,6 +249,8 @@ func unusedParentAbsent(report longhorninventory.StorageRootReport) bool {
 		!report.ReplicaEntryPresent && !report.ReplicaDirectoryPresent && !report.BackingImagesPresent && report.Directories == known
 }
 
+// protectUnusedCapacity claims scale-down protection for the complete temporary
+// pool through identity-bound patches and verifies the resulting pins afresh.
 func (p temporaryPreparation) protectUnusedCapacity(ctx context.Context) error {
 	s, err := p.c.snapshot(ctx)
 	if err != nil {
@@ -290,6 +304,9 @@ func (p temporaryPreparation) protectUnusedCapacity(ctx context.Context) error {
 	return p.unusedCapacity(current, true)
 }
 
+// resetUnused drains through normal eviction, repeats all evacuation and native
+// absence checks, and records durable intent before one EPHEMERAL-only reset.
+// A lost response leaves recovery to observation rather than request replay.
 func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 	n, address, err := p.node(ctx, true)
 	if err != nil {
@@ -338,6 +355,9 @@ func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 	return nil
 }
 
+// unusedPostState requires the original node identity with a new boot, a replaced
+// encrypted EPHEMERAL partition and the separately encrypted raw volume. It also
+// verifies advertised hugepages and that Longhorn storage remains unregistered.
 func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object, err error) {
 	n, address, err := p.node(ctx, true)
 	if err != nil {
@@ -393,6 +413,8 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	return n, nil
 }
 
+// unusedStorageFenced accepts only an empty Longhorn node whose scheduling is
+// disabled, eviction is requested and storage enablement has not been applied.
 func unusedStorageFenced(lh object) bool {
 	disks, ok := value(lh, "spec", "disks").(map[string]any)
 	diskStatus, statusOK := value(lh, "status", "diskStatus").(map[string]any)

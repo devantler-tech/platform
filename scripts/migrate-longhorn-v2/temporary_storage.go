@@ -28,6 +28,8 @@ func (r unusedTemporaryReader) ListReplicas(ctx context.Context) (longhorninvent
 	return r.nativeReplicaReader.ListReplicas(ctx)
 }
 
+// ListStorageRoot verifies the original encrypted partition and absence of any
+// allocated raw storage before reading the complete Longhorn parent directory.
 func (r unusedTemporaryReader) ListStorageRoot(ctx context.Context) (longhorninventory.Listing, error) {
 	if err := r.verifyPartition(ctx); err != nil {
 		return longhorninventory.Listing{}, err
@@ -39,6 +41,8 @@ func (r unusedTemporaryReader) ListStorageRoot(ctx context.Context) (longhorninv
 	return reader.ListStorageRoot(ctx)
 }
 
+// ListBlockLayout preserves the native reader's complete typed layout report and
+// refuses a reader that cannot provide that observation capability.
 func (r unusedTemporaryReader) ListBlockLayout(ctx context.Context) (longhorninventory.BlockLayoutReport, error) {
 	reader, ok := r.nativeReplicaReader.(nativeBlockLayoutReader)
 	if !ok {
@@ -47,6 +51,8 @@ func (r unusedTemporaryReader) ListBlockLayout(ctx context.Context) (longhorninv
 	return reader.ListBlockLayout(ctx)
 }
 
+// verifyPartition reads both bounded native block collections on the fixed node
+// under one deadline; partial results or a changed partition withhold clearance.
 func (r unusedTemporaryReader) verifyPartition(ctx context.Context) error {
 	address, addressErr := netip.ParseAddr(r.address)
 	if ctx.Err() != nil || r.blocks == nil || r.nativeReplicaReader == nil || r.ephemeralUUID == "" || addressErr != nil || address.String() != r.address || !netip.MustParsePrefix("10.0.0.0/16").Contains(address) {
@@ -65,7 +71,9 @@ func (r unusedTemporaryReader) verifyPartition(ctx context.Context) error {
 	return nil
 }
 
-// Check the complete native block-resource inventory, never a CLI error string.
+// verifyUnusedTemporaryPartition requires the original ready encrypted partition
+// and complete physical absence of raw or user storage. A failed raw request is
+// unallocated only if its previous phase and every allocation field prove that.
 func verifyUnusedTemporaryPartition(statuses, discovered cosiresource.List, ephemeralUUID string) error {
 	if ephemeralUUID == "" || len(statuses.Items) == 0 || len(statuses.Items) > 128 || len(discovered.Items) == 0 || len(discovered.Items) > 512 {
 		return errInventory

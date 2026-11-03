@@ -14,6 +14,9 @@ func resolveTemporaryInventoryTarget(selection string, nodes []object, pools map
 	return resolveTemporarySelection(selection, nodes, pools, nil)
 }
 
+// resolveTemporarySelection binds an ordinal to the complete reviewed pool roster.
+// Recovery may relax readiness only for the journaled original physical member;
+// it never substitutes another node or grants permission for another reset.
 func resolveTemporarySelection(selection string, nodes []object, pools map[string]migrationPool, postReset *journal) (string, string, error) {
 	var role string
 	var ordinal int

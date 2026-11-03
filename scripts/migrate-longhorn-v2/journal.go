@@ -27,6 +27,9 @@ type journal struct {
 	RawVolumeAbsent    bool   `json:"rawVolumeAbsent,omitempty"`
 }
 
+// validateJournal requires complete original identities and a known procedure
+// phase. Its disjoint schemas keep permanent V1-disk records separate from
+// temporary-worker records carrying positive empty-storage evidence.
 func validateJournal(j journal, target string) error {
 	if j.Target != target ||
 		!regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(j.Source) || !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(j.OwnerRun) ||
@@ -71,6 +74,8 @@ type preparation struct {
 	temporarySelection string
 }
 
+// validateRecord binds a structurally valid journal to the explicitly selected
+// preparation profile and, for temporary workers, its fixed journal name.
 func (p preparation) validateRecord(j journal) error {
 	if err := validateJournal(j, p.target); err != nil {
 		return err
@@ -81,6 +86,8 @@ func (p preparation) validateRecord(j journal) error {
 	return nil
 }
 
+// readRecord decodes exactly one strict journal and validates its original
+// identities against the selected preparation profile before it can be used.
 func (p preparation) readRecord(ctx context.Context) (object, journal, error) {
 	cm, err := p.c.get(ctx, "configmap", "longhorn-system", p.name, true)
 	if err != nil || cm == nil {
@@ -106,6 +113,9 @@ func reviewedWorkflowPath(path string) bool {
 	return path == workflow || path == workflow+"@main" || path == workflow+"@refs/heads/main"
 }
 
+// claimRecord creates a validated journal on current main or adopts a former
+// owner only after its reviewed first-attempt workflow is proven terminal.
+// Adoption preserves the recorded phase and original storage identities.
 func (p *preparation) claimRecord(ctx context.Context, initial journal) error {
 	cm, j, err := p.readRecord(ctx)
 	if err != nil {

@@ -1,5 +1,7 @@
 package main
 
+// resolveTemporaryResetRecovery selects only the original journaled pool member
+// after durable reset intent, allowing observation while that member recovers.
 func resolveTemporaryResetRecovery(selection string, nodes []object, pools map[string]migrationPool, record journal) (string, error) {
 	if record.Schema != 2 || record.Phase != "reset-requested" || record.TemporarySelection != selection || validateJournal(record, record.Target) != nil {
 		return "", errInventory
