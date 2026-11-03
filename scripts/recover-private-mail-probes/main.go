@@ -132,23 +132,41 @@ type applicationGate struct {
 type checks struct{ Startup, Ready, Live *probe }
 
 func loadChecks(b []byte) (checks, error) {
-	var err error
-	var raw map[string]any
-	if err = yaml.Unmarshal(b, &raw); err != nil {
+	var operations []struct {
+		Op    string `yaml:"op"`
+		Path  string `yaml:"path"`
+		Value any    `yaml:"value"`
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(b))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&operations); err != nil {
 		return checks{}, errors.New("invalid reviewed probe definition")
 	}
-	b, err = json.Marshal(raw)
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return checks{}, errors.New("reviewed probe definition must be one document")
+	}
+	if len(operations) != 5 {
+		return checks{}, errNotEligible
+	}
+	for index, guard := range [][2]string{{"/apiVersion", "apps/v1"}, {"/kind", "StatefulSet"}, {"/metadata/name", "private-mail"}, {"/metadata/namespace", "private-mail"}} {
+		operation := operations[index]
+		if operation.Op != "test" || operation.Path != guard[0] || operation.Value != guard[1] {
+			return checks{}, errNotEligible
+		}
+	}
+	if operations[4].Op != "replace" || operations[4].Path != "/spec/template/spec" {
+		return checks{}, errNotEligible
+	}
+	b, err := json.Marshal(operations[4].Value)
 	if err != nil {
 		return checks{}, err
 	}
-	var set statefulSet
-	if err = json.Unmarshal(b, &set); err != nil {
+	var spec podSpec
+	if err = json.Unmarshal(b, &spec); err != nil {
 		return checks{}, err
 	}
-	if set.Kind != "StatefulSet" || set.Metadata.Name != "private-mail" {
-		return checks{}, errNotEligible
-	}
-	c, ok := serving(set.Spec.Template.Spec)
+	c, ok := serving(spec)
 	if !ok {
 		return checks{}, errNotEligible
 	}
