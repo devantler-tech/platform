@@ -15,8 +15,21 @@ data engine setting is on, because Longhorn refuses a block disk otherwise. Acti
 completed, cleaned baseline from a terminal main workflow and matching permanent hardware and OS
 identities, and that baseline does not exist yet, so a dispatch today holds with no write.
 
-Dispatch only the merged workflow on `main`. Select `refresh-clients` with
-`refresh-longhorn-v2-clients`. It verifies the live host allocation and modules,
+When a replica-directory observation holds, `inventory-storage-root` inspects the fixed
+parent `/var/lib/longhorn` directory. Use the same fixed node selections with the matching
+confirmation `inventory-longhorn-storage-root-<selection>`. It brackets two complete native
+metadata listings with the same node, hardware, boot, API-inventory and source checks.
+The receipt reports counts, known directory-presence flags and a metadata digest; it grants
+no reset clearance. A file named `replicas` remains distinguishable from a directory with that
+name. Closed native failure categories identify transport, metadata or entry-validation holds
+without printing provider errors, file names or file contents. A failed replica listing never
+becomes an empty listing, and parent observations do not establish historical recoverability.
+
+Dispatch only the merged workflow on `main`. Run `refresh-clients` promptly after
+`talos/workers/enable-longhorn-v2.yaml` deploys: the hosts then hold the pages, but kubelet
+still counts them as free memory, so an unrelated kubelet restart could reject Pods.
+Select `refresh-clients` with
+`refresh-longhorn-v2-clients`. It verifies the live host allocation and that each kernel module is usable, loaded or built in,
 restarts only kubelet where capacity is stale, and requires every worker to report
 2 GiB of 2 MiB huge pages. Containers and disks are preserved. Kubelet would reject
 any Pod that no longer fits once huge pages count, so when a permanent worker's Pods
@@ -166,3 +179,16 @@ snapshot, backup, proof of historical recoverability or permission to wipe. An
 unmatched directory must be investigated and preserved before any rebuild. The
 existing preparation operation still requires its separate preservation and
 recovery gates; this inventory operation does not authorize it.
+
+To inspect unused temporary capacity, select `temporary-v1-1`,
+`temporary-v1-2` or `temporary-v2-1` with the same `inventory-replicas`
+operation and `inventory-longhorn-replicas-<selection>` confirmation. These
+are ordinal selections from the sorted, complete pool roster in the reviewed
+`ksail.prod.yaml`, not hostnames. Both observations must retain every pool
+member's identity and boot state. A changed roster holds the observation.
+
+Temporary storage must still be fenced, unregistered and without placed
+replicas. Its native listing must be empty and accounted for; unexpected
+directories hold the observation. This can inform a later reviewed decision
+to reuse capacity for V2. It changes no disk, pool, host setting or volume,
+and does not authorize preparing a temporary worker through `prepare-worker`.

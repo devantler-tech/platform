@@ -60,8 +60,8 @@ func TestHugepageRefreshRestartsOnlyKubeletAndRequiresPositiveReadback(t *testin
 					if reflect.DeepEqual(args, []string{"--nodes=10.0.99.4", "read", "/proc/sys/vm/nr_hugepages"}) {
 						return []byte("1024\n"), nil
 					}
-					if reflect.DeepEqual(args, []string{"--nodes=10.0.99.4", "read", "/proc/modules"}) {
-						return []byte("nvme_tcp 1 0 - Live 0\nvfio_pci 1 0 - Live 0\nuio_pci_generic 1 0 - Live 0\n"), nil
+					if args[1] == "ls" && strings.HasPrefix(args[2], "/sys/module/") {
+						return nil, nil
 					}
 					if !reflect.DeepEqual(args, []string{"--nodes=10.0.99.4", "service", "kubelet", "restart"}) {
 						t.Fatalf("refresh exceeded kubelet-only scope: %v", args)
@@ -171,8 +171,8 @@ func TestRefreshDoesNotRestartKubeletWhenRequestsWouldNotFit(t *testing.T) {
 			if args[1] == "read" && args[2] == "/proc/sys/vm/nr_hugepages" {
 				return []byte("1024\n"), nil
 			}
-			if args[1] == "read" {
-				return []byte("nvme_tcp 1 0 - Live 0\nvfio_pci 1 0 - Live 0\nuio_pci_generic 1 0 - Live 0\n"), nil
+			if args[1] == "ls" {
+				return nil, nil
 			}
 			t.Fatalf("kubelet was restarted over a request that does not fit: %v", args)
 		}
@@ -243,5 +243,45 @@ func TestRefreshJudgesThePodsARestartKept(t *testing.T) {
 	}
 	if err := verifyRestartKeptPods("prod-worker-1", before[:1], nil); err == nil {
 		t.Fatal("an empty inventory passed")
+	}
+}
+
+// /proc/modules lists no built-in module, and nvme_tcp is built into the Talos kernel,
+// so availability is read from /sys/module, which holds both kinds. Absence holds the
+// refresh before any Pod moves or kubelet restarts.
+func TestHugepageRefreshHoldsUntilEveryV2ModuleIsAvailable(t *testing.T) {
+	for _, missing := range []string{"nvme_tcp", "vfio_pci", "uio_pci_generic"} {
+		t.Run(missing, func(t *testing.T) {
+			n := refreshWorker()
+			n["status"].(object)["capacity"] = object{"hugepages-2Mi": "0"}
+			n["status"].(object)["allocatable"] = object{"hugepages-2Mi": "0", "memory": "14980Mi"}
+			run := func(_ context.Context, _ []byte, program string, args ...string) ([]byte, error) {
+				switch program {
+				case "git":
+					return []byte(strings.Repeat("1", 40) + "\trefs/heads/main\n"), nil
+				case "kubectl":
+					return json.Marshal(n)
+				case "talosctl":
+					if len(args) == 5 && args[2] == "systeminformation" {
+						return json.Marshal(object{"metadata": object{"id": "systeminformation", "namespace": "hardware"}, "spec": object{"uuid": "machine-uuid"}})
+					}
+					if args[1] == "read" && args[2] == "/proc/sys/vm/nr_hugepages" {
+						return []byte("1024\n"), nil
+					}
+					if args[1] == "ls" && args[2] == "/sys/module/"+missing {
+						return nil, errors.New("exit status 1")
+					}
+					if args[1] == "ls" {
+						return nil, nil
+					}
+					t.Fatalf("refresh went past the module check: %v", args)
+				}
+				return nil, nil
+			}
+			err := refreshHugepages(context.Background(), client{run: run, context: "admin@prod"}, strings.Repeat("1", 40), n, []object{podOnWorker(text(n, "metadata", "name"), "1Gi")})
+			if err == nil || !strings.Contains(err.Error(), missing) {
+				t.Fatalf("refresh did not hold on %s: %v", missing, err)
+			}
+		})
 	}
 }

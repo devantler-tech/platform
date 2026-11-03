@@ -60,7 +60,7 @@ var controlPlaneName = regexp.MustCompile(`^prod-control-plane-[1-9][0-9]*$`)
 
 func qualify(servers []server, nodes []node, requireV2 bool) error {
 	if len(servers) != len(nodes) || len(nodes) < 8 || len(nodes) > 9 {
-		return errors.New("provider and Kubernetes inventories must contain only the eight or nine migration nodes")
+		return fmt.Errorf("inventory count gate failed: provider_servers=%d kubernetes_nodes=%d expected_equal=true permitted_nodes=8..9", len(servers), len(nodes))
 	}
 	byID := map[int64]server{}
 	var network int64

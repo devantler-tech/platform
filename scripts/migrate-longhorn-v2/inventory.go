@@ -22,6 +22,8 @@ type inventoryProjection struct {
 var errInventory = errors.New("replica inventory identity, placement or completeness is unproven")
 var inventoryBoot = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var inventoryTarget = regexp.MustCompile(`^prod-worker-[123]$`)
+var inventoryTemporaryNode = regexp.MustCompile(`^autoscale-longhorn-(v[12])-[0-9a-f]{16}$`)
+var inventoryTemporarySelection = regexp.MustCompile(`^temporary-(v1-[12]|v2-1)$`)
 
 type inventoryStage uint8
 
@@ -64,14 +66,18 @@ func (stage inventoryStage) Unwrap() error { return errInventory }
 func inventoryFailureMessage(err error) string {
 	var stage inventoryStage
 	if errors.As(err, &stage) {
-		return stage.Error()
+		message := stage.Error()
+		if code := longhorninventory.FailureCode(err); code != "unknown" {
+			message += " Native diagnostic=" + code + "."
+		}
+		return message
 	}
 	return stageUnknown.Error()
 }
 
 func projectInventory(target string, node, storage object, replicas []object) (inventoryProjection, error) {
 	p := inventoryProjection{BootID: text(node, "status", "nodeInfo", "bootID")}
-	if !inventoryTarget.MatchString(target) || !inventoryBoot.MatchString(p.BootID) ||
+	if (!inventoryTarget.MatchString(target) && !inventoryTemporaryNode.MatchString(target)) || !inventoryBoot.MatchString(p.BootID) ||
 		text(node, "metadata", "uid") == "" || text(node, "metadata", "resourceVersion") == "" ||
 		text(node, "spec", "providerID") == "" || text(node, "status", "nodeInfo", "systemUUID") == "" ||
 		text(storage, "metadata", "name") != target || text(storage, "metadata", "uid") == "" || text(storage, "metadata", "resourceVersion") == "" || len(replicas) > longhorninventory.MaxEntries {
@@ -87,6 +93,13 @@ func projectInventory(target string, node, storage object, replicas []object) (i
 	statuses, statusOK := value(storage, "status", "diskStatus").(map[string]any)
 	if !ok || !statusOK || len(disks) > 16 || len(statuses) > 16 {
 		return inventoryProjection{}, errInventory
+	}
+	if match := inventoryTemporaryNode.FindStringSubmatch(target); match != nil {
+		pool := migrationPool{name: "autoscale-longhorn-" + match[1], role: match[1], serverType: "cpx42"}
+		if verifyMigrationNode(node, pool) != nil || value(storage, "spec", "allowScheduling") != false ||
+			value(storage, "spec", "evictionRequested") != true || text(storage, "metadata", "labels", migrationEnabledLabel) != "" || len(disks) != 0 || len(statuses) != 0 {
+			return inventoryProjection{}, errInventory
+		}
 	}
 	diskID := ""
 	bindings := object{}
@@ -175,8 +188,8 @@ func decodeInventoryCollection(data []byte, apiVersion, kind string) ([]object, 
 }
 
 func authorizeInventory(getenv func(string) string, target string) error {
-	if !inventoryTarget.MatchString(target) || getenv("LONGHORN_V2_NODE") != target || getenv("LONGHORN_V2_OPERATION") != "inventory-replicas" {
-		return errors.New("the explicit permanent-worker inventory operation is required")
+	if (!inventoryTarget.MatchString(target) && !inventoryTemporarySelection.MatchString(target)) || getenv("LONGHORN_V2_NODE") != target || getenv("LONGHORN_V2_OPERATION") != "inventory-replicas" {
+		return errors.New("the explicit reviewed worker inventory selection is required")
 	}
 	return authorizeWorkflow(getenv, "inventory-longhorn-replicas-"+target)
 }

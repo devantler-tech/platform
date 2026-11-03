@@ -49,7 +49,7 @@ func TestBoundObservationDiscardsChangedOrIncompleteBindings(t *testing.T) {
 				}
 				return
 			}
-			if err != errReadHeld || result.Snapshots != 0 || result.Digest != "" || len(result.entries) != 0 {
+			if !errors.Is(err, errReadHeld) || result.Snapshots != 0 || result.Digest != "" || len(result.entries) != 0 {
 				t.Fatal("partial result or provider error escaped")
 			}
 			if mode == "wrong-before" && observed != 0 {

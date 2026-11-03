@@ -163,6 +163,16 @@ func newInventoryReader(ctx context.Context, address string) (nativeReplicaReade
 
 func runReplicaInventory(ctx context.Context, target, source, runID string) error {
 	c := client{run: inventoryReadCommand, context: "admin@prod"}
+	if inventoryTemporarySelection.MatchString(target) {
+		config, err := os.ReadFile("ksail.prod.yaml")
+		if err != nil {
+			return stageProjectionBefore
+		}
+		c.inventoryPools, err = configuredMigrationPools(config)
+		if err != nil {
+			return stageProjectionBefore
+		}
+	}
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return stageSourceBefore
 	}
