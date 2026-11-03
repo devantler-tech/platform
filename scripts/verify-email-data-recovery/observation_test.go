@@ -111,6 +111,12 @@ func TestObservationCommandRefusesForeignDispatchBeforeAccess(t *testing.T) {
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestObservationCommandRefusesForeignDispatchBeforeAccess$")
 	cmd.Env = []string{"EMAIL_OBSERVATION_CHILD=1", "PATH=/nonexistent"}
+	// A coverage run exports GOCOVERDIR. Without it the instrumented child
+	// warns on stderr at exit, which this exact-output check would read as
+	// leaked output; forwarding it keeps the check exact and records coverage.
+	if dir, ok := os.LookupEnv("GOCOVERDIR"); ok {
+		cmd.Env = append(cmd.Env, "GOCOVERDIR="+dir)
+	}
 	output, err := cmd.CombinedOutput()
 	exit, ok := err.(*exec.ExitError)
 	if !ok || exit.ExitCode() != 2 || string(output) != "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=dispatch\n" {
