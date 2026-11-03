@@ -83,7 +83,14 @@ ksail cluster list     # existing Talos clusters
 
 ## Validation
 
-The repository has static manifest checks, Go tests and linters, and MegaLinter. **Never run a cluster for maintenance.** For Go changes, run the affected packages' tests from the repository root (for example, `go test ./scripts/analyze-cri-logs`) and the relevant offline script regressions. The unconditional required `validate-go-regressions` job in [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) checks every tracked module with `bash scripts/check-go-modules-tidy.sh` before running the complete root-module Go suite. Its offline controls are `bash scripts/tests/test-go-modules-tidy.sh`. The guard leaves module files unchanged and names the module needing `go mod tidy`; it also refuses failed or empty discovery. The organization Go workflow's language selector does not enroll this primarily Shell repository. MegaLinter's scope and dispositions live in [`.mega-linter.yml`](.mega-linter.yml). For manifest changes, validate with:
+The repository has static manifest checks, Go tests and linters, and MegaLinter. **Never run a cluster for maintenance.** For Go changes, run the affected packages' tests from the repository root (for example, `go test ./scripts/analyze-cri-logs`) and the relevant offline script regressions. The unconditional required `validate-go-regressions` job in [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) checks every tracked module with `bash scripts/check-go-modules-tidy.sh` before running the complete root-module Go suite. Its offline controls are `bash scripts/tests/test-go-modules-tidy.sh`. The guard leaves module files unchanged and names the module needing `go mod tidy`; it also refuses failed or empty discovery. Resolve organization-required Go validation from the live effective rules: applicability can change with GitHub's language classification, and a repository-owned green check does not replace a missing required workflow. MegaLinter's scope and dispositions live in [`.mega-linter.yml`](.mega-linter.yml). For manifest changes, validate with:
+
+Complete Go validation uses two fixed, isolated matrix partitions. They run
+every compiled credential-refresh test, example and fuzz seed exactly once,
+and every other root package once. Both results must succeed before production
+or required CI can pass. Run `bash scripts/tests/test-run-go-regressions.sh` for
+routing and failure controls; `bash scripts/run-go-regressions.sh all` is the
+unpartitioned diagnostic path with the same workers and per-package deadline.
 
 ```bash
 # Preferred when KSail is installed: schema-aware validation with Flux variable

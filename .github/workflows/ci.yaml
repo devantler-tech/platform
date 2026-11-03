@@ -63,8 +63,13 @@ jobs:
   # Full suites produce no path outputs. Run them independently, but require
   # their success before production access and the final merge verdict.
   validate-go-regressions:
-    name: 🧪 Validate Complete Go Regressions
+    name: 🧪 Validate Complete Go Regressions (${{ matrix.suite }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        suite: [bridge-0, bridge-1]
     permissions:
       contents: read
     steps:
@@ -88,6 +93,12 @@ jobs:
 
       - name: 🧹 Verify every tracked Go module is tidy
         run: bash scripts/check-go-modules-tidy.sh
+
+      - name: 🔍 Lint complete regression routing
+        run: shellcheck scripts/run-go-regressions.sh scripts/tests/test-run-go-regressions.sh
+
+      - name: 🧪 Exercise complete regression routing offline
+        run: bash scripts/tests/test-run-go-regressions.sh
 
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5
@@ -114,11 +125,14 @@ jobs:
       # evicts an unrelated PR (#4893). 20 minutes keeps the slowest measured run
       # under half the bound. Resize it only from fresh hosted timings, never to
       # hide a hung test.
-      # Bound already parallel-safe cases to eight slots: the complete
-      # credential-bridge suite improved from 407s to 245s at four CPUs,
-      # preserving the same 582 passing cases and every deadline.
+      # Both isolated partitions retain eight test workers and every deadline.
+      # They discover the complete package and compiled test inventories;
+      # together they run each bridge test and every other package exactly once.
+      # The matrix result remains required before production and merge.
       - name: 🧪 Validate the complete Go helper regression suite
-        run: go test -parallel 8 -timeout 20m ./...
+        env:
+          PARTITION: ${{ matrix.suite }}
+        run: bash scripts/run-go-regressions.sh "$PARTITION"
 
   changes:
     name: 🔍 Detect Changes

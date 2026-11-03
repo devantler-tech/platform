@@ -23,6 +23,23 @@ guard result. Making independent guards depend on repository guards and complete
 Go regressions is the serial diagnostic control; their commands and inputs stay identical.
 Regressions that share one shell environment remain in the same step.
 
+The complete root Go suite uses two fixed, isolated `validate-go-regressions`
+partitions with fail-fast disabled and a maximum of two standard hosted runners.
+Both discover the same compiled credential-refresh test inventory. Alternating
+top-level identities assigns every test, example and fuzz seed to exactly one
+partition; Go retains all subtests of each selected identity. Partition zero also
+runs every other package from the complete root package inventory, without a test
+filter. Discovery errors, missing packages, empty or duplicate inventories and
+child failures fail the job. Both matrix results remain prerequisites for the
+required aggregate and production deployment.
+
+`bash scripts/run-go-regressions.sh all` retains the unpartitioned diagnostic
+command. Every execution keeps eight test workers and the explicit 20-minute
+per-package deadline. No production ordering or deployment gate changes. Local
+partition routing is not a hosted throughput measurement: compare complete
+pre-deployment execution, runner waiting and occupied runner time under #5840
+before claiming that an additional runner allocation improves the queue.
+
 Move the independent OpenBao standby, Crossplane egress, native-mail, Kyverno
 review-admission, unscanned-namespace, publisher-pin and Coroot application-health
 regressions out of the serial manifest job into one required PR matrix. Preserve

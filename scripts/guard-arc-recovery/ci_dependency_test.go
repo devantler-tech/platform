@@ -30,7 +30,7 @@ func nativeKubectlDependency(steps, authorization []nativeCIStep) error {
 	}
 	installed, native := -1, -1
 	for index, step := range steps {
-		if strings.TrimSpace(step.Run) == "go test -parallel 8 -timeout 20m ./..." {
+		if strings.TrimSpace(step.Run) == `bash scripts/run-go-regressions.sh "$PARTITION"` {
 			native = index
 		}
 		if step.Env["KUBECTL_VERSION"] != approved["KUBECTL_VERSION"] || step.Env["KUBECTL_SHA256"] != approved["KUBECTL_SHA256"] {
