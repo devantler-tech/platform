@@ -11,6 +11,25 @@ import (
 // main admits explicit migration operations through their distinct confirmations
 // and protected workflow identities before constructing any production client.
 func main() {
+	if len(os.Args) > 1 {
+		if len(os.Args) != 3 || (os.Args[1] != "--render-canary" && os.Args[1] != "--render-csi-canary") {
+			fmt.Fprintln(os.Stderr, "Only the explicit offline canary rendering arguments are supported.")
+			os.Exit(1)
+		}
+		render := canaryResources
+		if os.Args[1] == "--render-csi-canary" {
+			render = csiCanaryResources
+		}
+		assets, err := render(os.Args[2])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err = json.NewEncoder(os.Stdout).Encode(object{"apiVersion": "v1", "kind": "List", "items": assets}); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	operation := os.Getenv("LONGHORN_V2_OPERATION")
 	target := os.Getenv("LONGHORN_V2_NODE")
 	var authorization error
@@ -21,6 +40,10 @@ func main() {
 		authorization = authorizeTemporaryPreparation(os.Getenv, target)
 	case "benchmark-v1", "benchmark-v2":
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
+	case "canary-v2", "canary-csi-v2":
+		authorization = authorizeCanary(os.Getenv)
+	case "register-temporary-v2-storage":
+		authorization = authorizeTemporaryActivation(os.Getenv)
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":
@@ -85,6 +108,27 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == "canary-v2" || operation == "canary-csi-v2" {
+		transport := "filesystem"
+		if operation == "canary-csi-v2" {
+			transport = "csi"
+		}
+		if err = runCanaryWithTransport(ctx, client{run: execute, context: "admin@prod", inventoryPools: pools}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), pools, transport); err != nil {
+			fmt.Fprintln(os.Stderr, "V2 recovery canary held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve the canary journal and scratch resources; no application cutover is authorized.")
+			os.Exit(1)
+		}
+		return
+	}
+	if operation == "register-temporary-v2-storage" {
+		activation := temporaryV2Activation{c: client{run: execute, context: "admin@prod", inventoryPools: pools}, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}
+		if err = activation.run(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "Temporary V2 registration held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve its identity journal and any partial registration for explicit recovery.")
+			os.Exit(1)
+		}
+		return
 	}
 	if operation == "prepare-unused-temporary-worker" {
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}

@@ -45,3 +45,16 @@ func authorizeBenchmark(getenv func(string) string, phase string) error {
 	}
 	return authorizeWorkflow(getenv, "benchmark-longhorn-storage")
 }
+
+// authorizeCanary keeps filesystem and CSI data movement behind separate
+// confirmations in the same first-attempt protected main workflow.
+func authorizeCanary(getenv func(string) string) error {
+	switch getenv("LONGHORN_V2_OPERATION") {
+	case "canary-v2":
+		return authorizeWorkflow(getenv, "verify-longhorn-v2-restore")
+	case "canary-csi-v2":
+		return authorizeWorkflow(getenv, "verify-longhorn-v2-csi-restore")
+	default:
+		return errors.New("the explicit V2 recovery canary operation is required")
+	}
+}

@@ -15,10 +15,10 @@
 #
 # This restores ONLY the CPU limit and deliberately keeps memory unset, so the
 # OOM-cascade safeguard is preserved:
-#   * default.cpu "2" is generous and compressible — historically longhorn ran
-#     fine under the old 500m CPU cap (the incident was memory, never CPU), so a
-#     4x-higher ceiling cannot throttle a rebuild into failure; a CPU limit only
-#     slows, it never OOMKills, so it cannot trigger the IM-restart cascade.
+#   * default.cpu "4" leaves management and network work headroom above V2's
+#     two polling reactors. Longhorn sets the CPU request separately; this
+#     changes its ceiling. Recovery acceptance checks the admitted request and
+#     limit before registering disks or creating a disposable probe.
 #   * NO default.memory — this is the entire point of the longhorn exclusion and
 #     must stay unset (instance-managers must be free to burst memory during a
 #     rebuild).
@@ -33,7 +33,7 @@ spec:
   limits:
     - type: Container
       default:
-        cpu: "2"
+        cpu: "4"
       defaultRequest:
         cpu: 15m
         memory: 128Mi

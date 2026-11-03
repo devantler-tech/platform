@@ -56,13 +56,69 @@ may adopt it only after the previous run has ended. This operation enables no V2
 storage and removes no iSCSI support.
 
 The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
-platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCSI.
+platform#5582. Its recovery probes use disposable claims; application cutover,
+V1 retirement and iSCSI removal have separate acceptance gates.
 
 This tool lands in stages (platform#5655). It includes `refresh-clients`, `prepare-worker`,
 `prepare-unused-temporary-worker`, read-only replica inventories and the benchmarks.
 `refresh-clients` holds until the fixed migration workers are Ready and the host
-huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
-capacity follows in its own change.
+huge-page settings are loaded. Host recovery and a cleaned V1 baseline precede
+temporary-disk preparation. The V2 activation change must follow those completed
+operations, rather than their source PRs alone.
+
+## Temporary V2 activation and disposable recovery proof
+
+The activation manifests retain V1 and the existing default StorageClass, enable
+V2, and add the opt-in `longhorn-v2` Retain class. Eight-CPU workers reserve two
+cores for polling SPDK reactors with mask `0x3`, CPU isolation, and 2048 MiB of
+huge pages. The CPU-only LimitRange rises to four cores so management and network
+work have headroom above those reactors; it adds no memory limit. The reviewed
+Longhorn 1.13.0 instance-manager image and the admitted client resources and
+arguments must match before registration. Enabling the setting proves neither
+raw-disk readiness nor application recovery.
+
+After both temporary V1 workers have completed their independently confirmed
+raw-layout preparation, select `register-temporary-v2-storage` and confirm
+`register-longhorn-v2-temporary-storage`. This operation always selects all three
+fixed temporary pool members. It requires intact original V1 replicas, healthy
+database quorums, the cleaned baseline, reviewed storage capacity, no competing
+maintenance, and ready V2 clients on all six workers before its first write.
+
+The journal `longhorn-v2-temporary-activation` binds each temporary selection to
+the node, provider, hardware, boot, encrypted EPHEMERAL and raw GPT partition
+identities. Complete native reads bracket the partition observations. Each
+conditional Longhorn Node update registers only the canonical raw disk and adds
+the journal UID as its ownership annotation. Matching unowned disks are refused.
+An uncertain response stops the run. A new first-attempt main dispatch may resume
+an owned partial registration only after the previous workflow is terminal, and
+it revalidates all three native bindings and every remaining prerequisite.
+Completion requires three independent ready raw disks and all qualified clients;
+it grants no application cutover or original-disk reset authority.
+
+Run `canary-v2` with `verify-longhorn-v2-restore` for filesystem backup recovery,
+then `canary-csi-v2` with `verify-longhorn-v2-csi-restore` for CSI snapshot data
+movement. Each has a distinct journal and confirmation. Both first revalidate the
+completed activation against its current native identities and require its
+owning workflow to be terminal. The probes create their own restricted namespaces,
+classes and claims, write and checksum 128 MiB on V1, restore to an independent
+three-replica V2 backend, compare the original bytes and sentinel, then reattach
+the same V2 backend from a second permanent worker and compare again.
+
+Backup metadata alone cannot pass either probe. Filesystem recovery binds the
+native PodVolumeBackup and PodVolumeRestore; CSI recovery binds the DataUpload,
+DataDownload, claim, PV and Longhorn backend, including short-lived scratch
+identities captured by bounded native list/watch streams. Successful cleanup is
+verified before the journal records completion. Any failed or interrupted probe
+retains its journal and scratch for diagnosis; it is not rerun or adopted by name.
+All original application volumes and historical recovery states remain protected.
+
+`go run ./scripts/migrate-longhorn-v2 --render-canary 1234` and
+`go run ./scripts/migrate-longhorn-v2 --render-csi-canary 1234` render example
+disposable assets without production credentials
+or mutations. The native watch transport test uses an isolated local HTTP API
+fixture and kubeconfig; CI installs the checksum-pinned approved kubectl and runs
+it with `LONGHORN_V2_NATIVE_TEST=1`. That protocol test is not a production restore
+receipt. Real recovery results come only from the confirmed main dispatches.
 
 For the unused temporary-worker route (platform#5787), finish the client refresh and the
 cleaned V1 baseline first. Select `prepare-unused-temporary-worker`, `temporary-v1-1` or
