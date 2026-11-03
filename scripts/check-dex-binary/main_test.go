@@ -42,6 +42,16 @@ func TestNativeTLSFloorControls(t *testing.T) {
 	}
 }
 
+func TestNativeAdmissionRefusesAStaleCertificate(t *testing.T) {
+	binary, web := os.Getenv("DEX_STALE_CERTIFICATE_BINARY"), os.Getenv("DEX_NATIVE_WEB")
+	if binary == "" || web == "" {
+		t.Skip("native reloader mutation runs in the Dex image workflow")
+	}
+	if err := nativeTLSFloor(binary, web, "1.3"); err == nil || err.Error() != "renewed certificate was not observed on both endpoints" {
+		t.Fatalf("stale-certificate control must fail the actual renewal observation, got %v", err)
+	}
+}
+
 func TestJudgeReportRefusesUnexaminedOrNewFindings(t *testing.T) {
 	const sbom = `{"SBOM":{"go_version":"go1.27.3","modules":[{"path":"github.com/dexidp/dex","version":"v0.0.0-20261021142137-75eb19238e10"}]}}`
 	const historical = `{"finding":{"osv":"GO-2024-2476","trace":[{"module":"github.com/dexidp/dex","function":"loadTLSConfig"}]}}`

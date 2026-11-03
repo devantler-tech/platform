@@ -42,6 +42,7 @@ jobs:
       archive_sha: ${{ steps.build.outputs.archive_sha }}
       image_id: ${{ steps.build.outputs.image_id }}
       binary_sha: ${{ steps.build.outputs.binary_sha }}
+      artifact_name: ${{ steps.artifact.outputs.name }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -71,10 +72,13 @@ jobs:
       - name: Build, scan and exercise exact distribution
         id: build
         run: bash scripts/build-dex-security-image.sh upstream "${IMAGE}:${IMAGE_TAG}"
+      - name: Name the verified archive
+        id: artifact
+        run: printf 'name=dex-image-%s-%s\n' "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}" >> "${GITHUB_OUTPUT:?}"
       - name: Retain the verified image without rebuilding
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dex-image-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.artifact.outputs.name }}
           path: ${{ runner.temp }}/dex-image.tar
           if-no-files-found: error
           retention-days: 7
@@ -102,7 +106,7 @@ jobs:
       - name: Download this run's verified image
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: dex-image-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ needs.verify.outputs.artifact_name }}
           path: ${{ runner.temp }}/dex-verified
       - name: Check archive and native image identity
         env:

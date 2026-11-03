@@ -22,6 +22,19 @@ export GOPRIVATE='' GONOPROXY='' GONOSUMDB=''
 CGO_ENABLED=1 go -C "$source_dir" test -mod=readonly -timeout=5m ./cmd/dex ./server ./storage/memory ./connector/oidc
 git -C "$source_dir" diff --exit-code
 [[ -z $(git -C "$source_dir" ls-files --others --exclude-standard) ]]
+# A controlled non-shipping executable keeps serving its original certificate.
+# The renewal control must reject it; sending a signal alone used to pass.
+original_serve="${RUNNER_TEMP:?}/dex-serve-original.go"
+cp "$source_dir/cmd/dex/serve.go" "$original_serve"
+trap 'cp "$original_serve" "$source_dir/cmd/dex/serve.go"' EXIT
+[[ $(grep -Fc 'ptr.Store(loaded)' "$original_serve") == 1 ]]
+sed 's/ptr.Store(loaded)/_ = loaded/' "$original_serve" > "$source_dir/cmd/dex/serve.go"
+CC=musl-gcc CGO_ENABLED=1 go -C "$source_dir" build -mod=readonly -trimpath -tags netgo,osusergo \
+  -ldflags '-X main.version=v2.46.1-devantler.1 -linkmode external -extldflags "-static"' \
+  -o "$RUNNER_TEMP/dex-no-reload" ./cmd/dex
+cp "$original_serve" "$source_dir/cmd/dex/serve.go"
+trap - EXIT
+git -C "$source_dir" diff --exit-code
 mkdir "$source_dir/dist"
 # Use musl's static runtime, preserving SQLite without introducing glibc into
 # the distribution. Go handles network and user lookups directly.
@@ -33,7 +46,7 @@ mkdir -p "${RUNNER_TEMP:?}/dex-tools"
 GOBIN="$RUNNER_TEMP/dex-tools" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
   https://vuln.go.dev/ID/GO-2024-2476.json --output "$RUNNER_TEMP/dex-advisory.json"
-DEX_NATIVE_BINARY="$source_dir/dist/dex" DEX_NATIVE_WEB="$source_dir/web" \
+DEX_NATIVE_BINARY="$source_dir/dist/dex" DEX_STALE_CERTIFICATE_BINARY="$RUNNER_TEMP/dex-no-reload" DEX_NATIVE_WEB="$source_dir/web" \
   go -C "$root" test -count=1 ./scripts/check-dex-binary
 go -C "$root" run ./scripts/check-dex-binary --binary "$source_dir/dist/dex" \
   --scanner "$RUNNER_TEMP/dex-tools/govulncheck" --advisory "$RUNNER_TEMP/dex-advisory.json" --web "$source_dir/web"

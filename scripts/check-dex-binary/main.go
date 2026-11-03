@@ -45,6 +45,8 @@ func main() {
 	fmt.Println("Dex executable, scanner coverage, primary advisory and native TLS controls passed.")
 }
 
+// run binds the executable and scanner identities before exercising the real
+// service. An undisposed finding or changed executable refuses admission.
 func run(binary, scanner, advisory, web string) error {
 	if binary == "" || scanner == "" || advisory == "" || web == "" || flag.NArg() != 0 {
 		return errors.New("binary, scanner, advisory and web are required")
@@ -129,6 +131,7 @@ func run(binary, scanner, advisory, web string) error {
 	return nil
 }
 
+// binaryDigest binds the file scanned to the file exercised by the fixture.
 func binaryDigest(path string) ([32]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -144,6 +147,8 @@ func binaryDigest(path string) ([32]byte, error) {
 	return sum, nil
 }
 
+// judgeReport requires actual module/compiler coverage and rejects new reachable
+// findings. A true result requires the separate historical TLS disposition.
 func judgeReport(r io.Reader, compiler string) (bool, error) {
 	decoder := json.NewDecoder(r)
 	coverage, disposition := false, false
@@ -199,6 +204,8 @@ func judgeReport(r io.Reader, compiler string) (bool, error) {
 	return disposition, nil
 }
 
+// checkHistoricalAdvisory refuses a changed primary range instead of silently
+// carrying a past disposition forward to different advisory metadata.
 func checkHistoricalAdvisory(body []byte) error {
 	var doc struct {
 		ID       string `json:"id"`
@@ -235,6 +242,8 @@ func nativeTLS(binary, web string) error {
 	return nativeTLSFloor(binary, web, "1.3")
 }
 
+// nativeTLSFloor runs disposable SQLite-backed HTTPS/gRPC services. Only the
+// negative control supplies a weaker floor; admission always supplies TLS 1.3.
 func nativeTLSFloor(binary, web, floor string) (resultErr error) {
 	fixture, err := os.MkdirTemp("", "dex-tls-")
 	if err != nil {
@@ -382,21 +391,73 @@ frontend:
 			return err
 		}
 	}
+	// Renew only the certificate, retaining the private key so every old/new
+	// read remains a matching keypair. A different issuer name and serial make
+	// the old and renewed trust pools distinct despite using the same key.
+	template.SerialNumber = big.NewInt(2)
+	template.Subject.CommonName = "local Dex renewed fixture"
+	renewedDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return err
+	}
+	renewedPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: renewedDER})
+	renewedPath := filepath.Join(fixture, "renewed.pem")
+	if err := os.WriteFile(renewedPath, renewedPEM, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(renewedPath, certPath); err != nil {
+		return err
+	}
 	if err := cmd.Process.Signal(syscall.SIGHUP); err != nil {
 		return err
 	}
-	// Repeated handshakes cover continued service and certificate-reloader operation.
-	for i := 0; i < 5; i++ {
-		time.Sleep(100 * time.Millisecond)
+	renewedPool := x509.NewCertPool()
+	if !renewedPool.AppendCertsFromPEM(renewedPEM) {
+		return errors.New("renewed fixture trust failed")
+	}
+	renewedConfig := good.Clone()
+	renewedConfig.RootCAs = renewedPool
+	observed := false
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		count := 0
 		for _, address := range addresses {
-			if err := exerciseTLS(address, good); err != nil {
-				return err
+			conn, err := tls.DialWithDialer(&net.Dialer{Timeout: time.Second}, "tcp", address, renewedConfig.Clone())
+			if err != nil {
+				continue
 			}
+			peers := conn.ConnectionState().PeerCertificates
+			if len(peers) > 0 && peers[0].SerialNumber.Cmp(big.NewInt(2)) == 0 {
+				count++
+			}
+			_ = conn.Close()
+		}
+		if count == len(addresses) {
+			observed = true
+			break
+		}
+	}
+	if !observed {
+		return errors.New("renewed certificate was not observed on both endpoints")
+	}
+	for _, address := range addresses {
+		if err := exerciseTLS(address, renewedConfig); err != nil {
+			return err
+		}
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: time.Second}, "tcp", address, good.Clone())
+		if err == nil {
+			_ = conn.Close()
+			return errors.New("retired fixture trust still accepted the renewed certificate")
+		}
+		var unknown x509.UnknownAuthorityError
+		if !errors.As(err, &unknown) {
+			return errors.New("retired fixture trust failed for an unexpected reason")
 		}
 	}
 	return nil
 }
 
+// reserveEndpoints keeps every selected port bound until the caller hands all
+// endpoints to the native process, preventing self-reuse during selection.
 func reserveEndpoints(count int) ([]net.Listener, error) {
 	var listeners []net.Listener
 	for i := 0; i < count; i++ {
@@ -412,6 +473,8 @@ func reserveEndpoints(count int) ([]net.Listener, error) {
 	return listeners, nil
 }
 
+// exerciseTLS brackets protocol/trust refusals with successful connections, so
+// an unavailable service cannot satisfy a negative control.
 func exerciseTLS(address string, good *tls.Config) error {
 	dial := func(config *tls.Config) error {
 		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: time.Second}, "tcp", address, config)

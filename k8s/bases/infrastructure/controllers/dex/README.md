@@ -23,10 +23,16 @@ historical advisory has an open-ended Go version mapping but an upstream custom
 range fixed before this release. Its disposition requires unchanged primary
 metadata, the fixing commit's ancestry, the exact patched executable's build
 information, and real HTTPS **and** gRPC handshakes. Configured TLS 1.3 must work
-before and after certificate reload; TLS 1.2, a wrong CA and a wrong hostname must
+before and after an observed renewal on both endpoints; TLS 1.2, a wrong CA and a wrong hostname must
 fail. A real TLS-1.2-configured negative control must fail admission. This is a
 specific fix-or-refute decision, not a scanner suppression or a claim that all
 required modules are free of advisories.
+
+Renewal writes a new certificate with a distinct issuer and serial, waits until
+both endpoints serve that leaf, and repeats the controls with its new trust
+pool. A deliberately non-shipping reloader mutation must fail that observation.
+The immutable archive name comes from its producing job's output, so a partial
+publisher retry retains the successful verification attempt's artifact.
 
 CI also extracts and rechecks the packaged executable and web files. Publication
 loads the same archive produced by verification, checks both its hash and image
