@@ -7,6 +7,8 @@ import (
 	"github.com/devantler-tech/platform/internal/longhornmigration"
 )
 
+// migrationStorageEligible reads the shared activation receipt only for an
+// enabled migration pool, retaining ordinary-node exclusion and read failures.
 func (e engine) migrationStorageEligible(ctx context.Context, node, storage object) (bool, error) {
 	if str(storage, "metadata", "labels", longhornmigration.EnabledLabel) == "" {
 		return false, nil

@@ -65,7 +65,7 @@ func (a temporaryV2Activation) environment(ctx context.Context) (inventory, erro
 	if err := verifyBudgetSettings(ctx, a.c); err != nil {
 		return inventory{}, err
 	}
-	if err := verifyCanarySettings(ctx, a.c); err != nil {
+	if err := verifyV2Settings(ctx, a.c); err != nil {
 		return inventory{}, err
 	}
 	s, err := a.c.snapshot(ctx)
@@ -73,7 +73,7 @@ func (a temporaryV2Activation) environment(ctx context.Context) (inventory, erro
 		return inventory{}, errTemporaryActivation
 	}
 	managers, err := a.c.list(ctx, "instancemanagers.longhorn.io", "longhorn-system")
-	if err != nil || verifyV2Clients(s, managers, a.pools, canaryManagerImage) != nil {
+	if err != nil || verifyV2Clients(s, managers, a.pools, v2ManagerImage) != nil {
 		return inventory{}, errTemporaryActivation
 	}
 	for _, node := range s.nodes {
@@ -130,7 +130,7 @@ func (a temporaryV2Activation) targets(ctx context.Context, s inventory, journal
 			return nil, errTemporaryActivation
 		}
 		binding, err = a.prepared(ctx, binding)
-		if err != nil || expected != nil && expected[selection] != binding {
+		if err != nil || expected != nil && !expected[selection].SameStorageIdentity(binding) {
 			return nil, errTemporaryActivation
 		}
 		result[selection] = binding
@@ -235,7 +235,7 @@ func (a temporaryV2Activation) run(ctx context.Context) error {
 		if _, err = a.targets(ctx, s, uid, record.Targets); err != nil {
 			return errors.Join(errReadinessTerminal, err)
 		}
-		_, err = canaryEnvironment(ctx, a.c, a.pools)
+		_, err = v2Environment(ctx, a.c, a.pools)
 		return err
 	}); err != nil {
 		return err
@@ -254,7 +254,7 @@ func (a temporaryV2Activation) run(ctx context.Context) error {
 	return nil
 }
 
-// accepted is a read-only canary admission check. The completed journal must
+// accepted is a read-only registration acceptance check. The completed journal must
 // come from a terminated protected workflow and still match all three native
 // partitions and journal-owned registrations; its cached completion bit alone
 // never authorizes IO.

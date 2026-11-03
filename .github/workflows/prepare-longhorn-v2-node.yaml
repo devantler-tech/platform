@@ -17,7 +17,7 @@ on:
         description: The guarded migration step to run
         required: true
         type: choice
-        options: [prepare-worker, prepare-unused-temporary-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas, inventory-storage-root, inventory-storage-layout, inspect-host-memory, reboot-host-for-hugepages, canary-v2, canary-csi-v2, register-temporary-v2-storage]
+        options: [prepare-worker, prepare-unused-temporary-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas, inventory-storage-root, inventory-storage-layout, inspect-host-memory, reboot-host-for-hugepages, register-temporary-v2-storage]
       node:
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
         required: false
@@ -47,22 +47,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Install the approved client for hermetic native watch tests
-        shell: bash
-        env:
-          KUBECTL_VERSION: v1.36.2
-          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
-        run: |
-          set -euo pipefail
-          kubectl_path="$RUNNER_TEMP/longhorn-v2-test-kubectl"
-          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
-          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
-          mkdir -p "$RUNNER_TEMP/longhorn-v2-test-tools"
-          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/longhorn-v2-test-tools/kubectl"
-          printf '%s\n' "$RUNNER_TEMP/longhorn-v2-test-tools" >> "$GITHUB_PATH"
       - name: Test complete observations and interrupted recovery
-        env:
-          LONGHORN_V2_NATIVE_TEST: '1'
         run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
 
   prepare:
@@ -118,12 +103,6 @@ jobs:
               ;;
             benchmark-v1|benchmark-v2)
               [[ "${LONGHORN_V2_CONFIRM}" == benchmark-longhorn-storage ]]
-              ;;
-            canary-v2)
-              [[ "${LONGHORN_V2_CONFIRM}" == verify-longhorn-v2-restore ]]
-              ;;
-            canary-csi-v2)
-              [[ "${LONGHORN_V2_CONFIRM}" == verify-longhorn-v2-csi-restore ]]
               ;;
             register-temporary-v2-storage)
               [[ "${LONGHORN_V2_CONFIRM}" == register-longhorn-v2-temporary-storage ]]

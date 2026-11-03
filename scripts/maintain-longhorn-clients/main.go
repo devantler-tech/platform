@@ -389,6 +389,8 @@ func (e engine) detached(ctx context.Context, j journal) (bool, error) {
 	return true, nil
 }
 
+// clientsReady verifies effective Longhorn and CSI workloads and worker
+// registration, including only journal-qualified temporary storage exceptions.
 func (e engine) clientsReady(ctx context.Context) (bool, error) {
 	for _, setting := range []struct{ name, value string }{{"system-managed-components-node-selector", ""}, {"create-default-disk-labeled-nodes", "true"}} {
 		o, err := e.c.read(ctx, "settings.longhorn.io", "longhorn-system", setting.name)

@@ -59,8 +59,8 @@ may adopt it only after the previous run has ended. This operation enables no V2
 storage and removes no iSCSI support.
 
 The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
-platform#5582. Its recovery probes use disposable claims; application cutover,
-V1 retirement and iSCSI removal have separate acceptance gates.
+platform#5582. Application cutover, recovery probes, V1 retirement and iSCSI
+removal have separate acceptance gates.
 
 This tool lands in stages (platform#5655). It includes `refresh-clients`, `prepare-worker`,
 `prepare-unused-temporary-worker`, read-only replica inventories and the benchmarks.
@@ -69,7 +69,7 @@ huge-page settings are loaded. Host recovery and a cleaned V1 baseline precede
 temporary-disk preparation. The V2 activation change must follow those completed
 operations, rather than their source PRs alone.
 
-## Temporary V2 activation and disposable recovery proof
+## Temporary V2 activation
 
 The activation manifests retain V1 and the existing default StorageClass, enable
 V2, and add the opt-in `longhorn-v2` Retain class. Eight-CPU workers reserve two
@@ -109,34 +109,16 @@ disks only with the completed activation journal, its matching ownership UID,
 and the unchanged Kubernetes, provider, hardware and Longhorn node identities.
 An ordinary later reboot or OS upgrade does not revoke this registration.
 
-Run `canary-v2` with `verify-longhorn-v2-restore` for filesystem backup recovery,
-then `canary-csi-v2` with `verify-longhorn-v2-csi-restore` for CSI snapshot data
-movement. Each has a distinct journal and confirmation. Both first revalidate the
-completed activation against its current native identities and require its
-owning workflow to be terminal. The probes create their own restricted namespaces,
-classes and claims, write and checksum 128 MiB on V1, restore to an independent
-three-replica V2 backend, compare the original bytes and sentinel, then reattach
-the same V2 backend from a second permanent worker and compare again.
+The journal retains the original boot and OS observations for audit. Later
+registration recovery and acceptance compare its durable worker, partition and
+preparation identities, while each native read still requires an unchanged live
+boot bracket. A normal reboot does not adopt replacement hardware or storage.
 
-Backup metadata alone cannot pass either probe. Filesystem recovery binds the
-native PodVolumeBackup and PodVolumeRestore to the same Ready Kopia repository
-UID and specification, selected by Velero's source-namespace, storage-location
-and repository-type key. Kopia does not use the Restic-only repository identifier.
-The restored claim's source PV binding is removed before independent V2
-provisioning. CSI recovery binds the DataUpload,
-DataDownload, claim, PV and Longhorn backend, including short-lived scratch
-identities captured by bounded native list/watch streams. Successful cleanup is
-verified before the journal records completion. Any failed or interrupted probe
-retains its journal and scratch for diagnosis; it is not rerun or adopted by name.
-All original application volumes and historical recovery states remain protected.
-
-`go run ./scripts/migrate-longhorn-v2 --render-canary 1234` and
-`go run ./scripts/migrate-longhorn-v2 --render-csi-canary 1234` render example
-disposable assets without production credentials
-or mutations. The native watch transport test uses an isolated local HTTP API
-fixture and kubeconfig; CI installs the checksum-pinned approved kubectl and runs
-it with `LONGHORN_V2_NATIVE_TEST=1`. That protocol test is not a production restore
-receipt. Real recovery results come only from the confirmed main dispatches.
+Filesystem and CSI recovery probes follow separately under platform#5809.
+They must verify restored bytes, persistence after reattachment and owned scratch
+cleanup before any application cutover. This activation operation has no data
+movement or probe entrypoint. All original application volumes and historical
+recovery states remain protected.
 
 For the unused temporary-worker route (platform#5787), finish the client refresh and the
 cleaned V1 baseline first. Select `prepare-unused-temporary-worker`, `temporary-v1-1` or

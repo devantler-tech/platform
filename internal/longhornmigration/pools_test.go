@@ -10,6 +10,8 @@ func sourceFixture() []byte {
 	return []byte(`{"spec":{"cluster":{"controlPlanes":3,"workers":3,"autoscaler":{"node":{"maxNodesTotal":9,"pools":[{"name":"autoscale-longhorn-v1","serverType":"cpx42","location":"fsn1","min":2,"max":2,"labels":{"storage.platform.devantler.tech/migration-pool":"v1"}},{"name":"autoscale-longhorn-v2","serverType":"cpx42","location":"fsn1","min":1,"max":1,"labels":{"storage.platform.devantler.tech/migration-pool":"v2"}}]}}},"provider":{"hetzner":{"serverLimit":10}}}}`)
 }
 
+// eligibilityFixture binds one fixed pool member to owned scale-down protection
+// and its role-specific storage, independently of the activation writer.
 func eligibilityFixture(role string) (Object, Object) {
 	name := "autoscale-longhorn-" + role + "-0123456789abcdef"
 	n := Object{"metadata": Object{"name": name, "uid": "kube-uid", "resourceVersion": "1", "labels": Object{PoolLabel: role, "ksail.io/autoscaled": "true", "node.kubernetes.io/instance-type": "cpx42"}, "annotations": Object{ScaleDownDisabled: "true", OwnerAnnotation: OwnerValue}}, "spec": Object{"providerID": "hcloud://42"}, "status": Object{"nodeInfo": Object{"systemUUID": "machine"}, "conditions": []any{Object{"type": "Ready", "status": "True"}}}}
@@ -25,6 +27,8 @@ func eligibilityFixture(role string) (Object, Object) {
 	return n, lh
 }
 
+// Only fixed reviewed pool members with intact ownership and storage can escape
+// ordinary compute-node exclusion; missing or altered authorization holds.
 func TestOnlyReviewedPinnedMigrationPoolsAreStorageExceptions(t *testing.T) {
 	for _, role := range []string{"v1", "v2"} {
 		n, lh := eligibilityFixture(role)
@@ -62,6 +66,7 @@ func TestOnlyReviewedPinnedMigrationPoolsAreStorageExceptions(t *testing.T) {
 	}
 }
 
+// Fixed pool capacity cannot be reduced while its storage exception is active.
 func TestFixedPoolMinimumCannotBeRemovedWhileStorageIsAuthorized(t *testing.T) {
 	n, lh := eligibilityFixture("v1")
 	var cfg Object

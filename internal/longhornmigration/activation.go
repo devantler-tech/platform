@@ -32,6 +32,15 @@ type ActivationBinding struct {
 	PreparationUID   string `json:"preparationUID,omitempty"`
 }
 
+// SameStorageIdentity compares the durable worker, partition and preparation
+// identities. Boot and OS observations describe the original read bracket; a
+// later caller must freshly prove its own bracket rather than reuse those values.
+func (b ActivationBinding) SameStorageIdentity(other ActivationBinding) bool {
+	b.BootID, b.OSImage = "", ""
+	other.BootID, other.OSImage = "", ""
+	return b == other
+}
+
 // ActivationRecord is shared by the registering writer and publication readers.
 type ActivationRecord struct {
 	Version   int                          `json:"version"`

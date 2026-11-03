@@ -5,10 +5,14 @@ import (
 	"testing"
 )
 
+// v2ReadinessFixture keeps original V1 replicas on permanent workers while
+// independent temporary disks supply the prospective V2 storage.
 func v2ReadinessFixture() (inventory, []object) {
 	return v2ReadinessFixtureForRoute(false)
 }
 
+// v2ReadinessFixtureForRoute can represent the superseded original-disk route
+// solely to prove that it cannot satisfy temporary-only activation admission.
 func v2ReadinessFixtureForRoute(legacy bool) (inventory, []object) {
 	s := evacuatedFixture()
 	s.nodes = capacityFixture()
@@ -55,6 +59,7 @@ func v2ReadinessFixtureForRoute(legacy bool) (inventory, []object) {
 	return s, managers
 }
 
+// Raw storage on original workers cannot borrow the temporary-route authority.
 func TestV2RuntimeRejectsTheEarlierRebuiltPermanentWorkerRoute(t *testing.T) {
 	pools, err := configuredMigrationPools(poolConfigFixture())
 	if err != nil {
@@ -66,7 +71,9 @@ func TestV2RuntimeRejectsTheEarlierRebuiltPermanentWorkerRoute(t *testing.T) {
 	}
 }
 
-func TestV2CanaryRequiresRealRawDisksAndReservedReactors(t *testing.T) {
+// Ready disk identities, original redundancy and effective SPDK ownership,
+// executable arguments and reservations are all required for storage readiness.
+func TestV2RuntimeRequiresRealRawDisksAndReservedReactors(t *testing.T) {
 	pools, err := configuredMigrationPools(poolConfigFixture())
 	if err != nil {
 		t.Fatal(err)

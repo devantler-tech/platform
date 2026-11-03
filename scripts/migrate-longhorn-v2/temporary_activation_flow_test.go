@@ -26,6 +26,8 @@ type activationAPI struct {
 	preparationFailed   bool
 }
 
+// newActivationAPI models complete fixed-roster reads and successful native
+// preparation, with writes restricted to the activation journal and raw nodes.
 func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
 	t.Helper()
 	s, managers := v2ReadinessFixture()
@@ -96,6 +98,8 @@ func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
 	return f, a
 }
 
+// run enforces the production command boundary and identity-preconditioned
+// writes, including an uncertain response after an actual disk registration.
 func (f *activationAPI) run(_ context.Context, input []byte, program string, args ...string) ([]byte, error) {
 	f.t.Helper()
 	if program == "git" && reflect.DeepEqual(args, []string{"ls-remote", "--exit-code", "https://github.com/devantler-tech/platform.git", "refs/heads/main"}) {
@@ -242,6 +246,8 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 	return nil, nil
 }
 
+// Registered disks must remain eligible to the independent publication reader;
+// replaying the completed operation must not repeat a disk write.
 func TestTemporaryActivationRegistersOnlyThreeJournalOwnedRawDisks(t *testing.T) {
 	f, a := newActivationAPI(t)
 	if err := a.run(t.Context()); err != nil {
@@ -270,6 +276,7 @@ func TestTemporaryActivationRegistersOnlyThreeJournalOwnedRawDisks(t *testing.T)
 	}
 }
 
+// No journal or disk may be written without successful native preparation.
 func TestTemporaryActivationHoldsBeforeWritesWithoutSuccessfulPreparation(t *testing.T) {
 	for _, mode := range []string{"missing preparation", "failed preparation", "unfinished preparation"} {
 		t.Run(mode, func(t *testing.T) {
@@ -290,6 +297,8 @@ func TestTemporaryActivationHoldsBeforeWritesWithoutSuccessfulPreparation(t *tes
 	}
 }
 
+// Only a later owner may resume an uncertain owned patch; an unrelated storage
+// owner's annotation cannot be adopted even when the desired disk matches.
 func TestTemporaryActivationResumesItsUncertainWriteWithoutAdoptingForeignStorage(t *testing.T) {
 	f, a := newActivationAPI(t)
 	f.lostResponse = true
@@ -307,6 +316,44 @@ func TestTemporaryActivationResumesItsUncertainWriteWithoutAdoptingForeignStorag
 	}
 }
 
+// Completed and interrupted registration survive a normal host reboot without
+// replaying an owned disk write or rewriting the original observation evidence.
+func TestTemporaryActivationPreservesStorageIdentityAcrossReboot(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("interrupted=%t", interrupted), func(t *testing.T) {
+			f, a := newActivationAPI(t)
+			f.lostResponse = interrupted
+			if err := a.run(t.Context()); (err != nil) != interrupted {
+				t.Fatal("initial registration did not reach the selected boundary:", err)
+			}
+			_, original, err := a.read(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, node := range f.s.nodes {
+				if !strings.HasPrefix(text(node, "metadata", "name"), "autoscale-longhorn-") {
+					continue
+				}
+				info := value(node, "status", "nodeInfo").(object)
+				info["bootID"] = fmt.Sprintf("12345678-1234-4234-8234-%012x", i+500)
+				info["osImage"] = "Talos upgraded fixture"
+			}
+			a.owner = "789"
+			if err = a.run(t.Context()); err != nil || f.writes != 3 {
+				t.Fatal("normal reboot invalidated intact prepared storage:", err)
+			}
+			if err = a.accepted(t.Context()); err != nil {
+				t.Fatal("completed storage was not accepted after reboot:", err)
+			}
+			_, recovered, err := a.read(t.Context())
+			if err != nil || !reflect.DeepEqual(original.Targets, recovered.Targets) {
+				t.Fatal("recovery rewrote the original registration observations:", err)
+			}
+		})
+	}
+}
+
+// Matching but unreviewed manager images must fail before disk registration.
 func TestTemporaryActivationRejectsUnqualifiedClientsBeforeRegisteringDisks(t *testing.T) {
 	f, a := newActivationAPI(t)
 	f.managers[0]["spec"].(object)["image"] = "example.invalid/unreviewed:latest"
@@ -318,7 +365,9 @@ func TestTemporaryActivationRejectsUnqualifiedClientsBeforeRegisteringDisks(t *t
 	}
 }
 
-func TestCanaryRequiresCompletedStillOwnedTemporaryActivation(t *testing.T) {
+// Read-only acceptance must revalidate the completed workflow and current
+// storage identities rather than trust a cached completion bit.
+func TestCompletedTemporaryActivationRequiresCurrentOwnedStorage(t *testing.T) {
 	f, a := newActivationAPI(t)
 	if a.accepted(t.Context()) == nil || f.writes != 0 {
 		t.Fatal("an unregistered pool authorized the canary")

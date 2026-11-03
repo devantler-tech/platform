@@ -4,6 +4,8 @@ import (
 	"testing"
 )
 
+// temporaryRawBindingFixture supplies one pinned worker and separate encrypted
+// filesystem and raw partitions without using the registration builder.
 func temporaryRawBindingFixture() (object, object, object, object, migrationPool) {
 	n := capacityFixture()[3]
 	n["spec"] = object{"providerID": "hcloud://123", "unschedulable": false}
@@ -16,6 +18,8 @@ func temporaryRawBindingFixture() (object, object, object, object, migrationPool
 	return n, lh, raw, eph, migrationPool{name: "autoscale-longhorn-v1", role: "v1", serverType: "cpx42", count: 2}
 }
 
+// Wrong ownership, boot, encryption, capacity or pool selection must prevent a
+// native partition observation from becoming registration evidence.
 func TestTemporaryRawRegistrationBindsTheNativePartitionsAndPoolMember(t *testing.T) {
 	n, lh, raw, eph, pool := temporaryRawBindingFixture()
 	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"))
@@ -52,6 +56,8 @@ func TestTemporaryRawRegistrationBindsTheNativePartitionsAndPoolMember(t *testin
 	}
 }
 
+// Resumption recognizes only an empty fence or this journal's exact raw disk;
+// matching paths without ownership never authorize adoption.
 func TestTemporaryRawRegistrationAcceptsOnlyItsOwnPartialActivation(t *testing.T) {
 	storage := func(enabled bool) object {
 		_, lh, _, _, _ := temporaryRawBindingFixture()

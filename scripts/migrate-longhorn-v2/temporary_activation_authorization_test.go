@@ -8,6 +8,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Registration confirmation grants neither host disruption nor another
+// operation, and cannot be reused outside the protected first main attempt.
 func TestTemporaryActivationRequiresItsOwnFirstAttemptMainConfirmation(t *testing.T) {
 	env := dispatchFixture()
 	env["LONGHORN_V2_OPERATION"] = "register-temporary-v2-storage"
@@ -26,11 +28,17 @@ func TestTemporaryActivationRequiresItsOwnFirstAttemptMainConfirmation(t *testin
 			}
 		})
 	}
-	if authorizeCanary(getenv) == nil || authorizeHostReboot(getenv, "prod-worker-1") == nil {
-		t.Fatal("disk registration authorized a canary or host disruption")
+	if authorizeHostReboot(getenv, "prod-worker-1") == nil {
+		t.Fatal("disk registration authorized host disruption")
+	}
+	env["LONGHORN_V2_OPERATION"] = "canary-v2"
+	if authorizeTemporaryActivation(getenv) == nil {
+		t.Fatal("recovery data movement was admitted as disk registration")
 	}
 }
 
+// Execute the actual workflow gate so a different operation's confirmation
+// cannot reach production credentials through the registration branch.
 func TestTemporaryActivationWorkflowRequiresTheDistinctConfirmation(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/prepare-longhorn-v2-node.yaml")
 	if err != nil {

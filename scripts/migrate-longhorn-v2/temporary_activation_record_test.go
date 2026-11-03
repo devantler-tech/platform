@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+// temporaryActivationRecordFixture gives each selected worker independent
+// provider, hardware, partition and preparation identities.
 func temporaryActivationRecordFixture(t *testing.T) temporaryActivationRecord {
 	t.Helper()
 	n, lh, raw, eph, pool := temporaryRawBindingFixture()
@@ -30,6 +32,8 @@ func temporaryActivationRecordFixture(t *testing.T) temporaryActivationRecord {
 	return record
 }
 
+// The decoder must reject missing or reused identities and ambiguous JSON
+// rather than let a partial or differently interpreted plan authorize storage.
 func TestTemporaryActivationRecordRequiresThreeDistinctCompleteBindings(t *testing.T) {
 	record := temporaryActivationRecordFixture(t)
 	data, _ := json.Marshal(record)

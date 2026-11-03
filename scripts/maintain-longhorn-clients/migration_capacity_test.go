@@ -90,6 +90,8 @@ func rawMigrationFixture(t *testing.T) (*fakeAPI, engine, object, object, object
 	return a, e, n, lh, cm
 }
 
+// A completed raw registration must satisfy both publication and replica
+// exclusion while the pool retains its original allocation label.
 func TestCompletedRawTransitionPreservesPublicationAndReplicaExclusion(t *testing.T) {
 	_, e, _, _, _ := rawMigrationFixture(t)
 	if ok, err := e.clientsReady(context.Background()); !ok || err != nil {
@@ -100,6 +102,8 @@ func TestCompletedRawTransitionPreservesPublicationAndReplicaExclusion(t *testin
 	}
 }
 
+// An incomplete, replaced or foreign activation must fail both independent
+// readers rather than turn a matching raw path into storage authorization.
 func TestRawTransitionCannotBorrowAnotherActivationOrWorkerIdentity(t *testing.T) {
 	for name, mutate := range map[string]func(*fakeAPI, object, object, object){
 		"missing journal": func(a *fakeAPI, _, _, _ object) {

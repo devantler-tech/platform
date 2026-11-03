@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+// temporaryPreparedFixture records an earlier encrypted filesystem and boot,
+// both distinct from the post-reset binding used for activation.
 func temporaryPreparedFixture(t *testing.T, binding temporaryV2Binding) object {
 	t.Helper()
 	j := journal{Schema: 2, Target: binding.Name, Source: strings.Repeat("1", 40), OwnerRun: "7777", Phase: "prepared",
@@ -22,6 +24,8 @@ func temporaryPreparedFixture(t *testing.T, binding temporaryV2Binding) object {
 	return cm
 }
 
+// Foreign, unfinished, replaced or ambiguous preparation cannot authorize a
+// raw disk, and completion must prove the original filesystem was replaced.
 func TestTemporaryActivationRequiresTheCompletedPreparationIdentity(t *testing.T) {
 	n, lh, raw, eph, pool := temporaryRawBindingFixture()
 	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"))

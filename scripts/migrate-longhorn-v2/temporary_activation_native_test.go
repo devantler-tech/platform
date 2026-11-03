@@ -14,6 +14,7 @@ type activationBootReader struct {
 	reads         int
 }
 
+// BootID supplies independently selected observations on the two bracket sides.
 func (r *activationBootReader) BootID(context.Context) (string, error) {
 	r.reads++
 	if r.reads == 1 {
@@ -22,6 +23,8 @@ func (r *activationBootReader) BootID(context.Context) (string, error) {
 	return r.after, nil
 }
 
+// A binding requires matching native boot, hardware and API identities plus a
+// successful reader close; durable identity comparison cannot waive this bracket.
 func TestTemporaryRawBindingBracketsNativeReadsAndClosesItsReader(t *testing.T) {
 	for _, mode := range []string{"valid", "boot changed", "hardware changed", "node changed", "partition unreadable", "close failed"} {
 		t.Run(mode, func(t *testing.T) {
