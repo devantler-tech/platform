@@ -27,4 +27,6 @@ id = "generic-api-key"
 [[rules.allowlists]]
 description = "Go module checksums: an `h1:` go.sum line, as quoted in a vendored go.sum diff, is a public hash."
 regexTarget = "line"
-regexes = ['''^[+ -]?\S+ v\S+ h1:[A-Za-z0-9+/]{43}=\s*$''']
+# The reported line can begin with the preceding newline, so allow leading whitespace before the
+# optional diff marker.
+regexes = ['''^\s*[+ -]?\S+ v\S+ h1:[A-Za-z0-9+/]{43}=\s*$''']
