@@ -24,7 +24,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/kubescape-runtime-rules.XXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 # The declared switch: "true" or "false", or the reason it is not a boolean.
 declared_switch() {
@@ -120,8 +123,7 @@ controller_helm="${CONTROLLER_HELM:-$scratch/controller-helm}"
 if [[ -z "${CONTROLLER_HELM:-}" ]]; then
   bash "$root/scripts/build-controller-helm.sh" "$controller_helm"
 fi
-[[ "$("$controller_helm" version --template '{{ printf "%#v" . }}')" == \
-  'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ]] ||
+[[ "$("$controller_helm" version --template '{{ printf "%#v" . }}')" == 'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ]] ||
   fail 'the audited controller renderer is required'
 
 # Render the chart with one switch state and apply the release's post-renderers as Flux does.
@@ -139,7 +141,7 @@ render() {
       --namespace kubescape --kube-version "$kube_version" --values "$scratch/values.json" \
       >"$scratch/rendered.yaml"
   fi
-  for ((i=0; i<count; i++)); do
+  for ((i = 0; i < count; i++)); do
     renderer="$scratch/$state-$mode-renderer-$i"
     mkdir "$renderer"
     cp "$scratch/rendered.yaml" "$renderer/rendered.yaml"

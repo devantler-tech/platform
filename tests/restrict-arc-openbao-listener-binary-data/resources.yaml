@@ -1,3 +1,4 @@
+---
 # The listener in openbao with binaryData beside the audited listener.
 apiVersion: v1
 kind: ConfigMap

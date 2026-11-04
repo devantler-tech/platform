@@ -17,24 +17,24 @@ func TestHistoricalNodePhasePlanRequiresCurrentRuntimeProof(t *testing.T) {
 		noPatch bool
 	}{
 		{name: "mutating", want: true},
-		{name: "claimed", want: true, change: func(n, a map[string]any) { a["platform.devantler.tech/ghcr-auth-drain-phase"] = "claimed" }},
-		{name: "absent", want: true, noPatch: true, change: func(n, a map[string]any) { delete(a, "platform.devantler.tech/ghcr-auth-drain-phase") }},
-		{name: "unknown phase", change: func(n, a map[string]any) { a["platform.devantler.tech/ghcr-auth-drain-phase"] = "unknown" }},
-		{name: "empty phase", change: func(n, a map[string]any) { a["platform.devantler.tech/ghcr-auth-drain-phase"] = "" }},
-		{name: "active owner", change: func(n, a map[string]any) { a["platform.devantler.tech/ghcr-auth-drain-owner"] = "other" }},
-		{name: "recovery", change: func(n, a map[string]any) { a["platform.devantler.tech/ghcr-auth-drain-recovery"] = "journal" }},
-		{name: "scale guard owner", change: func(n, a map[string]any) { a["platform.devantler.tech/ghcr-auth-scale-down-owner"] = "other" }},
-		{name: "operator cordon", change: func(n, a map[string]any) { n["spec"].(map[string]any)["unschedulable"] = true }},
-		{name: "missing revision", change: func(n, a map[string]any) { delete(a, "platform.devantler.tech/ghcr-pull-verified-revision-v2") }},
-		{name: "stale revision", change: func(n, a map[string]any) { a["platform.devantler.tech/ghcr-pull-verified-revision-v2"] = "old" }},
-		{name: "stale image", change: func(n, a map[string]any) { a["platform.devantler.tech/ghcr-pull-verified-image-v2"] = "old" }},
-		{name: "changed identity", change: func(n, a map[string]any) { n["metadata"].(map[string]any)["uid"] = "replacement" }},
-		{name: "missing identity", change: func(n, a map[string]any) { delete(n["metadata"].(map[string]any), "uid") }},
-		{name: "missing resource version", change: func(n, a map[string]any) { delete(n["metadata"].(map[string]any), "resourceVersion") }},
-		{name: "deleting", change: func(n, a map[string]any) {
+		{name: "claimed", want: true, change: func(_, a map[string]any) { a["platform.devantler.tech/ghcr-auth-drain-phase"] = "claimed" }},
+		{name: "absent", want: true, noPatch: true, change: func(_, a map[string]any) { delete(a, "platform.devantler.tech/ghcr-auth-drain-phase") }},
+		{name: "unknown phase", change: func(_, a map[string]any) { a["platform.devantler.tech/ghcr-auth-drain-phase"] = "unknown" }},
+		{name: "empty phase", change: func(_, a map[string]any) { a["platform.devantler.tech/ghcr-auth-drain-phase"] = "" }},
+		{name: "active owner", change: func(_, a map[string]any) { a["platform.devantler.tech/ghcr-auth-drain-owner"] = "other" }},
+		{name: "recovery", change: func(_, a map[string]any) { a["platform.devantler.tech/ghcr-auth-drain-recovery"] = "journal" }},
+		{name: "scale guard owner", change: func(_, a map[string]any) { a["platform.devantler.tech/ghcr-auth-scale-down-owner"] = "other" }},
+		{name: "operator cordon", change: func(n, _ map[string]any) { n["spec"].(map[string]any)["unschedulable"] = true }},
+		{name: "missing revision", change: func(_, a map[string]any) { delete(a, "platform.devantler.tech/ghcr-pull-verified-revision-v2") }},
+		{name: "stale revision", change: func(_, a map[string]any) { a["platform.devantler.tech/ghcr-pull-verified-revision-v2"] = "old" }},
+		{name: "stale image", change: func(_, a map[string]any) { a["platform.devantler.tech/ghcr-pull-verified-image-v2"] = "old" }},
+		{name: "changed identity", change: func(n, _ map[string]any) { n["metadata"].(map[string]any)["uid"] = "replacement" }},
+		{name: "missing identity", change: func(n, _ map[string]any) { delete(n["metadata"].(map[string]any), "uid") }},
+		{name: "missing resource version", change: func(n, _ map[string]any) { delete(n["metadata"].(map[string]any), "resourceVersion") }},
+		{name: "deleting", change: func(n, _ map[string]any) {
 			n["metadata"].(map[string]any)["deletionTimestamp"] = "2026-10-04T00:00:00Z"
 		}},
-		{name: "unready", change: func(n, a map[string]any) {
+		{name: "unready", change: func(n, _ map[string]any) {
 			n["status"].(map[string]any)["conditions"] = []any{map[string]any{"type": "Ready", "status": "False"}}
 		}},
 	} {

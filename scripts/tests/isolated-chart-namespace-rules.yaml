@@ -1,3 +1,4 @@
+---
 rules:
   - name: restrict-data-product-controller-rendered-child-namespaces
     # This rule is deliberately path-scoped by its caller to the reviewed

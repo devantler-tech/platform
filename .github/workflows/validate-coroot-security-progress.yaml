@@ -1,6 +1,7 @@
+---
 name: Validate Coroot Security Progress
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:
