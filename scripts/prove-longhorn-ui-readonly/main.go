@@ -1,3 +1,5 @@
+// Command prove-longhorn-ui-readonly sends fixed, harmless requests through
+// the authentication proxy to prove the Longhorn UI is read only.
 package main
 
 import (

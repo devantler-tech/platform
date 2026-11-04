@@ -1,3 +1,5 @@
+// Command guard-cilium-sni verifies SNI hostname coverage in the committed
+// Cilium network policies.
 package main
 
 import (

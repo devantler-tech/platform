@@ -1,3 +1,5 @@
+// Command validate-policy-actions verifies the explicit validation rule
+// actions of the cluster policies against the approved baseline.
 package main
 
 import (

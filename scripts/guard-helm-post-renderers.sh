@@ -600,16 +600,16 @@ check_release() { # <record> <work>
       yq 'select(tag == "!!map")' "$wire_input" >"$work/$mode.manifests.yaml" ||
         die "$label: cannot collect the combined $mode render of $chart_desc"
     fi
-      error="$(apply_post_renderers "$record" "$work/$mode.manifests.yaml" "$work/$mode.manifests")"
-      case $? in
-        0) ;;
-        1)
-          printf '%s: its post-renderers do not apply to the %s render of %s (%s): %s\n' \
-            "$label" "$mode" "$chart_desc" "$hook_strategy" "$error" >>"$scratch/findings"
-          return 0
-          ;;
-        *) exit 2 ;;
-      esac
+    error="$(apply_post_renderers "$record" "$work/$mode.manifests.yaml" "$work/$mode.manifests")"
+    case $? in
+      0) ;;
+      1)
+        printf '%s: its post-renderers do not apply to the %s render of %s (%s): %s\n' \
+          "$label" "$mode" "$chart_desc" "$hook_strategy" "$error" >>"$scratch/findings"
+        return 0
+        ;;
+      *) exit 2 ;;
+    esac
   done
   printf '  ok  %s: %s post-renderer(s) apply to %s (install and upgrade)\n' \
     "$label" "$(jq '.release.spec.postRenderers | length' "$record")" "$chart_desc"

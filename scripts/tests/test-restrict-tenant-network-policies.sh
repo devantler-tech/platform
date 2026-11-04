@@ -140,11 +140,17 @@ for operation in CREATE UPDATE DELETE; do
     "${work_dir}/hold-values.yaml" >"${work_dir}/operation.yaml"
   apply "${hold}" "${work_dir}/operation.yaml" "${work_dir}/hold-tenant.yaml"
   expect_summary "pass: 4, fail: 1, warn: 0, error: 0, skip: 0" "tenant staging hold ${operation}"
-  [[ "${apply_status}" -eq 1 ]] || { echo "staging denial did not fail admission" >&2; exit 1; }
+  [[ "${apply_status}" -eq 1 ]] || {
+    echo "staging denial did not fail admission" >&2
+    exit 1
+  }
   for author in platform-author kyverno-author; do
     apply "${hold}" "${work_dir}/operation.yaml" "${tests}/${author}/user-info.yaml"
     expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" "platform staging hold ${operation}"
-    [[ "${apply_status}" -eq 0 ]] || { echo "trusted platform operation failed" >&2; exit 1; }
+    [[ "${apply_status}" -eq 0 ]] || {
+      echo "trusted platform operation failed" >&2
+      exit 1
+    }
   done
 done
 # A controller name in a tenant namespace does not inherit the platform carve-out.

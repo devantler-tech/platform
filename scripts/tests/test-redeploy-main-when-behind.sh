@@ -15,7 +15,10 @@ trap 'rm -rf "$scratch"' EXIT
 failures=0
 assertions=0
 
-[ -x "$script" ] || { printf 'FAIL: %s is not executable\n' "$script"; exit 1; }
+[ -x "$script" ] || {
+  printf 'FAIL: %s is not executable\n' "$script"
+  exit 1
+}
 
 tip="$(printf 'a%.0s' {1..40})"
 older="$(printf 'b%.0s' {1..40})"

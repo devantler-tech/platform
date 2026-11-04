@@ -1,3 +1,4 @@
+---
 # World-reachable WireGuard server (51820/udp). The home UniFi gateway dials in
 # from a dynamic residential IP, so the source can't be pinned — but WireGuard
 # never replies to an unauthenticated packet, so an open source is safe (the

@@ -11,7 +11,10 @@ filter="$(awk '
   }
   END { if (found != 1 || in_filter) exit 1 }
 ' "${runbook}")"
-[[ -n "${filter}" ]] || { echo 'Missing runbook disk query' >&2; exit 1; }
+[[ -n "${filter}" ]] || {
+  echo 'Missing runbook disk query' >&2
+  exit 1
+}
 
 check() {
   local label="$1" input="$2" expected="$3" actual

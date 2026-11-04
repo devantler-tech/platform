@@ -249,7 +249,9 @@
     },
     {
       "description": "The flux-operator chart (dedicated regex manager above) installs and upgrades Flux itself. Its chart lives on ghcr.io, which gives Renovate no release date for it, and a release with no date never clears the repository-wide wait, so no update was proposed after 0.50.0 (#4985, the same cause as #4754). minimumReleaseAge is therefore 0 days. Raising the PR adopts nothing: automerge is off whatever the update type, so every update is reviewed against the operator's release notes and the HelmRelease post-renderers before merge. Placed after the broad automerge rules so none of them can turn automerge back on.",
-      "matchPackageNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"],
+      "matchPackageNames": [
+        "ghcr.io/controlplaneio-fluxcd/charts/flux-operator"
+      ],
       "minimumReleaseAge": "0 days",
       "automerge": false
     },
@@ -393,7 +395,10 @@
     {
       "description": "The Kopia reader (internal/backupcatalogue) replaces github.com/kopia/kopia with the exact project-velero/kopia commit the deployed Velero's own go.mod pins, so it reads the backup format production writes. That fork is pinned by pseudo-version, and semver ranks every v0.0.0 pseudo-version below every tag, so Renovate offers the older v0.19.0-velero.1 (February 2025, 390 commits behind the pin, December 2025) as a minor update with automerge on. Only a compile error stops that downgrade. github.com/kopia/kopia is covered too: the replacement means its require version is never the code we build, and Velero carries v0.16.0 beside this same replacement, so a bump would change nothing we run and make go.mod say something untrue. The pin moves with Velero instead: when a Velero bump changes the fork commit in its go.mod, change it here in one reviewed change. scripts/tests/test-velero-kopia-renovate-pin.sh fails once the replacement is no longer a pseudo-version, which is when this rule can go.",
       "matchManagers": ["gomod"],
-      "matchPackageNames": ["github.com/kopia/kopia", "github.com/project-velero/kopia"],
+      "matchPackageNames": [
+        "github.com/kopia/kopia",
+        "github.com/project-velero/kopia"
+      ],
       "enabled": false
     }
   ],

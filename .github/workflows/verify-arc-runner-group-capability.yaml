@@ -1,6 +1,7 @@
+---
 name: Verify ARC Runner Group Capability
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

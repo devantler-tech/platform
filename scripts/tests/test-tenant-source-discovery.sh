@@ -68,7 +68,10 @@ printf 'schema: &schema kro.run/v1alpha1\napiVersion: *schema\nkind: Tenant\n' >
 refuses 'YAML alias'
 printf 'schema: &schema\n  apiVersion: kro.run/v1alpha1\n  kind: Tenant\nobject:\n  <<: *schema\n' >"$input"
 refuses 'YAML merge'
-{ printf 'apiVersion: v1\nkind: ConfigMap\n---\n'; cat "$work/good.yaml"; } >"$input"
+{
+  printf 'apiVersion: v1\nkind: ConfigMap\n---\n'
+  cat "$work/good.yaml"
+} >"$input"
 refuses 'second document'
 printf 'apiVersion: example.test/v1\nkind: Carrier\nspec:\n  template:\n    apiVersion: kro.run/v1alpha1\n    kind: Tenant\n' >"$input"
 refuses 'nested typed controller template'

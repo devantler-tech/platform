@@ -151,7 +151,11 @@ business_site_manifest_evidence() (
     case "$seen" in *":$option:"*) return 2 ;; esac
     seen="$seen$option:"
     case "$option" in
-      --verify-only) verify_only=1; shift; continue ;;
+      --verify-only)
+        verify_only=1
+        shift
+        continue
+        ;;
       --consumer | --tag | --source-sha | --digest) [ "$#" -ge 2 ] || return 2 ;;
       *) return 2 ;;
     esac

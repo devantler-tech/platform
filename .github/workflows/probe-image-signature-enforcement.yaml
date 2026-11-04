@@ -1,3 +1,4 @@
+---
 name: Probe Image Signature Enforcement
 
 # Obtain the ONE observation #3336 is missing: that a matched-but-unsigned image
@@ -45,7 +46,7 @@ name: Probe Image Signature Enforcement
 # so a cached image is never re-pulled and the probe would verify nothing; it
 # fails closed (INCONCLUSIVE) rather than reporting that as a pass.
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       node:

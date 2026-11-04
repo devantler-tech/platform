@@ -15,7 +15,10 @@ trap 'rm -rf "$scratch"' EXIT
 failures=0
 assertions=0
 
-[ -x "$script" ] || { printf 'FAIL: %s is not executable\n' "$script"; exit 1; }
+[ -x "$script" ] || {
+  printf 'FAIL: %s is not executable\n' "$script"
+  exit 1
+}
 
 sha="$(printf 'c%.0s' {1..40})"
 queue_ref="refs/heads/gh-readonly-queue/main/pr-3084-$sha"
