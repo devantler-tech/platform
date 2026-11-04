@@ -3,7 +3,10 @@
 # against bounded API/exec fixtures, including failure and replacement races.
 set -euo pipefail
 : "${HUBBLE_TEST_BIN:?requires the checksum-verified Hubble v1.20.2 binary}"
-[[ -x "$HUBBLE_TEST_BIN" ]] || { printf 'native Hubble parser is unavailable\n' >&2; exit 1; }
+[[ -x "$HUBBLE_TEST_BIN" ]] || {
+  printf 'native Hubble parser is unavailable\n' >&2
+  exit 1
+}
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/bin" "$scratch/state"
@@ -15,17 +18,17 @@ readonly head=1111111111111111111111111111111111111111
 export GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform GITHUB_REF=refs/heads/main GITHUB_SHA="$head" GITHUB_RUN_ID=12345 GITHUB_RUN_ATTEMPT=1
 # The issuance restriction is a ValidatingPolicy: its CRD adds no spec defaults
 # and it reports readiness in status.conditionStatus (as Kyverno v1.19.1 does).
-yq -o=json '.spec' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml \
-  | jq '{metadata:{uid:"issuance-policy-uid"},spec:.,status:{conditionStatus:{ready:true}}}' >"$scratch/policy.json"
+yq -o=json '.spec' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml |
+  jq '{metadata:{uid:"issuance-policy-uid"},spec:.,status:{conditionStatus:{ready:true}}}' >"$scratch/policy.json"
 # Native Kyverno v1.19.1 admission adds both rule defaults to the listener
 # ClusterPolicy. Keep the fixture independent of the verifier's expected-spec
 # construction.
-yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml \
-  | jq '.rules |= map(.skipBackgroundRequests=true | .validate.allowExistingViolations=true) |
+yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml |
+  jq '.rules |= map(.skipBackgroundRequests=true | .validate.allowExistingViolations=true) |
       {metadata:{uid:"policy-uid"},spec:(. + {admission:true,emitWarning:false,validationFailureAction:"Audit"}),
       status:{conditions:[{type:"Ready",status:"True"}]}}' >"$scratch/listener-policy.json"
-yq -o=json '.' k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml \
-  | jq '.metadata.uid="listener-uid" | .metadata.resourceVersion="123"' >"$scratch/listener.json"
+yq -o=json '.' k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml |
+  jq '.metadata.uid="listener-uid" | .metadata.resourceVersion="123"' >"$scratch/listener.json"
 readonly script="$PWD/scripts/verify-arc-transport.sh"
 # Hold only the real background launch before its redirections. The copied
 # orchestrator otherwise keeps the actual command, PID, readers and cleanup.
@@ -44,11 +47,13 @@ while IFS= read -r line || [[ -n "$line" ]]; do
         "  [[ -f \"\$PROOF_TEST_ROOT/state/first-forward-read\" ]] || exit 98"
       printf '  exec %s\n' "${line% &}"
       printf '%s\n' '} &'
-      launches=$((launches+1)) ;;
+      launches=$((launches + 1))
+      ;;
     'forward_pid=$!')
       printf '%s\n' "$line" \
         "printf '%s\\n' \"\$forward_pid\" > \"\$PROOF_TEST_ROOT/state/port-forward-pid\""
-      pid_records=$((pid_records+1)) ;;
+      pid_records=$((pid_records + 1))
+      ;;
     *) printf '%s\n' "$line" ;;
   esac
 done <"$script" >"$delayed_script"
@@ -266,22 +271,42 @@ run_case() {
   local name=$1 expected=$2 result=0 expected_phase=${3:-}
   rm -f "$scratch/state/"*
   if [[ "$name" == source_explicit_* ]]; then
-    (cd "$scratch/source"; PROOF_CASE=$name bash "$script" --same-node) >"$scratch/output" 2>"$scratch/error" || result=$?
+    (
+      cd "$scratch/source"
+      PROOF_CASE=$name bash "$script" --same-node
+    ) >"$scratch/output" 2>"$scratch/error" || result=$?
   elif [[ "$name" == delayed_forward_* ]]; then
     PROOF_CASE=$name bash "$delayed_script" --same-node >"$scratch/output" 2>"$scratch/error" || result=$?
   else
     PROOF_CASE=$name bash "$script" --same-node >"$scratch/output" 2>"$scratch/error" || result=$?
   fi
-  [[ "$result" == "$expected" ]] || { printf 'FAIL %s: exit %s expected %s\n' "$name" "$result" "$expected"; cat "$scratch/error"; exit 1; }
+  [[ "$result" == "$expected" ]] || {
+    printf 'FAIL %s: exit %s expected %s\n' "$name" "$result" "$expected"
+    cat "$scratch/error"
+    exit 1
+  }
   if [[ "$name" == delayed_forward_* && ! -f "$scratch/state/first-forward-read" ]]; then
     printf 'FAIL %s: first native capture read was not observed\n' "$name" >&2
     exit 1
   fi
   if [[ -n "$expected_phase" ]]; then
-    grep -Fxq "ARC transport: FAIL at $expected_phase" "$scratch/error" || { printf 'FAIL %s: incorrect failure phase\n' "$name"; cat "$scratch/error"; exit 1; }
-    ! grep -Fq private-error-sentinel "$scratch/error" || { printf 'FAIL %s: private diagnostic leaked\n' "$name"; exit 1; }
-    grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output" || { printf 'FAIL %s: missing cleanup\n' "$name"; exit 1; }
-    [[ ! -e "$scratch/state/created" ]] || { printf 'FAIL %s: probe remained after cleanup\n' "$name"; exit 1; }
+    grep -Fxq "ARC transport: FAIL at $expected_phase" "$scratch/error" || {
+      printf 'FAIL %s: incorrect failure phase\n' "$name"
+      cat "$scratch/error"
+      exit 1
+    }
+    ! grep -Fq private-error-sentinel "$scratch/error" || {
+      printf 'FAIL %s: private diagnostic leaked\n' "$name"
+      exit 1
+    }
+    grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output" || {
+      printf 'FAIL %s: missing cleanup\n' "$name"
+      exit 1
+    }
+    [[ ! -e "$scratch/state/created" ]] || {
+      printf 'FAIL %s: probe remained after cleanup\n' "$name"
+      exit 1
+    }
   fi
   if [[ -f "$scratch/state/port-forward-pid" ]]; then
     local forward_pid
@@ -294,15 +319,27 @@ run_case() {
     fi
   fi
   if [[ "$name" == listener_read_failure ]]; then
-    grep -Fxq 'ARC transport: FAIL at inactive-credential-boundary' "$scratch/error" || { printf 'FAIL missing failure stage\n'; exit 1; }
-    ! grep -Fq private-error-sentinel "$scratch/error" || { printf 'FAIL private diagnostic leaked\n'; exit 1; }
-    grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output" || { printf 'FAIL missing cleanup\n'; exit 1; }
+    grep -Fxq 'ARC transport: FAIL at inactive-credential-boundary' "$scratch/error" || {
+      printf 'FAIL missing failure stage\n'
+      exit 1
+    }
+    ! grep -Fq private-error-sentinel "$scratch/error" || {
+      printf 'FAIL private diagnostic leaked\n'
+      exit 1
+    }
+    grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output" || {
+      printf 'FAIL missing cleanup\n'
+      exit 1
+    }
   fi
   # No secret, TokenRequest, JIT, host exec, policy change or node deletion is permitted.
   if [[ -f "$scratch/state/calls" ]] && grep -Eqi 'get secret |tokenrequest|create token|ephemeralrunner|delete node|patch |apply ' "$scratch/state/calls"; then exit 1; fi
   if [[ -f "$scratch/state/calls" ]] && grep 'replace ' "$scratch/state/calls" | grep -vq 'replace --dry-run=server '; then exit 1; fi
-  if [[ "$name" == replacement ]] && grep -q 'delete --raw=' "$scratch/state/calls"; then printf 'FAIL replacement delete\n'; exit 1; fi
-  cases=$((cases+1))
+  if [[ "$name" == replacement ]] && grep -q 'delete --raw=' "$scratch/state/calls"; then
+    printf 'FAIL replacement delete\n'
+    exit 1
+  fi
+  cases=$((cases + 1))
 }
 GITHUB_REF=refs/heads/feature run_case unreviewed_ref 1
 run_case delayed_forward_healthy 0
@@ -325,21 +362,31 @@ run_case source_explicit_false 0
 run_case source_explicit_drift 1
 run_case listener_read_failure 17
 run_case tls_error 60
-[[ -f "$scratch/state/port-forward-pid" ]] || { printf 'FAIL TLS case did not exercise port forwarding\n'; exit 1; }
+[[ -f "$scratch/state/port-forward-pid" ]] || {
+  printf 'FAIL TLS case did not exercise port forwarding\n'
+  exit 1
+}
 grep -Fxq 'ARC transport: FAIL at healthy-tls-health' "$scratch/error" || {
-  printf 'FAIL TLS health failure did not identify its phase\n'; exit 1;
+  printf 'FAIL TLS health failure did not identify its phase\n'
+  exit 1
 }
 if grep -Fq private-error-sentinel "$scratch/error"; then
-  printf 'FAIL private TLS diagnostic leaked\n'; exit 1;
+  printf 'FAIL private TLS diagnostic leaked\n'
+  exit 1
 fi
 grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output"
 run_case http_health_error 43
-[[ -f "$scratch/state/port-forward-pid" ]] || { printf 'FAIL HTTP case did not exercise port forwarding\n'; exit 1; }
+[[ -f "$scratch/state/port-forward-pid" ]] || {
+  printf 'FAIL HTTP case did not exercise port forwarding\n'
+  exit 1
+}
 grep -Fxq 'ARC transport: FAIL at healthy-http-health' "$scratch/error" || {
-  printf 'FAIL HTTP health failure did not identify its phase\n'; exit 1;
+  printf 'FAIL HTTP health failure did not identify its phase\n'
+  exit 1
 }
 if grep -Fq private-error-sentinel "$scratch/error"; then
-  printf 'FAIL private HTTP diagnostic leaked\n'; exit 1;
+  printf 'FAIL private HTTP diagnostic leaked\n'
+  exit 1
 fi
 grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output"
 [[ ! -e "$scratch/state/created" ]]

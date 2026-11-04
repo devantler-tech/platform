@@ -62,7 +62,7 @@ need to change.
 ✅ meets · ⚠️ partly, or with our own work · ❌ fails · — not assessed after a hard-filter failure.
 
 | Candidate | OSI licence | Popular and maintained | Simple to run and use | Cloud-native self-hosting | Fits our sites | Own logins, per-client isolation | Platform guardrails |
-|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- |
 | **Payload** | ✅ MIT. SSO and some workflow features are a paid add-on we do not need | ✅ ~45k stars, ~1M npm downloads a week, weekly releases | ✅ one Next.js process plus Postgres; polished editor | ⚠️ no official image, so we build it; Postgres and S3 adapters | ✅ REST and GraphQL, framework-agnostic live preview, built-in localisation | ✅ built-in users and access control; one instance per client | ✅ our signed image; no exception expected |
 | **Strapi** | ⚠️ MIT except `ee/`; live preview, content history and SSO need paid plans | ✅ ~73k stars, weekly releases | ⚠️ documented host minimum of 2 GB, 4 GB recommended, which sizes a whole server with the build; Payload publishes no figure, so increment 2 measures both | ⚠️ no official image; Postgres; S3 provider | ✅ REST and GraphQL; free localisation | ✅ built-in users and roles; one instance per client | ✅ our signed image, as for Payload |
 | **Directus** | ❌ MSCL since v12 (June 2026), with enforced limits on the free tier | ✅ ~38k stars, monthly releases | ✅ | ✅ official amd64 and arm64 image | ✅ | ✅ | — |

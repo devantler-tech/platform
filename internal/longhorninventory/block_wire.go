@@ -16,19 +16,25 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// BlockCollections lists Talos block resources of one kind.
 type BlockCollections interface {
 	List(context.Context, resource.Kind, ...state.ListOption) (resource.List, error)
 }
 
+// BlockListAPI is the COSI resource-list stream BoundedBlocks reads.
 type BlockListAPI interface {
 	List(context.Context, *v1alpha1.ListRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[v1alpha1.ListResponse], error)
 }
 
+// BoundedBlocks is a BlockCollections limited to the block namespace's volume
+// status and discovered-volume kinds on the one node named by Target.
 type BoundedBlocks struct {
 	API    BlockListAPI
 	Target string
 }
 
+// List reads one bounded collection, refusing any other kind, option or node,
+// and any deadline missing or more than 15 seconds away.
 func (r BoundedBlocks) List(ctx context.Context, kind resource.Kind, options ...state.ListOption) (resource.List, error) {
 	invalid := nativeFailure{code: "block-list"}
 	if ctx == nil || !active(ctx) || r.API == nil || kind == nil || len(options) != 0 || kind.Namespace() != block.NamespaceName {

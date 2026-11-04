@@ -1,3 +1,4 @@
+---
 name: Publish Platform Manifests
 description: >-
   Publish platform manifests through a unique staging reference, attach the

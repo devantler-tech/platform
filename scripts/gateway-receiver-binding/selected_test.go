@@ -412,7 +412,7 @@ func TestInstallFenceWaitsForTheFluxLayerWithoutWriting(t *testing.T) {
 	held := api.bindings
 	api.bindings = map[string][]byte{}
 	pauses := 0
-	wrote, err := receiverClient{context: "admin@prod", command: api.command}.installFence(context.Background(), b, func(_ context.Context, d time.Duration) error {
+	wrote, err := receiverClient{context: "admin@prod", command: api.command}.installFence(context.Background(), b, func(_ context.Context, _ time.Duration) error {
 		pauses++
 		if pauses <= 3 && len(api.writes) != 0 {
 			t.Fatal("wrote before the bindings arrived")

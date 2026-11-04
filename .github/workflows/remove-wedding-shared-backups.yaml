@@ -1,8 +1,9 @@
+---
 name: Remove Retired Wedding Shared Backups
 
 # One approved retirement (#4481), dormant until an explicit main dispatch.
 # Source CI and the merge queue never execute this workflow.
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

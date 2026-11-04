@@ -30,7 +30,10 @@ work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
 kubectl kustomize "${infra}" >"${work}/infra.yaml"
-[ -s "${work}/infra.yaml" ] || { echo "::error::infrastructure overlay rendered nothing"; exit 1; }
+[ -s "${work}/infra.yaml" ] || {
+  echo "::error::infrastructure overlay rendered nothing"
+  exit 1
+}
 
 fail=0
 checked=0
@@ -90,7 +93,10 @@ check_affinity "vault-snapshot-init Job" "${work}/init.yaml"
 
 # Coroot: every spec object with hcloud storage, found by walking the CR.
 yq ea 'select(.kind == "Coroot" and .metadata.name == "coroot") | .spec' "${work}/infra.yaml" >"${work}/coroot.yaml"
-[ -s "${work}/coroot.yaml" ] || { echo "::error::Coroot CR did not render"; fail=1; }
+[ -s "${work}/coroot.yaml" ] || {
+  echo "::error::Coroot CR did not render"
+  fail=1
+}
 coroot_paths=()
 # The root spec itself has no path segment; yq prints an empty line for it.
 while IFS= read -r p; do
@@ -113,7 +119,10 @@ for p in "${coroot_paths[@]}"; do
 done
 for c in clickhouse clickhouse.keeper; do
   anti="$(yq ".${c}.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution // [] | length" "${work}/coroot.yaml")"
-  [ "${anti}" -ge 1 ] || { echo "::error::coroot ${c} lost the base's required podAntiAffinity"; fail=1; }
+  [ "${anti}" -ge 1 ] || {
+    echo "::error::coroot ${c} lost the base's required podAntiAffinity"
+    fail=1
+  }
 done
 
 # OpenBao: requires the static workers BY HOSTNAME, not by the label. It deploys
@@ -127,7 +136,10 @@ done
 # must equal ksail.prod.yaml's metadata.name, which is what KSail names nodes by.
 controllers="${repo_root}/k8s/providers/hetzner/infrastructure/controllers"
 kubectl kustomize "${controllers}" >"${work}/controllers.yaml"
-[ -s "${work}/controllers.yaml" ] || { echo "::error::infrastructure-controllers overlay rendered nothing"; exit 1; }
+[ -s "${work}/controllers.yaml" ] || {
+  echo "::error::infrastructure-controllers overlay rendered nothing"
+  exit 1
+}
 workers="$(yq '.spec.cluster.workers' "${repo_root}/ksail.prod.yaml")"
 case "${workers}" in
   '' | 0 | *[!0-9]*)
@@ -160,7 +172,10 @@ else
     checked=$((checked + 1))
   fi
   anti="$(yq '[.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution // [] | .[] | select(.topologyKey == "kubernetes.io/hostname")] | length' "${work}/openbao-affinity.yaml")"
-  [ "${anti}" -ge 1 ] || { echo "::error::OpenBao lost the chart's required hostname podAntiAffinity"; fail=1; }
+  [ "${anti}" -ge 1 ] || {
+    echo "::error::OpenBao lost the chart's required hostname podAntiAffinity"
+    fail=1
+  }
 fi
 
 if [ "${fail}" -ne 0 ]; then

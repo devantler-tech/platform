@@ -1,0 +1,10 @@
+# osv-scanner reads this file for the go.mod beside it only. The fixture pins an old Go release
+# so that its standard library carries published advisories: the Go vulnerability scan must report
+# them, or it has failed (see go.mod and docs/go-vulnerability-scan.md). Those advisories are the
+# fixture's purpose, not a defect to fix, and the module is never built or shipped. Only the
+# standard library is excluded; any advisory on a dependency added here is still reported.
+[[PackageOverrides]]
+name = "stdlib"
+ecosystem = "Go"
+vulnerability.ignore = true
+reason = "Negative control: the pinned old Go release must carry standard-library advisories."

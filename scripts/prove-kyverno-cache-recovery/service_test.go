@@ -36,17 +36,17 @@ func TestWebhookServiceRoutesOnlyToTheQualifiedProcesses(t *testing.T) {
 
 func TestForeignOrUnavailableEndpointCannotPass(t *testing.T) {
 	for name, change := range map[string]func(object, object){
-		"wrong service selector": func(s, e object) { s["spec"].(object)["selector"] = object{"foreign": "true"} },
-		"external service target": func(s, e object) {
+		"wrong service selector": func(s, _ object) { s["spec"].(object)["selector"] = object{"foreign": "true"} },
+		"external service target": func(s, _ object) {
 			s["spec"].(object)["type"] = "ExternalName"
 			s["spec"].(object)["externalName"] = "foreign.invalid"
 		},
-		"wrong service port":  func(s, e object) { s["spec"].(object)["ports"].([]any)[0].(object)["targetPort"] = "foreign" },
-		"foreign slice owner": func(s, e object) { e["metadata"].(object)["ownerReferences"] = owned("Service", "foreign") },
-		"foreign Pod UID":     func(s, e object) { e["endpoints"].([]any)[0].(object)["targetRef"].(object)["uid"] = "foreign" },
-		"foreign address":     func(s, e object) { e["endpoints"].([]any)[0].(object)["addresses"] = []any{"10.0.0.99"} },
-		"unready endpoint":    func(s, e object) { e["endpoints"].([]any)[0].(object)["conditions"].(object)["ready"] = false },
-		"wrong endpoint port": func(s, e object) { e["ports"].([]any)[0].(object)["port"] = 9444 },
+		"wrong service port":  func(s, _ object) { s["spec"].(object)["ports"].([]any)[0].(object)["targetPort"] = "foreign" },
+		"foreign slice owner": func(_, e object) { e["metadata"].(object)["ownerReferences"] = owned("Service", "foreign") },
+		"foreign Pod UID":     func(_, e object) { e["endpoints"].([]any)[0].(object)["targetRef"].(object)["uid"] = "foreign" },
+		"foreign address":     func(_, e object) { e["endpoints"].([]any)[0].(object)["addresses"] = []any{"10.0.0.99"} },
+		"unready endpoint":    func(_, e object) { e["endpoints"].([]any)[0].(object)["conditions"].(object)["ready"] = false },
+		"wrong endpoint port": func(_, e object) { e["ports"].([]any)[0].(object)["port"] = 9444 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, e, bindings := serviceFixture(t)

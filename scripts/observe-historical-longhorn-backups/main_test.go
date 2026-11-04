@@ -78,7 +78,7 @@ func TestRunNeverPublishesPartialOrStaleMetadata(t *testing.T) {
 			env := authorizedEnvironment()
 			get := func(k string) string { return env[k] }
 			checks, observations := 0, 0
-			runner := func(ctx context.Context, program string, args ...string) ([]byte, error) {
+			runner := func(_ context.Context, program string, args ...string) ([]byte, error) {
 				if program != "git" || !readAllowed(program, args...) {
 					t.Fatal("unexpected command")
 				}

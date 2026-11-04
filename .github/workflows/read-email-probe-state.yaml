@@ -1,6 +1,7 @@
+---
 name: Read Email Probe State
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

@@ -7,7 +7,10 @@ local_fixture="$(mktemp -d "${root_dir}/.reloader-local-opt-in.XXXXXX")"
 trap 'rm -rf -- "${scratch}" "${local_fixture}"' EXIT
 
 # Stop the render guard with the failed invariant.
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 
 # Check the actual chart's placement, HA, security and resource bounds.
 placement_is_independent() {

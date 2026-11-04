@@ -242,10 +242,22 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
     'dr|rebuild|DR'; do
     IFS='|' read -r workflow_kind go_job go_label <<<"$route"
     case "$workflow_kind" in
-      ci) go_workflow="$CI_WORKFLOW"; go_override=RGD_WIRING_CI_WORKFLOW ;;
-      main) go_workflow="$MAIN_WORKFLOW"; go_override=RGD_WIRING_MAIN_WORKFLOW ;;
-      cd) go_workflow="$CD_WORKFLOW"; go_override=RGD_WIRING_CD_WORKFLOW ;;
-      dr) go_workflow="$DR_WORKFLOW"; go_override=RGD_WIRING_DR_WORKFLOW ;;
+      ci)
+        go_workflow="$CI_WORKFLOW"
+        go_override=RGD_WIRING_CI_WORKFLOW
+        ;;
+      main)
+        go_workflow="$MAIN_WORKFLOW"
+        go_override=RGD_WIRING_MAIN_WORKFLOW
+        ;;
+      cd)
+        go_workflow="$CD_WORKFLOW"
+        go_override=RGD_WIRING_CD_WORKFLOW
+        ;;
+      dr)
+        go_workflow="$DR_WORKFLOW"
+        go_override=RGD_WIRING_DR_WORKFLOW
+        ;;
     esac
     go_ablation_index=0
     for mutation in \

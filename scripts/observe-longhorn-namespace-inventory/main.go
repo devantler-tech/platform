@@ -1,3 +1,5 @@
+// Command observe-longhorn-namespace-inventory checks, read-only, whether
+// production returns a complete metadata inventory of the Longhorn namespace.
 package main
 
 import (

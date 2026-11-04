@@ -2,11 +2,18 @@
 set -euo pipefail
 
 mode="${1:-}"
-case "$mode" in --render-only|--runtime) ;; *) printf 'usage: %s --render-only|--runtime\n' "$0" >&2; exit 2 ;; esac
+case "$mode" in --render-only | --runtime) ;; *)
+  printf 'usage: %s --render-only|--runtime\n' "$0" >&2
+  exit 2
+  ;;
+esac
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 helm_bin="${CONTROLLER_HELM:?use the audited controller Helm renderer}"
 pull_bin="${HELM_PULL_BIN:-helm}"
 release="$root_dir/k8s/bases/infrastructure/controllers/cilium/helm-release.yaml"

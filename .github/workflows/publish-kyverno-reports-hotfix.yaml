@@ -1,6 +1,7 @@
+---
 name: Publish Kyverno Reports Hotfix
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:
