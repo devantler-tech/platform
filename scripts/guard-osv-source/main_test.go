@@ -19,7 +19,7 @@ func TestOSVArgumentsKeepCompleteNativeScope(t *testing.T) {
 func TestNativeOSVReportMustExamineEveryModuleAndKeepOperationalErrorsBlocking(t *testing.T) {
 	files := map[string]string{"go.mod": "receipt", "nested/go.mod": "receipt"}
 	valid := []byte(`{"results":[{"source":{"path":"/snapshot/go.mod"},"packages":[{"package":{"name":"stdlib","version":"1.27.3","ecosystem":"Go"}}]},{"source":{"path":"/snapshot/nested/go.mod"},"packages":[{"package":{"name":"stdlib","version":"1.26.10","ecosystem":"Go"}}]}]}`)
-	log := []byte("Scanned /snapshot/go.mod file and found 124 packages\nScanned /snapshot/nested/go.mod file and found 78 packages\n")
+	log := []byte("Scanned /snapshot/go.mod file and found 124 packages\nScanned /snapshot/nested/go.mod file and found 1 package\n")
 	if err := validateReport(valid, log, "/snapshot", files); err != nil {
 		t.Fatal(err)
 	}

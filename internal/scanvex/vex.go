@@ -76,7 +76,7 @@ func ValidateTrivy(data []byte, vexPath string, scopes []Scope) error {
 			Target                       string
 			ExperimentalModifiedFindings []struct {
 				Type, Status, Statement, Source string
-				Finding                         struct{ VulnerabilityID, PkgName, InstalledVersion string }
+				Finding                         struct{ ID, VulnerabilityID, PkgName, InstalledVersion string }
 			}
 		}
 	}
@@ -85,6 +85,12 @@ func ValidateTrivy(data []byte, vexPath string, scopes []Scope) error {
 	}
 	for _, result := range report.Results {
 		for _, finding := range result.ExperimentalModifiedFindings {
+			// --show-suppressed also retains the pre-existing, explicitly supplied
+			// native misconfiguration ignore file. Its frozen inputs and premises
+			// are checked by the source/runtime guards; these are not VEX matches.
+			if finding.Type == "misconfiguration" && finding.Status == "ignored" && finding.Source == ".trivyignore.yaml" && finding.Finding.ID != "" {
+				continue
+			}
 			if finding.Type != "vulnerability" || finding.Status != "not_affected" || finding.Statement != "vulnerable_code_not_in_execute_path" || finding.Source != vexPath || !allowed(scopes, finding.Finding.VulnerabilityID, finding.Finding.PkgName, finding.Finding.InstalledVersion, []string{result.Target}) {
 				return fmt.Errorf("native Trivy suppressed a finding outside the complete proven occurrence set")
 			}

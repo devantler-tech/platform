@@ -38,6 +38,10 @@ func TestUnexpectedSuppressionRemainsBlocking(t *testing.T) {
 	if ValidateTrivy([]byte(`{}`), "/proof/vex.json", scopes) == nil {
 		t.Fatal("accepted an empty native scan")
 	}
+	nativeIgnore := []byte(`{"Results":[{"Target":"fixture/quota.yaml","ExperimentalModifiedFindings":[{"Type":"misconfiguration","Status":"ignored","Source":".trivyignore.yaml","Finding":{"ID":"KSV-0039"}}]}]}`)
+	if err := ValidateTrivy(nativeIgnore, "/proof/vex.json", scopes); err != nil {
+		t.Fatalf("rejected the preserved native ignore input: %v", err)
+	}
 }
 
 func TestGrypeRetainsUnknownFindingsAndRejectsUnprovedSuppression(t *testing.T) {

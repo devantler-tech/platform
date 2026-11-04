@@ -226,7 +226,7 @@ func validateReport(data, log []byte, root string, files map[string]string) erro
 	// The native extractor logs every examined module, including modules with
 	// no vulnerability. Asking for --all-packages would additionally force
 	// ./... analysis on a tools-only module with no local Go packages.
-	for _, match := range regexp.MustCompile(`(?m)^Scanned (.+/go[.]mod) file and found ([1-9][0-9]*) packages\r?$`).FindAllStringSubmatch(string(log), -1) {
+	for _, match := range regexp.MustCompile(`(?m)^Scanned (.+/go[.]mod) file and found ([1-9][0-9]*) packages?\r?$`).FindAllStringSubmatch(string(log), -1) {
 		rel, err := filepath.Rel(root, match[1])
 		if err != nil || strings.HasPrefix(rel, "../") {
 			return fmt.Errorf("native extractor escaped its frozen checkout")
