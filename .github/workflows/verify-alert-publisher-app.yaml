@@ -1,9 +1,12 @@
+---
 name: Verify Alert Publisher App
 
 # Coverage bootstrap for #5291/#5294. The publisher stays dormant. This reads
 # GitHub metadata, mints one repository-scoped token, then revokes that token.
 # It never runs the publisher state machine or creates an incident/ask.
-on:
+"on":
+  # checkov:skip=CKV_GHA_7:Not a build. `confirm` is the typed interlock for this read-only
+  # proof and nothing is built or published, so removing the input would only remove the guard.
   workflow_dispatch:
     inputs:
       confirm:

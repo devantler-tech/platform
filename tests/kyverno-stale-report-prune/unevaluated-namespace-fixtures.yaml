@@ -1,3 +1,4 @@
+---
 # #3155, #4234: a policy that matches a ConfigMap in each system namespace, and one
 # such ConfigMap per namespace. kube-system, kube-public and kube-node-lease are
 # dropped from the resource filters, so each must get a report. kyverno stays in
@@ -18,7 +19,14 @@ spec:
         any:
           - resources:
               kinds: [ConfigMap]
-              namespaces: [kube-system, kube-public, kube-node-lease, kyverno, unevaluated-control]
+              namespaces:
+                [
+                  kube-system,
+                  kube-public,
+                  kube-node-lease,
+                  kyverno,
+                  unevaluated-control,
+                ]
       validate:
         message: owner label required
         pattern:

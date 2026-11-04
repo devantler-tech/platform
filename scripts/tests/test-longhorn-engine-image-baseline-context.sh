@@ -98,7 +98,11 @@ any() {
   yq -r ea "[select(.kind == \"DaemonSet\" and .metadata.namespace == \"longhorn-system\" and .metadata.name == \"${target}\") | $2] | any" "$1"/*.yaml
 }
 
-{ cat "${fixtures_dir}/resources.yaml"; printf -- '---\n'; cat "${fixtures_dir}/near-misses.yaml"; } >"${work_dir}/targets.yaml"
+{
+  cat "${fixtures_dir}/resources.yaml"
+  printf -- '---\n'
+  cat "${fixtures_dir}/near-misses.yaml"
+} >"${work_dir}/targets.yaml"
 apply "${work_dir}/targets.yaml" "${work_dir}/live"
 live="${work_dir}/live"
 

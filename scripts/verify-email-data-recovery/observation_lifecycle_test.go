@@ -30,7 +30,7 @@ func (w *observationFailingWriter) Write(p []byte) (int, error) {
 	return w.base.Write(p)
 }
 
-func TestObservationForwarderChild(t *testing.T) {
+func TestObservationForwarderChild(_ *testing.T) {
 	port := os.Getenv("EMAIL_OBSERVATION_FORWARD_PORT")
 	if port == "" {
 		return

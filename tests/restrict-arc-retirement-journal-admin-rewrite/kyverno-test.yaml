@@ -1,3 +1,4 @@
+---
 # Pins the preserve-retirement-journal rule before the ValidatingPolicy rewrite
 # (#4995): protected administrator recovery (system:masters) may replace the journal.
 # values.yaml supplies the previous Namespace and user-info.yaml the requester;

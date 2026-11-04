@@ -1,3 +1,5 @@
+// Command verify-email-storage-canary proves the encrypted email storage
+// canary's write, remount, wrong-key refusal, recovery and cleanup.
 package main
 
 import (

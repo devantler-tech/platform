@@ -1,3 +1,5 @@
+// Command expand-openbao-audit inspects, or performs, the approved bounded
+// expansion of the OpenBao audit volume, preserving its records.
 package main
 
 import (
@@ -203,9 +205,9 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 		if err != nil || !valid(c, "v1", "PersistentVolumeClaim", "openbao", name) || field(c, "status", "phase") != "Bound" || field(c, "spec", "storageClassName") != "hcloud" || field(c, "metadata", "labels", "app.kubernetes.io/name") != "openbao" {
 			return s, claimUnverified
 		}
-		req, cap := str(field(c, "spec", "resources", "requests", "storage")), str(field(c, "status", "capacity", "storage"))
+		req, capacity := str(field(c, "spec", "resources", "requests", "storage")), str(field(c, "status", "capacity", "storage"))
 		_, typedConditions := field(c, "status", "conditions").([]any)
-		if req != "1Gi" && req != "10Gi" && req != target || cap != "10Gi" && cap != target || field(c, "status", "conditions") != nil && !typedConditions {
+		if req != "1Gi" && req != "10Gi" && req != target || capacity != "10Gi" && capacity != target || field(c, "status", "conditions") != nil && !typedConditions {
 			return s, claimCapacityUnreviewed
 		}
 		pvName := str(field(c, "spec", "volumeName"))
@@ -280,14 +282,14 @@ func auditPod(p map[string]any, name, claim, owner string) bool {
 }
 func stableResource(r map[string]any, omitCapacity bool) map[string]any {
 	b, _ := json.Marshal(r)
-	copy, _ := decode(b)
-	spec := obj(copy["spec"])
+	clone, _ := decode(b)
+	spec := obj(clone["spec"])
 	if omitCapacity {
 		delete(spec, "capacity")
-	} else if requests := obj(field(copy, "spec", "resources", "requests")); requests != nil {
+	} else if requests := obj(field(clone, "spec", "resources", "requests")); requests != nil {
 		delete(requests, "storage")
 	}
-	return map[string]any{"uid": field(copy, "metadata", "uid"), "name": field(copy, "metadata", "name"), "namespace": field(copy, "metadata", "namespace"), "owners": field(copy, "metadata", "ownerReferences"), "labels": field(copy, "metadata", "labels"), "annotations": field(copy, "metadata", "annotations"), "finalizers": field(copy, "metadata", "finalizers"), "spec": spec}
+	return map[string]any{"uid": field(clone, "metadata", "uid"), "name": field(clone, "metadata", "name"), "namespace": field(clone, "metadata", "namespace"), "owners": field(clone, "metadata", "ownerReferences"), "labels": field(clone, "metadata", "labels"), "annotations": field(clone, "metadata", "annotations"), "finalizers": field(clone, "metadata", "finalizers"), "spec": spec}
 }
 func preserved(a, b snapshot) bool {
 	if !reflect.DeepEqual(stableResource(a.workload, false), stableResource(b.workload, false)) || !reflect.DeepEqual(a.class, b.class) {

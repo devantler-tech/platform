@@ -1,8 +1,9 @@
+---
 name: Verify Wedding Backup Cutover
 
 # Dormant operator proof: create one fresh online backup only after the reviewed
 # dedicated archive is active. Catalogue and isolated restore proofs are separate.
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

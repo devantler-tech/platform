@@ -19,7 +19,10 @@ case "$(uname -s)/$(uname -m)" in
     asset=envtest-v1.36.2-darwin-arm64.tar.gz
     expected_sha=f344e7c70961b100471eeea4d2555006f282a6a27bece7f42fbede77b29b886e
     ;;
-  *) echo 'FAIL: unreviewed local API asset platform' >&2; exit 1 ;;
+  *)
+    echo 'FAIL: unreviewed local API asset platform' >&2
+    exit 1
+    ;;
 esac
 curl --proto '=https' --proto-redir '=https' --location --tlsv1.2 \
   --fail --silent --show-error --connect-timeout 10 --max-time 180 \

@@ -19,7 +19,7 @@ go run ./scripts/judge-openbao-quorum \
 ```
 
 | Exit | Verdict | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | 0 | `PROVEN` | Every expected server is a voter, exactly one member is leader, nothing unexpected is a member, and quorum survives taking `--replace` out. |
 | 1 | `HOLD` | A definite finding: an expected server that is missing or not a voter, an unexpected member, no leader or more than one, or a replacement that would leave fewer voters than quorum. |
 | 2 | `UNKNOWN` | The evidence cannot decide: the capture is stale, from the future or has no start or completion time, the read did not return HTTP 200, or the body is malformed, partial, oversized or ambiguous, or a member is listed twice or without its node identity, voter or leader field. Invalid arguments also exit 2, including `-h`, an unknown flag, any flag given twice and a `--replace` that is not one of `--expect-servers`. |

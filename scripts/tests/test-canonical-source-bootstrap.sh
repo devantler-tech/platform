@@ -61,47 +61,52 @@ awk -F '\t' '$1=="business-site" && $2=="publish-app" &&
  $8=="oci://ghcr.io/devantler-tech/business-site/manifests" {ok=1} END {exit !ok}' "$work/rows"
 controls=0
 for mutation in \
- '.bindings[0].consumer="different"' \
- '.bindings[0].consumerRepository="other/business-site"' \
- '.bindings[0].workflow="publish-manifests"' \
- '.bindings[0].kind="unknown"' \
- '.bindings[0].extra=true' \
- '.bindings += .bindings' \
- '.bindings[0].sourcePath="../outside.yaml"' \
- '.bindings[0].constructorSpecSha256=("0"*64)' \
- '.bindings[0].tenantIdentity.kind="OtherTenant"' \
- '.bindings[0].tenantIdentity.namespace="other"' \
- '.bindings[0].sourceIdentity.name="other"' \
- '.bindings[0].sourceIdentity.artifactURL="oci://ghcr.io/other/business-site/manifests"' \
- '.bindings[0].sourceIdentity.digest="sha256:invalid"' \
- '.bindings[0].publication.gitTag="not-a-tag"' \
- '.bindings[0].publication.sourceSHA="partial"' \
- '.bindings[0].publication.publisherIdentity="devantler-tech/actions/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0"' \
- '.bindings[0].publication.callerWorkflow=".github/workflows/cd.yaml"' \
- '.bindings[0].publication.event="push"' \
- '.bindings[0].publication.workflowRunId=0' \
- '.bindings[0].publication.workflowRunAttempt="1"'; do
+  '.bindings[0].consumer="different"' \
+  '.bindings[0].consumerRepository="other/business-site"' \
+  '.bindings[0].workflow="publish-manifests"' \
+  '.bindings[0].kind="unknown"' \
+  '.bindings[0].extra=true' \
+  '.bindings += .bindings' \
+  '.bindings[0].sourcePath="../outside.yaml"' \
+  '.bindings[0].constructorSpecSha256=("0"*64)' \
+  '.bindings[0].tenantIdentity.kind="OtherTenant"' \
+  '.bindings[0].tenantIdentity.namespace="other"' \
+  '.bindings[0].sourceIdentity.name="other"' \
+  '.bindings[0].sourceIdentity.artifactURL="oci://ghcr.io/other/business-site/manifests"' \
+  '.bindings[0].sourceIdentity.digest="sha256:invalid"' \
+  '.bindings[0].publication.gitTag="not-a-tag"' \
+  '.bindings[0].publication.sourceSHA="partial"' \
+  '.bindings[0].publication.publisherIdentity="devantler-tech/actions/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0"' \
+  '.bindings[0].publication.callerWorkflow=".github/workflows/cd.yaml"' \
+  '.bindings[0].publication.event="push"' \
+  '.bindings[0].publication.workflowRunId=0' \
+  '.bindings[0].publication.workflowRunAttempt="1"'; do
   jq "$mutation" "$work/good.json" >"$tree/scripts/canonical-tenant-source-bindings.json"
   if discover >"$work/rows" 2>"$work/error"; then
-    echo "invalid canonical binding admitted: $mutation" >&2; exit 1
+    echo "invalid canonical binding admitted: $mutation" >&2
+    exit 1
   fi
   test ! -s "$work/rows"
-  controls=$((controls+1))
+  controls=$((controls + 1))
 done
 cp "$work/good.json" "$tree/scripts/canonical-tenant-source-bindings.json"
 for mutation in '.spec.source.reconcileApplication=true' '.spec.webApp=true' '.spec.externalDns=true' '.spec.sops=true' '.spec.extra="unreviewed"'; do
   yq "$mutation" "$work/good-tenant.yaml" >"$tree/$source_path"
   if discover >"$work/rows" 2>"$work/error"; then
-    echo "changed source-only instance admitted: $mutation" >&2; exit 1
+    echo "changed source-only instance admitted: $mutation" >&2
+    exit 1
   fi
   test ! -s "$work/rows"
-  controls=$((controls+1))
+  controls=$((controls + 1))
 done
 cp "$work/good-tenant.yaml" "$tree/$source_path"
 cp "$tree/$source_path" "$tree/$(dirname "$source_path")/clone.yaml"
-if discover >"$work/rows" 2>"$work/error"; then echo 'cloned Tenant admitted' >&2; exit 1; fi
+if discover >"$work/rows" 2>"$work/error"; then
+  echo 'cloned Tenant admitted' >&2
+  exit 1
+fi
 test ! -s "$work/rows"
-printf 'Canonical source bootstrap: positive discovery and %d binding/instance refusal controls passed.\n' "$((controls+1))"
+printf 'Canonical source bootstrap: positive discovery and %d binding/instance refusal controls passed.\n' "$((controls + 1))"
 
 # The production guard must independently attribute the real rendered graph.
 # A passing raw parser cannot substitute for this actual Kustomize comparison.
@@ -215,22 +220,41 @@ BASH
 chmod 755 "$work/bootstrap-fixture"
 rm "$production/scripts/canonical-tenant-source-bindings.json"
 for race in directory symlink conflict; do
-  if env CANONICAL_BOOT_RACE="$race" "$work/bootstrap-fixture" >"$work/error" 2>&1; then echo "bootstrap accepted destination $race race" >&2; exit 1; fi
+  if env CANONICAL_BOOT_RACE="$race" "$work/bootstrap-fixture" >"$work/error" 2>&1; then
+    echo "bootstrap accepted destination $race race" >&2
+    exit 1
+  fi
   case "$race" in
-    directory) test -z "$(find "$production/scripts/canonical-tenant-source-bindings.json" -mindepth 1 -print)"; rmdir "$production/scripts/canonical-tenant-source-bindings.json" ;;
-    symlink) test -L "$production/scripts/canonical-tenant-source-bindings.json"; test -z "$(find "$work/redirect" -mindepth 1 -print)"; rm "$production/scripts/canonical-tenant-source-bindings.json" ;;
-    conflict) grep -qxF '{"unreviewed":true}' "$production/scripts/canonical-tenant-source-bindings.json"; rm "$production/scripts/canonical-tenant-source-bindings.json" ;;
+    directory)
+      test -z "$(find "$production/scripts/canonical-tenant-source-bindings.json" -mindepth 1 -print)"
+      rmdir "$production/scripts/canonical-tenant-source-bindings.json"
+      ;;
+    symlink)
+      test -L "$production/scripts/canonical-tenant-source-bindings.json"
+      test -z "$(find "$work/redirect" -mindepth 1 -print)"
+      rm "$production/scripts/canonical-tenant-source-bindings.json"
+      ;;
+    conflict)
+      grep -qxF '{"unreviewed":true}' "$production/scripts/canonical-tenant-source-bindings.json"
+      rm "$production/scripts/canonical-tenant-source-bindings.json"
+      ;;
   esac
 done
 "$work/bootstrap-fixture" >"$work/bootstrap-generation"
 cp "$production/scripts/canonical-tenant-source-bindings.json" "$work/bootstrap-generated.json"
-if env CANONICAL_BOOT_RACE=observed "$work/bootstrap-fixture" >"$work/error" 2>&1; then echo 'bootstrap overwrote concurrent observed binding' >&2; exit 1; fi
+if env CANONICAL_BOOT_RACE=observed "$work/bootstrap-fixture" >"$work/error" 2>&1; then
+  echo 'bootstrap overwrote concurrent observed binding' >&2
+  exit 1
+fi
 test "$(jq -r '.bindings[0].kind' "$production/scripts/canonical-tenant-source-bindings.json")" = published-binding
 cp "$work/bootstrap-generated.json" "$production/scripts/canonical-tenant-source-bindings.json"
 "$work/bootstrap-fixture" >"$work/bootstrap-generation"
 cmp "$work/bootstrap-generated.json" "$production/scripts/canonical-tenant-source-bindings.json"
 for failure in CANONICAL_VERIFY_FAILURE CANONICAL_INVENTORY_FAILURE; do
-  if env "$failure=1" "$work/bootstrap-fixture" >"$work/error" 2>&1; then echo "bootstrap admitted failed $failure" >&2; exit 1; fi
+  if env "$failure=1" "$work/bootstrap-fixture" >"$work/error" 2>&1; then
+    echo "bootstrap admitted failed $failure" >&2
+    exit 1
+  fi
   cmp "$work/bootstrap-generated.json" "$production/scripts/canonical-tenant-source-bindings.json"
 done
 
@@ -245,7 +269,10 @@ jq '.items[0].status={}' "$work/observed-inventory.json" >"$work/source-inventor
 "$work/generate-fixture" >"$work/generation"
 test "$(jq -r '.bindings[0].kind' "$production/scripts/canonical-tenant-source-bindings.json")" = published-bootstrap
 cp "$work/observed-inventory.json" "$work/source-inventory.json"
-if "$work/bootstrap-fixture" >"$work/error" 2>&1; then echo 'bootstrap replaced real observation' >&2; exit 1; fi
+if "$work/bootstrap-fixture" >"$work/error" 2>&1; then
+  echo 'bootstrap replaced real observation' >&2
+  exit 1
+fi
 "$work/generate-fixture" >"$work/generation"
 test "$(jq -r '.bindings[0].kind' "$production/scripts/canonical-tenant-source-bindings.json")" = published-binding
 test "$(awk -F '\t' '$1=="business-site" && NF==7 {n++} END {print n+0}' "$production/scripts/publish-workflow-approved-revisions.identities.tsv")" = 1
@@ -256,28 +283,40 @@ APPROVED_REVISIONS_OBSERVED_ON=2030-01-01 "$work/generate-fixture" >"$work/gener
 cmp "$work/observed-identities.tsv" "$production/scripts/publish-workflow-approved-revisions.identities.tsv"
 cmp "$work/observed-binding.json" "$production/scripts/canonical-tenant-source-bindings.json"
 for mutation in '.items=[]' '.metadata.continue="next"' '.items += .items' \
- '.items=[{}]' '.metadata.continue=123' '.items[0].status.conditions="malformed"' \
- '.items[0].status={}' '.items[0].status.observedGeneration=1' \
- '.items[0].status.conditions[1].status="False"' '.items[0].status.conditions[0].observedGeneration=1' \
- '.items[0].spec.url="oci://ghcr.io/other/manifests"' '.items[0].status.artifact.revision="sha256:wrong"'; do
+  '.items=[{}]' '.metadata.continue=123' '.items[0].status.conditions="malformed"' \
+  '.items[0].status={}' '.items[0].status.observedGeneration=1' \
+  '.items[0].status.conditions[1].status="False"' '.items[0].status.conditions[0].observedGeneration=1' \
+  '.items[0].spec.url="oci://ghcr.io/other/manifests"' '.items[0].status.artifact.revision="sha256:wrong"'; do
   jq "$mutation" "$work/observed-inventory.json" >"$work/source-inventory.json"
-  if "$work/generate-fixture" >"$work/error" 2>&1; then echo "observed source regressed: $mutation" >&2; exit 1; fi
+  if "$work/generate-fixture" >"$work/error" 2>&1; then
+    echo "observed source regressed: $mutation" >&2
+    exit 1
+  fi
   cmp "$work/observed-identities.tsv" "$production/scripts/publish-workflow-approved-revisions.identities.tsv"
   cmp "$work/observed-binding.json" "$production/scripts/canonical-tenant-source-bindings.json"
   cmp "$work/legacy-before.tsv" "$production/scripts/publish-workflow-approved-revisions.tsv"
 done
 cp "$work/observed-inventory.json" "$work/source-inventory.json"
 for failure in CANONICAL_VERIFY_FAILURE CANONICAL_INVENTORY_FAILURE; do
-  if env "$failure=1" "$work/generate-fixture" >"$work/error" 2>&1; then echo "generator admitted failed $failure" >&2; exit 1; fi
+  if env "$failure=1" "$work/generate-fixture" >"$work/error" 2>&1; then
+    echo "generator admitted failed $failure" >&2
+    exit 1
+  fi
   cmp "$work/observed-binding.json" "$production/scripts/canonical-tenant-source-bindings.json"
 done
 # Inconsistent direction one: bootstrap with an observed row.
 jq '.bindings[0].kind="published-bootstrap"' "$work/observed-binding.json" >"$production/scripts/canonical-tenant-source-bindings.json"
-if "$work/generate-fixture" >"$work/error" 2>&1; then echo 'bootstrap borrowed observed authority' >&2; exit 1; fi
+if "$work/generate-fixture" >"$work/error" 2>&1; then
+  echo 'bootstrap borrowed observed authority' >&2
+  exit 1
+fi
 cp "$work/observed-binding.json" "$production/scripts/canonical-tenant-source-bindings.json"
 # Inconsistent direction two: binding without its real observed row.
 awk -F '\t' '$1!="business-site"' "$work/observed-identities.tsv" >"$production/scripts/publish-workflow-approved-revisions.identities.tsv"
-if "$work/generate-fixture" >"$work/error" 2>&1; then echo 'binding invented missing observation' >&2; exit 1; fi
+if "$work/generate-fixture" >"$work/error" 2>&1; then
+  echo 'binding invented missing observation' >&2
+  exit 1
+fi
 cp "$work/observed-identities.tsv" "$production/scripts/publish-workflow-approved-revisions.identities.tsv"
 printf 'Canonical source bootstrap: atomic/idempotent admission, monotonic observed transition and refusal controls passed.\n'
 
@@ -285,6 +324,7 @@ printf 'Canonical source bootstrap: atomic/idempotent admission, monotonic obser
 # source validation still passes; independent rendered validation must refuse.
 yq -i '.patches += [{"target":{"kind":"ResourceGraphDefinition","name":"tenant.kro.run"},"patch":"- op: replace\n  path: /spec/resources/0/template/metadata/name\n  value: unreviewed"}]' "$production/k8s/providers/hetzner/infrastructure/kustomization.yaml"
 if bash "$test_repo_root/scripts/guard-consumer-discovery-conservation.sh" "$production" >"$work/error" 2>&1; then
-  echo 'effective constructor changed behind admitted raw graph' >&2; exit 1
+  echo 'effective constructor changed behind admitted raw graph' >&2
+  exit 1
 fi
 printf 'Canonical source bootstrap: effective rendered constructor changes are refused.\n'

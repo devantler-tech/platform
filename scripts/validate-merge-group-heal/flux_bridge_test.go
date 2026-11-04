@@ -183,8 +183,8 @@ func TestFluxBridgeRequiredResult(t *testing.T) {
 		if guard != nil {
 			t.Fatal("duplicate Flux bridge result guard")
 		}
-		copy := step
-		guard = &copy
+		found := step
+		guard = &found
 	}
 	if guard == nil || guard.If != "" || guard.Continue != nil ||
 		guard.Env["EVENT_NAME"] != "${{ github.event_name }}" ||

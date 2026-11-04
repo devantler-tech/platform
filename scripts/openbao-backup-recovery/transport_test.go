@@ -21,7 +21,7 @@ func TestAPIRefusesExternalOriginsRedirectsAndIncompleteHealth(t *testing.T) {
 		}
 	}
 	var followed atomic.Bool
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { followed.Store(true); w.WriteHeader(http.StatusOK) }))
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { followed.Store(true); w.WriteHeader(http.StatusOK) }))
 	defer target.Close()
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
@@ -36,7 +36,7 @@ func TestAPIRefusesExternalOriginsRedirectsAndIncompleteHealth(t *testing.T) {
 		t.Fatal("redirect could expose the recovery token")
 	}
 	for _, body := range []string{`{}`, `{"initialized":true,"sealed":false}`, `{"initialized":true,"sealed":false,"version":"2.5.3"}`} {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
 		client, err := newAPI(server.URL)
 		if err != nil {
 			t.Fatal(err)

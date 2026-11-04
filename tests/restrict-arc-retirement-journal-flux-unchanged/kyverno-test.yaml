@@ -1,3 +1,4 @@
+---
 # Pins the preserve-retirement-journal rule before the ValidatingPolicy rewrite
 # (#4995): a controller without system:masters may update the Namespace when the journal is unchanged.
 # values.yaml supplies the previous Namespace and user-info.yaml the requester;

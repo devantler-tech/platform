@@ -8,7 +8,7 @@ fail() {
 }
 
 mode=$EMAIL_CUSTODY_MODE
-case "$mode" in plan|copy) ;; *) fail ;; esac
+case "$mode" in plan | copy) ;; *) fail ;; esac
 [ -n "$BAO_ADDR" ] || fail
 [ -f "$EMAIL_CUSTODY_TOKEN_FILE" ] || fail
 [ -d "$EMAIL_CUSTODY_WORK_DIR" ] || fail
@@ -16,8 +16,8 @@ work=$(mktemp -d "$EMAIL_CUSTODY_WORK_DIR/email-credentials.XXXXXXXX") || fail
 trap 'rm -rf "$work"' 0
 trap 'exit 1' HUP INT TERM
 token=$(cat "$EMAIL_CUSTODY_TOKEN_FILE") || fail
-case "$token" in ''|*[!A-Za-z0-9._-]*) fail ;; esac
-printf 'X-Vault-Token: %s\nContent-Type: application/json\n' "$token" > "$work/headers"
+case "$token" in '' | *[!A-Za-z0-9._-]*) fail ;; esac
+printf 'X-Vault-Token: %s\nContent-Type: application/json\n' "$token" >"$work/headers"
 unset token
 
 # Headers and JSON bodies are files in private memory, never process arguments.
@@ -35,13 +35,13 @@ request() {
     POST) set -- "$@" --request POST --data-binary "@$request_input" ;;
     *) fail ;;
   esac
-  status=$(curl "$@" "$BAO_ADDR/v1/$request_path" 2> "$work/request-error") || fail
+  status=$(curl "$@" "$BAO_ADDR/v1/$request_path" 2>"$work/request-error") || fail
 }
 
 read_record() {
   record_path=$1
   record_output=$2
-  : > "$record_output"
+  : >"$record_output"
   request GET "secret/data/$record_path" ''
   case "$status" in
     404) return 4 ;;
@@ -55,7 +55,7 @@ read_record() {
       select(all(..; type != "number")) |
       select(.password | type == "string") |
       select(.password | test("^[A-Za-z0-9]{40,128}$"))' \
-      "$work/response.json" > "$record_output" 2> "$work/json-error"; then
+    "$work/response.json" >"$record_output" 2>"$work/json-error"; then
     fail
   fi
 }
@@ -79,16 +79,16 @@ report() {
 # without creating passwords or mistaking absence for a verified migration.
 request GET sys/mounts ''
 [ "$status" = 200 ] || fail
-if ! jq -e '.data | type == "object"' "$work/response.json" > /dev/null 2> "$work/json-error"; then
+if ! jq -e '.data | type == "object"' "$work/response.json" >/dev/null 2>"$work/json-error"; then
   fail
 fi
-if jq -e '.data["secret/"] == null' "$work/response.json" > /dev/null; then
+if jq -e '.data["secret/"] == null' "$work/response.json" >/dev/null; then
   unseeded=3
   report
   exit 0
 fi
 if ! jq -e '.data["secret/"] | .type == "kv" and .options.version == "2"' \
-    "$work/response.json" > /dev/null 2> "$work/json-error"; then
+  "$work/response.json" >/dev/null 2>"$work/json-error"; then
   fail
 fi
 
@@ -98,18 +98,18 @@ fi
 if [ "$mode" = copy ]; then
   expected_file=${EMAIL_CUSTODY_EXPECTED_FILE:-}
   [ -n "$expected_file" ] && [ -f "$expected_file" ] && [ ! -L "$expected_file" ] || fail
-  [ "$(wc -c < "$expected_file")" -le 1048576 ] || fail
+  [ "$(wc -c <"$expected_file")" -le 1048576 ] || fail
   if ! jq -ceS -s 'select(length == 1) | .[0] |
       select(type == "object") |
       select(keys == ["apps/private-mail/admin", "apps/private-mail/agent", "apps/private-mail/maintainer"]) |
       select(all(.[]; type == "object" and all(..; type != "number") and
         (.password | type == "string" and test("^[A-Za-z0-9]{40,128}$"))))' \
-      "$expected_file" > "$work/expected.json" 2> "$work/json-error"; then
+    "$expected_file" >"$work/expected.json" 2>"$work/json-error"; then
     fail
   fi
   for account in admin maintainer agent; do
     if ! jq -ceS --arg path "apps/private-mail/$account" '.[$path]' \
-        "$work/expected.json" > "$work/expected-$account.json" 2> "$work/json-error"; then
+      "$work/expected.json" >"$work/expected-$account.json" 2>"$work/json-error"; then
       fail
     fi
     read_record "apps/private-mail/$account" "$work/source.json" || fail
@@ -150,12 +150,12 @@ for account in admin maintainer agent; do
     pending=$((pending + 1))
   else
     if ! jq -cn --slurpfile value "$work/source.json" \
-        '{options: {cas: 0}, data: $value[0]}' > "$work/create.json" 2> "$work/json-error"; then
+      '{options: {cas: 0}, data: $value[0]}' >"$work/create.json" 2>"$work/json-error"; then
       fail
     fi
     request POST "secret/data/$destination_path" "$work/create.json"
     creation_status=$status
-    case "$creation_status" in 200|204|400) ;; *) fail ;; esac
+    case "$creation_status" in 200 | 204 | 400) ;; *) fail ;; esac
     # Read back successful writes AND conditional-create races. Never replace
     # a different destination or silently accept a lost/uncertain write.
     read_record "$destination_path" "$work/destination.json" || fail

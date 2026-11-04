@@ -54,15 +54,24 @@ check() {
 
   # T1 — runs exactly once a day, every day.
   [ "$(yq -r '.on.schedule | length' "$f")" = '1' ] ||
-    { printf 'VIOLATION T1: expected exactly one schedule entry\n'; return 1; }
+    {
+      printf 'VIOLATION T1: expected exactly one schedule entry\n'
+      return 1
+    }
   cron="$(q "$f" '.on.schedule[0].cron')"
   minute='' hour='' dom='' month='' dow='' extra=''
   read -r minute hour dom month dow extra <<<"${cron}"
   case "${minute}" in
-    '' | *[!0-9]*) printf 'VIOLATION T1: cron minute is not a fixed number (got "%s")\n' "${cron}"; return 1 ;;
+    '' | *[!0-9]*)
+      printf 'VIOLATION T1: cron minute is not a fixed number (got "%s")\n' "${cron}"
+      return 1
+      ;;
   esac
   case "${hour}" in
-    '' | *[!0-9]*) printf 'VIOLATION T1: cron hour is not a fixed number (got "%s")\n' "${cron}"; return 1 ;;
+    '' | *[!0-9]*)
+      printf 'VIOLATION T1: cron hour is not a fixed number (got "%s")\n' "${cron}"
+      return 1
+      ;;
   esac
   if [ "${minute}" -gt 59 ] || [ "${hour}" -gt 23 ]; then
     printf 'VIOLATION T1: cron minute or hour out of range (got "%s")\n' "${cron}"
@@ -75,38 +84,59 @@ check() {
 
   # T2 — still runnable on demand.
   [ "$(yq -r '(.on // {}) | has("workflow_dispatch")' "$f")" = 'true' ] ||
-    { printf 'VIOLATION T2: no workflow_dispatch trigger\n'; return 1; }
+    {
+      printf 'VIOLATION T2: no workflow_dispatch trigger\n'
+      return 1
+    }
 
   # T3 — no other trigger. Both jobs read prod through an environment that only
   # admits protected branches.
   keys="$(yq -r '(.on // {}) | keys | sort | join(",")' "$f")"
   [ "${keys}" = 'schedule,workflow_dispatch' ] ||
-    { printf 'VIOLATION T3: triggers are "%s", expected schedule,workflow_dispatch\n' "${keys}"; return 1; }
+    {
+      printf 'VIOLATION T3: triggers are "%s", expected schedule,workflow_dispatch\n' "${keys}"
+      return 1
+    }
 
   # T0 — both jobs exist, so T4 and T5 below cannot pass vacuously.
   for job in "${fleet_job}" "${inventory_job}"; do
     [ "$(yq -r ".jobs | has(\"${job}\")" "$f")" = 'true' ] ||
-      { printf 'VIOLATION T0: job %s is missing\n' "${job}"; return 1; }
+      {
+        printf 'VIOLATION T0: job %s is missing\n' "${job}"
+        return 1
+      }
   done
 
   # T4 — no job carries a condition. Any job-level `if:` can skip the scheduled
   # run while the run reports success.
   offenders="$(yq -r '.jobs | to_entries | map(select(.value | has("if"))) | map(.key) | join(",")' "$f")"
   [ -z "${offenders}" ] ||
-    { printf 'VIOLATION T4: job-level if: on %s\n' "${offenders}"; return 1; }
+    {
+      printf 'VIOLATION T4: job-level if: on %s\n' "${offenders}"
+      return 1
+    }
 
   # T5 — every job runs in environment prod, where KUBE_CONFIG and TALOS_CONFIG live.
   offenders="$(yq -r '.jobs | to_entries | map(select(.value.environment != "prod")) | map(.key) | join(",")' "$f")"
   [ -z "${offenders}" ] ||
-    { printf 'VIOLATION T5: not in environment prod: %s\n' "${offenders}"; return 1; }
+    {
+      printf 'VIOLATION T5: not in environment prod: %s\n' "${offenders}"
+      return 1
+    }
 
   # T6 — the complete policy parser uses the repository's reviewed Go pin.
   [ "$(yq -r ".jobs[\"${fleet_job}\"].steps | map(select(.uses == \"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e\" and .with.\"go-version-file\" == \"go.mod\")) | length" "$f")" = '1' ] ||
-    { printf 'VIOLATION T6: missing pinned Go setup for complete policy comparison\n'; return 1; }
+    {
+      printf 'VIOLATION T6: missing pinned Go setup for complete policy comparison\n'
+      return 1
+    }
 
   # T7 — removing the actual checker must not leave a green scheduled shell.
   [ "$(yq -r ".jobs[\"${fleet_job}\"].steps | map(select(.run == \"./scripts/validate-image-verifier-liveness.sh\")) | length" "$f")" = '1' ] ||
-    { printf 'VIOLATION T7: complete fleet checker is not invoked\n'; return 1; }
+    {
+      printf 'VIOLATION T7: complete fleet checker is not invoked\n'
+      return 1
+    }
 
   printf 'ok\n'
 }
