@@ -2021,7 +2021,7 @@ jobs:
         if: matrix.suite == 'services'
         timeout-minutes: 5
         env:
-          CONTRACT_PROBE_IMAGE_NATIVE_TEST: '1'
+          CONTRACT_PROBE_IMAGE_NATIVE_TEST: "1"
         run: |
           set -euo pipefail
           go test -count=1 -timeout 4m -json ./scripts/tests/contract-probe-image |
@@ -3568,13 +3568,13 @@ jobs:
         if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
-          VAULT_BACKUP_TOOLING_NATIVE_TEST: '1'
+          VAULT_BACKUP_TOOLING_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/vault-backup-recovery
       - name: 🔒 Prove Longhorn dashboard read-only routing
         if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
-          LONGHORN_UI_NATIVE_TEST: '1'
+          LONGHORN_UI_NATIVE_TEST: "1"
         run: go test -race -count=1 -v ./scripts/tests/longhorn-ui-readonly
       - name: 🐤 Validate staged OpenBao standby repair
         if: matrix.suite == 'contracts'

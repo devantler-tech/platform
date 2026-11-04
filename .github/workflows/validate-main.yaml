@@ -98,7 +98,7 @@ jobs:
 
       - name: 🔐 Enforce approved publication signers
         env:
-          APPROVED_REVISIONS_ENFORCE: '1'
+          APPROVED_REVISIONS_ENFORCE: "1"
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       - name: ⚙️ Setup Go
@@ -207,7 +207,6 @@ jobs:
           # read as a passing step.
           set -o pipefail
           ./scripts/report-publish-workflow-signing-revisions.sh | tee -a "$GITHUB_STEP_SUMMARY"
-
 
   # ci.yaml's validate-talos job runs the Kubernetes/Talos compatibility predicate on
   # `pull_request` and `merge_group`, but neither event fires for a direct push to main.

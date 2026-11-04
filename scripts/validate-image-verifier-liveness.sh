@@ -117,17 +117,17 @@ if [[ -z "${policy_checker}" ]]; then
   trap 'rm -rf "${helper_work}"' EXIT
   policy_checker="${helper_work}/validate-image-verification-policy"
   GOWORK=off GOFLAGS="" go -C "${root_dir}" build -mod=readonly -trimpath \
-    -o "${policy_checker}" ./scripts/validate-image-verification-policy >/dev/null 2>&1 || \
+    -o "${policy_checker}" ./scripts/validate-image-verification-policy >/dev/null 2>&1 ||
     fail_infra 'could not build the reviewed image-verification policy comparator'
 fi
 [[ -x "${policy_checker}" ]] || fail_infra 'image-verification policy comparator is unavailable'
-declared_rules_json="$("${policy_checker}" normalize "${policy_manifest}" 2>/dev/null)" || \
+declared_rules_json="$("${policy_checker}" normalize "${policy_manifest}" 2>/dev/null)" ||
   fail_infra 'could not parse the complete declared image-verification policy'
 readonly declared_rules_json
-declared_rule_count="$(printf '%s' "${declared_rules_json}" | jq -r 'length')" || \
+declared_rule_count="$(printf '%s' "${declared_rules_json}" | jq -r 'length')" ||
   fail_infra 'could not count the declared image-verification rules'
 readonly declared_rule_count
-declared_patterns_json="$(printf '%s' "${declared_rules_json}" | jq -c 'map(.imagePattern)')" || \
+declared_patterns_json="$(printf '%s' "${declared_rules_json}" | jq -c 'map(.imagePattern)')" ||
   fail_infra 'could not encode the declared image-verification rule set'
 readonly declared_patterns_json
 
@@ -388,7 +388,7 @@ check_node() {
   # Preserve the complete native spec, in first-match order, and fail closed
   # when it cannot be read or compared. Diagnostics never print raw signers.
   running_decisions="$(printf '%s' "${rules}" | jq -c --arg owner "${rules_owner}" \
-    '[sort_by(.id)[] | select(.phase == "running" and .owner == $owner) | .spec]')" || \
+    '[sort_by(.id)[] | select(.phase == "running" and .owner == $owner) | .spec]')" ||
     fail_infra "could not read complete image-verification decisions on ${node}"
   status=0
   printf '%s' "${running_decisions}" | "${policy_checker}" compare "${policy_manifest}" >/dev/null 2>&1 || status=$?

@@ -78,7 +78,8 @@ grep -qxF 'new record' "$generator_test_work/target"
 printf 'still pending\n' >"$generator_test_work/pending"
 mkdir "$generator_test_work/directory"
 if "$generator_test_work/run" replace "$generator_test_work/pending" "$generator_test_work/directory" >"$generator_test_work/replace-error" 2>&1; then
-  printf 'replacement interpreted a directory as an output container\n' >&2; exit 1
+  printf 'replacement interpreted a directory as an output container\n' >&2
+  exit 1
 fi
 test -z "$(find "$generator_test_work/directory" -mindepth 1 -print)"
 grep -qxF 'still pending' "$generator_test_work/pending"

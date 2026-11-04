@@ -204,7 +204,7 @@ Reserved policy names do not inherit an exception for an already noncompliant
 old object: platform creation is not permission for a tenant's later update.
 This ownership boundary is separate from the hold's actual traffic effect.
 Routing, projection and live hold/serve/isolate/recover acceptance remain under
-#5247 before exposure; the source-only baseline does not enable an application.
+# 5247 before exposure; the source-only baseline does not enable an application.
 
 ### Public business-site configuration identity
 

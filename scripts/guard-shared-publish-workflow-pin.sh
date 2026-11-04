@@ -345,9 +345,9 @@ judge_family_subject() {
       return 1
       ;;
   esac
-  canonical_part="${inner#*"$boundary"}"                # <workflow>\.yaml@<commit>
+  canonical_part="${inner#*"$boundary"}" # <workflow>\.yaml@<commit>
   legacy_part="${inner%"$boundary$canonical_part"}"
-  legacy_part="${legacy_part#"$LEGACY_FAMILY"}"         # <workflow>\.yaml@<ref>
+  legacy_part="${legacy_part#"$LEGACY_FAMILY"}" # <workflow>\.yaml@<ref>
   case "$legacy_part$canonical_part" in
     *"$LEGACY_FAMILY"* | *"$CANONICAL_FAMILY"*)
       printf '%s: two-family subject names a publisher family more than once (subject: %s)\n' \

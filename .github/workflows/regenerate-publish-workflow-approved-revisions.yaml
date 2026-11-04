@@ -204,7 +204,7 @@ jobs:
         if: steps.moved.outputs.moved == 'true'
         shell: bash
         env:
-          APPROVED_REVISIONS_ENFORCE: '1'
+          APPROVED_REVISIONS_ENFORCE: "1"
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       - name: 📦 Open or update the regeneration pull request

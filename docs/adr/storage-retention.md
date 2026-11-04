@@ -115,7 +115,7 @@ removed. `Retain` lets the deletion succeed.
 
 ### Narrow the annotation to stateful resources — rejected
 
-#3368 kept the annotation on claims and releases and took it off namespaces. A narrower opt-out is
+# 3368 kept the annotation on claims and releases and took it off namespaces. A narrower opt-out is
 still an opt-out: whatever keeps the annotation is still outside declarative management. Any rule
 that treats stateless tenants differently also needs to know which tenants are stateless, and that
 cannot be read from this repository.

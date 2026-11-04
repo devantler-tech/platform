@@ -223,7 +223,10 @@ assert_gate_behaviour() {
 
 for workflow_name in ci cd; do
   workflow="${root_dir}/.github/workflows/${workflow_name}.yaml"
-  [ -f "${workflow}" ] || { fail "${workflow_name}.yaml is missing"; continue; }
+  [ -f "${workflow}" ] || {
+    fail "${workflow_name}.yaml is missing"
+    continue
+  }
 
   script="${work_dir}/${workflow_name}-step.sh"
   extract_step "${workflow}" >"${script}"

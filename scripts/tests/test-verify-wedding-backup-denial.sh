@@ -276,7 +276,10 @@ require_text "${pod_err}" 'allowed to list' 'a silent accepted list is reported 
 
 # A success record wins even when the client also exits non-zero.
 dir="$(new_pod_case list-partly-granted)"
-{ file_record 'wedding-db/x'; denied 'list folder'; } >"${dir}/mc/list.out"
+{
+  file_record 'wedding-db/x'
+  denied 'list folder'
+} >"${dir}/mc/list.out"
 run_pod "${dir}"
 [[ "${pod_rc}" -ne 0 ]] || fail 'a partly listed shared catalogue must fail the proof'
 require_text "${pod_err}" 'allowed to list' 'a partly listed catalogue is reported as broken isolation'
@@ -652,8 +655,7 @@ for test in \
   'replicas-fractional|.spec.instances = 3.5 | .status.readyInstances = 3.5' \
   'uid-absent|del(.metadata.uid)' \
   'generation-absent|del(.metadata.generation)' \
-  'observed-generation-stale|.status.observedGeneration = 6'
-do
+  'observed-generation-stale|.status.observedGeneration = 6'; do
   name="${test%%|*}"
   mutation="${test#*|}"
   new_case "preflight-${name}"
@@ -675,8 +677,7 @@ for test in \
   'wal-disabled|.spec.plugins[0].isWALArchiver = false' \
   'ready-lost|.status.readyInstances = 2' \
   'uid-changed|.metadata.uid = "22222222-2222-2222-2222-222222222222"' \
-  'generation-changed|.metadata.generation = 8'
-do
+  'generation-changed|.metadata.generation = 8'; do
   name="${test%%|*}"
   mutation="${test#*|}"
   new_case "readback-${name}"
@@ -765,12 +766,18 @@ run_runner --confirm
 [[ ! -e "${CASE}/staged-secret.json" ]] || fail 'incomplete source keys never reach the platform namespace'
 
 new_case reordered
-{ printf '%s\n' "${marker}"; printf '%s\n' "${receipt}"; } >"${CASE}/pod.log"
+{
+  printf '%s\n' "${marker}"
+  printf '%s\n' "${receipt}"
+} >"${CASE}/pod.log"
 run_runner --confirm
 [[ "${run_rc}" -ne 0 ]] || fail 'a marker printed before the receipt must fail the proof'
 
 new_case trailing
-{ cat "${work_dir}/passing-pod.log"; printf 'denial-pod: late\n'; } >"${CASE}/pod.log"
+{
+  cat "${work_dir}/passing-pod.log"
+  printf 'denial-pod: late\n'
+} >"${CASE}/pod.log"
 run_runner --confirm
 [[ "${run_rc}" -ne 0 ]] || fail 'output after the marker must fail the proof'
 

@@ -59,7 +59,7 @@ runs:
     - name: 🔐 Enforce approved publication signers
       shell: bash
       env:
-        APPROVED_REVISIONS_ENFORCE: '1'
+        APPROVED_REVISIONS_ENFORCE: "1"
       run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
     # Keep signer approval ahead of credentials, then refuse stale recovery
