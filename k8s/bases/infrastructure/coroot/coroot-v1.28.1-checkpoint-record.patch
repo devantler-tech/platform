@@ -158,10 +158,19 @@ index 0a6938f..05ac049 100644
  	DatabaseSize    map[string]*timeseries.TimeSeries
  	TableSize       map[DbTableKey]*timeseries.TimeSeries
 diff --git a/watchers/alerts.go b/watchers/alerts.go
-index 6a2b363..da238d3 100644
+index 6a2b363..559e289 100644
 --- a/watchers/alerts.go
 +++ b/watchers/alerts.go
-@@ -137,6 +137,11 @@ func (w *Alerts) Check(project *db.Project, world *model.World, from, to timeser
+@@ -105,6 +105,8 @@ func (w *Alerts) Check(project *db.Project, world *model.World, from, to timeser
+ 					}
+ 					check, report := app.GetCheckWithReport(rule.Source.Check.CheckId)
+ 					if check == nil {
++						// A missing report is unobserved time too: restart any pending period.
++						delete(w.pendingAlerts, calcFingerprint(string(rule.Id), app.Id.String(), nil))
+ 						continue
+ 					}
+ 					alertsEvaluated++
+@@ -137,6 +139,11 @@ func (w *Alerts) Check(project *db.Project, world *model.World, from, to timeser
  
  func (w *Alerts) evaluateCheckAlert(project *db.Project, rule *model.AlertingRule, app *model.Application, check *model.Check, report model.AuditReportName, now timeseries.Time) {
  	fingerprint := calcFingerprint(string(rule.Id), app.Id.String(), nil)
@@ -175,10 +184,10 @@ index 6a2b363..da238d3 100644
  
 diff --git a/watchers/alerts_test.go b/watchers/alerts_test.go
 new file mode 100644
-index 0000000..a58b563
+index 0000000..1042ad8
 --- /dev/null
 +++ b/watchers/alerts_test.go
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,186 @@
 +package watchers
 +
 +import (
@@ -338,4 +347,30 @@ index 0000000..a58b563
 +	after, err := database.GetAlert(project.Id, alerts[0].Id)
 +	require.NoError(t, err)
 +	require.Zero(t, after.ResolvedAt)
++}
++
++func TestCheckAlertMissingReportRestartsPendingPeriod(t *testing.T) {
++	database, project, watcher, world, app, rule := checkAlertFixture(t)
++	rule.Source.Check.CheckId = model.Checks.PostgresAvailability.Id
++	rule.For = 10 * timeseries.Minute
++	require.NoError(t, database.UpdateAlertingRule(project.Id, rule))
++	check := &model.Check{Id: rule.Source.Check.CheckId, Status: model.WARNING, Message: "synthetic failure"}
++	now := timeseries.Now()
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportPostgres, now)
++	fingerprint := calcFingerprint(string(rule.Id), app.Id.String(), nil)
++	require.Contains(t, watcher.pendingAlerts, fingerprint)
++	app.Reports = nil
++	auditor.Audit(world, project, nil, nil)
++	missing, _ := app.GetCheckWithReport(rule.Source.Check.CheckId)
++	require.Nil(t, missing)
++	watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++	require.NotContains(t, watcher.pendingAlerts, fingerprint, "a missing report must not keep the pending period running")
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportPostgres, now.Add(11*timeseries.Minute))
++	alerts, err := database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Empty(t, alerts, "the breach must satisfy the full For period again after a missing report")
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportPostgres, now.Add(22*timeseries.Minute))
++	alerts, err = database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Len(t, alerts, 1)
 +}
