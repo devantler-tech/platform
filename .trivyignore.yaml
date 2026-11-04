@@ -6,6 +6,42 @@
 # checkov and trivy to zero on k8s/ so both can leave DISABLE_ERRORS_LINTERS.
 
 misconfigurations:
+  - id: KSV-0053
+    paths:
+      - k8s/providers/hetzner/apps/world-at-ruin/role-operator.yaml
+    statement: >-
+      [runtime-premise] The fixed private World trial grants only its OIDC owner
+      create on pods/exec and pods/portforward, with no other writes. Kubernetes
+      cannot restrict exec to one command. The audited v0.167.0 manifest artifact
+      is pinned to sha256:41734486d53261dcc8a75bdd7736b003f09b471f3d660806f5c631abe9d4e0d8,
+      with its exact signed image/source receipt, owner binding, host isolation,
+      budget, Vault identity and retirement controls. Offline and native effective
+      profile guards reject new grants, consumers, credentials, persistence or
+      source changes. Retire before player accounts, authoritative persistence or
+      production zone credentials; every future release requires a fresh audit.
+  - id: KSV-0049
+    paths:
+      - k8s/bases/infrastructure/controllers/prune-protected-orphan-alert/role.yaml
+    statement: >-
+      [runtime-premise] The detector must GET and PATCH only its named first-seen
+      state ConfigMap to retain the bounded orphan-alert clock. Its sole namespaced
+      RoleBinding, service account, complete consumer script, state object and
+      read-only inventory grant are fingerprinted; no create/delete or other write
+      is admitted. The mandatory native script regression verifies actual GET/PATCH
+      requests and refuses failed/malformed state or unsuccessful updates.
+  - id: KSV-0048
+    paths:
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-csi-sidecars.yaml
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-csi-plugin.yaml
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-engine-image.yaml
+    statement: >-
+      [runtime-premise] Kyverno mutate-existing repairs require get/patch/update
+      only on the statically named Longhorn CSI Deployments and DaemonSets. Each
+      namespaced Role/Binding, sole Kyverno background-controller subject and full
+      matching policy/consumer are fingerprinted, including registrar-hook removal.
+      Mandatory native Kyverno regressions prove actual target mutations,
+      convergence and unchanged near misses. New bindings, targets, wildcards or
+      unrelated consumers invalidate this necessity; no permission is widened.
   # KSV-0039 "limit range usage" — 450 of trivy's 614 findings on this tree (73%), all LOW.
   #
   # The check is evaluated per FILE, but a LimitRange is a namespace-scoped object that this
@@ -72,10 +108,14 @@ misconfigurations:
     paths:
       - k8s/bases/infrastructure/**
       - k8s/providers/*/infrastructure/**
+      - k8s/bases/bootstrap/limit-ranges/kube-system.yaml
     statement: >-
       These are cluster infrastructure components that belong in kube-system by construction — CNI,
       DNS, CSI, cloud-controller-manager and their namespace-local VerticalPodAutoscalers,
-      PodDisruptionBudgets and Gateway material. Application trees remain covered by this check.
+      PodDisruptionBudgets and Gateway material. The exact bootstrap path contains kube-system's
+      namespace-local default-limitrange, not an application: Container default CPU 2 and requests
+      CPU 15m/memory 128Mi. internal/trivydispositions binds its complete identity and properties.
+      Application trees remain covered by this check.
 
   # KSV-0109 matches identifier text rather than secret material at both sites below. Keep the
   # dispositions separate so each path carries the reason that was checked against its content.
@@ -91,6 +131,14 @@ misconfigurations:
     statement: >-
       external_secrets_replicas is a public controller replica count; Trivy matches the word
       secrets in the key name, not secret material.
+  - id: KSV-0109
+    paths:
+      - k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml
+    statement: >-
+      The sole match is the shell comment phrase "clean pass:" in the embedded coverage checker;
+      the detector interprets pass: as a password assignment. Complete parsed data fingerprint
+      sha256:0d54ba88c2aad1521c6b5ec9576bda09c5ea0e0c327bdf5c4c9792626b5fdbf0 is enforced with
+      exact ownership, GVK and path by internal/trivydispositions before this disposition is used.
 
   # KSV-01010 "ConfigMap with sensitive content" is a SEPARATE check from KSV-0109 above, not that
   # check renumbered — verified with a with/without-ignorefile ablation rather than assumed. With
@@ -116,6 +164,22 @@ misconfigurations:
     statement: >-
       The ConfigMap embeds public JavaScript source that reads credentials from an ESO-mounted
       Secret; Trivy matches the source identifiers containing secretKey, not credential values.
+  - id: KSV-01010
+    paths:
+      - k8s/bases/apps/homepage/config-map.yaml
+    statement: >-
+      The sole match is the Email display-layout label in settings.yaml, not an email identifier
+      or credential. Complete parsed data fingerprint
+      sha256:9abfd145907ad4c1dd5096b4ed3456c375d010411304ed5ad91331419d877bd3 is enforced with
+      exact ownership, GVK and path by internal/trivydispositions before this disposition is used.
+  - id: KSV-01010
+    paths:
+      - k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml
+    statement: >-
+      Matches are jq object-key constructors and function definitions in metrics.jq and the
+      embedded coverage checker, not sensitive values. Complete parsed data fingerprint
+      sha256:0d54ba88c2aad1521c6b5ec9576bda09c5ea0e0c327bdf5c4c9792626b5fdbf0 is enforced with
+      exact ownership, GVK and path by internal/trivydispositions before this disposition is used.
 
   # CoreDNS must bind UDP/TCP port 53 while running as the pinned image's non-root 65532 identity.
   # The binary carries the required file capability, so the container adds only
@@ -665,3 +729,64 @@ misconfigurations:
       primary gid, so the split costs no access. Because trivy scopes by path rather than by
       resource, scripts/tests/test-trivyignore-vault-config-identity-boundary.sh asserts that per
       container so this entry cannot silently cover a future low-GID container.
+
+  # Runtime-specific premises are checked before and after native scanning by
+  # internal/trivyruntimedispositions and real listed/unlisted boundary controls.
+  - id: DS-0026
+    paths:
+      - k8s/bases/infrastructure/controllers/kyverno/BackgroundDownstreamCleanup.Dockerfile
+      - k8s/bases/infrastructure/controllers/kyverno/MigrationRuntime.Dockerfile
+      - k8s/bases/infrastructure/controllers/kyverno/ReportsWatchPlan.Dockerfile
+      - k8s/bases/infrastructure/coroot/CorootCheckpoint.Dockerfile
+      - k8s/bases/infrastructure/coroot/CorootClusterAgentCheckpoint.Dockerfile
+      - k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
+    statement: >-
+      [runtime-premise] These exact compatibility image factories have repository-owned
+      Kubernetes service consumers and immutable upstream runtime/source bindings. Docker
+      HEALTHCHECK metadata is not their Kubernetes health contract. Four long-running
+      consumers currently lack native probes; this disposition does not claim probe coverage
+      or observed health. The Coroot server has native readiness and migration is a one-shot
+      Job. No dummy check or HEALTHCHECK NONE is introduced. Exact files, publishers and
+      Kubernetes ownership are guarded; an unlisted Dockerfile remains reported.
+  - id: DS-0002
+    paths:
+      - k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
+    statement: >-
+      [runtime-premise] The exact pinned Coroot eBPF node-agent checks BPF permissions and
+      refuses startup without root/CAP_SYS_ADMIN. Its operator generates privileged hostPID
+      execution. Only the reviewed binary replaces the immutable upstream image; source,
+      publisher and Kubernetes identity changes invalidate this necessity.
+  - id: KSV-0020
+    paths:
+      - k8s/bases/apps/private-mail/stateful-set.yaml
+    statement: >-
+      [runtime-premise] UID 2000 is the immutable Stalwart image's baked stalwart user, which
+      owns its configuration and data directories. The complete sole-container identity,
+      image, workload ownership and restrictive execution contract are guarded.
+  - id: KSV-0021
+    paths:
+      - k8s/bases/apps/private-mail/stateful-set.yaml
+    statement: >-
+      [runtime-premise] GID 2000 is the same immutable image's baked stalwart group. The
+      matching primary and volume group are guarded together with the exact sole-container
+      execution contract; no other low-GID workload is covered.
+  - id: KSV-0022
+    paths:
+      - k8s/bases/apps/private-mail/stateful-set.yaml
+    statement: >-
+      [runtime-premise] The exact Stalwart binary carries effective cap_net_bind_service=ep.
+      NET_BIND_SERVICE must remain in its bounding set for exec even on management port8080.
+      Every other capability is dropped, privilege escalation is disabled and the complete
+      image/identity/capability contract is guarded; arbitrary added capabilities are refused.
+  - id: KSV-0036
+    paths:
+      - k8s/bases/infrastructure/coroot/components/security-progress/deployment.yaml
+      - k8s/bases/infrastructure/vault-backup/cron-job.yaml
+      - k8s/bases/infrastructure/vault-backup/job.yaml
+    statement: >-
+      [runtime-premise] Automatic token mounting is false. Only the Coroot collector or the
+      vault snapshot initContainer explicitly receives one3600second projected token. The
+      collector has exact get/list-only workload/security-report RBAC; snapshot has no
+      repository Kubernetes RBAC binding and exchanges its JWT for the exact read-only
+      OpenBao snapshot policy. Sidecar access, audience/lifetime/ownership changes, scripts
+      and the complete RBAC/authentication contract are guarded.

@@ -3,6 +3,7 @@ name: Prove Cilium Default Deny
 # Dormant proof plumbing for #3501. Dispatch requires a separately approved
 # main workflow SHA and candidate PR/head. No production access or provider.
 on:
+  # checkov:skip=CKV_GHA_7:Inputs bind an explicitly approved disposable policy proof to immutable workflow and candidate identities; this workflow publishes no product build.
   workflow_dispatch:
     inputs:
       confirm:

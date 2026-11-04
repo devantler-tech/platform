@@ -2,6 +2,7 @@
 # Compile the repository's actual graph; never inherit a kubeconfig or test cluster.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+bash "$root/scripts/guard-controller-helm-profile.sh"
 fixture="${root}/scripts/tests/webapp-compiler"
 work="$(mktemp -d "${TMPDIR:-/tmp}/webapp-compiler.XXXXXX")"
 trap 'rm -rf -- "${work}"' EXIT
@@ -25,7 +26,7 @@ jq -e '.Replace == null' <<<"${gateway_profile}" >/dev/null || {
 }
 gateway="$(go -C "${fixture}" mod download -json sigs.k8s.io/gateway-api | jq -er '.Dir | select(type == "string" and length > 0)')"
 
-# Real dependency schemas, pinned to the reviewed Flux 2.10.0 fixture and current
+# Real dependency schemas, pinned to the reviewed Flux 2.9.6 distribution and current
 # External Secrets chart. A fixture pin is not an observation of production.
 fetch_schema() {
   local url="$1" expected_digest="$2" output="$3" actual_digest
@@ -42,10 +43,10 @@ fetch_schema() {
   echo 'FAIL: review Tenant schema fixtures for the new External Secrets chart' >&2
   exit 1
 }
-fetch_schema 'https://raw.githubusercontent.com/fluxcd/source-controller/v1.10.1/config/crd/bases/source.toolkit.fluxcd.io_ocirepositories.yaml' \
-  dcb7198a1c747ad96b8ca5218d2780896800306098497159fa77ecd7aba9a886 "${work}/oci.yaml"
-fetch_schema 'https://raw.githubusercontent.com/fluxcd/kustomize-controller/v1.10.1/config/crd/bases/kustomize.toolkit.fluxcd.io_kustomizations.yaml' \
-  dec77e391bff9307e47898d2d7448c5083a49b85700f6f870c7849449e11aad0 "${work}/kustomization.yaml"
+fetch_schema 'https://raw.githubusercontent.com/fluxcd/source-controller/v1.9.6/config/crd/bases/source.toolkit.fluxcd.io_ocirepositories.yaml' \
+  80c7c6e5c8de0764cc83acd4de5c74bea8e51186085304d22cecc5f2eb35500e "${work}/oci.yaml"
+fetch_schema 'https://raw.githubusercontent.com/fluxcd/kustomize-controller/v1.9.6/config/crd/bases/kustomize.toolkit.fluxcd.io_kustomizations.yaml' \
+  da23ca0e6b4c80d3d26a91583137491e147ef4ef1e2208aece0d0af4ef851974 "${work}/kustomization.yaml"
 fetch_schema 'https://raw.githubusercontent.com/external-secrets/external-secrets/v2.14.0/deploy/crds/bundle.yaml' \
   0dd116eb3b2ae247e2d256662d5afa4d1f3cd37d34ad6580261b15acf55b3b0d "${work}/external-secrets.yaml"
 yq -o=json -I=0 '.' "${work}/external-secrets.yaml" | jq -se '

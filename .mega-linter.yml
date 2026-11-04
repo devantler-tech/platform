@@ -61,6 +61,21 @@ PRE_COMMANDS:
     secured_env: true
     run_before_linters: true
     continue_if_failed: false
+  - command: bash scripts/tests/test-trivyignore-source-model-boundary.sh
+    cwd: workspace
+    secured_env: true
+    run_before_linters: true
+    continue_if_failed: false
+  - command: bash scripts/with-runtime-disposition-tools.sh -- bash scripts/tests/test-trivyignore-runtime-boundary.sh
+    cwd: workspace
+    secured_env: true
+    run_before_linters: true
+    continue_if_failed: false
+  - command: bash scripts/tests/test-checkov-operational-inputs.sh
+    cwd: workspace
+    secured_env: true
+    run_before_linters: true
+    continue_if_failed: false
 
 EXCLUDED_DIRECTORIES:
   - megalinter-reports
@@ -443,6 +458,18 @@ REPOSITORY_TRIVY_ARGUMENTS:
 REPOSITORY_TRIVY_CLI_EXECUTABLE:
   - bash
   - scripts/trivy-resource-quota.sh
+
+# The image's old embedded Go analyzer cannot read Go 1.27. Build the reviewed
+# native release with the repository compiler and retain the complete scope.
+REPOSITORY_OSV_SCANNER_CLI_EXECUTABLE:
+  - bash
+  - scripts/osv-source-analysis.sh
+REPOSITORY_GRYPE_CLI_EXECUTABLE:
+  - bash
+  - scripts/grype-source-analysis.sh
+REPOSITORY_CHECKOV_CLI_EXECUTABLE:
+  - bash
+  - scripts/checkov-source-analysis.sh
 
 # zizmor aborts with "fatal: no audit was performed" because MegaLinter strips GITHUB_TOKEN and its
 # artipacked audit then 401s against the GitHub API. Handing it the token makes the audit run

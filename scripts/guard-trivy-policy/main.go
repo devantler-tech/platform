@@ -4,7 +4,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +14,12 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/celapplicability"
+	"github.com/devantler-tech/platform/internal/scansnapshot"
+	"github.com/devantler-tech/platform/internal/scanvex"
+	"github.com/devantler-tech/platform/internal/trivydispositions"
+	"github.com/devantler-tech/platform/internal/trivyruntimedispositions"
 )
 
 func patchQuotaRule(input []byte) ([]byte, error) {
@@ -60,11 +68,62 @@ func run(args []string) (int, error) {
 	if err != nil || !strings.HasPrefix(string(version), "Version: 0.74.0\n") {
 		return 2, fmt.Errorf("native Trivy 0.74.0 is required")
 	}
+	snapshot, cleanup, err := scansnapshot.Clone(context.Background(), ".")
+	if err != nil {
+		return 2, err
+	}
+	defer cleanup()
+	if err := trivydispositions.Validate(snapshot.Root); err != nil {
+		return 2, err
+	}
+	if err := trivyruntimedispositions.Validate(snapshot.Root); err != nil {
+		return 2, err
+	}
+	proof, err := celapplicability.Prove(context.Background(), snapshot.Root)
+	if err != nil {
+		return 2, err
+	}
+	paths := make([]string, 0, len(proof.Scopes))
+	for _, scope := range proof.Scopes {
+		paths = append(paths, scope.GoModPath)
+	}
+	scopes := []scanvex.Scope{{IDs: append([]string{proof.Vulnerability}, proof.Aliases...), Module: "github.com/google/cel-go", Version: "v0.26.0", Paths: paths, Justification: proof.Justification}}
 	work, err := os.MkdirTemp("", "trivy-quota-policy-")
 	if err != nil {
 		return 2, err
 	}
 	defer func() { _ = os.RemoveAll(work) }()
+	vexPath := filepath.Join(work, "source-applicability.json")
+	if err := scanvex.Write(vexPath, scopes); err != nil {
+		return 2, err
+	}
+	// Retain the proof outside the scanned frozen checkout in the native report tree.
+	reportDir := filepath.Join("megalinter-reports", "source-applicability")
+	for _, directory := range []string{"megalinter-reports", reportDir} {
+		if err := os.Mkdir(directory, 0700); err != nil && !os.IsExist(err) {
+			return 2, err
+		}
+		info, err := os.Lstat(directory)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return 2, fmt.Errorf("linked or invalid native report directory")
+		}
+	}
+	receipt, err := json.MarshalIndent(proof, "", "  ")
+	if err != nil {
+		return 2, err
+	}
+	receiptFile, err := os.CreateTemp(reportDir, "trivy-cel-"+snapshot.Head+"-*.json")
+	if err != nil {
+		return 2, err
+	}
+	if _, err := receiptFile.Write(receipt); err != nil {
+		_ = receiptFile.Close()
+		return 2, err
+	}
+	if err := receiptFile.Close(); err != nil {
+		return 2, err
+	}
+	fmt.Fprintf(os.Stderr, "guard-trivy-policy: complete source commit %s; advisory-specific proof of %d source files\n", snapshot.Head, proof.SourceFiles)
 	original, corrected := filepath.Join(work, "original"), filepath.Join(work, "corrected")
 	for _, dir := range []string{original, corrected, filepath.Join(work, "bootstrap"), filepath.Join(work, "controls")} {
 		if err := os.Mkdir(dir, 0700); err != nil {
@@ -102,12 +161,27 @@ func run(args []string) (int, error) {
 	if err := verifyBundle(corrected, correctedInventory); err != nil {
 		return 2, err
 	}
-	// Preserve every native source path, scanner, ignore/data input, finding,
-	// output byte and exit status. Only the private policy cache is different.
-	fullArgs := append(slices.Clone(args[:len(args)-1]), "--skip-check-update", args[len(args)-1])
-	result, err := runNative(engine, corrected, fullArgs, 10*time.Minute)
+	// The native engine retains active and adjudicated findings in its JSON.
+	// Both its source and the applicability proof read the same frozen commit.
+	if err := snapshot.Verify(); err != nil {
+		return 2, err
+	}
+	fullArgs := append(slices.Clone(args[:len(args)-1]), "--skip-check-update", "--vex", vexPath, "--show-suppressed", "--format", "json", args[len(args)-1])
+	result, err := runNativeIn(engine, corrected, fullArgs, 10*time.Minute, snapshot.Root)
 	status, err := finishScan(result, err, corrected, os.Stdout, os.Stderr)
 	if err != nil {
+		return 2, err
+	}
+	if err := scanvex.ValidateTrivy(result.stdout, vexPath, scopes); err != nil {
+		return 2, err
+	}
+	if err := snapshot.Verify(); err != nil {
+		return 2, err
+	}
+	if err := trivydispositions.Validate(snapshot.Root); err != nil {
+		return 2, err
+	}
+	if err := trivyruntimedispositions.Validate(snapshot.Root); err != nil {
 		return 2, err
 	}
 	fmt.Fprintln(os.Stderr, "guard-trivy-policy: verified complete 580-module bundle and native quota/unrelated-finding refusal controls")

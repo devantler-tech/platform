@@ -71,7 +71,7 @@ func TestMegaLinterRequiresNativeFixtureRefusals(t *testing.T) {
 	if config.Forward == nil || *config.Forward {
 		t.Fatal("native Betterleaks must read the source config at depth zero, preserving all targeted rules")
 	}
-	for _, command := range []string{"bash scripts/tests/test-betterleaks-fixture-boundary.sh", "bash scripts/tests/test-secretlint-fixture-boundary.sh"} {
+	for _, command := range []string{"bash scripts/tests/test-betterleaks-fixture-boundary.sh", "bash scripts/tests/test-secretlint-fixture-boundary.sh", "bash scripts/tests/test-trivyignore-source-model-boundary.sh", "bash scripts/with-runtime-disposition-tools.sh -- bash scripts/tests/test-trivyignore-runtime-boundary.sh", "bash scripts/tests/test-checkov-operational-inputs.sh"} {
 		count := 0
 		for _, step := range config.Commands {
 			if step.Command != command {

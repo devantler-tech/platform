@@ -153,7 +153,7 @@ run_guard() { # <tree> [guard-args...]
   local tree="$1"
   shift
   : >"$HELM_SHIM_LOG"
-  if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.10.0 "$@" "$tree/k8s" 2>&1)"; then
+  if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.9.6 "$@" "$tree/k8s" 2>&1)"; then
     GUARD_RC=0
   else
     GUARD_RC=$?
@@ -196,7 +196,11 @@ assert_pulled() { # <label> <ref|repo|version>
 }
 
 commit() { # <tree> <message>
-  if ! git -C "$1" add -A ||
+  local paths=(k8s) path
+  for path in ksail.yaml ksail.prod.yaml; do
+    if [ -f "$1/$path" ]; then paths+=("$path"); fi
+  done
+  if ! git -C "$1" add -- "${paths[@]}" ||
     ! git -C "$1" -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false \
       commit -q -m "$2"; then
     printf 'FAIL: cannot commit the fixture tree\n' >&2
@@ -245,8 +249,8 @@ EOF
     '  namespace: flux-system' 'spec:' '  path: ./__PROVIDER__/apps' >"$k8s/clusters/base/flux.yaml"
   printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' '  - config-map.yaml' \
     '  - flux-instance.yaml' >"$k8s/bootstrap/test/kustomization.yaml"
-  printf '%s\n' 'apiVersion: fluxcd.controlplane.io/v1' 'kind: FluxInstance' 'metadata:' '  name: flux' \
-    '  namespace: flux-system' 'spec:' '  distribution:' '    version: 2.10.0' >"$k8s/bootstrap/test/flux-instance.yaml"
+  cp "$repo_root/k8s/providers/docker/infrastructure/controllers/flux-instance/flux-instance.yaml" \
+    "$k8s/bootstrap/test/flux-instance.yaml"
   variables 3
   printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' \
     '  - helm-repository.yaml' '  - helm-release.yaml' >"$k8s/controllers/test/kustomization.yaml"
@@ -436,8 +440,13 @@ printf 'guard-helm-post-renderers:\n'
 # --- The real tree --------------------------------------------------------------------------
 
 printf 'the committed tree, compared with itself\n'
+mkdir -p "$scratch/real-tree"
+cp -R "$repo_root/k8s" "$scratch/real-tree/k8s"
+cp "$repo_root/ksail.yaml" "$repo_root/ksail.prod.yaml" "$scratch/real-tree/"
+git -C "$scratch/real-tree" init -q || exit 1
+commit "$scratch/real-tree" current-manifest-inputs
 : >"$HELM_SHIM_LOG"
-if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.10.0 --base HEAD "$repo_root/k8s" 2>&1)"; then GUARD_RC=0; else GUARD_RC=$?; fi
+if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.9.6 --base HEAD "$scratch/real-tree/k8s" 2>&1)"; then GUARD_RC=0; else GUARD_RC=$?; fi
 assert_rc 'an unchanged tree passes' 0
 assert_contains 'nothing is rendered when nothing changed' ', 0 checked'
 assertions=$((assertions + 1))
@@ -447,6 +456,13 @@ else
   bad 'the repository'"'"'s post-rendered HelmReleases are found'
 fi
 assert_pulls 'no chart is pulled for an unchanged tree' 0
+
+new_tree
+pr_3580 | release
+yq -i '.spec.kustomize.patches |= map(select(.target.kind != "Deployment" or .target.name != "helm-controller"))' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
+run_guard "$TREE"
+assert_rc 'the exact distribution without the controller override is not the audited renderer profile' 2
+assert_contains 'the effective composed profile is required' 'unaudited controller image/CRD composition'
 
 # --- #3577 and #3580 -------------------------------------------------------------------------
 
@@ -482,7 +498,7 @@ new_tree
 pr_3580 | release
 yq -i '.spec.distribution.version = "2.9.x"' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
 commit "$TREE" previous-controller-profile
-yq -i '.spec.distribution.version = "2.10.0"' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
+yq -i '.spec.distribution.version = "2.9.6"' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
 run_guard "$TREE" --base HEAD
 assert_rc 'the audited controller upgrade checks the actual candidate render' 0
 assert_contains 'an old base profile checks every current post-renderer' 'checking every post-rendered HelmRelease'
@@ -635,7 +651,7 @@ assert_contains 'the separate strategy is refused' 'explicit nohooks or combined
   pr_job_leaf_add
 } | RELEASE_STRATEGY='' release
 run_guard "$TREE"
-assert_rc 'an omitted strategy defaults to combined on Flux 2.10.0' 2
+assert_rc 'an omitted strategy defaults to combined on Flux 2.9.6' 2
 assert_contains 'the omitted strategy is refused' 'explicit nohooks or combined'
 
 new_tree

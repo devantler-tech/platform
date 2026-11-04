@@ -22,6 +22,33 @@
   "customManagers": [
     {
       "customType": "regex",
+      "description": "Track the exact Flux base separately from the adjacent-minor Helm controller override. The admitted base stays reversible to current main; adopting a new minor needs a new recovery and native composition audit.",
+      "managerFilePatterns": [
+        "/^k8s/providers/(?:docker|hetzner)/infrastructure/controllers/flux-instance/flux-instance\\.yaml$/"
+      ],
+      "matchStrings": [
+        "\\n    version: \"(?<currentValue>2\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "fluxcd/flux2",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the signed Helm controller image in FluxInstance JSON patches. A tag/digest update also needs the matching official generated CRD patch, controller SDK audit and native composition test.",
+      "managerFilePatterns": [
+        "/^k8s/providers/(?:docker|hetzner)/infrastructure/controllers/flux-instance/flux-instance\\.yaml$/"
+      ],
+      "matchStrings": [
+        "value: ghcr\\.io/fluxcd/helm-controller:(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "ghcr.io/fluxcd/helm-controller",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
       "description": "Bump pinned CLI versions in the shared installers under .github/scripts. Same pair as the workflow manager below, in shell assignment syntax: '# renovate: ...\\n<NAME>_VERSION=\"<ver>\"'. Those installers also pin the asset's SHA-256 on the next line, which no datasource can supply — a bump here therefore fails the install with the digest to write rather than installing unverified bytes.",
       "managerFilePatterns": ["/^\\.github/scripts/.+\\.sh$/"],
       "matchStrings": [
@@ -399,6 +426,18 @@
         "github.com/project-velero/kopia"
       ],
       "enabled": false
+    },
+    {
+      "description": "The reversible controller profile admits exact Flux 2.9.6 while only Helm controller advances to 1.7.1. Keep update discovery enabled, but move this selector only with a reviewed native image/CRD and recovery audit.",
+      "matchPackageNames": ["fluxcd/flux2"],
+      "allowedVersions": "/^v?2\\.9\\.6$/",
+      "automerge": false
+    },
+    {
+      "description": "The signed Helm controller 1.7.1 override and its generated CRD are one reviewed profile. A new version needs the controller SDK/module sums, generated schema and native composition tests updated together.",
+      "matchPackageNames": ["ghcr.io/fluxcd/helm-controller"],
+      "allowedVersions": "/^v?1\\.7\\.1$/",
+      "automerge": false
     }
   ],
   "ignorePaths": [

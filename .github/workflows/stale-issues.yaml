@@ -2,6 +2,7 @@
 name: 🗂️ Stale Issue Triage
 
 on:
+  # checkov:skip=CKV_GHA_7:The boolean only selects a preview in the pinned issue-triage workflow; this caller has no build or checkout step.
   pull_request:
     paths: [.github/workflows/stale-issues.yaml]
   schedule:

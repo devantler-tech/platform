@@ -41,20 +41,28 @@ for mutation in source manifest orphan unknown real-source untracked-source untr
     orphan) rm "$destination/$control/main.go.tmpl" ;;
     unknown)
       cp "$destination/$control/main.go.tmpl" "$destination/unknown.go.tmpl"
-      git -C "$destination" add -- unknown.go.tmpl ;;
+      git -C "$destination" add -- unknown.go.tmpl
+      ;;
     real-source)
       cp "$destination/$control/main.go.tmpl" "$destination/$control/main.go"
-      git -C "$destination" add -- "$control/main.go" ;;
+      git -C "$destination" add -- "$control/main.go"
+      ;;
     untracked-source)
-      cp "$destination/$control/main.go.tmpl" "$destination/$control/main.go" ;;
+      cp "$destination/$control/main.go.tmpl" "$destination/$control/main.go"
+      ;;
     untracked-hidden)
-      printf 'unexpected input\n' >"$destination/$control/.extra" ;;
+      printf 'unexpected input\n' >"$destination/$control/.extra"
+      ;;
     linked)
       mv "$destination/$control/main.go.tmpl" "$destination/source-data"
-      ln -s "$destination/source-data" "$destination/$control/main.go.tmpl" ;;
+      ln -s "$destination/source-data" "$destination/$control/main.go.tmpl"
+      ;;
   esac
   refuse "$destination" --materialize "$work/rejected-$mutation"
-  [ ! -e "$work/rejected-$mutation" ] || { echo 'FAIL: rejected control left generated files' >&2; exit 1; }
+  [ ! -e "$work/rejected-$mutation" ] || {
+    echo 'FAIL: rejected control left generated files' >&2
+    exit 1
+  }
 done
 ln -s "$work/emitted" "$work/linked-destination"
 refuse "$work/valid" --materialize "$work/linked-destination"

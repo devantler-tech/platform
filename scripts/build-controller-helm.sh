@@ -5,6 +5,8 @@ if [ "$#" -ne 1 ] || [ -z "${1:-}" ]; then
   echo 'usage: build-controller-helm.sh <output-binary>' >&2
   exit 2
 fi
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+bash "$root/scripts/guard-controller-helm-profile.sh"
 module="$(cd "$(dirname "${BASH_SOURCE[0]}")/render-helm-chart" && pwd)"
 output="$1"
 work="$(mktemp -d)"

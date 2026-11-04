@@ -24,7 +24,7 @@ done
 [[ "$(helm version --template '{{.Version}}')" == v4.3.1 ]] || fail 'the audited Helm v4.3.1 chart puller is required'
 [[ -n "${CONTROLLER_HELM:-}" && -x "${CONTROLLER_HELM}" ]] || fail 'the audited controller SDK renderer is required'
 [[ "$("${CONTROLLER_HELM}" version --template '{{ printf "%#v" . }}')" == 'version.BuildInfo{Version:"v4.3", GitCommit:"", GitTreeState:"", GoVersion:"go1.27.3", KubeClientVersion:"v1.37"}' ]] ||
-  fail 'controller SDK renderer metadata does not match Flux 2.10.0'
+  fail 'controller SDK renderer metadata does not match Flux 2.9.6 with the helm-controller 1.7.1 override'
 kube_version="$(yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")' "${root}/ksail.prod.yaml")"
 
 kubectl kustomize "${release_dir}" | yq -o=json \

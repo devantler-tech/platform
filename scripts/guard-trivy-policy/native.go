@@ -40,9 +40,14 @@ func finishScan(result nativeResult, scanErr error, cache string, stdout, stderr
 }
 
 func runNative(engine, cache string, args []string, budget time.Duration) (nativeResult, error) {
+	return runNativeIn(engine, cache, args, budget, "")
+}
+
+func runNativeIn(engine, cache string, args []string, budget time.Duration, directory string) (nativeResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, engine, append([]string{"--cache-dir", cache, "--debug"}, args...)...)
+	cmd.Dir = directory
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "TRIVY_") {
 			cmd.Env = append(cmd.Env, entry)

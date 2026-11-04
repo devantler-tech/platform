@@ -1,0 +1,18 @@
+# Preserve standard-library scanning from every declared Go release.
+ScanGoModVersion = true
+
+# The same exact-ID database-range adjudication as .govulncheck-allow.txt.
+# These upstream advisories exclude the pinned Kyverno v1.19.2 release.
+# TestAdvisoryAcceptancePinsReviewedRelease fences version/replacement changes.
+# No package, other advisory, directory or future release is excluded.
+[[IgnoredVulns]]
+id = "GO-2025-3615"
+reason = "Upstream GHSA-459x-q9hg-4gpq affects versions below v1.13.4; the pinned release is v1.19.2 (platform issue 5154)."
+
+[[IgnoredVulns]]
+id = "GO-2026-5337"
+reason = "Upstream GHSA-cvq5-hhx3-f99p is patched in v1.17.2; the pinned release is v1.19.2 (platform issue 5154)."
+
+[[IgnoredVulns]]
+id = "GO-2026-5594"
+reason = "Upstream GHSA-qr4g-8hrp-c4rw is patched in v1.18.0; the pinned release is v1.19.2 (platform issue 5154)."

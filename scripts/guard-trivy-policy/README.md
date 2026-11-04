@@ -1,10 +1,10 @@
-# Native ResourceQuota applicability correction
+# Native ResourceQuota and source applicability checks
 
 Trivy 0.74.0 evaluates KSV-0040 against unrelated documents when a scan also
 contains a ResourceQuota. The native rule declares its kind selector in
 metadata, but its deny body lacks the per-input condition. This adapter adds
 only `input.kind == "ResourceQuota"` to that body in a private complete bundle.
-It creates no ignore entries and filters no findings.
+It filters no findings itself.
 
 The wrapper obtains the current official policy bundle into a fresh cache and
 verifies every content path and byte. The audited inventory contains 641 files
@@ -19,6 +19,16 @@ finding fields and every unrelated finding must remain identical; an invalid
 quota must retain a requested native exit status. The complete scan retains its
 source paths, reviewed data and ignore inputs, output and finding exit status.
 An operational refusal also retains native diagnostics and partial findings.
+
+The full source scan reads a private checkout of the exact Git commit. The CEL
+assessment reads that same checkout, inspects all source variants in the two
+fixture owners and all selected dependencies, and refuses references to the
+affected functions outside their two canonical declarations. It checks fresh
+advisory scope and complete module/source receipts before emitting versioned
+native VEX. The native JSON retains both active and adjudicated findings; every
+adjudicated source location must match the proven occurrence set. New versions,
+owners, references, unsupported dynamic inputs or an incomplete proof refuse the
+scan. Source and runtime disposition guards run before and after it.
 
 Run `go test ./scripts/guard-trivy-policy` for local refusal controls. The full
 wrapper always runs its native controls. An additional offline diagnostic can

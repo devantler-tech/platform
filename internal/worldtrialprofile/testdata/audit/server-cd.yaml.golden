@@ -1,0 +1,116 @@
+name: Zone server CD
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zone-server-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-zone:
+    name: Publish signed zone image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require an exact stable release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
+      - name: Create native cross-compilation builder
+        run: docker buildx create --driver docker-container --use
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish both architectures
+        id: image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: server
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository }}/zone:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.title=World at Ruin zone server
+          provenance: mode=max
+          sbom: true
+      - name: Pull and exercise the published image by digest
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/zone
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          docker pull "${IMAGE}@${DIGEST}"
+          bash tools/smoke-zone-container.sh "${IMAGE}@${DIGEST}"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: fluxcd/flux2/action@b9c17924adb533d3617ec7de97a7b0f4acc07b39 # v2.9.6
+      - name: Pin the trial image and stage its manifests
+        id: manifests
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/zone
+          DIGEST: ${{ steps.image.outputs.digest }}
+          ARTIFACT: ghcr.io/${{ github.repository }}/zone-manifests
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE: https://github.com/${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]] || exit 1
+          [[ "$(grep -c '^          image: ghcr.io/devantler-tech/world-at-ruin/zone:unpublished$' deploy/deployment.yaml)" == 1 ]] || exit 1
+          sed "s|ghcr.io/devantler-tech/world-at-ruin/zone:unpublished|${IMAGE}@${DIGEST}|" \
+            deploy/deployment.yaml > deploy/deployment.yaml.tmp
+          mv deploy/deployment.yaml.tmp deploy/deployment.yaml
+          flux push artifact "oci://${ARTIFACT}:staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --path ./deploy \
+            --source "$SOURCE" --revision "${RELEASE_TAG}@sha1:${SOURCE_SHA}" \
+            --reproducible --output json > manifests.json
+          manifest_digest="$(jq -er '.digest' manifests.json)"
+          [[ "$manifest_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          echo "digest=${manifest_digest}" >> "$GITHUB_OUTPUT"
+      - name: Sign and verify the immutable published digest
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/zone
+          DIGEST: ${{ steps.image.outputs.digest }}
+          SIGNER: https://github.com/${{ github.repository }}/.github/workflows/server-cd.yaml@${{ github.ref }}
+          ARTIFACT: ghcr.io/${{ github.repository }}/zone-manifests
+          MANIFEST_DIGEST: ${{ steps.manifests.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "$SIGNER" "${IMAGE}@${DIGEST}" > /dev/null
+          [[ "$MANIFEST_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          cosign sign --yes "${ARTIFACT}@${MANIFEST_DIGEST}"
+          cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "$SIGNER" "${ARTIFACT}@${MANIFEST_DIGEST}" > /dev/null
+          printf '### Signed zone image\n\n%s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n### Signed trial manifests\n\n%s@%s\n' "$ARTIFACT" "$MANIFEST_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+      - name: Promote verified trial manifests
+        env:
+          ARTIFACT: ghcr.io/${{ github.repository }}/zone-manifests
+          MANIFEST_DIGEST: ${{ steps.manifests.outputs.digest }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$MANIFEST_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
+          flux tag artifact "oci://${ARTIFACT}@${MANIFEST_DIGEST}" --tag "${RELEASE_TAG#v}"

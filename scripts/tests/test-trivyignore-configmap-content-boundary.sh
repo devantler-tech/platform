@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The two ConfigMap dispositions in .trivyignore.yaml rest on premises trivy cannot re-check, and
+# The legacy ConfigMap dispositions rest on premises trivy cannot re-check, and
 # this test is what keeps them honest: KSV-01010 is PATH-SCOPED, and both it and KSV-0109 are
 # excepted against a reviewed key set.
 #
@@ -99,6 +99,12 @@ command -v yq >/dev/null 2>&1 || fail "yq is required to check the KSV-01010 dis
 readonly EXPECTED_PATHS="k8s/bases/apps/actual-budget/config-map.yaml
 k8s/clusters/local/bootstrap/config-map.yaml
 k8s/clusters/prod/bootstrap/config-map.yaml"
+# These additional paths have complete parsed-data fingerprints rather than the
+# older heuristic premise below. Their mandatory guard also owns their identities.
+readonly FINGERPRINT_PATHS="k8s/bases/apps/homepage/config-map.yaml
+k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml"
+(cd "$REPO_ROOT" && go run ./scripts/guard-trivy-source-dispositions --root "$REPO_ROOT")
+expected_scope="$(printf '%s\n%s\n' "$EXPECTED_PATHS" "$FINGERPRINT_PATHS" | sort)"
 
 entry_count="$(yq "[.misconfigurations[] | select(.id == \"$CHECK_ID\")] | length" "$IGNOREFILE" 2>/dev/null || printf '0')"
 [ "$entry_count" -gt 0 ] || fail \
@@ -115,16 +121,16 @@ done < <(yq ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // []
 # The scoped set must be exactly the three reviewed files. A widened glob (k8s/**) or a new path
 # added without review both land here.
 actual_paths="$(yq -r ".misconfigurations[] | select(.id == \"$CHECK_ID\") | .paths[]" "$IGNOREFILE" | sort)"
-if [ "$actual_paths" != "$EXPECTED_PATHS" ]; then
+if [ "$actual_paths" != "$expected_scope" ]; then
   fail "$CHECK_ID scope changed. Each path is excepted because its content was reviewed, so a new
 or widened path needs its own reason recorded in $IGNOREFILE.
 expected:
-$EXPECTED_PATHS
+$expected_scope
 actual:
 $actual_paths"
 fi
 
-echo "PASS(structural): $CHECK_ID is path-scoped to exactly the 3 reviewed ConfigMaps."
+echo "PASS(structural): $CHECK_ID is scoped to the 3 legacy and 2 fingerprint-bound ConfigMaps."
 
 # --- Layer 1b: content premises. Path scoping decides WHICH files are excepted; it says nothing
 # --- about what those files may later contain. A credential added to one of them would be

@@ -7,9 +7,8 @@ spec:
   interval: 1m
   url: oci://ghcr.io/devantler-tech/world-at-ruin/zone-manifests
   ref:
-    # Earlier packages include a standard NetworkPolicy that tenant-edit cannot apply.
-    semver: ">=0.115.1"
-    semverFilter: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+    # Audited private trial; a new release requires a fresh artifact/profile audit.
+    digest: sha256:41734486d53261dcc8a75bdd7736b003f09b471f3d660806f5c631abe9d4e0d8
   verify:
     provider: cosign
     matchOIDCIdentity:

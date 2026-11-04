@@ -778,6 +778,8 @@ jobs:
               - 'scripts/floating-image-tag-exceptions.tsv'
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-helm-post-renderers.sh'
+              - 'scripts/guard-controller-helm-profile.sh'
+              - 'scripts/tests/test-controller-helm-profile.sh'
               - 'scripts/tests/test-guard-helm-post-renderers.sh'
               - 'scripts/tests/test-kubescape-storage-placement.sh'
               - 'scripts/tests/test-kubescape-runtime-rules-switch.sh'
@@ -1020,6 +1022,20 @@ jobs:
         run: |
           bash scripts/tests/schemas/update-cloudnative-pg-cluster.sh --check-committed
           npm exec --yes --package=v8r@6.1.0 -- bash scripts/tests/test-v8r-cnpg-schema.sh
+
+      - name: 🧩 Verify the exact reversible controller profile natively
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          shellcheck scripts/guard-controller-helm-profile.sh scripts/tests/test-controller-helm-profile.sh
+          tool_dir="$(mktemp -d "$RUNNER_TEMP/flux-profile.XXXXXX")"
+          archive="$tool_dir/flux-operator.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.62.1/flux-operator_0.62.1_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 7bb9e54d370039d8701d4271b38aed57d6c89668432b7caddce69f4e26e24c1b "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$tool_dir"
+          FLUX_OPERATOR_BIN="$tool_dir/flux-operator" bash scripts/tests/test-controller-helm-profile.sh
 
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5
@@ -1780,6 +1796,24 @@ jobs:
 
       - name: 🔏 Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+
+      - name: 🔏 Verify the immutable private-trial artifact and image
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d "$RUNNER_TEMP/world-artifact-tools.XXXXXX")"
+          archive="$tool_dir/oras.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/oras-project/oras/releases/download/v1.3.6/oras_1.3.6_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0 "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$tool_dir" oras
+          COSIGN_BIN="$(command -v cosign)" ORAS_BIN="$tool_dir/oras" \
+            WORLD_TRIAL_EVIDENCE_DIR="$RUNNER_TEMP/world-trial-evidence" \
+            bash scripts/with-runtime-disposition-tools.sh --kubectl-only -- \
+            bash scripts/tests/test-world-trial-profile-native.sh .
 
       - name: 🔏 Test the cosign failure classifier
         # The check below words its failure by WHY cosign failed (#3545). This
@@ -4158,7 +4192,8 @@ jobs:
           cache: false
 
       - name: 🧩 Install the audited controller's Helm renderer
-        # Flux 2.10.0 / helm-controller 1.7.1 embeds upstream Helm 4.3.1. The
+        # Flux 2.9.6 plus the signed helm-controller 1.7.1 image and CRD
+        # override embeds upstream Helm 4.3.1. The
         # runner's ambient Helm is not proof of matching template capabilities.
         env:
           HELM_VERSION: v4.3.1
@@ -4174,7 +4209,7 @@ jobs:
 
       - name: 🧩 Validate the post-renderer guard
         run: |
-          shellcheck scripts/build-controller-helm.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          shellcheck scripts/build-controller-helm.sh scripts/guard-controller-helm-profile.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
@@ -4195,7 +4230,7 @@ jobs:
           shellcheck scripts/tests/test-longhorn-client-placement.sh
           changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
             .github/workflows/ci.yaml scripts/tests/test-longhorn-client-placement.sh \
-            scripts/build-controller-helm.sh scripts/render-helm-chart \
+            scripts/build-controller-helm.sh scripts/guard-controller-helm-profile.sh scripts/tests/test-controller-helm-profile.sh scripts/render-helm-chart \
             k8s/providers/hetzner/infrastructure/controllers/longhorn \
             k8s/providers/hetzner/infrastructure/cluster-policies/restrict-storage-to-baseline-workers.yaml \
             k8s/providers/hetzner/infrastructure/kustomization.yaml \
@@ -4206,7 +4241,7 @@ jobs:
 
       - name: 🧩 Apply the actual Whoami chart's post-renderers
         run: |
-          bash scripts/guard-helm-post-renderers.sh --flux-version 2.10.0 --release whoami/whoami \
+          bash scripts/guard-helm-post-renderers.sh --flux-version 2.9.6 --release whoami/whoami \
             --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
 
       - name: 🧩 Verify independent reloader placement
@@ -4304,7 +4339,7 @@ jobs:
             k8s/bases/components ksail.prod.yaml \
             scripts/tests/test-hubble-ui-streaming.sh \
             scripts/check-hubble-ui-streaming go.mod go.sum \
-            scripts/build-controller-helm.sh scripts/render-helm-chart)"
+            scripts/build-controller-helm.sh scripts/guard-controller-helm-profile.sh scripts/tests/test-controller-helm-profile.sh scripts/render-helm-chart)"
           if [[ -n "$changed_inputs" ]]; then
             bash scripts/tests/test-hubble-ui-streaming.sh --runtime
           fi
@@ -4316,7 +4351,7 @@ jobs:
             github.event.merge_group.base_sha }}
         run: |
           base_kube_version="$(git show "${BASE_SHA}:ksail.prod.yaml" | yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")')"
-          bash scripts/guard-helm-post-renderers.sh --flux-version 2.10.0 --base "$BASE_SHA" \
+          bash scripts/guard-helm-post-renderers.sh --flux-version 2.9.6 --base "$BASE_SHA" \
             --base-kube-version "$base_kube_version" \
             --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
 

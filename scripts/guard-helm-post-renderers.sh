@@ -34,7 +34,9 @@
 # every release is checked instead.
 #
 # CONTROLLER PROFILE. --flux-version is an explicit, audited offline profile, not live version
-# discovery. Flux 2.10.0 (helm-controller 1.7.1) embeds Helm 4.3.1. Its default postRenderStrategy
+# discovery. Flux 2.9.6 with the signed helm-controller 1.7.1 image/CRD override
+# embeds Helm 4.3.1. The distribution selector alone does not identify this profile.
+# The controller's default postRenderStrategy
 # is `combined`, which post-renders hooks and ordinary manifests in one stream.
 # This guard models explicit `nohooks` and `combined` strategies; an omitted
 # strategy or the separate-stream strategy is UNKNOWN until explicitly modeled.
@@ -61,7 +63,7 @@
 # Kustomization, or a tree that renders no HelmRelease at all, is exit 2 as well: a selector that
 # matched nothing is indistinguishable from a clean tree.
 #
-# Usage: guard-helm-post-renderers.sh --flux-version 2.10.0 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>
+# Usage: guard-helm-post-renderers.sh --flux-version 2.9.6 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>
 #
 # Exit codes:
 #   0  every checked HelmRelease's post-renderers apply to its chart's rendered output
@@ -76,7 +78,7 @@ die() {
   exit 2
 }
 
-usage="usage: $0 --flux-version 2.10.0 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>"
+usage="usage: $0 --flux-version 2.9.6 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>"
 base=''
 kube_version=''
 base_kube_version=''
@@ -120,7 +122,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ "$#" -eq 1 ] || die "$usage"
-[ "$flux_version" = 2.10.0 ] || die "an audited --flux-version 2.10.0 profile is required"
+[ "$flux_version" = 2.9.6 ] || die "an audited --flux-version 2.9.6 profile is required"
 if [ -n "$base" ] && [ -n "$kube_version" ]; then
   [ -n "$base_kube_version" ] || die "--base-kube-version is required when comparing an explicit Kubernetes profile"
 fi
@@ -378,9 +380,15 @@ collect() { # <k8s-root> <out> <kube-version>
       | if length == 1 then .[0] else error("missing or conflicting FluxInstance selectors") end' "$work/resolved.json")" ||
       die "cluster '$cluster' has no unique FluxInstance distribution selector"
     case $selector in
-      2.10.0 | v2.10.0) ;;
+      2.9.6 | v2.9.6) ;;
       *) die "cluster '$cluster' selector '$selector' does not admit audited Flux $flux_version" ;;
     esac
+    jq -e '[.[] | select(.kind == "FluxInstance")] | length == 1' "$work/resolved.json" >/dev/null ||
+      die "cluster '$cluster' must render exactly one FluxInstance"
+    jq '.[] | select(.kind == "FluxInstance")' "$work/resolved.json" >"$work/flux-instance.json" ||
+      die "cannot collect the effective FluxInstance"
+    bash "$(dirname "${BASH_SOURCE[0]}")/guard-controller-helm-profile.sh" "$work/flux-instance.json" ||
+      die "cluster '$cluster' has an unaudited controller image/CRD composition"
     profile="$(jq -n --arg flux "$flux_version" --arg helm "$helm_version" --arg kube "$kube_version" --arg selector "$selector" \
       '{flux: $flux, helm: $helm, kube: $kube, selector: $selector, hooks: ["nohooks", "combined"]}')"
     while IFS="$tab" read -r doc rendered path; do
