@@ -1,3 +1,4 @@
+---
 name: Probe Gateway Denied Peer
 
 # Answers the first question of #5448 stage 3: does the Gateway's TLS fence refuse a physical peer
@@ -11,7 +12,7 @@ name: Probe Gateway Denied Peer
 # script, the main-branch guard, the confirmation phrase and `contents: read`. The log carries only
 # counts, curl exit codes and the verdict. scripts/tests/test-probe-gateway-denied-peer.sh pins
 # this in CI's required `validate` job without a cluster.
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

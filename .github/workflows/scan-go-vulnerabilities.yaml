@@ -1,3 +1,4 @@
+---
 name: Scan Go Vulnerabilities
 
 # Reports advisories the platform's Go modules actually reach (#4961). A pull request that changes
@@ -16,7 +17,7 @@ name: Scan Go Vulnerabilities
 # The scan itself is the organization's reviewed govulncheck action, the same scanner and
 # allowlist format the shared Go validation uses. Resolve a finding with
 # docs/go-vulnerability-scan.md.
-on:
+"on":
   pull_request:
     branches: [main]
     paths:

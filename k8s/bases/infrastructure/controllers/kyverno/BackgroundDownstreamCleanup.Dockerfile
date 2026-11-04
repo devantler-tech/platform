@@ -23,6 +23,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
     && if grep -Fq 'golang.org/x/crypto/openpgp' /tmp/symbols; then \
          echo 'Unmaintained OpenPGP package compiled into the controller'; exit 1; \
        else test "$?" -eq 1; fi
+# The findings pipeline below must fail when any of its stages fails, not only the last one.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only these exact module records are accepted. The three Kyverno v1.19.2 records have the same
 # adjudication and removal as scripts/tests/tenant-webapp-admission/.govulncheck-allow.txt
 # (platform#5154). GO-2026-5932 names x/crypto/openpgp and has no fixed version; the symbol check
@@ -41,4 +43,8 @@ RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
 
 FROM reg.kyverno.io/kyverno/background-controller:v1.19.2@sha256:c46e124f21ef8a6bb4b48de57106808b1007edcd5ddd4ff7df5d23b9efa60ce2
 COPY --from=builder --chmod=0755 /out/background-controller /ko-app/background-controller
+# Restate the upstream image's own non-root identity; its config User is 65532.
+USER 65532
+# Kubernetes never runs an image health check, so this image declares none.
+HEALTHCHECK NONE
 RUN ["/ko-app/background-controller", "--help"]

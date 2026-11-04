@@ -683,10 +683,16 @@ regression_explicit_adoption() {
 
 if [[ -n "${FLUX_ORPHANS_TEST_REGRESSION:-}" ]]; then
   case "${FLUX_ORPHANS_TEST_REGRESSION}" in
-    metadata) regression_metadata_storage; regression_auxiliary_metadata_storage ;;
+    metadata)
+      regression_metadata_storage
+      regression_auxiliary_metadata_storage
+      ;;
     attribution) regression_baseline_attribution ;;
     settle) regression_always_settle ;;
-    *) echo 'unknown regression selector' >&2; exit 2 ;;
+    *)
+      echo 'unknown regression selector' >&2
+      exit 2
+      ;;
   esac
   echo "check-flux-orphaned-objects: selected regression passed (${run_count} CLI fixture runs)"
   exit 0

@@ -423,9 +423,10 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 				at(lease, "spec")["renewTime"] = now.Add(-time.Second).Format(time.RFC3339Nano)
 				if strings.HasPrefix(failure, "refresh marker ") {
 					changeGuard()
-					if failure == "refresh marker owner" {
+					switch failure {
+					case "refresh marker owner":
 						list(s.cluster, "metadata", "managedFields")[0]["manager"] = "other"
-					} else if failure == "refresh marker marker" {
+					case "refresh marker marker":
 						at(s.cluster, "metadata", "annotations")[pauseObservationKey] = "other"
 					}
 				}
@@ -451,9 +452,10 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 							at(lease, "spec")["renewTime"] = now.Add(-time.Second).Format(time.RFC3339Nano)
 						}
 						if continuation && len(writes) == 1 {
-							if failure == "changed observation" {
+							switch failure {
+							case "changed observation":
 								at(s.cluster, "metadata", "annotations")[pauseObservationKey] = "other"
-							} else if failure == "foreign observation owner" {
+							case "foreign observation owner":
 								at(s.cluster, "metadata")["managedFields"] = append(value(s.cluster, "metadata", "managedFields").([]any), object{"manager": "other", "fieldsV1": object{"f:metadata": object{"f:annotations": object{"f:" + pauseObservationKey: object{}}}}})
 							}
 						}

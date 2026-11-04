@@ -1,3 +1,4 @@
+---
 # Pins the fence-credential-recreation rule before the ValidatingPolicy rewrite
 # (#4995): past the baseline phase (here "drained"), an update that rewrites its spec is denied on
 # the ARC credential-sync ExternalSecret. values.yaml supplies the journal the

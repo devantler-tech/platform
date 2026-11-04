@@ -4,20 +4,23 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 workflow="$root/.github/workflows/publish-kyverno-background-hotfix.yaml"
 patch="$root/k8s/bases/infrastructure/controllers/kyverno/background-v1.19.2-downstream-cleanup.patch"
 dockerfile="$root/k8s/bases/infrastructure/controllers/kyverno/BackgroundDownstreamCleanup.Dockerfile"
-fail() { printf 'FAIL: background hotfix: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: background hotfix: %s\n' "$1" >&2
+  exit 1
+}
 [[ -f "$workflow" && -f "$patch" && -f "$dockerfile" ]] || fail 'publisher inputs missing'
 [[ "$(yq -r '.permissions|length' "$workflow")" == 0 ]] || fail 'deny permissions by default'
 [[ "$(yq -r '.jobs.verify.permissions|length' "$workflow")" == 1 &&
-   "$(yq -r '.jobs.verify.permissions.contents' "$workflow")" == read ]] || fail 'verification must remain read-only'
+"$(yq -r '.jobs.verify.permissions.contents' "$workflow")" == read ]] || fail 'verification must remain read-only'
 [[ "$(yq -r '.jobs.publish.permissions|length' "$workflow")" == 3 &&
-   "$(yq -r '.jobs.publish.permissions.contents' "$workflow")" == read &&
-   "$(yq -r '.jobs.publish.permissions.packages' "$workflow")" == write &&
-   "$(yq -r '.jobs.publish.permissions."id-token"' "$workflow")" == write ]] || fail 'publisher permissions changed'
+"$(yq -r '.jobs.publish.permissions.contents' "$workflow")" == read &&
+"$(yq -r '.jobs.publish.permissions.packages' "$workflow")" == write &&
+"$(yq -r '.jobs.publish.permissions."id-token"' "$workflow")" == write ]] || fail 'publisher permissions changed'
 [[ "$(yq -r '.jobs.publish.if' "$workflow")" == "github.event_name == 'push' && github.ref == 'refs/heads/main'" &&
-   "$(yq -r '.jobs.publish.needs' "$workflow")" == verify ]] || fail 'publish only tested main pushes'
+"$(yq -r '.jobs.publish.needs' "$workflow")" == verify ]] || fail 'publish only tested main pushes'
 [[ "$(yq -r '.env.SOURCE_COMMIT' "$workflow")" == e63308f1e16c05cd009ac4864be6ec25c66b49be &&
-   "$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == 52bd71206733efbd2a2ce86595315c9706ada94a &&
-   "$(yq -r '.env.IMAGE' "$workflow")" == ghcr.io/devantler-tech/platform-kyverno-background ]] || fail 'source or destination changed'
+"$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == 52bd71206733efbd2a2ce86595315c9706ada94a &&
+"$(yq -r '.env.IMAGE' "$workflow")" == ghcr.io/devantler-tech/platform-kyverno-background ]] || fail 'source or destination changed'
 # This expression belongs to GitHub, not the shell.
 # shellcheck disable=SC2016
 [[ "$(yq -r '.env.IMAGE_TAG' "$workflow")" == 'v1.19.2-downstream-cleanup.1-${{ github.sha }}' ]] || fail 'immutable source tag missing'

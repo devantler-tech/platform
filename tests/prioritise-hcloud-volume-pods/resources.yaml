@@ -34,7 +34,6 @@ metadata:
   name: no-volumes
   namespace: observability
 spec:
-
   containers:
     - name: app
       image: registry.k8s.io/pause:3.10

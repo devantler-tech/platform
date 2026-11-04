@@ -6,18 +6,21 @@ ci="$(yq -o=json '.' "${root}/.github/workflows/ci.yaml")"
 main="$(yq -o=json '.' "${root}/.github/workflows/validate-main.yaml")"
 work="$(mktemp -d)"
 trap 'rm -rf -- "${work}"' EXIT
-fail() { echo "FAIL: $*" >&2; exit 1; }
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
 
 # Execute the actual hosted script's entire credential preamble. Neither input
 # nor a copied variable's inherited export attribute may reach child processes.
 fixture_token=ghs_opaque-fixture.value.with.dots
-awk '/^root=/{exit} {print}' "$root/scripts/tests/test-webapp-runtime-hosted.sh" > "$work/preamble.sh"
-cat >> "$work/preamble.sh" <<'PREAMBLE'
+awk '/^root=/{exit} {print}' "$root/scripts/tests/test-webapp-runtime-hosted.sh" >"$work/preamble.sh"
+cat >>"$work/preamble.sh" <<'PREAMBLE'
 [[ "$hosted_ci_read_token" == "$FIXTURE_TOKEN" ]]
 bash -c '[[ -z "${PREBUILT_CI_READ_TOKEN:-}" && -z "${hosted_ci_read_token:-}" ]]'
 PREAMBLE
 PREBUILT_CI_READ_TOKEN="$fixture_token" FIXTURE_TOKEN="$fixture_token" hosted_ci_read_token=ambient_export_attribute \
-  bash -x "$work/preamble.sh" > "$work/preamble.log" 2>&1
+  bash -x "$work/preamble.sh" >"$work/preamble.log" 2>&1
 if grep -Fq "$fixture_token" "$work/preamble.log"; then fail 'hosted credential reached traced output'; fi
 
 # Require the compiler, scanner and hosted trial inside the read-only job.

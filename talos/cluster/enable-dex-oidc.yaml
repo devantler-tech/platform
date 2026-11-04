@@ -1,3 +1,4 @@
+---
 # OIDC configuration for the kube-apiserver on Hetzner clusters.
 # Enables Dex as an OIDC identity provider so that tokens issued by Dex
 # are accepted as valid Kubernetes authentication credentials.

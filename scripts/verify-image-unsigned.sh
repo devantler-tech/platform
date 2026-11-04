@@ -108,7 +108,7 @@ command -v jq >/dev/null 2>&1 || fail_unknown 'jq is not installed'
 curl_version="$(curl --version 2>/dev/null)" || fail_unknown 'could not determine curl version'
 curl_version_re='^curl ([0-9]{1,3})\.([0-9]{1,3})\.'
 [[ "${curl_version}" =~ ${curl_version_re} ]] || fail_unknown 'could not determine curl version'
-(( 10#${BASH_REMATCH[1]} > 8 || (10#${BASH_REMATCH[1]} == 8 && 10#${BASH_REMATCH[2]} >= 4) )) ||
+((10#${BASH_REMATCH[1]} > 8 || (10#${BASH_REMATCH[1]} == 8 && 10#${BASH_REMATCH[2]} >= 4))) ||
   fail_unknown 'curl 8.4 or newer is required for bounded response streaming'
 
 work="$(mktemp -d)" || fail_unknown 'could not create a private working directory'
@@ -140,8 +140,11 @@ http() {
     return
   fi
   if [[ "$3" != /dev/null ]]; then
-    size="$(wc -c <"$3")" || { printf '000'; return; }
-    if [[ ! "${size}" =~ ^[[:space:]]*[0-9]+[[:space:]]*$ ]] || (( size > 2097152 )); then
+    size="$(wc -c <"$3")" || {
+      printf '000'
+      return
+    }
+    if [[ ! "${size}" =~ ^[[:space:]]*[0-9]+[[:space:]]*$ ]] || ((size > 2097152)); then
       printf '000'
       return
     fi

@@ -10,7 +10,10 @@ scratch="$(mktemp -d)"
 readonly root_dir release repository scratch
 trap 'rm -rf "${scratch}"' EXIT
 
-fail() { printf 'FAIL: kyverno migration hook: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: kyverno migration hook: %s\n' "$1" >&2
+  exit 1
+}
 for tool in helm jq kubectl yq; do
   command -v "${tool}" >/dev/null || fail "${tool} is required"
 done

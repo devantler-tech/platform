@@ -33,8 +33,14 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly repo_root
 
-command -v yq >/dev/null 2>&1 || { printf 'yq is required\n' >&2; exit 1; }
-command -v kubectl >/dev/null 2>&1 || { printf 'kubectl is required to render the overlays\n' >&2; exit 1; }
+command -v yq >/dev/null 2>&1 || {
+  printf 'yq is required\n' >&2
+  exit 1
+}
+command -v kubectl >/dev/null 2>&1 || {
+  printf 'kubectl is required to render the overlays\n' >&2
+  exit 1
+}
 
 readonly LABEL='devantler.tech/aggregate-to-tenant-edit'
 
