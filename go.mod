@@ -138,7 +138,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
-	golang.org/x/crypto v0.58.1-0.20261009181718-2f1f834330b2 // indirect
+	golang.org/x/crypto v0.58.1-0.20261009181718-2f1f834330b2 // indirect; untagged fix for GO-2026-5932, move to the first tagged release that contains it
 )
 
 replace github.com/kopia/kopia => github.com/project-velero/kopia v0.0.0-20251230033609-d946b1e75197

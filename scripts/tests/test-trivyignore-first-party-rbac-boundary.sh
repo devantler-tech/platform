@@ -386,7 +386,16 @@ assert_single_rule_role KSV-0053 "$war_role" world-at-ruin '/pods/portforward,po
 
 # The World at Ruin exception is owner-only: every binding of the role names exactly one subject,
 # the owner's OIDC user. A ServiceAccount or group subject would extend exec beyond the owner.
-war_subjects="$(yq -N 'select(.kind == "RoleBinding" and .roleRef.kind == "Role" and .roleRef.name == "world-at-ruin-zone-trial-operator") | .subjects[] | .kind + ":" + .name' "$repo_root"/k8s/providers/hetzner/apps/world-at-ruin/*.yaml 2>/dev/null || printf '')"
+# Read the rendered production layers, so a binding or a subject patch from any directory counts.
+war_subjects=''
+for layer in apps infrastructure infrastructure/controllers; do
+  if ! rendered="$(kubectl kustomize "$repo_root/k8s/providers/hetzner/$layer")"; then
+    printf 'PREMISE UNREAD: could not render k8s/providers/hetzner/%s\n' "$layer" >&2
+    exit 1
+  fi
+  war_subjects+="$(yq -N 'select(.kind == "RoleBinding" and .roleRef.name == "world-at-ruin-zone-trial-operator")
+    | .subjects[] | .kind + ":" + .name' <<<"$rendered")"
+done
 # The literal Flux substitution placeholder is the reviewed subject, so it must not expand here.
 # shellcheck disable=SC2016
 if [ "$war_subjects" != 'User:oidc:${admin_email}' ]; then

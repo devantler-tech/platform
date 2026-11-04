@@ -13,9 +13,44 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// osvIgnoredID matches an [[IgnoredVulns]] id in osv-scanner.toml. An entry in
-// any other form is not matched, so the lists differ and the test fails closed.
-var osvIgnoredID = regexp.MustCompile(`(?m)^\s*id\s*=\s*"([^"]+)"\s*$`)
+var (
+	osvIgnoredID     = regexp.MustCompile(`^id = "([A-Z]+-[0-9]{4}-[0-9]+)"$`)
+	osvIgnoredReason = regexp.MustCompile(`^reason = "[^"\\]+"$`)
+)
+
+// osvIgnoredIDs reads osv-scanner.toml line by line and accepts only comments
+// and [[IgnoredVulns]] tables holding exactly one id and one reason. Any other
+// line, such as a [[PackageOverrides]] table, a single-quoted id or a trailing
+// comment, could make osv-scanner ignore more than the listed IDs, so it fails
+// the test instead of being skipped.
+func osvIgnoredIDs(t *testing.T, data string) []string {
+	t.Helper()
+	var ids []string
+	idsInTable, reasonsInTable, inTable := 0, 0, false
+	closeTable := func() {
+		if inTable && (idsInTable != 1 || reasonsInTable != 1) {
+			t.Fatalf("osv-scanner.toml: each [[IgnoredVulns]] table needs exactly one id and one reason")
+		}
+		idsInTable, reasonsInTable = 0, 0
+	}
+	for number, line := range strings.Split(data, "\n") {
+		switch {
+		case line == "" || strings.HasPrefix(line, "#"):
+		case line == "[[IgnoredVulns]]":
+			closeTable()
+			inTable = true
+		case inTable && osvIgnoredID.MatchString(line):
+			ids = append(ids, osvIgnoredID.FindStringSubmatch(line)[1])
+			idsInTable++
+		case inTable && osvIgnoredReason.MatchString(line):
+			reasonsInTable++
+		default:
+			t.Fatalf("osv-scanner.toml line %d is not a reviewed ignore entry: %q", number+1, line)
+		}
+	}
+	closeTable()
+	return ids
+}
 
 // readOptional returns a file's contents, or nothing when the file is absent.
 func readOptional(t *testing.T, name string) string {
@@ -40,9 +75,7 @@ func TestAdvisoryAcceptancePinsReviewedRelease(t *testing.T) {
 		line, _, _ = strings.Cut(line, "#")
 		accepted = append(accepted, strings.Fields(line)...)
 	}
-	for _, match := range osvIgnoredID.FindAllStringSubmatch(readOptional(t, "osv-scanner.toml"), -1) {
-		ignored = append(ignored, match[1])
-	}
+	ignored = osvIgnoredIDs(t, readOptional(t, "osv-scanner.toml"))
 	slices.Sort(accepted)
 	slices.Sort(ignored)
 	if !slices.Equal(accepted, ignored) {

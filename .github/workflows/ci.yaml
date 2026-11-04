@@ -2288,7 +2288,8 @@ jobs:
         # Every private-mail container runs at uid/gid 2000, the stalwart identity the pinned
         # Stalwart digest defines and the bootstrap image restates. The path-scoped entry would
         # also hide a container added later at another low identity, so the guard asserts the
-        # identity per container and the measured digest, and keeps an identical probe reported.
+        # identity and image of every container. Its identical-probe trivy control runs only
+        # where trivy is installed, which this job is not yet (#5864).
         run: |
           shellcheck scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
           bash scripts/tests/test-trivyignore-private-mail-identity-boundary.sh

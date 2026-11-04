@@ -361,8 +361,9 @@ MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: (\.agents/.*|scripts/validate-eks-ci
 #     with `diff -u`, so prettier's layout fails the test that owns them.
 #   * scripts/validate-feature-flags/schema/ holds upstream flagd schemas whose sha256 the README
 #     records; reformatting them breaks that provenance.
-#   * scripts/diagnose-email-startup/testdata/ holds output captured from a real Stalwart store, and
-#     the test is meant to read what the store wrote.
+#   * scripts/diagnose-email-startup/testdata/ holds compact JSON captured from a real Stalwart store.
+#     access_test.go builds its negative controls by replacing exact compact substrings such as
+#     `"total":1`, so prettier's `"total": 1` layout would fail those controls.
 JSON_PRETTIER_FILTER_REGEX_EXCLUDE: (tests/chart-rendered-rbac-policy/.*\.json|scripts/validate-feature-flags/schema/.*\.json|scripts/diagnose-email-startup/testdata/.*\.json)
 
 # The only HTML file here is a byte-exact copy of the released Hubble UI v0.13.6 entry point, which

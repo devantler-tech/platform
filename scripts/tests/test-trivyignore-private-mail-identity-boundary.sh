@@ -86,12 +86,18 @@ for field in runAsUser runAsGroup; do
   done
 done
 
-[ "$(yq -r '.spec.template.spec.containers[] | select(.name == "private-mail") | .image' "$REPO_ROOT/$SET_PATH")" = "$STALWART_IMAGE" ] ||
-  fail "PREMISE: $SET_PATH no longer runs the measured Stalwart digest; re-measure its /etc/passwd identity"
-for file in "$SERVE_PATH" "$PROXY_PATH"; do
+# Every container, not only the main one: a sidecar at the pod's default 2000 would otherwise
+# inherit the suppression without running an image that defines that identity.
+for file in "$SET_PATH" "$SERVE_PATH" "$PROXY_PATH"; do
+  expected="$BOOTSTRAP_REPOSITORY"
+  [ "$file" != "$SET_PATH" ] || expected="$STALWART_IMAGE"
+  images="$(yq -r '[(.spec.template.spec.initContainers // [])[], (.spec.template.spec.containers // [])[]] | .[].image' "$REPO_ROOT/$file")" ||
+    images=''
+  [ -n "$images" ] || fail "PREMISE: read no container image from $file"
   while IFS= read -r image; do
-    [ "$image" = "$BOOTSTRAP_REPOSITORY" ] || fail "PREMISE: $file runs $image, not the bootstrap image built from the measured digest"
-  done < <(yq -r '[(.spec.template.spec.initContainers // [])[], (.spec.template.spec.containers // [])[]] | .[].image' "$REPO_ROOT/$file")
+    [ -n "$image" ] || continue
+    [ "$image" = "$expected" ] || fail "PREMISE: $file runs $image, not $expected, whose image-defined identity was measured"
+  done <<<"$images"
 done
 [ "$(awk 'toupper($1) == "FROM" {base = $2} END {print base}' "$REPO_ROOT/$DOCKERFILE")" = "$STALWART_IMAGE" ] ||
   fail "PREMISE: the bootstrap image's final stage is no longer built from the measured Stalwart digest"
