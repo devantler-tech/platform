@@ -26,7 +26,7 @@ readonly SHA_A='1111111111111111111111111111111111111111'
 readonly SHA_B='2222222222222222222222222222222222222222'
 readonly SHA_C='3333333333333333333333333333333333333333'
 readonly SHA_D='4444444444444444444444444444444444444444'
-readonly SHA_E='5555555555555555555555555555555555555555'  # release candidate (#3960)
+readonly SHA_E='5555555555555555555555555555555555555555' # release candidate (#3960)
 readonly DIGEST='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 readonly GENERIC_KYVERNO='k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
 readonly GENERIC_RGD='k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
@@ -39,7 +39,10 @@ fail() {
 }
 pass() { printf 'ok: %s\n' "$*"; }
 
-[ -x "$GUARD" ] || { fail "guard not executable at $GUARD"; exit 1; }
+[ -x "$GUARD" ] || {
+  fail "guard not executable at $GUARD"
+  exit 1
+}
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -65,7 +68,10 @@ if [ -z "$consumers" ]; then
   exit 1
 fi
 consumer_count="$(printf '%s\n' "$consumers" | grep -c .)"
-[ "$consumer_count" -ge 2 ] || { fail "need at least two registered consumers to cross pairs, found $consumer_count"; exit 1; }
+[ "$consumer_count" -ge 2 ] || {
+  fail "need at least two registered consumers to cross pairs, found $consumer_count"
+  exit 1
+}
 first_consumer="$(printf '%s\n' "$consumers" | sed -n 1p | cut -f1)"
 first_workflow="$(printf '%s\n' "$consumers" | sed -n 1p | cut -f2)"
 second_consumer='aws'
@@ -224,7 +230,10 @@ build_tree() {
     case "$form" in
       pattern) ref="$PATTERN" ;;
       pair) ref="$(set_for "$repo" "$workflow")" ;;
-      *) printf 'build_tree: unknown form %s\n' "$form" >&2; exit 1 ;;
+      *)
+        printf 'build_tree: unknown form %s\n' "$form" >&2
+        exit 1
+        ;;
     esac
     write_consumer "$root" "$repo" "$workflow" "$ref"
   done <<<"$consumers"
@@ -246,20 +255,26 @@ expect_pass() { # <case> <root> <enforce>
   if out="$(run_guard "$2" "$3")"; then
     pass "$1"
   else
-    fail "$1 — expected exit 0, got a refusal:"; printf '%s\n' "$out" >&2
+    fail "$1 — expected exit 0, got a refusal:"
+    printf '%s\n' "$out" >&2
   fi
 }
 expect_refusal() { # <case> <root> <enforce> <must-mention>...
   local case_name="$1" root="$2" enforce="$3" out needle
   shift 3
   if out="$(run_guard "$root" "$enforce")"; then
-    fail "$case_name — expected a refusal, guard exited 0:"; printf '%s\n' "$out" >&2
+    fail "$case_name — expected a refusal, guard exited 0:"
+    printf '%s\n' "$out" >&2
     return
   fi
   for needle in "$@"; do
     case "$out" in
       *"$needle"*) ;;
-      *) fail "$case_name — refusal does not name '$needle':"; printf '%s\n' "$out" >&2; return ;;
+      *)
+        fail "$case_name — refusal does not name '$needle':"
+        printf '%s\n' "$out" >&2
+        return
+        ;;
     esac
   done
   pass "$case_name"
@@ -355,22 +370,27 @@ expect_refusal 'a shared-workflow subject in a second document of a consumer fil
 # signer == pin: the steady state after a consumer re-releases on the revision it pins.
 same_set() { # <root> — rewrite the first consumer's row with signer == pin == SHA_B
   local root="$1"
-  { head -n1 "$root/scripts/approved.tsv"
+  {
+    head -n1 "$root/scripts/approved.tsv"
     tail -n +2 "$root/scripts/approved.tsv" | awk -F'\t' -v c="$first_consumer" -v s="$SHA_B" 'BEGIN{OFS="\t"} $1 "" == c "" {$5=s} {print}'
   } >"$root/scripts/approved.tmp"
   mv "$root/scripts/approved.tmp" "$root/scripts/approved.tsv"
 }
-root="$(build_tree same-single pair)"; same_set "$root"
+root="$(build_tree same-single pair)"
+same_set "$root"
 write_consumer "$root" "$first_consumer" "$first_workflow" "$SHA_B"
 expect_pass 'signer == pin: the single concrete revision is the set and passes' "$root" 1
-root="$(build_tree same-group pair)"; same_set "$root"
+root="$(build_tree same-group pair)"
+same_set "$root"
 write_consumer "$root" "$first_consumer" "$first_workflow" "($SHA_B)"
 expect_pass 'signer == pin: the single revision in a group passes' "$root" 1
-root="$(build_tree same-doubled pair)"; same_set "$root"
+root="$(build_tree same-doubled pair)"
+same_set "$root"
 write_consumer "$root" "$first_consumer" "$first_workflow" "($SHA_B|$SHA_B)"
 expect_refusal 'signer == pin: a doubled alternation is not the canonical set and is refused' \
   "$root" 0 "$first_consumer" 'not the generated set'
-root="$(build_tree same-foreign pair)"; same_set "$root"
+root="$(build_tree same-foreign pair)"
+same_set "$root"
 write_consumer "$root" "$first_consumer" "$first_workflow" "($SHA_B|$SHA_D)"
 expect_refusal 'signer == pin: an alternation adding a foreign revision is refused' \
   "$root" 1 "$first_consumer" "$SHA_D"
@@ -521,12 +541,16 @@ else
 fi
 
 root="$(build_tree set-bad-header pattern)"
-{ printf 'consumer\tworkflow\n'; tail -n +2 "$root/scripts/approved.tsv"; } >"$root/scripts/approved.tmp"
+{
+  printf 'consumer\tworkflow\n'
+  tail -n +2 "$root/scripts/approved.tsv"
+} >"$root/scripts/approved.tmp"
 mv "$root/scripts/approved.tmp" "$root/scripts/approved.tsv"
 expect_refusal "an approved set whose header is not the generator's is refused" "$root" 0 'header'
 
 root="$(build_tree set-workflow-mismatch pair)"
-other_workflow='publish-manifests'; [ "$first_workflow" = 'publish-manifests' ] && other_workflow='publish-app'
+other_workflow='publish-manifests'
+[ "$first_workflow" = 'publish-manifests' ] && other_workflow='publish-app'
 write_consumer "$root" "$first_consumer" "$other_workflow" "($(signer_for "$first_consumer")|$SHA_B)"
 expect_refusal 'a consumer whose manifest names a different workflow than its row is refused' \
   "$root" 0 "$first_consumer" "$other_workflow"
@@ -580,7 +604,8 @@ fi
 if out="$(env -u PUBLISH_BOOTSTRAP_FILE PUBLISH_CONSUMER_ROOT="$REPO_ROOT" APPROVED_REVISIONS_ENFORCE=1 bash "$GUARD" 2>&1)"; then
   pass 'real tree: every consumer matcher uses its declared boundary (enforced)'
 else
-  fail 'real tree: guard refuses the committed state:'; printf '%s\n' "$out" >&2
+  fail 'real tree: guard refuses the committed state:'
+  printf '%s\n' "$out" >&2
 fi
 
 if [ "$failures" -ne 0 ]; then

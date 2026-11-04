@@ -1,4 +1,6 @@
 ---
+# One row per resource: fail when any check refuses it. Which check refuses it is
+# in per-check.yaml, which scripts/tests/test-github-team-management-checks.sh runs.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -9,128 +11,55 @@ policies:
 resources:
   - resources.yaml
 results:
-  # Only the CODEOWNERS teams may be managed through this delegation.
   - policy: restrict-github-team-management
-    rule: teams-allow-listed
-    resources:
-      - github-config/attacker-team
     kind: Team
     result: fail
-  - policy: restrict-github-team-management
-    rule: teams-allow-listed
     resources:
-      - github-config/admins
-      - github-config/maintainers
-    kind: Team
-    result: pass
-  # A self-consistent provider identity passes, including when it is omitted and
-  # Crossplane derives the remote team from the object name. attacker-team is
-  # here on purpose: it fails the allow-list above yet must pass this rule, so a
-  # regression that collapsed the two rules into one would be caught.
-  - policy: restrict-github-team-management
-    rule: teams-bind-provider-identity-to-object-name
-    resources:
-      - github-config/admins
-      - github-config/maintainers
       - github-config/attacker-team
+  - policy: restrict-github-team-management
     kind: Team
     result: pass
-  # None of the paved-road teams names a parent team or a directory group.
-  # attacker-team is here for the same reason as above: the nesting rule judges
-  # only those fields, whatever the allow-list says about the object.
-  - policy: restrict-github-team-management
-    rule: teams-not-nested-or-directory-linked
     resources:
       - github-config/admins
       - github-config/maintainers
-      - github-config/attacker-team
-    kind: Team
-    result: pass
-  # References must go through the allow-listed Team objects, never a raw ID.
   - policy: restrict-github-team-management
-    rule: teammemberships-reference-allow-listed-teams
-    resources:
-      - github-config/direct-team-id
-      - github-config/unresolved-reference
-      - github-config/ifnotpresent-reference
-      - github-config/initprovider-foreign-team
-      - github-config/selector-reference
-      - github-config/non-allow-listed-reference
     kind: TeamMembership
     result: fail
+    resources:
+      - github-config/arbitrary-username
+      - github-config/direct-team-id
+      - github-config/ifnotpresent-reference
+      - github-config/initprovider-arbitrary-username
+      - github-config/initprovider-foreign-team
+      - github-config/initprovider-only-arbitrary-username
+      - github-config/initprovider-unknown-role
+      - github-config/initprovider-unknown-role-behind-valid-forprovider
+      - github-config/non-allow-listed-reference
+      - github-config/selector-reference
+      - github-config/unknown-role
+      - github-config/unresolved-reference
   - policy: restrict-github-team-management
-    rule: teammemberships-reference-allow-listed-teams
+    kind: TeamMembership
+    result: pass
     resources:
       - github-config/admins-member
-    kind: TeamMembership
-    result: pass
-  # Repository grants: admins may hold admin; only maintainers are capped below it.
+      - github-config/allow-listed-maintainer
+      - github-config/initprovider-only-allow-listed-username
+      - github-config/mixed-case-username
   - policy: restrict-github-team-management
-    rule: teamrepositories-reference-allow-listed-teams
-    resources:
-      - github-config/unresolved-reference-repo
-      - github-config/maintainers-escalated-initprovider-only
     kind: TeamRepository
     result: fail
+    resources:
+      - github-config/maintainers-escalated
+      - github-config/maintainers-escalated-initprovider
+      - github-config/maintainers-escalated-initprovider-only
+      - github-config/unresolved-reference-repo
   - policy: restrict-github-team-management
-    rule: teamrepositories-reference-allow-listed-teams
+    kind: TeamRepository
+    result: pass
     resources:
       - github-config/admins-repo
       - github-config/admins-repo-admin
       - github-config/initprovider-admin-grant
       - github-config/maintain-grant
       - github-config/maintainers-repo
-    kind: TeamRepository
-    result: pass
-  # #3208: the per-team ceiling. admins may hold admin; maintainers may not.
-  - policy: restrict-github-team-management
-    rule: teamrepositories-maintainers-capped-below-admin
-    resources:
-      - github-config/maintainers-escalated
-      - github-config/maintainers-escalated-initprovider
-      - github-config/maintainers-escalated-initprovider-only
-    kind: TeamRepository
-    result: fail
-  - policy: restrict-github-team-management
-    rule: teamrepositories-maintainers-capped-below-admin
-    resources:
-      - github-config/maintainers-repo
-    kind: TeamRepository
-    result: pass
-  # #3146: the member identity, independent of which team is referenced. Every
-  # fixture below is well-formed against the reference rule above, so a failure
-  # here can only come from the identity condition.
-  - policy: restrict-github-team-management
-    rule: teammemberships-allow-listed-members
-    resources:
-      - github-config/arbitrary-username
-      - github-config/initprovider-arbitrary-username
-      - github-config/initprovider-only-arbitrary-username
-    kind: TeamMembership
-    result: fail
-  - policy: restrict-github-team-management
-    rule: teammemberships-allow-listed-members
-    resources:
-      - github-config/admins-member
-      - github-config/allow-listed-maintainer
-      - github-config/mixed-case-username
-      - github-config/initprovider-only-allow-listed-username
-    kind: TeamMembership
-    result: pass
-  # #3146: the granted role is an enumeration, so unknown values are refused
-  # rather than assumed harmless — in forProvider and through the merge.
-  - policy: restrict-github-team-management
-    rule: teammemberships-known-roles
-    resources:
-      - github-config/unknown-role
-      - github-config/initprovider-unknown-role
-      - github-config/initprovider-unknown-role-behind-valid-forprovider
-    kind: TeamMembership
-    result: fail
-  - policy: restrict-github-team-management
-    rule: teammemberships-known-roles
-    resources:
-      - github-config/admins-member
-      - github-config/allow-listed-maintainer
-    kind: TeamMembership
-    result: pass

@@ -206,7 +206,8 @@ func (f *providerFixture) call(_ context.Context, input []byte, args ...string) 
 			f.t.Fatal("write escaped fixed diagnostic resource")
 		}
 		kind := o["kind"].(string)
-		if kind == "Pod" {
+		switch kind {
+		case "Pod":
 			spec := o["spec"].(map[string]any)
 			if spec["hostNetwork"] == true || spec["automountServiceAccountToken"] != false || spec["hostUsers"] != false || spec["volumes"] != nil || spec["nodeName"] != nil || spec["restartPolicy"] != "Never" {
 				f.t.Fatal("probe gained host, credential, volume, or scheduler bypass access")
@@ -222,11 +223,11 @@ func (f *providerFixture) call(_ context.Context, input []byte, args ...string) 
 			if strings.Contains(string(input), "MAIL FROM") || strings.Contains(string(input), "RCPT TO") {
 				f.t.Fatal("probe can send mail")
 			}
-		} else if kind == "CiliumNetworkPolicy" {
+		case "CiliumNetworkPolicy":
 			if !strings.Contains(string(input), `"matchName":"mx01.mail.icloud.com"`) || strings.Contains(string(input), `"toEntities"`) {
 				f.t.Fatal("probe network access is not confined to fixed SMTP and DNS")
 			}
-		} else {
+		default:
 			f.t.Fatal("unexpected resource kind")
 		}
 		if f.fault == "create-lost" {

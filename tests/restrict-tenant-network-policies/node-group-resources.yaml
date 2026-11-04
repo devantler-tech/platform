@@ -1,3 +1,4 @@
+---
 # Node and provider selectors are outside the tenant namespace boundary.
 # Empty lists and nulls are paired with a valid endpoint selector, so only
 # the forbidden field can explain their refusal.

@@ -1,3 +1,6 @@
+// Command analyze-cri-logs is the opt-in offline diagnostic for finite CRI
+// log records: it reports request pairing and slow-window counts without
+// establishing Coroot request attribution or recovery.
 package main
 
 import (
@@ -293,7 +296,7 @@ func hasGaps(n nodeStats) bool {
 }
 
 func run(args []string, stdout io.Writer) int {
-	fail := func(message string) int { fmt.Fprintln(stdout, "ANALYSIS=REFUSED "+message); return 2 }
+	fail := func(message string) int { _, _ = fmt.Fprintln(stdout, "ANALYSIS=REFUSED "+message); return 2 }
 	fs := flag.NewFlagSet("analyze-cri-logs", flag.ContinueOnError)
 	fs.SetOutput(io.Discard) // Flag errors can contain raw paths or values.
 	var logs inputs
@@ -341,12 +344,12 @@ func run(args []string, stdout io.Writer) int {
 		}
 		before, err := f.Stat()
 		if err != nil || !before.Mode().IsRegular() || before.Mode().Perm()&0077 != 0 || before.Size() > maxFileBytes {
-			f.Close()
+			_ = f.Close()
 			return fail("input must be a private bounded regular file: " + label)
 		}
 		total += before.Size()
 		if total > maxTotalBytes {
-			f.Close()
+			_ = f.Close()
 			return fail("total input limit exceeded")
 		}
 		h := sha256.New()
@@ -392,7 +395,9 @@ func run(args []string, stdout io.Writer) int {
 		slowPairs += n.SlowPairs
 		failures += n.FailedPairs
 	}
-	fmt.Fprintf(stdout, "ANALYSIS=%s nodes=%d successful_pairs=%d slow_window_pairs=%d failed_pairs=%d coroot_attribution=UNPROVEN\n", r.Status, len(r.Nodes), pairs, slowPairs, failures)
+	if _, err := fmt.Fprintf(stdout, "ANALYSIS=%s nodes=%d successful_pairs=%d slow_window_pairs=%d failed_pairs=%d coroot_attribution=UNPROVEN\n", r.Status, len(r.Nodes), pairs, slowPairs, failures); err != nil {
+		return 2
+	}
 	if r.Status == "GAPS" {
 		return 1
 	}

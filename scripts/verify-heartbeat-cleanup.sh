@@ -4,7 +4,10 @@ set +x
 set -euo pipefail
 umask 077
 
-unverified() { printf '%s\n' 'HEARTBEAT_CLEANUP=UNVERIFIED'; exit 2; }
+unverified() {
+  printf '%s\n' 'HEARTBEAT_CLEANUP=UNVERIFIED'
+  exit 2
+}
 if [[ ${GITHUB_EVENT_NAME:-} != workflow_dispatch || ${GITHUB_REF:-} != refs/heads/main || ${HEARTBEAT_CLEANUP_CONFIRM:-} != verify-heartbeat-cleanup ]]; then
   unverified
 fi
@@ -14,7 +17,7 @@ done
 private_dir=$(mktemp -d) || unverified
 trap 'rm -rf "$private_dir"' EXIT
 
-if ! kubectl --context admin@prod --request-timeout=20s -n flux-system get secret variables-cluster -o json > "$private_dir/original.json" 2>/dev/null; then
+if ! kubectl --context admin@prod --request-timeout=20s -n flux-system get secret variables-cluster -o json >"$private_dir/original.json" 2>/dev/null; then
   unverified
 fi
 if ! jq -e '
@@ -26,7 +29,7 @@ if ! jq -e '
 ' "$private_dir/original.json" >/dev/null 2>&1; then
   unverified
 fi
-if ! kubectl --context admin@prod --request-timeout=20s -n flux-system get secret variables-heartbeat -o json > "$private_dir/replacement.json" 2>/dev/null; then
+if ! kubectl --context admin@prod --request-timeout=20s -n flux-system get secret variables-heartbeat -o json >"$private_dir/replacement.json" 2>/dev/null; then
   unverified
 fi
 if ! jq -e '

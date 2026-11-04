@@ -436,11 +436,13 @@ regression_published_closure() {
     case "$boundary" in
       uppercase-json)
         reference='selected.JSON'
-        yq -o=json '.' "$WORK/selected.yaml" >"$root/k8s/providers/prod/infrastructure/$reference" ;;
+        yq -o=json '.' "$WORK/selected.yaml" >"$root/k8s/providers/prod/infrastructure/$reference"
+        ;;
       ignored-yml)
         reference='.selected.YmL'
         cp "$WORK/selected.yaml" "$root/k8s/providers/prod/infrastructure/$reference"
-        printf '.selected.YmL\n' >"$root/k8s/providers/prod/infrastructure/.gitignore" ;;
+        printf '.selected.YmL\n' >"$root/k8s/providers/prod/infrastructure/.gitignore"
+        ;;
       *) cp "$WORK/selected.yaml" "$root/k8s/providers/prod/infrastructure/$reference" ;;
     esac
     printf '  - %s\n' "$reference" >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
@@ -553,7 +555,7 @@ exec "$REAL_YQ" "$@"
 SH
     chmod +x "$WORK/closure-successful-partial-$boundary-bin/yq"
     REAL_YQ="$(command -v yq)" SUCCESSFUL_PARTIAL="$boundary" \
-      PATH="$WORK/closure-successful-partial-$boundary-bin:$PATH" \
+    PATH="$WORK/closure-successful-partial-$boundary-bin:$PATH" \
       closure_expect_no_render "successful $boundary path extraction cannot attest completeness" "$root"
   done
 
@@ -568,11 +570,14 @@ SH
         patches | patchesJson6902 | replacements) printf '%s:\n  - path: %s\n' "$field" "$reference" >>"$config" ;;
         patchesStrategicMerge | configurations | crds | transformers | generators) printf '%s:\n  - %s\n' "$field" "$reference" >>"$config" ;;
         configMap-files | secret-files)
-          printf '%sGenerator:\n  - name: loader\n    files:\n      - key=%s\n' "${field%-files}" "$reference" >>"$config" ;;
+          printf '%sGenerator:\n  - name: loader\n    files:\n      - key=%s\n' "${field%-files}" "$reference" >>"$config"
+          ;;
         configMap-envs | secret-envs)
-          printf '%sGenerator:\n  - name: loader\n    envs:\n      - %s\n' "${field%-envs}" "$reference" >>"$config" ;;
+          printf '%sGenerator:\n  - name: loader\n    envs:\n      - %s\n' "${field%-envs}" "$reference" >>"$config"
+          ;;
         configMap-env | secret-env)
-          printf '%sGenerator:\n  - name: loader\n    env: %s\n' "${field%-env}" "$reference" >>"$config" ;;
+          printf '%sGenerator:\n  - name: loader\n    env: %s\n' "${field%-env}" "$reference" >>"$config"
+          ;;
         openapi) printf 'openapi:\n  path: %s\n' "$reference" >>"$config" ;;
       esac
       closure_expect_no_render "$field $boundary inputs must refuse before rendering" "$root"
@@ -593,13 +598,16 @@ SH
           printf 'patches:\n  - path: loader.yaml\n' >>"$config"
         else
           printf 'patchesStrategicMerge:\n  - loader.yaml\n' >>"$config"
-        fi ;;
+        fi
+        ;;
       patchesJson6902)
         printf '[{"op":"replace","path":"/data/value","value":"unchanged"}]\n' >"${config%/*}/loader.json"
-        printf 'patchesJson6902:\n  - target:\n      version: v1\n      kind: ConfigMap\n      name: input\n    path: loader.json\n' >>"$config" ;;
+        printf 'patchesJson6902:\n  - target:\n      version: v1\n      kind: ConfigMap\n      name: input\n    path: loader.json\n' >>"$config"
+        ;;
       configurations)
         printf 'namePrefix:\n  - path: metadata/name\n' >"${config%/*}/loader.yaml"
-        printf 'configurations:\n  - loader.yaml\n' >>"$config" ;;
+        printf 'configurations:\n  - loader.yaml\n' >>"$config"
+        ;;
       crds | openapi)
         if [ "$field" = openapi ]; then
           printf '{"swagger":"2.0","info":{"title":"fixture","version":"v1"},"paths":{},"definitions":{}}\n' >"${config%/*}/loader.json"
@@ -607,27 +615,34 @@ SH
         else
           printf '{"fixture":{"type":"object"}}\n' >"${config%/*}/loader.json"
           printf 'crds:\n  - loader.json\n' >>"$config"
-        fi ;;
+        fi
+        ;;
       transformers)
         printf 'apiVersion: builtin\nkind: AnnotationsTransformer\nmetadata:\n  name: loader\nannotations:\n  fixture: local\nfieldSpecs:\n  - path: metadata/annotations\n    create: true\n' >"${config%/*}/loader.yaml"
-        printf 'transformers:\n  - loader.yaml\n' >>"$config" ;;
+        printf 'transformers:\n  - loader.yaml\n' >>"$config"
+        ;;
       generators)
         mkdir "${config%/*}/nested"
         printf 'apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata:\n  name: loader\nfiles:\n  - settings.yaml\n' >"${config%/*}/nested/loader.yaml"
         printf 'setting=value\n' >"${config%/*}/settings.yaml"
-        printf 'generators:\n  - nested/loader.yaml\n' >>"$config" ;;
+        printf 'generators:\n  - nested/loader.yaml\n' >>"$config"
+        ;;
       configMap-files | secret-files)
         printf 'setting=value\n' >"${config%/*}/settings.yaml"
-        printf '%sGenerator:\n  - name: loader\n    files:\n      - key=settings.yaml\n' "${field%-files}" >>"$config" ;;
+        printf '%sGenerator:\n  - name: loader\n    files:\n      - key=settings.yaml\n' "${field%-files}" >>"$config"
+        ;;
       configMap-envs | secret-envs)
         printf 'setting=value\n' >"${config%/*}/settings.yaml"
-        printf '%sGenerator:\n  - name: loader\n    envs:\n      - settings.yaml\n' "${field%-envs}" >>"$config" ;;
+        printf '%sGenerator:\n  - name: loader\n    envs:\n      - settings.yaml\n' "${field%-envs}" >>"$config"
+        ;;
       configMap-env | secret-env)
         printf 'setting=value\n' >"${config%/*}/settings.yaml"
-        printf '%sGenerator:\n  - name: loader\n    env: settings.yaml\n' "${field%-env}" >>"$config" ;;
+        printf '%sGenerator:\n  - name: loader\n    env: settings.yaml\n' "${field%-env}" >>"$config"
+        ;;
       replacements)
         printf 'source:\n  kind: ConfigMap\n  name: input\n  fieldPath: data.value\ntargets:\n  - select:\n      kind: ConfigMap\n      name: input\n    fieldPaths:\n      - data.value\n' >"${config%/*}/loader.yaml"
-        printf 'replacements:\n  - path: loader.yaml\n' >>"$config" ;;
+        printf 'replacements:\n  - path: loader.yaml\n' >>"$config"
+        ;;
     esac
     expect_pass "$field retains valid selected local-file inputs" "$root" '2 consumer(s)'
   done
@@ -695,10 +710,12 @@ YAML
           *-envs) printf 'envs:\n  - https://example.test/unavailable.yaml\n' >>"${config%/*}/loader.yaml" ;;
           *-env) printf 'env: https://example.test/unavailable.yaml\n' >>"${config%/*}/loader.yaml" ;;
           *) printf 'files:\n  - key=https://example.test/unavailable.yaml\n' >>"${config%/*}/loader.yaml" ;;
-        esac ;;
+        esac
+        ;;
       patch-transformer*)
         reference='transformers'
-        printf 'apiVersion: builtin\nkind: PatchTransformer\nmetadata:\n  name: loader\npath: https://example.test/unavailable.yaml\n' >"${config%/*}/loader.yaml" ;;
+        printf 'apiVersion: builtin\nkind: PatchTransformer\nmetadata:\n  name: loader\npath: https://example.test/unavailable.yaml\n' >"${config%/*}/loader.yaml"
+        ;;
     esac
     if [[ "$field" = *-inline ]]; then
       LOADER="$(cat "${config%/*}/loader.yaml")" FIELD="$reference" yq -i '.[strenv(FIELD)] = [strenv(LOADER)]' "$config"
@@ -778,13 +795,16 @@ YAML
     case "$boundary" in
       remote)
         yq -i '.transformers[0] |= sub("replacement.yaml", "https://example.test/unavailable.yaml")' "$config"
-        closure_expect_no_render 'inline builtin replacement paths refuse before rendering' "$root" ;;
+        closure_expect_no_render 'inline builtin replacement paths refuse before rendering' "$root"
+        ;;
       local)
         printf 'source:\n  kind: ConfigMap\n  name: replacement-input\n  fieldPath: data.value\ntargets:\n  - select:\n      kind: ConfigMap\n      name: replacement-input\n    fieldPaths:\n      - data.value\n' >"${config%/*}/replacement.yaml"
-        expect_pass 'inline builtin replacement paths retain selected local files' "$root" '2 consumer(s)' ;;
+        expect_pass 'inline builtin replacement paths retain selected local files' "$root" '2 consumer(s)'
+        ;;
       malformed)
         yq -i '.transformers[0] = "apiVersion: builtin\nkind: ReplacementTransformer\nmetadata:\n  name: replacements\nreplacements:\n  path: missing.yaml\n"' "$config"
-        closure_expect_no_render 'malformed inline replacements cannot authorize a loader' "$root" ;;
+        closure_expect_no_render 'malformed inline replacements cannot authorize a loader' "$root"
+        ;;
     esac
   done
 }
@@ -912,9 +932,18 @@ regression_consumer_identities() {
   for field in name namespace url; do
     root="$(fixture "identity-patched-$field")"
     case "$field" in
-      name) target='/metadata/name'; value='beta-renamed' ;;
-      namespace) target='/metadata/namespace'; value='beta-other' ;;
-      url) target='/spec/url'; value='oci://ghcr.io/devantler-tech/beta/manifests/' ;;
+      name)
+        target='/metadata/name'
+        value='beta-renamed'
+        ;;
+      namespace)
+        target='/metadata/namespace'
+        value='beta-other'
+        ;;
+      url)
+        target='/spec/url'
+        value='oci://ghcr.io/devantler-tech/beta/manifests/'
+        ;;
     esac
     cat >>"$root/k8s/providers/prod/apps/kustomization.yaml" <<YAML
 patches:
@@ -1079,7 +1108,8 @@ YAML
       qualified) yq -i '.spec.rules[0].match.any[0].resources.kinds = ["source.toolkit.fluxcd.io/v1/OCIRepository"]' "$root/k8s/providers/prod/apps/mutation.yaml" ;;
       missing) yq -i 'del(.spec.rules[0].match.any[0].resources.kinds)' "$root/k8s/providers/prod/apps/mutation.yaml" ;;
       mutate-existing) yq -i '.spec.rules[0].match.any[0].resources.kinds = ["ConfigMap"] | .spec.rules[0].mutate.targets = [{"apiVersion":"source.toolkit.fluxcd.io/v1","kind":"OCIRepository"}]' "$root/k8s/providers/prod/apps/mutation.yaml" ;;
-      cel) cat >"$root/k8s/providers/prod/apps/mutation.yaml" <<'YAML'
+      cel)
+        cat >"$root/k8s/providers/prod/apps/mutation.yaml" <<'YAML'
 apiVersion: policies.kyverno.io/v1
 kind: MutatingPolicy
 metadata:
@@ -1199,7 +1229,10 @@ YAML
       extra-json-patch-field) yq -i '.spec.mutations[0].jsonPatch.extra = "x"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
     esac
     cmp -s "$WORK/reviewed-cel-mutation/k8s/providers/prod/apps/cel-mutation.yaml" "$root/k8s/providers/prod/apps/cel-mutation.yaml" &&
-      { printf 'FAIL: the %s variant did not change the reviewed MutatingPolicy\n' "$target" >&2; failures=$((failures + 1)); }
+      {
+        printf 'FAIL: the %s variant did not change the reviewed MutatingPolicy\n' "$target" >&2
+        failures=$((failures + 1))
+      }
     printf '  - cel-mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
     expect_refusal "a $target MutatingPolicy is outside the reviewed shape" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
   done
@@ -1307,7 +1340,10 @@ YAML
   root="$(fixture reviewed-cel-generation-one-line)"
   yq '.spec.generate[0].expression |= sub("\n *"; "")' "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" >"$root/k8s/providers/prod/apps/cel-generation.yaml"
   cmp -s "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml" &&
-    { printf 'FAIL: the one-line variant did not change the reviewed GeneratingPolicy\n' >&2; failures=$((failures + 1)); }
+    {
+      printf 'FAIL: the one-line variant did not change the reviewed GeneratingPolicy\n' >&2
+      failures=$((failures + 1))
+    }
   printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'the reviewed auto-vpa GeneratingPolicy on one line does not alter consumers' "$root" '2 consumer(s)'
   # #5125: a NotIn exclusion of named namespaces passes too; a label selector
@@ -1332,7 +1368,10 @@ YAML
       extra-expression-key) yq -i '.spec.matchConstraints.namespaceSelector.matchExpressions[0].extra = "x"' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
     esac
     cmp -s "$WORK/reviewed-cel-generation-namespace-exclusion/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml" &&
-      { printf 'FAIL: the %s variant did not change the namespace-excluded GeneratingPolicy\n' "$target" >&2; failures=$((failures + 1)); }
+      {
+        printf 'FAIL: the %s variant did not change the namespace-excluded GeneratingPolicy\n' "$target" >&2
+        failures=$((failures + 1))
+      }
     printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
     expect_refusal "a $target namespace selector is outside the reviewed shape" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
   done
@@ -1369,7 +1408,10 @@ YAML
       any-version) yq -i '.spec.matchConstraints.resourceRules[0].apiVersions = ["*"]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
     esac
     cmp -s "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml" &&
-      { printf 'FAIL: the %s variant did not change the reviewed GeneratingPolicy\n' "$target" >&2; failures=$((failures + 1)); }
+      {
+        printf 'FAIL: the %s variant did not change the reviewed GeneratingPolicy\n' "$target" >&2
+        failures=$((failures + 1))
+      }
     printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
     expect_refusal "a $target GeneratingPolicy is outside the reviewed shape" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
   done
@@ -1564,7 +1606,8 @@ spec:
 YAML
     case "$placement" in
       steps) yq -i '.spec.steps = [{"name":"instances","resources":.spec.resources}] | del(.spec.resources)' "$root/k8s/providers/prod/apps/carrier.yaml" ;;
-      generation) cat >"$root/k8s/providers/prod/apps/carrier.yaml" <<'YAML'
+      generation)
+        cat >"$root/k8s/providers/prod/apps/carrier.yaml" <<'YAML'
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -1710,7 +1753,10 @@ YAML
       missing-resource) yq -i 'del(.webhooks[0].rules[0].resources)' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
       missing-operation) yq -i 'del(.webhooks[0].rules[0].operations)' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
       substituted-operation) yq -i '.webhooks[0].rules[0].operations = ["${SOURCE_OPERATION}"]' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
-      substituted-key) yq -i '.webhooks[0]["${RULES_FIELD}"] = .webhooks[0].rules | del(.webhooks[0].rules)' "$root/k8s/providers/prod/apps/webhook.yaml"; want='mapping key' ;;
+      substituted-key)
+        yq -i '.webhooks[0]["${RULES_FIELD}"] = .webhooks[0].rules | del(.webhooks[0].rules)' "$root/k8s/providers/prod/apps/webhook.yaml"
+        want='mapping key'
+        ;;
     esac
     printf '  - webhook.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
     expect_refusal "a $target native mutator cannot attest a static consumer" "$root" "$want" 'UNKNOWN'
@@ -1807,8 +1853,14 @@ YAML
       case "$placement" in
         match) TARGET_KIND="$target" yq -i '.spec.rules[0].match.any[0].resources.kinds = [strenv(TARGET_KIND)]' "$root/k8s/providers/prod/apps/policy.yaml" ;;
         targets) TARGET_KIND="$target" yq -i '.spec.rules[0].mutate.targets = [{"apiVersion":"example.test/v1","kind":strenv(TARGET_KIND)}]' "$root/k8s/providers/prod/apps/policy.yaml" ;;
-        generate) TARGET_KIND="$target" yq -i 'del(.spec.rules[0].mutate) | .spec.rules[0].generate = {"apiVersion":"example.test/v1","kind":strenv(TARGET_KIND),"name":"carrier","data":{"spec":{}}}' "$root/k8s/providers/prod/apps/policy.yaml"; want='consumer generation' ;;
-        clone) TARGET_KIND="$target" yq -i 'del(.spec.rules[0].mutate) | .spec.rules[0].generate.cloneList = {"kinds":["example.test/v1/" + strenv(TARGET_KIND)],"namespace":"existing"}' "$root/k8s/providers/prod/apps/policy.yaml"; want='consumer generation' ;;
+        generate)
+          TARGET_KIND="$target" yq -i 'del(.spec.rules[0].mutate) | .spec.rules[0].generate = {"apiVersion":"example.test/v1","kind":strenv(TARGET_KIND),"name":"carrier","data":{"spec":{}}}' "$root/k8s/providers/prod/apps/policy.yaml"
+          want='consumer generation'
+          ;;
+        clone)
+          TARGET_KIND="$target" yq -i 'del(.spec.rules[0].mutate) | .spec.rules[0].generate.cloneList = {"kinds":["example.test/v1/" + strenv(TARGET_KIND)],"namespace":"existing"}' "$root/k8s/providers/prod/apps/policy.yaml"
+          want='consumer generation'
+          ;;
       esac
       printf '  - policy.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
       expect_refusal "$placement cannot hide a runtime $target carrier" "$root" "$want" 'UNKNOWN'
@@ -1841,7 +1893,8 @@ YAML
         # shellcheck disable=SC2016 # Flux substitutes this mapping key after the static build.
         yq -i '.spec.resources[0].spec["${TEMPLATE_FIELD}"] = .spec.resources[0].spec.resourcesTemplate | del(.spec.resources[0].spec.resourcesTemplate)' "$root/k8s/providers/prod/apps/carrier.yaml"
         yq -i '.spec.postBuild.substitute.TEMPLATE_FIELD = "resourcesTemplate"' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
-        want='mapping key' ;;
+        want='mapping key'
+        ;;
     esac
     printf '  - carrier.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
     expect_refusal "a nested ResourceSet $placement string cannot escape the census" "$root" "$want" 'UNKNOWN'
@@ -1875,24 +1928,50 @@ spec:
 YAML
     want='consumer-producing schema'
     case "$target" in
-      custom-group) yq -i '.spec.schema.group = "tenants.example.test"' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"; yq -i '.spec.rules[0].generate.cloneList.kinds = ["tenants.example.test/v1alpha1/Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      custom-group)
+        yq -i '.spec.schema.group = "tenants.example.test"' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+        yq -i '.spec.rules[0].generate.cloneList.kinds = ["tenants.example.test/v1alpha1/Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml"
+        ;;
       kind-only) yq -i '.spec.rules[0].generate.cloneList.kinds = ["Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
       version-kind) yq -i '.spec.rules[0].generate.cloneList.kinds = ["v1alpha1/Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
-      foreach|foreach-source) yq -i '.spec.rules[0].generate = {"foreach":[{"list":"request.object.metadata.labels","cloneList":.spec.rules[0].generate.cloneList}]}' "$root/k8s/providers/prod/apps/generate.yaml"
-        if [ "$target" = foreach-source ]; then yq -i '.spec.rules[0].generate.foreach[0].cloneList.kinds = ["source.toolkit.fluxcd.io/v1/OCIRepository"]' "$root/k8s/providers/prod/apps/generate.yaml"; want='consumer generation'; fi ;;
+      foreach | foreach-source)
+        yq -i '.spec.rules[0].generate = {"foreach":[{"list":"request.object.metadata.labels","cloneList":.spec.rules[0].generate.cloneList}]}' "$root/k8s/providers/prod/apps/generate.yaml"
+        if [ "$target" = foreach-source ]; then
+          yq -i '.spec.rules[0].generate.foreach[0].cloneList.kinds = ["source.toolkit.fluxcd.io/v1/OCIRepository"]' "$root/k8s/providers/prod/apps/generate.yaml"
+          want='consumer generation'
+        fi
+        ;;
       foreign-group) yq -i '.spec.rules[0].generate.cloneList.kinds = ["other.example.test/v1alpha1/Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
       foreign-version) yq -i '.spec.rules[0].generate.cloneList.kinds = ["kro.run/v9/Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
       unrelated-foreach) yq -i '.spec.rules[0].generate = {"foreach":[{"list":"request.object.metadata.labels","apiVersion":"v1","kind":"ConfigMap","name":"ordinary","data":{"data":{"ordinary":"value"}}}]}' "$root/k8s/providers/prod/apps/generate.yaml" ;;
-      malformed-match) yq -i '.spec.rules[0].generate = null | .spec.rules[0].mutate.patchStrategicMerge.metadata.labels.ordinary = "value" | .spec.rules[0].match.any[0].resources.kinds = {"bad":"Pod"} | del(.spec.rules[0].generate)' "$root/k8s/providers/prod/apps/generate.yaml"; want='admission mutation' ;;
-      malformed-clone) yq -i '.spec.rules[0].generate.cloneList.kinds = {"bad":"v1/ConfigMap"}' "$root/k8s/providers/prod/apps/generate.yaml"; want='consumer generation' ;;
-      empty-foreach) yq -i '.spec.rules[0].generate = {"foreach":[]}' "$root/k8s/providers/prod/apps/generate.yaml"; want='consumer generation' ;;
-      unknown-foreach) yq -i '.spec.rules[0].generate = {"foreach":[{"list":"request.object.metadata.labels","data":{}}]}' "$root/k8s/providers/prod/apps/generate.yaml"; want='consumer generation' ;;
-      nested-foreach) yq -i '.spec.rules[0].generate = {"foreach":[{"foreach":[{"kind":"ConfigMap"}]}]}' "$root/k8s/providers/prod/apps/generate.yaml"; want='consumer generation' ;;
-      cel) yq -i '.apiVersion = "policies.kyverno.io/v1" | .kind = "GeneratingPolicy" | .spec = {"generation":[{"expression":"generator.Apply(\"v1\", \"configmaps\", \"default\", [])"}]}' "$root/k8s/providers/prod/apps/generate.yaml"; want='unevaluated CEL' ;;
+      malformed-match)
+        yq -i '.spec.rules[0].generate = null | .spec.rules[0].mutate.patchStrategicMerge.metadata.labels.ordinary = "value" | .spec.rules[0].match.any[0].resources.kinds = {"bad":"Pod"} | del(.spec.rules[0].generate)' "$root/k8s/providers/prod/apps/generate.yaml"
+        want='admission mutation'
+        ;;
+      malformed-clone)
+        yq -i '.spec.rules[0].generate.cloneList.kinds = {"bad":"v1/ConfigMap"}' "$root/k8s/providers/prod/apps/generate.yaml"
+        want='consumer generation'
+        ;;
+      empty-foreach)
+        yq -i '.spec.rules[0].generate = {"foreach":[]}' "$root/k8s/providers/prod/apps/generate.yaml"
+        want='consumer generation'
+        ;;
+      unknown-foreach)
+        yq -i '.spec.rules[0].generate = {"foreach":[{"list":"request.object.metadata.labels","data":{}}]}' "$root/k8s/providers/prod/apps/generate.yaml"
+        want='consumer generation'
+        ;;
+      nested-foreach)
+        yq -i '.spec.rules[0].generate = {"foreach":[{"foreach":[{"kind":"ConfigMap"}]}]}' "$root/k8s/providers/prod/apps/generate.yaml"
+        want='consumer generation'
+        ;;
+      cel)
+        yq -i '.apiVersion = "policies.kyverno.io/v1" | .kind = "GeneratingPolicy" | .spec = {"generation":[{"expression":"generator.Apply(\"v1\", \"configmaps\", \"default\", [])"}]}' "$root/k8s/providers/prod/apps/generate.yaml"
+        want='unevaluated CEL'
+        ;;
     esac
     printf '  - generate.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
     case "$target" in
-      foreign-group|foreign-version|unrelated-foreach) expect_pass "a bounded $target generator does not match a consumer schema" "$root" '2 consumer(s)' ;;
+      foreign-group | foreign-version | unrelated-foreach) expect_pass "a bounded $target generator does not match a consumer schema" "$root" '2 consumer(s)' ;;
       *) expect_refusal "$target generation cannot hide an unseen consumer instance" "$root" "$want" 'UNKNOWN' ;;
     esac
   done
@@ -1910,7 +1989,7 @@ case "$PARTIAL_RUNTIME:$*" in
 esac
 SH
     chmod +x "$WORK/partial-runtime-$boundary-bin/yq"
-    case "$boundary" in clone) want='could not bound cloning of Tenant';; templates) want='could not read ResourceSet resourcesTemplate';; esac
+    case "$boundary" in clone) want='could not bound cloning of Tenant' ;; templates) want='could not read ResourceSet resourcesTemplate' ;; esac
     REAL_YQ="$(command -v yq)" PARTIAL_RUNTIME="$boundary" PATH="$WORK/partial-runtime-$boundary-bin:$PATH" \
       expect_refusal "partial $boundary reader cannot clear a runtime chain" "$root" "$want" 'UNKNOWN'
   done
@@ -2002,10 +2081,15 @@ spec:
 YAML
     want='admission mutation'
     case "$field" in
-      clone) yq -i 'del(.spec.resources[0].spec.rules[0].mutate) | .spec.resources[0].spec.rules[0].match.any[0].resources.kinds = ["Namespace"] | .spec.resources[0].spec.rules[0].generate.cloneList = {"kinds":["<< inputs.schema >>"],"namespace":"existing"}' "$root/k8s/providers/prod/apps/resource-set.yaml"; want='consumer generation' ;;
-      native-group|native-resource) yq -i '.spec.resources[0] = {"apiVersion":"admissionregistration.k8s.io/v1","kind":"MutatingWebhookConfiguration","metadata":{"name":"runtime"},"webhooks":[{"name":"runtime.example.test","clientConfig":{"url":"https://webhook.example.test/"},"admissionReviewVersions":["v1"],"sideEffects":"None","rules":[{"apiGroups":["source.toolkit.fluxcd.io"],"apiVersions":["v1"],"operations":["CREATE","UPDATE"],"resources":["ocirepositories"]}]}]}' "$root/k8s/providers/prod/apps/resource-set.yaml"
+      clone)
+        yq -i 'del(.spec.resources[0].spec.rules[0].mutate) | .spec.resources[0].spec.rules[0].match.any[0].resources.kinds = ["Namespace"] | .spec.resources[0].spec.rules[0].generate.cloneList = {"kinds":["<< inputs.schema >>"],"namespace":"existing"}' "$root/k8s/providers/prod/apps/resource-set.yaml"
+        want='consumer generation'
+        ;;
+      native-group | native-resource)
+        yq -i '.spec.resources[0] = {"apiVersion":"admissionregistration.k8s.io/v1","kind":"MutatingWebhookConfiguration","metadata":{"name":"runtime"},"webhooks":[{"name":"runtime.example.test","clientConfig":{"url":"https://webhook.example.test/"},"admissionReviewVersions":["v1"],"sideEffects":"None","rules":[{"apiGroups":["source.toolkit.fluxcd.io"],"apiVersions":["v1"],"operations":["CREATE","UPDATE"],"resources":["ocirepositories"]}]}]}' "$root/k8s/providers/prod/apps/resource-set.yaml"
         if [ "$field" = native-group ]; then yq -i '.spec.resources[0].webhooks[0].rules[0].apiGroups = ["<< inputs.affectedGroup >>"]' "$root/k8s/providers/prod/apps/resource-set.yaml"; else yq -i '.spec.resources[0].webhooks[0].rules[0].resources = ["<< inputs.affectedResource >>"]' "$root/k8s/providers/prod/apps/resource-set.yaml"; fi
-        want='native admission mutation' ;;
+        want='native admission mutation'
+        ;;
     esac
     printf '  - resource-set.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
     expect_refusal "a ResourceSet policy $field contract must remain literal" "$root" "$want" 'UNKNOWN'
@@ -2041,13 +2125,22 @@ spec:
 YAML
       want='nested source reference'
       case "$field" in
-        kind) yq -i '.spec.resources[0].apiVersion = "kro.run/v1alpha1" | .spec.resources[0].kind = "<< inputs.resourceKind >>" | .spec.resources[0].spec = {"name":"generated"}' "$root/k8s/providers/prod/apps/resource-set.yaml"; want='ResourceSet object types' ;;
-        api-version) yq -i '.spec.resources[0].kind = "Tenant" | .spec.resources[0].apiVersion = "<< inputs.group >>/v1alpha1" | .spec.resources[0].spec = {"name":"generated"}' "$root/k8s/providers/prod/apps/resource-set.yaml"; want='ResourceSet object types' ;;
+        kind)
+          yq -i '.spec.resources[0].apiVersion = "kro.run/v1alpha1" | .spec.resources[0].kind = "<< inputs.resourceKind >>" | .spec.resources[0].spec = {"name":"generated"}' "$root/k8s/providers/prod/apps/resource-set.yaml"
+          want='ResourceSet object types'
+          ;;
+        api-version)
+          yq -i '.spec.resources[0].kind = "Tenant" | .spec.resources[0].apiVersion = "<< inputs.group >>/v1alpha1" | .spec.resources[0].spec = {"name":"generated"}' "$root/k8s/providers/prod/apps/resource-set.yaml"
+          want='ResourceSet object types'
+          ;;
         source-kind) yq -i '.spec.resources[0].spec.sourceRef = {"kind":"<< inputs.sourceKind >>","name":"flux-system"}' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
         source-name) yq -i '.spec.resources[0].spec.sourceRef.name = "<< inputs.sourceName >>"' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
         source-namespace) yq -i '.spec.resources[0].spec.sourceRef.name = "flux-system" | .spec.resources[0].spec.sourceRef.namespace = "<< inputs.namespace >>"' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
         inherited-namespace) yq -i '.spec.resources[0].spec.sourceRef.name = "flux-system" | .spec.resources[0].metadata.namespace = "<< inputs.namespace >>"' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
-        key) yq -i '.spec.resources[0]["<< inputs.typeField >>"] = .spec.resources[0].kind | del(.spec.resources[0].kind)' "$root/k8s/providers/prod/apps/resource-set.yaml"; want='mapping key' ;;
+        key)
+          yq -i '.spec.resources[0]["<< inputs.typeField >>"] = .spec.resources[0].kind | del(.spec.resources[0].kind)' "$root/k8s/providers/prod/apps/resource-set.yaml"
+          want='mapping key'
+          ;;
       esac
       case "$placement" in
         steps) yq -i '.spec.steps = [{"name":"sources","resources":.spec.resources}] | del(.spec.resources)' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
@@ -2122,13 +2215,14 @@ regression_platform_source_aliases() {
     namespace=flux-system
     url=oci://ghcr.io/devantler-tech/platform/manifests
     case "$placement" in
-      cross-root|reverse-root) source_file="$root/k8s/providers/prod/infrastructure/platform-alias.yaml" ;;
+      cross-root | reverse-root) source_file="$root/k8s/providers/prod/infrastructure/platform-alias.yaml" ;;
       overlay) source_file="$root/k8s/clusters/prod/platform-alias.yaml" ;;
       explicit-namespace) namespace=other ;;
       trailing-slash) url="$url/" ;;
       unresolved-url)
         # shellcheck disable=SC2016 # Flux resolves this literal variable, not the shell.
-        url='oci://ghcr.io/${REPOSITORY}/manifests' ;;
+        url='oci://ghcr.io/${REPOSITORY}/manifests'
+        ;;
     esac
     cat >"$source_file" <<YAML
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -2162,11 +2256,12 @@ YAML
       reverse-root) yq eval-all -i '[.] | reverse | .[] | split_doc' "$root/k8s/clusters/prod/flux-kustomizations.yaml" ;;
       default-namespace) yq -i 'del(.metadata.namespace)' "$root/k8s/providers/prod/apps/extra-root.yaml" ;;
       explicit-namespace) yq -i '.spec.sourceRef.namespace = "other"' "$root/k8s/providers/prod/apps/extra-root.yaml" ;;
-      resources|steps)
+      resources | steps)
         yq -i '{"apiVersion":"fluxcd.controlplane.io/v1","kind":"ResourceSet","metadata":{"name":"roots","namespace":"flux-system"},"spec":{"resources":[.]}}' "$root/k8s/providers/prod/apps/extra-root.yaml"
         if [ "$placement" = steps ]; then
           yq -i '.spec.steps = [{"resources":.spec.resources}] | del(.spec.resources)' "$root/k8s/providers/prod/apps/extra-root.yaml"
-        fi ;;
+        fi
+        ;;
     esac
     printf '  - extra-root.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
     if [ "$placement" = unresolved-url ]; then

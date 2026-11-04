@@ -9,7 +9,8 @@
 # https://github.com/kyverno/kyverno/security/advisories/GHSA-459x-q9hg-4gpq
 # Go's imported records instead classify all versions/symbols as affected.
 # This does not accept a vulnerable version, any other advisory or production
-# exposure. TestAdvisoryAcceptancePinsReviewedRelease fences dependency changes.
+# exposure. TestAdvisoryAcceptancePinsReviewedRelease fences dependency changes
+# and requires osv-scanner.toml to ignore exactly these IDs.
 GO-2026-5594
 GO-2026-5337
 GO-2025-3615

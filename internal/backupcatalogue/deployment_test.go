@@ -38,7 +38,7 @@ func TestBoundObservationDiscardsChangedOrIncompleteBindings(t *testing.T) {
 				}
 				return docs, nil
 			}
-			read := func(ctx context.Context, p Policy, access, secret, password, parent string, base http.RoundTripper) (Catalogue, error) {
+			read := func(_ context.Context, p Policy, access, secret, password, _ string, _ http.RoundTripper) (Catalogue, error) {
 				observed++
 				if p.Prefix != "velero/prod/kopia/wedding-app/" || access != "fixture-access" || secret != "fixture-secret" || password != "fixture-password" {
 					t.Fatal("wrong read scope")

@@ -17,7 +17,10 @@ trap 'rm -rf "$scratch"' EXIT
 failures=0
 assertions=0
 
-[ -x "$script" ] || { printf 'FAIL: %s is not executable\n' "$script"; exit 1; }
+[ -x "$script" ] || {
+  printf 'FAIL: %s is not executable\n' "$script"
+  exit 1
+}
 
 good_digest="sha256:$(printf 'a%.0s' {1..64})"
 
@@ -136,7 +139,6 @@ STUB_ATTESTED="not-a-commit"
 run_case "a malformed attested value is never fetched" 0 "CONVERGED" \
   "$good_digest" 0 0 "CONVERGED ignored" "verdict=CONVERGED"
 assert_no_log "malformed value reaches no fetch" "git fetch"
-
 
 # The workflow acts on the verdict written above. Only BEHIND may deploy: DIVERGED is
 # what a merge group that deployed before merging looks like, and a failed check writes

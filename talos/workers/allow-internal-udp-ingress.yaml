@@ -1,3 +1,4 @@
+---
 # Cluster-internal UDP reachable from the node CIDR only on worker nodes.
 # Pairs with cluster/block-ingress-by-default.yaml.
 #   Cilium VXLAN 8472, Cilium WireGuard 51871

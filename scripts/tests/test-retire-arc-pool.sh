@@ -195,8 +195,10 @@ fixture() {
   jq -n '{apiVersion:"v1",kind:"Namespace",metadata:{name:"arc-runners",uid:"ns-1",resourceVersion:"1",annotations:{foreign:"preserve"}}}' >"$ARC_TEST_STATE/ns.json"
   jq -n '{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:{name:"platform-runners",namespace:"arc-runners",uid:"hr-1",resourceVersion:"2"},spec:{suspend:false,chartRef:{kind:"OCIRepository",name:"platform-runners"},values:{runnerScaleSetName:"platform-linux",githubConfigUrl:"https://github.com/devantler-tech",githubConfigSecret:"arc-github-app",runnerGroup:"platform",minRunners:0,maxRunners:1}}}' >"$ARC_TEST_STATE/hr.json"
   jq -n '{apiVersion:"external-secrets.io/v1",kind:"ExternalSecret",metadata:{name:"arc-github-app",namespace:"arc-runners",uid:"eso-1",resourceVersion:"3"},spec:{target:{name:"arc-github-app",creationPolicy:"Owner"},secretStoreRef:{name:"openbao",kind:"SecretStore"}}}' >"$ARC_TEST_STATE/eso.json"
-  : >"$ARC_TEST_STATE/ars.json"; : >"$ARC_TEST_STATE/ers.json"
-  printf '[]\n' >"$ARC_TEST_STATE/listeners.json"; printf '[]\n' >"$ARC_TEST_STATE/listener-pods.json"
+  : >"$ARC_TEST_STATE/ars.json"
+  : >"$ARC_TEST_STATE/ers.json"
+  printf '[]\n' >"$ARC_TEST_STATE/listeners.json"
+  printf '[]\n' >"$ARC_TEST_STATE/listener-pods.json"
   jq -n '{metadata:{name:"arc-controller",namespace:"arc-systems",uid:"deployment",resourceVersion:"4",generation:3},spec:{replicas:1,template:{metadata:{},spec:{containers:[{name:"manager",command:["/manager"],args:["--watch-single-namespace=arc-runners","--auto-scaling-runner-set-only"]}]} }},status:{observedGeneration:3,replicas:1,updatedReplicas:1,readyReplicas:1,availableReplicas:1}}' >"$ARC_TEST_STATE/controller.json"
   jq -n '[{uid:"old-1",ownerUID:"old-rs",ownerKind:"ReplicaSet",phase:"Running",ready:"True",deleting:""}]' >"$ARC_TEST_STATE/controller-pods.json"
   jq -n '[{uid:"new-1",ownerUID:"new-rs",ownerKind:"ReplicaSet",phase:"Running",ready:"True",deleting:""}]' >"$ARC_TEST_STATE/new-controller-pods.json"
@@ -210,65 +212,128 @@ fixture() {
 baseline_fixture() {
   fixture "$1"
   ARC_TEST_BASELINE_SOURCE=true
-  jq '.spec.values.maxRunners=0' "$ARC_TEST_STATE/hr.json" >"$ARC_TEST_STATE/next.json";mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/hr.json"
+  jq '.spec.values.maxRunners=0' "$ARC_TEST_STATE/hr.json" >"$ARC_TEST_STATE/next.json"
+  mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/hr.json"
   jq -n '{apiVersion:"actions.github.com/v1alpha1",kind:"AutoscalingRunnerSet",metadata:{name:"platform-linux",namespace:"arc-runners",uid:"ars-1",resourceVersion:"8",generation:2,annotations:{"meta.helm.sh/release-name":"platform-runners","meta.helm.sh/release-namespace":"arc-runners"}},spec:{runnerScaleSetName:"platform-linux",githubConfigUrl:"https://github.com/devantler-tech",githubConfigSecret:"arc-github-app",runnerGroup:"platform",minRunners:0,maxRunners:0},status:{observedGeneration:2}}' >"$ARC_TEST_STATE/ars.json"
   jq --slurpfile hr "$ARC_TEST_STATE/hr.json" --slurpfile eso "$ARC_TEST_STATE/eso.json" --slurpfile ars "$ARC_TEST_STATE/ars.json" '
-    .metadata.annotations."platform.devantler.tech/arc-retirement"=({version:1,owner:{run:"123",attempt:"1",sha:("a"*40)},namespaceUID:"ns-1",hrUID:"",esoUID:"",phase:"baseline",controllerUID:"",controllerPodUIDs:[],controllerTicket:"",baseline:{version:1,sourceSHA:("b"*40),digest:("sha256:"+("a"*64)),maximum:0,hrSpec0:$hr[0].spec,arsSpec0:$ars[0].spec,esoSpec:$eso[0].spec,hrUID:"",arsUID:"",esoUID:""}}|tojson)' "$ARC_TEST_STATE/ns.json" >"$ARC_TEST_STATE/next.json";mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/ns.json"
+    .metadata.annotations."platform.devantler.tech/arc-retirement"=({version:1,owner:{run:"123",attempt:"1",sha:("a"*40)},namespaceUID:"ns-1",hrUID:"",esoUID:"",phase:"baseline",controllerUID:"",controllerPodUIDs:[],controllerTicket:"",baseline:{version:1,sourceSHA:("b"*40),digest:("sha256:"+("a"*64)),maximum:0,hrSpec0:$hr[0].spec,arsSpec0:$ars[0].spec,esoSpec:$eso[0].spec,hrUID:"",arsUID:"",esoUID:""}}|tojson)' "$ARC_TEST_STATE/ns.json" >"$ARC_TEST_STATE/next.json"
+  mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/ns.json"
 }
 run_native() { bash scripts/retire-arc-pool.sh "$1" >"$ARC_TEST_STATE/output" 2>"$ARC_TEST_STATE/error"; }
 refused() {
-  if run_native before-publish; then printf 'Native retirement wrongly accepted %s\n' "$1" >&2; exit 1; fi
+  if run_native before-publish; then
+    printf 'Native retirement wrongly accepted %s\n' "$1" >&2
+    exit 1
+  fi
   if [[ -s "$ARC_TEST_STATE/proxy-pid" ]]; then
-    ! kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null || { printf 'Owned proxy survived failure.\n' >&2; exit 1; }
+    ! kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null || {
+      printf 'Owned proxy survived failure.\n' >&2
+      exit 1
+    }
   fi
 }
-fixture outside; GITHUB_ACTIONS=false; refused outside; GITHUB_ACTIONS=true
+fixture outside
+GITHUB_ACTIONS=false
+refused outside
+GITHUB_ACTIONS=true
 [[ ! -f "$ARC_TEST_STATE/commands" ]]
-fixture reader; ARC_TEST_ADMIN=false; refused reader
-fixture denied-read; ARC_TEST_READ_FAILURE=true; refused denied-read
+fixture reader
+ARC_TEST_ADMIN=false
+refused reader
+fixture denied-read
+ARC_TEST_READ_FAILURE=true
+refused denied-read
 [[ ! -f "$ARC_TEST_STATE/metadata-paths" ]]
-fixture empty-scale-set-read-failure; : >"$ARC_TEST_STATE/hr.json"; : >"$ARC_TEST_STATE/eso.json"; ARC_TEST_ARS_READ_FAILURE=true
+fixture empty-scale-set-read-failure
+: >"$ARC_TEST_STATE/hr.json"
+: >"$ARC_TEST_STATE/eso.json"
+ARC_TEST_ARS_READ_FAILURE=true
 refused empty-scale-set-read-failure
 grep -q 'object-read' "$ARC_TEST_STATE/error"
-if grep -Eq '^patch |^delete ' "$ARC_TEST_STATE/commands";then printf 'Failed orphan lookup allowed a mutation.\n' >&2;exit 1;fi
-fixture empty-secret-read-failure; : >"$ARC_TEST_STATE/hr.json"; : >"$ARC_TEST_STATE/eso.json"; ARC_TEST_METADATA_FAILURE=true
+if grep -Eq '^patch |^delete ' "$ARC_TEST_STATE/commands"; then
+  printf 'Failed orphan lookup allowed a mutation.\n' >&2
+  exit 1
+fi
+fixture empty-secret-read-failure
+: >"$ARC_TEST_STATE/hr.json"
+: >"$ARC_TEST_STATE/eso.json"
+ARC_TEST_METADATA_FAILURE=true
 refused empty-secret-read-failure
 grep -q 'secret-metadata-transport' "$ARC_TEST_STATE/error"
-if grep -Eq '^patch |^delete ' "$ARC_TEST_STATE/commands";then printf 'Failed credential lookup allowed a mutation.\n' >&2;exit 1;fi
-fixture empty-lingering-secret; : >"$ARC_TEST_STATE/hr.json"; : >"$ARC_TEST_STATE/eso.json"; ARC_TEST_LINGERING_SECRET=true
+if grep -Eq '^patch |^delete ' "$ARC_TEST_STATE/commands"; then
+  printf 'Failed credential lookup allowed a mutation.\n' >&2
+  exit 1
+fi
+fixture empty-lingering-secret
+: >"$ARC_TEST_STATE/hr.json"
+: >"$ARC_TEST_STATE/eso.json"
+ARC_TEST_LINGERING_SECRET=true
 refused empty-lingering-secret
 grep -q 'lingering-generated-credential' "$ARC_TEST_STATE/error"
 grep -q '/secrets/arc-github-app$' "$ARC_TEST_STATE/metadata-paths"
-if grep -Eq '^patch |^delete |(^| )get secrets?( |$)' "$ARC_TEST_STATE/commands";then printf 'Empty-install refusal mutated or read a full credential.\n' >&2;exit 1;fi
-for parent in absent retained;do
+if grep -Eq '^patch |^delete |(^| )get secrets?( |$)' "$ARC_TEST_STATE/commands"; then
+  printf 'Empty-install refusal mutated or read a full credential.\n' >&2
+  exit 1
+fi
+for parent in absent retained; do
   baseline_fixture "unbound-orphan-$parent"
-  jq 'del(.metadata.annotations."platform.devantler.tech/arc-retirement")' "$ARC_TEST_STATE/ns.json" >"$ARC_TEST_STATE/next.json";mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/ns.json"
+  jq 'del(.metadata.annotations."platform.devantler.tech/arc-retirement")' "$ARC_TEST_STATE/ns.json" >"$ARC_TEST_STATE/next.json"
+  mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/ns.json"
   : >"$ARC_TEST_STATE/hr.json"
-  if [[ "$parent" == absent ]];then : >"$ARC_TEST_STATE/eso.json";fi
+  if [[ "$parent" == absent ]]; then : >"$ARC_TEST_STATE/eso.json"; fi
   refused "unbound-orphan-$parent"
   grep -q 'unbound-orphan-scale-set' "$ARC_TEST_STATE/error"
   grep -q 'get autoscalingrunnerset platform-linux' "$ARC_TEST_STATE/commands"
   [[ -s "$ARC_TEST_STATE/ars.json" ]]
-  if grep -Eq '^patch |^delete ' "$ARC_TEST_STATE/commands";then printf 'Unbound orphan was mutated.\n' >&2;exit 1;fi
+  if grep -Eq '^patch |^delete ' "$ARC_TEST_STATE/commands"; then
+    printf 'Unbound orphan was mutated.\n' >&2
+    exit 1
+  fi
 done
-fixture empty; : >"$ARC_TEST_STATE/hr.json"; : >"$ARC_TEST_STATE/eso.json"; run_native before-publish
+fixture empty
+: >"$ARC_TEST_STATE/hr.json"
+: >"$ARC_TEST_STATE/eso.json"
+run_native before-publish
 grep -q '/secrets/arc-github-app$' "$ARC_TEST_STATE/metadata-paths"
-if [[ -s "$ARC_TEST_STATE/proxy-pid" ]] && kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null;then printf 'Empty-install proxy survived success.\n' >&2;exit 1;fi
-fixture failed-metadata; ARC_TEST_METADATA_FAILURE=true; refused failed-metadata
+if [[ -s "$ARC_TEST_STATE/proxy-pid" ]] && kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null; then
+  printf 'Empty-install proxy survived success.\n' >&2
+  exit 1
+fi
+fixture failed-metadata
+ARC_TEST_METADATA_FAILURE=true
+refused failed-metadata
 [[ -s "$ARC_TEST_STATE/eso.json" && -s "$ARC_TEST_STATE/hr.json" ]]
-fixture inert-admission; ARC_TEST_INERT_ADMISSION=true; refused inert-admission
-if grep -q '^delete ' "$ARC_TEST_STATE/commands"; then printf 'Inert admission allowed deletion.\n' >&2; exit 1; fi
-fixture replaced-release; ARC_TEST_REPLACE=hr; refused replaced-release
-if grep -q '^delete ' "$ARC_TEST_STATE/commands"; then printf 'Replaced release was deleted.\n' >&2; exit 1; fi
+fixture inert-admission
+ARC_TEST_INERT_ADMISSION=true
+refused inert-admission
+if grep -q '^delete ' "$ARC_TEST_STATE/commands"; then
+  printf 'Inert admission allowed deletion.\n' >&2
+  exit 1
+fi
+fixture replaced-release
+ARC_TEST_REPLACE=hr
+refused replaced-release
+if grep -q '^delete ' "$ARC_TEST_STATE/commands"; then
+  printf 'Replaced release was deleted.\n' >&2
+  exit 1
+fi
 jq -e '.metadata.uid=="replacement-hr"' "$ARC_TEST_STATE/hr.json" >/dev/null
-fixture replaced-credential; ARC_TEST_REPLACE=eso; refused replaced-credential
-if grep -q 'delete.*externalsecrets' "$ARC_TEST_STATE/commands"; then printf 'Replaced credential sync was deleted.\n' >&2; exit 1; fi
+fixture replaced-credential
+ARC_TEST_REPLACE=eso
+refused replaced-credential
+if grep -q 'delete.*externalsecrets' "$ARC_TEST_STATE/commands"; then
+  printf 'Replaced credential sync was deleted.\n' >&2
+  exit 1
+fi
 jq -e '.metadata.uid=="replacement-eso"' "$ARC_TEST_STATE/eso.json" >/dev/null
 fixture full
 run_native before-publish
 jq -e '.metadata.annotations.foreign=="preserve" and (.metadata.annotations."platform.devantler.tech/arc-retirement"|fromjson|.phase=="absent" and .controllerPodUIDs==["old-1"])' "$ARC_TEST_STATE/ns.json" >/dev/null
 [[ ! -s "$ARC_TEST_STATE/hr.json" && ! -s "$ARC_TEST_STATE/eso.json" ]]
-if kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null; then printf 'Owned proxy survived success.\n' >&2; exit 1; fi
+if kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null; then
+  printf 'Owned proxy survived success.\n' >&2
+  exit 1
+fi
 run_native after-reconcile
 jq -e '.metadata.annotations."platform.devantler.tech/arc-retirement"|fromjson|.phase=="restored"' "$ARC_TEST_STATE/ns.json" >/dev/null
 first_ticket=$(jq -r '.[0].status.lastHandledReconcileAt' "$ARC_TEST_STATE/layers.json")
@@ -277,52 +342,94 @@ run_native after-reconcile
 ARC_TEST_NO_ACK=true
 rm -f "$ARC_TEST_STATE/source-proof-read"
 if timeout 15s bash scripts/retire-arc-pool.sh after-reconcile >"$ARC_TEST_STATE/output" 2>"$ARC_TEST_STATE/error"; then
-  printf 'Unacknowledged fresh request passed.\n' >&2; exit 1
+  printf 'Unacknowledged fresh request passed.\n' >&2
+  exit 1
 else
-  code=$?;[[ "$code" == 124 ]] || { printf 'Fresh-request timeout was not exercised (exit %s).\n' "$code" >&2;exit 1; }
+  code=$?
+  [[ "$code" == 124 ]] || {
+    printf 'Fresh-request timeout was not exercised (exit %s).\n' "$code" >&2
+    exit 1
+  }
 fi
 [[ -s "$ARC_TEST_STATE/source-proof-read" || -f "$ARC_TEST_STATE/source-proof-read" ]]
-if kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null; then printf 'Retry proxy survived termination.\n' >&2; exit 1; fi
+if kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null; then
+  printf 'Retry proxy survived termination.\n' >&2
+  exit 1
+fi
 ARC_TEST_NO_ACK=false
 run_native before-publish
 jq -e '.metadata.annotations."platform.devantler.tech/arc-retirement"|fromjson|.phase=="restored"' "$ARC_TEST_STATE/ns.json" >/dev/null
-if grep -Eq 'delete.*(pod|node|ephemeralrunner)|(^| )get secrets?( |$)' "$ARC_TEST_STATE/commands"; then printf 'Recovery touched jobs, capacity or a full Secret.\n' >&2; exit 1; fi
+if grep -Eq 'delete.*(pod|node|ephemeralrunner)|(^| )get secrets?( |$)' "$ARC_TEST_STATE/commands"; then
+  printf 'Recovery touched jobs, capacity or a full Secret.\n' >&2
+  exit 1
+fi
 fixture foreign
-jq '.metadata.annotations."platform.devantler.tech/arc-retirement"="{\"version\":1,\"owner\":{\"run\":\"456\",\"attempt\":\"1\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"namespaceUID\":\"ns-1\",\"hrUID\":\"hr-1\",\"esoUID\":\"eso-1\",\"phase\":\"fenced\",\"controllerUID\":\"\",\"controllerPodUIDs\":[],\"controllerTicket\":\"\"}"' "$ARC_TEST_STATE/ns.json" >"$ARC_TEST_STATE/next.json"; mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/ns.json"
+jq '.metadata.annotations."platform.devantler.tech/arc-retirement"="{\"version\":1,\"owner\":{\"run\":\"456\",\"attempt\":\"1\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"namespaceUID\":\"ns-1\",\"hrUID\":\"hr-1\",\"esoUID\":\"eso-1\",\"phase\":\"fenced\",\"controllerUID\":\"\",\"controllerPodUIDs\":[],\"controllerTicket\":\"\"}"' "$ARC_TEST_STATE/ns.json" >"$ARC_TEST_STATE/next.json"
+mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/ns.json"
 refused live-foreign-attempt
-if grep -q '^patch ' "$ARC_TEST_STATE/commands"; then printf 'Foreign live attempt was mutated.\n' >&2; exit 1; fi
+if grep -q '^patch ' "$ARC_TEST_STATE/commands"; then
+  printf 'Foreign live attempt was mutated.\n' >&2
+  exit 1
+fi
 baseline_fixture interrupted-opening
 run_native before-publish
 jq -e '.metadata.annotations."platform.devantler.tech/arc-retirement"|fromjson|.phase=="absent" and .baseline.hrUID=="hr-1" and .baseline.arsUID=="ars-1" and .baseline.esoUID=="eso-1" and .baseline.maximum==0' "$ARC_TEST_STATE/ns.json" >/dev/null
 for late in hr eso ars; do
-  baseline_fixture "late-$late";ARC_TEST_LATE=$late
+  baseline_fixture "late-$late"
+  ARC_TEST_LATE=$late
   mv "$ARC_TEST_STATE/$late.json" "$ARC_TEST_STATE/late-$late.json"
   timeout 40s bash scripts/retire-arc-pool.sh before-publish >"$ARC_TEST_STATE/output" 2>"$ARC_TEST_STATE/error"
   jq -e '.metadata.annotations."platform.devantler.tech/arc-retirement"|fromjson|.phase=="absent" and .hrUID=="hr-1" and .esoUID=="eso-1" and .baseline.arsUID=="ars-1"' "$ARC_TEST_STATE/ns.json" >/dev/null
   [[ ! -s "$ARC_TEST_STATE/hr.json" && ! -s "$ARC_TEST_STATE/eso.json" && ! -s "$ARC_TEST_STATE/ars.json" ]]
-  if [[ "$late" == ars ]] && ! grep -q 'delete.*autoscalingrunnersets/platform-linux' "$ARC_TEST_STATE/commands"; then printf 'Bound orphan was not finalized.\n' >&2;exit 1;fi
+  if [[ "$late" == ars ]] && ! grep -q 'delete.*autoscalingrunnersets/platform-linux' "$ARC_TEST_STATE/commands"; then
+    printf 'Bound orphan was not finalized.\n' >&2
+    exit 1
+  fi
 done
-baseline_fixture replaced-scale-set;ARC_TEST_REPLACE=ars;refused replaced-scale-set
-if grep -q 'delete.*autoscalingrunnersets' "$ARC_TEST_STATE/commands";then printf 'Replaced scale set was deleted.\n' >&2;exit 1;fi
+baseline_fixture replaced-scale-set
+ARC_TEST_REPLACE=ars
+refused replaced-scale-set
+if grep -q 'delete.*autoscalingrunnersets' "$ARC_TEST_STATE/commands"; then
+  printf 'Replaced scale set was deleted.\n' >&2
+  exit 1
+fi
 jq -e '.metadata.uid=="replacement-ars"' "$ARC_TEST_STATE/ars.json" >/dev/null
-for missing in hr eso;do
-  baseline_fixture "never-created-$missing";rm "$ARC_TEST_STATE/$missing.json"
+for missing in hr eso; do
+  baseline_fixture "never-created-$missing"
+  rm "$ARC_TEST_STATE/$missing.json"
   run_native before-publish
   jq -e '.metadata.annotations."platform.devantler.tech/arc-retirement"|fromjson|.phase=="absent" and .baseline.writer.flux.podUIDs==["flux-pod-1","flux-pod-2"]' "$ARC_TEST_STATE/ns.json" >/dev/null
 done
-baseline_fixture generic-source-failure;rm "$ARC_TEST_STATE/eso.json";ARC_TEST_SOURCE_FAILURE=generic
+baseline_fixture generic-source-failure
+rm "$ARC_TEST_STATE/eso.json"
+ARC_TEST_SOURCE_FAILURE=generic
 export ARC_RETIREMENT_REMAINING=1
 refused generic-source-failure
 unset ARC_RETIREMENT_REMAINING
 grep -q 'quiesced-source-writer-timeout' "$ARC_TEST_STATE/error"
-if grep -q '^delete ' "$ARC_TEST_STATE/commands";then printf 'Generic source failure allowed deletion.\n' >&2;exit 1;fi
-baseline_fixture unacknowledged-writer;ARC_TEST_NO_ACK=true
-if timeout 15s bash scripts/retire-arc-pool.sh before-publish >"$ARC_TEST_STATE/output" 2>"$ARC_TEST_STATE/error";then
-  printf 'Unacknowledged source writer allowed retirement.\n' >&2;exit 1
+if grep -q '^delete ' "$ARC_TEST_STATE/commands"; then
+  printf 'Generic source failure allowed deletion.\n' >&2
+  exit 1
+fi
+baseline_fixture unacknowledged-writer
+ARC_TEST_NO_ACK=true
+if timeout 15s bash scripts/retire-arc-pool.sh before-publish >"$ARC_TEST_STATE/output" 2>"$ARC_TEST_STATE/error"; then
+  printf 'Unacknowledged source writer allowed retirement.\n' >&2
+  exit 1
 else
-  code=$?;[[ "$code" == 124 ]] || { printf 'Writer timeout was not exercised (exit %s).\n' "$code" >&2;exit 1; }
+  code=$?
+  [[ "$code" == 124 ]] || {
+    printf 'Writer timeout was not exercised (exit %s).\n' "$code" >&2
+    exit 1
+  }
 fi
 [[ -f "$ARC_TEST_STATE/source-proof-read" ]]
-if grep -q '^delete ' "$ARC_TEST_STATE/commands";then printf 'Unacknowledged writer allowed deletion.\n' >&2;exit 1;fi
-if [[ -s "$ARC_TEST_STATE/proxy-pid" ]] && kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null;then printf 'Writer timeout retained its proxy.\n' >&2;exit 1;fi
+if grep -q '^delete ' "$ARC_TEST_STATE/commands"; then
+  printf 'Unacknowledged writer allowed deletion.\n' >&2
+  exit 1
+fi
+if [[ -s "$ARC_TEST_STATE/proxy-pid" ]] && kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null; then
+  printf 'Writer timeout retained its proxy.\n' >&2
+  exit 1
+fi
 printf 'Native ARC retirement: protected context, full partial-install retirement, durable restoration, foreign-attempt refusal, read failures and proxy cleanup passed.\n'

@@ -1,0 +1,5 @@
+# talos/factory-schematic.yaml is the canonical Talos Image Factory schematic byte for byte: its
+# sha256 IS the schematic ID registered before every deploy and expected on every node. prettier
+# would re-indent it from four spaces to two, and MegaLinter's APPLY_FIXES would commit that as a
+# different schematic ID. Its own contract tests check its content; no formatter may rewrite it.
+talos/factory-schematic.yaml
