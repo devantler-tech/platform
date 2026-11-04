@@ -352,7 +352,18 @@ DISABLE_ERRORS_LINTERS:
 
 SPELL_CSPELL_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
 SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
-MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: \.agents/.*
+# approved-surface-history.md is frozen: history_frozen_test.go accepts only its recorded sha256,
+# so markdownlint's fixes would fail that test. New approvals go in approved-surface.txt instead.
+MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: (\.agents/.*|scripts/validate-eks-ci-role-policy/approved-surface-history\.md)
+
+# prettier rewrites JSON in place, and these three sets must keep their exact bytes:
+#   * tests/chart-rendered-rbac-policy/ baselines are written by jq (UPDATE_BASELINE=1) and compared
+#     with `diff -u`, so prettier's layout fails the test that owns them.
+#   * scripts/validate-feature-flags/schema/ holds upstream flagd schemas whose sha256 the README
+#     records; reformatting them breaks that provenance.
+#   * scripts/diagnose-email-startup/testdata/ holds output captured from a real Stalwart store, and
+#     the test is meant to read what the store wrote.
+JSON_PRETTIER_FILTER_REGEX_EXCLUDE: (tests/chart-rendered-rbac-policy/.*\.json|scripts/validate-feature-flags/schema/.*\.json|scripts/diagnose-email-startup/testdata/.*\.json)
 
 # The only HTML file here is a byte-exact copy of the released Hubble UI v0.13.6 entry point, which
 # check-hubble-ui-streaming's regression test reads and requires unaltered, minifier output included.
