@@ -1,3 +1,5 @@
+// Command validate-flux-force-safety verifies that Flux layers and tenant
+// templates cannot force replacement and persistent resources cannot opt in.
 package main
 
 import (

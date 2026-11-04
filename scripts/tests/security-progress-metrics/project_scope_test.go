@@ -104,7 +104,7 @@ func TestProjectBindingRejectsTruncatedHTTPWithValidJSONBody(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_, _ = fmt.Fprint(buffer, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\n\r\n"+
 			`{"projects":[{"id":"synthetic-platform","name":"platform"}]}`)
 		_ = buffer.Flush()

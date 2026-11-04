@@ -1,3 +1,4 @@
+---
 name: Restore Stranded Prod
 
 # Production can keep an artifact that never reached main (#4186): a heal decided outside
@@ -11,7 +12,7 @@ name: Restore Stranded Prod
 # prod-deploy lock, a DIVERGED prod with an empty merge queue and no unfinished merge-group
 # run can only be stranded, so it redeploys main through the manual CD workflow, which
 # carries every production gate. Any failed read redeploys nothing and fails the run.
-on:
+"on":
   workflow_dispatch:
   schedule:
     - cron: "40 * * * *" # Hourly

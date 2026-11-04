@@ -1,3 +1,4 @@
+---
 apiVersion: v1
 kind: Pod
 metadata:
@@ -7,6 +8,27 @@ metadata:
     app.kubernetes.io/part-of: coroot
     app.kubernetes.io/managed-by: coroot-operator
 spec:
+  # The ndots policy reads only the labels, namespace and dnsConfig. The rest is a restricted pod
+  # baseline, so the fixture is not itself a scanner finding.
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65535
+    runAsGroup: 65535
+    seccompProfile:
+      type: RuntimeDefault
   containers:
     - name: fixture
       image: registry.k8s.io/pause:3.10
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 10m
+          memory: 16Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]

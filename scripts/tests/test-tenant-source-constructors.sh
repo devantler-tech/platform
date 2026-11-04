@@ -32,7 +32,7 @@ check_guards() {
       printf 'ok: %s %s accepted\n' "$guard" "$label"
     elif [[ "$want" == reject && "$rc" != 0 && "$out" == *'invalid Tenant source constructor'* ]]; then
       printf 'ok: %s %s refused by constructor boundary\n' "$guard" "$label"
-    elif [[ "$want" == reject && "$guard" == oci && ( "$label" == foreign-source-url || "$label" == wrong-node-kind ) && "$rc" != 0 && "$out" == *'found 0 in-scope OCIRepositor(y/ies)'* ]]; then
+    elif [[ "$want" == reject && "$guard" == oci && ("$label" == foreign-source-url || "$label" == wrong-node-kind) && "$rc" != 0 && "$out" == *'found 0 in-scope OCIRepositor(y/ies)'* ]]; then
       # These mutations remove the only kind/URL in this isolated discovery root.
       # The publisher guard independently rejects their complete graph context.
       printf 'ok: oci %s refused by the discovery floor\n' "$label"

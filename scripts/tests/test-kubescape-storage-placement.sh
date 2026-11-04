@@ -10,7 +10,10 @@ scratch="$(mktemp -d "${TMPDIR:-/tmp}/kubescape-placement.XXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 
 # Refuse an incomplete render or a changed scheduling or safety boundary.
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 # Every Linux worker is eligible, with or without a storage disk; a Windows node never is,
 # and no required node affinity or fixed node name narrows that again.
@@ -65,8 +68,7 @@ controller_helm="${CONTROLLER_HELM:-$scratch/controller-helm}"
 if [[ -z "${CONTROLLER_HELM:-}" ]]; then
   bash "$root/scripts/build-controller-helm.sh" "$controller_helm"
 fi
-[[ "$("$controller_helm" version --template '{{ printf "%#v" . }}')" == \
-  'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ]] ||
+[[ "$("$controller_helm" version --template '{{ printf "%#v" . }}')" == 'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ]] ||
   fail 'the audited controller renderer is required'
 
 for mode in install upgrade; do
@@ -79,7 +81,7 @@ for mode in install upgrade; do
   yq ea -o=json -I=0 'select(.kind == "Deployment" or .kind == "DaemonSet")' "$scratch/rendered.yaml" |
     jq -s 'map({kind,name:.metadata.name} + (.spec.template.spec | {nodeSelector,affinity,tolerations,nodeName,topologySpreadConstraints})) | sort_by(.kind,.name)' \
       >"$scratch/before-placement.json"
-  for ((i=0; i<count; i++)); do
+  for ((i = 0; i < count; i++)); do
     renderer="$scratch/$mode-renderer-$i"
     mkdir "$renderer"
     cp "$scratch/rendered.yaml" "$renderer/rendered.yaml"

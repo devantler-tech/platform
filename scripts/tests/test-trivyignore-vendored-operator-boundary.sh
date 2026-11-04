@@ -61,6 +61,11 @@ readonly first_party_pairs=(
   'KSV-0048:k8s/bases/infrastructure/controllers/kyverno/role.yaml'
   'KSV-0048:k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml'
   'KSV-0113:k8s/bases/infrastructure/vault-config/role.yaml'
+  'KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-csi-sidecars.yaml'
+  'KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-csi-plugin.yaml'
+  'KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-engine-image.yaml'
+  'KSV-0049:k8s/bases/infrastructure/controllers/prune-protected-orphan-alert/role.yaml'
+  'KSV-0053:k8s/providers/hetzner/apps/world-at-ruin/role-operator.yaml'
 )
 
 # Reviewed NON-RBAC dispositions for these same check ids, as exact CHECK:PATH pairs. Kept
@@ -84,6 +89,15 @@ readonly reviewed_workload_pairs=(
   'KSV-0020:k8s/bases/infrastructure/vault-backup/cron-job.yaml'
   'KSV-0021:k8s/bases/infrastructure/vault-backup/job.yaml'
   'KSV-0021:k8s/bases/infrastructure/vault-backup/cron-job.yaml'
+  # Stalwart's image-baked uid/gid 2000 on the private-mail StatefulSet and its two overlay
+  # fragments; guarded per container, with the measured image digest, by
+  # scripts/tests/test-trivyignore-private-mail-identity-boundary.sh.
+  'KSV-0020:k8s/bases/apps/private-mail/stateful-set.yaml'
+  'KSV-0020:k8s/bases/apps/private-mail-administration/patches/serve-after-initialization.yaml'
+  'KSV-0020:k8s/bases/apps/private-mail-proxy-identity/patches/add-client-proxy.yaml'
+  'KSV-0021:k8s/bases/apps/private-mail/stateful-set.yaml'
+  'KSV-0021:k8s/bases/apps/private-mail-administration/patches/serve-after-initialization.yaml'
+  'KSV-0021:k8s/bases/apps/private-mail-proxy-identity/patches/add-client-proxy.yaml'
 )
 
 # THIRD reviewed category: an ADMISSION verdict — the suppressed field is not absent at runtime, it

@@ -49,7 +49,9 @@ func TestWriterBarrierSurvivesClosedSourceReadinessButNotChangedAuthority(t *tes
 	}
 	for _, kind := range []string{"source-uid", "source-generation", "source-revision", "invalid-archive-checksum", "source-unverified", "layer-uid", "layer-generation", "disabled-layer", "producer-alias"} {
 		var p map[string]any
-		json.Unmarshal(body, &p)
+		if err := json.Unmarshal(body, &p); err != nil {
+			t.Fatal(err)
+		}
 		src := p["OCI"].(map[string]any)
 		layers := p["Kustomizations"].([]any)
 		layer := layers[0].(map[string]any)
@@ -94,7 +96,9 @@ func TestWriterReceiptRequiresCompleteFreshBarrierBeforeDrain(t *testing.T) {
 	}
 	raw := sourceFixture(t)
 	var proof map[string]any
-	json.Unmarshal(raw, &proof)
+	if err := json.Unmarshal(raw, &proof); err != nil {
+		t.Fatal(err)
+	}
 	proof["Ticket"] = "native-123-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	for _, layer := range proof["Kustomizations"].([]any) {
 		layer.(map[string]any)["metadata"].(map[string]any)["annotations"] = map[string]any{"reconcile.fluxcd.io/requestedAt": proof["Ticket"]}
@@ -137,7 +141,9 @@ func TestOpeningWriterBarrierRequiresTheCompletedExactMissingCreateDenial(t *tes
 			applyRecord(t, &s, p)
 			j, _ := readJournal(s)
 			var proof map[string]any
-			json.Unmarshal(sourceFixture(t), &proof)
+			if err := json.Unmarshal(sourceFixture(t), &proof); err != nil {
+				t.Fatal(err)
+			}
 			proof["Digest"] = j.Baseline.Digest
 			proof["Ticket"] = "native-123-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 			proof["FluxBefore"], proof["Flux"] = fluxFixture(), fluxFixture()
@@ -171,7 +177,9 @@ func TestOpeningWriterBarrierRequiresTheCompletedExactMissingCreateDenial(t *tes
 			}
 			for _, kind := range []string{"generic-error", "wrong-policy", "wrong-target", "active-apply", "stale-condition", "unacknowledged", "different-digest", "other-layer-failed", "runtime-version", "runtime-rollout", "runtime-old-pod", "runtime-replaced", "duplicate-condition", "stalled", "bound-missing-identity"} {
 				var mutated map[string]any
-				json.Unmarshal(body, &mutated)
+				if err := json.Unmarshal(body, &mutated); err != nil {
+					t.Fatal(err)
+				}
 				layers := mutated["Kustomizations"].([]any)
 				layer := layers[2].(map[string]any)
 				status := layer["status"].(map[string]any)
@@ -228,7 +236,9 @@ func TestOpeningWriterBarrierRequiresTheCompletedExactMissingCreateDenial(t *tes
 
 func TestCompletedFailureReceiptRejectsChangedRuntimeAtDelete(t *testing.T) {
 	var proof map[string]any
-	json.Unmarshal(sourceFixture(t), &proof)
+	if err := json.Unmarshal(sourceFixture(t), &proof); err != nil {
+		t.Fatal(err)
+	}
 	flux := fluxFixture()
 	proof["Flux"] = flux
 	raw, _ := json.Marshal(flux)

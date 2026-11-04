@@ -13,7 +13,10 @@ readonly scratch_dir
 trap 'rm -rf "${scratch_dir}"' EXIT
 
 # Print the supplied failure message to stderr and stop the regression.
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 
 for tool in kubectl yq jq helm; do
   command -v "${tool}" >/dev/null || fail "${tool} is required"

@@ -225,7 +225,7 @@ var drPublisherCredentials = []drPublisherCredential{
 //
 // 🔴 THE WORKFLOW IS PARSED, NOT SCANNED — the third route, and the last one to
 // be converted. The two production routes were parsed in #2939; this one still
-// asked `containsLine`, which is satisfied by the expected text appearing
+// asked a since-removed line scan, which is satisfied by the expected text appearing
 // ANYWHERE in the job's text. Five ways that said "wired" about a DR route that
 // was not, each reproduced as an ablation and each returning nil against the
 // scanning version:
@@ -1649,14 +1649,6 @@ func stringListContains(value any, want string) bool {
 	return false
 }
 
-func containsLine(block string, want string) bool {
-	for _, line := range strings.Split(block, "\n") {
-		if strings.Contains(line, want) {
-			return true
-		}
-	}
-	return false
-}
 func run(workflowPath string, configPath string, stdout io.Writer, stderr io.Writer) int {
 	workflow, err := os.ReadFile(workflowPath) //nolint:gosec // The explicit CLI path is the validator input.
 	if err != nil {

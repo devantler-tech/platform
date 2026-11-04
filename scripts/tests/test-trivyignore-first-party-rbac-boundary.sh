@@ -100,6 +100,12 @@ readonly reviewed_pairs=(
   "KSV-0048:$kyverno_role"
   "KSV-0048:$kro_webapp"
   "KSV-0113:$vault_config_role"
+  # Premises asserted in section 6 below.
+  "KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-csi-sidecars.yaml"
+  "KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-csi-plugin.yaml"
+  "KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-engine-image.yaml"
+  "KSV-0049:k8s/bases/infrastructure/controllers/prune-protected-orphan-alert/role.yaml"
+  "KSV-0053:k8s/providers/hetzner/apps/world-at-ruin/role-operator.yaml"
 )
 readonly vendored_cdi='k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml'
 readonly vendored_kubevirt='k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml'
@@ -326,6 +332,76 @@ while IFS= read -r rule; do
   IFS="$old_ifs"
   set +f
 done < <(yq -N '.rules[] | ((.resourceNames // []) | join(",")) + "|" + ((.verbs // []) | join(","))' "$repo_root/$vault_config_role")
+
+# 6. The single-rule namespaced Roles dispositioned after #2990 (Longhorn retrofit, orphan alert,
+#    World at Ruin trial). Each disposition rests on the same three facts as the umami Kyverno role
+#    above: a namespaced Role, exactly one rule over the reviewed group/resources, pinned to the
+#    reviewed resourceNames, with verbs drawn only from the reviewed set. A whitelist under
+#    `set -f`, for the reason the vault-config check gives: a literal `*` must not glob away.
+# args: <check> <role path> <namespace> <group/resources> <resourceNames csv, empty = unpinned> <verbs>
+assert_single_rule_role() {
+  local check="$1" role="$2" want_ns="$3" want_shape="$4" want_names="$5" allowed="$6"
+  local kind ns rules shape names verb
+  kind="$(yq -N '.kind // ""' "$repo_root/$role" 2>/dev/null || printf '')"
+  ns="$(yq -N '.metadata.namespace // ""' "$repo_root/$role" 2>/dev/null || printf '')"
+  rules="$(yq -N '.rules | length' "$repo_root/$role" 2>/dev/null || printf '0')"
+  if [ "$kind" != "Role" ] || [ "$ns" != "$want_ns" ] || [ "${rules:-0}" -ne 1 ]; then
+    printf 'PREMISE BROKEN: %s is a %s in %s with %s rule(s); the %s disposition assumes one rule in a Role in %s\n' \
+      "$role" "${kind:-unset}" "${ns:-unset}" "${rules:-unset}" "$check" "$want_ns" >&2
+    status=1
+    return
+  fi
+  shape="$(yq -N '.rules[0] | ((.apiGroups // []) | join(",")) + "/" + ((.resources // []) | join(","))' "$repo_root/$role")"
+  names="$(yq -N '.rules[0] | ((.resourceNames // []) | join(","))' "$repo_root/$role")"
+  if [ "$shape" != "$want_shape" ] || [ "$names" != "$want_names" ]; then
+    printf 'PREMISE BROKEN: %s targets [%s] pinned to [%s]; the %s disposition assumes [%s] pinned to [%s]\n' \
+      "$role" "$shape" "${names:-<unpinned>}" "$check" "$want_shape" "${want_names:-<unpinned>}" >&2
+    status=1
+  fi
+  set -f
+  while IFS= read -r verb; do
+    [ -n "$verb" ] || continue
+    case " $allowed " in
+      *" $verb "*) ;;
+      *)
+        printf 'PREMISE BROKEN: %s grants verb %s; the %s disposition assumes only: %s\n' "$role" "$verb" "$check" "$allowed" >&2
+        status=1
+        ;;
+    esac
+  done < <(yq -N '.rules[0].verbs[]' "$repo_root/$role")
+  set +f
+}
+
+readonly longhorn_dir='k8s/providers/hetzner/infrastructure/controllers/longhorn'
+assert_single_rule_role KSV-0048 "$longhorn_dir/role-kyverno-mutate-csi-sidecars.yaml" longhorn-system \
+  'apps/deployments' 'csi-attacher,csi-provisioner,csi-resizer,csi-snapshotter' 'get patch update'
+assert_single_rule_role KSV-0048 "$longhorn_dir/role-kyverno-mutate-longhorn-csi-plugin.yaml" longhorn-system \
+  'apps/daemonsets' 'longhorn-csi-plugin' 'get patch update'
+assert_single_rule_role KSV-0048 "$longhorn_dir/role-kyverno-mutate-longhorn-engine-image.yaml" longhorn-system \
+  'apps/daemonsets' 'engine-image-ei-493e04e7' 'get patch update'
+assert_single_rule_role KSV-0049 'k8s/bases/infrastructure/controllers/prune-protected-orphan-alert/role.yaml' observability \
+  '/configmaps' 'prune-protected-orphan-alert-state' 'get patch'
+readonly war_role='k8s/providers/hetzner/apps/world-at-ruin/role-operator.yaml'
+assert_single_rule_role KSV-0053 "$war_role" world-at-ruin '/pods/portforward,pods/exec' '' 'create'
+
+# The World at Ruin exception is owner-only: every binding of the role names exactly one subject,
+# the owner's OIDC user. A ServiceAccount or group subject would extend exec beyond the owner.
+# Read the rendered production layers, so a binding or a subject patch from any directory counts.
+war_subjects=''
+for layer in apps infrastructure infrastructure/controllers; do
+  if ! rendered="$(kubectl kustomize "$repo_root/k8s/providers/hetzner/$layer")"; then
+    printf 'PREMISE UNREAD: could not render k8s/providers/hetzner/%s\n' "$layer" >&2
+    exit 1
+  fi
+  war_subjects+="$(yq -N 'select(.kind == "RoleBinding" and .roleRef.name == "world-at-ruin-zone-trial-operator")
+    | .subjects[] | .kind + ":" + .name' <<<"$rendered")"
+done
+# The literal Flux substitution placeholder is the reviewed subject, so it must not expand here.
+# shellcheck disable=SC2016
+if [ "$war_subjects" != 'User:oidc:${admin_email}' ]; then
+  printf 'PREMISE BROKEN: %s is bound to [%s]; the KSV-0053 disposition assumes the owner OIDC user alone\n' "$war_role" "${war_subjects:-<unbound>}" >&2
+  status=1
+fi
 
 [ "$status" -eq 0 ] || exit 1
 printf 'first-party RBAC dispositions hold: tenant role never cluster-bound, cluster-reader read-only, KRO aggregation-scoped, kyverno grant pinned to one Deployment, vault-config unscoped only for create\n'

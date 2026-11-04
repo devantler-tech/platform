@@ -25,7 +25,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	var mu sync.Mutex
 	var queries []string
 	go func() {
