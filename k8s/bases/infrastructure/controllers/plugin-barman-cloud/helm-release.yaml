@@ -32,6 +32,41 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: cloudnative-pg
+  # Recovery must bind both executable releases and the running operator's
+  # selected sidecar image. A mutable ConfigMap reference cannot establish the
+  # value loaded by an existing process. Keep this exact image in the immutable
+  # Pod specification; changing the release requires reviewing both pins.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              group: apps
+              version: v1
+              kind: Deployment
+              name: plugin-barman-cloud
+            patch: |-
+              - op: test
+                path: /spec/template/spec/containers/0/name
+                value: barman-cloud
+              - op: test
+                path: /spec/template/spec/containers/0/image
+                value: ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.15.1
+              - op: replace
+                path: /spec/template/spec/containers/0/image
+                value: ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.15.1@sha256:c75acad19a36e8176cfe2885761ff1b836c6ef977d7257e298c99a28b5c302ef
+              - op: test
+                path: /spec/template/spec/containers/0/env/0/name
+                value: SIDECAR_IMAGE
+              - op: test
+                path: /spec/template/spec/containers/0/env/0/valueFrom/configMapKeyRef
+                value:
+                  key: SIDECAR_IMAGE
+                  name: plugin-barman-cloud-config
+              - op: replace
+                path: /spec/template/spec/containers/0/env/0
+                value:
+                  name: SIDECAR_IMAGE
+                  value: ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.15.1@sha256:2287a793a804db751edd0d07d44cd549e357677e98a800eb12e2cf7c0d53f9b0
   # Single replica — this chart CANNOT run a ready warm standby. It hardcodes
   # `--leader-elect` ON, and the operator-facing gRPC listener on :9090 (which
   # the readiness probe checks via tcp-socket :9090) is a leader-election

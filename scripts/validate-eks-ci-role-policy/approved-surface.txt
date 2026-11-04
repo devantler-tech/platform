@@ -40,7 +40,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|trust-manager 6a835c24da86d1b
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|cloudnative-pg 46ab199a2eabe76e64ee7f020cc81fe9f3d94ffc3fe97dcbec0a1279f8a4b6d1
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45ae481b09a5094419372f311f12cb4b727601c269dd396191f19283d
+helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 3e7f9f3edd1fcd6c3db7df7319bd9c85d671ce145c91959f62fba03c6aef0117
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3
 

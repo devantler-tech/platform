@@ -17,12 +17,17 @@ on:
         description: The guarded migration step to run
         required: true
         type: choice
-        options: [prepare-worker, prepare-unused-temporary-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas, inventory-storage-root, inventory-storage-layout, inspect-host-memory, reboot-host-for-hugepages]
+        options: [prepare-worker, prepare-unused-temporary-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas, inventory-storage-root, inventory-storage-layout, inspect-host-memory, reboot-host-for-hugepages, observe-database]
       node:
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
         required: false
         type: choice
         options: [prod-worker-1, prod-worker-2, prod-worker-3, temporary-v1-1, temporary-v1-2, temporary-v2-1]
+      database:
+        description: Fixed database for a read-only migration observation; leave node empty
+        required: false
+        type: choice
+        options: [coroot-db, umami-db, wedding-db]
       confirm:
         description: "Type the exact confirmation documented for the selected operation"
         required: true
@@ -66,6 +71,7 @@ jobs:
       queue: max
     env:
       LONGHORN_V2_NODE: ${{ inputs.node }}
+      LONGHORN_V2_DATABASE: ${{ inputs.database }}
       LONGHORN_V2_OPERATION: ${{ inputs.operation }}
       LONGHORN_V2_CONFIRM: ${{ inputs.confirm }}
     steps:
@@ -77,6 +83,9 @@ jobs:
           set -euo pipefail
           [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
           case "${LONGHORN_V2_OPERATION}" in
+            observe-database)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
+              ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
               ;;
