@@ -1,3 +1,4 @@
+---
 # The live shape measured against prod 2026-09-21: an EMPTY pod securityContext
 # and one privileged container. Every existing field must survive the retrofit.
 apiVersion: apps/v1

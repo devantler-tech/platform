@@ -20,7 +20,8 @@ for kind in deployment statefulset daemonset; do
   # The old owner must be rejected for the replacement with the same name.
   cp "$fixture/generated-vpa.yaml" "$case_dir/generated-vpa.yaml"
   if kyverno test "$case_dir" --remove-color >"$case_dir/old-owner.log" 2>&1; then
-    echo "FAIL: $kind accepted the previous incarnation"; exit 1
+    echo "FAIL: $kind accepted the previous incarnation"
+    exit 1
   fi
   for invalid in missing empty numeric; do
     cp "$fixture/resources.yaml" "$case_dir/resources.yaml"
@@ -30,10 +31,13 @@ for kind in deployment statefulset daemonset; do
       numeric) yq -i '.metadata.uid = 42' "$case_dir/resources.yaml" ;;
     esac
     if kyverno test "$case_dir" --remove-color >"$case_dir/$invalid.log" 2>&1; then
-      echo "FAIL: $kind accepted a $invalid UID"; exit 1
+      echo "FAIL: $kind accepted a $invalid UID"
+      exit 1
     fi
     if ! grep -Eqi 'error|failed|not found' "$case_dir/$invalid.log"; then
-      cat "$case_dir/$invalid.log"; echo "FAIL: $kind/$invalid failed without evaluation evidence"; exit 1
+      cat "$case_dir/$invalid.log"
+      echo "FAIL: $kind/$invalid failed without evaluation evidence"
+      exit 1
     fi
   done
   echo "ok: $kind binds the replacement UID and refuses missing, empty and numeric UIDs"

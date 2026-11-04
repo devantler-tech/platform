@@ -1,3 +1,4 @@
+---
 creation_rules:
   - path_regex: ^k8s\/clusters\/local\/.+\.enc\.ya?ml$
     encrypted_regex: ^(data|stringData)$

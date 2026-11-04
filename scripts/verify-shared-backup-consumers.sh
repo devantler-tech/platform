@@ -2,8 +2,11 @@
 # Complete #4481's post-removal acceptance with new, identity-bound backups.
 # No credentials or backup contents are read into the runner output.
 set -euo pipefail
-fail() { printf 'shared-backup-consumers: %s\n' "$1" >&2; exit 1; }
-[[ ( "$#" == 0 || ( "$#" == 1 && "$1" == --preflight ) ) && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform &&
+fail() {
+  printf 'shared-backup-consumers: %s\n' "$1" >&2
+  exit 1
+}
+[[ ("$#" == 0 || ("$#" == 1 && "$1" == --preflight)) && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform &&
   "${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "${GITHUB_REF:-}" == refs/heads/main &&
   "${GITHUB_RUN_ATTEMPT:-}" == 1 && "${GITHUB_RUN_ID:-}" =~ ^[1-9][0-9]*$ &&
   "${WEDDING_SHARED_REMOVAL_CONFIRM:-}" == remove-wedding-shared-backups-4481 ]] ||

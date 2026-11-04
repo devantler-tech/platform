@@ -31,9 +31,9 @@ success_output="$({
     UMAMI_CURL_PAYLOAD_FILE="${tmp_dir}/payload.json" \
     UMAMI_CURL_RESPONSE="{\"cache\":\"signed-cache\",\"sessionId\":\"${session_id}\",\"visitId\":\"${visit_id}\"}" \
     bash "${probe}" \
-      --website-id "${website_id}" \
-      --hostname devantler.tech \
-      --path "${test_path}"
+    --website-id "${website_id}" \
+    --hostname devantler.tech \
+    --path "${test_path}"
 })" || fail 'the probe must accept Umami recording confirmation identifiers'
 
 [[ "${success_output}" == "PASS: Umami recorded synthetic pageview session=${session_id} visit=${visit_id}" ]] ||

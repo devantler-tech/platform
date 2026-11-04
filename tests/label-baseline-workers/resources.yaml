@@ -1,3 +1,4 @@
+---
 # A baseline worker carrying the labels the shared Talos worker config stamps.
 apiVersion: v1
 kind: Node

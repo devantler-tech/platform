@@ -1,5 +1,6 @@
+---
 name: CI
-on:
+"on":
   pull_request:
     branches: [main]
   merge_group:
@@ -262,6 +263,7 @@ jobs:
               - 'scripts/tests/test-flux-kustomization-prune.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-github-team-management-checks.sh'
               - 'scripts/tests/test-tenant-kro-pull-secret.sh'
               - 'scripts/tests/test-tenant-controller-namespace-coverage.sh'
               - 'scripts/tests/test-arc-listener-public-content.sh'
@@ -458,6 +460,9 @@ jobs:
               # The vault-backup KSV-0020 disposition rests on the same per-container identity,
               # and its guard also asserts that KSV-0021 stays UNdispositioned there.
               - 'scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh'
+              # The private-mail KSV-0020/KSV-0021 disposition rests on Stalwart's image-baked
+              # identity per container, so the entry and its premises test move together.
+              - 'scripts/tests/test-trivyignore-private-mail-identity-boundary.sh'
               # The first-party RBAC dispositions and the roles they describe are one
               # contract: the disposition is only valid while the role stays bound and
               # scoped the way it was reviewed. The roles themselves are already covered
@@ -1867,7 +1872,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.23"
+          KSAIL_VERSION: "7.206.24"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1977,6 +1982,8 @@ jobs:
           bash scripts/tests/test-github-team-identity-admission.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
+          shellcheck scripts/tests/test-github-team-management-checks.sh
+          bash scripts/tests/test-github-team-management-checks.sh
           shellcheck scripts/tests/test-tenant-controller-namespace-coverage.sh
           bash scripts/tests/test-tenant-controller-namespace-coverage.sh
           shellcheck scripts/tests/test-restrict-tenant-network-policies.sh
@@ -2017,7 +2024,7 @@ jobs:
         if: matrix.suite == 'services'
         timeout-minutes: 5
         env:
-          CONTRACT_PROBE_IMAGE_NATIVE_TEST: '1'
+          CONTRACT_PROBE_IMAGE_NATIVE_TEST: "1"
         run: |
           set -euo pipefail
           go test -count=1 -timeout 4m -json ./scripts/tests/contract-probe-image |
@@ -2275,6 +2282,17 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
           bash scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
+
+      - name: 🧱 Validate private-mail identity disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # Every private-mail container runs at uid/gid 2000, the stalwart identity the pinned
+        # Stalwart digest defines and the bootstrap image restates. The path-scoped entry would
+        # also hide a container added later at another low identity, so the guard asserts the
+        # identity and image of every container. Its identical-probe trivy control runs only
+        # where trivy is installed, which this job is not yet (#5864).
+        run: |
+          shellcheck scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
+          bash scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
 
       - name: 🧱 Validate first-party RBAC disposition premises
         if: needs.changes.outputs.k8s == 'true'
@@ -3099,7 +3117,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.23"
+          KSAIL_VERSION: "7.206.24"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3533,7 +3551,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.23"
+          KSAIL_VERSION: "7.206.24"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3554,13 +3572,13 @@ jobs:
         if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
-          VAULT_BACKUP_TOOLING_NATIVE_TEST: '1'
+          VAULT_BACKUP_TOOLING_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/vault-backup-recovery
       - name: 🔒 Prove Longhorn dashboard read-only routing
         if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
-          LONGHORN_UI_NATIVE_TEST: '1'
+          LONGHORN_UI_NATIVE_TEST: "1"
         run: go test -race -count=1 -v ./scripts/tests/longhorn-ui-readonly
       - name: 🐤 Validate staged OpenBao standby repair
         if: matrix.suite == 'contracts'
@@ -4526,7 +4544,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.23"
+          KSAIL_VERSION: "7.206.24"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -4731,7 +4749,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@15e2fb1af4b5525ff96202661ca4b87d6affade0 # v19.1.1
+        uses: devantler-tech/.github/actions/aggregate-job-checks@522038c41420f0c9508a586cb944eda995ad0068 # v20.1.0
         with:
           check-workflow-startup: "true"
           job-results: >-

@@ -85,9 +85,9 @@ else
 fi
 
 # #3145: kubectl's shorthand kind makes every rule match nothing.
-root="$(copy shorthand-kinds restrict-github-team-management)"
-sed -i.bak -E 's#team\.github\.m\.upbound\.io/\*/(Team|TeamMembership|TeamRepository)$#\1.team.github.m.upbound.io#' \
-  "${root}/${policies}/restrict-github-team-management.yaml"
+root="$(copy shorthand-kinds restrict-tenant-network-policies)"
+sed -i.bak -E 's#- CiliumNetworkPolicy$#- CiliumNetworkPolicy.cilium.io#' \
+  "${root}/${policies}/restrict-tenant-network-policies.yaml"
 if kyverno_passes "shorthand kinds" "${root}"; then
   expect_fail "shorthand kinds" "${root}" 1 "declares result: fail (kyverno reported it Excluded)"
 fi
@@ -321,20 +321,20 @@ fi
 
 # #4530: a policy kyverno loads but refuses to evaluate has every row skipped as
 # "Invalid Policy" and counted as passing. A bare JSON literal is not a variable kyverno accepts.
-root="$(copy invalid-policy restrict-github-team-management)"
+root="$(copy invalid-policy restrict-arc-retirement-listener-pod)"
 # shellcheck disable=SC2016 # the braces and backticks are kyverno syntax, not shell
-yq -i '(.spec.rules[] | select(.name == "teams-allow-listed") | .validate.deny.conditions.all[0].key) = "{{ `true` }}"' \
-  "${root}/${policies}/restrict-github-team-management.yaml"
+yq -i '(.spec.rules[] | select(.name == "fence-retired-listener-pod") | .validate.deny.conditions.all[0].key) = "{{ `true` }}"' \
+  "${root}/${policies}/restrict-arc-retirement.yaml"
 if kyverno_passes "a policy kyverno refuses to evaluate" "${root}"; then
-  expect_fail "a policy kyverno refuses to evaluate" "${root}" 1 "of restrict-github-team-management (result: Skip, reason: Invalid Policy) and still counted them as passing"
+  expect_fail "a policy kyverno refuses to evaluate" "${root}" 1 "of restrict-arc-retirement (result: Skip, reason: Invalid Policy) and still counted them as passing"
 fi
 
 # The control: the same edit with an expression kyverno accepts is evaluated, and the
-# rows judge it (the allow-list now refuses the approved teams as well).
-root="$(copy valid-constant-policy restrict-github-team-management)"
+# rows judge it (the fence now refuses the pod it left alone).
+root="$(copy valid-constant-policy restrict-arc-retirement-listener-pod)"
 # shellcheck disable=SC2016 # the braces and backticks are kyverno syntax, not shell
-yq -i '(.spec.rules[] | select(.name == "teams-allow-listed") | .validate.deny.conditions.all[0].key) = "{{ request.object.metadata.name == `\"\"` }}"' \
-  "${root}/${policies}/restrict-github-team-management.yaml"
+yq -i '(.spec.rules[] | select(.name == "fence-retired-listener-pod") | .validate.deny.conditions.all[0].key) = "{{ request.object.metadata.name == `\"\"` }}"' \
+  "${root}/${policies}/restrict-arc-retirement.yaml"
 expect_fail "an evaluated policy with the same edit" "${root}" 1 "Want pass, got fail"
 
 # #5133: the host-access baseline must reject a permission broadening in each

@@ -1,3 +1,4 @@
+---
 machine:
   sysctls:
     # Network buffer tuning (Cilium / high-throughput workloads).

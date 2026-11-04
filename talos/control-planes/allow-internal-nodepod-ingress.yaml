@@ -1,3 +1,4 @@
+---
 # Cluster-internal TCP reachable from the node CIDR AND the pod CIDR on
 # control-plane nodes. Pairs with cluster/block-ingress-by-default.yaml.
 # The node CIDR covers cross-node scrapes (Cilium masquerades pod->node-IP to

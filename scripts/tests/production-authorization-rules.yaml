@@ -1,3 +1,4 @@
+---
 rules:
   # The EKS CI role is assumed through this service account. Bindings that name
   # it directly, through its canonical user name, or through a containing group
