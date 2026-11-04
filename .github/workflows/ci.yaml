@@ -3733,7 +3733,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@f6f8c96641f21c98e6ffc841bc6f3859cce0525b # v20.0.1
+        uses: devantler-tech/.github/actions/validate-naming@3f0791b9b2f435133d13980e918ac8f2f361c519 # v20.1.4
 
       - name: Confirm naming validation completed
         env:
