@@ -77,6 +77,7 @@ jobs:
 
       # The allowed half: the fence is in place and the load balancer's traffic is still answered.
       - name: Verify the selected fence and the public routes
+        id: binding
         shell: bash
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
@@ -85,14 +86,19 @@ jobs:
           verified="$(go run ./scripts/gateway-receiver-binding verify --context admin@prod)"
           printf '%s\n' "${verified}"
           # Without a selected fence, an answered connection would say nothing about the fence.
-          grep -Eq '(^| )fence_selected=true( |$)' <<<"${verified}" || { printf 'The fence is not selected; nothing was probed.\n' >&2; exit 1; }
+          pattern='^GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=true proxy_protocol=(true|false)$'
+          [[ "${verified}" =~ ${pattern} ]] || { printf 'The fenced transport profile is unverified; nothing was probed.\n' >&2; exit 1; }
+          transport=plain
+          [[ "${BASH_REMATCH[1]}" == false ]] || transport=proxy-v1
+          printf 'transport=%s\n' "${transport}" >>"${GITHUB_OUTPUT}"
 
       - name: Probe with a pod as the peer
         id: probe
         shell: bash
         env:
           RUN_ID: ${{ github.run_id }}
-        run: ./scripts/probe-gateway-denied-peer.sh --context admin@prod --run-id "${RUN_ID}"
+          TRANSPORT: ${{ steps.binding.outputs.transport }}
+        run: ./scripts/probe-gateway-denied-peer.sh --context admin@prod --run-id "${RUN_ID}" --transport "${TRANSPORT}"
 
       # A cancelled job can end the step before the script's own cleanup runs.
       - name: Remove anything this run left behind
@@ -100,4 +106,8 @@ jobs:
         shell: bash
         env:
           RUN_ID: ${{ github.run_id }}
-        run: kubectl --context admin@prod --request-timeout=30s --namespace whoami delete pods,ciliumnetworkpolicies --selector "platform.devantler.tech/gateway-peer-probe=${RUN_ID}" --ignore-not-found >/dev/null 2>&1
+        run: |
+          set -euo pipefail
+          kubectl --context admin@prod --request-timeout=30s --namespace whoami delete pods,ciliumnetworkpolicies --selector "platform.devantler.tech/gateway-peer-probe=${RUN_ID}" --ignore-not-found --wait=true --timeout=25s >/dev/null 2>&1
+          remaining="$(kubectl --context admin@prod --request-timeout=30s --namespace whoami get pods,ciliumnetworkpolicies --selector "platform.devantler.tech/gateway-peer-probe=${RUN_ID}" -o name 2>/dev/null)"
+          [[ -z "${remaining}" ]] || { printf 'Run-owned cleanup is unverified.\n' >&2; exit 1; }

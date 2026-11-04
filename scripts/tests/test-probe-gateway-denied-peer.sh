@@ -43,6 +43,11 @@ case "${args}" in
     exit 0
     ;;
   *' get pods,ciliumnetworkpolicies '*)
+    [[ -f "${FIXTURES}/cleanup-read-fails" && -f "${FIXTURES}/applied" ]] && exit 1
+    if [[ -f "${FIXTURES}/delete-keeps-objects" && -f "${FIXTURES}/applied" ]]; then
+      printf 'pod/gateway-peer-probe-12345\n'
+      exit 0
+    fi
     cat "${FIXTURES}/leftovers" 2>/dev/null || true
     exit 0
     ;;
@@ -84,10 +89,10 @@ fixture() {
 
 # Runs the probe against a fixture set; expects the exit code and the verdict line.
 expect() {
-  local name="$1" want_rc="$2" want_verdict="$3" rc=0
+  local name="$1" want_rc="$2" want_verdict="$3" transport="${4:-plain}" rc=0
   local dir="${work}/${name}"
   PATH="${work}/bin:${PATH}" FIXTURES="${dir}" PROBE_POLL_SECONDS=0 GITHUB_STEP_SUMMARY="${dir}/summary" \
-    bash "${script}" --context admin@prod --run-id 12345 --attempts 3 >"${dir}/out" 2>&1 || rc=$?
+    bash "${script}" --context admin@prod --run-id 12345 --attempts 3 --transport "${transport}" >"${dir}/out" 2>&1 || rc=$?
   [[ "${rc}" == "${want_rc}" ]] || fail "${name}: exit ${rc}, want ${want_rc}: $(tr '\n' '|' <"${dir}/out")"
   if [[ -n "${want_verdict}" ]]; then
     grep -q "^VERDICT: ${want_verdict}\$" "${dir}/out" || fail "${name}: no VERDICT ${want_verdict}: $(tr '\n' '|' <"${dir}/out")"
@@ -100,6 +105,8 @@ expect() {
 # The positive case, and one changed fixture for each thing it depends on.
 fixture refused 35 000 301 301 3
 expect refused 0 REFUSED
+fixture proxy-refused 35 000 301 301 3
+expect proxy-refused 0 REFUSED proxy-v1
 fixture reset 56 000 301 301 5
 expect reset 0 REFUSED
 fixture accepted 0 200 301 301 0 3 0.094778
@@ -157,9 +164,16 @@ fixture cleanup-fails 35 000 301 301 3
 touch "${work}/cleanup-fails/delete-fails"
 expect cleanup-fails 4 ''
 grep -q '^CLEANUP: FAILED' "${work}/cleanup-fails/out" || fail 'cleanup-fails: not reported'
+fixture cleanup-retained 35 000 301 301 3
+touch "${work}/cleanup-retained/delete-keeps-objects"
+expect cleanup-retained 4 ''
+grep -q '^CLEANUP: FAILED' "${work}/cleanup-retained/out" || fail 'cleanup-retained: deletion success concealed retained resources'
+fixture cleanup-unknown 35 000 301 301 3
+touch "${work}/cleanup-unknown/cleanup-read-fails"
+expect cleanup-unknown 4 ''
 
 # Usage errors read and write nothing.
-for bad in '--run-id 012' '--run-id abc' '--run-id 12345 --attempts 0' '--run-id 12345 --attempts 31' '--run-id 12345 --attempts 08'; do
+for bad in '--run-id 012 --transport plain' '--run-id abc --transport plain' '--run-id 12345 --attempts 0 --transport plain' '--run-id 12345 --attempts 31 --transport plain' '--run-id 12345 --attempts 08 --transport plain' '--run-id 12345 --transport guessed' '--run-id 12345'; do
   dir="${work}/usage"
   rm -rf "${dir}"
   mkdir -p "${dir}"
@@ -215,6 +229,58 @@ sed -n '/^        - |$/,/^      securityContext:$/p' "${work}/refused/applied" |
 pod_out="$(PATH="${work}/pod/bin:${PATH}" ATTEMPTS=2 WARMUP_ATTEMPTS=1 TIMEOUT=1 SETTLE_SECONDS=0 GATEWAY_IP=192.0.2.1 TLS_HOST=example.test CONTROL_HOST=x.invalid sh "${work}/pod/script.sh")"
 want_pod="$(printf 'PROBE control-before 301\nPROBE-READY\nPROBE tls 35 000 0.000000\nPROBE tls 35 000 0.000000\nPROBE control-after 301\nPROBE-DONE')"
 [[ "${pod_out}" == "${want_pod}" ]] || fail "the pod script printed: $(tr '\n' '|' <<<"${pod_out}")"
+
+# Execute the rendered shell with real curl and loopback listeners. A wrapper changes only the
+# destination socket; the listeners inspect the actual bytes before HTTP or the TLS ClientHello.
+for transport in plain proxy-v1; do
+  fixture_name=refused
+  [[ "${transport}" == proxy-v1 ]] && fixture_name=proxy-refused
+  if [[ ! -f "${work}/${fixture_name}/applied" ]]; then
+    fail "wire ${transport}: no rendered pod"
+    continue
+  fi
+  sed -n '/^        - |$/,/^      securityContext:$/p' "${work}/${fixture_name}/applied" | sed '1d;$d' | sed 's/^          //' >"${work}/pod/wire.sh"
+  go run "${repo}/scripts/tests/gateway-denied-peer-wire/main.go" "${work}/pod/wire.sh" "${transport}" || fail "wire ${transport}: native framing failed"
+  if [[ "${transport}" == proxy-v1 ]]; then
+    sed 's/curl -sk --haproxy-protocol /curl -sk /' "${work}/pod/wire.sh" >"${work}/pod/tls-framing-mutant.sh"
+    if go run "${repo}/scripts/tests/gateway-denied-peer-wire/main.go" "${work}/pod/tls-framing-mutant.sh" proxy-v1 >/dev/null 2>&1; then
+      fail 'wire proxy-v1: missing TLS framing was not detected'
+    fi
+  fi
+done
+
+# Run the workflow's actual receipt parser. A stale success line or an unknown mode must never
+# select a transport, even when it contains a plausible fenced=true substring.
+# shellcheck disable=SC2016 # extract literal workflow shell, including its command substitution
+sed -n '/verified="$(go run /,/^      - name: Probe /p' "${workflow}" | sed '$d;s/^          //' >"${work}/binding.sh"
+cat >"${work}/bin/go" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "${BINDING_RECEIPT}"
+FAKE
+chmod +x "${work}/bin/go"
+for mode in true false; do
+  output="${work}/binding-${mode}"
+  if ! PATH="${work}/bin:${PATH}" BINDING_RECEIPT="GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=true proxy_protocol=${mode}" GITHUB_OUTPUT="${output}" bash "${work}/binding.sh" >/dev/null; then
+    fail "workflow: verified ${mode} profile refused"
+  fi
+  want=plain
+  [[ "${mode}" == false ]] || want=proxy-v1
+  [[ "$(cat "${output}" 2>/dev/null)" == "transport=${want}" ]] || fail "workflow: wrong ${mode} transport"
+done
+for receipt in \
+  'GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=true' \
+  'GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=false proxy_protocol=false' \
+  'GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=true proxy_protocol=unknown' \
+  'GATEWAY_RECEIVER_SOURCE=UNVERIFIED public_probes=4 fence_selected=true proxy_protocol=true' \
+  "$(printf 'extra\nGATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=true proxy_protocol=true')"; do
+  output="${work}/binding-invalid"
+  rm -f "${output}"
+  if PATH="${work}/bin:${PATH}" BINDING_RECEIPT="${receipt}" GITHUB_OUTPUT="${output}" bash "${work}/binding.sh" >/dev/null 2>&1; then
+    fail 'workflow: an unverified receipt selected a transport'
+  fi
+  [[ ! -e "${output}" ]] || fail 'workflow: invalid receipt emitted a step output'
+done
+rm "${work}/bin/go"
 
 # The workflow: dormant, main only, confirmed, serialised with deploys.
 grep -qE '^  workflow_dispatch:$' "${workflow}" || fail 'workflow: not dispatch-only'
