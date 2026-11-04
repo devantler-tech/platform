@@ -9,9 +9,12 @@ unset hosted_ci_read_token
 hosted_ci_read_token="${PREBUILT_CI_READ_TOKEN:-}"
 unset PREBUILT_CI_READ_TOKEN
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-fail() { echo "FAIL: WebApp hosted fixture: $1" >&2; exit 1; }
+fail() {
+  echo "FAIL: WebApp hosted fixture: $1" >&2
+  exit 1
+}
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
-   "$(uname -s)/$(uname -m)" == Linux/x86_64 ]] || fail 'requires an isolated GitHub-hosted Linux VM'
+  "$(uname -s)/$(uname -m)" == Linux/x86_64 ]] || fail 'requires an isolated GitHub-hosted Linux VM'
 : "${RUNNER_TEMP:?}"
 work="$(mktemp -d "$RUNNER_TEMP/webapp-runtime.XXXXXX")"
 fixture="webapp-${work##*.}"
@@ -20,7 +23,10 @@ export KUBECONFIG="$work/kubeconfig" GOWORK=off
 forward_pid=''
 created=false
 cleanup() {
-  if [[ -n "$forward_pid" ]]; then kill "$forward_pid" 2>/dev/null || true; wait "$forward_pid" 2>/dev/null || true; fi
+  if [[ -n "$forward_pid" ]]; then
+    kill "$forward_pid" 2>/dev/null || true
+    wait "$forward_pid" 2>/dev/null || true
+  fi
   if [[ "$created" == true ]]; then "$work/kind" delete cluster --name "$fixture" >/dev/null 2>&1 || true; fi
   rm -rf -- "$work"
 }
@@ -168,7 +174,9 @@ for path in /company/ /da/company/; do
 done
 code="$(curl -sS --max-time 10 -D "$work/headers" -o "$work/private" -w '%{http_code}' http://127.0.0.1:18080/portal/)"
 if [[ "$code" != 404 ]] || ! grep -iq '^Cache-Control: no-store' "$work/headers" || grep -iq '^Location:' "$work/headers"; then fail 'private access is not closed'; fi
-kill "$forward_pid"; wait "$forward_pid" 2>/dev/null || true; forward_pid=''
+kill "$forward_pid"
+wait "$forward_pid" 2>/dev/null || true
+forward_pid=''
 
 # Real derived Pods distinguish reader refusal from OOM or another startup error.
 for control in mode group missing; do
@@ -200,7 +208,10 @@ missing_uid="$(kubectl -n runtime-fixture get pod missing-key -o jsonpath='{.met
 mount_refused=false
 for _attempt in {1..60}; do
   if kubectl -n runtime-fixture get events --field-selector "involvedObject.uid=$missing_uid" -o json |
-    jq -e 'any(.items[]; .reason=="FailedMount" and (.message|contains("non-existent secret key")))' >/dev/null; then mount_refused=true; break; fi
+    jq -e 'any(.items[]; .reason=="FailedMount" and (.message|contains("non-existent secret key")))' >/dev/null; then
+    mount_refused=true
+    break
+  fi
   sleep 2
 done
 [[ "$mount_refused" == true ]] || fail 'missing selected key did not produce an observed kubelet mount refusal'

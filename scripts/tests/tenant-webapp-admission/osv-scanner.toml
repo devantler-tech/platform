@@ -1,0 +1,15 @@
+# osv-scanner reads this file for the go.mod beside it only. These are the same three exact-ID
+# database-range adjudications for Kyverno v1.19.2 as .govulncheck-allow.txt, which records the
+# upstream ranges they rest on; platform#5154 removes both after the Go records are corrected.
+# TestAdvisoryAcceptancePinsReviewedRelease keeps the two lists equal and fences the release.
+[[IgnoredVulns]]
+id = "GO-2026-5594"
+reason = "Go record claims every version; upstream GHSA-qr4g-8hrp-c4rw is patched in 1.18.0."
+
+[[IgnoredVulns]]
+id = "GO-2026-5337"
+reason = "Go record claims every version; upstream GHSA-cvq5-hhx3-f99p is patched in 1.17.2."
+
+[[IgnoredVulns]]
+id = "GO-2025-3615"
+reason = "Go record claims every version; upstream GHSA-459x-q9hg-4gpq affects < v1.13.4."

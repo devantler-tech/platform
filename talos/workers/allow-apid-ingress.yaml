@@ -1,3 +1,4 @@
+---
 # apid (50000) open to all on worker nodes — KSail manages workers via
 # public IPs. Pairs with cluster/block-ingress-by-default.yaml.
 # Keep the rule COUNT low — consolidate ports into an existing rule when the

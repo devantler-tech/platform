@@ -418,7 +418,6 @@ make_provider "$nolayer" nolayerlike blind-dns kube-system \
 rm -rf "$nolayer/clusters"
 expect 'missing-layer-definitions-is-exit-2' 2 "$nolayer" 'flux-kustomization'
 
-
 # --- 19. A CLUSTER-SCOPED layer (bootstrap) also shields ---------------------
 # The bootstrap layer root is `clusters/__CLUSTER__/bootstrap`, not
 # `providers/__PROVIDER__/...`, yet it reaches a provider overlay one hop in. The

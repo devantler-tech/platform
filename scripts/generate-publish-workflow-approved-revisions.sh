@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# generate-publish-workflow-approved-revisions.sh â derive, per consumer of the shared
+# generate-publish-workflow-approved-revisions.sh — derive, per consumer of the shared
 # publish workflows, the two revisions its OCIRepository cosign matcher must accept, and
 # commit them as a reviewable data file (#3550, first child of #3308).
 #
@@ -14,13 +14,13 @@
 # pattern form (APPROVED_REVISIONS_ENFORCE) flips with the narrowing itself.
 #
 # THE TWO INPUTS
-#   applied  â the artifact revision Flux has verified and applied, read from the consumer's
+#   applied  — the artifact revision Flux has verified and applied, read from the consumer's
 #              OCIRepository `status.artifact.revision` (`<tag>@sha256:<digest>`) on the
 #              cluster named by PUBLISH_KUBE_CONTEXT; the revision that SIGNED it is the shared
-#              workflow revision recorded on the `ð CD` run that published exactly that tag
+#              workflow revision recorded on the `🚀 CD` run that published exactly that tag
 #              (`referenced_workflows[].sha`), which is the same fact the OIDC
 #              `job_workflow_ref` claim is minted from and needs no package read.
-#   pin      â `.jobs[].uses` of the consumer's cd.yaml at its default branch, via the report's
+#   pin      — `.jobs[].uses` of the consumer's cd.yaml at its default branch, via the report's
 #              `pin_at_ref`.
 # For canonical publications, these current observations retain the full
 # repository/workflow identity in publish-workflow-approved-revisions.identities.tsv.
@@ -45,8 +45,8 @@
 # guard can diff the committed file against a fresh run.
 #
 # SEAMS (tests substitute these; production leaves them unset)
-#   APPROVED_REVISION_OBSERVER      <repo> <workflow> â "<applied-tag>\t<sha256:digest>\t<signer-sha>"
-#   APPROVED_REVISION_PIN_RESOLVER  <repo> <workflow> â "<pin-sha>"
+#   APPROVED_REVISION_OBSERVER      <repo> <workflow> → "<applied-tag>\t<sha256:digest>\t<signer-sha>"
+#   APPROVED_REVISION_PIN_RESOLVER  <repo> <workflow> → "<pin-sha>"
 #   APPROVED_REVISION_RELEASE_RESOLVER  <workflow> -> "<release-candidate-sha>"
 #   APPROVED_REVISIONS_FILE         output path (default scripts/publish-workflow-approved-revisions.tsv)
 #   APPROVED_REVISIONS_OBSERVED_ON  YYYY-MM-DD stamped on rows whose tuple changed (default: today, UTC)
@@ -130,8 +130,14 @@ applied_revision() {
   }
   case "$count" in
     1) ;;
-    0) refuse "$repo: no OCIRepository on $context has url $url"; return 1 ;;
-    *) refuse "$repo: $count OCIRepositories on $context have url $url; the applied revision is ambiguous"; return 1 ;;
+    0)
+      refuse "$repo: no OCIRepository on $context has url $url"
+      return 1
+      ;;
+    *)
+      refuse "$repo: $count OCIRepositories on $context have url $url; the applied revision is ambiguous"
+      return 1
+      ;;
   esac
   revision="$(printf '%s' "$json" | jq -r --arg u "$url" \
     'first(.items[] | select(.spec.url == $u)) | .status.artifact.revision // ""' 2>/dev/null)" || {
@@ -141,7 +147,8 @@ applied_revision() {
   if is_digest "$revision"; then
     local binding file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}"
     binding="$(publication_binding "${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" "$file" "$repo" publish-app "$revision")" || {
-      refuse "$repo: bare digest has no exact publication binding"; return 1;
+      refuse "$repo: bare digest has no exact publication binding"
+      return 1
     }
     # artifact.revision is the registry manifest digest. artifact.digest hashes
     # Flux's local archive and must never be substituted for that identity.
@@ -167,14 +174,14 @@ applied_revision() {
 # The git tag whose publish produced one registry tag. The shared workflows strip a leading
 # `v` and spell `+` as `_`, so the translation is not invertible: BOTH `v1.2.3` and `1.2.3`
 # would publish as `1.2.3`. Exactly one existing git tag may translate to the applied tag,
-# or the signer cannot be attributed to one commit â the same refusal the report makes.
+# or the signer cannot be attributed to one commit — the same refusal the report makes.
 git_tag_for_registry_tag() {
   local repo="$1" registry_tag="$2" tags matches count
   tags="$(gh_retry api --paginate "repos/devantler-tech/${repo}/tags?per_page=100" --jq '.[].name')" || return 1
   matches="$(printf '%s\n' "$tags" | while IFS= read -r t; do
     [ -n "$t" ] || continue
     [ "$(registry_tag_for_git_tag "$t")" = "$registry_tag" ] && printf '%s\n' "$t"
-  done || true)"  # the loop's status is the LAST tag's comparison, never a verdict
+  done || true)" # the loop's status is the LAST tag's comparison, never a verdict
   count="$(printf '%s' "$matches" | grep -c . || true)"
   [ "$count" -eq 1 ] || return 1
   plausible_ref "$matches" || return 1
@@ -339,7 +346,9 @@ default_release_resolver() {
 # OBS_COUNT.
 split_observation() {
   local answer="$1" field n=0
-  OBS_TAG=''; OBS_DIGEST=''; OBS_SIGNER=''
+  OBS_TAG=''
+  OBS_DIGEST=''
+  OBS_SIGNER=''
   while IFS= read -r field; do
     case "$n" in
       0) OBS_TAG="$field" ;;
@@ -361,9 +370,15 @@ replace_generated_record() {
   case "$(uname -s)" in
     Linux) replacement_command='mv' ;;
     Darwin) replacement_command='gmv' ;;
-    *) refuse 'record replacement requires GNU coreutils'; return 1 ;;
+    *)
+      refuse 'record replacement requires GNU coreutils'
+      return 1
+      ;;
   esac
-  command -v "$replacement_command" >/dev/null || { refuse 'record replacement requires GNU coreutils (gmv on macOS)'; return 1; }
+  command -v "$replacement_command" >/dev/null || {
+    refuse 'record replacement requires GNU coreutils (gmv on macOS)'
+    return 1
+  }
   "$replacement_command" --no-target-directory -- "$1" "$2"
 }
 
@@ -371,36 +386,53 @@ main() {
   local observer="${APPROVED_REVISION_OBSERVER:-}" pin_resolver="${APPROVED_REVISION_PIN_RESOLVER:-}"
   local release_resolver="${APPROVED_REVISION_RELEASE_RESOLVER:-}" release_candidates='' release_attempted=' '
   local today="${APPROVED_REVISIONS_OBSERVED_ON:-$(date -u +%Y-%m-%d)}"
-  is_date "$today" || { refuse "APPROVED_REVISIONS_OBSERVED_ON must be YYYY-MM-DD, got '$today'"; exit 1; }
+  is_date "$today" || {
+    refuse "APPROVED_REVISIONS_OBSERVED_ON must be YYYY-MM-DD, got '$today'"
+    exit 1
+  }
   [ "$OUTPUT" != "$IDENTITIES_OUTPUT" ] || {
-    refuse 'compatibility and observed identities outputs must be different files'; exit 1;
+    refuse 'compatibility and observed identities outputs must be different files'
+    exit 1
   }
   if [ -L "$OUTPUT" ] || [ -L "$IDENTITIES_OUTPUT" ]; then
-    refuse 'generation outputs must not be symlinks'; exit 1
+    refuse 'generation outputs must not be symlinks'
+    exit 1
   fi
   local canonical_baseline_checked=0
   local canonical_root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" canonical_document canonical_file canonical_initial
   canonical_file="${CANONICAL_TENANT_BINDINGS_FILE:-$canonical_root/scripts/canonical-tenant-source-bindings.json}"
-  canonical_document="$(canonical_tenant_bindings "$canonical_root")" || { refuse 'canonical source admission is invalid'; exit 1; }
+  canonical_document="$(canonical_tenant_bindings "$canonical_root")" || {
+    refuse 'canonical source admission is invalid'
+    exit 1
+  }
   canonical_initial="$canonical_document"
   local bootstrap_file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}" bootstrap_document=''
   if [ -e "$bootstrap_file" ] || [ -n "${PUBLISH_BOOTSTRAP_FILE:-}" ]; then
     bootstrap_document="$(read_bound_publications "${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" "$bootstrap_file")" || {
-      refuse 'publication bindings are invalid; no file written'; exit 1;
+      refuse 'publication bindings are invalid; no file written'
+      exit 1
     }
   fi
   if [ -f "$IDENTITIES_OUTPUT" ]; then
     [ "$(head -n1 "$IDENTITIES_OUTPUT")" = "$IDENTITIES_HEADER" ] || {
-      refuse 'observed identities header is malformed; no file written'; exit 1;
+      refuse 'observed identities header is malformed; no file written'
+      exit 1
     }
     awk -F'\t' 'NR>1 && (NF!=7 || seen[$1]++) {bad=1} END {exit bad}' "$IDENTITIES_OUTPUT" || {
-      refuse 'observed identities rows are malformed or duplicated; no file written'; exit 1;
+      refuse 'observed identities rows are malformed or duplicated; no file written'
+      exit 1
     }
   fi
 
   local consumers
-  consumers="$("$REPORT" --list-consumers)" || { refuse 'consumer discovery failed; see the report above'; exit 1; }
-  [ -n "$consumers" ] || { refuse 'consumer discovery returned nothing'; exit 1; }
+  consumers="$("$REPORT" --list-consumers)" || {
+    refuse 'consumer discovery failed; see the report above'
+    exit 1
+  }
+  [ -n "$consumers" ] || {
+    refuse 'consumer discovery returned nothing'
+    exit 1
+  }
   # One approved row per source repository and workflow: artifacts one repository publishes
   # share its revision set, so the artifact field is dropped and repeats collapse (#3327).
   consumers="$(printf '%s\n' "$consumers" | cut -f1-3 | awk '!seen[$0]++')"
@@ -423,20 +455,36 @@ main() {
       # No legacy row/candidate is fabricated for a canonical-only consumer.
       # A failed observation or immutable publication read never becomes absence.
       local source_state source_inventory canonical_pin canonical_tuple canonical_previous canonical_date
-      canonical_observation_consistent "$canonical_record" "$IDENTITIES_OUTPUT" || { refuse "$repo: bootstrap/current-observation records disagree"; exit 1; }
-      canonical_publication_verify "$canonical_record" || { refuse "$repo: immutable publication verification failed"; exit 1; }
+      canonical_observation_consistent "$canonical_record" "$IDENTITIES_OUTPUT" || {
+        refuse "$repo: bootstrap/current-observation records disagree"
+        exit 1
+      }
+      canonical_publication_verify "$canonical_record" || {
+        refuse "$repo: immutable publication verification failed"
+        exit 1
+      }
       require_canonical_approval "$repo" "$workflow" "$(printf '%s\n' "$canonical_record" | jq -r .publication.publisherIdentity)" || exit 1
-      [ -n "${PUBLISH_KUBE_CONTEXT:-}" ] || { refuse "$repo: source inventory context is unset"; exit 1; }
+      [ -n "${PUBLISH_KUBE_CONTEXT:-}" ] || {
+        refuse "$repo: source inventory context is unset"
+        exit 1
+      }
       source_inventory="$(mktemp)" || exit 1
       if ! kubectl --context "$PUBLISH_KUBE_CONTEXT" get ocirepositories.source.toolkit.fluxcd.io -A -o json >"$source_inventory"; then
-        rm -f "$source_inventory"; refuse "$repo: source inventory read failed"; exit 1
+        rm -f "$source_inventory"
+        refuse "$repo: source inventory read failed"
+        exit 1
       fi
       source_state="$(canonical_source_inventory_state "$canonical_record" "$source_inventory")" || {
-        rm -f "$source_inventory"; refuse "$repo: source inventory is incomplete, ambiguous or inconsistent"; exit 1;
+        rm -f "$source_inventory"
+        refuse "$repo: source inventory is incomplete, ambiguous or inconsistent"
+        exit 1
       }
       rm -f "$source_inventory"
       canonical_pin="$(default_pin_resolver "$repo" "$workflow")" || exit 1
-      [ "$canonical_pin" = "$(printf '%s\n' "$canonical_record" | jq -r .publication.publisherIdentity)" ] || { refuse "$repo: current publisher is outside the pinned admission"; exit 1; }
+      [ "$canonical_pin" = "$(printf '%s\n' "$canonical_record" | jq -r .publication.publisherIdentity)" ] || {
+        refuse "$repo: current publisher is outside the pinned admission"
+        exit 1
+      }
       case "$source_state" in
         previous)
           # Keep the last actual row, including absence before first observation.
@@ -444,7 +492,10 @@ main() {
           if [ -n "$canonical_previous" ]; then identities_rows="${identities_rows}${canonical_previous}"$'\n'; fi
           ;;
         absent | pending)
-          [ "$(printf '%s\n' "$canonical_record" | jq -r .kind)" = published-bootstrap ] || { refuse "$repo: observed publication cannot regress to bootstrap"; exit 1; }
+          [ "$(printf '%s\n' "$canonical_record" | jq -r .kind)" = published-bootstrap ] || {
+            refuse "$repo: observed publication cannot regress to bootstrap"
+            exit 1
+          }
           ;;
         observed)
           canonical_tuple="$(printf '%s\n' "$canonical_record" | jq -r '[.consumer,.workflow,(.publication.gitTag|ltrimstr("v")),.sourceIdentity.digest,.publication.publisherIdentity,.publication.publisherIdentity]|@tsv')"
@@ -456,7 +507,10 @@ main() {
           identities_rows="${identities_rows}${canonical_tuple}"$'\t'"${canonical_date}"$'\n'
           canonical_document="$(printf '%s\n' "$canonical_document" | jq --arg consumer "$repo" '.bindings |= map(if .consumer==$consumer then .kind="published-binding"|del(.previousBinding,.previousObservation) else . end)')"
           ;;
-        *) refuse "$repo: unknown canonical source state"; exit 1 ;;
+        *)
+          refuse "$repo: unknown canonical source state"
+          exit 1
+          ;;
       esac
       continue
     fi
@@ -490,14 +544,16 @@ main() {
     case "$signer_identity" in
       devantler-tech/.github/*)
         if ! require_canonical_approval "$repo" "$workflow" "$signer_identity"; then
-          unresolved=$((unresolved + 1)); continue
+          unresolved=$((unresolved + 1))
+          continue
         fi
         OBS_TAG="$(printf '%s\n' "$previous_legacy" | cut -f1)"
         OBS_DIGEST="$(printf '%s\n' "$previous_legacy" | cut -f2)"
         OBS_SIGNER="$(printf '%s\n' "$previous_legacy" | cut -f3)"
         if ! plausible_tag "$OBS_TAG" || ! is_digest "$OBS_DIGEST" || ! is_sha "$OBS_SIGNER"; then
           refuse "$repo: retained legacy publication evidence is missing or malformed"
-          unresolved=$((unresolved + 1)); continue
+          unresolved=$((unresolved + 1))
+          continue
         fi
         ;;
       *) OBS_SIGNER="${signer_identity##*@}" ;;
@@ -505,12 +561,14 @@ main() {
     case "$pin_identity" in
       devantler-tech/.github/*)
         if ! require_canonical_approval "$repo" "$workflow" "$pin_identity"; then
-          unresolved=$((unresolved + 1)); continue
+          unresolved=$((unresolved + 1))
+          continue
         fi
         pin="$(printf '%s\n' "$previous_legacy" | cut -f4)"
         if ! is_sha "$pin"; then
           refuse "$repo: retained legacy pin evidence is missing or malformed"
-          unresolved=$((unresolved + 1)); continue
+          unresolved=$((unresolved + 1))
+          continue
         fi
         ;;
       *) pin="${pin_identity##*@}" ;;
@@ -520,7 +578,11 @@ main() {
     local candidate=''
     case "$workflow" in
       publish-app | publish-manifests) ;;
-      *) refuse "$repo: unsupported publishing workflow '$workflow'"; unresolved=$((unresolved + 1)); continue ;;
+      *)
+        refuse "$repo: unsupported publishing workflow '$workflow'"
+        unresolved=$((unresolved + 1))
+        continue
+        ;;
     esac
     case "$release_attempted" in
       *" $workflow "*) ;;
@@ -564,7 +626,8 @@ main() {
       if ! printf '%s\n' "$bootstrap_document" | jq -e --arg repo "$repo" --arg digest "$actual_digest" --arg signer "$OBS_SIGNER" \
         'all(.publications[] | select(.consumer==$repo); .digest==$digest and .signerSHA==$signer)' >/dev/null; then
         refuse "$repo: observation differs from the immutable publication binding"
-        unresolved=$((unresolved + 1)); continue
+        unresolved=$((unresolved + 1))
+        continue
       fi
       # Real observation retires the first-publication approval. Retain only
       # the immutable identity binding needed to attribute a bare Flux digest.
@@ -576,7 +639,10 @@ main() {
     refuse "$unresolved of $examined consumer(s) unresolved; no file written (an incomplete approved set reads like a complete one)"
     exit 1
   fi
-  [ "$examined" -gt 0 ] || { refuse 'no consumers examined; no file written'; exit 1; }
+  [ "$examined" -gt 0 ] || {
+    refuse 'no consumers examined; no file written'
+    exit 1
+  }
 
   local tmp identities_tmp bootstrap_tmp='' canonical_tmp=''
   tmp="$(mktemp "${OUTPUT}.XXXXXX")"
@@ -584,20 +650,23 @@ main() {
   trap 'rm -f "$tmp" "$identities_tmp" "${bootstrap_tmp:-}" "${canonical_tmp:-}"' EXIT
   if [ "$(printf '%s\n' "$canonical_document" | jq '.bindings|length')" -gt 0 ]; then
     if [ ! -f "$canonical_file" ] || [ -L "$canonical_file" ]; then
-      refuse 'canonical destination changed; no file written'; exit 1
+      refuse 'canonical destination changed; no file written'
+      exit 1
     fi
     # The reader normalizes JSON for validation; that formatting is not an
     # observation. Keep the original bytes unless the validated data changed.
     local canonical_unchanged
     canonical_unchanged="$(printf '%s\n' "$canonical_document" | jq -cr --argjson initial "$canonical_initial" '. == $initial')" || {
-      refuse 'canonical comparison failed; no file written'; exit 1;
+      refuse 'canonical comparison failed; no file written'
+      exit 1
     }
     if [ "$canonical_unchanged" = false ]; then
       canonical_tmp="$(mktemp "${canonical_file}.XXXXXX")"
       printf '%s\n' "$canonical_document" | jq . >"$canonical_tmp"
       chmod 0644 "$canonical_tmp"
     elif [ "$canonical_unchanged" != true ]; then
-      refuse 'canonical comparison was not boolean; no file written'; exit 1
+      refuse 'canonical comparison was not boolean; no file written'
+      exit 1
     fi
   fi
   if [ -n "$bootstrap_document" ]; then

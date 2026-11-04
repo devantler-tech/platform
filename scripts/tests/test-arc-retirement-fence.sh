@@ -6,7 +6,10 @@ cd "$repo_root"
 policy=k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-retirement.yaml
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
-fail() { printf 'ARC retirement admission: FAIL %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'ARC retirement admission: FAIL %s\n' "$1" >&2
+  exit 1
+}
 [[ -f "$policy" ]] || fail missing-policy
 jq -n '{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",
   metadata:{name:"platform-runners",namespace:"arc-runners"},
@@ -25,7 +28,7 @@ run_case() {
   jq -n --argjson groups "$groups" '{apiVersion:"cli.kyverno.io/v1alpha1",kind:"UserInfo",metadata:{name:"arc-retirement"},
     userInfo:{username:"fixture",groups:$groups}}' >"$dir/userinfo.json"
   local code=200
-  case "$flag" in 403|404|500) code=$flag ;; esac
+  case "$flag" in 403 | 404 | 500) code=$flag ;; esac
   jq -n --slurpfile resource "$dir/resource.json" --arg rule "$rule" --arg flag "$flag" --arg op "$operation" --arg expected "$expected" --argjson code "$code" '{
     apiVersion:"cli.kyverno.io/v1alpha1",kind:"Test",metadata:{name:"arc-retirement"},
     policies:["policy.yaml"],resources:["resource.json"],variables:"values.json",userinfo:"userinfo.json",
@@ -35,7 +38,7 @@ run_case() {
     results:[{kind:$resource[0].kind,policy:"restrict-arc-retirement",rule:$rule,
       resources:[(($resource[0].metadata.namespace // "") + "/" + $resource[0].metadata.name | ltrimstr("/"))],operation:$op,result:$expected}]
     }' >"$dir/kyverno-test.yaml"
-  cases=$((cases+1))
+  cases=$((cases + 1))
 }
 run_case recreate-zero CREATE owned '.' fail
 run_case recreate-active CREATE owned '.spec.values.maxRunners=1' fail

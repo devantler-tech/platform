@@ -7,8 +7,20 @@
 # delegation scoped to the intended CODEOWNERS teams and blocks direct numeric
 # team IDs/selectors that would bypass the allow-list enforced through
 # Crossplane references.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+#
+# #4517: every value these validations judge is written by the party they
+# constrain, so every comparison is literal. CEL's == and `in` compare text
+# exactly, so a value of * or ? matches nothing. A field that is missing, null or
+# empty counts as unset; false, a list or an object is refused where the field
+# must be unset, not left to the provider's schema to reject.
+#
+# An update is judged like a create: unlike the ClusterPolicy default, nothing
+# here admits an update because the object already failed. No object fails today,
+# and one that somehow did must not become freely editable for that reason. The
+# cost: such an object could not be changed at all, its finalizer included, until
+# the field is cleared.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: restrict-github-team-management
   annotations:
@@ -16,7 +28,7 @@ metadata:
     policies.kyverno.io/category: Security, GitHub
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Team, TeamMembership, TeamRepository
-    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
       Restricts provider-upjet-github team resources in the github-config
       namespace to the github-config CODEOWNERS teams, requires TeamMembership and
@@ -27,81 +39,136 @@ metadata:
       github-config artifact from adding arbitrary users to arbitrary GitHub
       teams or granting privileged repository access.
 spec:
-  background: true
-  # #4517: every value these rules judge is written by the party they
-  # constrain, so every comparison is LITERAL. Kyverno's list operators (AnyIn,
-  # AnyNotIn, ...) read * and ? in either operand as wildcards, which lets a
-  # value of * match any entry of an allow-list: measured on v1.19.1, 25 such
-  # values were admitted by the rules below. Each condition is therefore one
-  # JMESPath boolean compared with `Equals false` — JMESPath == and contains()
-  # compare text exactly. Write a new condition the same way, and never with a
-  # list operator. not_null() replaces only a missing value with the empty
-  # string, and to_string() keeps a non-text value from being read as empty.
-  rules:
-    - name: teams-allow-listed
-      match:
-        any:
-          - resources:
-              kinds:
-                - team.github.m.upbound.io/*/Team
-              namespaces:
-                - github-config
-      validate:
-        failureAction: Enforce
-        message: GitHub Team resources managed by github-config must be one of admins or maintainers.
-        deny:
-          conditions:
-            all:
-              - key: "{{ contains(['admins', 'maintainers'], request.object.metadata.name) }}"
-                operator: Equals
-                value: false
+  failurePolicy: Fail
+  validationActions:
+    - Deny
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["team.github.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["teams", "teammemberships", "teamrepositories"]
+  matchConditions:
+    - name: in-github-config
+      expression: "object.metadata.?namespace.orValue('') == 'github-config'"
+  variables:
+    - name: forProvider
+      expression: "object.?spec.?forProvider.orValue({})"
+    - name: initProvider
+      expression: "object.?spec.?initProvider.orValue({})"
+    - name: objectName
+      expression: "object.metadata.name.lowerAscii()"
+    - name: forDisplayName
+      expression: "variables.forProvider.?name.orValue('')"
+    - name: initDisplayName
+      expression: "variables.initProvider.?name.orValue('')"
+    - name: forRefName
+      expression: "variables.forProvider.?teamIdRef.?name.orValue('')"
+    - name: forRefNamespace
+      expression: "variables.forProvider.?teamIdRef.?namespace.orValue('')"
+    - name: initRefName
+      expression: "variables.initProvider.?teamIdRef.?name.orValue('')"
+    - name: initRefNamespace
+      expression: "variables.initProvider.?teamIdRef.?namespace.orValue('')"
+    - name: forSelector
+      expression: "variables.forProvider.?teamIdSelector.orValue({})"
+    - name: initSelector
+      expression: "variables.initProvider.?teamIdSelector.orValue({})"
+    - name: initTeamId
+      expression: "variables.initProvider.?teamId.orValue('')"
+    # #3195: requiring the reference to re-resolve on every reconcile is what
+    # makes a directly-authored numeric ID inert, so no forProvider.teamId check
+    # is needed -- and none can work. The provider's own reference resolver
+    # writes the resolved ID into that field, so a check on it fires on the
+    # controller's write and deadlocks the resource. Measured live: all 39
+    # TeamMembership/TeamRepository resources carry a populated teamId.
+    #
+    # #4525: the provider reads the referenced Team from the namespace the
+    # reference names and falls back to this object's own only when that is
+    # empty, so a foreign namespace would resolve to a Team object the team
+    # validations never judged.
+    #
+    # upjet merges initProvider into any unset forProvider field, so every
+    # constraint has to hold there too. Otherwise an approved forProvider
+    # reference fronts a foreign team supplied under initProvider.
+    - name: referenceAccepted
+      expression: >-
+        variables.forProvider.?teamIdRef.?policy.?resolve.orValue('') == 'Always' &&
+        (variables.forSelector == null || variables.forSelector == {}) &&
+        variables.forRefName in ['admins', 'maintainers'] &&
+        (variables.forRefNamespace == null || variables.forRefNamespace in ['', 'github-config']) &&
+        (variables.initTeamId == null || variables.initTeamId == '') &&
+        (variables.initSelector == null || variables.initSelector == {}) &&
+        (variables.initRefName == null || variables.initRefName in ['', 'admins', 'maintainers']) &&
+        (variables.initRefNamespace == null || variables.initRefNamespace in ['', 'github-config'])
+    # The account actually reconciled is forProvider's when set and initProvider's
+    # otherwise, so an initProvider-only username cannot skip the check. GitHub
+    # logins are case-insensitive.
+    - name: forUsername
+      expression: "variables.forProvider.?username.orValue('')"
+    - name: initUsername
+      expression: "variables.initProvider.?username.orValue('')"
+    - name: reconciledUsername
+      expression: >-
+        variables.forUsername != null && variables.forUsername != '' ? variables.forUsername :
+        variables.initUsername
+    - name: forRole
+      expression: "variables.forProvider.?role.orValue('')"
+    - name: initRole
+      expression: "variables.initProvider.?role.orValue('')"
+    - name: forPermission
+      expression: "variables.forProvider.?permission.orValue('')"
+    - name: initPermission
+      expression: "variables.initProvider.?permission.orValue('')"
+    # The team actually reconciled, for the same reason as the username: keying
+    # the ceiling on forProvider alone let an initProvider-only maintainers
+    # reference skip it and take admin.
+    - name: reconciledTeam
+      expression: >-
+        variables.forRefName != null && variables.forRefName != '' ? variables.forRefName :
+        variables.initRefName
+  validations:
+    - expression: "object.kind != 'Team' || object.metadata.name in ['admins', 'maintainers']"
+      message: GitHub Team resources managed by github-config must be one of admins or maintainers.
     # The allow-list above constrains the Kubernetes object name, but the
     # provider takes the real GitHub team from spec.forProvider.name (and
-    # spec.initProvider.name). Without this rule a Team object named "admins"
-    # may carry forProvider.name: some-other-team, so the reference rules below
+    # spec.initProvider.name). Without this check a Team object named "admins"
+    # may carry forProvider.name: some-other-team, so the reference checks
     # accept teamIdRef.name: admins while the org-admin provider reconciles a
     # different remote team. Binding the provider identity to the object name is
     # what makes the object name a faithful proxy for the remote team, which is
-    # the assumption the two reference rules rest on. Both fields are authored
+    # the assumption the two reference checks rest on. Both fields are authored
     # by the tenant and never rewritten by the provider, so pinning them carries
     # no reconciliation risk.
-    - name: teams-bind-provider-identity-to-object-name
-      match:
-        any:
-          - resources:
-              kinds:
-                - team.github.m.upbound.io/*/Team
-              namespaces:
-                - github-config
-      validate:
-        failureAction: Enforce
-        message: GitHub Team spec.forProvider.name and spec.initProvider.name must be omitted or equal to metadata.name, so the allow-listed object name is the team actually reconciled.
-        deny:
-          conditions:
-            any:
-              - key: "{{ not_null(request.object.spec.forProvider.name, '') == '' || to_lower(to_string(request.object.spec.forProvider.name)) == to_lower(request.object.metadata.name) }}"
-                operator: Equals
-                value: false
-              - key: "{{ not_null(request.object.spec.initProvider.name, '') == '' || to_lower(to_string(request.object.spec.initProvider.name)) == to_lower(request.object.metadata.name) }}"
-                operator: Equals
-                value: false
-    # crossplane.io/external-name is the other way the local name can be
-    # detached from the remote team, and it is NOT constrained here. A rule
-    # accepting only an empty annotation or metadata.name looks like the
-    # obvious counterpart to the binding above, but it breaks legitimate
-    # re-adoption: after a rebuild, or whenever a Team CR is recreated, the
-    # existing GitHub team must be adopted by the numeric team ID the provider
-    # itself writes into this annotation. It is constrained in
-    # restrict-github-team-external-identity instead, which approves each
-    # team's numeric identity and exempts the provider's own write. That rule
-    # depends on the writing identity, so it cannot live in this
-    # background-scanned policy.
     #
+    # crossplane.io/external-name is the other way the local name can be
+    # detached from the remote team, and it is NOT constrained here. A check
+    # accepting only an empty annotation or metadata.name looks like the
+    # obvious counterpart, but it breaks legitimate re-adoption: after a rebuild,
+    # or whenever a Team CR is recreated, the existing GitHub team must be adopted
+    # by the numeric team ID the provider itself writes into this annotation. It
+    # is constrained in restrict-github-team-external-identity instead, which
+    # approves each team's numeric identity and exempts the provider's own write.
+    # That check depends on the writing identity, so it cannot live in this
+    # background-scanned policy.
+    - expression: >-
+        object.kind != 'Team' ||
+        ((variables.forDisplayName == null || variables.forDisplayName == '' ||
+        (type(variables.forDisplayName) == string && variables.forDisplayName.lowerAscii() == variables.objectName)) &&
+        (variables.initDisplayName == null || variables.initDisplayName == '' ||
+        (type(variables.initDisplayName) == string && variables.initDisplayName.lowerAscii() == variables.objectName)))
+      message: >-
+        GitHub Team spec.forProvider.name and spec.initProvider.name must be
+        omitted or equal to metadata.name, so the allow-listed object name is
+        the team actually reconciled.
     # #4511: a nested team inherits every repository grant of its parent, and
     # that inheritance happens on GitHub — it never passes through the
-    # TeamRepository rules below, which are what cap this delegation's grants. A
+    # TeamRepository checks below, which are what cap this delegation's grants. A
     # Team that named a parent would hand its members the parent's access with no
-    # grant for those rules to judge. The directory link is refused for the same
+    # grant for those checks to judge. The directory link is refused for the same
     # reason from the other side: it lets a group outside this cluster decide who
     # the members are, past the member allow-list.
     #
@@ -116,143 +183,51 @@ spec:
     # GitHub by hand, the provider would try to record the parent on the admins
     # object, be refused, and report the object out of sync — which is the
     # signal wanted for a nesting nobody reviewed.
-    - name: teams-not-nested-or-directory-linked
-      match:
-        any:
-          - resources:
-              kinds:
-                - team.github.m.upbound.io/*/Team
-              namespaces:
-                - github-config
-      validate:
-        failureAction: Enforce
-        # Kyverno admits an update by default when the object already failed the
-        # rule before it. No object fails it today, and one that somehow did
-        # must not become freely editable for that reason. The cost: such an
-        # object could not be changed at all, its finalizer included, until
-        # the field is cleared.
-        allowExistingViolations: false
-        message: >-
-          A github-config Team must leave parentTeamId, parentTeamReadId,
-          parentTeamReadSlug and ldapDn unset or empty, in forProvider and
-          initProvider. Nesting a team or linking it to a directory group is a
-          reviewed change to
-          restrict-github-team-management.yaml.
-        deny:
-          conditions:
-            all:
-              # ONE comparison evaluated by JMESPath rather than eight Kyverno
-              # operators: AnyNotIn and Equals read * and ? in an operand as
-              # wildcards, and these fields are written by the party this rule
-              # constrains. JMESPath == compares strings literally. not_null()
-              # replaces only a missing value with the empty string, so false,
-              # an empty list or an empty object is refused here and not left
-              # to the provider's schema to reject.
-              - key: "{{ not_null(request.object.spec.forProvider.parentTeamId, '') == '' && not_null(request.object.spec.forProvider.parentTeamReadId, '') == '' && not_null(request.object.spec.forProvider.parentTeamReadSlug, '') == '' && not_null(request.object.spec.forProvider.ldapDn, '') == '' && not_null(request.object.spec.initProvider.parentTeamId, '') == '' && not_null(request.object.spec.initProvider.parentTeamReadId, '') == '' && not_null(request.object.spec.initProvider.parentTeamReadSlug, '') == '' && not_null(request.object.spec.initProvider.ldapDn, '') == '' }}"
-                operator: Equals
-                value: false
-    - name: teammemberships-reference-allow-listed-teams
-      match:
-        any:
-          - resources:
-              kinds:
-                - team.github.m.upbound.io/*/TeamMembership
-              namespaces:
-                - github-config
-      validate:
-        failureAction: Enforce
-        message: GitHub TeamMembership resources must set spec.forProvider.teamIdRef.name to admins or maintainers with policy.resolve Always, so the reference re-resolves on every reconcile; selectors are not allowed, a reference may name no namespace other than github-config, and initProvider must not carry a teamId, selector or non-allow-listed reference.
-        deny:
-          conditions:
-            any:
-              # #3195: requiring the reference to re-resolve on every reconcile is what
-              # makes a directly-authored numeric ID inert, so no forProvider.teamId deny
-              # is needed -- and none can work. The provider's own reference resolver
-              # writes the resolved ID into that field, so a deny on it fires on the
-              # controller's write and deadlocks the resource. Measured live: all 39
-              # TeamMembership/TeamRepository resources carry a populated teamId.
-              - key: "{{ not_null(request.object.spec.forProvider.teamIdRef.policy.resolve, '') == 'Always' }}"
-                operator: Equals
-                value: false
-              - key: "{{ not_null(request.object.spec.forProvider.teamIdSelector, `{}`) == `{}` }}"
-                operator: Equals
-                value: false
-              - key: "{{ contains(['admins', 'maintainers'], not_null(request.object.spec.forProvider.teamIdRef.name, '')) }}"
-                operator: Equals
-                value: false
-              # #4525: the provider reads the referenced Team from the namespace the
-              # reference names and falls back to this object's own only when that is
-              # empty, so a foreign namespace would resolve to a Team object the team
-              # rules above never judged.
-              - key: "{{ contains(['', 'github-config'], not_null(request.object.spec.forProvider.teamIdRef.namespace, '')) }}"
-                operator: Equals
-                value: false
-              # upjet merges initProvider into any unset forProvider field, so
-              # every constraint above has to hold there too — otherwise an
-              # approved forProvider reference fronts a foreign team supplied
-              # under initProvider.
-              - key: "{{ not_null(request.object.spec.initProvider.teamId, '') == '' }}"
-                operator: Equals
-                value: false
-              - key: "{{ not_null(request.object.spec.initProvider.teamIdSelector, `{}`) == `{}` }}"
-                operator: Equals
-                value: false
-              - key: "{{ contains(['', 'admins', 'maintainers'], not_null(request.object.spec.initProvider.teamIdRef.name, '')) }}"
-                operator: Equals
-                value: false
-              - key: "{{ contains(['', 'github-config'], not_null(request.object.spec.initProvider.teamIdRef.namespace, '')) }}"
-                operator: Equals
-                value: false
-    # #3146: the reference rule above constrains WHICH team is written to and
-    # nothing constrains WHO is written into it. A TeamMembership naming `admins`
-    # with policy.resolve Always, no teamId and no selector satisfies every
-    # condition above while carrying any account at all, and the org-admin
-    # provider then adds that account to a CODEOWNERS team. The policy's own
-    # description promises this is prevented, which is worse than an
-    # acknowledged gap.
+    - expression: >-
+        object.kind != 'Team' ||
+        [variables.forProvider, variables.initProvider].all(block,
+        ['parentTeamId', 'parentTeamReadId', 'parentTeamReadSlug', 'ldapDn'].all(field,
+        !(field in block) || block[field] == null || block[field] == ''))
+      message: >-
+        A github-config Team must leave parentTeamId, parentTeamReadId,
+        parentTeamReadSlug and ldapDn unset or empty, in forProvider and
+        initProvider. Nesting a team or linking it to a directory group is a
+        reviewed change to restrict-github-team-management.yaml.
+    - expression: "object.kind != 'TeamMembership' || variables.referenceAccepted"
+      message: >-
+        GitHub TeamMembership resources must set spec.forProvider.teamIdRef.name
+        to admins or maintainers with policy.resolve Always, so the reference
+        re-resolves on every reconcile; selectors are not allowed, a reference
+        may name no namespace other than github-config, and initProvider must
+        not carry a teamId, selector or non-allow-listed reference.
+    # #3146: the reference check above constrains WHICH team is written to and
+    # nothing there constrains WHO is written into it. A TeamMembership naming
+    # `admins` with policy.resolve Always, no teamId and no selector satisfies it
+    # while carrying any account at all, and the org-admin provider then adds
+    # that account to a CODEOWNERS team.
     #
     # The allow-list lives HERE rather than being derived from the github-config
     # artifact's own team definitions. That artifact is the exact input this
     # policy exists to constrain, so reading the permitted members out of it
     # would let a compromised artifact supply both the membership and its own
-    # authorisation. Keeping the list in the reviewed manifest is also what the
-    # team allow-list above already does, and it makes adding a member a
-    # reviewed change to this file rather than something the delegation can do
-    # to itself. Measured live: the fleet is two TeamMemberships, both
-    # `devantler` (admins/maintainer and maintainers/maintainer), so this list
-    # admits the entire current fleet and denies every other identity.
-    - name: teammemberships-allow-listed-members
-      match:
-        any:
-          - resources:
-              kinds:
-                - team.github.m.upbound.io/*/TeamMembership
-              namespaces:
-                - github-config
-      validate:
-        failureAction: Enforce
-        message: GitHub TeamMembership resources may only add allow-listed org members; set spec.forProvider.username to an allow-listed login (currently devantler) and do not supply a different one under initProvider. Adding a member is a reviewed change to restrict-github-team-management.yaml.
-        deny:
-          conditions:
-            any:
-              # upjet merges initProvider into any UNSET forProvider field, so the
-              # account actually reconciled is forProvider's when set and
-              # initProvider's otherwise. Resolving the effective value across both
-              # is what stops an initProvider-only username skipping the rule, the
-              # same bypass the maintainers ceiling below had to widen for.
-              # GitHub logins are case-insensitive, so normalise before matching:
-              # without it an allow-listed account spelled with different case is
-              # refused, which is a false denial rather than a bypass but a real one.
-              - key: "{{ contains(['devantler'], to_lower(to_string(request.object.spec.forProvider.username || request.object.spec.initProvider.username || ''))) }}"
-                operator: Equals
-                value: false
-              # The initProvider value is constrained on its own as well, so an
-              # approved forProvider username cannot front a foreign account if
-              # the merge semantics ever widen. Same belt-and-braces the
-              # reference conditions above apply to initProvider.teamIdRef.
-              - key: "{{ contains(['', 'devantler'], to_lower(to_string(not_null(request.object.spec.initProvider.username, '')))) }}"
-                operator: Equals
-                value: false
+    # authorisation. Adding a member is a reviewed change to this file. Measured
+    # live: the fleet is two TeamMemberships, both `devantler`
+    # (admins/maintainer and maintainers/maintainer), so this list admits the
+    # entire current fleet and denies every other identity.
+    #
+    # The initProvider value is constrained on its own as well, so an approved
+    # forProvider username cannot front a foreign account if the merge semantics
+    # ever widen.
+    - expression: >-
+        object.kind != 'TeamMembership' ||
+        (type(variables.reconciledUsername) == string && variables.reconciledUsername.lowerAscii() == 'devantler' &&
+        (variables.initUsername == null || variables.initUsername == '' ||
+        (type(variables.initUsername) == string && variables.initUsername.lowerAscii() == 'devantler')))
+      message: >-
+        GitHub TeamMembership resources may only add allow-listed org members;
+        set spec.forProvider.username to an allow-listed login (currently
+        devantler) and do not supply a different one under initProvider. Adding
+        a member is a reviewed change to restrict-github-team-management.yaml.
     # An allow-list, not a deny-list on `maintainer`: the team role is an
     # enumeration the provider passes straight through to GitHub, so a value
     # outside the two documented roles must be refused rather than assumed
@@ -265,135 +240,45 @@ spec:
     # does not imply permission to make one a maintainer. Measured live, that
     # distinction has nothing to bind to: the allow-list is a single account and
     # both of its memberships already hold `maintainer`, so any ceiling either
-    # denies the whole live fleet or is vacuous. The identity rule above
+    # denies the whole live fleet or is vacuous. The identity check above
     # subsumes the concern for now — a role cannot be escalated for an account
     # that cannot be added — and a ceiling becomes expressible, and worth
     # adding, as soon as the allow-list holds more than one member.
-    - name: teammemberships-known-roles
-      match:
-        any:
-          - resources:
-              kinds:
-                - team.github.m.upbound.io/*/TeamMembership
-              namespaces:
-                - github-config
-      validate:
-        failureAction: Enforce
-        message: GitHub TeamMembership resources may grant only the member or maintainer role, in forProvider and initProvider.
-        deny:
-          conditions:
-            any:
-              # Each condition owns one block. Unlike the identity rule above, this
-              # needs no merge fallback: the allow-list here includes the empty
-              # string, so an unset forProvider.role is admitted and the
-              # initProvider condition below is what constrains the value the
-              # merge would supply. Folding the fallback in would add a conjunct
-              # no fixture can isolate.
-              - key: "{{ contains(['', 'member', 'maintainer'], to_lower(to_string(not_null(request.object.spec.forProvider.role, '')))) }}"
-                operator: Equals
-                value: false
-              - key: "{{ contains(['', 'member', 'maintainer'], to_lower(to_string(not_null(request.object.spec.initProvider.role, '')))) }}"
-                operator: Equals
-                value: false
-    - name: teamrepositories-reference-allow-listed-teams
-      match:
-        any:
-          - resources:
-              kinds:
-                - team.github.m.upbound.io/*/TeamRepository
-              namespaces:
-                - github-config
-      validate:
-        failureAction: Enforce
-        message: GitHub TeamRepository resources must reference admins or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, may name no namespace other than github-config in that reference, and may grant only the pull, triage, push, maintain or admin permission, in forProvider and initProvider; the maintainers team is capped below admin by a separate rule.
-        deny:
-          conditions:
-            any:
-              # #3195: requiring the reference to re-resolve on every reconcile is what
-              # makes a directly-authored numeric ID inert, so no forProvider.teamId deny
-              # is needed -- and none can work. The provider's own reference resolver
-              # writes the resolved ID into that field, so a deny on it fires on the
-              # controller's write and deadlocks the resource. Measured live: all 39
-              # TeamMembership/TeamRepository resources carry a populated teamId.
-              - key: "{{ not_null(request.object.spec.forProvider.teamIdRef.policy.resolve, '') == 'Always' }}"
-                operator: Equals
-                value: false
-              - key: "{{ not_null(request.object.spec.forProvider.teamIdSelector, `{}`) == `{}` }}"
-                operator: Equals
-                value: false
-              - key: "{{ contains(['admins', 'maintainers'], not_null(request.object.spec.forProvider.teamIdRef.name, '')) }}"
-                operator: Equals
-                value: false
-              # #4525: the provider reads the referenced Team from the namespace the
-              # reference names and falls back to this object's own only when that is
-              # empty, so a foreign namespace would resolve to a Team object the team
-              # rules above never judged.
-              - key: "{{ contains(['', 'github-config'], not_null(request.object.spec.forProvider.teamIdRef.namespace, '')) }}"
-                operator: Equals
-                value: false
-              # An allow-list, not a deny-list on `admin`: GitHub also offers
-              # `maintain` and organization-defined custom repository roles, so
-              # denying only `admin` fails open the moment the tenant picks
-              # another privileged role. An empty value is the provider default
-              # (`pull`).
-              - key: "{{ contains(['', 'pull', 'triage', 'push', 'maintain', 'admin'], not_null(request.object.spec.forProvider.permission, '')) }}"
-                operator: Equals
-                value: false
-              # Same initProvider merge as above: an approved forProvider
-              # reference must not be able to front a foreign team or an admin
-              # grant supplied under initProvider.
-              - key: "{{ not_null(request.object.spec.initProvider.teamId, '') == '' }}"
-                operator: Equals
-                value: false
-              - key: "{{ not_null(request.object.spec.initProvider.teamIdSelector, `{}`) == `{}` }}"
-                operator: Equals
-                value: false
-              - key: "{{ contains(['', 'admins', 'maintainers'], not_null(request.object.spec.initProvider.teamIdRef.name, '')) }}"
-                operator: Equals
-                value: false
-              - key: "{{ contains(['', 'github-config'], not_null(request.object.spec.initProvider.teamIdRef.namespace, '')) }}"
-                operator: Equals
-                value: false
-              - key: "{{ contains(['', 'pull', 'triage', 'push', 'maintain', 'admin'], not_null(request.object.spec.initProvider.permission, '')) }}"
-                operator: Equals
-                value: false
+    - expression: >-
+        object.kind != 'TeamMembership' ||
+        [variables.forRole, variables.initRole].all(role, role == null ||
+        (type(role) == string && role.lowerAscii() in ['', 'member', 'maintainer']))
+      message: GitHub TeamMembership resources may grant only the member or maintainer role, in forProvider and initProvider.
+    # An allow-list, not a deny-list on `admin`: GitHub also offers `maintain`
+    # and organization-defined custom repository roles, so denying only `admin`
+    # fails open the moment the tenant picks another privileged role. An empty
+    # value is the provider default (`pull`). An approved forProvider reference
+    # must not be able to front an admin grant supplied under initProvider either.
+    - expression: >-
+        object.kind != 'TeamRepository' ||
+        (variables.referenceAccepted &&
+        [variables.forPermission, variables.initPermission].all(permission, permission == null ||
+        permission in ['', 'pull', 'triage', 'push', 'maintain', 'admin']))
+      message: >-
+        GitHub TeamRepository resources must reference admins or maintainers by
+        spec.forProvider.teamIdRef.name with policy.resolve Always, may name no
+        namespace other than github-config in that reference, and may grant only
+        the pull, triage, push, maintain or admin permission, in forProvider and
+        initProvider; the maintainers team is capped below admin by a separate
+        check.
     # #3208: the privilege ceiling is per-team, not flat. A single cap cannot express the
     # intent — capping everything at `push` denies all 37 live grants, while widening it to
-    # `admin` lets the maintainers team be granted `admin` and makes the rule vacuous.
+    # `admin` lets the maintainers team be granted `admin` and makes the check vacuous.
     # Measured live, the correlation is exact and has no exceptions: `admins` holds `admin`
     # on 22 repositories and `maintainers` holds `maintain` on 15, with zero
     # `maintainers`+`admin` and zero `admins`+non-`admin`. Binding the ceiling to the
     # referenced team admits all 37 live grants while still denying the escalation a
     # compromised artifact would actually want: `admin` through the lower-privileged team.
-    # The reference rule above already guarantees the team is one of the two allow-listed
-    # names, so this precondition is exhaustive for anything that rule admits. The flat
-    # list above remains the known-roles guard against org-defined custom roles.
-    - name: teamrepositories-maintainers-capped-below-admin
-      match:
-        any:
-          - resources:
-              kinds:
-                - team.github.m.upbound.io/*/TeamRepository
-              namespaces:
-                - github-config
-      preconditions:
-        all:
-          # upjet merges initProvider into any UNSET forProvider field, so the team
-          # actually reconciled is forProvider's when set and initProvider's otherwise.
-          # Keying this precondition on forProvider alone let an initProvider-only
-          # maintainers reference skip the rule entirely and take admin.
-          - key: "{{ (request.object.spec.forProvider.teamIdRef.name || request.object.spec.initProvider.teamIdRef.name || '') == 'maintainers' }}"
-            operator: Equals
-            value: true
-      validate:
-        failureAction: Enforce
-        message: GitHub TeamRepository resources referencing the maintainers team may grant at most maintain; admin is reserved to the admins team.
-        deny:
-          conditions:
-            any:
-              - key: "{{ contains(['', 'pull', 'triage', 'push', 'maintain'], not_null(request.object.spec.forProvider.permission, '')) }}"
-                operator: Equals
-                value: false
-              - key: "{{ contains(['', 'pull', 'triage', 'push', 'maintain'], not_null(request.object.spec.initProvider.permission, '')) }}"
-                operator: Equals
-                value: false
+    # The reference check above already guarantees the team is one of the two allow-listed
+    # names. The flat list above remains the known-roles guard against org-defined custom
+    # roles.
+    - expression: >-
+        object.kind != 'TeamRepository' || variables.reconciledTeam != 'maintainers' ||
+        [variables.forPermission, variables.initPermission].all(permission, permission == null ||
+        permission in ['', 'pull', 'triage', 'push', 'maintain'])
+      message: GitHub TeamRepository resources referencing the maintainers team may grant at most maintain; admin is reserved to the admins team.

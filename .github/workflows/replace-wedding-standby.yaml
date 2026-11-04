@@ -1,6 +1,7 @@
+---
 name: Replace Failed Wedding Standby
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:

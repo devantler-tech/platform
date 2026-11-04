@@ -13,12 +13,12 @@ func TestDispatchAuthorization(t *testing.T) {
 	}
 	for key, bad := range map[string]string{"GITHUB_REPOSITORY": "other/platform", "GITHUB_REF": "refs/pull/1/merge", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_RUN_ID": "1/../../private-mail", "GITHUB_SHA": "main", "EMAIL_CANARY_CONFIRM": "yes", "RUNNER_ENVIRONMENT": "self-hosted"} {
 		t.Run(key, func(t *testing.T) {
-			copy := map[string]string{}
+			clone := map[string]string{}
 			for k, v := range valid {
-				copy[k] = v
+				clone[k] = v
 			}
-			copy[key] = bad
-			if _, err := authorize(func(k string) string { return copy[k] }); err == nil {
+			clone[key] = bad
+			if _, err := authorize(func(k string) string { return clone[k] }); err == nil {
 				t.Fatal("unsafe dispatch accepted")
 			}
 		})

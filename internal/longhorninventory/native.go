@@ -19,13 +19,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// ReplicaRoot is the fixed V1 replica directory ListReplicas observes.
 const ReplicaRoot = "/var/lib/longhorn/replicas"
 
+// Files is the subset of the Talos machine API the observer uses.
 type Files interface {
 	List(context.Context, *machine.ListRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[machine.FileInfo], error)
 	Read(context.Context, *machine.ReadRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[common.Data], error)
 }
 
+// Native observes one node, addressed by its IP in Target, through the Talos
+// file and block-resource APIs.
 type Native struct {
 	API    Files
 	Target string
@@ -55,6 +59,7 @@ func active(ctx context.Context) bool {
 	return bounded && ctx.Err() == nil && time.Now().Before(deadline)
 }
 
+// ListReplicas lists the immediate children of ReplicaRoot.
 func (n Native) ListReplicas(ctx context.Context) (Listing, error) {
 	return n.listFixedRoot(ctx, ReplicaRoot)
 }

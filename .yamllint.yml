@@ -1,0 +1,23 @@
+---
+# yamllint rules for MegaLinter. MegaLinter reads a repository-root .yamllint.yml in place of
+# its bundled default, so everything except the document-start entry is MegaLinter v10.1.0's
+# TEMPLATES/.yamllint.yml, unchanged. Keep it in step with that template when MegaLinter moves.
+extends: default
+rules:
+  braces:
+    max-spaces-inside: 1
+  new-lines:
+    level: warning
+    type: unix
+  line-length:
+    max: 500
+  comments:
+    min-spaces-from-content: 1 # Used to follow prettier standard: https://github.com/prettier/prettier/pull/10926
+  document-start:
+    # One file, one rule. talos/factory-schematic.yaml is the canonical Talos Image Factory
+    # schematic byte for byte: its sha256 IS the schematic ID that
+    # scripts/register-talos-factory-schematic.sh registers before every deploy and
+    # scripts/verify-talos-schematic-readback.sh expects on every node. A `---` line would
+    # change that ID, so this file cannot carry the marker every other YAML file here has.
+    ignore: |
+      talos/factory-schematic.yaml

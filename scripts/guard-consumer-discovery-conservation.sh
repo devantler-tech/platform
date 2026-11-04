@@ -350,7 +350,8 @@ validate_published_inputs() {
     fi
     case "$reference" in
       /* | *:* | git@* | *'?'* | *'#'*)
-        refuse "$label has an absolute or nonlocal reference outside the inspectable published k8s dependency closure, so its consumers are UNKNOWN" ;;
+        refuse "$label has an absolute or nonlocal reference outside the inspectable published k8s dependency closure, so its consumers are UNKNOWN"
+        ;;
     esac
     resolved="$(published_path "$dir/$reference" "$label dependency")" || exit 1
     case "$mode" in
@@ -359,7 +360,8 @@ validate_published_inputs() {
         [ -f "$resolved" ] || refuse "could not render $label, so its non-file published k8s dependency closure is UNKNOWN"
         # Builtin configs retain their Kustomization loader root, even when their
         # own config file lives in a subdirectory.
-        if [ "$mode" = loader ]; then validate_published_inputs "$resolved" "$dir" "$label loader"; fi ;;
+        if [ "$mode" = loader ]; then validate_published_inputs "$resolved" "$dir" "$label loader"; fi
+        ;;
       *) refuse "could not read the complete published k8s dependency closure of $label, so its consumers are UNKNOWN" ;;
     esac
   done <<<"$references"

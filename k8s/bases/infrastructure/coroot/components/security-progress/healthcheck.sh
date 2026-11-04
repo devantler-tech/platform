@@ -4,12 +4,12 @@ set -euo pipefail
 
 require_project=false
 case "${1:-}" in
-"") [[ $# == 0 ]] || exit 2 ;;
---require-project)
-  [[ $# == 1 ]] || exit 2
-  require_project=true
-  ;;
-*) exit 2 ;;
+  "") [[ $# == 0 ]] || exit 2 ;;
+  --require-project)
+    [[ $# == 1 ]] || exit 2
+    require_project=true
+    ;;
+  *) exit 2 ;;
 esac
 
 metrics_file=${METRICS_FILE:-/metrics/metrics}
@@ -40,14 +40,14 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   [[ -z "$project_id" || "$project_id" == "$current_project" ]] || exit 1
   project_id=$current_project
   case "$surface" in
-  policy)
-    "$policy_seen" && exit 1
-    policy_seen=true
-    ;;
-  kubescape)
-    "$kubescape_seen" && exit 1
-    kubescape_seen=true
-    ;;
+    policy)
+      "$policy_seen" && exit 1
+      policy_seen=true
+      ;;
+    kubescape)
+      "$kubescape_seen" && exit 1
+      kubescape_seen=true
+      ;;
   esac
 done <"$metrics_file"
 "$policy_seen" && "$kubescape_seen"

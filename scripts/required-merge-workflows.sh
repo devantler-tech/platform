@@ -2,7 +2,10 @@
 # Read the effective rules for main, including inherited organization rules.
 # This is a one-shot read. It neither updates a PR nor enqueues one.
 set -euo pipefail
-unknown() { printf 'Required merge workflows: UNKNOWN — %s\n' "$*" >&2; exit 2; }
+unknown() {
+  printf 'Required merge workflows: UNKNOWN — %s\n' "$*" >&2
+  exit 2
+}
 pages="$(gh api repos/devantler-tech/platform/rules/branches/main --paginate --slurp)" ||
   unknown 'effective branch rules could not be read'
 result="$(jq -ce '
@@ -27,5 +30,5 @@ result="$(jq -ce '
     | {path,repository_id,ref,ruleset_id:$rule.ruleset_id,
        ruleset_source_type:$rule.ruleset_source_type,ruleset_source:$rule.ruleset_source}]
   | unique | sort_by(.path,.repository_id,.ref,.ruleset_id)
-' <<< "$pages")" || unknown 'effective workflow rules could not be interpreted'
+' <<<"$pages")" || unknown 'effective workflow rules could not be interpreted'
 printf '%s\n' "$result"

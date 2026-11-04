@@ -6,7 +6,10 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 release="${root_dir}/k8s/bases/infrastructure/controllers/velero/helm-release.yaml"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/velero-priority.XXXXXX")"
 trap 'rm -r -- "${scratch}"' EXIT
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 
 helm_bin="${CONTROLLER_HELM:-helm}"
 chart_version="$(yq -er '.spec.chart.spec.version' "${release}")"

@@ -7,8 +7,14 @@ deadline, grant a retry, or relax an acceptance check.
 
 One failed resource read is read once more inside the shared deadline, because it
 says nothing about the rollout. An accepted receipt counts these in `readRetries`,
-as it counts dropped public connections in `publicRetries`. A second failure of the
-same read refuses with `read_incomplete`.
+as it counts dropped or timed-out public requests in `publicRetries`. A second
+failure of the same read refuses with `read_incomplete`.
+
+Each public request may use a tenth of the deadline, and at least five seconds,
+before it times out. So one stalled response cannot use the whole budget. A
+request that drops its connection, times out, or gets a 520 to 524 answer (the
+edge could not reach the cluster) is tried once more inside the shared deadline;
+any other public failure refuses at once.
 
 For snapshot failures, `phase` identifies `initial_readiness` or
 `rollout_stability`. `role` names a fixed resource role or check group, and
@@ -26,7 +32,10 @@ cause of an incident. `snapshot`, `workloads`, `backends`, `routes`, and
 `readiness` describe groups when no narrower completed result exists.
 
 Public-response failures use `phase: public_contract` and their fixed endpoint
-role and failure class. A public failure observed against a moving snapshot pair
+role and failure class. A public failure also reports `publicStartedAfterSeconds`,
+the seconds the verifier had used when that public pass began, and `attempt`, the
+snapshot pair it ran on. A large value means the readiness wait used the budget;
+a small one means the public requests did. A public failure observed against a moving snapshot pair
 is discarded. `changed` retains only the verifier's field names when a pair
 moved; no object values, resource identities, response bodies, addresses, or
 credentials appear in diagnostics.

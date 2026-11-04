@@ -1,3 +1,4 @@
+---
 # Pins the fence-retired-listener-pod rule before the ValidatingPolicy rewrite
 # (#4995). The retirement journal's phase is read from the arc-runners
 # Namespace through an API call, which kyverno test cannot make, so values.yaml

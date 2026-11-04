@@ -128,16 +128,16 @@ func TestServingSourceIsBoundAcrossPodClaimAndBackend(t *testing.T) {
 }
 func TestSourceReplacementHookOrWrongClaimRefusesBackup(t *testing.T) {
 	mutations := map[string]func(object, object, object){
-		"claim-ref": func(p, c, v object) { child(child(v, "spec"), "claimRef")["uid"] = "another-claim" },
-		"wrong-pod-volume": func(p, c, v object) {
+		"claim-ref": func(_, _, v object) { child(child(v, "spec"), "claimRef")["uid"] = "another-claim" },
+		"wrong-pod-volume": func(p, _, _ object) {
 			child(items(child(p, "spec"), "volumes")[0], "persistentVolumeClaim")["claimName"] = "another-claim"
 		},
-		"unready":     func(p, c, v object) { items(child(p, "status"), "conditions")[0]["status"] = "False" },
-		"wrong-image": func(p, c, v object) { items(child(p, "spec"), "containers")[0]["image"] = "unreviewed:latest" },
-		"hook": func(p, c, v object) {
+		"unready":     func(p, _, _ object) { items(child(p, "status"), "conditions")[0]["status"] = "False" },
+		"wrong-image": func(p, _, _ object) { items(child(p, "spec"), "containers")[0]["image"] = "unreviewed:latest" },
+		"hook": func(p, _, _ object) {
 			child(p, "metadata")["annotations"] = object{"pre.hook.backup.velero.io/command": "unsafe-command"}
 		},
-		"deleting": func(p, c, v object) { child(c, "metadata")["deletionTimestamp"] = "2026-10-29T10:00:00Z" },
+		"deleting": func(_, c, _ object) { child(c, "metadata")["deletionTimestamp"] = "2026-10-29T10:00:00Z" },
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
