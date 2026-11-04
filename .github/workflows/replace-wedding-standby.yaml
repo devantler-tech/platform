@@ -53,7 +53,20 @@ jobs:
         env:
           WEDDING_REPAIR_OPERAND_TEST: "true"
         run: |
-          docker pull ghcr.io/cloudnative-pg/postgresql@sha256:42708a75345b7a48fdd9257b071830783a97fd228529196b6313187a7198e185
+          image=ghcr.io/cloudnative-pg/postgresql@sha256:42708a75345b7a48fdd9257b071830783a97fd228529196b6313187a7198e185
+          # GHCR can answer `toomanyrequests` for a moment (#5514). Retry the pull of
+          # the same pinned digest with backoff and fail only after the last attempt.
+          attempts=4
+          for attempt in $(seq 1 "$attempts"); do
+            if docker pull "$image"; then
+              break
+            fi
+            if [ "$attempt" -eq "$attempts" ]; then
+              echo "::error::docker pull failed after ${attempts} attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
           go test -count=1 -timeout=1m -run '^TestLoopbackRequestReadsTheExporter$' ./scripts/replace-wedding-standby
 
   repair:
