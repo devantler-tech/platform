@@ -500,6 +500,15 @@ cleanup as test helpers, and `Load` takes `any` instead of `interface{}`.
 schematic-ID guard are unchanged. This audit changes no cluster configuration or
 vulnerability exception.
 
+**7.206.33**, commit `69090121cd15884513f81afc68c7cc2d5dcc30fe`, is audited
+against 7.206.24. The configuration manager, Talos generator, cluster API and
+charts are byte-identical, so `applySchematic`, `schematicKernelArgs`,
+`reconcileFoldedKernelArgs` and the schematic-ID guard are unchanged. `go.mod`
+and `go.sum` move only the EKS SDK, `go-gh`, `go-colorful`, Wails, `goldmark`
+and the locally replaced `charmbracelet/x/ansi`; no `siderolabs` module moves,
+so the Talos machinery and its YAML encoders are unchanged. This audit changes
+no cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
