@@ -83,7 +83,10 @@ check() {
   fi
   printf 'ok: %s\n' "${name}"
 }
-use() { rm -f "${scratch}"/input.*.json; cp "${scratch}/$1.json" "${scratch}/input.json"; }
+use() {
+  rm -f "${scratch}"/input.*.json
+  cp "${scratch}/$1.json" "${scratch}/input.json"
+}
 
 use unhardened
 check 'label absent disarms without reading the cluster' before-publish pass api-error disabled
@@ -155,23 +158,32 @@ reads="$(cat "${scratch}/count")"
 jq '.items[0].metadata.resourceVersion = "101"' "${scratch}/hardened.json" >"${scratch}/v101.json"
 jq '.items[0].metadata.resourceVersion = "102"' "${scratch}/hardened.json" >"${scratch}/v102.json"
 jq '.items[1].metadata.resourceVersion = "101"' "${scratch}/v101.json" >"${scratch}/two-objects.json"
-use hardened; cp "${scratch}/v101.json" "${scratch}/input.2.json"; cp "${scratch}/v101.json" "${scratch}/input.3.json"
+use hardened
+cp "${scratch}/v101.json" "${scratch}/input.2.json"
+cp "${scratch}/v101.json" "${scratch}/input.3.json"
 cp "${scratch}/v101.json" "${scratch}/input.4.json"
 check 'one write on one template is tolerated' after-reconcile pass normal enabled
-use hardened; cp "${scratch}/v101.json" "${scratch}/input.2.json"; cp "${scratch}/v102.json" "${scratch}/input.3.json"
+use hardened
+cp "${scratch}/v101.json" "${scratch}/input.2.json"
+cp "${scratch}/v102.json" "${scratch}/input.3.json"
 check 'repeated writes on one template are a loop' after-reconcile fail normal enabled 'repeated owner writes'
-use hardened; for n in 2 3 4; do cp "${scratch}/two-objects.json" "${scratch}/input.${n}.json"; done
+use hardened
+for n in 2 3 4; do cp "${scratch}/two-objects.json" "${scratch}/input.${n}.json"; done
 check 'one write on each of two templates is not a loop' after-reconcile pass normal enabled
 jq '.items[3].metadata.generation = 4 | .items[3].status.observedGeneration = 4' \
   "${scratch}/hardened.json" >"${scratch}/regen.json"
-use hardened; cp "${scratch}/regen.json" "${scratch}/input.3.json"
+use hardened
+cp "${scratch}/regen.json" "${scratch}/input.3.json"
 check 'a template rewrite during observation fails' after-reconcile fail normal enabled 'rewrote or replaced'
 jq '.items[3].metadata.uid = "uid-replacement"' "${scratch}/hardened.json" >"${scratch}/replaced.json"
-use hardened; cp "${scratch}/replaced.json" "${scratch}/input.2.json"
+use hardened
+cp "${scratch}/replaced.json" "${scratch}/input.2.json"
 check 'a replaced template during observation fails' after-reconcile fail normal enabled 'rewrote or replaced'
-use hardened; cp "${scratch}/unhardened.json" "${scratch}/input.2.json"
+use hardened
+cp "${scratch}/unhardened.json" "${scratch}/input.2.json"
 check 'an operator stripping the fields fails' after-reconcile fail normal enabled 'removed an admitted field'
-use hardened; cp "${scratch}/unready.json" "${scratch}/input.3.json"
+use hardened
+cp "${scratch}/unready.json" "${scratch}/input.3.json"
 jq '.items |= map(.spec.template.spec.securityContext.fsGroupChangePolicy = "OnRootMismatch" |
   .spec.template.spec.containers |= map(.securityContext.seLinuxOptions = {}))' \
   "${scratch}/input.3.json" >"${scratch}/tmp.json" && mv "${scratch}/tmp.json" "${scratch}/input.3.json"
@@ -191,7 +203,8 @@ grep -qxF "preexisting_unready=${record}" "${scratch}/outputs"
   printf 'FAIL: a pre-existing unready template must receive three stability samples\n' >&2
   exit 1
 }
-use degraded; cp "${scratch}/hardened.json" "${scratch}/input.4.json"
+use degraded
+cp "${scratch}/hardened.json" "${scratch}/input.4.json"
 check 'a template that recovers during observation leaves no tolerated record' before-publish pass normal enabled
 grep -qx 'rollout_required=true' "${scratch}/outputs"
 if grep -q '^preexisting_unready=' "${scratch}/outputs"; then
@@ -200,26 +213,33 @@ if grep -q '^preexisting_unready=' "${scratch}/outputs"; then
 fi
 jq '.items[4].metadata.generation = 4 | .items[4].status.observedGeneration = 4' \
   "${scratch}/degraded.json" >"${scratch}/degraded-regen.json"
-use degraded; cp "${scratch}/degraded-regen.json" "${scratch}/input.3.json"
+use degraded
+cp "${scratch}/degraded-regen.json" "${scratch}/input.3.json"
 check 'an unready template rewritten during observation is refused' before-publish fail normal enabled 'rewrote or replaced'
 jq '.items[4].metadata.resourceVersion = "101"' "${scratch}/degraded.json" >"${scratch}/degraded-v101.json"
 jq '.items[4].metadata.resourceVersion = "102"' "${scratch}/degraded.json" >"${scratch}/degraded-v102.json"
-use degraded; cp "${scratch}/degraded-v101.json" "${scratch}/input.2.json"; cp "${scratch}/degraded-v102.json" "${scratch}/input.3.json"
+use degraded
+cp "${scratch}/degraded-v101.json" "${scratch}/input.2.json"
+cp "${scratch}/degraded-v102.json" "${scratch}/input.3.json"
 check 'an unready template written repeatedly is refused' before-publish fail normal enabled 'repeated owner writes'
 jq '.items[4].metadata.generation = 4' "${scratch}/degraded.json" >"${scratch}/degraded-unobserved.json"
 use degraded-unobserved
 check 'an unready template with an unobserved generation is refused' before-publish fail normal enabled 'has not observed the latest generation'
-use degraded; cp "${scratch}/unhardened.json" "${scratch}/input.3.json"
+use degraded
+cp "${scratch}/unhardened.json" "${scratch}/input.3.json"
 check 'an unready template losing its fields during observation is refused' before-publish fail normal enabled 'removed an admitted field'
 jq '.items[4].metadata.ownerReferences = []' "${scratch}/degraded.json" >"${scratch}/degraded-orphan.json"
-use degraded; cp "${scratch}/degraded-orphan.json" "${scratch}/input.2.json"
+use degraded
+cp "${scratch}/degraded-orphan.json" "${scratch}/input.2.json"
 check 'an unready template losing its owner during observation is refused' before-publish fail normal enabled 'lost its operator owner'
 
 jq '.items[1].status.readyReplicas = 0' "${scratch}/degraded.json" >"${scratch}/degraded-second.json"
 jq '.items[4].status.readyReplicas = 0 | .items[4].status.availableReplicas = 0' "${scratch}/degraded.json" >"${scratch}/degraded-worse.json"
-use degraded; cp "${scratch}/degraded-second.json" "${scratch}/input.3.json"
+use degraded
+cp "${scratch}/degraded-second.json" "${scratch}/input.3.json"
 check 'a second template losing readiness during observation is refused' before-publish fail normal enabled 'lost readiness'
-use degraded; cp "${scratch}/degraded-worse.json" "${scratch}/input.2.json"
+use degraded
+cp "${scratch}/degraded-worse.json" "${scratch}/input.2.json"
 check 'an unready template getting less ready during observation is refused' before-publish fail normal enabled 'lost readiness'
 
 # After reconcile the tolerated record admits only that same object, no worse.
@@ -246,9 +266,12 @@ use degraded-replaced
 check 'the tolerated record lapses when the template is replaced' after-reconcile fail normal enabled 'did not all reach both fields'
 use degraded-worse
 check 'a tolerated template that got less ready fails' after-reconcile fail normal enabled 'did not all reach both fields'
-use degraded; cp "${scratch}/degraded-worse.json" "${scratch}/input.3.json"
+use degraded
+cp "${scratch}/degraded-worse.json" "${scratch}/input.3.json"
 check 'a tolerated template losing readiness during observation fails' after-reconcile fail normal enabled 'lost readiness'
-use degraded; cp "${scratch}/degraded-v101.json" "${scratch}/input.2.json"; cp "${scratch}/degraded-v102.json" "${scratch}/input.3.json"
+use degraded
+cp "${scratch}/degraded-v101.json" "${scratch}/input.2.json"
+cp "${scratch}/degraded-v102.json" "${scratch}/input.3.json"
 check 'a tolerated template is still held to the rewrite loop check' after-reconcile fail normal enabled 'repeated owner writes'
 jq '.items |= map(.spec.template.spec.securityContext |= del(.fsGroupChangePolicy))' "${scratch}/degraded.json" >"${scratch}/degraded-stripped.json"
 use degraded-stripped

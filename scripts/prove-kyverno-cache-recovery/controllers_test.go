@@ -56,28 +56,28 @@ func TestRecoveredAdmissionRetainsReplicaAndDisruptionFloors(t *testing.T) {
 
 func TestUnavailableOrUnownedAdmissionCannotPass(t *testing.T) {
 	for name, change := range map[string]func(object, object, object, []object){
-		"one replica": func(d, p, r object, pods []object) { d["status"].(object)["readyReplicas"] = 1 },
-		"foreign executable": func(d, p, r object, pods []object) {
+		"one replica": func(d, _, _ object, _ []object) { d["status"].(object)["readyReplicas"] = 1 },
+		"foreign executable": func(_, _, _ object, pods []object) {
 			pods[0]["spec"].(object)["containers"].([]any)[0].(object)["image"] = "registry.invalid/foreign:latest"
 		},
-		"arguments rewritten": func(d, p, r object, pods []object) {
+		"arguments rewritten": func(_, _, _ object, pods []object) {
 			pods[0]["spec"].(object)["containers"].([]any)[0].(object)["args"] = []any{"--foreign"}
 		},
-		"unprotected disruption": func(d, p, r object, pods []object) { p["spec"].(object)["minAvailable"] = 0 },
-		"unavailable PDB":        func(d, p, r object, pods []object) { p["status"].(object)["disruptionsAllowed"] = 0 },
-		"foreign owner": func(d, p, r object, pods []object) {
+		"unprotected disruption": func(_, p, _ object, _ []object) { p["spec"].(object)["minAvailable"] = 0 },
+		"unavailable PDB":        func(_, p, _ object, _ []object) { p["status"].(object)["disruptionsAllowed"] = 0 },
+		"foreign owner": func(_, _, _ object, pods []object) {
 			pods[0]["metadata"].(object)["ownerReferences"] = owned("ReplicaSet", "foreign-rs")
 		},
-		"unready process": func(d, p, r object, pods []object) {
+		"unready process": func(_, _, _ object, pods []object) {
 			pods[0]["status"].(object)["containerStatuses"].([]any)[0].(object)["ready"] = false
 		},
-		"blank process identity": func(d, p, r object, pods []object) {
+		"blank process identity": func(_, _, _ object, pods []object) {
 			pods[0]["status"].(object)["containerStatuses"].([]any)[0].(object)["containerID"] = ""
 		},
-		"blanket eviction": func(d, p, r object, pods []object) {
+		"blanket eviction": func(_, _, _ object, pods []object) {
 			pods[0]["metadata"].(object)["annotations"].(object)["cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes"] = "sigstore,data"
 		},
-		"persistent cache": func(d, p, r object, pods []object) {
+		"persistent cache": func(_, _, _ object, pods []object) {
 			pods[0]["spec"].(object)["volumes"] = []any{object{"name": "sigstore", "persistentVolumeClaim": object{"claimName": "data"}}}
 		},
 	} {

@@ -229,7 +229,10 @@ discover_consumers() {
   if [ -n "$typed_documents" ]; then
     typed_file="$(mktemp)" || return 1
     printf '%s\n' "$typed_documents" >"$typed_file"
-    rows="$(consumer_rows "$typed_file" "$mode")" || { rm -f "$typed_file"; return 1; }
+    rows="$(consumer_rows "$typed_file" "$mode")" || {
+      rm -f "$typed_file"
+      return 1
+    }
     rm -f "$typed_file"
     found="$found$rows"$'\n'
   fi
@@ -321,8 +324,8 @@ consumer_rows() {
     fi
     if [ "$mode" = with-object-contract ]; then
       if [ "$literal_identity" != true ] || [ -z "$verification" ] || [ -n "$extra" ] ||
-          { [ "$filtered" != true ] && [ "$filtered" != false ]; } ||
-          { [ "$active" != true ] && [ "$active" != false ]; }; then
+        { [ "$filtered" != true ] && [ "$filtered" != false ]; } ||
+        { [ "$active" != true ] && [ "$active" != false ]; }; then
         printf 'OCI object contract in %s is incomplete or has no literal identity, so its consumers are UNKNOWN\n' "$file" >&2
         return 1
       fi

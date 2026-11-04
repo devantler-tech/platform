@@ -1,3 +1,5 @@
+// Command validate-break-glass validates the named recovery fields of a KV v2
+// JSON export read from standard input.
 package main
 
 import (

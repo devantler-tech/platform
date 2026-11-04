@@ -24,7 +24,10 @@ GENERIC_FILES=(
   k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
   talos/cluster/verify-first-party-images.yaml
 )
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 fixture() {
   rm -rf "$TREE"
@@ -88,8 +91,14 @@ expect_atomic_refusal() {
 fixture
 if guard >"$WORK/guard.log" 2>&1; then fail 'pattern-form fixture unexpectedly passes enforcement'; fi
 grep -Fq 'pattern form' "$WORK/guard.log" || fail 'baseline refusal was not caused by the broad matcher'
-write_matchers >"$WORK/writer.log" 2>&1 || { cat "$WORK/writer.log" >&2; fail 'writer must converge every registered consumer'; }
-guard >"$WORK/guard.log" 2>&1 || { cat "$WORK/guard.log" >&2; fail 'rewritten tree does not pass enforcement'; }
+write_matchers >"$WORK/writer.log" 2>&1 || {
+  cat "$WORK/writer.log" >&2
+  fail 'writer must converge every registered consumer'
+}
+guard >"$WORK/guard.log" 2>&1 || {
+  cat "$WORK/guard.log" >&2
+  fail 'rewritten tree does not pass enforcement'
+}
 [ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/github-config/oci-repository.yaml")" = \
   '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@(1111111111111111111111111111111111111111|2222222222222222222222222222222222222222)$' ] || fail 'github-config did not receive its own exact pair'
 [ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/ascoachingogvaner/oci-repository.yaml")" = \

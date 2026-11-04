@@ -93,7 +93,10 @@ expect "row without a reason fails" 1 "kube-public is listed without a reason" \
   "${REAL_HR}" "${tmp}/no-reason.tsv"
 
 # A duplicated row.
-{ cat "${REAL_TSV}"; grep '^kubeconfig	' "${REAL_TSV}"; } >"${tmp}/dup.tsv"
+{
+  cat "${REAL_TSV}"
+  grep '^kubeconfig	' "${REAL_TSV}"
+} >"${tmp}/dup.tsv"
 [ "$(grep -c '^kubeconfig	' "${tmp}/dup.tsv")" -eq 2 ] || {
   printf 'FAIL: duplicate fixture did not land\n' >&2
   exit 1

@@ -1,3 +1,4 @@
+---
 # Allowed control for the preserve-retiring-namespace fixture beside it (#4995):
 # with no retirement journal annotation, deleting arc-runners is allowed. It
 # needs its own directory because both cases are the one arc-runners Namespace.

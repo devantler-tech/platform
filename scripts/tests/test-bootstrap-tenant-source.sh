@@ -329,7 +329,8 @@ if read_bound_publications "$test_repo_root" "$biz_work/receipt.json" >/dev/null
 fi
 # A coherent selected-publisher publication must pass the actual verification path.
 # Only provider processes are doubled; no deployment or approval file is written.
-awk -F '\t' '!($1=="business-site" && $4=="af042c540ce8db4d64add98c34b5c57691e0e812")' "$test_repo_root/scripts/publish-workflow-canonical-approvals.tsv" >"$biz_work/transition-approvals.tsv"
+awk -F '\t' '$1!="business-site"' "$test_repo_root/scripts/publish-workflow-canonical-approvals.tsv" >"$biz_work/transition-approvals.tsv"
+printf 'business-site\tpublish-app\tdevantler-tech/.github\t467f07582436a26b62cf4aa756423512f85ba0c0\n' >>"$biz_work/transition-approvals.tsv"
 printf 'business-site\tpublish-app\tdevantler-tech/.github\taf042c540ce8db4d64add98c34b5c57691e0e812\n' >>"$biz_work/transition-approvals.tsv"
 BIZ_SIGNER=af042c540ce8db4d64add98c34b5c57691e0e812
 business_fixture

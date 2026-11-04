@@ -1,6 +1,7 @@
+---
 name: Publish Kyverno Background Hotfix
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:

@@ -187,13 +187,16 @@ check_case() {
   local receipt="${state}/temp/cilium-deny-proof-123-1/receipt/result.json"
   if [[ "$expected" == 0 ]]; then
     if ! jq -e '.verdict == "PASS" and .cleanup == "PASS" and .tests.dns and .tests.allowed_http and .tests.denied_ingress and .tests.denied_egress and .valid_cnp_count == 3 and .floor_valid_cnp_count == 2 and .floor_tests.pre_floor_http and .floor_tests.allowed_http and .floor_tests.denied_ingress and .floor_tests.denied_egress and .floor_tests.denied_target_http' "$receipt" >/dev/null; then
-      printf 'FAIL %s: complete proof receipt absent\n' "$name"; failures=$((failures + 1))
+      printf 'FAIL %s: complete proof receipt absent\n' "$name"
+      failures=$((failures + 1))
     fi
     if ! jq -e '([.probe_bindings[].name] | sort) == ["client-allowed","client-denied","server-allowed","server-denied"] and all(.probe_bindings[]; (.uid | startswith("pod-")) and (.ip_sha256 | test("^[0-9a-f]{64}$")) and (.container_sha256 | test("^[0-9a-f]{64}$")) and (.image_sha256 | test("^[0-9a-f]{64}$")) and .restart_count == 0 and .ready == true) and .tests.denied_target_http' "$receipt" >/dev/null; then
-      printf 'FAIL %s: healthy stable probe identity receipt absent\n' "$name"; failures=$((failures + 1))
+      printf 'FAIL %s: healthy stable probe identity receipt absent\n' "$name"
+      failures=$((failures + 1))
     fi
     if grep -Eq '10[.]1[.]0[.]|containerd://' "$receipt"; then
-      printf 'FAIL %s: receipt exposes private probe IP/container identity\n' "$name"; failures=$((failures + 1))
+      printf 'FAIL %s: receipt exposes private probe IP/container identity\n' "$name"
+      failures=$((failures + 1))
     fi
     # Read the recorded process boundary to prove all helper-only positive
     # controls and both floor-only denials were exercised before DNS was added.
@@ -212,37 +215,47 @@ check_case() {
           positive["floor"]>=3 && ingress["floor"]>=3 && egress["floor"]>=3 && target["floor"]>=6 && dns["floor"]==0 &&
           positive["dns"]>=3 && ingress["dns"]>=3 && egress["dns"]>=3 && target["dns"]>=6 && dns["dns"]>=3)
       }' "${state}/commands"; then
-      printf 'FAIL %s: causal phase/control sequence absent\n' "$name"; failures=$((failures + 1))
+      printf 'FAIL %s: causal phase/control sequence absent\n' "$name"
+      failures=$((failures + 1))
     fi
   elif [[ -f "$receipt" ]] && jq -e '.verdict == "PASS" and .cleanup == "PASS"' "$receipt" >/dev/null; then
-    printf 'FAIL %s: failure produced a green receipt\n' "$name"; failures=$((failures + 1))
+    printf 'FAIL %s: failure produced a green receipt\n' "$name"
+    failures=$((failures + 1))
   fi
   if [[ "$name" == floor_* ]]; then
     if ! grep -Eq '^FAIL: floor-only healthy target/admitted HTTP and independent ingress/egress denial did not converge$' "${state}/output" ||
-       ! jq -e '.verdict == "FAIL" and .cleanup == "PASS" and .floor_valid_cnp_count == 0' "$receipt" >/dev/null ||
-       grep -Eq 'apply -f .*allow-dns[.]json$' "${state}/commands"; then
-      printf 'FAIL %s: witness did not reach and reject the isolated floor before DNS\n' "$name"; failures=$((failures + 1))
+      ! jq -e '.verdict == "FAIL" and .cleanup == "PASS" and .floor_valid_cnp_count == 0' "$receipt" >/dev/null ||
+      grep -Eq 'apply -f .*allow-dns[.]json$' "${state}/commands"; then
+      printf 'FAIL %s: witness did not reach and reject the isolated floor before DNS\n' "$name"
+      failures=$((failures + 1))
     fi
   elif [[ "$name" == dns_after_floor_error ]]; then
     if ! grep -Eq '^FAIL: complete healthy target/DNS/admitted/independent ingress and egress denial did not converge$' "${state}/output" ||
-       ! jq -e '.verdict == "FAIL" and .cleanup == "PASS" and .floor_valid_cnp_count == 2 and .floor_tests.denied_ingress and .floor_tests.denied_egress' "$receipt" >/dev/null; then
-      printf 'FAIL %s: final DNS failure bypassed the proven floor phase\n' "$name"; failures=$((failures + 1))
+      ! jq -e '.verdict == "FAIL" and .cleanup == "PASS" and .floor_valid_cnp_count == 2 and .floor_tests.denied_ingress and .floor_tests.denied_egress' "$receipt" >/dev/null; then
+      printf 'FAIL %s: final DNS failure bypassed the proven floor phase\n' "$name"
+      failures=$((failures + 1))
     fi
   fi
   if [[ "$name" == unconfirmed || "$name" == occupied || "$name" == tampered || "$name" == docker_error || "$name" == wrong_ksail ]]; then
     if [[ -f "${state}/commands" ]] && grep -Eq 'ksail .*cluster (create|delete)|kubectl' "${state}/commands"; then
-      printf 'FAIL %s: rejected preflight touched a cluster\n' "$name"; failures=$((failures + 1))
+      printf 'FAIL %s: rejected preflight touched a cluster\n' "$name"
+      failures=$((failures + 1))
     fi
   elif [[ "$name" != cleanup_error && -f "${state}/created" ]]; then
-    printf 'FAIL %s: owned cluster survived cleanup\n' "$name"; failures=$((failures + 1))
+    printf 'FAIL %s: owned cluster survived cleanup\n' "$name"
+    failures=$((failures + 1))
   fi
   # Every Kubernetes call must use only the private context/config. Deleting
   # by ambient context, a changed provider or a whole Docker prune is unsafe.
   if [[ -f "${state}/commands" ]] && grep -E '^kubectl ' "${state}/commands" | grep -Ev -- '--kubeconfig .*/cilium-deny-proof-123-1/kubeconfig --context kind-deny-proof-123-1' >/dev/null; then
-    printf 'FAIL %s: ambient Kubernetes call\n' "$name"; failures=$((failures + 1))
+    printf 'FAIL %s: ambient Kubernetes call\n' "$name"
+    failures=$((failures + 1))
   fi
 }
 check_case success 0
 for name in unconfirmed occupied docker_error wrong_ksail tampered wrong_version invalid unknown missing exec_error dns_error baseline_error allow_all refused other_timeout cleanup_error changed target_unhealthy_after target_loopback_error target_uid_changed target_ip_changed client_uid_changed target_restarted probe_list_error probe_baseline_not_ready flux_extra_rules floor_unselected floor_not_enforcing floor_no_effect floor_egress_not_enforcing floor_egress_no_effect dns_after_floor_error; do check_case "$name" 1; done
-[[ "$failures" == 0 ]] || { printf '%s failures\n' "$failures"; exit 1; }
+[[ "$failures" == 0 ]] || {
+  printf '%s failures\n' "$failures"
+  exit 1
+}
 echo 'PASS: isolated proof refuses incomplete/false traffic evidence and cleans only its owned cluster'

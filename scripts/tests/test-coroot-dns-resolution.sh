@@ -8,7 +8,10 @@ readonly root_dir policy scratch
 trap 'rm -rf "${scratch}"' EXIT
 
 for tool in docker go kyverno yq; do
-  command -v "${tool}" >/dev/null || { printf '%s is required\n' "${tool}" >&2; exit 1; }
+  command -v "${tool}" >/dev/null || {
+    printf '%s is required\n' "${tool}" >&2
+    exit 1
+  }
 done
 
 # Exercise admission, then feed its effective option to both real resolvers.

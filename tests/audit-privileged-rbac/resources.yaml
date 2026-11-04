@@ -5,8 +5,8 @@ metadata:
   name: read-only-rbac
 rules:
   - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles","clusterroles"]
-    verbs: ["get","list","watch"]
+    resources: ["roles", "clusterroles"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -24,7 +24,7 @@ metadata:
 rules:
   - apiGroups: ["*"]
     resources: ["*"]
-    verbs: ["get","list","watch"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -50,9 +50,9 @@ kind: ClusterRole
 metadata:
   name: wildcard-with-extra-values
 rules:
-  - apiGroups: ["apps","*"]
-    resources: ["pods","*"]
-    verbs: ["get","*"]
+  - apiGroups: ["apps", "*"]
+    resources: ["pods", "*"]
+    verbs: ["get", "*"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -242,7 +242,7 @@ metadata:
   name: read-auth-metadata
 rules:
   - apiGroups: ["authentication.k8s.io"]
-    resources: ["uids","userextras/scopes"]
+    resources: ["uids", "userextras/scopes"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
