@@ -18,16 +18,19 @@ tenant_path=k8s/providers/hetzner/apps/business-site/tenant.yaml
 jq '.bindings |= map((.previousBinding // .)|.kind="published-bootstrap"|
  .sourceIdentity.digest="sha256:fa22e5796a39872feb8c75b5d56e2c6d68ff289230e2c5762f0bbfa0b30d6744"|
  .publication.gitTag="v1.0.3"|.publication.sourceSHA="498248e86e49024b72f3249b518e4dd1cef0104b"|
+ .publication.publisherIdentity="devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0"|
  .publication.workflowRunId=39921694859|.publication.workflowRunAttempt=1)' "$binding_file" >"$upgrade_test_work/seed.json"
 mv "$upgrade_test_work/seed.json" "$binding_file"
 UPGRADE_SEED_DIGEST="$(jq -r '.bindings[0].sourceIdentity.digest' "$binding_file")" \
-  yq -i '.spec.source.digest=strenv(UPGRADE_SEED_DIGEST)' "$tree/$tenant_path"
+UPGRADE_SEED_PUBLISHER="$(jq -r '.bindings[0].publication.publisherIdentity|split("@")[1]' "$binding_file")" \
+  yq -i '.spec.source.digest=strenv(UPGRADE_SEED_DIGEST)|.spec.source.publisherRevision=strenv(UPGRADE_SEED_PUBLISHER)' "$tree/$tenant_path"
 awk -F '\t' '$1!="business-site"' "$tree/scripts/publish-workflow-approved-revisions.identities.tsv" >"$upgrade_test_work/seed-identities.tsv"
 mv "$upgrade_test_work/seed-identities.tsv" "$tree/scripts/publish-workflow-approved-revisions.identities.tsv"
 cp "$binding_file" "$upgrade_test_work/original-binding.json"
 cp "$tree/$tenant_path" "$upgrade_test_work/original-tenant.yaml"
-# Keep the old actual publication exact while the selected publisher is approved.
-awk -F '\t' '!($1=="business-site" && $4=="af042c540ce8db4d64add98c34b5c57691e0e812")' "$tree/scripts/publish-workflow-canonical-approvals.tsv" >"$upgrade_test_work/two-approved.tsv"
+# Seed both fixture approvals independently of the checkout's current transition.
+awk -F '\t' '$1!="business-site"' "$tree/scripts/publish-workflow-canonical-approvals.tsv" >"$upgrade_test_work/two-approved.tsv"
+printf 'business-site\tpublish-app\tdevantler-tech/.github\t467f07582436a26b62cf4aa756423512f85ba0c0\n' >>"$upgrade_test_work/two-approved.tsv"
 printf 'business-site\tpublish-app\tdevantler-tech/.github\taf042c540ce8db4d64add98c34b5c57691e0e812\n' >>"$upgrade_test_work/two-approved.tsv"
 mv "$upgrade_test_work/two-approved.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv"
 cp "$tree/scripts/publish-workflow-canonical-approvals.tsv" "$upgrade_test_work/original-approvals.tsv"

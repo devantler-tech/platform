@@ -14,6 +14,8 @@ cp "$generator_test_root/scripts/publish-workflow-approved-revisions.tsv" "$fixt
 awk -F '\t' '$1!="business-site"' "$generator_test_root/scripts/publish-workflow-approved-revisions.identities.tsv" >"$fixture/scripts/publish-workflow-approved-revisions.identities.tsv"
 cp "$generator_test_root/scripts/publish-workflow-bootstrap-publications.json" "$fixture/scripts/"
 export CANONICAL_GENERATOR_TEST_ROOT="$generator_test_root" CANONICAL_GENERATOR_FIXTURE="$fixture"
+CANONICAL_GENERATOR_PUBLISHER="$(jq -er '.bindings[0].publication.publisherIdentity' "$fixture/scripts/canonical-tenant-source-bindings.json")"
+export CANONICAL_GENERATOR_PUBLISHER
 cat >"$generator_test_work/run" <<'BASH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -35,7 +37,7 @@ default_pin_resolver() {
       rm "$CANONICAL_GENERATOR_FIXTURE/scripts/canonical-tenant-source-bindings.json"
       mkdir "$CANONICAL_GENERATOR_FIXTURE/scripts/canonical-tenant-source-bindings.json"
     fi
-    printf '%s\n' devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
+    printf '%s\n' "$CANONICAL_GENERATOR_PUBLISHER"
   elif [ "$1" = data-product-controller ]; then
     jq -r '.publications[]|select(.consumer=="data-product-controller")|.mainPinSHA' "$PUBLISH_BOOTSTRAP_FILE"
   else
