@@ -67,7 +67,7 @@ func TestNativeRecoveryMarkerLifecycle(t *testing.T) {
 	marker, err := client.createMarker(ctx, nonce)
 	if err != nil {
 		if marker != nil && marker.identity.email != "" {
-			logNativeMessageShape(t, ctx, client, marker.identity)
+			logNativeMessageShape(ctx, t, client, marker.identity)
 		}
 		t.Fatalf("native marker import: %s", err)
 	}
@@ -82,7 +82,7 @@ func TestNativeRecoveryMarkerLifecycle(t *testing.T) {
 
 // Failure diagnostics reveal only comparisons and types from synthetic data.
 // No message content, identifier or credential is written to CI output.
-func logNativeMessageShape(t *testing.T, ctx context.Context, client *mailboxClient, expected messageIdentity) {
+func logNativeMessageShape(ctx context.Context, t *testing.T, client *mailboxClient, expected messageIdentity) {
 	t.Helper()
 	result, err := client.call(ctx, "Email/get", object{"ids": []any{expected.email}, "properties": []any{"id", "blobId", "messageId", "mailboxIds", "textBody", "bodyValues"}, "fetchTextBodyValues": true})
 	if err != nil {

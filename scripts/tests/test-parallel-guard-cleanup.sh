@@ -126,7 +126,10 @@ kill -TERM "$parent"
 rc=0
 wait "$parent" || rc=$?
 parent=''
-[ "$rc" -eq 143 ] || { printf 'cancellation lost its failing exit code: %s\n' "$rc" >&2; exit 1; }
+[ "$rc" -eq 143 ] || {
+  printf 'cancellation lost its failing exit code: %s\n' "$rc" >&2
+  exit 1
+}
 assert_stopped "$state"
 
 # Fail actual fixture construction immediately after the first queued worker
@@ -187,7 +190,10 @@ wait_for_parent_exit
 rc=0
 wait "$parent" || rc=$?
 parent=''
-[ "$rc" -eq 143 ] || { printf 'witness cancellation lost its exit code: %s\n' "$rc" >&2; exit 1; }
+[ "$rc" -eq 143 ] || {
+  printf 'witness cancellation lost its exit code: %s\n' "$rc" >&2
+  exit 1
+}
 assert_stopped "$state"
 
 # A producer that exits before readiness must fail, rather than consuming the
@@ -203,7 +209,10 @@ fi
 rc=0
 wait "$parent" || rc=$?
 parent=''
-[ "$rc" -eq 42 ] || { printf 'fixture producer lost its failing exit code\n' >&2; exit 1; }
+[ "$rc" -eq 42 ] || {
+  printf 'fixture producer lost its failing exit code\n' >&2
+  exit 1
+}
 grep -qF 'fixture producer exited before witness readiness' "$state/output" || {
   printf 'fixture exit was mistaken for a readiness timeout\n' >&2
   cat "$state/output" >&2

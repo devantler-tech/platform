@@ -1,3 +1,4 @@
+---
 # The listener in openbao with a second data key beside listener.hcl.
 apiVersion: v1
 kind: ConfigMap

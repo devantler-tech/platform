@@ -1,3 +1,4 @@
+---
 # Pins the listener guard against independent literal resource outcomes.
 # The audited listener in openbao passes; the same name anywhere else fails; a
 # ConfigMap with another name is outside the rule. Changed content in openbao is

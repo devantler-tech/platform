@@ -54,7 +54,10 @@ readonly -a NON_APP_FANOUT_NAMESPACES=("kyverno")
 
 repo_root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-die() { printf '%s\n' "$1" >&2; exit 2; }
+die() {
+  printf '%s\n' "$1" >&2
+  exit 2
+}
 
 apps_dir="$repo_root/k8s/bases/apps"
 apps_kustomization="$apps_dir/kustomization.yaml"
@@ -86,7 +89,10 @@ reachable_manifests() { # <dir>
   reachable_visited="${reachable_visited:-} $dir"
   kustomization=""
   for target in kustomization.yaml kustomization.yml Kustomization; do
-    [ -f "$dir/$target" ] && { kustomization="$dir/$target"; break; }
+    [ -f "$dir/$target" ] && {
+      kustomization="$dir/$target"
+      break
+    }
   done
   [ -n "$kustomization" ] ||
     die "guard: $dir has no kustomization, so what it deploys is unknown"
@@ -268,7 +274,10 @@ done
 # is an orphan — most often a typo in an app name.
 while IFS= read -r ns; do
   [ -n "$ns" ] || continue
-  is_non_app "$ns" && { printf '  ok   %s — declared non-app fan-out namespace\n' "$ns"; continue; }
+  is_non_app "$ns" && {
+    printf '  ok   %s — declared non-app fan-out namespace\n' "$ns"
+    continue
+  }
   listed_is_app=0
   for app in "${ghcr_apps[@]}"; do [ "$app" = "$ns" ] && listed_is_app=1 && break; done
   ((listed_is_app)) && continue

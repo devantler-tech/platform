@@ -1,3 +1,5 @@
+// Command validate-feature-flags checks every authored FeatureFlag definition
+// against the pinned flagd schema.
 package main
 
 import (

@@ -32,19 +32,19 @@ make_fixture() {
   git config user.email t@example.com
   git config user.name t
 
-  printf '#!/usr/bin/env bash\necho hi\n' > "$target"
-  printf 'jobs:\n  j:\n    steps:\n      - run: %s\n' "$invocation" > .github/workflows/w.yaml
+  printf '#!/usr/bin/env bash\necho hi\n' >"$target"
+  printf 'jobs:\n  j:\n    steps:\n      - run: %s\n' "$invocation" >.github/workflows/w.yaml
 
   if [[ "$anchor" == "anchor" ]]; then
-    printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
-    printf '      - run: ./scripts/fixture-anchor.sh\n' >> .github/workflows/w.yaml
+    printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
+    printf '      - run: ./scripts/fixture-anchor.sh\n' >>.github/workflows/w.yaml
   fi
 
   git add -A
   git update-index --chmod="$mode" "$target"
   [[ "$anchor" == "anchor" ]] && git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 
 expect() {
@@ -102,19 +102,19 @@ make_workdir_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho hi\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho hi\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf 'jobs:\n  j:\n    steps:\n'
     printf '      - working-directory: %s\n' "$workdir"
     printf '        run: %s\n' "$invocation"
     printf '      - run: ./scripts/fixture-anchor.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_workdir_fixture "$work/workdir" scripts './fixture-target.sh'
 expect "WORKDIR relative invocation from a working-directory fails closed" 1 \
@@ -143,7 +143,6 @@ make_workdir_fixture "$work/workdir-untracked" scripts './not-a-tracked-script.s
 expect "WORKDIR relative path naming no tracked script is out of scope" 0 \
   "exec-bit guard OK" "$work/workdir-untracked"
 
-
 # .GITHUB/SCRIPTS COVERAGE: the CI installers live under .github/scripts and are
 # invoked as the command of a run step, with no ./ in front. That surface was
 # outside both the mode inventory and the detector, so a mode-only regression on
@@ -170,19 +169,19 @@ make_continuation_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho lib\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho lib\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf 'jobs:\n  j:\n    steps:\n      - run: |\n'
     printf '          shellcheck \\\n'
     printf '            scripts/fixture-target.sh\n'
     printf '      - run: ./scripts/fixture-anchor.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_continuation_fixture "$work/continuation"
 expect "CONT  continued argument is not an invocation" 0 "exec-bit guard OK" "$work/continuation"
@@ -197,15 +196,15 @@ make_runblock_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho hi\n' > .github/scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho hi\n' >.github/scripts/fixture-target.sh
   {
     printf 'jobs:\n  j:\n    steps:\n      - run: |\n'
     printf '          .github/scripts/fixture-target.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod="$mode" .github/scripts/fixture-target.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_runblock_fixture "$work/runblock" -x
 expect "BLOCK run-block command 100644 is rejected" 1 "is tracked 100644, not 100755" "$work/runblock"
@@ -223,18 +222,18 @@ make_filter_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho lib\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho lib\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf 'on:\n  pull_request:\n    paths:\n'
     printf "      - 'scripts/fixture-target.sh'\n"
     printf 'jobs:\n  j:\n    steps:\n      - run: ./scripts/fixture-anchor.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_filter_fixture "$work/filter"
 expect "FILTER quoted path-filter entry is not an invocation" 0 "exec-bit guard OK" "$work/filter"
@@ -340,18 +339,18 @@ make_unquoted_filter_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho lib\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho lib\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf 'on:\n  pull_request:\n    paths:\n'
     printf '      - scripts/fixture-target.sh\n'
     printf 'jobs:\n  j:\n    steps:\n      - run: ./scripts/fixture-anchor.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_unquoted_filter_fixture "$work/filter-unquoted"
 expect "FILTER unquoted path-filter entry is not an invocation" 0 "exec-bit guard OK" "$work/filter-unquoted"
@@ -372,18 +371,18 @@ make_trailarg_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho hi\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho hi\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf 'jobs:\n  j:\n    steps:\n      - run: |\n'
     printf '          scripts/fixture-target.sh --some-flag\n'
     printf '      - run: ./scripts/fixture-anchor.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_trailarg_fixture "$work/trailarg"
 expect "TRAIL run-block bare path with trailing argument is rejected" 1 "is tracked 100644, not 100755" "$work/trailarg"
@@ -402,7 +401,6 @@ expect "QUOTED-ASSIGN quoted env assignment before a bare path is rejected" 1 \
 make_fixture "$work/quoted-assign-bash" -x 'FOO="${BAR}" bash scripts/fixture-target.sh' anchor
 expect "QUOTED-ASSIGN interpreter behind a quoted assignment stays accepted" 0 \
   "" "$work/quoted-assign-bash"
-
 
 # CHAINED COMMAND: `cmd && ./scripts/x.sh` puts a SECOND command position after the
 # separator, and the walk has to notice. Extraction is greedy, so the occurrence
@@ -434,21 +432,21 @@ make_assign_value_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho hi\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho hi\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf '#!/usr/bin/env bash\n'
     printf 'HELPER="./scripts/fixture-target.sh"\n'
     # shellcheck disable=SC2016 # the literal $HELPER is the fixture; it must not expand
     printf 'bash "$HELPER"\n'
-  } > scripts/fixture-caller.sh
-  printf 'jobs:\n  j:\n    steps:\n      - run: ./scripts/fixture-anchor.sh\n' > .github/workflows/w.yaml
+  } >scripts/fixture-caller.sh
+  printf 'jobs:\n  j:\n    steps:\n      - run: ./scripts/fixture-anchor.sh\n' >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git update-index --chmod=+x scripts/fixture-caller.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_assign_value_fixture "$work/assign-value"
 expect "ASSIGN-VALUE a path stored in a quoted assignment is not an invocation" 0 \
@@ -467,20 +465,20 @@ make_chain_first_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho a\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho b\n' > scripts/fixture-other.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho a\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho b\n' >scripts/fixture-other.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf 'jobs:\n  j:\n    steps:\n'
     printf '      - run: ./scripts/fixture-target.sh && bash ./scripts/fixture-other.sh\n'
     printf '      - run: ./scripts/fixture-anchor.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=-x scripts/fixture-other.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_chain_first_fixture "$work/chain-first"
 expect "CHAIN-FIRST a direct invocation BEFORE a separator is still checked" 1 \
@@ -511,18 +509,18 @@ make_semi_block_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho hi\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho hi\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf 'jobs:\n  j:\n    steps:\n      - run: |\n'
     printf '          echo ready; scripts/fixture-target.sh\n'
     printf '      - run: ./scripts/fixture-anchor.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_semi_block_fixture "$work/semi-block"
 expect "SEMI glued semicolon inside a run block is rejected" 1 \
@@ -597,20 +595,20 @@ make_two_script_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho a\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho b\n' > scripts/fixture-other.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho a\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho b\n' >scripts/fixture-other.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf 'jobs:\n  j:\n    steps:\n'
     printf '      - run: %s\n' "$invocation"
     printf '      - run: ./scripts/fixture-anchor.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=-x scripts/fixture-other.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_two_script_fixture "$work/semi-first" './scripts/fixture-target.sh; bash ./scripts/fixture-other.sh'
 expect "SEMI-FIRST a direct invocation BEFORE a semicolon is still checked" 1 \
@@ -632,19 +630,19 @@ make_multiline_string_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho hi\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho hi\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf 'jobs:\n  j:\n    steps:\n      - run: |\n'
     printf '          echo "multi\n'
     printf '          %s\n' "$closing_line"
     printf '      - run: ./scripts/fixture-anchor.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_multiline_string_fixture "$work/unpaired-semi" 'line"; ./scripts/fixture-target.sh'
 expect "UNPAIRED a direct invocation after a string's closing quote and ; is rejected" 1 \
@@ -702,19 +700,19 @@ make_argpath_block_fixture() {
   git init -q .
   git config user.email t@example.com
   git config user.name t
-  printf '#!/usr/bin/env bash\necho hi\n' > scripts/fixture-target.sh
-  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  printf '#!/usr/bin/env bash\necho hi\n' >scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' >scripts/fixture-anchor.sh
   {
     printf 'jobs:\n  j:\n    steps:\n      - run: |\n'
     printf '          %s\n' "$first"
     [[ -z "$second" ]] || printf '            %s\n' "$second"
     printf '      - run: ./scripts/fixture-anchor.sh\n'
-  } > .github/workflows/w.yaml
+  } >.github/workflows/w.yaml
   git add -A
   git update-index --chmod=-x scripts/fixture-target.sh
   git update-index --chmod=+x scripts/fixture-anchor.sh
   git -c commit.gpgsign=false commit -qm fixture
-  cd - > /dev/null
+  cd - >/dev/null
 }
 make_argpath_block_fixture "$work/argpath-block" 'scripts/fixture-target.sh scripts/fixture-anchor.sh' ''
 expect "ARGPATH a run-block command with a script path argument is rejected" 1 \

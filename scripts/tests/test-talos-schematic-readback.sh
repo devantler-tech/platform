@@ -28,7 +28,7 @@ update_line=$(grep -nF './scripts/run-ksail-prod-with-pull-auth.sh cluster updat
 stability_line=$(grep -nF './scripts/wait-for-prod-api-stability.sh' "$deploy_action" | cut -d: -f1)
 readback_line=$(grep -nF './scripts/verify-talos-schematic-readback.sh' "$deploy_action" | cut -d: -f1)
 if [[ -z "$update_line" || -z "$stability_line" || -z "$readback_line" ]] ||
-  (( update_line >= stability_line || stability_line >= readback_line )); then
+  ((update_line >= stability_line || stability_line >= readback_line)); then
   printf 'schematic readback must follow cluster update and API stability\n' >&2
   exit 1
 fi

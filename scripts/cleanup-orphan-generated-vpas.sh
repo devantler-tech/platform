@@ -6,16 +6,22 @@
 set -euo pipefail
 umask 077
 # Stop on a proven safety refusal before attempting any further deletion.
-fail() { printf 'REFUSED: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'REFUSED: %s\n' "$1" >&2
+  exit 1
+}
 # Report incomplete evidence distinctly from a proven absence or safe result.
-unknown() { printf 'UNKNOWN: %s\n' "$1" >&2; exit 2; }
+unknown() {
+  printf 'UNKNOWN: %s\n' "$1" >&2
+  exit 2
+}
 mode="${1:-assess}"
-[[ "$#" -le 1 && ( "$mode" == assess || "$mode" == apply ) ]] || fail 'invalid operation'
+[[ "$#" -le 1 && ("$mode" == assess || "$mode" == apply) ]] || fail 'invalid operation'
 [[ "${GITHUB_REPOSITORY:-}" == devantler-tech/platform &&
-   "${GITHUB_EVENT_NAME:-}" == workflow_dispatch &&
-   "${GITHUB_REF:-}" == refs/heads/main &&
-   "${GITHUB_RUN_ATTEMPT:-}" == 1 &&
-   "${VPA_CLEANUP_CONFIRM:-}" == cleanup-orphan-generated-vpas ]] ||
+  "${GITHUB_EVENT_NAME:-}" == workflow_dispatch &&
+  "${GITHUB_REF:-}" == refs/heads/main &&
+  "${GITHUB_RUN_ATTEMPT:-}" == 1 &&
+  "${VPA_CLEANUP_CONFIRM:-}" == cleanup-orphan-generated-vpas ]] ||
   fail 'requires the confirmed first-attempt main workflow'
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
@@ -78,7 +84,10 @@ target_absent() {
   return 1
 }
 
-generated=0; retained=0; candidates=0; deleted=0
+generated=0
+retained=0
+candidates=0
+deleted=0
 : >"$work/plan.jsonl"
 while IFS= read -r obj; do
   [[ -n "$obj" ]] || continue
@@ -107,7 +116,8 @@ while IFS= read -r obj; do
   # overridden. The cleanup is solely for the old ownerless generation.
   if ! jq -e '(.metadata.ownerReferences // [] | length)==0 and
     (.metadata.finalizers // [] | length)==0 and .metadata.deletionTimestamp==null' <<<"$obj" >/dev/null; then
-    retained=$((retained + 1)); continue
+    retained=$((retained + 1))
+    continue
   fi
   if target_absent "$obj"; then
     printf '%s\n' "$obj" >>"$work/plan.jsonl"

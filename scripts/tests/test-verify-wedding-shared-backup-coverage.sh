@@ -661,7 +661,8 @@ for refusal in wrong-consumer-destination backup-denied missing-schedule; do
   touch "${k}/mc-umami/removal-enabled"
   case "${refusal}" in
     wrong-consumer-destination)
-      store_json s3://another-bucket/cnpg/coroot-db coroot-db-backup-r2 >"${k}/observability-objectstores.barmancloud.cnpg.io-coroot-db.json" ;;
+      store_json s3://another-bucket/cnpg/coroot-db coroot-db-backup-r2 >"${k}/observability-objectstores.barmancloud.cnpg.io-coroot-db.json"
+      ;;
     backup-denied) touch "${k}/backup-denied" ;;
     missing-schedule) rm "${k}/schedules.velero.io.json" ;;
   esac

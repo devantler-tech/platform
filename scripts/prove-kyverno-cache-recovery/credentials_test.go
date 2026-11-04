@@ -22,7 +22,8 @@ func credentialSecret(t *testing.T, config string, change func(map[string]any)) 
 func TestRegistryPrecheckUsesActualKyvernoCredential(t *testing.T) {
 	for _, config := range []string{
 		`{"auths":{"ghcr.io":{"username":"probe","password":"private-test-token"}}}`,
-		`{"auths":{"ghcr.io":{"auth":"cHJvYmU6cHJpdmF0ZS10ZXN0LXRva2Vu"}}}`,
+		// base64("probe:private-test-token"), the fixture credential above.
+		`{"auths":{"ghcr.io":{"auth":"cHJvYmU6cHJpdmF0ZS10ZXN0LXRva2Vu"}}}`, // betterleaks:allow
 	} {
 		username, password, err := registryCredential(credentialSecret(t, config, nil))
 		if err != nil || username != "probe" || password != "private-test-token" {
@@ -34,7 +35,8 @@ func TestRegistryPrecheckUsesActualKyvernoCredential(t *testing.T) {
 func TestAmbiguousOrForeignCredentialCannotQualifyUnsignedControl(t *testing.T) {
 	for _, config := range []string{
 		`{"auths":{"other.example":{"username":"probe","password":"private-test-token"}}}`,
-		`{"auths":{"ghcr.io":{"username":"probe","password":"private-test-token","auth":"b3RoZXI6dG9rZW4="}}}`,
+		// base64("other:token"), a conflicting fixture credential.
+		`{"auths":{"ghcr.io":{"username":"probe","password":"private-test-token","auth":"b3RoZXI6dG9rZW4="}}}`, // betterleaks:allow
 		`{"auths":{"ghcr.io":{"username":"probe","password":""}}}`,
 		`{"auths":{"ghcr.io":{"username":"probe","password":"private-test-token","password":"changed"}}}`,
 		`{"auths":{"ghcr.io":{"username":"probe","password":"private-test-token"}}} {}`,

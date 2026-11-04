@@ -3,19 +3,22 @@
 set -euo pipefail
 umask 077
 
-fail() { printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=runtime' >&2; exit 2; }
+fail() {
+  printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=runtime' >&2
+  exit 2
+}
 [[ $# == 3 && $(uname -s) == Linux && $(id -u) != 0 ]] || fail
 mode=$1
 proof_dir=$2
 binary=$3
 record_count=3
 case "$mode" in
-  verify|fixture|verify-email|fixture-email) ;;
-  verify-email-storage|fixture-email-storage) record_count=4 ;;
+  verify | fixture | verify-email | fixture-email) ;;
+  verify-email-storage | fixture-email-storage) record_count=4 ;;
   *) fail ;;
 esac
 fixture_mode=false
-case "$mode" in fixture|fixture-email|fixture-email-storage) fixture_mode=true ;; esac
+case "$mode" in fixture | fixture-email | fixture-email-storage) fixture_mode=true ;; esac
 [[ $proof_dir == /* && -d $proof_dir && ! -L $proof_dir && $binary == /* && -f $binary && ! -L $binary && -x $binary ]] || fail
 [[ $(cd "$proof_dir" && pwd -P) == "$proof_dir" && $(stat -c %a "$proof_dir") == 700 && $(stat -c %u "$proof_dir") == "$(id -u)" ]] || fail
 image=$("$binary" image) || fail
@@ -33,9 +36,9 @@ cleanup() {
     [[ $rc != 0 ]] || rc=2
   elif [[ -n $ids ]]; then
     if [[ $ids =~ ^[a-f0-9]{64}$ ]] &&
-        label=$(docker inspect --type container --format '{{ index .Config.Labels "platform.devantler.tech/recovery-proof" }}' "$ids" 2>>"$proof_dir/cleanup.log") &&
-        [[ $label == "$nonce" ]] &&
-        docker rm --force "$ids" >"$proof_dir/cleanup.log" 2>&1; then
+      label=$(docker inspect --type container --format '{{ index .Config.Labels "platform.devantler.tech/recovery-proof" }}' "$ids" 2>>"$proof_dir/cleanup.log") &&
+      [[ $label == "$nonce" ]] &&
+      docker rm --force "$ids" >"$proof_dir/cleanup.log" 2>&1; then
       :
     else
       printf '%s\n' 'OPENBAO_BACKUP_CLEANUP=UNVERIFIED' >&2

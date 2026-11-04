@@ -2,6 +2,9 @@ package main
 
 import (
 	"os"
+	"regexp"
+	"slices"
+	"strings"
 	"testing"
 
 	policiesv1beta1 "github.com/kyverno/api/api/policies.kyverno.io/v1beta1"
@@ -10,14 +13,76 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+var (
+	osvIgnoredID     = regexp.MustCompile(`^id = "([A-Z]+-[0-9]{4}-[0-9]+)"$`)
+	osvIgnoredReason = regexp.MustCompile(`^reason = "[^"\\]+"$`)
+)
+
+// osvIgnoredIDs reads osv-scanner.toml line by line and accepts only comments
+// and [[IgnoredVulns]] tables holding exactly one id and one reason. Any other
+// line, such as a [[PackageOverrides]] table, a single-quoted id or a trailing
+// comment, could make osv-scanner ignore more than the listed IDs, so it fails
+// the test instead of being skipped.
+func osvIgnoredIDs(t *testing.T, data string) []string {
+	t.Helper()
+	var ids []string
+	idsInTable, reasonsInTable, inTable := 0, 0, false
+	closeTable := func() {
+		if inTable && (idsInTable != 1 || reasonsInTable != 1) {
+			t.Fatalf("osv-scanner.toml: each [[IgnoredVulns]] table needs exactly one id and one reason")
+		}
+		idsInTable, reasonsInTable = 0, 0
+	}
+	for number, line := range strings.Split(data, "\n") {
+		switch {
+		case line == "" || strings.HasPrefix(line, "#"):
+		case line == "[[IgnoredVulns]]":
+			closeTable()
+			inTable = true
+		case inTable && osvIgnoredID.MatchString(line):
+			ids = append(ids, osvIgnoredID.FindStringSubmatch(line)[1])
+			idsInTable++
+		case inTable && osvIgnoredReason.MatchString(line):
+			reasonsInTable++
+		default:
+			t.Fatalf("osv-scanner.toml line %d is not a reviewed ignore entry: %q", number+1, line)
+		}
+	}
+	closeTable()
+	return ids
+}
+
+// readOptional returns a file's contents, or nothing when the file is absent.
+func readOptional(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(name)
+	if os.IsNotExist(err) {
+		return ""
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 // These acceptances adjudicate overbroad database ranges, not an unpatched
 // runtime. A dependency update must re-read the upstream ranges before carrying
 // them forward. Removing the acceptances after database correction is allowed.
+// govulncheck and osv-scanner each read their own list, so both must name the
+// same advisories.
 func TestAdvisoryAcceptancePinsReviewedRelease(t *testing.T) {
-	if _, err := os.Stat(".govulncheck-allow.txt"); os.IsNotExist(err) {
+	var accepted, ignored []string
+	for _, line := range strings.Split(readOptional(t, ".govulncheck-allow.txt"), "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		accepted = append(accepted, strings.Fields(line)...)
+	}
+	ignored = osvIgnoredIDs(t, readOptional(t, "osv-scanner.toml"))
+	slices.Sort(accepted)
+	slices.Sort(ignored)
+	if !slices.Equal(accepted, ignored) {
+		t.Fatalf("osv-scanner.toml ignores %v but .govulncheck-allow.txt accepts %v", ignored, accepted)
+	}
+	if len(accepted) == 0 {
 		return
-	} else if err != nil {
-		t.Fatal(err)
 	}
 	data, err := os.ReadFile("go.mod")
 	if err != nil {

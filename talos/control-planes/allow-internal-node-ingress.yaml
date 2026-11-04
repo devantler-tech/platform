@@ -1,3 +1,4 @@
+---
 # Cluster-internal TCP reachable from the node CIDR only on control-plane
 # nodes. Pairs with cluster/block-ingress-by-default.yaml.
 #   etcd 2379-2380, cilium-health 4240, cilium-mutual-auth 4250,

@@ -92,4 +92,4 @@ while IFS= read -r canonical_entry; do
     "$canonical_consumer" "$(printf '%s\n' "$canonical_entry" | jq -r .kind)"
 done < <(printf '%s\n' "$canonical_only" | jq -c '.bindings[]')
 printf 'guard-publish-workflow-approved-revisions: %d consumer matcher(s) agree with %s (enforce=%s)\n' \
-  "$((${#EXPECTED_CONSUMERS[@]}+canonical_count))" "${APPROVED_SET#"$REPO_ROOT"/}" "$ENFORCE"
+  "$((${#EXPECTED_CONSUMERS[@]} + canonical_count))" "${APPROVED_SET#"$REPO_ROOT"/}" "$ENFORCE"

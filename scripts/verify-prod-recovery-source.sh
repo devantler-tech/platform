@@ -2,8 +2,14 @@
 # A recovery may publish only its validated checkout while that revision is main.
 set -euo pipefail
 
-unknown() { echo 'PROD_RECOVERY_SOURCE=UNKNOWN: cannot prove the validated recovery is current' >&2; exit 2; }
-stale() { echo 'PROD_RECOVERY_SOURCE=STALE: restart recovery from current main and revalidate' >&2; exit 1; }
+unknown() {
+  echo 'PROD_RECOVERY_SOURCE=UNKNOWN: cannot prove the validated recovery is current' >&2
+  exit 2
+}
+stale() {
+  echo 'PROD_RECOVERY_SOURCE=STALE: restart recovery from current main and revalidate' >&2
+  exit 1
+}
 expected="${1:-}"
 [[ "$expected" =~ ^[0-9a-f]{40}$ ]] || unknown
 [[ "${GITHUB_REPOSITORY:-}" == devantler-tech/platform ]] || unknown
@@ -42,7 +48,7 @@ response="$(timeout 30s gh api --hostname github.com --method GET \
 remote="$(jq -er '
   select(type == "object" and .ref == "refs/heads/main" and .object.type == "commit")
   | .object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))
-' <<< "$response" 2>/dev/null)" || unknown
+' <<<"$response" 2>/dev/null)" || unknown
 [[ "$remote" =~ ^[0-9a-f]{40}$ ]] || unknown
 [[ "$remote" == "$expected" ]] || stale
 # Refuse a checkout changed while the remote read was in progress as well.

@@ -1,0 +1,16 @@
+# revive configuration, read by MegaLinter's GO_REVIVE.
+#
+# Every default rule stays on except package-comments. MegaLinter hands revive a list of files
+# rather than packages, so revive treats each file as a package of its own and asks for a package
+# comment in every file of a package that already has one. Every package here carries its own
+# package comment; satisfying the file-by-file reading would mean duplicating it into each file,
+# and `go doc` would then print every copy. Maintainer decision, 3 November 2026, devantler-tech/platform#5852.
+#
+# severity and confidence restate revive's built-in defaults, which apply only without a config file.
+
+severity = "warning"
+confidence = 0.8
+enable-default-rules = true
+
+[rule.package-comments]
+Disabled = true

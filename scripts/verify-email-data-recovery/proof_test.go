@@ -52,21 +52,21 @@ func TestMailboxSnapshotSelectionIgnoresScratchButRequiresUniqueData(t *testing.
 // of these foreign, stale, incomplete or empty backups as recovery evidence.
 func TestUnboundOrIncompleteBackupCannotBecomeRestoreInput(t *testing.T) {
 	mutations := map[string]func(object, object){
-		"foreign-backup":  func(b, p object) { child(b, "metadata")["uid"] = "replacement" },
-		"wrong-owner":     func(b, p object) { items(child(p, "metadata"), "ownerReferences")[0]["uid"] = "another-backup" },
-		"wrong-pod":       func(b, p object) { child(child(p, "spec"), "pod")["uid"] = "replacement-pod" },
-		"wrong-namespace": func(b, p object) { child(child(p, "spec"), "pod")["namespace"] = "other" },
-		"wrong-volume":    func(b, p object) { child(p, "spec")["volume"] = "another" },
-		"wrong-location":  func(b, p object) { child(p, "spec")["backupStorageLocation"] = "foreign" },
-		"incomplete":      func(b, p object) { child(p, "status")["phase"] = "InProgress" },
-		"partial":         func(b, p object) { child(child(p, "status"), "progress")["bytesDone"] = float64(3999) },
-		"empty": func(b, p object) {
+		"foreign-backup":  func(b, _ object) { child(b, "metadata")["uid"] = "replacement" },
+		"wrong-owner":     func(_, p object) { items(child(p, "metadata"), "ownerReferences")[0]["uid"] = "another-backup" },
+		"wrong-pod":       func(_, p object) { child(child(p, "spec"), "pod")["uid"] = "replacement-pod" },
+		"wrong-namespace": func(_, p object) { child(child(p, "spec"), "pod")["namespace"] = "other" },
+		"wrong-volume":    func(_, p object) { child(p, "spec")["volume"] = "another" },
+		"wrong-location":  func(_, p object) { child(p, "spec")["backupStorageLocation"] = "foreign" },
+		"incomplete":      func(_, p object) { child(p, "status")["phase"] = "InProgress" },
+		"partial":         func(_, p object) { child(child(p, "status"), "progress")["bytesDone"] = float64(3999) },
+		"empty": func(_, p object) {
 			child(child(p, "status"), "progress")["bytesDone"] = float64(0)
 			child(child(p, "status"), "progress")["totalBytes"] = float64(0)
 		},
-		"invalid-snapshot": func(b, p object) { child(p, "status")["snapshotID"] = "../foreign" },
-		"stale":            func(b, p object) { child(p, "status")["completionTimestamp"] = "2026-10-28T10:00:00Z" },
-		"backup-errors":    func(b, p object) { child(b, "status")["errors"] = float64(1) },
+		"invalid-snapshot": func(_, p object) { child(p, "status")["snapshotID"] = "../foreign" },
+		"stale":            func(_, p object) { child(p, "status")["completionTimestamp"] = "2026-10-28T10:00:00Z" },
+		"backup-errors":    func(b, _ object) { child(b, "status")["errors"] = float64(1) },
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {

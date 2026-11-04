@@ -1,6 +1,7 @@
+---
 name: Publish Kubescape Storage Hotfix
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:

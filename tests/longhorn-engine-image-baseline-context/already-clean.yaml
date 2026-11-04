@@ -1,3 +1,4 @@
+---
 # CONVERGENCE: the target after the retrofit has applied once. Every
 # precondition must be false, so a second pass produces no patch at all.
 apiVersion: apps/v1
