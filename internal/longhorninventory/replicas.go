@@ -11,11 +11,13 @@ import (
 	"unicode/utf8"
 )
 
+// MaxEntries and MaxMetadataBytes bound inventory size and metadata bytes.
 const (
 	MaxEntries       = 16384
 	MaxMetadataBytes = 4 << 20
 )
 
+// Entry records one immediate child's file metadata.
 type Entry struct {
 	Name           string
 	Mode           uint32
@@ -24,15 +26,18 @@ type Entry struct {
 	Size, Modified int64
 }
 
+// Listing records observed entries and whether their stream completed.
 type Listing struct {
 	Entries  []Entry
 	Complete bool
 }
 
+// Replica binds an API replica identity to its directory name.
 type Replica struct {
 	Name, UID, Directory string
 }
 
+// Report summarizes replica-directory accounting and its digest.
 type Report struct {
 	Directories, Files, Matched, Unmatched, Missing int
 	EmptyAndAccounted                               bool

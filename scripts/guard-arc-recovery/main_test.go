@@ -143,10 +143,7 @@ func TestRecoveryDeclarationRefusesSuspensionAndImplicitRunnerBounds(t *testing.
 // Exercise the real kubectl proxy with a temporary synthetic kubeconfig and
 // TLS API server. This never opens the operator's kubeconfig or a live cluster.
 func TestNativeMetadataProxyPreservesAcceptAndRejectsWrites(t *testing.T) {
-	kubectl, err := exec.LookPath("kubectl")
-	if err != nil {
-		t.Fatal("native metadata-proxy regression requires kubectl")
-	}
+	kubectl := privateNativeKubectl(t)
 	requests := make(chan string, len(recoveryEndpoints)+1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests <- r.Method + " " + r.URL.Path

@@ -78,6 +78,12 @@ patches:
       namespace: private-mail
     path: patches/configure-proxy-transport.yaml
   - path: patches/add-client-proxy.yaml
+    target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
   - path: patches/isolate-client-proxy.yaml
   - target:
       version: v1

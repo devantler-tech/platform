@@ -125,7 +125,7 @@ jobs:
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: devantler-tech
+          # Admission above pins this repository; the action defaults its owner.
           repositories: ${{ steps.admit.outputs.name }}
           permission-contents: read
           permission-actions: read
@@ -200,7 +200,7 @@ jobs:
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: devantler-tech
+          # Admission above pins this repository; the action defaults its owner.
           repositories: ${{ steps.admit.outputs.name }}
           permission-contents: write
           permission-actions: read

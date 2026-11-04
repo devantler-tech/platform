@@ -11,8 +11,8 @@ equal to `generation`, while every later reconcile logged that the release was i
 
 ## Why it happens
 
-It is helm-controller behaviour, read from the released source of v1.5.5 and unchanged in v1.6.5 (the
-version production runs, with Flux 2.9) and on its `main` branch on 2026-10-07:
+It is helm-controller behaviour, read from the released source of v1.5.5 and unchanged in the
+audited v1.7.1 profile used by Flux 2.9.6 with the helm-controller 1.7.1 override:
 
 - The controller decides a release needs an upgrade by comparing the chart, the values and a digest
   of the post-renderers with what it last observed.
@@ -23,12 +23,12 @@ version production runs, with Flux 2.9) and on its `main` branch on 2026-10-07:
 
 ## What tells you
 
-| Signal | Lasts | Where |
-|---|---|---|
-| The Flux reconciliation alert | One message, at the moment of the failure | Slack, from [`alert.yaml`](../../k8s/providers/hetzner/infrastructure/flux-notifications/alert.yaml); it carried the full error text on 2026-09-04 |
-| A Warning `UpgradeFailed` event on the release | As long as the API server keeps events, about an hour | `kubectl get events --namespace <the release's namespace>`; events are namespaced, so the bare command reads the wrong place |
-| The release's own failure count | Until its chart version, values or generation next change | `status.failures` (`status.upgradeFailures` stays at zero, because the failed attempt stored no release) |
-| The helm-controller log | Until the pod restarts | `flux-system/helm-controller` |
+| Signal                                         | Lasts                                                     | Where                                                                                                                                              |
+| ---------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The Flux reconciliation alert                  | One message, at the moment of the failure                 | Slack, from [`alert.yaml`](../../k8s/providers/hetzner/infrastructure/flux-notifications/alert.yaml); it carried the full error text on 2026-09-04 |
+| A Warning `UpgradeFailed` event on the release | As long as the API server keeps events, about an hour     | `kubectl get events --namespace <the release's namespace>`; events are namespaced, so the bare command reads the wrong place                       |
+| The release's own failure count                | Until its chart version, values or generation next change | `status.failures` (`status.upgradeFailures` stays at zero, because the failed attempt stored no release)                                           |
+| The helm-controller log                        | Until the pod restarts                                    | `flux-system/helm-controller`                                                                                                                      |
 
 Before a change merges, the `validate-helm-post-renderers` CI job renders each changed release's
 chart and applies its post-renderers (#3581, #4377). It catches a patch that cannot apply to the

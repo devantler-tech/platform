@@ -29,7 +29,10 @@ cat >"$work/guard.jq" <<'JQ'
   def build: .env == {GOWORK:"off",GOFLAGS:"",GOTOOLCHAIN:"local",CGO_ENABLED:"0"} and
     (.run | contains("build -trimpath -o \"$PWD/.devantler-tech-recovery/publish-release-recovery\" ./cmd/publish-release-recovery"));
   def incident: {REPOSITORY:"${{ github.repository }}",TAG:"${{ inputs.tag }}",SOURCE_SHA:"${{ inputs.source-sha }}",RUN_ID:"${{ inputs.run-id }}",RUN_ATTEMPT:"${{ inputs.run-attempt }}",PRODUCER_REF:"${{ inputs.producer-ref }}"};
-  def token($contents): {"client-id":"${{ vars.APP_CLIENT_ID }}","private-key":"${{ secrets.APP_PRIVATE_KEY }}",owner:"devantler-tech",repositories:"${{ steps.admit.outputs.name }}","permission-contents":$contents,"permission-actions":"read"};
+  # The pinned action defaults owner to GITHUB_REPOSITORY_OWNER. The preceding
+  # executed admission pins that repository to devantler-tech/platform; the
+  # nonempty derived repository list and both permission scopes remain explicit.
+  def token($contents): {"client-id":"${{ vars.APP_CLIENT_ID }}","private-key":"${{ secrets.APP_PRIVATE_KEY }}",repositories:"${{ steps.admit.outputs.name }}","permission-contents":$contents,"permission-actions":"read"};
   ($w.on | keys) == ["workflow_dispatch"] and $w.permissions == {} and
   ($w.on.workflow_dispatch.inputs | has("enable-recovery") | not) and
   $w.on.workflow_dispatch.inputs["confirm-publication"].type == "boolean" and $w.on.workflow_dispatch.inputs["confirm-publication"].default == false and
@@ -128,6 +131,8 @@ for mutation in \
   '.w.jobs.recover.steps |= [.[0],.[1],.[2],.[3],.[4],.[8],.[6],.[7],.[5],.[9]]' \
   '.w.jobs.recover.steps[5].with["permission-contents"]="write"' \
   '.w.jobs.recover.steps[5].with.repositories=null' \
+  '.w.jobs.recover.steps[5].with.repositories=""' \
+  '.w.jobs.recover.steps[5].with.owner="other-owner"' \
   '.w.jobs.recover.steps[6].env.GH_TOKEN="${{ steps.write-token.outputs.token }}"' \
   '.w.jobs.recover.steps[7].if=null' \
   '.w.jobs.recover.steps[7].env.GH_TOKEN="${{ steps.write-token.outputs.token }}"' \
@@ -138,6 +143,8 @@ for mutation in \
   '.w.jobs.recover.steps[8].if=null' \
   '.w.jobs.recover.steps[8].with["permission-issues"]="write"' \
   '.w.jobs.recover.steps[8].with.repositories=null' \
+  '.w.jobs.recover.steps[8].with.repositories=""' \
+  '.w.jobs.recover.steps[8].with.owner="other-owner"' \
   '.w.jobs.recover.steps[9].env.GH_TOKEN="${{ github.token }}"' \
   '.w.jobs.recover.steps[9].env.REPOSITORY="${{ inputs.tag }}"' \
   '.w.jobs["offline-test"].if="inputs.offline-test || inputs.confirm-publication"' \

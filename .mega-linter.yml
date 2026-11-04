@@ -37,6 +37,46 @@ FLAVOR_SUGGESTIONS: false
 IGNORE_GITIGNORED_FILES: true
 REPORTERS_MARKDOWN_SUMMARY_TYPE: sections
 
+# Keep the native engine and its default rules. Explicit file targets discard
+# package context; the adapter scans the complete tracked inventory as packages
+# and retains platform/build-tag files omitted by native directory discovery.
+GO_REVIVE_CLI_EXECUTABLE:
+  - bash
+  - scripts/revive-package-context.sh
+
+# Betterleaks 1.7.3 attaches targeted allowlists only at config depth zero.
+# Its source config preserves the same native directory exclusions directly.
+REPOSITORY_BETTERLEAKS_FORWARD_EXCLUDED_DIRECTORIES: false
+
+# Prove the exact fixture boundaries with the same installed native engines.
+# Fail before linting when a version, inherited default or refusal proof drifts.
+PRE_COMMANDS:
+  - command: bash scripts/tests/test-betterleaks-fixture-boundary.sh
+    cwd: workspace
+    secured_env: true
+    run_before_linters: true
+    continue_if_failed: false
+  - command: bash scripts/tests/test-secretlint-fixture-boundary.sh
+    cwd: workspace
+    secured_env: true
+    run_before_linters: true
+    continue_if_failed: false
+  - command: bash scripts/tests/test-trivyignore-source-model-boundary.sh
+    cwd: workspace
+    secured_env: true
+    run_before_linters: true
+    continue_if_failed: false
+  - command: bash scripts/with-runtime-disposition-tools.sh -- bash scripts/tests/test-trivyignore-runtime-boundary.sh
+    cwd: workspace
+    secured_env: true
+    run_before_linters: true
+    continue_if_failed: false
+  - command: bash scripts/tests/test-checkov-operational-inputs.sh
+    cwd: workspace
+    secured_env: true
+    run_before_linters: true
+    continue_if_failed: false
+
 EXCLUDED_DIRECTORIES:
   - megalinter-reports
   - report
@@ -83,15 +123,11 @@ DISABLE_LINTERS:
   # because APPLY_FIXES is forced on, it committed that. A formatter that damages the document
   # it formats is worse than no formatter; markdownlint still governs table syntax.
   - MARKDOWN_MARKDOWN_TABLE_FORMATTER
-  # golangci-lint ALREADY runs as its own job in the org's validate-go-project workflow, on the Go
-  # version this repository declares, and that job is what gates the pull request. The copy inside
-  # MegaLinter runs in the MegaLinter container instead, which ships its own older Go and sets
-  # GOTOOLCHAIN=local, so it cannot honour the `go` directive and fails to load the packages at all:
-  #   go.mod requires go >= 1.26.6 (running go 1.26.3; GOTOOLCHAIN=local)
-  # That is a container-version failure, not a finding — it reports nothing about this code, and it
-  # recurs on every bump that outruns the image. No lint coverage is lost by removing it: the
-  # dedicated `🧹 Lint - golangci-lint` check runs the same linter with the correct toolchain and
-  # must stay green. ksail disables it for the same reason.
+  # Platform's required validate-go-regressions job installs golangci-lint on
+  # the Go toolchain declared by go.mod and checks every tracked source module.
+  # The primarily Shell repository does not inherit the org's Go workflow.
+  # Keep the container copy disabled: its separate toolchain can lag go.mod.
+  # The local required job and its real refusal controls supply lint coverage.
   - GO_GOLANGCI_LINT
 
 DISABLE_ERRORS_LINTERS:
@@ -413,6 +449,27 @@ REPOSITORY_TRIVY_ARGUMENTS:
   # unexpected registry. Omitting this argument silently restores those 27.
   - --config-data
   - .trivy/data
+
+# Retain the complete native scanner and every reviewed source/data input.
+# The wrapper verifies all 580 current policy modules and changes only the
+# audited KSV-0040 applicability predicate in a private complete bundle. Native
+# invalid-quota and unrelated-finding controls precede every full scan; unknown
+# bundles, missing checks, embedded fallback and compiler errors fail closed.
+REPOSITORY_TRIVY_CLI_EXECUTABLE:
+  - bash
+  - scripts/trivy-resource-quota.sh
+
+# The image's old embedded Go analyzer cannot read Go 1.27. Build the reviewed
+# native release with the repository compiler and retain the complete scope.
+REPOSITORY_OSV_SCANNER_CLI_EXECUTABLE:
+  - bash
+  - scripts/osv-source-analysis.sh
+REPOSITORY_GRYPE_CLI_EXECUTABLE:
+  - bash
+  - scripts/grype-source-analysis.sh
+REPOSITORY_CHECKOV_CLI_EXECUTABLE:
+  - bash
+  - scripts/checkov-source-analysis.sh
 
 # zizmor aborts with "fatal: no audit was performed" because MegaLinter strips GITHUB_TOKEN and its
 # artipacked audit then 401s against the GitHub API. Handing it the token makes the audit run

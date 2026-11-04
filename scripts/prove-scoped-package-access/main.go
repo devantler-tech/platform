@@ -1,3 +1,4 @@
+// Package main verifies scoped access to the selected package images.
 package main
 
 import (

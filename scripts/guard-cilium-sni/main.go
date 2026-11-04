@@ -1,3 +1,4 @@
+// Package main checks the rendered Cilium SNI configuration.
 package main
 
 import (

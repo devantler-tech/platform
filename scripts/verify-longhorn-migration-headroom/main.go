@@ -1,3 +1,4 @@
+// Package main verifies the headroom required by Longhorn migration operations.
 package main
 
 import (

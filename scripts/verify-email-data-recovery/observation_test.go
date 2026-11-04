@@ -78,7 +78,7 @@ func TestObservationHealthReportsStatusWithoutAuthenticationOrRedirects(t *testi
 	for _, status := range []int{200, 401, 403, 503, 302} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			targetReads := 0
-			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { targetReads++ }))
+			target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { targetReads++ }))
 			defer target.Close()
 			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != "GET" || r.URL.Path != "/healthz/ready" || r.Header.Get("Authorization") != "" {
@@ -110,7 +110,8 @@ func TestObservationCommandRefusesForeignDispatchBeforeAccess(t *testing.T) {
 		return
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestObservationCommandRefusesForeignDispatchBeforeAccess$")
-	cmd.Env = []string{"EMAIL_OBSERVATION_CHILD=1", "PATH=/nonexistent"}
+	// Preserve the exact stderr proof when the child is coverage-instrumented.
+	cmd.Env = []string{"EMAIL_OBSERVATION_CHILD=1", "PATH=/nonexistent", "GOCOVERDIR=" + t.TempDir()}
 	output, err := cmd.CombinedOutput()
 	exit, ok := err.(*exec.ExitError)
 	if !ok || exit.ExitCode() != 2 || string(output) != "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=dispatch\n" {

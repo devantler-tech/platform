@@ -1,3 +1,4 @@
+// Package main validates Flux replacement and persistence safety settings.
 package main
 
 import (

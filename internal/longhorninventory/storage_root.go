@@ -10,8 +10,10 @@ import (
 	"strings"
 )
 
+// StorageRoot is the fixed directory observed for storage-root inventories.
 const StorageRoot = "/var/lib/longhorn"
 
+// StorageRootReport summarizes immediate storage-root entries and their digest.
 type StorageRootReport struct {
 	Directories, Files, OtherEntries                                                                  int
 	ReplicaEntryPresent, ReplicaDirectoryPresent                                                      bool
@@ -19,9 +21,12 @@ type StorageRootReport struct {
 	Digest                                                                                            string
 }
 
+// ListStorageRoot lists immediate children of the fixed storage directory.
 func (n Native) ListStorageRoot(ctx context.Context) (Listing, error) {
 	return n.listFixedRoot(ctx, StorageRoot)
 }
+
+// AnalyzeStorageRoot summarizes and hashes a complete storage-root listing.
 func AnalyzeStorageRoot(listing Listing) (StorageRootReport, error) {
 	entries, _, err := normalizedEntries(listing)
 	if err != nil {
@@ -72,6 +77,8 @@ func (e nativeFailure) Error() string {
 }
 func (nativeFailure) Unwrap() error { return errNative }
 
+// FailureCode returns a package-authored diagnostic classification.
+//
 // Only package-authored classifications enter logs. Transport messages and
 // file-error strings never select a diagnostic class or grant missing-path proof.
 func FailureCode(err error) string {

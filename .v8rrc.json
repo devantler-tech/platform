@@ -1,0 +1,13 @@
+{
+  "customCatalog": {
+    "schemas": [
+      {
+        "name": "CloudNativePG Cluster v1 (controller 1.30.1)",
+        "fileMatch": [
+          "scripts/tests/fixtures/wedding-database-priority/cluster.yaml"
+        ],
+        "location": "scripts/tests/schemas/cloudnative-pg-cluster-v1.json"
+      }
+    ]
+  }
+}

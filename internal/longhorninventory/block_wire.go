@@ -16,19 +16,23 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// BlockCollections lists typed block resources.
 type BlockCollections interface {
 	List(context.Context, resource.Kind, ...state.ListOption) (resource.List, error)
 }
 
+// BlockListAPI provides the native streaming block-list operation.
 type BlockListAPI interface {
 	List(context.Context, *v1alpha1.ListRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[v1alpha1.ListResponse], error)
 }
 
+// BoundedBlocks validates and bounds native block-resource listings.
 type BoundedBlocks struct {
 	API    BlockListAPI
 	Target string
 }
 
+// List reads a supported block-resource collection within the request bounds.
 func (r BoundedBlocks) List(ctx context.Context, kind resource.Kind, options ...state.ListOption) (resource.List, error) {
 	invalid := nativeFailure{code: "block-list"}
 	if ctx == nil || !active(ctx) || r.API == nil || kind == nil || len(options) != 0 || kind.Namespace() != block.NamespaceName {

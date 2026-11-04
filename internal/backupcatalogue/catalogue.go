@@ -22,6 +22,8 @@ type catalogueEntry struct {
 	Snapshot snapshot.Manifest
 	Raw      json.RawMessage
 }
+
+// Catalogue summarizes a bounded backup-metadata inventory.
 type Catalogue struct {
 	MetadataOnly     bool   `json:"metadataOnly"`
 	Snapshots        int    `json:"snapshots"`

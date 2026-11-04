@@ -67,15 +67,14 @@ jobs:
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          # Without `owner`/`repositories` the token is limited to the repository the
-          # job runs in, so every consumer read would 404 and the generator would
+          # The action defaults owner to this repository's owner. Without the
+          # explicit repositories, every consumer read would 404 and the generator would
           # refuse on the pin half — a permanently red daily run. The list is exactly
           # the registered consumers validated by the approval reader, including
           # a first publication before its ordinary observed row exists;
           # the contract test reads that file and fails if one is added there and not
           # here. READ ONLY: contents for each consumer's cd.yaml, actions for the
           # `📦 CD` run that signed the applied tag. Nothing else.
-          owner: ${{ github.repository_owner }}
           repositories: |
             .github
             ascoachingogvaner
@@ -95,7 +94,6 @@ jobs:
           # THIS repository only: the checkout, the branch push and the pull request
           # all happen here. Scoping the write token to one repository is what keeps
           # the consumer half above read-only.
-          owner: ${{ github.repository_owner }}
           repositories: |
             platform
           permission-contents: write

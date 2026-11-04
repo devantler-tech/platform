@@ -11,8 +11,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// Object represents an unstructured configuration or API object.
 type Object = map[string]any
 
+// PoolLabel and the related markers identify reviewed migration capacity.
 const (
 	PoolLabel         = "storage.platform.devantler.tech/migration-pool"
 	EnabledLabel      = "storage.platform.devantler.tech/migration-enabled"
@@ -21,6 +23,7 @@ const (
 	ScaleDownDisabled = "cluster-autoscaler.kubernetes.io/scale-down-disabled"
 )
 
+// Pool records a reviewed migration pool's identity and fixed capacity.
 type Pool struct {
 	Name, Role, ServerType string
 	Count                  int
@@ -58,6 +61,7 @@ const (
 	reviewedLocation   = "fsn1"
 )
 
+// ConfiguredPools validates and returns the reviewed migration pools.
 func ConfiguredPools(data []byte) (map[string]Pool, error) {
 	b, err := yaml.YAMLToJSONStrict(data)
 	var cfg Object
@@ -94,6 +98,7 @@ func ConfiguredPools(data []byte) (map[string]Pool, error) {
 	return result, nil
 }
 
+// VerifyNode checks a ready node's identity against its reviewed migration pool.
 func VerifyNode(n Object, pool Pool) error {
 	if !regexp.MustCompile("^"+regexp.QuoteMeta(pool.Name)+"-[0-9a-f]{16}$").MatchString(text(n, "metadata", "name")) ||
 		text(n, "metadata", "labels", PoolLabel) != pool.Role || text(n, "metadata", "labels", "ksail.io/autoscaled") != "true" ||

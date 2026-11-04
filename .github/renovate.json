@@ -22,6 +22,33 @@
   "customManagers": [
     {
       "customType": "regex",
+      "description": "Track the exact Flux base separately from the adjacent-minor Helm controller override. The admitted base stays reversible to current main; adopting a new minor needs a new recovery and native composition audit.",
+      "managerFilePatterns": [
+        "/^k8s/providers/(?:docker|hetzner)/infrastructure/controllers/flux-instance/flux-instance\\.yaml$/"
+      ],
+      "matchStrings": [
+        "\\n    version: \"(?<currentValue>2\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "fluxcd/flux2",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the signed Helm controller image in FluxInstance JSON patches. A tag/digest update also needs the matching official generated CRD patch, controller SDK audit and native composition test.",
+      "managerFilePatterns": [
+        "/^k8s/providers/(?:docker|hetzner)/infrastructure/controllers/flux-instance/flux-instance\\.yaml$/"
+      ],
+      "matchStrings": [
+        "value: ghcr\\.io/fluxcd/helm-controller:(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "ghcr.io/fluxcd/helm-controller",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
       "description": "Bump pinned CLI versions in the shared installers under .github/scripts. Same pair as the workflow manager below, in shell assignment syntax: '# renovate: ...\\n<NAME>_VERSION=\"<ver>\"'. Those installers also pin the asset's SHA-256 on the next line, which no datasource can supply — a bump here therefore fails the install with the digest to write rather than installing unverified bytes.",
       "managerFilePatterns": ["/^\\.github/scripts/.+\\.sh$/"],
       "matchStrings": [
@@ -248,7 +275,9 @@
     },
     {
       "description": "The flux-operator chart (dedicated regex manager above) installs and upgrades Flux itself. Its chart lives on ghcr.io, which gives Renovate no release date for it, and a release with no date never clears the repository-wide wait, so no update was proposed after 0.50.0 (#4985, the same cause as #4754). minimumReleaseAge is therefore 0 days. Raising the PR adopts nothing: automerge is off whatever the update type, so every update is reviewed against the operator's release notes and the HelmRelease post-renderers before merge. Placed after the broad automerge rules so none of them can turn automerge back on.",
-      "matchPackageNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"],
+      "matchPackageNames": [
+        "ghcr.io/controlplaneio-fluxcd/charts/flux-operator"
+      ],
       "minimumReleaseAge": "0 days",
       "automerge": false
     },
@@ -383,17 +412,32 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "The Helm SDK is HARD-PINNED at v4.2.4 in every Go module here (scripts/render-helm-chart, scripts/tests/openbao-strategy-transition): they build the exact Helm the deployed Flux helm-controller embeds, so an offline render matches what production renders. scripts/build-controller-helm.sh refuses any other version or module sum, so a standalone update can never go green, and closing it only delays the next offer (#4424, #4731, tracked in #4738). The version moves with the controller instead: when a Flux update changes the embedded Helm, update this pattern, the version and sum in scripts/build-controller-helm.sh, its expected build metadata, HELM_VERSION in .github/workflows/ci.yaml, scripts/guard-helm-post-renderers.sh and both go.mod files in one reviewed change. scripts/tests/test-controller-helm-sdk-renovate-pin.sh fails when this pattern and the build guard disagree. Placed last so no earlier rule can widen it.",
+      "description": "The Helm SDK is HARD-PINNED at v4.3.1 in every Go module here (scripts/render-helm-chart, scripts/tests/openbao-strategy-transition): they build the exact Helm the deployed Flux helm-controller embeds, so an offline render matches what production renders. scripts/build-controller-helm.sh refuses any other version or module sum, so a standalone update can never go green, and closing it only delays the next offer (#4424, #4731, tracked in #4738). The version moves with the controller instead: when a Flux update changes the embedded Helm, update this pattern, the version and sum in scripts/build-controller-helm.sh, its expected build metadata, HELM_VERSION in .github/workflows/ci.yaml, scripts/guard-helm-post-renderers.sh and both go.mod files in one reviewed change. scripts/tests/test-controller-helm-sdk-renovate-pin.sh fails when this pattern and the build guard disagree. Placed last so no earlier rule can widen it.",
       "matchManagers": ["gomod"],
       "matchPackageNames": ["helm.sh/helm/v4"],
-      "allowedVersions": "/^v?4\\.2\\.4$/",
+      "allowedVersions": "/^v?4\\.3\\.1$/",
       "automerge": false
     },
     {
       "description": "The Kopia reader (internal/backupcatalogue) replaces github.com/kopia/kopia with the exact project-velero/kopia commit the deployed Velero's own go.mod pins, so it reads the backup format production writes. That fork is pinned by pseudo-version, and semver ranks every v0.0.0 pseudo-version below every tag, so Renovate offers the older v0.19.0-velero.1 (February 2025, 390 commits behind the pin, December 2025) as a minor update with automerge on. Only a compile error stops that downgrade. github.com/kopia/kopia is covered too: the replacement means its require version is never the code we build, and Velero carries v0.16.0 beside this same replacement, so a bump would change nothing we run and make go.mod say something untrue. The pin moves with Velero instead: when a Velero bump changes the fork commit in its go.mod, change it here in one reviewed change. scripts/tests/test-velero-kopia-renovate-pin.sh fails once the replacement is no longer a pseudo-version, which is when this rule can go.",
       "matchManagers": ["gomod"],
-      "matchPackageNames": ["github.com/kopia/kopia", "github.com/project-velero/kopia"],
+      "matchPackageNames": [
+        "github.com/kopia/kopia",
+        "github.com/project-velero/kopia"
+      ],
       "enabled": false
+    },
+    {
+      "description": "The reversible controller profile admits exact Flux 2.9.6 while only Helm controller advances to 1.7.1. Keep update discovery enabled, but move this selector only with a reviewed native image/CRD and recovery audit.",
+      "matchPackageNames": ["fluxcd/flux2"],
+      "allowedVersions": "/^v?2\\.9\\.6$/",
+      "automerge": false
+    },
+    {
+      "description": "The signed Helm controller 1.7.1 override and its generated CRD are one reviewed profile. A new version needs the controller SDK/module sums, generated schema and native composition tests updated together.",
+      "matchPackageNames": ["ghcr.io/fluxcd/helm-controller"],
+      "allowedVersions": "/^v?1\\.7\\.1$/",
+      "automerge": false
     }
   ],
   "ignorePaths": [

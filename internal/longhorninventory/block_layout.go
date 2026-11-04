@@ -1,3 +1,4 @@
+// Package longhorninventory observes bounded file and block metadata for Longhorn inventories.
 package longhorninventory
 
 import (
@@ -13,6 +14,7 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/resources/block"
 )
 
+// BlockLayoutReport summarizes observed block layout metadata and its digest.
 type BlockLayoutReport struct {
 	VolumeStatuses, DiscoveredVolumes                           int
 	EphemeralPhase                                              string
@@ -26,6 +28,7 @@ type BlockLayoutReport struct {
 	Digest                                                      string
 }
 
+// ListBlockLayout compares two bounded block observations and reports their layout.
 func (n Native) ListBlockLayout(ctx context.Context) (BlockLayoutReport, error) {
 	ctx, cancel, err := n.requestContext(ctx)
 	if err != nil {

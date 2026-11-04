@@ -176,7 +176,11 @@ runs:
           sleep 10
         done
         last_err=$(printf '%s' "$last_err" | tr '\n' ' ')
-        echo "::error::Prod Kubernetes API (context admin@prod) failed its readiness probe after stable endpoint selection (last kubectl error: ${last_err}). Inspect the selected endpoint, network reachability, and API readiness, then diagnose any reported TLS, authentication, or authorization failure. Recover kubeconfig credentials only if that diagnosis confirms a credential failure; this Kubernetes probe does not test Talos credentials. See docs/dr/runbook.md → 'Endpoint selection during ordinary deployments' and, for confirmed credential failures, 'Credential refresh after a full rebuild'."
+        printf '%s%s%s%s\n' \
+          "::error::Prod Kubernetes API (context admin@prod) failed its readiness probe after stable endpoint selection (last kubectl error: ${last_err}). " \
+          "Inspect the selected endpoint, network reachability, and API readiness, then diagnose any reported TLS, authentication, or authorization failure. " \
+          "Recover kubeconfig credentials only if that diagnosis confirms a credential failure; this Kubernetes probe does not test Talos credentials. " \
+          "See docs/dr/runbook.md → 'Endpoint selection during ordinary deployments' and, for confirmed credential failures, 'Credential refresh after a full rebuild'."
         exit 1
 
     - name: 🧱 Register and verify the Talos Image Factory schematic

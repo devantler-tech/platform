@@ -64,7 +64,7 @@ jobs:
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: devantler-tech
+          # The pinned action defaults owner to this repository's owner.
           repositories: wedding-app
           permission-packages: read
 

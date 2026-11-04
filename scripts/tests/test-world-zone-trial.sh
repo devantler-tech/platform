@@ -245,9 +245,7 @@ fi
 bash "${root}/scripts/tests/test-world-zone-signatures.sh"
 subject="$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "${trial}/oci-repository.yaml")"
 [[ "${subject}" == "$(yq -r '.spec.attestors[] | select(.name == "publishwarzone") | .cosign.keyless.identities[0].subjectRegExp' "${policy}")" ]] || fail 'OCI and admission signer identities must agree'
-artifact_filter="$(yq -r '.spec.ref.semverFilter' "${trial}/oci-repository.yaml")"
-[[ '0.115.1' =~ ${artifact_filter} && ! '0.115.1-rc.1' =~ ${artifact_filter} ]] || fail 'the actual unprefixed stable manifest tags must pass discovery'
-[[ "$(yq -r '.spec.ref.semver' "${trial}/oci-repository.yaml")" == '>=0.115.1' ]] || fail 'packages with the tenant-owned standard NetworkPolicy must remain excluded'
+[[ "$(yq -o=json -I=0 '.spec.ref' "${trial}/oci-repository.yaml")" == '{"digest":"sha256:41734486d53261dcc8a75bdd7736b003f09b471f3d660806f5c631abe9d4e0d8"}' ]] || fail 'the private trial must use only the audited immutable artifact'
 
 printf 'PASS: trial budget, retained cleanup, isolation, public registry, exact exception and Vault bounds; 7 controls + %d ablations\n' "${ablations}"
 printf 'PASS: private prod-only zone trial, scoped operator grant and stable release signer boundaries\n'

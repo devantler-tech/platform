@@ -18,6 +18,7 @@ import (
 	"time"
 )
 
+// Policy bounds the endpoint, object prefix, request count and response bytes for reads.
 type Policy struct {
 	Endpoint, Bucket, Prefix   string
 	MaxRequests                int
@@ -53,6 +54,7 @@ type ReadTransport struct {
 	operations    int
 }
 
+// NewReadTransport constructs a read transport within the supplied policy bounds.
 func NewReadTransport(ctx context.Context, p Policy, base http.RoundTripper) (*ReadTransport, error) {
 	u, err := url.Parse(p.Endpoint)
 	if ctx == nil || base == nil || err != nil || u.Scheme != "https" || !r2Host.MatchString(u.Host) ||
@@ -166,6 +168,7 @@ func (g *ReadTransport) signalLocked() {
 	g.changed = make(chan struct{})
 }
 
+// RoundTrip validates and performs one request within the transport's read policy.
 func (g *ReadTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if !g.allowed(r) || !contextActive(r.Context()) {
 		return nil, g.hold()
@@ -282,6 +285,7 @@ func (g *ReadTransport) Err() error {
 	return nil
 }
 
+// Close cancels the transport's bounded read context.
 func (g *ReadTransport) Close() { g.cancel() }
 
 func (g *ReadTransport) beginOperation(ctx context.Context) error {

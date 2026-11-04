@@ -30,7 +30,7 @@ func nativeKubectlDependency(steps, authorization []nativeCIStep) error {
 	}
 	installed, native := -1, -1
 	for index, step := range steps {
-		if strings.TrimSpace(step.Run) == "go test -parallel 8 -timeout 20m ./..." {
+		if strings.TrimSpace(step.Run) == `bash scripts/run-go-regressions.sh "$PARTITION"` {
 			native = index
 		}
 		if step.Env["KUBECTL_VERSION"] != approved["KUBECTL_VERSION"] || step.Env["KUBECTL_SHA256"] != approved["KUBECTL_SHA256"] {
@@ -49,7 +49,8 @@ func nativeKubectlDependency(steps, authorization []nativeCIStep) error {
 	return nil
 }
 
-func TestNativeSuiteInstallsTheApprovedKubectlFirst(t *testing.T) {
+func nativeCISteps(t *testing.T) ([]nativeCIStep, []nativeCIStep) {
+	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -60,8 +61,11 @@ func TestNativeSuiteInstallsTheApprovedKubectlFirst(t *testing.T) {
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatal(err)
 	}
-	steps := workflow.Jobs["validate-go-regressions"].Steps
-	authorization := workflow.Jobs["validate-eks-authorization"].Steps
+	return workflow.Jobs["validate-go-regressions"].Steps, workflow.Jobs["validate-eks-authorization"].Steps
+}
+
+func TestNativeSuiteInstallsTheApprovedKubectlFirst(t *testing.T) {
+	steps, authorization := nativeCISteps(t)
 	if err := nativeKubectlDependency(steps, authorization); err != nil {
 		t.Fatal(err)
 	}

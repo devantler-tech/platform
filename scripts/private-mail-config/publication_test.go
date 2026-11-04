@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +48,11 @@ func publicationFixture(t *testing.T) assetPublicationFixture {
 	write(filepath.Join(assetDir, "webui-pins.json"), string(pins), 0644)
 	write(filepath.Join(f.root, "asset-source"), "verified admin asset fixture\n", 0644)
 	write(filepath.Join(f.root, "license-source"), "fixture license\n", 0644)
+	proxyLicense, err := os.ReadFile("testdata/caddy-v2.11.7-LICENSE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(f.root, "proxy-license-source"), string(proxyLicense), 0644)
 	write(filepath.Join(f.bin, "go"), `#!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
@@ -84,6 +91,8 @@ case "$url" in
     if [ "${FAKE_DOWNLOAD_BAD:-}" = zip ]; then printf 'altered' >"$output"; else cp "$ASSET_FIXTURE_ROOT/asset-source" "$output"; fi ;;
   https://raw.githubusercontent.com/stalwartlabs/webui/v1.0.11/LICENSES/AGPL-3.0-only.txt)
     if [ "${FAKE_DOWNLOAD_BAD:-}" = license ]; then printf 'altered' >"$output"; else cp "$ASSET_FIXTURE_ROOT/license-source" "$output"; fi ;;
+  https://raw.githubusercontent.com/caddyserver/caddy/v2.11.7/LICENSE)
+    if [ "${FAKE_DOWNLOAD_BAD:-}" = caddy-license ]; then printf 'altered' >"$output"; else cp "$ASSET_FIXTURE_ROOT/proxy-license-source" "$output"; fi ;;
   *) exit 65 ;;
 esac
 `, 0755)
@@ -135,12 +144,16 @@ func TestBothPublicationPathsStageTheAdministrationArtifacts(t *testing.T) {
 					t.Fatalf("publication did not stage the required administration artifact %s", name)
 				}
 			}
+			proxyLicense, err := os.ReadFile(filepath.Join(f.runner, "private-mail-build", "caddy.LICENSE"))
+			if err != nil || fmt.Sprintf("%x", sha256.Sum256(proxyLicense)) != "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30" {
+				t.Fatal("publication did not stage the checksum-verified proxy license")
+			}
 		})
 	}
 }
 
 func TestAssetStagingRefusesAlteredDownloadsWithoutPublishedFiles(t *testing.T) {
-	for _, bad := range []string{"zip", "license"} {
+	for _, bad := range []string{"zip", "license", "caddy-license"} {
 		t.Run(bad, func(t *testing.T) {
 			f := publicationFixture(t)
 			output := filepath.Join(f.runner, "private-mail-build")
@@ -150,7 +163,7 @@ func TestAssetStagingRefusesAlteredDownloadsWithoutPublishedFiles(t *testing.T) 
 			if _, err := f.run(`bash scripts/private-mail-config/stage-webui.sh "$RUNNER_TEMP/private-mail-build"`, "FAKE_DOWNLOAD_BAD="+bad); err == nil {
 				t.Fatal("altered administration download was staged successfully")
 			}
-			for _, name := range []string{"webui.zip", "webui.LICENSE", "webui.SOURCE"} {
+			for _, name := range []string{"webui.zip", "webui.LICENSE", "webui.SOURCE", "caddy.LICENSE"} {
 				if _, err := os.Lstat(filepath.Join(output, name)); !os.IsNotExist(err) {
 					t.Fatal("a rejected download left a published administration artifact")
 				}
@@ -164,7 +177,7 @@ func TestAssetStagingRefusesAlteredDownloadsWithoutPublishedFiles(t *testing.T) 
 }
 
 func TestAssetStagingPreservesExistingBuildArtifacts(t *testing.T) {
-	for _, existing := range []string{"webui.zip", "webui.LICENSE", "webui.SOURCE"} {
+	for _, existing := range []string{"webui.zip", "webui.LICENSE", "webui.SOURCE", "caddy.LICENSE"} {
 		t.Run(existing, func(t *testing.T) {
 			f := publicationFixture(t)
 			output := filepath.Join(f.runner, "private-mail-build")
@@ -182,7 +195,7 @@ func TestAssetStagingPreservesExistingBuildArtifacts(t *testing.T) {
 			if err != nil || string(got) != "pre-existing artifact\n" {
 				t.Fatal("existing artifact contents changed")
 			}
-			for _, name := range []string{"webui.zip", "webui.LICENSE", "webui.SOURCE"} {
+			for _, name := range []string{"webui.zip", "webui.LICENSE", "webui.SOURCE", "caddy.LICENSE"} {
 				if name != existing {
 					if _, err := os.Lstat(filepath.Join(output, name)); !os.IsNotExist(err) {
 						t.Fatal("refused output reuse left new publication artifacts")

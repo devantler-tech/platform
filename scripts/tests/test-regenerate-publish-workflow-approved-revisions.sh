@@ -188,24 +188,23 @@ check() {
 
 
   # A10 — each token reaches exactly its own half.
-  # create-github-app-token given neither `owner` nor `repositories` mints a token
-  # scoped to the repository the job runs in, so every consumer read would 404 and
-  # the generator would refuse on the pin half — a permanently red daily run. The
+  # The pinned action defaults an omitted owner to GITHUB_REPOSITORY_OWNER and
+  # preserves explicit repositories. Omitting repositories would instead select
+  # only the current repository, so every consumer read would 404. The
   # expected consumer set is read from the data file, so adding a consumer there
   # without adding it here fails this check rather than failing in production.
   # The write token must NOT name a consumer: one token carries one permission set,
   # so a consumer listed there would inherit contents/pull-requests write.
-  local read_scoped write_scoped consumers consumer missing leaked
-  [ -n "$(q "$f" ".jobs.regenerate.steps[${read_token_idx}].with.owner")" ] ||
-    { printf 'VIOLATION A10: the consumer-read token names no owner, so it cannot be scoped past this repository\n'; return 1; }
-  [ -n "$(q "$f" ".jobs.regenerate.steps[${write_token_idx}].with.owner")" ] ||
-    { printf 'VIOLATION A10: the platform-write token names no owner\n'; return 1; }
-  read_scoped=" $(q "$f" ".jobs.regenerate.steps[${read_token_idx}].with.repositories" | tr '\n' ' ') "
+  local read_scoped write_scoped consumers consumer missing leaked read_repositories
+  [ "$(yq -r ".jobs.regenerate.steps[${read_token_idx}].with | has(\"owner\")" "$f")" = false ] ||
+    { printf 'VIOLATION A10: the consumer-read token must use the current repository owner default\n'; return 1; }
+  [ "$(yq -r ".jobs.regenerate.steps[${write_token_idx}].with | has(\"owner\")" "$f")" = false ] ||
+    { printf 'VIOLATION A10: the platform-write token must use the current repository owner default\n'; return 1; }
+  read_repositories="$(q "$f" ".jobs.regenerate.steps[${read_token_idx}].with.repositories")"
+  read_scoped=" $(printf '%s' "$read_repositories" | tr '\n' ' ') "
   write_scoped=" $(q "$f" ".jobs.regenerate.steps[${write_token_idx}].with.repositories" | tr '\n' ' ') "
-  case "${write_scoped}" in
-    *' platform '*) ;;
-    *) printf 'VIOLATION A10: the write token omits platform, so it cannot push the branch or open the pull request\n'; return 1 ;;
-  esac
+  [ "$(q "$f" ".jobs.regenerate.steps[${write_token_idx}].with.repositories")" = platform ] ||
+    { printf 'VIOLATION A10: the write token must name only platform\n'; return 1; }
   # Read the consumers one per LINE, and keep the loop in THIS shell. `for c in
   # $(…)` splits on whitespace rather than lines, and a pipeline would put the
   # loop in a subshell where the accumulated result is lost. A `case` inside a
@@ -230,6 +229,8 @@ check() {
     { printf 'VIOLATION A10: consumer(s) %sare in the approved set but not in the consumer-read token repositories list\n' "${missing}"; return 1; }
   [ -z "${leaked}" ] ||
     { printf 'VIOLATION A10: consumer(s) %sare in the WRITE token repositories list, which grants them contents/pull-requests write\n' "${leaked}"; return 1; }
+  [ "$(printf '%s\n' "$read_repositories" | LC_ALL=C sort)" = "$(printf '%s\n' "$consumers" | LC_ALL=C sort)" ] ||
+    { printf 'VIOLATION A10: the consumer-read token must name exactly the approved consumer repositories\n'; return 1; }
 
   # A11 — ONE pull request even across refs. The pushed branch is fixed, so a
   # dispatch from another ref and the scheduled run on the default branch contend
@@ -408,7 +409,12 @@ ablate A9 'pull request on always()'         '(.jobs.regenerate.steps[] | select
 ablate A9 'guard step removed'               'del(.jobs.regenerate.steps[] | select(.run // "" | contains("guard-publish-workflow-approved-revisions.sh")))'
 ablate A9 'guard moved after the pull request' '.jobs.regenerate.steps = ([.jobs.regenerate.steps[] | select((.run // "" | contains("guard-publish-workflow-approved-revisions.sh")) | not)] + [.jobs.regenerate.steps[] | select(.run // "" | contains("guard-publish-workflow-approved-revisions.sh"))])'
 ablate A10 'token repositories removed'      '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with) |= del(.repositories)'
-ablate A10 'token owner removed'             '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with) |= del(.owner)'
+ablate A10 'read token owner changed'        '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.owner) = "other-owner"'
+ablate A10 'write token owner changed'       '(.jobs.regenerate.steps[] | select(.id == "app-token") | .with.owner) = "other-owner"'
+ablate A10 'read repositories empty'         '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.repositories) = ""'
+ablate A10 'write repositories empty'        '(.jobs.regenerate.steps[] | select(.id == "app-token") | .with.repositories) = ""'
+ablate A10 'extra unregistered read target'  '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.repositories) += "unregistered-repository\n"'
+ablate A10 'extra unregistered write target' '(.jobs.regenerate.steps[] | select(.id == "app-token") | .with.repositories) += "unregistered-repository\n"'
 ablate A10 'one consumer dropped from scope' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with.repositories) = "platform\n.github\naws\nwedding-app\n"'
 ablate A11 'concurrency keyed on the ref'    '.concurrency.group = "${{ github.workflow }}-${{ github.ref }}"'
 ablate A11 'pull-request base removed'       '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with) |= del(.base)'
@@ -491,4 +497,4 @@ mkdir -p "${checkout}"
   fi
 )
 
-printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 59 ablations + change-detection cases passed\n'
+printf 'test-regenerate-publish-workflow-approved-revisions: control, scope refusals, ablations and change-detection cases passed\n'

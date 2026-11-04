@@ -29,6 +29,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
 # above fails the build if that package is ever compiled in. The list must match exactly: another
 # advisory fails the build, and so does an empty list, because that means the report was not read
 # or a record needs removing here.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
     && timeout 600s govulncheck ./cmd/background-controller \
     && timeout 300s govulncheck -mode=binary -format json /out/background-controller > /tmp/binary-scan.json \
@@ -40,5 +41,6 @@ RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
     && test "$(tr '\n' ' ' < /tmp/binary-findings)" = 'GO-2025-3615 GO-2026-5337 GO-2026-5594 GO-2026-5932 '
 
 FROM reg.kyverno.io/kyverno/background-controller:v1.19.2@sha256:c46e124f21ef8a6bb4b48de57106808b1007edcd5ddd4ff7df5d23b9efa60ce2
+USER 65532
 COPY --from=builder --chmod=0755 /out/background-controller /ko-app/background-controller
 RUN ["/ko-app/background-controller", "--help"]

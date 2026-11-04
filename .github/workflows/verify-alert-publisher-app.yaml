@@ -4,6 +4,7 @@ name: Verify Alert Publisher App
 # GitHub metadata, mints one repository-scoped token, then revokes that token.
 # It never runs the publisher state machine or creates an incident/ask.
 on:
+  # checkov:skip=CKV_GHA_7:The confirmation is a required read-only operational safety interlock; reviewed source revisions remain pinned and no product build is published.
   workflow_dispatch:
     inputs:
       confirm:

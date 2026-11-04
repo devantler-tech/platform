@@ -14,5 +14,6 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
     -o /out/reports-controller ./cmd/reports-controller
 
 FROM reg.kyverno.io/kyverno/reports-controller:v1.19.2@sha256:5fb6d3e738050dbce84f60ecabaede7665fbe0578d07c1e8c912443b035e79c3
+USER 65532
 COPY --from=builder --chmod=0755 /out/reports-controller /ko-app/reports-controller
 RUN ["/ko-app/reports-controller", "--help"]

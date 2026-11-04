@@ -1,3 +1,4 @@
+// Package main audits the platform's storage retention configuration.
 package main
 
 import (

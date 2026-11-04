@@ -57,7 +57,7 @@ func bootstrapInputs(t *testing.T) string {
 
 // This actual child process deliberately never opens management. The parent
 // must stop and collect it when startup fails or cancellation arrives.
-func TestOwnedBootstrapChild(t *testing.T) {
+func TestOwnedBootstrapChild(_ *testing.T) {
 	if os.Getenv("STALWART_RECOVERY_MODE") != "1" {
 		return
 	}

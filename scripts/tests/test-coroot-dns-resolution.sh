@@ -11,9 +11,11 @@ for tool in docker go kyverno yq; do
   command -v "${tool}" >/dev/null || { printf '%s is required\n' "${tool}" >&2; exit 1; }
 done
 
+# Materialize the admission input only for the test; the golden is not a workload.
+cp "${root_dir}/scripts/tests/fixtures/coroot-dns-probe/pod.yaml.golden" "${scratch}/pod.yaml"
 # Exercise admission, then feed its effective option to both real resolvers.
 kyverno apply "${policy}" \
-  --resource "${root_dir}/scripts/tests/fixtures/coroot-dns-probe/pod.yaml" \
+  --resource "${scratch}/pod.yaml" \
   --output "${scratch}/mutated.yaml" --remove-color
 ndots="$(yq -er '.spec.dnsConfig.options[] | select(.name == "ndots") | .value' "${scratch}/mutated.yaml")"
 CGO_ENABLED=0 GOOS=linux go build -o "${scratch}/probe" \

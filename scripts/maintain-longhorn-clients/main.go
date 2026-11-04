@@ -1,3 +1,4 @@
+// Package main maintains Longhorn client placement within reviewed migration bounds.
 package main
 
 import (

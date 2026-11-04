@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -87,6 +88,22 @@ func TestMain(m *testing.M) {
 	case "gh":
 		code = fakeGh(os.Args[1:])
 	default:
+		// Shared Go jobs omit -parallel. Use the same bounded eight workers
+		// as run-go-regressions.sh, while preserving an explicit diagnostic
+		// limit and every existing package/command deadline. Fake commands
+		// above retain their own CLI arguments without test flag parsing.
+		flag.Parse()
+		explicitParallelism := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "test.parallel" {
+				explicitParallelism = true
+			}
+		})
+		if !explicitParallelism {
+			if err := flag.Set("test.parallel", "8"); err != nil {
+				panic(err)
+			}
+		}
 		cleanup := prepareFakeCommandBinary()
 		code = m.Run()
 		cleanup()

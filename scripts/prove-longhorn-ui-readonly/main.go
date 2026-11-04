@@ -1,3 +1,4 @@
+// Package main verifies the read-only Longhorn UI path.
 package main
 
 import (

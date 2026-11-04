@@ -3,6 +3,10 @@ kind: StatefulSet
 metadata:
   name: private-mail
   namespace: private-mail
+  annotations:
+    checkov.io/skip1: "CKV_K8S_25=[runtime-premise] the exact Stalwart image requires NET_BIND_SERVICE in its bounding set for its effective file capability; every other capability is dropped"
+    checkov.io/skip2: "CKV_K8S_40=[runtime-premise] UID/GID 2000 is the exact Stalwart image's baked identity; internal/trivyruntimedispositions binds the image, sole container and complete execution contract"
+    checkov.io/skip3: "CKV_K8S_35=[runtime-premise] the exact Stalwart recovery API reads STALWART_RECOVERY_ADMIN from ENV; only its single ESO-owned SecretKeyRef and exact source mapping are admitted"
   labels:
     # A single management-only preparation instance owns its local datastore.
     # Public mail activation must separately establish its availability model.

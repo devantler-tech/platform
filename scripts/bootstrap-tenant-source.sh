@@ -11,7 +11,7 @@ source "$BOOTSTRAP_DIR/tenant-publication-binding.lib.sh"
 canonical_bootstrap_admission() (
   set -euo pipefail
   trap - EXIT
-  local admission_root="$REPO_ROOT" tag='' source_sha='' digest='' seen=':' option output receipt graph_hash previous record state date previous_exists=0 current_record
+  local admission_root="$REPO_ROOT" tag='' source_sha='' digest='' seen=':' option bindings_destination receipt graph_hash previous record state date previous_exists=0 current_record
   while [ "$#" -gt 0 ]; do
     option="$1"
     case "$seen" in *":$option:"*) return 2 ;; esac
@@ -29,10 +29,10 @@ canonical_bootstrap_admission() (
   [[ "$tag" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]] && is_sha "$source_sha" && is_digest "$digest" || return 2
   [ -n "${PUBLISH_KUBE_CONTEXT:-}" ] || return 2
   admission_root="$(cd "$admission_root" && pwd -P)" || return 2
-  output="$admission_root/scripts/canonical-tenant-source-bindings.json"
-  [ ! -L "$output" ] || return 1
-  [ -z "${CANONICAL_TENANT_BINDINGS_FILE:-}" ] || [ "$CANONICAL_TENANT_BINDINGS_FILE" = "$output" ] || return 2
-  [ ! -e "$output" ] || previous_exists=1
+  bindings_destination="$admission_root/scripts/canonical-tenant-source-bindings.json"
+  [ ! -L "$bindings_destination" ] || return 1
+  [ -z "${CANONICAL_TENANT_BINDINGS_FILE:-}" ] || [ "$CANONICAL_TENANT_BINDINGS_FILE" = "$bindings_destination" ] || return 2
+  [ ! -e "$bindings_destination" ] || previous_exists=1
   previous="$(unset CANONICAL_TENANT_BINDINGS_FILE; canonical_tenant_bindings "$admission_root")" || return 1
   if [ "$previous_exists" = 1 ] && [ "$(printf '%s\n' "$previous" | jq '.bindings|length')" = 0 ]; then
     echo 'existing empty registry is not an admission; refusing to claim unchanged output' >&2
@@ -78,18 +78,18 @@ canonical_bootstrap_admission() (
   # concurrently changed/observed record, or move a temporary file into a
   # destination that became a directory.
   if [ "$previous_exists" = 1 ]; then
-    current_record="$(CANONICAL_TENANT_BINDINGS_FILE="$output" canonical_tenant_bindings "$admission_root")" || return 1
+    current_record="$(CANONICAL_TENANT_BINDINGS_FILE="$bindings_destination" canonical_tenant_bindings "$admission_root")" || return 1
     [ "$current_record" = "$previous" ] || return 1
     echo 'canonical source admission unchanged after fresh verification; application reconciliation remains disabled'
     return 0
   fi
   # Exclusive same-filesystem creation: link(1) never follows a destination
   # directory or overwrites any conflicting file/symlink appearing after the read.
-  canonical_bootstrap_output="$(mktemp "${output}.XXXXXX")" || return 1
+  canonical_bootstrap_output="$(mktemp "${bindings_destination}.XXXXXX")" || return 1
   trap 'rm -rf "$canonical_bootstrap_work"; rm -f "${canonical_bootstrap_output:-}"' EXIT
   cp "$canonical_bootstrap_work/candidate.json" "$canonical_bootstrap_output"
   chmod 0644 "$canonical_bootstrap_output"
-  link "$canonical_bootstrap_output" "$output" || return 1
+  link "$canonical_bootstrap_output" "$bindings_destination" || return 1
   rm "$canonical_bootstrap_output"
   echo 'canonical source admission candidate generated; review required; application reconciliation remains disabled'
 )
@@ -204,7 +204,8 @@ bootstrap_tenant_source() (
     }
     return 0
   fi
-  local source_root="$REPO_ROOT" source_file='' tag='' output="$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json"
+  # OUTPUT is the sourced approval ledger; this separate path holds the candidate.
+  local source_root="$REPO_ROOT" source_file='' tag='' publication_output="$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json"
   while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || {
       echo 'expected --source-file, --tag, --source-root or --output and a value' >&2
@@ -214,7 +215,7 @@ bootstrap_tenant_source() (
     --source-file) source_file="$2" ;;
     --tag) tag="$2" ;;
     --source-root) source_root="$2" ;;
-    --output) output="$2" ;;
+    --output) publication_output="$2" ;;
     *)
       echo 'unknown bootstrap argument' >&2
       return 2
@@ -230,7 +231,7 @@ bootstrap_tenant_source() (
   case "/$source_file/" in *'/../'* | *'/./'* | *'//'*) return 2 ;; esac
   source_root="$(cd "$source_root" && pwd -P)" || return 2
   [ "$(realpath "$source_root/$source_file" 2>/dev/null)" = "$source_root/$source_file" ] || return 2
-  [ ! -L "$output" ] || return 2
+  [ ! -L "$publication_output" ] || return 2
   # This is a FIRST-consumer path, never an alternative to ordinary observation.
   [ -r "$OUTPUT" ] && [ ! -L "$OUTPUT" ] || return 1
   [ "$(head -n1 "$OUTPUT")" = "$HEADER" ] || return 1
@@ -359,8 +360,8 @@ bootstrap_tenant_source() (
     rm -rf "$work"
     return 1
   }
-  if [ -e "$output" ]; then
-    previous="$(read_bound_publications "$source_root" "$output")" || {
+  if [ -e "$publication_output" ]; then
+    previous="$(read_bound_publications "$source_root" "$publication_output")" || {
       rm -rf "$work"
       return 1
     }
@@ -375,7 +376,7 @@ bootstrap_tenant_source() (
     return 0
   fi
   local staged
-  staged="$(mktemp "${output}.tmp.XXXXXX")" || {
+  staged="$(mktemp "${publication_output}.tmp.XXXXXX")" || {
     rm -rf "$work"
     return 1
   }
@@ -386,7 +387,7 @@ bootstrap_tenant_source() (
   chmod 0644 "$staged"
   # POSIX link creates this exact destination atomically. Unlike ln, it cannot
   # interpret a concurrently created directory (or directory symlink) as a target.
-  link "$staged" "$output" || {
+  link "$staged" "$publication_output" || {
     rm -f "$staged"
     return 1
   }

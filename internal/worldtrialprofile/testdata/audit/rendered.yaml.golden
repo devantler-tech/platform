@@ -1,0 +1,179 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: world-at-ruin-zone
+spec:
+  ports:
+  - name: zone-tls
+    port: 8443
+    targetPort: zone-tls
+  selector:
+    app.kubernetes.io/name: world-at-ruin-zone
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: world-at-ruin-zone
+    platform.devantler.tech/replica-floor: exempt
+  name: world-at-ruin-zone
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: world-at-ruin-zone
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: world-at-ruin-zone
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - args:
+        - -listen
+        - :8443
+        - -allocation-id
+        - operator-trial
+        - -tls-cert
+        - /credentials/tls.crt
+        - -tls-key
+        - /credentials/tls.key
+        env:
+        - name: WAR_ZONE_ADMISSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              key: secret
+              name: world-at-ruin-zone-admission
+        image: ghcr.io/devantler-tech/world-at-ruin/zone@sha256:23a0bb22aecf44356bd441a0c6998fcd10e688979d2756dadc3ad4f5131eaad7
+        livenessProbe:
+          exec:
+            command:
+            - /zoneprobe
+            - -tls-only
+            - -url
+            - wss://127.0.0.1:8443/zone
+            - -tls-server-name-file
+            - /credentials/tls.crt
+            - -timeout
+            - 1500ms
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 2
+        name: world-at-ruin
+        ports:
+        - containerPort: 8443
+          name: zone-tls
+        readinessProbe:
+          exec:
+            command:
+            - /zoneprobe
+            - -tls-only
+            - -url
+            - wss://127.0.0.1:8443/zone
+            - -tls-server-name-file
+            - /credentials/tls.crt
+            - -timeout
+            - 1500ms
+          periodSeconds: 5
+          timeoutSeconds: 2
+        resources:
+          limits:
+            cpu: 500m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /credentials
+          name: tls
+          readOnly: true
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: world-at-ruin
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: tls
+        secret:
+          defaultMode: 288
+          secretName: world-at-ruin-zone-tls
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: world-at-ruin-zone
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: world-at-ruin-zone
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: world-at-ruin-zone-admission
+spec:
+  data:
+  - remoteRef:
+      key: apps/world-at-ruin/admission
+      property: secret
+    secretKey: secret
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: world-at-ruin
+  target:
+    creationPolicy: Owner
+    name: world-at-ruin-zone-admission
+---
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: world-at-ruin-zone-admission
+spec:
+  data:
+  - match:
+      remoteRef:
+        property: secret
+        remoteKey: apps/world-at-ruin/admission
+      secretKey: password
+  deletionPolicy: None
+  refreshInterval: 1h
+  secretStoreRefs:
+  - kind: SecretStore
+    name: world-at-ruin
+  selector:
+    generatorRef:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      name: world-at-ruin-zone-admission
+  updatePolicy: IfNotExists
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: world-at-ruin-zone-admission
+spec:
+  allowRepeat: true
+  digits: 0
+  length: 64
+  noUpper: true
+  symbolCharacters: 0123456789abcdef
+  symbols: 64

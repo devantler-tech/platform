@@ -135,9 +135,9 @@ func TestNativeTLSAndCertificateReload(t *testing.T) {
 		}
 	})
 	endpoint := fmt.Sprintf("https://127.0.0.1:%d/v1/sys/health", tlsPort)
-	client := func(servername string, roots *x509.CertPool, min, max uint16) *http.Client {
+	client := func(servername string, roots *x509.CertPool, minimum, maximum uint16) *http.Client {
 		return &http.Client{Timeout: time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{
-			RootCAs: roots, ServerName: servername, MinVersion: min, MaxVersion: max,
+			RootCAs: roots, ServerName: servername, MinVersion: minimum, MaxVersion: maximum,
 		}, DisableKeepAlives: true}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	readHealth := func(c *http.Client) (int64, error) {
@@ -145,7 +145,7 @@ func TestNativeTLSAndCertificateReload(t *testing.T) {
 		if err != nil {
 			return 0, err
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		_, _ = io.Copy(io.Discard, response.Body)
 		if response.StatusCode != 501 || response.TLS == nil || len(response.TLS.PeerCertificates) == 0 {
 			return 0, fmt.Errorf("unexpected native empty-store health response")

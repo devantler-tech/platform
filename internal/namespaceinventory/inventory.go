@@ -13,12 +13,14 @@ import (
 	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
+// Binding records an observed namespace object's identity.
 type Binding struct{ Name, Namespace, UID, Kind string }
 
-// Bindings remain private until a caller explicitly copies them into its private
+// Inventory keeps bindings private until a caller explicitly copies them into its
 // journal. Default JSON serialization never publishes object identities.
 type Inventory struct{ bindings map[string]Binding }
 
+// Bindings returns a UID-sorted copy of the inventory's private bindings.
 func (i Inventory) Bindings() []Binding {
 	result := make([]Binding, 0, len(i.bindings))
 	for _, binding := range i.bindings {

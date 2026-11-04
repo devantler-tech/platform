@@ -1,3 +1,4 @@
+// Package main observes Longhorn namespace inventory and backup coverage.
 package main
 
 import (

@@ -1,3 +1,4 @@
+// Package main validates the platform's break-glass workflow constraints.
 package main
 
 import (

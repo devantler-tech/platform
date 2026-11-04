@@ -19,13 +19,16 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// ReplicaRoot is the fixed directory observed for replica inventories.
 const ReplicaRoot = "/var/lib/longhorn/replicas"
 
+// Files provides the native streaming file-list and file-read operations.
 type Files interface {
 	List(context.Context, *machine.ListRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[machine.FileInfo], error)
 	Read(context.Context, *machine.ReadRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[common.Data], error)
 }
 
+// Native observes file and block metadata on one selected node.
 type Native struct {
 	API    Files
 	Target string
@@ -55,6 +58,7 @@ func active(ctx context.Context) bool {
 	return bounded && ctx.Err() == nil && time.Now().Before(deadline)
 }
 
+// ListReplicas lists immediate children of the fixed replica directory.
 func (n Native) ListReplicas(ctx context.Context) (Listing, error) {
 	return n.listFixedRoot(ctx, ReplicaRoot)
 }

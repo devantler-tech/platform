@@ -21,13 +21,17 @@ on:
     branches: [main]
     paths:
       - "**/*.go"
+      - "**/*.go.tmpl"
       - "**/go.mod"
+      - "**/go.mod.tmpl"
       - "**/go.sum"
       - "**/.govulncheck-allow.txt"
       - scripts/go-vulnerability-modules.tsv
       - scripts/check-go-vulnerability-inventory.sh
+      - scripts/check-go-negative-control.sh
       - scripts/judge-go-vulnerability-scan.sh
       - scripts/tests/test-check-go-vulnerability-inventory.sh
+      - scripts/tests/test-go-negative-control.sh
       - scripts/tests/test-judge-go-vulnerability-scan.sh
       - .github/workflows/scan-go-vulnerabilities.yaml
   schedule:
@@ -68,8 +72,10 @@ jobs:
         run: |
           set -euo pipefail
           shellcheck scripts/check-go-vulnerability-inventory.sh scripts/judge-go-vulnerability-scan.sh \
+            scripts/check-go-negative-control.sh scripts/tests/test-go-negative-control.sh \
             scripts/tests/test-check-go-vulnerability-inventory.sh scripts/tests/test-judge-go-vulnerability-scan.sh
           bash scripts/tests/test-check-go-vulnerability-inventory.sh
+          bash scripts/tests/test-go-negative-control.sh
           bash scripts/tests/test-judge-go-vulnerability-scan.sh
 
       - name: 🧾 Require a row for every tracked Go module
@@ -99,6 +105,7 @@ jobs:
       # the public runner's 16 GB keeps a large module from getting the runner killed mid-scan.
       GOMEMLIMIT: 8GiB
       MODULE: ${{ matrix.directory }}
+      FACTORY: ${{ matrix.factory || 'module' }}
       EXPECT: ${{ matrix.expect }}
     steps:
       - name: 📄 Checkout
@@ -112,6 +119,15 @@ jobs:
         id: prepare
         run: |
           set -euo pipefail
+          case "$FACTORY" in
+            module) ;;
+            registered-negative-control)
+              test "$MODULE" = scripts/tests/fixtures/govulncheck-negative-control
+              MODULE="$(bash scripts/check-go-negative-control.sh --prepare-scan)"
+              ;;
+            *) echo 'Unknown Go module factory' >&2; exit 1 ;;
+          esac
+          printf 'directory=%s\n' "$MODULE" >>"$GITHUB_OUTPUT"
           report="$RUNNER_TEMP/govulncheck-report.json"
           rm -f -- "$report"
           printf 'report=%s\n' "$report" >>"$GITHUB_OUTPUT"
@@ -129,8 +145,8 @@ jobs:
         timeout-minutes: 30
         uses: devantler-tech/.github/.github/actions/govulncheck@0966f4b015e85ef14be37411d424a7028a858550 # v19.0.8
         with:
-          work-dir: ${{ matrix.directory }}
-          go-version-file: ${{ matrix.directory }}/go.mod
+          work-dir: ${{ steps.prepare.outputs.directory }}
+          go-version-file: ${{ steps.prepare.outputs.directory }}/go.mod
           allow-file: ${{ steps.prepare.outputs.allow }}
           output-file: ${{ steps.prepare.outputs.report }}
 
@@ -142,6 +158,7 @@ jobs:
           OUTCOME: ${{ steps.scan.outcome }}
           VERDICT: ${{ steps.scan.outputs.verdict }}
           REPORT: ${{ steps.prepare.outputs.report }}
+          MODULE: ${{ steps.prepare.outputs.directory }}
           # The Go release the scan set up for this module, never a downloaded one.
           GOTOOLCHAIN: local
         run: >-

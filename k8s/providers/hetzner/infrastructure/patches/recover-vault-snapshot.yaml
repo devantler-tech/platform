@@ -1,14 +1,21 @@
-# Re-run the existing one-shot snapshot after the CSI metadata-access repair.
-# A pod-template change makes Flux replace this immutable, force-enabled Job.
-# Retaining the completed Job (no TTL) prevents repeated volume attachments;
-# the daily CronJob remains the normal backup schedule.
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: vault-snapshot-init
-  namespace: openbao
-spec:
-  template:
-    metadata:
-      annotations:
-        backup.devantler.tech/recovery-id: "2026-09-08-csi-metadata"
+- op: test
+  path: /apiVersion
+  value: batch/v1
+- op: test
+  path: /kind
+  value: Job
+- op: test
+  path: /metadata/name
+  value: vault-snapshot-init
+- op: test
+  path: /metadata/namespace
+  value: openbao
+- op: test
+  path: /spec/template/metadata
+  value:
+    labels:
+      app: vault-snapshot
+- op: add
+  path: /spec/template/metadata/annotations
+  value:
+    backup.devantler.tech/recovery-id: "2026-09-08-csi-metadata"
