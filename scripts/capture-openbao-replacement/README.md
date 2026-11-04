@@ -16,7 +16,7 @@ workflow runs it in `preflight` mode and then runs both judges for the server it
 The expected servers and release come from the reviewed render, never from the cluster.
 
 | Exit | Line | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | 0 | `OPENBAO_REPLACEMENT_EVIDENCE=CAPTURED` | `health.json` and `quorum.json` are in `--out`, readable only by the owner. |
 | 2 | `OPENBAO_REPLACEMENT_EVIDENCE=UNVERIFIED stage=<stage>` | A read failed, so nothing was written. Invalid arguments also exit 2. |
 
