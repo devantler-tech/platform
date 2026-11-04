@@ -153,7 +153,7 @@ grep -qx 'rollout_required=false' "${scratch}/outputs"
 # artifact boundary. A standalone passing checker is not an enforced rollout.
 for workflow in .github/actions/deploy-prod/action.yml .github/workflows/dr-rebuild.yaml; do
   yq -o=json '.runs.steps // .jobs.rebuild.steps' "${root_dir}/${workflow}" |
-  jq -e '
+    jq -e '
     map(.id // "") as $ids |
     ($ids | index("longhorn_ui_baseline")) as $before |
     ($ids | index("publish_platform_manifest")) as $publish |

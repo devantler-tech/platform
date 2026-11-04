@@ -59,10 +59,14 @@ provider() {
 
 # --- Self-test: each verdict on a fixture, so a check that stopped matching
 # cannot pass the real render vacuously.
-{ provider upbound-provider-family-aws "${family}:v2.8.1"
-  provider provider-aws-iam "${member_prefix}iam:v2.8.1"; } >"${workdir}/equal.yaml"
-{ provider upbound-provider-family-aws "${family}:v2.8.1"
-  provider provider-aws-iam "${member_prefix}iam:v2.8.0"; } >"${workdir}/skewed.yaml"
+{
+  provider upbound-provider-family-aws "${family}:v2.8.1"
+  provider provider-aws-iam "${member_prefix}iam:v2.8.1"
+} >"${workdir}/equal.yaml"
+{
+  provider upbound-provider-family-aws "${family}:v2.8.1"
+  provider provider-aws-iam "${member_prefix}iam:v2.8.0"
+} >"${workdir}/skewed.yaml"
 provider provider-aws-iam "${member_prefix}iam:v2.8.1" >"${workdir}/no-family.yaml"
 provider upbound-provider-family-aws "${family}:v2.8.1" >"${workdir}/no-member.yaml"
 

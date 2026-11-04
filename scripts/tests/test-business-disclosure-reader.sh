@@ -9,7 +9,10 @@ readonly binary_dir
 trap 'rm -f "${binary_dir}/check"; rmdir "${binary_dir}"' EXIT
 (cd "${root_dir}" && GOTOOLCHAIN=local go build -o "${binary_dir}/check" ./scripts/check-business-disclosure-reader)
 
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 
 rendered="$(kubectl kustomize "${root_dir}/k8s/bases/infrastructure/vault-config")"
 config_script="$(yq -r '

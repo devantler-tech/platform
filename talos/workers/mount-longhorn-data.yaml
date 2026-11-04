@@ -1,3 +1,4 @@
+---
 # Longhorn on Talos requires kubelet extra mounts so the CSI driver can
 # access the host data directory.  Longhorn stores replicas under
 # /var/lib/longhorn on the root filesystem.

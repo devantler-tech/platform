@@ -3,7 +3,10 @@ set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)
 installer="${repo_root}/.github/scripts/setup-supply-chain-tools.sh"
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 [[ -f "${installer}" ]] || fail 'the digest-verified supply-chain installer is missing'
 
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/test-supply-chain-tools.XXXXXX")

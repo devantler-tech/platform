@@ -36,16 +36,40 @@ command -v yq >/dev/null 2>&1 || fail 'yq is required'
 # Prints the first violated assertion's name, or nothing when the workflow holds.
 violation() {
   local file="$1" gate report redeploy
-  [ "$(yq '.on | has("schedule")' "$file")" = true ] || { echo schedule; return; }
-  [ "$(yq '.on | has("workflow_dispatch")' "$file")" = true ] || { echo dispatch; return; }
+  [ "$(yq '.on | has("schedule")' "$file")" = true ] || {
+    echo schedule
+    return
+  }
+  [ "$(yq '.on | has("workflow_dispatch")' "$file")" = true ] || {
+    echo dispatch
+    return
+  }
   [ "$(yq '.on | (has("push") or has("pull_request") or has("merge_group"))' "$file")" = false ] ||
-    { echo event-triggers; return; }
-  [ "$(yq "${job}.concurrency.group" "$file")" = prod-deploy ] || { echo lock; return; }
-  [ "$(yq "${job}.concurrency.cancel-in-progress" "$file")" = false ] || { echo lock-cancel; return; }
-  [ "$(yq "${job}.concurrency.queue" "$file")" = max ] || { echo lock-queue; return; }
+    {
+      echo event-triggers
+      return
+    }
+  [ "$(yq "${job}.concurrency.group" "$file")" = prod-deploy ] || {
+    echo lock
+    return
+  }
+  [ "$(yq "${job}.concurrency.cancel-in-progress" "$file")" = false ] || {
+    echo lock-cancel
+    return
+  }
+  [ "$(yq "${job}.concurrency.queue" "$file")" = max ] || {
+    echo lock-queue
+    return
+  }
   [ "$(yq "[${preflight}.steps[] | select(.id == \"gate\" and .run == \"./scripts/prod-stranded-gate.sh\")] | length" "$file")" = 1 ] ||
-    { echo preflight-gate; return; }
-  [ "$(yq "${preflight} | has(\"concurrency\")" "$file")" = false ] || { echo preflight-unlocked; return; }
+    {
+      echo preflight-gate
+      return
+    }
+  [ "$(yq "${preflight} | has(\"concurrency\")" "$file")" = false ] || {
+    echo preflight-unlocked
+    return
+  }
   if [ "$(yq "${preflight}.permissions | length" "$file")" -lt 1 ] ||
     [ "$(yq "[${preflight}.permissions[] | select(. != \"read\")] | length" "$file")" != 0 ]; then
     echo preflight-read-only
@@ -53,21 +77,45 @@ violation() {
   fi
   # shellcheck disable=SC2016  # the literal Actions expression is what the workflow carries.
   [ "$(yq "${preflight}.outputs.stranded" "$file")" = '${{ steps.gate.outputs.stranded }}' ] ||
-    { echo preflight-output; return; }
-  [ "$(yq "${job}.needs" "$file")" = queue-preflight ] || { echo preflight-needed; return; }
+    {
+      echo preflight-output
+      return
+    }
+  [ "$(yq "${job}.needs" "$file")" = queue-preflight ] || {
+    echo preflight-needed
+    return
+  }
   [ "$(yq "${job}.if" "$file")" = "needs.queue-preflight.outputs.stranded == 'true'" ] ||
-    { echo preflight-gates-job; return; }
+    {
+      echo preflight-gates-job
+      return
+    }
   gate="$(yq "${job}.steps | to_entries | map(select(.value.id == \"gate\")) | .[0].key // -1" "$file")"
   report="$(yq "${job}.steps | to_entries | map(select(.value.id == \"report\")) | .[0].key // -1" "$file")"
-  if [ "$gate" -lt 0 ] || [ "$report" -le "$gate" ]; then echo gate-before-report; return; fi
-  [ "$(yq "${job}.steps[${gate}].run" "$file")" = ./scripts/prod-stranded-gate.sh ] || { echo gate-script; return; }
+  if [ "$gate" -lt 0 ] || [ "$report" -le "$gate" ]; then
+    echo gate-before-report
+    return
+  fi
+  [ "$(yq "${job}.steps[${gate}].run" "$file")" = ./scripts/prod-stranded-gate.sh ] || {
+    echo gate-script
+    return
+  }
   [ "$(yq "${job}.steps[${report}].if" "$file")" = "steps.gate.outputs.stranded == 'true'" ] ||
-    { echo report-gated; return; }
+    {
+      echo report-gated
+      return
+    }
   redeploy="$(yq "[${job}.steps[] | select(.run == \"./scripts/redeploy-main-when-behind.sh\")] | length" "$file")"
-  [ "$redeploy" = 1 ] || { echo single-redeploy; return; }
+  [ "$redeploy" = 1 ] || {
+    echo single-redeploy
+    return
+  }
   [ "$(yq "${job}.steps[] | select(.run == \"./scripts/redeploy-main-when-behind.sh\") | .if" "$file")" = \
     "steps.gate.outputs.stranded == 'true' && steps.report.outputs.verdict == 'DIVERGED'" ] ||
-    { echo redeploy-condition; return; }
+    {
+      echo redeploy-condition
+      return
+    }
 }
 
 got="$(violation "$workflow")"

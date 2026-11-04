@@ -19,7 +19,10 @@ COMMIT='3333333333333333333333333333333333333333'
 fixture_case=canonical-signed
 unset PUBLISH_REVISION_RESOLVER
 
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 discover_consumers() {
   printf '%s\n' \
@@ -34,10 +37,13 @@ deployed_tag() { printf 'v1.0.0\tpinned\t%s\n' "$COMMIT"; }
 
 gh_retry() {
   local args="$*" family=actions workflow=publish-manifests second=''
-  if [[ "$args" == *'--jq .default_branch' ]]; then printf 'main\n'; return; fi
+  if [[ "$args" == *'--jq .default_branch' ]]; then
+    printf 'main\n'
+    return
+  fi
   [[ "$args" == *'contents/.github/workflows/cd.yaml'* ]] || return 1
   case "$args" in
-    *ascoachingogvaner*|*data-product-controller*|*wedding-app*) workflow=publish-app ;;
+    *ascoachingogvaner* | *data-product-controller* | *wedding-app*) workflow=publish-app ;;
     *'devantler-tech/.github/'*)
       case "$fixture_case" in
         canonical-signed) [[ "$args" != *ref=main* ]] && family=.github ;;
@@ -50,8 +56,12 @@ gh_retry() {
         multiline) second="  second: {uses: \"devantler-tech/actions/.github/workflows/publish-manifests.yaml@$SHA\\njunk\"}" ;;
         malformed) second='---
 bad: [' ;;
-        canonical-app) family=.github; workflow=publish-app ;;
-      esac ;;
+        canonical-app)
+          family=.github
+          workflow=publish-app
+          ;;
+      esac
+      ;;
   esac
   printf 'jobs:\n  publish: {uses: devantler-tech/%s/.github/workflows/%s.yaml@%s}\n%s\n' \
     "$family" "$workflow" "$SHA" "$second"

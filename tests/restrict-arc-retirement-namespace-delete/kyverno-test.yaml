@@ -1,3 +1,4 @@
+---
 # Pins the preserve-retiring-namespace rule before the ValidatingPolicy rewrite
 # (#4995): deleting arc-runners is denied while it carries the retirement
 # journal annotation, and allowed when it does not. kyverno test presents the

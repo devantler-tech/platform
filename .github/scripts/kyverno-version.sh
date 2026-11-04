@@ -6,4 +6,4 @@ set -euo pipefail
 KYVERNO_VERSION="1.19.2"
 
 : "${GITHUB_OUTPUT:?GitHub Actions output file required}"
-printf 'release=v%s\n' "$KYVERNO_VERSION" >> "$GITHUB_OUTPUT"
+printf 'release=v%s\n' "$KYVERNO_VERSION" >>"$GITHUB_OUTPUT"

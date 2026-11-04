@@ -6,7 +6,10 @@ stage=dispatch
 work=''
 watchers=()
 readonly owner_bashpid="$BASHPID"
-fail() { printf 'EMAIL_BACKUP_REFRESH=UNVERIFIED stage=%s\n' "$stage" >&2; exit 2; }
+fail() {
+  printf 'EMAIL_BACKUP_REFRESH=UNVERIFIED stage=%s\n' "$stage" >&2
+  exit 2
+}
 cleanup() {
   # A terminated watch may inherit this EXIT handler before Bash resets it.
   # Only the parent owns the workspace and the watch processes.
@@ -23,7 +26,7 @@ work=$(mktemp -d "$EMAIL_BACKUP_WORK_DIR/snapshot-refresh.XXXXXXXX") || fail
 kc=(kubectl --context admin@prod --namespace openbao --request-timeout=25s)
 job="vault-snapshot-refresh-${GITHUB_RUN_ID}-1"
 stage=source
-"${kc[@]}" get cronjob vault-snapshot -o json > "$work/source.json" 2> "$work/reader.log" || fail
+"${kc[@]}" get cronjob vault-snapshot -o json >"$work/source.json" 2>"$work/reader.log" || fail
 jq -e '
   .kind=="CronJob" and .metadata.name=="vault-snapshot" and .metadata.namespace=="openbao" and
   (.metadata.uid|test("^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$")) and
@@ -46,7 +49,7 @@ jq -e '
     $p.containers[0].image=="quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f" and
     ([$p.containers[0].env[]|select(.name=="REQUIRE_REMOTE_SNAPSHOT")|.value]==["true"]) and
     ([$p.volumes[]|select(.persistentVolumeClaim)|{name,claim:.persistentVolumeClaim.claimName}]==[{name:"snapshots",claim:"vault-snapshots-recovery"}]))
-' "$work/source.json" > /dev/null 2> "$work/admission.log" || fail
+' "$work/source.json" >/dev/null 2>"$work/admission.log" || fail
 # Construct exactly the observed template and retain its CronJob controller owner.
 # Native history cleanup retains that ownership; a manual create still needs
 # its own unfinished-Job check because Forbid governs scheduled creation.
@@ -57,11 +60,11 @@ jq --arg name "$job" '
   annotations:((.spec.jobTemplate.metadata.annotations//{})+{"cronjob.kubernetes.io/instantiate":"manual"}),
   ownerReferences:[{apiVersion:"batch/v1",kind:"CronJob",name:$source.metadata.name,uid:$source.metadata.uid,controller:true}]},
   spec:.spec.jobTemplate.spec}
-' "$work/source.json" > "$work/job.json" 2> "$work/manifest.log" || fail
-"${kc[@]}" get cronjob vault-snapshot -o json > "$work/rebound.json" 2> "$work/reader.log" || fail
-jq -e --slurpfile before "$work/source.json" '.metadata.uid==$before[0].metadata.uid and .metadata.resourceVersion==$before[0].metadata.resourceVersion and .spec==$before[0].spec and ((.status.active//[])|length==0)' "$work/rebound.json" > /dev/null 2> "$work/admission.log" || fail
+' "$work/source.json" >"$work/job.json" 2>"$work/manifest.log" || fail
+"${kc[@]}" get cronjob vault-snapshot -o json >"$work/rebound.json" 2>"$work/reader.log" || fail
+jq -e --slurpfile before "$work/source.json" '.metadata.uid==$before[0].metadata.uid and .metadata.resourceVersion==$before[0].metadata.resourceVersion and .spec==$before[0].spec and ((.status.active//[])|length==0)' "$work/rebound.json" >/dev/null 2>"$work/admission.log" || fail
 stage=overlap
-"${kc[@]}" get jobs --chunk-size=0 -o json > "$work/jobs.json" 2> "$work/reader.log" || fail
+"${kc[@]}" get jobs --chunk-size=0 -o json >"$work/jobs.json" 2>"$work/reader.log" || fail
 jq -e --slurpfile source "$work/source.json" '
  (((.apiVersion=="v1" and .kind=="List") or (.apiVersion=="batch/v1" and .kind=="JobList")) and
   (.items|type)=="array" and (.metadata.continue//"")=="") and
@@ -72,38 +75,38 @@ jq -e --slurpfile source "$work/source.json" '
    then .metadata.deletionTimestamp==null and (.status.active//0)==0 and
     ([.status.conditions[]?|select((.type=="Complete" or .type=="Failed") and .status=="True")]|length)==1
    else true end))
-' "$work/jobs.json" > /dev/null 2> "$work/admission.log" || fail
+' "$work/jobs.json" >/dev/null 2>"$work/admission.log" || fail
 stage=create-unknown
-"${kc[@]}" create -f "$work/job.json" -o json > "$work/created.json" 2> "$work/create.log" || fail
+"${kc[@]}" create -f "$work/job.json" -o json >"$work/created.json" 2>"$work/create.log" || fail
 jq -e --arg name "$job" --slurpfile source "$work/source.json" '
  .kind=="Job" and .metadata.name==$name and .metadata.namespace=="openbao" and
  (.metadata.uid|test("^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$")) and
  any(.metadata.ownerReferences[]; .kind=="CronJob" and .uid==$source[0].metadata.uid and .controller==true)
-' "$work/created.json" > /dev/null 2> "$work/admission.log" || fail
+' "$work/created.json" >/dev/null 2>"$work/admission.log" || fail
 stage=completion
-"${kc[@]}" wait --for=condition=Complete "job/$job" --timeout=1850s > "$work/complete.log" 2>&1 &
+"${kc[@]}" wait --for=condition=Complete "job/$job" --timeout=1850s >"$work/complete.log" 2>&1 &
 watchers+=("$!")
-"${kc[@]}" wait --for=condition=Failed "job/$job" --timeout=1850s > "$work/failed.log" 2>&1 &
+"${kc[@]}" wait --for=condition=Failed "job/$job" --timeout=1850s >"$work/failed.log" 2>&1 &
 watchers+=("$!")
 # A native watch only wakes the readback; it is never itself a success verdict.
-wait -n "${watchers[@]}" 2> "$work/wait.log" || true
+wait -n "${watchers[@]}" 2>"$work/wait.log" || true
 for pid in "${watchers[@]}"; do kill "$pid" 2>/dev/null || true; done
 for pid in "${watchers[@]}"; do wait "$pid" 2>/dev/null || true; done
 watchers=()
-"${kc[@]}" get job "$job" -o json > "$work/completed.json" 2> "$work/reader.log" || fail
+"${kc[@]}" get job "$job" -o json >"$work/completed.json" 2>"$work/reader.log" || fail
 jq -e --slurpfile created "$work/created.json" '
  .metadata.uid==$created[0].metadata.uid and .metadata.name==$created[0].metadata.name and .metadata.namespace=="openbao" and
  .metadata.ownerReferences==$created[0].metadata.ownerReferences and .status.succeeded==1 and
  any(.status.conditions[]; .type=="Complete" and .status=="True") and
  all(.status.conditions[]; .type!="Failed" or .status!="True")
-' "$work/completed.json" > /dev/null 2> "$work/admission.log" || fail
+' "$work/completed.json" >/dev/null 2>"$work/admission.log" || fail
 stage=pod-proof
 uid=$(jq -er '.metadata.uid' "$work/created.json") || fail
-"${kc[@]}" get pods -l "batch.kubernetes.io/controller-uid=$uid" -o json > "$work/pods.json" 2> "$work/reader.log" || fail
+"${kc[@]}" get pods -l "batch.kubernetes.io/controller-uid=$uid" -o json >"$work/pods.json" 2>"$work/reader.log" || fail
 jq -e --arg uid "$uid" '
  [.items[]|select(any(.metadata.ownerReferences[]?;.kind=="Job" and .uid==$uid and .controller==true))|select(.status.phase=="Succeeded")]
  | length==1 and all(.[];
    ([.status.initContainerStatuses[]|select(.state.terminated.exitCode==0)|.name]|sort)==["install-mirror-tools","snapshot"] and
    ([.status.containerStatuses[]|select(.state.terminated.exitCode==0)|.name]==["mirror"]))
-' "$work/pods.json" > /dev/null 2> "$work/admission.log" || fail
+' "$work/pods.json" >/dev/null 2>"$work/admission.log" || fail
 printf '%s\n' 'EMAIL_BACKUP_REFRESH=COMPLETED snapshot=1 mirror=1 restore=UNVERIFIED'

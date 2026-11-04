@@ -94,9 +94,9 @@ resolve_replica_placeholder "${scratch}/values.yaml" "${replicas}"
 # remaining public cluster placeholders exactly as Flux does, without replacing
 # literal chart values or changing the strategy under test.
 OPENBAO_STORAGE_PLACEHOLDER="\${openbao_storage_size:=1Gi}" \
-OPENBAO_CANARY_STORAGE="$(yq -er '.data.openbao_storage_size' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" \
-OPENBAO_CANARY_CLUSTER="$(yq -er '.data.cluster_name' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" \
-yq -i '
+  OPENBAO_CANARY_STORAGE="$(yq -er '.data.openbao_storage_size' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" \
+  OPENBAO_CANARY_CLUSTER="$(yq -er '.data.cluster_name' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" \
+  yq -i '
   (.server.dataStorage.size | select(. == strenv(OPENBAO_STORAGE_PLACEHOLDER))) = strenv(OPENBAO_CANARY_STORAGE) |
   .server.affinity |= sub("\\$\\{cluster_name\\}", strenv(OPENBAO_CANARY_CLUSTER))
 ' "${scratch}/values.yaml"
@@ -124,7 +124,7 @@ readonly statefulset="${scratch}/statefulset.yaml"
 
 # A clean render alone cannot prove a transition from retained live fields.
 OPENBAO_TRANSITION_MANIFEST="${statefulset}" \
-OPENBAO_TRANSITION_RELEASE="${release}" \
+  OPENBAO_TRANSITION_RELEASE="${release}" \
   bash "${root_dir}/scripts/tests/test-openbao-strategy-transition.sh"
 
 # A partitioned rolling update recreates a lost lower ordinal from the stored

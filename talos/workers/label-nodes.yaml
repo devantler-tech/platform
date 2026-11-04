@@ -1,3 +1,4 @@
+---
 # Kubelet node-labels for Talos workers.
 #
 # All node-labels must be combined in this single file: Talos strategic

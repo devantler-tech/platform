@@ -16,7 +16,10 @@ readonly documented_manifest='bases/components/coroot-velero-maintenance-oom-ale
 readonly real_webhook='https://hooks.test.invalid/delivery-target'
 readonly placeholder_webhook='https://example.invalid/no-slack-configured'
 
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 pass() { printf 'ok: %s\n' "$1"; }
 
 for tool in yq jq; do

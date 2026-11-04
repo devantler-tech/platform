@@ -16,7 +16,7 @@ jq '.bindings[0] | {schemaVersion:1,kind:"manifest-publication-evidence",consume
  gitTag:.publication.gitTag,sourceSHA:.publication.sourceSHA,digest:.sourceIdentity.digest,
  publisherIdentity:.publication.publisherIdentity,callerWorkflow:.publication.callerWorkflow,event:.publication.event,
  workflowRunId:.publication.workflowRunId,workflowRunAttempt:.publication.workflowRunAttempt}' \
- "$test_root/scripts/canonical-tenant-source-bindings.json" >"$test_work/receipt.json"
+  "$test_root/scripts/canonical-tenant-source-bindings.json" >"$test_work/receipt.json"
 # shellcheck source=scripts/bootstrap-tenant-source.sh
 source "$test_root/scripts/bootstrap-tenant-source.sh"
 business_site_manifest_evidence() { cat "$test_work/receipt.json"; }
@@ -25,7 +25,10 @@ kubectl() {
     directory) mkdir "$fixture_output" ;;
     symlink) ln -s "$test_work/redirect" "$fixture_output" ;;
     conflict) printf '{"unreviewed":true}\n' >"$fixture_output" ;;
-    observed) jq '.bindings[0].kind="published-binding"' "$fixture_output" >"$fixture_output.changed"; mv "$fixture_output.changed" "$fixture_output" ;;
+    observed)
+      jq '.bindings[0].kind="published-binding"' "$fixture_output" >"$fixture_output.changed"
+      mv "$fixture_output.changed" "$fixture_output"
+      ;;
   esac
   printf '{"apiVersion":"v1","kind":"List","metadata":{},"items":[]}\n'
 }
@@ -37,15 +40,31 @@ run_admission() {
     --digest "$(jq -r .digest "$test_work/receipt.json")"
 }
 printf '{"schemaVersion":1,"bindings":[]}\n' >"$fixture_output"
-if run_admission >"$test_work/result" 2>&1; then echo 'empty registry reported an unchanged admission' >&2; exit 1; fi
+if run_admission >"$test_work/result" 2>&1; then
+  echo 'empty registry reported an unchanged admission' >&2
+  exit 1
+fi
 test "$(jq '.bindings|length' "$fixture_output")" = 0
 rm "$fixture_output"
 for race in directory symlink conflict; do
-  if run_admission >"$test_work/result" 2>&1; then echo "output $race race reported success" >&2; exit 1; fi
+  if run_admission >"$test_work/result" 2>&1; then
+    echo "output $race race reported success" >&2
+    exit 1
+  fi
   case "$race" in
-    directory) test -z "$(find "$fixture_output" -mindepth 1 -print)"; rmdir "$fixture_output" ;;
-    symlink) test -L "$fixture_output"; test -z "$(find "$test_work/redirect" -mindepth 1 -print)"; rm "$fixture_output" ;;
-    conflict) grep -qxF '{"unreviewed":true}' "$fixture_output"; rm "$fixture_output" ;;
+    directory)
+      test -z "$(find "$fixture_output" -mindepth 1 -print)"
+      rmdir "$fixture_output"
+      ;;
+    symlink)
+      test -L "$fixture_output"
+      test -z "$(find "$test_work/redirect" -mindepth 1 -print)"
+      rm "$fixture_output"
+      ;;
+    conflict)
+      grep -qxF '{"unreviewed":true}' "$fixture_output"
+      rm "$fixture_output"
+      ;;
   esac
 done
 race=''
@@ -55,6 +74,9 @@ cp "$fixture_output" "$test_work/first.json"
 run_admission >"$test_work/result"
 cmp "$test_work/first.json" "$fixture_output"
 race=observed
-if run_admission >"$test_work/result" 2>&1; then echo 'concurrent observed record was overwritten' >&2; exit 1; fi
+if run_admission >"$test_work/result" 2>&1; then
+  echo 'concurrent observed record was overwritten' >&2
+  exit 1
+fi
 test "$(jq -r '.bindings[0].kind' "$fixture_output")" = published-binding
 printf 'Canonical bootstrap output: empty registry and four races refused; exclusive creation/idempotence passed.\n'

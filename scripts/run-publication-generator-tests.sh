@@ -16,7 +16,10 @@ tests=(
   test-canonical-bootstrap-output.sh
   test-canonical-publisher-regeneration.sh
 )
-die() { printf 'publication-tests: %s\n' "$*" >&2; exit 2; }
+die() {
+  printf 'publication-tests: %s\n' "$*" >&2
+  exit 2
+}
 
 # xargs appends only one validated index; it never chooses a command or path.
 # Capture all child exit codes, including 255, without telling xargs to stop
@@ -40,7 +43,7 @@ fi
 workers=1
 if [[ $# != 0 ]]; then
   [[ $# == 2 && $1 == --jobs ]] || die 'usage: run-publication-generator-tests.sh [--jobs 1|2|4]'
-  case "$2" in 1|2|4) workers="$2" ;; *) die 'worker limit must be 1, 2 or 4' ;; esac
+  case "$2" in 1 | 2 | 4) workers="$2" ;; *) die 'worker limit must be 1, 2 or 4' ;; esac
 fi
 command -v xargs >/dev/null 2>&1 || die 'xargs is required'
 for test_file in "${tests[@]}"; do
@@ -61,7 +64,7 @@ for index in "${!tests[@]}"; do
   printf '::group::%s (exit %s, %ss)\n' "${tests[$index]}" "$result" "$seconds"
   cat "$work/$index.log" || die "cannot read output for ${tests[$index]}"
   printf '::endgroup::\n'
-  [[ "$result" == 0 ]] || failed=$((failed+1))
+  [[ "$result" == 0 ]] || failed=$((failed + 1))
 done
 [[ "$dispatch_status" == 0 ]] || die 'worker dispatch failed'
 printf 'PUBLICATION_TESTS jobs=%s count=%s failed=%s seconds=%s\n' "$workers" "${#tests[@]}" "$failed" "$SECONDS"

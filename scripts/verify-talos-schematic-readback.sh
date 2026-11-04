@@ -16,8 +16,8 @@ interval_seconds=${TALOS_READBACK_INTERVAL_SECONDS:-10}
 max_seconds=${TALOS_READBACK_MAX_SECONDS:-600}
 
 [[ "$max_attempts" =~ ^[1-9][0-9]*$ &&
-   "$interval_seconds" =~ ^(0|[1-9][0-9]*)$ &&
-   "$max_seconds" =~ ^[1-9][0-9]*$ ]] || {
+  "$interval_seconds" =~ ^(0|[1-9][0-9]*)$ &&
+  "$max_seconds" =~ ^[1-9][0-9]*$ ]] || {
   printf 'invalid Talos readback attempt, interval, or deadline setting\n' >&2
   exit 1
 }
@@ -44,9 +44,9 @@ if jq -e 'any(.[]; .role == "v2" and .min > 0)' <<<"$expected_migration_pools" >
 fi
 
 [[ "$expected_schematic" =~ ^[0-9a-f]{64}$ &&
-   "$expected_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ &&
-   "$expected_control_planes" =~ ^[1-9][0-9]*$ &&
-   "$expected_workers" =~ ^[1-9][0-9]*$ ]] || {
+  "$expected_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ &&
+  "$expected_control_planes" =~ ^[1-9][0-9]*$ &&
+  "$expected_workers" =~ ^[1-9][0-9]*$ ]] || {
   printf 'invalid desired Talos version, schematic, or static-node count\n' >&2
   exit 1
 }
@@ -128,7 +128,7 @@ journal_held_worker() {
   printf '%s' "$worker"
 }
 
-deadline_epoch=$(( $(date +%s) + max_seconds ))
+deadline_epoch=$(($(date +%s) + max_seconds))
 held_worker=''
 last_nodes_json=''
 for ((attempt = 1; attempt <= max_attempts; attempt++)); do

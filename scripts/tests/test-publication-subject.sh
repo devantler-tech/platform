@@ -9,7 +9,10 @@ failures=0
 assertions=0
 check() {
   assertions=$((assertions + 1))
-  if "$@"; then echo "ok $*"; else echo "FAIL $*"; failures=$((failures + 1)); fi
+  if "$@"; then echo "ok $*"; else
+    echo "FAIL $*"
+    failures=$((failures + 1))
+  fi
 }
 # shellcheck disable=SC2016 # A literal Actions expression, never a shell expansion.
 reference='${{ steps.staging_reference.outputs.subject_name }}'

@@ -4,7 +4,10 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 step="$(yq -er '.jobs.validate-helm-post-renderers.steps[] | select(.name == "🧩 Verify independent reloader placement") | .run' "$root_dir/.github/workflows/ci.yaml")"
 mkdir -p "$scratch/bin" "$scratch/repo/scripts/tests"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$scratch/bin/shellcheck"
