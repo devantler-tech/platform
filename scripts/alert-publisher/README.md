@@ -87,7 +87,7 @@ route. App or shared-credential retirement follows verified consumer migration.
 ## Cluster-independent journal preparation
 
 The optional `r2` backend prepares the independent journal needed by #5328 and
-# 4683. It uses the maintained AWS S3 SDK with explicit static credentials,
+# 4683. It uses the maintained AWS S3 SDK with explicit static credentials
 the configured account's global Cloudflare R2 S3 endpoint, region `auto`,
 bounded requests, no redirects and no automatic request retries. It does not
 discover credentials from the environment or create a bucket. The existing
