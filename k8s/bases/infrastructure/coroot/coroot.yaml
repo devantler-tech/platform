@@ -30,7 +30,9 @@ spec:
   # cluster-wide, `--reload-strategy=annotations`) watches the named Secret and
   # rolls the server's pods on change; the annotation goes on the pod template via
   # podAnnotations, matching the platform's existing convention (auth-proxy,
-  # oauth2-proxy, coredns).
+  # oauth2-proxy, coredns). It also watches coroot-mcp-agent: the operator passes
+  # the agents' MCP service-account key to Coroot through an env var too, so a
+  # rotated key takes effect only after a restart.
   #
   # The DNS-policy rollout token is deliberately repeated on every Coroot-owned
   # pod template below. set-observability-dns-ndots is admission-only, so this
@@ -39,7 +41,7 @@ spec:
   # before this rollout. Change the token only after a new admission-time DNS
   # policy is Ready; combining both changes can recreate pods under the old rule.
   podAnnotations:
-    secret.reloader.stakater.com/reload: coroot-db-app
+    secret.reloader.stakater.com/reload: coroot-db-app,coroot-mcp-agent
     platform.devantler.tech/dns-policy-rollout: 2026-09-30-ndots-3
 
   # COMPONENT IMAGE PINS. The operator does NOT bake a fixed tag into its
