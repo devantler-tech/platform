@@ -64,8 +64,15 @@ platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCS
 This tool lands in stages (platform#5655). It includes `refresh-clients`, `prepare-worker`,
 `prepare-unused-temporary-worker`, read-only replica inventories and the benchmarks.
 `refresh-clients` holds until the fixed migration workers are Ready and the host
-huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
-capacity follows in its own change.
+huge-page settings are loaded. Worker preparation is below and is dormant.
+
+Select `enable-capacity`, a pool, and `enable-longhorn-migration-capacity-<pool>` to activate
+temporary storage. The whole pool is checked and pinned before any disk is enabled. Its role, server
+type, hardware and encryption must match; an existing foreign pin or disk is a hold. New pool nodes
+remain excluded by admission until explicitly enabled. The V2 pool also holds until Longhorn's V2
+data engine setting is on, because Longhorn refuses a block disk otherwise. Activation requires the
+completed, cleaned baseline from a terminal main workflow and matching permanent hardware and OS
+identities, and that baseline does not exist yet, so a dispatch today holds with no write.
 
 For the unused temporary-worker route (platform#5787), finish the client refresh and the
 cleaned V1 baseline first. Select `prepare-unused-temporary-worker`, `temporary-v1-1` or

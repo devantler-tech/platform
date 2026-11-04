@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -92,6 +93,18 @@ func verifyTemporaryStorageEnabled(s inventory, pools map[string]migrationPool) 
 	}
 	if enabled != pool.count {
 		return errors.New("the temporary V1 pool is not fully enabled for replicas")
+	}
+	return nil
+}
+
+// verifyV2EngineEnabled holds V2 activation while Longhorn would refuse its block disk.
+func verifyV2EngineEnabled(ctx context.Context, c client) error {
+	setting, err := c.get(ctx, "settings.longhorn.io", "longhorn-system", "v2-data-engine", false)
+	if err != nil {
+		return err
+	}
+	if text(setting, "value") != "true" {
+		return errors.New("the V2 pool cannot be enabled while Longhorn's V2 data engine is off")
 	}
 	return nil
 }
