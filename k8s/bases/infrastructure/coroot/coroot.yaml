@@ -77,6 +77,22 @@ spec:
   # as Admin, mirroring the old single-operator "everyone -> Grafana Admin".
   authAnonymousRole: Admin
 
+  # A Viewer service account for the agents' MCP access. Coroot's /mcp endpoint
+  # never uses the anonymous role above: every request needs a bearer token (an
+  # OAuth token or a service-account API key), and every tool call is checked
+  # against that identity's role. A Viewer can read topology, alerts, incidents,
+  # traces, metrics and logs but cannot resolve alerts. The operator generates
+  # the key into the coroot-mcp-agent Secret when it is missing; nothing about
+  # the key is committed. http-route.yaml routes /mcp past oauth2-proxy for it.
+  serviceAccounts:
+    - name: agentic-engineer
+      role: Viewer
+      apiKeys:
+        - description: Agentic Engineer MCP access (agent-plugins coroot server)
+          keySecret:
+            name: coroot-mcp-agent
+            key: api-key
+
   # Metric resolution. The operator default is 15s; 30s halves the bundled
   # Prometheus ingest, the node-agent scrape volume, and Coroot's continuous
   # query load on a memory-constrained cluster, while staying at the
