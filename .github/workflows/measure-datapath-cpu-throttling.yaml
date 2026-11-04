@@ -1,3 +1,4 @@
+---
 name: Measure Datapath CPU Throttling
 
 # Record the throttled share of CFS periods for the datapath DaemonSets (#3790), before and after
@@ -31,7 +32,7 @@ name: Measure Datapath CPU Throttling
 # scripts/tests/test-measure-datapath-cpu-throttling.sh pins the script's behaviour and the shape of
 # this workflow. It needs no cluster and no secrets, so it runs in ci.yaml's required `validate` job.
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

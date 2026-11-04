@@ -18,6 +18,8 @@ import (
 	"time"
 )
 
+// Policy fixes the one R2 bucket prefix a ReadTransport may read and its
+// request, total-byte and per-response byte budgets.
 type Policy struct {
 	Endpoint, Bucket, Prefix   string
 	MaxRequests                int
@@ -53,6 +55,8 @@ type ReadTransport struct {
 	operations    int
 }
 
+// NewReadTransport validates p and wraps base in a read-only transport bounded
+// by ctx and a ten-minute ceiling.
 func NewReadTransport(ctx context.Context, p Policy, base http.RoundTripper) (*ReadTransport, error) {
 	u, err := url.Parse(p.Endpoint)
 	if ctx == nil || base == nil || err != nil || u.Scheme != "https" || !r2Host.MatchString(u.Host) ||
@@ -166,6 +170,8 @@ func (g *ReadTransport) signalLocked() {
 	g.changed = make(chan struct{})
 }
 
+// RoundTrip forwards an in-scope GET or HEAD within the policy budgets. Any
+// refused or failed request holds every later one.
 func (g *ReadTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if !g.allowed(r) || !contextActive(r.Context()) {
 		return nil, g.hold()
@@ -282,6 +288,7 @@ func (g *ReadTransport) Err() error {
 	return nil
 }
 
+// Close cancels the transport context, ending every outstanding request.
 func (g *ReadTransport) Close() { g.cancel() }
 
 func (g *ReadTransport) beginOperation(ctx context.Context) error {

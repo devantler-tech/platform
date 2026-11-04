@@ -10,7 +10,10 @@ config="${root_dir}/k8s/bases/infrastructure/coroot/components/crossplane-sync-e
 work_dir="$(mktemp -d)"
 trap 'chmod -R u+w "${work_dir}"; rm -rf "${work_dir}"' EXIT
 
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 
 pod_path='.spec.jobTemplate.spec.template.spec'
 scratch_volume="$(yq -r "${pod_path}.containers[] | select(.name == \"alerter\") | .volumeMounts[] | select(.mountPath == \"/tmp\") | .name" "${manifest}")"

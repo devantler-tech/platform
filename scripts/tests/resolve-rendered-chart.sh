@@ -6,7 +6,10 @@ set -euo pipefail
 
 release_file="${1:?HelmRelease JSON is required}"
 overlay_file="${2:?built overlay YAML is required}"
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 definition="$(jq -r '
   if .spec.chart != null and .spec.chartRef == null then "repository"

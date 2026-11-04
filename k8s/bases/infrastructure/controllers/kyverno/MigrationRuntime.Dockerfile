@@ -26,6 +26,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
     && if /out/kubectl-kyverno apply --help > /tmp/unsupported-command 2>&1; then \
          echo 'Unsupported CLI command exposed by migration runtime'; exit 1; \
        else test "$?" -eq 1 && grep -F 'unknown command "apply"' /tmp/unsupported-command; fi
+# The findings pipeline below must fail when any of its stages fails, not only the last one.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only these exact whole-module records for Kyverno v1.19.2 are accepted, with the same
 # adjudication and removal as scripts/tests/tenant-webapp-admission/.govulncheck-allow.txt
 # (platform#5154). The list must match exactly: another advisory fails the build, and so does
@@ -44,6 +46,10 @@ FROM reg.kyverno.io/kyverno/kyverno-cli:v1.19.2@sha256:322ec5044d600930cb3af0e56
 COPY --from=builder --chmod=0755 /out/kubectl-kyverno /ko-app/kubectl-kyverno
 # Match the released migration Job's explicit execution identity.
 USER 65534:65534
+# Kubernetes never runs an image health check, so this image declares none.
+HEALTHCHECK NONE
 ENTRYPOINT ["/ko-app/kubectl-kyverno"]
 RUN ["/ko-app/kubectl-kyverno", "--version"]
+# The runtime image has no shell, so these exec-form checks cannot share one RUN.
+# hadolint ignore=DL3059
 RUN ["/ko-app/kubectl-kyverno", "migrate", "--help"]

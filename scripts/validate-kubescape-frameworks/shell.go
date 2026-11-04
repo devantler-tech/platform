@@ -686,7 +686,7 @@ func maskActionsShellExpressions(source string) (string, error) {
 			}
 		}
 		if j >= len(source) {
-			return "", fmt.Errorf("Actions expression envelope is not decidable from the text")
+			return "", fmt.Errorf("the Actions expression envelope is not decidable from the text")
 		}
 		if strings.TrimSpace(source[i+3:j]) == "" {
 			return "", fmt.Errorf("empty Actions expression cannot identify an executable value")

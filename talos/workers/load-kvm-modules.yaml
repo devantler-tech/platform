@@ -1,3 +1,4 @@
+---
 # KubeVirt requires KVM kernel modules for hardware-accelerated
 # virtualization on Hetzner workers.
 machine:
