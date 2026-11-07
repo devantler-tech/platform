@@ -1,3 +1,5 @@
+// Command verify-email-data-recovery proves that Email mailbox data restores
+// from a fresh backup into an isolated server, without moving the serving claim.
 package main
 
 import (
@@ -11,6 +13,11 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--observe-retained" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		os.Exit(runRecoveryObservation(ctx, os.Getenv, kubectl{}, os.Stdout))
+	}
 	if len(os.Args) != 1 {
 		_, _ = fmt.Fprintln(os.Stdout, "EMAIL_DATA_RECOVERY=UNVERIFIED stage=dispatch cleanup=NOT_STARTED")
 		os.Exit(2)

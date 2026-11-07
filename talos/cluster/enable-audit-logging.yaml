@@ -1,3 +1,4 @@
+---
 # Kubernetes API server audit logging.
 #
 # Places an audit policy file on disk and configures the API server to

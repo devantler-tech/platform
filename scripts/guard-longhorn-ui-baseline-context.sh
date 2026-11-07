@@ -10,15 +10,27 @@ context=admin@prod
 release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/longhorn/helm-release.yaml"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --context) context="${2:?context required}"; shift 2 ;;
-    --release) release="${2:?release file required}"; shift 2 ;;
-    *) printf 'Unknown argument: %s\n' "$1" >&2; exit 2 ;;
+    --context)
+      context="${2:?context required}"
+      shift 2
+      ;;
+    --release)
+      release="${2:?release file required}"
+      shift 2
+      ;;
+    *)
+      printf 'Unknown argument: %s\n' "$1" >&2
+      exit 2
+      ;;
   esac
 done
-case "${phase}" in before-publish|after-reconcile) ;; *) exit 2 ;; esac
+case "${phase}" in before-publish | after-reconcile) ;; *) exit 2 ;; esac
 scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
-fail() { printf '::error::Longhorn UI baseline canary: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf '::error::Longhorn UI baseline canary: %s\n' "$1" >&2
+  exit 1
+}
 output() {
   printf 'rollout_required=%s\n' "$1"
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then printf 'rollout_required=%s\n' "$1" >>"${GITHUB_OUTPUT}"; fi

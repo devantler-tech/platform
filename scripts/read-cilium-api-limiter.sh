@@ -14,12 +14,18 @@ if [[ "$#" -ne 2 || "$1" != --context || "$2" != admin@prod ]]; then
   exit 1
 fi
 for tool in kubectl jq timeout head; do
-  command -v "${tool}" >/dev/null 2>&1 || { printf 'Required diagnostic tool is unavailable.\n' >&2; exit 1; }
+  command -v "${tool}" >/dev/null 2>&1 || {
+    printf 'Required diagnostic tool is unavailable.\n' >&2
+    exit 1
+  }
 done
 umask 077
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
-inconclusive() { printf 'INCONCLUSIVE: %s\n' "$1"; exit 3; }
+inconclusive() {
+  printf 'INCONCLUSIVE: %s\n' "$1"
+  exit 3
+}
 
 # Bound JSON responses and requests. Neither failed kubectl output nor parser diagnostics are public.
 read_json() {
@@ -73,7 +79,10 @@ read_json() {
       read_failure="${json_shape}"
       return 1
       ;;
-    *) read_failure=INVALID_JSON; return 1 ;;
+    *)
+      read_failure=INVALID_JSON
+      return 1
+      ;;
   esac
 }
 roster() {

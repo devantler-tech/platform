@@ -135,7 +135,8 @@ declares_caveat() { # <namespace> <file>
     die "could not locate the '$LABEL' label line for '$ns' in '$file' — unparseable YAML, or the expression no longer matches"
   case "$label_line" in
     '' | *[!0-9]*)
-      die "yq returned no usable line number for the '$ns' opt-in label in '$file' (got '$label_line'); refusing to fall back to a file-wide marker search" ;;
+      die "yq returned no usable line number for the '$ns' opt-in label in '$file' (got '$label_line'); refusing to fall back to a file-wide marker search"
+      ;;
   esac
   [ "$label_line" -gt 0 ] ||
     die "yq returned line 0 for the '$ns' opt-in label in '$file'; refusing to fall back to a file-wide marker search"

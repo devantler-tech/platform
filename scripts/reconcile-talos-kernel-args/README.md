@@ -481,6 +481,34 @@ neither the Talos configuration manager, generator nor cluster API; the same rea
 finds the machinery packages. This audit changes no cluster configuration or
 vulnerability exception.
 
+**7.206.23**, commit `00da4dba076374a13a6f3c6e299f5be01ee9db83`, is audited
+against 7.206.5. The configuration manager, Talos generator, cluster API and
+charts are byte-identical. `go.mod` and `go.sum` change one module,
+`wailsapp/wails/v3` from v3.0.0-beta.31 to v3.0.0-beta.33. Talos machinery stays
+at v1.14.0-alpha.2 and the YAML encoders are unchanged. At this tag `go list -deps`
+finds the module in neither the Talos configuration manager, generator nor
+cluster API; the same read finds the machinery packages. This audit changes no
+cluster configuration or vulnerability exception.
+
+**7.206.24**, commit `f01480bd8e5463b69660c380d9167d7357ec32bf`, is audited
+against 7.206.23. The Talos generator, cluster API, charts, `go.mod` and `go.sum`
+are byte-identical. In the configuration-manager tree the only changed file is the
+generated `mocks.go` test double: `NewMockConfigManager` now marks itself and its
+cleanup as test helpers, and `Load` takes `any` instead of `interface{}`.
+`talos/configs.go` and `ksail/distribution.go` are byte-identical to 7.206.23, so
+`applySchematic`, `schematicKernelArgs`, `reconcileFoldedKernelArgs` and the
+schematic-ID guard are unchanged. This audit changes no cluster configuration or
+vulnerability exception.
+
+**7.206.33**, commit `69090121cd15884513f81afc68c7cc2d5dcc30fe`, is audited
+against 7.206.24. The configuration manager, Talos generator, cluster API and
+charts are byte-identical, so `applySchematic`, `schematicKernelArgs`,
+`reconcileFoldedKernelArgs` and the schematic-ID guard are unchanged. `go.mod`
+and `go.sum` move only the EKS SDK, `go-gh`, `go-colorful`, Wails, `goldmark`
+and the locally replaced `charmbracelet/x/ansi`; no `siderolabs` module moves,
+so the Talos machinery and its YAML encoders are unchanged. This audit changes
+no cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

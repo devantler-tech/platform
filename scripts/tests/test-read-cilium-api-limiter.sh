@@ -94,27 +94,34 @@ add_second_agent() {
 run_read() {
   rc=0
   output="$(FIXTURE="${fixture}" PATH="${work_dir}/bin:${PATH}" bash "${root_dir}/scripts/read-cilium-api-limiter.sh" "$@" 2>&1)" || rc=$?
-  if [[ -f "${fixture}/unexpected" ]]; then printf 'FAIL: unexpected command\n' >&2; exit 1; fi
+  if [[ -f "${fixture}/unexpected" ]]; then
+    printf 'FAIL: unexpected command\n' >&2
+    exit 1
+  fi
   if [[ "${output}" == *PRIVATE* || "${output}" == *198.51.100.9* || "${output}" == *cilium-abcde* || "${output}" == *cilium-fghij* ]]; then
-    printf 'FAIL: private fixture data escaped\n' >&2; exit 1
+    printf 'FAIL: private fixture data escaped\n' >&2
+    exit 1
   fi
 }
 require_inconclusive() {
   run_read --context admin@prod
   [[ "${rc}" -eq 3 && "${output}" == INCONCLUSIVE:* && "${output}" != *MEASURED* ]] || {
-    printf 'FAIL: expected INCONCLUSIVE: %s (%s)\n' "${output}" "${rc}" >&2; exit 1;
+    printf 'FAIL: expected INCONCLUSIVE: %s (%s)\n' "${output}" "${rc}" >&2
+    exit 1
   }
 }
 
 reset_fixture
 run_read --context admin@prod
 [[ "${rc}" -eq 0 && "${output}" == *MEASURED* && "${output}" == *processed_requests_total*302* ]] || {
-  printf 'FAIL: passing control: %s (%s)\n' "${output}" "${rc}" >&2; exit 1;
+  printf 'FAIL: passing control: %s (%s)\n' "${output}" "${rc}" >&2
+  exit 1
 }
 [[ "$(grep -c '^--context.* exec ' "${fixture}/calls")" -eq 5 ]] || exit 1
 # An omitted value is upstream's zero, and is published as one.
 [[ "$(printf '%s\n' "${output}" | grep '^{' | jq -s '[.[].metrics[] | select(.metric=="cilium_api_limiter_wait_duration_seconds" and .stat=="min") | .value] | unique | tojson' -r)" == '[0]' ]] || {
-  printf 'FAIL: omitted zero was not published as zero: %s\n' "${output}" >&2; exit 1;
+  printf 'FAIL: omitted zero was not published as zero: %s\n' "${output}" >&2
+  exit 1
 }
 
 # The reader accepts only the audited agent version, including the previous one.
@@ -122,7 +129,8 @@ reset_fixture
 sed -i.bak 's|cilium:v1\.20\.4|cilium:v1.20.3|' "${fixture}/ds.json" "${fixture}/pods.json"
 require_inconclusive
 [[ ! -f "${fixture}/calls" ]] || ! grep -q ' exec ' "${fixture}/calls" || {
-  printf 'FAIL: an unaudited agent version reached a metric read\n' >&2; exit 1;
+  printf 'FAIL: an unaudited agent version reached a metric read\n' >&2
+  exit 1
 }
 
 # Usage must reach neither Kubernetes nor sleep.
@@ -165,7 +173,8 @@ reset_fixture
 printf '{malformed' >"${fixture}/metrics.json"
 require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: an agent metric read failed (INVALID_JSON).' ]] || {
-  printf 'FAIL: malformed JSON was not classified: %s\n' "${output}" >&2; exit 1;
+  printf 'FAIL: malformed JSON was not classified: %s\n' "${output}" >&2
+  exit 1
 }
 # Successful CLI exits can still carry no measurement. Keep those distinct from
 # malformed JSON, but refuse all of them before publishing any samples.
@@ -174,7 +183,8 @@ while IFS='|' read -r expected response; do
   printf '%b' "${response}" >"${fixture}/metrics.json"
   require_inconclusive
   [[ "${output}" == "INCONCLUSIVE: an agent metric read failed (${expected})." ]] || {
-    printf 'FAIL: expected %s response classification: %s\n' "${expected}" "${output}" >&2; exit 1;
+    printf 'FAIL: expected %s response classification: %s\n' "${expected}" "${output}" >&2
+    exit 1
   }
 done <<'RESPONSES'
 EMPTY_OUTPUT|
@@ -192,7 +202,8 @@ for response in 'null' ' \n null \t\n'; do
   printf '%b' "${response}" >"${fixture}/metrics.json"
   require_inconclusive
   [[ "${output}" == "${unobserved_one}" ]] || {
-    printf 'FAIL: null read with a live registry: %s\n' "${output}" >&2; exit 1;
+    printf 'FAIL: null read with a live registry: %s\n' "${output}" >&2
+    exit 1
   }
 done
 # Series for other calls only are the same state, and need no control read.
@@ -200,7 +211,8 @@ reset_fixture
 jq -n '[{name:"cilium_api_limiter_rate_limit",labels:{api_call:"endpoint-list",value:"limit"},value:1}]' >"${fixture}/metrics.json"
 require_inconclusive
 [[ "${output}" == "${unobserved_one}" ]] || {
-  printf 'FAIL: other calls only: %s\n' "${output}" >&2; exit 1;
+  printf 'FAIL: other calls only: %s\n' "${output}" >&2
+  exit 1
 }
 ! grep -q 'match-pattern ^cilium_version' "${fixture}/calls" || exit 1
 # A stable agent proven to have no series is counted beside the complete agent, with no values.
@@ -209,14 +221,17 @@ add_second_agent
 printf 'null' >"${fixture}/second-metrics.json"
 run_read --context admin@prod
 [[ "${rc}" -eq 0 && "${output}" == *'PARTIAL: five complete samples for 1 of 2 stable ready agents; 1 report no endpoint-create limiter series;'* && "${output}" != *MEASURED* ]] || {
-  printf 'FAIL: partial result: %s (%s)\n' "${output}" "${rc}" >&2; exit 1;
+  printf 'FAIL: partial result: %s (%s)\n' "${output}" "${rc}" >&2
+  exit 1
 }
 [[ "$(printf '%s\n' "${output}" | grep '^{' | jq -s -r '([.[].agent] | unique | tojson) + " " + (length | tostring)')" == '[1] 5' ]] || {
-  printf 'FAIL: partial samples: %s\n' "${output}" >&2; exit 1;
+  printf 'FAIL: partial samples: %s\n' "${output}" >&2
+  exit 1
 }
 # Five limiter reads each, plus a control read for each null response.
 [[ "$(grep -c '^--context.* exec ' "${fixture}/calls")" -eq 15 ]] || {
-  printf 'FAIL: partial result read count\n' >&2; exit 1;
+  printf 'FAIL: partial result read count\n' >&2
+  exit 1
 }
 # A series that appears or disappears between samples is neither complete nor absent.
 reset_fixture
@@ -225,14 +240,16 @@ printf 'null' >"${fixture}/second-metrics.json"
 cp "${fixture}/metrics.json" "${fixture}/second-late.json"
 require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: an agent gained or lost its endpoint-create limiter series during collection.' ]] || {
-  printf 'FAIL: series appeared mid-run: %s\n' "${output}" >&2; exit 1;
+  printf 'FAIL: series appeared mid-run: %s\n' "${output}" >&2
+  exit 1
 }
 reset_fixture
 add_second_agent
 printf 'null' >"${fixture}/second-late.json"
 require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: an agent gained or lost its endpoint-create limiter series during collection.' ]] || {
-  printf 'FAIL: series vanished mid-run: %s\n' "${output}" >&2; exit 1;
+  printf 'FAIL: series vanished mid-run: %s\n' "${output}" >&2
+  exit 1
 }
 # A partial result still requires the same stable roster.
 reset_fixture
@@ -241,7 +258,8 @@ printf 'null' >"${fixture}/second-metrics.json"
 jq '.items[1].metadata.uid="33333333-3333-3333-3333-333333333333"' "${fixture}/pods.json" >"${fixture}/after.json"
 require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: agent identity or container state changed during collection.' ]] || {
-  printf 'FAIL: replaced agent in a partial result: %s\n' "${output}" >&2; exit 1;
+  printf 'FAIL: replaced agent in a partial result: %s\n' "${output}" >&2
+  exit 1
 }
 reset_fixture
 add_second_agent
@@ -249,14 +267,16 @@ printf 'null' >"${fixture}/metrics.json"
 printf 'null' >"${fixture}/second-metrics.json"
 require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: 2 of 2 agents report no endpoint-create limiter series (LIMITER_UNOBSERVED).' ]] || {
-  printf 'FAIL: all agents unobserved: %s\n' "${output}" >&2; exit 1;
+  printf 'FAIL: all agents unobserved: %s\n' "${output}" >&2
+  exit 1
 }
 # Two complete agents still measure.
 reset_fixture
 add_second_agent
 run_read --context admin@prod
 [[ "${rc}" -eq 0 && "${output}" == *MEASURED* ]] || {
-  printf 'FAIL: two complete agents: %s (%s)\n' "${output}" "${rc}" >&2; exit 1;
+  printf 'FAIL: two complete agents: %s (%s)\n' "${output}" "${rc}" >&2
+  exit 1
 }
 [[ "$(grep -c '^--context.* exec ' "${fixture}/calls")" -eq 10 ]] || exit 1
 # A replaced agent also has no series, so it must not be reported as unobserved.
@@ -265,7 +285,8 @@ printf 'null' >"${fixture}/metrics.json"
 jq '.items[0].metadata.uid="33333333-3333-3333-3333-333333333333"' "${fixture}/pods.json" >"${fixture}/after.json"
 require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: agent identity or container state changed during collection.' ]] || {
-  printf 'FAIL: replaced agent: %s\n' "${output}" >&2; exit 1;
+  printf 'FAIL: replaced agent: %s\n' "${output}" >&2
+  exit 1
 }
 # A control read that cannot show a live registry keeps the null a read failure.
 while IFS='|' read -r expected response; do
@@ -274,7 +295,8 @@ while IFS='|' read -r expected response; do
   printf '%b' "${response}" >"${fixture}/control.json"
   require_inconclusive
   [[ "${output}" == "INCONCLUSIVE: an agent metric read failed (JSON_NULL; control ${expected})." ]] || {
-    printf 'FAIL: expected control %s: %s\n' "${expected}" "${output}" >&2; exit 1;
+    printf 'FAIL: expected control %s: %s\n' "${expected}" "${output}" >&2
+    exit 1
   }
 done <<'CONTROLS'
 JSON_NULL|null
@@ -288,7 +310,8 @@ printf 'null' >"${fixture}/metrics.json"
 touch "${fixture}/control-denied"
 require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: an agent metric read failed (JSON_NULL; control COMMAND_FAILED).' ]] || {
-  printf 'FAIL: denied control: %s\n' "${output}" >&2; exit 1;
+  printf 'FAIL: denied control: %s\n' "${output}" >&2
+  exit 1
 }
 # Only well-formed series for other calls show that no endpoint-create series exists.
 while IFS= read -r response; do
@@ -296,7 +319,8 @@ while IFS= read -r response; do
   printf '%s' "${response}" >"${fixture}/metrics.json"
   require_inconclusive
   [[ "${output}" == 'INCONCLUSIVE: a complete finite metric set could not be established.' ]] || {
-    printf 'FAIL: unproven unobserved claim: %s (%s)\n' "${output}" "${response}" >&2; exit 1;
+    printf 'FAIL: unproven unobserved claim: %s (%s)\n' "${output}" "${response}" >&2
+    exit 1
   }
 done <<'SERIES'
 [{"name":"PRIVATE_METRIC","labels":{"api_call":"endpoint-list"},"value":1}]
@@ -311,7 +335,8 @@ while IFS='|' read -r expected exit_code message; do
   printf '%s\n' "${exit_code}" >"${fixture}/exit-code"
   require_inconclusive
   [[ "${output}" == "INCONCLUSIVE: an agent metric read failed (${expected})." ]] || {
-    printf 'FAIL: expected %s classification: %s\n' "${expected}" "${output}" >&2; exit 1;
+    printf 'FAIL: expected %s classification: %s\n' "${expected}" "${output}" >&2
+    exit 1
   }
 done <<'CASES'
 DEADLINE_EXCEEDED|124|context deadline exceeded
@@ -328,7 +353,8 @@ printf '%8192sPRIVATE_ERROR Forbidden\n' '' >"${fixture}/stderr"
 printf '1\n' >"${fixture}/exit-code"
 require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: an agent metric read failed (COMMAND_FAILED).' ]] || {
-  printf 'FAIL: classification read beyond the private prefix bound\n' >&2; exit 1;
+  printf 'FAIL: classification read beyond the private prefix bound\n' >&2
+  exit 1
 }
 reset_fixture
 touch "${fixture}/denied"
@@ -339,7 +365,10 @@ printf '%1048577s' '' >"${fixture}/metrics.json"
 require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: an agent metric read failed (OUTPUT_LIMIT).' ]] || exit 1
 workflow="${root_dir}/.github/workflows/read-cilium-api-limiter.yaml"
-[[ -f "${workflow}" ]] || { printf 'FAIL: reviewed dispatch workflow missing\n' >&2; exit 1; }
+[[ -f "${workflow}" ]] || {
+  printf 'FAIL: reviewed dispatch workflow missing\n' >&2
+  exit 1
+}
 [[ "$(yq -r '.on | keys | join(",")' "${workflow}")" == workflow_dispatch ]] || exit 1
 [[ "$(yq -r '.permissions | length' "${workflow}")" == 0 ]] || exit 1
 [[ "$(yq -r '.jobs.read.permissions | keys | join(",")' "${workflow}")" == contents ]] || exit 1

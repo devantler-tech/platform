@@ -1,6 +1,7 @@
+---
 name: Read Email Ingress Source
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

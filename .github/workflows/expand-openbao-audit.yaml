@@ -1,6 +1,7 @@
+---
 name: Expand OpenBao Audit Capacity
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       mode:
@@ -79,7 +80,7 @@ jobs:
 
       - name: Require offline preservation and real patch transport controls
         env:
-          AUDIT_REQUIRE_NATIVE_CONTROL: '1'
+          AUDIT_REQUIRE_NATIVE_CONTROL: "1"
         run: go test -race -count=1 ./scripts/expand-openbao-audit
 
       - name: Restore the established protected production kubeconfig

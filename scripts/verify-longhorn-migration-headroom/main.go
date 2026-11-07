@@ -1,3 +1,5 @@
+// Command verify-longhorn-migration-headroom reads the Hetzner server
+// inventory between two Node reads to observe temporary migration headroom.
 package main
 
 import (

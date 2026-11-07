@@ -402,7 +402,7 @@ func TestClusterTransportRefusesUnverifiableResponse(t *testing.T) {
 }
 
 // TestKubeconfigExportHelper is a subprocess fixture, never a real kubectl call.
-func TestKubeconfigExportHelper(t *testing.T) {
+func TestKubeconfigExportHelper(_ *testing.T) {
 	switch os.Getenv("WEDDING_CONFIG_TEST_HELPER") {
 	case "stdout":
 		_, _ = io.WriteString(os.Stdout, strings.Repeat("x", transportByteLimit+1))

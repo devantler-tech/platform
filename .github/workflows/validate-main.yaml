@@ -1,3 +1,4 @@
+---
 name: Validate Main
 
 # ci.yaml runs the authorization gate on `pull_request` and `merge_group` only,
@@ -15,7 +16,7 @@ name: Validate Main
 # authorization surface, which a change anywhere in the overlays (or in the
 # validator itself) can move; a paths filter here would recreate a narrower
 # version of the same blind spot.
-on:
+"on":
   push:
     branches: [main]
   # Validate a trusted prospective revision with the original read-only jobs.
@@ -97,7 +98,7 @@ jobs:
 
       - name: 🔐 Enforce approved publication signers
         env:
-          APPROVED_REVISIONS_ENFORCE: '1'
+          APPROVED_REVISIONS_ENFORCE: "1"
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       - name: ⚙️ Setup Go
@@ -130,7 +131,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.15"
+          KSAIL_VERSION: "7.206.35"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -206,7 +207,6 @@ jobs:
           # read as a passing step.
           set -o pipefail
           ./scripts/report-publish-workflow-signing-revisions.sh | tee -a "$GITHUB_STEP_SUMMARY"
-
 
   # ci.yaml's validate-talos job runs the Kubernetes/Talos compatibility predicate on
   # `pull_request` and `merge_group`, but neither event fires for a direct push to main.
@@ -324,7 +324,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.15"
+          KSAIL_VERSION: "7.206.35"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh

@@ -1,3 +1,4 @@
+---
 name: Deploy to Production
 description: >-
   Deploy the platform's GitOps manifests to the production Talos + Hetzner
@@ -58,7 +59,7 @@ runs:
     - name: 🔐 Enforce approved publication signers
       shell: bash
       env:
-        APPROVED_REVISIONS_ENFORCE: '1'
+        APPROVED_REVISIONS_ENFORCE: "1"
       run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
     # Keep signer approval ahead of credentials, then refuse stale recovery
@@ -83,7 +84,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.206.15"
+        KSAIL_VERSION: "7.206.35"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -176,7 +177,11 @@ runs:
           sleep 10
         done
         last_err=$(printf '%s' "$last_err" | tr '\n' ' ')
-        echo "::error::Prod Kubernetes API (context admin@prod) failed its readiness probe after stable endpoint selection (last kubectl error: ${last_err}). Inspect the selected endpoint, network reachability, and API readiness, then diagnose any reported TLS, authentication, or authorization failure. Recover kubeconfig credentials only if that diagnosis confirms a credential failure; this Kubernetes probe does not test Talos credentials. See docs/dr/runbook.md → 'Endpoint selection during ordinary deployments' and, for confirmed credential failures, 'Credential refresh after a full rebuild'."
+        # echo joins its arguments with single spaces: the annotation is still one line.
+        echo "::error::Prod Kubernetes API (context admin@prod) failed its readiness probe after stable endpoint selection (last kubectl error: ${last_err})." \
+          "Inspect the selected endpoint, network reachability, and API readiness, then diagnose any reported TLS, authentication, or authorization failure." \
+          "Recover kubeconfig credentials only if that diagnosis confirms a credential failure; this Kubernetes probe does not test Talos credentials." \
+          "See docs/dr/runbook.md → 'Endpoint selection during ordinary deployments' and, for confirmed credential failures, 'Credential refresh after a full rebuild'."
         exit 1
 
     - name: 🧱 Register and verify the Talos Image Factory schematic

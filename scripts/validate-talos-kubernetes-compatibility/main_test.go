@@ -201,7 +201,7 @@ func TestHealDeployValidatesCheckedOutMain(t *testing.T) {
 	if deploy < 0 {
 		t.Fatal("heal route does not deploy production")
 	}
-	if !(checkoutMain < validator && validator < deploy) {
+	if checkoutMain >= validator || validator >= deploy {
 		t.Errorf("heal route must validate after checkout and before deploy: checkout=%d validator=%d deploy=%d", checkoutMain, validator, deploy)
 	}
 }

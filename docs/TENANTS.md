@@ -163,7 +163,7 @@ WebApp, external DNS and SOPS disabled. Fetching that source does not deploy the
 portal or prove any image/identity/private-input readiness.
 
 | Verifier | Artifact | What it accepts |
-|---|---|---|
+| --- | --- | --- |
 | **Flux** — a registered tenant's `OCIRepository` | manifest | Its recorded legacy signer, current pin and release candidate, plus any exact maintained revisions explicitly approved for that consumer. Other commits are refused. |
 | **Admission** — the `verify-app-images` Kyverno policy | image | Legacy `actions` publishers with a full commit identity, or the explicitly reviewed maintained `.github` publisher revision, from the GitHub OIDC issuer. Other maintained commits, tags and branches are refused. |
 | **Node pull** — the Talos image-verification rule | image | The same legacy compatibility and exact maintained revision as admission. |

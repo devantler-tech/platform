@@ -1,3 +1,4 @@
+---
 name: Validate Image Verifier Liveness
 
 # Assert that node-level image verification can enforce AT ALL.
@@ -43,7 +44,7 @@ name: Validate Image Verifier Liveness
 # the scheduled run, or losing `environment: prod` fails the PR. This workflow
 # therefore carries only the checks that need the fleet.
 
-on:
+"on":
   schedule:
     - cron: "43 4 * * *" # Daily at 04:43 UTC — see WHEN above
   workflow_dispatch:
@@ -167,7 +168,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.15"
+          KSAIL_VERSION: "7.206.35"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

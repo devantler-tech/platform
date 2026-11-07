@@ -11,7 +11,9 @@ resources:
   - helm-repository.yaml
   - helm-release.yaml
   - http-route.yaml
+  - service.yaml
   - cilium-network-policy.yaml
+  - cilium-network-policy-allow-gateway-to-coroot-mcp.yaml
   - cron-job.yaml
   # Heartbeat monitor URL, held in a Secret rather than substituted into the
   # CronJob spec above (see that file and secret-cluster-heartbeat.yaml):

@@ -61,8 +61,8 @@ team() {
 }
 control() {
   jq -cn --arg label "$1" --arg policy "$policy_name" --arg actor "$2" --argjson object "$3" --arg expected "$4" \
-    '{label: $label, policy: $policy, object: $object, oldObject: null, actor: $actor, operation: "CREATE", expected: $expected}' \
-    | jq -c 'del(.oldObject)' >>"$controls"
+    '{label: $label, policy: $policy, object: $object, oldObject: null, actor: $actor, operation: "CREATE", expected: $expected}' |
+    jq -c 'del(.oldObject)' >>"$controls"
 }
 foreign_team="$(team github-config 99999999)"
 provider_prefix='system:serviceaccount:crossplane-system:provider-upjet-github-'

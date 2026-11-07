@@ -171,7 +171,7 @@ func readJournal(s state) (journal, error) {
 	if json.Unmarshal(body, &canonical) != nil {
 		return j, errors.New("invalid retirement journal")
 	}
-	if len(canonical) != 9 && !(len(canonical) == 10 && j.Baseline != nil) {
+	if len(canonical) != 9 && (len(canonical) != 10 || j.Baseline == nil) {
 		return j, errors.New("incomplete retirement journal")
 	}
 	for _, key := range []string{"namespaceUID", "hrUID", "esoUID", "phase", "controllerUID", "controllerTicket"} {

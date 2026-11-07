@@ -91,7 +91,7 @@ fail() {
   exit 1
 }
 
-[[ "$#" -eq 1 && ( "$1" == '--confirm' || "$1" == '--remove-confirmed' ) ]] ||
+[[ "$#" -eq 1 && ("$1" == '--confirm' || "$1" == '--remove-confirmed') ]] ||
   fail 'refusing to run: use --confirm. The proof starts pods beside two production backup credentials. Nothing has been touched.'
 removal=false
 if [[ "$1" == '--remove-confirmed' ]]; then

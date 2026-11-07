@@ -62,7 +62,7 @@ func TestMailboxRejectsForeignMethodAccountAndCallReceipts(t *testing.T) {
 		"multiple":      `{"methodResponses":[["Email/get",{"accountId":"company-account"},"proof"],["Email/get",{"accountId":"company-account"},"proof"]]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, response) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, response) }))
 			defer server.Close()
 			client, _ := newMailboxClient(server.URL, "fixture-only")
 			client.account = "company-account"
@@ -75,9 +75,9 @@ func TestMailboxRejectsForeignMethodAccountAndCallReceipts(t *testing.T) {
 
 func TestMailboxCredentialsNeverFollowRedirectOrErrorText(t *testing.T) {
 	forwarded := false
-	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { forwarded = true }))
+	other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { forwarded = true }))
 	defer other.Close()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", other.URL)
 		w.WriteHeader(http.StatusTemporaryRedirect)
 		_, _ = io.WriteString(w, "private-mail-body-do-not-log")
