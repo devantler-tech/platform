@@ -36,6 +36,9 @@ spec:
   # selected sidecar image. A mutable ConfigMap reference cannot establish the
   # value loaded by an existing process. Keep this exact image in the immutable
   # Pod specification; changing the release requires reviewing both pins.
+  # The patch targets only the Deployment, never a hook, so hooks are left
+  # un-post-rendered (the repository's explicit-strategy convention).
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:
