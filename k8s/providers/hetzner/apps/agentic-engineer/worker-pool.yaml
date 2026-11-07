@@ -1,0 +1,24 @@
+# The gVisor workers the Agentic Engineer's sandbox runs on. One worker holds
+# one agent run; the limits size it for the 2 CPU / 4 GiB the kagent release
+# gives every agent runtime, plus the worker's own overhead.
+apiVersion: ate.dev/v1
+kind: WorkerPool
+metadata:
+  name: agentic-engineer
+  namespace: agentic-engineer
+spec:
+  replicas: 1
+  workerImage: ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0
+  sandboxClasses:
+    - name: gvisor
+      configRef:
+        name: gvisor-default
+  template:
+    serviceAccountName: agentic-engineer-worker
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "3"
+        memory: 6Gi
