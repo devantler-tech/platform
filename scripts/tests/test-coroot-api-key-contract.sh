@@ -83,6 +83,7 @@ assert "${controllers}" \
 # only path that may reach Coroot without oauth2-proxy is exactly /mcp, which
 # authenticates every request itself. Its backend pins sessions to one pod, and
 # every service account that can hold an MCP key is a Viewer.
+# shellcheck disable=SC2016 # $ns is a jq variable, not a shell expansion
 coroot_backed='[.[] | select(.kind == "HTTPRoute") | .metadata.namespace as $ns | .spec.rules[]? |
   select(any(.backendRefs[]?; (.namespace // $ns) == "observability" and
     (.name == "coroot-coroot" or .name == "coroot-mcp")))]'
