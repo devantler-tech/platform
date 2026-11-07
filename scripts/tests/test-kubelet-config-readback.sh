@@ -85,6 +85,7 @@ healthy='{"kubeletconfig":{
   "evictionHard":{"memory.available":"100Mi","nodefs.available":"10%","nodefs.inodesFree":"5%","imagefs.available":"15%","imagefs.inodesFree":"5%"},
   "imageGCHighThresholdPercent":75,
   "imageGCLowThresholdPercent":70,
+  "featureGates":{"ClusterTrustBundle":true,"ClusterTrustBundleProjection":true,"PodCertificateRequest":true},
   "maxPods":110}}'
 # The exact shape #3137 found on two autoscaler nodes.
 drifted=$(jq '.kubeletconfig.mergeDefaultEvictionSettings = false
