@@ -30,6 +30,12 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners 
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|arc-systems|arc-controller bff72aa7aa7b49d98f96e2463835f3a284f9c6ec3dd29b8ab89ca0d672fe8473
 
+helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate 71bf7ead35d1e476c22e0b091d2b1868e9ad30a3359207300f8a0253fb019a47
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-atelet d1f1c98cbd858bb598af517a3d53fd293f2ce7da78202c9ccd8288567982b9c7
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-crds 1e9dd6ce2680fd5b6e03f0811dbc7f8b67ff5a644eed691329a06ee469252024
+
 helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|cert-manager 6e91f980ce0c37a8bfa4671319b170384cffd1781e4778d84f57710a97754ca1
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|origin-ca-issuer 692c09671787d077243a0eefb2c0b6cbbf5f726f590c033e12f1d74f58713a14
@@ -57,6 +63,10 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|flagger-system|flagger-loadtester 41ddcdab
 helm.toolkit.fluxcd.io/v2|HelmRelease|flux-system|flux-operator 0cbdc24c2b42ef3da78473ccd608df4e01e94e83891b9da1e7c5f18473a67f1e
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|homepage|homepage 73c235e4a91bde46f5eeb0400fb986c47b52860d188f97822024b09fd4752b2a
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent 4663144c24331a93bf46ef3d119ae0a1157378d564a2b60d88c4498dc3acf62a
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent-crds e1765ef34c0535f7101afad08e946cb5ed9815eb370636b8e735cd0af82a1be2
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|keda|keda 667d9298b1ca426e4c3ea1b623ead7d0e3edca07ec1f00819881b19408a880dd
 
@@ -95,6 +105,8 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|observability|coroot-operator a6c5d6dfdec7
 helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-operator cde84536579dac248ebcd88cdd84a33a4f4855824a0d0b88a0577da9cbb170dc
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 12438e84df9ca039b9926288d1023000456bb3e513bb0b032f1f800c9fa341d7
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|podcertificate-controller-system|substrate-podcert c257b8ca692bf5b8992dfe7a5883173c6ead02fc13724ad77bd52ea5c3d4d4b8
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter f92d67d39b5638fa931d19f4015ee490d6c98043e00a01319f4ef1a5fc64bc29
 
@@ -262,6 +274,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner cb7
 
 rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner-external-dns bd51e723eadb52df8b583fc8931be70ecade6863d8d2821ecad5f128c8bf6888
 
+rbac.authorization.k8s.io/v1|RoleBinding|ate-system|substrate-ca-reader b8b1991b6efcbc6d875e48fd3b2cbf8f2c3a33e8db09bdcc95b5fbc60bfa7167
+
 rbac.authorization.k8s.io/v1|RoleBinding|aws|aws-managed-resources 876e05322100f78b490b870ba8733b26daa0f93b65b8fdd77d559e9de94588c1
 
 rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|data-product-readiness-observer 00bcf69a4402d05bf5af23e273f9d3c5d7e7ebeed8c1778017a9f702d261360e
@@ -292,6 +306,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|observability|prune-protected-orphan-al
 
 rbac.authorization.k8s.io/v1|RoleBinding|openbao|vault-config 73bf84c061f045e4bb57309ed8223a3934932262f69aa15baa749c55de07da96
 
+rbac.authorization.k8s.io/v1|RoleBinding|podcertificate-controller-system|substrate-ca-reader ad30d7f52285b04c5e5a76e4ef4cfb5856fea230d885e8d0cbe302c849bc7386
+
 rbac.authorization.k8s.io/v1|RoleBinding|umami|cronjob-failure-alert c95ff2b4457c46397cd91acb105ad010f12cb6ec6ef4c3aad62410d158de9e33
 
 rbac.authorization.k8s.io/v1|RoleBinding|umami|kyverno:background-controller:mutate-umami-primary a6f3fb55bd604d18cd496ab6f30a6ca13b56ca5960bb89a7917ed4beb71b901d
@@ -309,6 +325,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|wedding-app|wedding-app 8fb1f3e7ae50e8f
 rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin 593fd95bd84af8840c71270227cabdf8137cba9c58d844b5ca2db3406d4632a2
 
 rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-operator b14714377d4a5317c7d829bc1b378ecea44ed82f2b1fff32d4c923f9ee4809d6
+
+rbac.authorization.k8s.io/v1|Role|ate-system|substrate-ca-reader 41a31278db026ce57fbe20b3dbbfedc2750825c824201cd6439ce65483d9c149
 
 rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources bcbd97adfa055719ff19364d7341e4952fcb0566f1c1ba16d073b6f1ae4108b0
 
@@ -335,6 +353,8 @@ rbac.authorization.k8s.io/v1|Role|observability|cronjob-failure-alert 3b244783f5
 rbac.authorization.k8s.io/v1|Role|observability|prune-protected-orphan-alert 7a815989a665e8c9d5f6434e51f3dde0e6e9116e05f195f1e56ed34cd7b3b1c2
 
 rbac.authorization.k8s.io/v1|Role|openbao|vault-config f4a498f0733d0dc497233995191721730dc419e176321e4a43b499b5af536cfc
+
+rbac.authorization.k8s.io/v1|Role|podcertificate-controller-system|substrate-ca-reader 91327d71b1be001fe546eadebc9d50e7bb9c1da33d610beb63f94dee7b3105cb
 
 rbac.authorization.k8s.io/v1|Role|umami|cronjob-failure-alert 013941d8ee4be81bb4238f14f2b8c2f3d49636519e220b9448958e1988d9111c
 
@@ -418,6 +438,12 @@ source.toolkit.fluxcd.io/v1|OCIRepository|arc-systems|arc-controller 64fb3257414
 
 source.toolkit.fluxcd.io/v1|OCIRepository|ascoachingogvaner|ascoachingogvaner c6e95d236b2c2996f4097e67c14e86905174f7c01fb3e14ea3df02493fad0728
 
+source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate c18e72675027c27e703a9c81377d00bf511e0ce179fa1a58f2ae07a57456117d
+
+source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate-atelet c47333a5b1c9420871e752394dad081886abcd25e9c67ced379660f798bf973f
+
+source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate-crds 18e1e779162255c57802d54633594aa5ee0e27c17e340d58401cd59eacc1afcd
+
 source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 8ad26301961658e0c50fc13246f1f44894a8f922daeb2713ec8b8724957071c4
 
 source.toolkit.fluxcd.io/v1|OCIRepository|cert-manager|origin-ca-issuer 026bb5454bce4d953d216d1c661137a3c3232576488eeff7a41ec4c76a642215
@@ -430,9 +456,15 @@ source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config 0b308d3b53
 
 source.toolkit.fluxcd.io/v1|OCIRepository|homepage|homepage ff2c2d1aac0b2315247df9f5266eeb00f4443ea551d6e92270bdf76a243c0f38
 
+source.toolkit.fluxcd.io/v1|OCIRepository|kagent|kagent 4dd66b5a7207063af23b8280434ddabcafbae5571d2de226f2bc07285663b19e
+
+source.toolkit.fluxcd.io/v1|OCIRepository|kagent|kagent-crds cb0bac92f6bcee350b5c3262f5d6f22d257cb7e15d8245a5d1eb021ee42a8ba3
+
 source.toolkit.fluxcd.io/v1|OCIRepository|kro-system|kro 76bcb723555afb69d2299cea2394ee4943cffef0c106d59a0fcba56ae87a2caf
 
 source.toolkit.fluxcd.io/v1|OCIRepository|ksail-operator|ksail-operator 2c1b9612623604a381f454532cb10502dd96b56468ffacb5aeaf9d50c3327090
+
+source.toolkit.fluxcd.io/v1|OCIRepository|podcertificate-controller-system|substrate-podcert fc43f22189b94b5ebbb46e77d1738e1170ee58e9a9fe3fc4988518f298a6e4de
 
 source.toolkit.fluxcd.io/v1|OCIRepository|wedding-app|wedding-app 55fb578c4bd6258d6fc025aabd92ef34adcd724ccb97b2608cb2fafcc09ba038
 
