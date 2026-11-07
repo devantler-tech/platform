@@ -10,24 +10,18 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - namespace-ate-system.yaml
-  - namespace-pod-certificates.yaml
-  - issuer-ate-system.yaml
-  - issuer-pod-certificates.yaml
+  - namespace.yaml
+  - issuer.yaml
   - certificate-actor-id-ca.yaml
   - certificate-actor-id-jwt.yaml
   - certificate-egress-mitm-ca.yaml
   - certificate-pod-identity-ca.yaml
   - certificate-postgres-ca.yaml
   - certificate-service-dns-ca.yaml
-  - service-account-ate-system.yaml
-  - service-account-pod-certificates.yaml
-  - role-ate-system.yaml
-  - role-pod-certificates.yaml
-  - role-binding-ate-system.yaml
-  - role-binding-pod-certificates.yaml
-  - secret-store-ate-system.yaml
-  - secret-store-pod-certificates.yaml
+  - service-account.yaml
+  - role.yaml
+  - role-binding.yaml
+  - secret-store.yaml
   - external-secret-actor-id-ca-certs.yaml
   - external-secret-actor-id-ca-pool.yaml
   - external-secret-actor-id-jwt-pool.yaml
@@ -55,5 +49,4 @@ resources:
   - cilium-network-policy-database.yaml
   - cilium-network-policy-egress-gateway.yaml
   - cilium-network-policy-namespace.yaml
-  - cilium-network-policy-pod-certificates.yaml
   - cilium-network-policy-workers.yaml

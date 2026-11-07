@@ -3,7 +3,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: substrate-postgres-ca
-  namespace: podcertificate-controller-system
+  namespace: ate-system
 spec:
   secretName: substrate-postgres-ca
   commonName: substrate-postgres-ca

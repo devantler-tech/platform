@@ -20,7 +20,6 @@ spec:
   dependsOn:
     - name: substrate-crds
     - name: substrate-podcert
-      namespace: podcertificate-controller-system
   values:
     objectStore:
       # The bundled RustFS store the control-plane release deploys.
