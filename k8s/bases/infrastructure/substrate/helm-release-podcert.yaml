@@ -26,6 +26,8 @@ spec:
         memory: 64Mi
       limits:
         memory: 256Mi
+  # Post-render only the release manifest; the guard models only that stream.
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

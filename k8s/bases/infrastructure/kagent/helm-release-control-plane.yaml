@@ -53,6 +53,8 @@ spec:
     # container, not only on the pod.
     securityContext:
       runAsNonRoot: true
+  # Post-render only the release manifest; the guard models only that stream.
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:
