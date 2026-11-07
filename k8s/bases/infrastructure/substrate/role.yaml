@@ -4,12 +4,15 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: substrate-ca-reader
-  namespace: podcertificate-controller-system
+  namespace: ate-system
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get"]
     resourceNames:
+      - substrate-actor-id-ca
+      - substrate-actor-id-jwt
+      - substrate-egress-mitm-ca
       - substrate-service-dns-ca
       - substrate-pod-identity-ca
       - substrate-postgres-ca

@@ -3,7 +3,7 @@ apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
   name: substrate-podcert
-  namespace: podcertificate-controller-system
+  namespace: ate-system
 spec:
   interval: 10m
   # Substrate publishes its four charts together, one version for all of them.
