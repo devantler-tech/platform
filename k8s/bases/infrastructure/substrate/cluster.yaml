@@ -1,0 +1,76 @@
+# Substrate's PostgreSQL store: actors, snapshots metadata and egress grants.
+# The chart neither deploys nor prepares a database. This mirrors upstream's
+# pkg/postgressetup/setup.sql: NOLOGIN owner and read/write roles, a schema
+# owned by the owner role, and NOINHERIT logins that Substrate switches to the
+# matching role with SET ROLE on every connection.
+#
+# The state is rebuildable (a lost database loses running actors and snapshot
+# metadata, not agent work, which lives in Git), so there is no off-cluster
+# backup. Two instances keep a node drain from taking it offline.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: substrate-db
+  namespace: ate-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
+  instances: 2
+  storage:
+    size: 5Gi
+    storageClass: longhorn-wffc
+  # Same quorum replication as the platform's other databases: a promoted
+  # standby always holds every committed transaction, and writes continue if
+  # the standby is down.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+  bootstrap:
+    initdb:
+      database: substrate
+      # The schema owner. Managed below as NOLOGIN, as upstream creates it.
+      owner: substrate_owner
+      postInitApplicationSQL:
+        - CREATE ROLE substrate_readwrite NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
+        - CREATE SCHEMA substrate AUTHORIZATION substrate_owner
+        - REVOKE CREATE ON SCHEMA public FROM PUBLIC
+        - REVOKE ALL ON SCHEMA substrate FROM PUBLIC
+        - GRANT USAGE ON SCHEMA substrate TO substrate_readwrite
+        - ALTER DEFAULT PRIVILEGES FOR ROLE substrate_owner IN SCHEMA substrate GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO substrate_readwrite
+        - ALTER DEFAULT PRIVILEGES FOR ROLE substrate_owner IN SCHEMA substrate GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO substrate_readwrite
+        - ALTER DEFAULT PRIVILEGES FOR ROLE substrate_owner IN SCHEMA substrate GRANT EXECUTE ON ROUTINES TO substrate_readwrite
+        - ALTER DEFAULT PRIVILEGES FOR ROLE substrate_owner IN SCHEMA substrate GRANT USAGE ON TYPES TO substrate_readwrite
+  managed:
+    roles:
+      - name: substrate_owner
+        ensure: present
+        login: false
+      - name: substrate_readwrite
+        ensure: present
+        login: false
+      - name: substrate_owner_user
+        ensure: present
+        login: true
+        inherit: false
+        inRoles:
+          - substrate_owner
+        passwordSecret:
+          name: substrate-db-owner
+      - name: substrate_readwrite_user
+        ensure: present
+        login: true
+        inherit: false
+        inRoles:
+          - substrate_readwrite
+        passwordSecret:
+          name: substrate-db-readwrite
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi

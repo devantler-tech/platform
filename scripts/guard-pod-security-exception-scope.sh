@@ -20,7 +20,7 @@
 #
 # 🔴 THE EXCLUSION LIST IS NOT THE ANSWER — READ THE MATCH BLOCKS TOO.
 #
-# `add-pod-security-context` excludes FOURTEEN namespaces, not twelve: the twelve plus
+# `add-pod-security-context` excludes SIXTEEN namespaces, not fourteen: the fourteen plus
 # cert-manager and keda. Those two are excluded there only because
 # `add-imageuid-pod-security-context` matches them BY NAME and supplies the same
 # pod-level fields, so the mutation does reach them and the exception correctly does
@@ -32,7 +32,7 @@
 #     namespaces the mutation does NOT reach
 #       = exclusions(add-pod-security-context) MINUS matches(add-imageuid-pod-security-context)
 #
-# `add-container-security-context` excludes the twelve directly and is not used to
+# `add-container-security-context` excludes the fourteen directly and is not used to
 # derive the set: it supplies container-level fields, while the exception's rationale
 # is about the pod-level ones. It is cross-checked instead, because a divergence
 # between the two mutation rules is its own drift and would otherwise be invisible.
@@ -126,7 +126,7 @@ report_diff \
   "the exception's NotIn values" || status=1
 
 # A cross-check, not the primary comparison: the two mutation rules exclude the same
-# twelve today, and a divergence between them means one of the two field sets is being
+# fourteen today, and a divergence between them means one of the two field sets is being
 # injected where the other is not — which changes what the exception is compensating
 # for without touching the exception at all.
 report_diff \

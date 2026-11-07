@@ -1,0 +1,10 @@
+# Substrate's certificate controller signs the Pod Certificates that identify
+# Substrate's services, its workers and the kagent controller, and publishes
+# its CAs as ClusterTrustBundles. Its chart expects this namespace name.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: podcertificate-controller-system
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

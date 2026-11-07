@@ -135,6 +135,10 @@ spec:
                 - observability
                 - velero
                 - chaos-mesh
+                # Substrate: atelet and the gVisor worker pods run as root with the
+                # capabilities and seccomp profile their sandboxes need.
+                - ate-system
+                - agentic-engineer
           # Workloads with an image-baked non-1000 UID and no chart-set runAsUser
           # (cert-manager/trust-manager/origin-ca-issuer and keda run as 65532).
           # Forcing pod-level runAsUser:1000 would override their
@@ -187,6 +191,10 @@ spec:
                 - observability
                 - velero
                 - chaos-mesh
+                # Substrate: atelet and the gVisor worker pods run as root with the
+                # capabilities and seccomp profile their sandboxes need.
+                - ate-system
+                - agentic-engineer
       mutate:
         foreach:
           - list: "request.object.spec.containers"
@@ -282,7 +290,7 @@ spec:
               +(runAsNonRoot): true
               +(fsGroup): 1000
               +(fsGroupChangePolicy): OnRootMismatch
-    # The twelve namespaces excluded from add-pod-security-context and
+    # The namespaces excluded from add-pod-security-context and
     # add-container-security-context are excluded because their workloads need
     # elevated PRIVILEGE. That rationale covers runAsUser/runAsGroup/fsGroup and
     # the container hardening fields — it does not cover fsGroupChangePolicy or

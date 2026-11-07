@@ -149,6 +149,8 @@ results:
       - exempt-observability
       - exempt-velero
       - exempt-chaos-mesh
+      - exempt-ate-system
+      - exempt-agentic-engineer
   - policy: validate-pod-security
     kind: Deployment
     result: pass

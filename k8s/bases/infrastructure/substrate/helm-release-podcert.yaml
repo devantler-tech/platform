@@ -1,0 +1,47 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: substrate-podcert
+  namespace: podcertificate-controller-system
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  timeout: 10m
+  chartRef:
+    kind: OCIRepository
+    name: substrate-podcert
+  # The certificate controller is one per cluster and independent of the
+  # application release, as upstream installs it. It signs from the
+  # service-dns, pod-identity and postgres CA pools that ExternalSecrets build
+  # in this namespace (external-secret-*-ca-pool.yaml); its pod waits for them.
+  # The defaults already name the Substrate API server's namespace and service
+  # account as the only PostgreSQL client-certificate requester; this install
+  # uses password logins, so nothing requests one.
+  values:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+  postRenderers:
+    - kustomize:
+        patches:
+          # The chart hard-codes an empty pod securityContext, and the
+          # platform's pod-security policy requires a seccomp profile on the
+          # pod template. The container already drops all capabilities but
+          # NET_BIND_SERVICE and runs as non-root. One controller per cluster
+          # is upstream's design, so it is exempt from the replica floor.
+          - target:
+              kind: Deployment
+              name: podcertificate-controller
+            patch: |
+              - op: add
+                path: /spec/template/spec/securityContext/seccompProfile
+                value:
+                  type: RuntimeDefault
+              - op: add
+                path: /metadata/labels/platform.devantler.tech~1replica-floor
+                value: exempt

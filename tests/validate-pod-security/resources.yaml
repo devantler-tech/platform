@@ -3156,6 +3156,42 @@ spec:
         seccompProfile:
           type: Unconfined
 ---
+# Substrate runs atelet and its gVisor workers as root with added
+# capabilities and an unconfined seccomp profile; no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-ate-system
+  namespace: ate-system
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsUser: 0
+        capabilities:
+          drop: [ALL]
+          add: [SYS_ADMIN, NET_ADMIN]
+        seccompProfile:
+          type: Unconfined
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-agentic-engineer
+  namespace: agentic-engineer
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsUser: 0
+        capabilities:
+          drop: [ALL]
+          add: [SYS_ADMIN, NET_ADMIN]
+        seccompProfile:
+          type: Unconfined
+---
 # A namespace whose name only starts like an exempt one is still checked.
 apiVersion: v1
 kind: Pod

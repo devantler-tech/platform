@@ -1,0 +1,12 @@
+# The certificate controller only talks to the Kubernetes API: it watches
+# PodCertificateRequests, signs them and publishes ClusterTrustBundles.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-substrate-podcert
+  namespace: podcertificate-controller-system
+spec:
+  endpointSelector: {}
+  egress:
+    - toEntities:
+        - kube-apiserver
