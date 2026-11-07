@@ -42,7 +42,7 @@ jobs:
             patch: coroot-v1.28.1-checkpoint-record.patch
             dockerfile: CorootCheckpoint.Dockerfile
             image: platform-coroot
-            version: v1.28.1-checkpoints.1
+            version: v1.28.1-checkpoints.2
           - component: collector
             repository: coroot/coroot-cluster-agent
             source: 4291458563fa8ea55615e23e0f11412db79742b6
@@ -126,7 +126,7 @@ jobs:
             patch: coroot-v1.28.1-checkpoint-record.patch
             dockerfile: CorootCheckpoint.Dockerfile
             image: platform-coroot
-            version: v1.28.1-checkpoints.1
+            version: v1.28.1-checkpoints.2
           - component: collector
             repository: coroot/coroot-cluster-agent
             source: 4291458563fa8ea55615e23e0f11412db79742b6
