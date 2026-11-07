@@ -11,6 +11,7 @@ resources:
   - helm-repository.yaml
   - helm-release.yaml
   - http-route.yaml
+  - service.yaml
   - cilium-network-policy.yaml
   - cilium-network-policy-allow-gateway-to-coroot-mcp.yaml
   - cron-job.yaml
