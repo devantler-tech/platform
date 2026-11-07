@@ -1,0 +1,24 @@
+# The backend of the HTTPRoute's /mcp rule. Coroot's MCP server keeps each
+# session, and the project the session selected, in the memory of the pod that
+# opened it, and answers 404 "Invalid session ID" to a session it did not open.
+# Prod runs two Coroot pods behind coroot-coroot, so a follow-up request that
+# lands on the other pod fails. This Service sends MCP traffic to one pod only,
+# coroot-coroot-0 (the operator runs Coroot as a StatefulSet). While that pod
+# restarts, MCP is unavailable and clients open a new session afterwards; the UI
+# keeps using both pods through coroot-coroot.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coroot-mcp
+  namespace: observability
+spec:
+  selector:
+    app.kubernetes.io/part-of: coroot
+    app.kubernetes.io/component: coroot
+    statefulset.kubernetes.io/pod-name: coroot-coroot-0
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
