@@ -121,6 +121,25 @@ jobs:
       - name: 🧪 Validate the complete Go helper regression suite
         run: go test -parallel 8 -timeout 20m ./...
 
+  # The organization's required Go workflow only applies while GitHub detects this
+  # repository's language as Go, and Go and Shell are within a few kilobytes of each
+  # other. Call the same workflow here so every same-repository pull request runs it
+  # whichever language is detected, and a regression cannot merge while the rule is
+  # not selecting this repository (#5852). While the language is Go both runs happen;
+  # this call stays read-only so the required run remains the only signed-fix writer.
+  validate-go-project:
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@ea4d0d8c1ba4bcad612ef9c9e9b18ac932e7ff0e # v20.1.11
+    with:
+      apply-signed-fixes: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      code-quality: write
+
   changes:
     name: 🔍 Detect Changes
     runs-on: ubuntu-latest
@@ -4652,6 +4671,7 @@ jobs:
         validate-publication-generator,
         validate-manifest-regressions,
         validate-go-regressions,
+        validate-go-project,
         validate-webapp-compiler,
         validate-consumer-discovery,
         validate-publication-contract,
@@ -4675,6 +4695,29 @@ jobs:
     permissions:
       actions: read
     steps:
+      - name: 🧪 Require the organization Go workflow on same-repository pull requests
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+          GO_PROJECT_RESULT: ${{ needs.validate-go-project.result }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request)
+              if [ "$HEAD_REPOSITORY" = "$REPOSITORY" ]; then
+                expected=success
+              else
+                expected=skipped
+              fi
+              ;;
+            merge_group) expected=skipped ;;
+            *) echo '::error::Unknown Go workflow event'; exit 1 ;;
+          esac
+          if [ "$GO_PROJECT_RESULT" != "$expected" ]; then
+            echo "::error::Organization Go workflow result was $GO_PROJECT_RESULT; expected $expected"
+            exit 1
+          fi
+
       - name: 🧩 Require complete selected WebApp compilation
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -4758,6 +4801,7 @@ jobs:
             ${{ needs.validate-publication-generator.result }}
             ${{ needs.validate-manifest-regressions.result }}
             ${{ needs.validate-go-regressions.result }}
+            ${{ needs.validate-go-project.result }}
             ${{ needs.validate-webapp-compiler.result }}
             ${{ needs.validate-consumer-discovery.result }}
             ${{ needs.validate-publication-contract.result }}
