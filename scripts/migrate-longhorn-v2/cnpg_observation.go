@@ -41,7 +41,8 @@ func validateCNPGObservation(before, after cnpgObservation) error {
 		}
 		initial, present := before.States[name]
 		latest, observed := after.States[name]
-		if !present || !observed || validPostgresState(initial) != nil || validPostgresState(latest) != nil || initial.SystemID != latest.SystemID || initial.Timeline != latest.Timeline || initial.InRecovery != latest.InRecovery {
+		if !present || !observed || validPostgresState(initial) != nil || validPostgresState(latest) != nil || initial.SystemID != latest.SystemID || initial.Timeline != latest.Timeline || initial.InRecovery != latest.InRecovery ||
+			initial.PostmasterStart == "" || initial.PostmasterStart != latest.PostmasterStart {
 			return refused
 		}
 		if name == primaryName {

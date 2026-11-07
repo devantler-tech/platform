@@ -16,11 +16,13 @@ type postgresState struct {
 	FlushLSN   string `json:"flush_lsn"`
 	ReplayLSN  string `json:"replay_lsn"`
 	InRecovery bool   `json:"in_recovery"`
+	// PostmasterStart catches an in-place server restart, which keeps the container and its restart count.
+	PostmasterStart string `json:"postmaster_start"`
 }
 
 // Only fixed SQL is passed to PostgreSQL. This reveals physical recovery
 // coordinates, never application rows or credentials.
-const postgresStateSQL = `SELECT json_build_object('system_id',(pg_control_system()).system_identifier::text,'timeline',(pg_control_checkpoint()).timeline_id::text,'flush_lsn',CASE WHEN pg_is_in_recovery() THEN NULL ELSE pg_current_wal_flush_lsn()::text END,'replay_lsn',pg_last_wal_replay_lsn()::text,'in_recovery',pg_is_in_recovery());`
+const postgresStateSQL = `SELECT json_build_object('system_id',(pg_control_system()).system_identifier::text,'timeline',(pg_control_checkpoint()).timeline_id::text,'flush_lsn',CASE WHEN pg_is_in_recovery() THEN NULL ELSE pg_current_wal_flush_lsn()::text END,'replay_lsn',pg_last_wal_replay_lsn()::text,'in_recovery',pg_is_in_recovery(),'postmaster_start',pg_postmaster_start_time()::text);`
 
 var postgresLSN = regexp.MustCompile(`^[0-9A-F]{1,8}/[0-9A-F]{1,8}$`)
 var postgresImageDigest = regexp.MustCompile(`(^|@)sha256:[0-9a-f]{64}$`)

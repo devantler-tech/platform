@@ -15,7 +15,7 @@ func cnpgObservationFixture(t *testing.T) cnpgObservation {
 	states := map[string]postgresState{}
 	for i, p := range pods {
 		p["status"].(object)["containerStatuses"] = []any{object{"name": "postgres", "ready": true, "restartCount": float64(0), "imageID": "ghcr.io/cloudnative-pg/postgresql@sha256:" + strings.Repeat("a", 64), "containerID": "containerd://" + strings.Repeat(string(rune('b'+i)), 64)}}
-		state := postgresState{SystemID: "1234567890123456789", Timeline: "7", ReplayLSN: "2/101", InRecovery: true}
+		state := postgresState{SystemID: "1234567890123456789", Timeline: "7", ReplayLSN: "2/101", InRecovery: true, PostmasterStart: "2026-11-01 08:00:00.000000+00"}
 		if i == 0 {
 			state.FlushLSN, state.InRecovery = "2/100", false
 		}
@@ -67,6 +67,16 @@ func TestCNPGObservationAcceptsOnlyStablePhysicalReplication(t *testing.T) {
 		},
 		"timeline changed":    func(s *cnpgObservation) { p := s.States["umami-db-1"]; p.Timeline = "8"; s.States["umami-db-1"] = p },
 		"primary in recovery": func(s *cnpgObservation) { p := s.States["umami-db-1"]; p.InRecovery = true; s.States["umami-db-1"] = p },
+		"in-place server restart": func(s *cnpgObservation) {
+			p := s.States["umami-db-2"]
+			p.PostmasterStart = "2026-11-07 16:00:00.000000+00"
+			s.States["umami-db-2"] = p
+		},
+		"server start unobserved": func(s *cnpgObservation) {
+			p := s.States["umami-db-3"]
+			p.PostmasterStart = ""
+			s.States["umami-db-3"] = p
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := cloneCNPGObservation(t, before)
