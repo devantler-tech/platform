@@ -985,6 +985,18 @@ spec:
               }
               POLICY
 
+              # Read-only replacement preflight (#5836): the Raft membership the
+              # quorum judge decides on, and revoking its own token when done.
+              # Health needs no token, so it is not granted here.
+              bao policy write openbao-replacement-observer - <<'POLICY'
+              path "sys/storage/raft/configuration" {
+                capabilities = ["read"]
+              }
+              path "auth/token/revoke-self" {
+                capabilities = ["update"]
+              }
+              POLICY
+
               bao policy write vault-snapshot-readonly - <<'POLICY'
               path "sys/health" {
                 capabilities = ["read"]
@@ -1265,6 +1277,19 @@ spec:
                 bound_service_account_namespaces=openbao \
                 policies=vault-snapshot-readonly \
                 ttl=15m
+
+              # Minted per run by the protected replacement preflight (#5836);
+              # no default policy, and a token that outlives a run expires fast.
+              bao write auth/kubernetes/role/openbao-replacement-observer - <<'REPLACEMENT_OBSERVER_ROLE'
+              {
+                "bound_service_account_names": ["openbao-replacement-observer"],
+                "bound_service_account_namespaces": ["openbao"],
+                "token_policies": ["openbao-replacement-observer"],
+                "token_no_default_policy": true,
+                "token_ttl": 300,
+                "token_max_ttl": 300
+              }
+              REPLACEMENT_OBSERVER_ROLE
 
               # Weekly umami blue/green credential rotation (#4107).
               bao write auth/kubernetes/role/umami-db-rotator \

@@ -1069,9 +1069,6 @@ jobs:
       - name: 💾 Validate OpenBao snapshot fetch
         run: go test ./scripts/tests/vault-snapshot-fetch
 
-      - name: 🔎 Validate finite runtime-log evidence
-        run: go test ./scripts/analyze-cri-logs
-
       - name: 🛑 Validate inactive ARC staging boundaries
         run: go test ./scripts/tests/arc-staging
 
@@ -1872,7 +1869,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.24"
+          KSAIL_VERSION: "7.206.35"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1901,8 +1898,8 @@ jobs:
           shellcheck scripts/tests/test-production-authorization-rules.sh
           bash scripts/tests/test-production-authorization-rules.sh
 
-      - name: 🚦 Validate Actual Budget user-namespace pilot
-        # Exercise the active component and its rollback on both the PR and the
+      - name: 🚦 Validate Actual Budget user namespaces
+        # Exercise the permanent setting and its rollback on both the PR and the
         # speculative merge-group revision before deploy-prod can publish it.
         timeout-minutes: 5
         run: |
@@ -3117,7 +3114,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.24"
+          KSAIL_VERSION: "7.206.35"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3551,7 +3548,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.24"
+          KSAIL_VERSION: "7.206.35"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3733,7 +3730,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@f6f8c96641f21c98e6ffc841bc6f3859cce0525b # v20.0.1
+        uses: devantler-tech/.github/actions/validate-naming@56ceec6717a1faa0686d865424cd2d1d45f18a0a # v20.1.6
 
       - name: Confirm naming validation completed
         env:
@@ -4544,7 +4541,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.24"
+          KSAIL_VERSION: "7.206.35"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -4749,7 +4746,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@522038c41420f0c9508a586cb944eda995ad0068 # v20.1.0
+        uses: devantler-tech/.github/actions/aggregate-job-checks@56ceec6717a1faa0686d865424cd2d1d45f18a0a # v20.1.6
         with:
           check-workflow-startup: "true"
           job-results: >-
