@@ -87,18 +87,36 @@ export VPA_CLEANUP_CONFIRM=cleanup-orphan-generated-vpas
 run_case() {
   local scenario="$1" mode="$2" expected="$3" deleted="$4" rc=0
   export CASE="$work/$scenario-$mode" SCENARIO="$scenario"
-  mkdir -p "$CASE"; cp "$work/base.json" "$CASE/vpa.json"
+  mkdir -p "$CASE"
+  cp "$work/base.json" "$CASE/vpa.json"
   case "$scenario" in
-    wrong-label) jq '.metadata.labels["generate.kyverno.io/trigger-namespace"]="other"' "$CASE/vpa.json" >"$CASE/new"; mv "$CASE/new" "$CASE/vpa.json" ;;
-    wrong-target) jq '.spec.targetRef.name="other"' "$CASE/vpa.json" >"$CASE/new"; mv "$CASE/new" "$CASE/vpa.json" ;;
-    invalid-uid) jq '.metadata.labels["generate.kyverno.io/trigger-uid"]=""' "$CASE/vpa.json" >"$CASE/new"; mv "$CASE/new" "$CASE/vpa.json" ;;
-    owned) jq '.metadata.ownerReferences=[{"apiVersion":"apps/v1","kind":"Deployment","name":"old","uid":"00000000-0000-0000-0000-000000000002"}]' "$CASE/vpa.json" >"$CASE/new"; mv "$CASE/new" "$CASE/vpa.json" ;;
+    wrong-label)
+      jq '.metadata.labels["generate.kyverno.io/trigger-namespace"]="other"' "$CASE/vpa.json" >"$CASE/new"
+      mv "$CASE/new" "$CASE/vpa.json"
+      ;;
+    wrong-target)
+      jq '.spec.targetRef.name="other"' "$CASE/vpa.json" >"$CASE/new"
+      mv "$CASE/new" "$CASE/vpa.json"
+      ;;
+    invalid-uid)
+      jq '.metadata.labels["generate.kyverno.io/trigger-uid"]=""' "$CASE/vpa.json" >"$CASE/new"
+      mv "$CASE/new" "$CASE/vpa.json"
+      ;;
+    owned)
+      jq '.metadata.ownerReferences=[{"apiVersion":"apps/v1","kind":"Deployment","name":"old","uid":"00000000-0000-0000-0000-000000000002"}]' "$CASE/vpa.json" >"$CASE/new"
+      mv "$CASE/new" "$CASE/vpa.json"
+      ;;
   esac
   bash "$root/scripts/cleanup-orphan-generated-vpas.sh" "$mode" >"$CASE/output" 2>&1 || rc=$?
-  [[ "$rc" == "$expected" ]] || { cat "$CASE/output"; echo "FAIL: $scenario/$mode exit $rc expected $expected"; exit 1; }
+  [[ "$rc" == "$expected" ]] || {
+    cat "$CASE/output"
+    echo "FAIL: $scenario/$mode exit $rc expected $expected"
+    exit 1
+  }
   if [[ "$deleted" == yes ]]; then [[ -f "$CASE/deleted" ]]; else [[ ! -f "$CASE/deleted" ]]; fi
   if grep -Eq 'apps-ns|old-deployment|00000000-|Forbidden|https?://' "$CASE/output"; then
-    echo "FAIL: $scenario exposed private input"; exit 1
+    echo "FAIL: $scenario exposed private input"
+    exit 1
   fi
   echo "ok: $scenario/$mode"
 }
@@ -113,7 +131,10 @@ run_case delete-failed apply 2 no
 run_case leftover apply 1 yes
 export GITHUB_REF=refs/heads/unreviewed
 run_case unreviewed apply 1 no
-[[ ! -f "$CASE/calls" ]] || { echo 'FAIL: unreviewed dispatch reached the API'; exit 1; }
+[[ ! -f "$CASE/calls" ]] || {
+  echo 'FAIL: unreviewed dispatch reached the API'
+  exit 1
+}
 echo 'OK: generated VPA cleanup preserves live and changed objects'
 
 # Execute the actual workflow guard, including every branch before checkout or
@@ -139,7 +160,8 @@ for invalid in branch repository event attempt confirm mode; do
     esac
     bash "$work/guard.sh"
   ) >/dev/null 2>&1; then
-    echo "FAIL: the workflow accepted $invalid"; exit 1
+    echo "FAIL: the workflow accepted $invalid"
+    exit 1
   fi
 done
 echo 'OK: the main-only workflow guard refuses every invalid dispatch control'

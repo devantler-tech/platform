@@ -1,6 +1,7 @@
+---
 name: Prepare Longhorn V2 Migration
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:
@@ -17,12 +18,33 @@ on:
         description: The guarded migration step to run
         required: true
         type: choice
-        options: [prepare-worker, prepare-unused-temporary-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas, inventory-storage-root, inventory-storage-layout, inspect-host-memory, reboot-host-for-hugepages, observe-database]
+        options:
+          [
+            prepare-worker,
+            prepare-unused-temporary-worker,
+            refresh-clients,
+            benchmark-v1,
+            benchmark-v2,
+            inventory-replicas,
+            inventory-storage-root,
+            inventory-storage-layout,
+            inspect-host-memory,
+            reboot-host-for-hugepages,
+            observe-database,
+          ]
       node:
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
         required: false
         type: choice
-        options: [prod-worker-1, prod-worker-2, prod-worker-3, temporary-v1-1, temporary-v1-2, temporary-v2-1]
+        options:
+          [
+            prod-worker-1,
+            prod-worker-2,
+            prod-worker-3,
+            temporary-v1-1,
+            temporary-v1-2,
+            temporary-v2-1,
+          ]
       database:
         description: Fixed database for a read-only migration observation; leave node empty
         required: false

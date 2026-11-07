@@ -5,7 +5,7 @@
 #
 # WHY THIS EXISTS
 # KSV-01010 "ConfigMap with sensitive content" matches key and value TEXT, so it cannot tell a
-# public ACME contact address from a credential. Three ConfigMaps are dispositioned (#3240):
+# public ACME contact address from a credential. Five ConfigMaps are dispositioned (#3240):
 #
 #   k8s/clusters/{prod,local}/bootstrap/config-map.yaml  — matched on admin_email, the ACME
 #                                                          registration contact the cluster issuer
@@ -13,6 +13,10 @@
 #   k8s/bases/apps/actual-budget/config-map.yaml         — matched on the identifier names in an
 #                                                          embedded script that READS credentials
 #                                                          from an ESO-mounted Secret.
+#   k8s/bases/apps/homepage/config-map.yaml              — matched on the `Email:` service group
+#                                                          heading in the dashboard layout.
+#   .../coroot/components/security-progress/config-map.yaml — generated from reviewed scripts;
+#                                                          matched on jq identifiers named key.
 #
 # The premise is that the EXCEPTION IS THE PATH, not the content. If the scoping ever stopped
 # deciding — a glob widened to k8s/**, the id skipped outright — then a genuinely secret-bearing
@@ -45,7 +49,7 @@ readonly ISSUED_PREFIX_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?(gh[pousr]
 # ANCHORED AT BOTH ENDS, with the path segments restricted to the lowercase class an image
 # reference is actually limited to. Matching only a host-like PREFIX excluded any credential that
 # merely begins host-like, which is a fail-open in the guard rather than a cosmetic gap:
-# `hooks.slack.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx` matched both expressions,
+# a Slack webhook (`hooks.slack.com/services/T00000000/B00000000/…`) matched both expressions,
 # so a live Slack webhook added to an excepted ConfigMap would be discarded before the opaque-value
 # check and KSV-01010 would stay suppressed over it. Measured 2026-08-30; the
 # "hostname-prefixed credential" fixture below pins it.
@@ -53,6 +57,12 @@ readonly ISSUED_PREFIX_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?(gh[pousr]
 # Deliberately NOT done by dropping `/` from the value class: standard base64 contains `/`, so that
 # would have removed real coverage. The "standard base64 containing a slash" fixture pins that.
 readonly IMAGE_REF_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[a-z0-9-]+(\.[a-z0-9-]+)+(/[a-z0-9._-]+)+"?[[:space:]]*$'
+
+# An absolute file path (`/var/run/secrets/kubernetes.io/serviceaccount/token`) is the same kind
+# of false match, and is excluded the same way: the WHOLE value is lowercase path segments that
+# start at `/`. Standard base64 can also start with `/`, but carries uppercase, so the
+# "standard base64 starting with a slash" fixture below stays detected.
+readonly FILE_PATH_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?(/[a-z0-9._-]+)+"?[[:space:]]*$'
 
 # Credential-shaped lines in a file, minus image/registry references. Defined once so the file loop
 # and the self-test exercise the SAME composition — a self-test against a differently-composed
@@ -84,7 +94,7 @@ opaque_value_hits() {
 
   # This stage filters an in-memory string, so there is nothing left to fail on a read and exit 1
   # means every candidate was an image reference — a legitimate empty result.
-  printf '%s\n' "$candidates" | grep -vE "$IMAGE_REF_VALUE_RE" || true
+  printf '%s\n' "$candidates" | grep -vE -e "$IMAGE_REF_VALUE_RE" -e "$FILE_PATH_VALUE_RE" || true
 }
 
 fail() {
@@ -97,6 +107,8 @@ fail() {
 command -v yq >/dev/null 2>&1 || fail "yq is required to check the KSV-01010 disposition boundary"
 
 readonly EXPECTED_PATHS="k8s/bases/apps/actual-budget/config-map.yaml
+k8s/bases/apps/homepage/config-map.yaml
+k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml
 k8s/clusters/local/bootstrap/config-map.yaml
 k8s/clusters/prod/bootstrap/config-map.yaml"
 
@@ -109,10 +121,10 @@ instead, delete this test with them"
 while IFS= read -r n; do
   [ "$n" -gt 0 ] || fail \
     "a $CHECK_ID entry has no paths key, so the check is skipped repository-wide rather than \
-scoped to the three reviewed ConfigMaps"
+scoped to the five reviewed ConfigMaps"
 done < <(yq ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // []) | length" "$IGNOREFILE")
 
-# The scoped set must be exactly the three reviewed files. A widened glob (k8s/**) or a new path
+# The scoped set must be exactly the five reviewed files. A widened glob (k8s/**) or a new path
 # added without review both land here.
 actual_paths="$(yq -r ".misconfigurations[] | select(.id == \"$CHECK_ID\") | .paths[]" "$IGNOREFILE" | sort)"
 if [ "$actual_paths" != "$EXPECTED_PATHS" ]; then
@@ -124,7 +136,7 @@ actual:
 $actual_paths"
 fi
 
-echo "PASS(structural): $CHECK_ID is path-scoped to exactly the 3 reviewed ConfigMaps."
+echo "PASS(structural): $CHECK_ID is path-scoped to exactly the 5 reviewed ConfigMaps."
 
 # --- Layer 1b: content premises. Path scoping decides WHICH files are excepted; it says nothing
 # --- about what those files may later contain. A credential added to one of them would be
@@ -246,11 +258,16 @@ check_fixture no no "k8s registry image reference" 'registry.k8s.io/kube-state-m
 # yes), which is what distinguishes it from the two image references above; the uppercase path
 # segments are what an image reference may not contain.
 check_fixture yes no "hostname-prefixed credential (slack webhook)" \
-  'hooks.slack.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx'
+  "$(mk 'hooks.slack' '.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx')"
 
 # The case the naive fix (dropping `/` from the value class) would have broken: a standard-base64
 # credential containing `/` must still be caught.
 check_fixture yes no "standard base64 containing a slash" 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVph/2NkZWZnaGlq='
+
+# The file-path exclusion must clear a projected token path and still catch base64 that merely
+# starts with `/`, which is why it admits lowercase path segments only.
+check_fixture no no "projected token file path" '/var/run/secrets/kubernetes.io/serviceaccount/token'
+check_fixture yes no "standard base64 starting with a slash" '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgK'
 
 # MUST NOT be detected by either — the real reviewed values these exceptions exist for.
 check_fixture no no "acme contact address" 'ned@devantler.tech'
@@ -279,7 +296,7 @@ rm -f "$selftest_probe"
 [ "$selftest_failures" -eq 0 ] || fail \
   "$selftest_failures detector self-test failure(s). The content-premise checks above cannot be \
 trusted until these pass — a detector that no longer matches reports success identically."
-echo "PASS(selftest): both content detectors pin their own coverage (9 credential fixtures, 5 cleared, 2 unreadable-input rejections)."
+echo "PASS(selftest): both content detectors pin their own coverage (10 credential fixtures, 6 cleared, 2 unreadable-input rejections)."
 
 # --- Layer 2: behavioural paired control. Needs trivy; skips (loudly) where it is unavailable.
 command -v trivy >/dev/null 2>&1 || {
@@ -370,6 +387,10 @@ echo "  with    ignorefile : excepted=$SCOPED_EXCEPTED  probe=$SCOPED_PROBE   (s
 readonly REVIEWED_KEYS_prod="admin_email"
 readonly REVIEWED_KEYS_local="admin_email"
 readonly REVIEWED_KEYS_actual="const secretKey,enablebanking_secretKey"
+# Reviewed with trivy 0.76.1. Single-quoted: the jq source contains `$input` and `$list`.
+readonly REVIEWED_KEYS_homepage='Email'
+# shellcheck disable=SC2016
+readonly REVIEWED_KEYS_progress='def scope_key,|  key,| ( def index_of($list),| ($input.vulnerability | list | map(key,| group_by(.key) | map( key'
 
 # Extract the brace-delimited key list trivy reports for one target, normalise it, and join.
 matched_keys_at() {
@@ -429,11 +450,14 @@ to a Secret, or re-review the exception."
 assert_reviewed_key_sets "$CHECK_ID" \
   "k8s/clusters/prod/bootstrap/config-map.yaml:$REVIEWED_KEYS_prod" \
   "k8s/clusters/local/bootstrap/config-map.yaml:$REVIEWED_KEYS_local" \
-  "k8s/bases/apps/actual-budget/config-map.yaml:$REVIEWED_KEYS_actual"
+  "k8s/bases/apps/actual-budget/config-map.yaml:$REVIEWED_KEYS_actual" \
+  "k8s/bases/apps/homepage/config-map.yaml:$REVIEWED_KEYS_homepage" \
+  "k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml:$REVIEWED_KEYS_progress"
 
 # --- The KSV-0109 dispositions' content premises. ---
 # KSV-0109 "ConfigMap stores secrets" is the other ConfigMap check, and it is the one that matches
-# credential-shaped KEY NAMES rather than value text. Two files are excepted from it:
+# credential-shaped KEY NAMES rather than value text. Three files are excepted from it; the third,
+# the generated security-progress ConfigMap, matches only the word "pass" in a script comment.
 #
 #   k8s/clusters/prod/bootstrap/config-map.yaml   — matched on external_secrets_replicas, a public
 #                                                   controller replica count. The word "secrets"
@@ -443,14 +467,17 @@ assert_reviewed_key_sets "$CHECK_ID" \
 #                                                   JavaScript that READS credentials from an
 #                                                   ESO-mounted Secret.
 #
-# Both dispositions are scoped per FILE, so they cover whatever those files hold — including a
+# All three dispositions are scoped per FILE, so they cover whatever those files hold — including a
 # credential added later under a key nobody reviewed. Such an addition moves no count, because the
 # finding at that path is already suppressed, so neither the scan total nor the path-scoping checks
 # above can see it. Asserting the matched-key SET is what makes it fail.
 readonly CHECK_ID_0109="KSV-0109"
 readonly REVIEWED_0109_prod="external_secrets_replicas"
 readonly REVIEWED_0109_actual="const secretKey,enablebanking_secretKey"
+# The generated security-progress ConfigMap matches only prose in an embedded script comment.
+readonly REVIEWED_0109_progress='# FAIL CLOSED. An empty or failed read of any input is UNKNOWN (exit 2),never a clean pass'
 
 assert_reviewed_key_sets "$CHECK_ID_0109" \
   "k8s/clusters/prod/bootstrap/config-map.yaml:$REVIEWED_0109_prod" \
-  "k8s/bases/apps/actual-budget/config-map.yaml:$REVIEWED_0109_actual"
+  "k8s/bases/apps/actual-budget/config-map.yaml:$REVIEWED_0109_actual" \
+  "k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml:$REVIEWED_0109_progress"

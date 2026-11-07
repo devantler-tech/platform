@@ -229,10 +229,10 @@ for job in verify publish; do
   grep -qF 'git apply --check "${SUMMARY_REPAIR_PATCH}"' <<<"${job_script}" ||
     fail "the ${job} job must check the summary repair patch before applying it"
   # shellcheck disable=SC2016
-  grep -qF 'git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"' <<<"${job_script}" ||\
+  grep -qF 'git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"' <<<"${job_script}" ||
     fail "the ${job} job must check the native codec patch before applying it"
   # shellcheck disable=SC2016
-  grep -qF 'git apply --check --unidiff-zero "${SBOM_CODEC_PATCH}"' <<<"${job_script}" ||\
+  grep -qF 'git apply --check --unidiff-zero "${SBOM_CODEC_PATCH}"' <<<"${job_script}" ||
     fail "the ${job} job must check the SBOM metadata patch before applying it"
   # shellcheck disable=SC2016
   grep -qF 'git apply --check --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"' <<<"${job_script}" ||

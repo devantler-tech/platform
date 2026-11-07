@@ -1,0 +1,19 @@
+# Run the Actual Budget pod in its own user namespace (`hostUsers: false`).
+# The stateful pilot passed (#3604) and is permanent since #3605. Appended as
+# the last Helm post-renderer so the base strategy, probe and OIDC renderers
+# survive in order. The chart's Deployment has no metadata.namespace, so the
+# inner target uses its exact name; Helm scopes it to the release namespace.
+- op: add
+  path: /spec/postRenderers/-
+  value:
+    kustomize:
+      patches:
+        - target:
+            group: apps
+            version: v1
+            kind: Deployment
+            name: actual-budget-actualbudget
+          patch: |-
+            - op: add
+              path: /spec/template/spec/hostUsers
+              value: false

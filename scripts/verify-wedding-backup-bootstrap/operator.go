@@ -18,7 +18,7 @@ func prove(k client, r recipe) (err error) {
 	for _, target := range [][3]string{{"", "namespaces", ns}, {"external-secrets", "ciliumnetworkpolicies", ns}} {
 		o, e := k.get(target[0], target[1], target[2])
 		if e != nil || o != nil {
-			return refused
+			return errRefused
 		}
 	}
 	access, e := randomCredential(12)
@@ -43,12 +43,12 @@ func prove(k client, r recipe) (err error) {
 		clean := k
 		clean.ctx = ctx
 		if cleanup(clean, nsUID) != nil {
-			err = refused
+			err = errRefused
 		}
 	}()
 	n, e := k.get("", "namespaces", ns)
 	if e != nil || !owned(n, ns, "", k.run) {
-		return refused
+		return errRefused
 	}
 	nsUID = str(n, "metadata", "uid")
 	// Install isolation before a Pod can start.
@@ -75,7 +75,7 @@ func prove(k client, r recipe) (err error) {
 	}
 	for _, name := range []string{"openbao", "minio"} {
 		if e = waitFor(k, func() (bool, error) { o, e := k.get(ns, "pods", name); return ready(o), e }); e != nil {
-			return refused
+			return errRefused
 		}
 	}
 	url, stop, e := forward(k.ctx, k.run)
@@ -83,7 +83,7 @@ func prove(k client, r recipe) (err error) {
 		return e
 	}
 	defer stop()
-	b := bao{url: url, ctx: k.ctx, http: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return refused }}}
+	b := bao{url: url, ctx: k.ctx, http: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errRefused }}}
 	token, e := b.initialize()
 	if e != nil {
 		return e
@@ -132,7 +132,7 @@ func prove(k client, r recipe) (err error) {
 		}
 		data, _ := at(kv, "data", "data").(map[string]any)
 		if len(data) != 2 || str(data, "access_key_id") != access || str(data, "secret_access_key") != password {
-			return false, refused
+			return false, errRefused
 		}
 		currentSecret, currentPush, currentExternal = s, push, pull
 		return true, nil
@@ -143,11 +143,11 @@ func prove(k client, r recipe) (err error) {
 	initialUID := str(currentSecret, "metadata", "uid")
 	initialTime, e := time.Parse(time.RFC3339Nano, str(currentPush, "status", "refreshTime"))
 	if e != nil {
-		return refused
+		return errRefused
 	}
 	source, e := k.get(ns, "secrets", "wedding-db-backup-r2-bootstrap")
 	if e != nil || !owned(source, "wedding-db-backup-r2-bootstrap", ns, k.run) {
-		return refused
+		return errRefused
 	}
 	initialSource := source
 	fmt.Fprintln(os.Stderr, "Bootstrap proof: initial delivery verified; removing fixture copies")
@@ -168,7 +168,7 @@ func prove(k client, r recipe) (err error) {
 		}
 		refresh, e := time.Parse(time.RFC3339Nano, str(currentPush, "status", "refreshTime"))
 		if e != nil {
-			return false, refused
+			return false, errRefused
 		}
 		return str(currentSecret, "metadata", "uid") != initialUID && refresh.After(initialTime) && uuid.MatchString(str(currentExternal, "metadata", "uid")), nil
 	}); e != nil {
@@ -176,7 +176,7 @@ func prove(k client, r recipe) (err error) {
 	}
 	source, e = k.get(ns, "secrets", "wedding-db-backup-r2-bootstrap")
 	if e != nil || !unchangedSource(initialSource, source) {
-		return refused
+		return errRefused
 	}
 	fmt.Fprintln(os.Stderr, "Bootstrap proof: periodic repair verified; testing projected credentials")
 	p, e := probePod(k.run, r)
@@ -185,7 +185,7 @@ func prove(k client, r recipe) (err error) {
 	}
 	server, e := k.get(ns, "pods", "minio")
 	if e != nil || !unchangedPeerServer(server, server, k.run) || bindPeerAddress(p, server, k.run) != nil {
-		return refused
+		return errRefused
 	}
 	if e = k.create(p); e != nil {
 		return e
@@ -199,11 +199,11 @@ func prove(k client, r recipe) (err error) {
 		case "Succeeded":
 			after, e := k.get(ns, "pods", "minio")
 			if e != nil || !unchangedPeerServer(server, after, k.run) {
-				return false, refused
+				return false, errRefused
 			}
 			return true, nil
 		case "Failed":
-			return false, refused
+			return false, errRefused
 		}
 		return false, nil
 	})

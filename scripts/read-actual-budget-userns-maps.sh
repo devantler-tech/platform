@@ -163,8 +163,8 @@ classify_map() {
     fi
     # Linux permits any ordering, but neither side of the map may overlap.
     for ((index = 0; index < lines; index++)); do
-      if [[ ( "${inside}" -lt "${inside_ends[index]}" && "${inside_starts[index]}" -lt "${inside_end}" ) ||
-        ( "${outside}" -lt "${outside_ends[index]}" && "${outside_starts[index]}" -lt "${outside_end}" ) ]]; then
+      if [[ ("${inside}" -lt "${inside_ends[index]}" && "${inside_starts[index]}" -lt "${inside_end}") ||
+        ("${outside}" -lt "${outside_ends[index]}" && "${outside_starts[index]}" -lt "${outside_end}") ]]; then
         return 1
       fi
     done

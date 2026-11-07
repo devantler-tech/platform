@@ -1,8 +1,9 @@
+---
 name: Prove Longhorn UI Read Only
 
 # Fixed, harmless requests from the existing authentication proxy prove the
 # deployed router and Cilium filters. No Pod, policy, or storage object is changed.
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

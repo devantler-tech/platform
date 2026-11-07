@@ -2,7 +2,10 @@
 # Explicitly dispatched disposable Docker proof. Never uses a production config.
 set -euo pipefail
 umask 077
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform && "${GITHUB_REF:-}" == refs/heads/main ]] || fail 'main-only Actions runner required'
 [[ "${CONFIRM_DISPOSABLE_CILIUM_PROOF:-}" == RUN_DISPOSABLE_CILIUM_PROOF ]] || fail 'explicit disposable-cluster confirmation required'
 [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ && "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ && "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || fail 'invalid run identity'
@@ -21,15 +24,18 @@ receipt_update() {
 }
 owned_containers() { docker ps -aq --filter "label=io.x-k8s.kind.cluster=${name}"; }
 cleanup() {
-  if [[ ! -f "${work}/owner.json" ]]; then [[ ! -d "$work" ]]; return; fi
+  if [[ ! -f "${work}/owner.json" ]]; then
+    [[ ! -d "$work" ]]
+    return
+  fi
   jq -e --arg name "$name" --arg head "$GITHUB_SHA" --arg config "$kubeconfig" \
     '.name == $name and .workflow_head == $head and .kubeconfig == $config and .provider == "Docker"' "${work}/owner.json" >/dev/null || return 1
   # Recheck the config, not only its receipt, before allowing a deletion. Both
   # calls are explicit: ambient context/provider can never choose the target.
   [[ "$(yq '.metadata.name' "${work}/ksail.yaml")" == "$name" &&
-     "$(yq '.spec.cluster.provider' "${work}/ksail.yaml")" == Docker &&
-     "$(yq '.spec.cluster.distribution' "${work}/ksail.yaml")" == Vanilla &&
-     "$(yq '.spec.cluster.connection.kubeconfig' "${work}/ksail.yaml")" == "$kubeconfig" ]] || return 1
+  "$(yq '.spec.cluster.provider' "${work}/ksail.yaml")" == Docker &&
+  "$(yq '.spec.cluster.distribution' "${work}/ksail.yaml")" == Vanilla &&
+  "$(yq '.spec.cluster.connection.kubeconfig' "${work}/ksail.yaml")" == "$kubeconfig" ]] || return 1
   local containers
   containers="$(owned_containers)" || return 1
   if [[ -n "$containers" ]]; then
@@ -51,7 +57,10 @@ finish() {
   exit "$result"
 }
 case "${1:-}" in
-  cleanup) cleanup; exit ;;
+  cleanup)
+    cleanup
+    exit
+    ;;
   run) ;;
   *) fail 'usage: prove-cilium-default-deny.sh run|cleanup' ;;
 esac
@@ -64,9 +73,9 @@ ksail_version="$(ksail --version)" || fail 'KSail version read failed'
 grep -Eq '^ksail version v?7[.]193[.]8([[:space:]]|$)' <<<"$ksail_version" || fail 'audited KSail 7.193.8 required'
 jq -e '.schema == 1 and .repository == "devantler-tech/platform" and (.head | test("^[0-9a-f]{40}$")) and (.pr > 0)' "${candidate}/candidate.json" >/dev/null || fail 'candidate receipt absent or invalid'
 [[ "$(sha256sum "${candidate}/generator.yaml" | cut -d' ' -f1)" == "$(jq -r '.generator_sha256' "${candidate}/candidate.json")" &&
-   "$(sha256sum "${candidate}/flux-copy.yaml" | cut -d' ' -f1)" == "$(jq -r '.flux_copy_sha256' "${candidate}/candidate.json")" ]] || fail 'candidate files differ from verified hashes'
+"$(sha256sum "${candidate}/flux-copy.yaml" | cut -d' ' -f1)" == "$(jq -r '.flux_copy_sha256' "${candidate}/candidate.json")" ]] || fail 'candidate files differ from verified hashes'
 [[ "$(yq '.kind + "/" + .metadata.name' "${candidate}/generator.yaml")" == ClusterPolicy/add-default-deny &&
-   "$(yq '.kind + "/" + .metadata.name' "${candidate}/flux-copy.yaml")" == CiliumNetworkPolicy/default-deny ]] || fail 'unexpected fixed candidate resources'
+"$(yq '.kind + "/" + .metadata.name' "${candidate}/flux-copy.yaml")" == CiliumNetworkPolicy/default-deny ]] || fail 'unexpected fixed candidate resources'
 mkdir -p "${work}/receipt"
 jq --arg workflow "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
   '. + {workflow_head:$workflow,run_id:$run,run_attempt:$attempt,ksail_version:"7.193.8",cilium_version:"1.20.2",verdict:"UNKNOWN",cleanup:"UNKNOWN",floor_tests:{},tests:{},floor_valid_cnp_count:0,valid_cnp_count:0}' \
@@ -122,7 +131,7 @@ shopt -s nullglob
 generated=("${work}"/generated/*.yaml)
 shopt -u nullglob
 [[ "${#generated[@]}" -gt 0 ]] || fail 'Kyverno generated no resources'
-yq -o=json -I=0 'select(.metadata.namespace == "deny-proof" and .kind == "CiliumNetworkPolicy" and (.metadata.name == "default-deny" or .metadata.name == "allow-dns"))' "${generated[@]}" | \
+yq -o=json -I=0 'select(.metadata.namespace == "deny-proof" and .kind == "CiliumNetworkPolicy" and (.metadata.name == "default-deny" or .metadata.name == "allow-dns"))' "${generated[@]}" |
   jq -s '{apiVersion:"v1",kind:"List",items:.}' >"${work}/runtime-policies.yaml"
 jq -e '[.items[].metadata.name] | sort == ["allow-dns","default-deny"]' "${work}/runtime-policies.yaml" >/dev/null || fail 'exact generated CNP/DNS floor missing'
 generated_rules="$(jq -cS '.items[] | select(.kind == "CiliumNetworkPolicy" and .metadata.name == "default-deny") | {spec,specs}' "${work}/runtime-policies.yaml")"
@@ -180,8 +189,16 @@ http() {
   # shellcheck disable=SC2016
   k -n deny-proof exec "$1" -- sh -c 'wget -T 3 -q -O - "$1" 2>&1; result=$?; printf "\nPROBE_EXIT=%s\n" "$result"' probe "http://$2:8080/"
 }
-admitted() { local result; result="$(http "$1" "$2")" || return 1; [[ "$result" == *deny-proof-ok* && "${result##*$'\n'}" == PROBE_EXIT=0 ]]; }
-denied() { local result; result="$(http "$1" "$2")" || return 1; [[ "$result" == *'timed out'* && "${result##*$'\n'}" == PROBE_EXIT=1 ]]; }
+admitted() {
+  local result
+  result="$(http "$1" "$2")" || return 1
+  [[ "$result" == *deny-proof-ok* && "${result##*$'\n'}" == PROBE_EXIT=0 ]]
+}
+denied() {
+  local result
+  result="$(http "$1" "$2")" || return 1
+  [[ "$result" == *'timed out'* && "${result##*$'\n'}" == PROBE_EXIT=1 ]]
+}
 dns() { k -n deny-proof exec client-allowed -- nslookup kubernetes.default.svc.cluster.local >/dev/null; }
 http_routes() {
   admitted client-allowed "$allowed_ip" || return 1
@@ -196,7 +213,7 @@ http_routes() {
 # and admitted HTTP alongside the expected result for each negative pair.
 traffic_proof() {
   local mode="$1" require_dns="$2" consecutive=0 attempt
-  for ((attempt=0; attempt<12; attempt++)); do
+  for ((attempt = 0; attempt < 12; attempt++)); do
     probes_unchanged || fail 'probe readiness or UID/IP/runtime identity changed during traffic proof'
     if admitted server-denied 127.0.0.1 && { [[ "$require_dns" == false ]] || dns; } && http_routes "$mode" && admitted server-denied 127.0.0.1; then
       consecutive=$((consecutive + 1))

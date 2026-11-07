@@ -62,15 +62,24 @@ check_theme() {
   local rendered="$1"
   local count values theme dir mount_path volume sub_path cm_name items key size logo logo_file
 
-  count="$(read_all "[${dex_release}] | length" "${rendered}")" || { printf '%s\n' "${count}"; return 1; }
+  count="$(read_all "[${dex_release}] | length" "${rendered}")" || {
+    printf '%s\n' "${count}"
+    return 1
+  }
   if [[ "${count}" != 1 ]]; then
     printf 'renders %s dex HelmReleases in namespace dex instead of one\n' "${count:-no}"
     return 1
   fi
   values="${workdir}/dex-values.yaml"
-  read_yaml "${dex_release} | .spec.values" "${rendered}" >"${values}" || { cat "${values}"; return 1; }
+  read_yaml "${dex_release} | .spec.values" "${rendered}" >"${values}" || {
+    cat "${values}"
+    return 1
+  }
 
-  theme="$(read_yaml '.config.frontend.theme // ""' "${values}")" || { printf '%s\n' "${theme}"; return 1; }
+  theme="$(read_yaml '.config.frontend.theme // ""' "${values}")" || {
+    printf '%s\n' "${theme}"
+    return 1
+  }
   if [[ -z "${theme}" ]]; then
     printf 'the dex HelmRelease names no config.frontend.theme, so Dex shows its built-in light theme\n'
     return 1
@@ -80,7 +89,10 @@ check_theme() {
     return 1
   fi
 
-  dir="$(read_yaml '.config.frontend.dir // ""' "${values}")" || { printf '%s\n' "${dir}"; return 1; }
+  dir="$(read_yaml '.config.frontend.dir // ""' "${values}")" || {
+    printf '%s\n' "${dir}"
+    return 1
+  }
   if [[ "${dir}" != /* ]]; then
     printf 'the dex HelmRelease names no absolute config.frontend.dir, so Dex serves its built-in files and never sees a mounted theme\n'
     return 1
@@ -88,46 +100,70 @@ check_theme() {
   mount_path="${dir%/}/themes/${theme}"
 
   count="$(MOUNT="${mount_path}" read_yaml '[.volumeMounts[]? | select((.mountPath | sub("/$"; "")) == strenv(MOUNT))] | length' "${values}")" ||
-    { printf '%s\n' "${count}"; return 1; }
+    {
+      printf '%s\n' "${count}"
+      return 1
+    }
   if [[ "${count}" != 1 ]]; then
     printf "the dex HelmRelease mounts %s volumes at %s, where Dex looks for theme '%s'; it needs exactly one\n" "${count}" "${mount_path}" "${theme}"
     return 1
   fi
   volume="$(MOUNT="${mount_path}" read_yaml '.volumeMounts[] | select((.mountPath | sub("/$"; "")) == strenv(MOUNT)) | .name // ""' "${values}")" ||
-    { printf '%s\n' "${volume}"; return 1; }
+    {
+      printf '%s\n' "${volume}"
+      return 1
+    }
   sub_path="$(MOUNT="${mount_path}" read_yaml '.volumeMounts[] | select((.mountPath | sub("/$"; "")) == strenv(MOUNT)) | (.subPath // "") + (.subPathExpr // "")' "${values}")" ||
-    { printf '%s\n' "${sub_path}"; return 1; }
+    {
+      printf '%s\n' "${sub_path}"
+      return 1
+    }
   if [[ -n "${sub_path}" ]]; then
     printf 'the theme is mounted at %s with a subPath; mount the whole ConfigMap so the theme is a directory\n' "${mount_path}"
     return 1
   fi
 
-  count="$(VOL="${volume}" read_yaml '[.volumes[]? | select(.name == strenv(VOL))] | length' "${values}")" || { printf '%s\n' "${count}"; return 1; }
+  count="$(VOL="${volume}" read_yaml '[.volumes[]? | select(.name == strenv(VOL))] | length' "${values}")" || {
+    printf '%s\n' "${count}"
+    return 1
+  }
   if [[ -z "${volume}" || "${count}" != 1 ]]; then
     printf "the volume '%s' mounted at %s is defined %s times in the dex HelmRelease instead of once\n" "${volume}" "${mount_path}" "${count}"
     return 1
   fi
   cm_name="$(VOL="${volume}" read_yaml '.volumes[] | select(.name == strenv(VOL)) | .configMap.name // ""' "${values}")" ||
-    { printf '%s\n' "${cm_name}"; return 1; }
+    {
+      printf '%s\n' "${cm_name}"
+      return 1
+    }
   if [[ -z "${cm_name}" ]]; then
     printf "the volume '%s' mounted at %s is not a ConfigMap volume\n" "${volume}" "${mount_path}"
     return 1
   fi
   items="$(VOL="${volume}" read_yaml '.volumes[] | select(.name == strenv(VOL)) | .configMap.items // [] | length' "${values}")" ||
-    { printf '%s\n' "${items}"; return 1; }
+    {
+      printf '%s\n' "${items}"
+      return 1
+    }
   if [[ "${items}" != 0 ]]; then
     printf "the volume '%s' selects ConfigMap keys with items; mount every key, the way this check reads them\n" "${volume}"
     return 1
   fi
 
   local -r configmap="select(.kind == \"ConfigMap\" and .metadata.name == strenv(CM) and .metadata.namespace == \"dex\")"
-  count="$(CM="${cm_name}" read_all "[${configmap}] | length" "${rendered}")" || { printf '%s\n' "${count}"; return 1; }
+  count="$(CM="${cm_name}" read_all "[${configmap}] | length" "${rendered}")" || {
+    printf '%s\n' "${count}"
+    return 1
+  }
   if [[ "${count}" != 1 ]]; then
     printf "the ConfigMap '%s' that the theme is mounted from is rendered %s times in namespace dex in this layer instead of once\n" "${cm_name}" "${count}"
     return 1
   fi
 
-  logo="$(read_yaml '.config.frontend.logoURL // ""' "${values}")" || { printf '%s\n' "${logo}"; return 1; }
+  logo="$(read_yaml '.config.frontend.logoURL // ""' "${values}")" || {
+    printf '%s\n' "${logo}"
+    return 1
+  }
   if [[ -z "${logo}" ]]; then
     logo_file=logo.png # Dex's default logoURL is theme/logo.png.
   elif [[ "${logo}" =~ ^theme/([A-Za-z0-9._-]+)$ ]]; then
@@ -139,14 +175,20 @@ check_theme() {
 
   # styles.css is text, so it must be in data; the images may be in either map.
   size="$(CM="${cm_name}" read_yaml "${configmap} | .data[\"styles.css\"] // \"\" | length" "${rendered}")" ||
-    { printf '%s\n' "${size}"; return 1; }
+    {
+      printf '%s\n' "${size}"
+      return 1
+    }
   if [[ -z "${size}" || "${size}" == 0 ]]; then
     printf "the ConfigMap '%s' has no styles.css in data, so the pages render unstyled\n" "${cm_name}"
     return 1
   fi
   for key in favicon.png "${logo_file}"; do
     size="$(CM="${cm_name}" KEY="${key}" read_yaml "${configmap} | (.data[strenv(KEY)] // .binaryData[strenv(KEY)] // \"\") | length" "${rendered}")" ||
-      { printf '%s\n' "${size}"; return 1; }
+      {
+        printf '%s\n' "${size}"
+        return 1
+      }
     if [[ -z "${size}" || "${size}" == 0 ]]; then
       printf "the ConfigMap '%s' has no %s, which the pages link to as theme/%s\n" "${cm_name}" "${key}" "${key}"
       return 1

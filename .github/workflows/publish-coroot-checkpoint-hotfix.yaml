@@ -1,6 +1,7 @@
+---
 name: Publish Coroot Checkpoint Hotfix
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:
@@ -41,7 +42,7 @@ jobs:
             patch: coroot-v1.28.1-checkpoint-record.patch
             dockerfile: CorootCheckpoint.Dockerfile
             image: platform-coroot
-            version: v1.28.1-checkpoints.1
+            version: v1.28.1-checkpoints.2
           - component: collector
             repository: coroot/coroot-cluster-agent
             source: 4291458563fa8ea55615e23e0f11412db79742b6
@@ -54,7 +55,7 @@ jobs:
       IMAGE_TAG: ${{ matrix.version }}-${{ github.sha }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
@@ -125,7 +126,7 @@ jobs:
             patch: coroot-v1.28.1-checkpoint-record.patch
             dockerfile: CorootCheckpoint.Dockerfile
             image: platform-coroot
-            version: v1.28.1-checkpoints.1
+            version: v1.28.1-checkpoints.2
           - component: collector
             repository: coroot/coroot-cluster-agent
             source: 4291458563fa8ea55615e23e0f11412db79742b6
@@ -138,7 +139,7 @@ jobs:
       IMAGE_TAG: ${{ matrix.version }}-${{ github.sha }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 

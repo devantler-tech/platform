@@ -18,16 +18,19 @@ tenant_path=k8s/providers/hetzner/apps/business-site/tenant.yaml
 jq '.bindings |= map((.previousBinding // .)|.kind="published-bootstrap"|
  .sourceIdentity.digest="sha256:fa22e5796a39872feb8c75b5d56e2c6d68ff289230e2c5762f0bbfa0b30d6744"|
  .publication.gitTag="v1.0.3"|.publication.sourceSHA="498248e86e49024b72f3249b518e4dd1cef0104b"|
+ .publication.publisherIdentity="devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0"|
  .publication.workflowRunId=39921694859|.publication.workflowRunAttempt=1)' "$binding_file" >"$upgrade_test_work/seed.json"
 mv "$upgrade_test_work/seed.json" "$binding_file"
 UPGRADE_SEED_DIGEST="$(jq -r '.bindings[0].sourceIdentity.digest' "$binding_file")" \
-  yq -i '.spec.source.digest=strenv(UPGRADE_SEED_DIGEST)' "$tree/$tenant_path"
+UPGRADE_SEED_PUBLISHER="$(jq -r '.bindings[0].publication.publisherIdentity|split("@")[1]' "$binding_file")" \
+  yq -i '.spec.source.digest=strenv(UPGRADE_SEED_DIGEST)|.spec.source.publisherRevision=strenv(UPGRADE_SEED_PUBLISHER)' "$tree/$tenant_path"
 awk -F '\t' '$1!="business-site"' "$tree/scripts/publish-workflow-approved-revisions.identities.tsv" >"$upgrade_test_work/seed-identities.tsv"
 mv "$upgrade_test_work/seed-identities.tsv" "$tree/scripts/publish-workflow-approved-revisions.identities.tsv"
 cp "$binding_file" "$upgrade_test_work/original-binding.json"
 cp "$tree/$tenant_path" "$upgrade_test_work/original-tenant.yaml"
-# Keep the old actual publication exact while the selected publisher is approved.
-awk -F '\t' '!($1=="business-site" && $4=="af042c540ce8db4d64add98c34b5c57691e0e812")' "$tree/scripts/publish-workflow-canonical-approvals.tsv" >"$upgrade_test_work/two-approved.tsv"
+# Seed both fixture approvals independently of the checkout's current transition.
+awk -F '\t' '$1!="business-site"' "$tree/scripts/publish-workflow-canonical-approvals.tsv" >"$upgrade_test_work/two-approved.tsv"
+printf 'business-site\tpublish-app\tdevantler-tech/.github\t467f07582436a26b62cf4aa756423512f85ba0c0\n' >>"$upgrade_test_work/two-approved.tsv"
 printf 'business-site\tpublish-app\tdevantler-tech/.github\taf042c540ce8db4d64add98c34b5c57691e0e812\n' >>"$upgrade_test_work/two-approved.tsv"
 mv "$upgrade_test_work/two-approved.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv"
 cp "$tree/scripts/publish-workflow-canonical-approvals.tsv" "$upgrade_test_work/original-approvals.tsv"
@@ -74,19 +77,27 @@ kubectl() {
       case "$input_race" in
         approvals)
           awk -F '\t' '!($1=="business-site" && $4=="af042c540ce8db4d64add98c34b5c57691e0e812")' "$tree/scripts/publish-workflow-canonical-approvals.tsv" >"$upgrade_test_work/raced-approvals.tsv"
-          mv "$upgrade_test_work/raced-approvals.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv" ;;
+          mv "$upgrade_test_work/raced-approvals.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv"
+          ;;
         registry)
           jq '.bindings[0].publication.workflowRunAttempt=2' "$binding_file" >"$upgrade_test_work/raced.json"
-          mv "$upgrade_test_work/raced.json" "$binding_file" ;;
+          mv "$upgrade_test_work/raced.json" "$binding_file"
+          ;;
         tenant) yq -i '.spec.webApp=true' "$tree/$tenant_path" ;;
         constructor) yq -i '.spec.schema.group="unapproved.example"' "$tree/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" ;;
-        output) mkdir "$upgrade_test_work/candidate"; printf 'keep\n' >"$upgrade_test_work/candidate/keep" ;;
+        output)
+          mkdir "$upgrade_test_work/candidate"
+          printf 'keep\n' >"$upgrade_test_work/candidate/keep"
+          ;;
       esac
     else touch "$upgrade_test_work/read-once"; fi
   fi
   if [ "${observation_race:-0}" = 1 ]; then
     # A changed resourceVersion is enough to invalidate the preparation snapshot.
-    if [ -e "$upgrade_test_work/read-once" ]; then jq '.items[0].metadata.resourceVersion="changed"' "$upgrade_test_work/inventory.json"; return; fi
+    if [ -e "$upgrade_test_work/read-once" ]; then
+      jq '.items[0].metadata.resourceVersion="changed"' "$upgrade_test_work/inventory.json"
+      return
+    fi
     touch "$upgrade_test_work/read-once"
   fi
   cat "$upgrade_test_work/inventory.json"
@@ -106,7 +117,8 @@ for value in '[.bindings[0].publication.publisherIdentity]' '[]'; do
 done
 approval_after_verification_race=1
 if prepare >"$upgrade_test_work/result" 2>&1; then
-  echo 'approval change after verification was accepted' >&2;exit 1
+  echo 'approval change after verification was accepted' >&2
+  exit 1
 fi
 test ! -e "$upgrade_test_work/candidate"
 cp "$upgrade_test_work/original-approvals.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv"
@@ -117,7 +129,11 @@ observed_business_tuple() {
     $1=="business-site" {n++; if($3!=tag || $4!=digest || $5!=publisher) bad=1}
     END {exit bad || n!=1}' "$file"
 }
-prepare >"$upgrade_test_work/result" 2>"$upgrade_test_work/error" || { cat "$upgrade_test_work/error" >&2; echo 'real upgrade preparation failed' >&2; exit 1; }
+prepare >"$upgrade_test_work/result" 2>"$upgrade_test_work/error" || {
+  cat "$upgrade_test_work/error" >&2
+  echo 'real upgrade preparation failed' >&2
+  exit 1
+}
 candidate_record="$upgrade_test_work/candidate/scripts/canonical-tenant-source-bindings.json"
 test -f "$candidate_record"
 test -f "$upgrade_test_work/candidate/$tenant_path"
@@ -129,7 +145,10 @@ jq -e --arg digest "$next_digest" --argjson old "$old_record" '
  (.previousObservation.uidSha256|test("^[0-9a-f]{64}$"))' "$candidate_record" >/dev/null
 test "$(yq '.spec.source.digest' "$upgrade_test_work/candidate/$tenant_path")" = "$next_digest"
 test "$(yq '.spec.webApp or .spec.externalDns or .spec.sops or .spec.source.reconcileApplication' "$upgrade_test_work/candidate/$tenant_path")" = false
-if prepare >"$upgrade_test_work/result" 2>&1; then echo 'existing candidate directory overwritten' >&2; exit 1; fi
+if prepare >"$upgrade_test_work/result" 2>&1; then
+  echo 'existing candidate directory overwritten' >&2
+  exit 1
+fi
 cp -R "$upgrade_test_work/candidate" "$upgrade_test_work/good-candidate"
 rm -rf "$upgrade_test_work/candidate"
 prepare >"$upgrade_test_work/result"
@@ -137,18 +156,27 @@ diff -r "$upgrade_test_work/good-candidate" "$upgrade_test_work/candidate"
 rm -rf "$upgrade_test_work/candidate"
 mkdir "$upgrade_test_work/redirect"
 ln -s "$upgrade_test_work/redirect" "$upgrade_test_work/candidate"
-if prepare >"$upgrade_test_work/result" 2>&1; then echo 'candidate symlink followed' >&2; exit 1; fi
+if prepare >"$upgrade_test_work/result" 2>&1; then
+  echo 'candidate symlink followed' >&2
+  exit 1
+fi
 test -z "$(find "$upgrade_test_work/redirect" -mindepth 1 -print)"
 rm "$upgrade_test_work/candidate"
 observation_race=1
-if prepare >"$upgrade_test_work/result" 2>&1; then echo 'stale observation accepted' >&2; exit 1; fi
+if prepare >"$upgrade_test_work/result" 2>&1; then
+  echo 'stale observation accepted' >&2
+  exit 1
+fi
 test ! -e "$upgrade_test_work/candidate"
 observation_race=0
 graph_path=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
 cp "$tree/$graph_path" "$upgrade_test_work/original-graph.yaml"
 for input_race in registry tenant constructor output approvals; do
   rm -f "$upgrade_test_work/read-once"
-  if prepare >"$upgrade_test_work/result" 2>&1; then echo "changed $input_race input accepted" >&2; exit 1; fi
+  if prepare >"$upgrade_test_work/result" 2>&1; then
+    echo "changed $input_race input accepted" >&2
+    exit 1
+  fi
   if [ "$input_race" = output ]; then
     test "$(find "$upgrade_test_work/candidate" -type f | wc -l | tr -d ' ')" = 1
     grep -qx keep "$upgrade_test_work/candidate/keep"
@@ -161,23 +189,29 @@ for input_race in registry tenant constructor output approvals; do
 done
 input_race=''
 for mutation in \
- '.items += .items' \
- '.metadata.continue="next-page"' \
- '.items[0].metadata.uid=""' \
- '.items[0].status.conditions[1].status="False"' \
- '.items[0].status.observedGeneration=1' \
- '.items[0].spec.verify.matchOIDCIdentity[0].subject=".*"' \
- '.items[0].spec.url="oci://ghcr.io/other/repository"' \
- '.items[0].spec.ref.digest="sha256:bad"'; do
+  '.items += .items' \
+  '.metadata.continue="next-page"' \
+  '.items[0].metadata.uid=""' \
+  '.items[0].status.conditions[1].status="False"' \
+  '.items[0].status.observedGeneration=1' \
+  '.items[0].spec.verify.matchOIDCIdentity[0].subject=".*"' \
+  '.items[0].spec.url="oci://ghcr.io/other/repository"' \
+  '.items[0].spec.ref.digest="sha256:bad"'; do
   jq "$mutation" "$upgrade_test_work/original-inventory.json" >"$upgrade_test_work/inventory.json"
-  if prepare >"$upgrade_test_work/result" 2>&1; then echo "unsafe observed source accepted: $mutation" >&2; exit 1; fi
+  if prepare >"$upgrade_test_work/result" 2>&1; then
+    echo "unsafe observed source accepted: $mutation" >&2
+    exit 1
+  fi
   test ! -e "$upgrade_test_work/candidate"
 done
 cp "$upgrade_test_work/original-inventory.json" "$upgrade_test_work/inventory.json"
 cp "$upgrade_test_work/receipt.json" "$upgrade_test_work/good-receipt.json"
 for mutation in '.digest="sha256:bad"' '.sourceSHA=("9"*40)' '.gitTag="v3.0.0"' '.publisherIdentity="unapproved"' '.deploymentAuthorized=true' '.consumer="other"' '.event="push"' '.callerWorkflow=".github/workflows/other.yaml"'; do
   jq "$mutation" "$upgrade_test_work/good-receipt.json" >"$upgrade_test_work/receipt.json"
-  if prepare >"$upgrade_test_work/result" 2>&1; then echo "wrong candidate publication accepted: $mutation" >&2; exit 1; fi
+  if prepare >"$upgrade_test_work/result" 2>&1; then
+    echo "wrong candidate publication accepted: $mutation" >&2
+    exit 1
+  fi
   test ! -e "$upgrade_test_work/candidate"
 done
 cp "$upgrade_test_work/good-receipt.json" "$upgrade_test_work/receipt.json"
@@ -202,9 +236,11 @@ default_observer() {
 }
 default_pin_resolver() {
   if [ "$1" = business-site ]; then
-    if [ -n "${TEST_MAIN_PUBLISHER:-}" ]; then printf '%s\n' "$TEST_MAIN_PUBLISHER"
+    if [ -n "${TEST_MAIN_PUBLISHER:-}" ]; then
+      printf '%s\n' "$TEST_MAIN_PUBLISHER"
     else printf '%s\n' "$record" | jq -r .publication.publisherIdentity; fi
-  elif [ "$1" = data-product-controller ]; then jq -r '.publications[]|select(.consumer=="data-product-controller")|.mainPinSHA' "$PUBLISH_BOOTSTRAP_FILE"
+  elif [ "$1" = data-product-controller ]; then
+    jq -r '.publications[]|select(.consumer=="data-product-controller")|.mainPinSHA' "$PUBLISH_BOOTSTRAP_FILE"
   else awk -F '\t' -v c="$1" '$1==c {print $6}' "$APPROVED_REVISIONS_FILE"; fi
 }
 canonical_publication_verify() { :; }
@@ -213,7 +249,7 @@ test "$(jq -r '.bindings[0].kind' "$binding_file")" = published-upgrade
 test "$(awk -F '\t' '$1=="business-site" {n++} END {print n+0}' "$APPROVED_IDENTITIES_FILE")" = 0
 jq --arg digest "$next_digest" '.items[0].spec.ref.digest=$digest | .items[0].status.artifact.revision=$digest |
  .items[0].metadata.generation=3 | .items[0].status.observedGeneration=3 | .items[0].status.conditions[].observedGeneration=3' \
- "$upgrade_test_work/original-inventory.json" >"$upgrade_test_work/inventory.json"
+  "$upgrade_test_work/original-inventory.json" >"$upgrade_test_work/inventory.json"
 cp "$upgrade_test_work/inventory.json" "$upgrade_test_work/replacement-ready.json"
 cp "$binding_file" "$upgrade_test_work/pending-binding.json"
 cp "$APPROVED_REVISIONS_FILE" "$upgrade_test_work/pending-revisions.tsv"
@@ -224,14 +260,14 @@ cp "$PUBLISH_BOOTSTRAP_FILE" "$upgrade_test_work/pending-bootstrap.json"
 # on every refusal; reset fixture outputs so each pre-repair control is independent.
 unsafe_replacements=0
 for mutation in \
- '.items[0].spec.verify.matchOIDCIdentity[0].issuer=".*"' \
- '.items[0].spec.verify.matchOIDCIdentity[0].subject=".*"' \
- '.items[0].spec.verify.provider="other"' \
- 'del(.items[0].spec.verify)' \
- '.items[0].spec.verify.matchOIDCIdentity += [{issuer:".*",subject:".*"}]' \
- '.items[0].spec.verify.matchOIDCIdentity[0].subject="unapproved-publisher"' \
- 'del(.items[0].metadata.uid)' \
- 'del(.items[0].metadata.resourceVersion)'; do
+  '.items[0].spec.verify.matchOIDCIdentity[0].issuer=".*"' \
+  '.items[0].spec.verify.matchOIDCIdentity[0].subject=".*"' \
+  '.items[0].spec.verify.provider="other"' \
+  'del(.items[0].spec.verify)' \
+  '.items[0].spec.verify.matchOIDCIdentity += [{issuer:".*",subject:".*"}]' \
+  '.items[0].spec.verify.matchOIDCIdentity[0].subject="unapproved-publisher"' \
+  'del(.items[0].metadata.uid)' \
+  'del(.items[0].metadata.resourceVersion)'; do
   jq "$mutation" "$upgrade_test_work/replacement-ready.json" >"$upgrade_test_work/inventory.json"
   if (main) >"$upgrade_test_work/replacement-result" 2>&1; then
     printf 'unsafe replacement accepted: %s\n' "$mutation" >&2
@@ -247,7 +283,10 @@ for mutation in \
   cp "$upgrade_test_work/pending-identities.tsv" "$APPROVED_IDENTITIES_FILE"
   cp "$upgrade_test_work/pending-bootstrap.json" "$PUBLISH_BOOTSTRAP_FILE"
 done
-[ "$unsafe_replacements" -eq 0 ] || { printf '%s unsafe replacement controls admitted\n' "$unsafe_replacements" >&2; exit 1; }
+[ "$unsafe_replacements" -eq 0 ] || {
+  printf '%s unsafe replacement controls admitted\n' "$unsafe_replacements" >&2
+  exit 1
+}
 cp "$upgrade_test_work/replacement-ready.json" "$upgrade_test_work/inventory.json"
 main >"$upgrade_test_work/generator-observed"
 test "$(jq -r '.bindings[0].kind' "$binding_file")" = published-binding
@@ -262,7 +301,11 @@ cmp "$upgrade_test_work/applied-identities.tsv" "$APPROVED_IDENTITIES_FILE"
 # generator must refuse and preserve every generated output in this interval.
 cp "$APPROVED_REVISIONS_FILE" "$upgrade_test_work/gap-revisions.tsv"
 cp "$PUBLISH_BOOTSTRAP_FILE" "$upgrade_test_work/gap-bootstrap.json"
-if (TEST_MAIN_PUBLISHER=devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812; export TEST_MAIN_PUBLISHER; main) >"$upgrade_test_work/gap-result" 2>&1; then
+if (
+  TEST_MAIN_PUBLISHER=devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
+  export TEST_MAIN_PUBLISHER
+  main
+) >"$upgrade_test_work/gap-result" 2>&1; then
   echo 'main pin alone changed the current publication identity' >&2
   exit 1
 fi
@@ -293,7 +336,7 @@ cp "$binding_file" "$upgrade_test_work/second-pending-binding.json"
 cp "$APPROVED_IDENTITIES_FILE" "$upgrade_test_work/second-pending-identities.tsv"
 jq --arg digest "$next_digest" '.items[0].spec.ref.digest=$digest | .items[0].status.artifact.revision=$digest |
  .items[0].metadata.generation=4 | .items[0].status.observedGeneration=4 | .items[0].status.conditions[].observedGeneration=4' \
- "$upgrade_test_work/original-inventory.json" >"$upgrade_test_work/inventory.json"
+  "$upgrade_test_work/original-inventory.json" >"$upgrade_test_work/inventory.json"
 if (main) >"$upgrade_test_work/generator-old-matcher" 2>&1; then
   echo 'old approved matcher accepted for the proposed publisher' >&2
   exit 1
@@ -304,7 +347,7 @@ cmp "$upgrade_test_work/second-pending-identities.tsv" "$APPROVED_IDENTITIES_FIL
 jq --arg digest "$next_digest" '.items[0].spec.ref.digest=$digest | .items[0].status.artifact.revision=$digest |
  .items[0].spec.verify.matchOIDCIdentity[0].subject="^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812$" |
  .items[0].metadata.generation=4 | .items[0].status.observedGeneration=4 | .items[0].status.conditions[].observedGeneration=4' \
- "$upgrade_test_work/original-inventory.json" >"$upgrade_test_work/inventory.json"
+  "$upgrade_test_work/original-inventory.json" >"$upgrade_test_work/inventory.json"
 main >"$upgrade_test_work/generator-selected-observed"
 test "$(jq -r '.bindings[0].kind' "$binding_file")" = published-binding
 jq -e '.bindings[0].publication.publisherIdentity=="devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"' "$binding_file" >/dev/null
