@@ -48,7 +48,10 @@
                           "type": "string"
                         }
                       },
-                      "required": ["eventType", "expression"],
+                      "required": [
+                        "eventType",
+                        "expression"
+                      ],
                       "type": "object"
                     },
                     "type": "array"
@@ -58,7 +61,11 @@
                     "type": "string"
                   }
                 },
-                "required": ["message", "uniqueId", "ruleExpression"],
+                "required": [
+                  "message",
+                  "uniqueId",
+                  "ruleExpression"
+                ],
                 "type": "object"
               },
               "id": {
@@ -89,7 +96,11 @@
               },
               "profileDependency": {
                 "description": "Profile dependency level (0=Required, 1=Optional, 2=NotRequired)",
-                "enum": [0, 1, 2],
+                "enum": [
+                  0,
+                  1,
+                  2
+                ],
                 "type": "integer"
               },
               "severity": {
@@ -132,7 +143,9 @@
           "type": "array"
         }
       },
-      "required": ["rules"],
+      "required": [
+        "rules"
+      ],
       "type": "object"
     }
   },
