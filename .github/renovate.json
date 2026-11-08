@@ -43,7 +43,9 @@
     {
       "customType": "regex",
       "description": "Keep the digest-pinned images the Coroot security-progress validation workflow exercises in step with the manifests it checks them against. The workflow requires each pin to appear in the deployment, so a manifest update that leaves the workflow behind fails that check; with this manager both files move in the same update PR. COROOT_IMAGE is left out: it is this repository's own build, which Renovate does not track in the manifest either.",
-      "managerFilePatterns": ["/^\\.github/workflows/validate-coroot-security-progress\\.ya?ml$/"],
+      "managerFilePatterns": [
+        "/^\\.github/workflows/validate-coroot-security-progress\\.ya?ml$/"
+      ],
       "matchStrings": [
         "(?:COLLECTOR|SERVER|RECONCILER|PROMETHEUS)_IMAGE:\\s*(?<depName>[a-z0-9][a-z0-9./_-]*):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
       ],
