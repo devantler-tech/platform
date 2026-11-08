@@ -6,6 +6,10 @@ kind: WorkerPool
 metadata:
   name: agentic-engineer
   namespace: agentic-engineer
+  # kagent selects an externally managed pool's workers by these two labels.
+  labels:
+    kagent.dev/worker-pool-name: agentic-engineer
+    kagent.dev/worker-pool-namespace: agentic-engineer
 spec:
   replicas: 1
   workerImage: ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0

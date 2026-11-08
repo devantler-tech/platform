@@ -41,11 +41,14 @@ data:
           code=$(printf '%s' "$response" | tail -n 1)
           payload=$(printf '%s' "$response" | sed '$d')
           if [ "$status" -eq 0 ] && [ "$code" = 200 ]; then
-            token=$(printf '%s' "$payload" | jq -er .access_token)
-            umask 077
-            printf 'resources:\n- "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret\n  name: anthropic-authorization\n  generic_secret:\n    secret:\n      inline_string: "Bearer %s"\n' "$token" > /sds/.anthropic.yaml
-            mv /sds/.anthropic.yaml "$out"
-            echo "exchanged a rotated identity token; access token valid for $(printf '%s' "$payload" | jq -r '.expires_in')s"
+            if token=$(printf '%s' "$payload" | jq -er .access_token); then
+              umask 077
+              printf 'resources:\n- "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret\n  name: anthropic-authorization\n  generic_secret:\n    secret:\n      inline_string: "Bearer %s"\n' "$token" > /sds/.anthropic.yaml
+              mv /sds/.anthropic.yaml "$out"
+              echo "exchanged a rotated identity token; access token valid for $(printf '%s' "$payload" | jq -r '.expires_in')s"
+            else
+              echo "token exchange answered HTTP 200 without an access token; waiting for the next rotation" >&2
+            fi
             break
           fi
           # An HTTP answer means Anthropic saw the token, which may have spent
@@ -81,13 +84,25 @@ data:
                         - name: anthropic
                           domains: ["*"]
                           request_headers_to_remove: [x-api-key]
+                          # Only the Messages API carries the token: a batch or
+                          # file job would outlive the trigger's per-run cap.
                           routes:
-                            - match: {prefix: /}
+                            - match: {path: /v1/messages}
                               route:
                                 cluster: anthropic
                                 host_rewrite_literal: api.anthropic.com
                                 timeout: 0s
                                 idle_timeout: 900s
+                            - match: {path: /v1/messages/count_tokens}
+                              route:
+                                cluster: anthropic
+                                host_rewrite_literal: api.anthropic.com
+                                timeout: 0s
+                                idle_timeout: 900s
+                            - match: {prefix: /}
+                              direct_response:
+                                status: 403
+                                body: {inline_string: "only the Messages API is proxied\n"}
                     http_filters:
                       - name: envoy.filters.http.credential_injector
                         typed_config:
