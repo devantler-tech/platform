@@ -104,6 +104,56 @@ spec:
           namespace: oauth2-proxy
           port: 80
 ---
+# The API server defaults an omitted rule list to one `PathPrefix /` rule.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: omitted-rules
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+---
+# The cases below would have no usable derived link, and an href fixes each.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wildcard-hostname-with-href
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/href: https://whoami.platform.lan
+spec:
+  hostnames:
+    - "*.platform.lan"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: whoami
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: empty-matches-with-href
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/href: https://whoami.platform.lan
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches: []
+      backendRefs:
+        - name: whoami
+          port: 80
+---
 # --- derived link is a sub-path or missing, and no href: fail ----------------
 # The Coroot route as platform#5881 shipped it: the card linked to /mcp.
 apiVersion: gateway.networking.k8s.io/v1
@@ -232,6 +282,56 @@ spec:
       backendRefs:
         - name: whoami-api
           port: 80
+---
+# Homepage would link to https://*.platform.lan/, which no browser can open.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wildcard-hostname
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - "*.platform.lan"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: whoami
+          port: 80
+---
+# An explicitly empty list is not defaulted: Homepage fails reading matches[0].
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: empty-matches
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches: []
+      backendRefs:
+        - name: whoami
+          port: 80
+---
+# Likewise for an explicitly empty rule list: Homepage fails reading rules[0].
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: empty-rules
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules: []
 ---
 # --- the precondition's negative control: routes that never opted in --------
 apiVersion: gateway.networking.k8s.io/v1
