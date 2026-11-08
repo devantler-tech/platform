@@ -14,7 +14,7 @@ func TestNativeEndpointsStayReservedUntilHandoff(t *testing.T) {
 	}
 	defer func() {
 		for _, listener := range listeners {
-			listener.Close()
+			_ = listener.Close()
 		}
 	}()
 	if len(listeners) != 2 || listeners[0].Addr().String() == listeners[1].Addr().String() {
@@ -23,7 +23,7 @@ func TestNativeEndpointsStayReservedUntilHandoff(t *testing.T) {
 	for _, listener := range listeners {
 		other, err := net.Listen("tcp", listener.Addr().String())
 		if err == nil {
-			other.Close()
+			_ = other.Close()
 			t.Fatal("endpoint released before native process handoff")
 		}
 	}
@@ -34,7 +34,7 @@ func TestNativeTLSFloorControls(t *testing.T) {
 	if binary == "" || web == "" {
 		t.Skip("native release fixture runs in the Dex image workflow")
 	}
-	if err := nativeTLSFloor(binary, web, "1.2"); err == nil || err.Error() != "Dex discarded its configured TLS floor" {
+	if err := nativeTLSFloor(binary, web, "1.2"); err == nil || err.Error() != "dex discarded its configured TLS floor" {
 		t.Fatalf("weak-floor control must reach the actual protocol check, got %v", err)
 	}
 	if err := nativeTLSFloor(binary, web, "1.3"); err != nil {
