@@ -101,6 +101,7 @@ readonly reviewed_pairs=(
   "KSV-0048:$kro_webapp"
   "KSV-0113:$vault_config_role"
   # Premises asserted in section 6 below.
+  "KSV-0113:k8s/bases/infrastructure/substrate/role.yaml"
   "KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-csi-sidecars.yaml"
   "KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-csi-plugin.yaml"
   "KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-engine-image.yaml"
@@ -381,6 +382,8 @@ assert_single_rule_role KSV-0048 "$longhorn_dir/role-kyverno-mutate-longhorn-eng
   'apps/daemonsets' 'engine-image-ei-493e04e7' 'get patch update'
 assert_single_rule_role KSV-0049 'k8s/bases/infrastructure/controllers/prune-protected-orphan-alert/role.yaml' observability \
   '/configmaps' 'prune-protected-orphan-alert-state' 'get patch'
+assert_single_rule_role KSV-0113 'k8s/bases/infrastructure/substrate/role.yaml' ate-system '/secrets' \
+  'substrate-actor-id-ca,substrate-actor-id-jwt,substrate-egress-mitm-ca,substrate-service-dns-ca,substrate-pod-identity-ca,substrate-postgres-ca' 'get'
 readonly war_role='k8s/providers/hetzner/apps/world-at-ruin/role-operator.yaml'
 assert_single_rule_role KSV-0053 "$war_role" world-at-ruin '/pods/portforward,pods/exec' '' 'create'
 
