@@ -74,6 +74,12 @@ func TestWorkflowDownloadPassesOnlyOneURLToCurl(t *testing.T) {
 	}
 	command := exec.Command("/bin/bash", "--noprofile", "--norc", "-c", "set -euo pipefail\nkubectl_path=\"$RUNNER_TEMP/alert-routes-kubectl\"\n"+statement+"\nprintf DOWNLOAD_ADMITTED")
 	command.Env = []string{"ALERT_DOWNLOAD_CHILD=1", "PATH=" + bin, "RUNNER_TEMP=" + bin, "KUBECTL_VERSION=v1.36.2"}
+	// A coverage run exports GOCOVERDIR. Without it the instrumented child
+	// warns on stderr at exit, which this exact-output check would read as
+	// leaked output; forwarding it keeps the check exact and records coverage.
+	if dir, ok := os.LookupEnv("GOCOVERDIR"); ok {
+		command.Env = append(command.Env, "GOCOVERDIR="+dir)
+	}
 	output, err := command.CombinedOutput()
 	if err != nil || !bytes.Equal(output, []byte("DOWNLOAD_ADMITTED")) {
 		t.Fatalf("download command rejected: %v %q", err, output)
