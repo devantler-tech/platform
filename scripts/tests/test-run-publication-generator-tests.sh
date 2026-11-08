@@ -92,31 +92,31 @@ collect() {
     fi
     [[ "$name" =~ ^test-[a-z-]+\.sh$ && -p "$state/$name.gate" ]] || return 1
     case "$event" in
-    start)
-      [[ ! -e "$state/seen-$name" ]] || return 1
-      : >"$state/seen-$name"
-      : >"$state/live-$name"
-      printf '%s\n' "$name" >>"$state/started"
-      active=$((active + 1))
-      ((active <= PROBE_LIMIT)) || return 1
-      ((maximum >= active)) || maximum=$active
-      if ((PROBE_LIMIT > 1 && overlap == 0)); then
-        held+=" $name"
-        if ((active == PROBE_LIMIT)); then
-          # No first child can finish before the whole bound is observed running.
-          for waiting in $held; do release_probe "$waiting"; done
-          overlap=1
+      start)
+        [[ ! -e "$state/seen-$name" ]] || return 1
+        : >"$state/seen-$name"
+        : >"$state/live-$name"
+        printf '%s\n' "$name" >>"$state/started"
+        active=$((active + 1))
+        ((active <= PROBE_LIMIT)) || return 1
+        ((maximum >= active)) || maximum=$active
+        if ((PROBE_LIMIT > 1 && overlap == 0)); then
+          held+=" $name"
+          if ((active == PROBE_LIMIT)); then
+            # No first child can finish before the whole bound is observed running.
+            for waiting in $held; do release_probe "$waiting"; done
+            overlap=1
+          fi
+        else
+          release_probe "$name"
         fi
-      else
-        release_probe "$name"
-      fi
-      ;;
-    end)
-      [[ -f "$state/live-$name" && "$active" -gt 0 ]] || return 1
-      rm "$state/live-$name"
-      active=$((active - 1))
-      ;;
-    *) return 1 ;;
+        ;;
+      end)
+        [[ -f "$state/live-$name" && "$active" -gt 0 ]] || return 1
+        rm "$state/live-$name"
+        active=$((active - 1))
+        ;;
+      *) return 1 ;;
     esac
   done
   return 1

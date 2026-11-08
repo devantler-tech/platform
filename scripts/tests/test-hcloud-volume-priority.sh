@@ -51,7 +51,9 @@ done
 # Cluster; checking the patch source text alone would miss an unwired override.
 fixture_dir="$(mktemp -d)"
 trap 'rm -r -- "${fixture_dir}"' EXIT
-cp "${script_dir}/fixtures/wedding-database-priority/cluster.yaml" "${fixture_dir}/cluster.yaml"
+# The source is not named cluster.yaml: MegaLinter's v8r matches that file name to the
+# unrelated RKE cluster schema. The copy keeps the name the kustomization lists.
+cp "${script_dir}/fixtures/wedding-database-priority/cnpg-cluster.yaml" "${fixture_dir}/cluster.yaml"
 printf '%s\n' "${tenant_patches}" >"${fixture_dir}/patches.yaml"
 PRIORITY_PATCHES="${fixture_dir}/patches.yaml" yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" | .kind = "Kustomization" |
   .resources = ["cluster.yaml"] | .patches = load(strenv(PRIORITY_PATCHES))' \

@@ -129,9 +129,9 @@ func TestIndependentProductionReaderLimitsKubernetesObjects(t *testing.T) {
 // TestSnapshotTransportNeverForwardsSignedReads exercises real local HTTP connections.
 func TestSnapshotTransportNeverForwardsSignedReads(t *testing.T) {
 	var proxied, followed bool
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { proxied = true; w.WriteHeader(http.StatusNoContent) }))
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { proxied = true; w.WriteHeader(http.StatusNoContent) }))
 	defer proxy.Close()
-	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { followed = true; w.WriteHeader(http.StatusOK) }))
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { followed = true; w.WriteHeader(http.StatusOK) }))
 	defer destination.Close()
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, destination.URL, http.StatusTemporaryRedirect)

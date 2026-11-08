@@ -370,7 +370,6 @@ fi
 # These cases vary the QUOTING rather than the ref, which build_tree cannot do —
 # it always emits a well-formed single-quoted scalar.
 
-
 # build_tree_line <dir> <verbatim-subject-line> — as build_tree, but the first
 # subject's whole line is supplied by the caller.
 build_tree_line() {

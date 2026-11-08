@@ -69,12 +69,11 @@ func TestAfterReleaseRegressionDetectsEachAblatedProductionFence(t *testing.T) {
 			if err := file.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Chmod(path, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			result := f.runHelperExecutable(validConfig(), nil, map[string]string{
+			// A parallel fork can briefly retain the mutant's writer after Close,
+			// so executing the new file can fail with ETXTBSY. Let Bash read it.
+			result := f.runHelperExecutable(validConfig(), []string{path}, map[string]string{
 				"FAKE_SYNC_LEASE_ORPHANED_HEARTBEAT_WRITE_AFTER_RELEASE": "true",
-			}, false, path)
+			}, false, "bash")
 			// The mutated helper completes normally. The rejection assertion,
 			// rather than a syntax error or the fake's old mandatory-test policy,
 			// must be what distinguishes it from the real helper.
@@ -143,13 +142,12 @@ func TestDeletedLeaseDiagnosticRegressionRejectsAnAppliedMutation(t *testing.T) 
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(path, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	f := newFixture(t)
-	result := f.runHelperExecutable(validConfig(), nil, map[string]string{
+	// A parallel fork can briefly retain the mutant's writer after Close, so
+	// executing the new file can fail with ETXTBSY. Let Bash read it.
+	result := f.runHelperExecutable(validConfig(), []string{path}, map[string]string{
 		"FAKE_SYNC_LEASE_DELETED_BEFORE_RELEASE": "true",
-	}, false, path)
+	}, false, "bash")
 	// The applied mutation reaches release and exhausts the invalid-state path.
 	// It still fails overall; only the missing diagnostic distinguishes it, so
 	// asserting a non-zero exit alone would not protect the deleted-Lease branch.

@@ -1,3 +1,4 @@
+---
 # kube-scheduler scoring: favour fuller nodes that still fit (MostAllocated).
 #
 # The descheduler's HighNodeUtilization strategy drains nearly-empty nodes so the

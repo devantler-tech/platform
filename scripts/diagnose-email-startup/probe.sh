@@ -10,7 +10,10 @@ flag() { if "$@" >/dev/null 2>&1; then printf true; else printf false; fi; }
 # while measuring, so a truncated record cannot masquerade as a shorter read.
 bounded_rows() {
   local task_rows
-  task_rows="$(head -c 1048577 "$1" || exit 3; printf '.')" || exit 3
+  task_rows="$(
+    head -c 1048577 "$1" || exit 3
+    printf '.'
+  )" || exit 3
   task_rows="${task_rows%.}"
   [[ "${#task_rows}" -le 1048576 ]] || exit 3
   printf '%s' "$task_rows"

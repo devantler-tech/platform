@@ -48,7 +48,8 @@ fixture() {
 }
 
 # RED: the pre-#3407 shape — an egressDeny, no egress allow, no enableDefaultDeny.
-pre_3407="$(fixture pre-3407 <<'EOF'
+pre_3407="$(
+  fixture pre-3407 <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata:
@@ -66,7 +67,8 @@ EOF
 expect 'pre-#3407 policy is refused' 1 'deny-workload-instance-metadata-egress spec: egressDeny rules with no egress allow rules' "$pre_3407"
 expect 'the refusal says what to do' 1 'egress: false' "$pre_3407"
 
-explicit_false="$(fixture explicit-false <<'EOF'
+explicit_false="$(
+  fixture explicit-false <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: subtract-one}
@@ -81,7 +83,8 @@ expect 'explicit enableDefaultDeny false passes' 0 '' "$explicit_false"
 
 # A null is pruned by the API server, so Cilium applies its default (true): only a
 # real boolean states the intent.
-null_value="$(fixture null-value <<'EOF'
+null_value="$(
+  fixture null-value <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: null-intent}
@@ -94,7 +97,8 @@ EOF
 )"
 expect 'a null enableDefaultDeny direction is refused' 1 'null-intent spec: egressDeny' "$null_value"
 
-string_value="$(fixture string-value <<'EOF'
+string_value="$(
+  fixture string-value <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: string-intent}
@@ -107,7 +111,8 @@ EOF
 )"
 expect 'a non-boolean enableDefaultDeny direction is refused' 1 'string-intent spec: egressDeny' "$string_value"
 
-explicit_true="$(fixture explicit-true <<'EOF'
+explicit_true="$(
+  fixture explicit-true <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: lock-down}
@@ -120,7 +125,8 @@ EOF
 )"
 expect 'explicit enableDefaultDeny true passes' 0 '' "$explicit_true"
 
-with_allow="$(fixture with-allow <<'EOF'
+with_allow="$(
+  fixture with-allow <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: allow-list}
@@ -134,7 +140,8 @@ EOF
 )"
 expect 'deny alongside allow rules is ordinary allow-list semantics' 0 '' "$with_allow"
 
-wrong_direction="$(fixture wrong-direction <<'EOF'
+wrong_direction="$(
+  fixture wrong-direction <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: wrong-direction}
@@ -147,7 +154,8 @@ EOF
 )"
 expect 'enableDefaultDeny for the OTHER direction does not count' 1 'no enableDefaultDeny.egress' "$wrong_direction"
 
-ingress_only="$(fixture ingress-only <<'EOF'
+ingress_only="$(
+  fixture ingress-only <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: ingress-deny}
@@ -159,7 +167,8 @@ EOF
 )"
 expect 'deny-only ingress is refused and named' 1 'ingressDeny rules with no ingress allow rules' "$ingress_only"
 
-multi_spec="$(fixture multi-spec <<'EOF'
+multi_spec="$(
+  fixture multi-spec <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: multi}
@@ -175,7 +184,8 @@ EOF
 )"
 expect 'one unguarded spec among guarded ones is refused by index' 1 'CiliumClusterwideNetworkPolicy/multi specs[1]: egressDeny' "$multi_spec"
 
-both_fields="$(fixture both-fields <<'EOF'
+both_fields="$(
+  fixture both-fields <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: both}
@@ -192,7 +202,8 @@ EOF
 )"
 expect 'a deny-only spec beside compliant specs is still checked (Cilium applies both)' 1 'CiliumClusterwideNetworkPolicy/both spec: egressDeny' "$both_fields"
 
-multi_doc="$(fixture multi-doc <<'EOF'
+multi_doc="$(
+  fixture multi-doc <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: good}
@@ -214,7 +225,8 @@ EOF
 expect 'a bad policy in the second document of a stream is found' 1 'CiliumClusterwideNetworkPolicy/bad spec:' "$multi_doc"
 expect 'every rendered file is checked, not just the first' 1 'CiliumClusterwideNetworkPolicy/bad' "$explicit_false" "$multi_doc"
 
-namespaced="$(fixture namespaced <<'EOF'
+namespaced="$(
+  fixture namespaced <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata: {name: namespaced, namespace: demo}
@@ -227,7 +239,8 @@ EOF
 expect 'no clusterwide policy at all is cannot-check' 2 'nothing was verified' "$namespaced"
 expect 'namespaced policies are out of scope beside a checked clusterwide one' 0 '' "$explicit_false" "$namespaced"
 
-other_group="$(fixture other-group <<'EOF'
+other_group="$(
+  fixture other-group <<'EOF'
 apiVersion: example.com/v1
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: not-cilium}
@@ -238,7 +251,8 @@ EOF
 )"
 expect 'a same-named kind from another API group is not Cilium' 0 '' "$explicit_false" "$other_group"
 
-no_api="$(fixture no-api <<'EOF'
+no_api="$(
+  fixture no-api <<'EOF'
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: no-api}
 spec:
@@ -249,7 +263,8 @@ EOF
 )"
 expect 'a missing apiVersion is cannot-check, never skipped' 2 'CiliumClusterwideNetworkPolicy/no-api' "$explicit_false" "$no_api"
 
-bare_group="$(fixture bare-group <<'EOF'
+bare_group="$(
+  fixture bare-group <<'EOF'
 apiVersion: cilium.io/
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: bare-group}
@@ -259,7 +274,8 @@ EOF
 )"
 expect 'cilium.io with no version is cannot-check' 2 'CiliumClusterwideNetworkPolicy/bare-group' "$explicit_false" "$bare_group"
 
-no_spec="$(fixture no-spec <<'EOF'
+no_spec="$(
+  fixture no-spec <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: no-spec}
@@ -267,7 +283,8 @@ EOF
 )"
 expect 'a policy with no spec is cannot-check' 2 'no spec or specs' "$no_spec"
 
-broken="$(fixture broken <<'EOF'
+broken="$(
+  fixture broken <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata: {name: broken

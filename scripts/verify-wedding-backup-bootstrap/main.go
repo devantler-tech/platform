@@ -1,3 +1,5 @@
+// Command verify-wedding-backup-bootstrap proves the Wedding backup bootstrap
+// on a disposable fixture namespace of the existing cluster.
 package main
 
 import (
@@ -15,7 +17,7 @@ import (
 type object = map[string]any
 type recipe struct{ push, pull, store, minio object }
 
-var refused = errors.New("safety check failed")
+var errRefused = errors.New("safety check failed")
 
 func at(o object, keys ...string) any {
 	var v any = o
@@ -35,7 +37,7 @@ const dedicatedPath = "apps/wedding-app/backup/r2"
 const projectedSecret = "wedding-db-backup-r2-dedicated"
 const baoImage = "quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806"
 const mcImage = "quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f"
-const toolsImage = "docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8"
+const toolsImage = "docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6"
 
 // This reviewed startup tuple must match the local-provider recipe. The fixture
 // refuses a configuration that could omit authentication or expose other APIs.
@@ -65,28 +67,28 @@ var uuid = regexp.MustCompile(`^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
 func readObject(filename string) (object, error) {
 	a, err := filepath.Abs(filename)
 	if err != nil {
-		return nil, refused
+		return nil, errRefused
 	}
-	real, err := filepath.EvalSymlinks(a)
-	if err != nil || real != a {
-		return nil, refused
+	resolved, err := filepath.EvalSymlinks(a)
+	if err != nil || resolved != a {
+		return nil, errRefused
 	}
 	s, err := os.Lstat(a)
 	if err != nil || !s.Mode().IsRegular() || s.Size() < 1 || s.Size() > 262144 {
-		return nil, refused
+		return nil, errRefused
 	}
 	b, err := os.ReadFile(a)
 	if err != nil {
-		return nil, refused
+		return nil, errRefused
 	}
 	d := yaml.NewDecoder(bytes.NewReader(b))
 	var o object
 	if d.Decode(&o) != nil || o == nil {
-		return nil, refused
+		return nil, errRefused
 	}
 	var extra any
 	if d.Decode(&extra) != io.EOF {
-		return nil, refused
+		return nil, errRefused
 	}
 	return o, nil
 }
@@ -105,7 +107,7 @@ func loadRecipe(root string) (recipe, error) {
 }
 func validateRecipe(r recipe) error {
 	if str(r.push, "kind") != "PushSecret" || str(r.push, "metadata", "name") != "seed-wedding-db-backup-r2" || str(r.push, "metadata", "namespace") != "flux-system" || str(r.push, "spec", "refreshInterval") != "1h" || str(r.push, "spec", "selector", "secret", "name") != "wedding-db-backup-r2-bootstrap" {
-		return refused
+		return errRefused
 	}
 	wantPush := []any{}
 	wantPull := []any{}
@@ -114,31 +116,31 @@ func validateRecipe(r recipe) error {
 		wantPull = append(wantPull, object{"secretKey": pair[1], "remoteRef": object{"key": dedicatedPath, "property": pair[0]}})
 	}
 	if !reflect.DeepEqual(at(r.push, "spec", "data"), wantPush) || !reflect.DeepEqual(at(r.push, "spec", "secretStoreRefs"), []any{object{"name": "openbao", "kind": "ClusterSecretStore"}}) {
-		return refused
+		return errRefused
 	}
 	if str(r.pull, "kind") != "ExternalSecret" || str(r.pull, "metadata", "namespace") != "wedding-app" || str(r.pull, "metadata", "name") != projectedSecret || str(r.pull, "spec", "refreshInterval") != "1h" || str(r.pull, "spec", "target", "name") != projectedSecret || str(r.pull, "spec", "target", "creationPolicy") != "Owner" || !reflect.DeepEqual(at(r.pull, "spec", "secretStoreRef"), object{"name": "openbao", "kind": "ClusterSecretStore"}) || !reflect.DeepEqual(at(r.pull, "spec", "data"), wantPull) {
-		return refused
+		return errRefused
 	}
 	if !reflect.DeepEqual(at(r.pull, "spec", "target", "template", "data"), object{"ACCESS_KEY_ID": "{{ .ACCESS_KEY_ID }}", "SECRET_ACCESS_KEY": "{{ .SECRET_ACCESS_KEY }}", "REGION": "auto"}) {
-		return refused
+		return errRefused
 	}
 	refs := object{}
 	for field, key := range map[string]string{"accessKeyId": "ACCESS_KEY_ID", "secretAccessKey": "SECRET_ACCESS_KEY", "region": "REGION"} {
 		refs[field] = object{"name": projectedSecret, "key": key}
 	}
 	if str(r.store, "kind") != "ObjectStore" || str(r.store, "metadata", "name") != "wedding-db-dedicated" || str(r.store, "spec", "configuration", "destinationPath") != "s3://wedding-db-backups/cnpg/wedding-db" || str(r.store, "spec", "configuration", "endpointURL") != "${r2_endpoint}" || !reflect.DeepEqual(at(r.store, "spec", "configuration", "s3Credentials"), refs) {
-		return refused
+		return errRefused
 	}
 	containers, _ := at(r.minio, "spec", "template", "spec", "containers").([]any)
 	if str(r.minio, "kind") != "Deployment" || len(containers) != 1 {
-		return refused
+		return errRefused
 	}
 	c, ok := containers[0].(map[string]any)
 	if !ok || !regexp.MustCompile(`^docker\.io/chrislusf/seaweedfs:[0-9]+\.[0-9]+@sha256:[a-f0-9]{64}$`).MatchString(str(c, "image")) {
-		return refused
+		return errRefused
 	}
 	if at(c, "env") != nil || at(c, "envFrom") != nil || !reflect.DeepEqual(at(c, "command"), []any{"/bin/sh", "-ec"}) || !reflect.DeepEqual(at(c, "args"), []any{s3ServerScript}) {
-		return refused
+		return errRefused
 	}
 	return nil
 }
@@ -157,7 +159,7 @@ func meta(name, ns, run string) object {
 }
 func fixture(run string, r recipe, access, password string) ([]object, error) {
 	if !digits.MatchString(run) || validateRecipe(r) != nil || !regexp.MustCompile(`^[A-Za-z0-9]{16,64}$`).MatchString(access) || !regexp.MustCompile(`^[A-Za-z0-9]{20,128}$`).MatchString(password) || access == password {
-		return nil, refused
+		return nil, errRefused
 	}
 	ns := "wedding-bootstrap-" + run
 	nsm := meta(ns, "", run)
@@ -208,7 +210,7 @@ ui = false
 func invocation(env func(string) string) (string, error) {
 	run := env("GITHUB_RUN_ID")
 	if env("GITHUB_REPOSITORY") != "devantler-tech/platform" || env("GITHUB_EVENT_NAME") != "workflow_dispatch" || env("GITHUB_REF") != "refs/heads/main" || env("GITHUB_RUN_ATTEMPT") != "1" || env("WEDDING_BOOTSTRAP_CONFIRM") != "verify-wedding-backup-bootstrap" || !digits.MatchString(run) {
-		return "", refused
+		return "", errRefused
 	}
 	return run, nil
 }

@@ -359,7 +359,7 @@ func TestInputMustBeOwnedAndUnambiguous(t *testing.T) {
 
 func TestRequestTimeoutIsBounded(t *testing.T) {
 	c := newCoroot()
-	c.override = func(w http.ResponseWriter, r *http.Request) bool {
+	c.override = func(_ http.ResponseWriter, r *http.Request) bool {
 		<-r.Context().Done()
 		return true
 	}

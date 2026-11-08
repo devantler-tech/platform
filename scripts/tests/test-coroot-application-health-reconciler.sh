@@ -703,33 +703,33 @@ observe_query_slots() {
     fi
     [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
     case "$event" in
-    start)
-      [[ ! -e "${dir}/live-query-$pid" && -p "${dir}/query-$pid.gate" ]] || return 1
-      : >"${dir}/live-query-$pid"
-      active=$((active + 1))
-      ((peak >= active)) || peak=$active
-      decision=go
-      ((active <= limit)) || decision=reject
-      printf '%s' "$decision" >"${dir}/query-$pid.decision"
-      pending="$pending $pid"
-      printf 'start pid=%s active=%s decision=%s\n' "$pid" "$active" "$decision" >>"${dir}/query-events"
-      if ((overlap == 0 || active >= overlap)); then
-        for client in $pending; do
-          exec 8<>"${dir}/query-$client.gate"
-          printf '%s\n' "$(cat "${dir}/query-$client.decision")" >&8
-          exec 8>&-
-        done
-        pending=''
-        overlap=0
-      fi
-      ;;
-    end)
-      [[ -f "${dir}/live-query-$pid" && "$active" -gt 0 ]] || return 1
-      rm "${dir}/live-query-$pid"
-      active=$((active - 1))
-      printf 'end pid=%s active=%s\n' "$pid" "$active" >>"${dir}/query-events"
-      ;;
-    *) return 1 ;;
+      start)
+        [[ ! -e "${dir}/live-query-$pid" && -p "${dir}/query-$pid.gate" ]] || return 1
+        : >"${dir}/live-query-$pid"
+        active=$((active + 1))
+        ((peak >= active)) || peak=$active
+        decision=go
+        ((active <= limit)) || decision=reject
+        printf '%s' "$decision" >"${dir}/query-$pid.decision"
+        pending="$pending $pid"
+        printf 'start pid=%s active=%s decision=%s\n' "$pid" "$active" "$decision" >>"${dir}/query-events"
+        if ((overlap == 0 || active >= overlap)); then
+          for client in $pending; do
+            exec 8<>"${dir}/query-$client.gate"
+            printf '%s\n' "$(cat "${dir}/query-$client.decision")" >&8
+            exec 8>&-
+          done
+          pending=''
+          overlap=0
+        fi
+        ;;
+      end)
+        [[ -f "${dir}/live-query-$pid" && "$active" -gt 0 ]] || return 1
+        rm "${dir}/live-query-$pid"
+        active=$((active - 1))
+        printf 'end pid=%s active=%s\n' "$pid" "$active" >>"${dir}/query-events"
+        ;;
+      *) return 1 ;;
     esac
   done
   return 1

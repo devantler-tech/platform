@@ -1,3 +1,5 @@
+// Command gateway-receiver-binding restores, applies and verifies the
+// reviewed Gateway receiver state during production deployment.
 package main
 
 import (

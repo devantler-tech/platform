@@ -1,6 +1,7 @@
+---
 name: Observe Longhorn Migration Headroom
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:
