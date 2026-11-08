@@ -525,6 +525,16 @@ misconfigurations:
       cannot enumerate the namespace's Secrets, cannot read any Secret other than openbao-unseal,
       and cannot destroy one. The residual capability is creating a NEW Secret in the openbao
       namespace, which is what the store-keys init container does with the unseal material.
+  - id: KSV-0113
+    paths:
+      - k8s/bases/infrastructure/substrate/role.yaml
+    statement: >-
+      This is a namespaced Role in the ate-system namespace, bound to the
+      ate-system/substrate-ca-reader ServiceAccount that External Secrets uses to rewrite
+      cert-manager's certificate authorities into the CA-pool format Substrate reads. Its one rule
+      grants get alone, scoped by resourceNames to the six substrate-* CA Secrets cert-manager
+      issues, so the identity cannot list or watch the namespace's Secrets, cannot read any other
+      Secret, and cannot create, change or delete one.
   # KSV-0020 "runs with UID <= 10000" on the vault-config Job — 2 findings, both LOW.
   #
   # UID 100 is the identity the openbao image itself DEFINES — measured against the pinned

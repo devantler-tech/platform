@@ -1,0 +1,20 @@
+# Substrate's API server requires at least one JWT provider for service
+# account tokens. This is the in-cluster issuer upstream configures when the
+# cluster's own issuer is not discoverable from inside it. This cluster's
+# tokens carry its external issuer, so no service account token matches it:
+# the only Substrate API client, the kagent controller, authenticates with its
+# Pod Certificate (ateApi.authorization.bootstrapOwners in
+# helm-release-control-plane.yaml), and nothing logs in with a token.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ate-api-authentication
+  namespace: ate-system
+data:
+  authentication.yaml: |-
+    jwtProviders:
+    - name: kubernetes
+      issuer: https://kubernetes.default.svc
+      audiences: [api.ate-system.svc]
+      certificateAuthorityFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      discoveryTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token

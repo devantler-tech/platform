@@ -61,6 +61,7 @@ readonly first_party_pairs=(
   'KSV-0048:k8s/bases/infrastructure/controllers/kyverno/role.yaml'
   'KSV-0048:k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml'
   'KSV-0113:k8s/bases/infrastructure/vault-config/role.yaml'
+  'KSV-0113:k8s/bases/infrastructure/substrate/role.yaml'
   'KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-csi-sidecars.yaml'
   'KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-csi-plugin.yaml'
   'KSV-0048:k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-engine-image.yaml'

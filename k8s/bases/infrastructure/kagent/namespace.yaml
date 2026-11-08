@@ -1,0 +1,13 @@
+# kagent 1.0's control plane: its controller (Agent, Harness and ModelConfig
+# reconciliation, the A2A and task APIs) and UI. Agents themselves run in
+# Substrate actors on the worker pools of their own namespaces. The
+# ate.dev/api-access label is Substrate's opt-in for API clients: its
+# NetworkPolicies admit the Substrate API only from labelled namespaces.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kagent
+  labels:
+    ate.dev/api-access: "true"
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

@@ -2933,7 +2933,7 @@ jobs:
 
       - name: 🔗 Validate the pod-security exception still matches its mutation's scope
         if: needs.changes.outputs.k8s == 'true'
-        # The exception suppresses C-0016/C-0055 everywhere EXCEPT the twelve
+        # The exception suppresses C-0016/C-0055 everywhere EXCEPT the fourteen
         # namespaces its compensating mutation does not reach. #2824 happened because
         # those two scopes drifted apart in silence, and the narrowing that fixed it
         # left the agreement resting on a code comment. Both directions of drift read
@@ -2943,7 +2943,7 @@ jobs:
         # now runs, producing findings that are not real gaps.
         #
         # The comparison is NOT against the exclusion list: add-pod-security-context
-        # excludes fourteen namespaces, and two of them (cert-manager and keda)
+        # excludes sixteen namespaces, and two of them (cert-manager and keda)
         # are reached by the by-name add-imageuid rule. Reading exclusions
         # alone reports two false differences on a correct tree, and the natural way
         # to silence that is to add them to the exception — the very drift this

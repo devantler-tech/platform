@@ -1,0 +1,32 @@
+# The CNPG instances: the operator's status and SQL probes, the Substrate API
+# server, and replication between the instances.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-substrate-db
+  namespace: ate-system
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: substrate-db
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: cnpg-system
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "5432"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            app: ate-api-server
+        - matchLabels:
+            cnpg.io/cluster: substrate-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP

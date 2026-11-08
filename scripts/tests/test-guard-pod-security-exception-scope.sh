@@ -84,7 +84,7 @@ printf 'guard-pod-security-exception-scope\n'
 # --------------------------------------------------------------- the real tree --
 run_guard "$policy_src" "$exception_src"
 assert_rc 'the committed tree agrees' 0 "$GUARD_RC"
-assert_mentions 'reports the unreached count' '12 namespace(s) unreached'
+assert_mentions 'reports the unreached count' '14 namespace(s) unreached'
 
 # cert-manager and keda are in the exclusion list and MUST NOT be reported. This
 # is the imageuid carve-out, asserted on the real files rather than a fixture.
