@@ -30,7 +30,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners 
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|arc-systems|arc-controller bff72aa7aa7b49d98f96e2463835f3a284f9c6ec3dd29b8ab89ca0d672fe8473
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate 39491f2756a462deb3514cfbe41d9f4c022edcb38c76f8e4559e978385390bd9
+helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate 646603f78f7124c4bdc214001cd5e0d0b544f6f8a3cc70a87a9bb2768726c101
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-atelet fc731e55e74d04ed0a7139f09dd88d355da89e4aa052ef696edd5596e952b668
 
