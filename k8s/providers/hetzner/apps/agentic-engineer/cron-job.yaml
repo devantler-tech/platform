@@ -33,6 +33,7 @@ spec:
           containers:
             - name: trigger
               image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              imagePullPolicy: IfNotPresent
               command: ["/bin/sh", "/etc/trigger/trigger.sh"]
               env:
                 # The per-run spend cap: Opus spends roughly $0.30 a minute
@@ -44,6 +45,7 @@ spec:
                   cpu: 5m
                   memory: 16Mi
                 limits:
+                  cpu: 100m
                   memory: 64Mi
               securityContext:
                 allowPrivilegeEscalation: false
