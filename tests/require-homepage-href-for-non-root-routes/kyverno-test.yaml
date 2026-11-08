@@ -40,21 +40,3 @@ results:
       - whoami/discovery-disabled
     kind: HTTPRoute
     result: skip
-  # --- Ingress is guarded identically ---
-  - policy: require-homepage-href-for-non-root-routes
-    resources:
-      - whoami/ingress-root-path
-      - whoami/ingress-subpath-with-href
-    kind: Ingress
-    result: pass
-  - policy: require-homepage-href-for-non-root-routes
-    resources:
-      - whoami/ingress-subpath-without-href
-      - whoami/ingress-path-omitted
-    kind: Ingress
-    result: fail
-  - policy: require-homepage-href-for-non-root-routes
-    resources:
-      - whoami/ingress-not-opted-in
-    kind: Ingress
-    result: skip

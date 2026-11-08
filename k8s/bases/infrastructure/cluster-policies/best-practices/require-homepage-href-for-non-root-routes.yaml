@@ -2,11 +2,11 @@
 #
 # Why: unless a route sets gethomepage.dev/href, Homepage builds the card link
 # itself, from the route's first hostname plus the path of its FIRST rule's
-# FIRST match (spec.rules[0].http.paths[0].path for an Ingress). Rule order is
-# routing-neutral in the Gateway API, where the most specific match wins
-# whatever its position, so nothing in a route reads as wrong when a narrow
-# rule is listed first. Homepage is the only consumer of that order, and it
-# fails silently: the card still renders, healthy, and links somewhere else.
+# FIRST match. Rule order is routing-neutral in the Gateway API, where the most
+# specific match wins whatever its position, so nothing in a route reads as
+# wrong when a narrow rule is listed first. Homepage is the only consumer of
+# that order, and it fails silently: the card still renders, healthy, and links
+# somewhere else.
 #
 # That is how the Coroot card broke. platform#5881 put an `Exact /mcp` rule
 # (the agents' MCP endpoint, which bypasses SSO) ahead of the catch-all, so the
@@ -20,9 +20,15 @@
 # list, match list or path to `PathPrefix /`, so an omitted one reads as the
 # root here as well.
 #
-# Scope: every namespace, platform and tenant routes alike, with background
-# scanning on so existing drift surfaces in the PolicyReports. CREATE and
-# UPDATE only, never DELETE, so a route can always be removed (#4732).
+# Scope: HTTPRoutes in every namespace, platform and tenant alike, with
+# background scanning on so existing drift surfaces in the PolicyReports.
+# CREATE and UPDATE only, never DELETE, so a route can always be removed
+# (#4732). Ingress is deliberately not matched: neither this repository nor the
+# cluster serves one, and the tenant role grants only HTTPRoutes. Reading an
+# Ingress's link needs its `http` field, and `ksail workload validate` skips
+# any policy whose expressions name `http` (it cannot tell the field from the
+# CEL http library), so covering Ingress would cost the offline evaluation that
+# lets a pull request fail on a violating route before admission does.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -31,10 +37,10 @@ metadata:
     policies.kyverno.io/title: Require Homepage Href For Non-Root Routes
     policies.kyverno.io/category: Best Practices
     policies.kyverno.io/severity: low
-    policies.kyverno.io/subject: HTTPRoute, Ingress
+    policies.kyverno.io/subject: HTTPRoute
     policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
-      Requires every route that opts into Homepage discovery
+      Requires every HTTPRoute that opts into Homepage discovery
       (gethomepage.dev/enabled: "true") to set gethomepage.dev/href unless the
       link Homepage would derive from it is the site root, so reordering a
       route's rules cannot silently move its dashboard card to a sub-path.
@@ -47,17 +53,10 @@ spec:
       enabled: true
   matchConstraints:
     resourceRules:
-      # HTTPRoute is what this platform uses. Ingress is Homepage's other
-      # discovery source and is included so a future Ingress cannot bypass the
-      # guard, the same scope as restrict-homepage-service-groups.
       - apiGroups: ["gateway.networking.k8s.io"]
         apiVersions: ["*"]
         operations: ["CREATE", "UPDATE"]
         resources: ["httproutes"]
-      - apiGroups: ["networking.k8s.io"]
-        apiVersions: ["*"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["ingresses"]
   matchConditions:
     - name: opted-into-homepage
       expression: >-
@@ -69,7 +68,7 @@ spec:
         object.metadata.?annotations.orValue({})[?'gethomepage.dev/href'].orValue('')
     # https://<hostnames[0]><rules[0].matches[0].path.value>, and no link at all
     # without a hostname or for a RegularExpression path.
-    - name: httpRouteLinksToRoot
+    - name: linksToRoot
       expression: >-
         size(object.spec.?hostnames.orValue([])) > 0 &&
         (
@@ -80,20 +79,11 @@ spec:
             object.spec.rules[0].matches[0].?path.?type.orValue('PathPrefix') != 'RegularExpression'
           )
         )
-    # <scheme>://<rules[0].host><rules[0].http.paths[0].path>; an Ingress has no
-    # defaulting here, so a missing host or path yields a broken link.
-    - name: ingressLinksToRoot
-      expression: >-
-        size(object.spec.?rules.orValue([])) > 0 &&
-        object.spec.rules[0].?host.orValue('') != '' &&
-        size(object.spec.rules[0].?http.?paths.orValue([])) > 0 &&
-        object.spec.rules[0].http.paths[0].?path.orValue('') == '/'
   validations:
     - expression: >-
-        variables.href != '' ||
-        (object.kind == 'HTTPRoute' ? variables.httpRouteLinksToRoot : variables.ingressLinksToRoot)
+        variables.href != '' || variables.linksToRoot
       message: >-
-        A route with gethomepage.dev/enabled="true" must set
+        An HTTPRoute with gethomepage.dev/enabled="true" must set
         gethomepage.dev/href unless its first hostname and its first rule's
         first path already form the site root. Homepage builds the card link
         from exactly those two fields, so a route whose first rule matches a
