@@ -56,6 +56,11 @@ func TestObserveUsesEveryServedVersionAndMetadataOnly(t *testing.T) {
 	if err != nil || len(result.Bindings()) != 2 {
 		t.Fatalf("complete metadata inventory failed: count=%d error=%v", len(result.Bindings()), err)
 	}
+	for _, binding := range result.Bindings() {
+		if binding.Resource != map[string]string{"Widget": "widgets.example.io", "Secret": "secrets"}[binding.Kind] {
+			t.Fatal("group/resource identity was discarded or versioned")
+		}
+	}
 }
 
 func TestNativeEmptyMetadataListMayContainNullItems(t *testing.T) {
@@ -73,6 +78,43 @@ func TestFixedLonghornCalibrationReadsMetadataWithoutRetirementAuthority(t *test
 	result, err = observeFixtureInNamespace(t, "native empty list", "longhorn-system")
 	if err == nil || len(result.Bindings()) != 0 {
 		t.Fatal("empty production calibration accepted")
+	}
+}
+
+func TestRetainedEmailInventoryCoversAllServedKinds(t *testing.T) {
+	result, err := observeFixtureInNamespace(t, "", "email-data-recovery-41561215415")
+	if err != nil || len(result.Bindings()) != 2 {
+		t.Fatalf("fixed Email inventory failed: %v", err)
+	}
+	for _, failure := range []string{"continued list", "changed discovery", "namespace replaced", "full Secret response", "duplicate UID"} {
+		result, err = observeFixtureInNamespace(t, failure, "email-data-recovery-41561215415")
+		if err == nil || len(result.Bindings()) != 0 {
+			t.Fatalf("incomplete Email inventory accepted: %s", failure)
+		}
+	}
+	if result, err = Observe(context.Background(), nil, nil, "email-data-recovery-41561215416", "uid"); err == nil || len(result.Bindings()) != 0 {
+		t.Fatal("arbitrary Email namespace admitted by general benchmark API")
+	}
+}
+
+// One stored Event is served by core v1 and events.k8s.io under the same UID.
+// That alias is one object; any other identity difference stays a conflict.
+func TestEventAliasesAreOneObject(t *testing.T) {
+	result, err := observeFixtureInNamespace(t, "event alias", "email-data-recovery-41561215415")
+	if err != nil {
+		t.Fatalf("Event aliases were read as conflicting identities: %v", err)
+	}
+	events := 0
+	for _, binding := range result.Bindings() {
+		if binding.Kind == "Event" {
+			events++
+		}
+	}
+	if len(result.Bindings()) != 3 || events != 1 {
+		t.Fatalf("want secret, widget and one Event, got %d bindings with %d Events", len(result.Bindings()), events)
+	}
+	if result, err = observeFixtureInNamespace(t, "event alias renamed", "email-data-recovery-41561215415"); err == nil || len(result.Bindings()) != 0 {
+		t.Fatal("two different Events with one UID were accepted")
 	}
 }
 
@@ -155,7 +197,11 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 				respond(`{"apiVersion":"v1","kind":"APIGroupList","groups":[]}`)
 				return
 			}
-			respond(`{"apiVersion":"v1","kind":"APIGroupList","groups":[{"name":"example.io","versions":[{"groupVersion":"example.io/v1","version":"v1"},{"groupVersion":"example.io/v2","version":"v2"}]}]}`)
+			events := ""
+			if strings.HasPrefix(failure, "event alias") {
+				events = `,{"name":"events.k8s.io","versions":[{"groupVersion":"events.k8s.io/v1","version":"v1"}]}`
+			}
+			respond(`{"apiVersion":"v1","kind":"APIGroupList","groups":[{"name":"example.io","versions":[{"groupVersion":"example.io/v1","version":"v1"},{"groupVersion":"example.io/v2","version":"v2"}]}` + events + `]}`)
 			return
 		}
 		gv := ""
@@ -166,6 +212,8 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			gv = "example.io/v1"
 		case "/apis/example.io/v2":
 			gv = "example.io/v2"
+		case "/apis/events.k8s.io/v1":
+			gv = "events.k8s.io/v1"
 		}
 		if gv != "" {
 			if failure == "wrong group version" {
@@ -175,6 +223,9 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			if strings.HasPrefix(gv, "example.io/") {
 				resource, kind = "widgets", "Widget"
 			}
+			if gv == "events.k8s.io/v1" {
+				resource, kind = "events", "Event"
+			}
 			verbs := `["get","list","delete"]`
 			if failure == "missing list verb" {
 				verbs = `["get","delete"]`
@@ -182,6 +233,9 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			body := fmt.Sprintf(`{"apiVersion":"v1","kind":"APIResourceList","groupVersion":%q,"resources":[{"name":%q,"kind":%q,"namespaced":true,"verbs":%s},{"name":"widgets/status","kind":"Widget","namespaced":true,"verbs":["get","update"]}]}`, gv, resource, kind, verbs)
 			if failure == "missing namespace scope" {
 				body = strings.Replace(body, `"namespaced":true,`, "", 1)
+			}
+			if strings.HasPrefix(failure, "event alias") && gv == "v1" {
+				body = strings.Replace(body, `"resources":[`, `"resources":[{"name":"events","kind":"Event","namespaced":true,"verbs":["get","list","delete"]},`, 1)
 			}
 			respond(body)
 			return
@@ -217,6 +271,12 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			if failure == "duplicate UID different kind" {
 				name, uid = "same-name", "same-uid"
 			}
+			if strings.HasSuffix(r.URL.Path, "/events") {
+				name, uid = "reader.1", "event-uid"
+				if failure == "event alias renamed" && strings.HasPrefix(r.URL.Path, "/apis/") {
+					name = "other.1"
+				}
+			}
 			if failure == "duplicate UID" && strings.HasSuffix(r.URL.Path, "/v2/namespaces/"+testNamespace+"/widgets") {
 				name = "different-widget"
 			}
@@ -250,9 +310,12 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 	}
 	var result Inventory
 	var err error
-	if namespace == "longhorn-system" {
+	switch namespace {
+	case "longhorn-system":
 		result, err = CalibrateLonghornSystem(ctx, server.Client(), endpoint, "namespace-uid")
-	} else {
+	case "email-data-recovery-41561215415":
+		result, err = ObserveRetainedEmailRecovery(ctx, server.Client(), endpoint, "namespace-uid")
+	default:
 		result, err = Observe(ctx, server.Client(), endpoint, testNamespace, "namespace-uid")
 	}
 	server.Close()
