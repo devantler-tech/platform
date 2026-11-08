@@ -1,7 +1,8 @@
+---
 name: Verify ARC App Identity
 
 # Production proof is manual only. PRs run credential-free fixtures.
-on:
+"on":
   pull_request:
     branches: [main]
     paths:

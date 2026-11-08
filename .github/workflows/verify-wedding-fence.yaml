@@ -1,6 +1,7 @@
+---
 name: Verify Retained Wedding Fence
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

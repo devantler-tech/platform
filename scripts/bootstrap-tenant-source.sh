@@ -33,14 +33,18 @@ canonical_bootstrap_admission() (
   [ ! -L "$output" ] || return 1
   [ -z "${CANONICAL_TENANT_BINDINGS_FILE:-}" ] || [ "$CANONICAL_TENANT_BINDINGS_FILE" = "$output" ] || return 2
   [ ! -e "$output" ] || previous_exists=1
-  previous="$(unset CANONICAL_TENANT_BINDINGS_FILE; canonical_tenant_bindings "$admission_root")" || return 1
+  previous="$(
+    unset CANONICAL_TENANT_BINDINGS_FILE
+    canonical_tenant_bindings "$admission_root"
+  )" || return 1
   if [ "$previous_exists" = 1 ] && [ "$(printf '%s\n' "$previous" | jq '.bindings|length')" = 0 ]; then
     echo 'existing empty registry is not an admission; refusing to claim unchanged output' >&2
     return 1
   fi
   if [ "$(printf '%s\n' "$previous" | jq '.bindings|length')" -gt 0 ]; then
     [ "$(printf '%s\n' "$previous" | jq -r '.bindings[0].kind')" = published-bootstrap ] || {
-      echo 'canonical source already observed; use ordinary regeneration' >&2; return 1;
+      echo 'canonical source already observed; use ordinary regeneration' >&2
+      return 1
     }
   fi
   receipt="$(business_site_manifest_evidence --consumer business-site --verify-only --tag "$tag" --source-sha "$source_sha" --digest "$digest")" || return 1
@@ -73,7 +77,11 @@ canonical_bootstrap_admission() (
   CANONICAL_TENANT_BINDINGS_FILE="$canonical_bootstrap_work/candidate.json" discover_consumers "$admission_root" >/dev/null || return 1
   kubectl --context "$PUBLISH_KUBE_CONTEXT" get ocirepositories.source.toolkit.fluxcd.io -A -o json >"$canonical_bootstrap_work/inventory.json" || return 1
   state="$(canonical_source_inventory_state "$record" "$canonical_bootstrap_work/inventory.json")" || return 1
-  case "$state" in absent | pending) ;; *) echo 'canonical source already has an artifact; use observed regeneration' >&2; return 1 ;; esac
+  case "$state" in absent | pending) ;; *)
+    echo 'canonical source already has an artifact; use observed regeneration' >&2
+    return 1
+    ;;
+  esac
   # An existing identical admission is a revalidated no-op. Never replace a
   # concurrently changed/observed record, or move a temporary file into a
   # destination that became a directory.
@@ -117,7 +125,8 @@ canonical_upgrade_preparation() (
   [[ "$tag" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]] && is_sha "$source_sha" && is_digest "$digest" || return 2
   [ -n "${PUBLISH_KUBE_CONTEXT:-}" ] && [[ "$upgrade_output" = /* ]] || return 2
   local output_parent output_name upgrade_tenant graph_path
-  output_parent="$(dirname "$upgrade_output")"; output_name="$(basename "$upgrade_output")"
+  output_parent="$(dirname "$upgrade_output")"
+  output_name="$(basename "$upgrade_output")"
   [[ "$output_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || return 2
   output_parent="$(cd "$output_parent" && pwd -P)" || return 2
   upgrade_output="$output_parent/$output_name"
@@ -179,7 +188,10 @@ canonical_upgrade_preparation() (
   discover_consumers "$upgrade_root" >/dev/null || return 1
   # Reserve a new private output directory only after every input has been validated.
   # Exclusive links cannot overwrite a conflicting file or follow its final symlink.
-  (umask 077; mkdir "$upgrade_output") || return 1
+  (
+    umask 077
+    mkdir "$upgrade_output"
+  ) || return 1
   mkdir -p "$upgrade_output/scripts" "$upgrade_output/$(dirname "$upgrade_tenant")" || return 1
   link "$prepared_root/scripts/canonical-tenant-source-bindings.json" "$upgrade_output/scripts/canonical-tenant-source-bindings.json" || return 1
   link "$prepared_root/$upgrade_tenant" "$upgrade_output/$upgrade_tenant" || return 1
@@ -211,14 +223,14 @@ bootstrap_tenant_source() (
       return 2
     }
     case "$1" in
-    --source-file) source_file="$2" ;;
-    --tag) tag="$2" ;;
-    --source-root) source_root="$2" ;;
-    --output) output="$2" ;;
-    *)
-      echo 'unknown bootstrap argument' >&2
-      return 2
-      ;;
+      --source-file) source_file="$2" ;;
+      --tag) tag="$2" ;;
+      --source-root) source_root="$2" ;;
+      --output) output="$2" ;;
+      *)
+        echo 'unknown bootstrap argument' >&2
+        return 2
+        ;;
     esac
     shift 2
   done
@@ -272,23 +284,23 @@ bootstrap_tenant_source() (
   }
   count="$(printf '%s\n' "$inventory" | jq '[.items[] | select(.spec.url == "oci://ghcr.io/devantler-tech/data-product-controller/manifests")] | length')"
   case "$count" in
-  0) ;;
-  1)
-    printf '%s\n' "$inventory" | jq -e --arg digest "$digest" '
+    0) ;;
+    1)
+      printf '%s\n' "$inventory" | jq -e --arg digest "$digest" '
         [.items[] | select(.spec.url == "oci://ghcr.io/devantler-tech/data-product-controller/manifests")][0] |
         .metadata.namespace == "data-product-controller" and .metadata.name == "khoist-documentation" and
         .spec.ref.digest == $digest and
         ((.status.artifact.revision // "") == "") and
         all(.status.conditions[]?; .type != "Ready" or .status != "True")
       ' >/dev/null || {
+        rm -rf "$work"
+        return 1
+      }
+      ;;
+    *)
       rm -rf "$work"
       return 1
-    }
-    ;;
-  *)
-    rm -rf "$work"
-    return 1
-    ;;
+      ;;
   esac
   source_sha="$(tag_commit data-product-controller "$tag")" || {
     rm -rf "$work"

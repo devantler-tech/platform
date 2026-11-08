@@ -107,7 +107,6 @@ check podlevel-mutated.yaml '.spec.securityContext.seLinuxOptions.user' \
 check podlevel-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
   OnRootMismatch "pod-level rule did not fire on the podlevel fixture"
 
-
 # Partial pod options remain inherited as a whole; leave level selection to the
 # runtime and preserve the operator's user. The fsGroup check prevents vacuity.
 check podlevel-partial-mutated.yaml '.spec.securityContext.seLinuxOptions.level' \

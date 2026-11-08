@@ -1,6 +1,7 @@
+---
 name: Verify ARC Credential Transport
 
-on:
+"on":
   workflow_dispatch:
 
 permissions: {}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -17,26 +18,116 @@ type command func(context.Context, []byte, string, ...string) ([]byte, error)
 // errConflict reports an API 409, the one failure a caller may retry with fresh state.
 var errConflict = errors.New("external command refused: the resource changed")
 
+type commandOutput struct {
+	buffer   bytes.Buffer
+	limit    int
+	overflow bool
+}
+
+func (b *commandOutput) Write(p []byte) (int, error) {
+	if len(p) > b.limit-b.buffer.Len() {
+		b.overflow = true
+		return 0, errors.New("external command output exceeded its bound")
+	}
+	return b.buffer.Write(p)
+}
+
+func commandContextActive(ctx context.Context) bool {
+	if ctx == nil || ctx.Err() != nil {
+		return false
+	}
+	deadline, bounded := ctx.Deadline()
+	return !bounded || time.Now().Before(deadline)
+}
+
 func execute(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+	if !commandContextActive(ctx) {
+		return nil, errors.New("external command context is inactive")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stdin = bytes.NewReader(input)
 	// Host configuration and provider replies never enter public workflow logs:
-	// stderr is only classified, never returned or printed.
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	result, err := cmd.Output()
+	// stderr is only classified, never returned or printed. Either output bound,
+	// cancellation or an incomplete pipe rejects all output, including conflicts.
+	stdout, stderr := &commandOutput{limit: 16 << 20}, &commandOutput{limit: 64 << 10}
+	outReader, outWriter, err := os.Pipe()
 	if err != nil {
-		if strings.Contains(stderr.String(), "Error from server (Conflict)") {
+		return nil, errors.New("external command response pipe could not be opened")
+	}
+	defer func() { _ = outReader.Close() }()
+	defer func() { _ = outWriter.Close() }()
+	errReader, errWriter, err := os.Pipe()
+	if err != nil {
+		return nil, errors.New("external command response pipe could not be opened")
+	}
+	defer func() { _ = errReader.Close() }()
+	defer func() { _ = errWriter.Close() }()
+	// Own both pipes: Cmd.Wait can mask its forced-close ErrWaitDelay with an
+	// ExitError, which cannot establish a complete API conflict response.
+	cmd.Stdout, cmd.Stderr, cmd.WaitDelay = outWriter, errWriter, 2*time.Second
+	if cmd.Start() != nil {
+		return nil, errors.New("external command could not start")
+	}
+	_ = outWriter.Close()
+	_ = errWriter.Close()
+	drained := make(chan error, 2)
+	for _, stream := range []struct {
+		reader *os.File
+		output *commandOutput
+	}{{outReader, stdout}, {errReader, stderr}} {
+		go func() {
+			_, copyErr := io.Copy(stream.output, stream.reader)
+			if copyErr != nil {
+				cancel()
+			}
+			drained <- copyErr
+		}()
+	}
+	err = cmd.Wait()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	incomplete := false
+	for remaining := 2; remaining > 0; {
+		select {
+		case copyErr := <-drained:
+			remaining--
+			incomplete = incomplete || copyErr != nil
+		case <-ctx.Done():
+			incomplete = true
+			_ = outReader.Close()
+			_ = errReader.Close()
+			for ; remaining > 0; remaining-- {
+				<-drained
+			}
+		case <-timer.C:
+			incomplete = true
+			_ = outReader.Close()
+			_ = errReader.Close()
+			for ; remaining > 0; remaining-- {
+				<-drained
+			}
+		}
+	}
+	if incomplete || !commandContextActive(ctx) || stdout.overflow || stderr.overflow {
+		return nil, errors.New("external command did not return a complete bounded response")
+	}
+	if err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) && exitError.ExitCode() == 1 && strings.Contains(stderr.buffer.String(), "Error from server (Conflict)") {
 			return nil, errConflict
 		}
 		return nil, errors.New("external command failed")
 	}
-	return result, nil
+	return stdout.buffer.Bytes(), nil
 }
 
 type client struct {
-	run     command
-	context string
+	run                  command
+	context              string
+	inventoryPools       map[string]migrationPool
+	inventoryPreparation *journal
 }
 
 var kubeName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)

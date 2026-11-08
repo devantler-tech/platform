@@ -7,7 +7,10 @@ policy="${root}/k8s/bases/infrastructure/cluster-policies/best-practices/verify-
 talos="${root}/talos/cluster/verify-first-party-images.yaml"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 
 subject="$(yq -r '.spec.attestors[] | select(.name == "publishwarzone") | .cosign.keyless.identities[0].subjectRegExp' "${policy}")"
 [[ -n "${subject}" && "${subject}" != null ]] || fail 'a complete zone signature identity is required'

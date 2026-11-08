@@ -297,9 +297,9 @@ func TestProviderObservationDoesNotFollowRedirectOrDiscloseProviderBody(t *testi
 				if r.URL.Host != "api.hetzner.cloud" {
 					t.Fatal("redirect followed")
 				}
-				copy := r.Clone(r.Context())
-				copy.URL.Scheme, copy.URL.Host = local.Scheme, local.Host
-				return transport.RoundTrip(copy)
+				clone := r.Clone(r.Context())
+				clone.URL.Scheme, clone.URL.Host = local.Scheme, local.Host
+				return transport.RoundTrip(clone)
 			})}
 			_, err := observeProvider(context.Background(), client, "disposable-test-token", b, false)
 			if err == nil || strings.Contains(err.Error(), "private-provider-detail") || strings.Contains(err.Error(), "disposable-test-token") || forwarded != 0 {

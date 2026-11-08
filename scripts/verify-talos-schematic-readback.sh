@@ -16,8 +16,8 @@ interval_seconds=${TALOS_READBACK_INTERVAL_SECONDS:-10}
 max_seconds=${TALOS_READBACK_MAX_SECONDS:-600}
 
 [[ "$max_attempts" =~ ^[1-9][0-9]*$ &&
-   "$interval_seconds" =~ ^(0|[1-9][0-9]*)$ &&
-   "$max_seconds" =~ ^[1-9][0-9]*$ ]] || {
+  "$interval_seconds" =~ ^(0|[1-9][0-9]*)$ &&
+  "$max_seconds" =~ ^[1-9][0-9]*$ ]] || {
   printf 'invalid Talos readback attempt, interval, or deadline setting\n' >&2
   exit 1
 }
@@ -44,9 +44,9 @@ if jq -e 'any(.[]; .role == "v2" and .min > 0)' <<<"$expected_migration_pools" >
 fi
 
 [[ "$expected_schematic" =~ ^[0-9a-f]{64}$ &&
-   "$expected_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ &&
-   "$expected_control_planes" =~ ^[1-9][0-9]*$ &&
-   "$expected_workers" =~ ^[1-9][0-9]*$ ]] || {
+  "$expected_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ &&
+  "$expected_control_planes" =~ ^[1-9][0-9]*$ &&
+  "$expected_workers" =~ ^[1-9][0-9]*$ ]] || {
   printf 'invalid desired Talos version, schematic, or static-node count\n' >&2
   exit 1
 }
@@ -59,30 +59,76 @@ jq -e 'all(.[]; (.name | test("^autoscale-longhorn-v[12]$")) and
   exit 1
 }
 
-# A failed worker preparation deliberately keeps its cordon and journal for
+# A held worker preparation or host reboot keeps its cordon and journal for
 # explicit recovery. Accept exactly that cordon, so a deploy that may carry the
 # recovery fix is not evicted by it. Any other cordon still fails this gate.
 journal_held_worker() {
-  local nodes_json=$1 candidates worker journal_name record
+  local nodes_json=$1 candidates worker journal_name record annotation profile selection='' members
   candidates=$(jq -c '[.items[] | select(.spec.unschedulable == true)]' <<<"$nodes_json") || return 0
   [[ $(jq 'length' <<<"$candidates") == 1 ]] || return 0
   worker=$(jq -r '.[0].metadata.name' <<<"$candidates")
-  [[ "$worker" =~ ^prod-worker-[1-9][0-9]*$ ]] || return 0
-  journal_name="longhorn-v2-prepare-$worker"
-  jq -e --arg journal "$journal_name" '.[0].metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] == $journal' \
-    <<<"$candidates" >/dev/null || return 0
+  annotation=$(jq -r '.[0].metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] // ""' <<<"$candidates")
+  if [[ "$worker" =~ ^prod-worker-[1-9][0-9]*$ && "$annotation" == "longhorn-v2-prepare-$worker" ]]; then
+    profile=permanent
+    journal_name="longhorn-v2-prepare-$worker"
+  elif [[ "$worker" =~ ^prod-worker-[123]$ && "$annotation" == "longhorn-v2-host-memory-$worker" ]]; then
+    profile=host
+    journal_name="longhorn-v2-host-memory-$worker"
+  elif [[ "$worker" =~ ^autoscale-longhorn-v1-[0-9a-f]{16}$ ]]; then
+    members=$(jq -c '[.items[] | select(.metadata.name | test("^autoscale-longhorn-v1-[0-9a-f]{16}$")) | .metadata.name] | sort' <<<"$nodes_json") || return 0
+    [[ $(jq 'length' <<<"$members") == 2 ]] || return 0
+    if [[ $(jq -r '.[0]' <<<"$members") == "$worker" ]]; then
+      selection=temporary-v1-1
+    elif [[ $(jq -r '.[1]' <<<"$members") == "$worker" ]]; then
+      selection=temporary-v1-2
+    else
+      return 0
+    fi
+    profile=temporary
+    journal_name="longhorn-v2-prepare-$selection"
+    [[ "$annotation" == "$journal_name" ]] || return 0
+  else
+    return 0
+  fi
   record=$("$kubectl_bin" --context "$kube_context" --request-timeout=15s \
     get configmap "$journal_name" --namespace=longhorn-system -o json 2>/dev/null) || return 0
-  jq -e --arg worker "$worker" --argjson candidates "$candidates" '
+  jq -e --arg worker "$worker" --arg profile "$profile" --arg selection "$selection" \
+    --arg journal_name "$journal_name" --argjson candidates "$candidates" '
     (.data.record | fromjson) as $journal |
-    $journal.schema == 1 and $journal.target == $worker and
+    $journal.target == $worker and
     $journal.nodeUID == $candidates[0].metadata.uid and
-    ($journal.phase == "evacuating" or $journal.phase == "draining" or $journal.phase == "reset-requested")
+    if $profile == "permanent" then
+      $journal.schema == 1 and
+      ($journal.phase == "evacuating" or $journal.phase == "draining" or $journal.phase == "reset-requested")
+    else
+      .metadata.name == $journal_name and .metadata.namespace == "longhorn-system" and
+      (.metadata.uid | type == "string" and length > 0) and
+      (.metadata.resourceVersion | type == "string" and length > 0) and
+      ($journal.nodeUID | type == "string" and length > 0) and
+      ($journal.providerID | test("^hcloud://[1-9][0-9]*$")) and
+      $journal.providerID == $candidates[0].spec.providerID and
+      ($journal.machineUUID | type == "string" and length > 0) and
+      $journal.machineUUID == $candidates[0].status.nodeInfo.systemUUID and
+      ($journal.source | test("^[0-9a-f]{40}$")) and ($journal.ownerRun | test("^[1-9][0-9]*$")) and
+      ($journal.originalBootID | test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")) and
+      ($candidates[0].status.nodeInfo.bootID | test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")) and
+      if $profile == "host" then
+        $journal.version == 1 and $journal.schema == null and
+        (($journal.phase == "draining" and $journal.originalBootID == $candidates[0].status.nodeInfo.bootID) or
+         $journal.phase == "reboot-requested" or
+         ($journal.phase == "returning" and $journal.recoveredBootID == $candidates[0].status.nodeInfo.bootID and $journal.recoveredBootID != $journal.originalBootID))
+      else
+        $journal.schema == 2 and $journal.version == null and $journal.temporarySelection == $selection and
+        $journal.rawVolumeAbsent == true and ($journal.nativeEmptyDigest | test("^[0-9a-f]{64}$")) and
+        ($journal.originalDisks | type == "object" and length == 0) and ($journal.ephemeralUUID | type == "string" and length > 0) and
+        (($journal.phase == "evacuating" or $journal.phase == "draining") and $journal.originalBootID == $candidates[0].status.nodeInfo.bootID or $journal.phase == "reset-requested")
+      end
+    end
   ' <<<"$record" >/dev/null 2>&1 || return 0
   printf '%s' "$worker"
 }
 
-deadline_epoch=$(( $(date +%s) + max_seconds ))
+deadline_epoch=$(($(date +%s) + max_seconds))
 held_worker=''
 last_nodes_json=''
 for ((attempt = 1; attempt <= max_attempts; attempt++)); do
@@ -122,7 +168,7 @@ for ((attempt = 1; attempt <= max_attempts; attempt++)); do
       printf 'PASS: all Talos nodes run %s with schematic %s and are Ready/schedulable\n' \
         "$expected_version" "$expected_schematic"
       if [[ -n "$held_worker" ]]; then
-        printf '::warning::HELD: %s stays cordoned by its Longhorn V2 preparation journal; recover it before the next preparation\n' "$held_worker"
+        printf '::warning::HELD: %s stays cordoned by its Longhorn V2 maintenance journal; recover it before the next worker\n' "$held_worker"
       fi
       exit 0
     fi

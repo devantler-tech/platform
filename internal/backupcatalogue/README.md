@@ -33,10 +33,21 @@ must complete before any receipt is printed. The command checks the current
 
 Deployment bindings must match the reviewed base and production variable files,
 the Ready BackupRepository and Available BackupStorageLocation, and the two
-existing Velero credential Secrets. Complete before/after responses must remain
-identical. The private comparison digest includes Secret data and never enters
-the returned catalogue. Backend HTTP uses a dedicated transport without ambient
+existing Velero credential Secrets. Each native response must be complete and
+carry its resource version. Before/after bindings require unchanged validated
+object identities, repository scope, usable state and credential data. Resource
+versions and unconsumed validation timestamps may advance during the read; those
+bookkeeping changes do not alter the binding. Credentials are compared directly
+in memory with constant-time comparisons, separately from the non-credential
+state. No credential digest or Secret data enters the returned catalogue.
+Backend HTTP uses a dedicated transport without ambient
 proxies, with TLS, connection, request, response and total-read limits.
+
+A failed observation prints a fixed phase such as `source-before`,
+`deployment-bind-before` or `repository-metadata`. It never prints the
+underlying command, provider or credential error. A phase identifies where the
+attempt was held; it does not establish completeness or authorize a retry,
+restore, migration or disk reset. Failed and partial catalogues remain withheld.
 
 Velero constructs Kopia paths from the BSL prefix, `kopia` and the repository's
 `volumeNamespace`; the BackupRepository UID is not an object-key prefix. The

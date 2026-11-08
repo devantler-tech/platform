@@ -98,6 +98,9 @@ spec:
       namespace: arc-systems
     - kind: HelmRelease
       name: "*"
+      namespace: ate-system
+    - kind: HelmRelease
+      name: "*"
       namespace: cert-manager
     - kind: HelmRelease
       name: "*"
@@ -126,6 +129,9 @@ spec:
     - kind: HelmRelease
       name: "*"
       namespace: homepage
+    - kind: HelmRelease
+      name: "*"
+      namespace: kagent
     - kind: HelmRelease
       name: "*"
       namespace: keda

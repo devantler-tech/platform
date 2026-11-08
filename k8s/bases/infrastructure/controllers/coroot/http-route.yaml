@@ -31,6 +31,13 @@ metadata:
     # uses for the Cilium and OpenBao routes. Homepage fetches icons client-side,
     # so the cluster egress NetworkPolicy doesn't block it.
     gethomepage.dev/icon: https://raw.githubusercontent.com/coroot/coroot/main/front/public/icon.svg
+    # Card link. Without it Homepage builds the link from the hostname plus the
+    # FIRST rule's first path match, and the first rule below is the /mcp
+    # bypass, so the card opened Coroot's MCP endpoint, which answers a browser
+    # without a bearer token with 401 "unauthorized" (#5881 added that rule).
+    # Pin the UI root so rule order cannot move the link again; the
+    # require-homepage-href-for-non-root-routes policy enforces this.
+    gethomepage.dev/href: https://observability.${domain}
 spec:
   parentRefs:
     - name: platform
@@ -39,6 +46,24 @@ spec:
   hostnames:
     - observability.${domain}
   rules:
+    # Coroot's MCP endpoint authenticates every request itself — a bearer OAuth
+    # token or a service-account API key, never the anonymous role — so agents
+    # reach exactly /mcp directly, without the browser SSO they cannot complete.
+    # Every other path still goes through oauth2-proxy. The backend is the
+    # coroot-mcp Service, which pins MCP sessions to one pod (see service.yaml).
+    - matches:
+        - path:
+            type: Exact
+            value: /mcp
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: coroot-mcp
+          port: 8080
     - filters:
         - type: ResponseHeaderModifier
           responseHeaderModifier:

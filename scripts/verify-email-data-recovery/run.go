@@ -23,7 +23,7 @@ func approvedBackupControllerImage(image string) bool {
 	return regexp.MustCompile(`^(docker\.io/)?velero/velero:v1\.18\.4(@sha256:[0-9a-f]{64})?$`).MatchString(image)
 }
 func (d *recoveryDriver) list(ctx context.Context, kind, ns, selector string) ([]object, error) {
-	args := []string{"get", kind, "--namespace=" + ns, "-o=json"}
+	args := []string{"get", veleroReadResource(kind), "--namespace=" + ns, "-o=json"}
 	if selector != "" {
 		args = append(args, "--selector="+selector)
 	}
@@ -232,7 +232,7 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	d.stage = "mailbox-proof"
+	d.stage = "reader-forward"
 	endpoint, stopReader, err := d.forward(ctx, d.i.namespace, "reader", reader.uid)
 	if err != nil {
 		return err
@@ -243,6 +243,7 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 		return err
 	}
 	recovered.account = original.account
+	d.stage = "reader-readiness"
 	err = waitRecovery(ctx, 90*time.Second, func() (bool, error) {
 		_, e := recovered.request(ctx, "GET", "/healthz/ready", "", nil)
 		return e == nil, nil
@@ -250,9 +251,11 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	d.stage = "reader-session"
 	if err = recovered.session(ctx); err != nil {
 		return err
 	}
+	d.stage = "reader-message"
 	if _, err = recovered.verifyMessage(ctx, marker.identity); err != nil {
 		return err
 	}

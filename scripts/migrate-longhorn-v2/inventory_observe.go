@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -30,7 +32,30 @@ type inventoryReceipt struct {
 	Report              longhorninventory.Report `json:"report"`
 }
 
+// inventoryProjection binds a complete Kubernetes storage observation to the
+// selected physical node and reviewed pool roster. A preparation journal permits
+// only its own identity-bound cordon in the observation view.
 func (c client) inventoryProjection(ctx context.Context, target string) (inventoryProjection, object, error) {
+	return c.storageProjection(ctx, target, true)
+}
+
+// hostMemoryProjection binds counters to the selected host and registered disk,
+// independently of replica scheduling. It grants no replica-accounting proof.
+// Reboot recovery separately proves two peer copies before restoring scheduling.
+func (c client) hostMemoryProjection(ctx context.Context, target string) (inventoryProjection, object, error) {
+	if !inventoryTarget.MatchString(target) {
+		return inventoryProjection{}, nil, errInventory
+	}
+	projection, node, err := c.storageProjection(ctx, target, false)
+	if err != nil || !projection.Registered {
+		return inventoryProjection{}, nil, errInventory
+	}
+	return projection, node, nil
+}
+
+// storageProjection shares node, hardware, disk and endpoint identity checks.
+// Only the replica observer includes the complete replica ownership graph.
+func (c client) storageProjection(ctx context.Context, target string, includeReplicas bool) (inventoryProjection, object, error) {
 	var nodes, storage, replicas []object
 	for _, query := range []struct {
 		path, apiVersion, kind string
@@ -40,6 +65,9 @@ func (c client) inventoryProjection(ctx context.Context, target string) (invento
 		{inventoryStorageNodes, "longhorn.io/v1beta2", "NodeList", &storage},
 		{inventoryReplicas, "longhorn.io/v1beta2", "ReplicaList", &replicas},
 	} {
+		if query.path == inventoryReplicas && !includeReplicas {
+			continue
+		}
 		// Ordinary kubectl printing flattens the typed list and discards its
 		// collection revision. Preserve the server envelope with a fixed raw GET.
 		data, err := c.kubectl(ctx, nil, "get", "--raw="+query.path)
@@ -50,6 +78,22 @@ func (c client) inventoryProjection(ctx context.Context, target string) (invento
 		if err != nil {
 			return inventoryProjection{}, nil, err
 		}
+	}
+	selectionDigest := ""
+	var projectionErr error
+	nodes, projectionErr = temporaryInventoryNodes(nodes, c.inventoryPreparation)
+	if projectionErr != nil {
+		return inventoryProjection{}, nil, projectionErr
+	}
+	if !inventoryTarget.MatchString(target) {
+		var err error
+		target, selectionDigest, err = resolveTemporaryInventoryTarget(target, nodes, c.inventoryPools)
+		if err != nil {
+			return inventoryProjection{}, nil, err
+		}
+	}
+	if c.inventoryPreparation != nil && target != c.inventoryPreparation.Target {
+		return inventoryProjection{}, nil, errInventory
 	}
 	var node, lh object
 	for _, item := range nodes {
@@ -65,6 +109,10 @@ func (c client) inventoryProjection(ctx context.Context, target string) (invento
 	p, err := projectInventory(target, node, lh, replicas)
 	if err != nil {
 		return inventoryProjection{}, nil, err
+	}
+	if selectionDigest != "" {
+		digest := sha256.Sum256([]byte(selectionDigest + ":" + p.Digest))
+		p.Digest = hex.EncodeToString(digest[:])
 	}
 	for _, item := range nodes {
 		if text(item, "metadata", "name") == target {
@@ -124,7 +172,7 @@ func observeReplicaInventory(ctx context.Context, c client, target string, facto
 	}
 	first, err := reader.ListReplicas(ctx)
 	if err != nil {
-		return inventoryReceipt{}, stageListingBefore
+		return inventoryReceipt{}, errors.Join(stageListingBefore, err)
 	}
 	firstReport, err := longhorninventory.Analyze(first, before.Replicas)
 	if err != nil {
@@ -132,7 +180,7 @@ func observeReplicaInventory(ctx context.Context, c client, target string, facto
 	}
 	second, err := reader.ListReplicas(ctx)
 	if err != nil {
-		return inventoryReceipt{}, stageListingAfter
+		return inventoryReceipt{}, errors.Join(stageListingAfter, err)
 	}
 	after, node, err := c.inventoryProjection(ctx, target)
 	if err != nil {
@@ -154,6 +202,9 @@ func observeReplicaInventory(ctx context.Context, c client, target string, facto
 	}
 	if report.Digest != firstReport.Digest {
 		return inventoryReceipt{}, stageListingConsistency
+	}
+	if inventoryTemporarySelection.MatchString(target) && !report.EmptyAndAccounted {
+		return inventoryReceipt{}, stageOwnershipAfter
 	}
 	if !active() {
 		return inventoryReceipt{}, stageDeadline

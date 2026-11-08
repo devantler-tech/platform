@@ -163,7 +163,7 @@ WebApp, external DNS and SOPS disabled. Fetching that source does not deploy the
 portal or prove any image/identity/private-input readiness.
 
 | Verifier | Artifact | What it accepts |
-|---|---|---|
+| --- | --- | --- |
 | **Flux** — a registered tenant's `OCIRepository` | manifest | Its recorded legacy signer, current pin and release candidate, plus any exact maintained revisions explicitly approved for that consumer. Other commits are refused. |
 | **Admission** — the `verify-app-images` Kyverno policy | image | Legacy `actions` publishers with a full commit identity, or the explicitly reviewed maintained `.github` publisher revision, from the GitHub OIDC issuer. Other maintained commits, tags and branches are refused. |
 | **Node pull** — the Talos image-verification rule | image | The same legacy compatibility and exact maintained revision as admission. |
@@ -375,7 +375,11 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   alongside the canonical Kyverno policy fixtures, so neither half can widen silently.
 - The platform's `homepage` app discovers `gethomepage.dev/*` annotations on the tenant's
   HTTPRoute cluster-wide, so the tenant authors them in its own artifact — they are tenant
-  self-presentation, not platform config.
+  self-presentation, not platform config. Homepage links the card to the route's first
+  hostname plus its first rule's first path, so a route whose first rule matches a sub-path
+  (an `/api` or `/mcp` bypass, say) must set `gethomepage.dev/href`; admission denies it
+  otherwise
+  ([`require-homepage-href-for-non-root-routes.yaml`](../k8s/bases/infrastructure/cluster-policies/best-practices/require-homepage-href-for-non-root-routes.yaml)).
 
 Use an existing tenant's `deploy/httproute.yaml` (e.g. `ascoachingogvaner`, which owns its
 hostnames *and* its dashboard annotations) as the reference.

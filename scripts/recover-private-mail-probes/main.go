@@ -1,3 +1,5 @@
+// Command recover-private-mail-probes performs the fixed recovery of the
+// obsolete private-mail probe Pod and verifies its retained claim.
 package main
 
 import (
@@ -425,12 +427,17 @@ func recoverPod(ctx context.Context, c clusterClient, want checks, digest string
 	}
 }
 
-type commandClient struct{ kubeconfig string }
+type commandClient struct {
+	kubeconfig string
+	// Only the isolated fixture sets this. Production keeps discarding kubectl's
+	// stderr, because it can name real operator configuration.
+	diagnostics io.Writer
+}
 type boundedOutput struct{ bytes.Buffer }
 
 func (b *boundedOutput) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > 1<<20 {
-		return 0, errors.New("Kubernetes response too large")
+		return 0, errors.New("oversized Kubernetes response")
 	}
 	return b.Buffer.Write(p)
 }
@@ -441,12 +448,24 @@ func (c commandClient) run(ctx context.Context, input []byte, args ...string) ([
 	if c.kubeconfig != "" {
 		prefix = append(prefix, "--kubeconfig", c.kubeconfig)
 	}
+	if c.diagnostics != nil {
+		// Request-level tracing separates a client that never reached the server
+		// from a request that was sent and never answered.
+		prefix = append(prefix, "--v=6")
+	}
 	cmd := exec.CommandContext(requestCtx, "kubectl", append(prefix, args...)...)
 	cmd.Stdin = bytes.NewReader(input)
 	var out boundedOutput
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
+	if c.diagnostics != nil {
+		cmd.Stderr = c.diagnostics
+	}
+	started := time.Now()
 	if err := cmd.Run(); err != nil {
+		if c.diagnostics != nil {
+			_, _ = fmt.Fprintf(c.diagnostics, "kubectl %s: %v after %s, deadline: %v\n", args[0], err, time.Since(started).Round(time.Millisecond), requestCtx.Err())
+		}
 		return nil, errors.New("bounded Kubernetes request failed")
 	}
 	return out.Bytes(), nil

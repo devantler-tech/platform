@@ -1,0 +1,14 @@
+diff --git a/go.mod b/go.mod
+index 6a8a2b7..55de1c4 100644
+--- a/go.mod
++++ b/go.mod
+@@ -43 +43 @@ require (
+-	golang.org/x/net v0.59.0
++	golang.org/x/net v0.60.0
+diff --git a/go.sum b/go.sum
+index b02875b..13f574b 100644
+--- a/go.sum
++++ b/go.sum
+@@ -332,0 +333,2 @@ golang.org/x/net v0.59.0/go.mod h1:2DA/G1UfVbCpQPeWTmMPGY7Cs2PkBkwu743bVX5PIVg=
++golang.org/x/net v0.60.0 h1:79p50tfZlm0J9YfoDsSi639qSXNGVwEzOPLCxM2FsYU=
++golang.org/x/net v0.60.0/go.mod h1:2DA/G1UfVbCpQPeWTmMPGY7Cs2PkBkwu743bVX5PIVg=

@@ -49,22 +49,43 @@ type ownedReference struct{ kind, name, namespace, uid string }
 
 func (r ownedReference) key() string { return r.kind + "/" + r.namespace + "/" + r.name }
 
+// A bare Backup can select Longhorn's CRD. Always name Velero's API group;
+// keep manifest kinds unchanged for UID fencing and fixed mutation scopes.
+func veleroReadResource(kind string) string {
+	switch kind {
+	case "Backup":
+		return "backups.velero.io"
+	case "PodVolumeBackup":
+		return "podvolumebackups.velero.io"
+	case "DataDownload":
+		return "datadownloads.velero.io"
+	case "BackupStorageLocation":
+		return "backupstoragelocations.velero.io"
+	case "BackupRepository":
+		return "backuprepositories.velero.io"
+	default:
+		return kind
+	}
+}
+
 type recoveryDriver struct {
-	i                     invocation
-	k                     kubernetes
-	refs                  map[string]ownedReference
-	uncertain             bool
-	started               bool
-	stage                 string
-	image                 string
-	volumeName, volumeUID string
-	pvUID                 string
-	source                sourceIdentity
-	namespacePolicies     map[string]namespacePolicy
+	i                          invocation
+	k                          kubernetes
+	refs                       map[string]ownedReference
+	uncertain                  bool
+	started                    bool
+	stage                      string
+	image                      string
+	volumeName, volumeUID      string
+	pvUID                      string
+	source                     sourceIdentity
+	namespacePolicies          map[string]namespacePolicy
+	completeNamespaceInventory func(context.Context) error
+	retainedGraph              map[string]object
 }
 
 func (d *recoveryDriver) lookup(ctx context.Context, kind, name, ns string) (object, bool, error) {
-	args := []string{"get", kind, name, "--ignore-not-found=true", "-o=json"}
+	args := []string{"get", veleroReadResource(kind), name, "--ignore-not-found=true", "-o=json"}
 	if ns != "" {
 		args = append(args, "--namespace="+ns)
 	}
@@ -94,6 +115,10 @@ func (d *recoveryDriver) owned(ctx context.Context, ref ownedReference) (object,
 	if text(m, "uid") != ref.uid || text(child(m, "labels"), recoveryLabel) != d.i.run {
 		d.uncertain = true
 		return nil, errors.New("replacement")
+	}
+	if d.retainedGraph != nil && !reflect.DeepEqual(retainedMutableFields(o), d.retainedGraph[ref.key()]) {
+		d.uncertain = true
+		return nil, errors.New("retained-graph-changed")
 	}
 	return o, nil
 }

@@ -32,7 +32,7 @@ yq '.metadata.name="unadmitted-tenant.kro.run" | (.spec.resources[] | select(.id
 accepted=0
 if discover >"$work/raw" 2>"$work/raw-error"; then
   printf 'raw discovery attributed a Tenant to an unrelated-group graph\n' >&2
-  accepted=$((accepted+1))
+  accepted=$((accepted + 1))
 fi
 test ! -s "$work/raw" || test "$accepted" -gt 0
 # Exercise the rendered reader independently with its complete parser envelope.
@@ -43,7 +43,7 @@ yq -N -o=json -I=0 '{"file":filename,"document":explode(.)}' "$tree/$graph" "$tr
   source "$attribution_repo_root/scripts/canonical-tenant-source.lib.sh"
   canonical_typed_source_hits "$tree" "$work/inventory.jsonl" >"$work/hits.json"
   canonical_tenant_inventory_projection "$tree" "$work/inventory.jsonl" "$work/hits.json" rendered
-) >"$work/rendered" 2>"$work/rendered-error" && accepted=$((accepted+1))
+) >"$work/rendered" 2>"$work/rendered-error" && accepted=$((accepted + 1))
 if [ "$accepted" -ne 0 ]; then
   printf 'constructor attribution accepted %s invalid raw/rendered projections\n' "$accepted" >&2
   exit 1

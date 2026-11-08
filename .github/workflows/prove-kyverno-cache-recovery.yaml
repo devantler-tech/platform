@@ -1,6 +1,7 @@
+---
 name: Prove Kyverno Cache Recovery
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

@@ -7,7 +7,10 @@ policy=k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-ope
 listener=k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
-fail() { printf 'ARC public listener: FAIL %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'ARC public listener: FAIL %s\n' "$1" >&2
+  exit 1
+}
 command -v ksail >/dev/null 2>&1 || fail missing-native-scanner
 yq -o=json '.' "$listener" >"$scratch/public.json"
 kyverno apply "$policy" --resource "$scratch/public.json" --remove-color >"$scratch/admission" 2>&1 || fail public-settings

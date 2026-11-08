@@ -28,7 +28,7 @@ update_line=$(grep -nF './scripts/run-ksail-prod-with-pull-auth.sh cluster updat
 stability_line=$(grep -nF './scripts/wait-for-prod-api-stability.sh' "$deploy_action" | cut -d: -f1)
 readback_line=$(grep -nF './scripts/verify-talos-schematic-readback.sh' "$deploy_action" | cut -d: -f1)
 if [[ -z "$update_line" || -z "$stability_line" || -z "$readback_line" ]] ||
-  (( update_line >= stability_line || stability_line >= readback_line )); then
+  ((update_line >= stability_line || stability_line >= readback_line)); then
   printf 'schematic readback must follow cluster update and API stability\n' >&2
   exit 1
 fi
@@ -39,7 +39,7 @@ mock_kubectl="$tmp_dir/kubectl"
 cat >"$mock_kubectl" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "$*" == "--context admin@prod --request-timeout=15s get configmap longhorn-v2-prepare-prod-worker-1 --namespace=longhorn-system -o json" ]]; then
+if [[ "$*" == "--context admin@prod --request-timeout=15s get configmap ${MOCK_JOURNAL_NAME:-longhorn-v2-prepare-prod-worker-1} --namespace=longhorn-system -o json" ]]; then
   [[ -n "${MOCK_JOURNAL_FILE:-}" ]] || exit 1
   cat "$MOCK_JOURNAL_FILE"
   exit 0
@@ -188,5 +188,91 @@ jq '(.items[] | select(.metadata.name == "prod-control-plane-2")) |= (.spec.unsc
   "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
 assert_rejected 'a cordoned non-worker carrying a preparation annotation'
 unset MOCK_JOURNAL_FILE
+
+# New maintenance profiles retain their own cordons if native recovery is held.
+# Their exact annotations, journal scopes and physical identities must match.
+for profile in host temporary; do
+  worker=prod-worker-1
+  journal_name=longhorn-v2-host-memory-prod-worker-1
+  if [[ "$profile" == temporary ]]; then
+    worker=autoscale-longhorn-v1-0123456789abcdef
+    journal_name=longhorn-v2-prepare-temporary-v1-1
+  fi
+  base_nodes=$(jq --arg worker "$worker" --arg journal "$journal_name" '
+    (.items[] | select(.metadata.name == $worker)) |= (
+      .spec.unschedulable = true | .metadata.uid = "held-worker-uid" |
+      .spec.providerID = "hcloud://123" |
+      .status.nodeInfo.systemUUID = "held-hardware-uuid" |
+      .status.nodeInfo.bootID = "12345678-1234-4234-8234-000000000001" |
+      .metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] = $journal)
+  ' "$tmp_dir/nodes.json")
+  base_record=$(jq -n --arg worker "$worker" --arg journal "$journal_name" --arg profile "$profile" '{
+    metadata: {name: $journal, namespace: "longhorn-system", uid: "journal-uid", resourceVersion: "1"},
+    data: {record: ({target: $worker, nodeUID: "held-worker-uid", providerID: "hcloud://123", machineUUID: "held-hardware-uuid",
+      phase: "draining", source: ("a" * 40), ownerRun: "123", originalBootID: "12345678-1234-4234-8234-000000000001"} +
+      if $profile == "host" then {version: 1, recoveredBootID: ""}
+      else {schema: 2, temporarySelection: "temporary-v1-1", rawVolumeAbsent: true, nativeEmptyDigest: ("b" * 64), originalDisks: {}, ephemeralUUID: "original-ephemeral"} end | tojson)}
+  }')
+  printf '%s\n' "$base_nodes" >"$tmp_dir/changed.json"
+  printf '%s\n' "$base_record" >"$tmp_dir/journal.json"
+  export MOCK_JOURNAL_FILE="$tmp_dir/journal.json" MOCK_JOURNAL_NAME="$journal_name"
+  if ! run_readback "$tmp_dir/changed.json" >"$tmp_dir/held.out"; then
+    printf 'readback refused an identity-bound %s maintenance cordon\n' "$profile" >&2
+    exit 1
+  fi
+  grep -Fq "HELD: $worker" "$tmp_dir/held.out"
+  for phase in reboot-requested returning; do
+    if [[ "$profile" == temporary ]]; then
+      phase=reset-requested
+    fi
+    phase_nodes=$base_nodes
+    phase_record=$(jq --arg phase "$phase" '.data.record |= (fromjson | .phase = $phase | tojson)' <<<"$base_record")
+    if [[ "$phase" == returning || "$profile" == temporary ]]; then
+      phase_nodes=$(jq --arg worker "$worker" '(.items[] | select(.metadata.name == $worker)).status.nodeInfo.bootID = "12345678-1234-4234-8234-000000000099"' <<<"$base_nodes")
+    fi
+    if [[ "$phase" == returning ]]; then
+      phase_record=$(jq '.data.record |= (fromjson | .recoveredBootID = "12345678-1234-4234-8234-000000000099" | tojson)' <<<"$phase_record")
+    fi
+    printf '%s\n' "$phase_nodes" >"$tmp_dir/changed.json"
+    printf '%s\n' "$phase_record" >"$tmp_dir/journal.json"
+    run_readback "$tmp_dir/changed.json" >"$tmp_dir/held.out"
+    [[ "$profile" != temporary ]] || break
+  done
+  printf '%s\n' "$base_nodes" >"$tmp_dir/changed.json"
+  for mutation in \
+    '.metadata.name = "foreign"' \
+    '.metadata.namespace = "foreign"' \
+    '.data.record |= (fromjson | .nodeUID = "replacement" | tojson)' \
+    '.data.record |= (fromjson | .providerID = "hcloud://999" | tojson)' \
+    '.data.record |= (fromjson | .machineUUID = "replacement" | tojson)' \
+    '.data.record |= (fromjson | .source = "unverified" | tojson)' \
+    '.data.record |= (fromjson | .ownerRun = "" | tojson)' \
+    '.data.record |= (fromjson | .originalBootID = "12345678-1234-4234-8234-000000000099" | tojson)' \
+    '.data.record |= (fromjson | .phase = "recovered" | tojson)'; do
+    jq "$mutation" <<<"$base_record" >"$tmp_dir/journal.json"
+    assert_rejected "a foreign or completed $profile journal: $mutation"
+  done
+  if [[ "$profile" == temporary ]]; then
+    for mutation in '.rawVolumeAbsent = false' '.temporarySelection = "temporary-v1-2"' '.schema = 1' '.nativeEmptyDigest = ""' '.phase = "prepared"'; do
+      jq ".data.record |= (fromjson | $mutation | tojson)" <<<"$base_record" >"$tmp_dir/journal.json"
+      assert_rejected "an invalid temporary preparation proof: $mutation"
+    done
+    second_worker=autoscale-longhorn-v1-fedcba9876543210
+    second_journal=longhorn-v2-prepare-temporary-v1-2
+    jq --arg first "$worker" --arg second "$second_worker" --arg journal "$second_journal" '
+      (.items[].metadata.name) |= (if . == $first then $second elif . == $second then $first else . end) |
+      (.items[] | select(.metadata.name == $second)).metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] = $journal
+    ' <<<"$base_nodes" >"$tmp_dir/changed.json"
+    jq --arg worker "$second_worker" --arg journal "$second_journal" '
+      .metadata.name = $journal | .data.record |= (fromjson | .target = $worker | .temporarySelection = "temporary-v1-2" | tojson)
+    ' <<<"$base_record" >"$tmp_dir/journal.json"
+    MOCK_JOURNAL_NAME="$second_journal" run_readback "$tmp_dir/changed.json" >"$tmp_dir/held.out"
+  fi
+  printf '%s\n' "$base_record" >"$tmp_dir/journal.json"
+  jq --arg worker "$worker" '(.items[] | select(.metadata.name == $worker)).status.conditions[0].status = "False"' \
+    <<<"$base_nodes" >"$tmp_dir/changed.json"
+  assert_rejected "an unready $profile worker even with an owned journal"
+  unset MOCK_JOURNAL_FILE MOCK_JOURNAL_NAME
+done
 
 printf 'PASS: production Talos version, schematic, and node health are read back fail-closed\n'

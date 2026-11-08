@@ -14,19 +14,26 @@ import (
 	machine "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talos "github.com/siderolabs/talos/pkg/machinery/client"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
+// ReplicaRoot is the fixed V1 replica directory ListReplicas observes.
 const ReplicaRoot = "/var/lib/longhorn/replicas"
 
+// Files is the subset of the Talos machine API the observer uses.
 type Files interface {
 	List(context.Context, *machine.ListRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[machine.FileInfo], error)
 	Read(context.Context, *machine.ReadRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[common.Data], error)
 }
 
+// Native observes one node, addressed by its IP in Target, through the Talos
+// file and block-resource APIs.
 type Native struct {
 	API    Files
 	Target string
+	Blocks BlockCollections
 }
 
 const maxMessageBytes = 64 << 10
@@ -52,15 +59,23 @@ func active(ctx context.Context) bool {
 	return bounded && ctx.Err() == nil && time.Now().Before(deadline)
 }
 
+// ListReplicas lists the immediate children of ReplicaRoot.
 func (n Native) ListReplicas(ctx context.Context) (Listing, error) {
+	return n.listFixedRoot(ctx, ReplicaRoot)
+}
+
+func (n Native) listFixedRoot(ctx context.Context, root string) (Listing, error) {
+	if root != ReplicaRoot && root != StorageRoot {
+		return Listing{}, nativeFailure{code: "request"}
+	}
 	ctx, cancel, err := n.requestContext(ctx)
 	if err != nil {
-		return Listing{}, err
+		return Listing{}, nativeFailure{code: "request"}
 	}
 	defer cancel()
-	stream, err := n.API.List(ctx, &machine.ListRequest{Root: ReplicaRoot, RecursionDepth: 1}, grpc.MaxCallRecvMsgSize(maxMessageBytes))
+	stream, err := n.API.List(ctx, &machine.ListRequest{Root: root, RecursionDepth: 1}, grpc.MaxCallRecvMsgSize(maxMessageBytes))
 	if err != nil || stream == nil {
-		return Listing{}, errNative
+		return Listing{}, classifyNativeFailure(err, "transport")
 	}
 	listing := Listing{}
 	total := 0
@@ -70,23 +85,44 @@ func (n Native) ListReplicas(ctx context.Context) (Listing, error) {
 		// Wrapped or joined EOF may carry a failure and must never clear a disk.
 		if recvErr == io.EOF && active(ctx) {
 			listing.Complete = true
-			if _, err = Analyze(listing, nil); err != nil || !active(ctx) {
-				return Listing{}, errNative
+			if _, _, err = normalizedEntries(listing); err != nil || !active(ctx) {
+				return Listing{}, nativeFailure{code: "structure"}
 			}
 			return listing, nil
 		}
 		if recvErr != nil || !active(ctx) || item == nil {
-			return Listing{}, errNative
+			return Listing{}, classifyNativeFailure(recvErr, "stream")
 		}
 		size := proto.Size(item)
 		total += size
-		if size > maxMessageBytes || total > MaxMetadataBytes || len(listing.Entries) >= MaxEntries ||
-			!n.validMetadata(item.GetMetadata()) || item.GetError() != "" || item.GetLink() != "" || len(item.GetXattrs()) != 0 ||
-			(!baseName(item.GetRelativeName()) && item.GetRelativeName() != ".") || item.GetName() != path.Join(ReplicaRoot, item.GetRelativeName()) {
-			return Listing{}, errNative
+		if size > maxMessageBytes || total > MaxMetadataBytes || len(listing.Entries) >= MaxEntries {
+			return Listing{}, nativeFailure{code: "bounds"}
+		}
+		if !n.validMetadata(item.GetMetadata()) {
+			return Listing{}, nativeFailure{code: "metadata"}
+		}
+		if item.GetError() != "" {
+			return Listing{}, nativeFailure{code: "entry-error"}
+		}
+		if item.GetLink() != "" || len(item.GetXattrs()) != 0 ||
+			(!baseName(item.GetRelativeName()) && item.GetRelativeName() != ".") || item.GetName() != path.Join(root, item.GetRelativeName()) {
+			return Listing{}, nativeFailure{code: "entry-shape"}
 		}
 		listing.Entries = append(listing.Entries, Entry{Name: item.GetRelativeName(), Mode: item.GetMode(), UID: item.GetUid(), GID: item.GetGid(),
 			IsDir: item.GetIsDir(), Size: item.GetSize(), Modified: item.GetModified()})
+	}
+}
+
+func classifyNativeFailure(err error, fallback string) nativeFailure {
+	switch status.Code(err) {
+	case codes.NotFound:
+		return nativeFailure{code: "not-found"}
+	case codes.PermissionDenied:
+		return nativeFailure{code: "permission"}
+	case codes.Unimplemented:
+		return nativeFailure{code: "unimplemented"}
+	default:
+		return nativeFailure{code: fallback}
 	}
 }
 

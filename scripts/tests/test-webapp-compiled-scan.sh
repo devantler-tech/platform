@@ -4,9 +4,15 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
-[[ "$(trivy --version | sed -n 's/^Version: //p' | head -n 1)" == 0.74.0 ]] || { echo 'FAIL: require reviewed Trivy 0.74.0' >&2; exit 1; }
+[[ "$(trivy --version | sed -n 's/^Version: //p' | head -n 1)" == 0.74.0 ]] || {
+  echo 'FAIL: require reviewed Trivy 0.74.0' >&2
+  exit 1
+}
 bash "$root/scripts/tests/test-webapp-inputs-wiring.sh"
-PLATFORM_COMPILED_WEBAPP_DIR="$work/compiled" bash "$root/scripts/tests/test-webapp-compiler.sh" >"$work/compiler.log" 2>&1 || { cat "$work/compiler.log" >&2; exit 1; }
+PLATFORM_COMPILED_WEBAPP_DIR="$work/compiled" bash "$root/scripts/tests/test-webapp-compiler.sh" >"$work/compiler.log" 2>&1 || {
+  cat "$work/compiler.log" >&2
+  exit 1
+}
 mkdir "$work/controls"
 cp "$work/compiled/"*.json "$work/controls/"
 jq '.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem=false' "$work/compiled/enabled.json" >"$work/controls/writable.json"
@@ -26,5 +32,8 @@ jq -e '
     "writable.json":[{ID:"KSV-0014",Severity:"HIGH"}],
     "low-user.json":[{ID:"KSV-0020",Severity:"LOW"}],
     "low-group.json":[{ID:"KSV-0021",Severity:"LOW"}]
-  }' "$work/results.json" >/dev/null || { echo 'FAIL: compiled WebApp findings changed or a resource was not scanned' >&2; exit 1; }
+  }' "$work/results.json" >/dev/null || {
+  echo 'FAIL: compiled WebApp findings changed or a resource was not scanned' >&2
+  exit 1
+}
 echo 'PASS: actual compiled workloads retain default writable-root/low-ID findings; enabled workload is clean and three regressions are detected.'
