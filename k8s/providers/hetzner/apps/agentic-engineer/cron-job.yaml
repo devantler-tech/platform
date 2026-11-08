@@ -6,6 +6,10 @@ metadata:
   name: agentic-engineer
   namespace: agentic-engineer
 spec:
+  # Suspended until every sub-issue of devantler-tech/monorepo#4866 is done
+  # (ADR 0014, point 6). The canary runs once, as a Job created from this
+  # CronJob; the PR that swaps in the full run message resumes the schedule.
+  suspend: true
   schedule: "15 5 * * *"
   timeZone: Europe/Copenhagen
   concurrencyPolicy: Forbid
