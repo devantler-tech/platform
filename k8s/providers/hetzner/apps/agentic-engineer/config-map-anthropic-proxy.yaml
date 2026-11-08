@@ -65,6 +65,10 @@ data:
       sleep 30
     done
   envoy.yaml: |
+    # A file-based SDS secret needs a node identity, or Envoy exits at startup.
+    node:
+      id: anthropic-proxy
+      cluster: anthropic-proxy
     static_resources:
       listeners:
         - name: anthropic
