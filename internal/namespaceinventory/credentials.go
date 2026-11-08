@@ -84,6 +84,9 @@ func LoadRetainedEmailClient(getenv func(string) string) (*http.Client, *url.URL
 	return newProductionClient(config)
 }
 
+// AuthorizeRetainedEmailDispatch refuses unless the environment is the first attempt of the
+// confirmed, maintainer-dispatched disposal workflow on main in this repository, with a
+// well-formed source commit and run id.
 func AuthorizeRetainedEmailDispatch(getenv func(string) string) error {
 	for key, want := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform",
