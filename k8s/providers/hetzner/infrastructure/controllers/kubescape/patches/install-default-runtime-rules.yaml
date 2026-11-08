@@ -9,7 +9,7 @@ spec:
   values:
     alertCRD:
       # Install the chart's rule definitions for the initial runtime-detection
-      # baseline (#4968). The appended runtime-rule-baseline post-renderer retains
+      # baseline (#4968). The appended retain-port-forward-baseline post-renderer retains
       # and binds only R2001, the profile-independent pod port-forward rule. It does not
       # activate the chart's anomaly bindings while profiles remain incomplete.
       #

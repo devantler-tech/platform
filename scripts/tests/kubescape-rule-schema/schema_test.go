@@ -40,7 +40,9 @@ func TestRulesSchema(t *testing.T) {
 		{"invalid dependency", func(r map[string]any) { r["profileDependency"] = float64(3) }, false},
 		{"missing required field", func(r map[string]any) { delete(r, "enabled") }, false},
 		{"unknown expression field", func(r map[string]any) {
-			r["expressions"].(map[string]any)["unrecognized"] = true
+			if expressions, ok := r["expressions"].(map[string]any); ok {
+				expressions["unrecognized"] = true
+			}
 		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

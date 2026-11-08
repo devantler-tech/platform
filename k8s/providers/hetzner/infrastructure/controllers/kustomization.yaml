@@ -163,7 +163,7 @@ patches:
   # Prod-only initial detection baseline (#4968): install the definitions, then
   # bind only the profile-independent port-forward rule by its stable ID.
   - path: kubescape/patches/install-default-runtime-rules.yaml
-  - path: kubescape/patches/runtime-rule-baseline.yaml
+  - path: kubescape/patches/retain-port-forward-baseline.yaml
     target:
       group: helm.toolkit.fluxcd.io
       version: v2
