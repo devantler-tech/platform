@@ -7,5 +7,7 @@ COPY web /srv/dex/web
 COPY dist/licenses /usr/share/licenses/dex
 ENV PATH=/usr/local/bin
 USER 65534:65534
+# Kubernetes never runs an image health check, so this image declares none.
+HEALTHCHECK NONE
 ENTRYPOINT []
 CMD ["dex", "serve", "/etc/dex/config.yaml"]
