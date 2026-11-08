@@ -300,8 +300,9 @@ spec:
     # - Empty seLinuxOptions keeps runtime SELinux label allocation, satisfies
     #   C-0211, and is a no-op on this AppArmor cluster.
     # Excluding them cost both controls across the whole excluded population:
-    # measured against live prod specs 2026-08-29, 210/210 pods in those twelve
-    # namespaces have no fsGroupChangePolicy and 189/210 have at least one
+    # measured against live prod specs 2026-08-29, 210/210 pods in the twelve
+    # namespaces excluded then, before ate-system and agentic-engineer joined,
+    # have no fsGroupChangePolicy and 189/210 have at least one
     # container with no seLinuxOptions.
     #
     # DEFAULT-OFF. This rule is gated on an explicit namespace opt-in label, the

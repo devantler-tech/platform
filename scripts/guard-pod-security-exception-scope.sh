@@ -5,7 +5,7 @@
 #
 # #2824 exists because these two scopes drifted apart in silence: the exception
 # suppressed C-0016/C-0055 cluster-wide while the Kyverno mutation it cites,
-# `add-security-context`, does not run in twelve namespaces. The narrowing made them
+# `add-security-context`, does not run in fourteen namespaces. The narrowing made them
 # agree — and left that agreement resting on a code comment. Both directions of drift
 # read as compliance:
 #
