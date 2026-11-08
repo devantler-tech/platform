@@ -27,7 +27,7 @@ func TestPublishedProbeImage(t *testing.T) {
 	defer cancel()
 
 	declaration := filepath.Join("..", "..", "..", "k8s", "bases", "apps", "data-product-controller", "deployment-contract-probe.yaml")
-	data := runNative(t, ctx, "read declared image", "yq", "-o=json", ".spec.template.spec.containers", declaration)
+	data := runNative(ctx, t, "read declared image", "yq", "-o=json", ".spec.template.spec.containers", declaration)
 	var containers []struct {
 		Name  string `json:"name"`
 		Image string `json:"image"`
@@ -51,7 +51,7 @@ func TestPublishedProbeImage(t *testing.T) {
 	if err := os.Chmod(client, 0o555); err != nil {
 		t.Fatal("could not make the isolated client executable")
 	}
-	runNative(t, ctx, "pull declared image", "docker", "pull", "--platform", "linux/amd64", image)
+	runNative(ctx, t, "pull declared image", "docker", "pull", "--platform", "linux/amd64", image)
 	name := fmt.Sprintf("contract-probe-proof-%d-%d", os.Getpid(), time.Now().UnixNano())
 	// Register before create: a partially completed Docker operation may still
 	// leave this unique, test-owned container behind.
@@ -63,14 +63,14 @@ func TestPublishedProbeImage(t *testing.T) {
 			t.Errorf("native probe cleanup was not confirmed: %v\n%s", err, output)
 		}
 	})
-	runNative(t, ctx, "create isolated probe", "docker", "create", "--name", name,
+	runNative(ctx, t, "create isolated probe", "docker", "create", "--name", name,
 		"--platform", "linux/amd64", "--network", "none", "--read-only", "--user", "65532:65532",
 		"--cpus", "1", "--memory", "64m", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
 		"--mount", "type=bind,source="+client+",target=/management-proof.test,readonly",
 		"--env", "CONTRACT_PROBE_URL=https://contract-probe.invalid/openapi.json",
 		"--env", "CONTRACT_READINESS_ENABLED=true", "--entrypoint", "/contract-probe", image)
-	runNative(t, ctx, "start isolated probe", "docker", "start", name)
-	proof := runNative(t, ctx, "exercise published diagnostics", "docker", "exec",
+	runNative(ctx, t, "start isolated probe", "docker", "start", name)
+	proof := runNative(ctx, t, "exercise published diagnostics", "docker", "exec",
 		"--env", "CONTRACT_PROBE_IMAGE_INSIDE=1", name, "/management-proof.test",
 		"-test.run", "^TestInsidePublishedProbe$", "-test.v", "-test.timeout", "30s")
 	if !strings.Contains(string(proof), "--- PASS: TestInsidePublishedProbe") {
@@ -81,7 +81,7 @@ func TestPublishedProbeImage(t *testing.T) {
 
 // runNative keeps failures attributable to the fixed fixture stage. No platform
 // credentials or workload response data are supplied to these commands.
-func runNative(t *testing.T, ctx context.Context, stage, program string, args ...string) []byte {
+func runNative(ctx context.Context, t *testing.T, stage, program string, args ...string) []byte {
 	t.Helper()
 	output, err := exec.CommandContext(ctx, program, args...).CombinedOutput()
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -88,10 +89,37 @@ func TestMain(m *testing.M) {
 		code = fakeGh(os.Args[1:])
 	default:
 		cleanup := prepareFakeCommandBinary()
+		raiseDefaultParallelism()
 		code = m.Run()
 		cleanup()
 	}
 	os.Exit(code)
+}
+
+// minimumParallelCases is the case concurrency the complete suite is measured
+// and reviewed at (#5558). A case spends much of its wall time waiting on the
+// helper's shell and fake-command processes rather than on a CPU, so Go's
+// default of one slot per CPU leaves a four-CPU runner idle: the suite took
+// 407s there at that default and 245s at eight slots. At the default a plain
+// `go test ./...` also ran past Go's ten-minute package budget (592s, its last
+// cases failing the command deadlines derived from that budget).
+const minimumParallelCases = 8
+
+// raiseDefaultParallelism lifts only Go's per-CPU default. An explicit
+// -parallel, including the eight slots platform CI passes, is kept as given.
+func raiseDefaultParallelism() {
+	flag.Parse()
+	explicit := false
+	flag.Visit(func(f *flag.Flag) {
+		explicit = explicit || f.Name == "test.parallel"
+	})
+	parallel := flag.Lookup("test.parallel")
+	if explicit || parallel == nil {
+		return
+	}
+	if current, err := strconv.Atoi(parallel.Value.String()); err == nil && current < minimumParallelCases {
+		_ = parallel.Value.Set(strconv.Itoa(minimumParallelCases))
+	}
 }
 
 // The fakes are this same binary re-executed under another name, and the script

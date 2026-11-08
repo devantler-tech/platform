@@ -1,3 +1,4 @@
+---
 name: Probe GitHub Team External Identity
 
 # Obtain the ONE observation #3144 is missing: that production admission really refuses a
@@ -32,7 +33,7 @@ name: Probe GitHub Team External Identity
 # ServiceAccount name, and never kubectl's own error text. The endpoint helper prints no address
 # either; its standard output is discarded so this log carries the probe's lines only.
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

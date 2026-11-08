@@ -48,7 +48,7 @@ managers="$(jq -c --arg path "${oci_path}" '
 
 # The manager's pattern must capture the pin the compiler check reads, and nothing else.
 [[ "$(jq -r '.[0].matchStrings | length' <<<"${managers}")" == '1' &&
-  "$(jq -r '.[0].matchStrings[0]' <<<"${managers}")" == 'tag:\s*(?<currentValue>\S+)' ]] ||
+"$(jq -r '.[0].matchStrings[0]' <<<"${managers}")" == 'tag:\s*(?<currentValue>\S+)' ]] ||
   fail 'the KRO chart manager must use the single pattern tag:\s*(?<currentValue>\S+)'
 pin="$(yq -er '.spec.ref.tag' "${oci_repository}")" || fail "cannot read .spec.ref.tag from ${oci_repository}"
 matches="$(grep -Eo 'tag:[[:space:]]*[^[:space:]]+' "${oci_repository}" | sed -E 's/^tag:[[:space:]]*//')" ||

@@ -1,0 +1,28 @@
+# Signs the certificates the egress gateway presents to actors when it injects credentials into their HTTPS requests (egress-mitm-ca-pool).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: substrate-egress-mitm-ca
+  namespace: ate-system
+spec:
+  secretName: substrate-egress-mitm-ca
+  commonName: substrate-egress-mitm-ca
+  isCA: true
+  usages:
+    - cert sign
+    - crl sign
+    - digital signature
+  # A long-lived root, renewed by cert-manager. rotationPolicy Never keeps the
+  # key across renewals, so the pool keeps signing with, and trusting, the
+  # same key and nothing it signed is invalidated.
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    # Substrate's pool format stores PKCS#8 keys.
+    encoding: PKCS8
+    rotationPolicy: Never
+  issuerRef:
+    group: cert-manager.io
+    kind: Issuer
+    name: substrate-self-signed

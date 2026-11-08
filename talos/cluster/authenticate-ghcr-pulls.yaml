@@ -1,3 +1,4 @@
+---
 # Node-level ghcr.io registry auth for first-party image-signature verification.
 #
 # talos/cluster/verify-first-party-images.yaml (ImageVerificationConfig) verifies the

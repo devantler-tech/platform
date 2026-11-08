@@ -1,3 +1,4 @@
+---
 # Container image signature verification (Talos 1.13+, ImageVerificationConfig).
 #
 # STATUS — Talos evaluates these rules on this cluster.

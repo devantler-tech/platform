@@ -105,7 +105,7 @@ identity_subject='^https://github\.com/devantler-tech/business-site/\.github/wor
 identity_policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
 identity_rules="${repo_root}/talos/cluster/verify-first-party-images.yaml"
 if [ "$(yq -r '.spec.attestors[] | select(.name == "publishcustomeridentity") | .cosign.keyless.identities[0].subjectRegExp' "$identity_policy")" != "$identity_subject" ] ||
-   [ "$(yq -r '.spec.attestors[] | select(.name == "publishcustomeridentity") | .cosign.keyless.identities[0].issuer' "$identity_policy")" != https://token.actions.githubusercontent.com ]; then
+  [ "$(yq -r '.spec.attestors[] | select(.name == "publishcustomeridentity") | .cosign.keyless.identities[0].issuer' "$identity_policy")" != https://token.actions.githubusercontent.com ]; then
   echo 'FAIL  dedicated customer identity admission contract is absent or differs'
   failures=$((failures + 1))
 fi

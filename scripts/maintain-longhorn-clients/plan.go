@@ -418,13 +418,13 @@ func withoutField(value any, path []string) any {
 	if !ok || len(path) == 0 {
 		return value
 	}
-	copy := maps.Clone(m)
+	clone := maps.Clone(m)
 	if len(path) == 1 {
-		delete(copy, path[0])
-	} else if child, exists := copy[path[0]]; exists {
-		copy[path[0]] = withoutField(child, path[1:])
+		delete(clone, path[0])
+	} else if child, exists := clone[path[0]]; exists {
+		clone[path[0]] = withoutField(child, path[1:])
 	}
-	return copy
+	return clone
 }
 
 // Attachment targets are controller-owned and must change when consumers move.

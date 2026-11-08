@@ -72,7 +72,7 @@ func readYAMLFile(path string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxResponse+1))
 	if err != nil || len(data) > maxResponse {
 		return nil, fmt.Errorf("invalid configuration")

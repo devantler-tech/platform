@@ -1,3 +1,4 @@
+---
 # Pins the policy's behaviour across its ValidatingPolicy rewrite (#5128).
 # A Kustomization needs a non-empty interval, timeout and retry interval,
 # prune: true, wait: true and a named source; a HelmRelease needs an interval,

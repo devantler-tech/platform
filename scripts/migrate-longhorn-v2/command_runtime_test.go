@@ -14,7 +14,7 @@ import (
 
 // This child process exercises the actual pipe, exit and cancellation path.
 // All content is synthetic; no external command or cluster is contacted.
-func TestMigrationCommandFixture(t *testing.T) {
+func TestMigrationCommandFixture(_ *testing.T) {
 	if len(os.Args) < 3 || os.Args[len(os.Args)-2] != "--" {
 		return
 	}

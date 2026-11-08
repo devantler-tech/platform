@@ -25,16 +25,31 @@ manifest="${root_dir}/k8s/bases/infrastructure/controllers/coroot/namespace.yaml
 tolerated='[]'
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --context) context="${2:?context required}"; shift 2 ;;
-    --namespace-manifest) manifest="${2:?namespace manifest required}"; shift 2 ;;
-    --tolerate-unready) tolerated="${2:?tolerated record required}"; shift 2 ;;
-    *) printf 'Unknown argument: %s\n' "$1" >&2; exit 2 ;;
+    --context)
+      context="${2:?context required}"
+      shift 2
+      ;;
+    --namespace-manifest)
+      manifest="${2:?namespace manifest required}"
+      shift 2
+      ;;
+    --tolerate-unready)
+      tolerated="${2:?tolerated record required}"
+      shift 2
+      ;;
+    *)
+      printf 'Unknown argument: %s\n' "$1" >&2
+      exit 2
+      ;;
   esac
 done
-case "${phase}" in before-publish|after-reconcile) ;; *) exit 2 ;; esac
+case "${phase}" in before-publish | after-reconcile) ;; *) exit 2 ;; esac
 scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
-fail() { printf '::error::Coroot baseline context: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf '::error::Coroot baseline context: %s\n' "$1" >&2
+  exit 1
+}
 output() {
   printf '%s=%s\n' "$1" "$2"
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then printf '%s=%s\n' "$1" "$2" >>"${GITHUB_OUTPUT}"; fi
@@ -144,7 +159,10 @@ if [[ "${phase}" == before-publish ]]; then
   fi
   case "${configured}" in
     enabled) ;;
-    '') output rollout_required false; exit 0 ;;
+    '')
+      output rollout_required false
+      exit 0
+      ;;
     *) fail "unexpected baseline-context-coroot value '${configured}'" ;;
   esac
   read_templates

@@ -1,0 +1,22 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: substrate-crds
+  namespace: ate-system
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  timeout: 10m
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  chartRef:
+    kind: OCIRepository
+    name: substrate-crds
+  # Substrate's ate.dev/v1 CRDs (WorkerPool, SandboxConfig, ActorTemplate…).
+  # Upstream upgrades them before the control plane, so every other Substrate
+  # release depends on this one.

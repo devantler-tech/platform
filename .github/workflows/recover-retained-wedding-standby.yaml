@@ -1,6 +1,7 @@
+---
 name: Recover Retained Wedding Standby
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:

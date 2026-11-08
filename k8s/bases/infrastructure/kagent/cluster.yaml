@@ -1,0 +1,83 @@
+# kagent's PostgreSQL store: agents' sessions, tasks and runtime revisions. The
+# chart neither deploys nor prepares a database. This mirrors upstream's
+# go/core/pkg/postgressetup/setup.sql: NOLOGIN owner and read/write roles, a
+# schema owned by the owner role, and NOINHERIT logins that kagent switches to
+# the matching role with SET ROLE on every connection.
+#
+# The state is rebuildable (a lost database loses session history, not agent
+# work, which lives in Git), so there is no off-cluster backup. Two instances
+# keep a node drain from taking it offline.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: kagent-db
+  namespace: kagent
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
+  instances: 2
+  # The platform's storage tier for database pods (as every production
+  # database declares). CNPG ignores a priorityClassName change, so the
+  # matching env var is what rolls the instances when it changes.
+  priorityClassName: hcloud-volume-workload
+  env:
+    - name: PLATFORM_DATABASE_PRIORITY_CLASS
+      value: hcloud-volume-workload
+  storage:
+    size: 5Gi
+    storageClass: longhorn-wffc
+  # Same quorum replication as the platform's other databases: a promoted
+  # standby always holds every committed transaction, and writes continue if
+  # the standby is down.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+  bootstrap:
+    initdb:
+      database: kagent
+      # The schema owner. Managed below as NOLOGIN, as upstream creates it.
+      owner: kagent_owner
+      postInitApplicationSQL:
+        - CREATE ROLE kagent_readwrite NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
+        - CREATE SCHEMA kagent AUTHORIZATION kagent_owner
+        - REVOKE CREATE ON SCHEMA public FROM PUBLIC
+        - REVOKE ALL ON SCHEMA kagent FROM PUBLIC
+        - GRANT USAGE ON SCHEMA kagent TO kagent_readwrite
+        - ALTER DEFAULT PRIVILEGES FOR ROLE kagent_owner IN SCHEMA kagent GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO kagent_readwrite
+        - ALTER DEFAULT PRIVILEGES FOR ROLE kagent_owner IN SCHEMA kagent GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO kagent_readwrite
+        - ALTER DEFAULT PRIVILEGES FOR ROLE kagent_owner IN SCHEMA kagent GRANT EXECUTE ON ROUTINES TO kagent_readwrite
+        - ALTER DEFAULT PRIVILEGES FOR ROLE kagent_owner IN SCHEMA kagent GRANT USAGE ON TYPES TO kagent_readwrite
+  managed:
+    roles:
+      - name: kagent_owner
+        ensure: present
+        login: false
+      - name: kagent_readwrite
+        ensure: present
+        login: false
+      - name: kagent_owner_user
+        ensure: present
+        login: true
+        inherit: false
+        inRoles:
+          - kagent_owner
+        passwordSecret:
+          name: kagent-db-owner
+      - name: kagent_readwrite_user
+        ensure: present
+        login: true
+        inherit: false
+        inRoles:
+          - kagent_readwrite
+        passwordSecret:
+          name: kagent-db-readwrite
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi

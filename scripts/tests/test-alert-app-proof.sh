@@ -4,7 +4,10 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 workflow="$root/.github/workflows/verify-alert-publisher-app.yaml"
-fail() { printf 'alert App proof guard: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'alert App proof guard: %s\n' "$1" >&2
+  exit 1
+}
 [[ -f "$workflow" ]] || fail 'reviewed dispatch workflow is missing'
 [[ "$(yq -o=json -I=0 '.on | keys' "$workflow")" == '["workflow_dispatch"]' ]] || fail 'only manual dispatch is permitted'
 [[ "$(yq -o=json -I=0 '.jobs.proof.permissions' "$workflow")" == '{"contents":"read"}' ]] || fail 'workflow token must be read only'

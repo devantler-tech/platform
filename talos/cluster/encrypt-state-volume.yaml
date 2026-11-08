@@ -1,3 +1,4 @@
+---
 # Encrypt the STATE partition with a nodeID-derived key (LUKS2).
 #
 # nodeID uses the Hetzner VM UUID to derive the encryption key, protecting

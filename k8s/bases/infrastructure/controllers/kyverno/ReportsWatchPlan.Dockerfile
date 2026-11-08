@@ -15,4 +15,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
 
 FROM reg.kyverno.io/kyverno/reports-controller:v1.19.2@sha256:5fb6d3e738050dbce84f60ecabaede7665fbe0578d07c1e8c912443b035e79c3
 COPY --from=builder --chmod=0755 /out/reports-controller /ko-app/reports-controller
+# Restate the upstream image's own non-root identity; its config User is 65532.
+USER 65532
+# Kubernetes never runs an image health check, so this image declares none.
+HEALTHCHECK NONE
 RUN ["/ko-app/reports-controller", "--help"]

@@ -1,3 +1,5 @@
+// Command validate-talos-kubernetes-compatibility checks that the Kubernetes
+// and Talos version pins of a KSail cluster config are compatible.
 package main
 
 import (
