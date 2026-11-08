@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - agent-sandboxes.yaml
   - admission-controllers.yaml
+  - anthropic-proxy.yaml
   - arc-openbao-listener.yaml
   - batch-workloads.yaml
   - cilium-network-policies.yaml
