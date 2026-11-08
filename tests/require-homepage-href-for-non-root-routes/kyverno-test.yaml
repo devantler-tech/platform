@@ -22,10 +22,11 @@ results:
       - observability/subpath-first-with-href
       - whoami/wildcard-hostname-with-href
       - whoami/empty-matches-with-href
+      - whoami/no-parent-refs-with-href
       - observability/coroot
     kind: HTTPRoute
     result: pass
-  # --- a sub-path, a regex, a missing or wildcard hostname, or an empty list, with no href ---
+  # --- a sub-path, a regex, a missing or wildcard hostname, no parentRef, or an empty list, with no href ---
   - policy: require-homepage-href-for-non-root-routes
     resources:
       - observability/subpath-first-without-href
@@ -37,6 +38,8 @@ results:
       - whoami/wildcard-hostname
       - whoami/empty-matches
       - whoami/empty-rules
+      - whoami/no-parent-refs
+      - whoami/empty-parent-refs
     kind: HTTPRoute
     result: fail
   # --- the precondition's negative control: routes that never opted in ---

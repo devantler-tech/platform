@@ -68,12 +68,15 @@ spec:
         object.metadata.?annotations.orValue({})[?'gethomepage.dev/href'].orValue('')
     # https://<hostnames[0]><rules[0].matches[0].path.value>, and no link at all
     # without a hostname or for a RegularExpression path. A wildcard first
-    # hostname (`*.example.com`) yields a link no browser can open. The API
-    # server defaults only an OMITTED rule list or match list; an explicitly
-    # empty one stays empty, and Homepage then fails reading `[0]` of it, so
-    # omitted reads as the root and empty does not.
+    # hostname (`*.example.com`) yields a link no browser can open. The scheme
+    # comes from the Gateway named by parentRefs[0], and Homepage throws reading
+    # that entry when parentRefs is omitted or empty. The API server defaults
+    # only an OMITTED rule list or match list; an explicitly empty one stays
+    # empty, and Homepage then fails reading `[0]` of it, so omitted reads as
+    # the root and empty does not.
     - name: linksToRoot
       expression: >-
+        size(object.spec.?parentRefs.orValue([])) > 0 &&
         size(object.spec.?hostnames.orValue([])) > 0 &&
         !object.spec.hostnames[0].startsWith('*') &&
         (
@@ -99,6 +102,6 @@ spec:
         first path already form the site root. Homepage builds the card link
         from exactly those two fields, so a route whose first rule matches a
         sub-path (such as an /mcp or /api bypass) sends the card there, and a
-        missing or wildcard hostname, a RegularExpression path, or an
-        explicitly empty rule or match list leaves the card with no usable
-        link.
+        missing or wildcard hostname, a missing parentRef, a RegularExpression
+        path, or an explicitly empty rule or match list leaves the card with no
+        usable link.

@@ -7,6 +7,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
@@ -33,6 +37,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
@@ -54,6 +62,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
@@ -69,6 +81,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
@@ -89,6 +105,10 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/href: https://observability.platform.lan
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - observability.platform.lan
   rules:
@@ -113,6 +133,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
 ---
@@ -126,6 +150,10 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/href: https://whoami.platform.lan
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - "*.platform.lan"
   rules:
@@ -146,11 +174,31 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/href: https://whoami.platform.lan
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
     - matches: []
       backendRefs:
+        - name: whoami
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: no-parent-refs-with-href
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/href: https://whoami.platform.lan
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - backendRefs:
         - name: whoami
           port: 80
 ---
@@ -164,6 +212,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - observability.platform.lan
   rules:
@@ -191,6 +243,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
@@ -211,6 +267,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
@@ -234,6 +294,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
@@ -253,6 +317,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   rules:
     - matches:
         - path:
@@ -272,6 +340,10 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/href: ""
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
@@ -292,6 +364,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - "*.platform.lan"
   rules:
@@ -312,6 +388,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
@@ -329,9 +409,45 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules: []
+---
+# Homepage reads parentRefs[0] for the scheme and throws when there is none.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: no-parent-refs
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - backendRefs:
+        - name: whoami
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: empty-parent-refs
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  parentRefs: []
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - backendRefs:
+        - name: whoami
+          port: 80
 ---
 # --- the precondition's negative control: routes that never opted in --------
 apiVersion: gateway.networking.k8s.io/v1
@@ -340,6 +456,10 @@ metadata:
   name: not-opted-in
   namespace: whoami
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
@@ -359,6 +479,10 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "false"
 spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
   hostnames:
     - whoami.platform.lan
   rules:
