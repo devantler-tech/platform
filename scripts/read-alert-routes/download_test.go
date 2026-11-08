@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestKubectlDownloadCurlChild(t *testing.T) {
+func TestKubectlDownloadCurlChild(_ *testing.T) {
 	if os.Getenv("ALERT_DOWNLOAD_CHILD") != "1" {
 		return
 	}
