@@ -1,0 +1,15 @@
+# The Agentic Engineer's agent namespace (devantler-tech/monorepo#4866). It is
+# created here, in the infrastructure layer, because the kagent chart creates
+# its controller's Roles in it (rbac.namespaces), and the apps layer that holds
+# the lane's Agent, Harness, egress policies and WorkerPool waits for
+# infrastructure to be ready. The Substrate gVisor worker pods that run the
+# agent run as root with SYS_ADMIN and an unconfined seccomp profile, so the
+# namespace enforces the privileged Pod Security level and is on the platform's
+# pod-security exclusion lists. The agent itself runs inside the sandbox.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentic-engineer
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest

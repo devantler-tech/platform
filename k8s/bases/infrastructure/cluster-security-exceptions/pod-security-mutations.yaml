@@ -16,7 +16,7 @@
 # blocks, not only its exclusions.
 #
 # Narrowing these three controls surfaces nothing, re-measured 2026-09-09 rather
-# than reasoned. The twelve excluded namespaces split three ways:
+# than reasoned. The fourteen excluded namespaces split four ways:
 #   - Six carry scanned workloads. longhorn-system, observability, velero, kubevirt
 #     and cdi are separately excepted for C-0013, C-0016 and C-0055 in
 #     infrastructure-privileged.yaml. flux-system is the only one no other exception
