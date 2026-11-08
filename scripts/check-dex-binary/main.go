@@ -93,8 +93,8 @@ func run(binary, scanner, advisory, web string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	defer os.Remove(f.Name())
+	defer func() { _ = f.Close() }()
+	defer func() { _ = os.Remove(f.Name()) }()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, scanner, "-mode", "binary", "-format", "json", binary)
@@ -137,7 +137,7 @@ func binaryDigest(path string) ([32]byte, error) {
 	if err != nil {
 		return [32]byte{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return [32]byte{}, err
@@ -250,7 +250,7 @@ func nativeTLSFloor(binary, web, floor string) (resultErr error) {
 		return err
 	}
 	defer func() {
-		if resultErr != nil && resultErr.Error() != "Dex discarded its configured TLS floor" {
+		if resultErr != nil && resultErr.Error() != "dex discarded its configured TLS floor" {
 			// This process only receives the fictional configuration below. Keep
 			// bounded failure diagnostics useful without retaining its private key.
 			if body, err := os.ReadFile(filepath.Join(fixture, "dex.log")); err == nil {
@@ -335,7 +335,7 @@ frontend:
 	if err != nil {
 		return err
 	}
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "serve", configPath)
@@ -377,7 +377,7 @@ frontend:
 			Issuer string `json:"issuer"`
 		}
 		err = json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&document)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err == nil && resp.StatusCode == 200 && document.Issuer == issuer {
 			ready = true
 			break
@@ -489,7 +489,7 @@ func exerciseTLS(address string, good *tls.Config) error {
 	low := good.Clone()
 	low.MinVersion, low.MaxVersion = tls.VersionTLS12, tls.VersionTLS12
 	if err := dial(low); err == nil || !strings.Contains(err.Error(), "protocol version not supported") {
-		return errors.New("Dex discarded its configured TLS floor")
+		return errors.New("dex discarded its configured TLS floor")
 	}
 	wrongCA := good.Clone()
 	wrongCA.RootCAs = x509.NewCertPool()
