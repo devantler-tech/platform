@@ -1,6 +1,6 @@
 # Worker pods talk only to Substrate (its egress gateway carries the agent's
-# traffic; its router and API server reach the workers), and the trigger only
-# to kagent's A2A API.
+# traffic; its router and API server reach the workers). The trigger's own
+# path to kagent's A2A API is cilium-network-policy-trigger.yaml.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -16,14 +16,6 @@ spec:
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: ate-system
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: kagent
-            app.kubernetes.io/component: controller
-      toPorts:
-        - ports:
-            - port: "8083"
-              protocol: TCP
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system

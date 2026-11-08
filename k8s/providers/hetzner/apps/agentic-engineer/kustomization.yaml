@@ -28,3 +28,4 @@ resources:
   - cron-job.yaml
   - cilium-network-policy-agents.yaml
   - cilium-network-policy-credentials.yaml
+  - cilium-network-policy-trigger.yaml

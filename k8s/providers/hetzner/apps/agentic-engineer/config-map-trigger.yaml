@@ -38,7 +38,10 @@ data:
       '{jsonrpc: "2.0", id: $id, method: "SendMessage", params: {
          message: {messageId: $id, role: "ROLE_USER", parts: [{text: $text}]},
          configuration: {returnImmediately: true}}}' | rpc)
-    id=$(printf '%s' "$task" | jq -er '.result.task.id // .result.id')
+    id=$(printf '%s' "$task" | jq -er '.result.task.id // .result.id') || {
+      echo "no task id in response: $task" >&2
+      exit 1
+    }
     echo "started $run_id as task $id"
     state=""
     while [ "$(date +%s)" -lt "$deadline" ]; do
