@@ -18,6 +18,7 @@ resources:
   - best-practices/disable-default-sa-automount.yaml
   - best-practices/disallow-latest-tag.yaml
   - best-practices/propagate-reloader-to-flagger-primary.yaml
+  - best-practices/require-homepage-href-for-non-root-routes.yaml
   - best-practices/restrict-github-team-external-identity.yaml
   - best-practices/restrict-github-team-management.yaml
   - best-practices/restrict-arc-openbao-listener.yaml
