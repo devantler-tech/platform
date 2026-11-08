@@ -89,7 +89,9 @@ spec:
           # deletes it once it succeeds, and replaces a failed one on the
           # next attempt. Helm sorts hooks after post-rendering, so this
           # works under nohooks. The name is unchanged: the chart's
-          # NetworkPolicy selects the Job's pods by it.
+          # NetworkPolicy selects the Job's pods by it. Retire this patch when
+          # the chart ships the Job as a hook (kagent-dev/substrate#158);
+          # test-substrate-bucket-init-hook.sh fails once it does.
           - target:
               kind: Job
               name: rustfs-bucket-init
