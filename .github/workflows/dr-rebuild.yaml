@@ -180,7 +180,7 @@ jobs:
         # deploy-prod action; renovate keeps the pin current in all places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.35"
+          KSAIL_VERSION: "7.206.59"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -451,7 +451,7 @@ jobs:
                   sizeLimit: 8Mi
             initContainers:
               - name: install-tools
-                image: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+                image: docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6
                 command: ["/bin/sh", "-ec", "cp /bin/busybox /tools/busybox; /tools/busybox --install -s /tools"]
                 securityContext:
                   allowPrivilegeEscalation: false
