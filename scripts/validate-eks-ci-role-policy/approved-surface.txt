@@ -66,7 +66,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|flux-system|flux-operator 0cbdc24c2b42ef3d
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|homepage|homepage 73c235e4a91bde46f5eeb0400fb986c47b52860d188f97822024b09fd4752b2a
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent 66fe293fc0ae80fda3c21b035e86b06b5179bdd17f8aebe69180ab7ec2313294
+helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent 0bd52db1b6b8ed350e60b4580f9386e405c9a62f0e2c1cc73303187ed5bf121c
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent-crds e1765ef34c0535f7101afad08e946cb5ed9815eb370636b8e735cd0af82a1be2
 
@@ -386,6 +386,8 @@ source.toolkit.fluxcd.io/v1|HelmRepository|external-secrets|external-secrets 1b3
 
 source.toolkit.fluxcd.io/v1|HelmRepository|flagger-system|flagger c486c0ac9521f94c378ab3b1b331a1c8b11b2e4852d5ba6c1829daec8e877fb9
 
+source.toolkit.fluxcd.io/v1|HelmRepository|kagent|kagent 27efeec945f8e61dc19211d1016b5a084444a00a6ba606e70ac68ff06f26dec9
+
 source.toolkit.fluxcd.io/v1|HelmRepository|keda|keda 0ac84176333ac006ba8e534c1403ea7e7a8f5052860c87bb788eb55c3cfc331c
 
 source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|cilium f35184ba46c66023f433529f9e87bc4513351856c822e5e5550356e313457552
@@ -453,8 +455,6 @@ source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator fdc99e9413e8
 source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config 0b308d3b5370f3492537972463ca4c2f07dbc24245ba18c4781e1379474daafc
 
 source.toolkit.fluxcd.io/v1|OCIRepository|homepage|homepage ff2c2d1aac0b2315247df9f5266eeb00f4443ea551d6e92270bdf76a243c0f38
-
-source.toolkit.fluxcd.io/v1|OCIRepository|kagent|kagent 4dd66b5a7207063af23b8280434ddabcafbae5571d2de226f2bc07285663b19e
 
 source.toolkit.fluxcd.io/v1|OCIRepository|kagent|kagent-crds cb0bac92f6bcee350b5c3262f5d6f22d257cb7e15d8245a5d1eb021ee42a8ba3
 
