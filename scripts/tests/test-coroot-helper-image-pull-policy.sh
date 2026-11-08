@@ -57,17 +57,17 @@ for manifest in "${manifests[@]}"; do
   # They still pull the same digest, so every container using it must be
   # pinned and cached.
   case "${manifest#"${root_dir}"/}" in
-  k8s/bases/apps/* | k8s/providers/*/apps/*)
-    entries="$(yq eval -r '.. | select(has("image")) | select(.image | contains("docker.io/badouralix/curl-jq:")) | .image + "|" + (.imagePullPolicy // "")' "${manifest}")"
-    [ -n "${entries}" ] || fail "could not read the curl+jq containers of ${manifest}"
-    while IFS='|' read -r image policy; do
-      [[ "${image}" =~ ${digest_pattern} ]] ||
-        fail "curl+jq image must retain an immutable digest: ${manifest}"
-      [ "${policy}" = IfNotPresent ] ||
-        fail "cached curl+jq digest must not reauthenticate on every run: ${manifest}"
-    done <<<"${entries}"
-    continue
-    ;;
+    k8s/bases/apps/* | k8s/providers/*/apps/*)
+      entries="$(yq eval -r '.. | select(has("image")) | select(.image | contains("docker.io/badouralix/curl-jq:")) | .image + "|" + (.imagePullPolicy // "")' "${manifest}")"
+      [ -n "${entries}" ] || fail "could not read the curl+jq containers of ${manifest}"
+      while IFS='|' read -r image policy; do
+        [[ "${image}" =~ ${digest_pattern} ]] ||
+          fail "curl+jq image must retain an immutable digest: ${manifest}"
+        [ "${policy}" = IfNotPresent ] ||
+          fail "cached curl+jq digest must not reauthenticate on every run: ${manifest}"
+      done <<<"${entries}"
+      continue
+      ;;
   esac
   [ "$(yq eval -r '.kind' "${manifest}")" = CronJob ] ||
     fail "curl+jq consumer is not a CronJob: ${manifest}"
