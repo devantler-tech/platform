@@ -35,14 +35,36 @@ grep -q 'method: "CancelTask"' "${work}/trigger.sh" || fail 'the trigger no long
 
 # The stub answers by JSON-RPC method. GetTask replays one state per call from the scenario's
 # `states` file (the last line repeats); after a CancelTask, `states-after-cancel` takes over when
-# present. CancelTask either answers, returns a JSON-RPC error, or fails at the HTTP layer.
+# present. CancelTask either answers, returns a JSON-RPC error, or fails at the HTTP layer. With
+# a `stall` file, GetTask replies only after that many seconds until a cancel lands, timing out
+# like curl at its `--max-time`.
 mkdir -p "${work}/bin"
 cat >"${work}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 dir="${STUB_DIR:?}"
+max_time=60
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == --max-time ]]; then
+    max_time="$2"
+    shift
+  fi
+  shift
+done
 method="$(jq -r '.method')"
 printf '%s\n' "${method}" >>"${dir}/calls"
+if [[ "${method}" == CancelTask && ! -f "${dir}/cancel-at" ]]; then
+  date +%s >"${dir}/cancel-at"
+fi
+if [[ "${method}" == GetTask && -f "${dir}/stall" && ! -f "${dir}/cancelled" ]]; then
+  stall="$(cat "${dir}/stall")"
+  if ((stall > max_time)); then
+    sleep "${max_time}"
+    printf 'curl: (28) Operation timed out after %s seconds\n' "${max_time}" >&2
+    exit 28
+  fi
+  sleep "${stall}"
+fi
 next_state() {
   local file="$1" count
   count="$(grep -c '^GetTask$' "${dir}/calls")"
@@ -72,11 +94,15 @@ STUB
 chmod +x "${work}/bin/curl"
 
 # run <scenario> <cancel behaviour> <run limit> <states> [states after cancel]: prints the exit
-# code. States are space-separated, one per GetTask call.
+# code. States are space-separated, one per GetTask call. STALL=<seconds> stalls GetTask.
 run() {
   local dir="${work}/$1" status=0 states=() after=()
   mkdir -p "${dir}"
   : >"${dir}/calls"
+  if [[ -n "${STALL:-}" ]]; then
+    printf '%s\n' "${STALL}" >"${dir}/stall"
+  fi
+  date +%s >"${dir}/start"
   printf '%s\n' "$2" >"${dir}/cancel"
   read -ra states <<<"$4"
   printf '%s\n' "${states[@]}" >"${dir}/states"
@@ -101,6 +127,13 @@ grep -q 'final state: TASK_STATE_COMPLETED' "${work}/finished/out" || fail 'a co
 [[ "$(run capped ok 2 TASK_STATE_WORKING TASK_STATE_CANCELED)" == 1 ]] ||
   fail "a capped run did not fail as capped: $(cat "${work}/capped/out")"
 grep -q 'final state: CANCELED_AT_LIMIT' "${work}/capped/out" || fail 'a capped run did not report CANCELED_AT_LIMIT'
+
+# A GetTask that stalls near the limit cannot hold the cancel back past it.
+[[ "$(STALL=30 run stalled ok 3 TASK_STATE_WORKING TASK_STATE_CANCELED)" == 1 ]] ||
+  fail "a stalled run did not end capped: $(cat "${work}/stalled/out")"
+[[ -f "${work}/stalled/cancel-at" ]] || fail 'a stalled run was never cancelled'
+late=$(($(cat "${work}/stalled/cancel-at") - $(cat "${work}/stalled/start") - 3))
+((late <= 2)) || fail "a stalled GetTask delayed the cancel ${late}s past the run limit"
 
 # A cancel the task ignores, or that never reaches kagent, must not read as capped.
 for behaviour in rpc-error http-error; do

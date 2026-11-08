@@ -31,13 +31,17 @@ data:
     deadline=$(( $(date +%s) + RUN_LIMIT_SECONDS ))
     poll="${POLL_SECONDS:-30}"
     message="${MESSAGE_FILE:-/etc/trigger/message.txt}"
-    rpc() {
-      curl -sS --fail-with-body --max-time 60 -H 'content-type: application/json' \
+    rpc() { # [max seconds, default 60]
+      curl -sS --fail-with-body --max-time "${1:-60}" -H 'content-type: application/json' \
         -H 'A2A-Version: 1.0' -H 'X-User-Id: agentic-engineer-scheduler' \
         --data-binary @- "$endpoint"
     }
-    get_task() {
-      jq -n --arg id "$id" '{jsonrpc: "2.0", id: "get", method: "GetTask", params: {id: $id}}' | rpc
+    get_task() { # [max seconds]
+      jq -n --arg id "$id" '{jsonrpc: "2.0", id: "get", method: "GetTask", params: {id: $id}}' | rpc "$@"
+    }
+    # Seconds left before the run limit; the watch loop never waits past it.
+    remaining() {
+      echo $(( deadline - $(date +%s) ))
     }
     # An unreadable response is an unknown state, never a reason to stop
     # watching a task that may still be running.
@@ -61,9 +65,16 @@ data:
     }
     echo "started $run_id as task $id"
     state=""
-    while [ "$(date +%s)" -lt "$deadline" ]; do
-      sleep "$poll"
-      task=$(get_task) || continue
+    # Each wait and each GetTask is bounded by the time left, so a stalled
+    # reply near the limit cannot delay the cancel. The cancel and its
+    # confirmation below keep their own timeout.
+    while [ "$(remaining)" -gt 0 ]; do
+      wait=$(remaining)
+      if [ "$wait" -gt "$poll" ]; then wait=$poll; fi
+      sleep "$wait"
+      left=$(remaining)
+      if [ "$left" -lt 1 ]; then break; fi
+      task=$(get_task "$left") || continue
       state=$(task_state)
       if terminal "$state"; then break; fi
     done
