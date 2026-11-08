@@ -42,6 +42,17 @@
     },
     {
       "customType": "regex",
+      "description": "Keep the digest-pinned images the Coroot security-progress validation workflow exercises in step with the manifests it checks them against. The workflow requires each pin to appear in the deployment, so a manifest update that leaves the workflow behind fails that check; with this manager both files move in the same update PR. COROOT_IMAGE is left out: it is this repository's own build, which Renovate does not track in the manifest either.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/validate-coroot-security-progress\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "(?:COLLECTOR|SERVER|RECONCILER|PROMETHEUS)_IMAGE:\\s*(?<depName>[a-z0-9][a-z0-9./_-]*):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
       "description": "Track the flux-operator OCI chart tag in its OCIRepository via the docker datasource. The dedicated manager preserves update discovery after the migration from HelmRepository/chart.spec to OCIRepository/chartRef.",
       "managerFilePatterns": [
         "/^k8s/bases/infrastructure/controllers/flux-operator/oci-repository\\.ya?ml$/"

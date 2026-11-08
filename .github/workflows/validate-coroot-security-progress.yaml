@@ -53,8 +53,8 @@ jobs:
       - name: Exercise the collector and loopback metrics server
         shell: bash
         env:
-          COLLECTOR_IMAGE: docker.io/alpine/k8s:1.37.1@sha256:712dc5385d1c1a3f83b747fa9e40f64d433a97f72ff42f9755ff7dd1f62846e4
-          SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+          COLLECTOR_IMAGE: docker.io/alpine/k8s:1.37.2@sha256:dcb7185e112a453aa72f426754849a97357727ef8f40168fb208c8cf59952042
+          SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6
         run: |
           set -euo pipefail
           component=k8s/bases/infrastructure/coroot/components/security-progress
@@ -149,7 +149,7 @@ jobs:
     env:
       COROOT_IMAGE: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:9a2782f405f9ee673301912b3b2cf85a4a154fbfeb1542df2d4937d6600396f1
       PROMETHEUS_IMAGE: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
-      SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+      SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6
       PLAYWRIGHT_VERSION: 1.56.1
     steps:
       - name: Harden runner

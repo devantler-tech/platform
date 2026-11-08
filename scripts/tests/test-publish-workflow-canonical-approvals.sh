@@ -678,24 +678,25 @@ while IFS=$'\t' read -r expected issuer identity; do
     fail "github-config transition: expected $expected for $issuer $identity, got $result"
   fi
 done <<'IDENTITIES'
-accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0966f4b015e85ef14be37411d424a7028a858550
 accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@57310dc609dcc8f9205f53c674ff17c5dc979b73
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@56ceec6717a1faa0686d865424cd2d1d45f18a0a
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0966f4b015e85ef14be37411d424a7028a858550
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0f390329b590404c02565b27a263ee841fa02bce
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@8d2203af130a8c27b8b98b3d7146f76b5ade7a98
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d
 accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@1d726483facb9340655489913f609082677be8f5
 accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
-reject	https://another-issuer.invalid	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0966f4b015e85ef14be37411d424a7028a858550
-reject	https://tokenXactionsXgithubusercontentXcom	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0966f4b015e85ef14be37411d424a7028a858550
-reject	https://token.actions.githubusercontent.com	https://github.com/another-org/.github/.github/workflows/publish-manifests.yaml@0966f4b015e85ef14be37411d424a7028a858550
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/xgithub/.github/workflows/publish-manifests.yaml@0966f4b015e85ef14be37411d424a7028a858550
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0966f4b015e85ef14be37411d424a7028a858550
+reject	https://another-issuer.invalid	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@57310dc609dcc8f9205f53c674ff17c5dc979b73
+reject	https://tokenXactionsXgithubusercontentXcom	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@57310dc609dcc8f9205f53c674ff17c5dc979b73
+reject	https://token.actions.githubusercontent.com	https://github.com/another-org/.github/.github/workflows/publish-manifests.yaml@57310dc609dcc8f9205f53c674ff17c5dc979b73
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/xgithub/.github/workflows/publish-manifests.yaml@57310dc609dcc8f9205f53c674ff17c5dc979b73
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@57310dc609dcc8f9205f53c674ff17c5dc979b73
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@v12.0.1
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@main
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0966f4b
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0966f4b015e85ef14be37411d424a7028a858550-extra
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@57310dc
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@57310dc609dcc8f9205f53c674ff17c5dc979b73-extra
 IDENTITIES
 
 aws_subject="$(yq -er '.spec.verify.matchOIDCIdentity[0].subject' "$REPO_ROOT/k8s/providers/hetzner/apps/aws/oci-repository.yaml")"
