@@ -28,7 +28,7 @@ original_serve="${RUNNER_TEMP:?}/dex-serve-original.go"
 cp "$source_dir/cmd/dex/serve.go" "$original_serve"
 trap 'cp "$original_serve" "$source_dir/cmd/dex/serve.go"' EXIT
 [[ $(grep -Fc 'ptr.Store(loaded)' "$original_serve") == 1 ]]
-sed 's/ptr.Store(loaded)/_ = loaded/' "$original_serve" > "$source_dir/cmd/dex/serve.go"
+sed 's/ptr.Store(loaded)/_ = loaded/' "$original_serve" >"$source_dir/cmd/dex/serve.go"
 CC=musl-gcc CGO_ENABLED=1 go -C "$source_dir" build -mod=readonly -trimpath -tags netgo,osusergo \
   -ldflags '-X main.version=v2.46.1-devantler.1 -linkmode external -extldflags "-static"' \
   -o "$RUNNER_TEMP/dex-no-reload" ./cmd/dex
@@ -82,7 +82,7 @@ docker build --file "$root/k8s/bases/infrastructure/controllers/dex/DexSecurity.
   --label "org.opencontainers.image.revision=${GITHUB_SHA:?}" \
   --label io.devantler.dex.upstream-revision=75eb19238e10fc4750e7efb05a4031b254b04029 \
   --tag "$image" "$RUNNER_TEMP/dex-context"
-docker image inspect "$image" | jq -e 'length == 1 and (.[0] | .Os == "linux" and .Architecture == "amd64" and .Config.User == "65534:65534" and ((.Config.Entrypoint // []) | length == 0))' > /dev/null
+docker image inspect "$image" | jq -e 'length == 1 and (.[0] | .Os == "linux" and .Architecture == "amd64" and .Config.User == "65534:65534" and ((.Config.Entrypoint // []) | length == 0))' >/dev/null
 docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges "$image" dex version
 
 # Inspect the packaged bytes, not just the pre-image build directory.
@@ -95,6 +95,6 @@ cmp "$source_dir/dist/dex" "$RUNNER_TEMP/dex-packaged/dex"
 go -C "$root" run ./scripts/check-dex-binary --binary "$RUNNER_TEMP/dex-packaged/dex" \
   --scanner "$RUNNER_TEMP/dex-tools/govulncheck" --advisory "$RUNNER_TEMP/dex-advisory.json" --web "$RUNNER_TEMP/dex-packaged/web"
 docker save --output "$RUNNER_TEMP/dex-image.tar" "$image"
-sha256sum "$RUNNER_TEMP/dex-image.tar" | awk '{print "archive_sha=" $1}' >> "${GITHUB_OUTPUT:?}"
-docker image inspect --format 'image_id={{.Id}}' "$image" >> "$GITHUB_OUTPUT"
-sha256sum "$source_dir/dist/dex" | awk '{print "binary_sha=" $1}' >> "$GITHUB_OUTPUT"
+sha256sum "$RUNNER_TEMP/dex-image.tar" | awk '{print "archive_sha=" $1}' >>"${GITHUB_OUTPUT:?}"
+docker image inspect --format 'image_id={{.Id}}' "$image" >>"$GITHUB_OUTPUT"
+sha256sum "$source_dir/dist/dex" | awk '{print "binary_sha=" $1}' >>"$GITHUB_OUTPUT"
