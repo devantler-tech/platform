@@ -42,6 +42,25 @@ func TestRetainedInventoryRefusesForeignGroupWithAllowedKindAndName(t *testing.T
 	}
 }
 
+// Events from either Event API are skipped as transient; nothing else is, and
+// an Event-shaped foreign CRD never inherits that.
+func TestRetainedInventorySkipsOnlyNativeEvents(t *testing.T) {
+	for _, resource := range []string{"events", "events.events.k8s.io"} {
+		if !retainedTransientResource(namespaceinventory.Binding{Kind: "Event", Name: "reader.1", Resource: resource}) {
+			t.Fatalf("native Event from %s was not transient", resource)
+		}
+	}
+	for _, binding := range []namespaceinventory.Binding{
+		{Kind: "Event", Name: "reader.1", Resource: "events.foreign.invalid"},
+		{Kind: "Pod", Name: "reader", Resource: "pods"},
+		{Kind: "Secret", Name: "events", Resource: "events"},
+	} {
+		if retainedTransientResource(binding) {
+			t.Fatalf("%s from %s was skipped as transient", binding.Kind, binding.Resource)
+		}
+	}
+}
+
 func retainedDispatch() map[string]string {
 	env := confirmedInvocation()
 	env["GITHUB_ACTIONS"] = "true"

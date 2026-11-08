@@ -163,10 +163,22 @@ func (d *recoveryDriver) cleanupPreflight(ctx context.Context) error {
 				return errors.New("cleanup-backup-retention")
 			}
 		} else {
-			for _, helper := range []ownedReference{{kind: "Pod", name: ref.name, namespace: "velero"}, {kind: "PersistentVolumeClaim", name: ref.name, namespace: "velero"}, {kind: "PersistentVolumeClaim", name: ref.name + "-cache", namespace: "velero"}} {
-				if _, found, err := d.lookup(ctx, helper.kind, helper.name, helper.namespace); err != nil || found {
-					return errors.New("cleanup-transfer-helper")
+			// Velero removes the transfer helpers shortly after the DataDownload
+			// completes, so a fresh recovery can still see them here. Wait for them
+			// as the transfer step does; a lookup error or a helper that outlives
+			// the bound still refuses.
+			err = waitRecovery(ctx, 2*time.Minute, func() (bool, error) {
+				for _, helper := range []ownedReference{{kind: "Pod", name: ref.name, namespace: "velero"}, {kind: "PersistentVolumeClaim", name: ref.name, namespace: "velero"}, {kind: "PersistentVolumeClaim", name: ref.name + "-cache", namespace: "velero"}} {
+					if _, found, e := d.lookup(ctx, helper.kind, helper.name, helper.namespace); e != nil {
+						return false, e
+					} else if found {
+						return false, nil
+					}
 				}
+				return true, nil
+			})
+			if err != nil {
+				return errors.New("cleanup-transfer-helper")
 			}
 		}
 	}

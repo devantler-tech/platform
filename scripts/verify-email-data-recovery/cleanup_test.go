@@ -17,6 +17,7 @@ type cleanupAPI struct {
 	blockBackend bool
 	cancel       context.CancelFunc
 	onDelete     func(object)
+	onGet        func(key string)
 }
 
 func cleanupKey(kind, ns, name string) string { return kind + "/" + ns + "/" + name }
@@ -41,6 +42,9 @@ func (a *cleanupAPI) call(_ context.Context, input []byte, args ...string) ([]by
 		}
 		if len(args) < 3 {
 			return nil, errors.New("get")
+		}
+		if a.onGet != nil {
+			a.onGet(cleanupKey(kind, ns, args[2]))
 		}
 		o, found := a.objects[cleanupKey(kind, ns, args[2])]
 		if !found {
@@ -166,6 +170,32 @@ func TestCleanupRetainsTheKeyUntilBothStorageObjectsAreAbsent(t *testing.T) {
 			t.Fatal("cleanup did not retain only the native backup")
 		}
 	})
+}
+
+// A fresh recovery can still see Velero's transfer helpers when cleanup starts.
+// The preflight waits for them, as the transfer step does, instead of retaining
+// a verified copy.
+func TestCleanupPreflightWaitsForTransferHelpers(t *testing.T) {
+	d, a, ctx := cleanupFixture(t, false)
+	name := d.i.namespace + "-download"
+	helper := cleanupKey("Pod", "velero", name)
+	a.objects[helper] = object{"kind": "Pod", "metadata": object{"name": name, "namespace": "velero", "uid": "helper"}}
+	reads := 0
+	a.onGet = func(key string) {
+		if key != helper {
+			return
+		}
+		reads++
+		if reads == 2 {
+			delete(a.objects, helper)
+		}
+	}
+	if err := d.cleanupRestore(ctx); err != nil {
+		t.Fatalf("a helper Velero was still removing retained the copy: %s", err)
+	}
+	if reads < 2 {
+		t.Fatal("the fixture never showed the helper to the preflight")
+	}
 }
 
 func TestCleanupChecksEntireGraphBeforeFirstDeletion(t *testing.T) {

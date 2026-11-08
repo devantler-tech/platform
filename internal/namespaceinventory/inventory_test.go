@@ -97,6 +97,27 @@ func TestRetainedEmailInventoryCoversAllServedKinds(t *testing.T) {
 	}
 }
 
+// One stored Event is served by core v1 and events.k8s.io under the same UID.
+// That alias is one object; any other identity difference stays a conflict.
+func TestEventAliasesAreOneObject(t *testing.T) {
+	result, err := observeFixtureInNamespace(t, "event alias", "email-data-recovery-41561215415")
+	if err != nil {
+		t.Fatalf("Event aliases were read as conflicting identities: %v", err)
+	}
+	events := 0
+	for _, binding := range result.Bindings() {
+		if binding.Kind == "Event" {
+			events++
+		}
+	}
+	if len(result.Bindings()) != 3 || events != 1 {
+		t.Fatalf("want secret, widget and one Event, got %d bindings with %d Events", len(result.Bindings()), events)
+	}
+	if result, err = observeFixtureInNamespace(t, "event alias renamed", "email-data-recovery-41561215415"); err == nil || len(result.Bindings()) != 0 {
+		t.Fatal("two different Events with one UID were accepted")
+	}
+}
+
 func TestIncompleteOrUnboundObservationDiscardsEverything(t *testing.T) {
 	for _, failure := range []string{"discovery failed", "changed discovery", "wrong group version", "missing namespace scope", "missing list verb", "remote deletable API", "partial APIService roster", "changed APIService roster", "full Secret response", "missing items", "continued list", "unknown remainder", "duplicate UID", "duplicate UID different kind", "duplicate identical item", "namespace replaced", "deadline on final read", "redirect", "oversized", "duplicate field"} {
 		t.Run(failure, func(t *testing.T) {
@@ -176,7 +197,11 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 				respond(`{"apiVersion":"v1","kind":"APIGroupList","groups":[]}`)
 				return
 			}
-			respond(`{"apiVersion":"v1","kind":"APIGroupList","groups":[{"name":"example.io","versions":[{"groupVersion":"example.io/v1","version":"v1"},{"groupVersion":"example.io/v2","version":"v2"}]}]}`)
+			events := ""
+			if strings.HasPrefix(failure, "event alias") {
+				events = `,{"name":"events.k8s.io","versions":[{"groupVersion":"events.k8s.io/v1","version":"v1"}]}`
+			}
+			respond(`{"apiVersion":"v1","kind":"APIGroupList","groups":[{"name":"example.io","versions":[{"groupVersion":"example.io/v1","version":"v1"},{"groupVersion":"example.io/v2","version":"v2"}]}` + events + `]}`)
 			return
 		}
 		gv := ""
@@ -187,6 +212,8 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			gv = "example.io/v1"
 		case "/apis/example.io/v2":
 			gv = "example.io/v2"
+		case "/apis/events.k8s.io/v1":
+			gv = "events.k8s.io/v1"
 		}
 		if gv != "" {
 			if failure == "wrong group version" {
@@ -196,6 +223,9 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			if strings.HasPrefix(gv, "example.io/") {
 				resource, kind = "widgets", "Widget"
 			}
+			if gv == "events.k8s.io/v1" {
+				resource, kind = "events", "Event"
+			}
 			verbs := `["get","list","delete"]`
 			if failure == "missing list verb" {
 				verbs = `["get","delete"]`
@@ -203,6 +233,9 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			body := fmt.Sprintf(`{"apiVersion":"v1","kind":"APIResourceList","groupVersion":%q,"resources":[{"name":%q,"kind":%q,"namespaced":true,"verbs":%s},{"name":"widgets/status","kind":"Widget","namespaced":true,"verbs":["get","update"]}]}`, gv, resource, kind, verbs)
 			if failure == "missing namespace scope" {
 				body = strings.Replace(body, `"namespaced":true,`, "", 1)
+			}
+			if strings.HasPrefix(failure, "event alias") && gv == "v1" {
+				body = strings.Replace(body, `"resources":[`, `"resources":[{"name":"events","kind":"Event","namespaced":true,"verbs":["get","list","delete"]},`, 1)
 			}
 			respond(body)
 			return
@@ -237,6 +270,12 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			}
 			if failure == "duplicate UID different kind" {
 				name, uid = "same-name", "same-uid"
+			}
+			if strings.HasSuffix(r.URL.Path, "/events") {
+				name, uid = "reader.1", "event-uid"
+				if failure == "event alias renamed" && strings.HasPrefix(r.URL.Path, "/apis/") {
+					name = "other.1"
+				}
 			}
 			if failure == "duplicate UID" && strings.HasSuffix(r.URL.Path, "/v2/namespaces/"+testNamespace+"/widgets") {
 				name = "different-widget"

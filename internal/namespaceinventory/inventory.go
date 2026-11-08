@@ -169,7 +169,11 @@ func observeNamespace(ctx context.Context, client *http.Client, endpoint *url.UR
 			}
 			binding := Binding{m.Name, m.Namespace, m.UID, resource.kind, groupResource}
 			if old, exists := result.bindings[m.UID]; exists && old != binding {
-				return Inventory{}, errors.New("namespace child UID has conflicting identities")
+				if !eventAlias(old, binding) {
+					return Inventory{}, errors.New("namespace child UID has conflicting identities")
+				}
+				// The same Event is served by both Event APIs; keep its first identity.
+				continue
 			}
 			result.bindings[m.UID] = binding
 		}
@@ -189,4 +193,13 @@ func observeNamespace(ctx context.Context, client *http.Client, endpoint *url.UR
 		return Inventory{}, errors.New("namespace inventory expired")
 	}
 	return result, nil
+}
+
+// eventAlias reports whether two bindings are one Event read through its two
+// served APIs, core v1 and events.k8s.io, which share one stored object and UID.
+// Any other difference in identity is still a conflict.
+func eventAlias(a, b Binding) bool {
+	resources := map[string]bool{a.Resource: true, b.Resource: true}
+	return a.Kind == "Event" && b.Kind == "Event" && a.Name == b.Name && a.Namespace == b.Namespace &&
+		a.UID == b.UID && len(resources) == 2 && resources["events"] && resources["events.events.k8s.io"]
 }

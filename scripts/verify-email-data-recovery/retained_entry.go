@@ -76,6 +76,9 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 		seen := map[string]bool{}
 		bindings := map[string]namespaceinventory.Binding{}
 		for _, binding := range inventory.Bindings() {
+			if retainedTransientResource(binding) {
+				continue
+			}
 			if !retainedInventoryResource(binding) {
 				return errors.New("inventory-foreign-resource")
 			}
@@ -183,6 +186,14 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 		return 2
 	}
 	return 0
+}
+
+// retainedTransientResource reports an Event, from either Event API. The
+// kubelet and controllers record Events for the reader's own lifecycle at any
+// time; they hold no recovered data and expire on their own, so they are neither
+// foreign resources nor identities to freeze between inventory reads.
+func retainedTransientResource(binding namespaceinventory.Binding) bool {
+	return binding.Kind == "Event" && (binding.Resource == "events" || binding.Resource == "events.events.k8s.io")
 }
 
 func retainedInventoryResource(binding namespaceinventory.Binding) bool {
