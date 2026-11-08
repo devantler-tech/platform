@@ -128,7 +128,7 @@ jq '.spec.values.alertCRD.installDefault = "false"' "$scratch/release.json" >"$s
 production_baseline_enabled "$scratch/release.json" ||
   fail 'production runtime detection and its installed rule baseline must be enabled'
 for mutation in '.spec.values.capabilities.runtimeDetection = "disable"' \
-                '.spec.values.alertCRD.installDefault = false'; do
+  '.spec.values.alertCRD.installDefault = false'; do
   jq "$mutation" "$scratch/release.json" >"$scratch/disabled-baseline.json"
   if production_baseline_enabled "$scratch/disabled-baseline.json"; then
     fail 'the production baseline check accepted a disabled detector or rule set'

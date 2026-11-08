@@ -4,7 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mode="${1:---check}"
-[[ "$#" -le 1 && ( "$mode" == --check || "$mode" == --write ) ]] || {
+[[ "$#" -le 1 && ("$mode" == --check || "$mode" == --write) ]] || {
   printf 'usage: %s [--check|--write]\n' "$0" >&2
   exit 2
 }
@@ -30,7 +30,7 @@ printf '%s  %s\n' "$catalog_sha256" "$scratch/catalog.json" "$chart_sha256" "$sc
 tar -xOf "$scratch/chart.tgz" kubescape-operator/crds/rules.crd.yaml |
   yq -o=json '.spec.versions[] | select(.name == "v1") |
     .schema.openAPIV3Schema.properties.spec.properties.rules.items.properties.profileDataRequired' - \
-  >"$scratch/property.json"
+    >"$scratch/property.json"
 jq -e '.type == "object" and .["x-kubernetes-preserve-unknown-fields"] == true' "$scratch/property.json" >/dev/null
 jq -e '.properties.spec.properties.rules.items.properties | has("profileDataRequired") | not' "$scratch/catalog.json" >/dev/null
 jq -S --slurpfile property "$scratch/property.json" \
