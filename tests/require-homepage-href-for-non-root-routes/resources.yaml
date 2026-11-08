@@ -1,0 +1,372 @@
+# --- derived link is the site root, or an explicit href is set: pass ---------
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: root-prefix-first
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: whoami
+          port: 80
+    - matches:
+        - path:
+            type: Exact
+            value: /api
+      backendRefs:
+        - name: whoami-api
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: exact-root-first
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /
+      backendRefs:
+        - name: whoami
+          port: 80
+---
+# The API server defaults an omitted match list to `PathPrefix /`; the CLI
+# applies no defaults, so this is the pre-defaulting shape of a catch-all.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: omitted-matches
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - backendRefs:
+        - name: whoami
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: omitted-path
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches:
+        - headers:
+            - name: x-canary
+              value: "true"
+      backendRefs:
+        - name: whoami
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: subpath-first-with-href
+  namespace: observability
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/href: https://observability.platform.lan
+spec:
+  hostnames:
+    - observability.platform.lan
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /mcp
+      backendRefs:
+        - name: coroot-mcp
+          port: 8080
+    - backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80
+---
+# --- derived link is a sub-path or missing, and no href: fail ----------------
+# The Coroot route as platform#5881 shipped it: the card linked to /mcp.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: subpath-first-without-href
+  namespace: observability
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - observability.platform.lan
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /mcp
+      backendRefs:
+        - name: coroot-mcp
+          port: 8080
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: prefix-subpath-first
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: whoami-api
+          port: 80
+---
+# A second match on the first rule does not count: Homepage reads matches[0].
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: root-is-second-match
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /docs
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: whoami
+          port: 80
+---
+# Homepage builds no link for a RegularExpression path, even one matching "/".
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: regex-root-first
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches:
+        - path:
+            type: RegularExpression
+            value: /
+      backendRefs:
+        - name: whoami
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: no-hostnames
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: whoami
+          port: 80
+---
+# Homepage treats an empty href as unset and falls back to the derived link.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: empty-href
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/href: ""
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: whoami-api
+          port: 80
+---
+# --- the precondition's negative control: routes that never opted in --------
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: not-opted-in
+  namespace: whoami
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /mcp
+      backendRefs:
+        - name: whoami
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: discovery-disabled
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "false"
+spec:
+  hostnames:
+    - whoami.platform.lan
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/send
+      backendRefs:
+        - name: whoami
+          port: 80
+---
+# --- Ingress is guarded identically ------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-root-path
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  rules:
+    - host: whoami.platform.lan
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: whoami
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-subpath-with-href
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/href: https://whoami.platform.lan
+spec:
+  rules:
+    - host: whoami.platform.lan
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: whoami-api
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-subpath-without-href
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  rules:
+    - host: whoami.platform.lan
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: whoami-api
+                port:
+                  number: 80
+---
+# ImplementationSpecific allows an omitted path; Homepage would append
+# "undefined" to the host.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-path-omitted
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+spec:
+  rules:
+    - host: whoami.platform.lan
+      http:
+        paths:
+          - pathType: ImplementationSpecific
+            backend:
+              service:
+                name: whoami
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-not-opted-in
+  namespace: whoami
+spec:
+  rules:
+    - host: whoami.platform.lan
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: whoami-api
+                port:
+                  number: 80

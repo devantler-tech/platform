@@ -1,0 +1,60 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: require-homepage-href-for-non-root-routes
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/require-homepage-href-for-non-root-routes.yaml
+resources:
+  - resources.yaml
+  # Exercise the shipped Coroot route, whose /mcp rule comes first: it passes
+  # only while it keeps its explicit href.
+  - ../../k8s/bases/infrastructure/controllers/coroot/http-route.yaml
+results:
+  # --- derived link is the site root, or an explicit href is set ---
+  - policy: require-homepage-href-for-non-root-routes
+    resources:
+      - whoami/root-prefix-first
+      - whoami/exact-root-first
+      - whoami/omitted-matches
+      - whoami/omitted-path
+      - observability/subpath-first-with-href
+      - observability/coroot
+    kind: HTTPRoute
+    result: pass
+  # --- a sub-path, a regex or no hostname, with no href ---
+  - policy: require-homepage-href-for-non-root-routes
+    resources:
+      - observability/subpath-first-without-href
+      - whoami/prefix-subpath-first
+      - whoami/root-is-second-match
+      - whoami/regex-root-first
+      - whoami/no-hostnames
+      - whoami/empty-href
+    kind: HTTPRoute
+    result: fail
+  # --- the precondition's negative control: routes that never opted in ---
+  - policy: require-homepage-href-for-non-root-routes
+    resources:
+      - whoami/not-opted-in
+      - whoami/discovery-disabled
+    kind: HTTPRoute
+    result: skip
+  # --- Ingress is guarded identically ---
+  - policy: require-homepage-href-for-non-root-routes
+    resources:
+      - whoami/ingress-root-path
+      - whoami/ingress-subpath-with-href
+    kind: Ingress
+    result: pass
+  - policy: require-homepage-href-for-non-root-routes
+    resources:
+      - whoami/ingress-subpath-without-href
+      - whoami/ingress-path-omitted
+    kind: Ingress
+    result: fail
+  - policy: require-homepage-href-for-non-root-routes
+    resources:
+      - whoami/ingress-not-opted-in
+    kind: Ingress
+    result: skip
