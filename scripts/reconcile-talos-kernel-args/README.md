@@ -490,6 +490,49 @@ finds the module in neither the Talos configuration manager, generator nor
 cluster API; the same read finds the machinery packages. This audit changes no
 cluster configuration or vulnerability exception.
 
+**7.206.24**, commit `f01480bd8e5463b69660c380d9167d7357ec32bf`, is audited
+against 7.206.23. The Talos generator, cluster API, charts, `go.mod` and `go.sum`
+are byte-identical. In the configuration-manager tree the only changed file is the
+generated `mocks.go` test double: `NewMockConfigManager` now marks itself and its
+cleanup as test helpers, and `Load` takes `any` instead of `interface{}`.
+`talos/configs.go` and `ksail/distribution.go` are byte-identical to 7.206.23, so
+`applySchematic`, `schematicKernelArgs`, `reconcileFoldedKernelArgs` and the
+schematic-ID guard are unchanged. This audit changes no cluster configuration or
+vulnerability exception.
+
+**7.206.33**, commit `69090121cd15884513f81afc68c7cc2d5dcc30fe`, is audited
+against 7.206.24. The configuration manager, Talos generator, cluster API and
+charts are byte-identical, so `applySchematic`, `schematicKernelArgs`,
+`reconcileFoldedKernelArgs` and the schematic-ID guard are unchanged. `go.mod`
+and `go.sum` move only the EKS SDK, `go-gh`, `go-colorful`, Wails, `goldmark`
+and the locally replaced `charmbracelet/x/ansi`; no `siderolabs` module moves,
+so the Talos machinery and its YAML encoders are unchanged. This audit changes
+no cluster configuration or vulnerability exception.
+
+**7.206.51**, commit `a84341a9950ab90c8661eaf0d06771cbfee92df5`, is audited
+against 7.206.33. The Talos generator, cluster API and charts are byte-identical.
+In the configuration-manager tree the only changed file is
+`vcluster/Dockerfile`, which moves the vCluster provider's image pins
+(`vcluster-pro` 0.37.4 to 0.37.5, `kubernetes` v1.37.1 to v1.37.2); `talos/`
+and `ksail/` are byte-identical, so `applySchematic`, `schematicKernelArgs`,
+`reconcileFoldedKernelArgs` and the schematic-ID guard are unchanged. `go.mod`
+and `go.sum` move only `copilot-sdk/go`, `kyverno/kyverno`, `kyverno/sdk` and
+`loft-sh/vcluster`, and drop the indirect `IGLOU-EU/go-wildcard`; no `siderolabs`
+module moves, so the Talos machinery and its YAML encoders are unchanged. This
+audit changes no cluster configuration or vulnerability exception.
+
+**7.206.57**, commit `b2f151ac5688e063d63ce721f4937a0a1742f3f1`, is audited
+against 7.206.51; 7.206.56 has the same inputs. The Talos generator, cluster API
+and charts are byte-identical. In the configuration-manager tree the only changed
+file is `vcluster/Dockerfile`, which moves the vCluster provider's `kubernetes`
+v1.37.2 image to a new digest; `talos/` and `ksail/` are byte-identical, so
+`applySchematic`, `schematicKernelArgs`, `reconcileFoldedKernelArgs` and the
+schematic-ID guard are unchanged. `go.mod` and `go.sum` move only cloud SDK,
+`copilot-sdk/go`, `hcloud-go`, Prometheus, `klauspost/compress`, `x/net`,
+`x/time` and Google API modules; no `siderolabs` or YAML module moves, so the
+Talos machinery and its YAML encoders are unchanged. This audit changes no
+cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

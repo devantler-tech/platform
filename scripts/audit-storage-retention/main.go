@@ -1,3 +1,5 @@
+// Command audit-storage-retention audits a captured, read-only list of the
+// cluster's volumes and claims for storage retention, reporting only counts.
 package main
 
 import (

@@ -1,3 +1,4 @@
+---
 # Block all ingress traffic by default. Explicit allow rules are defined
 # per node role in control-planes/ and workers/ directories.
 #

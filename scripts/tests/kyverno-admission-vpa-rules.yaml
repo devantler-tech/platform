@@ -1,3 +1,4 @@
+---
 rules:
   # A warning is intentional here: the shell harness requires this marker in
   # KSail's output, proving that the rendered chart still contains the target

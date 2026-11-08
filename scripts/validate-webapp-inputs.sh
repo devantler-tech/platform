@@ -8,7 +8,7 @@ if [ "$#" -gt 1 ]; then
 fi
 input="${1:--}"
 case "$input" in
-  -|/*) ;;
+  - | /*) ;;
   *) input="$(pwd -P)/$input" ;;
 esac
 if ! GOWORK=off go -C "$root" run ./scripts/validate-webapp-inputs json "$input" "$root/scripts/webapp-inputs.jq" >/dev/null; then

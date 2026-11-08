@@ -886,7 +886,9 @@ pass 'the rendered in-pod loop runs as a pod would: delivered, complete black-ho
 wf="$(cat "${workflow}")"
 output="${wf}"
 rc=0
-on_block="$(awk '/^on:/{f=1; next} f&&/^[a-z]/{exit} f' "${workflow}")"
+# The trigger key is quoted ("on":) so YAML 1.1 readers keep it a string, not `true`.
+on_block="$(awk '/^"?on"?:/{f=1; next} f&&/^[a-z]/{exit} f' "${workflow}")"
+[ -n "${on_block}" ] || fail 'the workflow trigger block could not be read'
 grep -Fq 'workflow_dispatch:' <<<"${on_block}" || fail 'the workflow must be dispatch-triggered'
 if grep -Eq '^[[:space:]]*(schedule|pull_request|pull_request_target|push|merge_group|workflow_run):' <<<"${on_block}"; then
   fail 'the workflow must have no trigger other than workflow_dispatch'

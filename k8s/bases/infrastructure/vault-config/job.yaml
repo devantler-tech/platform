@@ -152,7 +152,7 @@ spec:
       initContainers:
         # The minimal mc image needs static tools for snapshot-name selection.
         - name: install-fetch-tools
-          image: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+          image: docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6
           command: ["/bin/sh", "-ec", "cp /bin/busybox /tools/busybox; /tools/busybox --install -s /tools"]
           securityContext:
             allowPrivilegeEscalation: false
@@ -985,6 +985,18 @@ spec:
               }
               POLICY
 
+              # Read-only replacement preflight (#5836): the Raft membership the
+              # quorum judge decides on, and revoking its own token when done.
+              # Health needs no token, so it is not granted here.
+              bao policy write openbao-replacement-observer - <<'POLICY'
+              path "sys/storage/raft/configuration" {
+                capabilities = ["read"]
+              }
+              path "auth/token/revoke-self" {
+                capabilities = ["update"]
+              }
+              POLICY
+
               bao policy write vault-snapshot-readonly - <<'POLICY'
               path "sys/health" {
                 capabilities = ["read"]
@@ -1265,6 +1277,19 @@ spec:
                 bound_service_account_namespaces=openbao \
                 policies=vault-snapshot-readonly \
                 ttl=15m
+
+              # Minted per run by the protected replacement preflight (#5836);
+              # no default policy, and a token that outlives a run expires fast.
+              bao write auth/kubernetes/role/openbao-replacement-observer - <<'REPLACEMENT_OBSERVER_ROLE'
+              {
+                "bound_service_account_names": ["openbao-replacement-observer"],
+                "bound_service_account_namespaces": ["openbao"],
+                "token_policies": ["openbao-replacement-observer"],
+                "token_no_default_policy": true,
+                "token_ttl": 300,
+                "token_max_ttl": 300
+              }
+              REPLACEMENT_OBSERVER_ROLE
 
               # Weekly umami blue/green credential rotation (#4107).
               bao write auth/kubernetes/role/umami-db-rotator \

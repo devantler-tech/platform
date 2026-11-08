@@ -7,21 +7,26 @@ assert_diagnostic_log_privacy() {
   local log=$1 secret
   shift
   if ! grep -Fq 'server.startup' "$log"; then
-    echo 'FAIL: normal serving produced no startup diagnostic event' >&2; return 1
+    echo 'FAIL: normal serving produced no startup diagnostic event' >&2
+    return 1
   fi
   for secret in "$@"; do
     if grep -Fq -f "$secret" "$log"; then
-      echo 'FAIL: a generated fixture credential appeared in server logs' >&2; return 1
+      echo 'FAIL: a generated fixture credential appeared in server logs' >&2
+      return 1
     fi
   done
   if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$log"; then
-    echo 'FAIL: a recovery credential appeared in server logs' >&2; return 1
+    echo 'FAIL: a recovery credential appeared in server logs' >&2
+    return 1
   fi
   if grep -Eqi '(^|[^[:alnum:]_-])(smtp|imap|jmap|auth|oauth|message|message-ingest|queue|delivery|http|websocket)\.[[:alnum:]_-]+' "$log"; then
-    echo 'FAIL: excluded message or authentication events appeared in server logs' >&2; return 1
+    echo 'FAIL: excluded message or authentication events appeared in server logs' >&2
+    return 1
   fi
   if grep -Fq -e 'Native policy proof' -e 'mail-policy@example.test' -e 'Preserved native mail fixture.' -e 'Human submission proof' -e 'Receiving continuity' -e 'Native client retention proof' -e 'private-canary' "$log"; then
-    echo 'FAIL: private fixture message content appeared in server logs' >&2; return 1
+    echo 'FAIL: private fixture message content appeared in server logs' >&2
+    return 1
   fi
 }
 test_diagnostic_log_privacy() (
@@ -48,7 +53,10 @@ test_diagnostic_log_privacy
 if [ "${1:-}" = --test-log-privacy ]; then exit 0; fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture_user="$(id -u):$(id -g)"
-[ "$(id -u)" != 0 ] || { echo 'FAIL: native mail proof requires an unprivileged fixture user' >&2; exit 1; }
+[ "$(id -u)" != 0 ] || {
+  echo 'FAIL: native mail proof requires an unprivileged fixture user' >&2
+  exit 1
+}
 scratch="$(mktemp -d)"
 name="mail-config-$(basename "$scratch" | tr '[:upper:]' '[:lower:]')"
 network="${name}-network"
@@ -60,11 +68,11 @@ cleanup() {
   local rc=$? cleanup_rc=0
   trap - EXIT
   if [ "$proxy_started" = 1 ]; then
-    docker rm -fv "$proxy_name" > /dev/null 2>&1 || cleanup_rc=1
+    docker rm -fv "$proxy_name" >/dev/null 2>&1 || cleanup_rc=1
   fi
-  docker rm -fv "$name" > /dev/null 2>&1 || cleanup_rc=1
-  docker network rm "$network" > /dev/null 2>&1 || cleanup_rc=1
-  docker image rm "$name-bootstrap-image" > /dev/null 2>&1 || cleanup_rc=1
+  docker rm -fv "$name" >/dev/null 2>&1 || cleanup_rc=1
+  docker network rm "$network" >/dev/null 2>&1 || cleanup_rc=1
+  docker image rm "$name-bootstrap-image" >/dev/null 2>&1 || cleanup_rc=1
   rm -rf "$scratch"
   if [ "$rc" = 0 ] && [ "$cleanup_rc" != 0 ]; then
     echo 'FAIL: native mail proof cleanup was not confirmed' >&2
@@ -102,7 +110,8 @@ docker run --rm --network none --read-only --user "$fixture_user" --cpus 1 --mem
   --entrypoint /reader-proof.test "$name-bootstrap-image" \
   -test.run '^TestNativeRecoveryReaderSecurity$' -test.timeout 30s
 [ "$(docker image inspect "$name-bootstrap-image" --format '{{.Config.User}}')" = '2000:2000' ] || {
-  echo 'FAIL: bootstrap image lost its unprivileged deployment identity' >&2; exit 1;
+  echo 'FAIL: bootstrap image lost its unprivileged deployment identity' >&2
+  exit 1
 }
 docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
   --security-opt no-new-privileges:true --entrypoint /bin/sh "$name-bootstrap-image" \
@@ -173,7 +182,7 @@ start_server() {
     --mount "type=bind,source=$data_dir,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
     "${recovery[@]}" "${application_assets[@]}" --entrypoint /usr/local/bin/stalwart "$name-bootstrap-image" --config /etc/stalwart/config.json >/dev/null
-  for ((attempt=0;attempt<60;attempt++)); do
+  for ((attempt = 0; attempt < 60; attempt++)); do
     if docker exec "$name" curl --fail --silent --max-time 2 "http://127.0.0.1:$health_port/healthz/ready" >/dev/null 2>&1; then
       return 0
     fi
@@ -270,17 +279,26 @@ verify_rendered_self_checks() {
     check_command=()
     while IFS= read -r -d '' arg; do check_command+=("$arg"); done < <(jq -j --arg probe "$probe" '.[$probe].exec.command[] | ., "\u0000"' "$scratch/health-container.json")
     docker exec "$target" "${check_command[@]}" >"$scratch/$probe.stdout" 2>"$scratch/$probe.stderr"
-    [ ! -s "$scratch/$probe.stdout" ] || { echo 'FAIL: a self-check printed response content' >&2; exit 1; }
+    [ ! -s "$scratch/$probe.stdout" ] || {
+      echo 'FAIL: a self-check printed response content' >&2
+      exit 1
+    }
     refused_command=("${check_command[@]}")
     rewritten=0
     for i in "${!refused_command[@]}"; do
       refused_command[i]="${refused_command[i]//$loopback/127.0.0.1:1}"
-      if [[ "${refused_command[i]}" != "${check_command[i]}" ]]; then rewritten=$((rewritten+1)); fi
+      if [[ "${refused_command[i]}" != "${check_command[i]}" ]]; then rewritten=$((rewritten + 1)); fi
     done
-    [ "$rewritten" = 1 ] || { echo 'FAIL: self-check lacks its unique loopback target' >&2; exit 1; }
+    [ "$rewritten" = 1 ] || {
+      echo 'FAIL: self-check lacks its unique loopback target' >&2
+      exit 1
+    }
     status=0
     docker exec "$target" "${refused_command[@]}" >"$scratch/$probe-refused.stdout" 2>"$scratch/$probe-refused.stderr" || status=$?
-    [ "$status" = 7 ] || { echo 'FAIL: the native connection-refusal control was not observed' >&2; exit 1; }
+    [ "$status" = 7 ] || {
+      echo 'FAIL: the native connection-refusal control was not observed' >&2
+      exit 1
+    }
     docker exec "$target" "${check_command[@]}" >"$scratch/$probe-recovered.stdout" 2>"$scratch/$probe-recovered.stderr"
   done
   echo 'PASS: actual rendered self-checks accept native health and reject an unreachable endpoint'
@@ -324,7 +342,11 @@ printf '%s' '{"aliases":{}}' >"$scratch/clear-owned-aliases.json"
 for collision in user-primary group-primary user-alias disabled-user-alias list-primary list-alias; do
   object=Account
   response_index=10
-  case "$collision" in list-*) object=MailingList; response_index=12 ;; esac
+  case "$collision" in list-*)
+    object=MailingList
+    response_index=12
+    ;;
+  esac
   native_cli update Account "$maintainer_id" --file /proof/clear-owned-aliases.json >"$scratch/clear-owned.out" 2>"$scratch/clear-owned.err"
   jq -cn --arg kind "$collision" --arg object "$object" --arg domain "$domain_id" '
     ({name:(if ($kind|endswith("-primary")) then "former-a" else "owned-negative" end),domainId:$domain}
@@ -337,13 +359,15 @@ for collision in user-primary group-primary user-alias disabled-user-alias list-
   negative_id=$(jq -er --argjson i "$response_index" --arg kind "$collision" '.methodResponses[$i][1].list|map(select(.name==(if ($kind|endswith("-primary")) then "former-a" else "owned-negative" end)))|if length==1 then .[0].id else error("ambiguous owned negative") end' "$scratch/inputs/listener-inventory.json")
   jq -S --argjson i "$response_index" --arg id "$negative_id" '.methodResponses[$i][1].list|map(select(.id==$id))' "$scratch/inputs/listener-inventory.json" >"$scratch/receiving-owner-before.json"
   if prepare_plan "$scratch/unsafe-receiving.ndjson" >"$scratch/receiving-refusal.log" 2>&1; then
-    echo 'FAIL: a competing receiving owner produced a plan' >&2; exit 1
+    echo 'FAIL: a competing receiving owner produced a plan' >&2
+    exit 1
   fi
   [ ! -e "$scratch/unsafe-receiving.ndjson" ]
   docker stop --time 30 "$name" >/dev/null
   docker rm "$name" >/dev/null
   if run_bootstrap; then
-    echo 'FAIL: bootstrap took a competing receiving address' >&2; exit 1
+    echo 'FAIL: bootstrap took a competing receiving address' >&2
+    exit 1
   fi
   start_server preparation
   inventory
@@ -363,7 +387,8 @@ native_cli update Account "$maintainer_id" --file /proof/drift-aliases.json >"$s
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 if run_bootstrap; then
-  echo 'FAIL: bootstrap trusted a stale receiving snapshot' >&2; exit 1
+  echo 'FAIL: bootstrap trusted a stale receiving snapshot' >&2
+  exit 1
 fi
 start_server preparation
 inventory
@@ -375,13 +400,15 @@ native_cli update Account "$maintainer_id" --file /proof/approved-aliases.json >
 printf '%s\n' '{"@type":"upsert","object":"NetworkListener","matchOn":["name"],"value":{"negative":{"name":"unexpected","protocol":"smtp","bind":{"0.0.0.0:3456":true},"useTls":false}}}' >"$scratch/negative.ndjson"
 native_cli apply --file /proof/negative.ndjson --json >"$scratch/negative-apply.jsonl" 2>"$scratch/negative-apply.err"
 if prepare_plan "$scratch/unsafe-plan.ndjson" >"$scratch/negative-render.log" 2>&1; then
-  echo 'FAIL: unexpected native listener was accepted' >&2; exit 1
+  echo 'FAIL: unexpected native listener was accepted' >&2
+  exit 1
 fi
 [ ! -e "$scratch/unsafe-plan.ndjson" ]
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 if run_bootstrap; then
-  echo 'FAIL: bootstrap permitted serving after unsafe inventory' >&2; exit 1
+  echo 'FAIL: bootstrap permitted serving after unsafe inventory' >&2
+  exit 1
 fi
 start_server preparation
 native_cli query NetworkListener --where name=unexpected --fields id --json >"$scratch/negative-listener.jsonl"
@@ -393,13 +420,15 @@ jq -s '[.[].id] | if length==1 then . else error("negative listener identity is 
 printf '%s\n' '{"@type":"upsert","object":"Application","matchOn":["description"],"value":{"negative":{"description":"Unexpected fixture application","enabled":false,"resourceUrl":"file:///usr/local/share/stalwart/webui.zip","urlPrefix":{"/unexpected":true}}}}' >"$scratch/negative-application.ndjson"
 native_cli apply --file /proof/negative-application.ndjson --json >"$scratch/negative-application-apply.jsonl" 2>"$scratch/negative-application-apply.err"
 if prepare_plan "$scratch/unsafe-application-plan.ndjson" >"$scratch/negative-application-render.log" 2>&1; then
-  echo 'FAIL: unexpected native application was accepted' >&2; exit 1
+  echo 'FAIL: unexpected native application was accepted' >&2
+  exit 1
 fi
 [ ! -e "$scratch/unsafe-application-plan.ndjson" ]
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 if run_bootstrap; then
-  echo 'FAIL: bootstrap permitted serving after an unexpected application' >&2; exit 1
+  echo 'FAIL: bootstrap permitted serving after an unexpected application' >&2
+  exit 1
 fi
 start_server preparation
 inventory
@@ -426,7 +455,8 @@ domain_id=$(jq -er '[.methodResponses[6][1].list[]|select(.name=="example.test")
 printf '%s' '{"aliases":{"example.invalid":true}}' >"$scratch/sink-alias-patch.json"
 native_cli update Domain "$domain_id" --file /proof/sink-alias-patch.json >"$scratch/sink-alias.out" 2>"$scratch/sink-alias.err"
 if prepare_plan "$scratch/unsafe-sink-plan.ndjson" >"$scratch/sink-negative.log" 2>&1; then
-  echo 'FAIL: a registered rejection-domain alias was accepted' >&2; exit 1
+  echo 'FAIL: a registered rejection-domain alias was accepted' >&2
+  exit 1
 fi
 [ ! -e "$scratch/unsafe-sink-plan.ndjson" ]
 printf '%s' '{"aliases":{}}' >"$scratch/restore-alias-patch.json"
@@ -521,21 +551,25 @@ auth_advertised() {
 protocol_curl --fail "${smtp[@]}" --config /proof/agent.curl --mail-rcpt maintainer@example.test >"$scratch/allowed.out" 2>"$scratch/allowed.err"
 for recipient in operator@example.test someone@remote.example.test maintainer+tag@example.test former-a@example.test former-b@example.test; do
   if protocol_curl "${smtp[@]}" --config /proof/agent.curl --mail-rcpt "$recipient" >"$scratch/denied.out" 2>"$scratch/denied.err"; then
-    echo 'FAIL: agent recipient restriction was bypassed' >&2; exit 1
+    echo 'FAIL: agent recipient restriction was bypassed' >&2
+    exit 1
   fi
   grep -q '550' "$scratch/denied.err"
 done
 if protocol_curl --verbose "${smtp[@]}" --mail-rcpt maintainer@example.test >"$scratch/no-auth.out" 2>"$scratch/no-auth.err"; then
-  echo 'FAIL: submission accepted an unauthenticated envelope' >&2; exit 1
+  echo 'FAIL: submission accepted an unauthenticated envelope' >&2
+  exit 1
 fi
 grep -q '503' "$scratch/no-auth.err"
 # The same detector must see AUTH on submission. This probe supplies no
 # credentials, so capability logging cannot record an authentication secret.
 auth_advertised "$scratch/no-auth.err" || {
-  echo 'FAIL: authenticated-submission capabilities were not observed' >&2; exit 1;
+  echo 'FAIL: authenticated-submission capabilities were not observed' >&2
+  exit 1
 }
 if protocol_curl --silent --show-error --max-time 10 --url "smtp://$name:1025" --mail-from sender@remote.example.test --mail-rcpt someone@other.example.test --upload-file /proof/known.eml >"$scratch/relay.out" 2>"$scratch/relay.err"; then
-  echo 'FAIL: unauthenticated relay was accepted' >&2; exit 1
+  echo 'FAIL: unauthenticated relay was accepted' >&2
+  exit 1
 fi
 grep -q '550' "$scratch/relay.err"
 # Human submission retains normal external sending. The isolated .test
@@ -553,10 +587,12 @@ protocol_curl --fail --silent --show-error --verbose --max-time 10 \
   --ssl-reqd --url smtp://mail.example.test:1025 --mail-from sender@remote.example.test \
   --mail-rcpt maintainer@example.test --upload-file /proof/known.eml >"$scratch/mx-auth.out" 2>"$scratch/mx-capabilities.log"
 if [ "$(grep -c '^> EHLO ' "$scratch/mx-capabilities.log")" -lt 2 ]; then
-  echo 'FAIL: MX capabilities were not observed before and after TLS' >&2; exit 1
+  echo 'FAIL: MX capabilities were not observed before and after TLS' >&2
+  exit 1
 fi
 if auth_advertised "$scratch/mx-capabilities.log"; then
-  echo 'FAIL: MX offered agent authentication' >&2; exit 1
+  echo 'FAIL: MX offered agent authentication' >&2
+  exit 1
 fi
 for alias in former-a former-b; do
   printf 'From: sender@remote.example.test\r\nTo: %s@example.test\r\nSubject: Receiving continuity %s\r\nMessage-ID: <%s-receiving@example.test>\r\n\r\nReceiving continuity %s proof.\r\n' "$alias" "$alias" "$alias" "$alias" >"$scratch/alias.eml"
@@ -569,7 +605,8 @@ for alias in former-a former-b; do
   cp "$scratch/$alias-receiving-metadata.json" "$scratch/$alias-receiving-before.json"
 done
 if protocol_curl --silent --show-error --max-time 10 --url "smtp://$name:1025" --mail-from sender@remote.example.test --mail-rcpt unknown@example.test --upload-file /proof/known.eml >"$scratch/unknown-recipient.out" 2>"$scratch/unknown-recipient.err"; then
-  echo 'FAIL: an undeclared receiving address was accepted' >&2; exit 1
+  echo 'FAIL: an undeclared receiving address was accepted' >&2
+  exit 1
 fi
 grep -q '550' "$scratch/unknown-recipient.err"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/agent.curl "http://$name:8080/jmap/session" >"$scratch/session.json"
@@ -624,12 +661,14 @@ if [ "$recovery_mail_status" = 200 ]; then
     "$scratch/recovery-mail-result.json" >/dev/null; then
     echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_UNAVAILABLE mode=recovery'
   else
-    echo 'FAIL: native recovery mailbox protocol returned an unclassified response' >&2; exit 1
+    echo 'FAIL: native recovery mailbox protocol returned an unclassified response' >&2
+    exit 1
   fi
 elif [ "$recovery_mail_status" = 401 ] || [ "$recovery_mail_status" = 403 ]; then
   echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_UNAVAILABLE mode=recovery'
 else
-  echo 'FAIL: native recovery mailbox protocol returned an unexpected status' >&2; exit 1
+  echo 'FAIL: native recovery mailbox protocol returned an unexpected status' >&2
+  exit 1
 fi
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
@@ -708,7 +747,8 @@ jq -e '.methodResponses[0][0]=="Email/query"' "$scratch/expiry-restored.json" >/
 echo 'PASS: native client credential and primary expiration survive complete initializer re-entry'
 protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/admin/login" >"$scratch/refreshed-interface.html"
 if grep -q 'previous-ui-cache-canary' "$scratch/refreshed-interface.html"; then
-  echo 'FAIL: bootstrap reused the previous cached administration bundle' >&2; exit 1
+  echo 'FAIL: bootstrap reused the previous cached administration bundle' >&2
+  exit 1
 fi
 verify_administration_assets
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
@@ -741,7 +781,8 @@ for log in "$scratch/smtp-auth-server.log" "$scratch/server.log"; do
   assert_diagnostic_log_privacy "$log" "$scratch/inputs/"*-password "$scratch/old-maintainer-password" "$scratch/client-password"
 done
 if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$scratch/server.log"; then
-  echo 'FAIL: a recovery credential appeared in server logs' >&2; exit 1
+  echo 'FAIL: a recovery credential appeared in server logs' >&2
+  exit 1
 fi
 # The new transport policy is opt-in. Exercise native persisted readback in
 # both directions without changing the fixture's identities or mailbox data.
@@ -752,7 +793,8 @@ for forwarded in true false; do
     "$scratch/inputs/settings.json" >"$scratch/inputs/settings.next"
   mv "$scratch/inputs/settings.next" "$scratch/inputs/settings.json"
   if [ "$forwarded" = true ] && run_bootstrap --proxy-client-ip=true; then
-    echo 'FAIL: bootstrap combined HTTP and transport identity modes' >&2; exit 1
+    echo 'FAIL: bootstrap combined HTTP and transport identity modes' >&2
+    exit 1
   fi
   run_bootstrap
   start_server serving
@@ -787,10 +829,16 @@ for proxy_enabled in true false; do
   direct_status=0
   docker exec "$name" /usr/bin/curl --disable --noproxy '*' --silent \
     --max-time 3 http://127.0.0.1:18081/healthz/ready >"$scratch/proxy-direct.out" 2>"$scratch/proxy-direct.err" || direct_status=$?
-  [ "$direct_status" != 0 ] || { echo 'FAIL: native proxy listener accepted a request without its transport envelope' >&2; exit 1; }
+  [ "$direct_status" != 0 ] || {
+    echo 'FAIL: native proxy listener accepted a request without its transport envelope' >&2
+    exit 1
+  }
 
   yq -r '.configMapGenerator[0].literals[0] | sub("^Caddyfile=", "")' "$root/k8s/bases/apps/private-mail-proxy-identity/kustomization.yaml" >"$scratch/ClientProxy.Caddyfile"
-  [ -s "$scratch/ClientProxy.Caddyfile" ] || { echo 'FAIL: the client proxy configuration could not be read' >&2; exit 1; }
+  [ -s "$scratch/ClientProxy.Caddyfile" ] || {
+    echo 'FAIL: the client proxy configuration could not be read' >&2
+    exit 1
+  }
   proxy_started=1
   docker run --detach --name "$proxy_name" --network "container:$name" --read-only \
     --user "$fixture_user" --cpus 0.1 --memory 64m --cap-drop ALL \
@@ -799,24 +847,31 @@ for proxy_enabled in true false; do
     --entrypoint /usr/local/bin/caddy "$name-bootstrap-image" \
     run --config /etc/email-client-proxy/Caddyfile --adapter caddyfile >"$scratch/proxy-start.out" 2>"$scratch/proxy-start.err"
   proxy_ready=0
-  for ((attempt=0; attempt<30; attempt++)); do
+  for ((attempt = 0; attempt < 30; attempt++)); do
     if docker exec "$proxy_name" /usr/bin/curl --disable --noproxy '*' --fail --silent \
       --max-time 2 --header 'X-Forwarded-For: 127.0.0.1' http://127.0.0.1:8081/healthz/ready >/dev/null 2>&1; then
-      proxy_ready=1; break
+      proxy_ready=1
+      break
     fi
     sleep 1
   done
-  [ "$proxy_ready" = 1 ] || { echo 'FAIL: native proxy-to-mail health did not become ready' >&2; exit 1; }
+  [ "$proxy_ready" = 1 ] || {
+    echo 'FAIL: native proxy-to-mail health did not become ready' >&2
+    exit 1
+  }
   verify_rendered_self_checks private-mail-proxy-identity client-proxy "$proxy_name" 127.0.0.1:8081
 
   for client_ip in 198.51.100.9 198.51.100.10 2001:db8::9 2001:db8::10 10.20.30.40 fd00::9; do
     expected=200
-    case "$client_ip" in 198.51.100.9|2001:db8::9) expected=502 ;; esac
+    case "$client_ip" in 198.51.100.9 | 2001:db8::9) expected=502 ;; esac
     status=$(protocol_curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' \
       --header "X-Forwarded-For: $client_ip" --header 'Forwarded: for=203.0.113.22' \
       --header 'X-Real-IP: 203.0.113.23' --header 'X-Email-Private-Canary: email-proxy-private-canary' \
       "http://$name:8081/healthz/ready?private=email-proxy-private-canary")
-    [ "$status" = "$expected" ] || { echo 'FAIL: native mail ban or per-client identity did not survive proxying' >&2; exit 1; }
+    [ "$status" = "$expected" ] || {
+      echo 'FAIL: native mail ban or per-client identity did not survive proxying' >&2
+      exit 1
+    }
   done
   for malformed in missing duplicate chain invalid invalid-ipv6; do
     header_args=()
@@ -828,14 +883,18 @@ for proxy_enabled in true false; do
     esac
     status=$(protocol_curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' \
       "${header_args[@]}" "http://$name:8081/healthz/ready")
-    [ "$status" = 400 ] || { echo 'FAIL: native proxy accepted missing or ambiguous identity metadata' >&2; exit 1; }
+    [ "$status" = 400 ] || {
+      echo 'FAIL: native proxy accepted missing or ambiguous identity metadata' >&2
+      exit 1
+    }
   done
   protocol_curl --fail --silent --show-error --max-time 5 --config /proof/administrator.curl \
     --header 'X-Forwarded-For: 198.51.100.10' "http://$name:8081/jmap/session" >"$scratch/proxy-administrator-session.json"
   jq -e '.accounts|type=="object" and length>0' "$scratch/proxy-administrator-session.json" >/dev/null
   docker logs "$proxy_name" >"$scratch/proxy-runtime.log" 2>&1
   if grep -Fq 'email-proxy-private-canary' "$scratch/proxy-runtime.log"; then
-    echo 'FAIL: private request metadata reached the proxy log' >&2; exit 1
+    echo 'FAIL: private request metadata reached the proxy log' >&2
+    exit 1
   fi
   administration_cli query AllowedIp --fields id,address --json >"$scratch/allowed-after.jsonl"
   jq -sS 'sort_by(.id)' "$scratch/allowed-after.jsonl" >"$scratch/allowed-after.json"

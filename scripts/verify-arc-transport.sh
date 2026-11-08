@@ -2,11 +2,14 @@
 # Protected-main-only challenge; never reads an App key, Secret or runner JIT data.
 set -Eeuo pipefail
 umask 077
-fail() { printf 'ARC transport: FAIL at %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'ARC transport: FAIL at %s\n' "$1" >&2
+  exit 1
+}
 [[ "$#" == 1 && "$1" == --same-node ]] || fail arguments
 [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform &&
-   "${GITHUB_REF:-}" == refs/heads/main && "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ &&
-   "${GITHUB_RUN_ID:-}" =~ ^[1-9][0-9]{0,19}$ && "${GITHUB_RUN_ATTEMPT:-}" =~ ^[1-9][0-9]{0,2}$ ]] || fail identity
+  "${GITHUB_REF:-}" == refs/heads/main && "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ &&
+  "${GITHUB_RUN_ID:-}" =~ ^[1-9][0-9]{0,19}$ && "${GITHUB_RUN_ATTEMPT:-}" =~ ^[1-9][0-9]{0,2}$ ]] || fail identity
 current_main() { [[ "$(timeout 20s gh api repos/devantler-tech/platform/branches/main --jq .commit.sha 2>/dev/null)" == "$GITHUB_SHA" ]] || fail moved-main; }
 current_main
 readonly context=admin@prod namespace=arc-runners host=openbao-arc.openbao.svc.cluster.local
@@ -39,10 +42,16 @@ cleanup_probe() {
 cleanup() {
   local result=$? failed=0
   trap - EXIT ERR INT TERM
-  if [[ -n "$forward_pid" ]]; then kill "$forward_pid" 2>/dev/null || true; wait "$forward_pid" 2>/dev/null || true; fi
+  if [[ -n "$forward_pid" ]]; then
+    kill "$forward_pid" 2>/dev/null || true
+    wait "$forward_pid" 2>/dev/null || true
+  fi
   cleanup_probe || failed=1
   rm -rf "$scratch"
-  if [[ "$failed" != 0 ]]; then printf 'ARC transport: FAIL cleanup\n' >&2; exit 4; fi
+  if [[ "$failed" != 0 ]]; then
+    printf 'ARC transport: FAIL cleanup\n' >&2
+    exit 4
+  fi
   printf 'ARC transport: owned probe cleanup verified\n'
   exit "$result"
 }
@@ -141,7 +150,10 @@ kc -n external-secrets get pods -l app.kubernetes.io/name=external-secrets -o js
 jq -e '(.items | length) > 0 and all(.items[]; .metadata.uid != null and .spec.nodeName != null and
  any(.status.conditions[]; .type == "Ready" and .status == "True") and
  all(.status.containerStatuses[]; .ready == true and .containerID != ""))' "$scratch/eso.json" >/dev/null
-{ printf '%s\n' "$bao_node"; jq -r '.items[].spec.nodeName' "$scratch/eso.json"; } | sort -u >"$scratch/nodes"
+{
+  printf '%s\n' "$bao_node"
+  jq -r '.items[].spec.nodeName' "$scratch/eso.json"
+} | sort -u >"$scratch/nodes"
 [[ "$(wc -l <"$scratch/nodes")" -le 4 ]] || fail exposure-bound
 stage=healthy-health-forward
 # Positive health controls use loopback-only tunnels to this exact Pod. The
@@ -182,13 +194,13 @@ while IFS= read -r node; do
   observer_node="$node"
   [[ "$cluster" == default ]] || observer_node="$cluster/$node"
   stage=same-node-challenge
-  count=$((count+1))
+  count=$((count + 1))
   probe="arc-transport-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$count"
   kc get node "$node" -o json >"$scratch/node.json"
   jq -e '.metadata.uid != null and .metadata.labels["platform.devantler.tech/ci-runner"] != "enabled" and
     any(.status.conditions[]; .type == "Ready" and .status == "True")' "$scratch/node.json" >/dev/null
-  kc -n kube-system get pods -l k8s-app=cilium --field-selector "spec.nodeName=$node" -o json \
-    | jq -e 'if (.items | length) == 1 then .items[0] else error("observer count") end |
+  kc -n kube-system get pods -l k8s-app=cilium --field-selector "spec.nodeName=$node" -o json |
+    jq -e 'if (.items | length) == 1 then .items[0] else error("observer count") end |
       select(any(.status.conditions[]; .type == "Ready" and .status == "True"))' >"$scratch/agent.json"
   agent=$(jq -er '.metadata.name' "$scratch/agent.json")
   quiet kc -n kube-system exec "$agent" -c cilium-agent -- hubble status --server unix:///var/run/cilium/hubble.sock --timeout 5s --request-timeout 5s --output json
@@ -247,7 +259,8 @@ while IFS= read -r node; do
   for destination_port in 8200 8204; do
     healthy
     start=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
-    scheme=http; [[ "$destination_port" == 8204 ]] && scheme=https
+    scheme=http
+    [[ "$destination_port" == 8204 ]] && scheme=https
     stage=same-node-denial-challenge
     if quiet kc -n "$namespace" exec "$probe" -c probe -- curl --noproxy '*' --connect-timeout 3 --max-time 5 \
       --silent --show-error --output /dev/null "$scheme://$bao_ip:$destination_port/v1/sys/health?standbyok=true"; then fail reachable-openbao; else result=$?; fi
@@ -279,7 +292,9 @@ while IFS= read -r node; do
   stage=same-node-workload-bindings
   for binding in 'arc-runners probe' 'kube-system agent' 'openbao bao'; do
     read -r ns object <<<"$binding"
-    name=$probe; [[ "$object" == agent ]] && name=$agent; [[ "$object" == bao ]] && name=openbao-2
+    name=$probe
+    [[ "$object" == agent ]] && name=$agent
+    [[ "$object" == bao ]] && name=openbao-2
     identity <"$scratch/$object.json" >"$scratch/before"
     kc -n "$ns" get pod "$name" -o json >"$scratch/current-pod.json"
     identity <"$scratch/current-pod.json" >"$scratch/after"
@@ -290,7 +305,10 @@ while IFS= read -r node; do
   jq -ce '{uid:.metadata.uid,ready:[.status.conditions[]|select(.type=="Ready")|.status]}' "$scratch/current-node.json" >"$scratch/after"
   jq -ce '{uid:.metadata.uid,ready:[.status.conditions[]|select(.type=="Ready")|.status]}' "$scratch/node.json" >"$scratch/before"
   cmp -s "$scratch/before" "$scratch/after" || fail node-churn
-  cleanup_probe || { printf 'ARC transport: FAIL cleanup\n' >&2; exit 4; }
+  cleanup_probe || {
+    printf 'ARC transport: FAIL cleanup\n' >&2
+    exit 4
+  }
 done <"$scratch/nodes"
 stage=final-bindings
 public_listener_boundary
@@ -301,7 +319,8 @@ cmp -s "$scratch/listener-before" "$scratch/after" || fail listener-configuratio
 for object in 'secretstore openbao' 'configmap arc-openbao-ca'; do
   read -r kind name <<<"$object"
   kc -n "$namespace" get "$kind" "$name" -o json | jq -Sc '{uid:.metadata.uid,spec:.spec,data:.data}' >"$scratch/after"
-  original=store; [[ "$kind" == configmap ]] && original=ca
+  original=store
+  [[ "$kind" == configmap ]] && original=ca
   jq -Sc '{uid:.metadata.uid,spec:.spec,data:.data}' "$scratch/$original.json" >"$scratch/before"
   cmp -s "$scratch/before" "$scratch/after" || fail transport-churn
 done

@@ -3,7 +3,10 @@
 # Candidate scripts, workflows and checkout code are never executed.
 set -euo pipefail
 umask 077
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 [[ "${CANDIDATE_PR:-}" =~ ^[1-9][0-9]*$ && "${CANDIDATE_HEAD:-}" =~ ^[0-9a-f]{40}$ ]] || fail 'candidate PR and exact SHA required'
 [[ "${RUNNER_TEMP:-}" == /* && -d "$RUNNER_TEMP" ]] || fail 'absolute runner scratch directory required'
 readonly candidate="${RUNNER_TEMP}/cilium-deny-candidate"

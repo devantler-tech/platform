@@ -39,6 +39,24 @@ spec:
   hostnames:
     - observability.${domain}
   rules:
+    # Coroot's MCP endpoint authenticates every request itself — a bearer OAuth
+    # token or a service-account API key, never the anonymous role — so agents
+    # reach exactly /mcp directly, without the browser SSO they cannot complete.
+    # Every other path still goes through oauth2-proxy. The backend is the
+    # coroot-mcp Service, which pins MCP sessions to one pod (see service.yaml).
+    - matches:
+        - path:
+            type: Exact
+            value: /mcp
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: coroot-mcp
+          port: 8080
     - filters:
         - type: ResponseHeaderModifier
           responseHeaderModifier:

@@ -40,6 +40,15 @@ expect_fail() {
   passed=$((passed + 1))
 }
 
+# A pass whose output must say $2.
+expect_pass_saying() {
+  local name="$1" reason="$2" output
+  shift 2
+  output="$(env ${@+"$@"} bash "${check}" 2>&1)" || fail "${name}: expected a pass, got: ${output}"
+  [[ "${output}" == *"${reason}"* ]] || fail "${name}: passed without saying '${reason}': ${output}"
+  passed=$((passed + 1))
+}
+
 # A Renovate config edited with a jq filter.
 renovate_with() {
   local file="${work}/renovate-$1.json"
@@ -56,8 +65,9 @@ guards_job="$(awk '
 grep -Fq 'bash scripts/tests/test-kyverno-1-20-cap.sh' <<<"${guards_job}" ||
   fail 'the Kyverno 1.20 cap test must run unconditionally in the repository guards job'
 
-# 1. As committed: kyverno.io policies remain and the cap holds.
-expect_pass 'committed tree'
+# 1. As committed: kyverno.io policies remain and the cap holds. Tenant Flux Kustomizations
+# read their own repositories, so the pass reports them as not examined (#5017).
+expect_pass_saying 'committed tree' 'Flux Kustomizations read other sources and were not examined'
 
 # 2. The cap is removed while a ClusterPolicy remains.
 no_caps="$(renovate_with no-caps 'del(.packageRules[] | select(has("allowedVersions") and ((.matchPackageNames // []) | (index("kyverno") or index("kyverno/kyverno")))))')"
@@ -166,6 +176,9 @@ metadata:
   namespace: flux-system
 spec:
   path: ./root
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
 YAML
   printf 'resources:\n  - config-map.yaml\n' >"${tree}/root/kustomization.yaml"
   printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: other\n' >"${tree}/root/config-map.yaml"
@@ -194,6 +207,68 @@ unrenderable="$(mini_tree unrenderable)"
 rm "${unrenderable}/root/kustomization.yaml"
 expect_fail 'root does not render' 'cannot render root,' "RENDER_K8S_ROOT=${unrenderable}"
 
+# A Kyverno chart HelmRelease named $2 at version $3, written to file $1.
+kyverno_release() {
+  cat >"$1" <<YAML
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: $2
+  namespace: kyverno
+spec:
+  chart:
+    spec:
+      chart: kyverno
+      version: $3
+YAML
+}
+
+# A Flux Kustomization in file $1 named $2 that builds path $3 from the source named $4.
+nested_kustomization() {
+  cat >"$1" <<YAML
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: $2
+  namespace: flux-system
+spec:
+  path: $3
+  sourceRef:
+    kind: OCIRepository
+    name: $4
+YAML
+}
+
+# 9g. A Flux Kustomization that a root renders and that reads the platform's own source is
+# followed and judged like a root (#5017).
+nested_local="$(mini_tree nested-local)"
+mkdir -p "${nested_local}/nested"
+nested_kustomization "${nested_local}/root/flux-kustomization.yaml" nested ./nested flux-system
+printf 'resources:\n  - config-map.yaml\n  - flux-kustomization.yaml\n' >"${nested_local}/root/kustomization.yaml"
+kyverno_release "${nested_local}/nested/helm-release.yaml" nested-kyverno 3.10.0
+printf 'resources:\n  - helm-release.yaml\n' >"${nested_local}/nested/kustomization.yaml"
+expect_fail 'nested platform Kustomization pins the 1.20 chart' \
+  'nested deploys the Kyverno chart in kyverno/nested-kyverno at 3.10.0, outside its cap' \
+  "RENDER_K8S_ROOT=${nested_local}"
+
+# 9h. A followed Flux Kustomization is held to the same build visibility as a root.
+nested_patches="$(mini_tree nested-patches)"
+nested_kustomization "${nested_patches}/root/flux-kustomization.yaml" nested ./nested flux-system
+printf '  patches:\n    - patch: "{}"\n' >>"${nested_patches}/root/flux-kustomization.yaml"
+printf 'resources:\n  - config-map.yaml\n  - flux-kustomization.yaml\n' >"${nested_patches}/root/kustomization.yaml"
+expect_fail 'nested platform Kustomization carries patches' \
+  'Flux Kustomization nested in root carries spec.patches' "RENDER_K8S_ROOT=${nested_patches}"
+
+# 9i. A Flux Kustomization that reads another source, such as a tenant repository, cannot be
+# rendered here. It is reported as unexamined rather than counted as clean.
+nested_tenant="$(mini_tree nested-tenant)"
+nested_kustomization "${nested_tenant}/root/flux-kustomization.yaml" tenant . tenant
+kyverno_release "${nested_tenant}/root/release-a.yaml" kyverno-a 3.9.2
+kyverno_release "${nested_tenant}/root/release-b.yaml" kyverno-b 3.9.2
+printf 'resources:\n  - flux-kustomization.yaml\n  - release-a.yaml\n  - release-b.yaml\n' >"${nested_tenant}/root/kustomization.yaml"
+expect_pass_saying 'tenant Kustomization reported as unexamined' \
+  '; 1 Flux Kustomizations read other sources and were not examined' "RENDER_K8S_ROOT=${nested_tenant}"
+
 # Manifest fixtures. Only the kyverno.io group counts; policies.kyverno.io is the new API.
 mkdir -p "${work}/migrated" "${work}/legacy" "${work}/empty"
 cat >"${work}/migrated/validating-policy.yaml" <<'YAML'
@@ -217,8 +292,10 @@ metadata:
 apiVersion: "kyverno.io/v2"
 YAML
 
-# 10. Migration finished but the cap is still in place: the check says to remove it.
+# 10. Migration finished but the cap is still in place: the check says to remove it, after
+# checking the tenant sources it cannot read (#5017).
 expect_fail 'cap outlives migration' 'remove the Kyverno 1.20 cap rules' "K8S_ROOT=${work}/migrated"
+expect_fail 'cap removal names the tenant check' 'first check every tenant source the platform deploys' "K8S_ROOT=${work}/migrated"
 
 # 11. Migration finished and the cap removed.
 expect_pass 'cap removed after migration' "K8S_ROOT=${work}/migrated" "RENOVATE_CONFIG=${no_caps}"
