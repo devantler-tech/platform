@@ -870,12 +870,12 @@ func TestFetchIsRetriedBeforeItFails(t *testing.T) {
 	dir, _ := sourceRepository(t)
 	bin := t.TempDir()
 	count := filepath.Join(bin, "fetches")
-	real, err := exec.LookPath("git")
+	realGit, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Fail the first fetch, then hand over to git.
-	script := "#!/bin/sh\nfor a in \"$@\"; do if [ \"$a\" = fetch ]; then echo x >> '" + count + "'; if [ \"$(wc -l < '" + count + "')\" -lt 2 ]; then echo transient >&2; exit 128; fi; fi; done\nexec '" + real + "' \"$@\"\n"
+	script := "#!/bin/sh\nfor a in \"$@\"; do if [ \"$a\" = fetch ]; then echo x >> '" + count + "'; if [ \"$(wc -l < '" + count + "')\" -lt 2 ]; then echo transient >&2; exit 128; fi; fi; done\nexec '" + realGit + "' \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

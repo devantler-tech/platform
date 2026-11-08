@@ -1,3 +1,5 @@
+// Command verify-email-data-recovery proves that Email mailbox data restores
+// from a fresh backup into an isolated server, without moving the serving claim.
 package main
 
 import (

@@ -106,7 +106,7 @@ func TestStorageOnlyAcceptsValidatedOptionalMissingBlob(t *testing.T) {
 
 func TestStorageRejectsInvalidRangesWithoutReading(t *testing.T) {
 	for _, tc := range []struct{ offset, length int64 }{{-1, -1}, {1, -1}, {0, -2}, {1 << 62, 1 << 62}} {
-		s, err := newStorage(t.Context(), testPolicy(), "access", "secret", roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		s, err := newStorage(t.Context(), testPolicy(), "access", "secret", roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 			t.Fatal("invalid range reached backend")
 			return nil, nil
 		}))

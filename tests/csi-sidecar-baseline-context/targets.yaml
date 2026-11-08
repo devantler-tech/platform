@@ -1,3 +1,4 @@
+---
 # The live shape measured against prod 2026-09-20T21:20Z: no pod-level
 # securityContext, one container, no container securityContext.
 apiVersion: apps/v1

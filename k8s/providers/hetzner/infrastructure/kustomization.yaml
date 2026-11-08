@@ -276,6 +276,12 @@ patches:
   # vault-snapshots, so no explicit target is needed.
   - path: patches/store-vault-snapshots-on-hcloud.yaml
   - path: patches/recover-vault-snapshot.yaml
+    target:
+      group: batch
+      version: v1
+      kind: Job
+      name: vault-snapshot-init
+      namespace: openbao
   # Prod-only: the vault-snapshot CronJob and Job mount that hcloud volume, so
   # both require a static baseline worker (#3287). JSON patches don't
   # self-identify, so each names its target.

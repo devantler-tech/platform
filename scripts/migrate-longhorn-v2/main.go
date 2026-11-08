@@ -1,3 +1,4 @@
+// Command migrate-longhorn-v2 prepares Longhorn V2 workers.
 package main
 
 import (

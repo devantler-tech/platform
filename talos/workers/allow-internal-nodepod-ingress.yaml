@@ -1,3 +1,4 @@
+---
 # Cluster-internal TCP reachable from the node CIDR and the pod CIDR on worker
 # nodes. Pairs with cluster/block-ingress-by-default.yaml.
 #   Hubble peer service 4244, node-exporter 9100 (Prometheus scraping),

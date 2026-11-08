@@ -1,0 +1,32 @@
+# Betterleaks configuration. MegaLinter's REPOSITORY_BETTERLEAKS extends this file, and this file
+# extends the upstream default ruleset. Each allowlist below sits on one rule and names one shape
+# that is not secret material, so a real credential anywhere else, or of another shape, still fails.
+# Test fixtures that can carry a comment use an inline `betterleaks:allow` instead.
+#
+# The allowlists are rule-level ([[rules.allowlists]]), not global [[allowlists]] with targetRules:
+# Betterleaks 1.7 attaches targetRules only in the top-level config, and MegaLinter's generated
+# config extends this one, so targeted global allowlists here are silently dropped.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "curl-auth-user"
+
+[[rules.allowlists]]
+description = "Container identities: `docker run --user <uid>:<gid>` near a curl call is a numeric user, not a curl credential."
+regexes = ['''^[0-9]+:[0-9]+$''']
+
+[[rules.allowlists]]
+description = "Disposable test accounts: the mail-server tests sign in as `fixture` to a throwaway local container."
+regexes = ['''^fixture:[a-z-]+$''']
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Go module checksums: an `h1:` go.sum line, as quoted in a vendored go.sum diff, is a public hash."
+regexTarget = "line"
+# The reported line can begin with the preceding newline, so allow leading whitespace before the
+# optional diff marker.
+regexes = ['''^\s*[+ -]?\S+ v\S+ h1:[A-Za-z0-9+/]{43}=\s*$''']

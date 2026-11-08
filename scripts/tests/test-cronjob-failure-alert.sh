@@ -22,7 +22,10 @@ readonly documented_manifest='bases/components/coroot-cronjob-failure-alert/cron
 readonly real_webhook='https://hooks.test.invalid/delivery-target'
 readonly placeholder_webhook='https://example.invalid/no-slack-configured'
 
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 pass() { printf 'ok: %s\n' "$1"; }
 
 for tool in yq jq; do
@@ -245,7 +248,11 @@ expect_error() { # dir label stderr-needle
 
 # The shape #2915 is about: the newest two runs both failed.
 dir="$(setup_scenario consecutive)"
-{ job run-4 Failed 60; job run-3 Failed 960; job run-2 Complete 1860; } | job_list >"${dir}/jobs.body"
+{
+  job run-4 Failed 60
+  job run-3 Failed 960
+  job run-2 Complete 1860
+} | job_list >"${dir}/jobs.body"
 expect_alert "$dir" 'two consecutive failed runs alert, naming the target and both runs' \
   'umami/umami-provision-tenants' 'the last 2 runs all failed' run-4 run-3 BackoffLimitExceeded
 grep -Fq 'run-2' "${dir}/tmp/payload.json" && fail 'a run outside the failure window was named'
@@ -254,38 +261,65 @@ dir="$(setup_scenario kubescape-single-failure)"
 job cleanup-failed Failed 60 kubescape-hostdata-cleanup | job_list >"${dir}/jobs.body"
 WATCH_OVERRIDE='kubescape/kubescape-hostdata-cleanup:1:93600' \
   expect_alert "$dir" 'the daily Kubescape cleanup alerts on its first failed run' \
-    'kubescape/kubescape-hostdata-cleanup' 'the last 1 runs all failed' cleanup-failed
+  'kubescape/kubescape-hostdata-cleanup' 'the last 1 runs all failed' cleanup-failed
 
 # Ordering is by schedule time, not list order: the same runs listed oldest
 # first must give the same verdict.
 dir="$(setup_scenario list-order)"
-{ job run-2 Complete 1860; job run-3 Failed 960; job run-4 Failed 60; } | job_list >"${dir}/jobs.body"
+{
+  job run-2 Complete 1860
+  job run-3 Failed 960
+  job run-4 Failed 60
+} | job_list >"${dir}/jobs.body"
 expect_alert "$dir" 'the verdict does not depend on list order' run-4 run-3
 
 # Control arm: the loop absorbs one failure by design (the weekly credential
 # rotation). A single failure followed by success stays quiet ...
 dir="$(setup_scenario absorbed)"
-{ job run-3 Complete 60; job run-2 Failed 960; job run-1 Failed 1860; } | job_list >"${dir}/jobs.body"
+{
+  job run-3 Complete 60
+  job run-2 Failed 960
+  job run-1 Failed 1860
+} | job_list >"${dir}/jobs.body"
 expect_quiet "$dir" 'a success after failures clears the alert' 'healthy'
 # ... and so does a lone newest failure.
 dir="$(setup_scenario single)"
-{ job run-2 Failed 60; job run-1 Complete 960; } | job_list >"${dir}/jobs.body"
+{
+  job run-2 Failed 60
+  job run-1 Complete 960
+} | job_list >"${dir}/jobs.body"
 expect_quiet "$dir" 'a single failed run is absorbed, not alerted' 'healthy'
 # A still-running Job is not a finished run and must not break the streak.
 dir="$(setup_scenario running)"
-{ job run-3 Running 30; job run-2 Failed 960; job run-1 Failed 1860; } | job_list >"${dir}/jobs.body"
+{
+  job run-3 Running 30
+  job run-2 Failed 960
+  job run-1 Failed 1860
+} | job_list >"${dir}/jobs.body"
 expect_alert "$dir" 'an in-flight run neither counts nor hides the streak' run-2 run-1
 # Another CronJob's failures in the same namespace are not this loop's. They are
 # the NEWEST runs here, so an owner filter that stopped matching would alert.
 dir="$(setup_scenario foreign)"
-{ job other-2 Failed 60 umami-other; job other-1 Failed 960 umami-other; job run-1 Complete 1800; } | job_list >"${dir}/jobs.body"
+{
+  job other-2 Failed 60 umami-other
+  job other-1 Failed 960 umami-other
+  job run-1 Complete 1800
+} | job_list >"${dir}/jobs.body"
 expect_quiet "$dir" "another CronJob's failures are ignored" 'healthy'
 
 # Threshold boundary: with threshold 3, two failures are quiet and three alert.
 dir="$(setup_scenario threshold)"
-{ job run-3 Failed 60; job run-2 Failed 960; job run-1 Complete 1860; } | job_list >"${dir}/jobs.body"
+{
+  job run-3 Failed 60
+  job run-2 Failed 960
+  job run-1 Complete 1860
+} | job_list >"${dir}/jobs.body"
 THRESHOLD_OVERRIDE=3 expect_quiet "$dir" 'fewer failures than the threshold stay quiet' 'healthy'
-{ job run-3 Failed 60; job run-2 Failed 960; job run-1 Failed 1860; } | job_list >"${dir}/jobs.body"
+{
+  job run-3 Failed 60
+  job run-2 Failed 960
+  job run-1 Failed 1860
+} | job_list >"${dir}/jobs.body"
 THRESHOLD_OVERRIDE=3 expect_alert "$dir" 'exactly the threshold of failures alerts' 'the last 3 runs all failed'
 
 # Silence is not health: no run finishing within STALE_SECONDS alerts.
@@ -336,7 +370,10 @@ WATCH_OVERRIDE='umami/umami-provision-tenants:4:3600' \
 
 # Delivery: the placeholder host never delivers; a failed delivery fails the Job.
 dir="$(setup_scenario placeholder "$placeholder_webhook")"
-{ job run-2 Failed 60; job run-1 Failed 960; } | job_list >"${dir}/jobs.body"
+{
+  job run-2 Failed 60
+  job run-1 Failed 960
+} | job_list >"${dir}/jobs.body"
 for shell in "${shells[@]}"; do
   run_scenario "$dir" "$shell" || fail "placeholder [${shell}] exited non-zero"
   [ ! -f "${dir}/delivered" ] || fail "placeholder [${shell}] delivered"
@@ -344,7 +381,10 @@ for shell in "${shells[@]}"; do
 done
 pass 'the placeholder webhook is never delivered to'
 dir="$(setup_scenario delivery-fails)"
-{ job run-2 Failed 60; job run-1 Failed 960; } | job_list >"${dir}/jobs.body"
+{
+  job run-2 Failed 60
+  job run-1 Failed 960
+} | job_list >"${dir}/jobs.body"
 for shell in "${shells[@]}"; do
   if STUB_DELIVERY_EXIT=22 run_scenario "$dir" "$shell"; then fail "failed delivery [${shell}] reported success"; fi
 done

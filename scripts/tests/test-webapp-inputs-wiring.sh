@@ -59,7 +59,11 @@ echo 'PASS: all four failed mutations stop before their candidate reaches valida
 # current content ledger. A new source-only Tenant must not disappear from this
 # positive scanner fixture while its three unsafe WebApp controls remain real.
 while IFS= read -r file; do
-  case "$file" in k8s/*) ;; *) echo 'FAIL: instance fixture path is outside k8s' >&2; exit 1 ;; esac
+  case "$file" in k8s/*) ;; *)
+    echo 'FAIL: instance fixture path is outside k8s' >&2
+    exit 1
+    ;;
+  esac
   case "/$file/" in *'/../'* | *'/./'*) exit 1 ;; esac
   mkdir -p "$work/$(dirname "$file")"
   cp "$root/$file" "$work/$file"
@@ -68,7 +72,10 @@ done < <({
     k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml
   awk -F '\t' '$3=="INSTANCE-CONTENT" {print $2}' "$root/scripts/rgd-template-static-scan-baseline.tsv"
 } | LC_ALL=C sort -u)
-bash "$root/scripts/scan-rgd-templates.sh" "$work" >"$work/valid.log" 2>&1 || { cat "$work/valid.log" >&2; exit 1; }
+bash "$root/scripts/scan-rgd-templates.sh" "$work" >"$work/valid.log" 2>&1 || {
+  cat "$work/valid.log" >&2
+  exit 1
+}
 instance="$work/k8s/providers/docker/apps/web-app-wedding-app.yaml"
 cp "$instance" "$work/original.yaml"
 for expression in \
@@ -82,7 +89,10 @@ for expression in \
     echo 'FAIL: actual publication scanner accepted an unsafe WebApp input' >&2
     exit 1
   fi
-  grep -Fq 'committed WebApp has invalid or unknown source inputs' "$work/refused.log" || { cat "$work/refused.log" >&2; exit 1; }
+  grep -Fq 'committed WebApp has invalid or unknown source inputs' "$work/refused.log" || {
+    cat "$work/refused.log" >&2
+    exit 1
+  }
 done
 cp "$work/original.yaml" "$instance"
 printf '\n  runAsUser: 0\n  runAsUser: 65532\n' >>"$instance"
@@ -90,5 +100,8 @@ if bash "$root/scripts/scan-rgd-templates.sh" "$work" >"$work/duplicate.log" 2>&
   echo 'FAIL: actual publication scanner accepted duplicate raw YAML fields' >&2
   exit 1
 fi
-grep -Fq 'committed WebApp has ambiguous raw source' "$work/duplicate.log" || { cat "$work/duplicate.log" >&2; exit 1; }
+grep -Fq 'committed WebApp has ambiguous raw source' "$work/duplicate.log" || {
+  cat "$work/duplicate.log" >&2
+  exit 1
+}
 echo 'PASS: real publication scanner accepts committed inputs and refuses command, root, namespace and interpolation overrides.'

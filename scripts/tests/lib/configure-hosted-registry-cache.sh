@@ -5,19 +5,22 @@
 set -euo pipefail
 
 if [ "$#" != 0 ]; then
-  printf 'FAIL: unexpected registry cache argument\n' >&2; exit 1;
+  printf 'FAIL: unexpected registry cache argument\n' >&2
+  exit 1
 fi
 if [ "${GITHUB_ACTIONS:-}" != true ] ||
   [ "${RUNNER_ENVIRONMENT:-}" != github-hosted ] ||
   [ "${RUNNER_OS:-}" != Linux ]; then
-    printf 'FAIL: registry cache setup requires a hosted Linux runner\n' >&2; exit 1;
+  printf 'FAIL: registry cache setup requires a hosted Linux runner\n' >&2
+  exit 1
 fi
 umask 077
 cache_dir="$(mktemp -d)"
 trap 'rm -rf "${cache_dir}"' EXIT
 docker ps -aq >"${cache_dir}/containers"
 [ ! -s "${cache_dir}/containers" ] || {
-  printf 'FAIL: registry cache setup requires an unused Docker daemon\n' >&2; exit 1;
+  printf 'FAIL: registry cache setup requires an unused Docker daemon\n' >&2
+  exit 1
 }
 if sudo test -e /etc/docker/daemon.json; then
   sudo cat /etc/docker/daemon.json | tee "${cache_dir}/original.json" >/dev/null
@@ -37,7 +40,8 @@ jq -e -s '
   .["registry-mirrors"] = (["https://mirror.gcr.io"] +
     [(.["registry-mirrors"] // [])[] | select(. != "https://mirror.gcr.io")])
 ' "${cache_dir}/original.json" >"${cache_dir}/daemon.json" 2>/dev/null || {
-  printf 'FAIL: invalid daemon or registry cache configuration\n' >&2; exit 1;
+  printf 'FAIL: invalid daemon or registry cache configuration\n' >&2
+  exit 1
 }
 sudo dockerd --validate --config-file="${cache_dir}/daemon.json" >/dev/null
 sudo mkdir -p /etc/docker

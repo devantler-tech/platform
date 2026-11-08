@@ -1,3 +1,4 @@
+---
 # NEAR MISS: the same DaemonSet name in another namespace.
 apiVersion: apps/v1
 kind: DaemonSet

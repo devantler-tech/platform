@@ -263,6 +263,13 @@ data:
             icon: mdi-bank-outline
             href: https://enablebanking.com
             description: Open-banking connections and consents.
+        # Skattestyrelsen's guide for an enkeltmandsvirksomhed (EMV), the
+        # business's legal form. The host is an IDN; browsers send it as
+        # xn--bogfringsguide-tqb.skat.dk.
+        - Skat Bogføringsguide:
+            icon: mdi-calculator-variant-outline
+            href: https://bogføringsguide.skat.dk/#/EMV
+            description: Bookkeeping and deductions guide for a sole proprietorship.
     # The business site and the product documentation sites are served by
     # GitHub Pages, not this cluster, so they are listed statically. Business &
     # Clients holds the company site followed by the client projects, which are

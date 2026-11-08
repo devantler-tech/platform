@@ -13,7 +13,7 @@ readonly header=$'repository\tworkflow\ttag\tcommit\tworkflow_blob\tobserved_on'
 
 # Old code gets plausible answers, but the test still fails if it makes ANY
 # request. This distinguishes removing the dependency from masking its failure.
-cat > "$work/bin/gh" <<'STUB'
+cat >"$work/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FROZEN_TEST_LOG"
 case "$*" in
@@ -27,21 +27,21 @@ STUB
 chmod +x "$work/bin/gh"
 
 snapshot="$work/valid.tsv"
-printf '%s\n' "$header" > "$snapshot"
-printf 'devantler-tech/actions\tpublish-app\tv13.10.12\t%s\t%s\t2026-10-20\n' "$frozen" "$app_blob" >> "$snapshot"
-printf 'devantler-tech/actions\tpublish-manifests\tv13.10.12\t%s\t%s\t2026-10-20\n' "$frozen" "$manifests_blob" >> "$snapshot"
+printf '%s\n' "$header" >"$snapshot"
+printf 'devantler-tech/actions\tpublish-app\tv13.10.12\t%s\t%s\t2026-10-20\n' "$frozen" "$app_blob" >>"$snapshot"
+printf 'devantler-tech/actions\tpublish-manifests\tv13.10.12\t%s\t%s\t2026-10-20\n' "$frozen" "$manifests_blob" >>"$snapshot"
 
 passed=0
 failed=0
 run_case() {
   local name="$1" workflow="$2" record="$3" want="$4" output rc=0
-  : > "$work/requests.log"
+  : >"$work/requests.log"
   output="$(env PATH="$work/bin:$PATH" FROZEN_TEST_LOG="$work/requests.log" \
     FROZEN_LEGACY_RELEASE_FILE="$record" bash -c \
     "source \"\$1\"; default_release_resolver \"\$2\"" bash "$sut" "$workflow" 2>"$work/error.log")" || rc=$?
-  if [[ -s "$work/requests.log" || ( "$want" == accept && ( "$rc" != 0 || "$output" != "$frozen" ) ) || \
-    ( "$want" == reject && ( "$rc" == 0 || -n "$output" ) ) ]]; then
-    printf 'FAIL: %s (exit=%s, network_requests=%s)\n' "$name" "$rc" "$(wc -l < "$work/requests.log" | tr -d ' ')"
+  if [[ -s "$work/requests.log" || ("$want" == accept && ("$rc" != 0 || "$output" != "$frozen")) ||
+    ("$want" == reject && ("$rc" == 0 || -n "$output")) ]]; then
+    printf 'FAIL: %s (exit=%s, network_requests=%s)\n' "$name" "$rc" "$(wc -l <"$work/requests.log" | tr -d ' ')"
     failed=$((failed + 1))
   else
     passed=$((passed + 1))
@@ -55,7 +55,7 @@ run_case 'missing snapshot is refused' publish-app "$work/missing.tsv" reject
 
 mutate() {
   local name="$1" expression="$2"
-  sed "$expression" "$snapshot" > "$work/mutant.tsv"
+  sed "$expression" "$snapshot" >"$work/mutant.tsv"
   run_case "$name" publish-app "$work/mutant.tsv" reject
 }
 mutate 'wrong header' '1s/repository/repo/'
@@ -79,10 +79,10 @@ mutate 'extra field' '2s/$/\textra/'
 mutate 'missing final field' '2s/\t2026-10-20$//'
 
 cp "$snapshot" "$work/mutant.tsv"
-sed -n '2p' "$snapshot" >> "$work/mutant.tsv"
+sed -n '2p' "$snapshot" >>"$work/mutant.tsv"
 run_case 'duplicate row' publish-app "$work/mutant.tsv" reject
 cp "$snapshot" "$work/mutant.tsv"
-printf '\n' >> "$work/mutant.tsv"
+printf '\n' >>"$work/mutant.tsv"
 run_case 'blank extra row' publish-app "$work/mutant.tsv" reject
 ln -s "$snapshot" "$work/link.tsv"
 run_case 'symlink snapshot' publish-app "$work/link.tsv" reject
@@ -112,16 +112,16 @@ done
 source "$root_dir/scripts/tests/lib/legacy-consumer-fixture.sh"
 legacy_fixture="$work/legacy-consumers"
 build_legacy_consumer_fixture "$root_dir" "$legacy_fixture"
-cat > "$work/observe" <<'STUB'
+cat >"$work/observe" <<'STUB'
 #!/usr/bin/env bash
 printf '1.2.3\tsha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tea4df9004d4ab43b6c9af5b0c5f55712f7211328\n'
 STUB
-cat > "$work/pin" <<'STUB'
+cat >"$work/pin" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' ea4df9004d4ab43b6c9af5b0c5f55712f7211328
 STUB
 chmod +x "$work/observe" "$work/pin"
-printf '{"schemaVersion":1,"publications":[]}\n' > "$work/bootstrap.json"
+printf '{"schemaVersion":1,"publications":[]}\n' >"$work/bootstrap.json"
 generate() {
   env PATH="$work/bin:$PATH" FROZEN_TEST_LOG="$work/requests.log" \
     PUBLISH_CONSUMER_ROOT="$legacy_fixture" \
@@ -129,10 +129,10 @@ generate() {
     FROZEN_LEGACY_RELEASE_FILE="$1" APPROVED_REVISION_RELEASE_RESOLVER='' \
     APPROVED_REVISION_OBSERVER="$work/observe" APPROVED_REVISION_PIN_RESOLVER="$work/pin" \
     PUBLISH_BOOTSTRAP_FILE="$work/bootstrap.json" APPROVED_REVISIONS_FILE="$work/generated.tsv" \
-    bash "$sut" > "$work/generation.log" 2>&1
+    bash "$sut" >"$work/generation.log" 2>&1
 }
-: > "$work/requests.log"
-if generate '' && [[ ! -s "$work/requests.log" ]] && \
+: >"$work/requests.log"
+if generate '' && [[ ! -s "$work/requests.log" ]] &&
   awk -F'\t' -v candidate="$frozen" 'NR>1 { if (NF!=8 || $7!=candidate || $1=="business-site") bad=1; rows++ } END {exit bad || rows!=5}' "$work/generated.tsv"; then
   passed=$((passed + 1))
 else
@@ -142,9 +142,9 @@ fi
 if [[ -f "$work/generated.tsv" && -f "$work/generated.identities.tsv" ]]; then
   cp "$work/generated.tsv" "$work/generated.before"
   cp "$work/generated.identities.tsv" "$work/identities.before"
-  : > "$work/requests.log"
-  if generate "$work/missing.tsv" || [[ -s "$work/requests.log" ]] || \
-    ! cmp -s "$work/generated.tsv" "$work/generated.before" || \
+  : >"$work/requests.log"
+  if generate "$work/missing.tsv" || [[ -s "$work/requests.log" ]] ||
+    ! cmp -s "$work/generated.tsv" "$work/generated.before" ||
     ! cmp -s "$work/generated.identities.tsv" "$work/identities.before"; then
     printf 'FAIL: invalid frozen evidence must refuse without changing either output\n'
     failed=$((failed + 1))

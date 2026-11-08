@@ -964,9 +964,9 @@ yq -i '.spec.chart.spec.chart = "sdk-sensitive"' "$TREE/k8s/controllers/test/hel
 # Demonstrate the divergence with both real rendering commands and the actual
 # patch, independently of the guard's refusal of a mismatched renderer binary.
 mkdir -p "$scratch/cli-divergence"
-yq -o=json '.spec.postRenderers[0].kustomize' "$TREE/k8s/controllers/test/helm-release.yaml" | \
+yq -o=json '.spec.postRenderers[0].kustomize' "$TREE/k8s/controllers/test/helm-release.yaml" |
   jq '. + {apiVersion:"kustomize.config.k8s.io/v1beta1",kind:"Kustomization",resources:["rendered.yaml"]}' \
-  >"$scratch/cli-divergence/kustomization.yaml"
+    >"$scratch/cli-divergence/kustomization.yaml"
 for cli_mode in install upgrade; do
   cli_args=(template flux-operator "$scratch/charts/sdk-sensitive" --namespace flux-system)
   [ "$cli_mode" != upgrade ] || cli_args+=(--is-upgrade)

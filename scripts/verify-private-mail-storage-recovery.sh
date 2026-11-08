@@ -26,7 +26,7 @@ export FLUX_ORPHANS_RECOVERY_SHA="$GITHUB_SHA"
 export FLUX_ORPHANS_SETTLE_SECONDS=60
 export FLUX_ORPHANS_RETRY_SECONDS=20
 status=0
-bash "$root/scripts/check-flux-orphaned-objects.sh" > "$proof_dir/scan.log" 2>&1 || status=$?
+bash "$root/scripts/check-flux-orphaned-objects.sh" >"$proof_dir/scan.log" 2>&1 || status=$?
 case "$status" in
   0)
     if grep -Eq '^✅ (No object is outside every inventory across both reads among |Nothing stayed outside every inventory across (3|4) reads among )' "$proof_dir/scan.log"; then

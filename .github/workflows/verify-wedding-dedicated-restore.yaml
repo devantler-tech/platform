@@ -1,8 +1,9 @@
+---
 name: Verify Wedding Dedicated Restore
 
 # An operator proof, never a PR-triggered production mutation. It preserves the
 # live database and deletes only the temporary namespace owned by this run.
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

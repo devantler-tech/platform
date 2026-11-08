@@ -44,7 +44,10 @@ trap 'rm -rf "$scratch"' EXIT
 failures=0
 assertions=0
 
-[ -x "$guard" ] || { printf 'FAIL: %s is not executable\n' "$guard"; exit 1; }
+[ -x "$guard" ] || {
+  printf 'FAIL: %s is not executable\n' "$guard"
+  exit 1
+}
 
 run_guard() { # <root>
   # Capture the status with `if`: this file runs under `set -uo pipefail` with
@@ -139,7 +142,8 @@ write_app_kustomization() {
 
 # write_kustomization <root> <enabled-app>...   (apps not listed are staged off)
 write_kustomization() {
-  local root="$1"; shift
+  local root="$1"
+  shift
   {
     printf -- '---\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n'
     local a
@@ -155,7 +159,8 @@ write_kustomization() {
 
 # write_fanout <root> <namespace>...
 write_fanout() {
-  local root="$1"; shift
+  local root="$1"
+  shift
   {
     printf '#!/usr/bin/env bash\nreadonly -a FANOUT_NAMESPACES=(\n'
     local n

@@ -248,7 +248,7 @@ spec:
       image:
         registry: ghcr.io
         repository: devantler-tech/platform-kyverno-background
-        tag: v1.19.2-downstream-cleanup.1-aa73bf47bf139712b2dc64c7b6178e9ce2607e67@sha256:327d72f865bb10108b19ce2510e3244104872632aa0063283da5e69034b1f1fa
+        tag: v1.19.2-downstream-cleanup.1-adb150c0a8c590b13d548a272d09535809f52702@sha256:5815de0e5745a0746bf215363351f80fcbae0535d34d976e94c6ec16af25460d
       replicas: ${kyverno_background_replicas:=1}
       # The chart auto-enables this controller's PDB whenever replicas > 1 and
       # defaults it to minAvailable: 1 -- the exact shape validate-pdb-drain-safe

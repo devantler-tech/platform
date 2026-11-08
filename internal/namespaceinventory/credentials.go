@@ -19,11 +19,11 @@ var credentialPath = regexp.MustCompile(`^/dev/shm/longhorn-namespace-inventory\
 var sourcePattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var runPattern = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
 
-// LoadProtectedClient reads only the private memory-backed credential created
-// by the confirmed first-attempt workflow. It never loads an ambient context,
-// credential file named by kubeconfig content, or authentication plugin.
+// Dispatch is the verified source commit and run of a protected observation.
 type Dispatch struct{ Source, Run string }
 
+// AuthorizeProtectedDispatch accepts only the confirmed first attempt of the
+// observation workflow on main, on a GitHub-hosted runner.
 func AuthorizeProtectedDispatch(getenv func(string) string) (Dispatch, error) {
 	for key, want := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
@@ -41,6 +41,9 @@ func AuthorizeProtectedDispatch(getenv func(string) string) (Dispatch, error) {
 	return Dispatch{getenv("GITHUB_SHA"), getenv("GITHUB_RUN_ID")}, nil
 }
 
+// LoadProtectedClient reads only the private memory-backed credential created
+// by the confirmed first-attempt workflow. It never loads an ambient context,
+// credential file named by kubeconfig content, or authentication plugin.
 func LoadProtectedClient(getenv func(string) string) (*http.Client, *url.URL, error) {
 	if _, err := AuthorizeProtectedDispatch(getenv); err != nil {
 		return nil, nil, err

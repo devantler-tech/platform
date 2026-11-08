@@ -52,8 +52,8 @@ give_up() { # <exit code> <message>
 }
 
 [[ "$max_attempts" =~ ^[1-9][0-9]*$ &&
-   "$interval_seconds" =~ ^(0|[1-9][0-9]*)$ &&
-   "$max_seconds" =~ ^[1-9][0-9]*$ ]] ||
+  "$interval_seconds" =~ ^(0|[1-9][0-9]*)$ &&
+  "$max_seconds" =~ ^[1-9][0-9]*$ ]] ||
   give_up 2 'invalid kubelet readback attempt, interval, or deadline setting'
 
 shopt -s nullglob
@@ -123,7 +123,7 @@ report=''
 unread=false
 node_count=0
 autoscaler_count=0
-deadline_epoch=$(( $(date +%s) + max_seconds ))
+deadline_epoch=$(($(date +%s) + max_seconds))
 for ((attempt = 1; attempt <= max_attempts; attempt++)); do
   report=''
   unread=false

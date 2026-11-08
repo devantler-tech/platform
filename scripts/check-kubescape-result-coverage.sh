@@ -67,14 +67,14 @@ need_value() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-  --context) need_value "$@" && context="$2" && shift 2 ;;
-  --cache-dir) need_value "$@" && cache_dir="$2" && shift 2 ;;
-  --from-dir) need_value "$@" && from_dir="$2" && shift 2 ;;
-  --snapshot-dir) need_value "$@" && snapshot_dir="$2" && shift 2 ;;
-  --now) need_value "$@" && now="$2" && shift 2 ;;
-  --vuln-max-age-days) need_value "$@" && vuln_max_age_days="$2" && shift 2 ;;
-  --reviewed-list) need_value "$@" && reviewed="$2" && shift 2 ;;
-  *) die "unknown argument: $1" ;;
+    --context) need_value "$@" && context="$2" && shift 2 ;;
+    --cache-dir) need_value "$@" && cache_dir="$2" && shift 2 ;;
+    --from-dir) need_value "$@" && from_dir="$2" && shift 2 ;;
+    --snapshot-dir) need_value "$@" && snapshot_dir="$2" && shift 2 ;;
+    --now) need_value "$@" && now="$2" && shift 2 ;;
+    --vuln-max-age-days) need_value "$@" && vuln_max_age_days="$2" && shift 2 ;;
+    --reviewed-list) need_value "$@" && reviewed="$2" && shift 2 ;;
+    *) die "unknown argument: $1" ;;
   esac
 done
 
