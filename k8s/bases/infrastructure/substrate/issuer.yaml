@@ -1,0 +1,10 @@
+# Self-signed issuer for Substrate's private CAs in ate-system. Upstream's installer
+# generates these CAs imperatively; cert-manager keeps them declarative here
+# and ExternalSecrets convert each one into Substrate's CA-pool format.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: substrate-self-signed
+  namespace: ate-system
+spec:
+  selfSigned: {}

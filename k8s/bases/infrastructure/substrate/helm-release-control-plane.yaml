@@ -1,0 +1,82 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: substrate
+  namespace: ate-system
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  timeout: 15m
+  chartRef:
+    kind: OCIRepository
+    name: substrate
+  dependsOn:
+    - name: substrate-atelet
+  # The RustFS keys are generated in-cluster (external-secret-rustfs.yaml) and
+  # never committed. The chart renders them into the RustFS Deployment.
+  valuesFrom:
+    - kind: Secret
+      name: rustfs-credentials
+      valuesKey: AWS_ACCESS_KEY_ID
+      targetPath: rustfs.accessKey
+    - kind: Secret
+      name: rustfs-credentials
+      valuesKey: AWS_SECRET_ACCESS_KEY
+      targetPath: rustfs.secretKey
+  values:
+    # atelet is its own release (helm-release-atelet.yaml).
+    atelet:
+      enabled: false
+    # kagent sets each Harness's snapshot location and needs golden egress
+    # policies; both are preview gates in Substrate 1.0.0.
+    preview:
+      - PerTemplateSnapshotLocation
+      - GoldenEgressPolicy
+    postgres:
+      readWriteConnectionStringSecretRef:
+        name: substrate-db-readwrite
+        key: readWriteConnectionString
+      ownerConnectionStringSecretRef:
+        name: substrate-db-owner
+        key: ownerConnectionString
+    rustfs:
+      # Snapshots of suspended agent sandboxes. They are a cache: a lost
+      # snapshot only costs the next run a cold start.
+      storageSize: 10Gi
+    ateApi:
+      authorization:
+        # Only the kagent controller administers Substrate. It authenticates
+        # with its Pod Certificate, whose SPIFFE ID is this principal.
+        bootstrapOwners:
+          - spiffe://cluster.local/ns/kagent/sa/kagent-controller
+    atenetRouter:
+      # The only client that may reach actors through the router.
+      ingressAllowedSPIFFEIDs:
+        - spiffe://cluster.local/ns/kagent/sa/kagent-controller
+    credentialProvider:
+      # The egress gateway may read Secrets only from an atespace's own
+      # namespace. kagent names each atespace after its agents' namespace.
+      namespacePolicies:
+        - atespace: agentic-engineer
+          allowedNamespaces:
+            - agentic-engineer
+  # Post-render only the release manifest; the guard models only that stream.
+  postRenderStrategy: nohooks
+  postRenderers:
+    - kustomize:
+        patches:
+          # The chart has no replica settings for these. They serve one daily
+          # agent run, so a short gap during a node drain only delays an actor
+          # call, which Substrate retries; the API server and IdP already run two.
+          - target:
+              kind: Deployment
+              name: ate-controller|atenet-router|atenet-egress|k8s-credential-provider|rustfs
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: any
+                labels:
+                  platform.devantler.tech/replica-floor: exempt

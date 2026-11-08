@@ -1,0 +1,25 @@
+# Only its ES256 key is used: it signs the actor JWTs (actor-id-jwt-pool).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: substrate-actor-id-jwt
+  namespace: ate-system
+spec:
+  secretName: substrate-actor-id-jwt
+  commonName: substrate-actor-id-jwt
+  usages:
+    - digital signature
+  # A long-lived root, renewed by cert-manager. rotationPolicy Never keeps the
+  # key across renewals, so the pool keeps signing with, and trusting, the
+  # same key and nothing it signed is invalidated.
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    # Substrate's pool format stores PKCS#8 keys.
+    encoding: PKCS8
+    rotationPolicy: Never
+  issuerRef:
+    group: cert-manager.io
+    kind: Issuer
+    name: substrate-self-signed

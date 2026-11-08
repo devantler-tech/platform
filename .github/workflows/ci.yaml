@@ -421,6 +421,7 @@ jobs:
               # up, and that no address reaches the public log.
               - 'scripts/probe-gateway-denied-peer.sh'
               - 'scripts/tests/test-probe-gateway-denied-peer.sh'
+              - 'scripts/tests/gateway-denied-peer-wire/**'
               - '.github/workflows/probe-gateway-denied-peer.yaml'
               # The #3144 admission probe, its test and its workflow are one
               # contract: the test pins that every write the probe sends is a
@@ -2535,7 +2536,8 @@ jobs:
       - name: 🚧 Validate Gateway denied-peer probe
         if: needs.changes.outputs.k8s == 'true'
         # The probe needs prod, runs only on dispatch and writes while it runs. Its
-        # test fakes kubectl and pins each verdict against a one-fixture control.
+        # test pins verdicts and cleanup, then executes both rendered transport modes with
+        # real curl and synthetic loopback HTTP/TLS peers.
         run: |
           shellcheck scripts/probe-gateway-denied-peer.sh scripts/tests/test-probe-gateway-denied-peer.sh
           bash scripts/tests/test-probe-gateway-denied-peer.sh
@@ -2931,7 +2933,7 @@ jobs:
 
       - name: 🔗 Validate the pod-security exception still matches its mutation's scope
         if: needs.changes.outputs.k8s == 'true'
-        # The exception suppresses C-0016/C-0055 everywhere EXCEPT the twelve
+        # The exception suppresses C-0016/C-0055 everywhere EXCEPT the fourteen
         # namespaces its compensating mutation does not reach. #2824 happened because
         # those two scopes drifted apart in silence, and the narrowing that fixed it
         # left the agreement resting on a code comment. Both directions of drift read
@@ -2941,7 +2943,7 @@ jobs:
         # now runs, producing findings that are not real gaps.
         #
         # The comparison is NOT against the exclusion list: add-pod-security-context
-        # excludes fourteen namespaces, and two of them (cert-manager and keda)
+        # excludes sixteen namespaces, and two of them (cert-manager and keda)
         # are reached by the by-name add-imageuid rule. Reading exclusions
         # alone reports two false differences on a correct tree, and the natural way
         # to silence that is to add them to the exception — the very drift this

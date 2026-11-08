@@ -28,6 +28,8 @@ results:
       - userns-enabled/host-users-absent
       - userns-enabled/cnpg-instance
       - observability/infrastructure-pod
+      - agentic-engineer/substrate-worker
+      - ate-system/atelet
     kind: Pod
     result: pass
   # Host access outside the infrastructure namespaces, including a namespace

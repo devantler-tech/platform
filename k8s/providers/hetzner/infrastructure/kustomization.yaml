@@ -6,6 +6,10 @@ resources:
   # Apply the OIDC-dependent release with the Gateway. Its namespace, signed
   # source, policy and route remain in controllers, which must finish first.
   - ../../../bases/infrastructure/ksail-operator/
+  # kagent 1.0 and its Substrate sandbox runtime (prod-only: they need the beta
+  # Pod Certificate APIs talos/cluster/enable-pod-certificates.yaml turns on).
+  - ../../../bases/infrastructure/substrate/
+  - ../../../bases/infrastructure/kagent/
   # Re-adopt the retained release without activating a runner. Suspension does
   # not drain an installed scale set; runtime acceptance remains a separate gate.
   - retained-ksail-analysis/
