@@ -14,6 +14,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 base="${root}/k8s/bases/infrastructure/substrate"
 work="$(mktemp -d)"
 completed=0
+# Remove the work directory on exit, and fail any exit that did not reach the final PASS, so an
+# abort the shell does not report (bash 3.2 can mask `set -u` here) never reads as a pass.
 cleanup() {
   rm -rf "${work}"
   if [[ "${completed}" != 1 ]]; then
@@ -22,6 +24,7 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+# Print one failure reason and stop.
 fail() {
   printf 'FAIL: substrate bucket-init hook: %s\n' "$1" >&2
   exit 1
@@ -65,7 +68,8 @@ jq '.spec.values | .rustfs.accessKey = "placeholder" | .rustfs.secretKey = "plac
 "${CONTROLLER_HELM}" template substrate "${chart}" --namespace "${namespace}" --is-upgrade \
   --values "${work}/values.json" >"${work}/chart.yaml"
 
-normalized() {
+# Index a multi-document manifest by kind/namespace/name, so two renders compare as one object.
+normalized() { # <manifest file>
   yq ea -o=json '[. | select(tag == "!!map")]' "$1" |
     jq -S 'map({key: "\(.kind)/\(.metadata.namespace // "")/\(.metadata.name)", value: .}) | from_entries'
 }
@@ -80,8 +84,9 @@ jq -e --arg key "${key}" '.[$key] != null and (.[$key].metadata.annotations // {
 jq -e '[.[] | select(.metadata.annotations["helm.sh/hook"] != null)] | length == 0' "${work}/chart.json" >/dev/null ||
   fail 'the chart now renders hooks of its own; the nohooks stream no longer equals the combined one'
 
-# Apply the release's post-renderers in order, the way Flux builds them. The baseline drops
-# only the Job patch, to prove that patch changes nothing but the Job's hook annotations.
+# Apply the release's post-renderers in order, the way Flux builds them, and write the
+# normalized result to <out>.json. The baseline drops only the Job patch, to prove that patch
+# changes nothing but the Job's hook annotations.
 post_render() { # <out> <jq filter over one renderer's patches>
   local dir="${work}/render-$1" count index
   mkdir -p "${dir}"
