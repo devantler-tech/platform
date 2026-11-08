@@ -702,6 +702,7 @@ jobs:
               - 'scripts/tests/test-guard-helm-post-renderers.sh'
               - 'scripts/tests/test-kubescape-storage-placement.sh'
               - 'scripts/tests/test-kubescape-runtime-rules-switch.sh'
+              - 'scripts/tests/test-substrate-bucket-init-hook.sh'
               - 'scripts/build-controller-helm.sh'
               - 'scripts/prepare-helm-render-input-capture.sh'
               - 'scripts/render-helm-chart/**'
@@ -4098,6 +4099,14 @@ jobs:
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
           export CONTROLLER_HELM="$controller_helm"
           bash scripts/tests/test-guard-helm-post-renderers.sh
+
+      - name: 🧩 Verify Substrate's bucket-init Job runs as a hook
+        # The chart's Job carries the RustFS keys in its immutable pod template.
+        # As an ordinary release object, a finished Job fails every upgrade that
+        # changes them or the image (#5903). The release patches it into a hook.
+        run: |
+          shellcheck scripts/tests/test-substrate-bucket-init-hook.sh
+          bash scripts/tests/test-substrate-bucket-init-hook.sh
 
       - name: 🧩 Validate Reloader chart selection
         run: |

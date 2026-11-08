@@ -80,3 +80,24 @@ spec:
                 name: any
                 labels:
                   platform.devantler.tech/replica-floor: exempt
+          # The chart renders its bucket-init Job as an ordinary release
+          # object, and the Job's pod template carries the RustFS keys and
+          # the aws-cli image. A Job's template is immutable, so an upgrade
+          # that changes either fails and keeps failing while the finished
+          # Job remains (devantler-tech/platform#5903 failed twice on it).
+          # As a hook, Helm creates the Job after each install or upgrade,
+          # deletes it once it succeeds, and replaces a failed one on the
+          # next attempt. Helm sorts hooks after post-rendering, so this
+          # works under nohooks. The name is unchanged: the chart's
+          # NetworkPolicy selects the Job's pods by it.
+          - target:
+              kind: Job
+              name: rustfs-bucket-init
+            patch: |
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: any
+                annotations:
+                  helm.sh/hook: post-install,post-upgrade
+                  helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
