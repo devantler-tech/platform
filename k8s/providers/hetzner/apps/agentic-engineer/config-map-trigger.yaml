@@ -29,12 +29,29 @@ data:
     endpoint=http://kagent-controller.kagent.svc.cluster.local:8083/agents/agentic-engineer/agentic-engineer
     run_id="run-$(date -u +%Y%m%d)"
     deadline=$(( $(date +%s) + RUN_LIMIT_SECONDS ))
+    poll="${POLL_SECONDS:-30}"
+    message="${MESSAGE_FILE:-/etc/trigger/message.txt}"
     rpc() {
       curl -sS --fail-with-body --max-time 60 -H 'content-type: application/json' \
         -H 'A2A-Version: 1.0' -H 'X-User-Id: agentic-engineer-scheduler' \
         --data-binary @- "$endpoint"
     }
-    task=$(jq -n --arg id "$run_id" --rawfile text /etc/trigger/message.txt \
+    get_task() {
+      jq -n --arg id "$id" '{jsonrpc: "2.0", id: "get", method: "GetTask", params: {id: $id}}' | rpc
+    }
+    # An unreadable response is an unknown state, never a reason to stop
+    # watching a task that may still be running.
+    task_state() {
+      printf '%s' "$task" | jq -r '.result.status.state // "unknown"' 2>/dev/null || echo unknown
+    }
+    # A state the task does not leave on its own: the run has ended.
+    terminal() {
+      case "$1" in
+        *COMPLETED|*FAILED|*CANCELED|*REJECTED|*INPUT_REQUIRED|*AUTH_REQUIRED) return 0 ;;
+      esac
+      return 1
+    }
+    task=$(jq -n --arg id "$run_id" --rawfile text "$message" \
       '{jsonrpc: "2.0", id: $id, method: "SendMessage", params: {
          message: {messageId: $id, role: "ROLE_USER", parts: [{text: $text}]},
          configuration: {returnImmediately: true}}}' | rpc)
@@ -45,20 +62,32 @@ data:
     echo "started $run_id as task $id"
     state=""
     while [ "$(date +%s)" -lt "$deadline" ]; do
-      sleep 30
-      task=$(jq -n --arg id "$id" '{jsonrpc: "2.0", id: "get", method: "GetTask", params: {id: $id}}' | rpc) || continue
-      state=$(printf '%s' "$task" | jq -r '.result.status.state // "unknown"')
-      case "$state" in
-        *COMPLETED|*FAILED|*CANCELED|*REJECTED|*INPUT_REQUIRED|*AUTH_REQUIRED) break ;;
-      esac
+      sleep "$poll"
+      task=$(get_task) || continue
+      state=$(task_state)
+      if terminal "$state"; then break; fi
     done
-    case "$state" in
-      *COMPLETED|*FAILED|*CANCELED|*REJECTED|*INPUT_REQUIRED|*AUTH_REQUIRED) ;;
-      *)
-        echo "run limit reached in state $state; cancelling"
-        jq -n --arg id "$id" '{jsonrpc: "2.0", id: "cancel", method: "CancelTask", params: {id: $id}}' | rpc >/dev/null || true
-        state=CANCELED_AT_LIMIT ;;
-    esac
+    if ! terminal "$state"; then
+      # The run limit is the per-run spend cap, so a cancel counts only once
+      # GetTask shows the task has stopped. A failed or ignored cancel fails
+      # the Job (exit 2) instead of reporting a capped run.
+      echo "run limit reached in state $state; cancelling"
+      attempt=0
+      while [ "$attempt" -lt 3 ] && ! terminal "$state"; do
+        attempt=$((attempt + 1))
+        jq -n --arg id "$id" '{jsonrpc: "2.0", id: "cancel", method: "CancelTask", params: {id: $id}}' | rpc >/dev/null ||
+          echo "CancelTask attempt $attempt failed" >&2
+        sleep "$poll"
+        task=$(get_task) || continue
+        state=$(task_state)
+      done
+      if ! terminal "$state"; then
+        echo "cancellation not confirmed after $attempt attempts: task $id is still $state and may still be spending" >&2
+        exit 2
+      fi
+      echo "cancelled at the run limit; the task is now $state"
+      state=CANCELED_AT_LIMIT
+    fi
     echo "final state: $state"
     printf '%s' "$task" | jq -r '[.result.artifacts[]?.parts[]?.text, .result.status.message.parts[]?.text] | map(select(. != null)) | join("\n")' | tail -c 4000
     case "$state" in *COMPLETED) exit 0 ;; *) exit 1 ;; esac
