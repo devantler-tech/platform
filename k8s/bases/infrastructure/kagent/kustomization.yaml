@@ -13,7 +13,7 @@ resources:
   - external-secret-db-owner.yaml
   - external-secret-db-readwrite.yaml
   - cluster.yaml
-  - oci-repository-control-plane.yaml
+  - helm-repository.yaml
   - oci-repository-crds.yaml
   - helm-release-control-plane.yaml
   - helm-release-crds.yaml

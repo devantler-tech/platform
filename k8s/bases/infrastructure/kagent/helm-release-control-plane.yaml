@@ -9,9 +9,15 @@ metadata:
 spec:
   interval: 10m0s
   timeout: 10m
-  chartRef:
-    kind: OCIRepository
-    name: kagent
+  # A HelmRepository chart, not a chartRef: see helm-repository.yaml.
+  chart:
+    spec:
+      chart: kagent
+      # kagent 1.0 is at release candidate 3; its two charts share a version.
+      version: 1.0.0-rc3
+      sourceRef:
+        kind: HelmRepository
+        name: kagent
   dependsOn:
     - name: kagent-crds
     # The controller fetches Substrate's actor JWT keys at startup.
