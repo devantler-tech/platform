@@ -17,7 +17,7 @@ go run ./scripts/judge-openbao-health \
 ```
 
 | Exit | Verdict | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | 0 | `PROVEN` | Every expected server is healthy and the cluster has exactly one active server. |
 | 1 | `HOLD` | A definite finding: a sealed or uninitialized server, the wrong release, split cluster identities, or no active server or more than one. |
 | 2 | `UNKNOWN` | The evidence cannot decide: a server is missing, duplicated or unexpected, the capture is stale, from the future or has no start or completion time, a body was not produced during the capture, or a body is malformed, partial, oversized or ambiguous. Invalid arguments also exit 2, including `-h`, an unknown flag and any flag given twice. |

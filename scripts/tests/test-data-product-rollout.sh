@@ -387,6 +387,22 @@ case "${MODE:-}" in
       esac
     fi
     ;;
+  edge-origin-error-once)
+    if [[ ! -e "$FIXTURE/public-edge-failed-once" ]]; then
+      : >"$FIXTURE/public-edge-failed-once"
+      printf '520'
+      exit 0
+    fi
+    ;;
+  edge-origin-error) printf '522'; exit 0 ;;
+  request-timeout-once | stalled-once)
+    if [[ ! -e "$FIXTURE/public-timed-out-once" ]]; then
+      : >"$FIXTURE/public-timed-out-once"
+      [[ "$MODE" != stalled-once ]] || sleep "$transfer_seconds"
+      printf '000'
+      exit 28
+    fi
+    ;;
   dropped-at-deadline) : >"$FIXTURE/public-deadline"; printf '000'; exit 56 ;;
   slow-public) sleep 0.55 ;;
   connection-reset) printf '000'; printf 'PRIVATE-ERROR-CANARY: private upstream\n' >&2; exit 56 ;;
@@ -588,11 +604,15 @@ jq -e '.httpStatus == 0 and .curlExit == 56' "${scratch}/receipt-connection-rese
 [[ $(wc -l <"${scratch}/receipt-connection-reset/urls") -eq 2 ]] || fail 'a dropped connection was not retried exactly once'
 # One dropped connection recovers, and the accepted receipt still counts it.
 expected_urls=12
-for mode in connection-refused-once empty-reply-once connection-reset-once; do
+for mode in connection-refused-once empty-reply-once connection-reset-once request-timeout-once edge-origin-error-once; do
   run_case "$mode" pass "$mode"
   jq -e '.complete == true and .publicRetries == 1' "${scratch}/${mode}/stdout" >/dev/null ||
     fail "$mode: the accepted receipt lost the absorbed retry"
 done
+# A stalled response gives up at its own attempt limit, so the retry still fits the budget.
+run_case stalled-once pass stalled-once 30
+jq -e '.complete == true and .publicRetries == 1' "${scratch}/stalled-once/stdout" >/dev/null ||
+  fail 'stalled-once: a stalled response spent the budget its retry needed'
 expected_urls=11
 # The cluster-wide inventory reports counts only, and never reads an unread list as zero.
 run_case inventory-clean pass ''
@@ -673,13 +693,24 @@ run_case final-moving-public fail flap-public-failure 20
   fail 'final-moving-public: did not reach three moving pairs with failed public checks'
 jq -e '.failure == "rollout_changed" and .changed == ["apps.metadata.labels"] and (has("phase") or has("role") or has("reason")) == false' "${scratch}/final-moving-public/stdout" >/dev/null ||
   fail 'final-moving-public: final moving snapshot retained an unvalidated public failure'
-for mode in dns-failure tls-failure tls-handshake-failure request-timeout; do
+for mode in dns-failure tls-failure tls-handshake-failure; do
   run_case "$mode" fail "$mode" 15
   [[ $(wc -l <"${scratch}/${mode}/urls") -eq 1 ]] || fail "$mode: a non-retryable failure was retried"
 done
 # Spend the complete transfer budget, as a connected endpoint that never responds does.
 # The refusal must retain its sanitized transport cause even at the shared deadline.
+# An edge that keeps failing to reach the cluster is retried once, then refuses with its status.
+run_case edge-origin-error fail edge-origin-error 15
+[[ $(wc -l <"${scratch}/edge-origin-error/urls") -eq 2 ]] || fail 'edge-origin-error: an edge origin error was not retried exactly once'
+jq -e '.reason == "http_status" and .httpStatus == 522 and .curlExit == 0' "${scratch}/edge-origin-error/stdout" >/dev/null ||
+  fail 'edge-origin-error: the refusal lost its status'
+# A request that keeps timing out is retried once, then refuses with its cause.
+run_case request-timeout fail request-timeout 15
+[[ $(wc -l <"${scratch}/request-timeout/urls") -eq 2 ]] || fail 'request-timeout: a timed-out request was not retried exactly once'
+jq -e '.curlExit == 28' "${scratch}/request-timeout/stdout" >/dev/null || fail 'request-timeout: the refusal lost its curl exit'
 run_case transfer-timeout fail transfer-timeout 15
+jq -e '(.publicStartedAfterSeconds | type == "number" and . >= 0) and .attempt == 1' "${scratch}/transfer-timeout/stdout" >/dev/null ||
+  fail 'transfer-timeout: the refusal did not say when the public pass began'
 
 # mutate_case verifies that a dormant-profile mutation reaches snapshot rejection.
 # mutate_case_impl copies the immutable healthy seed and checks one isolated rollout mutation.

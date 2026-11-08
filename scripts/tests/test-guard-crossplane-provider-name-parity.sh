@@ -235,21 +235,25 @@ for shape in flow whole-flow alias merge; do
       printf '%s\n' 'apiVersion: pkg.crossplane.io/v1' 'kind: Provider' \
         'metadata: { name: upbound-provider-family-aws }' \
         'spec: { package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.1 }' \
-        >"$t/providers/canonical.yaml" ;;
+        >"$t/providers/canonical.yaml"
+      ;;
     whole-flow)
       printf '%s\n' '{apiVersion: pkg.crossplane.io/v1, kind: Provider, metadata: {name: upbound-provider-family-aws}, spec: {package: "xpkg.upbound.io/upbound/provider-family-aws:v2.6.1"}}' \
-        >"$t/providers/canonical.yml" ;;
+        >"$t/providers/canonical.yml"
+      ;;
     alias)
       printf '%s\n' 'apiVersion: pkg.crossplane.io/v1' 'kind: Provider' \
         'identity: &metadata {name: upbound-provider-family-aws}' \
         'packageRef: &package {package: "xpkg.upbound.io/upbound/provider-family-aws:v2.6.1"}' \
-        'metadata: *metadata' 'spec: *package' >"$t/providers/canonical.yaml" ;;
+        'metadata: *metadata' 'spec: *package' >"$t/providers/canonical.yaml"
+      ;;
     merge)
       printf '%s\n' 'apiVersion: pkg.crossplane.io/v1' 'kind: Provider' \
         'defaults: &defaults {name: shortened}' \
         'metadata: {name: upbound-provider-family-aws, <<: *defaults}' \
         'spec: {package: "xpkg.upbound.io/upbound/provider-family-aws:v2.6.1"}' \
-        >"$t/providers/canonical.yaml" ;;
+        >"$t/providers/canonical.yaml"
+      ;;
   esac
   run_guard "$t"
   assert_rc "$shape canonical Provider is checked" 0 "$GUARD_RC"

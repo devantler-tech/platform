@@ -14,14 +14,26 @@ context=admin@prod
 rollout_timeout=15m
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --context) context="${2:?context required}"; shift 2 ;;
-    --rollout-timeout) rollout_timeout="${2:?timeout required}"; shift 2 ;;
-    *) printf 'Unknown argument: %s\n' "$1" >&2; exit 2 ;;
+    --context)
+      context="${2:?context required}"
+      shift 2
+      ;;
+    --rollout-timeout)
+      rollout_timeout="${2:?timeout required}"
+      shift 2
+      ;;
+    *)
+      printf 'Unknown argument: %s\n' "$1" >&2
+      exit 2
+      ;;
   esac
 done
 scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
-fail() { printf '::error::Coroot baseline admission: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf '::error::Coroot baseline admission: %s\n' "$1" >&2
+  exit 1
+}
 
 # The reviewed population, identical to guard-coroot-baseline-context.sh. Every
 # read must match it exactly, so no write ever reaches a template outside it.
@@ -73,7 +85,7 @@ for ((attempt = 1; attempt <= 3; attempt++)); do
   lacking >"${scratch}/still"
   [[ -s "${scratch}/still" ]] || break
   sort -u "${scratch}/written" "${scratch}/still" -o "${scratch}/written"
-  if (( attempt < 3 )); then sleep 10; fi
+  if ((attempt < 3)); then sleep 10; fi
 done
 [[ ! -s "${scratch}/still" ]] ||
   fail "admission did not add both fields to: $(paste -sd ' ' "${scratch}/still")"

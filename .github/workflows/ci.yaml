@@ -1,5 +1,6 @@
+---
 name: CI
-on:
+"on":
   pull_request:
     branches: [main]
   merge_group:
@@ -120,6 +121,25 @@ jobs:
       - name: 🧪 Validate the complete Go helper regression suite
         run: go test -parallel 8 -timeout 20m ./...
 
+  # The organization's required Go workflow only applies while GitHub detects this
+  # repository's language as Go, and Go and Shell are within a few kilobytes of each
+  # other. Call the same workflow here so every same-repository pull request runs it
+  # whichever language is detected, and a regression cannot merge while the rule is
+  # not selecting this repository (#5852). While the language is Go both runs happen;
+  # this call stays read-only so the required run remains the only signed-fix writer.
+  validate-go-project:
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@ea4d0d8c1ba4bcad612ef9c9e9b18ac932e7ff0e # v20.1.11
+    with:
+      apply-signed-fixes: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      code-quality: write
+
   changes:
     name: 🔍 Detect Changes
     runs-on: ubuntu-latest
@@ -169,6 +189,7 @@ jobs:
               - 'scripts/private-mail-config/**'
               - 'scripts/verify-email-data-recovery/**'
               - '.github/workflows/verify-email-data-recovery.yaml'
+              - '.github/workflows/observe-email-data-recovery.yaml'
               - 'ksail.yaml'
               - 'ksail.prod.yaml'
               - '.sops.yaml'
@@ -261,6 +282,7 @@ jobs:
               - 'scripts/tests/test-flux-kustomization-prune.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-github-team-management-checks.sh'
               - 'scripts/tests/test-tenant-kro-pull-secret.sh'
               - 'scripts/tests/test-tenant-controller-namespace-coverage.sh'
               - 'scripts/tests/test-arc-listener-public-content.sh'
@@ -399,6 +421,7 @@ jobs:
               # up, and that no address reaches the public log.
               - 'scripts/probe-gateway-denied-peer.sh'
               - 'scripts/tests/test-probe-gateway-denied-peer.sh'
+              - 'scripts/tests/gateway-denied-peer-wire/**'
               - '.github/workflows/probe-gateway-denied-peer.yaml'
               # The #3144 admission probe, its test and its workflow are one
               # contract: the test pins that every write the probe sends is a
@@ -457,6 +480,9 @@ jobs:
               # The vault-backup KSV-0020 disposition rests on the same per-container identity,
               # and its guard also asserts that KSV-0021 stays UNdispositioned there.
               - 'scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh'
+              # The private-mail KSV-0020/KSV-0021 disposition rests on Stalwart's image-baked
+              # identity per container, so the entry and its premises test move together.
+              - 'scripts/tests/test-trivyignore-private-mail-identity-boundary.sh'
               # The first-party RBAC dispositions and the roles they describe are one
               # contract: the disposition is only valid while the role stays bound and
               # scoped the way it was reviewed. The roles themselves are already covered
@@ -803,7 +829,7 @@ jobs:
     permissions: {}
     steps:
       - name: "\U0001F6E1️ Harden runner"
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
       - name: "\U0001F4D1 Download immutable recovery source"
@@ -1062,9 +1088,6 @@ jobs:
 
       - name: 💾 Validate OpenBao snapshot fetch
         run: go test ./scripts/tests/vault-snapshot-fetch
-
-      - name: 🔎 Validate finite runtime-log evidence
-        run: go test ./scripts/analyze-cri-logs
 
       - name: 🛑 Validate inactive ARC staging boundaries
         run: go test ./scripts/tests/arc-staging
@@ -1866,7 +1889,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.23"
+          KSAIL_VERSION: "7.206.59"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1895,8 +1918,8 @@ jobs:
           shellcheck scripts/tests/test-production-authorization-rules.sh
           bash scripts/tests/test-production-authorization-rules.sh
 
-      - name: 🚦 Validate Actual Budget user-namespace pilot
-        # Exercise the active component and its rollback on both the PR and the
+      - name: 🚦 Validate Actual Budget user namespaces
+        # Exercise the permanent setting and its rollback on both the PR and the
         # speculative merge-group revision before deploy-prod can publish it.
         timeout-minutes: 5
         run: |
@@ -1976,6 +1999,8 @@ jobs:
           bash scripts/tests/test-github-team-identity-admission.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
+          shellcheck scripts/tests/test-github-team-management-checks.sh
+          bash scripts/tests/test-github-team-management-checks.sh
           shellcheck scripts/tests/test-tenant-controller-namespace-coverage.sh
           bash scripts/tests/test-tenant-controller-namespace-coverage.sh
           shellcheck scripts/tests/test-restrict-tenant-network-policies.sh
@@ -2016,7 +2041,7 @@ jobs:
         if: matrix.suite == 'services'
         timeout-minutes: 5
         env:
-          CONTRACT_PROBE_IMAGE_NATIVE_TEST: '1'
+          CONTRACT_PROBE_IMAGE_NATIVE_TEST: "1"
         run: |
           set -euo pipefail
           go test -count=1 -timeout 4m -json ./scripts/tests/contract-probe-image |
@@ -2275,6 +2300,17 @@ jobs:
           shellcheck scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
           bash scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
 
+      - name: 🧱 Validate private-mail identity disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # Every private-mail container runs at uid/gid 2000, the stalwart identity the pinned
+        # Stalwart digest defines and the bootstrap image restates. The path-scoped entry would
+        # also hide a container added later at another low identity, so the guard asserts the
+        # identity and image of every container. Its identical-probe trivy control runs only
+        # where trivy is installed, which this job is not yet (#5864).
+        run: |
+          shellcheck scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
+          bash scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
+
       - name: 🧱 Validate first-party RBAC disposition premises
         if: needs.changes.outputs.k8s == 'true'
         # The four first-party RBAC dispositions rest on facts trivy cannot see: the tenant
@@ -2500,7 +2536,8 @@ jobs:
       - name: 🚧 Validate Gateway denied-peer probe
         if: needs.changes.outputs.k8s == 'true'
         # The probe needs prod, runs only on dispatch and writes while it runs. Its
-        # test fakes kubectl and pins each verdict against a one-fixture control.
+        # test pins verdicts and cleanup, then executes both rendered transport modes with
+        # real curl and synthetic loopback HTTP/TLS peers.
         run: |
           shellcheck scripts/probe-gateway-denied-peer.sh scripts/tests/test-probe-gateway-denied-peer.sh
           bash scripts/tests/test-probe-gateway-denied-peer.sh
@@ -2896,7 +2933,7 @@ jobs:
 
       - name: 🔗 Validate the pod-security exception still matches its mutation's scope
         if: needs.changes.outputs.k8s == 'true'
-        # The exception suppresses C-0016/C-0055 everywhere EXCEPT the twelve
+        # The exception suppresses C-0016/C-0055 everywhere EXCEPT the fourteen
         # namespaces its compensating mutation does not reach. #2824 happened because
         # those two scopes drifted apart in silence, and the narrowing that fixed it
         # left the agreement resting on a code comment. Both directions of drift read
@@ -2906,7 +2943,7 @@ jobs:
         # now runs, producing findings that are not real gaps.
         #
         # The comparison is NOT against the exclusion list: add-pod-security-context
-        # excludes fourteen namespaces, and two of them (cert-manager and keda)
+        # excludes sixteen namespaces, and two of them (cert-manager and keda)
         # are reached by the by-name add-imageuid rule. Reading exclusions
         # alone reports two false differences on a correct tree, and the natural way
         # to silence that is to add them to the exception — the very drift this
@@ -3098,7 +3135,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.23"
+          KSAIL_VERSION: "7.206.59"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3532,7 +3569,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.23"
+          KSAIL_VERSION: "7.206.59"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3553,13 +3590,13 @@ jobs:
         if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
-          VAULT_BACKUP_TOOLING_NATIVE_TEST: '1'
+          VAULT_BACKUP_TOOLING_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/vault-backup-recovery
       - name: 🔒 Prove Longhorn dashboard read-only routing
         if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
-          LONGHORN_UI_NATIVE_TEST: '1'
+          LONGHORN_UI_NATIVE_TEST: "1"
         run: go test -race -count=1 -v ./scripts/tests/longhorn-ui-readonly
       - name: 🐤 Validate staged OpenBao standby repair
         if: matrix.suite == 'contracts'
@@ -3703,7 +3740,7 @@ jobs:
       contents: read # checkout repository
     steps:
       - name: 🛡️ Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
@@ -3714,7 +3751,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@0966f4b015e85ef14be37411d424a7028a858550 # v19.0.8
+        uses: devantler-tech/.github/actions/validate-naming@56ceec6717a1faa0686d865424cd2d1d45f18a0a # v20.1.6
 
       - name: Confirm naming validation completed
         env:
@@ -4525,7 +4562,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.23"
+          KSAIL_VERSION: "7.206.59"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -4636,6 +4673,7 @@ jobs:
         validate-publication-generator,
         validate-manifest-regressions,
         validate-go-regressions,
+        validate-go-project,
         validate-webapp-compiler,
         validate-consumer-discovery,
         validate-publication-contract,
@@ -4659,6 +4697,29 @@ jobs:
     permissions:
       actions: read
     steps:
+      - name: 🧪 Require the organization Go workflow on same-repository pull requests
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+          GO_PROJECT_RESULT: ${{ needs.validate-go-project.result }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request)
+              if [ "$HEAD_REPOSITORY" = "$REPOSITORY" ]; then
+                expected=success
+              else
+                expected=skipped
+              fi
+              ;;
+            merge_group) expected=skipped ;;
+            *) echo '::error::Unknown Go workflow event'; exit 1 ;;
+          esac
+          if [ "$GO_PROJECT_RESULT" != "$expected" ]; then
+            echo "::error::Organization Go workflow result was $GO_PROJECT_RESULT; expected $expected"
+            exit 1
+          fi
+
       - name: 🧩 Require complete selected WebApp compilation
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -4730,7 +4791,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@15e2fb1af4b5525ff96202661ca4b87d6affade0 # v19.1.1
+        uses: devantler-tech/.github/actions/aggregate-job-checks@56ceec6717a1faa0686d865424cd2d1d45f18a0a # v20.1.6
         with:
           check-workflow-startup: "true"
           job-results: >-
@@ -4742,6 +4803,7 @@ jobs:
             ${{ needs.validate-publication-generator.result }}
             ${{ needs.validate-manifest-regressions.result }}
             ${{ needs.validate-go-regressions.result }}
+            ${{ needs.validate-go-project.result }}
             ${{ needs.validate-webapp-compiler.result }}
             ${{ needs.validate-consumer-discovery.result }}
             ${{ needs.validate-publication-contract.result }}

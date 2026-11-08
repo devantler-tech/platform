@@ -1,0 +1,52 @@
+# Substrate 1.0.0, the sandbox runtime kagent 1.0 runs agent harnesses on
+# (devantler-tech/platform#5892). Prod-only: the Hetzner infrastructure overlay
+# opts in, because Substrate needs the beta Pod Certificate and
+# ClusterTrustBundle APIs its Talos patch enables, and gVisor workers.
+#
+# It lives in the infrastructure layer, not with the controllers, because it
+# consumes cert-manager, External Secrets and CNPG resources that layer
+# provides; its releases order themselves through dependsOn.
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - issuer.yaml
+  - certificate-actor-id-ca.yaml
+  - certificate-actor-id-jwt.yaml
+  - certificate-egress-mitm-ca.yaml
+  - certificate-pod-identity-ca.yaml
+  - certificate-postgres-ca.yaml
+  - certificate-service-dns-ca.yaml
+  - service-account.yaml
+  - role.yaml
+  - role-binding.yaml
+  - secret-store.yaml
+  - external-secret-actor-id-ca-certs.yaml
+  - external-secret-actor-id-ca-pool.yaml
+  - external-secret-actor-id-jwt-pool.yaml
+  - external-secret-db-owner.yaml
+  - external-secret-db-readwrite.yaml
+  - external-secret-egress-mitm-ca-pool.yaml
+  - external-secret-pod-identity-ca-pool.yaml
+  - external-secret-postgres-ca-pool.yaml
+  - external-secret-rustfs.yaml
+  - external-secret-service-dns-ca-pool.yaml
+  - password-db-owner.yaml
+  - password-db-readwrite.yaml
+  - password-rustfs.yaml
+  - config-map.yaml
+  - cluster.yaml
+  - oci-repository-atelet.yaml
+  - oci-repository-control-plane.yaml
+  - oci-repository-crds.yaml
+  - oci-repository-podcert.yaml
+  - helm-release-atelet.yaml
+  - helm-release-control-plane.yaml
+  - helm-release-crds.yaml
+  - helm-release-podcert.yaml
+  - cilium-network-policy-atelet.yaml
+  - cilium-network-policy-database.yaml
+  - cilium-network-policy-egress-gateway.yaml
+  - cilium-network-policy-namespace.yaml
+  - cilium-network-policy-workers.yaml

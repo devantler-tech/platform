@@ -6,6 +6,10 @@ resources:
   # Apply the OIDC-dependent release with the Gateway. Its namespace, signed
   # source, policy and route remain in controllers, which must finish first.
   - ../../../bases/infrastructure/ksail-operator/
+  # kagent 1.0 and its Substrate sandbox runtime (prod-only: they need the beta
+  # Pod Certificate APIs talos/cluster/enable-pod-certificates.yaml turns on).
+  - ../../../bases/infrastructure/substrate/
+  - ../../../bases/infrastructure/kagent/
   # Re-adopt the retained release without activating a runner. Suspension does
   # not drain an installed scale set; runtime acceptance remains a separate gate.
   - retained-ksail-analysis/
@@ -276,6 +280,12 @@ patches:
   # vault-snapshots, so no explicit target is needed.
   - path: patches/store-vault-snapshots-on-hcloud.yaml
   - path: patches/recover-vault-snapshot.yaml
+    target:
+      group: batch
+      version: v1
+      kind: Job
+      name: vault-snapshot-init
+      namespace: openbao
   # Prod-only: the vault-snapshot CronJob and Job mount that hcloud volume, so
   # both require a static baseline worker (#3287). JSON patches don't
   # self-identify, so each names its target.

@@ -1,3 +1,4 @@
+---
 # Keep container image garbage collection ahead of the platform's storage
 # warning boundary.
 #

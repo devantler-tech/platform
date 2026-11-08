@@ -113,7 +113,7 @@ ts() { # $1 seconds ago → RFC 3339
 # Fixture builders. The 2026-07-01 shape, parameterised.
 event_json() { # $1 reason, $2 first-ago, $3 last-ago, $4 count, $5 ns, $6 pod
   jq -cn --arg reason "$1" --arg first "$(ts "$2")" --arg last "$(ts "$3")" --argjson count "$4" \
-        --arg ns "$5" --arg pod "$6" '
+    --arg ns "$5" --arg pod "$6" '
     { reason: $reason, count: $count, firstTimestamp: $first, lastTimestamp: $last,
       involvedObject: { kind: "Pod", namespace: $ns, name: $pod },
       source: { component: "attachdetach-controller", host: "prod-worker-2" },

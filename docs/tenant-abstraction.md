@@ -100,16 +100,19 @@ and annotations; they cannot force orphaning by removing that finalizer.
 The existing platform-owned `flux-system/wedding-app` pilot is an exact
 exception, not a wildcard namespace exemption.
 
-KRO 0.9.2 identifies children through ApplySet and `kro.run/instance-*` labels,
-not WebApp owner references. Child admission therefore checks their complete
-placement/identity and refuses updates that would adopt an unlabelled or
+KRO 0.9.4 identifies children through ApplySet and `kro.run/instance-*` labels,
+not WebApp owner references, and its apply path adopts an existing unlabelled
+object. Child admission therefore checks their complete placement/identity and
+refuses updates that would adopt an unlabelled or
 foreign-owned Deployment, Service or HTTPRoute. Non-controller writers must
 preserve reserved ownership labels. Controller updates may change provenance
 such as `kro.run/kro-version`, while instance/node/ApplySet identity remains fixed.
 Existing hostname, secret-store and
 network admission remain in force; KRO has no hostname bypass.
 
-KRO's pinned deletion path does not itself verify child ownership. Deletion
+KRO's pinned deletion path does not itself verify child ownership: it deletes every
+object carrying the parent's ApplySet membership label, with a UID precondition that
+only guards against a recreate between listing and deleting. Deletion
 admission additionally requires complete old child ownership, a read of the
 labelled parent's matching UID, and that parent's deletion timestamp. This
 prevents failed collision/rollback from deleting an unowned workload or another
@@ -168,7 +171,7 @@ rejects duplicate members before jq can keep a last value; the maintained YAML
 decoder also checks the original source before conversion. Complete inputs are
 bounded to 1 MiB, with at most 1024 raw YAML documents. This is the platform's committed
 source gate, not proof of a future tenant publisher's input validation. The actual
-KRO 0.9.2 compiler/generated API tests admission, defaults, literal arguments and
+KRO 0.9.4 compiler/generated API tests admission, defaults, literal arguments and
 resolved children. Resolved deployments are separately scanned with Trivy 0.74.0;
 the writable-root and low-ID compatibility findings remain explicit rather than
 disappearing behind expressions. Both resolved states pass the actual container
@@ -203,8 +206,9 @@ the same name in other namespaces retain their ordinary admission rules.
 Reserved policy names do not inherit an exception for an already noncompliant
 old object: platform creation is not permission for a tenant's later update.
 This ownership boundary is separate from the hold's actual traffic effect.
-Routing, projection and live hold/serve/isolate/recover acceptance remain under
-#5247 before exposure; the source-only baseline does not enable an application.
+Routing, projection and live hold/serve/isolate/recover acceptance remain
+under #5247 before exposure; the source-only baseline does not enable an
+application.
 
 ### Public business-site configuration identity
 

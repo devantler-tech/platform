@@ -8,7 +8,10 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
 release_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/longhorn"
 
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 for tool in kubectl helm yq jq; do
   command -v "${tool}" >/dev/null || fail "${tool} is required"
 done

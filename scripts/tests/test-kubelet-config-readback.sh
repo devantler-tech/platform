@@ -20,7 +20,7 @@ fi
 
 stability_line=$(grep -nF './scripts/wait-for-prod-api-stability.sh' "$deploy_action" | cut -d: -f1)
 readback_line=$(grep -nF './scripts/verify-kubelet-config-readback.sh' "$deploy_action" | cut -d: -f1)
-if [[ -z "$stability_line" || -z "$readback_line" ]] || (( stability_line >= readback_line )); then
+if [[ -z "$stability_line" || -z "$readback_line" ]] || ((stability_line >= readback_line)); then
   printf 'kubelet settings readback must follow cluster update and API stability\n' >&2
   exit 1
 fi
@@ -85,6 +85,7 @@ healthy='{"kubeletconfig":{
   "evictionHard":{"memory.available":"100Mi","nodefs.available":"10%","nodefs.inodesFree":"5%","imagefs.available":"15%","imagefs.inodesFree":"5%"},
   "imageGCHighThresholdPercent":75,
   "imageGCLowThresholdPercent":70,
+  "featureGates":{"ClusterTrustBundle":true,"ClusterTrustBundleProjection":true,"PodCertificateRequest":true},
   "maxPods":110}}'
 # The exact shape #3137 found on two autoscaler nodes.
 drifted=$(jq '.kubeletconfig.mergeDefaultEvictionSettings = false

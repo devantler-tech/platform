@@ -1,3 +1,5 @@
+// Command prove-kyverno-cache-recovery verifies Kyverno admission after its
+// ephemeral cache recovers.
 package main
 
 import (

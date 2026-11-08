@@ -279,9 +279,14 @@ while IFS= read -r root; do
   fi
   while IFS=$'\t' read -r url name has_verify provider ids_type ids_count incomplete issuer subject ref_type ref_key_count ref_semver; do
     [ -n "$url" ] || continue
-    url="$(decode "$url")"; name="$(decode "$name")"; provider="$(decode "$provider")"
-    ids_type="$(decode "$ids_type")"; issuer="$(decode "$issuer")"; subject="$(decode "$subject")"
-    ref_type="$(decode "$ref_type")"; ref_semver="$(decode "$ref_semver")"
+    url="$(decode "$url")"
+    name="$(decode "$name")"
+    provider="$(decode "$provider")"
+    ids_type="$(decode "$ids_type")"
+    issuer="$(decode "$issuer")"
+    subject="$(decode "$subject")"
+    ref_type="$(decode "$ref_type")"
+    ref_semver="$(decode "$ref_semver")"
     [ -n "$url$name" ] || continue
     url="$(normalise_url "$url")"
     # The second pattern is the literal characters `${` — a Flux substitution marker,
@@ -306,7 +311,9 @@ while IFS= read -r root; do
         fail "$label: invalid Tenant source constructor"
         continue
       fi
-      ref_type='!!map'; ref_key_count=1; ref_semver="$REQUIRED_TENANT_STREAM_SEMVER"
+      ref_type='!!map'
+      ref_key_count=1
+      ref_semver="$REQUIRED_TENANT_STREAM_SEMVER"
     fi
     case "$url" in
       "$WEDDING_STREAM_URL" | "$ASCOACHING_STREAM_URL" | "$TEMPLATED_TENANT_STREAM_URL")

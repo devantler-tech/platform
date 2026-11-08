@@ -1,0 +1,21 @@
+# atelet pulls actor images into its node image cache and downloads the
+# public gVisor releases its SandboxConfig names (gs://gvisor, served by
+# storage.googleapis.com). Agent harness images are on GHCR.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-atelet
+  namespace: ate-system
+spec:
+  endpointSelector:
+    matchLabels:
+      app: atelet
+  egress:
+    - toFQDNs:
+        - matchName: ghcr.io
+        - matchName: pkg-containers.githubusercontent.com
+        - matchName: storage.googleapis.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

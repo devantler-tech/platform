@@ -1,0 +1,24 @@
+# The Gateway reaches the Coroot app pod directly for exactly one route: the
+# /mcp rule in http-route.yaml, which bypasses oauth2-proxy because Coroot's MCP
+# endpoint authenticates every request with a bearer token itself. Only the
+# Coroot app pod is selected, so no other observability workload becomes
+# reachable from the Gateway. Every other path still arrives through oauth2-proxy
+# and the auth-proxy, which allow-coroot admits.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-gateway-to-coroot-mcp
+  namespace: observability
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: coroot
+      app.kubernetes.io/component: coroot
+  ingress:
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

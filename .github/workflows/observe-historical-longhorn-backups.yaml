@@ -1,6 +1,7 @@
+---
 name: Observe Historical Longhorn Backups
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:

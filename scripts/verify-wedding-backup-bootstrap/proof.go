@@ -36,7 +36,7 @@ func projection(s, es object, run, access, password string) bool {
 
 func probePod(run string, r recipe) (object, error) {
 	if !digits.MatchString(run) || validateRecipe(r) != nil {
-		return nil, refused
+		return nil, errRefused
 	}
 	destination := strings.TrimPrefix(str(r.store, "spec", "configuration", "destinationPath"), "s3://")
 	script := `set -eu
@@ -70,7 +70,7 @@ cmp /tmp/sentinel /tmp/readback
 func randomCredential(size int) (string, error) {
 	b := make([]byte, size)
 	if _, err := rand.Read(b); err != nil {
-		return "", refused
+		return "", errRefused
 	}
 	return hex.EncodeToString(b), nil
 }
@@ -78,7 +78,7 @@ func randomCredential(size int) (string, error) {
 func bindPeerAddress(p, server object, run string) error {
 	ip := net.ParseIP(str(server, "status", "podIP"))
 	if !owned(server, "minio", "wedding-bootstrap-"+run, run) || ip == nil || !ip.IsGlobalUnicast() {
-		return refused
+		return errRefused
 	}
 	c := at(p, "spec", "containers").([]any)[0].(map[string]any)
 	c["env"] = append(at(c, "env").([]any), object{"name": "S3_POD_IP", "value": ip.String()})
