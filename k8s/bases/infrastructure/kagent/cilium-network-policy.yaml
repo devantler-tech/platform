@@ -18,6 +18,7 @@ spec:
             app: atenet-egress
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: agentic-engineer
+            app: agentic-engineer-trigger
       toPorts:
         - ports:
             - port: "8083"

@@ -582,6 +582,8 @@ jobs:
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
+              - 'scripts/tests/test-agentic-engineer-trigger.sh'
+              - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-cancellation-release.sh'
               - 'scripts/tests/test-velero-node-agent-priority.sh'
@@ -2794,6 +2796,24 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-helper-image-pull-policy.sh
           bash scripts/tests/test-coroot-helper-image-pull-policy.sh
+
+      - name: ⏱️ Validate the Agentic Engineer trigger's run limit
+        if: needs.changes.outputs.k8s == 'true'
+        # The trigger's cancel is the lane's per-run spend cap. Replays kagent's
+        # A2A API against the manifest's real script: a cancel that fails or is
+        # ignored must fail the Job, never report a capped run.
+        run: |
+          shellcheck scripts/tests/test-agentic-engineer-trigger.sh
+          bash scripts/tests/test-agentic-engineer-trigger.sh
+
+      - name: 🔑 Validate the Anthropic proxy's Envoy bootstrap
+        if: needs.changes.outputs.k8s == 'true'
+        # The proxy crash-looped on a bootstrap Envoy rejects at startup (#5905).
+        # Validates it with the Deployment's pinned Envoy image, and proves the
+        # check catches a bootstrap without its node identity.
+        run: |
+          shellcheck scripts/tests/test-anthropic-proxy-envoy-config.sh
+          bash scripts/tests/test-anthropic-proxy-envoy-config.sh
 
       - name: 💾 Validate the Velero maintenance OOM alert
         if: needs.changes.outputs.k8s == 'true'
