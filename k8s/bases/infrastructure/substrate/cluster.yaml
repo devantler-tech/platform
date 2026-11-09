@@ -28,6 +28,19 @@ spec:
   storage:
     size: 5Gi
     storageClass: longhorn-wffc
+  # Coroot's Postgres integration, as every platform database has. CNPG
+  # copies these annotations onto the instance pods, where Coroot's
+  # cluster-agent discovers them; it logs in as the coroot_monitor role below
+  # with the substrate-db-coroot-monitor Secret, and only it may reach the
+  # instances for this (cilium-network-policy-coroot.yaml).
+  inheritedMetadata:
+    annotations:
+      coroot.com/postgres-scrape: "true"
+      coroot.com/postgres-scrape-port: "5432"
+      coroot.com/postgres-scrape-credentials-secret-name: substrate-db-coroot-monitor
+      coroot.com/postgres-scrape-credentials-secret-username-key: username
+      coroot.com/postgres-scrape-credentials-secret-password-key: password
+      coroot.com/postgres-scrape-param-sslmode: require
   # Same quorum replication as the platform's other databases: a promoted
   # standby always holds every committed transaction, and writes continue if
   # the standby is down.
@@ -36,6 +49,11 @@ spec:
       method: any
       number: 1
       dataDurability: preferred
+    # Any pg_stat_statements.* parameter makes CNPG preload the extension and
+    # create it in every database, which feeds Coroot's per-query view.
+    parameters:
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: all
   bootstrap:
     initdb:
       database: substrate
@@ -75,6 +93,15 @@ spec:
           - substrate_readwrite
         passwordSecret:
           name: substrate-db-readwrite
+      # Coroot's read-only monitoring login: pg_monitor only, no access to
+      # Substrate's schema.
+      - name: coroot_monitor
+        ensure: present
+        login: true
+        inRoles:
+          - pg_monitor
+        passwordSecret:
+          name: substrate-db-coroot-monitor
   resources:
     requests:
       cpu: 50m

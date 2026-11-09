@@ -182,6 +182,9 @@ jobs:
           filters: |
             k8s:
               - 'k8s/**'
+              # The k8s-gated database monitoring gate, so a change to the
+              # test alone still runs it.
+              - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
               - 'scripts/tests/private-mail-preparation/**'
               - 'scripts/tests/ingress-client-address/**'
               - 'scripts/tests/vault-email-credentials/**'
@@ -2620,8 +2623,9 @@ jobs:
 
       - name: 🐘 Validate Coroot Postgres scrape policy
         if: needs.changes.outputs.k8s == 'true'
-        # Schema validation cannot detect a valid selector that matches no pod.
-        # Pin both cross-namespace policies to the operator's generated labels.
+        # Every production database must ship Coroot's Postgres integration,
+        # and schema validation cannot detect a valid selector that matches no
+        # pod: pin each scrape policy to the operator's generated labels.
         run: |
           shellcheck scripts/tests/test-coroot-postgres-scrape-policy.sh
           bash scripts/tests/test-coroot-postgres-scrape-policy.sh
