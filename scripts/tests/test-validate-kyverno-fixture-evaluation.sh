@@ -85,9 +85,11 @@ else
 fi
 
 # #3145: kubectl's shorthand kind makes every rule match nothing.
-root="$(copy shorthand-kinds restrict-tenant-network-policies)"
-sed -i.bak -E 's#- CiliumNetworkPolicy$#- CiliumNetworkPolicy.cilium.io#' \
-  "${root}/${policies}/restrict-tenant-network-policies.yaml"
+root="$(copy shorthand-kinds restrict-arc-retirement-credential-sync-rewritten)"
+sed -i.bak -E 's#kinds: \[external-secrets\.io/v1/ExternalSecret\]#kinds: [ExternalSecret.external-secrets.io]#' \
+  "${root}/${policies}/restrict-arc-retirement.yaml"
+grep -qF 'kinds: [ExternalSecret.external-secrets.io]' "${root}/${policies}/restrict-arc-retirement.yaml" ||
+  fail "shorthand kinds: the edit no longer applies to restrict-arc-retirement.yaml"
 if kyverno_passes "shorthand kinds" "${root}"; then
   expect_fail "shorthand kinds" "${root}" 1 "declares result: fail (kyverno reported it Excluded)"
 fi
