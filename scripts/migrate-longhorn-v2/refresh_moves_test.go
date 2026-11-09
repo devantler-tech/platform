@@ -33,6 +33,7 @@ type refreshCluster struct {
 	onRestart      func()
 	onPodsRead     func()
 	onNodesRead    func()
+	onNodeRead     func()
 	sourceMoved    bool
 	failPodReads   int
 }
@@ -205,6 +206,9 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 			}
 			return f.list(f.pods...)
 		case call[0] == "get" && call[1] == "node":
+			if f.onNodeRead != nil {
+				f.onNodeRead()
+			}
 			return json.Marshal(f.node)
 		}
 		f.t.Fatalf("unexpected kubectl call %v", call)
@@ -248,11 +252,15 @@ func TestRefreshStopsForwardWritesWhenMainMoves(t *testing.T) {
 		{name: "between evictions", want: []string{"cordon", "evict a", "uncordon"}},
 		{name: "between eviction retries", want: []string{"cordon", "evict a", "uncordon"}},
 		{name: "before restart"},
+		{name: "before restart with owned cordon", want: []string{"cordon", "evict a", "uncordon"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pods := []object{podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "a", "1Gi", "a-rs"), movablePodOnWorker(worker, "b", "900Mi", "b-rs")}
-			if tc.name == "before restart" {
+			switch tc.name {
+			case "before restart":
 				pods = []object{podOnWorker(worker, "1Gi")}
+			case "before restart with owned cordon":
+				pods = []object{podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "a", "2Gi", "a-rs")}
 			}
 			f := newRefreshCluster(t, pods...)
 			moveMain := func() { f.sourceMoved = true }
@@ -265,6 +273,12 @@ func TestRefreshStopsForwardWritesWhenMainMoves(t *testing.T) {
 				f.refuseEviction, f.onEvict = true, moveMain
 			case "before restart":
 				f.onPodsRead = moveMain
+			case "before restart with owned cordon":
+				f.onNodeRead = func() {
+					if len(f.evictions) == 1 {
+						moveMain()
+					}
+				}
 			}
 			if err := f.refresh(context.Background()); err == nil || !f.sourceMoved || !slices.Equal(f.events, tc.want) {
 				t.Fatalf("events %v, expected %v after main moved: %v", f.events, tc.want, err)
