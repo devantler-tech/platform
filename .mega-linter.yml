@@ -440,3 +440,10 @@ REPOSITORY_TRIVY_ARGUMENTS:
 # instead of disabling the linter. Measured: 1 error -> 0, audit performed.
 ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES:
   - GITHUB_TOKEN
+
+# grype scans the whole tree and refreshes its vulnerability database in the same run, so it sits
+# close to MegaLinter's 300-second default: 232s on 2026-11-09 11:40Z, then killed at 300s on two
+# consecutive runs that afternoon. A killed scan reports one error and fails the gate without
+# having examined anything. More time keeps the full scan; nothing is excluded or downgraded.
+# The key is `_TIMEOUT_SECONDS`: the `_TIMEOUT_SEC` name in the timeout message is not in the schema.
+REPOSITORY_GRYPE_TIMEOUT_SECONDS: 900

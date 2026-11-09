@@ -50,3 +50,13 @@ spec:
                 name: atelet
                 annotations:
                   secret.reloader.stakater.com/reload: rustfs-credentials
+              spec:
+                template:
+                  metadata:
+                    annotations:
+                      # The RustFS key generation the running atelet pods
+                      # started with. Reloader only reacts to a later change,
+                      # so pods still holding keys that rotated before it was
+                      # watching need this value changed to roll onto the
+                      # current Secret.
+                      substrate.devantler.tech/rustfs-credentials-generation: "2026-11-08"

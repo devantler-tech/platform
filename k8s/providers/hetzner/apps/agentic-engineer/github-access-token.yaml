@@ -1,0 +1,18 @@
+# Mints installation tokens for the Devantler Tech Engineering App
+# (devantler-tech-engineering[bot]), the lane's GitHub identity. A token lives
+# one hour; external-secret-github-token.yaml refreshes it every 30 minutes.
+# The IDs are public identifiers; the private key stays in OpenBao.
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: GithubAccessToken
+metadata:
+  name: devantler-tech-engineering
+  namespace: agentic-engineer
+spec:
+  appID: "5655281"
+  installID: "179549057"
+  auth:
+    privateKey:
+      secretRef:
+        name: github-app
+        key: private-key
