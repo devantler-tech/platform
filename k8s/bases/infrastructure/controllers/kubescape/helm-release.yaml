@@ -377,9 +377,11 @@ spec:
   # this HelmRelease and are never rendered. That blind spot is tracked
   # separately — do not read a green scan as evidence about this namespace.
   #
-  # readOnlyRootFilesystem is deliberately NOT added to `storage`: it is an
-  # aggregated APIServer backed by a RWO PVC and its write paths are unverified,
-  # so that one needs its own evidence rather than riding along here.
+  # readOnlyRootFilesystem is not added to `storage` here: chart 1.41.0 sets it
+  # itself and mounts an emptyDir at /tmp (kubescape/helm-charts#934). The pinned
+  # v0.0.297 compatibility build writes only below /data (its SQLite and file
+  # roots) and /tmp, and reads its serving certificate from the mounted Secret,
+  # so it never writes self-signed certificates to the root filesystem.
   #
   # UPGRADE HAZARD, deliberately accepted: JSON-Patch `add` REPLACES an existing
   # key, so if a future chart version starts setting `capabilities` on one of
