@@ -313,7 +313,7 @@ data:
   # twice on one page with different contents under each.
   bookmarks.yaml: |
     - Internal Developer Platform:
-        - DevantlerTech:
+        - GitHub:
             - icon: github-light
               href: https://github.com/devantler-tech
         - Repositories:
