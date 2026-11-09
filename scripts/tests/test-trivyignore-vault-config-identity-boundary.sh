@@ -246,10 +246,18 @@ printf '  below the floor: %s container(s) by UID, %s by GID; expected %s each (
 
 # ---------------------------------------------------------------- behaviour --
 command -v trivy >/dev/null 2>&1 || {
+  if [[ ${CI:-} == true ]]; then
+    fail "trivy is required for behavioural checks in CI"
+    exit 1
+  fi
   echo "SKIP(behavioural): trivy not installed; structural and premise checks above still passed"
   exit 0
 }
 command -v jq >/dev/null 2>&1 || {
+  if [[ ${CI:-} == true ]]; then
+    fail "jq is required for behavioural checks in CI"
+    exit 1
+  fi
   echo "SKIP(behavioural): jq not installed; structural and premise checks above still passed"
   exit 0
 }
