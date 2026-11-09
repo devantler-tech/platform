@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Prove the Agentic Engineer lane's trigger enforces its per-run spend cap.
+# Prove the Agentic Engineer lane's trigger starts the daily run and watches it to its end.
 #
-# The trigger's run limit is the lane's per-run spend cap: kagent and Substrate have no task
-# deadline of their own, so the trigger cancels the task at the limit. A cancel that fails or is
-# ignored must fail the Job rather than report a capped run (devantler-tech/platform#5905). This
-# runs the ConfigMap's real script under `sh`, against a stub `curl` that plays kagent's A2A API.
+# A run has no time limit: cutting one off mid-task wastes what it has already spent, so the
+# Anthropic workspace's monthly limit is the lane's only spend cap (maintainer decision,
+# 2026-11-09). The trigger therefore never cancels the task, retries a failed or unreadable poll,
+# resends a lost opening message with the same message ID, and fails the Job when it never learns
+# of the run or the run does not complete. This runs the ConfigMap's real script under `sh`,
+# against a stub `curl` that plays kagent's A2A API.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-manifest="${root}/k8s/providers/hetzner/apps/agentic-engineer/config-map-trigger.yaml"
+lane="${root}/k8s/providers/hetzner/apps/agentic-engineer"
+manifest="${lane}/config-map-trigger.yaml"
 work="$(mktemp -d)"
 completed=0
 # Remove the work directory on exit, and fail any exit that did not reach the final PASS.
@@ -31,49 +34,29 @@ done
 
 yq '.data["trigger.sh"]' "${manifest}" >"${work}/trigger.sh"
 yq '.data["message.txt"]' "${manifest}" >"${work}/message.txt"
-grep -q 'method: "CancelTask"' "${work}/trigger.sh" || fail 'the trigger no longer cancels the task'
+[[ -s "${work}/trigger.sh" ]] || fail 'the ConfigMap has no trigger.sh'
+# The trigger must not cut a run off: no cancel, and no run limit for the CronJob to set.
+if grep -q 'CancelTask' "${work}/trigger.sh"; then
+  fail 'the trigger cancels the task; a run has no time limit'
+fi
+if grep -q 'RUN_LIMIT_SECONDS' "${work}/trigger.sh" "${lane}/cron-job.yaml"; then
+  fail 'a run limit is still configured; a run has no time limit'
+fi
 
 # The stub answers by JSON-RPC method. GetTask replays one state per call from the scenario's
-# `states` file (the last line repeats); after a CancelTask, `states-after-cancel` takes over when
-# present. CancelTask either answers, returns a JSON-RPC error, or fails at the HTTP layer. With
-# a `stall` file, GetTask replies only after that many seconds until a cancel lands, timing out
-# like curl at its `--max-time`.
+# `states` file (the last line repeats): a task state, `garbage` for an unreadable reply, or
+# `http-error` for a failed request. A completed task's report arrives as two streamed parts.
 mkdir -p "${work}/bin"
 cat >"${work}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 dir="${STUB_DIR:?}"
-max_time=60
-while [[ $# -gt 0 ]]; do
-  if [[ "$1" == --max-time ]]; then
-    max_time="$2"
-    shift
-  fi
-  shift
-done
 body="$(cat)"
 method="$(jq -r '.method' <<<"${body}")"
 printf '%s\n' "${method}" >>"${dir}/calls"
 if [[ "${method}" == SendMessage ]]; then
   jq -r '.params.message.messageId' <<<"${body}" >>"${dir}/message-ids"
 fi
-if [[ "${method}" == CancelTask && ! -f "${dir}/cancel-at" ]]; then
-  date +%s >"${dir}/cancel-at"
-fi
-if [[ "${method}" == GetTask && -f "${dir}/stall" && ! -f "${dir}/cancelled" ]]; then
-  stall="$(cat "${dir}/stall")"
-  if ((stall > max_time)); then
-    sleep "${max_time}"
-    printf 'curl: (28) Operation timed out after %s seconds\n' "${max_time}" >&2
-    exit 28
-  fi
-  sleep "${stall}"
-fi
-next_state() {
-  local file="$1" count
-  count="$(grep -c '^GetTask$' "${dir}/calls")"
-  sed -n "${count}p" "${file}" | grep . || tail -n 1 "${file}"
-}
 case "${method}" in
   SendMessage)
     behaviour=ok
@@ -86,102 +69,88 @@ case "${method}" in
       garbage) printf '<html>bad gateway</html>' ;;
       http-error) printf 'curl: (52) Empty reply from server\n' >&2; exit 52 ;;
     esac ;;
-  CancelTask)
-    case "$(cat "${dir}/cancel")" in
-      ok) printf '{"jsonrpc":"2.0","id":"cancel","result":{"id":"task-1"}}'; touch "${dir}/cancelled" ;;
-      rpc-error) printf '{"jsonrpc":"2.0","id":"cancel","error":{"code":-32002,"message":"not cancelable"}}' ;;
-      http-error) printf 'curl: (22) The requested URL returned error: 503\n' >&2; exit 22 ;;
-    esac ;;
   GetTask)
-    file="${dir}/states"
-    [[ -f "${dir}/cancelled" && -f "${dir}/states-after-cancel" ]] && file="${dir}/states-after-cancel"
-    state="$(next_state "${file}")"
-    if [[ "${state}" == garbage ]]; then
-      printf '<html>bad gateway</html>'
-    else
-      jq -cn --arg state "${state}" '{jsonrpc: "2.0", id: "get", result: {id: "task-1",
-        status: {state: $state, message: {parts: [{text: "run report"}]}}}}'
-    fi ;;
+    count="$(grep -c '^GetTask$' "${dir}/calls")"
+    state="$(sed -n "${count}p" "${dir}/states" | grep . || tail -n 1 "${dir}/states")"
+    case "${state}" in
+      garbage) printf '<html>bad gateway</html>' ;;
+      http-error) printf 'curl: (22) The requested URL returned error: 503\n' >&2; exit 22 ;;
+      *)
+        jq -cn --arg state "${state}" '{jsonrpc: "2.0", id: "get", result: {id: "task-1",
+          status: {state: $state, message: {parts: [{text: "run "}, {text: "report"}]}}}}' ;;
+    esac ;;
   *) printf 'unexpected method %s\n' "${method}" >&2; exit 1 ;;
 esac
 STUB
 chmod +x "${work}/bin/curl"
 
-# run <scenario> <cancel behaviour> <run limit> <states> [states after cancel]: prints the exit
-# code. States are space-separated, one per GetTask call. STALL=<seconds> stalls GetTask, and
+# run <scenario> <states>: prints the exit code. States are space-separated, one per GetTask call.
 # SEND="<behaviour>..." scripts SendMessage replies (ok, garbage, http-error; the last repeats).
 run() {
-  local dir="${work}/$1" status=0 states=() after=()
+  local dir="${work}/$1" status=0 states=()
   mkdir -p "${dir}"
   : >"${dir}/calls"
-  if [[ -n "${STALL:-}" ]]; then
-    printf '%s\n' "${STALL}" >"${dir}/stall"
-  fi
   if [[ -n "${SEND:-}" ]]; then
     local sends=()
     read -ra sends <<<"${SEND}"
     printf '%s\n' "${sends[@]}" >"${dir}/send"
   fi
-  date +%s >"${dir}/start"
-  printf '%s\n' "$2" >"${dir}/cancel"
-  read -ra states <<<"$4"
+  read -ra states <<<"$2"
   printf '%s\n' "${states[@]}" >"${dir}/states"
-  if [[ -n "${5:-}" ]]; then
-    read -ra after <<<"$5"
-    printf '%s\n' "${after[@]}" >"${dir}/states-after-cancel"
-  fi
-  PATH="${work}/bin:${PATH}" STUB_DIR="${dir}" RUN_LIMIT_SECONDS="$3" POLL_SECONDS=1 \
+  PATH="${work}/bin:${PATH}" STUB_DIR="${dir}" POLL_SECONDS=0 \
     MESSAGE_FILE="${work}/message.txt" sh "${work}/trigger.sh" >"${dir}/out" 2>&1 || status=$?
   printf '%s' "${status}"
 }
-# Count the CancelTask calls a scenario made.
-cancels() { grep -c '^CancelTask$' "${work}/$1/calls" || true; }
+# Count the calls of one method a scenario made.
+calls() { grep -c "^$2\$" "${work}/$1/calls" || true; }
 
-# A run that finishes inside the limit succeeds without a cancel, even past an unreadable reply.
-[[ "$(run finished ok 10 'garbage TASK_STATE_COMPLETED')" == 0 ]] ||
+# A run that completes succeeds, past an unreadable reply, and its report prints whole.
+[[ "$(run finished 'garbage TASK_STATE_COMPLETED')" == 0 ]] ||
   fail "a completed run did not succeed: $(cat "${work}/finished/out")"
-[[ "$(cancels finished)" == 0 ]] || fail 'a completed run was cancelled'
 grep -q 'final state: TASK_STATE_COMPLETED' "${work}/finished/out" || fail 'a completed run did not report its state'
+grep -qx 'run report' "${work}/finished/out" || fail "a streamed report did not print whole: $(cat "${work}/finished/out")"
 
-# At the limit, a cancel the task honours ends the run as capped.
-[[ "$(run capped ok 2 TASK_STATE_WORKING TASK_STATE_CANCELED)" == 1 ]] ||
-  fail "a capped run did not fail as capped: $(cat "${work}/capped/out")"
-grep -q 'final state: CANCELED_AT_LIMIT' "${work}/capped/out" || fail 'a capped run did not report CANCELED_AT_LIMIT'
+# A long run is watched until it ends, across every poll, and never cancelled.
+long='TASK_STATE_WORKING TASK_STATE_WORKING TASK_STATE_WORKING TASK_STATE_WORKING TASK_STATE_WORKING'
+long+=' TASK_STATE_WORKING TASK_STATE_WORKING TASK_STATE_WORKING TASK_STATE_COMPLETED'
+[[ "$(run long "${long}")" == 0 ]] || fail "a long run was not watched to its end: $(cat "${work}/long/out")"
+[[ "$(calls long GetTask)" == 9 ]] || fail "a long run was polled $(calls long GetTask) times instead of 9"
+# Each change of what a poll sees is logged once: nine polls, two states, two lines.
+[[ "$(grep -c '^task task-1: ' "${work}/long/out")" == 2 ]] ||
+  fail "a long run did not log each state change exactly once: $(cat "${work}/long/out")"
+
+# A failed or unreadable poll is retried, never a reason to stop watching, and is logged.
+[[ "$(run flaky 'http-error garbage http-error TASK_STATE_WORKING TASK_STATE_COMPLETED')" == 0 ]] ||
+  fail "a run with failed polls was not watched to its end: $(cat "${work}/flaky/out")"
+flaky_log="$(grep '^task task-1: ' "${work}/flaky/out" | sed 's/^task task-1: //' | tr '\n' '|')"
+[[ "${flaky_log}" == 'unreachable (GetTask failed)|unknown|unreachable (GetTask failed)|TASK_STATE_WORKING|TASK_STATE_COMPLETED|' ]] ||
+  fail "failed and unreadable polls were not logged as they changed: ${flaky_log}"
+
+# A run that ends in any other way fails the Job, with the state it ended in.
+[[ "$(run failed 'TASK_STATE_WORKING TASK_STATE_FAILED')" == 1 ]] ||
+  fail "a failed run did not fail the Job: $(cat "${work}/failed/out")"
+grep -q 'final state: TASK_STATE_FAILED' "${work}/failed/out" || fail 'a failed run did not report its state'
 
 # A send whose reply is lost is resent with the same message ID, which kagent answers with the
-# task the first send started, so the run is watched and capped as usual.
-[[ "$(SEND='http-error garbage ok' run resent ok 2 TASK_STATE_WORKING TASK_STATE_CANCELED)" == 1 ]] ||
-  fail "a resent run was not watched to its limit: $(cat "${work}/resent/out")"
-[[ "$(grep -c '^SendMessage$' "${work}/resent/calls")" == 3 ]] || fail 'a lost send was not resent until it gave a task'
+# task the first send started, so the run is watched as usual.
+[[ "$(SEND='http-error garbage ok' run resent 'TASK_STATE_WORKING TASK_STATE_COMPLETED')" == 0 ]] ||
+  fail "a resent run was not watched to its end: $(cat "${work}/resent/out")"
+[[ "$(calls resent SendMessage)" == 3 ]] || fail 'a lost send was not resent until it gave a task'
 # kagent returns the first send's task only for the same message ID; a new ID would start a run.
-[[ "$(sort -u "${work}/resent/message-ids" | grep -c '^run-[0-9]\{8\}$')" == 1 &&
-"$(sort -u "${work}/resent/message-ids" | wc -l | tr -d ' ')" == 1 ]] ||
+# Every send must carry one and the same `run-YYYYMMDD` ID: bash anchors ^ and $ at the ends of the
+# whole value, so a second distinct ID fails the match.
+[[ "$(sort -u "${work}/resent/message-ids")" =~ ^run-[0-9]{8}$ ]] ||
   fail "a resend changed the message ID: $(tr '\n' ' ' <"${work}/resent/message-ids")"
-grep -q 'final state: CANCELED_AT_LIMIT' "${work}/resent/out" || fail 'a resent run was not capped'
 
-# A run the trigger never learns of cannot read as anything but a failure it cannot cap.
-[[ "$(SEND=garbage run unknown ok 10 TASK_STATE_WORKING)" == 2 ]] ||
+# A run the trigger never learns of cannot read as anything but a failure.
+[[ "$(SEND=garbage run unknown TASK_STATE_WORKING)" == 2 ]] ||
   fail "a send that never gave a task did not exit 2: $(cat "${work}/unknown/out")"
 grep -q 'no task id for run-' "${work}/unknown/out" || fail 'a send that never gave a task did not say so'
-[[ "$(grep -c '^GetTask$' "${work}/unknown/calls")" == 0 ]] || fail 'the trigger watched a task it never learned of'
+[[ "$(calls unknown GetTask)" == 0 ]] || fail 'the trigger watched a task it never learned of'
 
-# A GetTask that stalls near the limit cannot hold the cancel back past it.
-[[ "$(STALL=30 run stalled ok 3 TASK_STATE_WORKING TASK_STATE_CANCELED)" == 1 ]] ||
-  fail "a stalled run did not end capped: $(cat "${work}/stalled/out")"
-[[ -f "${work}/stalled/cancel-at" ]] || fail 'a stalled run was never cancelled'
-late=$(($(cat "${work}/stalled/cancel-at") - $(cat "${work}/stalled/start") - 3))
-((late <= 2)) || fail "a stalled GetTask delayed the cancel ${late}s past the run limit"
-
-# A cancel the task ignores, or that never reaches kagent, must not read as capped.
-for behaviour in rpc-error http-error; do
-  [[ "$(run "ignored-${behaviour}" "${behaviour}" 2 TASK_STATE_WORKING)" == 2 ]] ||
-    fail "an unconfirmed cancel (${behaviour}) did not exit 2: $(cat "${work}/ignored-${behaviour}/out")"
-  [[ "$(cancels "ignored-${behaviour}")" == 3 ]] || fail "an unconfirmed cancel (${behaviour}) was not retried three times"
-  grep -q 'cancellation not confirmed after 3 attempts' "${work}/ignored-${behaviour}/out" ||
-    fail "an unconfirmed cancel (${behaviour}) did not say so"
-  if grep -q 'CANCELED_AT_LIMIT' "${work}/ignored-${behaviour}/out"; then
-    fail "an unconfirmed cancel (${behaviour}) reported a capped run"
-  fi
+# No scenario cancelled anything.
+for scenario in finished long flaky failed resent unknown; do
+  [[ "$(calls "${scenario}" CancelTask)" == 0 ]] || fail "the ${scenario} scenario cancelled the task"
 done
 
 grep -Fq 'bash scripts/tests/test-agentic-engineer-trigger.sh' "${root}/.github/workflows/ci.yaml" ||

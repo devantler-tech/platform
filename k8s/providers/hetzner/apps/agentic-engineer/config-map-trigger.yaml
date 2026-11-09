@@ -1,7 +1,8 @@
-# The daily run's trigger. It sends the run message over kagent's A2A API,
-# polls the task, and cancels it at the run's time limit: with one Opus run a
-# day, wall-clock time is the per-run spend cap, below the Anthropic
-# workspace's monthly limit. The message ID is per day, and kagent returns the
+# The daily run's trigger. It sends the run message over kagent's A2A API and
+# watches the task until the agent ends it. There is no per-run time limit:
+# cutting a run off mid-task wastes what it has already spent, so the
+# Anthropic workspace's monthly limit is the lane's only spend cap (maintainer
+# decision, 2026-11-09). The message ID is per day, and kagent returns the
 # existing task for a resent opening message, so a resend continues the same
 # run instead of starting a second one.
 #
@@ -29,20 +30,15 @@ data:
     set -eu
     endpoint=http://kagent-controller.kagent.svc.cluster.local:8083/agents/agentic-engineer/agentic-engineer
     run_id="run-$(date -u +%Y%m%d)"
-    deadline=$(( $(date +%s) + RUN_LIMIT_SECONDS ))
     poll="${POLL_SECONDS:-30}"
     message="${MESSAGE_FILE:-/etc/trigger/message.txt}"
-    rpc() { # [max seconds, default 60]
-      curl -sS --fail-with-body --max-time "${1:-60}" -H 'content-type: application/json' \
+    rpc() {
+      curl -sS --fail-with-body --max-time 60 -H 'content-type: application/json' \
         -H 'A2A-Version: 1.0' -H 'X-User-Id: agentic-engineer-scheduler' \
         --data-binary @- "$endpoint"
     }
-    get_task() { # [max seconds]
-      jq -n --arg id "$id" '{jsonrpc: "2.0", id: "get", method: "GetTask", params: {id: $id}}' | rpc "$@"
-    }
-    # Seconds left before the run limit; the watch loop never waits past it.
-    remaining() {
-      echo $(( deadline - $(date +%s) ))
+    get_task() {
+      jq -n --arg id "$id" '{jsonrpc: "2.0", id: "get", method: "GetTask", params: {id: $id}}' | rpc
     }
     # An unreadable response is an unknown state, never a reason to stop
     # watching a task that may still be running.
@@ -65,9 +61,8 @@ data:
     # A send whose reply is lost may still have started the run. kagent
     # treats a resent opening message as the same request and returns the
     # task the first send started (InteractionService.PrepareSend, kagent
-    # v1.0.0-rc3), so the trigger resends until it knows the task, past the
-    # run limit if need be: knowing the task is the only way to cancel it. A
-    # run it never learns of fails the Job.
+    # v1.0.0-rc3), so the trigger resends until it knows the task. A run it
+    # never learns of fails the Job.
     id=""
     attempt=0
     while [ -z "$id" ] && [ "$attempt" -lt 5 ]; do
@@ -80,45 +75,35 @@ data:
       fi
     done
     if [ -z "$id" ]; then
-      echo "no task id for $run_id after $attempt attempts: a run may have started that this trigger cannot watch or cancel" >&2
+      echo "no task id for $run_id after $attempt attempts: a run may have started that this trigger cannot watch" >&2
       exit 2
     fi
     echo "started $run_id as task $id"
+    # Watch until the agent ends the run. A failed or unreadable GetTask is
+    # retried at the next poll; the trigger never cancels the task. The Job's
+    # activeDeadlineSeconds bounds only this watcher (cron-job.yaml). Each
+    # change of what a poll sees is logged once, so the Pod log tells a long
+    # healthy run from a watcher that cannot reach or read the task.
     state=""
-    # Each wait and each GetTask is bounded by the time left, so a stalled
-    # reply near the limit cannot delay the cancel. The cancel and its
-    # confirmation below keep their own timeout.
-    while [ "$(remaining)" -gt 0 ]; do
-      wait=$(remaining)
-      if [ "$wait" -gt "$poll" ]; then wait=$poll; fi
-      sleep "$wait"
-      left=$(remaining)
-      if [ "$left" -lt 1 ]; then break; fi
-      task=$(get_task "$left") || continue
-      state=$(task_state)
-      if terminal "$state"; then break; fi
-    done
-    if ! terminal "$state"; then
-      # The run limit is the per-run spend cap, so a cancel counts only once
-      # GetTask shows the task has stopped. A failed or ignored cancel fails
-      # the Job (exit 2) instead of reporting a capped run.
-      echo "run limit reached in state $state; cancelling"
-      attempt=0
-      while [ "$attempt" -lt 3 ] && ! terminal "$state"; do
-        attempt=$((attempt + 1))
-        jq -n --arg id "$id" '{jsonrpc: "2.0", id: "cancel", method: "CancelTask", params: {id: $id}}' | rpc >/dev/null ||
-          echo "CancelTask attempt $attempt failed" >&2
-        sleep "$poll"
-        task=$(get_task) || continue
+    seen=""
+    until terminal "$state"; do
+      sleep "$poll"
+      if task=$(get_task); then
         state=$(task_state)
-      done
-      if ! terminal "$state"; then
-        echo "cancellation not confirmed after $attempt attempts: task $id is still $state and may still be spending" >&2
-        exit 2
+        now=$state
+      else
+        now="unreachable (GetTask failed)"
       fi
-      echo "cancelled at the run limit; the task is now $state"
-      state=CANCELED_AT_LIMIT
-    fi
+      if [ "$now" != "$seen" ]; then
+        echo "task $id: $now"
+        seen=$now
+      fi
+    done
     echo "final state: $state"
-    printf '%s' "$task" | jq -r '[.result.artifacts[]?.parts[]?.text, .result.status.message.parts[]?.text] | map(select(. != null)) | join("\n")' | tail -c 4000
+    # A streamed reply arrives as many parts: join one message's parts as
+    # written, and separate the messages with a newline.
+    printf '%s' "$task" | jq -r '
+      [(.result.artifacts[]? | [.parts[]?.text | select(. != null)] | join("")),
+       ([.result.status.message.parts[]?.text | select(. != null)] | join(""))]
+      | map(select(. != "")) | join("\n")' | tail -c 4000
     case "$state" in *COMPLETED) exit 0 ;; *) exit 1 ;; esac

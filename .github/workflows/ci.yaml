@@ -2815,11 +2815,11 @@ jobs:
           shellcheck scripts/tests/test-coroot-helper-image-pull-policy.sh
           bash scripts/tests/test-coroot-helper-image-pull-policy.sh
 
-      - name: ⏱️ Validate the Agentic Engineer trigger's run limit
+      - name: ⏱️ Validate the Agentic Engineer trigger
         if: needs.changes.outputs.k8s == 'true'
-        # The trigger's cancel is the lane's per-run spend cap. Replays kagent's
-        # A2A API against the manifest's real script: a cancel that fails or is
-        # ignored must fail the Job, never report a capped run.
+        # Replays kagent's A2A API against the manifest's real script: a run is
+        # watched until the agent ends it and never cancelled, a lost send is
+        # resent with the same message ID, and the Job's result is the run's.
         run: |
           shellcheck scripts/tests/test-agentic-engineer-trigger.sh
           bash scripts/tests/test-agentic-engineer-trigger.sh
