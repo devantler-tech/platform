@@ -314,6 +314,49 @@ readonly node_agent_profile_reader_count
 [[ "${node_agent_profile_reader_count}" == "1" ]] ||
   fail 'the Helm post-renderer must restore exactly the node-agent profile read rule removed by chart 1.40.4'
 
+# Chart 1.41.0 runs both schedulers with a mounted token for the scanner's and
+# kubevuln's ServiceAccounts, whose ClusterRoles reach far beyond creating one
+# OperatorCommand. Require the post-renderer to move both onto the dedicated
+# kubescape-scheduler identity and a digest-pinned kubectl image.
+for scheduler in kubescape-scheduler kubevuln-scheduler; do
+  scheduler_identity="$(SCHEDULER="${scheduler}" yq ea -er '
+    select(.kind == "CronJob" and .metadata.name == strenv(SCHEDULER)) |
+    .spec.jobTemplate.spec.template.spec |
+    .serviceAccountName + " " + .containers[0].image
+  ' "${postrendered_chart}")" || fail "the post-rendered ${scheduler} CronJob is missing"
+  [[ "${scheduler_identity}" == 'kubescape-scheduler quay.io/kubescape/kubectl:1.36.1@sha256:e2b97dde9666986c61c56d49aae85a714b89b69392baa531438e74ec34096fb4' ]] ||
+    fail "the ${scheduler} CronJob must run as kubescape-scheduler with the digest-pinned kubectl image (got: ${scheduler_identity})"
+done
+
+readonly scheduler_role="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/role-scheduler.yaml"
+scheduler_rules="$(yq -er -o=json -I=0 '
+  [.rules[] | {
+    "groups": (.apiGroups | sort | join(",")),
+    "resources": (.resources | sort | join(",")),
+    "verbs": (.verbs | sort | join(","))
+  }] | sort_by(.groups)
+' "${scheduler_role}")" || fail 'the kubescape-scheduler Role is missing'
+readonly scheduler_rules
+[[ "${scheduler_rules}" == '[{"groups":"batch","resources":"jobs","verbs":"get"},{"groups":"kubescape.io","resources":"operatorcommands","verbs":"create"}]' ]] ||
+  fail "the kubescape-scheduler Role must grant only operatorcommands create and jobs get (got: ${scheduler_rules})"
+
+# Chart 1.41.0 fixes GOMEMLIMIT at a fraction of the authored memory limit. The
+# VPA resizes limits below that, so keep the three Go servers that followed
+# their real limit in 1.40.5 on resourceFieldRef.
+for workload in kubescape:kubescape operator:operator storage:apiserver; do
+  deployment="${workload%%:*}"
+  container="${workload#*:}"
+  gomemlimit_source="$(DEPLOYMENT="${deployment}" CONTAINER="${container}" yq ea -er '
+    select(.kind == "Deployment" and .metadata.name == strenv(DEPLOYMENT)) |
+    .spec.template.spec.containers[] | select(.name == strenv(CONTAINER)) |
+    [.env[] | select(.name == "GOMEMLIMIT")] |
+    select(length == 1) | .[0] |
+    ((.value // "") + "|" + (.valueFrom.resourceFieldRef.resource // ""))
+  ' "${postrendered_chart}")" || fail "the post-rendered ${deployment} GOMEMLIMIT is missing or duplicated"
+  [[ "${gomemlimit_source}" == '|limits.memory' ]] ||
+    fail "${deployment} GOMEMLIMIT must follow the container's memory limit (got: ${gomemlimit_source})"
+done
+
 rendered_posture_schedule="$(yq ea -er '
   select(.kind == "CronJob" and .metadata.name == "kubescape-scheduler") |
   .spec.schedule |

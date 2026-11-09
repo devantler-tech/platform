@@ -18,3 +18,8 @@ resources:
   # workload. The patched image looks the object up before removing its record.
   - cluster-role-storage-scan-record-cleanup.yaml
   - cluster-role-binding-storage-scan-record-cleanup.yaml
+  # The posture and vulnerability schedulers create OperatorCommands through the
+  # API server. Give them their own least-privilege identity (see helm-release.yaml).
+  - service-account-scheduler.yaml
+  - role-scheduler.yaml
+  - role-binding-scheduler.yaml

@@ -471,6 +471,63 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/securityContext/seLinuxOptions
                 value: {}
+          # The schedulers run kubectl with a mounted token to create one
+          # OperatorCommand owned by their Job. The chart reuses the scanner's
+          # and kubevuln's ServiceAccounts, whose ClusterRoles include
+          # cluster-wide reads such as secrets. Run them as kubescape-scheduler,
+          # which may only create OperatorCommands and read Jobs in this
+          # namespace, and pin the kubectl image by digest so the code that
+          # holds the token is the code that was reviewed.
+          - target:
+              kind: CronJob
+              name: ^(kubescape|kubevuln)-scheduler$
+            patch: |
+              - op: replace
+                path: /spec/jobTemplate/spec/template/spec/serviceAccountName
+                value: kubescape-scheduler
+              - op: test
+                path: /spec/jobTemplate/spec/template/spec/containers/0/image
+                value: quay.io/kubescape/kubectl:1.36.1
+              - op: replace
+                path: /spec/jobTemplate/spec/template/spec/containers/0/image
+                value: quay.io/kubescape/kubectl:1.36.1@sha256:e2b97dde9666986c61c56d49aae85a714b89b69392baa531438e74ec34096fb4
+          # Chart 1.41.0 sets GOMEMLIMIT to a fixed fraction of the authored
+          # memory limit. The VPA resizes these limits, often far below the
+          # authored value, so a fixed GOMEMLIMIT can sit above the real limit
+          # and the Go GC no longer works harder before the OOM killer fires.
+          # Keep it tied to the container's actual limit, as chart 1.40.5 did
+          # for these three. The test op fails the render if the chart moves
+          # the variable, rather than replacing the wrong one.
+          - target:
+              kind: Deployment
+              name: ^(kubescape|storage)$
+            patch: |
+              - op: test
+                path: /spec/template/spec/containers/0/env/0/name
+                value: GOMEMLIMIT
+              - op: replace
+                path: /spec/template/spec/containers/0/env/0
+                value:
+                  name: GOMEMLIMIT
+                  valueFrom:
+                    resourceFieldRef:
+                      resource: limits.memory
+                      divisor: "1"
+          - target:
+              kind: Deployment
+              name: ^operator$
+            patch: |
+              - op: test
+                path: /spec/template/spec/containers/0/env/2/name
+                value: GOMEMLIMIT
+              - op: replace
+                path: /spec/template/spec/containers/0/env/2
+                value:
+                  name: GOMEMLIMIT
+                  valueFrom:
+                    resourceFieldRef:
+                      resource: limits.memory
+                      divisor: "1"
           - target:
               kind: CronJob
               name: ^(kubescape|kubevuln)-scheduler$
