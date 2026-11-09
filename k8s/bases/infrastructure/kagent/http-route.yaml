@@ -17,7 +17,7 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: kagent
     gethomepage.dev/description: AI agents, their runs and their tools.
-    gethomepage.dev/group: Artificial Intelligence
+    gethomepage.dev/group: Kubernetes
     # Status dot: the default selector (app.kubernetes.io/name=kagent) also
     # matches the controller pod, so key on the UI pod.
     gethomepage.dev/pod-selector: app.kubernetes.io/name=kagent,app.kubernetes.io/component=ui
