@@ -1,8 +1,9 @@
+---
 name: Prove Kyverno Stale Report Prune
 
 # #2573: prove the stale-report DeletingPolicy on a throwaway kind cluster
 # before it reaches production. Runs no production credentials.
-on:
+"on":
   pull_request:
     paths:
       - .github/workflows/prove-kyverno-stale-report-prune.yaml

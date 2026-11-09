@@ -10,8 +10,11 @@ import (
 	"strings"
 )
 
+// StorageRoot is the fixed Longhorn data root ListStorageRoot observes.
 const StorageRoot = "/var/lib/longhorn"
 
+// StorageRootReport counts the storage root's children, records which known
+// Longhorn directories are present, and commits to the listing by digest.
 type StorageRootReport struct {
 	Directories, Files, OtherEntries                                                                  int
 	ReplicaEntryPresent, ReplicaDirectoryPresent                                                      bool
@@ -19,9 +22,13 @@ type StorageRootReport struct {
 	Digest                                                                                            string
 }
 
+// ListStorageRoot lists the immediate children of StorageRoot.
 func (n Native) ListStorageRoot(ctx context.Context) (Listing, error) {
 	return n.listFixedRoot(ctx, StorageRoot)
 }
+
+// AnalyzeStorageRoot qualifies a complete storage-root listing and reduces it
+// to a StorageRootReport.
 func AnalyzeStorageRoot(listing Listing) (StorageRootReport, error) {
 	entries, _, err := normalizedEntries(listing)
 	if err != nil {
@@ -72,7 +79,8 @@ func (e nativeFailure) Error() string {
 }
 func (nativeFailure) Unwrap() error { return errNative }
 
-// Only package-authored classifications enter logs. Transport messages and
+// FailureCode returns the package-authored class of an observation failure,
+// or "unknown". Only these classifications enter logs. Transport messages and
 // file-error strings never select a diagnostic class or grant missing-path proof.
 func FailureCode(err error) string {
 	var failure nativeFailure
@@ -80,7 +88,7 @@ func FailureCode(err error) string {
 		return "unknown"
 	}
 	switch failure.code {
-	case "request", "transport", "not-found", "permission", "unimplemented", "stream", "bounds", "metadata", "entry-error", "entry-shape", "structure":
+	case "request", "transport", "not-found", "permission", "unimplemented", "stream", "bounds", "metadata", "entry-error", "entry-shape", "structure", "block-client", "block-list", "block-shape", "block-change":
 		return failure.code
 	}
 	return "unknown"

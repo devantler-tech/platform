@@ -8,6 +8,11 @@ policies:
 resources:
   - resources.yaml
 results:
+  # Not listed here: the Role exclusion velero/velero-server (a current pass) and the
+  # two same-name lookalikes, the Role sample/velero-server and the ClusterRole
+  # velero-server (both fail). kyverno test pairs a row by name alone, ignoring
+  # namespace and kind, so it cannot tell those three apart;
+  # scripts/tests/test-audit-privileged-rbac.sh asserts all three by full identity.
   - policy: audit-privileged-rbac
     kind: ClusterRole
     result: pass
@@ -65,8 +70,3 @@ results:
       - sample/namespaced-wildcard
       - sample/impersonate-serviceaccounts
       - sample/namespaced-clusterrole-bind
-  # Not listed here: the Role exclusion velero/velero-server (a current pass) and the
-  # two same-name lookalikes, the Role sample/velero-server and the ClusterRole
-  # velero-server (both fail). kyverno test pairs a row by name alone, ignoring
-  # namespace and kind, so it cannot tell those three apart;
-  # scripts/tests/test-audit-privileged-rbac.sh asserts all three by full identity.

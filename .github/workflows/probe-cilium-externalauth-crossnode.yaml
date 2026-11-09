@@ -1,3 +1,4 @@
+---
 name: Probe Cilium ExternalAuth Cross-Node
 
 # Answer #2284 with a datapath test (#3784): does the gateway Envoy's Gateway API ExternalAuth
@@ -38,7 +39,7 @@ name: Probe Cilium ExternalAuth Cross-Node
 # shape of this workflow. It needs no cluster and no secrets, so it runs in ci.yaml's required
 # `validate` job rather than here.
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

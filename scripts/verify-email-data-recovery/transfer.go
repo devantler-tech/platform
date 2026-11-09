@@ -5,7 +5,9 @@ import "errors"
 func backupManifest(i invocation) object {
 	o := recoveryManifest(i, "Backup", i.namespace+"-backup", "velero", "velero.io/v1")
 	o["spec"] = object{
-		"includedNamespaces": []any{"private-mail"}, "includedResources": []any{"pods"}, "includeClusterResources": false,
+		// Velero v1.18 backs PVC data through the related claim item. Excluding
+		// claims leaves only scratch-volume receipts even when the Backup completes.
+		"includedNamespaces": []any{"private-mail"}, "includedResources": []any{"pods", "persistentvolumeclaims"}, "includeClusterResources": false,
 		"labelSelector":   object{"matchLabels": object{"statefulset.kubernetes.io/pod-name": "private-mail-0"}},
 		"snapshotVolumes": false, "defaultVolumesToFsBackup": true, "storageLocation": "default", "ttl": "24h0m0s",
 	}

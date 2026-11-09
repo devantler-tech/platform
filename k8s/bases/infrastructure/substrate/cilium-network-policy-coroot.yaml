@@ -1,0 +1,25 @@
+# Let Coroot's cluster-agent (observability namespace) reach the substrate-db
+# instances on 5432 for its Postgres integration (cluster.yaml). Additive:
+# Cilium adds this to the namespace's other policies, so it only admits the
+# cluster-agent, and only to the database pods. The cluster-agent's own
+# egress policy already allows every namespace.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-coroot-postgres-scrape
+  namespace: ate-system
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: substrate-db
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+            app.kubernetes.io/managed-by: coroot-operator
+            app.kubernetes.io/part-of: coroot
+            app.kubernetes.io/component: coroot-cluster-agent
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP

@@ -1,3 +1,4 @@
+---
 # Pins the policy's behaviour across its MutatingPolicy rewrite (#4997). A
 # HelmRelease labelled `helm.toolkit.fluxcd.io/crds: enabled` gets CreateReplace
 # for CRDs on install and upgrade, overriding any value it set itself and

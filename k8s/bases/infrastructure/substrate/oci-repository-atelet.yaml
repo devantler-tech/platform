@@ -1,0 +1,15 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: substrate-atelet
+  namespace: ate-system
+spec:
+  interval: 10m
+  # Substrate publishes its four charts together, one version for all of them.
+  url: oci://ghcr.io/kagent-dev/substrate/helm/substrate-atelet
+  ref:
+    tag: 1.0.0
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy

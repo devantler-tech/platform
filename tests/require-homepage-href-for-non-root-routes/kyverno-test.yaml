@@ -1,0 +1,51 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: require-homepage-href-for-non-root-routes
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/require-homepage-href-for-non-root-routes.yaml
+resources:
+  - resources.yaml
+  # Exercise the shipped Coroot route, whose /mcp rule comes first: it passes
+  # only while it keeps its explicit href.
+  - ../../k8s/bases/infrastructure/controllers/coroot/http-route.yaml
+results:
+  # --- derived link is the site root, or an explicit href is set ---
+  - policy: require-homepage-href-for-non-root-routes
+    resources:
+      - whoami/root-prefix-first
+      - whoami/exact-root-first
+      - whoami/omitted-matches
+      - whoami/omitted-rules
+      - whoami/omitted-path
+      - observability/subpath-first-with-href
+      - whoami/wildcard-hostname-with-href
+      - whoami/empty-matches-with-href
+      - whoami/no-parent-refs-with-href
+      - observability/coroot
+    kind: HTTPRoute
+    result: pass
+  # --- a sub-path, a regex, a missing or wildcard hostname, no parentRef, or an empty list, with no href ---
+  - policy: require-homepage-href-for-non-root-routes
+    resources:
+      - observability/subpath-first-without-href
+      - whoami/prefix-subpath-first
+      - whoami/root-is-second-match
+      - whoami/regex-root-first
+      - whoami/no-hostnames
+      - whoami/empty-href
+      - whoami/wildcard-hostname
+      - whoami/empty-matches
+      - whoami/empty-rules
+      - whoami/no-parent-refs
+      - whoami/empty-parent-refs
+    kind: HTTPRoute
+    result: fail
+  # --- the precondition's negative control: routes that never opted in ---
+  - policy: require-homepage-href-for-non-root-routes
+    resources:
+      - whoami/not-opted-in
+      - whoami/discovery-disabled
+    kind: HTTPRoute
+    result: skip

@@ -9,10 +9,12 @@ readonly patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/
 readonly cleanup_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch"
 readonly summary_repair_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch"
 readonly native_codec_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch"
+readonly sbom_codec_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch"
+readonly dependency_security_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch"
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
-readonly image_tag='v0.0.297-sqlite-contention.10-f90df920acce50d6af7a3df0f95a00c02639a173@sha256:09e5868c8a20a958587ec57755c3e447fb25f3d46945e4f0da40788fd3f5ec96'
+readonly image_tag='v0.0.297-sqlite-contention.11-ee02c6f9678b9332aed7af2bcc8c7a6686eb3552@sha256:cf539713a84613e00cd3cf9fa4c8c4f68eeb0719299fbb6ac91bca1d215e005b'
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -25,6 +27,9 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
 [[ -f "${cleanup_patch_file}" ]] || fail 'the Kubescape storage scan-record cleanup patch is missing'
 [[ -f "${summary_repair_patch_file}" ]] || fail 'the Kubescape summary-metadata repair patch is missing'
 [[ -f "${native_codec_patch_file}" ]] || fail 'the Kubescape native-metadata codec patch is missing'
+
+[[ -f "${sbom_codec_patch_file}" ]] || fail 'the SBOM forward-metadata compatibility patch is missing'
+[[ -f "${dependency_security_patch_file}" ]] || fail 'the dependency security patch is missing'
 
 [[ "$(yq -er '.permissions | length' "${workflow}")" == '0' ]] ||
   fail 'the hotfix workflow must deny permissions by default'
@@ -41,8 +46,8 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
   fail 'the workflow image destination drifted'
 # The literal GitHub expression is the contract.
 # shellcheck disable=SC2016
-[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.10-${{ github.sha }}' ]] ||
-  fail 'the workflow image tag must identify the native-metadata codec repair revision'
+[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.11-${{ github.sha }}' ]] ||
+  fail 'the workflow image tag must identify the SBOM forward-metadata repair revision'
 
 grep -qF 'repository: kubescape/storage' "${workflow}" ||
   fail 'the workflow must check out the upstream storage source explicitly'
@@ -54,7 +59,7 @@ grep -qF 'persist-credentials: false' "${workflow}" ||
   fail 'workflow checkouts must not persist credentials'
 grep -qF 'git apply --check' "${workflow}" ||
   fail 'the compatibility patch must be checked before application'
-grep -qF 'go test -race ./pkg/registry/file' "${workflow}" ||
+grep -qF 'go test -race ./pkg/apis/softwarecomposition/... ./pkg/registry/file' "${workflow}" ||
   fail 'the patched upstream storage package must run its tests with race detection before publish'
 # Identity is the action path; the commit pin is asserted separately below. Binding identity to one
 # specific SHA made every reviewed version bump read as a missing step, so dependency automation
@@ -200,18 +205,23 @@ fi
   fail 'the workflow must apply the reviewed summary-metadata repair patch'
 [[ "$(yq -er '.env.NATIVE_CODEC_PATCH_PATH' "${workflow}")" == 'k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch' ]] ||
   fail 'the workflow must apply the reviewed native-metadata codec repair patch'
+[[ "$(yq -er '.env.SBOM_CODEC_PATCH_PATH' "${workflow}")" == 'k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch' ]] ||
+  fail 'the workflow must apply the reviewed SBOM forward-metadata patch'
+[[ "$(yq -er '.env.DEPENDENCY_SECURITY_PATCH_PATH' "${workflow}")" == 'k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch' ]] ||
+  fail 'the workflow must apply the reviewed dependency security patch'
 for job in verify publish; do
+
   job_script="$(JOB="${job}" yq -er '
     [.jobs[strenv(JOB)].steps[] | select((.run // "") | contains("git apply")) | .run] | join("\n")
   ' "${workflow}")" || fail "could not read how the ${job} job applies its patches"
   # The literal shell variables are the contract.
   # shellcheck disable=SC2016
-  apply_order="$(grep -E '^\s*git apply( --unidiff-zero)? "\$\{(HOTFIX|CLEANUP|SUMMARY_REPAIR|NATIVE_CODEC)_PATCH\}"$' <<<"${job_script}" | tr -d ' ' | tr '\n' ' ')"
+  apply_order="$(grep -E '^\s*git apply( --unidiff-zero)? "\$\{(HOTFIX|CLEANUP|SUMMARY_REPAIR|NATIVE_CODEC|SBOM_CODEC|DEPENDENCY_SECURITY)_PATCH\}"$' <<<"${job_script}" | tr -d ' ' | tr '\n' ' ')"
   # shellcheck disable=SC2016
-  [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" gitapply"${SUMMARY_REPAIR_PATCH}" gitapply--unidiff-zero"${NATIVE_CODEC_PATCH}" ' ]] ||
-    fail "the ${job} job must apply compatibility, cleanup, summary repair and native codec patches in order, once each"
-  [[ "$(grep -cE '^\s*git apply( |$)' <<<"${job_script}")" == '8' ]] ||
-    fail "the ${job} job must run exactly one check and one apply for each of the four patches"
+  [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" gitapply"${SUMMARY_REPAIR_PATCH}" gitapply--unidiff-zero"${NATIVE_CODEC_PATCH}" gitapply--unidiff-zero"${SBOM_CODEC_PATCH}" gitapply--unidiff-zero"${DEPENDENCY_SECURITY_PATCH}" ' ]] ||
+    fail "the ${job} job must apply compatibility, cleanup, summary repair, native codec, SBOM metadata and dependency security patches in order, once each"
+  [[ "$(grep -cE '^\s*git apply( |$)' <<<"${job_script}")" == '12' ]] ||
+    fail "the ${job} job must run exactly one check and one apply for each of the six patches"
   # shellcheck disable=SC2016
   grep -qF 'git apply --check "${CLEANUP_PATCH}"' <<<"${job_script}" ||
     fail "the ${job} job must check the cleanup patch before applying it"
@@ -219,19 +229,28 @@ for job in verify publish; do
   grep -qF 'git apply --check "${SUMMARY_REPAIR_PATCH}"' <<<"${job_script}" ||
     fail "the ${job} job must check the summary repair patch before applying it"
   # shellcheck disable=SC2016
-  grep -qF 'git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"' <<<"${job_script}" ||\
+  grep -qF 'git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"' <<<"${job_script}" ||
     fail "the ${job} job must check the native codec patch before applying it"
+  # shellcheck disable=SC2016
+  grep -qF 'git apply --check --unidiff-zero "${SBOM_CODEC_PATCH}"' <<<"${job_script}" ||
+    fail "the ${job} job must check the SBOM metadata patch before applying it"
+  # shellcheck disable=SC2016
+  grep -qF 'git apply --check --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"' <<<"${job_script}" ||
+    fail "the ${job} job must check the dependency security patch before applying it"
 done
 for trigger in pull_request push; do
+
   TRIGGER="${trigger}" yq -e '
     .on[strenv(TRIGGER)].paths |
     contains([
       "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch",
       "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch",
-      "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch"
+      "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch",
+      "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch",
+      "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch"
     ])
   ' "${workflow}" >/dev/null ||
-    fail "a cleanup, summary repair or native codec patch change must start the workflow on ${trigger}"
+    fail "a cleanup, summary repair, native codec, SBOM metadata or dependency security patch change must start the workflow on ${trigger}"
 done
 
 [[ "$(grep -c '^diff --git ' "${cleanup_patch_file}")" == '5' ]] ||

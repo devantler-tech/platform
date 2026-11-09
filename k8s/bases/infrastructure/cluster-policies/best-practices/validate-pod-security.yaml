@@ -90,7 +90,8 @@ spec:
         !(object.metadata.?namespace.orValue('') in [
           'kube-system', 'kube-public', 'kube-node-lease', 'flux-system',
           'longhorn-system', 'local-path-storage', 'kubescape', 'kubevirt',
-          'cdi', 'observability', 'velero', 'chaos-mesh'])
+          'cdi', 'observability', 'velero', 'chaos-mesh',
+          'ate-system', 'agentic-engineer'])
   variables:
     - name: podSpec
       expression: >-

@@ -1,3 +1,4 @@
+---
 # Container image signature verification (Talos 1.13+, ImageVerificationConfig).
 #
 # STATUS — Talos evaluates these rules on this cluster.
@@ -213,6 +214,16 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-background-hotfix\.yaml@refs/heads/main$
+  # Exact customer identity repository, before the ordinary app catch-all.
+  - image: ghcr.io/devantler-tech/business-site-identity
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/business-site/\.github/workflows/publish-identity\.yaml@refs/heads/main$
+  # Source-built Dex: exact repository before the generic app rule (#5811).
+  - image: ghcr.io/devantler-tech/platform-dex
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$
   # First-party APP images retain legacy full-commit verification and accept the
   # two reviewed maintained publisher revisions (v8.0.0 #5213, v19.0.5 #5404).
   # Mutable refs, tags and other maintained commits are refused, as in the app

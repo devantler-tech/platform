@@ -1,0 +1,34 @@
+# Egress every Substrate component needs. Substrate's chart ships ingress-only
+# NetworkPolicies (default-deny ingress plus one allow per component), which
+# Cilium enforces alongside these, so ingress is not widened here.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-substrate
+  namespace: ate-system
+spec:
+  endpointSelector: {}
+  egress:
+    # Between components: router and egress gateway to the API server, API
+    # server to atelet, RustFS and PostgreSQL, egress gateway to the
+    # credential provider. The chart's ingress policies narrow each pair.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ate-system
+    # Controllers, the credential provider's Secret reads, CNPG instances.
+    - toEntities:
+        - kube-apiserver
+    # DNS. rules.dns engages Cilium's DNS proxy for the toFQDNs rules below.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

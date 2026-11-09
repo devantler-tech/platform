@@ -189,7 +189,7 @@ func TestCommittedTenant(t *testing.T) {
 			assertTenantChildren(t, objects, ignored, false, sops)
 			if !sops {
 				t.Run("controller-ownership", func(t *testing.T) {
-					assertTenantNetworkFloor(t, ctx, config, root, objects)
+					assertTenantNetworkFloor(ctx, t, config, root, objects)
 				})
 			}
 			source := objects["ociRepository"]

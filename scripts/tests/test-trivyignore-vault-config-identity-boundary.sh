@@ -68,6 +68,12 @@ readonly VENDORED_KUBEVIRT='k8s/bases/infrastructure/controllers/kubevirt/kubevi
 readonly VAULT_BACKUP_JOB='k8s/bases/infrastructure/vault-backup/job.yaml'
 readonly VAULT_BACKUP_CRON='k8s/bases/infrastructure/vault-backup/cron-job.yaml'
 
+# The private-mail StatefulSet and its two overlay fragments carry their own reviewed disposition
+# on Stalwart's image-baked identity, guarded by test-trivyignore-private-mail-identity-boundary.sh.
+readonly PRIVATE_MAIL_SET='k8s/bases/apps/private-mail/stateful-set.yaml'
+readonly PRIVATE_MAIL_SERVE='k8s/bases/apps/private-mail-administration/patches/serve-after-initialization.yaml'
+readonly PRIVATE_MAIL_PROXY='k8s/bases/apps/private-mail-proxy-identity/patches/add-client-proxy.yaml'
+
 status=0
 fail() {
   printf '%s\n' "$*" >&2
@@ -127,6 +133,7 @@ for CHECK_ID in "${CHECK_IDS[@]}"; do
       [ -n "$path" ] || continue
       case "$path" in
         "$VENDORED_CDI" | "$VENDORED_KUBEVIRT" | "$JOB_PATH" | "$VAULT_BACKUP_JOB" | "$VAULT_BACKUP_CRON") ;;
+        "$PRIVATE_MAIL_SET" | "$PRIVATE_MAIL_SERVE" | "$PRIVATE_MAIL_PROXY") ;;
         *) fail "UNREVIEWED DISPOSITION: $CHECK_ID is scoped to $path, which no premises test guards" ;;
       esac
     done <<PATHS

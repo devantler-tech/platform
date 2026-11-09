@@ -1,3 +1,4 @@
+---
 version: 1
 resource-roots: [k8s]
 patch-roots: ["talos*"]

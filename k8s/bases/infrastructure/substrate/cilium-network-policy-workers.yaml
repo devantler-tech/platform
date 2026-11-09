@@ -1,0 +1,23 @@
+# The router forwards requests to actors, and the API server reaches them,
+# inside the worker pods of each WorkerPool, which live in the agents'
+# namespaces and carry the ate.dev/worker-pool label.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-workers
+  namespace: ate-system
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - atenet-router
+          - ate-api-server
+  egress:
+    - toEndpoints:
+        - matchExpressions:
+            - key: k8s:io.kubernetes.pod.namespace
+              operator: Exists
+            - key: ate.dev/worker-pool
+              operator: Exists

@@ -25,11 +25,11 @@ readonly WRITER="$REPO_ROOT/scripts/write-publish-workflow-matchers.sh"
 readonly REPORT="$REPO_ROOT/scripts/report-publish-workflow-signing-revisions.sh"
 
 readonly PATTERN='[0-9a-f]{40}'
-readonly SHA_A='1111111111111111111111111111111111111111'  # applied signer
-readonly SHA_B='2222222222222222222222222222222222222222'  # default-branch pin
-readonly SHA_E='5555555555555555555555555555555555555555'  # release candidate
-readonly SHA_K='6666666666666666666666666666666666666666'  # reviewed canonical commit
-readonly SHA_X='7777777777777777777777777777777777777777'  # a commit nobody approved
+readonly SHA_A='1111111111111111111111111111111111111111' # applied signer
+readonly SHA_B='2222222222222222222222222222222222222222' # default-branch pin
+readonly SHA_E='5555555555555555555555555555555555555555' # release candidate
+readonly SHA_K='6666666666666666666666666666666666666666' # reviewed canonical commit
+readonly SHA_X='7777777777777777777777777777777777777777' # a commit nobody approved
 readonly DIGEST='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 readonly CANONICAL_REPOSITORY='devantler-tech/.github'
 readonly LEGACY_SET="($SHA_A|$SHA_B|$SHA_E)"
@@ -58,7 +58,10 @@ export PUBLISH_BOOTSTRAP_FILE="$WORK/bootstrap-none.json"
 printf '{"schemaVersion":1,"publications":[]}\n' >"$PUBLISH_BOOTSTRAP_FILE"
 
 consumers="$("$REPORT" --list-consumers 2>/dev/null | cut -f1,2 || true)"
-[ -n "$consumers" ] || { fail '--list-consumers produced nothing; every case below would pass vacuously'; exit 1; }
+[ -n "$consumers" ] || {
+  fail '--list-consumers produced nothing; every case below would pass vacuously'
+  exit 1
+}
 # Two manifest consumers and one application consumer, taken from the real registry.
 manifest_consumer="$(printf '%s\n' "$consumers" | awk -F'\t' '$2 == "publish-manifests" && $1 !~ /^\./ {print $1; exit}')"
 other_manifest_consumer="$(printf '%s\n' "$consumers" | awk -F'\t' -v skip="$manifest_consumer" '$2 == "publish-manifests" && $1 != skip {print $1; exit}')"
@@ -143,19 +146,27 @@ run_in() { # <root> <script> — against the fixture, in the current switch stat
 
 expect_pass() { # <case> <root>
   local out
-  if out="$(run_in "$2" "$GUARD")"; then pass "$1"; else fail "$1 — expected exit 0:"; printf '%s\n' "$out" >&2; fi
+  if out="$(run_in "$2" "$GUARD")"; then pass "$1"; else
+    fail "$1 — expected exit 0:"
+    printf '%s\n' "$out" >&2
+  fi
 }
 expect_refusal() { # <case> <root> <must-mention>...
   local case_name="$1" root="$2" out needle
   shift 2
   if out="$(run_in "$root" "$GUARD")"; then
-    fail "$case_name — expected a refusal, guard exited 0:"; printf '%s\n' "$out" >&2
+    fail "$case_name — expected a refusal, guard exited 0:"
+    printf '%s\n' "$out" >&2
     return
   fi
   for needle in "$@"; do
     case "$out" in
       *"$needle"*) ;;
-      *) fail "$case_name — refusal does not name '$needle':"; printf '%s\n' "$out" >&2; return ;;
+      *)
+        fail "$case_name — refusal does not name '$needle':"
+        printf '%s\n' "$out" >&2
+        return
+        ;;
     esac
   done
   pass "$case_name"
@@ -463,7 +474,8 @@ want="$(family_subject publish-app "$LEGACY_SET" "$SHA_K")"
 if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$app_consumer")")" = "$want" ]; then
   pass 'writer: renders the approved application family without widening revisions'
 else
-  fail 'writer: did not render the approved application family'; printf '%s\n' "$out" >&2
+  fail 'writer: did not render the approved application family'
+  printf '%s\n' "$out" >&2
 fi
 expect_pass 'writer: its application output passes the enforcing guard' "$root"
 # The independent repository-wide shape guard must accept the actual writer
@@ -481,7 +493,8 @@ cp "$REPO_ROOT/scripts/guard-shared-publish-workflow-pin.sh" "$root/scripts/pin-
 if out="$(bash "$root/scripts/pin-guard.sh" 2>&1)"; then
   pass 'writer: its application output passes the independent publisher pin guard'
 else
-  fail 'writer: application output rejected by independent publisher pin guard'; printf '%s\n' "$out" >&2
+  fail 'writer: application output rejected by independent publisher pin guard'
+  printf '%s\n' "$out" >&2
 fi
 if cmp -s "$root/$(manifest_path "$manifest_consumer")" "$WORK/writer-app.other"; then
   pass 'writer: an application approval leaves the unapproved manifest consumer unchanged'
@@ -492,7 +505,8 @@ write_record "$root"
 if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$app_consumer")")" = "$(legacy_subject publish-app "$LEGACY_SET")" ]; then
   pass 'writer: withdrawing an application approval restores its exact legacy identity'
 else
-  fail 'writer: retained a withdrawn application approval'; printf '%s\n' "$out" >&2
+  fail 'writer: retained a withdrawn application approval'
+  printf '%s\n' "$out" >&2
 fi
 
 root="$(build_tree writer-legacy)"
@@ -500,7 +514,8 @@ cp -R "$root" "$WORK/writer-legacy.before"
 if out="$(run_in "$root" "$WRITER")" && diff -r "$root" "$WORK/writer-legacy.before" >/dev/null; then
   pass 'writer: with no approval, a legacy tree is left byte for byte'
 else
-  fail 'writer: a record that approves nothing changed a legacy tree'; printf '%s\n' "$out" >&2
+  fail 'writer: a record that approves nothing changed a legacy tree'
+  printf '%s\n' "$out" >&2
 fi
 
 root="$(build_tree writer-adds)"
@@ -510,7 +525,8 @@ want="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
 if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$manifest_consumer")")" = "$want" ]; then
   pass 'writer: renders the legacy set and the recorded commit as one two-family subject'
 else
-  fail 'writer: did not render the expected two-family subject'; printf '%s\n' "$out" >&2
+  fail 'writer: did not render the expected two-family subject'
+  printf '%s\n' "$out" >&2
 fi
 if cmp -s "$root/$(manifest_path "$other_manifest_consumer")" "$WORK/writer-adds.other"; then
   pass 'writer: a consumer with no approval is not touched'
@@ -518,10 +534,11 @@ else
   fail 'writer: rewrote a consumer the record does not name'
 fi
 expect_pass 'writer: its output passes the enforcing guard' "$root"
-if out="$(run_in "$root" "$WRITER")" && case "$out" in *' 0 consumer matcher(s) changed'*) true ;; *) false ;; esac; then
+if out="$(run_in "$root" "$WRITER")" && case "$out" in *' 0 consumer matcher(s) changed'*) true ;; *) false ;; esac then
   pass 'writer: a second run changes nothing'
 else
-  fail 'writer: is not idempotent on a two-family tree'; printf '%s\n' "$out" >&2
+  fail 'writer: is not idempotent on a two-family tree'
+  printf '%s\n' "$out" >&2
 fi
 
 # Withdrawing the approval must render the legacy subject back, not leave the family behind.
@@ -529,7 +546,8 @@ write_record "$root"
 if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$manifest_consumer")")" = "$(legacy_subject publish-manifests "$LEGACY_SET")" ]; then
   pass 'writer: a withdrawn approval renders the legacy subject back'
 else
-  fail 'writer: a withdrawn approval left the canonical family in the matcher'; printf '%s\n' "$out" >&2
+  fail 'writer: a withdrawn approval left the canonical family in the matcher'
+  printf '%s\n' "$out" >&2
 fi
 
 # Two recorded commits render as one grouped pair in the record's order, and dropping the first
@@ -540,27 +558,31 @@ want="$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)")"
 if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$manifest_consumer")")" = "$want" ]; then
   pass 'writer: renders two recorded commits as one grouped pair in record order'
 else
-  fail 'writer: did not render the expected two-commit canonical family'; printf '%s\n' "$out" >&2
+  fail 'writer: did not render the expected two-commit canonical family'
+  printf '%s\n' "$out" >&2
 fi
 expect_pass 'writer: its two-commit output passes the enforcing guard' "$root"
-if out="$(run_in "$root" "$WRITER")" && case "$out" in *' 0 consumer matcher(s) changed'*) true ;; *) false ;; esac; then
+if out="$(run_in "$root" "$WRITER")" && case "$out" in *' 0 consumer matcher(s) changed'*) true ;; *) false ;; esac then
   pass 'writer: a second run changes nothing on a two-commit tree'
 else
-  fail 'writer: is not idempotent on a two-commit tree'; printf '%s\n' "$out" >&2
+  fail 'writer: is not idempotent on a two-commit tree'
+  printf '%s\n' "$out" >&2
 fi
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_X")"
 want="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_X")"
 if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$manifest_consumer")")" = "$want" ]; then
   pass 'writer: dropping the first row renders the remaining commit alone'
 else
-  fail 'writer: left a withdrawn canonical commit in the matcher'; printf '%s\n' "$out" >&2
+  fail 'writer: left a withdrawn canonical commit in the matcher'
+  printf '%s\n' "$out" >&2
 fi
 
 root="$(build_tree writer-refuses)"
 write_record "$root" "$(record_row "$manifest_consumer" main)"
 cp -R "$root" "$WORK/writer-refuses.before"
 if out="$(run_in "$root" "$WRITER")"; then
-  fail 'writer: accepted a floating canonical approval'; printf '%s\n' "$out" >&2
+  fail 'writer: accepted a floating canonical approval'
+  printf '%s\n' "$out" >&2
 elif diff -r "$root" "$WORK/writer-refuses.before" >/dev/null; then
   pass 'writer: an invalid record changes no manifest'
 else
@@ -656,23 +678,26 @@ while IFS=$'\t' read -r expected issuer identity; do
     fail "github-config transition: expected $expected for $issuer $identity, got $result"
   fi
 done <<'IDENTITIES'
-accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0966f4b015e85ef14be37411d424a7028a858550
-accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@56ceec6717a1faa0686d865424cd2d1d45f18a0a
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@57310dc609dcc8f9205f53c674ff17c5dc979b73
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@e6db1a4ed5b23ce6f69e755deeddd6649313e9dc
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0966f4b015e85ef14be37411d424a7028a858550
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0f390329b590404c02565b27a263ee841fa02bce
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@8d2203af130a8c27b8b98b3d7146f76b5ade7a98
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d
 accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@1d726483facb9340655489913f609082677be8f5
 accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
-reject	https://another-issuer.invalid	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b
-reject	https://tokenXactionsXgithubusercontentXcom	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b
-reject	https://token.actions.githubusercontent.com	https://github.com/another-org/.github/.github/workflows/publish-manifests.yaml@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/xgithub/.github/workflows/publish-manifests.yaml@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b
+reject	https://another-issuer.invalid	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@56ceec6717a1faa0686d865424cd2d1d45f18a0a
+reject	https://tokenXactionsXgithubusercontentXcom	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@56ceec6717a1faa0686d865424cd2d1d45f18a0a
+reject	https://token.actions.githubusercontent.com	https://github.com/another-org/.github/.github/workflows/publish-manifests.yaml@56ceec6717a1faa0686d865424cd2d1d45f18a0a
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/xgithub/.github/workflows/publish-manifests.yaml@56ceec6717a1faa0686d865424cd2d1d45f18a0a
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@56ceec6717a1faa0686d865424cd2d1d45f18a0a
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@v12.0.1
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@main
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@bd24a3e
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b-extra
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@56ceec6
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@56ceec6717a1faa0686d865424cd2d1d45f18a0a-extra
 IDENTITIES
 
 aws_subject="$(yq -er '.spec.verify.matchOIDCIdentity[0].subject' "$REPO_ROOT/k8s/providers/hetzner/apps/aws/oci-repository.yaml")"

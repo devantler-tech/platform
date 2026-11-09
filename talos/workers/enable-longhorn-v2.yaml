@@ -1,3 +1,4 @@
+---
 # Host prerequisites only (platform#5582). Refresh Clients verifies the actual
 # allocation and restarts kubelet only where huge-page capacity is stale; Longhorn
 # V2 activation remains a separate, reviewed change. nvme_tcp is also required but

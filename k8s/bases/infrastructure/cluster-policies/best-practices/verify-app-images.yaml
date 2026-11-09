@@ -21,7 +21,8 @@ metadata:
       publish-app for app images, the platform's dedicated compatibility-image
       publishers, each Crossplane provider's own package workflow, KSail's
       publish-ksail-analysis-runner.yaml workflow, the mail bootstrap publisher,
-      and KSail's release workflow.
+      the dedicated customer identity publisher, the source-built Dex
+      publisher, and KSail's release workflow.
       Each class is verified only against its own identity;
       third-party images admit unverified.
 spec:
@@ -153,6 +154,22 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/server-cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
+    # The retained original identity image has a business-site-owned main-only
+    # publisher. Its signature cannot satisfy any other image class.
+    - name: publishcustomeridentity
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/business-site/\.github/workflows/publish-identity\.yaml@refs/heads/main$
+    # The source-built Dex distribution has its own main-only publisher. Its
+    # signature cannot satisfy any other image class (platform#5811).
+    - name: publishdexsecurity
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$
     # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
     # reusable publish workflow they use cannot sign, so each provider repo
     # attaches the keyless signature in its own publish-provider-package.yml
@@ -212,6 +229,12 @@ spec:
           image != 'ghcr.io/devantler-tech/world-at-ruin/zone' &&
           !image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:') &&
           !image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@') &&
+          image != 'ghcr.io/devantler-tech/business-site-identity' &&
+          !image.startsWith('ghcr.io/devantler-tech/business-site-identity:') &&
+          !image.startsWith('ghcr.io/devantler-tech/business-site-identity@') &&
+          image != 'ghcr.io/devantler-tech/platform-dex' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-dex:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-dex@') &&
           image != 'ghcr.io/devantler-tech/platform-kubescape-storage' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@') &&
@@ -259,6 +282,28 @@ spec:
       message: >-
         mail bootstrap image is not signed by its main-only publisher;
         other first-party images retain their existing signer.
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/business-site-identity' ||
+          image.startsWith('ghcr.io/devantler-tech/business-site-identity:') ||
+          image.startsWith('ghcr.io/devantler-tech/business-site-identity@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishcustomeridentity]))
+        .all(e, e > 0)
+      message: >-
+        customer identity image is not signed by its main-only original
+        publisher; other first-party images retain their existing signer.
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-dex' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-dex:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-dex@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishdexsecurity]))
+        .all(e, e > 0)
+      message: >-
+        Dex image is not signed by the platform repository's dedicated
+        main-branch publisher (keyless cosign)
     - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,

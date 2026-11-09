@@ -1,0 +1,62 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: substrate-atelet
+  namespace: ate-system
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  timeout: 10m
+  chartRef:
+    kind: OCIRepository
+    name: substrate-atelet
+  # atelet is Substrate's node agent: a DaemonSet that stages sandbox assets and
+  # images and runs the actors on each node. Upstream ships it as its own
+  # release so it upgrades before the API server (version skew policy), which
+  # the dependency below and the control plane's dependency on this release
+  # keep in order.
+  dependsOn:
+    - name: substrate-crds
+    - name: substrate-podcert
+  values:
+    objectStore:
+      # The bundled RustFS store the control-plane release deploys.
+      backend: s3
+      endpoint: http://rustfs.ate-system.svc:9000
+      region: us-east-1
+      pathStyle: true
+      credentialsSecret: rustfs-credentials
+  # Post-render only the release manifest; the guard models only that stream.
+  postRenderStrategy: nohooks
+  postRenderers:
+    - kustomize:
+        patches:
+          # atelet reads the RustFS keys from rustfs-credentials into its
+          # environment at startup, and transfers snapshots with them (on S3
+          # there is no per-actor credential). When the keys are regenerated,
+          # RustFS restarts with the new ones but a running atelet keeps the
+          # old ones, so every snapshot upload is refused and no agent can be
+          # built (devantler-tech/platform#5905). Stakater Reloader restarts
+          # the DaemonSet when that Secret changes.
+          - target:
+              kind: DaemonSet
+              name: atelet
+            patch: |
+              apiVersion: apps/v1
+              kind: DaemonSet
+              metadata:
+                name: atelet
+                annotations:
+                  secret.reloader.stakater.com/reload: rustfs-credentials
+              spec:
+                template:
+                  metadata:
+                    annotations:
+                      # The RustFS key generation the running atelet pods
+                      # started with. Reloader only reacts to a later change,
+                      # so pods still holding keys that rotated before it was
+                      # watching need this value changed to roll onto the
+                      # current Secret.
+                      substrate.devantler.tech/rustfs-credentials-generation: "2026-11-08"

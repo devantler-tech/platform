@@ -12,7 +12,7 @@ spec:
   chart:
     spec:
       chart: kubescape-operator
-      version: 1.40.5
+      version: 1.41.0
       sourceRef:
         kind: HelmRepository
         name: kubescape
@@ -326,8 +326,11 @@ spec:
         # same-identity payload exactly one version ahead. Payload bytes stay
         # intact; creation-time identity is compared at metadata JSON precision.
         # Unproven or concurrently changed state is refused (#5419).
+        # Revision 11 also preserves newer SBOM metadata through the legacy
+        # storage codec and updates the executable dependencies. Its immutable
+        # publication and both shipped executables were verified under #5553.
         repository: ghcr.io/devantler-tech/platform-kubescape-storage
-        tag: "v0.0.297-sqlite-contention.10-f90df920acce50d6af7a3df0f95a00c02639a173@sha256:09e5868c8a20a958587ec57755c3e447fb25f3d46945e4f0da40788fd3f5ec96"
+        tag: "v0.0.297-sqlite-contention.11-ee02c6f9678b9332aed7af2bcc8c7a6686eb3552@sha256:cf539713a84613e00cd3cf9fa4c8c4f68eeb0719299fbb6ac91bca1d215e005b"
         pullPolicy: IfNotPresent
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
@@ -374,9 +377,11 @@ spec:
   # this HelmRelease and are never rendered. That blind spot is tracked
   # separately — do not read a green scan as evidence about this namespace.
   #
-  # readOnlyRootFilesystem is deliberately NOT added to `storage`: it is an
-  # aggregated APIServer backed by a RWO PVC and its write paths are unverified,
-  # so that one needs its own evidence rather than riding along here.
+  # readOnlyRootFilesystem is not added to `storage` here: chart 1.41.0 sets it
+  # itself and mounts an emptyDir at /tmp (kubescape/helm-charts#934). The pinned
+  # v0.0.297 compatibility build writes only below /data (its SQLite and file
+  # roots) and /tmp, and reads its serving certificate from the mounted Secret,
+  # so it never writes self-signed certificates to the root filesystem.
   #
   # UPGRADE HAZARD, deliberately accepted: JSON-Patch `add` REPLACES an existing
   # key, so if a future chart version starts setting `capabilities` on one of
@@ -466,6 +471,63 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/securityContext/seLinuxOptions
                 value: {}
+          # The schedulers run kubectl with a mounted token to create one
+          # OperatorCommand owned by their Job. The chart reuses the scanner's
+          # and kubevuln's ServiceAccounts, whose ClusterRoles include
+          # cluster-wide reads such as secrets. Run them as kubescape-scheduler,
+          # which may only create OperatorCommands and read Jobs in this
+          # namespace, and pin the kubectl image by digest so the code that
+          # holds the token is the code that was reviewed.
+          - target:
+              kind: CronJob
+              name: ^(kubescape|kubevuln)-scheduler$
+            patch: |
+              - op: replace
+                path: /spec/jobTemplate/spec/template/spec/serviceAccountName
+                value: kubescape-scheduler
+              - op: test
+                path: /spec/jobTemplate/spec/template/spec/containers/0/image
+                value: quay.io/kubescape/kubectl:1.36.1
+              - op: replace
+                path: /spec/jobTemplate/spec/template/spec/containers/0/image
+                value: quay.io/kubescape/kubectl:1.36.1@sha256:e2b97dde9666986c61c56d49aae85a714b89b69392baa531438e74ec34096fb4
+          # Chart 1.41.0 sets GOMEMLIMIT to a fixed fraction of the authored
+          # memory limit. The VPA resizes these limits, often far below the
+          # authored value, so a fixed GOMEMLIMIT can sit above the real limit
+          # and the Go GC no longer works harder before the OOM killer fires.
+          # Keep it tied to the container's actual limit, as chart 1.40.5 did
+          # for these three. The test op fails the render if the chart moves
+          # the variable, rather than replacing the wrong one.
+          - target:
+              kind: Deployment
+              name: ^(kubescape|storage)$
+            patch: |
+              - op: test
+                path: /spec/template/spec/containers/0/env/0/name
+                value: GOMEMLIMIT
+              - op: replace
+                path: /spec/template/spec/containers/0/env/0
+                value:
+                  name: GOMEMLIMIT
+                  valueFrom:
+                    resourceFieldRef:
+                      resource: limits.memory
+                      divisor: "1"
+          - target:
+              kind: Deployment
+              name: ^operator$
+            patch: |
+              - op: test
+                path: /spec/template/spec/containers/0/env/2/name
+                value: GOMEMLIMIT
+              - op: replace
+                path: /spec/template/spec/containers/0/env/2
+                value:
+                  name: GOMEMLIMIT
+                  valueFrom:
+                    resourceFieldRef:
+                      resource: limits.memory
+                      divisor: "1"
           - target:
               kind: CronJob
               name: ^(kubescape|kubevuln)-scheduler$

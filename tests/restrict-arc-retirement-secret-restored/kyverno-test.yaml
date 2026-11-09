@@ -1,3 +1,4 @@
+---
 # Pins the fence-retired-secret rule before the ValidatingPolicy rewrite
 # (#4995): with the retirement journal in phase "restored", creating the ARC
 # GitHub App credential is denied. values.yaml supplies the journal the policy

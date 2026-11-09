@@ -75,6 +75,33 @@ spec:
                           }
                       }
                   }
+          # Point the chart's GatewayClass at the platform's
+          # CiliumGatewayClassConfig (infrastructure/gateway/), which turns off
+          # Envoy's gRPC-web to gRPC translation. The chart has no value for
+          # parametersRef. With translation on, Envoy rewrites a browser's
+          # gRPC-web call into native gRPC, but every backend behind this
+          # Gateway is reached over HTTP/1.1 (no Service declares h2c or grpc),
+          # so native gRPC can never complete. Apps that serve gRPC-web
+          # themselves, such as the kagent UI, then receive a request they do
+          # not recognise. While the config does not exist yet, Cilium marks the
+          # class not accepted and keeps translating, so routing never changes
+          # in between.
+          - target:
+              group: gateway.networking.k8s.io
+              version: v1
+              kind: GatewayClass
+              name: cilium
+            patch: |-
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: GatewayClass
+              metadata:
+                name: cilium
+              spec:
+                parametersRef:
+                  group: cilium.io
+                  kind: CiliumGatewayClassConfig
+                  name: platform
+                  namespace: kube-system
   # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
   values:
     # Roll the agent DaemonSet whenever the cilium-config ConfigMap changes.
@@ -469,6 +496,12 @@ spec:
     gatewayAPI:
       enabled: true
       enableAlpn: true
+      # Render the GatewayClass whether or not the Gateway API CRDs are visible
+      # at render time. "auto" already creates it on every cluster (ksail
+      # installs the CRDs first); "true" also renders it offline, so the
+      # post-renderer guard can prove the parametersRef patch above applies.
+      gatewayClass:
+        create: true
       # Off unless a provider's load balancer sends PROXY traffic; the Hetzner
       # overlay turns it on. Keep it explicit for a verified rollback baseline.
       enableProxyProtocol: false

@@ -21,6 +21,23 @@ Start with [contributor guidance](../CONTRIBUTING.md#validation). The complete
 [validation contract](../AGENTS.md#validation) covers affected Go/Bash tests and
 CI path filters.
 
+## Go module files
+
+The required Go regression job checks every tracked `go.mod`, including nested
+test helpers, on every PR and merge-group event:
+
+```bash
+bash scripts/check-go-modules-tidy.sh
+bash scripts/tests/test-go-modules-tidy.sh
+```
+
+The guard uses `go mod tidy -diff` with the installed Go toolchain and workspace
+mode disabled. It prints proposed changes and fails without editing `go.mod` or
+`go.sum`. Run `go mod tidy` in the named module, review the changes and rerun the
+guard. Missing sums, failed module discovery and failed Go commands also fail.
+The intentional vulnerability fixture keeps its old Go declaration; checking
+tidiness does not upgrade module Go versions.
+
 ## WebApp compiler
 
 Run the committed WebApp and Tenant graphs through the pinned KRO compiler:

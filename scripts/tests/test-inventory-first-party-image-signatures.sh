@@ -57,6 +57,7 @@ EOF
 # verify stub: accepts only when the subjectRegex it was handed is in ACCEPT_SUBJECTS.
 cat >"${work}/verify" <<'EOF'
 #!/usr/bin/env bash
+if [ -n "${EXPECTED_ISSUER:-}" ] && [ "$2" != "$EXPECTED_ISSUER" ]; then exit 1; fi
 for s in ${ACCEPT_SUBJECTS:-}; do [ "$3" = "$s" ] && exit 0; done
 exit 1
 EOF
@@ -72,11 +73,11 @@ echo 200
 EOF
 chmod +x "${work}/probe"
 
-run() { # images_multiline  -> sets RC / OUT
+run() { # images_multiline [rules_file] -> sets RC / OUT
   printf '%s\n' "$1" >"${work}/images"
   set +e
   OUT="$(INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
-    "$script" --rules "${work}/rules.yaml" --images "${work}/images" 2>&1)"
+    "$script" --rules "${2:-${work}/rules.yaml}" --images "${work}/images" 2>&1)"
   RC=$?
   set -e
 }
@@ -97,6 +98,31 @@ check "ksail is held to rule 1, not the catch-all" 0 'ghcr\.io/example/ksail\*' 
 
 ACCEPT_SUBJECTS='^APP$' PROBE_MAP='' run 'ghcr.io/example/ksail:v1'
 check "the catch-all identity does NOT satisfy ksail" 1 'FAIL' "$RC" "$OUT"
+
+# The committed customer identity rule must win before the generic app rule.
+# Keep the expected contract independent of the rule being selected.
+identity_subject='^https://github\.com/devantler-tech/business-site/\.github/workflows/publish-identity\.yaml@refs/heads/main$'
+identity_policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
+identity_rules="${repo_root}/talos/cluster/verify-first-party-images.yaml"
+if [ "$(yq -r '.spec.attestors[] | select(.name == "publishcustomeridentity") | .cosign.keyless.identities[0].subjectRegExp' "$identity_policy")" != "$identity_subject" ] ||
+  [ "$(yq -r '.spec.attestors[] | select(.name == "publishcustomeridentity") | .cosign.keyless.identities[0].issuer' "$identity_policy")" != https://token.actions.githubusercontent.com ]; then
+  echo 'FAIL  dedicated customer identity admission contract is absent or differs'
+  failures=$((failures + 1))
+fi
+digest="sha256:$(printf '%064d' 7)"
+for suffix in '' ':4.20.0-devantler.1' "@$digest" ":4.20.0-devantler.1@$digest"; do
+  EXPECTED_ISSUER=https://token.actions.githubusercontent.com ACCEPT_SUBJECTS="$identity_subject" PROBE_MAP='' \
+    run "ghcr.io/devantler-tech/business-site-identity$suffix" "$identity_rules"
+  check "customer identity exact repository $suffix uses its signer" 0 'PASS=1 FAIL=0 UNKNOWN=0' "$RC" "$OUT"
+done
+for repository in business-site-identity-other business-site-identity/helper business-site; do
+  EXPECTED_ISSUER=https://token.actions.githubusercontent.com ACCEPT_SUBJECTS="$identity_subject" PROBE_MAP='' \
+    run "ghcr.io/devantler-tech/$repository:v1" "$identity_rules"
+  check "customer identity signer does not satisfy $repository" 1 'FAIL=1' "$RC" "$OUT"
+done
+app_subject="$(yq -r '.spec.attestors[] | select(.name == "publishapp") | .cosign.keyless.identities[0].subjectRegExp' "$identity_policy")"
+ACCEPT_SUBJECTS="$app_subject" PROBE_MAP='' run 'ghcr.io/devantler-tech/business-site-identity:v1' "$identity_rules"
+check 'shared app signer does not satisfy customer identity' 1 'FAIL=1' "$RC" "$OUT"
 
 # --- 2b. a reference carrying a TAG AND a DIGEST is held to its name's rule --
 # `name:tag@digest` is how an operator pins an image it also labels. Left on, the tag makes an
@@ -273,12 +299,14 @@ expected_globs="$(printf '%s\n' \
   'ghcr.io/devantler-tech/platform-kyverno-reports' \
   'ghcr.io/devantler-tech/platform-kyverno-migrate' \
   'ghcr.io/devantler-tech/platform-kyverno-background' \
+  'ghcr.io/devantler-tech/business-site-identity' \
+  'ghcr.io/devantler-tech/platform-dex' \
   'ghcr.io/devantler-tech/*')"
 if [ "$real_globs" != "$expected_globs" ]; then
-  echo "FAIL  the real rules must retain all fourteen exact ordered image routes"
+  echo "FAIL  the real rules must retain all sixteen exact ordered image routes"
   failures=$((failures + 1))
 else
-  echo "ok    real rules: fourteen ordered rules, dedicated publishers before catch-all"
+  echo "ok    real rules: sixteen ordered rules, dedicated publishers before catch-all"
 fi
 
 # The real file must also satisfy the completeness gate the fixtures exercise.
@@ -423,6 +451,41 @@ for image in "$background_repository" "$background_repository:revision" "$backgr
     OUT="$(ACCEPT_SUBJECTS="$accepted_subject" INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
       "$script" --rules "$real" --images "${work}/images-background" 2>&1)" || RC=$?
     check "background signer isolation: $image / $signer" "$want_rc" '' "$RC" "$OUT"
+  done
+done
+# The source-built Dex distribution has its own exact main-only publisher (#5811).
+# Exercise first-match routing with the real rules, including tag and digest
+# references, and prove that neither publisher can authenticate the other's image.
+dex_repository='ghcr.io/devantler-tech/platform-dex'
+dex_identity='^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$'
+talos_dex_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-dex") | .keyless.subjectRegex' "$real")"
+talos_dex_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-dex") | .keyless.issuer' "$real")"
+admission_dex_identity="$(yq -r '.spec.attestors[] | select(.name == "publishdexsecurity") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+admission_dex_issuer="$(yq -r '.spec.attestors[] | select(.name == "publishdexsecurity") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
+if [ "$talos_dex_identity" != "$dex_identity" ] ||
+  [ "$admission_dex_identity" != "$dex_identity" ] ||
+  [ "$talos_dex_issuer" != 'https://token.actions.githubusercontent.com' ] ||
+  [ "$admission_dex_issuer" != "$talos_dex_issuer" ]; then
+  echo 'FAIL  Dex image must retain its exact main publisher in both verifiers'
+  failures=$((failures + 1))
+else
+  echo 'ok    Dex publisher identity matches both verifiers'
+fi
+for image in "$dex_repository" "$dex_repository:revision" "$dex_repository@sha256:aa" "$dex_repository:revision@sha256:aa" "$dex_repository-other:revision"; do
+  printf '%s\n' "$image" >"${work}/images-dex"
+  for signer in dex app; do
+    accepted_subject="$dex_identity"
+    [ "$signer" = dex ] || accepted_subject="$app_identity"
+    want_rc=1
+    case "$image/$signer" in
+      "$dex_repository-other:revision/app") want_rc=0 ;;
+      "$dex_repository-other:revision/dex") ;;
+      */dex) want_rc=0 ;;
+    esac
+    RC=0
+    OUT="$(ACCEPT_SUBJECTS="$accepted_subject" INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
+      "$script" --rules "$real" --images "${work}/images-dex" 2>&1)" || RC=$?
+    check "Dex signer isolation: $image / $signer" "$want_rc" '' "$RC" "$OUT"
   done
 done
 

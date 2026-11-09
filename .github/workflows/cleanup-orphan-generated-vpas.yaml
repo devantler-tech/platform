@@ -1,5 +1,6 @@
+---
 name: Clean Up Orphan Generated VPAs
-on:
+"on":
   workflow_dispatch:
     inputs:
       mode:

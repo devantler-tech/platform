@@ -144,7 +144,10 @@ fi
 # instance_rendered -> true once flux-operator has reconciled the patched generation (or
 # nothing was patched), false while it has not.
 instance_rendered() {
-  [[ -z "${patched_generation}" ]] && { printf 'true'; return 0; }
+  [[ -z "${patched_generation}" ]] && {
+    printf 'true'
+    return 0
+  }
   kubectl_prod get fluxinstance "${instance}" -o json |
     jq -r --argjson g "${patched_generation}" \
       'any(.status.conditions[]?; .type == "Ready" and .status == "True" and (.observedGeneration // -1) >= $g)'
