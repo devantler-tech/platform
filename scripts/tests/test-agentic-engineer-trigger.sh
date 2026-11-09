@@ -131,8 +131,9 @@ grep -q 'final state: TASK_STATE_FAILED' "${work}/failed/out" || fail 'a failed 
   fail "a resent run was not watched to its end: $(cat "${work}/resent/out")"
 [[ "$(calls resent SendMessage)" == 3 ]] || fail 'a lost send was not resent until it gave a task'
 # kagent returns the first send's task only for the same message ID; a new ID would start a run.
-[[ "$(sort -u "${work}/resent/message-ids" | grep -c '^run-[0-9]\{8\}$')" == 1 &&
-  "$(sort -u "${work}/resent/message-ids" | wc -l | tr -d ' ')" == 1 ]] ||
+# Every send must carry one and the same `run-YYYYMMDD` ID: bash anchors ^ and $ at the ends of the
+# whole value, so a second distinct ID fails the match.
+[[ "$(sort -u "${work}/resent/message-ids")" =~ ^run-[0-9]{8}$ ]] ||
   fail "a resend changed the message ID: $(tr '\n' ' ' <"${work}/resent/message-ids")"
 
 # A run the trigger never learns of cannot read as anything but a failure.
