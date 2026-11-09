@@ -62,6 +62,14 @@ func TestObservationWorkflowMainGuardAndCustody(t *testing.T) {
 			}
 		})
 	}
+	cmd := exec.Command("/bin/bash", "--noprofile", "--norc", "-c", guard.Run+"\nprintf PARITY_ADMITTED\n")
+	env["CONFIRM"] = "verify-retained-email-parity"
+	for key, value := range env {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "PARITY_ADMITTED" {
+		t.Fatal("read-only parity dispatch refused")
+	}
 	checkout := job.Steps[1]
 	if checkout.With["ref"] != "${{ github.sha }}" || checkout.With["persist-credentials"] != false || !strings.HasPrefix(checkout.Uses, "actions/checkout@") {
 		t.Fatal("checkout lost immutable credential-free binding")
@@ -70,10 +78,16 @@ func TestObservationWorkflowMainGuardAndCustody(t *testing.T) {
 		if i < 5 && (step.Env["KUBE_CONFIG"] != "" || step.Env["HCLOUD_TOKEN"] != "") {
 			t.Fatal("credential restored before build")
 		}
+		if i < 5 && (step.Env["EMAIL_RETAINED_READER_UID"] != "" || step.Env["EMAIL_RETAINED_CLAIM_UID"] != "") {
+			t.Fatal("retained identities restored before build")
+		}
 	}
 	final := job.Steps[5]
 	if final.Env["KUBE_CONFIG"] != "${{ secrets.KUBE_CONFIG }}" || final.Env["HCLOUD_TOKEN"] != "${{ secrets.HCLOUD_TOKEN }}" || final.Env["EMAIL_DATA_RECOVERY_CONFIRM"] != "${{ inputs.confirm }}" || !strings.HasSuffix(strings.TrimSpace(final.Run), `"$RUNNER_TEMP/verify-email-data-recovery" --observe-retained`) {
 		t.Fatal("workflow invoked recovery writes or lost credential binding")
+	}
+	if final.Env["EMAIL_RETAINED_READER_UID"] != "${{ secrets.EMAIL_RETAINED_READER_UID }}" || final.Env["EMAIL_RETAINED_CLAIM_UID"] != "${{ secrets.EMAIL_RETAINED_CLAIM_UID }}" {
+		t.Fatal("workflow lost the original reader or claim binding")
 	}
 	for _, step := range job.Steps {
 		if strings.Contains(step.Uses, "upload-artifact") {

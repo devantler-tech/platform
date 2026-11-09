@@ -84,6 +84,14 @@ observation does not establish message recovery. Its output contains only a
 status code and closed stage names. Future recovery failures distinguish reader
 forwarding, readiness, session and message checks instead of grouping them.
 
+With confirmation `verify-retained-email-parity`, the same workflow also binds
+the configured original reader and claim UIDs and compares the diagnostic
+message with the reviewed serving workload. Its read-only JMAP client checks
+both copies twice. A missing or expired original backup does not prevent this
+comparison. `EMAIL_RETAINED_PARITY=VERIFIED` reports present message parity.
+The original trial stays unverified and disposal still requires its own backup
+and ownership checks.
+
 The pass receipt covers message recovery, encrypted disposable storage, source
 retention and disposal of the restored copy. It does not establish an independent
 cluster rebuild, archive migration, transport delivery, OIDC, or production
