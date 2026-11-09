@@ -13,6 +13,7 @@ import (
 var errConfiguration = errors.New("email configuration is incomplete or invalid")
 
 type settings struct {
+	RuntimeVersion       string   `json:"runtimeVersion,omitempty"`
 	Domain               string   `json:"domain"`
 	Hostname             string   `json:"hostname"`
 	Maintainer           string   `json:"maintainer"`
@@ -34,6 +35,10 @@ var passwordPattern = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
 
 // render builds staged settings and account changes from validated private inputs.
 func render(v inputs) ([]byte, error) {
+	profile, err := schemaFor(v.RuntimeVersion)
+	if err != nil {
+		return nil, errConfiguration
+	}
 	if v.UseForwardedClientIP && v.UseProxyClientIP {
 		return nil, errConfiguration
 	}
@@ -64,7 +69,7 @@ func render(v inputs) ([]byte, error) {
 		seen[password] = true
 	}
 	// Expression values contain only the validated conservative address alphabet.
-	applicationDigest, err := pinnedApplicationDigest()
+	applicationDigest, err := pinnedApplicationDigestFor(v.RuntimeVersion)
 	if err != nil {
 		return nil, errConfiguration
 	}
@@ -81,9 +86,9 @@ func render(v inputs) ([]byte, error) {
 	maintainer := account(v.Maintainer, v.maintainerPassword, "User")
 	// Fresh recovery has no generated Role objects. Replace makes the declared
 	// mailbox independent of role defaults and excludes administrative grants.
-	maintainer["permissions"] = map[string]any{"@type": "Replace", "enabledPermissions": normalMailboxPermissions(), "disabledPermissions": map[string]bool{}}
+	maintainer["permissions"] = map[string]any{"@type": "Replace", "enabledPermissions": mailboxPermissionsFor(profile), "disabledPermissions": map[string]bool{}}
 	if v.MaintainerAliases != nil {
-		maintainer["aliases"] = receivingAliases(v.MaintainerAliases, "#domain")
+		maintainer["aliases"] = receivingAliasesFor(v.MaintainerAliases, "#domain", profile.aliasEnabled)
 	}
 	agents := account(v.Agent, v.agentPassword, "User")
 	newAccounts := map[string]any{}
@@ -113,7 +118,7 @@ func render(v inputs) ([]byte, error) {
 		permissions[name] = true
 	}
 	listener := func(name, protocol, bind string, tls, implicit bool) map[string]any {
-		return map[string]any{"name": name, "protocol": protocol, "bind": map[string]bool{bind: true}, "useTls": tls, "tlsImplicit": implicit}
+		return map[string]any{"name": name, "protocol": protocol, "bind": map[string]bool{bind: true}, "useTls": tls, profile.implicitTLS: implicit}
 	}
 	clientProxy := listener("client-proxy", "http", "127.0.0.1:18081", false, false)
 	proxyTrust := map[string]bool{}
@@ -145,7 +150,7 @@ func render(v inputs) ([]byte, error) {
 		// Declare the existing local authentication state explicitly. A main
 		// recovery must clear a later external directory rather than retain it.
 		update("Authentication", map[string]any{"directoryId": nil}),
-		upsert("Domain", []string{"name"}, map[string]any{"domain": map[string]any{"name": v.Domain, "isEnabled": true, "allowRelaying": false, "catchAllAddress": nil, "subAddressing": map[string]any{"@type": "Disabled"}, "dkimManagement": map[string]any{"@type": "Automatic"}, "dnsManagement": map[string]any{"@type": "Manual"}}}),
+		upsert("Domain", []string{"name"}, map[string]any{"domain": map[string]any{"name": v.Domain, profile.domainEnabled: true, "allowRelaying": false, "catchAllAddress": nil, "subAddressing": map[string]any{"@type": "Disabled"}, "dkimManagement": map[string]any{"@type": "Automatic"}, "dnsManagement": map[string]any{"@type": "Manual"}}}),
 	}
 	if len(newAccounts) != 0 {
 		operations = append(operations, map[string]any{"@type": "create", "object": "Account", "value": newAccounts})
@@ -187,10 +192,10 @@ func render(v inputs) ([]byte, error) {
 		}),
 		// The server's upload endpoint does not honor the JMAP mutation permission
 		// list. This dedicated IMAP/SMTP service denies it for every account.
-		update("Http", map[string]any{"allowedEndpoints": map[string]any{"match": map[string]any{"0": map[string]any{"if": "starts_with(path, '/jmap/upload/')", "then": "403"}}, "else": "200"}, "useXForwarded": v.UseForwardedClientIP, "usePermissiveCors": false}),
+		update("Http", httpSettings(v, profile)),
 		upsert("Application", []string{"description"}, map[string]any{"webadmin": map[string]any{
-			"description": "Stalwart Web Interface", "enabled": true,
-			"resourceUrl": "file://" + applicationAssetPath(applicationDigest), "autoUpdateFrequency": int64(30 * 24 * 60 * 60 * 1000),
+			"description": "Stalwart Web Interface", profile.applicationEnabled: true,
+			"resourceUrl": "file://" + applicationAssetPath(applicationDigest), profile.applicationInterval: int64(30 * 24 * 60 * 60 * 1000),
 			"urlPrefix":       map[string]bool{"/admin": true, "/account": true},
 			"unpackDirectory": nil, "oauthClientId": nil,
 		}}),
