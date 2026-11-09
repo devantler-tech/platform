@@ -1,0 +1,24 @@
+# auth-proxy reaches the kagent UI only after oauth2-proxy has authenticated
+# the request (see http-route.yaml). Only the UI pod and only its port: the
+# controller's API stays reachable from inside the namespace alone, through
+# the UI's proxy. allow-kagent (cilium-network-policy.yaml) keeps the rest of
+# the namespace's rules; Cilium adds the two policies together.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kagent-ui-from-auth-proxy
+  namespace: kagent
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: kagent
+      app.kubernetes.io/component: ui
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+            app: auth-proxy
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

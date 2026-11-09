@@ -18,3 +18,5 @@ resources:
   - helm-release-control-plane.yaml
   - helm-release-crds.yaml
   - cilium-network-policy.yaml
+  - cilium-network-policy-ui.yaml
+  - http-route.yaml

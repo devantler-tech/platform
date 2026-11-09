@@ -64,6 +64,12 @@ data:
           rule: "Host(`policy-reporter.${domain}`)"
           entryPoints: ["web"]
           service: policy-reporter
+        # kagent UI. Prod-only (kagent ships only via the hetzner overlay), so
+        # this router is inert on local/CI, like Policy Reporter's.
+        kagent:
+          rule: "Host(`agents.${domain}`)"
+          entryPoints: ["web"]
+          service: kagent-ui
         openbao:
           rule: "Host(`vault.${domain}`)"
           entryPoints: ["web"]
@@ -129,6 +135,11 @@ data:
           loadBalancer:
             servers:
               - url: "http://policy-reporter-ui.policy-reporter.svc.cluster.local:8080"
+        # kagent UI (kagent-ui Service :8080). Prod-only and inert on local.
+        kagent-ui:
+          loadBalancer:
+            servers:
+              - url: "http://kagent-ui.kagent.svc.cluster.local:8080"
         # OpenBao UI/API, routed only after oauth2-proxy SSO. Use the active
         # Service to avoid sending UI/API requests to sealed standby pods.
         openbao:
