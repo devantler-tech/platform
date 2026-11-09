@@ -71,7 +71,17 @@ next_state() {
   sed -n "${count}p" "${file}" | grep . || tail -n 1 "${file}"
 }
 case "${method}" in
-  SendMessage) printf '{"jsonrpc":"2.0","id":"run","result":{"task":{"id":"task-1"}}}' ;;
+  SendMessage)
+    behaviour=ok
+    if [[ -f "${dir}/send" ]]; then
+      count="$(grep -c '^SendMessage$' "${dir}/calls")"
+      behaviour="$(sed -n "${count}p" "${dir}/send" | grep . || tail -n 1 "${dir}/send")"
+    fi
+    case "${behaviour}" in
+      ok) printf '{"jsonrpc":"2.0","id":"run","result":{"task":{"id":"task-1"}}}' ;;
+      garbage) printf '<html>bad gateway</html>' ;;
+      http-error) printf 'curl: (52) Empty reply from server\n' >&2; exit 52 ;;
+    esac ;;
   CancelTask)
     case "$(cat "${dir}/cancel")" in
       ok) printf '{"jsonrpc":"2.0","id":"cancel","result":{"id":"task-1"}}'; touch "${dir}/cancelled" ;;
@@ -94,13 +104,19 @@ STUB
 chmod +x "${work}/bin/curl"
 
 # run <scenario> <cancel behaviour> <run limit> <states> [states after cancel]: prints the exit
-# code. States are space-separated, one per GetTask call. STALL=<seconds> stalls GetTask.
+# code. States are space-separated, one per GetTask call. STALL=<seconds> stalls GetTask, and
+# SEND="<behaviour>..." scripts SendMessage replies (ok, garbage, http-error; the last repeats).
 run() {
   local dir="${work}/$1" status=0 states=() after=()
   mkdir -p "${dir}"
   : >"${dir}/calls"
   if [[ -n "${STALL:-}" ]]; then
     printf '%s\n' "${STALL}" >"${dir}/stall"
+  fi
+  if [[ -n "${SEND:-}" ]]; then
+    local sends=()
+    read -ra sends <<<"${SEND}"
+    printf '%s\n' "${sends[@]}" >"${dir}/send"
   fi
   date +%s >"${dir}/start"
   printf '%s\n' "$2" >"${dir}/cancel"
@@ -127,6 +143,19 @@ grep -q 'final state: TASK_STATE_COMPLETED' "${work}/finished/out" || fail 'a co
 [[ "$(run capped ok 2 TASK_STATE_WORKING TASK_STATE_CANCELED)" == 1 ]] ||
   fail "a capped run did not fail as capped: $(cat "${work}/capped/out")"
 grep -q 'final state: CANCELED_AT_LIMIT' "${work}/capped/out" || fail 'a capped run did not report CANCELED_AT_LIMIT'
+
+# A send whose reply is lost is resent with the same message ID, which kagent answers with the
+# task the first send started, so the run is watched and capped as usual.
+[[ "$(SEND='http-error garbage ok' run resent ok 2 TASK_STATE_WORKING TASK_STATE_CANCELED)" == 1 ]] ||
+  fail "a resent run was not watched to its limit: $(cat "${work}/resent/out")"
+[[ "$(grep -c '^SendMessage$' "${work}/resent/calls")" == 3 ]] || fail 'a lost send was not resent until it gave a task'
+grep -q 'final state: CANCELED_AT_LIMIT' "${work}/resent/out" || fail 'a resent run was not capped'
+
+# A run the trigger never learns of cannot read as anything but a failure it cannot cap.
+[[ "$(SEND=garbage run unknown ok 10 TASK_STATE_WORKING)" == 2 ]] ||
+  fail "a send that never gave a task did not exit 2: $(cat "${work}/unknown/out")"
+grep -q 'no task id for run-' "${work}/unknown/out" || fail 'a send that never gave a task did not say so'
+[[ "$(grep -c '^GetTask$' "${work}/unknown/calls")" == 0 ]] || fail 'the trigger watched a task it never learned of'
 
 # A GetTask that stalls near the limit cannot hold the cancel back past it.
 [[ "$(STALL=30 run stalled ok 3 TASK_STATE_WORKING TASK_STATE_CANCELED)" == 1 ]] ||
