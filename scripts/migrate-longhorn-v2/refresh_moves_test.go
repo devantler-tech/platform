@@ -32,6 +32,8 @@ type refreshCluster struct {
 	onEvict        func()
 	onRestart      func()
 	onPodsRead     func()
+	onNodesRead    func()
+	sourceMoved    bool
 	failPodReads   int
 }
 
@@ -160,6 +162,9 @@ func (f *refreshCluster) patch(input []byte) ([]byte, error) {
 func (f *refreshCluster) run(_ context.Context, input []byte, program string, args ...string) ([]byte, error) {
 	switch program {
 	case "git":
+		if f.sourceMoved {
+			return []byte(strings.Repeat("2", 40) + "\trefs/heads/main\n"), nil
+		}
 		return []byte(strings.Repeat("1", 40) + "\trefs/heads/main\n"), nil
 	case "kubectl":
 		call := args[2:]
@@ -169,6 +174,9 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 		case call[0] == "patch":
 			return f.patch(input)
 		case call[0] == "get" && call[1] == "nodes":
+			if f.onNodesRead != nil {
+				f.onNodesRead()
+			}
 			return f.list(f.node, f.spare)
 		case call[0] == "get" && call[1] == "pods":
 			if f.onPodsRead != nil {
@@ -228,6 +236,41 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 
 func (f *refreshCluster) refresh(ctx context.Context) error {
 	return refreshHugepages(ctx, client{run: f.run, context: "admin@prod"}, strings.Repeat("1", 40), f.node, f.pods)
+}
+
+func TestRefreshStopsForwardWritesWhenMainMoves(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	for _, tc := range []struct {
+		name string
+		want []string
+	}{
+		{name: "before cordon"},
+		{name: "between evictions", want: []string{"cordon", "evict a", "uncordon"}},
+		{name: "between eviction retries", want: []string{"cordon", "evict a", "uncordon"}},
+		{name: "before restart"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pods := []object{podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "a", "1Gi", "a-rs"), movablePodOnWorker(worker, "b", "900Mi", "b-rs")}
+			if tc.name == "before restart" {
+				pods = []object{podOnWorker(worker, "1Gi")}
+			}
+			f := newRefreshCluster(t, pods...)
+			moveMain := func() { f.sourceMoved = true }
+			switch tc.name {
+			case "before cordon":
+				f.onNodesRead = moveMain
+			case "between evictions":
+				f.onEvict = moveMain
+			case "between eviction retries":
+				f.refuseEviction, f.onEvict = true, moveMain
+			case "before restart":
+				f.onPodsRead = moveMain
+			}
+			if err := f.refresh(context.Background()); err == nil || !f.sourceMoved || !slices.Equal(f.events, tc.want) {
+				t.Fatalf("events %v, expected %v after main moved: %v", f.events, tc.want, err)
+			}
+		})
+	}
 }
 
 func TestRefreshMovesOnlyWhatDoesNotFitThenRestoresScheduling(t *testing.T) {
@@ -689,7 +732,7 @@ func TestAnUnreadRetryNeverEvicts(t *testing.T) {
 			f.failPodReads = 1000
 		}
 	}
-	err := client{run: f.run, context: "admin@prod"}.movePod(context.Background(), pod, f.pods)
+	err := client{run: f.run, context: "admin@prod"}.movePod(context.Background(), strings.Repeat("1", 40), pod, f.pods)
 	if err == nil {
 		t.Fatal("a refused eviction was reported as moved")
 	}
