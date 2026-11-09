@@ -35,19 +35,28 @@ command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required to render the pr
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to inspect the rendered manifests'
 
 # check_databases <rendered manifests>: prints one line per gap, naming the
-# database, and nothing when every database is covered.
+# database, and nothing when every database is covered. It writes how many
+# databases it examined to ${workdir}/checked, so a caller can tell "no gaps"
+# from "examined nothing": it runs in a command substitution, where `set -e`
+# does not stop it.
 #
 # yq is not jq: `==` compares scalars only, and both `as $var |` and `|` end at
 # the next `and`. So every clause names its full path, and every pipe sits in
-# its own parentheses.
+# its own parentheses. `//` treats false like a missing value, so booleans are
+# compared explicitly.
 check_databases() {
-  local rendered="$1" relevant="${workdir}/relevant.yaml" database namespace name secret
+  local rendered="$1" relevant="${workdir}/relevant.yaml" database namespace name secret checked=0
+  printf '0\n' >"${workdir}/checked"
   # Keep only the kinds the checks read, so each query below parses a small file.
   yq e 'select(
       (.apiVersion == "postgresql.cnpg.io/v1" and .kind == "Cluster") or
-      .kind == "ExternalSecret" or .kind == "CiliumNetworkPolicy")' "${rendered}" >"${relevant}"
+      .kind == "ExternalSecret" or .kind == "CiliumNetworkPolicy")' "${rendered}" >"${relevant}" || {
+    printf 'the rendered manifests could not be filtered\n'
+    return
+  }
   while IFS= read -r database; do
     [[ -n "${database}" ]] || continue
+    checked=$((checked + 1))
     namespace="${database%%/*}"
     name="${database#*/}"
     NAMESPACE="${namespace}" NAME="${name}" yq e -N 'select(.kind == "Cluster" and
@@ -66,6 +75,7 @@ check_databases() {
 
     SECRET="${secret}" yq e -e '([.spec.managed.roles[]? | select(
         .name == "coroot_monitor" and .login == true and
+        (.ensure == null or .ensure == "present") and (.inherit == null or .inherit == true) and
         ((.inRoles // []) | length) == 1 and .inRoles[0] == "pg_monitor" and
         .passwordSecret.name == strenv(SECRET))] | length) == 1' \
       "${workdir}/cluster.yaml" >/dev/null 2>&1 ||
@@ -79,7 +89,10 @@ check_databases() {
         .kind == "ExternalSecret" and .metadata.namespace == strenv(NAMESPACE) and
         (.spec.target.name // .metadata.name) == strenv(SECRET) and
         .spec.target.template.type == "kubernetes.io/basic-auth" and
-        .spec.target.template.data.username == "coroot_monitor")] | length) == 1' \
+        .spec.target.template.data.username == "coroot_monitor" and
+        .spec.target.template.data.password == "{{ .password }}" and
+        (.spec.dataFrom | length) == 1 and
+        .spec.dataFrom[0].sourceRef.generatorRef.kind == "Password")] | length) == 1' \
       "${relevant}" >/dev/null 2>&1 ||
       printf '%s: no ExternalSecret creates its scrape Secret for the coroot_monitor login\n' "${database}"
 
@@ -109,12 +122,13 @@ check_databases() {
       printf '%s: no CiliumNetworkPolicy admits only the Coroot cluster-agent to its pods on 5432\n' "${database}"
   done < <(yq e -N 'select(.apiVersion == "postgresql.cnpg.io/v1" and .kind == "Cluster") |
       .metadata.namespace + "/" + .metadata.name' "${relevant}")
+  printf '%s\n' "${checked}" >"${workdir}/checked"
 }
 
 # --- Self-test the checks ----------------------------------------------------
 # Checks that report nothing on a database they never examined would pass
 # every real database too, so prove them on a fixture first: a covered
-# database, one in observability (no policy needed), and two that each miss
+# database, one in observability (no policy needed), and three that each miss
 # something.
 cat >"${workdir}/fixture.yaml" <<'EOF'
 apiVersion: postgresql.cnpg.io/v1
@@ -142,6 +156,7 @@ spec:
   target:
     name: covered-db-coroot-monitor
     template: {type: kubernetes.io/basic-auth, data: {username: coroot_monitor, password: "{{ .password }}"}}
+  dataFrom: [{sourceRef: {generatorRef: {apiVersion: generators.external-secrets.io/v1alpha1, kind: Password, name: fixture}}}]
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -183,6 +198,7 @@ spec:
   target:
     name: agent-db-coroot-monitor
     template: {type: kubernetes.io/basic-auth, data: {username: coroot_monitor, password: "{{ .password }}"}}
+  dataFrom: [{sourceRef: {generatorRef: {apiVersion: generators.external-secrets.io/v1alpha1, kind: Password, name: fixture}}}]
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
@@ -215,6 +231,7 @@ spec:
   target:
     name: open-db-coroot-monitor
     template: {type: kubernetes.io/basic-auth, data: {username: coroot_monitor, password: "{{ .password }}"}}
+  dataFrom: [{sourceRef: {generatorRef: {apiVersion: generators.external-secrets.io/v1alpha1, kind: Password, name: fixture}}}]
 ---
 # Admits the whole observability namespace, not only the cluster-agent.
 apiVersion: cilium.io/v2
@@ -227,14 +244,46 @@ spec:
         - matchLabels: {k8s:io.kubernetes.pod.namespace: observability}
       toPorts:
         - ports: [{port: "5432", protocol: TCP}]
+---
+# A login that does not inherit pg_monitor's privileges, and a Secret with no
+# generated password.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: weak-db, namespace: observability}
+spec:
+  inheritedMetadata:
+    annotations:
+      coroot.com/postgres-scrape: "true"
+      coroot.com/postgres-scrape-port: "5432"
+      coroot.com/postgres-scrape-credentials-secret-name: weak-db-coroot-monitor
+      coroot.com/postgres-scrape-credentials-secret-username-key: username
+      coroot.com/postgres-scrape-credentials-secret-password-key: password
+      coroot.com/postgres-scrape-param-sslmode: require
+  postgresql:
+    parameters: {pg_stat_statements.track: all}
+  managed:
+    roles:
+      - {name: coroot_monitor, ensure: present, login: true, inherit: false, inRoles: [pg_monitor], passwordSecret: {name: weak-db-coroot-monitor}}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: weak-db-coroot-monitor, namespace: observability}
+spec:
+  target:
+    name: weak-db-coroot-monitor
+    template: {type: kubernetes.io/basic-auth, data: {username: coroot_monitor}}
 EOF
 fixture_gaps="$(check_databases "${workdir}/fixture.yaml")"
+[[ "$(cat "${workdir}/checked")" == 5 ]] ||
+  fail "the checks examined $(cat "${workdir}/checked") of the fixture's 5 databases; fix the checks before trusting this test"
 expected_gaps='app/bare-db: the coroot.com/postgres-scrape annotations are missing or incomplete in spec.inheritedMetadata
 app/bare-db: no coroot_monitor login in pg_monitor whose password comes from the scrape Secret
 app/bare-db: pg_stat_statements is not enabled
 app/bare-db: no ExternalSecret creates its scrape Secret for the coroot_monitor login
 app/bare-db: no CiliumNetworkPolicy admits only the Coroot cluster-agent to its pods on 5432
-other/open-db: no CiliumNetworkPolicy admits only the Coroot cluster-agent to its pods on 5432'
+other/open-db: no CiliumNetworkPolicy admits only the Coroot cluster-agent to its pods on 5432
+observability/weak-db: no coroot_monitor login in pg_monitor whose password comes from the scrape Secret
+observability/weak-db: no ExternalSecret creates its scrape Secret for the coroot_monitor login'
 [[ "${fixture_gaps}" == "${expected_gaps}" ]] ||
   fail "the checks found these gaps in their fixture instead of the expected ones; fix the checks before trusting this test:
 ${fixture_gaps}"
@@ -256,8 +305,11 @@ databases="$(yq e -N 'select(.apiVersion == "postgresql.cnpg.io/v1" and .kind ==
   fail 'the production layers rendered no CNPG Cluster; the selector or the render is broken'
 
 gaps="$(check_databases "${rendered}")"
+database_count="$(printf '%s\n' "${databases}" | wc -l | tr -d ' ')"
+[[ "$(cat "${workdir}/checked")" == "${database_count}" ]] ||
+  fail "the checks examined $(cat "${workdir}/checked") of the ${database_count} rendered databases"
 [[ -z "${gaps}" ]] || fail "every production database needs Coroot's Postgres integration (see this test's header):
 ${gaps}"
 
 printf 'PASS: all %s production databases (%s) carry Coroot'"'"'s Postgres integration\n' \
-  "$(printf '%s\n' "${databases}" | wc -l | tr -d ' ')" "$(printf '%s' "${databases}" | tr '\n' ' ')"
+  "${database_count}" "$(printf '%s' "${databases}" | tr '\n' ' ')"

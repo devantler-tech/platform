@@ -182,6 +182,9 @@ jobs:
           filters: |
             k8s:
               - 'k8s/**'
+              # The k8s-gated database monitoring gate, so a change to the
+              # test alone still runs it.
+              - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
               - 'scripts/tests/private-mail-preparation/**'
               - 'scripts/tests/ingress-client-address/**'
               - 'scripts/tests/vault-email-credentials/**'
