@@ -66,8 +66,19 @@ data:
           service: policy-reporter
         # kagent UI. Prod-only (kagent ships only via the hetzner overlay), so
         # this router is inert on local/CI, like Policy Reporter's.
+        # The controller trusts any caller, so the SSO session is its only
+        # gate, and the browser sends that cookie from every page on the
+        # domain. A page elsewhere on it could otherwise make the browser
+        # start a billable agent run or change an agent. So a request that
+        # can change anything (any method but GET and HEAD, or a WebSocket
+        # upgrade) passes only when the browser marks it as coming from the
+        # UI's own pages; plain page loads, such as links from Homepage, stay
+        # open. Unmatched requests get Traefik's 404.
         kagent:
-          rule: "Host(`agents.${domain}`)"
+          rule: >-
+            Host(`agents.${domain}`) &&
+            (((Method(`GET`) || Method(`HEAD`)) && !HeaderRegexp(`Upgrade`, `.+`)) ||
+            Header(`Sec-Fetch-Site`, `same-origin`))
           entryPoints: ["web"]
           service: kagent-ui
         openbao:
