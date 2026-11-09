@@ -24,7 +24,7 @@ admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||gateway-receiver c225
 
 admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||longhorn-benchmark-delete c762dfaf739eba36be7b0dca44a3e308fc814ea4be9098ff5bc0c6d969452a78
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget 36855100be6e3611947d34ce120822158db269cdf860c23ebce11ad9ae76b197
+helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget 324de8ec2c3109109cbb21a52ff6d6f85e47faa1a10d8d3c9749cb38af179b47
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners f59980a0d056bb796135803ce4cfb1a84947957e943abe9854a78eaf1249b2b0
 
