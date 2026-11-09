@@ -4898,7 +4898,7 @@ renew_sync_lease() {
   local lease_file="${work_dir}/sync-lease-renew-${invocation_id}.json"
   local patch_file_local="${work_dir}/sync-lease-renew-patch-${invocation_id}.json"
   local result_file="${work_dir}/sync-lease-renew-result-${invocation_id}.txt"
-  local resource_version now observed_holder
+  local now jq_status
 
   sync_lease_renewal_failure=""
   [[ "${sync_lease_acquired}" == "true" && -n "${sync_lease_holder}" ]] || return 1
@@ -4910,31 +4910,42 @@ renew_sync_lease() {
     sync_lease_renewal_failure="api-unreachable"
     return 1
   fi
-  observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
-    sync_lease_renewal_failure="invalid-lease-state"
-    return 1
-  }
-  if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
-    sync_lease_renewal_failure="held-by-another"
-    return 1
-  fi
-  resource_version="$(jq -er '.metadata.resourceVersion' "${lease_file}")" || {
-    sync_lease_renewal_failure="invalid-lease-state"
-    return 1
-  }
+  # One jq process proves the observed holder, reads the resourceVersion and
+  # writes the compare-and-swap patch. This runs before every guarded cluster
+  # mutation, so each process saved here is saved hundreds of times a run.
+  # Exit 7 means another holder; any other failure (unparseable state, or a
+  # missing resourceVersion) means the state could not be proved.
   now="$(kubernetes_microtime_now)"
-  jq -n \
-    --arg resource_version "${resource_version}" \
+  jq_status=0
+  jq -e \
     --arg holder "${sync_lease_holder}" \
     --arg now "${now}" \
     --argjson duration "${SYNC_LEASE_DURATION_SECONDS}" '
-    [
-      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-      {op: "test", path: "/spec/holderIdentity", value: $holder},
-      {op: "replace", path: "/spec/renewTime", value: $now},
-      {op: "replace", path: "/spec/leaseDurationSeconds", value: $duration}
-    ]
-  ' >"${patch_file_local}"
+    (.spec.holderIdentity // "") as $observed
+    | if ($observed | if type == "string" then . else tojson end) != $holder then
+        ("" | halt_error(7))
+      else . end
+    | (.metadata.resourceVersion
+        | if . == null or . == false then ("" | halt_error(8))
+          elif type == "string" then . else tojson end) as $resource_version
+    | [
+        {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+        {op: "test", path: "/spec/holderIdentity", value: $holder},
+        {op: "replace", path: "/spec/renewTime", value: $now},
+        {op: "replace", path: "/spec/leaseDurationSeconds", value: $duration}
+      ]
+  ' "${lease_file}" >"${patch_file_local}" || jq_status=$?
+  case "${jq_status}" in
+    0) ;;
+    7)
+      sync_lease_renewal_failure="held-by-another"
+      return 1
+      ;;
+    *)
+      sync_lease_renewal_failure="invalid-lease-state"
+      return 1
+      ;;
+  esac
   if kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
@@ -4956,27 +4967,40 @@ renew_sync_lease() {
     sync_lease_renewal_failure="api-unreachable"
     return 1
   fi
-  observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
-    sync_lease_renewal_failure="invalid-lease-state"
-    return 1
-  }
-  if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
-    sync_lease_renewal_failure="held-by-another"
-    return 1
-  fi
-  if jq -e \
+  # Exit 0 is live, 1 is not live (including an unreadable renew time), 7 is
+  # another holder, and any other failure means the state could not be proved.
+  jq_status=0
+  jq -e \
     --arg holder "${sync_lease_holder}" \
     --argjson now_epoch "$(date -u +%s)" '
-    .spec.holderIdentity == $holder
-    and (((.spec.renewTime // .spec.acquireTime)
-      | sub("\\.[0-9]+Z$"; "Z")
-      | fromdateiso8601) + .spec.leaseDurationSeconds > $now_epoch)
-  ' "${lease_file}" >/dev/null; then
-    return 0
-  fi
-
-  sync_lease_renewal_failure="not-live"
-  return 1
+    (.spec.holderIdentity // "") as $observed
+    | if ($observed | if type == "string" then . else tojson end) != $holder then
+        ("" | halt_error(7))
+      else . end
+    | try (
+        .spec.holderIdentity == $holder
+        and (((.spec.renewTime // .spec.acquireTime)
+          | sub("\\.[0-9]+Z$"; "Z")
+          | fromdateiso8601) + .spec.leaseDurationSeconds > $now_epoch)
+      ) catch false
+  ' "${lease_file}" >/dev/null || jq_status=$?
+  case "${jq_status}" in
+    0)
+      return 0
+      ;;
+    1)
+      sync_lease_renewal_failure="not-live"
+      return 1
+      ;;
+    7)
+      sync_lease_renewal_failure="held-by-another"
+      return 1
+      ;;
+    *)
+      sync_lease_renewal_failure="invalid-lease-state"
+      return 1
+      ;;
+  esac
 }
 
 # Advance this transaction's own fence from "claimed" to "mutating", immediately
