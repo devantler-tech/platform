@@ -40,10 +40,14 @@ identity, and pushes those bytes without rebuilding. The main-only workflow
 signs the resulting digest and attaches verified build and CycloneDX statements.
 Image tags identify the source revision; consumers must use the verified digest.
 
-The infrastructure broker runs this distribution: [`helm-release.yaml`](helm-release.yaml)
+The production infrastructure broker runs this distribution: the Hetzner
+provider patch
+[`run-source-built-image.yaml`](../../../../providers/hetzner/infrastructure/controllers/dex/patches/run-source-built-image.yaml)
 pins one published digest, and both workload admission and node image pulls
 accept that repository only with this workflow's main-branch signature. Moving
-to a newer build is a reviewed change of that digest pin.
+to a newer build is a reviewed change of that digest pin. The image is built for
+amd64 only, so the local Docker cluster, which may run on arm64 hosts, keeps the
+upstream multi-architecture image.
 The infrastructure broker and any customer broker retain independent
 configuration, clients, credentials and storage.
 

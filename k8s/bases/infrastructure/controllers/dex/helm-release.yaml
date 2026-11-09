@@ -20,14 +20,6 @@ spec:
   # https://github.com/dexidp/helm-charts/blob/master/charts/dex/values.yaml
   values:
     replicaCount: ${dex_replicas:=2}
-    # The source-built Dex distribution (README.md, "Source-built distribution"),
-    # pinned by digest. Admission and node pulls accept it only when the
-    # platform's main-branch publish-dex-security-image workflow signed it.
-    # The tag names the published source revision; the digest is what runs.
-    image:
-      repository: ghcr.io/devantler-tech/platform-dex
-      tag: "v2.46.1-security.1-cd65a4e40d53beafd8a8eec9b5a32a71986de2d5@sha256:cffb54b332b8d957ca4c8611814ee1685837370ce5fa7069dacdbc39c0c2afc7"
-      pullPolicy: IfNotPresent
     # Zero-downtime rollout. dex re-upgrades whenever a new platform OCI artifact
     # is pushed (helm-controller re-applies the chart), and with only
     # ${dex_replicas:=2} replicas the chart's default RollingUpdate
