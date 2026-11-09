@@ -49,6 +49,17 @@ type hostRebootRecord struct {
 
 type hostDatabaseIdentity struct{ UID, SystemID string }
 
+var hostDatabases = map[string]struct {
+	instances float64
+	legacy    bool
+}{
+	"observability/coroot-db": {instances: 3, legacy: true},
+	"umami/umami-db":          {instances: 3, legacy: true},
+	"wedding-app/wedding-db":  {instances: 3, legacy: true},
+	"ate-system/substrate-db": {instances: 2},
+	"kagent/kagent-db":        {instances: 2},
+}
+
 var hostSystemID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
 var errHostDatabasesRecovering = errors.New("the original database quorum is still recovering after eviction")
@@ -63,13 +74,21 @@ func (r hostRebootRecord) identity() journal {
 // validate rejects incomplete or out-of-profile records before their phase can authorize
 // an action, including incomplete original storage and database identities.
 func (r hostRebootRecord) validate(target string) error {
-	if r.Version != 1 || validateJournal(r.identity(), target) != nil || r.OriginalDiskUUID == "" || !inventoryBoot.MatchString(r.OriginalBootID) || r.OSImage == "" || r.Architecture != "amd64" || len(r.Databases) != 3 {
+	if (r.Version != 1 && r.Version != 2) || validateJournal(r.identity(), target) != nil || r.OriginalDiskUUID == "" || !inventoryBoot.MatchString(r.OriginalBootID) || r.OSImage == "" || r.Architecture != "amd64" {
 		return errHostMemory
 	}
-	for _, key := range []string{"observability/coroot-db", "umami/umami-db", "wedding-app/wedding-db"} {
+	want := 0
+	for key, profile := range hostDatabases {
+		if r.Version == 1 && !profile.legacy {
+			continue
+		}
+		want++
 		if r.Databases[key].UID == "" || !hostSystemID.MatchString(r.Databases[key].SystemID) {
 			return errHostMemory
 		}
+	}
+	if len(r.Databases) != want {
+		return errHostMemory
 	}
 	switch r.Phase {
 	case "draining", "reboot-requested":
@@ -203,28 +222,31 @@ func (h hostMemoryReboot) owned(ctx context.Context, expected hostRebootRecord) 
 // preserves its cluster and system identities across the maintenance operation.
 func (h hostMemoryReboot) databases(ctx context.Context, expected map[string]hostDatabaseIdentity) (map[string]hostDatabaseIdentity, error) {
 	items, err := h.c.list(ctx, "clusters.postgresql.cnpg.io", "*")
-	if err != nil || len(items) != 3 {
+	if err != nil || len(items) != len(hostDatabases) {
 		return nil, errHostMemory
 	}
 	result := map[string]hostDatabaseIdentity{}
 	recovering := false
 	for _, db := range items {
 		key := text(db, "metadata", "namespace") + "/" + text(db, "metadata", "name")
-		if key != "observability/coroot-db" && key != "umami/umami-db" && key != "wedding-app/wedding-db" || result[key].UID != "" ||
+		profile, known := hostDatabases[key]
+		if !known || result[key].UID != "" ||
 			text(db, "metadata", "uid") == "" || text(db, "metadata", "resourceVersion") == "" || value(db, "metadata", "deletionTimestamp") != nil ||
-			value(db, "spec", "instances") != float64(3) || !hostSystemID.MatchString(text(db, "status", "systemID")) {
+			value(db, "spec", "instances") != profile.instances || !hostSystemID.MatchString(text(db, "status", "systemID")) {
 			return nil, errHostMemory
 		}
 		result[key] = hostDatabaseIdentity{UID: text(db, "metadata", "uid"), SystemID: text(db, "status", "systemID")}
 		ready := value(db, "status", "readyInstances")
 		phase := text(db, "status", "phase")
-		if (ready != float64(2) && ready != float64(3)) || phase == "" {
+		if (ready != profile.instances-1 && ready != profile.instances) || phase == "" {
 			return nil, errHostMemory
 		}
-		recovering = recovering || ready != float64(3) || phase != "Cluster in healthy state"
+		recovering = recovering || ready != profile.instances || phase != "Cluster in healthy state"
 	}
-	if expected != nil && !reflect.DeepEqual(result, expected) {
-		return nil, errHostMemory
+	for key, identity := range expected {
+		if result[key] != identity {
+			return nil, errHostMemory
+		}
 	}
 	if recovering {
 		return nil, errHostDatabasesRecovering
@@ -345,7 +367,7 @@ func (h hostMemoryReboot) initialize(ctx context.Context) (hostRebootRecord, err
 		return hostRebootRecord{}, err
 	}
 	n, lh := nodes[h.target], storage[h.target]
-	r := hostRebootRecord{Version: 1, Target: h.target, Source: h.source, OwnerRun: h.owner, Phase: "draining", NodeUID: text(n, "metadata", "uid"), ProviderID: text(n, "spec", "providerID"),
+	r := hostRebootRecord{Version: 2, Target: h.target, Source: h.source, OwnerRun: h.owner, Phase: "draining", NodeUID: text(n, "metadata", "uid"), ProviderID: text(n, "spec", "providerID"),
 		MachineUUID: text(n, "status", "nodeInfo", "systemUUID"), OriginalBootID: text(n, "status", "nodeInfo", "bootID"), LonghornUID: text(lh, "metadata", "uid"),
 		OSImage: text(n, "status", "nodeInfo", "osImage"), Architecture: text(n, "status", "nodeInfo", "architecture"), Databases: databases, OriginalDiskUUID: hostRegisteredDiskUUID(lh)}
 	r.OriginalDisks, _ = value(lh, "spec", "disks").(object)
@@ -394,9 +416,18 @@ func (h hostMemoryReboot) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-	} else if r.OwnerRun != h.owner || r.Source != h.source {
-		if previousRunCompleted(ctx, h.c, r.OwnerRun, r.Source) != nil {
+	} else if r.OwnerRun != h.owner || r.Source != h.source || r.Version == 1 && r.Phase == "draining" {
+		if (r.OwnerRun != h.owner || r.Source != h.source) && previousRunCompleted(ctx, h.c, r.OwnerRun, r.Source) != nil {
 			return errHostMemory
+		}
+		// Older pre-reboot records must bind the new databases before any
+		// forward action. Post-request recovery still observes the old record.
+		if r.Version == 1 && r.Phase == "draining" {
+			databases, readErr := h.databases(ctx, r.Databases)
+			if readErr != nil {
+				return readErr
+			}
+			r.Version, r.Databases = 2, databases
 		}
 		r.OwnerRun, r.Source = h.owner, h.source
 		if err = h.write(ctx, cm, r); err != nil {

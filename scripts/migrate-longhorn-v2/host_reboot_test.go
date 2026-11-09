@@ -69,11 +69,17 @@ func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
 	pod["spec"] = object{"nodeName": "prod-worker-1"}
 	pod["status"] = object{"phase": "Running", "conditions": readyConditions()}
 	b.s.pods = append(b.s.pods, pod)
-	for i, selected := range []struct{ namespace, name string }{{"observability", "coroot-db"}, {"umami", "umami-db"}, {"wedding-app", "wedding-db"}} {
+	for i, selected := range []struct {
+		namespace, name string
+		instances       float64
+	}{
+		{"observability", "coroot-db", 3}, {"umami", "umami-db", 3}, {"wedding-app", "wedding-db", 3},
+		{"ate-system", "substrate-db", 2}, {"kagent", "kagent-db", 2},
+	} {
 		db := resource(selected.name)
 		db["metadata"].(object)["namespace"] = selected.namespace
-		db["spec"] = object{"instances": float64(3)}
-		db["status"] = object{"readyInstances": float64(3), "systemID": fmt.Sprintf("1234567%d", i), "phase": "Cluster in healthy state"}
+		db["spec"] = object{"instances": selected.instances}
+		db["status"] = object{"readyInstances": selected.instances, "systemID": fmt.Sprintf("1234567%d", i), "phase": "Cluster in healthy state"}
 		f.databases = append(f.databases, db)
 	}
 	h := hostMemoryReboot{c: client{context: "admin@prod", run: f.run}, target: "prod-worker-1", source: old.source, owner: old.owner, pools: old.pools}
@@ -91,6 +97,48 @@ func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
 		return hostMemoryReport{PersistentPages: pages, TotalPages: pages, FreePages: pages, PageSizeKiB: 2048, TotalKiB: 16 << 20, AvailableKiB: 7 << 20}, nil
 	}
 	return f, h
+}
+
+func TestHostRebootRecordsEveryDeclaredDatabase(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	r, err := h.initialize(context.Background())
+	if err != nil || r.Version != 2 || len(r.Databases) != 5 {
+		t.Fatalf("current database roster was not bound: version=%d databases=%d err=%v", r.Version, len(r.Databases), err)
+	}
+	f.databases[4]["status"].(object)["readyInstances"] = float64(1)
+	if _, err = h.databases(context.Background(), r.Databases); !errors.Is(err, errHostDatabasesRecovering) {
+		t.Fatal("a recovering two-instance cluster cleared the reboot gate", err)
+	}
+	f.databases[4]["status"].(object)["readyInstances"] = float64(2)
+	f.databases[4]["status"].(object)["systemID"] = "90000000"
+	if _, err = h.databases(context.Background(), r.Databases); err == nil {
+		t.Fatal("new cluster identity was not protected")
+	}
+}
+
+func TestLegacyPreRebootJournalBindsNewDatabasesBeforeMovingTheWorker(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	r, err := h.initialize(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Version = 1
+	delete(r.Databases, "ate-system/substrate-db")
+	delete(r.Databases, "kagent/kagent-db")
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valueObject(f.base.cm, "data")["record"] = string(encoded)
+	f.afterDrain = func() {
+		var current hostRebootRecord
+		if json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &current) != nil || current.Version != 2 || len(current.Databases) != 5 {
+			t.Fatal("the worker drained before the journal bound the current database roster")
+		}
+	}
+	if err := h.run(context.Background()); err != nil || f.reboots != 1 {
+		t.Fatal("the qualified legacy journal could not resume", err)
+	}
 }
 
 func (f *hostRebootFixture) run(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
