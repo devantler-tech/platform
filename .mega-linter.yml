@@ -445,4 +445,5 @@ ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES:
 # close to MegaLinter's 300-second default: 232s on 2026-11-09 11:40Z, then killed at 300s on two
 # consecutive runs that afternoon. A killed scan reports one error and fails the gate without
 # having examined anything. More time keeps the full scan; nothing is excluded or downgraded.
-REPOSITORY_GRYPE_TIMEOUT_SEC: 900
+# The key is `_TIMEOUT_SECONDS`: the `_TIMEOUT_SEC` name in the timeout message is not in the schema.
+REPOSITORY_GRYPE_TIMEOUT_SECONDS: 900
