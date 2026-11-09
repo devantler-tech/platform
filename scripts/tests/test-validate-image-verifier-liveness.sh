@@ -329,7 +329,8 @@ write_node driftrules
   resource_obj 0011 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${migrate_pattern}"
   resource_obj 0012 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${background_pattern}"
   resource_obj 0013 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${customer_identity_pattern}"
-  resource_obj 0014 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
+  resource_obj 0014 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${dex_pattern}"
+  resource_obj 0015 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
 } | write_rules driftrules
 resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
   write_roots driftrules
