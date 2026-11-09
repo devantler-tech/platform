@@ -45,7 +45,7 @@ func completeGoPartitions(workflow regressionWorkflow) bool {
 	suites := append([]string(nil), strategy.Matrix["suite"]...)
 	slices.Sort(suites)
 	return strategy.FailFast != nil && !*strategy.FailFast && strategy.MaxParallel == 2 && len(strategy.Matrix) == 1 &&
-		slices.Equal(suites, []string{"bridge-0", "bridge-1"})
+		slices.Equal(suites, []string{"bridge", "helpers"})
 }
 
 func TestFullGoPartitionsRejectIncompleteRouting(t *testing.T) {
@@ -58,13 +58,13 @@ func TestFullGoPartitionsRejectIncompleteRouting(t *testing.T) {
 		workers  int
 		failFast bool
 	}{
-		{"missing", []string{"bridge-0"}, 2, false},
-		{"duplicate", []string{"bridge-0", "bridge-0"}, 2, false},
-		{"unknown", []string{"bridge-0", "other"}, 2, false},
-		{"extra", []string{"bridge-0", "bridge-1", "all"}, 2, false},
-		{"unbounded", []string{"bridge-0", "bridge-1"}, 0, false},
-		{"overflow", []string{"bridge-0", "bridge-1"}, 3, false},
-		{"early cancellation", []string{"bridge-0", "bridge-1"}, 2, true},
+		{"missing", []string{"bridge"}, 2, false},
+		{"duplicate", []string{"bridge", "bridge"}, 2, false},
+		{"unknown", []string{"bridge", "other"}, 2, false},
+		{"extra", []string{"bridge", "helpers", "all"}, 2, false},
+		{"unbounded", []string{"bridge", "helpers"}, 0, false},
+		{"overflow", []string{"bridge", "helpers"}, 3, false},
+		{"early cancellation", []string{"bridge", "helpers"}, 2, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			workflow := readRegressionWorkflow(t)

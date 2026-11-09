@@ -20,22 +20,12 @@ if [[ "$*" == 'list ./...' ]]; then
   case "${MODE:-}" in
     empty-packages) exit 0 ;;
     missing-package) printf '%s\n' "$module/scripts/a"; exit 0 ;;
+    only-bridge) printf '%s\n' "$bridge"; exit 0 ;;
     bad-package) printf '%s\n' '-unexpected-option'; exit 0 ;;
+    duplicate-package) printf '%s\n' "$bridge" "$module/scripts/a" "$module/scripts/a"; exit 0 ;;
   esac
   printf '%s\n' "$module/scripts/a" "$bridge" "$module/scripts/b"
   [[ "${MODE:-}" != failed-packages ]] || exit 19
-elif [[ "$*" == "test -list ^(Test|Example|Fuzz) $bridge" ]]; then
-  case "${MODE:-}" in
-    empty-tests) printf 'ok\t%s\t0.1s\n' "$bridge"; exit 0 ;;
-    duplicate-tests) printf 'TestAlpha\nTestAlpha\n' ;;
-    bad-test) printf 'TestAlpha;exit 0\n' ;;
-    *) printf 'TestAlpha\nTestBeta\nTestGamma\nExampleDelta\nFuzzEpsilon\n' ;;
-  esac
-  [[ "${MODE:-}" != missing-summary ]] || exit 0
-  duration=0.1s
-  [[ "${MODE:-}" != bad-summary ]] || duration=0..1s
-  printf 'ok\t%s\t%s\n' "$bridge" "$duration"
-  [[ "${MODE:-}" != failed-tests ]] || exit 21
 else
   printf '%s\n' "$*" >>"$CALLS"
   case "${MODE:-}:$*" in
@@ -55,51 +45,25 @@ run() {
 module=github.com/devantler-tech/platform
 bridge="$module/scripts/tests/refresh-flux-ghcr-auth"
 helpers="test -parallel 8 -timeout 20m $module/scripts/a $module/scripts/b"
-for part in bridge-0 bridge-1; do
-  run "$part"
-  [[ "$result" == 0 ]] || {
-    cat "$work/output"
-    fail "$part failed"
-  }
-  helper_calls=0 bridge_calls=0
-  while IFS= read -r call; do
-    if [[ "$call" == "$helpers" ]]; then
-      helper_calls=$((helper_calls + 1))
-    elif [[ "$call" == 'test -parallel 8 -timeout 20m -run '*" $bridge" ]]; then
-      bridge_calls=$((bridge_calls + 1))
-      selector="${call#test -parallel 8 -timeout 20m -run }"
-      selector="${selector% "$bridge"}"
-      for test_name in TestAlpha TestBeta TestGamma ExampleDelta FuzzEpsilon; do
-        if [[ "$test_name" =~ $selector ]]; then printf '%s\n' "$test_name" >>"$work/selected"; fi
-      done
-      [[ ! TestAlphaSuffix =~ $selector && ! PrefixTestAlpha =~ $selector ]] || fail 'selector is not exact'
-    else
-      fail "unexpected child command: $call"
-    fi
-  done <"$work/calls"
-  [[ "$bridge_calls" == 1 ]] || fail 'partition did not run exactly one bridge subset'
-  expected=0
-  [[ "$part" != bridge-0 ]] || expected=1
-  [[ "$helper_calls" == "$expected" ]] || fail 'helper packages were duplicated or omitted'
-done
-printf '%s\n' ExampleDelta FuzzEpsilon TestAlpha TestBeta TestGamma >"$work/expected"
-LC_ALL=C sort "$work/selected" >"$work/actual"
-cmp "$work/expected" "$work/actual" || fail 'partitions overlap or omit a test/example/fuzz seed'
+run bridge
+[[ "$result" == 0 && "$(cat "$work/calls")" == "test -parallel 8 -timeout 20m $bridge" ]] ||
+  fail 'the bridge runner must run the full bridge package once without a test filter'
+run helpers
+[[ "$result" == 0 && "$(cat "$work/calls")" == "$helpers" ]] ||
+  fail 'the helper runner must run every other package once without a test filter'
 run all
-[[ "$result" == 0 && "$(cat "$work/calls")" == 'test -parallel 8 -timeout 20m ./...' ]] || fail 'serial diagnostic changed'
-for mode in empty-packages missing-package bad-package failed-packages empty-tests duplicate-tests bad-test bad-summary missing-summary failed-tests; do
-  run bridge-0 "$mode"
-  [[ "$result" != 0 && ! -s "$work/calls" ]] || fail "$mode did not refuse before execution"
+[[ "$result" == 0 && "$(cat "$work/calls")" == 'test -parallel 8 -timeout 20m ./...' ]] ||
+  fail 'serial diagnostic changed'
+for mode in empty-packages missing-package only-bridge bad-package duplicate-package failed-packages; do
+  for part in bridge helpers; do
+    run "$part" "$mode"
+    [[ "$result" != 0 && ! -s "$work/calls" ]] || fail "$part: $mode did not refuse before execution"
+  done
 done
-for part in bridge-0 bridge-1; do
-  run "$part" failed-bridge
-  [[ "$result" != 0 ]] || fail 'bridge child failure was lost'
-  if [[ "$part" == bridge-0 ]]; then
-    [[ "$(cat "$work/calls")" == *"$helpers"* ]] || fail 'a failed bridge omitted helper coverage'
-  fi
-done
-run bridge-0 failed-helpers
-[[ "$result" != 0 ]] || fail 'helper child failure was lost'
+run bridge failed-bridge
+[[ "$result" == 23 ]] || fail 'bridge child failure was lost'
+run helpers failed-helpers
+[[ "$result" == 29 ]] || fail 'helper child failure was lost'
 run unexpected
 [[ "$result" != 0 && ! -s "$work/calls" ]] || fail 'unknown partition ran tests'
-echo 'PASS: complete disjoint routing, serial control, discovery refusals and child failures'
+echo 'PASS: complete disjoint package routing, serial control, discovery refusals and child failures'

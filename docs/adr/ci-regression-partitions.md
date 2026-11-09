@@ -25,13 +25,13 @@ Regressions that share one shell environment remain in the same step.
 
 The complete root Go suite uses two fixed, isolated `validate-go-regressions`
 partitions with fail-fast disabled and a maximum of two standard hosted runners.
-Both discover the same compiled credential-refresh test inventory. Alternating
-top-level identities assigns every test, example and fuzz seed to exactly one
-partition; Go retains all subtests of each selected identity. Partition zero also
-runs every other package from the complete root package inventory, without a test
-filter. Discovery errors, missing packages, empty or duplicate inventories and
-child failures fail the job. Both matrix results remain prerequisites for the
-required aggregate and production deployment.
+Both discover the same root package inventory. One runs the whole
+credential-refresh package and the other runs every remaining package. Neither
+uses a test filter. Discovery errors, missing packages, duplicate inventories
+and child failures fail the job. Both matrix results remain prerequisites for
+the required aggregate and production deployment. In the first hosted trial,
+running half the bridge suite and then all other packages on the same runner
+left a serial tail. The whole-package split lets those two workloads overlap.
 
 `bash scripts/run-go-regressions.sh all` retains the unpartitioned diagnostic
 command. Every execution keeps eight test workers and the explicit 20-minute

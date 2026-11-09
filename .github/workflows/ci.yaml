@@ -70,7 +70,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        suite: [bridge-0, bridge-1]
+        suite: [bridge, helpers]
     permissions:
       contents: read
     steps:
@@ -127,8 +127,8 @@ jobs:
       # under half the bound. Resize it only from fresh hosted timings, never to
       # hide a hung test.
       # Both isolated partitions retain eight test workers and every deadline.
-      # They discover the complete package and compiled test inventories;
-      # together they run each bridge test and every other package exactly once.
+      # Both discover the complete root inventory. One runs the full bridge
+      # package while the other runs every remaining package without a filter.
       # The matrix result remains required before production and merge.
       - name: 🧪 Validate the complete Go helper regression suite
         env:
@@ -3771,7 +3771,7 @@ jobs:
           bash scripts/tests/test-wait-for-prod-api-stability.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           # The unconditional validate-go-regressions job runs the complete
-          # refresh-flux-ghcr-auth package via ./... on this same checkout.
+          # refresh-flux-ghcr-auth package on this same checkout.
           # Required CI rejects every non-success result from either job.
 
   naming:
