@@ -364,6 +364,9 @@ func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 	if err = p.advance(ctx, "reset-requested"); err != nil {
 		return err
 	}
+	if err = p.checkOwner(ctx); err != nil {
+		return err
+	}
 	_, resetErr := p.c.run(ctx, nil, "talosctl", "--nodes="+address, "reset", "--system-labels-to-wipe=EPHEMERAL", "--reboot", "--graceful=true", "--wait", "--timeout=15m")
 	if resetErr != nil {
 		fmt.Println("Temporary reset response was uncertain; only positive recovery can advance the journal.")

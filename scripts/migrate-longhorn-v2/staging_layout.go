@@ -37,13 +37,13 @@ func (p temporaryPreparation) installStagingLayout(ctx context.Context, address 
 	if err = verifyDesiredLayout(raw, ephemeral); err != nil {
 		return err
 	}
-	if err = p.checkOwner(ctx); err != nil {
-		return err
-	}
 	node, currentAddress, err := p.node(ctx, true)
 	if err != nil || currentAddress != address || text(node, "status", "nodeInfo", "bootID") != p.j.OriginalBootID ||
 		value(node, "spec", "unschedulable") != true || text(node, "metadata", "annotations", fenceAnnotation) != p.name {
 		return errInventory
+	}
+	if err = p.checkOwner(ctx); err != nil {
+		return err
 	}
 	applyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

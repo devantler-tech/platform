@@ -67,6 +67,38 @@ func TestStagingRejectsInsufficientNativePartitionSizeBeforeMutation(t *testing.
 	}
 }
 
+func TestStagingHoldsIfMainMovesAtEitherMutationBoundary(t *testing.T) {
+	for _, phase := range []string{"layout apply", "reset request"} {
+		t.Run(phase, func(t *testing.T) {
+			f, p := unusedPreparationAPI(t)
+			p.staging = true
+			oldLayoutRead := false
+			p.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+				if phase == "layout apply" && program == "talosctl" && len(args) == 5 && args[1] == "get" {
+					if args[2] == "volumeconfig" && args[3] == "EPHEMERAL" && f.nativeCalls == 2 {
+						oldLayoutRead = true
+					}
+					if args[2] == "systeminformation" && oldLayoutRead {
+						f.base.staleSource = true
+					}
+				}
+				response, err := f.run(ctx, input, program, args...)
+				if phase == "reset request" && program == "kubectl" && len(args) > 3 && args[2] == "patch" && args[3] == "configmap" {
+					var j journal
+					if json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &j) == nil && j.Phase == "reset-requested" {
+						f.base.staleSource = true
+					}
+				}
+				return response, err
+			}
+			err := p.prepare(context.Background())
+			if err == nil || !f.base.staleSource || f.base.resets != 0 || phase == "layout apply" && f.layoutWrites != 0 {
+				t.Fatal("moved main allowed a forward storage mutation", err)
+			}
+		})
+	}
+}
+
 func unusedBaselineFixture(t *testing.T, s inventory) object {
 	t.Helper()
 	machines, err := benchmarkMachines(s, "v1")
