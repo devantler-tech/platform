@@ -110,6 +110,7 @@ spec:
           'Home',
           'Finance',
           'Data',
+          'Artificial Intelligence',
           'Business & Clients',
           'Products',
           'Personal',
@@ -126,8 +127,8 @@ spec:
         layout (k8s/bases/apps/homepage/config-map.yaml): Kubernetes,
         Observability, Storage, Analytics, Secrets Management, Governance,
         Diagnostics, Device Management, Infrastructure as Code, Cloud,
-        Network, Home, Finance, Data, Business & Clients, Products,
-        Personal, or Email.
+        Network, Home, Finance, Data, Artificial Intelligence,
+        Business & Clients, Products, Personal, or Email.
         An undeclared group still renders,
         but sorts below every declared group with a generic icon. Bookmark
         group names are deliberately not accepted here.
