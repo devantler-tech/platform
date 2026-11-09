@@ -51,8 +51,12 @@ while [[ $# -gt 0 ]]; do
   fi
   shift
 done
-method="$(jq -r '.method')"
+body="$(cat)"
+method="$(jq -r '.method' <<<"${body}")"
 printf '%s\n' "${method}" >>"${dir}/calls"
+if [[ "${method}" == SendMessage ]]; then
+  jq -r '.params.message.messageId' <<<"${body}" >>"${dir}/message-ids"
+fi
 if [[ "${method}" == CancelTask && ! -f "${dir}/cancel-at" ]]; then
   date +%s >"${dir}/cancel-at"
 fi
@@ -149,6 +153,10 @@ grep -q 'final state: CANCELED_AT_LIMIT' "${work}/capped/out" || fail 'a capped 
 [[ "$(SEND='http-error garbage ok' run resent ok 2 TASK_STATE_WORKING TASK_STATE_CANCELED)" == 1 ]] ||
   fail "a resent run was not watched to its limit: $(cat "${work}/resent/out")"
 [[ "$(grep -c '^SendMessage$' "${work}/resent/calls")" == 3 ]] || fail 'a lost send was not resent until it gave a task'
+# kagent returns the first send's task only for the same message ID; a new ID would start a run.
+[[ "$(sort -u "${work}/resent/message-ids" | grep -c '^run-[0-9]\{8\}$')" == 1 &&
+  "$(sort -u "${work}/resent/message-ids" | wc -l | tr -d ' ')" == 1 ]] ||
+  fail "a resend changed the message ID: $(tr '\n' ' ' <"${work}/resent/message-ids")"
 grep -q 'final state: CANCELED_AT_LIMIT' "${work}/resent/out" || fail 'a resent run was not capped'
 
 # A run the trigger never learns of cannot read as anything but a failure it cannot cap.
