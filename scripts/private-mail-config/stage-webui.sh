@@ -19,12 +19,12 @@ for name in webui.zip webui.LICENSE webui.SOURCE; do
 done
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 case "${2:-0.16.27}" in
-0.16.27) pins="$root/webui-pins.json" ;;
-1.0.2) pins="$root/webui-v1-pins.json" ;;
-*)
-  echo 'Unsupported Email runtime version.' >&2
-  exit 2
-  ;;
+  0.16.27) pins="$root/webui-pins.json" ;;
+  1.0.2) pins="$root/webui-v1-pins.json" ;;
+  *)
+    echo 'Unsupported Email runtime version.' >&2
+    exit 2
+    ;;
 esac
 version="$(jq -er '.version | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$pins")"
 url="$(jq -er '.url | select(type == "string")' "$pins")"
