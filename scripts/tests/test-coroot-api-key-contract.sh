@@ -58,7 +58,7 @@ assert "${infrastructure}" \
 assert "${infrastructure}" \
   "${coroot} | .[0].spec |
     ((.communityEdition.image.name | test(\"^ghcr[.]io/coroot/coroot:[0-9]\")) or
-      .communityEdition.image.name == \"ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:9a2782f405f9ee673301912b3b2cf85a4a154fbfeb1542df2d4937d6600396f1\") and
+      .communityEdition.image.name == \"ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.2-900535fee5b7a2f6615a72ef2097038099c1f976@sha256:0f77bc490a377f6bf966fa5c0caa0b7e8e4583fe6707b037526870994b49630f\") and
     (.nodeAgent.image.name | test(\"^ghcr[.]io/(coroot/coroot-node-agent:[0-9]|devantler-tech/platform-coroot-node-agent:v[0-9])\")) and
     ((.clusterAgent.image.name | test(\"^ghcr[.]io/coroot/coroot-cluster-agent:[0-9]\")) or
       .clusterAgent.image.name == \"ghcr.io/devantler-tech/platform-coroot-cluster-agent:v1.11.7-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:46b6abe52dbf5445277ef3e3bbcb469a89a88e2c610411c5d9a4270a8a8a88c3\")" \
