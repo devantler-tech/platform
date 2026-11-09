@@ -155,7 +155,7 @@ grep -q 'final state: CANCELED_AT_LIMIT' "${work}/capped/out" || fail 'a capped 
 [[ "$(grep -c '^SendMessage$' "${work}/resent/calls")" == 3 ]] || fail 'a lost send was not resent until it gave a task'
 # kagent returns the first send's task only for the same message ID; a new ID would start a run.
 [[ "$(sort -u "${work}/resent/message-ids" | grep -c '^run-[0-9]\{8\}$')" == 1 &&
-  "$(sort -u "${work}/resent/message-ids" | wc -l | tr -d ' ')" == 1 ]] ||
+"$(sort -u "${work}/resent/message-ids" | wc -l | tr -d ' ')" == 1 ]] ||
   fail "a resend changed the message ID: $(tr '\n' ' ' <"${work}/resent/message-ids")"
 grep -q 'final state: CANCELED_AT_LIMIT' "${work}/resent/out" || fail 'a resent run was not capped'
 
