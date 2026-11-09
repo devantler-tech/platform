@@ -708,6 +708,8 @@ jobs:
               - 'scripts/floating-image-tag-exceptions.tsv'
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-helm-post-renderers.sh'
+              - 'scripts/guard-controller-helm-profile.sh'
+              - 'scripts/tests/test-controller-helm-profile.sh'
               - 'scripts/tests/test-guard-helm-post-renderers.sh'
               - 'scripts/tests/test-kubescape-storage-placement.sh'
               - 'scripts/tests/test-kubescape-runtime-rules-switch.sh'
@@ -1133,8 +1135,8 @@ jobs:
       - name: ⎈ Install checksum-verified native Helm
         shell: bash
         env:
-          HELM_VERSION: v4.2.4
-          HELM_SHA256: c306b46f719b0a4da32d0f78ee21bf90ce8d602f15b22ab753f0674d1670a7f3
+          HELM_VERSION: v4.3.1
+          HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
         run: |
           set -euo pipefail
           native_dir="$(mktemp -d)"
@@ -1251,6 +1253,20 @@ jobs:
           go run ./scripts/validate-flux-verify \
             ksail.prod.yaml \
             k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml
+
+      - name: 🧩 Verify the exact reversible controller profile natively
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          shellcheck scripts/guard-controller-helm-profile.sh scripts/tests/test-controller-helm-profile.sh
+          tool_dir="$(mktemp -d "$RUNNER_TEMP/flux-profile.XXXXXX")"
+          archive="$tool_dir/flux-operator.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.62.1/flux-operator_0.62.1_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 7bb9e54d370039d8701d4271b38aed57d6c89668432b7caddce69f4e26e24c1b "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$tool_dir" flux-operator
+          FLUX_OPERATOR_BIN="$tool_dir/flux-operator" bash scripts/tests/test-controller-helm-profile.sh
 
       # The step above covers the ROOT source. These are the other eight cosign
       # subjects — app OCIRepositories, the tenant RGD, the Kyverno policy and the
@@ -1587,8 +1603,8 @@ jobs:
       - name: ⎈ Install checksum-verified native Helm
         shell: bash
         env:
-          HELM_VERSION: v4.2.4
-          HELM_SHA256: c306b46f719b0a4da32d0f78ee21bf90ce8d602f15b22ab753f0674d1670a7f3
+          HELM_VERSION: v4.3.1
+          HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
         run: |
           set -euo pipefail
           native_dir="$(mktemp -d)"
@@ -4104,14 +4120,14 @@ jobs:
       - name: ⚙️ Setup the audited controller's Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: scripts/render-helm-chart/go.mod
+          go-version: "1.27.3"
           cache: false
 
       - name: 🧩 Install the audited controller's Helm renderer
-        # Flux 2.9.6 / helm-controller 1.6.5 embeds upstream Helm 4.2.4. The
+        # Flux 2.9.6 with the signed helm-controller 1.7.1 override embeds Helm 4.3.1. The
         # runner's ambient Helm is not proof of matching template capabilities.
         env:
-          HELM_VERSION: v4.2.4
+          HELM_VERSION: v4.3.1
         run: |
           install_dir="$(mktemp -d)"
           cd "$install_dir"
@@ -4124,7 +4140,7 @@ jobs:
 
       - name: 🧩 Validate the post-renderer guard
         run: |
-          shellcheck scripts/build-controller-helm.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          shellcheck scripts/build-controller-helm.sh scripts/guard-controller-helm-profile.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
@@ -4309,7 +4325,7 @@ jobs:
       - name: ⚙️ Setup the audited controller's Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: scripts/render-helm-chart/go.mod
+          go-version: "1.27.3"
           cache: false
 
       - name: 🛟 Validate the PodDisruptionBudget selector guard
