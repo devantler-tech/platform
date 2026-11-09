@@ -28,3 +28,25 @@ spec:
       region: us-east-1
       pathStyle: true
       credentialsSecret: rustfs-credentials
+  # Post-render only the release manifest; the guard models only that stream.
+  postRenderStrategy: nohooks
+  postRenderers:
+    - kustomize:
+        patches:
+          # atelet reads the RustFS keys from rustfs-credentials into its
+          # environment at startup, and transfers snapshots with them (on S3
+          # there is no per-actor credential). When the keys are regenerated,
+          # RustFS restarts with the new ones but a running atelet keeps the
+          # old ones, so every snapshot upload is refused and no agent can be
+          # built (devantler-tech/platform#5905). Stakater Reloader restarts
+          # the DaemonSet when that Secret changes.
+          - target:
+              kind: DaemonSet
+              name: atelet
+            patch: |
+              apiVersion: apps/v1
+              kind: DaemonSet
+              metadata:
+                name: atelet
+                annotations:
+                  secret.reloader.stakater.com/reload: rustfs-credentials
