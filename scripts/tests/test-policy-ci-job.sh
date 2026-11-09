@@ -327,7 +327,7 @@ jq -e --arg selection "github.event_name == 'pull_request' && github.event.pull_
   .jobs["validate-go-project"] as $job |
   ($job.if == $selection) and
   ($job.uses | test("^devantler-tech/\\.github/\\.github/workflows/validate-go-project\\.yaml@[0-9a-f]{40}( |$)")) and
-  ($job.with == {"apply-signed-fixes": false}) and
+  ($job.with == {"apply-signed-fixes": false, "enable-test-parallelism": true, "test-parallelism": 8}) and
   ($job.permissions.contents == "read") and
   (($job["continue-on-error"] // false) == false) and
   (.jobs["ci-required-checks"].needs | index("validate-go-project") != null)
