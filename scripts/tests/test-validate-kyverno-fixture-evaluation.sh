@@ -85,48 +85,50 @@ else
 fi
 
 # #3145: kubectl's shorthand kind makes every rule match nothing.
-root="$(copy shorthand-kinds restrict-tenant-network-policies)"
-sed -i.bak -E 's#- CiliumNetworkPolicy$#- CiliumNetworkPolicy.cilium.io#' \
-  "${root}/${policies}/restrict-tenant-network-policies.yaml"
+root="$(copy shorthand-kinds restrict-arc-retirement-credential-sync-rewritten)"
+sed -i.bak -E 's#kinds: \[external-secrets\.io/v1/ExternalSecret\]#kinds: [ExternalSecret.external-secrets.io]#' \
+  "${root}/${policies}/restrict-arc-retirement.yaml"
+grep -qF 'kinds: [ExternalSecret.external-secrets.io]' "${root}/${policies}/restrict-arc-retirement.yaml" ||
+  fail "shorthand kinds: the edit no longer applies to restrict-arc-retirement.yaml"
 if kyverno_passes "shorthand kinds" "${root}"; then
   expect_fail "shorthand kinds" "${root}" 1 "declares result: fail (kyverno reported it Excluded)"
 fi
 
 # #3152: a deleted rule leaves its rows Excluded.
-root="$(copy deleted-rule restrict-tenant-network-policies)"
-yq -i 'del(.spec.rules[] | select(.name == "cnp-ingress-sources-must-be-constrained"))' \
-  "${root}/${policies}/restrict-tenant-network-policies.yaml"
+root="$(copy deleted-rule restrict-arc-retirement-listener-pod)"
+yq -i 'del(.spec.rules[] | select(.name == "fence-retired-listener-pod"))' \
+  "${root}/${policies}/restrict-arc-retirement.yaml"
 if kyverno_passes "deleted rule" "${root}"; then
-  expect_fail "deleted rule" "${root}" 1 "names rule cnp-ingress-sources-must-be-constrained of policy restrict-tenant-network-policies, which the policies it loads do not define"
+  expect_fail "deleted rule" "${root}" 1 "names rule fence-retired-listener-pod of policy restrict-arc-retirement, which the policies it loads do not define"
 fi
 
 # #3152: a renamed rule is the same break under another name.
-root="$(copy renamed-rule restrict-tenant-network-policies)"
-yq -i '(.spec.rules[] | select(.name == "cnp-ingress-sources-must-be-constrained") | .name) = "cnp-ingress-sources"' \
-  "${root}/${policies}/restrict-tenant-network-policies.yaml"
+root="$(copy renamed-rule restrict-arc-retirement-listener-pod)"
+yq -i '(.spec.rules[] | select(.name == "fence-retired-listener-pod") | .name) = "fence-retired-listener"' \
+  "${root}/${policies}/restrict-arc-retirement.yaml"
 if kyverno_passes "renamed rule" "${root}"; then
-  expect_fail "renamed rule" "${root}" 1 "names rule cnp-ingress-sources-must-be-constrained"
+  expect_fail "renamed rule" "${root}" 1 "names rule fence-retired-listener-pod"
 fi
 
 # A rule named only by `skip` rows passes the Excluded check, so only the
 # existence check can catch its removal.
-root="$(copy skip-only restrict-tenant-network-policies)"
+root="$(copy skip-only restrict-arc-retirement-listener-pod)"
 mkdir -p "${root}/skip-only"
-mv "${root}/tests/restrict-tenant-network-policies" "${root}/skip-only/"
-yq -i '.results |= map(select(.result == "skip"))' "${root}/skip-only/restrict-tenant-network-policies/kyverno-test.yaml"
+mv "${root}/tests/restrict-arc-retirement-listener-pod" "${root}/skip-only/"
+yq -i '.results |= map(select(.result == "skip"))' "${root}/skip-only/restrict-arc-retirement-listener-pod/kyverno-test.yaml"
 expect_pass "a skip-only fixture whose rule exists" "${root}" skip-only
-yq -i 'del(.spec.rules[] | select(.name == "cnp-ingress-sources-must-be-constrained"))' \
-  "${root}/${policies}/restrict-tenant-network-policies.yaml"
+yq -i 'del(.spec.rules[] | select(.name == "fence-retired-listener-pod"))' \
+  "${root}/${policies}/restrict-arc-retirement.yaml"
 if kyverno_passes "skip-only rule removed" "${root}" skip-only; then
-  expect_fail "skip-only rule removed" "${root}" 1 "names rule cnp-ingress-sources-must-be-constrained" skip-only
+  expect_fail "skip-only rule removed" "${root}" 1 "names rule fence-retired-listener-pod" skip-only
 fi
 
 # #3392: a results entry naming a resource the test never loads gets no row at all.
-root="$(copy renamed-resource restrict-tenant-network-policies)"
-yq -i '(.results[].resources[] | select(. == "tenant-ns/attack-toservices-foreign-named")) = "tenant-ns/attack-toservices-foreign-renamed"' \
-  "${root}/tests/restrict-tenant-network-policies/kyverno-test.yaml"
+root="$(copy renamed-resource restrict-arc-retirement-listener-pod)"
+yq -i '(.results[].resources[] | select(. == "arc-systems/listener-restored")) = "arc-systems/listener-renamed"' \
+  "${root}/tests/restrict-arc-retirement-listener-pod/kyverno-test.yaml"
 if kyverno_passes "renamed resource" "${root}"; then
-  expect_fail "renamed resource" "${root}" 1 "tenant-ns/attack-toservices-foreign-renamed, but kyverno ran no assertion for it"
+  expect_fail "renamed resource" "${root}" 1 "arc-systems/listener-renamed, but kyverno ran no assertion for it"
 fi
 
 # A generate row names the object it generates, which need not share its trigger's name.

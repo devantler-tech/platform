@@ -9,11 +9,6 @@
   "restrict-homepage-service-groups": "Enforce",
   "require-homepage-href-for-non-root-routes": "Enforce",
   "restrict-tenant-issuer-refs": "Enforce",
-  "restrict-tenant-network-policies/cnp-ingress-sources-must-be-constrained": "Enforce",
-  "restrict-tenant-network-policies/cnp-egress-destinations-must-be-constrained": "Enforce",
-  "restrict-tenant-network-policies/cnp-must-not-opt-out-of-default-deny": "Enforce",
-  "restrict-tenant-network-policies/cnp-generated-policy-names-are-reserved": "Enforce",
-  "restrict-tenant-network-policies/cnp-must-use-the-singular-spec-container": "Enforce",
   "restrict-tenant-route-hostnames": "Enforce",
   "restrict-tenant-secret-stores": "Enforce",
   "restrict-tenant-webapps": "Enforce",
@@ -38,5 +33,6 @@
   "restrict-arc-retirement/preserve-retirement-journal": "Enforce",
   "restrict-arc-retirement/preserve-retiring-namespace": "Enforce",
   "restrict-arc-openbao-listener-settings": "Enforce",
-  "restrict-github-team-external-identity": "Enforce"
+  "restrict-github-team-external-identity": "Enforce",
+  "restrict-tenant-network-policies": "Enforce"
 }
