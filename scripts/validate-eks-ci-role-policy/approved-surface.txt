@@ -52,7 +52,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex c74b736b8a1b29196b16923b08c4d57476786f0db5909756ee3292e81c09dc48
+helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex e2cbe6e6b5ace19ebded8d0e75f508277dd450c079ed51062d13649e148904b9
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns 31c51b3b18a4d7dfbbe2fec098d6aad40f292dd29c6e91f0422217969ce24e45
 
