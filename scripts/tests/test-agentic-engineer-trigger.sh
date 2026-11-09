@@ -115,10 +115,16 @@ long='TASK_STATE_WORKING TASK_STATE_WORKING TASK_STATE_WORKING TASK_STATE_WORKIN
 long+=' TASK_STATE_WORKING TASK_STATE_WORKING TASK_STATE_WORKING TASK_STATE_COMPLETED'
 [[ "$(run long "${long}")" == 0 ]] || fail "a long run was not watched to its end: $(cat "${work}/long/out")"
 [[ "$(calls long GetTask)" == 9 ]] || fail "a long run was polled $(calls long GetTask) times instead of 9"
+# Each change of what a poll sees is logged once: nine polls, two states, two lines.
+[[ "$(grep -c '^task task-1: ' "${work}/long/out")" == 2 ]] ||
+  fail "a long run did not log each state change exactly once: $(cat "${work}/long/out")"
 
-# A failed or unreadable poll is retried, never a reason to stop watching.
+# A failed or unreadable poll is retried, never a reason to stop watching, and is logged.
 [[ "$(run flaky 'http-error garbage http-error TASK_STATE_WORKING TASK_STATE_COMPLETED')" == 0 ]] ||
   fail "a run with failed polls was not watched to its end: $(cat "${work}/flaky/out")"
+flaky_log="$(grep '^task task-1: ' "${work}/flaky/out" | sed 's/^task task-1: //' | tr '\n' '|')"
+[[ "${flaky_log}" == 'unreachable (GetTask failed)|unknown|unreachable (GetTask failed)|TASK_STATE_WORKING|TASK_STATE_COMPLETED|' ]] ||
+  fail "failed and unreadable polls were not logged as they changed: ${flaky_log}"
 
 # A run that ends in any other way fails the Job, with the state it ended in.
 [[ "$(run failed 'TASK_STATE_WORKING TASK_STATE_FAILED')" == 1 ]] ||

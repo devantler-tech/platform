@@ -81,12 +81,23 @@ data:
     echo "started $run_id as task $id"
     # Watch until the agent ends the run. A failed or unreadable GetTask is
     # retried at the next poll; the trigger never cancels the task. The Job's
-    # activeDeadlineSeconds bounds only this watcher (cron-job.yaml).
+    # activeDeadlineSeconds bounds only this watcher (cron-job.yaml). Each
+    # change of what a poll sees is logged once, so the Pod log tells a long
+    # healthy run from a watcher that cannot reach or read the task.
     state=""
+    seen=""
     until terminal "$state"; do
       sleep "$poll"
-      task=$(get_task) || continue
-      state=$(task_state)
+      if task=$(get_task); then
+        state=$(task_state)
+        now=$state
+      else
+        now="unreachable (GetTask failed)"
+      fi
+      if [ "$now" != "$seen" ]; then
+        echo "task $id: $now"
+        seen=$now
+      fi
     done
     echo "final state: $state"
     # A streamed reply arrives as many parts: join one message's parts as
