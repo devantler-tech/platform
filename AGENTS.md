@@ -83,6 +83,13 @@ ksail cluster list     # existing Talos clusters
 
 ## Validation
 
+The complete Go suite runs on two isolated CI runners. The partitions cover
+every compiled credential bridge test, example and fuzz seed once, and run every
+other root package once. Production and the required check wait for both
+results. `bash scripts/run-go-regressions.sh all` runs the full suite on one
+runner with the same worker and timeout limits. Verify routing and failure
+handling with `bash scripts/tests/test-run-go-regressions.sh`.
+
 The repository has static manifest checks, Go tests and linters, and MegaLinter. **Never run a cluster for maintenance.** For Go changes, run the affected packages' tests from the repository root (for example, `go test ./scripts/validate-eks-ci-role-policy`) and the relevant offline script regressions. The unconditional required `validate-go-regressions` job in [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) checks every tracked module with `bash scripts/check-go-modules-tidy.sh` before running the complete root-module Go suite. Its offline controls are `bash scripts/tests/test-go-modules-tidy.sh`. The guard leaves module files unchanged and names the module needing `go mod tidy`; it also refuses failed or empty discovery. The organization's required Go workflow (`validate-go-project.yaml` in devantler-tech/.github) applies whenever GitHub detects this repository's language as Go, and Go and Shell are within a few kilobytes of each other, so enrolment can flip with any change. Keep the repository passing that workflow whichever language is detected: its golangci-lint, dead-code, test, race-coverage and whole-repository MegaLinter jobs (#5852). The `validate-go-project` job in `ci.yaml` calls the same workflow read-only on every same-repository pull request, and `CI - Required Checks` requires its success, so a regression cannot merge while the organization rule is not selecting this repository. MegaLinter's scope and dispositions live in [`.mega-linter.yml`](.mega-linter.yml). For manifest changes, validate with:
 
 ```bash
@@ -127,11 +134,16 @@ The complete cluster-policy fixtures and offline regressions run in fixed suites
 
 The Talos gate renders both roles, applies the reviewed KSail post-installer kernel-argument fold, then validates both. Production's extension path clears `extraKernelArgs` and pins the UKI command line; the local path without extensions is unchanged. The unconditional pin check and real offline positive/invalid-patch controls are documented in [`scripts/reconcile-talos-kernel-args/README.md`](scripts/reconcile-talos-kernel-args/README.md). The pin check compares the pinned KSail release's fold inputs by content with the audited sets, so a KSail bump needs a new source audit of this fold only when one of those inputs changed.
 
-The complete offline Flux credential-bridge family runs in `validate-flux-bridge`
+The offline Flux credential-bridge shell controls run in `validate-flux-bridge`
 alongside manifest validation on pull requests selected by the existing `k8s` or
 `bridge_validation` filters. Required CI accepts success for a selected family
 and an intentional skip otherwise, rejecting missing selection evidence. The
-family is PR-only and is not a merge-group production prerequisite.
+shell job is PR-only and is not a merge-group production prerequisite. The
+complete `scripts/tests/refresh-flux-ghcr-auth` Go package runs once through
+`validate-go-regressions` on every PR and merge group. Required CI and production
+deployment require that unconditional job to succeed; the selected shell job
+does not repeat its Go tests. The workflow regression checks real Go package
+discovery so a nested module cannot silently remove the bridge from `./...`.
 
 The complete nested-RGD template regression runs alongside manifest validation
 in the read-only `validate-rgd-templates` PR job, selected by `k8s`. Required CI

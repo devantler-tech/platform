@@ -24,7 +24,12 @@ type regressionWorkflow struct {
 		Needs       []string              `yaml:"needs"`
 		Continue    any                   `yaml:"continue-on-error"`
 		Permissions map[string]string     `yaml:"permissions"`
-		Steps       []struct {
+		Strategy    struct {
+			FailFast    *bool               `yaml:"fail-fast"`
+			MaxParallel int                 `yaml:"max-parallel"`
+			Matrix      map[string][]string `yaml:"matrix"`
+		} `yaml:"strategy"`
+		Steps []struct {
 			Name             string            `yaml:"name"`
 			If               string            `yaml:"if"`
 			Run              string            `yaml:"run"`
@@ -33,6 +38,53 @@ type regressionWorkflow struct {
 			WorkingDirectory string            `yaml:"working-directory"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
+}
+
+func completeGoPartitions(workflow regressionWorkflow) bool {
+	strategy := workflow.Jobs["validate-go-regressions"].Strategy
+	suites := append([]string(nil), strategy.Matrix["suite"]...)
+	slices.Sort(suites)
+	return strategy.FailFast != nil && !*strategy.FailFast && strategy.MaxParallel == 2 && len(strategy.Matrix) == 1 &&
+		slices.Equal(suites, []string{"bridge", "helpers"})
+}
+
+func TestFullGoPartitionsRejectIncompleteRouting(t *testing.T) {
+	if !completeGoPartitions(readRegressionWorkflow(t)) {
+		t.Fatal("complete Go validation needs both fixed partitions without early cancellation")
+	}
+	for _, test := range []struct {
+		name     string
+		suites   []string
+		workers  int
+		failFast bool
+	}{
+		{"missing", []string{"bridge"}, 2, false},
+		{"duplicate", []string{"bridge", "bridge"}, 2, false},
+		{"unknown", []string{"bridge", "other"}, 2, false},
+		{"extra", []string{"bridge", "helpers", "all"}, 2, false},
+		{"unbounded", []string{"bridge", "helpers"}, 0, false},
+		{"overflow", []string{"bridge", "helpers"}, 3, false},
+		{"early cancellation", []string{"bridge", "helpers"}, 2, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workflow := readRegressionWorkflow(t)
+			job := workflow.Jobs["validate-go-regressions"]
+			job.Strategy.Matrix = map[string][]string{"suite": test.suites}
+			job.Strategy.MaxParallel = test.workers
+			job.Strategy.FailFast = &test.failFast
+			workflow.Jobs["validate-go-regressions"] = job
+			if completeGoPartitions(workflow) {
+				t.Fatal("accepted an incomplete or unbounded partition matrix")
+			}
+		})
+	}
+	workflow := readRegressionWorkflow(t)
+	job := workflow.Jobs["validate-go-regressions"]
+	job.Strategy.FailFast = nil
+	workflow.Jobs["validate-go-regressions"] = job
+	if completeGoPartitions(workflow) {
+		t.Fatal("omitting fail-fast restores GitHub's cancelling default")
+	}
 }
 
 // readRegressionWorkflow loads the actual CI workflow rather than a separate fixture.
@@ -63,13 +115,17 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 	if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
 		t.Fatal("the regression runner needs only read-only checkout permission")
 	}
+	if !completeGoPartitions(workflow) {
+		t.Fatal("complete Go coverage requires both fixed partitions")
+	}
 	// Keep the bounded test concurrency and explicit per-package timeout in
 	// the pinned command without allowing package filters or skipped results.
 	positions := make(map[string]int)
 	for _, command := range []string{
 		"bash scripts/tests/test-go-modules-tidy.sh",
 		"bash scripts/check-go-modules-tidy.sh",
-		"go test -parallel 8 -timeout 20m ./...",
+		"bash scripts/tests/test-run-go-regressions.sh",
+		"bash scripts/run-go-regressions.sh \"$PARTITION\"",
 	} {
 		found := false
 		for name, candidate := range workflow.Jobs {
@@ -79,6 +135,9 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 				}
 				if name != "validate-go-regressions" || step.If != "" || step.Continue != nil {
 					t.Fatalf("complete suite must run once, unconditionally in its independent job: %s", command)
+				}
+				if strings.Contains(command, "\"$PARTITION\"") && step.Env["PARTITION"] != "${{ matrix.suite }}" {
+					t.Fatal("the runner must bind its real matrix partition")
 				}
 				for _, directory := range []string{
 					workflow.Defaults.Run.WorkingDirectory,
@@ -101,7 +160,8 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 		}
 	}
 	if positions["bash scripts/tests/test-go-modules-tidy.sh"] >= positions["bash scripts/check-go-modules-tidy.sh"] ||
-		positions["bash scripts/check-go-modules-tidy.sh"] >= positions["go test -parallel 8 -timeout 20m ./..."] {
+		positions["bash scripts/check-go-modules-tidy.sh"] >= positions["bash scripts/run-go-regressions.sh \"$PARTITION\""] ||
+		positions["bash scripts/tests/test-run-go-regressions.sh"] >= positions["bash scripts/run-go-regressions.sh \"$PARTITION\""] {
 		t.Fatal("module refusal controls and all-module guard must pass before the full Go suite")
 	}
 	for _, name := range []string{"deploy-prod", "ci-required-checks"} {

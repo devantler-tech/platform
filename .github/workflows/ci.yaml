@@ -64,8 +64,13 @@ jobs:
   # Full suites produce no path outputs. Run them independently, but require
   # their success before production access and the final merge verdict.
   validate-go-regressions:
-    name: 🧪 Validate Complete Go Regressions
+    name: 🧪 Validate Complete Go Regressions (${{ matrix.suite }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        suite: [bridge, helpers]
     permissions:
       contents: read
     steps:
@@ -89,6 +94,12 @@ jobs:
 
       - name: 🧹 Verify every tracked Go module is tidy
         run: bash scripts/check-go-modules-tidy.sh
+
+      - name: 🔍 Lint complete regression routing
+        run: shellcheck scripts/run-go-regressions.sh scripts/tests/test-run-go-regressions.sh
+
+      - name: 🧪 Exercise complete regression routing offline
+        run: bash scripts/tests/test-run-go-regressions.sh
 
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5
@@ -115,11 +126,14 @@ jobs:
       # evicts an unrelated PR (#4893). 20 minutes keeps the slowest measured run
       # under half the bound. Resize it only from fresh hosted timings, never to
       # hide a hung test.
-      # Bound already parallel-safe cases to eight slots: the complete
-      # credential-bridge suite improved from 407s to 245s at four CPUs,
-      # preserving the same 582 passing cases and every deadline.
+      # Both isolated partitions retain eight test workers and every deadline.
+      # Both discover the complete root inventory. One runs the full bridge
+      # package while the other runs every remaining package without a filter.
+      # The matrix result remains required before production and merge.
       - name: 🧪 Validate the complete Go helper regression suite
-        run: go test -parallel 8 -timeout 20m ./...
+        env:
+          PARTITION: ${{ matrix.suite }}
+        run: bash scripts/run-go-regressions.sh "$PARTITION"
 
   # The organization's required Go workflow only applies while GitHub detects this
   # repository's language as Go, and Go and Shell are within a few kilobytes of each
@@ -3714,7 +3728,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup Go
-        # Runs the complete offline credential-bridge regression family.
+        # Supplies the reviewed YAML parser for the selected shell controls.
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -3756,7 +3770,9 @@ jobs:
           bash scripts/tests/test-use-prod-stable-api-endpoint.sh
           bash scripts/tests/test-wait-for-prod-api-stability.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
-          go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
+          # The unconditional validate-go-regressions job runs the complete
+          # refresh-flux-ghcr-auth package on this same checkout.
+          # Required CI rejects every non-success result from either job.
 
   naming:
     name: 🏷️ Validate Naming Conventions
