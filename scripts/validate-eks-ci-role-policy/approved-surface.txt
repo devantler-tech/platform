@@ -32,7 +32,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|arc-systems|arc-controller bff72aa7aa7b49d
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate 646603f78f7124c4bdc214001cd5e0d0b544f6f8a3cc70a87a9bb2768726c101
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-atelet fc731e55e74d04ed0a7139f09dd88d355da89e4aa052ef696edd5596e952b668
+helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-atelet 7cdaff69cf8aa755a8c44262d23311d19e895c909d07c8100f22bc3a0a2554ea
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-crds 1e9dd6ce2680fd5b6e03f0811dbc7f8b67ff5a644eed691329a06ee469252024
 
