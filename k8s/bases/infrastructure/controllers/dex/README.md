@@ -40,8 +40,10 @@ identity, and pushes those bytes without rebuilding. The main-only workflow
 signs the resulting digest and attaches verified build and CycloneDX statements.
 Image tags identify the source revision; consumers must use the verified digest.
 
-Building and publishing the image does not adopt it. Runtime use requires a
-separate reviewed digest pin, signer/node-pull admission and observed rollout.
+The infrastructure broker runs this distribution: [`helm-release.yaml`](helm-release.yaml)
+pins one published digest, and both workload admission and node image pulls
+accept that repository only with this workflow's main-branch signature. Moving
+to a newer build is a reviewed change of that digest pin.
 The infrastructure broker and any customer broker retain independent
 configuration, clients, credentials and storage.
 
