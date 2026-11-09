@@ -55,9 +55,9 @@ no port is published or bound to a public interface. Cleanup removes only this
 invocation's named containers and temporary files, preserving diagnostic logs
 and screenshots as seven-day workflow artifacts.
 
-The binary version is verified from its real startup log. The compatibility
-publisher sets it to `v1.28.1-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477`;
-Coroot 1.28.1 does not expose a `--version` option.
+The binary version in the real startup log must match the tag on the
+digest-pinned image. The compatibility publisher uses that same tag for the
+compiled version. Coroot 1.28.1 does not expose a `--version` option.
 
 The compatibility build uses upstream revision
 `15137ef2f43e01d0a87245e44b937b25515e0afe` and the reviewed
