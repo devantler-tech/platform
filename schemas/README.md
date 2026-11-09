@@ -4,12 +4,19 @@
 `bash scripts/generate-kubescape-rule-schema.sh --write`. Do not edit it directly.
 
 The pinned CRDs-catalog revision `6ec4c804fcb9b0a90fec9dd468aa57b984be150a`
-omits `profileDataRequired`, which the pinned Kubescape operator chart 1.40.5
+omits `profileDataRequired`, which the pinned Kubescape operator chart 1.41.0
 ships in its Rules CRD and uses in its default rule definitions. The generator
 verifies both input hashes, copies that one property from the shipped CRD, and
 proves every existing catalog constraint is unchanged. Both KSail configurations
 consult this local correction before their unchanged catalog fallback. No kind
 is skipped and other CRD schemas are unchanged.
+
+Chart 1.41.0 also adds an optional `stateWrites` list to each rule in its Rules
+CRD. Neither the chart's default rules nor any rule in this repository sets it,
+so the correction deliberately does not project it: a manifest that starts
+using `stateWrites` fails validation here until the generator is extended to
+copy that property too. The 1.41.0 `profileDataRequired` property is
+byte-identical to 1.40.5's, so the generated file did not change.
 
 Run `bash scripts/generate-kubescape-rule-schema.sh --check` to verify provenance,
 `go test ./scripts/tests/kubescape-rule-schema` for valid and invalid resource

@@ -92,7 +92,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 5781451a70a8dee38ed71
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager be4e40e80964e37494dde9c1df0662a58b9b8976d2a57b9efed9c65aebdb9611
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape e7ad3fad18433ca40be58549dfb6601a859ee78c85eb6fab9b1851b7bc7f96ba
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape cd313c675760792a4acd04e66ed2d1f2e9b3c6047ad6c6ea0c7c9269c6afd8d2
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno cba1d622347666781a22316d3c466cb9df54ea4951809e8efa9917b048032867
 
@@ -292,6 +292,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|kubelet-serving-cert-approver|leader-el
 
 rbac.authorization.k8s.io/v1|RoleBinding|kubescape|cronjob-failure-alert 9ba3fcabb476d2388a1842de22e88d0973ec3f91fba944a2761e9f8d1bc182d6
 
+rbac.authorization.k8s.io/v1|RoleBinding|kubescape|kubescape-scheduler b12dd1aa5621544defd829244292464ae617e4e7a94a7c04ff5ab73ee198b1ef
+
 rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-csi-sidecars dd8caae38ace5ea6508922dd7339e02f16929aa18efa186f47337c03048625d9
 
 rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-longhorn-csi-plugin 44de07bfbc98b39e8a3fe56e39ad53c5b08d45eb5d1a10d9f4d5187af514cca7
@@ -337,6 +339,8 @@ rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources 
 rbac.authorization.k8s.io/v1|Role|kubelet-serving-cert-approver|leader-election:kubelet-serving-cert-approver b73fcea5da2f0aad8552ff6a168372a6d47e9f4fb967c7df741ba89708240c73
 
 rbac.authorization.k8s.io/v1|Role|kubescape|cronjob-failure-alert 0af4e3cf510c76adfb56a232ee84b752f8cf873c403a742ebe631842bd15fc84
+
+rbac.authorization.k8s.io/v1|Role|kubescape|kubescape-scheduler 6308e2daa12d66b283e8f8303f5b80c16041c4bd78c0038fdd8176c9aca806df
 
 rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:mutate-csi-sidecars de61ebdb8aba68dd660bc5b26a10d1a2bf10ab0fa1ef6f9ee6ea62fcdd0b223b
 

@@ -10,7 +10,7 @@
             kind: Rules
             name: default-rules
           # Retain the vendor's definition without copying its implementation.
-          # The index is pinned to chart 1.40.5; the test fails closed on a move.
+          # The index is pinned to chart 1.41.0; the test fails closed on a move.
           patch: |-
             - op: test
               path: /spec/rules/27/id
