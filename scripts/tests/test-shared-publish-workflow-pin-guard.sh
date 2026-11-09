@@ -102,6 +102,47 @@ run_tree() {
   return "${status}"
 }
 
+# The controller patch contains OpenAPI schema keys named subject. Those keys
+# are not signer settings, while other subjects in the same file remain live.
+profile_tree="$work_dir/helm-schema"
+build_tree "$profile_tree" "$SHA_PATTERN"
+profile_file='k8s/providers/docker/infrastructure/controllers/flux-instance/flux-instance.yaml'
+mkdir -p "$profile_tree/$(dirname "$profile_file")"
+cp "$root_dir/$profile_file" "$profile_tree/$profile_file"
+cp "$root_dir/scripts/guard-controller-helm-profile.sh" "$profile_tree/scripts/"
+run_tree "$profile_tree" || {
+  cat "$profile_tree/stderr" >&2
+  fail 'audited HelmRelease schema should not be treated as a signer'
+}
+ok 'the audited schema subject is classified as a schema property'
+cat >>"$profile_tree/$profile_file" <<'YAML'
+      - target:
+          kind: OCIRepository
+          name: flux-system
+        patch: |
+          apiVersion: source.toolkit.fluxcd.io/v1
+          kind: OCIRepository
+          metadata:
+            name: flux-system
+          spec:
+            verify:
+              matchOIDCIdentity:
+                - subject:
+YAML
+outside_line="$(wc -l <"$profile_tree/$profile_file" | tr -d ' ')"
+if run_tree "$profile_tree"; then
+  fail 'a subject outside the audited patch was skipped'
+fi
+grep -Fq "$profile_file:$outside_line: subject does not open with the anchored literal" "$profile_tree/stderr" ||
+  fail 'the added subject did not reach the identity check'
+ok 'a subject outside the audited patch still reaches the identity check'
+cp "$root_dir/$profile_file" "$profile_tree/$profile_file"
+yq -i '(.spec.kustomize.patches[] | select(.target.kind == "CustomResourceDefinition").patch) |= sub("OIDCIdentityMatch", "unaudited schema")' "$profile_tree/$profile_file"
+if run_tree "$profile_tree"; then
+  fail 'an unaudited schema patch was skipped'
+fi
+ok 'a changed schema patch must be audited again'
+
 # --- GREEN: the narrowed shape is what the guard accepts ---------------------
 
 tree="${work_dir}/green"

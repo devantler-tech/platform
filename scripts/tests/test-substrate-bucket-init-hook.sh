@@ -33,7 +33,7 @@ for tool in kubectl jq yq; do
   command -v "${tool}" >/dev/null || fail "${tool} is required"
 done
 [[ -n "${CONTROLLER_HELM:-}" && -x "${CONTROLLER_HELM}" ]] || fail 'the audited controller SDK renderer is required (CONTROLLER_HELM)'
-[[ "$("${CONTROLLER_HELM}" version --template '{{ printf "%#v" . }}')" == 'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ]] ||
+[[ "$("${CONTROLLER_HELM}" version --template '{{ printf "%#v" . }}')" == 'version.BuildInfo{Version:"v4.3", GitCommit:"", GitTreeState:"", GoVersion:"go1.27.3", KubeClientVersion:"v1.37"}' ]] ||
   fail 'controller SDK renderer metadata does not match Flux 2.9.6'
 
 job='rustfs-bucket-init'
@@ -122,7 +122,7 @@ jq -e --arg job "${job}" '
   | index($job) != null
 ' "${work}/after.json" >/dev/null || fail 'the chart NetworkPolicy no longer admits the Job by its name'
 
-# Ask the controller's Helm where it sorts the Job. Helm 4.2.4 sorts hooks after
+# Ask the controller's Helm where it sorts the Job. Helm 4.3.1 sorts hooks after
 # post-rendering under every strategy, so the annotation alone decides it.
 plugin="${HELM_PLUGINS}/substrate-hook-proof"
 mkdir -p "${plugin}" "${work}/plugin-run"

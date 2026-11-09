@@ -580,6 +580,31 @@ prove_other_identity() {
   esac
 }
 
+# The authored FluxInstance contains one audited JSON patch as a literal YAML
+# block. Bind the physical lines to the complete parsed patch before treating
+# its empty "subject:" schema key as data. Other subjects use the normal guard.
+audited_helm_schema_subject() {
+  local location="$1" value="$2" file row header start patch lines raw
+  file="${location%:*}"
+  row="${location##*:}"
+  case "$file" in
+    ./k8s/providers/docker/infrastructure/controllers/flux-instance/flux-instance.yaml | \
+      ./k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml) ;;
+    *) return 1 ;;
+  esac
+  [[ -z "$value" && "$row" =~ ^[0-9]+$ ]] || return 1
+  bash "$REPO_ROOT/scripts/guard-controller-helm-profile.sh" "$file" >/dev/null 2>&1 || return 1
+  header="$(grep -nFx '      - patch: |+' "$file")" || return 1
+  [[ "$header" != *$'\n'* ]] || return 1
+  start="${header%%:*}"
+  patch="$(yq -r '.spec.kustomize.patches[] | select(.target.kind == "CustomResourceDefinition") | .patch' "$file")" || return 1
+  [[ -n "$patch" ]] || return 1
+  lines="$(printf '%s\n' "$patch" | wc -l)"
+  ((row > start && row <= start + lines)) || return 1
+  raw="$(sed -n "$((start + 1)),$((start + lines))p" "$file" | sed 's/^          //')" || return 1
+  [[ "$raw" == "$patch" ]]
+}
+
 main() {
   cd "$REPO_ROOT"
 
@@ -711,7 +736,9 @@ EOF
       status=1
       continue
     fi
-    prove_other_identity "$location" "$subject" || status=1
+    if ! audited_helm_schema_subject "$location" "$subject"; then
+      prove_other_identity "$location" "$subject" || status=1
+    fi
   done <<EOF
 $keyed
 EOF
