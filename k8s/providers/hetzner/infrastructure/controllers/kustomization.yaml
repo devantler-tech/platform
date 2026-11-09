@@ -139,6 +139,8 @@ patches:
   - path: kyverno/patches/enable-user-namespaces.yaml
   # Prod-only: the Sigstore cache must not hold an overflow node (#5655).
   - path: kyverno/patches/allow-sigstore-cache-eviction.yaml
+  # Prod-only: run Dex on the source-built, signed distribution — see file.
+  - path: dex/patches/run-source-built-image.yaml
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
   # Require relay replicas to use separate nodes in prod; local retains soft spread.
