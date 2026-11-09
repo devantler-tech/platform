@@ -41,7 +41,7 @@ expect_summary() {
 #    used to be refused now admits. The unmanaged namespace control is an explicit
 #    match-condition skip; a namespaceSelector previously omitted its result.
 apply "${tests}/resources.yaml" "${tests}/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 18, fail: 78, warn: 0, error: 0, skip: 1" \
+expect_summary "pass: 18, fail: 80, warn: 0, error: 0, skip: 1" \
   "tenant CiliumNetworkPolicy boundary"
 
 # 2. Carve-out: kyverno's background controller owns the generated floor. These

@@ -251,6 +251,10 @@ spec:
     # Both forms are read, so the `In` form cannot smuggle a key the map form
     # refuses. Carved out, mirroring the entity whitelist: `kube-apiserver` and,
     # on this side only, `ingress`, each in its reserved/bare/`any:` spelling.
+    # A carved-out key may only be matched positively (`In` or `Exists`): Cilium
+    # skips namespace injection for a selector naming a `reserved:` key, so a
+    # `NotIn`/`DoesNotExist` expression beside an ordinary label matches that
+    # label in every namespace.
     - name: fromEndpointKeysAllowed
       expression: >-
         variables.fromEndpoints.map(selector,
@@ -258,7 +262,10 @@ spec:
         selector.?matchExpressions.orValue([]).map(item, item.?key.orValue(''))).flatten()
         .all(key, !key.matches(variables.broadSelectorKey) ||
         key in ['reserved:kube-apiserver', 'kube-apiserver', 'any:kube-apiserver',
-        'reserved:ingress', 'ingress', 'any:ingress'])
+        'reserved:ingress', 'ingress', 'any:ingress']) &&
+        variables.fromEndpoints.all(selector, selector.?matchExpressions.orValue([]).all(item,
+        !item.?key.orValue('').matches(variables.broadSelectorKey) ||
+        item.?operator.orValue('') in ['In', 'Exists']))
     # A rule with no layer-3 stanza permits every source on its port. An empty
     # stanza names nothing, so it does not count.
     - name: ingressRulesNameSources
@@ -297,13 +304,17 @@ spec:
         size(selector.?matchLabels.orValue({})) > 0 ||
         selector.?matchExpressions.orValue([]).exists(item, item.?operator.orValue('') == 'In'))
     # `reserved:ingress` is a SOURCE identity and has no egress case.
+    # Carved-out keys are positive-only here too (see fromEndpointKeysAllowed).
     - name: toEndpointKeysAllowed
       expression: >-
         variables.toEndpoints.map(selector,
         selector.?matchLabels.orValue({}).map(key, key) +
         selector.?matchExpressions.orValue([]).map(item, item.?key.orValue(''))).flatten()
         .all(key, !key.matches(variables.broadSelectorKey) ||
-        key in ['reserved:kube-apiserver', 'kube-apiserver', 'any:kube-apiserver'])
+        key in ['reserved:kube-apiserver', 'kube-apiserver', 'any:kube-apiserver']) &&
+        variables.toEndpoints.all(selector, selector.?matchExpressions.orValue([]).all(item,
+        !item.?key.orValue('').matches(variables.broadSelectorKey) ||
+        item.?operator.orValue('') in ['In', 'Exists']))
     - name: egressRulesNameDestinations
       expression: >-
         variables.egress.all(rule,
@@ -368,7 +379,9 @@ spec:
         `io.cilium.k8s.namespace.labels.*`) or another cluster
         (`io.cilium.k8s.policy.cluster`) reaches the same broad source — pin a
         tenant label with the `k8s:` prefix instead, and name the post-Gateway
-        identity as `reserved:ingress` or `fromEntities: [ingress]`; only
+        identity as `reserved:ingress` or `fromEntities: [ingress]`; a
+        carved-out reserved key in matchExpressions must use `In` or `Exists`,
+        because a negative operator there lifts the namespace pin; only
         `kube-apiserver` and the post-Gateway `ingress` identity may be named
         as an entity; and a CIDR prefix shorter than /16 — or a CIDR inside
         private, cluster, link-local, loopback or multicast space, or a
@@ -394,8 +407,9 @@ spec:
         another namespace (`k8s:io.kubernetes.pod.namespace`,
         `io.cilium.k8s.namespace.labels.*`) or another cluster
         (`io.cilium.k8s.policy.cluster`) reaches the same broad destination —
-        pin a tenant label with the `k8s:` prefix instead; `kube-apiserver` is
-        the only entity a tenant may name; and a CIDR prefix shorter than /16
+        pin a tenant label with the `k8s:` prefix instead; a carved-out
+        `kube-apiserver` key in matchExpressions must use `In` or `Exists`;
+        `kube-apiserver` is the only entity a tenant may name; and a CIDR prefix shorter than /16
         — or a CIDR inside private, cluster, link-local, loopback or multicast
         space, or a CIDRSet entry naming a CiliumCIDRGroup, with or without a
         literal cidr beside it — reaches outside this

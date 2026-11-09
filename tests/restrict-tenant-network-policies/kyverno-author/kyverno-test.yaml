@@ -1,8 +1,8 @@
 ---
 # One row per resource: fail when any check refuses it. Which check refuses it is
 # in per-check.yaml, which scripts/tests/test-restrict-tenant-network-policies.sh
-# runs. The policy uses a namespaceSelector, so the CLI needs the namespace labels
-# declared explicitly.
+# runs. The policy reads namespace labels through namespaceObject in matchConditions,
+# so the CLI needs the namespace labels declared explicitly.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:

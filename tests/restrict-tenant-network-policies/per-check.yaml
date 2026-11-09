@@ -9,8 +9,9 @@ policies:
 resources:
   - resources.yaml
   - node-group-resources.yaml
-# The policy uses a namespaceSelector, so the CLI needs the namespace labels
-# declared explicitly or every case is reported as Excluded — which satisfies
+# The policy reads namespace labels through namespaceObject in matchConditions,
+# so the CLI needs the namespace labels declared explicitly or every case is
+# reported as Excluded — which satisfies
 # `result: fail` too and would pass vacuously. The companion shell test
 # (scripts/tests/test-restrict-tenant-network-policies.sh) is the second gate:
 # it runs `kyverno apply` and asserts the exact allow/deny counts, so a rule
@@ -174,12 +175,14 @@ results:
       - tenant-ns/attack-selector-namespace-labels-egress
       - tenant-ns/attack-selector-cluster-name-egress
       - tenant-ns/attack-selector-reserved-beside-constrained-egress
+      - tenant-ns/attack-selector-reserved-does-not-exist-egress
     kind: CiliumNetworkPolicy
     result: fail
   - policy: restrict-tenant-network-policies
     rule: cnp-ingress-sources-must-be-constrained
     resources:
       - tenant-ns/attack-selector-reserved-host-ingress
+      - tenant-ns/attack-selector-reserved-not-in-ingress
       - tenant-ns/attack-selector-cross-namespace-ingress
       - tenant-ns/attack-selector-bare-namespace-ingress
     kind: CiliumNetworkPolicy

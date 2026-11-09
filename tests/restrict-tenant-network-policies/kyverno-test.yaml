@@ -1,8 +1,8 @@
 ---
 # One row per resource: fail when any check refuses it. Which check refuses it is
 # in per-check.yaml, which scripts/tests/test-restrict-tenant-network-policies.sh
-# runs. The policy uses a namespaceSelector, so the CLI needs the namespace labels
-# declared explicitly.
+# runs. The policy reads namespace labels through namespaceObject in matchConditions,
+# so the CLI needs the namespace labels declared explicitly.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -65,8 +65,10 @@ results:
       - tenant-ns/attack-selector-exists-universal
       - tenant-ns/attack-selector-namespace-labels-egress
       - tenant-ns/attack-selector-reserved-beside-constrained-egress
+      - tenant-ns/attack-selector-reserved-does-not-exist-egress
       - tenant-ns/attack-selector-reserved-expression-egress
       - tenant-ns/attack-selector-reserved-host-ingress
+      - tenant-ns/attack-selector-reserved-not-in-ingress
       - tenant-ns/attack-selector-reserved-world-egress
       - tenant-ns/attack-specs-container-egress-world
       - tenant-ns/attack-togroups-empty-list
