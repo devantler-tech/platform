@@ -181,6 +181,7 @@ readonly background_pattern='ghcr.io/devantler-tech/platform-kyverno-background'
 readonly zone_pattern='ghcr.io/devantler-tech/world-at-ruin/zone'
 readonly mail_pattern='ghcr.io/devantler-tech/platform-private-mail-bootstrap'
 readonly customer_identity_pattern='ghcr.io/devantler-tech/business-site-identity'
+readonly dex_pattern='ghcr.io/devantler-tech/platform-dex'
 readonly app_pattern='ghcr.io/devantler-tech/*'
 fixture_rules_json="$(yq -o=json '.rules' "${root_dir}/talos/cluster/verify-first-party-images.yaml" | jq '
   map({imagePattern: .image, skip: (.skip // false), deny: (.deny // false),
@@ -245,7 +246,8 @@ write_healthy_rules() {
     resource_obj 0011 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${migrate_pattern}"
     resource_obj 0012 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${background_pattern}"
     resource_obj 0013 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${customer_identity_pattern}"
-    resource_obj 0014 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0014 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${dex_pattern}"
+    resource_obj 0015 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -271,7 +273,7 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '15 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '16 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
 
