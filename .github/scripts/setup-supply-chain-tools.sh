@@ -18,7 +18,7 @@ TRIVY_VERSION="0.76.1"
 # trivy_0.76.1_checksums.txt: trivy_0.76.1_Linux-64bit.tar.gz
 TRIVY_SHA256="c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0"
 
-if (( $# > 1 )) || [[ $# == 1 && $1 != trivy-boundary ]]; then
+if (($# > 1)) || [[ $# == 1 && $1 != trivy-boundary ]]; then
   echo "Usage: $0 [trivy-boundary]" >&2
   exit 2
 fi
