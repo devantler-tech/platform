@@ -90,6 +90,7 @@ func planV1ReservationRepair(s inventory) (v1ReservationRepair, error) {
 		if !valid || expected[claim] != size || text(volume, "status", "kubernetesStatus", "namespace") != "ate-system" || !v1InsufficientCapacity(volume) {
 			return v1ReservationRepair{}, refused
 		}
+		// verifyHealthyCopies has already required exactly one active engine.
 		for _, engine := range s.engines {
 			if text(engine, "spec", "volumeName") == name && value(engine, "spec", "active") == true {
 				modes, _ := value(engine, "status", "replicaModeMap").(object)

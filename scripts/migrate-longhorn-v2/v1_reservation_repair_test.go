@@ -1,13 +1,19 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 const v1FixtureGiB = int64(1 << 30)
 
-func v1ReservationFixture() inventory {
+func v1ReservationFixture(recovered bool) inventory {
 	s := inventory{}
 	for i := range 3 {
 		name := fmt.Sprintf("prod-worker-%d", i+1)
@@ -20,6 +26,9 @@ func v1ReservationFixture() inventory {
 		diskName := "default-disk"
 		if i == 0 {
 			reserve, scheduled = 45*v1FixtureGiB, 102*v1FixtureGiB
+			if recovered {
+				reserve, scheduled = 33*v1FixtureGiB, 117*v1FixtureGiB
+			}
 			diskName = "default-disk-fixture"
 		}
 		disk := object{"path": "/var/lib/longhorn", "diskType": "filesystem", "allowScheduling": true, "evictionRequested": false, "storageReserved": float64(reserve)}
@@ -40,6 +49,8 @@ func v1ReservationFixture() inventory {
 		state, robustness, instanceState := "attached", "degraded", "running"
 		if item.name == "retained" {
 			state, robustness, instanceState = "detached", "unknown", "stopped"
+		} else if recovered {
+			robustness = "healthy"
 		}
 		v["status"] = object{"state": state, "robustness": robustness, "kubernetesStatus": object{"namespace": "ate-system", "pvcName": item.name},
 			"conditions": []any{object{"type": "Scheduled", "status": "False", "reason": "ReplicaSchedulingFailure", "message": "insufficient storage"}}}
@@ -50,7 +61,7 @@ func v1ReservationFixture() inventory {
 		e["status"] = object{"currentState": instanceState, "replicaModeMap": modes}
 		s.engines = append(s.engines, e)
 		for i, node := range s.nodes {
-			if i == 0 && item.name != "retained" {
+			if i == 0 && item.name != "retained" && !recovered {
 				continue
 			}
 			name := fmt.Sprintf("%s-%d", item.name, i+1)
@@ -71,7 +82,7 @@ func v1ReservationFixture() inventory {
 }
 
 func TestV1ReservationRepairOpensOnlyTheMissingReplicaCapacity(t *testing.T) {
-	s := v1ReservationFixture()
+	s := v1ReservationFixture(false)
 	plan, err := planV1ReservationRepair(s)
 	if err != nil || plan.reserve != 33*v1FixtureGiB || plan.disk != "default-disk-fixture" || text(plan.node, "metadata", "name") != "prod-worker-1" || len(plan.volumes) != 2 {
 		t.Fatalf("complete repair projection refused or widened: %+v %v", plan, err)
@@ -95,6 +106,14 @@ func TestV1ReservationRepairHoldsOnUnknownCapacityOrHealth(t *testing.T) {
 		"ambiguous third engine mode": func(s *inventory) {
 			value(s.engines[1], "status", "replicaModeMap").(object)["unexpected-copy"] = "RW"
 		},
+		"no active engine": func(s *inventory) {
+			valueObject(s.engines[1], "spec")["active"] = false
+		},
+		"multiple active engines": func(s *inventory) {
+			duplicate := resource("extra-active-engine")
+			duplicate["spec"], duplicate["status"] = s.engines[1]["spec"], s.engines[1]["status"]
+			s.engines = append(s.engines, duplicate)
+		},
 		"peer reserve disagreement": func(s *inventory) {
 			value(s.storageNodes[2], "spec", "disks", "default-disk").(object)["storageReserved"] = float64(23 * v1FixtureGiB)
 		},
@@ -106,10 +125,80 @@ func TestV1ReservationRepairHoldsOnUnknownCapacityOrHealth(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			s := v1ReservationFixture()
+			s := v1ReservationFixture(false)
 			change(&s)
 			if _, err := planV1ReservationRepair(s); err == nil {
 				t.Fatal("unverified replica scheduling repair accepted")
+			}
+		})
+	}
+}
+
+func TestV1ReservationRepairWritesOnceAndRequiresNativeRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		wantError string
+	}{
+		{name: "already healthy"},
+		{name: "recovered"},
+		{name: "uncertain patch", wantError: "reservation write could not be confirmed"},
+		{name: "changed volume identity", wantError: "reservation changed but three-copy recovery remains unverified"},
+		{name: "changed reservation", wantError: "reservation changed but three-copy recovery remains unverified"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, p := newPreparationAPI(t, "draining")
+			f.s = v1ReservationFixture(tc.name == "already healthy")
+			f.node, f.storage = f.s.nodes[0], f.s.storageNodes[0]
+			current := v1ReservationFixture(true)
+			if tc.name == "changed volume identity" {
+				valueObject(current.volumes[1], "metadata")["uid"] = "replaced-volume"
+			}
+			if tc.name == "changed reservation" {
+				valueObject(current.storageNodes[0], "spec", "disks", "default-disk-fixture")["storageReserved"] = float64(32 * v1FixtureGiB)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			poll := readinessPoll
+			readinessPoll = time.Millisecond
+			t.Cleanup(func() { readinessPoll = poll })
+			writes, readsAfterWrite := 0, 0
+			p.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+				if program == "kubectl" && len(args) > 4 && args[2] == "patch" {
+					writes++
+					var changes []object
+					want := []object{
+						{"op": "test", "path": "/metadata/uid", "value": text(f.storage, "metadata", "uid")},
+						{"op": "test", "path": "/metadata/resourceVersion", "value": text(f.storage, "metadata", "resourceVersion")},
+						{"op": "replace", "path": "/spec/disks/default-disk-fixture/storageReserved", "value": float64(33 * v1FixtureGiB)},
+					}
+					if !reflect.DeepEqual(args[2:5], []string{"patch", "nodes.longhorn.io", v1RepairWorker}) || json.Unmarshal(input, &changes) != nil || !reflect.DeepEqual(changes, want) {
+						t.Fatal("repair did not write the single conditional reservation patch")
+					}
+					if tc.name == "uncertain patch" {
+						return nil, errors.New("patch response lost")
+					}
+					f.s = current
+					return nil, nil
+				}
+				if writes > 0 && program == "kubectl" && len(args) > 3 && args[2] == "get" && args[3] == "nodes" {
+					readsAfterWrite++
+					if readsAfterWrite == 2 && strings.HasPrefix(tc.name, "changed ") {
+						cancel()
+						return nil, ctx.Err()
+					}
+				}
+				return f.run(ctx, input, program, args...)
+			}
+			err := repairV1Reservation(ctx, p.c, p.source)
+			if tc.wantError == "" && err != nil || tc.wantError != "" && (err == nil || err.Error() != tc.wantError) {
+				t.Fatalf("repair returned %v, expected %q", err, tc.wantError)
+			}
+			wantWrites := 1
+			if tc.name == "already healthy" {
+				wantWrites = 0
+			}
+			if writes != wantWrites || tc.name == "uncertain patch" && readsAfterWrite != 0 {
+				t.Fatalf("unexpected write or readback count: writes=%d readbacks=%d", writes, readsAfterWrite)
 			}
 		})
 	}
