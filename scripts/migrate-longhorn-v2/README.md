@@ -1,5 +1,13 @@
 # Prepare Longhorn V2 workers
 
+`repair-v1-reservation` selects the fixed original worker and requires
+`repair-longhorn-v1-reservation` on a first-attempt main dispatch. It admits the
+two identified missing V1 copies only when both surviving copies, the complete
+disk allocation ledger and the physical free-space floor agree. The only write
+adjusts the filesystem disk reservation by the required logical capacity.
+Success requires all volumes to regain three healthy copies with the original
+affected volume and disk identities.
+
 `inventory-storage-layout` adds read-only native block metadata to the storage-root
 observation for a fixed temporary worker. Confirm it with
 `inventory-longhorn-storage-layout-<selection>`. Two complete, bounded native volume
