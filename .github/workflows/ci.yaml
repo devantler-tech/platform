@@ -134,6 +134,10 @@ jobs:
     uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@ea4d0d8c1ba4bcad612ef9c9e9b18ac932e7ff0e # v20.1.11
     with:
       apply-signed-fixes: false
+      # Same measured eight-slot bound as the helper regression job above;
+      # input-free required runs read it from .go-test-execution.json (#5862).
+      enable-test-parallelism: true
+      test-parallelism: 8
     permissions:
       contents: read
       issues: write
