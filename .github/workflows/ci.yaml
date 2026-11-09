@@ -134,6 +134,10 @@ jobs:
     uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@ea4d0d8c1ba4bcad612ef9c9e9b18ac932e7ff0e # v20.1.11
     with:
       apply-signed-fixes: false
+      # Same measured eight-slot bound as the helper regression job above;
+      # input-free required runs read it from .go-test-execution.json (#5862).
+      enable-test-parallelism: true
+      test-parallelism: 8
     permissions:
       contents: read
       issues: write
@@ -702,6 +706,10 @@ jobs:
               - 'scripts/tests/test-guard-helm-post-renderers.sh'
               - 'scripts/tests/test-kubescape-storage-placement.sh'
               - 'scripts/tests/test-kubescape-runtime-rules-switch.sh'
+              - 'scripts/generate-kubescape-rule-schema.sh'
+              - 'scripts/tests/kubescape-rule-schema/**'
+              - 'schemas/**'
+              - 'scripts/tests/test-substrate-bucket-init-hook.sh'
               - 'scripts/build-controller-helm.sh'
               - 'scripts/prepare-helm-render-input-capture.sh'
               - 'scripts/render-helm-chart/**'
@@ -1889,7 +1897,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.59"
+          KSAIL_VERSION: "7.206.65"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -3135,7 +3143,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.59"
+          KSAIL_VERSION: "7.206.65"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3569,7 +3577,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.59"
+          KSAIL_VERSION: "7.206.65"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -4099,6 +4107,14 @@ jobs:
           export CONTROLLER_HELM="$controller_helm"
           bash scripts/tests/test-guard-helm-post-renderers.sh
 
+      - name: 🧩 Verify Substrate's bucket-init Job runs as a hook
+        # The chart's Job carries the RustFS keys in its immutable pod template.
+        # As an ordinary release object, a finished Job fails every upgrade that
+        # changes them or the image (#5903). The release patches it into a hook.
+        run: |
+          shellcheck scripts/tests/test-substrate-bucket-init-hook.sh
+          bash scripts/tests/test-substrate-bucket-init-hook.sh
+
       - name: 🧩 Validate Reloader chart selection
         run: |
           shellcheck scripts/tests/test-reloader-placement-selection.sh
@@ -4184,7 +4200,7 @@ jobs:
             ${{ github.event.pull_request.base.sha ||
             github.event.merge_group.base_sha }}
         run: |
-          shellcheck scripts/tests/test-kubescape-runtime-rules-switch.sh
+          shellcheck scripts/tests/test-kubescape-runtime-rules-switch.sh scripts/generate-kubescape-rule-schema.sh
           changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
             .github/workflows/ci.yaml \
             k8s/bases/infrastructure/controllers/kubescape \
@@ -4193,6 +4209,7 @@ jobs:
             k8s/providers/hetzner/infrastructure/controllers/kubescape \
             k8s/bases/components ksail.prod.yaml \
             scripts/tests/test-kubescape-runtime-rules-switch.sh \
+            scripts/generate-kubescape-rule-schema.sh schemas \
             scripts/build-controller-helm.sh \
             scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
           if [[ -n "$changed_inputs" ]]; then
@@ -4562,7 +4579,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.59"
+          KSAIL_VERSION: "7.206.65"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

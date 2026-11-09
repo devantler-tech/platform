@@ -30,7 +30,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners 
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|arc-systems|arc-controller bff72aa7aa7b49d98f96e2463835f3a284f9c6ec3dd29b8ab89ca0d672fe8473
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate 39491f2756a462deb3514cfbe41d9f4c022edcb38c76f8e4559e978385390bd9
+helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate 646603f78f7124c4bdc214001cd5e0d0b544f6f8a3cc70a87a9bb2768726c101
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-atelet fc731e55e74d04ed0a7139f09dd88d355da89e4aa052ef696edd5596e952b668
 
@@ -92,7 +92,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 5781451a70a8dee38ed71
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager be4e40e80964e37494dde9c1df0662a58b9b8976d2a57b9efed9c65aebdb9611
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 67654a0c106caeec0ab230eaf8a845cb4f103e95d4daafd9b1b340859f1073f0
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape e7ad3fad18433ca40be58549dfb6601a859ee78c85eb6fab9b1851b7bc7f96ba
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno cba1d622347666781a22316d3c466cb9df54ea4951809e8efa9917b048032867
 
