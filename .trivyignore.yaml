@@ -102,7 +102,7 @@ misconfigurations:
       PodDisruptionBudgets and Gateway material, plus kube-system's own default LimitRange.
       Application trees remain covered by this check.
 
-  # KSV-0109 matches identifier text rather than secret material at both sites below. Keep the
+  # KSV-0109 matches identifier text rather than secret material at each site below. Keep the
   # dispositions separate so each path carries the reason that was checked against its content.
   - id: KSV-0109
     paths:
@@ -116,6 +116,12 @@ misconfigurations:
     statement: >-
       external_secrets_replicas is a public controller replica count; Trivy matches the word
       secrets in the key name, not secret material.
+  - id: KSV-0109
+    paths:
+      - k8s/providers/hetzner/apps/agentic-engineer/config-map-anthropic-proxy.yaml
+    statement: >-
+      The ConfigMap embeds the token-refresher script and Envoy configuration. Trivy matches the
+      printf template that writes the fetched token to a file at runtime, not credential values.
 
   # KSV-01010 "ConfigMap with sensitive content" is a SEPARATE check from KSV-0109 above, not that
   # check renumbered — verified with a with/without-ignorefile ablation rather than assumed. With

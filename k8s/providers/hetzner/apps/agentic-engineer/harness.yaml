@@ -1,0 +1,21 @@
+# kagent's Claude Code harness on this namespace's gVisor WorkerPool. Suspended
+# sandboxes snapshot to Substrate's in-cluster RustFS store.
+#
+# GH_TOKEN is a placeholder, not a credential: gh sends it in the
+# Authorization header and Substrate's gateway replaces it with a GitHub App
+# installation token (egress-policy-github.yaml).
+apiVersion: api.kagent.dev/v1alpha3
+kind: Harness
+metadata:
+  name: claude
+  namespace: agentic-engineer
+spec:
+  claude: {}
+  substrate:
+    workerPoolRef:
+      name: agentic-engineer
+    snapshotPolicy:
+      location: gs://ate-snapshots/agentic-engineer/
+  env:
+    - name: GH_TOKEN
+      value: kagent-credential-injected
