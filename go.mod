@@ -3,7 +3,7 @@ module github.com/devantler-tech/platform
 go 1.26.10
 
 require (
-	cel.dev/cel-go v0.33.1
+	cel.dev/cel-go v0.33.2
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	// Test-only consumer: match the deployed node-agent source ee62018e73b9.
 	github.com/coroot/logparser v1.4.0
