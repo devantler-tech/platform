@@ -163,6 +163,7 @@ func verifyBenchmarkManagerPod(pod, manager object, image string) (benchmarkMana
 		text(container, "name") != "instance-manager" || text(container, "image") != image ||
 		value(container, "securityContext", "privileged") != true ||
 		value(container, "securityContext", "runAsUser") != float64(0) ||
+		value(container, "securityContext", "runAsGroup") != float64(0) ||
 		value(container, "securityContext", "runAsNonRoot") == true ||
 		text(running, "name") != "instance-manager" ||
 		strings.TrimPrefix(text(running, "imageID"), "docker-pullable://") != image ||

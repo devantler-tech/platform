@@ -3,7 +3,9 @@ package namespaceinventory
 import (
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 )
 
 var credentialPath = regexp.MustCompile(`^/dev/shm/longhorn-namespace-inventory\.[A-Za-z0-9]+/kubeconfig$`)
+var benchmarkCredentialPath = regexp.MustCompile(`^/dev/shm/longhorn-v2\.[A-Za-z0-9]+/kubeconfig$`)
 var sourcePattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var runPattern = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
 
@@ -84,6 +87,38 @@ func LoadRetainedEmailClient(getenv func(string) string) (*http.Client, *url.URL
 	return newProductionClient(config)
 }
 
+// LoadBenchmarkAdmissionClient only admits the protected migration benchmark
+// operation. The caller must first join the selected address to the serving
+// Kubernetes process and independently verified Hetzner server.
+func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Addr) (*http.Client, *url.URL, error) {
+	for key, want := range map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
+		"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted",
+		"GITHUB_WORKFLOW_REF":   "devantler-tech/platform/.github/workflows/prepare-longhorn-v2-node.yaml@refs/heads/main",
+		"LONGHORN_V2_CONFIRM":   "benchmark-longhorn-storage",
+		"LONGHORN_V2_OPERATION": "benchmark-v1",
+	} {
+		if getenv(key) != want {
+			return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
+		}
+	}
+	path := getenv("KUBECONFIG")
+	if !sourcePattern.MatchString(getenv("GITHUB_SHA")) || !runPattern.MatchString(getenv("GITHUB_RUN_ID")) ||
+		!benchmarkCredentialPath.MatchString(path) || filepath.Dir(path) != getenv("LONGHORN_V2_CREDENTIAL_DIR") ||
+		!directIP.Is4() || !directIP.IsGlobalUnicast() || directIP.IsPrivate() {
+		return nil, nil, errors.New("fixed benchmark admission credentials and direct IPv4 peer are required")
+	}
+	raw, err := readPrivateKubeconfig(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	config, err := clientcmd.Load(raw)
+	if err != nil {
+		return nil, nil, errors.New("protected benchmark kubeconfig could not be decoded")
+	}
+	return newProductionClientAt(config, directIP)
+}
+
 // AuthorizeRetainedEmailDispatch refuses unless the environment is the first attempt of the
 // confirmed, maintainer-dispatched disposal workflow on main in this repository, with a
 // well-formed source commit and run id.
@@ -142,6 +177,10 @@ func readPrivateKubeconfig(path string) (raw []byte, err error) {
 }
 
 func newProductionClient(raw *clientcmdapi.Config) (*http.Client, *url.URL, error) {
+	return newProductionClientAt(raw, netip.Addr{})
+}
+
+func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr) (*http.Client, *url.URL, error) {
 	if raw == nil || raw.Contexts["admin@prod"] == nil {
 		return nil, nil, errors.New("fixed production context is missing")
 	}
@@ -173,10 +212,33 @@ func newProductionClient(raw *clientcmdapi.Config) (*http.Client, *url.URL, erro
 	config.Timeout = 20 * time.Second
 	config.DisableCompression = true
 	config.Proxy = func(*http.Request) (*url.URL, error) { return nil, nil }
+	if directIP.IsValid() {
+		if !directIP.Is4() || !directIP.IsGlobalUnicast() || directIP.IsPrivate() {
+			return nil, nil, errors.New("benchmark direct API address is unverified")
+		}
+		endpoint.Host = net.JoinHostPort(directIP.String(), "6443")
+		config.Host, config.ServerName = endpoint.String(), directIP.String()
+	}
 	client, err := rest.HTTPClientFor(config)
 	if err != nil {
 		return nil, nil, errors.New("verified production HTTP transport could not be constructed")
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	if directIP.IsValid() {
+		client.Transport = directAPIPeer{host: endpoint.Host, transport: client.Transport}
+	}
 	return client, endpoint, nil
+}
+
+type directAPIPeer struct {
+	host      string
+	transport http.RoundTripper
+}
+
+func (peer directAPIPeer) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Scheme != "https" || req.URL.Host != peer.host || req.URL.User != nil || req.URL.Opaque != "" ||
+		(req.Host != "" && req.Host != peer.host) {
+		return nil, errors.New("direct API request addressed another peer")
+	}
+	return peer.transport.RoundTrip(req)
 }

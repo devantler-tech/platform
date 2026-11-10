@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -121,5 +122,31 @@ func TestNativeClientRefusesDynamicExternalOrAmbiguousCredentials(t *testing.T) 
 func TestCredentialLoaderRefusesOutsideProtectedDispatch(t *testing.T) {
 	if _, _, err := LoadProtectedClient(func(string) string { return "" }); err == nil {
 		t.Fatal("credential loader admitted an unverified dispatch")
+	}
+}
+
+func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("the old endpoint must not receive direct-client credentials")
+	}))
+	t.Cleanup(server.Close)
+	raw := fixtureConfig(server)
+	raw.Clusters["prod"].TLSServerName = "old-dns-name.invalid"
+	direct := netip.MustParseAddr("203.0.113.10")
+	client, endpoint, err := newProductionClientAt(raw, direct)
+	if err != nil || endpoint.String() != "https://203.0.113.10:6443" {
+		t.Fatalf("direct endpoint is not pinned: %v", err)
+	}
+	if _, err := client.Get(server.URL + "/version"); err == nil {
+		t.Fatal("direct client accepted a request for a different peer")
+	}
+	if client.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
+		t.Fatal("direct client permits a redirect")
+	}
+}
+
+func TestBenchmarkCredentialLoaderRefusesOutsideProtectedDispatch(t *testing.T) {
+	if _, _, err := LoadBenchmarkAdmissionClient(func(string) string { return "" }, netip.MustParseAddr("203.0.113.10")); err == nil {
+		t.Fatal("direct credential loader admitted an unverified dispatch")
 	}
 }

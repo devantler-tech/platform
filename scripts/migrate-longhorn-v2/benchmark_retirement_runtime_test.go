@@ -145,6 +145,13 @@ func TestQualifyV1RetirementManagerEpochs(t *testing.T) {
 			},
 		},
 		{
+			name: "stock runtime group not explicitly selected",
+			change: func(_, pods *[]object) {
+				container := value((*pods)[0], "spec", "containers").([]any)[0].(object)
+				delete(valueObject(container, "securityContext"), "runAsGroup")
+			},
+		},
+		{
 			name: "different controller UID",
 			change: func(_, pods *[]object) {
 				value((*pods)[0], "metadata", "ownerReferences").([]any)[0].(object)["uid"] = "replacement"
@@ -199,7 +206,7 @@ func retirementPod(name, node string) object {
 			"containers": []any{object{
 				"name": "instance-manager", "image": testRetirementImage,
 				"volumeMounts":    []any{object{"name": "log", "mountPath": "/log"}},
-				"securityContext": object{"privileged": true, "runAsUser": float64(0)},
+				"securityContext": object{"privileged": true, "runAsUser": float64(0), "runAsGroup": float64(0)},
 			}},
 			"volumes": []any{object{"name": "log", "hostPath": object{
 				"path": "/var/lib/longhorn/logs", "type": "DirectoryOrCreate",
