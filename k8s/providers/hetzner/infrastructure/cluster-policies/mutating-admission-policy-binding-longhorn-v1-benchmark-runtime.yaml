@@ -1,0 +1,12 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: longhorn-v1-benchmark-runtime
+spec:
+  policyName: longhorn-v1-benchmark-runtime
+  matchResources:
+    matchPolicy: Exact
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: longhorn-system

@@ -1203,9 +1203,23 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 15 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 17 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
+	longhornPublishers := map[string]struct {
+		repository string
+		subject    string
+	}{
+		"publishlonghornretirement": {
+			repository: "ghcr.io/devantler-tech/platform-longhorn-instance-manager",
+			subject:    `^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v1-retirement\.yaml@refs/heads/main$`,
+		},
+		"publishlonghornv2": {
+			repository: "ghcr.io/devantler-tech/platform-longhorn-manager",
+			subject:    `^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$`,
+		},
+	}
+	longhornAttestors := make(map[string]bool, len(longhornPublishers))
 	storageAttestorValid := false
 	kubescapeNodeAgentAttestorValid := false
 	corootNodeAgentAttestorValid := false
@@ -1221,7 +1235,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishcorootcheckpoint" && name != "publishkyvernoreports" && name != "publishkyvernomigrate" && name != "publishkyvernobackground" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" && name != "publishcustomeridentity" && name != "publishdexsecurity" {
+		longhornPublisher, isLonghornPublisher := longhornPublishers[name]
+		if !isLonghornPublisher && name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishcorootcheckpoint" && name != "publishkyvernoreports" && name != "publishkyvernomigrate" && name != "publishkyvernobackground" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" && name != "publishcustomeridentity" && name != "publishdexsecurity" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1233,6 +1248,10 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 		identity, _ := identities[0].(map[string]any)
 		issuerValid := identity["issuer"] == "https://token.actions.githubusercontent.com"
 		subject, _ := identity["subjectRegExp"].(string)
+		if isLonghornPublisher {
+			longhornAttestors[name] = issuerValid && subject == longhornPublisher.subject
+			continue
+		}
 		switch name {
 		case "publishkubescapestorage":
 			storageAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-storage-hotfix\\.yaml@refs/heads/main$"
@@ -1285,9 +1304,19 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesCustomerIdentity := false
 	genericExcludesDex := false
 	dedicatedRoutesDex := false
+	genericExcludesLonghorn := make(map[string]bool, len(longhornPublishers))
+	dedicatedRoutesLonghorn := make(map[string]bool, len(longhornPublishers))
 	for _, rawValidation := range validations {
 		validation, _ := rawValidation.(map[string]any)
 		expression, _ := validation["expression"].(string)
+		for name, publisher := range longhornPublishers {
+			if strings.Contains(expression, "attestors.publishapp") {
+				genericExcludesLonghorn[name] = imageRouteContains(expression, publisher.repository, true)
+			}
+			if strings.Contains(expression, "attestors."+name) {
+				dedicatedRoutesLonghorn[name] = imageRouteContains(expression, publisher.repository, false)
+			}
+		}
 		if strings.Contains(expression, "attestors.publishapp") {
 			genericExcludesCustomerIdentity = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/business-site-identity'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/business-site-identity:')") &&
@@ -1383,6 +1412,11 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-dex@')")
 		}
 	}
+	for name := range longhornPublishers {
+		if !longhornAttestors[name] || !genericExcludesLonghorn[name] || !dedicatedRoutesLonghorn[name] {
+			return commandFailure(91, "consolidated image-validating policy patch omitted the exact %s publisher identity or repository routing", name)
+		}
+	}
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
 		!checkpointAttestorValid || !genericExcludesCheckpoint || !dedicatedRoutesCheckpoint ||
 		!reportsAttestorValid || !genericExcludesReports || !dedicatedRoutesReports ||
@@ -1413,18 +1447,18 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 }
 
 func checkpointRouteContains(expression string, excluded bool) bool {
+	return imageRouteContains(expression, "ghcr.io/devantler-tech/platform-coroot", excluded) &&
+		imageRouteContains(expression, "ghcr.io/devantler-tech/platform-coroot-cluster-agent", excluded)
+}
+
+func imageRouteContains(expression, repository string, excluded bool) bool {
 	comparison, negation := "==", ""
 	if excluded {
 		comparison, negation = "!=", "!"
 	}
-	for _, repository := range []string{"ghcr.io/devantler-tech/platform-coroot", "ghcr.io/devantler-tech/platform-coroot-cluster-agent"} {
-		if !strings.Contains(expression, "image "+comparison+" '"+repository+"'") ||
-			!strings.Contains(expression, negation+"image.startsWith('"+repository+":')") ||
-			!strings.Contains(expression, negation+"image.startsWith('"+repository+"@')") {
-			return false
-		}
-	}
-	return true
+	return strings.Contains(expression, "image "+comparison+" '"+repository+"'") &&
+		strings.Contains(expression, negation+"image.startsWith('"+repository+":')") &&
+		strings.Contains(expression, negation+"image.startsWith('"+repository+"@')")
 }
 
 func fakeKubectlDeleteRetiredImageValidatingPolicy(args []string) int {
