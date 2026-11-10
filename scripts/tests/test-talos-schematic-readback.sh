@@ -191,9 +191,13 @@ unset MOCK_JOURNAL_FILE
 
 # New maintenance profiles retain their own cordons if native recovery is held.
 # Their exact annotations, journal scopes and physical identities must match.
-for profile in host temporary; do
+for profile in host-v1 host-v2 temporary; do
   worker=prod-worker-1
   journal_name=longhorn-v2-host-memory-prod-worker-1
+  host_version=1
+  if [[ "$profile" == host-v2 ]]; then
+    host_version=2
+  fi
   if [[ "$profile" == temporary ]]; then
     worker=autoscale-longhorn-v1-0123456789abcdef
     journal_name=longhorn-v2-prepare-temporary-v1-1
@@ -206,11 +210,11 @@ for profile in host temporary; do
       .status.nodeInfo.bootID = "12345678-1234-4234-8234-000000000001" |
       .metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] = $journal)
   ' "$tmp_dir/nodes.json")
-  base_record=$(jq -n --arg worker "$worker" --arg journal "$journal_name" --arg profile "$profile" '{
+  base_record=$(jq -n --arg worker "$worker" --arg journal "$journal_name" --arg profile "$profile" --argjson host_version "$host_version" '{
     metadata: {name: $journal, namespace: "longhorn-system", uid: "journal-uid", resourceVersion: "1"},
     data: {record: ({target: $worker, nodeUID: "held-worker-uid", providerID: "hcloud://123", machineUUID: "held-hardware-uuid",
       phase: "draining", source: ("a" * 40), ownerRun: "123", originalBootID: "12345678-1234-4234-8234-000000000001"} +
-      if $profile == "host" then {version: 1, recoveredBootID: ""}
+      if $profile != "temporary" then {version: $host_version, recoveredBootID: ""}
       else {schema: 2, temporarySelection: "temporary-v1-1", rawVolumeAbsent: true, nativeEmptyDigest: ("b" * 64), originalDisks: {}, ephemeralUUID: "original-ephemeral"} end | tojson)}
   }')
   printf '%s\n' "$base_nodes" >"$tmp_dir/changed.json"
@@ -252,6 +256,12 @@ for profile in host temporary; do
     jq "$mutation" <<<"$base_record" >"$tmp_dir/journal.json"
     assert_rejected "a foreign or completed $profile journal: $mutation"
   done
+  if [[ "$profile" == host-v2 ]]; then
+    for mutation in 'del(.version)' '.version = 3' '.version = "2"' '.schema = 2'; do
+      jq ".data.record |= (fromjson | $mutation | tojson)" <<<"$base_record" >"$tmp_dir/journal.json"
+      assert_rejected "an unsupported host journal: $mutation"
+    done
+  fi
   if [[ "$profile" == temporary ]]; then
     for mutation in '.rawVolumeAbsent = false' '.temporarySelection = "temporary-v1-2"' '.schema = 1' '.nativeEmptyDigest = ""' '.phase = "prepared"'; do
       jq ".data.record |= (fromjson | $mutation | tojson)" <<<"$base_record" >"$tmp_dir/journal.json"

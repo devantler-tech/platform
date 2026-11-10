@@ -113,7 +113,9 @@ journal_held_worker() {
       ($journal.originalBootID | test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")) and
       ($candidates[0].status.nodeInfo.bootID | test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")) and
       if $profile == "host" then
-        $journal.version == 1 and $journal.schema == null and
+        # Version 2 expands the database roster but keeps the cordon identity
+        # and recovery phases used by this readback.
+        ($journal.version == 1 or $journal.version == 2) and $journal.schema == null and
         (($journal.phase == "draining" and $journal.originalBootID == $candidates[0].status.nodeInfo.bootID) or
          $journal.phase == "reboot-requested" or
          ($journal.phase == "returning" and $journal.recoveredBootID == $candidates[0].status.nodeInfo.bootID and $journal.recoveredBootID != $journal.originalBootID))
