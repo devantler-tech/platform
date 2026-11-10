@@ -233,7 +233,15 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 		return err
 	}
 	d.stage = "reader-forward"
-	endpoint, stopReader, err := d.forward(ctx, d.i.namespace, "reader", reader.uid)
+	openReader := func(ctx context.Context) (string, func(), error) {
+		return d.forward(ctx, d.i.namespace, "reader", reader.uid)
+	}
+	endpoint, stopReader, err := openReader(ctx)
+	if err != nil {
+		return err
+	}
+	d.stage = "reader-readiness"
+	endpoint, stopReader, err = waitReaderReady(ctx, endpoint, stopReader, openReader)
 	if err != nil {
 		return err
 	}
@@ -243,14 +251,6 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 		return err
 	}
 	recovered.account = original.account
-	d.stage = "reader-readiness"
-	err = waitRecovery(ctx, 90*time.Second, func() (bool, error) {
-		_, e := recovered.request(ctx, "GET", "/healthz/ready", "", nil)
-		return e == nil, nil
-	})
-	if err != nil {
-		return err
-	}
 	d.stage = "reader-session"
 	if err = recovered.session(ctx); err != nil {
 		return err
