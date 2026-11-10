@@ -86,19 +86,25 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      # These checks cover the whole checkout. Run them once on the helpers leg.
       - name: 🔍 Lint module tidiness guards
+        if: matrix.suite == 'helpers'
         run: shellcheck scripts/check-go-modules-tidy.sh scripts/tests/test-go-modules-tidy.sh
 
       - name: 🧪 Exercise module tidiness refusals offline
+        if: matrix.suite == 'helpers'
         run: bash scripts/tests/test-go-modules-tidy.sh
 
       - name: 🧹 Verify every tracked Go module is tidy
+        if: matrix.suite == 'helpers'
         run: bash scripts/check-go-modules-tidy.sh
 
       - name: 🔍 Lint complete regression routing
+        if: matrix.suite == 'helpers'
         run: shellcheck scripts/run-go-regressions.sh scripts/tests/test-run-go-regressions.sh
 
       - name: 🧪 Exercise complete regression routing offline
+        if: matrix.suite == 'helpers'
         run: bash scripts/tests/test-run-go-regressions.sh
 
       - name: ⚙️ Initialize the approved kubectl for native regressions
@@ -1579,8 +1585,13 @@ jobs:
           bash scripts/tests/test-authorization-gate-diagnostics.sh
 
   validate-publication-generator:
-    name: 🔐 Validate Publication Generator
+    name: 🔐 Validate Publication Generator (${{ matrix.suite }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        suite: [bootstrap, upgrade]
     permissions:
       contents: read
     steps:
@@ -1628,11 +1639,8 @@ jobs:
           tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
           printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$native_dir/linux-amd64/helm" >> "$GITHUB_ENV"
 
-      # The report names the two revisions per consumer; the generator (#3550) turns them
-      # into the committed approved set the matcher narrowing (#3308) is derived from. Its
-      # cluster read and its pin read are both stubbed here, so this proves the fail-closed
-      # shape — an unresolved consumer writes nothing — not any particular revision.
-      - name: 🔐 Validate the approved-revisions generator
+      - name: 🔍 Lint and exercise publication fixture routing
+        if: matrix.suite == 'bootstrap'
         run: |
           # -x: the generator SOURCES the report, and without it SC1091 is reported and the run exits 1.
           shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
@@ -1645,7 +1653,13 @@ jobs:
           shellcheck -x scripts/tests/test-canonical-publisher-regeneration.sh
           shellcheck scripts/run-publication-generator-tests.sh scripts/tests/test-run-publication-generator-tests.sh
           bash scripts/tests/test-run-publication-generator-tests.sh
-          bash scripts/run-publication-generator-tests.sh --jobs 4
+
+      # Fixture adapters replace external reads; the actual generator must
+      # still refuse unresolved inputs and preserve committed outputs.
+      - name: 🔐 Validate the approved-revisions generator
+        env:
+          PUBLICATION_SUITE: ${{ matrix.suite }}
+        run: bash scripts/run-publication-generator-tests.sh --jobs 4
 
   validate-consumer-discovery:
     name: 🔐 Validate Consumer Discovery Regressions
