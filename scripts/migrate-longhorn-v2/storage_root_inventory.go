@@ -16,6 +16,9 @@ type nativeStorageRootReader interface {
 type nativeBlockLayoutReader interface {
 	ListBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error)
 }
+type nativeRetainedBlockLayoutReader interface {
+	ListRetainedBlockLayout(context.Context, bool) (longhorninventory.BlockLayoutReport, longhorninventory.RetainedLayoutIdentity, error)
+}
 type storageRootReceipt struct {
 	Schema              int                                  `json:"schema"`
 	ObservationOnly     bool                                 `json:"observationOnly"`
@@ -23,17 +26,26 @@ type storageRootReceipt struct {
 	APIProjectionDigest string                               `json:"apiProjectionDigest"`
 	Report              longhorninventory.StorageRootReport  `json:"report"`
 	BlockLayout         *longhorninventory.BlockLayoutReport `json:"blockLayout,omitempty"`
+	retainedLayout      longhorninventory.RetainedLayoutIdentity
 }
 
 func observeStorageLayout(ctx context.Context, c client, target string, factory inventoryReaderFactory) (storageRootReceipt, error) {
-	return observeStorageRootScope(ctx, c, target, factory, true)
+	return observeStorageRootScope(ctx, c, target, factory, storageLayout)
 }
 
 func observeStorageRoot(ctx context.Context, c client, target string, factory inventoryReaderFactory) (storageRootReceipt, error) {
-	return observeStorageRootScope(ctx, c, target, factory, false)
+	return observeStorageRootScope(ctx, c, target, factory, storageRootOnly)
 }
 
-func observeStorageRootScope(ctx context.Context, c client, target string, factory inventoryReaderFactory, includeBlocks bool) (receipt storageRootReceipt, err error) {
+type storageObservationScope int
+
+const (
+	storageRootOnly storageObservationScope = iota
+	storageLayout
+	storageRetainedClosed
+)
+
+func observeStorageRootScope(ctx context.Context, c client, target string, factory inventoryReaderFactory, scope storageObservationScope) (receipt storageRootReceipt, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	expires, _ := ctx.Deadline()
@@ -79,12 +91,9 @@ func observeStorageRootScope(ctx context.Context, c client, target string, facto
 		return storageRootReceipt{}, stageOwnershipBefore
 	}
 	var blockLayout *longhorninventory.BlockLayoutReport
-	if includeBlocks {
-		blockReader, ok := reader.(nativeBlockLayoutReader)
-		if !ok {
-			return storageRootReceipt{}, stageClient
-		}
-		layout, layoutErr := blockReader.ListBlockLayout(ctx)
+	var retainedLayout longhorninventory.RetainedLayoutIdentity
+	if scope != storageRootOnly {
+		layout, retained, layoutErr := observeNativeBlockLayout(ctx, reader, target, scope == storageRetainedClosed)
 		if layoutErr != nil {
 			return storageRootReceipt{}, errors.Join(stageBlockLayout, layoutErr)
 		}
@@ -92,6 +101,7 @@ func observeStorageRootScope(ctx context.Context, c client, target string, facto
 			return storageRootReceipt{}, stageBlockLayout
 		}
 		blockLayout = &layout
+		retainedLayout = retained
 	}
 	second, err := rootReader.ListStorageRoot(ctx)
 	if err != nil {
@@ -122,10 +132,31 @@ func observeStorageRootScope(ctx context.Context, c client, target string, facto
 		return storageRootReceipt{}, stageDeadline
 	}
 	schema := 1
-	if includeBlocks {
+	if scope != storageRootOnly {
 		schema = 2
 	}
-	return storageRootReceipt{Schema: schema, ObservationOnly: true, ResetClearance: false, APIProjectionDigest: before.Digest, Report: report, BlockLayout: blockLayout}, nil
+	return storageRootReceipt{Schema: schema, ObservationOnly: true, ResetClearance: false,
+		APIProjectionDigest: before.Digest, Report: report, BlockLayout: blockLayout, retainedLayout: retainedLayout}, nil
+}
+
+func observeNativeBlockLayout(ctx context.Context, reader nativeReplicaReader, target string, closed bool) (longhorninventory.BlockLayoutReport, longhorninventory.RetainedLayoutIdentity, error) {
+	if target == "temporary-v2-1" {
+		retainedReader, ok := reader.(nativeRetainedBlockLayoutReader)
+		if !ok {
+			return longhorninventory.BlockLayoutReport{}, longhorninventory.RetainedLayoutIdentity{}, stageClient
+		}
+		layout, identity, err := retainedReader.ListRetainedBlockLayout(ctx, closed)
+		if err == nil && (!layout.RawExtentObserved || !inventoryBoot.MatchString(identity.PartitionUUID) || len(identity.ExtentDigest) != 64) {
+			return longhorninventory.BlockLayoutReport{}, longhorninventory.RetainedLayoutIdentity{}, stageBlockLayout
+		}
+		return layout, identity, err
+	}
+	blockReader, ok := reader.(nativeBlockLayoutReader)
+	if !ok || closed {
+		return longhorninventory.BlockLayoutReport{}, longhorninventory.RetainedLayoutIdentity{}, stageClient
+	}
+	layout, err := blockReader.ListBlockLayout(ctx)
+	return layout, longhorninventory.RetainedLayoutIdentity{}, err
 }
 
 func authorizeStorageRoot(getenv func(string) string, target string) error {
@@ -136,7 +167,7 @@ func authorizeStorageRoot(getenv func(string) string, target string) error {
 }
 
 func runStorageRootInventory(ctx context.Context, target, source, runID string) error {
-	return runStorageInventoryScope(ctx, target, source, runID, false)
+	return runStorageInventoryScope(ctx, target, source, runID, storageRootOnly)
 }
 
 func authorizeStorageLayout(getenv func(string) string, target string) error {
@@ -150,10 +181,10 @@ func runStorageLayoutInventory(ctx context.Context, target, source, runID string
 	if !inventoryTemporarySelection.MatchString(target) {
 		return stageProjectionBefore
 	}
-	return runStorageInventoryScope(ctx, target, source, runID, true)
+	return runStorageInventoryScope(ctx, target, source, runID, storageLayout)
 }
 
-func runStorageInventoryScope(ctx context.Context, target, source, runID string, includeBlocks bool) error {
+func runStorageInventoryScope(ctx context.Context, target, source, runID string, scope storageObservationScope) error {
 	c := client{run: inventoryReadCommand, context: "admin@prod"}
 	if inventoryTemporarySelection.MatchString(target) {
 		config, err := os.ReadFile("ksail.prod.yaml")
@@ -168,7 +199,7 @@ func runStorageInventoryScope(ctx context.Context, target, source, runID string,
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return stageSourceBefore
 	}
-	receipt, err := observeStorageRootScope(ctx, c, target, newInventoryReader, includeBlocks)
+	receipt, err := observeStorageRootScope(ctx, c, target, newInventoryReader, scope)
 	if err != nil {
 		return err
 	}

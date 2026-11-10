@@ -33,3 +33,20 @@ func TestUnusedTemporaryPreparationRequiresItsSeparateExactDispatch(t *testing.T
 		}
 	}
 }
+
+func TestRetainingPreparationUsesOnlyItsDistinctProtectedSelection(t *testing.T) {
+	env := dispatchFixture()
+	env["LONGHORN_V2_OPERATION"] = "prepare-retained-temporary-worker"
+	env["LONGHORN_V2_NODE"] = "temporary-v2-1"
+	env["LONGHORN_V2_CONFIRM"] = "prepare-retained-longhorn-v2-temporary-v2-1"
+	getenv := func(key string) string { return env[key] }
+	if authorizeRetainedTemporaryPreparation(getenv, "temporary-v2-1") != nil ||
+		authorizeTemporaryPreparation(getenv, "temporary-v2-1") == nil ||
+		authorizeRetainedTemporaryPreparation(getenv, "temporary-v1-1") == nil {
+		t.Fatal("retaining preparation lost its distinct protected scope")
+	}
+	env["GITHUB_RUN_ATTEMPT"] = "2"
+	if authorizeRetainedTemporaryPreparation(getenv, "temporary-v2-1") == nil {
+		t.Fatal("a rerun could request retaining preparation")
+	}
+}
