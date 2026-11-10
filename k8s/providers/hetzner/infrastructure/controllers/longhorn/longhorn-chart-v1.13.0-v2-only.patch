@@ -1,5 +1,5 @@
 diff --git a/chart/README.md b/chart/README.md
-index 551ffaac28997988be1db16e35b95436e1be9428..5f1da081150543ff64dbf739e933c6bde0842b26 100644
+index 551ffaac28997988be1db16e35b95436e1be9428..9926f4578c79c68185c419f8cb051ad98a6bcd07 100644
 --- a/chart/README.md
 +++ b/chart/README.md
 @@ -22,7 +22,36 @@ Longhorn is 100% open source software. Project source code is spread across a nu
@@ -30,7 +30,7 @@ index 551ffaac28997988be1db16e35b95436e1be9428..5f1da081150543ff64dbf739e933c6bd
 +  dataEngine: v2
 +```
 +
-+The chart rejects the stock manager repository and unresolved or conflicting engine settings, including when upgrade hooks are disabled. Daemon, global manager and pre-upgrade commands receive the capability explicitly. The manager separately checks live storage and runtime before starting. V2 nodes still require their normal V2 disk, CPU, kernel, NVMe/TCP and memory/hugepage prerequisites.
++The chart rejects the stock manager repository and unresolved or conflicting engine settings, including when upgrade hooks are disabled. The Platform manager repository requires a published `v1.13.0-platform.<run>` tag. Daemon, global manager and pre-upgrade commands receive the capability explicitly. The manager separately checks live storage and runtime before starting. V2 nodes still require their normal V2 disk, CPU, kernel, NVMe/TCP and memory/hugepage prerequisites.
 +
 +For an existing installation, retain iSCSI throughout migration. Move or restore every V1 volume and retained snapshot that must be kept, prove V2 recovery, and retire V1 engines, replicas and instance-manager runtime before selecting V2-only mode. This value does not convert existing data, snapshots or immutable StorageClass parameters. Remove host iSCSI dependencies only after the V2-only rollout is verified on every node.
 +
@@ -49,7 +49,7 @@ index 551ffaac28997988be1db16e35b95436e1be9428..5f1da081150543ff64dbf739e933c6bd
  | defaultBackupStore.backupTarget | `nil` | Endpoint used to access the default backupstore. (Options: "NFS", "CIFS", "AWS", "GCP", "AZURE") |
  | defaultBackupStore.backupTargetCredentialSecret | `nil` | Name of the Kubernetes secret associated with the default backup target. |
 diff --git a/chart/README.md.gotmpl b/chart/README.md.gotmpl
-index 727a6ac4b96fcb0c8366fd22175600b426c7fd7f..d513a7b3d88363bd668e1c1bfa2f24fe2b323a5d 100644
+index 727a6ac4b96fcb0c8366fd22175600b426c7fd7f..5065e4178e9d9d79f7ce5508e58ca2a602203fad 100644
 --- a/chart/README.md.gotmpl
 +++ b/chart/README.md.gotmpl
 @@ -22,7 +22,36 @@ Longhorn is 100% open source software. Project source code is spread across a nu
@@ -80,7 +80,7 @@ index 727a6ac4b96fcb0c8366fd22175600b426c7fd7f..d513a7b3d88363bd668e1c1bfa2f24fe
 +  dataEngine: v2
 +```
 +
-+The chart rejects the stock manager repository and unresolved or conflicting engine settings, including when upgrade hooks are disabled. Daemon, global manager and pre-upgrade commands receive the capability explicitly. The manager separately checks live storage and runtime before starting. V2 nodes still require their normal V2 disk, CPU, kernel, NVMe/TCP and memory/hugepage prerequisites.
++The chart rejects the stock manager repository and unresolved or conflicting engine settings, including when upgrade hooks are disabled. The Platform manager repository requires a published `v1.13.0-platform.<run>` tag. Daemon, global manager and pre-upgrade commands receive the capability explicitly. The manager separately checks live storage and runtime before starting. V2 nodes still require their normal V2 disk, CPU, kernel, NVMe/TCP and memory/hugepage prerequisites.
 +
 +For an existing installation, retain iSCSI throughout migration. Move or restore every V1 volume and retained snapshot that must be kept, prove V2 recovery, and retire V1 engines, replicas and instance-manager runtime before selecting V2-only mode. This value does not convert existing data, snapshots or immutable StorageClass parameters. Remove host iSCSI dependencies only after the V2-only rollout is verified on every node.
 +
@@ -111,10 +111,10 @@ index 120da852bfff00c27811a502b8115e5513b0ebd5..5b58a560dc6b87b760187c7168bfcb2f
      default: 'true'
      description: Use default Longhorn images
 diff --git a/chart/templates/_helpers.tpl b/chart/templates/_helpers.tpl
-index db6b9350e94dccca7a147330ed6300015bb69fa3..0cc03f722ab8021e8d33e16c9707428fc15b6afb 100644
+index db6b9350e94dccca7a147330ed6300015bb69fa3..95f1aa2eb0452e5ae70aee01deae90859a8f9864 100644
 --- a/chart/templates/_helpers.tpl
 +++ b/chart/templates/_helpers.tpl
-@@ -89,3 +89,25 @@ When .Values.global.timezone is set, this snippet renders a TZ env var.
+@@ -89,3 +89,31 @@ When .Values.global.timezone is set, this snippet renders a TZ env var.
    value: {{ .Values.global.timezone | quote }}
  {{- end }}
  {{- end -}}
@@ -137,6 +137,12 @@ index db6b9350e94dccca7a147330ed6300015bb69fa3..0cc03f722ab8021e8d33e16c9707428f
 +  {{- $managerRepository := .Values.image.longhorn.manager.repository -}}
 +  {{- if or (empty $managerRepository) (eq $managerRepository "longhornio/longhorn-manager") -}}
 +    {{- fail "v2-only requires an explicit compatible image.longhorn.manager.repository" -}}
++  {{- end -}}
++  {{- if eq $managerRepository "devantler-tech/platform-longhorn-manager" -}}
++    {{- $managerTag := toString .Values.image.longhorn.manager.tag -}}
++    {{- if not (regexMatch `^v1\.13\.0-platform\.[1-9][0-9]{0,11}(@sha256:[a-f0-9]{64})?$` $managerTag) -}}
++      {{- fail "v2-only requires a published v1.13.0-platform.<run> tag for the Platform manager" -}}
++    {{- end -}}
 +  {{- end -}}
 +{{- end -}}
 +{{- end -}}
@@ -253,10 +259,10 @@ index 4d57d3c159fc355ea9be0ca5081ca0fa0f6448ba..b7422f04e0f4c6b7c816d2d2f1eca8fb
    imageRegistry: ""
 diff --git a/scripts/test-data-engine-mode-chart.sh b/scripts/test-data-engine-mode-chart.sh
 new file mode 100644
-index 0000000000000000000000000000000000000000..146563a372444ded7996eae3f6435c713e9a0bad
+index 0000000000000000000000000000000000000000..93722a7fa14c005956793b9538f4c28f1fac863b
 --- /dev/null
 +++ b/scripts/test-data-engine-mode-chart.sh
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,111 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
@@ -300,10 +306,21 @@ index 0000000000000000000000000000000000000000..146563a372444ded7996eae3f6435c71
 +expect_failure "${v2[@]}"
 +expect_failure "${v2[@]}" --set image.longhorn.manager.registry=mirror.example
 +expect_failure "${v2[@]}" --set-string 'image.longhorn.manager.repository='
-+manager=(--set image.longhorn.manager.registry=ghcr.io --set image.longhorn.manager.repository=devantler-tech/platform-longhorn-manager --set image.longhorn.manager.tag=v1.13.0-platform.1)
++platform_manager=(--set image.longhorn.manager.registry=ghcr.io --set image.longhorn.manager.repository=devantler-tech/platform-longhorn-manager)
++expect_failure "${v2[@]}" --set image.longhorn.manager.repository=devantler-tech/platform-longhorn-manager
++expect_failure "${v2[@]}" "${platform_manager[@]}"
++for tag in latest v1.13.0-platform.0 v1.13.0-platform.1@sha256:deadbeef; do
++  expect_failure "${v2[@]}" "${platform_manager[@]}" --set-string "image.longhorn.manager.tag=$tag"
++done
++render "${v2[@]}" --set image.longhorn.manager.registry=registry.example --set image.longhorn.manager.repository=compatible/longhorn-manager >"$chart_scratch/custom.yaml"
++grep -q 'image: registry.example/compatible/longhorn-manager:v1.13.0' "$chart_scratch/custom.yaml"
++manager=("${platform_manager[@]}" --set image.longhorn.manager.tag=v1.13.0-platform.1)
 +v2+=("${manager[@]}")
 +render "${v2[@]}" >"$chart_scratch/v2.yaml"
 +grep -q 'image: ghcr.io/devantler-tech/platform-longhorn-manager:v1.13.0-platform.1' "$chart_scratch/v2.yaml"
++pinned_tag="v1.13.0-platform.1@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
++render "${v2[@]}" --set-string "image.longhorn.manager.tag=$pinned_tag" >"$chart_scratch/pinned.yaml"
++grep -Fq "image: ghcr.io/devantler-tech/platform-longhorn-manager:$pinned_tag" "$chart_scratch/pinned.yaml"
 +if [[ "$(grep -c -- '--data-engine-mode' "$chart_scratch/v2.yaml" || true)" != 3 ]]; then
 +  printf '%s\n' 'FAIL: V2 capability must reach daemon, global manager and pre-upgrade' >&2
 +  failed=1
