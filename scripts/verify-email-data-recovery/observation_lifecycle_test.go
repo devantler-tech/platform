@@ -190,6 +190,8 @@ func TestObservationRetainedReaderLifecycle(t *testing.T) {
 	}
 }
 
+// TestObservationVerifiesRetainedMessageWithoutBackupOrCleanup exercises the
+// read-only comparison and checks that failure stages reveal no mailbox data.
 func TestObservationVerifiesRetainedMessageWithoutBackupOrCleanup(t *testing.T) {
 	image := observationForwarderFixture(t)
 	for _, tc := range []struct {

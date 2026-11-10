@@ -90,8 +90,9 @@ func newRetainedMailboxClient(endpoint, password string) (*mailboxClient, error)
 	return c, nil
 }
 
-// Matching retained content is current readback evidence only. The old random
-// marker was not durably bound to its run, so this is not fresh-trial acceptance.
+// verifyRetainedMessage compares the retained and serving copies. Matching
+// content is current readback evidence only because the old marker has no
+// durable binding to its original run.
 // Private client copies ensure even callers supplying ordinary mailbox clients
 // cannot accidentally grant this path a mutating HTTP capability.
 func verifyRetainedMessage(ctx context.Context, reader, source *mailboxClient) (messageIdentity, error) {
@@ -184,7 +185,8 @@ func retainedQueryID(result object) (string, bool) {
 	return id, ok && mailboxIDPattern.MatchString(id)
 }
 
-// The second result is a fixed failure stage suitable for workflow logs.
+// readRetainedDiagnostic reads the marker from one mailbox. On failure it
+// returns a fixed stage suitable for workflow logs.
 func readRetainedDiagnostic(ctx context.Context, c *mailboxClient) (messageIdentity, string) {
 	result, err := c.call(ctx, "Mailbox/get", object{"properties": []any{"id", "name", "isSubscribed"}})
 	if err != nil {
