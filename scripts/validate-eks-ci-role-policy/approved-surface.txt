@@ -104,7 +104,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|observability|audit-log-forwarder 49f6267c
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|observability|coroot-operator a6c5d6dfdec7648afce4f0c833eb2945ca35f97a00d8046d473d7fa0a6faded2
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-operator cde84536579dac248ebcd88cdd84a33a4f4855824a0d0b88a0577da9cbb170dc
+helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-operator 804fb88028e50d7e3242464f746cc00fac9094f0833d829cabc8a89df6a57575
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 12438e84df9ca039b9926288d1023000456bb3e513bb0b032f1f800c9fa341d7
 
