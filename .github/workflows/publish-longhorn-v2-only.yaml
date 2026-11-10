@@ -91,9 +91,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      contents: read
-      packages: write
-      id-token: write
+      contents: read # Check out and verify the current main revision.
+      packages: write # Publish the verified manager image and OCI chart to GHCR.
+      id-token: write # Obtain the identity for keyless Cosign signing and attestation.
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
