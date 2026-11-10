@@ -606,6 +606,8 @@ jobs:
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
               - 'scripts/tests/test-agentic-engineer-schedule.sh'
+              - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
+              - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-cancellation-release.sh'
@@ -2855,6 +2857,15 @@ jobs:
         run: |
           shellcheck scripts/tests/test-agentic-engineer-schedule.sh
           bash scripts/tests/test-agentic-engineer-schedule.sh
+
+      - name: 🧠 Validate the kagent harness plugin wrapper
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the image's real `claude` wrapper against a stub Claude Code: a
+        # prompt run gets the whole agentic-engineering plugin once, every other
+        # call passes through, and the plugin is pinned by commit.
+        run: |
+          shellcheck scripts/tests/test-kagent-claude-harness-wrapper.sh scripts/kagent-claude-harness/claude
+          bash scripts/tests/test-kagent-claude-harness-wrapper.sh
 
       - name: 🔑 Validate the Anthropic proxy's Envoy bootstrap
         if: needs.changes.outputs.k8s == 'true'
