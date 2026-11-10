@@ -32,13 +32,27 @@ for name in success author fork moved closed read_error after_read reread_error;
   PATH="${work}/bin:${PATH}" TEST_ROOT="$root" FAKE_STATE="${work}/${name}" FAKE_CASE="$name" \
     RUNNER_TEMP="${work}/${name}/temp" CANDIDATE_PR=4381 CANDIDATE_HEAD=01e40ecf795a3eaf6c0e30ba461a7253afb36462 \
     bash "${root}/.github/scripts/fetch-cilium-deny-candidate.sh" >"${work}/${name}/output" 2>&1 || result=$?
-  expected=1; [[ "$name" != success ]] || expected=0
-  if [[ "$result" != "$expected" ]]; then echo "FAIL $name: expected $expected, got $result"; cat "${work}/${name}/output"; failures=$((failures + 1)); fi
+  expected=1
+  [[ "$name" != success ]] || expected=0
+  if [[ "$result" != "$expected" ]]; then
+    echo "FAIL $name: expected $expected, got $result"
+    cat "${work}/${name}/output"
+    failures=$((failures + 1))
+  fi
   if [[ "$name" == success ]]; then
     receipt="${work}/${name}/temp/cilium-deny-candidate/candidate.json"
-    if ! jq -e '.head == "01e40ecf795a3eaf6c0e30ba461a7253afb36462" and .author == "devantler" and (.generator_sha256|length)==64 and (.flux_copy_sha256|length)==64' "$receipt" >/dev/null; then echo 'FAIL candidate receipt'; failures=$((failures + 1)); fi
-  elif [[ "$name" != after_read && "$name" != reread_error && -f "${work}/${name}/requests" ]] && grep -Fq '/contents/' "${work}/${name}/requests"; then echo "FAIL $name: fetched before trust/head gate"; failures=$((failures + 1)); fi
-  if [[ "$name" != success && -f "${work}/${name}/temp/cilium-deny-candidate/candidate.json" ]]; then echo "FAIL $name: rejected candidate got a receipt"; failures=$((failures + 1)); fi
+    if ! jq -e '.head == "01e40ecf795a3eaf6c0e30ba461a7253afb36462" and .author == "devantler" and (.generator_sha256|length)==64 and (.flux_copy_sha256|length)==64' "$receipt" >/dev/null; then
+      echo 'FAIL candidate receipt'
+      failures=$((failures + 1))
+    fi
+  elif [[ "$name" != after_read && "$name" != reread_error && -f "${work}/${name}/requests" ]] && grep -Fq '/contents/' "${work}/${name}/requests"; then
+    echo "FAIL $name: fetched before trust/head gate"
+    failures=$((failures + 1))
+  fi
+  if [[ "$name" != success && -f "${work}/${name}/temp/cilium-deny-candidate/candidate.json" ]]; then
+    echo "FAIL $name: rejected candidate got a receipt"
+    failures=$((failures + 1))
+  fi
 done
 [[ "$failures" == 0 ]] || exit 1
 echo 'PASS: only exact same-repo trusted current heads reach fixed candidate data reads'

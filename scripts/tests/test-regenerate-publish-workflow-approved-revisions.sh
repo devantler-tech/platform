@@ -72,10 +72,16 @@ check() {
   cron="$(q "$f" '.on.schedule[0].cron')"
   case "${cron}" in
     *' '*' '*' '*' '*) ;;
-    *) printf 'VIOLATION A1: no five-field schedule cron (got "%s")\n' "${cron}"; return 1 ;;
+    *)
+      printf 'VIOLATION A1: no five-field schedule cron (got "%s")\n' "${cron}"
+      return 1
+      ;;
   esac
   [ "$(yq -r '.on | has("workflow_dispatch")' "$f")" = 'true' ] ||
-    { printf 'VIOLATION A1: no workflow_dispatch trigger\n'; return 1; }
+    {
+      printf 'VIOLATION A1: no workflow_dispatch trigger\n'
+      return 1
+    }
 
   # A2 — no ambient grant: the App token carries every write.
   if ! { [ "$(yq -r '.permissions | tag' "$f")" = '!!map' ] &&
@@ -91,13 +97,22 @@ check() {
 
   # A3 — one run at a time, never cut off mid pull request.
   [ "$(q "$f" '.concurrency.queue')" = 'single' ] ||
-    { printf 'VIOLATION A3: concurrency.queue is not single\n'; return 1; }
+    {
+      printf 'VIOLATION A3: concurrency.queue is not single\n'
+      return 1
+    }
   [ "$(q "$f" '.concurrency.cancel-in-progress')" = 'false' ] ||
-    { printf 'VIOLATION A3: concurrency.cancel-in-progress is not false\n'; return 1; }
+    {
+      printf 'VIOLATION A3: concurrency.cancel-in-progress is not false\n'
+      return 1
+    }
 
   # A4 — the cluster half needs the prod environment's KUBE_CONFIG.
   [ "$(q "$f" '.jobs.regenerate.environment')" = 'prod' ] ||
-    { printf 'VIOLATION A4: the job does not run in environment prod\n'; return 1; }
+    {
+      printf 'VIOLATION A4: the job does not run in environment prod\n'
+      return 1
+    }
 
   # Step indices, by what each step DOES rather than by name. The two App-token steps
   # are told apart by their id, because their `uses:` is identical.
@@ -113,58 +128,112 @@ check() {
   # A5 — the generator runs, against prod, on the READ-ONLY consumer token. Reading the
   # consumers with the write token would hand a compromised generator push and
   # pull-request rights over every consumer, which is what the split exists to prevent.
-  [ -n "${gen_idx}" ] || { printf 'VIOLATION A5: no step runs %s\n' "${generator}"; return 1; }
+  [ -n "${gen_idx}" ] || {
+    printf 'VIOLATION A5: no step runs %s\n' "${generator}"
+    return 1
+  }
   [ "$(q "$f" ".jobs.regenerate.steps[${gen_idx}].env.PUBLISH_KUBE_CONTEXT")" = 'admin@prod' ] ||
-    { printf 'VIOLATION A5: the generator step does not pin PUBLISH_KUBE_CONTEXT to admin@prod\n'; return 1; }
+    {
+      printf 'VIOLATION A5: the generator step does not pin PUBLISH_KUBE_CONTEXT to admin@prod\n'
+      return 1
+    }
   case "$(q "$f" ".jobs.regenerate.steps[${gen_idx}].env.GH_TOKEN")" in
     *'steps.consumer-token.outputs.token'*) ;;
-    *) printf 'VIOLATION A5: the generator step does not read GH_TOKEN from the consumer-read token\n'; return 1 ;;
+    *)
+      printf 'VIOLATION A5: the generator step does not read GH_TOKEN from the consumer-read token\n'
+      return 1
+      ;;
   esac
 
   # A6 — TWO tokens, each minted for exactly its half. One installation token carries
   # one permission set across every repository it names, so a single token covering
   # this repository and the consumers would grant write over all of them.
-  [ -n "${read_token_idx}" ] || { printf 'VIOLATION A6: no consumer-read App-token step (id: consumer-token)\n'; return 1; }
-  [ -n "${write_token_idx}" ] || { printf 'VIOLATION A6: no platform-write App-token step (id: app-token)\n'; return 1; }
+  [ -n "${read_token_idx}" ] || {
+    printf 'VIOLATION A6: no consumer-read App-token step (id: consumer-token)\n'
+    return 1
+  }
+  [ -n "${write_token_idx}" ] || {
+    printf 'VIOLATION A6: no platform-write App-token step (id: app-token)\n'
+    return 1
+  }
   local read_grants write_grants
   read_grants="$(yq -r ".jobs.regenerate.steps[${read_token_idx}].with | to_entries | map(select(.key | test(\"^permission-\"))) | map(.key + \"=\" + .value) | sort | join(\",\")" "$f")"
   [ "${read_grants}" = 'permission-actions=read,permission-contents=read' ] ||
-    { printf 'VIOLATION A6: consumer-read token grants are "%s", not exactly actions=read,contents=read\n' "${read_grants}"; return 1; }
+    {
+      printf 'VIOLATION A6: consumer-read token grants are "%s", not exactly actions=read,contents=read\n' "${read_grants}"
+      return 1
+    }
   write_grants="$(yq -r ".jobs.regenerate.steps[${write_token_idx}].with | to_entries | map(select(.key | test(\"^permission-\"))) | map(.key + \"=\" + .value) | sort | join(\",\")" "$f")"
   [ "${write_grants}" = 'permission-contents=write,permission-pull-requests=write' ] ||
-    { printf 'VIOLATION A6: platform-write token grants are "%s", not exactly contents=write,pull-requests=write\n' "${write_grants}"; return 1; }
+    {
+      printf 'VIOLATION A6: platform-write token grants are "%s", not exactly contents=write,pull-requests=write\n' "${write_grants}"
+      return 1
+    }
 
   # A7 — the checkout keeps no credential in the tree, and is pinned to the default
   # branch so a dispatch from another ref cannot carry that ref's commits into the
   # fixed regeneration branch.
-  [ -n "${checkout_idx}" ] || { printf 'VIOLATION A7: no checkout step\n'; return 1; }
+  [ -n "${checkout_idx}" ] || {
+    printf 'VIOLATION A7: no checkout step\n'
+    return 1
+  }
   [ "$(q "$f" ".jobs.regenerate.steps[${checkout_idx}].with.persist-credentials")" = 'false' ] ||
-    { printf 'VIOLATION A7: checkout does not set persist-credentials: false\n'; return 1; }
+    {
+      printf 'VIOLATION A7: checkout does not set persist-credentials: false\n'
+      return 1
+    }
   local coref
   coref="$(q "$f" ".jobs.regenerate.steps[${checkout_idx}].with.ref")"
   [ -n "${coref}" ] ||
-    { printf 'VIOLATION A7: the checkout pins no ref, so a dispatch from another ref builds the regeneration branch on it\n'; return 1; }
+    {
+      printf 'VIOLATION A7: the checkout pins no ref, so a dispatch from another ref builds the regeneration branch on it\n'
+      return 1
+    }
   case "${coref}" in
-    *'${{'*) printf 'VIOLATION A7: the checkout ref is interpolated ("%s")\n' "${coref}"; return 1 ;;
+    *'${{'*)
+      printf 'VIOLATION A7: the checkout ref is interpolated ("%s")\n' "${coref}"
+      return 1
+      ;;
   esac
 
   # A8 — one open pull request: a fixed branch, a draft, signed, exactly the set and matchers.
-  [ -n "${pr_idx}" ] || { printf 'VIOLATION A8: no create-pull-request step\n'; return 1; }
+  [ -n "${pr_idx}" ] || {
+    printf 'VIOLATION A8: no create-pull-request step\n'
+    return 1
+  }
   local branch
   branch="$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.branch")"
-  [ -n "${branch}" ] || { printf 'VIOLATION A8: the pull-request step names no branch\n'; return 1; }
+  [ -n "${branch}" ] || {
+    printf 'VIOLATION A8: the pull-request step names no branch\n'
+    return 1
+  }
   case "${branch}" in
-    *'${{'*) printf 'VIOLATION A8: the pull-request branch is interpolated ("%s"), so each run would open a new pull request\n' "${branch}"; return 1 ;;
+    *'${{'*)
+      printf 'VIOLATION A8: the pull-request branch is interpolated ("%s"), so each run would open a new pull request\n' "${branch}"
+      return 1
+      ;;
   esac
   [ "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.draft")" = 'true' ] ||
-    { printf 'VIOLATION A8: the pull request is not opened as a draft\n'; return 1; }
+    {
+      printf 'VIOLATION A8: the pull request is not opened as a draft\n'
+      return 1
+    }
   [ "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.sign-commits")" = 'true' ] ||
-    { printf 'VIOLATION A8: the pull-request commit is not API-signed\n'; return 1; }
+    {
+      printf 'VIOLATION A8: the pull-request commit is not API-signed\n'
+      return 1
+    }
   [ "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.add-paths")" = "${generated_paths}" ] ||
-    { printf 'VIOLATION A8: add-paths must contain exactly the set and four consumer manifests\n'; return 1; }
+    {
+      printf 'VIOLATION A8: add-paths must contain exactly the set and four consumer manifests\n'
+      return 1
+    }
   case "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.token")" in
     *'steps.app-token.outputs.token'*) ;;
-    *) printf 'VIOLATION A8: the pull request is not opened with the App token\n'; return 1 ;;
+    *)
+      printf 'VIOLATION A8: the pull request is not opened with the App token\n'
+      return 1
+      ;;
   esac
 
   # A9 — a failed resolution is a red run, never a pull request that dropped a consumer:
@@ -173,19 +242,26 @@ check() {
   i=0
   while [ "${i}" -lt "${steps}" ]; do
     [ "$(q "$f" ".jobs.regenerate.steps[${i}].continue-on-error")" = '' ] ||
-      { printf 'VIOLATION A9: step %s carries continue-on-error\n' "${i}"; return 1; }
+      {
+        printf 'VIOLATION A9: step %s carries continue-on-error\n' "${i}"
+        return 1
+      }
     i=$((i + 1))
   done
   case "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].if")" in
     *'always()'* | *'failure()'* | *'!cancelled()'*)
-      printf 'VIOLATION A9: the pull-request step runs after a failure\n'; return 1 ;;
+      printf 'VIOLATION A9: the pull-request step runs after a failure\n'
+      return 1
+      ;;
   esac
-  [ -n "${guard_idx}" ] || { printf 'VIOLATION A9: no step runs %s on the moved set\n' "${guard}"; return 1; }
+  [ -n "${guard_idx}" ] || {
+    printf 'VIOLATION A9: no step runs %s on the moved set\n' "${guard}"
+    return 1
+  }
   if ! { [ "${gen_idx}" -lt "${guard_idx}" ] && [ "${guard_idx}" -lt "${pr_idx}" ]; }; then
     printf 'VIOLATION A9: steps are not ordered generator (%s) < guard (%s) < pull request (%s)\n' "${gen_idx}" "${guard_idx}" "${pr_idx}"
     return 1
   fi
-
 
   # A10 — each token reaches exactly its own half.
   # create-github-app-token given neither `owner` nor `repositories` mints a token
@@ -197,14 +273,23 @@ check() {
   # so a consumer listed there would inherit contents/pull-requests write.
   local read_scoped write_scoped consumers consumer missing leaked
   [ -n "$(q "$f" ".jobs.regenerate.steps[${read_token_idx}].with.owner")" ] ||
-    { printf 'VIOLATION A10: the consumer-read token names no owner, so it cannot be scoped past this repository\n'; return 1; }
+    {
+      printf 'VIOLATION A10: the consumer-read token names no owner, so it cannot be scoped past this repository\n'
+      return 1
+    }
   [ -n "$(q "$f" ".jobs.regenerate.steps[${write_token_idx}].with.owner")" ] ||
-    { printf 'VIOLATION A10: the platform-write token names no owner\n'; return 1; }
+    {
+      printf 'VIOLATION A10: the platform-write token names no owner\n'
+      return 1
+    }
   read_scoped=" $(q "$f" ".jobs.regenerate.steps[${read_token_idx}].with.repositories" | tr '\n' ' ') "
   write_scoped=" $(q "$f" ".jobs.regenerate.steps[${write_token_idx}].with.repositories" | tr '\n' ' ') "
   case "${write_scoped}" in
     *' platform '*) ;;
-    *) printf 'VIOLATION A10: the write token omits platform, so it cannot push the branch or open the pull request\n'; return 1 ;;
+    *)
+      printf 'VIOLATION A10: the write token omits platform, so it cannot push the branch or open the pull request\n'
+      return 1
+      ;;
   esac
   # Read the consumers one per LINE, and keep the loop in THIS shell. `for c in
   # $(…)` splits on whitespace rather than lines, and a pipeline would put the
@@ -225,11 +310,17 @@ check() {
     case "${write_scoped}" in
       *" ${consumer} "*) leaked="${leaked}${consumer} " ;;
     esac
-  done <<< "${consumers}"
+  done <<<"${consumers}"
   [ -z "${missing}" ] ||
-    { printf 'VIOLATION A10: consumer(s) %sare in the approved set but not in the consumer-read token repositories list\n' "${missing}"; return 1; }
+    {
+      printf 'VIOLATION A10: consumer(s) %sare in the approved set but not in the consumer-read token repositories list\n' "${missing}"
+      return 1
+    }
   [ -z "${leaked}" ] ||
-    { printf 'VIOLATION A10: consumer(s) %sare in the WRITE token repositories list, which grants them contents/pull-requests write\n' "${leaked}"; return 1; }
+    {
+      printf 'VIOLATION A10: consumer(s) %sare in the WRITE token repositories list, which grants them contents/pull-requests write\n' "${leaked}"
+      return 1
+    }
 
   # A11 — ONE pull request even across refs. The pushed branch is fixed, so a
   # dispatch from another ref and the scheduled run on the default branch contend
@@ -238,14 +329,22 @@ check() {
   # request against the dispatched ref instead of the default branch.
   case "$(q "$f" '.concurrency.group')" in
     *'github.head_ref'* | *'github.ref'*)
-      printf 'VIOLATION A11: the concurrency group varies with the dispatch ref while the pushed branch is fixed\n'; return 1 ;;
+      printf 'VIOLATION A11: the concurrency group varies with the dispatch ref while the pushed branch is fixed\n'
+      return 1
+      ;;
   esac
   local base
   base="$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.base")"
   [ -n "${base}" ] ||
-    { printf 'VIOLATION A11: the pull-request step pins no base, so a dispatch from another ref targets that ref\n'; return 1; }
+    {
+      printf 'VIOLATION A11: the pull-request step pins no base, so a dispatch from another ref targets that ref\n'
+      return 1
+    }
   case "${base}" in
-    *'${{'*) printf 'VIOLATION A11: the pull-request base is interpolated ("%s")\n' "${base}"; return 1 ;;
+    *'${{'*)
+      printf 'VIOLATION A11: the pull-request base is interpolated ("%s")\n' "${base}"
+      return 1
+      ;;
   esac
 
   # A12 — the generated pull request discloses that an agent authored it. This
@@ -253,7 +352,10 @@ check() {
   # opens violates the repository convention that AGENTS.md states.
   case "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.body")" in
     '> 🤖 Generated by the'*) ;;
-    *) printf 'VIOLATION A12: the generated pull-request body does not begin with the agent disclosure line\n'; return 1 ;;
+    *)
+      printf 'VIOLATION A12: the generated pull-request body does not begin with the agent disclosure line\n'
+      return 1
+      ;;
   esac
 
   # A13 — the prod API endpoint is resolved AFTER the kubeconfig and BEFORE any
@@ -263,15 +365,24 @@ check() {
   local endpoint_idx kube_idx
   endpoint_idx="$(yq -r ".jobs.regenerate.steps | to_entries | map(select(.value.run // \"\" | contains(\"${endpoint_script}\"))) | .[0].key // \"\"" "$f")"
   kube_idx="$(yq -r '.jobs.regenerate.steps | to_entries | map(select(.value.env.KUBE_CONFIG // "" | length > 0)) | .[0].key // ""' "$f")"
-  [ -n "${endpoint_idx}" ] || { printf 'VIOLATION A13: no step runs %s\n' "${endpoint_script}"; return 1; }
-  [ -n "${kube_idx}" ] || { printf 'VIOLATION A13: no step restores KUBE_CONFIG\n'; return 1; }
+  [ -n "${endpoint_idx}" ] || {
+    printf 'VIOLATION A13: no step runs %s\n' "${endpoint_script}"
+    return 1
+  }
+  [ -n "${kube_idx}" ] || {
+    printf 'VIOLATION A13: no step restores KUBE_CONFIG\n'
+    return 1
+  }
   if ! { [ "${kube_idx}" -lt "${endpoint_idx}" ] && [ "${endpoint_idx}" -lt "${gen_idx}" ]; }; then
     printf 'VIOLATION A13: steps are not ordered kubeconfig (%s) < endpoint (%s) < generator (%s)\n' "${kube_idx}" "${endpoint_idx}" "${gen_idx}"
     return 1
   fi
   case "$(q "$f" ".jobs.regenerate.steps[${endpoint_idx}].env.HCLOUD_TOKEN")" in
     *'secrets.HCLOUD_TOKEN'*) ;;
-    *) printf 'VIOLATION A13: the endpoint step does not receive HCLOUD_TOKEN\n'; return 1 ;;
+    *)
+      printf 'VIOLATION A13: the endpoint step does not receive HCLOUD_TOKEN\n'
+      return 1
+      ;;
   esac
   # A14 — the pull-request step is NOT gated on `moved`. When a consumer's rollout is
   # reverted the observed set returns to the committed one, `moved` goes false, and a
@@ -281,7 +392,10 @@ check() {
   # reconciling that; A9 separately pins that a FAILURE still stops it.
   case "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].if")" in
     '') ;;
-    *) printf 'VIOLATION A14: the pull-request step is conditional ("%s"), so a set that returns to baseline leaves a stale pull request open\n' "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].if")"; return 1 ;;
+    *)
+      printf 'VIOLATION A14: the pull-request step is conditional ("%s"), so a set that returns to baseline leaves a stale pull request open\n' "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].if")"
+      return 1
+      ;;
   esac
 
   # A15 — update the matchers before change detection and enforced validation.
@@ -291,12 +405,19 @@ check() {
   if ! { [ -n "${writer_idx}" ] && [ -n "${moved_idx}" ] &&
     [ "${gen_idx}" -lt "${writer_idx}" ] && [ "${writer_idx}" -lt "${moved_idx}" ] &&
     [ "${moved_idx}" -lt "${guard_idx}" ]; }; then
-    printf 'VIOLATION A15: require generator < writer < change detection < guard\n'; return 1
+    printf 'VIOLATION A15: require generator < writer < change detection < guard\n'
+    return 1
   fi
   [ "$(q "$f" ".jobs.regenerate.steps[${writer_idx}].if")" = '' ] ||
-    { printf 'VIOLATION A15: the matcher writer must run unconditionally after generation\n'; return 1; }
+    {
+      printf 'VIOLATION A15: the matcher writer must run unconditionally after generation\n'
+      return 1
+    }
   [ "$(q "$f" ".jobs.regenerate.steps[${guard_idx}].env.APPROVED_REVISIONS_ENFORCE")" = '1' ] ||
-    { printf 'VIOLATION A15: the regeneration guard must enforce exact approved revisions\n'; return 1; }
+    {
+      printf 'VIOLATION A15: the regeneration guard must enforce exact approved revisions\n'
+      return 1
+    }
 
   # A16 — the body follows the pull-request template: `## Why` and `## What`, then an
   # issue line that is either `Fixes #<n>` or the explicit no-issue marker. The earlier
@@ -310,23 +431,38 @@ check() {
   what_line="$(printf '%s\n' "${body}" | grep -nx '## What' | head -n 1 | cut -d: -f1)"
   issue_line="$(printf '%s\n' "${body}" | grep -nxE 'Fixes #[0-9]+|No issue: trivial fix\.' | head -n 1 | cut -d: -f1)"
   if [ -z "${why_line}" ] || [ -z "${what_line}" ]; then
-    printf 'VIOLATION A16: the generated pull-request body lacks the template headings ## Why / ## What\n'; return 1
+    printf 'VIOLATION A16: the generated pull-request body lacks the template headings ## Why / ## What\n'
+    return 1
   fi
   [ -n "${issue_line}" ] ||
-    { printf 'VIOLATION A16: the generated pull-request body has no issue line (Fixes #N or the no-issue marker)\n'; return 1; }
+    {
+      printf 'VIOLATION A16: the generated pull-request body has no issue line (Fixes #N or the no-issue marker)\n'
+      return 1
+    }
   # Either/or: a body carrying both alternatives (or two issue lines) contradicts itself.
   [ "$(printf '%s\n' "${body}" | grep -cxE 'Fixes #[0-9]+|No issue: trivial fix\.')" = '1' ] ||
-    { printf 'VIOLATION A16: the generated pull-request body has more than one issue line\n'; return 1; }
+    {
+      printf 'VIOLATION A16: the generated pull-request body has more than one issue line\n'
+      return 1
+    }
   if ! { [ "${why_line}" -lt "${what_line}" ] && [ "${what_line}" -lt "${issue_line}" ]; }; then
-    printf 'VIOLATION A16: the generated pull-request body is out of template order (## Why %s, ## What %s, issue line %s)\n' "${why_line}" "${what_line}" "${issue_line}"; return 1
+    printf 'VIOLATION A16: the generated pull-request body is out of template order (## Why %s, ## What %s, issue line %s)\n' "${why_line}" "${what_line}" "${issue_line}"
+    return 1
   fi
   # Headings alone are not the template either: each section needs prose under it.
   printf '%s\n' "${body}" | sed -n "$((why_line + 1)),$((what_line - 1))p" | grep -q '[^[:space:]]' ||
-    { printf 'VIOLATION A16: the generated pull-request body has an empty ## Why section\n'; return 1; }
+    {
+      printf 'VIOLATION A16: the generated pull-request body has an empty ## Why section\n'
+      return 1
+    }
   printf '%s\n' "${body}" | sed -n "$((what_line + 1)),$((issue_line - 1))p" | grep -q '[^[:space:]]' ||
-    { printf 'VIOLATION A16: the generated pull-request body has an empty ## What section\n'; return 1; }
+    {
+      printf 'VIOLATION A16: the generated pull-request body has an empty ## What section\n'
+      return 1
+    }
   if printf '%s\n' "${body}" | grep -qE 'Part of #[0-9]+'; then
-    printf 'VIOLATION A16: the generated pull-request body links an issue with Part of, which the template does not accept\n'; return 1
+    printf 'VIOLATION A16: the generated pull-request body links an issue with Part of, which the template does not accept\n'
+    return 1
   fi
 
   # A17 — canonical source evidence invokes Cosign during generation. Hosted
@@ -334,15 +470,27 @@ check() {
   local cosign_indices cosign_idx cosign_uses
   cosign_indices="$(yq -r '.jobs.regenerate.steps | to_entries | map(select(.value.uses // "" | test("^sigstore/cosign-installer@"))) | .[].key' "$f")"
   [ "$(printf '%s\n' "${cosign_indices}" | grep -c '[0-9]')" = '1' ] ||
-    { printf 'VIOLATION A17: require exactly one Cosign installer\n'; return 1; }
+    {
+      printf 'VIOLATION A17: require exactly one Cosign installer\n'
+      return 1
+    }
   cosign_idx="${cosign_indices}"
   cosign_uses="$(q "$f" ".jobs.regenerate.steps[${cosign_idx}].uses")"
   printf '%s\n' "${cosign_uses}" | grep -Eq '^sigstore/cosign-installer@[0-9a-f]{40}$' ||
-    { printf 'VIOLATION A17: the Cosign installer must be pinned to a full commit\n'; return 1; }
+    {
+      printf 'VIOLATION A17: the Cosign installer must be pinned to a full commit\n'
+      return 1
+    }
   [ "${cosign_idx}" -lt "${gen_idx}" ] ||
-    { printf 'VIOLATION A17: install Cosign before generation\n'; return 1; }
+    {
+      printf 'VIOLATION A17: install Cosign before generation\n'
+      return 1
+    }
   [ "$(q "$f" ".jobs.regenerate.steps[${cosign_idx}].if")" = '' ] ||
-    { printf 'VIOLATION A17: the Cosign installer must not be conditional\n'; return 1; }
+    {
+      printf 'VIOLATION A17: the Cosign installer must not be conditional\n'
+      return 1
+    }
 
   printf 'ok\n'
 }
@@ -387,43 +535,43 @@ ablate() {
   esac
 }
 
-ablate A1 'schedule removed'                 'del(.on.schedule)'
-ablate A1 'workflow_dispatch removed'        'del(.on.workflow_dispatch)'
-ablate A2 'ambient contents: write'          '.permissions.contents = "write"'
+ablate A1 'schedule removed' 'del(.on.schedule)'
+ablate A1 'workflow_dispatch removed' 'del(.on.workflow_dispatch)'
+ablate A2 'ambient contents: write' '.permissions.contents = "write"'
 ablate A2 'job granted pull-requests: write' '.jobs.regenerate.permissions.pull-requests = "write"'
-ablate A3 'cancel-in-progress true'          '.concurrency.cancel-in-progress = true'
-ablate A3 'queue max'                        '.concurrency.queue = "max"'
-ablate A4 'environment removed'              'del(.jobs.regenerate.environment)'
-ablate A5 'kube context unpinned'            '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .env.PUBLISH_KUBE_CONTEXT) = "admin@local"'
-ablate A5 'generator on GITHUB_TOKEN'        '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .env.GH_TOKEN) = "${{ github.token }}"'
-ablate A6 'token widened to workflows'       '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with.permission-workflows) = "write"'
-ablate A6 'token actions grant dropped'      '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with) |= del(.permission-actions)'
-ablate A7 'credentials persisted'            '(.jobs.regenerate.steps[] | select(.uses // "" | contains("actions/checkout")) | .with.persist-credentials) = true'
-ablate A8 'branch interpolated'              '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.branch) = "regenerate-${{ github.run_id }}"'
-ablate A8 'not a draft'                      '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.draft) = false'
-ablate A8 'unsigned commit'                  '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with) |= del(.sign-commits)'
-ablate A8 'add-paths widened'                '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.add-paths) = "."'
-ablate A9 'generator continue-on-error'      '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .continue-on-error) = true'
-ablate A9 'pull request on always()'         '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .if) = "always()"'
-ablate A9 'guard step removed'               'del(.jobs.regenerate.steps[] | select(.run // "" | contains("guard-publish-workflow-approved-revisions.sh")))'
+ablate A3 'cancel-in-progress true' '.concurrency.cancel-in-progress = true'
+ablate A3 'queue max' '.concurrency.queue = "max"'
+ablate A4 'environment removed' 'del(.jobs.regenerate.environment)'
+ablate A5 'kube context unpinned' '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .env.PUBLISH_KUBE_CONTEXT) = "admin@local"'
+ablate A5 'generator on GITHUB_TOKEN' '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .env.GH_TOKEN) = "${{ github.token }}"'
+ablate A6 'token widened to workflows' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with.permission-workflows) = "write"'
+ablate A6 'token actions grant dropped' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with) |= del(.permission-actions)'
+ablate A7 'credentials persisted' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("actions/checkout")) | .with.persist-credentials) = true'
+ablate A8 'branch interpolated' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.branch) = "regenerate-${{ github.run_id }}"'
+ablate A8 'not a draft' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.draft) = false'
+ablate A8 'unsigned commit' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with) |= del(.sign-commits)'
+ablate A8 'add-paths widened' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.add-paths) = "."'
+ablate A9 'generator continue-on-error' '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .continue-on-error) = true'
+ablate A9 'pull request on always()' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .if) = "always()"'
+ablate A9 'guard step removed' 'del(.jobs.regenerate.steps[] | select(.run // "" | contains("guard-publish-workflow-approved-revisions.sh")))'
 ablate A9 'guard moved after the pull request' '.jobs.regenerate.steps = ([.jobs.regenerate.steps[] | select((.run // "" | contains("guard-publish-workflow-approved-revisions.sh")) | not)] + [.jobs.regenerate.steps[] | select(.run // "" | contains("guard-publish-workflow-approved-revisions.sh"))])'
-ablate A10 'token repositories removed'      '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with) |= del(.repositories)'
-ablate A10 'token owner removed'             '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with) |= del(.owner)'
+ablate A10 'token repositories removed' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with) |= del(.repositories)'
+ablate A10 'token owner removed' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with) |= del(.owner)'
 ablate A10 'one consumer dropped from scope' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with.repositories) = "platform\n.github\naws\nwedding-app\n"'
-ablate A11 'concurrency keyed on the ref'    '.concurrency.group = "${{ github.workflow }}-${{ github.ref }}"'
-ablate A11 'pull-request base removed'       '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with) |= del(.base)'
-ablate A11 'pull-request base interpolated'  '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.base) = "${{ github.ref_name }}"'
+ablate A11 'concurrency keyed on the ref' '.concurrency.group = "${{ github.workflow }}-${{ github.ref }}"'
+ablate A11 'pull-request base removed' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with) |= del(.base)'
+ablate A11 'pull-request base interpolated' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.base) = "${{ github.ref_name }}"'
 ablate A12 'disclosure dropped from the body' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) = "The per-consumer approved-revision set moved.\n"'
-ablate A13 'endpoint step removed'           'del(.jobs.regenerate.steps[] | select(.run // "" | contains("use-prod-stable-api-endpoint.sh")))'
+ablate A13 'endpoint step removed' 'del(.jobs.regenerate.steps[] | select(.run // "" | contains("use-prod-stable-api-endpoint.sh")))'
 ablate A13 'endpoint moved after the generator' '.jobs.regenerate.steps = ([.jobs.regenerate.steps[] | select((.run // "" | contains("use-prod-stable-api-endpoint.sh")) | not)] + [.jobs.regenerate.steps[] | select(.run // "" | contains("use-prod-stable-api-endpoint.sh"))])'
 ablate A13 'endpoint step loses HCLOUD_TOKEN' '(.jobs.regenerate.steps[] | select(.run // "" | contains("use-prod-stable-api-endpoint.sh")) | .env) |= del(.HCLOUD_TOKEN)'
 
-ablate A5 'generator on the WRITE token'     '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .env.GH_TOKEN) = "${{ steps.app-token.outputs.token }}"'
-ablate A6 'read token given contents write'  '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.permission-contents) = "write"'
-ablate A6 'write token given actions read'   '(.jobs.regenerate.steps[] | select(.id == "app-token") | .with.permission-actions) = "read"'
+ablate A5 'generator on the WRITE token' '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .env.GH_TOKEN) = "${{ steps.app-token.outputs.token }}"'
+ablate A6 'read token given contents write' '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.permission-contents) = "write"'
+ablate A6 'write token given actions read' '(.jobs.regenerate.steps[] | select(.id == "app-token") | .with.permission-actions) = "read"'
 ablate A6 'consumer-read token step removed' 'del(.jobs.regenerate.steps[] | select(.id == "consumer-token"))'
-ablate A7 'checkout ref removed'             '(.jobs.regenerate.steps[] | select(.uses // "" | contains("actions/checkout")) | .with) |= del(.ref)'
-ablate A7 'checkout ref interpolated'        '(.jobs.regenerate.steps[] | select(.uses // "" | contains("actions/checkout")) | .with.ref) = "${{ github.ref_name }}"'
+ablate A7 'checkout ref removed' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("actions/checkout")) | .with) |= del(.ref)'
+ablate A7 'checkout ref interpolated' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("actions/checkout")) | .with.ref) = "${{ github.ref_name }}"'
 ablate A10 'a consumer added to the WRITE token' '(.jobs.regenerate.steps[] | select(.id == "app-token") | .with.repositories) = "platform\nwedding-app\n"'
 ablate A10 'a consumer dropped from the READ token' '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.repositories) = ".github\naws\nwedding-app\n"'
 ablate A10 'a renamed consumer named by its old repository' '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.repositories) |= sub("khoist"; "data-product-controller")'
@@ -453,7 +601,7 @@ ablate A9 'Cosign installer failure ignored' '(.jobs.regenerate.steps[] | select
 # Execute the actual change-detection step in a disposable checkout. This proves
 # that the PR boundary handles each matcher, staged changes, and unrelated paths.
 detection="${work_dir}/detect.sh"
-yq -r '.jobs.regenerate.steps[] | select(.id == "moved") | .run' "${workflow}" > "${detection}"
+yq -r '.jobs.regenerate.steps[] | select(.id == "moved") | .run' "${workflow}" >"${detection}"
 checkout="${work_dir}/checkout"
 mkdir -p "${checkout}"
 (
@@ -461,32 +609,32 @@ mkdir -p "${checkout}"
   git init -q
   while IFS= read -r path; do
     mkdir -p "$(dirname "$path")"
-    printf 'original\n' > "$path"
+    printf 'original\n' >"$path"
     git add -- "$path"
-  done <<< "${generated_paths}"
+  done <<<"${generated_paths}"
   git -c user.name=Test -c user.email=test@example.invalid -c commit.gpgsign=false commit -qm fixture
   export GITHUB_OUTPUT="${work_dir}/outputs"
-  bash "${detection}" > "${work_dir}/detection.log"
+  bash "${detection}" >"${work_dir}/detection.log"
   grep -qx 'moved=false' "$GITHUB_OUTPUT" || fail 'unchanged checkout must report false'
   while IFS= read -r path; do
-    : > "$GITHUB_OUTPUT"
-    printf 'updated\n' >> "$path"
-    bash "${detection}" > "${work_dir}/detection.log"
+    : >"$GITHUB_OUTPUT"
+    printf 'updated\n' >>"$path"
+    bash "${detection}" >"${work_dir}/detection.log"
     grep -qx 'moved=true' "$GITHUB_OUTPUT" || fail "allowed update was not detected: $path"
     git add -- "$path"
-    : > "$GITHUB_OUTPUT"
-    bash "${detection}" > "${work_dir}/detection.log"
+    : >"$GITHUB_OUTPUT"
+    bash "${detection}" >"${work_dir}/detection.log"
     grep -qx 'moved=true' "$GITHUB_OUTPUT" || fail "staged update was not detected: $path"
     git restore --staged --worktree -- "$path"
-  done <<< "${generated_paths}"
+  done <<<"${generated_paths}"
   mkdir -p k8s/bases/apps/other
-  printf 'unrelated\n' > k8s/bases/apps/other/oci-repository.yaml
-  if bash "${detection}" > "${work_dir}/detection.log" 2>&1; then
+  printf 'unrelated\n' >k8s/bases/apps/other/oci-repository.yaml
+  if bash "${detection}" >"${work_dir}/detection.log" 2>&1; then
     fail 'unrelated untracked manifest was allowed'
   fi
   grep -Fq 'outside the approved set and matchers' "${work_dir}/detection.log" || fail 'unrelated-file refusal was not the expected cause'
   git add -- k8s/bases/apps/other/oci-repository.yaml
-  if bash "${detection}" > "${work_dir}/detection.log" 2>&1; then
+  if bash "${detection}" >"${work_dir}/detection.log" 2>&1; then
     fail 'unrelated staged manifest was allowed'
   fi
 )

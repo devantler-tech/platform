@@ -8,3 +8,5 @@ resources:
   - capacity-buffer.yaml
   - pod-template-longhorn-migration.yaml
   - capacity-buffer-longhorn-migration.yaml
+  - pod-template-longhorn-migration-v2.yaml
+  - capacity-buffer-longhorn-migration-v2.yaml

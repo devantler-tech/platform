@@ -70,6 +70,27 @@ together for normal review. A failed output reservation cannot overwrite an
 existing directory or final symlink. Interrupted partial output is not a valid
 preparation result; only a successful complete invocation may be copied for review.
 
+## Publisher transitions
+
+The consumer's canonical approvals may contain one or two distinct immutable
+publisher revisions. The current source binding still names exactly one genuine
+publisher; a staged approval never changes the attribution of existing bytes or
+expands the current source's verification matcher. Both the current and proposed
+publishers must remain approved while a transition retains its previous binding.
+Unknown families, floating references, duplicates and a third revision are refused.
+
+Publication verification derives the publisher from the authenticated release
+run and binds that same identity to the immutable caller, certificate, signed
+claims, receipt and final run readback. Preparation writes the replacement digest
+and exact publisher revision together, rechecking the approval snapshot before
+emitting its private candidate. It never edits the committed current binding.
+
+A changed main-branch pin without a matching proposed publication fails
+regeneration without changing any output. A valid proposed publication preserves
+the complete previous observation until the replacement digest and its exact
+publisher constraint are actually observed Ready and SourceVerified. Existing
+application and enrollment restrictions remain unchanged.
+
 ## Delivery boundary
 
 Source registration uses the normal reviewed production pipeline and fixed

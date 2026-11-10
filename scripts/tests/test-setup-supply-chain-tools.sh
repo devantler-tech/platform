@@ -3,8 +3,15 @@ set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)
 installer="${repo_root}/.github/scripts/setup-supply-chain-tools.sh"
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 [[ -f "${installer}" ]] || fail 'the digest-verified supply-chain installer is missing'
+trivy_pin=$(sed -n 's/^TRIVY_VERSION="\([^"]*\)"$/\1/p' "${installer}")
+ci_trivy=$(sed -n "s/^readonly CI_TRIVY_VERSION='\([^']*\)'$/\1/p" "${repo_root}/scripts/megalinter-scan-counts.sh")
+[[ -n "${trivy_pin}" && "${trivy_pin}" == "${ci_trivy}" ]] ||
+  fail 'boundary Trivy pin differs from the CI scan version'
 
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/test-supply-chain-tools.XXXXXX")
 trap 'rm -rf "${test_root}"' EXIT
@@ -12,15 +19,17 @@ mkdir -p "${test_root}/bin" "${test_root}/fixtures" "${test_root}/runner" "${tes
 export TEST_ROOT="${test_root}"
 
 # Execute the installed fixture programs, so success proves which bytes ran.
-for tool in cosign syft; do
+for tool in cosign syft trivy; do
   cat >"${test_root}/fixtures/${tool}" <<FIXTURE_TOOL
 #!/usr/bin/env bash
 printf '${tool} %s\\n' "\$*" >>"\${TEST_ROOT}/executed"
 FIXTURE_TOOL
 done
 tar -czf "${test_root}/fixtures/syft.tar.gz" -C "${test_root}/fixtures" syft
+tar -czf "${test_root}/fixtures/trivy.tar.gz" -C "${test_root}/fixtures" trivy
 cosign_sha=$(sha256sum "${test_root}/fixtures/cosign" | cut -d' ' -f1)
 syft_sha=$(sha256sum "${test_root}/fixtures/syft.tar.gz" | cut -d' ' -f1)
+trivy_sha=$(sha256sum "${test_root}/fixtures/trivy.tar.gz" | cut -d' ' -f1)
 
 cat >"${test_root}/bin/curl" <<'FAKE_CURL'
 #!/usr/bin/env bash
@@ -44,6 +53,8 @@ case "${url}" in
   https://github.com/anchore/syft/releases/download/v9.9.9/syft_9.9.9_linux_amd64.tar.gz)
     [[ ${FAIL_DOWNLOAD:-} != syft ]] || exit 22
     cp "${TEST_ROOT}/fixtures/syft.tar.gz" "${output}" ;;
+  https://github.com/aquasecurity/trivy/releases/download/v9.9.9/trivy_9.9.9_Linux-64bit.tar.gz)
+    cp "${TEST_ROOT}/fixtures/trivy.tar.gz" "${output}" ;;
   *) printf 'unexpected download: %s\n' "${url}" >&2; exit 2 ;;
 esac
 FAKE_CURL
@@ -75,8 +86,10 @@ chmod +x "${test_root}/bin/"*
 make_variant() {
   sed -e 's/^COSIGN_VERSION=.*/COSIGN_VERSION="9.9.9"/' \
     -e 's/^SYFT_VERSION=.*/SYFT_VERSION="9.9.9"/' \
+    -e 's/^TRIVY_VERSION=.*/TRIVY_VERSION="9.9.9"/' \
     -e "s/^COSIGN_SHA256=.*/COSIGN_SHA256=\"$1\"/" \
     -e "s/^SYFT_SHA256=.*/SYFT_SHA256=\"$2\"/" \
+    -e "s/^TRIVY_SHA256=.*/TRIVY_SHA256=\"${3:-${trivy_sha}}\"/" \
     -e "s|/usr/local/bin/cosign version|${test_root}/installed/cosign version|" \
     -e "s|/usr/local/bin/syft version|${test_root}/installed/syft version|" \
     "${installer}" >"${test_root}/installer.sh"
@@ -87,12 +100,13 @@ make_variant() {
 }
 
 run_installer() {
+  rm -rf "${test_root}/runner/platform-validation-tools"
   rm -f "${test_root}/installs" "${test_root}/executed" "${test_root}/downloads" "${test_root}/retries" "${test_root}/github-path" "${test_root}/installed/"*
   status=0
   output=$(PATH="${test_root}/bin:${test_root}/installed:${PATH}" \
     RUNNER_TEMP="${test_root}/runner" GITHUB_PATH="${test_root}/github-path" \
-    bash "${test_root}/installer.sh" 2>&1) || status=$?
-  [[ -z $(find "${test_root}/runner" -mindepth 1 -print -quit) ]] || fail 'installer left temporary downloads behind'
+    bash "${test_root}/installer.sh" "$@" 2>&1) || status=$?
+  [[ -z $(find "${test_root}/runner" -name 'supply-chain-tools.*' -print -quit) ]] || fail 'installer left temporary downloads behind'
 }
 
 assert_refused() {
@@ -119,6 +133,21 @@ if [[ ! -f ${test_root}/github-path ]] || ! grep -Fxq /usr/local/bin "${test_roo
 fi
 
 bad_sha=$(printf '%064d' 0)
+make_variant "${cosign_sha}" "${syft_sha}" "${bad_sha}"
+run_installer trivy-boundary
+assert_refused 'substituted trivy archive' 'trivy digest mismatch'
+[[ ! -e ${test_root}/runner/platform-validation-tools ]] || fail 'unverified trivy reached installation'
+[[ ! -e ${test_root}/github-path ]] || fail 'unverified trivy changed PATH'
+
+make_variant "${cosign_sha}" "${syft_sha}"
+run_installer trivy-boundary
+[[ ${status} == 0 ]] || fail "verified trivy download failed: ${output}"
+trivy_dir="${test_root}/runner/platform-validation-tools"
+cmp "${test_root}/fixtures/trivy" "${trivy_dir}/trivy" || fail 'wrong trivy bytes installed'
+grep -Fxq 'trivy --version' "${test_root}/executed" || fail 'verified trivy never ran'
+grep -Fxq "${trivy_dir}" "${test_root}/github-path" || fail 'verified trivy is not on the workflow PATH'
+[[ $(wc -l <"${test_root}/downloads") -eq 1 ]] || fail 'boundary setup downloaded unrelated tools'
+
 make_variant "${bad_sha}" "${syft_sha}"
 run_installer
 assert_refused 'substituted cosign binary' 'cosign digest mismatch'

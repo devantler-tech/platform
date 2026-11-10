@@ -7,13 +7,13 @@
 # with zero rules: the node agent profiled workloads but checked nothing, and an empty alert
 # route read exactly like a quiet cluster. This test makes that state visible and the switch safe:
 #
-#   1. Production must declare the switch explicitly. An idle detector is then a reviewed choice
-#      in Git, never a chart default nobody chose.
+#   1. Production must explicitly install the initial port-forward baseline when runtime detection
+#      is enabled. An enabled detector with no rules is a failure, never a quiet cluster.
 #   2. The pinned chart is rendered with production's values and post-renderers in BOTH states,
 #      as an install and as an upgrade, whichever state is declared.
 #   3. Off must render no rule or binding object. On must render exactly the default Rules object
-#      and the cluster-wide binding, the binding must name only rules that exist and at least one
-#      enabled rule, and it must cover the same namespaces the scanner does.
+#      and the cluster-wide binding, each containing only the enabled, profile-independent
+#      port-forward rule by ID, and cover the same namespaces the scanner does.
 #   4. On may differ from off by those two objects only, so turning the switch on changes no
 #      RBAC, workload or CRD.
 #
@@ -21,15 +21,24 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+bash "$root/scripts/generate-kubescape-rule-schema.sh" --check
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/kubescape-runtime-rules.XXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 # The declared switch: "true" or "false", or the reason it is not a boolean.
 declared_switch() {
   jq -r '.spec.values.alertCRD.installDefault |
     if type == "boolean" then tostring else "undeclared (\(type))" end' "$1"
+}
+
+production_baseline_enabled() {
+  jq -e '.spec.values.capabilities.runtimeDetection == "enable" and
+    .spec.values.alertCRD.installDefault == true' "$1" >/dev/null
 }
 
 # Problems with an "off" render ($1: a JSON array of every rendered object).
@@ -47,28 +56,34 @@ on_problems() {
     elif ($bindings | length) != 1 then "on renders \($bindings | length) bindings, not 1"
     else
       $rules[0] as $set | $bindings[0] as $binding |
-      [$set.spec.rules[]? | .name] as $names |
-      [$set.spec.rules[]? | select(.enabled == true) | .name] as $enabled |
-      [$binding.spec.rules[]? | .ruleName] as $bound |
+      [$set.spec.rules[]? | select(.enabled == true) | .id] as $enabled |
+      [$binding.spec.rules[]? | .ruleID] as $bound |
       (if $set.metadata.name == "default-rules" and $set.metadata.namespace == "kubescape" then empty
        else "the Rules object is not kubescape/default-rules" end),
+      (if ($set.spec | keys) == ["rules"] and ($set.spec.rules | length) == 1
+       then empty else "the baseline must contain exactly one rule definition and no temporary state" end),
       (if $binding.metadata.name == "all-rules-all-pods" and $binding.metadata.namespace == null then empty
        else "the binding is not the cluster-wide all-rules-all-pods" end),
       (if any($bound[]; IN($enabled[])) then empty else "the binding names no enabled rule" end),
+      (if $binding.spec.rules == [{ruleID:"R2001"}] and
+          $binding.metadata.labels["devantler.tech/runtime-rule-stage"] == "port-forward-baseline"
+       then empty else "the binding is not the bounded port-forward baseline" end),
+      (if [$set.spec.rules[]? | select(.id == "R2001" and .enabled == true and
+            .profileDependency == 2 and .expressions.ruleExpression == [{
+              eventType:"k8s-admission", expression:"event.Kind == \"PodPortForwardOptions\""}])] | length == 1
+       then empty else "the port-forward definition is missing, disabled or profile-dependent" end),
       (if $binding.spec.namespaceSelector.matchExpressions == [{
             key: "kubernetes.io/metadata.name", operator: "NotIn", values: ($exclude | split(","))}]
        then empty else "the binding does not cover exactly the scanned namespaces" end)
     end' "$1"
 }
 
-# Names the binding lists that match no rule in the Rules object. Such an entry checks nothing,
-# but the rules it does resolve still run, so it is reported rather than fatal: the pinned chart
-# itself binds one rule under a name its Rules object does not use.
-unbound_names() {
+# A stable ID must resolve against the installed Rules object; names may change.
+unbound_rule_ids() {
   jq -r '
-    [.[] | select(.kind == "Rules") | .spec.rules[]? | .name] as $names |
-    .[] | select(.kind == "RuntimeRuleAlertBinding") | .spec.rules[]? | .ruleName |
-    select(IN($names[]) | not)' "$1"
+    [.[] | select(.kind == "Rules") | .spec.rules[]? | .id] as $ids |
+    .[] | select(.kind == "RuntimeRuleAlertBinding") | .spec.rules[]? | .ruleID |
+    select(IN($ids[]) | not)' "$1"
 }
 
 # Every rendered object except the two the switch owns, in a stable order. The chart generates
@@ -110,7 +125,15 @@ jq '.spec.values.alertCRD.installDefault = "false"' "$scratch/release.json" >"$s
 [[ "$(declared_switch "$scratch/undeclared.json")" == "undeclared (string)" ]] ||
   fail 'the declaration check accepted a string switch'
 
-detection="$(jq -r '.spec.values.capabilities.runtimeDetection // "unset"' "$scratch/release.json")"
+production_baseline_enabled "$scratch/release.json" ||
+  fail 'production runtime detection and its installed rule baseline must be enabled'
+for mutation in '.spec.values.capabilities.runtimeDetection = "disable"' \
+  '.spec.values.alertCRD.installDefault = false'; do
+  jq "$mutation" "$scratch/release.json" >"$scratch/disabled-baseline.json"
+  if production_baseline_enabled "$scratch/disabled-baseline.json"; then
+    fail 'the production baseline check accepted a disabled detector or rule set'
+  fi
+done
 exclude="$(jq -er '.spec.values.excludeNamespaces | select(type == "string" and . != "")' "$scratch/release.json")" ||
   fail 'the release must declare the namespaces the scanner excludes'
 jq -e '.spec.postRenderers | select(length > 0)' "$scratch/release.json" >"$scratch/renderers.json"
@@ -120,8 +143,7 @@ controller_helm="${CONTROLLER_HELM:-$scratch/controller-helm}"
 if [[ -z "${CONTROLLER_HELM:-}" ]]; then
   bash "$root/scripts/build-controller-helm.sh" "$controller_helm"
 fi
-[[ "$("$controller_helm" version --template '{{ printf "%#v" . }}')" == \
-  'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ]] ||
+[[ "$("$controller_helm" version --template '{{ printf "%#v" . }}')" == 'version.BuildInfo{Version:"v4.3", GitCommit:"", GitTreeState:"", GoVersion:"go1.27.3", KubeClientVersion:"v1.37"}' ]] ||
   fail 'the audited controller renderer is required'
 
 # Render the chart with one switch state and apply the release's post-renderers as Flux does.
@@ -139,7 +161,7 @@ render() {
       --namespace kubescape --kube-version "$kube_version" --values "$scratch/values.json" \
       >"$scratch/rendered.yaml"
   fi
-  for ((i=0; i<count; i++)); do
+  for ((i = 0; i < count; i++)); do
     renderer="$scratch/$state-$mode-renderer-$i"
     mkdir "$renderer"
     cp "$scratch/rendered.yaml" "$renderer/rendered.yaml"
@@ -174,11 +196,25 @@ for mode in install upgrade; do
   expect_problem 'off renders Rules default-rules' off_problems "$on"
   jq 'map(if .kind == "Rules" then .spec.rules |= map(.enabled = false) else . end)' "$on" >"$scratch/mutated.json"
   expect_problem 'names no enabled rule' on_problems "$scratch/mutated.json" "$exclude"
-  jq 'map(if .kind == "Rules" then .spec.rules |= map(.name += " (renamed)") else . end)' "$on" >"$scratch/mutated.json"
+  jq 'map(if .kind == "Rules" then .spec.rules |= map(.id += "-unknown") else . end)' "$on" >"$scratch/mutated.json"
   expect_problem 'names no enabled rule' on_problems "$scratch/mutated.json" "$exclude"
-  jq 'map(if .kind == "Rules" then .spec.rules[0].name += " (renamed)" else . end)' "$on" >"$scratch/mutated.json"
-  expect_problem "$(jq -r '.[] | select(.kind == "Rules") | .spec.rules[0].name' "$on")" \
-    unbound_names "$scratch/mutated.json"
+  jq 'map(if .kind == "Rules" then .spec.rules |= map(if .id == "R2001" then .id = "unknown" else . end) else . end)' "$on" >"$scratch/mutated.json"
+  expect_problem 'R2001' unbound_rule_ids "$scratch/mutated.json"
+  jq 'map(if .kind == "Rules" then .spec.rules |= map(.name += " (renamed)") else . end)' "$on" >"$scratch/mutated.json"
+  [[ -z "$(on_problems "$scratch/mutated.json" "$exclude")" ]] ||
+    fail "$mode: renaming a rule broke its stable-ID binding"
+  jq 'map(if .kind == "RuntimeRuleAlertBinding" then .spec.rules = [{ruleID:"R0001"}] else . end)' "$on" >"$scratch/mutated.json"
+  expect_problem 'not the bounded port-forward baseline' on_problems "$scratch/mutated.json" "$exclude"
+  jq 'map(if .kind == "RuntimeRuleAlertBinding" then .spec.rules += [{ruleID:"R0001"}] else . end)' "$on" >"$scratch/mutated.json"
+  expect_problem 'not the bounded port-forward baseline' on_problems "$scratch/mutated.json" "$exclude"
+  jq 'map(if .kind == "Rules" then .spec.rules += [.spec.rules[0] | .id = "R0001"] else . end)' "$on" >"$scratch/mutated.json"
+  expect_problem 'exactly one rule definition' on_problems "$scratch/mutated.json" "$exclude"
+  jq 'map(if .kind == "Rules" then .spec.portForwardBaseline = {} else . end)' "$on" >"$scratch/mutated.json"
+  expect_problem 'no temporary state' on_problems "$scratch/mutated.json" "$exclude"
+  jq 'map(if .kind == "Rules" then .spec.rules |= map(if .id == "R2001" then .profileDependency = 0 else . end) else . end)' "$on" >"$scratch/mutated.json"
+  expect_problem 'profile-dependent' on_problems "$scratch/mutated.json" "$exclude"
+  jq 'map(if .kind == "Rules" then .spec.rules |= map(if .id == "R2001" then .expressions.ruleExpression[0].eventType = "exec" else . end) else . end)' "$on" >"$scratch/mutated.json"
+  expect_problem 'port-forward definition' on_problems "$scratch/mutated.json" "$exclude"
   jq 'map(select(.kind != "RuntimeRuleAlertBinding"))' "$on" >"$scratch/mutated.json"
   expect_problem 'renders 0 bindings' on_problems "$scratch/mutated.json" "$exclude"
   jq 'map(if .kind == "RuntimeRuleAlertBinding" then del(.spec.namespaceSelector) else . end)' "$on" >"$scratch/mutated.json"
@@ -190,10 +226,5 @@ for mode in install upgrade; do
   fi
 done
 
-while IFS= read -r name; do
-  printf 'NOTE: the chart binding names "%s", which matches no rule in its Rules object\n' "$name"
-done < <(unbound_names "$scratch/true-install.json")
-if [[ "$detection" == enable && "$declared" == false ]]; then
-  printf 'NOTE: runtime detection is enabled with its default rules switched off (#4968), so it checks nothing until the switch is turned on\n'
-fi
-printf 'PASS: the Kubescape runtime-rules switch is declared %s and adds only the default rules and their binding\n' "$declared"
+[[ -z "$(unbound_rule_ids "$scratch/true-install.json")" ]] || fail 'the binding contains unknown rule IDs'
+printf 'PASS: runtime detection installs the bounded port-forward baseline; other resources and both switch states are preserved\n'

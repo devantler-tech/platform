@@ -1,0 +1,11 @@
+# Opt Actual Budget into the label-gated `add-user-namespaces` Kyverno rule,
+# paired with the authored `hostUsers: false` in disable-host-users.yaml. The
+# stateful pilot passed (#3604) and is permanent since #3605. The label lives
+# only in the Hetzner overlay, so the local Docker provider keeps the defaults.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: actual-budget
+  labels:
+    pod-security.devantler.tech/user-namespaces: enabled

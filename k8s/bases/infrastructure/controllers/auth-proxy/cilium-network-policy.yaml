@@ -223,6 +223,18 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
+    # kagent UI upstream (kagent-ui Service :8080). Only the UI pod: the
+    # controller's API stays inside the kagent namespace. Prod-only; inert on
+    # local/CI where the kagent namespace does not exist.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kagent
+            app.kubernetes.io/name: kagent
+            app.kubernetes.io/component: ui
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
     # OpenBao UI/API upstream. The public HTTPRoute points at oauth2-proxy,
     # then auth-proxy forwards only authenticated requests to OpenBao.
     - toEndpoints:

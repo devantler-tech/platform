@@ -1,6 +1,7 @@
+---
 name: Publish Kyverno Background Hotfix
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:
@@ -23,7 +24,7 @@ concurrency:
 
 env:
   SOURCE_COMMIT: e63308f1e16c05cd009ac4864be6ec25c66b49be
-  PATCHED_SOURCE_TREE: 52bd71206733efbd2a2ce86595315c9706ada94a
+  PATCHED_SOURCE_TREE: a9fcf39f19241ac127b2a9d8a70eadae54c22de8
   IMAGE: ghcr.io/devantler-tech/platform-kyverno-background
   IMAGE_TAG: v1.19.2-downstream-cleanup.1-${{ github.sha }}
 
@@ -36,7 +37,7 @@ jobs:
       contents: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
@@ -115,7 +116,7 @@ jobs:
       id-token: write # obtain the keyless cosign signing certificate
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 

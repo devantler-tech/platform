@@ -1,3 +1,4 @@
+---
 # actionlint configuration.
 #
 # `concurrency.queue` is a real, documented GitHub Actions key — SchemaStore's

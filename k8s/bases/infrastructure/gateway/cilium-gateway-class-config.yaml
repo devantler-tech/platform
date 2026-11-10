@@ -1,0 +1,25 @@
+# The platform GatewayClass's Cilium options (the cilium HelmRelease points
+# the class here with a post-renderer patch).
+#
+# gRPC-web translation is off. With it on, Envoy rewrites a browser's gRPC-web
+# request into native gRPC. That only works when Envoy can reach the backend
+# over HTTP/2, and no backend behind this Gateway declares h2c or grpc, so
+# Envoy reaches every one over HTTP/1.1. The rewritten request therefore
+# reaches apps that serve gRPC-web themselves, such as the kagent UI, which
+# proxies /api to the kagent controller, as a native gRPC request over
+# HTTP/1.1, which they do not recognise. The controller answered every call
+# from its catch-all route with an empty 200, and the UI showed nothing.
+# Passing gRPC-web through unchanged is what those apps expect.
+#
+# It sits in this folder, with the Gateway, rather than with the cilium
+# HelmRelease: cilium-operator registers this CRD at runtime, so it does not
+# exist yet when the controllers layer first applies on a new cluster.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumGatewayClassConfig
+metadata:
+  name: platform
+  namespace: kube-system
+spec:
+  httpOptions:
+    grpcWebTranslation:
+      enabled: false

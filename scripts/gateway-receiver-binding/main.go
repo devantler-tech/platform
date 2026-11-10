@@ -1,3 +1,5 @@
+// Command gateway-receiver-binding restores, applies and verifies the
+// reviewed Gateway receiver state during production deployment.
 package main
 
 import (
@@ -225,7 +227,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "GATEWAY_RECEIVER_SOURCE=UNVERIFIED stage=%s\n", err.Error())
 			os.Exit(2)
 		}
-		fmt.Printf("GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=%t\n", profile.Fence)
+		fmt.Printf("GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=%t proxy_protocol=%t\n", profile.Fence, profile.Proxy)
 		return
 	}
 	if err := prepare(ctx, kubeContext, outputPath); err != nil {

@@ -9,8 +9,13 @@ a failed suite does not cancel the other diagnostics.
 
 Cluster policies have fixtures, tenant, services, placement, storage and
 observability suites. Every validation step belongs to exactly one declared
-suite. The publication-generator suite runs in its own required job with the same
-checkout, compiler and native tool setup. Repository guards and independent guards
+suite. The required publication-generator job has two isolated suites, bootstrap
+and upgrade, with at most four fixture workers per runner. The two slowest
+fixtures run on different runners. Every fixture belongs to one suite and both
+suite results are required before deployment or merge. The diagnostic runner
+still runs all nine fixtures when no suite is selected. The bootstrap suite
+also runs the shared lint and routing checks once per workflow.
+Repository guards and independent guards
 run in two fixed independent jobs, each with its own checkout and the same pinned
 compiler and native kubectl. The independent job also runs the existing native
 gateway receiver proof, alongside the complete Go regression job. The proof keeps
@@ -22,6 +27,25 @@ for both jobs, and the aggregate explicitly refuses every non-success publicatio
 guard result. Making independent guards depend on repository guards and complete
 Go regressions is the serial diagnostic control; their commands and inputs stay identical.
 Regressions that share one shell environment remain in the same step.
+
+The complete root Go suite uses two fixed, isolated `validate-go-regressions`
+partitions with fail-fast disabled and a maximum of two standard hosted runners.
+Both discover the same root package inventory. One runs the whole
+credential-refresh package and the other runs every remaining package. Neither
+uses a test filter. The helpers partition also runs the whole-repository module
+tidiness check, routing checks and their offline refusal tests once per workflow.
+Discovery errors, missing packages, duplicate inventories
+and child failures fail the job. Both matrix results remain prerequisites for
+the required aggregate and production deployment. In the first hosted trial,
+running half the bridge suite and then all other packages on the same runner
+left a serial tail. The whole-package split lets those two workloads overlap.
+
+`bash scripts/run-go-regressions.sh all` retains the unpartitioned diagnostic
+command. Every execution keeps eight test workers and the explicit 20-minute
+per-package deadline. No production ordering or deployment gate changes. Local
+partition routing is not a hosted throughput measurement: compare complete
+pre-deployment execution, runner waiting and occupied runner time under #5840
+before claiming that an additional runner allocation improves the queue.
 
 Move the independent OpenBao standby, Crossplane egress, native-mail, Kyverno
 review-admission, unscanned-namespace, publisher-pin and Coroot application-health
@@ -60,12 +84,28 @@ production verifier and all fixture assertions and real deadlines stay intact.
 
 ## Evidence and alternatives
 
+The selected Flux bridge job retains its shell syntax, lint and behavioral
+controls, while the unconditional complete Go job owns the credential-refresh
+Go package. Both jobs check out the same event revision and remain required.
+The Go package is no longer repeated in the selected job. Real `go list ./...`
+discovery protects its inclusion in the full suite; the existing aggregate
+controls reject a missing, skipped, cancelled or failed full-suite result.
+
+In successful PR run
+[41661620291](https://github.com/devantler-tech/platform/actions/runs/41661620291),
+the full Go regression step took 440 seconds and the selected bridge step took
+408 seconds. Both invoked the credential-refresh package. Removing that duplicate
+targets occupied runner time and contention; it does not establish a matching
+reduction in merge-queue latency. The merge-group Go suite, production validation,
+deployment and recovery remain mandatory. Compare hosted feedback and occupied
+runner time separately under #5495 after delivery.
+
 `Measure CI Runtime` compares settings on one immutable event revision.
 Run `measure-ci-runtime.yaml` on `main` with confirmation `measure current main`.
 Changes to that workflow also run the comparison as PR validation, before it is
 promoted. Both entrypoints check out the event's exact commit.
 It runs the existing complete Go suite with four and eight test workers, then
-the complete nine publication fixtures with two and four workers. Only one
+the complete nine publication fixtures on one runner with two and four workers. Only one
 standard runner is used at a time; each arm has its own checkout and Go setup
 with cache restoration disabled, read-only contents permission, the approved native tools, and a finite
 30-minute job limit. The complete Go command retains its 20-minute deadline.

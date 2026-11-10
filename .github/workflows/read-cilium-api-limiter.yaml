@@ -1,3 +1,4 @@
+---
 name: Read Cilium API Limiter
 
 # Finite read-only evidence for #4329. The runner starts only the fixed `cilium-dbg metrics
@@ -5,7 +6,7 @@ name: Read Cilium API Limiter
 # KUBE_CONFIG has the established admin@prod pipeline identity; the agent's reader cannot
 # reach this surface. Reviewed main code, fixed targets/command, a typed confirmation and
 # sanitized output bound this job. No raw metrics, pod identities or kubectl errors are uploaded.
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

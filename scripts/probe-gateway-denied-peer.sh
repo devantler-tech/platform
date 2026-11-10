@@ -3,7 +3,7 @@
 #
 # THE QUESTION (devantler-tech/platform#5448, stage 3). Every TLS chain on the Gateway's listener
 # accepts only the load balancer's private address. So far only allowed traffic has been observed,
-# which cannot show the fence refuses anything. This must be answered before any PROXY change,
+# which cannot show the fence refuses anything. Both listener transport modes must be testable,
 # because PROXY metadata names a client the listener must not take from an unbound peer.
 #
 # HOW. One short-lived pod connects straight to the gateway Service, so its physical peer is the
@@ -11,6 +11,8 @@
 #   control  plain HTTP to an unrouted hostname. It must get the platform's HTTP-to-HTTPS redirect
 #            (301) before and after the TLS attempts, which proves this pod reaches this Envoy and
 #            that the plain chain, which carries no fence, still answers.
+#            In proxy-v1 mode every request sends a valid PROXY preamble before HTTP or TLS;
+#            otherwise the parser's rejection could be mistaken for the physical-source fence.
 #   tls      HTTPS with the SNI of a public route. Certificate checks are off on purpose: a finished
 #            handshake is the failure this looks for, whatever certificate came back.
 #            refused   curl 35 or 56 with the TLS handshake never finished (time_appconnect is 0)
@@ -68,15 +70,16 @@ readonly settle_seconds=20
 readonly poll_seconds="${PROBE_POLL_SECONDS:-2}"
 
 usage() {
-  printf 'Usage: %s --context <kube-context> --run-id <digits> [--attempts N]\n' "$(basename "$0")" >&2
+  printf 'Usage: %s --context <kube-context> --run-id <digits> --transport <plain|proxy-v1> [--attempts N]\n' "$(basename "$0")" >&2
 }
 
 context=''
 run_id=''
 attempts='10'
+transport=''
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
-    --context | --run-id | --attempts)
+    --context | --run-id | --attempts | --transport)
       if [[ "$#" -lt 2 || -z "$2" ]]; then
         usage
         exit 1
@@ -85,6 +88,7 @@ while [[ "$#" -gt 0 ]]; do
         --context) context="$2" ;;
         --run-id) run_id="$2" ;;
         --attempts) attempts="$2" ;;
+        --transport) transport="$2" ;;
       esac
       shift 2
       ;;
@@ -94,7 +98,7 @@ while [[ "$#" -gt 0 ]]; do
       ;;
   esac
 done
-if [[ -z "${context}" ]] || [[ ! "${run_id}" =~ ^[1-9][0-9]{0,19}$ ]]; then
+if [[ -z "${context}" ]] || [[ ! "${run_id}" =~ ^[1-9][0-9]{0,19}$ ]] || [[ "${transport}" != plain && "${transport}" != proxy-v1 ]]; then
   usage
   exit 1
 fi
@@ -102,6 +106,11 @@ if [[ ! "${attempts}" =~ ^[1-9][0-9]?$ ]] || ((attempts > 30)); then
   printf 'Refusing to run: --attempts must be a whole number from 1 to 30.\n' >&2
   exit 1
 fi
+curl_transport_option=''
+if [[ "${transport}" == proxy-v1 ]]; then
+  curl_transport_option='--haproxy-protocol'
+fi
+readonly curl_transport_option
 
 # Worst case: warm-up, the settle wait, every attempt timing out, the closing control, and pull.
 readonly pod_deadline_seconds=$(((warmup_attempts + attempts + 1) * attempt_timeout + warmup_attempts + settle_seconds + 120))
@@ -147,11 +156,19 @@ fi
 # shellcheck disable=SC2317,SC2329
 cleanup() {
   local rc=$?
+  local remaining
   trap - EXIT INT TERM
   if ! kc -n "${probe_namespace}" delete pods,ciliumnetworkpolicies -l "${probe_label}=${run_id}" --ignore-not-found --wait=true --timeout=25s >/dev/null; then
     printf 'CLEANUP: FAILED, delete objects labelled %s=%s by hand\n' "${probe_label}" "${run_id}"
     summary ""
     summary "**Cleanup failed:** delete objects labelled \`${probe_label}=${run_id}\` by hand."
+    exit 4
+  fi
+  remaining="$(kc -n "${probe_namespace}" get pods,ciliumnetworkpolicies -l "${probe_label}=${run_id}" -o name)" || remaining='unknown'
+  if [[ -n "${remaining}" ]]; then
+    printf 'CLEANUP: FAILED, absence of run-owned objects was not verified\n'
+    summary ""
+    summary "**Cleanup failed:** absence of run-owned objects was not verified."
     exit 4
   fi
   printf 'CLEANUP: done\n'
@@ -239,7 +256,7 @@ spec:
         - |
           set -u
           control() {
-            curl -s -o /dev/null --max-time "\$TIMEOUT" -H "Host: \$CONTROL_HOST" -w '%{http_code}' "http://\$GATEWAY_IP/" 2>/dev/null || true
+            curl -s ${curl_transport_option} -o /dev/null --max-time "\$TIMEOUT" -H "Host: \$CONTROL_HOST" -w '%{http_code}' "http://\$GATEWAY_IP/" 2>/dev/null || true
           }
           i=0
           first=''
@@ -255,7 +272,7 @@ spec:
           i=0
           while [ "\$i" -lt "\$ATTEMPTS" ]; do
             i=\$((i + 1))
-            code="\$(curl -sk -o /dev/null --max-time "\$TIMEOUT" --resolve "\$TLS_HOST:443:\$GATEWAY_IP" -w '%{http_code} %{time_appconnect}' "https://\$TLS_HOST/" 2>/dev/null)"
+            code="\$(curl -sk ${curl_transport_option} -o /dev/null --max-time "\$TIMEOUT" --resolve "\$TLS_HOST:443:\$GATEWAY_IP" -w '%{http_code} %{time_appconnect}' "https://\$TLS_HOST/" 2>/dev/null)"
             printf 'PROBE tls %s %s\\n' "\$?" "\$code"
           done
           printf 'PROBE control-after %s\\n' "\$(control)"

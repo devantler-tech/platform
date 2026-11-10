@@ -1203,7 +1203,7 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 13 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 15 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
 	storageAttestorValid := false
@@ -1216,10 +1216,12 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	analysisAttestorValid := false
 	warZoneAttestorValid := false
 	mailAttestorValid := false
+	customerIdentityAttestorValid := false
+	dexAttestorValid := false
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishcorootcheckpoint" && name != "publishkyvernoreports" && name != "publishkyvernomigrate" && name != "publishkyvernobackground" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" {
+		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishcorootcheckpoint" && name != "publishkyvernoreports" && name != "publishkyvernomigrate" && name != "publishkyvernobackground" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" && name != "publishcustomeridentity" && name != "publishdexsecurity" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1252,6 +1254,10 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			warZoneAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/world-at-ruin/\\.github/workflows/server-cd\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
 		case "publishprivatemail":
 			mailAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-private-mail-bootstrap\\.yaml@refs/heads/main$"
+		case "publishcustomeridentity":
+			customerIdentityAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/business-site/\\.github/workflows/publish-identity\\.yaml@refs/heads/main$"
+		case "publishdexsecurity":
+			dexAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-dex-security-image\\.yaml@refs/heads/main$"
 		}
 	}
 	validations, _ := spec["validations"].([]any)
@@ -1275,10 +1281,20 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesWarZone := false
 	genericExcludesMail := false
 	dedicatedRoutesMail := false
+	genericExcludesCustomerIdentity := false
+	dedicatedRoutesCustomerIdentity := false
+	genericExcludesDex := false
+	dedicatedRoutesDex := false
 	for _, rawValidation := range validations {
 		validation, _ := rawValidation.(map[string]any)
 		expression, _ := validation["expression"].(string)
 		if strings.Contains(expression, "attestors.publishapp") {
+			genericExcludesCustomerIdentity = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/business-site-identity'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/business-site-identity:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/business-site-identity@')")
+			genericExcludesDex = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-dex'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-dex:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-dex@')")
 			genericExcludesReports = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kyverno-reports'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports@')")
@@ -1356,6 +1372,16 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@')")
 		}
+		if strings.Contains(expression, "attestors.publishcustomeridentity") {
+			dedicatedRoutesCustomerIdentity = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/business-site-identity'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/business-site-identity:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/business-site-identity@')")
+		}
+		if strings.Contains(expression, "attestors.publishdexsecurity") {
+			dedicatedRoutesDex = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-dex'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-dex:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-dex@')")
+		}
 	}
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
 		!checkpointAttestorValid || !genericExcludesCheckpoint || !dedicatedRoutesCheckpoint ||
@@ -1363,6 +1389,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 		!migrateAttestorValid || !genericExcludesMigrate || !dedicatedRoutesMigrate ||
 		!backgroundAttestorValid || !genericExcludesBackground || !dedicatedRoutesBackground ||
 		!mailAttestorValid || !genericExcludesMail || !dedicatedRoutesMail ||
+		!customerIdentityAttestorValid || !genericExcludesCustomerIdentity || !dedicatedRoutesCustomerIdentity ||
+		!dexAttestorValid || !genericExcludesDex || !dedicatedRoutesDex ||
 		!analysisAttestorValid || !genericExcludesAnalysis || !dedicatedRoutesAnalysis ||
 		!warZoneAttestorValid || !genericExcludesWarZone || !dedicatedRoutesWarZone ||
 		!genericExcludesStorage || !genericExcludesKubescapeNodeAgent || !genericExcludesCorootNodeAgent ||

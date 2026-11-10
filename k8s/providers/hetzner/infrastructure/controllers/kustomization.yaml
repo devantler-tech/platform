@@ -139,6 +139,8 @@ patches:
   - path: kyverno/patches/enable-user-namespaces.yaml
   # Prod-only: the Sigstore cache must not hold an overflow node (#5655).
   - path: kyverno/patches/allow-sigstore-cache-eviction.yaml
+  # Prod-only: run Dex on the source-built, signed distribution — see file.
+  - path: dex/patches/run-source-built-image.yaml
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
   # Require relay replicas to use separate nodes in prod; local retains soft spread.
@@ -160,9 +162,15 @@ patches:
   # in-cluster Alertmanager (alertmanager/ above) + keep the stdout exporter on,
   # fanning them out to Slack and Coroot — see file.
   - path: kubescape/patches/route-runtime-detection-alerts.yaml
-  # Prod-only release switch for the node-agent's default detection rules
-  # (#4968). OFF: runtime detection runs with no rules until it is turned on.
+  # Prod-only initial detection baseline (#4968): install the definitions, then
+  # bind only the profile-independent port-forward rule by its stable ID.
   - path: kubescape/patches/install-default-runtime-rules.yaml
+  - path: kubescape/patches/retain-port-forward-baseline.yaml
+    target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: kubescape
   # NB: the Coroot CR moved to the `infrastructure` layer (so the operator's
   # CRD is installed first), so its hetzner patch now lives in
   # ../coroot/patches/ and is applied by ../kustomization.yaml, not here.

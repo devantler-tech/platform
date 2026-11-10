@@ -1,10 +1,10 @@
 ---
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: audit-privileged-rbac
   annotations:
-    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/title: Restrict Privileged RBAC
     policies.kyverno.io/category: Security
     policies.kyverno.io/severity: high
@@ -38,80 +38,80 @@ spec:
   # there is not evaluated in any mode. kube-system, kube-public and kube-node-lease
   # are covered by background scans (#4234); kube-system only there, since the
   # webhooks skip it at admission.
-  background: true
-  rules:
-    - name: privileged-rules
-      match:
-        any:
-          - resources:
-              kinds:
-                - rbac.authorization.k8s.io/v1/Role
-                - rbac.authorization.k8s.io/v1/ClusterRole
-      # Reviewed exclusions, each an exact kind|namespace|name identity (namespace is
-      # empty for a ClusterRole). They are a false precondition rather than an
-      # `exclude` so the background scan records a current `skip` for an accepted
-      # role; an `exclude` records nothing, which left a role's earlier warning in
-      # its report after it was accepted (docs/policy-reports.md). The values carry
-      # no `*` or `?`, which Kyverno would treat as wildcards.
-      # The key falls back to request.oldObject because a DELETE request carries no
-      # request.object; without it a reviewed role would lose its exclusion on delete.
-      preconditions:
-        all:
-          - key: >-
-              {{ request.object.kind || request.oldObject.kind || '' }}|{{ request.object.metadata.namespace || request.oldObject.metadata.namespace || '' }}|{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}
-            operator: AnyNotIn
-            value:
-              # Kubernetes built-ins. The API server bootstraps them, and the
-              # clusterrole aggregation controller rewrites the aggregated rules.
-              - ClusterRole||admin
-              - ClusterRole||cluster-admin
-              - ClusterRole||edit
-              - ClusterRole||system:aggregate-to-edit
-              - ClusterRole||system:controller:clusterrole-aggregation-controller
-              # Crossplane core. The RBAC manager creates and binds provider roles.
-              - ClusterRole||crossplane
-              - ClusterRole||crossplane-rbac-manager
-              - ClusterRole||crossplane:system:aggregate-to-crossplane
-              # KRO. The controller, and the platform's tenant
-              # ResourceGraphDefinition role, which binds the ClusterRoles each
-              # tenant is provisioned with.
-              - ClusterRole||kro-tenant-rgd
-              - ClusterRole||kro:controller
-              # KSail operator. Creates and binds the RBAC of the clusters it
-              # manages. This is the broadest grant excluded here: bind and
-              # escalate on every RBAC resource.
-              - ClusterRole||ksail-operator
-              # Longhorn storage controller.
-              - ClusterRole||longhorn-role
-              - Role|longhorn-system|longhorn
-              # Velero server. Restores arbitrary namespaced objects in its
-              # namespace.
-              - Role|velero|velero-server
-      validate:
-        failureAction: Enforce
-        cel:
-          expressions:
-            - expression: >-
-                !has(object.rules) || type(object.rules) == null_type || object.rules.all(rule,
-                  !(has(rule.apiGroups) && has(rule.resources) && (
-                    ('*' in rule.apiGroups && '*' in rule.resources && '*' in rule.verbs) ||
-                    (('*' in rule.apiGroups || 'rbac.authorization.k8s.io' in rule.apiGroups) &&
-                     ((('*' in rule.verbs || 'bind' in rule.verbs) &&
-                       ('*' in rule.resources || 'roles' in rule.resources || 'clusterroles' in rule.resources)) ||
-                      (('*' in rule.verbs || 'escalate' in rule.verbs) &&
-                       ('*' in rule.resources || 'roles' in rule.resources ||
-                        (object.kind == 'ClusterRole' && 'clusterroles' in rule.resources))))) ||
-                    (('*' in rule.apiGroups || '' in rule.apiGroups) &&
-                     ('*' in rule.resources || 'serviceaccounts' in rule.resources ||
-                      (object.kind == 'ClusterRole' && ('users' in rule.resources || 'groups' in rule.resources))) &&
-                     ('*' in rule.verbs || 'impersonate' in rule.verbs)) ||
-                    (object.kind == 'ClusterRole' &&
-                     ('*' in rule.apiGroups || 'authentication.k8s.io' in rule.apiGroups) &&
-                     rule.resources.exists(resource, resource == '*' || resource == 'uids' ||
-                       resource.startsWith('userextras/') || resource.startsWith('*/')) &&
-                     ('*' in rule.verbs || 'impersonate' in rule.verbs))
-                  )))
-              message: >-
-                Wildcard administration, RBAC bind/escalate, and identity
-                impersonation grants are rejected unless the object is a
-                reviewed exclusion in the audit-privileged-rbac policy.
+  failurePolicy: Fail
+  validationActions:
+    - Deny
+  evaluation:
+    background:
+      enabled: true
+  # Removing a role grants nothing, so a DELETE is not judged.
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["roles", "clusterroles"]
+  variables:
+    # Reviewed exclusions, each an exact kind|namespace|name identity (namespace is
+    # empty for a ClusterRole). They are folded into the validation rather than a
+    # matchConditions entry so the background scan records a current `pass` for an
+    # accepted role; a false matchConditions entry records nothing, which would leave
+    # a role's earlier failure in its report (docs/policy-reports.md).
+    - name: reviewedExclusions
+      expression: |-
+        [
+          // Kubernetes built-ins. The API server bootstraps them, and the
+          // clusterrole aggregation controller rewrites the aggregated rules.
+          'ClusterRole||admin',
+          'ClusterRole||cluster-admin',
+          'ClusterRole||edit',
+          'ClusterRole||system:aggregate-to-edit',
+          'ClusterRole||system:controller:clusterrole-aggregation-controller',
+          // Crossplane core. The RBAC manager creates and binds provider roles.
+          'ClusterRole||crossplane',
+          'ClusterRole||crossplane-rbac-manager',
+          'ClusterRole||crossplane:system:aggregate-to-crossplane',
+          // KRO. The controller, and the platform tenant ResourceGraphDefinition
+          // role, which binds the ClusterRoles each tenant is provisioned with.
+          'ClusterRole||kro-tenant-rgd',
+          'ClusterRole||kro:controller',
+          // KSail operator. Creates and binds the RBAC of the clusters it manages.
+          // This is the broadest grant excluded here: bind and escalate on every
+          // RBAC resource.
+          'ClusterRole||ksail-operator',
+          // Longhorn storage controller.
+          'ClusterRole||longhorn-role',
+          'Role|longhorn-system|longhorn',
+          // Velero server. Restores arbitrary namespaced objects in its namespace.
+          'Role|velero|velero-server'
+        ]
+    - name: reviewed
+      expression: >-
+        (object.kind + '|' + object.metadata.?namespace.orValue('') + '|' + object.metadata.name)
+        in variables.reviewedExclusions
+  validations:
+    - expression: >-
+        variables.reviewed ||
+        !has(object.rules) || type(object.rules) == null_type || object.rules.all(rule,
+          !(has(rule.apiGroups) && has(rule.resources) && (
+            ('*' in rule.apiGroups && '*' in rule.resources && '*' in rule.verbs) ||
+            (('*' in rule.apiGroups || 'rbac.authorization.k8s.io' in rule.apiGroups) &&
+             ((('*' in rule.verbs || 'bind' in rule.verbs) &&
+               ('*' in rule.resources || 'roles' in rule.resources || 'clusterroles' in rule.resources)) ||
+              (('*' in rule.verbs || 'escalate' in rule.verbs) &&
+               ('*' in rule.resources || 'roles' in rule.resources ||
+                (object.kind == 'ClusterRole' && 'clusterroles' in rule.resources))))) ||
+            (('*' in rule.apiGroups || '' in rule.apiGroups) &&
+             ('*' in rule.resources || 'serviceaccounts' in rule.resources ||
+              (object.kind == 'ClusterRole' && ('users' in rule.resources || 'groups' in rule.resources))) &&
+             ('*' in rule.verbs || 'impersonate' in rule.verbs)) ||
+            (object.kind == 'ClusterRole' &&
+             ('*' in rule.apiGroups || 'authentication.k8s.io' in rule.apiGroups) &&
+             rule.resources.exists(resource, resource == '*' || resource == 'uids' ||
+               resource.startsWith('userextras/') || resource.startsWith('*/')) &&
+             ('*' in rule.verbs || 'impersonate' in rule.verbs))
+          )))
+      message: >-
+        Wildcard administration, RBAC bind/escalate, and identity
+        impersonation grants are rejected unless the object is a
+        reviewed exclusion in the audit-privileged-rbac policy.

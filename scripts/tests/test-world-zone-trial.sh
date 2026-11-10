@@ -8,7 +8,10 @@ policy="${root}/k8s/bases/infrastructure/cluster-policies/best-practices/verify-
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 # Print the fixed diagnostic in $1 and terminate the contract test with status 1.
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 
 kubectl kustomize "${trial}" >"${work}/trial.yaml"
 yq -o=json -I=0 eval-all '.' "${work}/trial.yaml" | jq -s '.' >"${work}/trial.json"
@@ -37,7 +40,10 @@ check_budget() {
       type:"Container", default:{cpu:"500m",memory:"256Mi"},
       defaultRequest:{cpu:"100m",memory:"64Mi"}
     }]])
-  ' "$1" >/dev/null 2>&1 || { printf 'VIOLATION B1: trial resource budget differs\n'; return 1; }
+  ' "$1" >/dev/null 2>&1 || {
+    printf 'VIOLATION B1: trial resource budget differs\n'
+    return 1
+  }
 }
 
 # Require the four host budget/cleanup controls to survive interrupted tenant
@@ -53,7 +59,10 @@ check_retirement() {
         {kind:"RoleBinding",name:"world-at-ruin"},
         {kind:"ServiceAccount",name:"world-at-ruin"}
       ]
-  ' "$1" >/dev/null 2>&1 || { printf 'VIOLATION L1: retained budget or cleanup authority differs\n'; return 1; }
+  ' "$1" >/dev/null 2>&1 || {
+    printf 'VIOLATION L1: retained budget or cleanup authority differs\n'
+    return 1
+  }
 }
 
 # Require namespace-wide host isolation in rendered input $1, including retention
@@ -66,7 +75,10 @@ check_isolation() {
         name:"default-deny", namespace:"world-at-ruin",
         spec:{podSelector:{},policyTypes:["Ingress","Egress"]}, prune:"disabled"
       }]
-  ' "$1" >/dev/null 2>&1 || { printf 'VIOLATION N1: retained namespace isolation differs\n'; return 1; }
+  ' "$1" >/dev/null 2>&1 || {
+    printf 'VIOLATION N1: retained namespace isolation differs\n'
+    return 1
+  }
 }
 
 # Public game packages need no namespace registry credential. Reject both
@@ -77,7 +89,10 @@ check_public_registry() {
       (.kind != "ExternalSecret" or .metadata.name != "ghcr-auth")) and
     ([.[] | select(.kind == "ServiceAccount") | (.imagePullSecrets // [])] == [[]]) and
     ([.[] | select(.kind == "OCIRepository") | (.spec.secretRef // null)] == [null])
-  ' "$1" >/dev/null 2>&1 || { printf 'VIOLATION R1: trial registry credential boundary differs\n'; return 1; }
+  ' "$1" >/dev/null 2>&1 || {
+    printf 'VIOLATION R1: trial registry credential boundary differs\n'
+    return 1
+  }
 }
 
 # Inspect the exception JSON in $1; return 1 unless its identities and control are exact.
@@ -91,7 +106,10 @@ check_exception() {
       {apiGroup:"rbac.authorization.k8s.io",kind:"RoleBinding",name:"^world-at-ruin-zone-trial-operator$"},
       {apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"^world-at-ruin-zone-trial-operator$"}
     ]}
-  ' "$1" >/dev/null 2>&1 || { printf 'VIOLATION C1: trial exception scope differs\n'; return 1; }
+  ' "$1" >/dev/null 2>&1 || {
+    printf 'VIOLATION C1: trial exception scope differs\n'
+    return 1
+  }
 }
 
 # Extract the rendered Job's bounded policy payload, like the existing OpenBao
@@ -107,7 +125,10 @@ check_vault_policy() {
     capturing && /^[[:space:]]*POLICY[[:space:]]*$/ { completed++; capturing=0; next }
     capturing { print }
     END { if (captures != 1 || completed != 1 || capturing) exit 1 }
-  ' "$1")" || { printf 'VIOLATION V1: dedicated Vault policy is unavailable\n'; return 1; }
+  ' "$1")" || {
+    printf 'VIOLATION V1: dedicated Vault policy is unavailable\n'
+    return 1
+  }
   rows="$(awk '
     {
       line=$0; sub(/^[[:space:]]+/, "", line); sub(/[[:space:]]+$/, "", line)
@@ -121,14 +142,20 @@ check_vault_policy() {
       } else { bad=1; exit 1 }
     }
     END { if (bad || state != 0 || count != 2) exit 1 }
-  ' <<<"${payload}")" || { printf 'VIOLATION V1: dedicated Vault policy grammar differs\n'; return 1; }
+  ' <<<"${payload}")" || {
+    printf 'VIOLATION V1: dedicated Vault policy grammar differs\n'
+    return 1
+  }
   jq -R -s -e '
     split("\n") | map(select(length > 0) | split("\t") |
       {path:.[0], capabilities:(.[1] | fromjson | sort)}) | sort_by(.path) == [
       {path:"secret/data/apps/world-at-ruin/*",capabilities:["create","read","update"]},
       {path:"secret/metadata/apps/world-at-ruin/*",capabilities:["create","read","update"]}
     ]
-  ' <<<"${rows}" >/dev/null 2>&1 || { printf 'VIOLATION V1: dedicated Vault KV bounds differ\n'; return 1; }
+  ' <<<"${rows}" >/dev/null 2>&1 || {
+    printf 'VIOLATION V1: dedicated Vault KV bounds differ\n'
+    return 1
+  }
 }
 
 # Inspect the rendered shell payload in $1 without executing it; return 1 on any
@@ -149,7 +176,10 @@ check_vault_role() {
       if (!continued) { completed++; capturing=0 }
     }
     END { if (captures != 1 || completed != 1 || capturing) exit 1 }
-  ' "$1")" || { printf 'VIOLATION V2: dedicated Vault role is unavailable\n'; return 1; }
+  ' "$1")" || {
+    printf 'VIOLATION V2: dedicated Vault role is unavailable\n'
+    return 1
+  }
   jq -R -s -e '
     split("\n") | map(select(length > 0) | capture("^(?<key>[a-z_]+)=(?<value>[^[:space:]]+)$")) |
     sort_by(.key) == [
@@ -158,7 +188,10 @@ check_vault_role() {
       {key:"policies",value:"app-world-at-ruin"},
       {key:"ttl",value:"1h"}
     ]
-  ' <<<"${assignments}" >/dev/null 2>&1 || { printf 'VIOLATION V2: dedicated Vault identity or policy binding differs\n'; return 1; }
+  ' <<<"${assignments}" >/dev/null 2>&1 || {
+    printf 'VIOLATION V2: dedicated Vault identity or policy binding differs\n'
+    return 1
+  }
 }
 
 yq -o=json '.' "${root}/k8s/bases/infrastructure/cluster-security-exceptions/world-at-ruin-trial-operator.yaml" >"${work}/exception.json"

@@ -1,0 +1,11 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: longhorn-benchmark-delete
+spec:
+  policyName: longhorn-benchmark-delete
+  paramRef:
+    name: longhorn-benchmark-delete-allowlist
+    namespace: longhorn-system
+    parameterNotFoundAction: Deny
+  validationActions: [Deny]

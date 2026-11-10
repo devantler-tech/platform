@@ -201,12 +201,14 @@ for result in success failure cancelled skipped pending unknown ''; do
 done
 echo 'PASS: both guard families retain the native proof; 14 incomplete routes and every non-success result refused'
 
-jq -e '
+jq -e --arg routing_condition "matrix.suite == 'bootstrap'" '
   .jobs["validate-publication-generator"] as $job |
   ($job.permissions == {contents: "read"}) and
   ($job | has("if") | not) and
   (($job["continue-on-error"] // false) == false) and
-  all($job.steps[]; .if == null and ((.["continue-on-error"] // false) == false)) and
+  all($job.steps[]; ((.["continue-on-error"] // false) == false) and
+    (if .name == "🔍 Lint and exercise publication fixture routing"
+     then .if == $routing_condition else .if == null end)) and
   ([$job.steps[] | select(.name == "🔐 Validate the approved-revisions generator"
     and .if == null and (.run | type == "string" and length > 0))] | length) == 1 and
   (.jobs["ci-required-checks"].needs | index("validate-publication-generator") != null) and
@@ -322,3 +324,42 @@ for event in pull_request merge_group; do
   done
 done
 echo 'PASS: all twelve manifest regressions run once and selected non-success outcomes are refused'
+
+jq -e --arg selection "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository" '
+  .jobs["validate-go-project"] as $job |
+  ($job.if == $selection) and
+  ($job.uses | test("^devantler-tech/\\.github/\\.github/workflows/validate-go-project\\.yaml@[0-9a-f]{40}( |$)")) and
+  ($job.with == {"apply-signed-fixes": false, "enable-test-parallelism": true, "test-parallelism": 8}) and
+  ($job.permissions.contents == "read") and
+  (($job["continue-on-error"] // false) == false) and
+  (.jobs["ci-required-checks"].needs | index("validate-go-project") != null)
+' "${work}/workflow.json" >/dev/null
+go_step="$(jq -c '[.steps[] | select(.name == "🧪 Require the organization Go workflow on same-repository pull requests")]' <<<"${gate}")"
+jq -e 'length == 1 and .[0].env == {
+  EVENT_NAME: "${{ github.event_name }}",
+  HEAD_REPOSITORY: "${{ github.event.pull_request.head.repo.full_name }}",
+  REPOSITORY: "${{ github.repository }}",
+  GO_PROJECT_RESULT: "${{ needs.validate-go-project.result }}"
+} and (.[0] | has("if") | not)
+  and ((.[0]["continue-on-error"] // false) == false)
+  and (.[0].run | type == "string" and length > 0)' <<<"${go_step}" >/dev/null
+jq -r '.[0].run' <<<"${go_step}" >"${work}/go-project-gate.sh"
+for event in pull_request merge_group push ''; do
+  for head in devantler-tech/platform someone/platform ''; do
+    for result in success failure cancelled skipped pending unknown ''; do
+      expected=1 actual=0
+      case "$event:$head:$result" in
+        pull_request:devantler-tech/platform:success | pull_request:someone/platform:skipped | \
+          pull_request::skipped | merge_group:*:skipped) expected=0 ;;
+      esac
+      EVENT_NAME="$event" HEAD_REPOSITORY="$head" REPOSITORY=devantler-tech/platform \
+        GO_PROJECT_RESULT="$result" bash -e "${work}/go-project-gate.sh" >"${work}/go-project-output" 2>&1 || actual=$?
+      if [ "$actual" -ne "$expected" ]; then
+        printf 'FAIL: Go workflow event=%s head=%s result=%s expected=%s actual=%s\n' \
+          "$event" "$head" "$result" "$expected" "$actual" >&2
+        exit 1
+      fi
+    done
+  done
+done
+echo 'PASS: same-repository pull requests require the organization Go workflow; forks and merge groups require it skipped'

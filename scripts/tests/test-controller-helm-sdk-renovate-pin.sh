@@ -27,6 +27,10 @@ guards_job="$(awk '
 ' "${ci_workflow}")"
 grep -Fq 'bash scripts/tests/test-controller-helm-sdk-renovate-pin.sh' <<<"${guards_job}" ||
   fail 'the Helm SDK pin test must run unconditionally in the repository guards job'
+# A test cannot notice its own step being removed, so this one watches the Kopia
+# pin step and that one watches this step.
+grep -Fq 'bash scripts/tests/test-velero-kopia-renovate-pin.sh' <<<"${guards_job}" ||
+  fail 'the Kopia pin test must run in the repository guards job'
 
 # The version the build guard requires is the single source of truth.
 required="$(sed -n 's/.*\.Version == "\(v[0-9][0-9.]*\)".*/\1/p' "${build_script}")"

@@ -104,7 +104,7 @@ for mode in default with-subject with-identity; do
   [ "$mode" != with-subject ] || expected="$subject_row"
   [ "$mode" != with-identity ] || expected="$identity_row"
   if actual=$(bash -c 'source "$1"; consumer_rows "$2" "$3"' \
-      bash "$SCRIPT" "$identity_root/source.yaml" "$mode") && [ "$actual" = "$expected" ]; then
+    bash "$SCRIPT" "$identity_root/source.yaml" "$mode") && [ "$actual" = "$expected" ]; then
     pass "$mode discovery has its exact documented columns and values"
   else
     fail "$mode discovery changed its row contract: $actual"
@@ -119,7 +119,7 @@ for mode in default with-subject with-identity; do
   [ "$mode" != with-subject ] || expected=$(printf '%s\t%s' "$unpinned_row" "$identity_subject")
   [ "$mode" != with-identity ] || expected=$(printf '%s\t%s\t-\tbeta\toci://ghcr.io/devantler-tech/beta/manifests/' "$unpinned_row" "$identity_subject")
   if actual=$(bash -c 'source "$1"; consumer_rows "$2" "$3"' \
-      bash "$SCRIPT" "$WORK/identity-unpinned.yaml" "$mode") && [ "$actual" = "$expected" ]; then
+    bash "$SCRIPT" "$WORK/identity-unpinned.yaml" "$mode") && [ "$actual" = "$expected" ]; then
     pass "$mode discovery preserves omitted-ref and absent-namespace fields"
   else
     fail "$mode discovery shifted absent fields: $actual"
@@ -132,7 +132,7 @@ cp "$identity_root/source.yaml" "$WORK/object-contract.yaml"
 yq -i 'del(.spec.verify) | .spec.url = "oci://registry.example.test/beta/manifests"' "$WORK/object-contract.yaml"
 expected=$(printf 'beta\tbeta\toci://registry.example.test/beta/manifests\t1.2.3\t-\tfalse\ttrue\t{}')
 if actual=$(bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
-    bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
+  bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
   pass 'the all-object reader preserves unsigned foreign-registry contracts'
 else
   fail "the all-object reader omitted or shifted an unsigned contract: $actual"
@@ -140,7 +140,7 @@ fi
 yq -i 'del(.metadata.namespace) | del(.spec.ref)' "$WORK/object-contract.yaml"
 expected=$(printf '%s\tbeta\toci://registry.example.test/beta/manifests\tunpinned\t-\tfalse\ttrue\t{}' '-')
 if actual=$(bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
-    bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
+  bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
   pass 'the all-object reader preserves absent namespace, ref and verification fields'
 else
   fail "the all-object reader shifted absent fields: $actual"
@@ -156,15 +156,15 @@ data:
     kind: OCIRepository
 YAML
 if actual=$(bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
-    bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
+  bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
   pass 'the all-object census selects only top-level Flux OCI documents'
 else
   fail 'the all-object census attributed a nested or unrelated mapping as an OCI object'
 fi
 yq -i 'select(.kind == "OCIRepository") | del(.metadata.name)' "$WORK/object-contract.yaml"
 if ! bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
-    bash "$SCRIPT" "$WORK/object-contract.yaml" >"$WORK/object-contract-malformed.out" 2>&1 &&
-    grep -q 'OCI object contract.*UNKNOWN' "$WORK/object-contract-malformed.out"; then
+  bash "$SCRIPT" "$WORK/object-contract.yaml" >"$WORK/object-contract-malformed.out" 2>&1 &&
+  grep -q 'OCI object contract.*UNKNOWN' "$WORK/object-contract-malformed.out"; then
   pass 'the all-object census cannot accept an unsigned object with unknown identity'
 else
   fail 'the all-object census accepted an unsigned object with unknown identity'
@@ -175,8 +175,8 @@ yq -i '.metadata.name = "beta-peer"' "$identity_root/peer.yaml"
 legacy_discovery=$(bash -c 'source "$1"; discover_consumers "$2"' bash "$SCRIPT" "$identity_root")
 object_discovery=$(bash -c 'source "$1"; discover_consumers "$2" with-identity' bash "$SCRIPT" "$identity_root")
 if [ "$legacy_discovery" = "$legacy_row" ] &&
-    [ "$(printf '%s\n' "$object_discovery" | grep -c .)" -eq 2 ] &&
-    printf '%s\n' "$object_discovery" | awk -F '\t' 'NF != 8 { exit 1 }'; then
+  [ "$(printf '%s\n' "$object_discovery" | grep -c .)" -eq 2 ] &&
+  printf '%s\n' "$object_discovery" | awk -F '\t' 'NF != 8 { exit 1 }'; then
   pass 'the report deduplicates an artifact while conservation preserves distinct OCI names'
 else
   fail 'guard-only object identity changed legacy artifact deduplication or collapsed distinct names'
@@ -185,9 +185,9 @@ fi
 yq -i 'del(.metadata.name)' "$identity_root/peer.yaml"
 legacy_discovery=$(bash -c 'source "$1"; consumer_rows "$2"' bash "$SCRIPT" "$identity_root/peer.yaml")
 if [ "$legacy_discovery" = "$legacy_row" ] &&
-    ! bash -c 'source "$1"; consumer_rows "$2" with-identity' \
-      bash "$SCRIPT" "$identity_root/peer.yaml" >"$WORK/identity-malformed.out" 2>&1 &&
-    grep -q 'consumer identity.*UNKNOWN' "$WORK/identity-malformed.out"; then
+  ! bash -c 'source "$1"; consumer_rows "$2" with-identity' \
+    bash "$SCRIPT" "$identity_root/peer.yaml" >"$WORK/identity-malformed.out" 2>&1 &&
+  grep -q 'consumer identity.*UNKNOWN' "$WORK/identity-malformed.out"; then
   pass 'an unknown object name is refused only by the conservation reader'
 else
   fail 'missing object identity was accepted by conservation or changed report discovery'
@@ -2133,6 +2133,19 @@ else
   grep -q 'names more than one shared publish workflow' "$mixed_out" ||
     fail "the mixed-workflow subject failed for another reason: $(head -3 "$mixed_out")"
   pass 'a two-family subject naming two workflows is refused as ambiguous'
+fi
+
+# `grep -q` exits at its first match, so under pipefail a writer still printing into it can fail on
+# the closed pipe and turn a found value into "not found". That made the identity floor refuse a
+# consumer it had discovered, at random, in CI (`printf: Broken pipe` beside "not discovered: aws").
+early_exit_pipes="$(
+  awk '/\|[[:space:]]*$/ { printf "%s ", $0; next } { print }' "$SCRIPT" |
+    grep -nE '\|[[:space:]]*grep([[:space:]]+-[^[:space:]]+)*[[:space:]]+(-[a-zA-Z]*q|--quiet)' || true
+)"
+if [ -z "$early_exit_pipes" ]; then
+  pass 'the report never pipes into an early-exiting grep'
+else
+  fail "the report pipes into an early-exiting grep: $early_exit_pipes"
 fi
 
 if ! bash "$REPO_ROOT/scripts/tests/test-signing-report-publisher-families.sh"; then

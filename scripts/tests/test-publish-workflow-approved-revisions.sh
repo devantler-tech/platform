@@ -25,7 +25,7 @@ readonly REPORT="$REPO_ROOT/scripts/report-publish-workflow-signing-revisions.sh
 readonly SHA_A='1111111111111111111111111111111111111111'
 readonly SHA_B='2222222222222222222222222222222222222222'
 readonly SHA_C='3333333333333333333333333333333333333333'
-readonly SHA_R='4444444444444444444444444444444444444444'  # release candidate (#3960)
+readonly SHA_R='4444444444444444444444444444444444444444' # release candidate (#3960)
 readonly DIGEST_A='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 
 failures=0
@@ -127,16 +127,19 @@ run_gen() { # <observer> <pin-resolver> <output-file> <observed-on> <log> [<rele
 }
 
 # --- 1. Every consumer resolves: one row each, both revisions, exit 0 -------------------
-full_table="$WORK/full.tsv"; write_table "$full_table" '' '' ''
+full_table="$WORK/full.tsv"
+write_table "$full_table" '' '' ''
 observer_full="$(make_observer "$full_table" full)"
 pin_ok="$(make_pin_resolver ok '')"
-out1="$WORK/out1.tsv"; log1="$WORK/log1"
+out1="$WORK/out1.tsv"
+log1="$WORK/log1"
 if run_gen "$observer_full" "$pin_ok" "$out1" 2026-01-01 "$log1"; then
   rows="$(tail -n +2 "$out1" | grep -c . || true)"
   if [ "$rows" -eq "$consumer_count" ]; then
     pass "complete run writes one row per consumer ($rows)"
   else
-    fail "complete run wrote $rows row(s) for $consumer_count consumer(s)"; cat "$out1"
+    fail "complete run wrote $rows row(s) for $consumer_count consumer(s)"
+    cat "$out1"
   fi
   if head -1 "$out1" | grep -qxF -- $'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\trelease_candidate_sha\tobserved_on'; then
     pass 'header names the eight columns'
@@ -149,10 +152,12 @@ if run_gen "$observer_full" "$pin_ok" "$out1" 2026-01-01 "$log1"; then
      $7 != r { bad = 1 } END { exit bad }'; then
     pass 'every row carries tag, digest, signer, pin, candidate and date in the expected columns'
   else
-    fail 'a row is malformed'; cat "$out1"
+    fail 'a row is malformed'
+    cat "$out1"
   fi
 else
-  fail "complete run exited non-zero"; cat "$log1"
+  fail "complete run exited non-zero"
+  cat "$log1"
 fi
 
 # --- 2. Byte-identical regeneration: unchanged tuples keep their date --------------------
@@ -160,11 +165,13 @@ cp "$out1" "$WORK/out1.before"
 if run_gen "$observer_full" "$pin_ok" "$out1" 2026-02-02 "$WORK/log2" && cmp -s "$out1" "$WORK/out1.before"; then
   pass 'regenerating on unchanged inputs is byte-identical (dates preserved, no re-stamp)'
 else
-  fail 'regeneration changed the file'; diff "$WORK/out1.before" "$out1" || true
+  fail 'regeneration changed the file'
+  diff "$WORK/out1.before" "$out1" || true
 fi
 
 # --- 3. A changed tuple is re-stamped; unchanged rows keep their date -------------------
-moved_table="$WORK/moved.tsv"; write_table "$moved_table" "$first_consumer" "1.2.4\\t${DIGEST_A}\\t${SHA_C}" ''
+moved_table="$WORK/moved.tsv"
+write_table "$moved_table" "$first_consumer" "1.2.4\\t${DIGEST_A}\\t${SHA_C}" ''
 observer_moved="$(make_observer "$moved_table" moved)"
 if run_gen "$observer_moved" "$pin_ok" "$out1" 2026-03-03 "$WORK/log3"; then
   moved_date="$(awk -F'\t' -v c="$first_consumer" -v w="$first_workflow" '$1 == c && $2 == w { print $8 }' "$out1")"
@@ -172,14 +179,17 @@ if run_gen "$observer_moved" "$pin_ok" "$out1" 2026-03-03 "$WORK/log3"; then
   if [ "$moved_date" = '2026-03-03' ] && [ "$kept" = yes ]; then
     pass 'a moved signer re-stamps only its own row'
   else
-    fail "re-stamp wrong: moved row date=$moved_date, other rows kept=$kept"; cat "$out1"
+    fail "re-stamp wrong: moved row date=$moved_date, other rows kept=$kept"
+    cat "$out1"
   fi
 else
-  fail 'moved-tuple run exited non-zero'; cat "$WORK/log3"
+  fail 'moved-tuple run exited non-zero'
+  cat "$WORK/log3"
 fi
 
 # --- 4. AC3: a consumer the observer cannot resolve FAILS the run and writes NOTHING -----
-omit_table="$WORK/omit.tsv"; write_table "$omit_table" '' '' "$first_consumer"
+omit_table="$WORK/omit.tsv"
+write_table "$omit_table" '' '' "$first_consumer"
 observer_omit="$(make_observer "$omit_table" omit)"
 out4="$WORK/out4.tsv"
 if run_gen "$observer_omit" "$pin_ok" "$out4" 2026-01-01 "$WORK/log4"; then
@@ -202,7 +212,8 @@ else
 fi
 
 # --- 5. A set of ONE revision is refused by consumer name --------------------------------
-one_table="$WORK/one.tsv"; write_table "$one_table" "$first_consumer" "1.2.3\\t${DIGEST_A}\\t" ''
+one_table="$WORK/one.tsv"
+write_table "$one_table" "$first_consumer" "1.2.3\\t${DIGEST_A}\\t" ''
 observer_one="$(make_observer "$one_table" one)"
 out5="$WORK/out5.tsv"
 if run_gen "$observer_one" "$pin_ok" "$out5" 2026-01-01 "$WORK/log5"; then
@@ -211,7 +222,8 @@ else
   if grep -qF -- "$first_consumer" "$WORK/log5" && [ ! -e "$out5" ]; then
     pass 'an empty signer is refused naming the consumer, no file written'
   else
-    fail 'empty-signer refusal did not name the consumer or wrote a file'; cat "$WORK/log5"
+    fail 'empty-signer refusal did not name the consumer or wrote a file'
+    cat "$WORK/log5"
   fi
 fi
 pin_fail="$(make_pin_resolver fail "$first_consumer")"
@@ -222,15 +234,18 @@ else
   if grep -qF -- "$first_consumer" "$WORK/log6" && [ ! -e "$out6" ]; then
     pass 'a missing pin is refused naming the consumer, no file written'
   else
-    fail 'missing-pin refusal did not name the consumer or wrote a file'; cat "$WORK/log6"
+    fail 'missing-pin refusal did not name the consumer or wrote a file'
+    cat "$WORK/log6"
   fi
 fi
 
 # --- 6. Malformed observer answers are refused, never parsed on their first line ---------
 for shape in "1.2.3\\t${DIGEST_A}\\t${SHA_A}\\nextra" "1.2.3\\tnot-a-digest\\t${SHA_A}" "1.2.3\\t${DIGEST_A}\\tdeadbeef" "1.2.3\\t\\t${SHA_A}"; do
-  bad_table="$WORK/bad.tsv"; write_table "$bad_table" "$first_consumer" "$shape" ''
+  bad_table="$WORK/bad.tsv"
+  write_table "$bad_table" "$first_consumer" "$shape" ''
   observer_bad="$(make_observer "$bad_table" bad)"
-  out7="$WORK/out7.tsv"; rm -f "$out7"
+  out7="$WORK/out7.tsv"
+  rm -f "$out7"
   if run_gen "$observer_bad" "$pin_ok" "$out7" 2026-01-01 "$WORK/log7"; then
     fail "malformed observer answer accepted: $shape"
   else
@@ -251,7 +266,8 @@ else
   if grep -q 'PUBLISH_KUBE_CONTEXT' "$WORK/log8" && [ ! -e "$out8" ]; then
     pass 'default observer refuses without a kube context, no file written'
   else
-    fail 'no-context refusal was not explained or wrote a file'; cat "$WORK/log8"
+    fail 'no-context refusal was not explained or wrote a file'
+    cat "$WORK/log8"
   fi
 fi
 
@@ -276,7 +292,8 @@ else
   elif [ ! -e "$out10" ] && grep -qF -- "$app_consumer" "$WORK/log10" && grep -qF -- 'release candidate' "$WORK/log10"; then
     pass 'an unreadable release fails the run naming the consumer, no file written'
   else
-    fail 'unreadable-release refusal did not name the consumer or wrote a file'; cat "$WORK/log10"
+    fail 'unreadable-release refusal did not name the consumer or wrote a file'
+    cat "$WORK/log10"
   fi
   # A failed read is still the one attempt: later publish-app rows must not retry it.
   app_rows="$(printf '%s\n' "$consumers" | awk -F'\t' '$2 == "publish-app"' | grep -c .)"
@@ -294,7 +311,8 @@ else
   # Malformed release answers are refused, never parsed on their first line.
   for shape in 'deadbeef' "${SHA_R}\\n${SHA_C}" '-'; do
     release_bad="$(make_release_resolver bad "$shape" 0)"
-    out11="$WORK/out11.tsv"; rm -f "$out11"
+    out11="$WORK/out11.tsv"
+    rm -f "$out11"
     if run_gen "$observer_full" "$pin_ok" "$out11" 2026-01-01 "$WORK/log11" "$release_bad"; then
       fail "malformed release answer accepted: $shape"
     elif [ ! -e "$out11" ]; then
@@ -317,7 +335,8 @@ else
       fail "the release resolver ran $calls time(s): $(tr '\n' ' ' <"$WORK/release-once.calls")"
     fi
   else
-    fail 'a resolvable release failed the run'; cat "$WORK/log12"
+    fail 'a resolvable release failed the run'
+    cat "$WORK/log12"
   fi
 
   # A new release moves both publishing workflows, preserving their signer and pin.
@@ -327,15 +346,20 @@ else
       $7 != n || $8 != "2026-04-04" { bad = 1 } END { exit bad }'; then
     pass 'a new release re-stamps both publishing workflows'
   else
-    fail 'a new release did not move both publishing workflows'; cat "$out12"
+    fail 'a new release did not move both publishing workflows'
+    cat "$out12" "$WORK/log13"
   fi
 fi
 
 # One workflow's successful lookup must not hide a failed or malformed other lookup.
 for workflow in publish-app publish-manifests; do
   for shape in unavailable malformed; do
-    answer=''; status=7
-    [ "$shape" != malformed ] || { answer=main; status=0; }
+    answer=''
+    status=7
+    [ "$shape" != malformed ] || {
+      answer=main
+      status=0
+    }
     release_one="$(make_release_resolver "$workflow-$shape" "$answer" "$status" "$workflow")"
     out="$WORK/one-workflow.tsv"
     cp "$WORK/out1.before" "$out"
@@ -418,7 +442,8 @@ driver="$(make_signer_driver "$(runs_fixture ok "$SHA_A" success)")"
 if out="$(bash "$driver" 2>"$WORK/signer-ok.err")" && [ "$out" = "$SHA_B" ] && [ ! -s "$WORK/signer-ok.err" ]; then
   pass 'the signer lookup resolves one successful run at the tag commit, silently'
 else
-  fail "the signer lookup did not resolve a signed tag (out='${out:-}')"; cat "$WORK/signer-ok.err" >&2
+  fail "the signer lookup did not resolve a signed tag (out='${out:-}')"
+  cat "$WORK/signer-ok.err" >&2
 fi
 
 # A failed runs read is named as a failed read, never as a missing run.
@@ -429,7 +454,8 @@ elif grep -q 'runs read for v9.9.9 failed' "$WORK/signer-fail.err" &&
   ! grep -q 'at_commit=' "$WORK/signer-fail.err"; then
   pass 'a failed runs read is refused as a failed read'
 else
-  fail 'a failed runs read was not named as one'; cat "$WORK/signer-fail.err" >&2
+  fail 'a failed runs read was not named as one'
+  cat "$WORK/signer-fail.err" >&2
 fi
 
 # A listing without the matching run prints what it DID contain, so a late or incomplete
@@ -441,7 +467,8 @@ elif grep -q 'total_count=1 returned=1 for_tag=1 cd=1 at_commit=0 successful=0 s
   "$WORK/signer-miss.err"; then
   pass 'a listing without the matching run is refused with its bounded counts'
 else
-  fail 'a listing without the matching run did not report its counts'; cat "$WORK/signer-miss.err" >&2
+  fail 'a listing without the matching run did not report its counts'
+  cat "$WORK/signer-miss.err" >&2
 fi
 
 # The counts track the conclusion too: a run at the right commit that did not succeed.
@@ -451,7 +478,8 @@ if bash "$driver" >/dev/null 2>"$WORK/signer-concl.err"; then
 elif grep -q 'at_commit=1 successful=0 signer_refs=0 conclusions=failure' "$WORK/signer-concl.err"; then
   pass 'a failed CD run at the tag commit is refused with its conclusion'
 else
-  fail 'a failed CD run did not report its conclusion'; cat "$WORK/signer-concl.err" >&2
+  fail 'a failed CD run did not report its conclusion'
+  cat "$WORK/signer-concl.err" >&2
 fi
 
 # Only an EMPTY listing is read again. A listing that holds runs but not exactly one signer

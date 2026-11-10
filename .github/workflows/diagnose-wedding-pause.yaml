@@ -1,6 +1,7 @@
+---
 name: Diagnose Wedding Pause
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:

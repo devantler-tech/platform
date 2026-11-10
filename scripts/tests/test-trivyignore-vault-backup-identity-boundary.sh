@@ -76,6 +76,10 @@ readonly REVIEWED_ELSEWHERE=(
   'k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml'
   'k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml'
   'k8s/bases/infrastructure/vault-config/job.yaml'
+  # Stalwart's image-baked identity, guarded by test-trivyignore-private-mail-identity-boundary.sh.
+  'k8s/bases/apps/private-mail/stateful-set.yaml'
+  'k8s/bases/apps/private-mail-administration/patches/serve-after-initialization.yaml'
+  'k8s/bases/apps/private-mail-proxy-identity/patches/add-client-proxy.yaml'
 )
 
 # A Job keeps its pod spec one level down; a CronJob keeps it under jobTemplate. Selecting whichever
@@ -287,10 +291,18 @@ printf 'PASS(structure+premise+gate): %s and %s are path-scoped to the two vault
 
 # ---------------------------------------------------------------- behaviour --
 command -v trivy >/dev/null 2>&1 || {
+  if [[ ${CI:-} == true ]]; then
+    fail "trivy is required for behavioural checks in CI"
+    exit 1
+  fi
   echo "SKIP(behavioural): trivy not installed; structural, absence and premise checks above still passed"
   exit 0
 }
 command -v jq >/dev/null 2>&1 || {
+  if [[ ${CI:-} == true ]]; then
+    fail "jq is required for behavioural checks in CI"
+    exit 1
+  fi
   echo "SKIP(behavioural): jq not installed; structural, absence and premise checks above still passed"
   exit 0
 }

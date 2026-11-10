@@ -82,18 +82,12 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if err != nil || strings.TrimSpace(string(pages)) != "1024" {
 		return errors.New("the host has not allocated the reviewed huge pages")
 	}
-	modules, err := c.talosCommand(ctx, talosReadLimit, address, "read", "/proc/modules")
-	if err != nil {
-		return errors.New("worker kernel modules could not be read")
-	}
-	loaded := map[string]bool{}
-	for line := range strings.SplitSeq(string(modules), "\n") {
-		if fields := strings.Fields(line); len(fields) > 0 {
-			loaded[fields[0]] = true
+	// /proc/modules omits built-in modules, and nvme_tcp is built into the Talos kernel.
+	// /sys/module holds both kinds, so it answers whether each one is usable.
+	for _, module := range []string{"nvme_tcp", "vfio_pci", "uio_pci_generic"} {
+		if _, err := c.talosCommand(ctx, talosReadLimit, address, "ls", "/sys/module/"+module); err != nil {
+			return errors.New("required V2 kernel module " + module + " is not available")
 		}
-	}
-	if !loaded["nvme_tcp"] || !loaded["vfio_pci"] || !loaded["uio_pci_generic"] {
-		return errors.New("required V2 kernel modules are not loaded")
 	}
 	if hugepagesReady(n) {
 		return nil
@@ -108,15 +102,9 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 		return err
 	}
 	if len(moves) > 0 {
-		if err = sourceCurrent(ctx, c.run, source); err != nil {
+		if err = c.moveForRefresh(ctx, source, n, moves, pods, &held); err != nil {
 			return err
 		}
-		if err = c.moveForRefresh(ctx, n, moves, pods, &held); err != nil {
-			return err
-		}
-	}
-	if err = sourceCurrent(ctx, c.run, source); err != nil {
-		return err
 	}
 	if n, _, err = get(ctx); err != nil {
 		return err
@@ -130,6 +118,9 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 		return err
 	}
 	if err = verifyRefreshFits(n, before); err != nil {
+		return err
+	}
+	if err = sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
 	// Never repeat an uncertain service request. Positive capacity and identity

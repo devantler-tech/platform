@@ -8,10 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+var repositoryAuthorizationRender = sync.OnceValues(func() ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), rendererCommandTimeout)
+	defer cancel()
+	return renderAuthorizationLayers(ctx, filepath.Join("..", ".."), commandOutput)
+})
 
 // repositoryInputs loads the committed source and complete production render.
 func repositoryInputs(t *testing.T) ([]byte, []byte, []byte) {
@@ -27,14 +34,13 @@ func repositoryInputs(t *testing.T) ([]byte, []byte, []byte) {
 		return contents
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), rendererCommandTimeout)
-	defer cancel()
-	rendered, err := renderAuthorizationLayers(ctx, repoRoot, commandOutput)
+	rendered, err := repositoryAuthorizationRender()
 	if err != nil {
 		t.Fatalf("render authorization layers: %v", err)
 	}
 
-	return read(roleManifestPath), read(boundaryManifestPath), rendered
+	// Each mutation test owns its input bytes even though the source render is shared.
+	return read(roleManifestPath), read(boundaryManifestPath), bytes.Clone(rendered)
 }
 
 func clusterReaderSecretBoundaryViolations(manifest []byte) ([]string, error) {

@@ -1,0 +1,153 @@
+name: Replace OpenBao Server
+
+# Read-only first slice of the single-server replacement procedure (#4970,
+# #5836): it judges whether replacing the named server is safe right now and
+# changes nothing. Only `preflight` exists until the replacement step lands.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Judge whether the named server can be replaced now, without changing anything
+        required: true
+        type: choice
+        default: preflight
+        options: [preflight]
+      server:
+        description: The one server a later replacement would take out
+        required: true
+        type: choice
+        options: [openbao-0, openbao-1, openbao-2]
+
+permissions: {}
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  preflight:
+    name: Judge OpenBao health and quorum before a replacement
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Keep prod secrets, reviewers, wait timers and branch policy without
+    # recording a deployment: this run deploys nothing.
+    environment:
+      name: prod
+      deployment: false
+    permissions:
+      contents: read # checkout reviewed main and verify it is still current
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPLACEMENT_MODE: ${{ inputs.mode }}
+      REPLACEMENT_SERVER: ${{ inputs.server }}
+    steps:
+      - name: Require a first main dispatch before credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_RUN_ATTEMPT" == 1 ]]
+          [[ "$REPLACEMENT_MODE" == preflight ]]
+          [[ "$REPLACEMENT_SERVER" =~ ^openbao-[0-9]$ ]]
+
+      - name: Checkout the exact reviewed dispatch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require the validated checkout to remain current main
+        run: ./scripts/verify-prod-recovery-source.sh "$GITHUB_SHA"
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Require the collector and both judges to pass offline
+        run: go test -race -count=1 ./scripts/capture-openbao-replacement ./scripts/judge-openbao-health ./scripts/judge-openbao-quorum ./internal/strictjson
+
+      # The judges' expectations come from the reviewed render, never from what
+      # the cluster reports: the prod replica count and the chart's release.
+      - name: Derive the expected servers and release from the reviewed render
+        shell: bash
+        run: |
+          set -euo pipefail
+          replicas="$(yq -er '.data.openbao_replicas' k8s/clusters/prod/bootstrap/config-map.yaml)"
+          [[ "$replicas" =~ ^[3-9]$ ]]
+          servers="$(seq -f 'openbao-%g' 0 $((replicas - 1)) | paste -sd, -)"
+          [[ ",$servers," == *",$REPLACEMENT_SERVER,"* ]]
+          release=k8s/bases/infrastructure/controllers/openbao/helm-release.yaml
+          repository=k8s/bases/infrastructure/controllers/openbao/helm-repository.yaml
+          chart="$(yq -er '.spec.chart.spec.version' "$release")"
+          url="$(yq -er '.spec.url' "$repository")"
+          [[ "$url" == https://openbao.github.io/openbao-helm ]]
+          version="$(helm show chart openbao --repo "$url" --version "$chart" | yq -er '.appVersion')"
+          version="${version#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          {
+            echo "OPENBAO_SERVERS=$servers"
+            echo "OPENBAO_VERSION=$version"
+          } >> "$GITHUB_ENV"
+          echo "Expecting $replicas servers on release $version"
+
+      # Built before the capture so compile time cannot age the evidence the
+      # judges measure against --max-age.
+      - name: Build the collector and judges
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          for tool in capture-openbao-replacement judge-openbao-health judge-openbao-quorum; do
+            go build -o "$RUNNER_TEMP/bin/$tool" "./scripts/$tool"
+          done
+
+      - name: Restore the established protected production kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "$KUBE_CONFIG"
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "$KUBE_CONFIG" > ~/.kube/config
+
+      - name: Select the stable production API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      # Reads pods and the two OpenBao endpoints only. The captures stay in a
+      # private directory; only the collector's closed status line and the
+      # judges' verdict lines, which carry no body, token or address, are logged.
+      - name: Capture and judge health and quorum for the named server
+        shell: bash
+        run: |
+          set -euo pipefail
+          private="$(mktemp -d)"
+          trap 'rm -rf "$private"' EXIT
+          bin="$RUNNER_TEMP/bin"
+          "$bin/capture-openbao-replacement" --expect-servers "$OPENBAO_SERVERS" --out "$private"
+          status=0
+          health=0
+          "$bin/judge-openbao-health" --input "$private/health.json" \
+            --expect-servers "$OPENBAO_SERVERS" --expect-version "$OPENBAO_VERSION" --max-age 5m || health=$?
+          quorum=0
+          "$bin/judge-openbao-quorum" --input "$private/quorum.json" \
+            --expect-servers "$OPENBAO_SERVERS" --replace "$REPLACEMENT_SERVER" --max-age 5m || quorum=$?
+          # UNKNOWN (2) outranks HOLD (1), which outranks PROVEN (0).
+          for code in "$health" "$quorum"; do
+            if (( code > status )); then status=$code; fi
+          done
+          case "$status" in
+            0) verdict=PROVEN ;;
+            1) verdict=HOLD ;;
+            *) verdict=UNKNOWN ;;
+          esac
+          echo "OPENBAO_REPLACEMENT_PREFLIGHT=$verdict server=$REPLACEMENT_SERVER"
+          echo "OpenBao replacement preflight for \`$REPLACEMENT_SERVER\`: **$verdict**" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

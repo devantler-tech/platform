@@ -14,8 +14,10 @@ it is a point-in-time observation, not a reservation or provisioning authority.
 
 Reads and response sizes are bounded. Incomplete lists, duplicate or case-aliased
 JSON fields, changed node identities, unavailable members and unknown workers
-fail closed. Public output contains only the stage and counts. Credentials and
-provider/node payloads remain in runner memory.
+fail closed. Public output contains only the stage, counts and fixed validation
+outcomes. A rejected provider envelope identifies which pagination or capacity
+checks failed, without printing response values or weakening those checks.
+Credentials and provider/node payloads remain in runner memory.
 
 The later worker activation must repeat this check immediately before mutable
 publication and before updating the pool, then require the full nine-node roster

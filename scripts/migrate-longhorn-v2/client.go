@@ -48,6 +48,10 @@ func verifyResetLayout(raw, ephemeral object, originalUUID string) error {
 }
 
 func verifyEncryptedLocalLayout(raw, ephemeral object) error {
+	return verifyEncryptedRawDisk(raw, ephemeral, permanentRawDiskGiB)
+}
+
+func verifyEncryptedRawDisk(raw, ephemeral object, rawGiB uint64) error {
 	if text(raw, "metadata", "id") != "r-longhorn" || text(ephemeral, "metadata", "id") != "EPHEMERAL" || text(ephemeral, "spec", "uuid") == "" {
 		return errors.New("encrypted local partition identities are missing")
 	}
@@ -68,7 +72,7 @@ func verifyEncryptedLocalLayout(raw, ephemeral object) error {
 	}
 	rawSize, rawOK := value(raw, "spec", "size").(float64)
 	ephemeralSize, ephemeralOK := value(ephemeral, "spec", "size").(float64)
-	if !rawOK || !ephemeralOK || rawSize != 96*1024*1024*1024 || ephemeralSize < 40*1024*1024*1024 {
+	if !rawOK || !ephemeralOK || rawSize != float64(rawGiB<<30) || ephemeralSize < 40*1024*1024*1024 {
 		return errors.New("partition capacities do not match the reviewed storage layout")
 	}
 	return nil

@@ -80,9 +80,9 @@ fi
 # kubevuln v0.3.159 swallows an exhausted conflict retry while updating a
 # VulnerabilityManifestSummary: it logs the original AlreadyExists result and
 # returns success. kubescape/kubevuln#745 fixed both error reporting and
-# propagation, first released in v0.3.404. Its chart-default v0.3.430 still
-# publishes manifest references in the workload namespace even though the
-# manifests live in the scanner namespace, and skips cached-summary refreshes
+# propagation, first released in v0.3.404. Releases before the
+# #946 fix publish manifest references in the workload namespace even though the
+# manifests live in the scanner namespace, and skip cached-summary refreshes
 # after image updates. Upstream #946 fixes both; v0.3.574 retains that fix,
 # preserves node-agent SBOMs when local generation is disabled (#1170), and
 # includes the parser repairs reviewed under #5553.
@@ -108,7 +108,7 @@ readonly offline
 
 # The scanner's API-server persistence handler stores detailed
 # WorkloadConfigurationScan objects only when clusterData.continuousPostureScan
-# is true. Chart 1.40.5 derives that flag from this capability.
+# is true. Chart 1.41.0 derives that flag from this capability.
 continuous_scan="$(yq -er '.spec.values.capabilities.continuousScan' "${helm_release}")" ||
   fail 'capabilities.continuousScan is missing'
 readonly continuous_scan
@@ -174,14 +174,17 @@ readonly kubevuln_cpu_limit
 # instant. Both scans are high-volume writers to one SQLite-backed storage API;
 # keep their authored windows separated so detailed posture writes do not lose
 # the single-writer lock to vulnerability results. These value paths and their
-# CronJob mapping were verified against immutable chart 1.40.5; fail on a chart
+# CronJob mapping were verified against immutable chart 1.41.0; fail on a chart
 # bump so the new chart must be rendered and this contract deliberately renewed.
+# Chart 1.41.0 keeps both value paths and CronJob names; its schedulers now run
+# kubectl to create OperatorCommand objects from the same request body instead
+# of posting it to the operator's trigger endpoint (kubescape/helm-charts#964).
 chart_version="$(yq -er '
   .spec.chart.spec.version |
   select(tag == "!!str" and length > 0)
 ' "${helm_release}")" || fail 'the Kubescape chart version must be an exact string'
 readonly chart_version
-[[ "${chart_version}" == "1.40.5" ]] ||
+[[ "${chart_version}" == "1.41.0" ]] ||
   fail 'the Kubescape chart changed; revalidate both rendered scheduler CronJobs before updating this guard'
 
 posture_schedule="$(yq -er '
@@ -208,7 +211,7 @@ readonly vulnerability_schedule
 # render additionally proves that the reviewed chart maps each authored value to
 # the intended CronJob. Pin the archive bytes so a republished tag fails closed.
 readonly chart_repository='https://kubescape.github.io/helm-charts/'
-readonly chart_archive_sha256='80c6d177b534936f66df7d1a10544bd5e13d48b581a562c480bd16314221aa92'
+readonly chart_archive_sha256='055db0597fb5d5ba533dbc96774a0ed14a0bad10cc796bd02ca8b43f3b5bdd5d'
 chart_dir="$(mktemp -d "${TMPDIR:-/tmp}/kubescape-chart.XXXXXX")" ||
   fail 'could not create a temporary directory for the Kubescape chart'
 readonly chart_dir
@@ -371,6 +374,48 @@ yq 'with(select(.kind == "ClusterRole" and .metadata.name == "kubevuln");
   "${postrendered_chart}" >"${invalid_watch_verb}" || fail 'could not construct the verb control'
 [[ "$(label_watch_access "${invalid_watch_verb}" apps deployments)" == false ]] ||
   fail 'the label-watch guard accepted a verb suffix instead of watch'
+# Chart 1.41.0 runs both schedulers with a mounted token for the scanner's and
+# kubevuln's ServiceAccounts, whose ClusterRoles reach far beyond creating one
+# OperatorCommand. Require the post-renderer to move both onto the dedicated
+# kubescape-scheduler identity and a digest-pinned kubectl image.
+for scheduler in kubescape-scheduler kubevuln-scheduler; do
+  scheduler_identity="$(SCHEDULER="${scheduler}" yq ea -er '
+    select(.kind == "CronJob" and .metadata.name == strenv(SCHEDULER)) |
+    .spec.jobTemplate.spec.template.spec |
+    .serviceAccountName + " " + .containers[0].image
+  ' "${postrendered_chart}")" || fail "the post-rendered ${scheduler} CronJob is missing"
+  [[ "${scheduler_identity}" == 'kubescape-scheduler quay.io/kubescape/kubectl:1.36.1@sha256:e2b97dde9666986c61c56d49aae85a714b89b69392baa531438e74ec34096fb4' ]] ||
+    fail "the ${scheduler} CronJob must run as kubescape-scheduler with the digest-pinned kubectl image (got: ${scheduler_identity})"
+done
+
+readonly scheduler_role="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/role-scheduler.yaml"
+scheduler_rules="$(yq -er -o=json -I=0 '
+  [.rules[] | {
+    "groups": (.apiGroups | sort | join(",")),
+    "resources": (.resources | sort | join(",")),
+    "verbs": (.verbs | sort | join(","))
+  }] | sort_by(.groups)
+' "${scheduler_role}")" || fail 'the kubescape-scheduler Role is missing'
+readonly scheduler_rules
+[[ "${scheduler_rules}" == '[{"groups":"batch","resources":"jobs","verbs":"get"},{"groups":"kubescape.io","resources":"operatorcommands","verbs":"create"}]' ]] ||
+  fail "the kubescape-scheduler Role must grant only operatorcommands create and jobs get (got: ${scheduler_rules})"
+
+# Chart 1.41.0 fixes GOMEMLIMIT at a fraction of the authored memory limit. The
+# VPA resizes limits below that, so keep the three Go servers that followed
+# their real limit in 1.40.5 on resourceFieldRef.
+for workload in kubescape:kubescape operator:operator storage:apiserver; do
+  deployment="${workload%%:*}"
+  container="${workload#*:}"
+  gomemlimit_source="$(DEPLOYMENT="${deployment}" CONTAINER="${container}" yq ea -er '
+    select(.kind == "Deployment" and .metadata.name == strenv(DEPLOYMENT)) |
+    .spec.template.spec.containers[] | select(.name == strenv(CONTAINER)) |
+    [.env[] | select(.name == "GOMEMLIMIT")] |
+    select(length == 1) | .[0] |
+    ((.value // "") + "|" + (.valueFrom.resourceFieldRef.resource // ""))
+  ' "${postrendered_chart}")" || fail "the post-rendered ${deployment} GOMEMLIMIT is missing or duplicated"
+  [[ "${gomemlimit_source}" == '|limits.memory' ]] ||
+    fail "${deployment} GOMEMLIMIT must follow the container's memory limit (got: ${gomemlimit_source})"
+done
 
 rendered_posture_schedule="$(yq ea -er '
   select(.kind == "CronJob" and .metadata.name == "kubescape-scheduler") |

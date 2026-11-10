@@ -1,10 +1,10 @@
 package backupcatalogue
 
 import (
-	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -21,7 +21,7 @@ type DeploymentDocuments struct {
 type deploymentBinding struct {
 	policy                         Policy
 	accessKey, secretKey, password string
-	digest                         string
+	state                          []bindingObject
 }
 
 type bindingMetadata struct {
@@ -150,12 +150,25 @@ func bindDeployment(namespace string, expected Policy, docs DeploymentDocuments)
 	// Velero 1.18.4 provider/unified_repo.go uses the BSL prefix, the fixed
 	// backend and volumeNamespace. The CR name/UID is not an object-key prefix.
 	expected.Prefix += "kopia/" + namespace + "/"
-	// Compare complete raw responses in memory across the observation. This
-	// private digest includes Secret data and must never enter a public receipt.
-	encoded, err := json.Marshal(docs)
-	if err != nil {
-		return deploymentBinding{}, errReadHeld
+	// Bind validated identity, scope, readiness and credential data. API resource
+	// versions and unconsumed validation timestamps can advance during a read
+	// without changing those facts. Resource versions still must be present on
+	// each complete native response. Credential values are compared separately
+	// in memory, never hashed or included in a serialized catalogue.
+	objects := []bindingObject{location, repository, cloud, passwordSecret}
+	for i := range objects {
+		objects[i].Metadata.ResourceVersion = ""
+		objects[i].Data = nil
 	}
-	digest := sha256.Sum256(encoded)
-	return deploymentBinding{policy: expected, accessKey: accessKey, secretKey: secretKey, password: password, digest: hex.EncodeToString(digest[:])}, nil
+	return deploymentBinding{policy: expected, accessKey: accessKey, secretKey: secretKey, password: password, state: objects}, nil
+}
+
+func sameDeployment(a, b deploymentBinding) bool {
+	if len(a.state) != 4 || len(b.state) != 4 || a.accessKey == "" || b.accessKey == "" || a.secretKey == "" || b.secretKey == "" || a.password == "" || b.password == "" {
+		return false
+	}
+	credentialsMatch := subtle.ConstantTimeCompare([]byte(a.accessKey), []byte(b.accessKey)) &
+		subtle.ConstantTimeCompare([]byte(a.secretKey), []byte(b.secretKey)) &
+		subtle.ConstantTimeCompare([]byte(a.password), []byte(b.password))
+	return credentialsMatch == 1 && reflect.DeepEqual(a.state, b.state)
 }

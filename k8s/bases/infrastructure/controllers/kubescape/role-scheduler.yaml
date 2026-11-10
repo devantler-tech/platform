@@ -1,0 +1,22 @@
+---
+# The scan schedulers only turn a request body into an OperatorCommand owned by
+# their own Job. Grant exactly that, in this namespace, instead of reusing the
+# scanner's and kubevuln's much broader identities.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubescape-scheduler
+  namespace: kubescape
+rules:
+  - apiGroups:
+      - kubescape.io
+    resources:
+      - operatorcommands
+    verbs:
+      - create
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get

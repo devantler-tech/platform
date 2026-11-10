@@ -45,6 +45,12 @@ if [[ "${MODE:-}" == hang || "${MODE:-}" == preflight-timeout ]]; then
     sleep 2
   fi
 fi
+# Reproduce a loaded runner reaching the public check after its old three-second
+# budget. The deadline-retry case must exercise a real request before judging it.
+if [[ "${MODE:-}" == dropped-at-deadline && ! -e "$FIXTURE/slow-preflight" ]]; then
+  : >"$FIXTURE/slow-preflight"
+  sleep 4
+fi
 # A timeout alone cannot prove a mutated snapshot was rejected on a busy host.
 # Record actual projection/predicate rejection before accepting that control.
 for argument in "$@"; do
@@ -61,6 +67,17 @@ done
 exec "$REAL_JQ" "$@"
 SH
 chmod +x "${scratch}/bin/jq"
+
+# Only the deadline-retry fixture uses a logical clock. Keep setup at time zero,
+# then leave exactly one second after the first failed public request. The real
+# fetch/remaining functions must refuse its retry; no production seam is added.
+# Other fixtures retain the real clock, including preflight and child cleanup.
+cat >"${scratch}/deadline-clock.sh" <<'SH'
+if [[ "$0" == "$ROLLOUT_FIXTURE_SCRIPT" ]]; then
+  set -T
+  trap 'if [[ -f "$FIXTURE/public-deadline" && -n "${deadline:-}" ]]; then SECONDS=$((deadline - 1)); else SECONDS=0; fi' DEBUG
+fi
+SH
 
 # Production derives the expected state from the checked-out Helm declaration,
 # never from the live object being judged. Keep that read explicit in fixtures.
@@ -370,7 +387,23 @@ case "${MODE:-}" in
       esac
     fi
     ;;
-  dropped-at-deadline) sleep "$transfer_seconds"; printf '000'; exit 56 ;;
+  edge-origin-error-once)
+    if [[ ! -e "$FIXTURE/public-edge-failed-once" ]]; then
+      : >"$FIXTURE/public-edge-failed-once"
+      printf '520'
+      exit 0
+    fi
+    ;;
+  edge-origin-error) printf '522'; exit 0 ;;
+  request-timeout-once | stalled-once)
+    if [[ ! -e "$FIXTURE/public-timed-out-once" ]]; then
+      : >"$FIXTURE/public-timed-out-once"
+      [[ "$MODE" != stalled-once ]] || sleep "$transfer_seconds"
+      printf '000'
+      exit 28
+    fi
+    ;;
+  dropped-at-deadline) : >"$FIXTURE/public-deadline"; printf '000'; exit 56 ;;
   slow-public) sleep 0.55 ;;
   connection-reset) printf '000'; printf 'PRIVATE-ERROR-CANARY: private upstream\n' >&2; exit 56 ;;
   invalid-http-status) printf '503PRIVATE-ERROR-CANARY'; exit 0 ;;
@@ -421,9 +454,11 @@ run_case() {
     cp "${scratch}/healthy/"*.json "$fixture/"
   }
   if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset && "$mode" != unsafe-storage ]]; then timeout_seconds=3; fi
-  local probe_runtime="$child"
+  local probe_runtime="$child" shell_init=''
+  if [[ "$mode" == dropped-at-deadline ]]; then shell_init="${scratch}/deadline-clock.sh"; fi
   if [[ -f "$fixture/expected-probe-runtime" ]]; then probe_runtime=$(cat "$fixture/expected-probe-runtime"); fi
   PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
+    BASH_ENV="$shell_init" ROLLOUT_FIXTURE_SCRIPT="$script" \
     EXPECTED_HELM_FILE="${root_dir}/k8s/bases/apps/data-product-controller/helm-release.yaml" \
     EXPECTED_CHART_FILE="${root_dir}/k8s/bases/apps/data-product-controller/oci-repository.yaml" \
     EXPECTED_PUBLISHER_FILE="${root_dir}/k8s/bases/apps/data-product-controller/deployment-publisher-review.yaml" \
@@ -569,11 +604,15 @@ jq -e '.httpStatus == 0 and .curlExit == 56' "${scratch}/receipt-connection-rese
 [[ $(wc -l <"${scratch}/receipt-connection-reset/urls") -eq 2 ]] || fail 'a dropped connection was not retried exactly once'
 # One dropped connection recovers, and the accepted receipt still counts it.
 expected_urls=12
-for mode in connection-refused-once empty-reply-once connection-reset-once; do
+for mode in connection-refused-once empty-reply-once connection-reset-once request-timeout-once edge-origin-error-once; do
   run_case "$mode" pass "$mode"
   jq -e '.complete == true and .publicRetries == 1' "${scratch}/${mode}/stdout" >/dev/null ||
     fail "$mode: the accepted receipt lost the absorbed retry"
 done
+# A stalled response gives up at its own attempt limit, so the retry still fits the budget.
+run_case stalled-once pass stalled-once 30
+jq -e '.complete == true and .publicRetries == 1' "${scratch}/stalled-once/stdout" >/dev/null ||
+  fail 'stalled-once: a stalled response spent the budget its retry needed'
 expected_urls=11
 # The cluster-wide inventory reports counts only, and never reads an unread list as zero.
 run_case inventory-clean pass ''
@@ -600,10 +639,12 @@ jq -e '.complete == true and .productInventory == "unavailable"' "${scratch}/inv
 for mode in inventory-clean inventory-ui inventory-forbidden; do
   if grep -Eq 'INVENTORY-NAME-CANARY|tenant-canary|PRIVATE-ERROR-CANARY' "${scratch}/${mode}/stdout"; then fail "$mode: the receipt exposed inventory values"; fi
 done
-# A retry never extends the deadline, and the refusal keeps the cause it could not retry.
-run_case dropped-at-deadline fail dropped-at-deadline 3
-# Which refusal fires first depends on the second the budget ran out in; both keep the cause.
-jq -e '(.failure == "deadline_exceeded" or .failure == "public_contract_incomplete") and .curlExit == 56' "${scratch}/dropped-at-deadline/stdout" >/dev/null ||
+# Setup deliberately exceeds the old three-second budget. Once a request has
+# failed, the logical clock leaves one second: enough to retain the cause, but
+# never enough to start the retry. The ordinary process watchdog stays bounded.
+run_case dropped-at-deadline fail dropped-at-deadline 30
+jq -e '(.failure == "deadline_exceeded" or .failure == "public_contract_incomplete") and .phase == "public_contract" and
+  .role == "sample_health" and .reason == "transport_failed" and .httpStatus == 0 and .curlExit == 56' "${scratch}/dropped-at-deadline/stdout" >/dev/null ||
   fail 'a retry the deadline forbids lost its curl exit'
 [[ $(wc -l <"${scratch}/dropped-at-deadline/urls") -eq 1 ]] || fail 'a retry ran past the deadline'
 run_case receipt-invalid-status fail invalid-http-status 15
@@ -652,13 +693,24 @@ run_case final-moving-public fail flap-public-failure 20
   fail 'final-moving-public: did not reach three moving pairs with failed public checks'
 jq -e '.failure == "rollout_changed" and .changed == ["apps.metadata.labels"] and (has("phase") or has("role") or has("reason")) == false' "${scratch}/final-moving-public/stdout" >/dev/null ||
   fail 'final-moving-public: final moving snapshot retained an unvalidated public failure'
-for mode in dns-failure tls-failure tls-handshake-failure request-timeout; do
+for mode in dns-failure tls-failure tls-handshake-failure; do
   run_case "$mode" fail "$mode" 15
   [[ $(wc -l <"${scratch}/${mode}/urls") -eq 1 ]] || fail "$mode: a non-retryable failure was retried"
 done
 # Spend the complete transfer budget, as a connected endpoint that never responds does.
 # The refusal must retain its sanitized transport cause even at the shared deadline.
+# An edge that keeps failing to reach the cluster is retried once, then refuses with its status.
+run_case edge-origin-error fail edge-origin-error 15
+[[ $(wc -l <"${scratch}/edge-origin-error/urls") -eq 2 ]] || fail 'edge-origin-error: an edge origin error was not retried exactly once'
+jq -e '.reason == "http_status" and .httpStatus == 522 and .curlExit == 0' "${scratch}/edge-origin-error/stdout" >/dev/null ||
+  fail 'edge-origin-error: the refusal lost its status'
+# A request that keeps timing out is retried once, then refuses with its cause.
+run_case request-timeout fail request-timeout 15
+[[ $(wc -l <"${scratch}/request-timeout/urls") -eq 2 ]] || fail 'request-timeout: a timed-out request was not retried exactly once'
+jq -e '.curlExit == 28' "${scratch}/request-timeout/stdout" >/dev/null || fail 'request-timeout: the refusal lost its curl exit'
 run_case transfer-timeout fail transfer-timeout 15
+jq -e '(.publicStartedAfterSeconds | type == "number" and . >= 0) and .attempt == 1' "${scratch}/transfer-timeout/stdout" >/dev/null ||
+  fail 'transfer-timeout: the refusal did not say when the public pass began'
 
 # mutate_case verifies that a dormant-profile mutation reaches snapshot rejection.
 # mutate_case_impl copies the immutable healthy seed and checks one isolated rollout mutation.

@@ -196,7 +196,11 @@ assert_pulled() { # <label> <ref|repo|version>
 }
 
 commit() { # <tree> <message>
-  if ! git -C "$1" add -A ||
+  local paths=(k8s) path
+  for path in ksail.yaml ksail.prod.yaml; do
+    if [ -f "$1/$path" ]; then paths+=("$path"); fi
+  done
+  if ! git -C "$1" add -- "${paths[@]}" ||
     ! git -C "$1" -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false \
       commit -q -m "$2"; then
     printf 'FAIL: cannot commit the fixture tree\n' >&2
@@ -245,8 +249,8 @@ EOF
     '  namespace: flux-system' 'spec:' '  path: ./__PROVIDER__/apps' >"$k8s/clusters/base/flux.yaml"
   printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' '  - config-map.yaml' \
     '  - flux-instance.yaml' >"$k8s/bootstrap/test/kustomization.yaml"
-  printf '%s\n' 'apiVersion: fluxcd.controlplane.io/v1' 'kind: FluxInstance' 'metadata:' '  name: flux' \
-    '  namespace: flux-system' 'spec:' '  distribution:' '    version: 2.9.x' >"$k8s/bootstrap/test/flux-instance.yaml"
+  cp "$repo_root/k8s/providers/docker/infrastructure/controllers/flux-instance/flux-instance.yaml" \
+    "$k8s/bootstrap/test/flux-instance.yaml"
   variables 3
   printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' \
     '  - helm-repository.yaml' '  - helm-release.yaml' >"$k8s/controllers/test/kustomization.yaml"
@@ -436,8 +440,13 @@ printf 'guard-helm-post-renderers:\n'
 # --- The real tree --------------------------------------------------------------------------
 
 printf 'the committed tree, compared with itself\n'
+mkdir -p "$scratch/real-tree"
+cp -R "$repo_root/k8s" "$scratch/real-tree/k8s"
+cp "$repo_root/ksail.yaml" "$repo_root/ksail.prod.yaml" "$scratch/real-tree/"
+git -C "$scratch/real-tree" init -q || exit 1
+commit "$scratch/real-tree" current-manifest-inputs
 : >"$HELM_SHIM_LOG"
-if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.9.6 --base HEAD "$repo_root/k8s" 2>&1)"; then GUARD_RC=0; else GUARD_RC=$?; fi
+if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.9.6 --base HEAD "$scratch/real-tree/k8s" 2>&1)"; then GUARD_RC=0; else GUARD_RC=$?; fi
 assert_rc 'an unchanged tree passes' 0
 assert_contains 'nothing is rendered when nothing changed' ', 0 checked'
 assertions=$((assertions + 1))
@@ -447,6 +456,13 @@ else
   bad 'the repository'"'"'s post-rendered HelmReleases are found'
 fi
 assert_pulls 'no chart is pulled for an unchanged tree' 0
+
+new_tree
+pr_3580 | release
+yq -i '.spec.kustomize.patches |= map(select(.target.kind != "Deployment" or .target.name != "helm-controller"))' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
+run_guard "$TREE"
+assert_rc 'the exact distribution without the controller override is not the audited renderer profile' 2
+assert_contains 'the effective composed profile is required' 'unaudited controller image/CRD composition'
 
 # --- #3577 and #3580 -------------------------------------------------------------------------
 
@@ -478,6 +494,23 @@ assert_contains 'one release was checked' ', 1 checked, all apply'
 # --- Scope: only what changed since the base is rendered ------------------------------------
 
 printf 'scope\n'
+new_tree
+pr_3580 | release
+yq -i '.spec.distribution.version = "2.9.x"' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
+commit "$TREE" previous-controller-profile
+yq -i '.spec.distribution.version = "2.9.6"' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
+run_guard "$TREE" --base HEAD
+assert_rc 'the audited controller upgrade checks the actual candidate render' 0
+assert_contains 'an old base profile checks every current post-renderer' 'checking every post-rendered HelmRelease'
+assert_contains 'the unchanged release is checked with the new profile' ', 1 checked, all apply'
+assert_pulls 'the profile transition cannot reuse the old render verdict' 1
+
+new_tree
+pr_3580 | release
+yq -i '.spec.distribution.version = "2.10.x"' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
+run_guard "$TREE"
+assert_rc 'a floating selector cannot admit a future unaudited controller patch' 2
+
 new_tree
 pr_3577 | release
 commit "$TREE" base
@@ -938,24 +971,24 @@ printf '%s\n' '  - template-input.yaml' >>"$TREE/k8s/controllers/test/kustomizat
 run_guard "$TREE"
 assert_rc 'revision-dependent templates supplied by selected ConfigMap data are cannot-check' 2
 assert_contains 'selected template values reach the historical-input check' 'revision-dependent chart'
-printf '%s\n' '{{ if eq .Capabilities.HelmVersion.Version "v4.2.4" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
+printf '%s\n' '{{ if eq .Capabilities.HelmVersion.Version "v4.3.1" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
   >"$scratch/charts/revision-sensitive/templates/revision.yaml"
 pr_3580 | release
 yq -i '.spec.chart.spec.chart = "revision-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
 run_guard "$TREE"
 assert_rc 'the audited SDK renders HelmVersion-dependent charts' 0
 # shellcheck disable=SC2016 # Go raw-string template keys must remain literal.
-printf '%s\n' '{{ if eq (index (.Capabilities | toJson | fromJson) `HelmVersion`).Version "v4.2.4" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
+printf '%s\n' '{{ if eq (index (.Capabilities | toJson | fromJson) `HelmVersion`).Version "v4.3.1" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
   >"$scratch/charts/revision-sensitive/templates/revision.yaml"
 run_guard "$TREE"
 assert_rc 'raw-string HelmVersion properties use the audited SDK metadata' 0
 
-# The official CLI adds a pod securityContext only in its v4.2.4 capability branch.
-# Flux's embedded SDK exposes v4.2, so its render lacks that parent and the JSON leaf add must
+# The official CLI adds a pod securityContext only in its v4.3.1 capability branch.
+# Flux's embedded SDK exposes v4.3, so its render lacks that parent and the JSON leaf add must
 # fail. A renderer that silently returns to the CLI would incorrectly report this patch clean.
 cp -R "$chart" "$scratch/charts/sdk-sensitive"
 yq -i '.name = "sdk-sensitive"' "$scratch/charts/sdk-sensitive/Chart.yaml"
-sed 's/semverCompare "<0.50.0" .Chart.Version/eq .Capabilities.HelmVersion.Version "v4.2.4"/' \
+sed 's/semverCompare "<0.50.0" .Chart.Version/eq .Capabilities.HelmVersion.Version "v4.3.1"/' \
   "$chart/templates/deployment.yaml" >"$scratch/charts/sdk-sensitive/templates/deployment.yaml"
 new_tree
 pr_pod_leaf_add | release
@@ -964,9 +997,9 @@ yq -i '.spec.chart.spec.chart = "sdk-sensitive"' "$TREE/k8s/controllers/test/hel
 # Demonstrate the divergence with both real rendering commands and the actual
 # patch, independently of the guard's refusal of a mismatched renderer binary.
 mkdir -p "$scratch/cli-divergence"
-yq -o=json '.spec.postRenderers[0].kustomize' "$TREE/k8s/controllers/test/helm-release.yaml" | \
+yq -o=json '.spec.postRenderers[0].kustomize' "$TREE/k8s/controllers/test/helm-release.yaml" |
   jq '. + {apiVersion:"kustomize.config.k8s.io/v1beta1",kind:"Kustomization",resources:["rendered.yaml"]}' \
-  >"$scratch/cli-divergence/kustomization.yaml"
+    >"$scratch/cli-divergence/kustomization.yaml"
 for cli_mode in install upgrade; do
   cli_args=(template flux-operator "$scratch/charts/sdk-sensitive" --namespace flux-system)
   [ "$cli_mode" != upgrade ] || cli_args+=(--is-upgrade)
@@ -990,7 +1023,7 @@ assert_rc 'a correct post-renderer applies to both SDK install and upgrade rende
 
 cp -R "$scratch/charts/sdk-sensitive" "$scratch/charts/sdk-upgrade-sensitive"
 yq -i '.name = "sdk-upgrade-sensitive"' "$scratch/charts/sdk-upgrade-sensitive/Chart.yaml"
-sed 's/(eq .Capabilities.HelmVersion.Version "v4.2.4")/(or (not .Release.IsUpgrade) (eq .Capabilities.HelmVersion.Version "v4.2.4"))/' \
+sed 's/(eq .Capabilities.HelmVersion.Version "v4.3.1")/(or (not .Release.IsUpgrade) (eq .Capabilities.HelmVersion.Version "v4.3.1"))/' \
   "$scratch/charts/sdk-sensitive/templates/deployment.yaml" >"$scratch/charts/sdk-upgrade-sensitive/templates/deployment.yaml"
 pr_pod_leaf_add | release
 yq -i '.spec.chart.spec.chart = "sdk-upgrade-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
@@ -1027,7 +1060,7 @@ YAML
             patch: |
               - op: test
                 path: /data/version
-                value: v4.2
+                value: v4.3
               - op: test
                 path: /data/commit
                 value: ""
@@ -1036,10 +1069,10 @@ YAML
                 value: ""
               - op: test
                 path: /data/compiler
-                value: go1.26.8
+                value: go1.27.3
               - op: test
                 path: /data/client
-                value: v1.36
+                value: v1.37
 YAML
 } | release
 yq -i '.spec.chart.spec.chart = "sdk-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"

@@ -499,6 +499,28 @@ run_scenario "${dir}" || fail "scenario 'within_grace': script exited non-zero: 
   fail "scenario 'within_grace': alerted on a cluster still inside its grace period"
 pass "a cluster still inside the grace period does not page"
 
+# A cluster that has never reported Ready uses its creation time for the
+# grace period. A fresh bootstrap stays quiet, but a stalled one alerts.
+dir="$(setup_scenario missing_ready_old 200 "$(
+  jq --arg ts "${old_stamp}" \
+    '.items[0] |= (.metadata.creationTimestamp = $ts | del(.status))' <<<"${degraded_body}"
+)" "${REAL_WEBHOOK}")"
+run_scenario "${dir}" || fail "scenario 'missing_ready_old': script exited non-zero"
+[[ "$(deliveries "${dir}")" == 1 ]] ||
+  fail "scenario 'missing_ready_old': a cluster without Ready must alert after the grace period"
+jq -e --arg ts "${old_stamp}" '.text | contains("Ready=Unknown since " + $ts)' \
+  "${dir}/delivered-payload.json" >/dev/null ||
+  fail "scenario 'missing_ready_old': payload does not report the missing readiness and its age"
+
+dir="$(setup_scenario missing_ready_fresh 200 "$(
+  jq --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.items[0] |= (.metadata.creationTimestamp = $ts | del(.status))' <<<"${degraded_body}"
+)" "${REAL_WEBHOOK}")"
+run_scenario "${dir}" || fail "scenario 'missing_ready_fresh': script exited non-zero"
+[[ "$(deliveries "${dir}")" == 0 ]] ||
+  fail "scenario 'missing_ready_fresh': a cluster inside the grace period must stay quiet"
+pass "missing readiness alerts only after the creation grace period"
+
 # Scenario 8b — the archive condition gets its own grace clock. A new Cluster
 # may report ContinuousArchiving=False while its sidecar starts; that ordinary
 # transition must stay quiet even though every database instance is Ready.

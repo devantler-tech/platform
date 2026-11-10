@@ -1,3 +1,4 @@
+---
 # The rule's trigger. It is one of the four matched Deployments; the policy
 # lists its four targets statically, so any one of them firing patches all
 # four. Kyverno's CLI fake client rejects the same object appearing as both a

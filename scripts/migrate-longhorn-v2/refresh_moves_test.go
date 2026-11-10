@@ -32,6 +32,9 @@ type refreshCluster struct {
 	onEvict        func()
 	onRestart      func()
 	onPodsRead     func()
+	onNodesRead    func()
+	onNodeRead     func()
+	sourceMoved    bool
 	failPodReads   int
 }
 
@@ -160,6 +163,9 @@ func (f *refreshCluster) patch(input []byte) ([]byte, error) {
 func (f *refreshCluster) run(_ context.Context, input []byte, program string, args ...string) ([]byte, error) {
 	switch program {
 	case "git":
+		if f.sourceMoved {
+			return []byte(strings.Repeat("2", 40) + "\trefs/heads/main\n"), nil
+		}
 		return []byte(strings.Repeat("1", 40) + "\trefs/heads/main\n"), nil
 	case "kubectl":
 		call := args[2:]
@@ -169,6 +175,9 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 		case call[0] == "patch":
 			return f.patch(input)
 		case call[0] == "get" && call[1] == "nodes":
+			if f.onNodesRead != nil {
+				f.onNodesRead()
+			}
 			return f.list(f.node, f.spare)
 		case call[0] == "get" && call[1] == "pods":
 			if f.onPodsRead != nil {
@@ -197,6 +206,9 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 			}
 			return f.list(f.pods...)
 		case call[0] == "get" && call[1] == "node":
+			if f.onNodeRead != nil {
+				f.onNodeRead()
+			}
 			return json.Marshal(f.node)
 		}
 		f.t.Fatalf("unexpected kubectl call %v", call)
@@ -206,8 +218,8 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 			return json.Marshal(object{"metadata": object{"id": "systeminformation", "namespace": "hardware"}, "spec": object{"uuid": "machine-uuid"}})
 		case args[1] == "read" && args[2] == "/proc/sys/vm/nr_hugepages":
 			return []byte("1024\n"), nil
-		case args[1] == "read":
-			return []byte("nvme_tcp 1 0 - Live 0\nvfio_pci 1 0 - Live 0\nuio_pci_generic 1 0 - Live 0\n"), nil
+		case args[1] == "ls":
+			return nil, nil
 		case args[1] == "service":
 			f.events = append(f.events, "restart")
 			if f.onRestart != nil {
@@ -228,6 +240,53 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 
 func (f *refreshCluster) refresh(ctx context.Context) error {
 	return refreshHugepages(ctx, client{run: f.run, context: "admin@prod"}, strings.Repeat("1", 40), f.node, f.pods)
+}
+
+// TestRefreshStopsForwardWritesWhenMainMoves exercises stale-source stops at
+// each mutation boundary and confirms that the owned cordon is released.
+func TestRefreshStopsForwardWritesWhenMainMoves(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	for _, tc := range []struct {
+		name string
+		want []string
+	}{
+		{name: "before cordon"},
+		{name: "between evictions", want: []string{"cordon", "evict a", "uncordon"}},
+		{name: "between eviction retries", want: []string{"cordon", "evict a", "uncordon"}},
+		{name: "before restart"},
+		{name: "before restart with owned cordon", want: []string{"cordon", "evict a", "uncordon"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pods := []object{podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "a", "1Gi", "a-rs"), movablePodOnWorker(worker, "b", "900Mi", "b-rs")}
+			switch tc.name {
+			case "before restart":
+				pods = []object{podOnWorker(worker, "1Gi")}
+			case "before restart with owned cordon":
+				pods = []object{podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "a", "2Gi", "a-rs")}
+			}
+			f := newRefreshCluster(t, pods...)
+			moveMain := func() { f.sourceMoved = true }
+			switch tc.name {
+			case "before cordon":
+				f.onNodesRead = moveMain
+			case "between evictions":
+				f.onEvict = moveMain
+			case "between eviction retries":
+				f.refuseEviction, f.onEvict = true, moveMain
+			case "before restart":
+				f.onPodsRead = moveMain
+			case "before restart with owned cordon":
+				f.onNodeRead = func() {
+					if len(f.evictions) == 1 {
+						moveMain()
+					}
+				}
+			}
+			if err := f.refresh(context.Background()); err == nil || !f.sourceMoved || !slices.Equal(f.events, tc.want) {
+				t.Fatalf("events %v, expected %v after main moved: %v", f.events, tc.want, err)
+			}
+		})
+	}
 }
 
 func TestRefreshMovesOnlyWhatDoesNotFitThenRestoresScheduling(t *testing.T) {
@@ -689,7 +748,7 @@ func TestAnUnreadRetryNeverEvicts(t *testing.T) {
 			f.failPodReads = 1000
 		}
 	}
-	err := client{run: f.run, context: "admin@prod"}.movePod(context.Background(), pod, f.pods)
+	err := client{run: f.run, context: "admin@prod"}.movePod(context.Background(), strings.Repeat("1", 40), pod, f.pods)
 	if err == nil {
 		t.Fatal("a refused eviction was reported as moved")
 	}

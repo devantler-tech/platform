@@ -206,6 +206,7 @@ echo 'bootstrap requires complete inventory and a verified immutable publication
 biz_work="$test_work/business"
 mkdir -p "$biz_work/bin"
 export BIZ_WORK="$biz_work"
+export BIZ_SIGNER=467f07582436a26b62cf4aa756423512f85ba0c0
 for approval in publish-workflow-approved-revisions.tsv publish-workflow-approved-revisions.identities.tsv \
   publish-workflow-canonical-approvals.tsv publish-workflow-bootstrap-publications.json; do
   cp "$test_repo_root/scripts/$approval" "$biz_work/before-$approval"
@@ -273,7 +274,8 @@ case "$verifier_args" in
     [ "$(cat "$BIZ_WORK/certificate-event")" = release ] || exit 42
     verifier_args="${verifier_args/--certificate-github-workflow-trigger release /}" ;;
 esac
-[[ "$verifier_args" == 'verify --certificate-identity https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0 --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-repository devantler-tech/business-site --certificate-github-workflow-ref refs/tags/v1.0.2 --certificate-github-workflow-sha e5eb256dcb5dbf3857257e9072937ab95f1ea6c3 ghcr.io/devantler-tech/business-site/manifests@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ]]
+expected="verify --certificate-identity https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@$BIZ_SIGNER --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-repository devantler-tech/business-site --certificate-github-workflow-ref refs/tags/v1.0.2 --certificate-github-workflow-sha e5eb256dcb5dbf3857257e9072937ab95f1ea6c3 ghcr.io/devantler-tech/business-site/manifests@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+[ "$verifier_args" = "$expected" ]
 cat "$BIZ_WORK/signature.json"
 [ "$BIZ_CASE" != signature-failure ] || exit 42
 EOF
@@ -292,10 +294,10 @@ business_evidence() {
 business_fixture() {
   rm -f "$biz_work/tag-read" "$biz_work/release-read"
   printf 'release\n' >"$biz_work/certificate-event"
-  cp "$biz_work/run.json" "$biz_work/current-run.json"
-  cp "$biz_work/caller.yaml" "$biz_work/current-caller.yaml"
-  jq -n --slurpfile run "$biz_work/run.json" '{total_count:1,workflow_runs:$run}' >"$biz_work/list.json"
-  jq -n '[{critical:{image:{"docker-manifest-digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},identity:{"docker-reference":"ghcr.io/devantler-tech/business-site/manifests"}},optional:{
+  jq --arg pin "$BIZ_SIGNER" '.referenced_workflows[0]={sha:$pin,path:("devantler-tech/.github/.github/workflows/publish-app.yaml@"+$pin)}' "$biz_work/run.json" >"$biz_work/current-run.json"
+  sed "s/467f07582436a26b62cf4aa756423512f85ba0c0/$BIZ_SIGNER/" "$biz_work/caller.yaml" >"$biz_work/current-caller.yaml"
+  jq -n --slurpfile run "$biz_work/current-run.json" '{total_count:1,workflow_runs:$run}' >"$biz_work/list.json"
+  jq -n --arg publisher "devantler-tech/.github/.github/workflows/publish-app.yaml@$BIZ_SIGNER" '[{critical:{image:{"docker-manifest-digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},identity:{"docker-reference":"ghcr.io/devantler-tech/business-site/manifests"}},optional:{
     "devantler.ci-run-attempt":"1","devantler.ci-run-id":"39867770434",
     "devantler.image-digest":"sha256:d71c867ac38472643dc38669b3b71d9ee3db4062ac46654314fde864846a9471",
     "devantler.image-producer":"https://github.com/devantler-tech/business-site/.github/workflows/ci.yaml@refs/heads/main",
@@ -304,7 +306,7 @@ business_fixture() {
     "devantler.public-profile":"production-template","devantler.repository":"devantler-tech/business-site",
     "devantler.run-attempt":"1","devantler.run-id":"39869859801","devantler.source-ref":"v1.0.2",
     "devantler.source-sha":"e5eb256dcb5dbf3857257e9072937ab95f1ea6c3","devantler.version":"1.0.2",
-    "devantler.workflow-ref":"devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0"
+    "devantler.workflow-ref":$publisher
   }}]' >"$biz_work/signature.json"
 }
 export BIZ_CASE=valid
@@ -325,6 +327,45 @@ if read_bound_publications "$test_repo_root" "$biz_work/receipt.json" >/dev/null
   echo 'manifest-only evidence was accepted as deployment approval' >&2
   exit 1
 fi
+# A coherent selected-publisher publication must pass the actual verification path.
+# Only provider processes are doubled; no deployment or approval file is written.
+awk -F '\t' '$1!="business-site"' "$test_repo_root/scripts/publish-workflow-canonical-approvals.tsv" >"$biz_work/transition-approvals.tsv"
+printf 'business-site\tpublish-app\tdevantler-tech/.github\t467f07582436a26b62cf4aa756423512f85ba0c0\n' >>"$biz_work/transition-approvals.tsv"
+printf 'business-site\tpublish-app\tdevantler-tech/.github\taf042c540ce8db4d64add98c34b5c57691e0e812\n' >>"$biz_work/transition-approvals.tsv"
+BIZ_SIGNER=af042c540ce8db4d64add98c34b5c57691e0e812
+business_fixture
+if ! CANONICAL_APPROVALS_FILE="$biz_work/transition-approvals.tsv" business_evidence >"$biz_work/selected-receipt.json" 2>"$biz_work/error"; then
+  echo 'selected reviewed publisher publication was refused' >&2
+  exit 1
+fi
+jq -e --arg pin "$BIZ_SIGNER" '.publisherIdentity==("devantler-tech/.github/.github/workflows/publish-app.yaml@"+$pin) and .deploymentAuthorized==false' "$biz_work/selected-receipt.json" >/dev/null
+for policy_case in duplicate third malformed family workflow missing-business; do
+  cp "$biz_work/transition-approvals.tsv" "$biz_work/bad-approvals.tsv"
+  case "$policy_case" in
+    duplicate) printf 'business-site\tpublish-app\tdevantler-tech/.github\taf042c540ce8db4d64add98c34b5c57691e0e812\n' >>"$biz_work/bad-approvals.tsv" ;;
+    third) printf 'business-site\tpublish-app\tdevantler-tech/.github\t1111111111111111111111111111111111111111\n' >>"$biz_work/bad-approvals.tsv" ;;
+    malformed) printf 'business-site\tpublish-app\tdevantler-tech/.github\n' >>"$biz_work/bad-approvals.tsv" ;;
+    family) sed 's/devantler-tech\/.github/devantler-tech\/actions/' "$biz_work/transition-approvals.tsv" >"$biz_work/bad-approvals.tsv" ;;
+    workflow) awk -F '\t' 'BEGIN {OFS="\t"} {$2=($1=="business-site"?"publish-manifests":$2);print}' "$biz_work/transition-approvals.tsv" >"$biz_work/bad-approvals.tsv" ;;
+    missing-business) awk -F '\t' '$1!="business-site"' "$biz_work/transition-approvals.tsv" >"$biz_work/bad-approvals.tsv" ;;
+  esac
+  business_fixture
+  if CANONICAL_APPROVALS_FILE="$biz_work/bad-approvals.tsv" business_evidence >"$biz_work/refusal" 2>"$biz_work/error"; then
+    echo "unsafe publisher policy accepted: $policy_case" >&2
+    exit 1
+  fi
+  test ! -s "$biz_work/refusal"
+  test ! -e "$biz_work/tag-read"
+done
+for BIZ_SIGNER in f5d078cc4b04ecb15432ed4e34cba1142a6279d4 1111111111111111111111111111111111111111; do
+  business_fixture
+  if CANONICAL_APPROVALS_FILE="$biz_work/transition-approvals.tsv" business_evidence >"$biz_work/refusal" 2>"$biz_work/error"; then
+    echo 'unapproved publisher publication was accepted' >&2
+    exit 1
+  fi
+  test ! -s "$biz_work/refusal"
+done
+BIZ_SIGNER=467f07582436a26b62cf4aa756423512f85ba0c0
 for BIZ_CASE in wrong-event wrong-caller wrong-source wrong-tag wrong-product wrong-publisher duplicate-publisher \
   malformed-list trailing-list incomplete-list run-read-failure tag-read-failure wrong-caller-pin multi-document-caller \
   signature-failure malformed-signature trailing-signature wrong-digest wrong-reference changed-attempt moved-tag withdrawn-release \

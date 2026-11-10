@@ -1,5 +1,28 @@
 # Verify Email mailbox-data recovery
 
+The separate `Dispose Verified Retained Email Copy` workflow targets only the
+fixed retained diagnostic invocation. It requires the independent reader and
+claim UID witnesses in the private `EMAIL_RETAINED_READER_UID` and
+`EMAIL_RETAINED_CLAIM_UID` metadata settings. These are object identities, not
+service credentials. Missing or replaced identities refuse disposal. No identity
+value or mailbox content belongs in a public workflow input or receipt.
+
+Before deleting anything, it verifies the reviewed workload, encrypted clone,
+completed snapshot/transfer, backup retention, absence of transfer helpers, and a
+complete metadata inventory across all served namespaced APIs. It requires one
+exact diagnostic with matching account, mailbox, message, blob and content on
+both source and retained copy, then repeats both reads. Source mailbox writes are
+blocked at the HTTP boundary. All source messages and the backup remain intact.
+Only UID-fenced test resources are removed; the key remains until both storage
+backends are absent. Changed, foreign or uncertain evidence retains the copy.
+
+This reports retained-copy readback and disposal only. The original trial's
+random identity was not durably journaled, so its fresh-trial PASS cannot be
+recreated. A fresh successful recovery exercise and production storage cutover
+remain separate acceptance gates. Partial disposal reports an unverified cleanup
+state and requires diagnosis; the workflow does not adopt replacements or
+silently resume an uncertain delete.
+
 The confirmed `Verify Email Mailbox Data Recovery` workflow runs only from an
 immutable main revision, on its first attempt, in the protected production
 environment. It shares the production deployment lock. It does not move the
@@ -10,8 +33,12 @@ uniquely identified diagnostic message into an unsubscribed test mailbox. JMAP
 import does not submit an outgoing message. The current account credential stays
 in runner memory and is never installed in the restored pod.
 
-A fresh Velero filesystem backup includes only the selected Email pod and its data
-volume. The restore uses the completed, source-bound Kopia snapshot as bytes;
+A fresh Velero filesystem backup selects the Email pod and includes its related
+claim, which the controller needs to capture persistent data. Scratch-volume
+receipts may coexist; acceptance requires the exact data-volume receipt, not
+the backup's overall Completed phase. Velero reads explicitly select its API
+group so another installed Backup resource cannot shadow the recovery object.
+The restore uses the completed, source-bound Kopia snapshot as bytes;
 backed-up pods, hooks, routes and credentials are not replayed. A fixed recovery
 server reads a separate, three-replica encrypted volume with a new diagnostic key.
 A single reviewed administration declaration supplies the exact runtime digest
@@ -48,6 +75,23 @@ cleanup before removing retained resources. Do not delete storage keys while a
 restore operation or encrypted backend may still need them. A workflow rerun is
 refused; diagnose before a new confirmed dispatch.
 
+The confirmed `Observe Retained Email Recovery` workflow performs a read-only
+diagnosis of invocation `41561215415`. Its target is fixed in reviewed code. It
+binds the namespace, reader UID and declared workload, samples readiness without
+authentication, and only then reads the existing account credential to check a
+JMAP session. It performs no mailbox write, new restore or cleanup. A successful
+observation does not establish message recovery. Its output contains only a
+status code and closed stage names. Future recovery failures distinguish reader
+forwarding, readiness, session and message checks instead of grouping them.
+
+With confirmation `verify-retained-email-parity`, the same workflow also binds
+the configured original reader and claim UIDs and compares the diagnostic
+message with the reviewed serving workload. Its read-only JMAP client checks
+both copies twice. A missing or expired original backup does not prevent this
+comparison. `EMAIL_RETAINED_PARITY=VERIFIED` reports present message parity.
+The original trial stays unverified and disposal still requires its own backup
+and ownership checks.
+
 The pass receipt covers message recovery, encrypted disposable storage, source
 retention and disposal of the restored copy. It does not establish an independent
 cluster rebuild, archive migration, transport delivery, OIDC, or production
@@ -67,3 +111,10 @@ set `EMAIL_RECOVERY_READONLY_SOURCE_CONTEXT` and run
 from the repository root. This opt-in reads only the fixed serving Pod, claim
 and volume twice. It does not invoke recovery, import a message or create any
 resources, and is skipped during normal tests.
+
+To check native backup-resource selection after a retained trial, also set
+`EMAIL_RECOVERY_READONLY_BACKUP_NAME` to that trial's
+`email-data-recovery-<run>-backup` name and run
+`go test -run '^TestReadOnlyVeleroBackupAPISelection$' -count=1 -v ./scripts/verify-email-data-recovery`.
+It reads only the selected Velero backup and its volume receipts. It does not
+establish a complete datastore backup or restore result.

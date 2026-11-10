@@ -1,0 +1,12 @@
+---
+# Host prerequisites only (platform#5582). Refresh Clients verifies the actual
+# allocation and restarts kubelet only where huge-page capacity is stale; Longhorn
+# V2 activation remains a separate, reviewed change. nvme_tcp is also required but
+# is built into the Talos kernel, so it has no module to load.
+machine:
+  sysctls:
+    vm.nr_hugepages: "1024"
+  kernel:
+    modules:
+      - name: vfio_pci
+      - name: uio_pci_generic

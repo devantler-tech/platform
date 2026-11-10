@@ -8,7 +8,7 @@
 # mutation actually runs, and only there.
 #
 # SCOPE. add-pod-security-context and add-container-security-context exclude the
-# twelve namespaces listed below, so this exception excludes them too, expressed
+# namespaces listed below, so this exception excludes them too, expressed
 # as `NotIn` and rendered by namespaceNotInPattern. cert-manager and keda are
 # deliberately NOT in that set: add-imageuid-pod-security-context matches those
 # two by name and supplies the pod-level fields, so the mutation —
@@ -16,7 +16,7 @@
 # blocks, not only its exclusions.
 #
 # Narrowing these three controls surfaces nothing, re-measured 2026-09-09 rather
-# than reasoned. The twelve excluded namespaces split three ways:
+# than reasoned. The fourteen excluded namespaces split four ways:
 #   - Six carry scanned workloads. longhorn-system, observability, velero, kubevirt
 #     and cdi are separately excepted for C-0013, C-0016 and C-0055 in
 #     infrastructure-privileged.yaml. flux-system is the only one no other exception
@@ -30,6 +30,9 @@
 #     cannot change their result.
 #   - Two have no namespace in prod: local-path-storage and chaos-mesh, the storage
 #     and chaos stacks being opt-in.
+#   - Two, added 2026-11-07, run Substrate (kagent 1.0's sandbox runtime):
+#     ate-system and agentic-engineer. Their atelet and gVisor worker pods need
+#     root and added capabilities, and agent-sandboxes.yaml excepts them.
 # The local overlay opts in to a different set, so re-measure rather than assuming
 # these counts still hold.
 #
@@ -88,6 +91,8 @@ spec:
             - observability
             - velero
             - chaos-mesh
+            - ate-system
+            - agentic-engineer
   reason: >-
     Kyverno mutate policy "add-security-context" injects allowPrivilegeEscalation:
     false, drop ALL capabilities and seccompProfile at container admission, and
