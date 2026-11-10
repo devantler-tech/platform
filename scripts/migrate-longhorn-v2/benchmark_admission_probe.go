@@ -28,9 +28,8 @@ func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, re
 	if err := authorizeBenchmark(os.Getenv, "v1"); err != nil {
 		return err
 	}
-	source := os.Getenv("GITHUB_SHA")
-	if err := sourceCurrent(ctx, c.run, source); err != nil {
-		return err
+	if record.Source != os.Getenv("GITHUB_SHA") || record.Run != os.Getenv("GITHUB_RUN_ID") {
+		return errors.New("the active V1 benchmark does not own this proof")
 	}
 	policies, err := benchmarkRetirementFences(record)
 	if err != nil || record.Phase != "v1" {
@@ -46,7 +45,17 @@ func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, re
 	default:
 		return errors.New("benchmark reference fence received an unsupported resource")
 	}
-	before, err := observeBenchmarkReferenceFence(ctx, c, policy)
+	receipt := record.Fences[text(policy, "metadata", "name")]
+	return proveBenchmarkFenceOnServingAPIs(ctx, c, record.Source, policy, receipt, func(ctx context.Context, direct *http.Client, address *url.URL) error {
+		return probe(ctx, direct, address, record, observed)
+	})
+}
+
+func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, source string, policy object, receipt benchmarkFenceReceipt, probe func(context.Context, *http.Client, *url.URL) error) error {
+	if err := sourceCurrent(ctx, c.run, source); err != nil {
+		return err
+	}
+	before, err := observeBenchmarkReferenceFence(ctx, c, policy, receipt)
 	if err != nil {
 		return err
 	}
@@ -62,7 +71,7 @@ func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, re
 		if err != nil {
 			return err
 		}
-		proof := probe(ctx, direct, address, record, observed)
+		proof := probe(ctx, direct, address)
 		direct.CloseIdleConnections()
 		if proof != nil {
 			return proof
@@ -72,25 +81,22 @@ func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, re
 	if err != nil || !slices.Equal(roster, after) {
 		return errors.New("serving API processes changed during benchmark admission proof")
 	}
-	bound, err := observeBenchmarkReferenceFence(ctx, c, policy)
+	bound, err := observeBenchmarkReferenceFence(ctx, c, policy, receipt)
 	if err != nil || before != bound {
 		return errors.New("the benchmark reference fence changed during native admission proof")
 	}
 	return sourceCurrent(ctx, c.run, source)
 }
 
-func observeBenchmarkReferenceFence(ctx context.Context, c client, desired object) (benchmarkAdmissionEpoch, error) {
+func observeBenchmarkReferenceFence(ctx context.Context, c client, desired object, receipt benchmarkFenceReceipt) (benchmarkAdmissionEpoch, error) {
 	unverified := errors.New("the exact Deny policy and binding for the original reference are unverified")
 	name := text(desired, "metadata", "name")
 	policy, err := c.get(ctx, "validatingadmissionpolicies.admissionregistration.k8s.io", "", name, false)
-	if err != nil || text(policy, "metadata", "name") != name || value(policy, "metadata", "deletionTimestamp") != nil ||
-		!reflect.DeepEqual(value(policy, "spec"), value(desired, "spec")) {
+	if err != nil || !matchesOwnedBenchmarkPolicy(policy, desired, receipt.PolicyUID) {
 		return benchmarkAdmissionEpoch{}, unverified
 	}
 	binding, err := c.get(ctx, "validatingadmissionpolicybindings.admissionregistration.k8s.io", "", name, false)
-	if err != nil || text(binding, "metadata", "name") != name || value(binding, "metadata", "deletionTimestamp") != nil ||
-		text(binding, "spec", "policyName") != name || !reflect.DeepEqual(value(binding, "spec", "validationActions"), []any{"Deny"}) ||
-		value(binding, "spec", "paramRef") != nil || value(binding, "spec", "matchResources") != nil {
+	if err != nil || !matchesOwnedBenchmarkFence(policy, binding, desired, receipt) {
 		return benchmarkAdmissionEpoch{}, unverified
 	}
 	return benchmarkAdmissionEpoch{

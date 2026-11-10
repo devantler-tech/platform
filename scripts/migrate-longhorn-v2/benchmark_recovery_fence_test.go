@@ -77,8 +77,11 @@ func TestNativeRetirementFenceDecisions(t *testing.T) {
 		}
 		_, groups := retirementInstanceFixture(t)
 		for kind, items := range groups {
-			if kind != "volumeattachments" {
-				items[0]["spec"].(object)["dataEngine"] = phase
+			if kind == "volumeattachments" {
+				continue
+			}
+			for _, item := range items {
+				item["spec"].(object)["dataEngine"] = phase
 			}
 		}
 		noStart, err := benchmarkRetirementInstanceFence(record, groups, "5678-"+strings.Repeat("a", 32))

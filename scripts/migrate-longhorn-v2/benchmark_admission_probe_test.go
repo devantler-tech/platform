@@ -26,9 +26,10 @@ func TestBenchmarkPVFenceRequiresExactPolicyAndDenyBinding(t *testing.T) {
 			}
 			desired := policies[0]
 			name := text(desired, "metadata", "name")
-			policy := object{"metadata": object{"name": name, "uid": "original-policy", "resourceVersion": "100"}, "spec": maps.Clone(valueObject(desired, "spec"))}
-			binding := object{"metadata": object{"name": name, "uid": "original-binding", "resourceVersion": "101"},
-				"spec": object{"policyName": name, "validationActions": []any{"Deny"}}}
+			policy := object{"apiVersion": benchmarkAdmissionAPI, "kind": "ValidatingAdmissionPolicy", "metadata": object{"name": name, "uid": "original-policy", "resourceVersion": "100"}, "spec": maps.Clone(valueObject(desired, "spec"))}
+			binding := benchmarkDenyBinding(name, "original-policy")
+			valueObject(binding, "metadata")["uid"] = "original-binding"
+			valueObject(binding, "metadata")["resourceVersion"] = "101"
 			switch fault {
 			case "policy changed":
 				valueObject(policy, "spec")["failurePolicy"] = "Ignore"
@@ -55,7 +56,7 @@ func TestBenchmarkPVFenceRequiresExactPolicyAndDenyBinding(t *testing.T) {
 				}
 				return nil, errors.New("unexpected benchmark fence kind")
 			}}
-			got, err := observeBenchmarkReferenceFence(context.Background(), c, desired)
+			got, err := observeBenchmarkReferenceFence(context.Background(), c, desired, benchmarkFenceReceipt{PolicyUID: "original-policy", BindingUID: "original-binding"})
 			if fault != "" && err == nil || fault == "" && (err != nil || got != (benchmarkAdmissionEpoch{"original-policy", "100", "original-binding", "101"})) {
 				t.Fatalf("policy and binding readback mismatch: %v", err)
 			}

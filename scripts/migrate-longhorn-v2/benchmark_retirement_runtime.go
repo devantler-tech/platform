@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"maps"
+	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,8 +22,77 @@ type benchmarkManagerEpoch struct {
 }
 
 type benchmarkV1Runtime struct {
-	SettingUID, SettingVersion string
-	Epochs                     []benchmarkManagerEpoch
+	Image, SettingUID, SettingVersion string
+	Epochs                            []benchmarkManagerEpoch
+}
+
+func captureBenchmarkV1Runtime(ctx context.Context, c client, requiredNodes []string) (benchmarkV1Runtime, error) {
+	setting, err := c.get(ctx, "settings.longhorn.io", "longhorn-system", "default-instance-manager-image", false)
+	if err != nil {
+		return benchmarkV1Runtime{}, errors.New("the approved V1 retirement runtime must be deployed before creating scratch")
+	}
+	return observeBenchmarkV1Runtime(ctx, c, text(setting, "value"), requiredNodes)
+}
+
+func checkpointBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRecord, baseline benchmarkV1Runtime) error {
+	requiredNodes := slices.Sorted(maps.Keys(record.Machines))
+	verifyRuntime := func() error {
+		current, err := observeBenchmarkV1Runtime(ctx, c, baseline.Image, requiredNodes)
+		if err != nil || !reflect.DeepEqual(baseline, current) {
+			return errors.New("the approved V1 runtime epochs changed since the benchmark started")
+		}
+		return nil
+	}
+	if !activeBenchmarkV1FenceOwner(c, *record) {
+		return errors.New("only the active benchmark may checkpoint this V1 backend")
+	}
+	if err := verifyRuntime(); err != nil {
+		return err
+	}
+	policies, err := benchmarkRetirementFences(*record)
+	if err != nil {
+		return err
+	}
+	var backend object
+	identity := record.Resources["LonghornVolume"]
+	if err := waitReady(ctx, func(ctx context.Context) error {
+		current, err := c.get(ctx, "volumes.longhorn.io", "longhorn-system", identity.Name, false)
+		if err != nil || benchmarkIdentity(current) != identity || text(current, "spec", "dataEngine") != "v1" ||
+			text(current, "spec", "accessMode") != "rwo" || value(current, "metadata", "deletionTimestamp") != nil {
+			return errors.New("original benchmark V1 backend identity changed")
+		}
+		if err := verifyBenchmarkDetachedBackendState(current); err != nil {
+			return err
+		}
+		if err := verifyRecoveredBackendCascadeCleared(current); err != nil {
+			return err
+		}
+		backend = current
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := installBenchmarkReferenceFence(ctx, c, record, policies[1]); err != nil {
+		return err
+	}
+	if err := proveBenchmarkReferenceFenceOnServingAPIs(ctx, c, *record, backend); err != nil {
+		return err
+	}
+	if err := proveAndCheckpointBenchmarkInstances(ctx, c, record); err != nil {
+		return err
+	}
+	if err := verifyRuntime(); err != nil {
+		return err
+	}
+	for _, epoch := range baseline.Epochs {
+		if err := sourceCurrent(ctx, c.run, record.Source); err != nil {
+			return err
+		}
+		if err := requestBenchmarkV1Seal(ctx, c, *record, epoch); err != nil {
+			return err
+		}
+	}
+	return verifyRuntime()
 }
 
 func observeBenchmarkV1Runtime(ctx context.Context, c client, image string, requiredNodes []string) (benchmarkV1Runtime, error) {
@@ -47,7 +119,7 @@ func observeBenchmarkV1Runtime(ctx context.Context, c client, image string, requ
 	if err != nil || afterUID != beforeUID || afterVersion != beforeVersion {
 		return benchmarkV1Runtime{}, errors.New("the V1 default instance manager changed during observation")
 	}
-	return benchmarkV1Runtime{SettingUID: beforeUID, SettingVersion: beforeVersion, Epochs: epochs}, nil
+	return benchmarkV1Runtime{Image: image, SettingUID: beforeUID, SettingVersion: beforeVersion, Epochs: epochs}, nil
 }
 
 func readBenchmarkDefaultManagerImage(ctx context.Context, c client, image string) (uid, version string, err error) {

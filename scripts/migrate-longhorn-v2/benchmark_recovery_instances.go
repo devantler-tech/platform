@@ -29,7 +29,7 @@ func qualifyRetirementInstances(record benchmarkRecord, groups map[string][]obje
 	if err := verifyRetirementReceipts(record); err != nil {
 		return nil, err
 	}
-	if len(groups) != 4 {
+	if len(groups) != len(benchmarkInstanceKinds) {
 		return nil, errors.New("complete native child inventories are required")
 	}
 	backend := record.Resources["LonghornVolume"]
@@ -40,7 +40,7 @@ func qualifyRetirementInstances(record benchmarkRecord, groups map[string][]obje
 	names := map[string]bool{}
 	children := []retirementChild{}
 	engines := map[string]bool{}
-	for _, resource := range []string{"engines", "replicas", "enginefrontends", "volumeattachments"} {
+	for _, resource := range []string{"engines", "replicas", "enginefrontends", "volumeattachments", "snapshots"} {
 		items, present := groups[resource]
 		if !present || items == nil {
 			return nil, errors.New("a native child inventory is unread")
@@ -54,7 +54,7 @@ func qualifyRetirementInstances(record benchmarkRecord, groups map[string][]obje
 			}
 			seen[identity.UID], names[key] = true, true
 			association := "volumeName"
-			if resource == "volumeattachments" {
+			if resource == "volumeattachments" || resource == "snapshots" {
 				association = "volume"
 			}
 			volume, valid := value(item, "spec", association).(string)
@@ -73,10 +73,16 @@ func qualifyRetirementInstances(record benchmarkRecord, groups map[string][]obje
 				}
 				ownerMatches = ownerMatches || text(ref, "uid") == backend.UID
 			}
-			if volume != backend.Name && !ownerMatches {
+			volumeLabel := text(item, "metadata", "labels", "longhornvolume")
+			reservedAttachment := resource == "volumeattachments" && identity.Name == backend.Name
+			if volume != backend.Name && !ownerMatches && volumeLabel != backend.Name && !reservedAttachment {
 				continue
 			}
-			if volume != backend.Name || len(refs) != 1 || !ownerMatches || value(item, "metadata", "deletionTimestamp") != nil {
+			if resource == "snapshots" {
+				return nil, errors.New("the original benchmark backend has a native snapshot dependency")
+			}
+			if volume != backend.Name || volumeLabel != backend.Name || resource == "volumeattachments" && !reservedAttachment ||
+				len(refs) != 1 || !ownerMatches || value(item, "metadata", "deletionTimestamp") != nil {
 				return nil, errors.New("a backend child has a foreign or changing owner")
 			}
 			owner := refs[0].(object)

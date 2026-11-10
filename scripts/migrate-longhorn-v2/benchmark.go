@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -22,9 +24,12 @@ const benchmarkOwner = "storage.platform.devantler.tech/benchmark-owner"
 type benchmarkMachine struct{ ProviderID, SystemUUID, OSImage, Architecture string }
 type benchmarkResource struct{ Name, Namespace, UID string }
 type benchmarkRecord struct {
-	Recovery                                                                  *benchmarkRecoveryOwner `json:",omitempty"`
-	PendingCreate                                                             string                  `json:",omitempty"`
-	TagNodes                                                                  map[string]string       `json:",omitempty"`
+	Recovery                                                                  *benchmarkRecoveryOwner          `json:",omitempty"`
+	Fences                                                                    map[string]benchmarkFenceReceipt `json:",omitempty"`
+	FenceCheckpoint                                                           string                           `json:",omitempty"`
+	FencePending                                                              string                           `json:",omitempty"`
+	PendingCreate                                                             string                           `json:",omitempty"`
+	TagNodes                                                                  map[string]string                `json:",omitempty"`
 	Resources                                                                 map[string]benchmarkResource
 	Version                                                                   int
 	Phase, Source, Run, Image, Workload, Namespace, NamespaceUID, CompletedAt string
@@ -94,7 +99,7 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 	var record benchmarkRecord
 	raw := text(cm, "data", "record")
 	fields := map[string][]string{
-		"":         {"Recovery", "PendingCreate", "TagNodes", "Resources", "Version", "Phase", "Source", "Run", "Image", "Workload", "Namespace", "NamespaceUID", "CompletedAt", "Machines", "Measurements", "Cleaned", "CPU"},
+		"":         {"Recovery", "Fences", "FenceCheckpoint", "FencePending", "PendingCreate", "TagNodes", "Resources", "Version", "Phase", "Source", "Run", "Image", "Workload", "Namespace", "NamespaceUID", "CompletedAt", "Machines", "Measurements", "Cleaned", "CPU"},
 		"Recovery": {"Source", "Run", "JournalUID", "Deletes"},
 	}
 	for _, kind := range []string{"Namespace", "NetworkPolicy", "Pod", "PersistentVolumeClaim", "StorageClass", "PersistentVolume", "LonghornVolume"} {
@@ -128,6 +133,17 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 	}
 	if err = validateBenchmarkResources(record); err != nil {
 		return nil, record, err
+	}
+	if err = validateBenchmarkFenceReceipts(record); err != nil {
+		return nil, record, err
+	}
+	if len(record.Fences) != 0 {
+		for _, name := range benchmarkFenceNames(phase, record.Run) {
+			fields["Fences."+name] = []string{"PolicyUID", "BindingUID"}
+		}
+		if strictjson.Validate([]byte(raw), fields) != nil {
+			return nil, record, errors.New("benchmark fence receipts are ambiguous")
+		}
 	}
 	if record.Recovery != nil && (!validBenchmarkOwner(record.Recovery.Run, record.Recovery.Source) || record.Recovery.Run == record.Run || record.Recovery.JournalUID != text(cm, "metadata", "uid") || record.Cleaned) {
 		return nil, record, errors.New("benchmark recovery ownership is invalid")
@@ -303,6 +319,13 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 			return err
 		}
 	}
+	var v1Runtime benchmarkV1Runtime
+	if phase == "v1" {
+		v1Runtime, err = captureBenchmarkV1Runtime(ctx, c, slices.Sorted(maps.Keys(machines)))
+		if err != nil {
+			return err
+		}
+	}
 	prior, _, err := readBenchmark(ctx, c, phase)
 	if err != nil {
 		return err
@@ -473,7 +496,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err != nil || !reflect.DeepEqual(endingCPU, record.CPU) {
 		return errors.New("admitted client or storage CPU context changed during the benchmark")
 	}
-	if err = cleanupBenchmark(ctx, c, source, tag, created, pv, volume); err != nil {
+	if err = cleanupBenchmark(ctx, c, &record, v1Runtime, created, pv, volume); err != nil {
 		return err
 	}
 	if err = benchmarkTags(ctx, c, source, tag, record.TagNodes, false); err != nil {
@@ -607,11 +630,18 @@ func saveBenchmarkProgress(ctx context.Context, c client, source, runID string, 
 	if !reflect.DeepEqual(previous.TagNodes, record.TagNodes) {
 		return errors.New("benchmark tag node identities changed")
 	}
+	if !reflect.DeepEqual(previous.Fences, record.Fences) || previous.FenceCheckpoint != record.FenceCheckpoint || previous.FencePending != record.FencePending {
+		return errors.New("benchmark fence receipts changed outside their journal transition")
+	}
 	for kind, old := range previous.Resources {
 		if record.Resources[kind] != old {
 			return errors.New("benchmark scratch identity changed")
 		}
 	}
+	return writeBenchmarkProgress(ctx, c, cm, source, record)
+}
+
+func writeBenchmarkProgress(ctx context.Context, c client, cm object, source string, record benchmarkRecord) error {
 	body, err := json.Marshal(record)
 	if err != nil {
 		return err

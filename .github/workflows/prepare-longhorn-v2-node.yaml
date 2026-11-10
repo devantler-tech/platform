@@ -177,8 +177,15 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh
       - name: Run the confirmed migration preparation
+        if: ${{ inputs.operation != 'benchmark-v1' }}
         env:
           GH_TOKEN: ${{ github.token }}
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Run the confirmed V1 benchmark
+        if: ${{ inputs.operation == 'benchmark-v1' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: go run ./scripts/migrate-longhorn-v2
       - name: Remove runner credentials
         if: ${{ always() }}

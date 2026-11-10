@@ -74,7 +74,8 @@ func verifyScratchBinding(pv, volume, claim, class object) error {
 	return nil
 }
 
-func cleanupBenchmark(ctx context.Context, c client, source, namespace string, created map[string]object, pv, volume object) error {
+func cleanupBenchmark(ctx context.Context, c client, record *benchmarkRecord, v1Runtime benchmarkV1Runtime, created map[string]object, pv, volume object) error {
+	source, namespace := record.Source, record.Namespace
 	claim, class := created["PersistentVolumeClaim"], created["StorageClass"]
 	if err := verifyScratchBinding(pv, volume, claim, class); err != nil {
 		return err
@@ -113,8 +114,8 @@ func cleanupBenchmark(ctx context.Context, c client, source, namespace string, c
 			return err
 		}
 		for _, a := range attachments {
-			if text(a, "spec", "source", "persistentVolumeName") == text(pv, "metadata", "name") && value(a, "status", "attached") == true {
-				return errors.New("scratch PV still has an attached consumer")
+			if text(a, "spec", "source", "persistentVolumeName") == text(pv, "metadata", "name") {
+				return errors.New("scratch PV still has an attachment or pending consumer")
 			}
 		}
 		engines, err := c.list(ctx, "engines.longhorn.io", "longhorn-system")
@@ -130,8 +131,18 @@ func cleanupBenchmark(ctx context.Context, c client, source, namespace string, c
 	}); err != nil {
 		return err
 	}
-	if err := removeScratch(ctx, c, source, "persistentvolume", "", "/api/v1/persistentvolumes/"+text(pv, "metadata", "name"), pv); err != nil {
-		return err
+	if record.Phase == "v1" {
+		if err := retireBenchmarkV1PV(ctx, c, record, volume, claim, class); err != nil {
+			return err
+		}
+		if err := checkpointBenchmarkV1Backend(ctx, c, record, v1Runtime); err != nil {
+			return err
+		}
+		return errors.New("benchmark backend and namespace retirement must complete before the baseline can be accepted")
+	} else {
+		if err := removeScratch(ctx, c, source, "persistentvolume", "", "/api/v1/persistentvolumes/"+text(pv, "metadata", "name"), pv); err != nil {
+			return err
+		}
 	}
 	if err := removeScratch(ctx, c, source, "volumes.longhorn.io", "longhorn-system", "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/"+text(volume, "metadata", "name"), volume); err != nil {
 		return err
@@ -163,4 +174,47 @@ func cleanupBenchmark(ctx context.Context, c client, source, namespace string, c
 		return err
 	}
 	return removeScratch(ctx, c, source, "namespace", "", "/api/v1/namespaces/"+namespace, created["Namespace"])
+}
+
+func retireBenchmarkV1PV(ctx context.Context, c client, record *benchmarkRecord, volume, claim, class object) error {
+	policies, err := benchmarkRetirementFences(*record)
+	if err != nil {
+		return err
+	}
+	identity := record.Resources["PersistentVolume"]
+	pv, err := c.get(ctx, "persistentvolume", "", identity.Name, false)
+	if err != nil || benchmarkIdentity(pv) != identity || text(pv, "status", "phase") != "Released" ||
+		value(pv, "metadata", "deletionTimestamp") != nil || verifyRecoveredBenchmarkStorage(*record, claim, class, pv, volume) != nil {
+		return errors.New("original retained benchmark PV is not released and verified")
+	}
+	if err := installBenchmarkReferenceFence(ctx, c, record, policies[0]); err != nil {
+		return err
+	}
+	if err := proveBenchmarkReferenceFenceOnServingAPIs(ctx, c, *record, pv); err != nil {
+		return err
+	}
+	attachments, err := c.list(ctx, "volumeattachments.storage.k8s.io", "")
+	if err != nil {
+		return err
+	}
+	for _, attachment := range attachments {
+		if text(attachment, "spec", "source", "persistentVolumeName") == identity.Name {
+			return errors.New("benchmark PV still has a Kubernetes attachment request")
+		}
+	}
+	// Keep the resource version that passed both native dry-runs. A newer
+	// object must pass those same gates before it can be deleted.
+	if err := c.deleteObserved(ctx, record.Source, "/api/v1/persistentvolumes/"+identity.Name, pv); err != nil {
+		return err
+	}
+	return waitReady(ctx, func(ctx context.Context) error {
+		current, err := c.get(ctx, "persistentvolume", "", identity.Name, true)
+		if err != nil {
+			return err
+		}
+		if current != nil {
+			return errors.New("original retained benchmark PV is still present")
+		}
+		return nil
+	})
 }
