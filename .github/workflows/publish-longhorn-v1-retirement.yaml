@@ -124,6 +124,7 @@ jobs:
           docker build --platform linux/amd64 \
             --file "${GITHUB_WORKSPACE}/${BUILD_FILES}/InstanceManagerRetirement.Dockerfile" \
             --tag "${IMAGE}:${IMAGE_TAG}" "${RUNNER_TEMP}/longhorn-retirement"
+          test "$(docker image inspect --format '{{.Config.User}}' "${IMAGE}:${IMAGE_TAG}")" = 65532:65532
           docker run --rm --network none --read-only --cap-drop ALL \
             --entrypoint /usr/local/bin/longhorn-instance-manager "${IMAGE}:${IMAGE_TAG}" \
             process seal-volume-for-retirement --help
