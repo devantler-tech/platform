@@ -51,25 +51,8 @@ func planV1ReservationRepair(s inventory) (v1ReservationRepair, error) {
 	maximum, maxOK := v1CapacityBytes(status["storageMaximum"])
 	available, freeOK := v1CapacityBytes(status["storageAvailable"])
 	scheduled, scheduledOK := v1CapacityBytes(status["storageScheduled"])
-	ledger, ledgerOK := status["scheduledReplica"].(object)
-	if !maxOK || !freeOK || !scheduledOK || !ledgerOK || maximum == 0 || available > maximum || scheduled > maximum || oldReserve != maximum*30/100 {
-		return v1ReservationRepair{}, refused
-	}
-	var counted int64
-	entries := 0
-	for _, replica := range s.replicas {
-		if text(replica, "spec", "nodeID") != v1RepairWorker {
-			continue
-		}
-		bytes, valid := v1VolumeBytes(text(replica, "spec", "volumeSize"))
-		allocated, present := v1CapacityBytes(ledger[text(replica, "metadata", "name")])
-		if !valid || !present || bytes != allocated || text(replica, "spec", "diskID") != text(status, "diskUUID") || text(replica, "spec", "dataEngine") != "v1" || counted > maximum-bytes {
-			return v1ReservationRepair{}, refused
-		}
-		counted += bytes
-		entries++
-	}
-	if counted != scheduled || entries != len(ledger) {
+	if !maxOK || !freeOK || !scheduledOK || maximum == 0 || available > maximum || scheduled > maximum ||
+		oldReserve != maximum*30/100 || !v1DiskLedgerMatches(s.replicas, v1RepairWorker, status, maximum, scheduled) {
 		return v1ReservationRepair{}, refused
 	}
 
@@ -115,6 +98,31 @@ func planV1ReservationRepair(s inventory) (v1ReservationRepair, error) {
 		return v1ReservationRepair{}, refused
 	}
 	return v1ReservationRepair{node: node, disk: disk, diskUUID: text(status, "diskUUID"), reserve: reserve, volumes: volumes}, nil
+}
+
+// v1DiskLedgerMatches reconciles every allocation on the reviewed single disk
+// with the Longhorn node's scheduler ledger and its reported byte total.
+func v1DiskLedgerMatches(replicas []object, worker string, status object, maximum, scheduled int64) bool {
+	ledger, ok := status["scheduledReplica"].(object)
+	if !ok {
+		return false
+	}
+	var counted int64
+	entries := 0
+	for _, replica := range replicas {
+		if text(replica, "spec", "nodeID") != worker {
+			continue
+		}
+		bytes, valid := v1VolumeBytes(text(replica, "spec", "volumeSize"))
+		allocated, present := v1CapacityBytes(ledger[text(replica, "metadata", "name")])
+		if !valid || !present || bytes != allocated || text(replica, "spec", "diskID") != text(status, "diskUUID") ||
+			text(replica, "spec", "dataEngine") != "v1" || counted > maximum-bytes {
+			return false
+		}
+		counted += bytes
+		entries++
+	}
+	return counted == scheduled && entries == len(ledger)
 }
 
 func v1RepairDisk(node object) (string, int64, object, bool) {
@@ -181,6 +189,18 @@ func authorizeV1ReservationRepair(getenv func(string) string, target string) err
 	return authorizeWorkflow(getenv, "repair-longhorn-v1-reservation")
 }
 
+// verifyV1ReservationSettings binds the reservation math to Longhorn's
+// existing logical allocation and physical free-space settings.
+func verifyV1ReservationSettings(ctx context.Context, c client) error {
+	for name, expected := range map[string]string{"storage-over-provisioning-percentage": "100", "storage-minimal-available-percentage": "25"} {
+		setting, err := c.get(ctx, "settings.longhorn.io", "longhorn-system", name, false)
+		if err != nil || text(setting, "value") != expected {
+			return errors.New("live scheduling settings differ from the reviewed V1 budget")
+		}
+	}
+	return nil
+}
+
 // repairV1Reservation makes one resource-version-fenced change and waits for
 // the original volumes to regain three healthy copies.
 func repairV1Reservation(ctx context.Context, c client, source string) error {
@@ -192,11 +212,8 @@ func repairV1Reservation(ctx context.Context, c client, source string) error {
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
-	for name, expected := range map[string]string{"storage-over-provisioning-percentage": "100", "storage-minimal-available-percentage": "25"} {
-		setting, err := c.get(ctx, "settings.longhorn.io", "longhorn-system", name, false)
-		if err != nil || text(setting, "value") != expected {
-			return errors.New("live scheduling settings differ from the repair budget")
-		}
+	if err := verifyV1ReservationSettings(ctx, c); err != nil {
+		return err
 	}
 	s, err := c.snapshot(ctx)
 	if err != nil {
