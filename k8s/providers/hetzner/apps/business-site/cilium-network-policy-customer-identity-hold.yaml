@@ -1,0 +1,21 @@
+# Install before either customer identity backend can receive gateway traffic.
+# Deny every port on these workloads so port substitutions cannot bypass the hold.
+# Remove only after verified backend TLS and failure controls pass.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: business-site-customer-identity-hold
+  namespace: business-site
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [customer-dex, customer-zitadel]
+  # This deny must not independently switch non-gateway ingress to whitelist mode.
+  # The tenant's generated default-deny still applies independently.
+  enableDefaultDeny:
+    ingress: false
+  ingressDeny:
+    - fromEntities:
+        - ingress
