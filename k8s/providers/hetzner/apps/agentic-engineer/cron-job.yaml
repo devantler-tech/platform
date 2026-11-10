@@ -36,7 +36,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: trigger
-              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              image: docker.io/badouralix/curl-jq@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
               imagePullPolicy: IfNotPresent
               command: ["/bin/sh", "/etc/trigger/trigger.sh"]
               env:
