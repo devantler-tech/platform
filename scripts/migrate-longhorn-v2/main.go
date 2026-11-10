@@ -132,7 +132,7 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		p := temporaryPreparation{preparation: preparation{c: c, target: resolved, name: "longhorn-v2-prepare-" + target, temporarySelection: target, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}}
+		p := temporaryPreparation{preparation: preparation{c: c, target: resolved, name: "longhorn-v2-prepare-" + target, temporarySelection: target, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}, staging: true}
 		if err = p.prepare(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "Unused temporary preparation held:", err)
 			fmt.Fprintln(os.Stderr, "Preserve its journal and owned cordon; uncertain resets are never replayed.")
