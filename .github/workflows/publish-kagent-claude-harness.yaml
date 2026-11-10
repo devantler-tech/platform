@@ -65,7 +65,8 @@ jobs:
             agents=$(find "${plugin}/agents" -name "*.agent.md" | wc -l)
             skills=$(find "${plugin}/skills" -name SKILL.md | wc -l)
             echo "plugin: ${agents} agents, ${skills} skills"
-            test "${agents}" -ge 4 && test "${skills}" -ge 80
+            test "${agents}" -ge 4
+            test "${skills}" -ge 80
             test "$(id -u)" = 65532'
 
   publish:
