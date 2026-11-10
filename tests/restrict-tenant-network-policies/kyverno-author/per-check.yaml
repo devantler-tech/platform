@@ -1,0 +1,25 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-network-policies-kyverno-author
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-network-policies.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  # The background controller creates and re-synchronises the generated floor.
+  # Both objects carry a reserved name, so without this carve-out the policy
+  # would refuse the very default-deny it exists to protect. The sibling shell
+  # test proves the same two bodies ARE denied under the tenant identity, so
+  # these skips cannot be a namespace-label mismatch in disguise.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-generated-policy-names-are-reserved
+    resources:
+      - tenant-ns/default-deny
+      - tenant-ns/allow-dns
+    kind: CiliumNetworkPolicy
+    result: skip

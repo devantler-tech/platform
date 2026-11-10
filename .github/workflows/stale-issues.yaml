@@ -1,11 +1,13 @@
 ---
 name: 🗂️ Stale Issue Triage
 
-on:
+"on":
   pull_request:
     paths: [.github/workflows/stale-issues.yaml]
   schedule:
     - cron: "33 6 * * *"
+  # checkov:skip=CKV_GHA_7:Not a build. `dry-run` (default true) only lets a manual run preview
+  # issue triage; the workflow produces no artifact for an input to influence.
   workflow_dispatch:
     inputs:
       dry-run:
@@ -23,7 +25,7 @@ jobs:
   triage:
     # Keep portfolio automation disabled in external template copies.
     if: ${{ github.repository_owner == 'devantler-tech' }}
-    uses: devantler-tech/.github/.github/workflows/triage-stale-issues.yaml@f6f8c96641f21c98e6ffc841bc6f3859cce0525b # v20.0.1
+    uses: devantler-tech/.github/.github/workflows/triage-stale-issues.yaml@17ee7092d5ff1748164185ff37fcff5214f9f870 # v20.1.5
     permissions:
       issues: write
       actions: write

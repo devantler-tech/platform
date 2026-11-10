@@ -52,6 +52,23 @@ done < <(find "${root_dir}/k8s" -type f -name '*.yaml' -exec grep -lF -- "${imag
   fail 'expected every existing Coroot curl+jq CronJob consumer to remain covered'
 
 for manifest in "${manifests[@]}"; do
+  # Apps-layer consumers are not Coroot helpers and are not rendered by the
+  # infrastructure overlays below, so they cannot join the render comparison.
+  # They still pull the same digest, so every container using it must be
+  # pinned and cached.
+  case "${manifest#"${root_dir}"/}" in
+    k8s/bases/apps/* | k8s/providers/*/apps/*)
+      entries="$(yq eval -r '.. | select(has("image")) | select(.image | contains("docker.io/badouralix/curl-jq:")) | .image + "|" + (.imagePullPolicy // "")' "${manifest}")"
+      [ -n "${entries}" ] || fail "could not read the curl+jq containers of ${manifest}"
+      while IFS='|' read -r image policy; do
+        [[ "${image}" =~ ${digest_pattern} ]] ||
+          fail "curl+jq image must retain an immutable digest: ${manifest}"
+        [ "${policy}" = IfNotPresent ] ||
+          fail "cached curl+jq digest must not reauthenticate on every run: ${manifest}"
+      done <<<"${entries}"
+      continue
+      ;;
+  esac
   [ "$(yq eval -r '.kind' "${manifest}")" = CronJob ] ||
     fail "curl+jq consumer is not a CronJob: ${manifest}"
   image="$(yq eval -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.image | contains("docker.io/badouralix/curl-jq:")) | .image' "${manifest}")"
@@ -125,4 +142,4 @@ if same_consumers "${scratch_dir}/all-sources" "${scratch_dir}/missing-and-dupli
   fail 'source/render comparison accepted a missing consumer masked by a duplicate'
 fi
 
-printf 'ok — %s Coroot curl+jq CronJobs use pinned, cached images across declared production and enabled-component renders\n' "${#manifests[@]}"
+printf 'ok — %s curl+jq consumers use pinned, cached images; Coroot helpers render exactly once in production and enabled-component renders\n' "${#manifests[@]}"

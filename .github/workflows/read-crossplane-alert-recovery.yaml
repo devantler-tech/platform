@@ -1,6 +1,7 @@
+---
 name: Read Crossplane Alert Recovery
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

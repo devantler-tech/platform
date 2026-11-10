@@ -1,7 +1,8 @@
+---
 name: Verify Wedding Backup Bootstrap
 
 # A disposable fixture on the existing cluster; never scheduled or PR-triggered.
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

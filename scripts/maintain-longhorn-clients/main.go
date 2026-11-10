@@ -1,3 +1,5 @@
+// Command maintain-longhorn-clients changes Longhorn client placement only
+// after its volumes are detached and the database clusters are healthy.
 package main
 
 import (

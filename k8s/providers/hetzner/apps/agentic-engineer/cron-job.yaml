@@ -1,0 +1,67 @@
+# One capped run a day (the kagent row of the monorepo's cadence table), at
+# 05:15 host time. See config-map-trigger.yaml for the run limit.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: agentic-engineer
+  namespace: agentic-engineer
+spec:
+  # Suspended until every sub-issue of devantler-tech/monorepo#4866 is done
+  # (ADR 0014, point 6). The canary runs once, as a Job created from this
+  # CronJob; the PR that swaps in the full run message resumes the schedule.
+  suspend: true
+  schedule: "15 5 * * *"
+  timeZone: Europe/Copenhagen
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 2400
+      template:
+        metadata:
+          labels:
+            app: agentic-engineer-trigger
+        spec:
+          restartPolicy: Never
+          serviceAccountName: trigger
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: trigger
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "/etc/trigger/trigger.sh"]
+              env:
+                # The per-run spend cap: Opus spends roughly $0.30 a minute
+                # in an agentic loop, so 20 minutes keeps a run near $6.
+                - name: RUN_LIMIT_SECONDS
+                  value: "1200"
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 16Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: trigger
+                  mountPath: /etc/trigger
+                  readOnly: true
+          volumes:
+            - name: trigger
+              configMap:
+                name: trigger

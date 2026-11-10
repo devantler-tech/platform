@@ -6,7 +6,8 @@
 # stay on the 1.19 line: Renovate must not propose 1.20, and nothing committed may
 # deploy or run it (#4994). Once the last such resource is migrated, this check fails
 # until the cap rules and the check itself are removed, so the cap cannot outlive its
-# reason.
+# reason. It reads only this repository, so that failure also asks for a check of every
+# tenant source before the cap goes (#5017).
 #
 # The chart version is judged in what Flux applies, not in the base file: every Flux
 # root is rendered with kubectl kustomize, so a provider overlay or an inline patch that
@@ -141,7 +142,7 @@ has_cap() {
 
 if [[ "${legacy_count}" == '0' ]]; then
   if has_cap "${chart_package}" || has_cap "${cli_package}"; then
-    fail "no kyverno.io resource remains under ${k8s_root#"${root_dir}"/} (${manifest_count} files read): remove the Kyverno 1.20 cap rules from .github/renovate.json and this check with its CI step (#4994)"
+    fail "no kyverno.io resource remains under ${k8s_root#"${root_dir}"/} (${manifest_count} files read), but this check reads only this repository: first check every tenant source the platform deploys (each tenant repository its Flux Kustomizations read) for kyverno.io resources and Kyverno HelmReleases (#5017); then remove the Kyverno 1.20 cap rules from .github/renovate.json and this check with its CI step (#4994)"
   fi
   printf 'PASS: no kyverno.io resource remains in %s files and no Kyverno 1.20 cap is left\n' "${manifest_count}"
   exit 0
@@ -166,8 +167,12 @@ version_lt "${cli_pin}" "${cli_cap}" ||
 # Every Kyverno chart version Flux would deploy, in the base or set by any overlay. The
 # roots are the spec.path of every Flux Kustomization each cluster overlay renders, read
 # from the render so a newly wired layer is judged too (the discovery
-# scripts/guard-oci-repository-verify.sh uses). Flux applies a Flux Kustomization's own
-# spec.patches after the build rendered here, so one that carries any is refused.
+# scripts/guard-oci-repository-verify.sh uses). A Flux Kustomization a root renders in turn
+# is followed when it reads one of the sources those roots read, since its spec.path is
+# then in this tree. One that reads another source, such as a tenant's own repository,
+# cannot be rendered here: it is counted and reported as unexamined (#5017). Flux applies a
+# Flux Kustomization's own spec.patches after the build rendered here, so one that carries
+# any is refused.
 command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required to render the Flux roots'
 command -v yq >/dev/null 2>&1 || fail 'yq is required to read the rendered Flux roots'
 [[ -d "${render_root}/clusters" ]] ||
@@ -181,41 +186,61 @@ render() {
     fail "cannot render ${1#"${render_root}"/}, so the Kyverno chart version it deploys is unknown: $(tr '\n' ' ' <"${work}/render.err")"
 }
 
+# One row per Flux Kustomization in the last render: name, spec.patches count,
+# spec.components count, spec.path and its source as kind/namespace/name. A sourceRef
+# without a namespace reads from the Kustomization's own namespace.
+flux_kustomizations() {
+  # Evaluated per document: yq's eval-all pairs every match with every other in a
+  # collected array, so one row per match needs the per-document form.
+  yq -N -r '
+    .. | select(type == "!!map" and .kind == "Kustomization" and
+      ((.apiVersion // "") | test("^kustomize\\.toolkit\\.fluxcd\\.io/"))) |
+    [(.metadata.name // "-"), (((.spec.patches // []) | length) | tostring), (((.spec.components // []) | length) | tostring), (.spec.path // ""),
+      ((.spec.sourceRef.kind // "-") + "/" + (.spec.sourceRef.namespace // .metadata.namespace // "-") + "/" + (.spec.sourceRef.name // "-"))] |
+    join("	")
+  ' "${work}/render.yaml"
+}
+
+# Refuse a Flux Kustomization $1 (rendered in $2) whose build this check cannot see.
+require_plain() {
+  local name="$1" where="$2" patch_count="$3" component_count="$4" path="$5"
+  [[ "${patch_count}" == '0' ]] ||
+    fail "Flux Kustomization ${name} in ${where} carries spec.patches, which Flux applies after the build this check renders, so the Kyverno chart version it deploys is unknown"
+  [[ "${component_count}" == '0' ]] ||
+    fail "Flux Kustomization ${name} in ${where} carries spec.components, which Flux adds to the build this check renders, so the Kyverno chart version it deploys is unknown"
+  [[ -n "${path}" ]] || fail "Flux Kustomization ${name} in ${where} names no spec.path"
+}
+
 roots=()
+platform_sources=' '
 for overlay in "${render_root}"/clusters/*/; do
   overlay="${overlay%/}"
   # clusters/base is the wiring template the cluster overlays consume, not a cluster.
   [[ "${overlay}" == */base ]] && continue
   render "${overlay}"
-  # Evaluated per document: yq's eval-all pairs every match with every other in a
-  # collected array, so one row per match needs the per-document form.
-  flux_rows="$(yq -N -r '
-    .. | select(type == "!!map" and .kind == "Kustomization" and
-      ((.apiVersion // "") | test("^kustomize\\.toolkit\\.fluxcd\\.io/"))) |
-    [(.metadata.name // "-"), (((.spec.patches // []) | length) | tostring), (((.spec.components // []) | length) | tostring), (.spec.path // "")] |
-    join("	")
-  ' "${work}/render.yaml")" || fail "cannot read the Flux Kustomizations in ${overlay#"${render_root}"/}"
-  while IFS=$'\t' read -r name patch_count component_count path; do
+  flux_rows="$(flux_kustomizations)" || fail "cannot read the Flux Kustomizations in ${overlay#"${render_root}"/}"
+  while IFS=$'\t' read -r name patch_count component_count path source; do
     [[ -n "${name}" ]] || continue
-    [[ "${patch_count}" == '0' ]] ||
-      fail "Flux Kustomization ${name} in ${overlay#"${render_root}"/} carries spec.patches, which Flux applies after the build this check renders, so the Kyverno chart version it deploys is unknown"
-    [[ "${component_count}" == '0' ]] ||
-      fail "Flux Kustomization ${name} in ${overlay#"${render_root}"/} carries spec.components, which Flux adds to the build this check renders, so the Kyverno chart version it deploys is unknown"
-    [[ -n "${path}" ]] || fail "Flux Kustomization ${name} in ${overlay#"${render_root}"/} names no spec.path"
+    require_plain "${name}" "${overlay#"${render_root}"/}" "${patch_count}" "${component_count}" "${path}"
     roots+=("${render_root}/${path#./}")
+    [[ "${platform_sources}" == *" ${source} "* ]] || platform_sources="${platform_sources}${source} "
   done <<<"${flux_rows}"
 done
 [[ "${#roots[@]}" -gt 0 ]] || fail "the cluster overlays under ${render_root} name no Flux root"
 
 chart_releases=0
 chart_pins=''
-for root in "${roots[@]}"; do
+unexamined=0
+# roots grows while it is walked: a followed Flux Kustomization is judged like a root.
+for ((index = 0; index < ${#roots[@]}; index++)); do
+  root="${roots[index]}"
   render "${root}"
   release_rows="$(yq -N -r '
     .. | select(type == "!!map" and .kind == "HelmRelease" and .spec.chart.spec.chart == "kyverno") |
     [((.metadata.namespace // "-") + "/" + (.metadata.name // "-")), ((.spec.chart.spec.version // "") | tostring)] |
     join("	")
   ' "${work}/render.yaml")" || fail "cannot read the HelmReleases in ${root#"${render_root}"/}"
+  nested_rows="$(flux_kustomizations)" || fail "cannot read the Flux Kustomizations in ${root#"${render_root}"/}"
   while IFS=$'\t' read -r release chart_pin; do
     [[ -n "${release}" ]] || continue
     chart_releases=$((chart_releases + 1))
@@ -225,9 +250,19 @@ for root in "${roots[@]}"; do
       fail "${root#"${render_root}"/} deploys the Kyverno chart in ${release} at ${chart_pin}, outside its cap <${chart_cap}"
     [[ " ${chart_pins} " == *" ${chart_pin} "* ]] || chart_pins="${chart_pins:+${chart_pins} }${chart_pin}"
   done <<<"${release_rows}"
+  while IFS=$'\t' read -r name patch_count component_count path source; do
+    [[ -n "${name}" ]] || continue
+    if [[ "${platform_sources}" != *" ${source} "* ]]; then
+      unexamined=$((unexamined + 1))
+      continue
+    fi
+    require_plain "${name}" "${root#"${render_root}"/}" "${patch_count}" "${component_count}" "${path}"
+    nested="${render_root}/${path#./}"
+    [[ " ${roots[*]} " == *" ${nested} "* ]] || roots+=("${nested}")
+  done <<<"${nested_rows}"
 done
 [[ "${chart_releases}" -ge "${expected_min_chart_releases}" ]] ||
   fail "the ${#roots[@]} rendered Flux roots hold ${chart_releases} Kyverno chart HelmReleases, expected at least ${expected_min_chart_releases}, so some were not examined"
 
-printf 'PASS: %s kyverno.io resources remain in %s files; Kyverno is held below 1.20 (chart %s <%s in %s HelmReleases across %s Flux roots, CLI %s <%s)\n' \
-  "${legacy_count}" "${manifest_count}" "${chart_pins}" "${chart_cap}" "${chart_releases}" "${#roots[@]}" "${cli_pin}" "${cli_cap}"
+printf 'PASS: %s kyverno.io resources remain in %s files; Kyverno is held below 1.20 (chart %s <%s in %s HelmReleases across %s Flux roots, CLI %s <%s); %s Flux Kustomizations read other sources and were not examined\n' \
+  "${legacy_count}" "${manifest_count}" "${chart_pins}" "${chart_cap}" "${chart_releases}" "${#roots[@]}" "${cli_pin}" "${cli_cap}" "${unexamined}"

@@ -2,7 +2,10 @@
 # Create one online backup after the dedicated archive is active. Keep its
 # Backup receipt for the catalogue and dedicated-only restore acceptance checks.
 set -euo pipefail
-fail() { printf 'Wedding backup proof refused: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'Wedding backup proof refused: %s\n' "$*" >&2
+  exit 1
+}
 [[ "$#" == 0 && "${WEDDING_BACKUP_CONFIRM:-}" == verify-wedding-backup-cutover ]] || fail 'explicit confirmation is required'
 [[ "${GITHUB_REPOSITORY:-}" == devantler-tech/platform && "${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "${GITHUB_REF:-}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT:-}" == 1 ]] || fail 'a first-attempt main dispatch is required'
 [[ "${GITHUB_RUN_ID:-}" =~ ^[1-9][0-9]*$ ]] || fail 'a workflow run identity is required'
@@ -49,7 +52,7 @@ jq -n --arg name "$backup" '{apiVersion:"postgresql.cnpg.io/v1",kind:"Backup",me
 # create, never apply: a rerun cannot mutate or substitute an older Backup.
 kube create -f "$tmp/request.json" -o json >"$tmp/created.json" 2>/dev/null || fail 'the fresh backup could not be created'
 backup_uid="$(jq -er '.metadata.uid | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' "$tmp/created.json")" || fail 'the created backup has no valid identity'
-for ((attempt=1; attempt<=240; attempt++)); do
+for ((attempt = 1; attempt <= 240; attempt++)); do
   read_object backups.postgresql.cnpg.io "$backup" "$tmp/backup.json"
   jq -e --arg uid "$backup_uid" --arg name "$backup" '
     .apiVersion == "postgresql.cnpg.io/v1" and .kind == "Backup" and
@@ -60,7 +63,7 @@ for ((attempt=1; attempt<=240; attempt++)); do
   case "$phase" in
     completed) break ;;
     failed) fail 'the fresh backup failed' ;;
-    pending|started|running|finalizing) ;;
+    pending | started | running | finalizing) ;;
     *) fail 'the backup reported an unknown state' ;;
   esac
   [[ "$attempt" != 240 ]] || fail 'the backup did not complete within twenty minutes'

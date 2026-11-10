@@ -1,3 +1,4 @@
+---
 name: Diagnose Cilium ExternalAuth ipcache
 
 # Obtain the ONE read #2284 needs: on a node running no oauth2-proxy replica, is the host-sourced
@@ -50,7 +51,7 @@ name: Diagnose Cilium ExternalAuth ipcache
 # The script's own test needs no cluster and no secrets, so it runs in ci.yaml's required
 # `validate` job rather than here.
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

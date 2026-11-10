@@ -69,17 +69,19 @@ func veleroReadResource(kind string) string {
 }
 
 type recoveryDriver struct {
-	i                     invocation
-	k                     kubernetes
-	refs                  map[string]ownedReference
-	uncertain             bool
-	started               bool
-	stage                 string
-	image                 string
-	volumeName, volumeUID string
-	pvUID                 string
-	source                sourceIdentity
-	namespacePolicies     map[string]namespacePolicy
+	i                          invocation
+	k                          kubernetes
+	refs                       map[string]ownedReference
+	uncertain                  bool
+	started                    bool
+	stage                      string
+	image                      string
+	volumeName, volumeUID      string
+	pvUID                      string
+	source                     sourceIdentity
+	namespacePolicies          map[string]namespacePolicy
+	completeNamespaceInventory func(context.Context) error
+	retainedGraph              map[string]object
 }
 
 func (d *recoveryDriver) lookup(ctx context.Context, kind, name, ns string) (object, bool, error) {
@@ -113,6 +115,10 @@ func (d *recoveryDriver) owned(ctx context.Context, ref ownedReference) (object,
 	if text(m, "uid") != ref.uid || text(child(m, "labels"), recoveryLabel) != d.i.run {
 		d.uncertain = true
 		return nil, errors.New("replacement")
+	}
+	if d.retainedGraph != nil && !reflect.DeepEqual(retainedMutableFields(o), d.retainedGraph[ref.key()]) {
+		d.uncertain = true
+		return nil, errors.New("retained-graph-changed")
 	}
 	return o, nil
 }

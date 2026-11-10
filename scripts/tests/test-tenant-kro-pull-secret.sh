@@ -81,7 +81,8 @@ done
 # Removing namespace observations must fail instead of silently excluding cases.
 jq -c 'del(.namespaces)' "$work/requests.jsonl" >"$work/no-namespaces.jsonl"
 if "$work/admission" "$policy" <"$work/no-namespaces.jsonl" >"$work/no-namespaces.log" 2>&1; then
-  echo 'missing namespace observation silently bypassed the policy' >&2; exit 1
+  echo 'missing namespace observation silently bypassed the policy' >&2
+  exit 1
 fi
 grep -Fq 'policy did not evaluate' "$work/no-namespaces.log"
 printf 'KRO pull-secret boundary: %s real admission controls passed.\n' "$expected"

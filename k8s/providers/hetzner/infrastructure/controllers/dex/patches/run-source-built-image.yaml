@@ -1,0 +1,21 @@
+# Prod-only: run Dex on the platform's source-built distribution
+# (k8s/bases/infrastructure/controllers/dex/README.md, "Source-built
+# distribution"), pinned by digest. Workload admission and Talos node pulls
+# accept this repository only with the platform's main-branch
+# publish-dex-security-image signature. The tag names the published source
+# revision; the digest is what runs.
+#
+# The image is published for amd64 only, which every production node runs. The
+# local Docker cluster keeps the upstream multi-architecture image so it still
+# starts on arm64 hosts; publishing an arm64 build lets this move to the base.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: dex
+  namespace: dex
+spec:
+  values:
+    image:
+      repository: ghcr.io/devantler-tech/platform-dex
+      tag: "v2.46.1-security.1-cd65a4e40d53beafd8a8eec9b5a32a71986de2d5@sha256:cffb54b332b8d957ca4c8611814ee1685837370ce5fa7069dacdbc39c0c2afc7"
+      pullPolicy: IfNotPresent

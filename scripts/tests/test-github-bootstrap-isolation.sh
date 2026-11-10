@@ -28,7 +28,11 @@ done
 for fixture in empty duplicate malformed; do
   case "${fixture}" in
     empty) printf 'kind: ConfigMap\n' >"${work}/unknown.yaml" ;;
-    duplicate) cat "${work}/github.yaml" >"${work}/unknown.yaml"; printf '\n---\n' >>"${work}/unknown.yaml"; cat "${work}/github.yaml" >>"${work}/unknown.yaml" ;;
+    duplicate)
+      cat "${work}/github.yaml" >"${work}/unknown.yaml"
+      printf '\n---\n' >>"${work}/unknown.yaml"
+      cat "${work}/github.yaml" >>"${work}/unknown.yaml"
+      ;;
     malformed) printf 'kind: [\n' >"${work}/unknown.yaml" ;;
   esac
   status=0

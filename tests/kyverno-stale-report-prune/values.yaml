@@ -1,3 +1,4 @@
+---
 # Production's report settings (k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml)
 # with a one-minute scan so the proof finishes in minutes.
 features:

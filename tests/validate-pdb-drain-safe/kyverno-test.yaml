@@ -1,3 +1,4 @@
+---
 # Pins the policy's behaviour across its ValidatingPolicy rewrite (#4996).
 # A maxUnavailable PDB passes and a minAvailable PDB fails. Each exclusion is
 # pinned: a CloudNativePG-labelled PDB, a KSail-installed PDB by name, and a

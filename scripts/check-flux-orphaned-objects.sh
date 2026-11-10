@@ -151,9 +151,9 @@ read_projected() {
   shift 2
   kubectl_cluster "$@" 2>"${tmp_dir}/error.log" |
     jq "${projection}" >"${output}" 2>"${tmp_dir}/projection-error.log" || {
-      cat "${tmp_dir}/projection-error.log" >>"${tmp_dir}/error.log"
-      return 1
-    }
+    cat "${tmp_dir}/projection-error.log" >>"${tmp_dir}/error.log"
+    return 1
+  }
 }
 
 # The public job log gets the reason a read failed, without the endpoints and
@@ -257,9 +257,9 @@ read_state() {
                         ($adopted_annotation): $m.annotations[$adopted_annotation]},
           managedFields: [$m.managedFields[]? | {manager, operation, subresource, time}]
         }}]} end' >"${dir}/objects.json" 2>"${tmp_dir}/projection-error.log" || {
-      cat "${tmp_dir}/projection-error.log" >>"${tmp_dir}/error.log"
-      return 1
-    }
+    cat "${tmp_dir}/projection-error.log" >>"${tmp_dir}/error.log"
+    return 1
+  }
   # Separate inventory and source reads need no annotations, last-applied
   # documents, managed field payloads, unrelated spec fields or status messages.
   read_projected "${dir}/kustomizations.json" '

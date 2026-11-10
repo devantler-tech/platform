@@ -13,7 +13,7 @@ umask 077
 context='' domain='' image_digest='' chart_digest='' apps_digest='' apps_verify_file='' timeout_seconds=300
 runtime_digests=() scratch='' active='' watchdog='' changed='' started_at=$SECONDS
 probe_runtime_digests=()
-phase=''
+phase='' public_started_after=''
 readonly repository='ghcr.io/devantler-tech/khoist'
 readonly namespace='data-product-controller'
 expected_helm_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/apps/data-product-controller/helm-release.yaml"
@@ -54,6 +54,10 @@ fail() {
     detail=$(printf ',"phase":"public_contract","role":"%s","reason":"%s"' "$role" "$reason")
     if [[ -n "$http_code" ]]; then detail+=$(printf ',"httpStatus":%d' "$http_code"); fi
     if [[ -n "$curl_code" ]]; then detail+=$(printf ',"curlExit":%d' "$curl_code"); fi
+    # Where the budget went: when the public pass that failed began, and on which snapshot pair.
+    if [[ "$public_started_after" =~ ^(0|[1-9][0-9]{0,3})$ ]]; then
+      detail+=$(printf ',"publicStartedAfterSeconds":%d,"attempt":%d' "$public_started_after" "${attempt:-0}")
+    fi
   elif [[ ("$1" == deadline_exceeded || "$1" == read_incomplete) &&
     ("$phase" == initial_readiness || "$phase" == rollout_stability) ]]; then
     role=snapshot
@@ -130,6 +134,10 @@ for tool in kubectl jq curl yq; do command -v "$tool" >/dev/null || fail missing
 scratch=$(mktemp -d) || fail private_storage_unavailable
 chmod 700 "$scratch"
 readonly deadline=$((started_at + timeout_seconds))
+# One public fetch attempt may use a tenth of the budget, never less than five seconds.
+fetch_seconds=$((timeout_seconds / 10))
+((fetch_seconds >= 5)) || fetch_seconds=5
+readonly fetch_seconds
 set -m
 # remaining enforces the shared deadline and records the time left for reads.
 remaining() {
@@ -697,24 +705,37 @@ refuse_public() {
 }
 
 # fetch retrieves one bounded HTTPS response without browser credentials.
-# A dropped connection (refused, empty reply or reset) is retried once inside the
-# shared deadline. Its cause is recorded first, so a retry the deadline forbids
-# still names it; every other failure refuses on its first attempt.
+# Each attempt has its own transfer limit, a tenth of the step budget (at least five
+# seconds), so one stalled response cannot spend the whole deadline. A dropped
+# connection (refused, empty reply or reset, or an edge 520-524) or a timed-out
+# attempt is retried once inside the shared deadline. Its cause is recorded first,
+# so a retry the deadline forbids still names it; every other failure refuses on
+# its first attempt.
 fetch() {
-  local url=$1 role=$2 result curl_exit reason=transport_failed retried=0
+  local url=$1 role=$2 result curl_exit reason retried=0
   while :; do
     remaining
     # Leave one second for curl's refusal to reach the parent before its watchdog fires.
     # An exhausted budget still refuses; it never grants extra transfer time.
     ((left > 1)) || fail deadline_exceeded
     local transfer_seconds=$((left - 1)) connect_seconds=$((left - 1))
+    ((transfer_seconds <= fetch_seconds)) || transfer_seconds=$fetch_seconds
     ((connect_seconds <= 5)) || connect_seconds=5
     curl_exit=0
     result=$(curl --disable --silent --show-error --proxy '' --connect-timeout "$connect_seconds" --max-time "$transfer_seconds" \
       --max-filesize 262144 --proto '=https' --header 'Cookie:' --header 'Authorization:' \
       --dump-header "$scratch/headers" --output "$scratch/body" --write-out '%{http_code}' --url "$url" 2>/dev/null) || curl_exit=$?
     case "$curl_exit" in
-      7 | 52 | 56) ;;
+      6) reason=dns_failed ;;
+      35 | 60) reason=tls_failed ;;
+      28) reason=request_timeout ;;
+      0) reason=http_status ;;
+      *) reason=transport_failed ;;
+    esac
+    # The edge answers 520-524 when its own connection to the cluster failed, which is
+    # the same dropped connection seen one hop further away.
+    case "$curl_exit:$result" in
+      7:* | 28:* | 52:* | 56:* | 0:52[0-4]) ;;
       *) break ;;
     esac
     ((retried == 0)) || break
@@ -725,11 +746,6 @@ fetch() {
   # A retry that succeeded must not leave its first cause on a later deadline refusal.
   rm -f "$scratch/public-failure"
   if ((curl_exit)); then
-    case "$curl_exit" in
-      6) reason=dns_failed ;;
-      35 | 60) reason=tls_failed ;;
-      28) reason=request_timeout ;;
-    esac
     refuse_public "$role" "$reason" "$result" "$curl_exit"
     return 1
   fi
@@ -885,6 +901,7 @@ while :; do
     sleep 0.2
   done
   public_ok=1
+  public_started_after=$((SECONDS - started_at))
   phase=public_contract
   bounded quiet_public_checks || public_ok=0
   ((public_ok || deadline - SECONDS > 0)) || fail public_contract_incomplete

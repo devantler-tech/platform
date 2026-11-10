@@ -11,8 +11,11 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// Object is a decoded JSON or YAML object.
 type Object = map[string]any
 
+// Labels and annotations that mark migration-pool nodes, Longhorn storage
+// authorization and the owned scale-down protection.
 const (
 	PoolLabel         = "storage.platform.devantler.tech/migration-pool"
 	EnabledLabel      = "storage.platform.devantler.tech/migration-enabled"
@@ -21,6 +24,7 @@ const (
 	ScaleDownDisabled = "cluster-autoscaler.kubernetes.io/scale-down-disabled"
 )
 
+// Pool is one reviewed fixed-size migration pool from the cluster config.
 type Pool struct {
 	Name, Role, ServerType string
 	Count                  int
@@ -58,6 +62,8 @@ const (
 	reviewedLocation   = "fsn1"
 )
 
+// ConfiguredPools returns the v1 and v2 migration pools from a KSail cluster
+// config, refusing any pool, capacity or hardware that differs from the review.
 func ConfiguredPools(data []byte) (map[string]Pool, error) {
 	b, err := yaml.YAMLToJSONStrict(data)
 	var cfg Object
@@ -94,6 +100,8 @@ func ConfiguredPools(data []byte) (map[string]Pool, error) {
 	return result, nil
 }
 
+// VerifyNode requires a ready, schedulable, autoscaled node whose name, labels,
+// instance type and provider identity belong to pool.
 func VerifyNode(n Object, pool Pool) error {
 	if !regexp.MustCompile("^"+regexp.QuoteMeta(pool.Name)+"-[0-9a-f]{16}$").MatchString(text(n, "metadata", "name")) ||
 		text(n, "metadata", "labels", PoolLabel) != pool.Role || text(n, "metadata", "labels", "ksail.io/autoscaled") != "true" ||

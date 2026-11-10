@@ -69,8 +69,8 @@ set -euo pipefail
 #
 # scripts/update-vendored-operators.sh pins the same Checkov version and refuses to run, including in
 # CI's --validate-committed step, while its pin differs from this one. Bump both together.
-readonly CI_CHECKOV_VERSION='3.3.9'
-readonly CI_TRIVY_VERSION='0.73.0'
+readonly CI_CHECKOV_VERSION='3.3.30'
+readonly CI_TRIVY_VERSION='0.76.1'
 
 # The MegaLinter release those two versions came from. It is not a local concept — nothing here runs
 # MegaLinter — but it is what makes the pair above checkable: MegaLinter bundles both scanners AND
@@ -81,7 +81,7 @@ readonly CI_TRIVY_VERSION='0.73.0'
 # Nothing in THIS repository selects it: the MegaLinter action is pinned in devantler-tech/actions,
 # so all three constants go stale here when that pin moves, silently and in both directions.
 # scripts/check-megalinter-version-drift.sh is the CI-side guard that catches it (#2853).
-readonly CI_MEGALINTER_VERSION='10.0.0'
+readonly CI_MEGALINTER_VERSION='10.2.0'
 
 # The frameworks MegaLinter's checkov run reports, and their current contribution to the CI total.
 #

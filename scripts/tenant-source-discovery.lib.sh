@@ -34,7 +34,8 @@ canonical_tenant_source_documents() (
   # Every parser invocation proves its complete filename set, including the
   # Kustomize reference pass; a partial read can never narrow the later census.
   read_source_documents() {
-    local output="$1"; shift
+    local output="$1"
+    shift
     printf '%s\0' "$@" | jq -Rs 'split("\u0000")[:-1] | unique' >"$output.expected.json" || return 1
     # YAML also accepts JSON. Older yq releases infer one input format for the
     # entire argument list, so mixed suffixes must never select that format.
@@ -61,8 +62,10 @@ canonical_tenant_source_documents() (
       case "$resource" in /*) resource_file="$resource" ;; esac
       resolved="$(realpath "$resource_file" 2>/dev/null)" || return 1
       case "$resolved" in "$discovery_root/k8s" | "$discovery_root/k8s/"*) ;; *) return 1 ;; esac
-      if [ -f "$resolved" ]; then files+=("$resolved")
-      elif [ ! -d "$resolved" ]; then return 1
+      if [ -f "$resolved" ]; then
+        files+=("$resolved")
+      elif [ ! -d "$resolved" ]; then
+        return 1
       fi
     done <"$source_discovery_work/references"
   fi

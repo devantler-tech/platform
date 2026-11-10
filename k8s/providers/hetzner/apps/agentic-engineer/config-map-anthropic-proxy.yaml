@@ -1,0 +1,151 @@
+# The Anthropic proxy the lane's model traffic goes through.
+#
+# Why a proxy: the lane authenticates with Workload Identity Federation, whose
+# short-lived access tokens are sent as `Authorization: Bearer`. kagent's
+# Substrate gateway injects Anthropic credentials only as `x-api-key`, which
+# accepts API keys, not federated tokens. So the ModelConfig points Claude
+# Code at this proxy: Envoy drops the placeholder `x-api-key` the gateway
+# sets and injects the current federated token as `Authorization`. The token
+# never enters the agent's sandbox, kagent or a Kubernetes Secret.
+#
+# refresh.sh runs beside Envoy. The kubelet rotates the projected identity
+# token at 80% of its 30-minute lifetime; each rotated token is exchanged
+# exactly once (Anthropic rejects a reused token ID) for a one-hour access
+# token, which is written atomically to the directory Envoy watches.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: anthropic-proxy
+  namespace: kagent-credentials
+data:
+  refresh.sh: |
+    #!/bin/sh
+    set -eu
+    identity=/var/run/secrets/anthropic.com/token
+    out=/sds/anthropic.yaml
+    exchanged=""
+    while true; do
+      jwt=$(cat "$identity")
+      if [ "$jwt" != "$exchanged" ]; then
+        body=$(jq -n --arg assertion "$jwt" \
+          '{grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: $assertion,
+            federation_rule_id: env.FEDERATION_RULE_ID, organization_id: env.ORGANIZATION_ID,
+            service_account_id: env.SERVICE_ACCOUNT_ID, workspace_id: env.WORKSPACE_ID}')
+        attempt=0
+        while :; do
+          attempt=$((attempt + 1))
+          status=0
+          response=$(printf '%s' "$body" | curl -sS --max-time 30 -w '\n%{http_code}' \
+            -H 'content-type: application/json' --data-binary @- \
+            https://api.anthropic.com/v1/oauth/token) || status=$?
+          code=$(printf '%s' "$response" | tail -n 1)
+          payload=$(printf '%s' "$response" | sed '$d')
+          if [ "$status" -eq 0 ] && [ "$code" = 200 ]; then
+            if token=$(printf '%s' "$payload" | jq -er .access_token); then
+              umask 077
+              printf 'resources:\n- "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret\n  name: anthropic-authorization\n  generic_secret:\n    secret:\n      inline_string: "Bearer %s"\n' "$token" > /sds/.anthropic.yaml
+              mv /sds/.anthropic.yaml "$out"
+              echo "exchanged a rotated identity token; access token valid for $(printf '%s' "$payload" | jq -r '.expires_in')s"
+            else
+              echo "token exchange answered HTTP 200 without an access token; waiting for the next rotation" >&2
+            fi
+            break
+          fi
+          # An HTTP answer means Anthropic saw the token, which may have spent
+          # its single use: wait for the next rotation. Only a failed
+          # connection is retried with the same token.
+          echo "token exchange failed (curl $status, HTTP $code): $(printf '%s' "$payload" | jq -c '{error, error_description}' 2>/dev/null || true)" >&2
+          if [ "$code" != 000 ] || [ "$attempt" -ge 3 ]; then
+            break
+          fi
+          sleep $((attempt * 10))
+        done
+        exchanged=$jwt
+      fi
+      sleep 30
+    done
+  envoy.yaml: |
+    # A file-based SDS secret needs a node identity, or Envoy exits at startup.
+    node:
+      id: anthropic-proxy
+      cluster: anthropic-proxy
+    static_resources:
+      listeners:
+        - name: anthropic
+          address:
+            socket_address: {address: 0.0.0.0, port_value: 8080}
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: anthropic
+                    # Model responses stream for minutes.
+                    request_timeout: 0s
+                    stream_idle_timeout: 900s
+                    route_config:
+                      virtual_hosts:
+                        - name: anthropic
+                          domains: ["*"]
+                          request_headers_to_remove: [x-api-key]
+                          # Only the Messages API carries the token: a batch or
+                          # file job would outlive the trigger's per-run cap.
+                          routes:
+                            - match: {path: /v1/messages}
+                              route:
+                                cluster: anthropic
+                                host_rewrite_literal: api.anthropic.com
+                                timeout: 0s
+                                idle_timeout: 900s
+                            - match: {path: /v1/messages/count_tokens}
+                              route:
+                                cluster: anthropic
+                                host_rewrite_literal: api.anthropic.com
+                                timeout: 0s
+                                idle_timeout: 900s
+                            - match: {prefix: /}
+                              direct_response:
+                                status: 403
+                                body: {inline_string: "only the Messages API is proxied\n"}
+                    http_filters:
+                      - name: envoy.filters.http.credential_injector
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.credential_injector.v3.CredentialInjector
+                          overwrite: true
+                          credential:
+                            name: envoy.http.injected_credentials.generic
+                            typed_config:
+                              "@type": type.googleapis.com/envoy.extensions.http.injected_credentials.generic.v3.Generic
+                              header: Authorization
+                              credential:
+                                name: anthropic-authorization
+                                sds_config:
+                                  path_config_source:
+                                    path: /sds/anthropic.yaml
+                                    watched_directory: {path: /sds}
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+      clusters:
+        - name: anthropic
+          type: LOGICAL_DNS
+          dns_lookup_family: V4_ONLY
+          connect_timeout: 10s
+          load_assignment:
+            cluster_name: anthropic
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address: {address: api.anthropic.com, port_value: 443}
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: api.anthropic.com
+              common_tls_context:
+                validation_context:
+                  trusted_ca: {filename: /etc/ssl/certs/ca-certificates.crt}
+                  match_typed_subject_alt_names:
+                    - san_type: DNS
+                      matcher: {exact: api.anthropic.com}

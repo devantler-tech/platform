@@ -1,0 +1,15 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: kagent-crds
+  namespace: kagent
+spec:
+  interval: 10m
+  # kagent 1.0 is at release candidate 3; its two charts share a version.
+  url: oci://ghcr.io/kagent-dev/kagent/helm/kagent-crds
+  ref:
+    tag: 1.0.0-rc3
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy

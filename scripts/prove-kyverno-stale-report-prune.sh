@@ -131,7 +131,7 @@ never_team_mid="$(result_timestamp never-rescanned require-team-label team-label
 owner_before="$(result_timestamp excluded-later require-owner-label owner-label)"
 wait_for "one more complete background scan" 600 scan_ran
 [[ "$(result_timestamp never-rescanned require-owner-label owner-label)" == "$never_owner_mid" &&
-  "$(result_timestamp never-rescanned require-team-label team-label)" == "$never_team_mid" ]] ||
+"$(result_timestamp never-rescanned require-team-label team-label)" == "$never_team_mid" ]] ||
   fail "a completed scan rewrote a never-rescanned result, so that report is still being scanned"
 has_results never-rescanned "$both" || fail "never-rescanned lost its results without the policy"
 log "ok: defect reproduced, the excluded rule's result survives a completed scan unchanged"

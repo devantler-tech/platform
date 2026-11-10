@@ -22,6 +22,9 @@ type catalogueEntry struct {
 	Snapshot snapshot.Manifest
 	Raw      json.RawMessage
 }
+
+// Catalogue is the strictly loaded snapshot-manifest metadata of one
+// repository, serialized only as counts and digests.
 type Catalogue struct {
 	MetadataOnly     bool   `json:"metadataOnly"`
 	Snapshots        int    `json:"snapshots"`

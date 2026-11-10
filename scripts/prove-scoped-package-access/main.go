@@ -1,3 +1,5 @@
+// Command prove-scoped-package-access runs the repository-scoped GHCR access
+// experiment against the existing encrypted pull credential as a baseline.
 package main
 
 import (

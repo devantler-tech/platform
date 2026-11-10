@@ -1,3 +1,4 @@
+---
 # DR — Rebuild Prod: the executable form of docs/dr/runbook.md Scenario 4
 # ("full cluster rebuild from zero"), runnable as one button press when the
 # production cluster is gone.
@@ -37,7 +38,7 @@ name: DR - Rebuild Prod
 # safe (nothing supersedes) but silently gives up the coalescing.
 run-name: DR - Rebuild Prod (restore=${{ inputs.restore }})
 
-on:
+"on":
   # checkov:skip=CKV_GHA_7:The `confirm` input IS the safety interlock — an operator must type
   # REBUILD-PROD before this workflow will destroy and rebuild the production cluster. Removing
   # the inputs to satisfy the check would delete that guard and make an accidental dispatch
@@ -111,7 +112,7 @@ jobs:
 
       - name: 🔐 Enforce approved publication signers
         env:
-          APPROVED_REVISIONS_ENFORCE: '1'
+          APPROVED_REVISIONS_ENFORCE: "1"
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       - name: 🛡️ Protect the nested RGD deployment gate
@@ -179,7 +180,7 @@ jobs:
         # deploy-prod action; renovate keeps the pin current in all places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.23"
+          KSAIL_VERSION: "7.206.67"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -450,7 +451,7 @@ jobs:
                   sizeLimit: 8Mi
             initContainers:
               - name: install-tools
-                image: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+                image: docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6
                 command: ["/bin/sh", "-ec", "cp /bin/busybox /tools/busybox; /tools/busybox --install -s /tools"]
                 securityContext:
                   allowPrivilegeEscalation: false

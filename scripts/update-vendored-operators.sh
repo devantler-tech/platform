@@ -30,7 +30,7 @@ readonly cert_approver_image_digest='sha256:445a8e5584f659701092d2ec8b625da8929d
 # refresh cannot miss a rule that the non-blocking CI scan knows. Every mode,
 # --validate-committed included, refuses to run while the two differ, so a bump
 # of either pin fails CI until the other moves with it.
-readonly checkov_version='3.3.9'
+readonly checkov_version='3.3.30'
 # CKV2_K8S_6 only understands networking.k8s.io NetworkPolicy. An isolated
 # bundle scan cannot see that cilium-network-policy.yaml protects every CDI
 # endpoint; the full-repository CI scan remains unskipped and owns graph checks.

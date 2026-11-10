@@ -13,7 +13,10 @@ ksail_config="${root_dir}/ksail.prod.yaml"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
 
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 
 container='.spec.jobTemplate.spec.template.spec.containers[] | select(.name == "alerter")'
 
@@ -98,7 +101,8 @@ node() { # name [control-plane]
 }
 
 new_case() { # name node...
-  case_dir="${work_dir}/$1"; shift
+  case_dir="${work_dir}/$1"
+  shift
   mkdir -p "${case_dir}/tmp"
   printf '200' >"${case_dir}/code"
   printf '%s\n' "$@" | jq -s '{kind:"NodeList",metadata:{},items:.}' >"${case_dir}/nodes.json"
