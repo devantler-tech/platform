@@ -129,6 +129,22 @@ cap does not apply to this separate profile. The raw disk remains unregistered a
 storage activation and volume migration follow separately. Original storage replicas remain on
 the permanent workers throughout this preparation route.
 
+For the V2-born worker, use `prepare-retained-temporary-worker`,
+`temporary-v2-1` and `prepare-retained-longhorn-v2-temporary-v2-1`. The
+reviewed pool configuration must already declare the original raw volume,
+the distinct 144 GiB staging volume and a 40–44 GiB EPHEMERAL range. The
+protected operation verifies the original 96 GiB raw partition and STATE
+extents, drains the worker and closes the original mapper. It records reset
+intent only after complete native reads show the old configuration, volume
+status and partition holders cleared while the physical extents remain.
+
+After the EPHEMERAL-only reset, the worker must report a new boot, a replaced
+encrypted EPHEMERAL partition and a separate encrypted staging partition.
+The workflow reopens the original mapper only after rechecking the retained
+extents. It requires the same extents and an open original mapper before
+recording preparation complete. A lost reset response permits observation
+of recovery only. The original mapper remains outside Longhorn scheduling.
+
 When a replica-directory observation holds, `inventory-storage-root` inspects the fixed
 parent `/var/lib/longhorn` directory. Use the same fixed node selections with the matching
 confirmation `inventory-longhorn-storage-root-<selection>`. It brackets two complete native
