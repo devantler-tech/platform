@@ -12,7 +12,7 @@ index ea1ee34..2113e79 100644
  }
 diff --git a/app/cmd/retirement.go b/app/cmd/retirement.go
 new file mode 100644
-index 0000000..1f007e8
+index 0000000..8ce899e
 --- /dev/null
 +++ b/app/cmd/retirement.go
 @@ -0,0 +1,124 @@
@@ -50,7 +50,7 @@ index 0000000..1f007e8
 +	if err := manager.EnableDurableRetirement(platformRetirementState); err != nil {
 +		return nil, err
 +	}
-+	return startRetirementSocket(platformRetirementSocket, manager.SealProcess)
++	return startRetirementSocket(platformRetirementSocket, manager.SealVolume)
 +}
 +
 +func startRetirementSocket(socket string, seal func(string) (bool, error)) (*http.Server, error) {
@@ -74,12 +74,12 @@ index 0000000..1f007e8
 +			http.NotFound(w, r)
 +			return
 +		}
-+		name, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 253))
-+		if err != nil || len(name) == 0 {
++		volume, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 40))
++		if err != nil || len(volume) != 40 {
 +			w.WriteHeader(http.StatusBadRequest)
 +			return
 +		}
-+		complete, err := seal(string(name))
++		complete, err := seal(string(volume))
 +		switch {
 +		case err != nil:
 +			w.WriteHeader(http.StatusPreconditionFailed)
@@ -95,14 +95,14 @@ index 0000000..1f007e8
 +	return server, nil
 +}
 +
-+func requestRetirement(ctx context.Context, socket, name string) (bool, error) {
++func requestRetirement(ctx context.Context, socket, volume string) (bool, error) {
 +	dialer := net.Dialer{Timeout: 3 * time.Second}
 +	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 +		return dialer.DialContext(ctx, "unix", socket)
 +	}}
 +	client := &http.Client{Transport: transport, Timeout: 6 * time.Second,
 +		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/seal", strings.NewReader(name))
++	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/seal", strings.NewReader(volume))
 +	if err != nil {
 +		return false, err
 +	}
@@ -123,11 +123,11 @@ index 0000000..1f007e8
 +
 +func processRetirementCmd() *cli.Command {
 +	return &cli.Command{
-+		Name:  "seal-for-retirement",
-+		Usage: "seal one process name through the local retirement socket",
-+		Flags: []cli.Flag{&cli.StringFlag{Name: "name", Required: true}},
++		Name:  "seal-volume-for-retirement",
++		Usage: "seal one dynamic V1 volume through the local retirement socket",
++		Flags: []cli.Flag{&cli.StringFlag{Name: "volume", Required: true}},
 +		Action: func(ctx context.Context, c *cli.Command) error {
-+			complete, err := requestRetirement(ctx, platformRetirementSocket, c.String("name"))
++			complete, err := requestRetirement(ctx, platformRetirementSocket, c.String("volume"))
 +			if err != nil {
 +				return err
 +			}
@@ -142,7 +142,7 @@ index 0000000..1f007e8
 +}
 diff --git a/app/cmd/retirement_test.go b/app/cmd/retirement_test.go
 new file mode 100644
-index 0000000..e101a51
+index 0000000..62ebda4
 --- /dev/null
 +++ b/app/cmd/retirement_test.go
 @@ -0,0 +1,63 @@
@@ -166,7 +166,7 @@ index 0000000..e101a51
 +	socket := filepath.Join(private, "retirement.sock")
 +	var calls atomic.Int32
 +	server, err := startRetirementSocket(socket, func(name string) (bool, error) {
-+		if name != "fixture-e-0" {
++		if name != "pvc-01234567-89ab-4cde-8f01-23456789abcd" {
 +			return false, errors.New("unexpected target")
 +		}
 +		return calls.Add(1) > 1, nil
@@ -183,13 +183,13 @@ index 0000000..e101a51
 +	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
 +		t.Fatalf("socket is not owner-only: %v", err)
 +	}
-+	if sealed, err := requestRetirement(context.Background(), socket, "fixture-e-0"); err != nil || sealed {
++	if sealed, err := requestRetirement(context.Background(), socket, "pvc-01234567-89ab-4cde-8f01-23456789abcd"); err != nil || sealed {
 +		t.Fatalf("in-flight child was acknowledged: %v", err)
 +	}
-+	if sealed, err := requestRetirement(context.Background(), socket, "fixture-e-0"); err != nil || !sealed {
++	if sealed, err := requestRetirement(context.Background(), socket, "pvc-01234567-89ab-4cde-8f01-23456789abcd"); err != nil || !sealed {
 +		t.Fatalf("completed seal was not acknowledged: %v", err)
 +	}
-+	if _, err := requestRetirement(context.Background(), socket, strings.Repeat("x", 254)); err == nil {
++	if _, err := requestRetirement(context.Background(), socket, strings.Repeat("x", 41)); err == nil {
 +		t.Fatal("oversized target was accepted")
 +	}
 +	if calls.Load() != 2 {
@@ -450,7 +450,7 @@ index c7788fc..9f422e6 100644
  				if p.IsStopped() {
  					return
 diff --git a/pkg/process/process_manager.go b/pkg/process/process_manager.go
-index 22d53a0..851c7a2 100644
+index 22d53a0..18220d0 100644
 --- a/pkg/process/process_manager.go
 +++ b/pkg/process/process_manager.go
 @@ -5,6 +5,7 @@ import (
@@ -478,12 +478,12 @@ index 22d53a0..851c7a2 100644
 +	if req.GetSpec() == nil || req.Spec.Name == "" || req.Spec.Binary == "" {
  		return nil, status.Errorf(codes.InvalidArgument, "missing required argument")
  	}
-+	name := req.Spec.Name
-+	if err := pm.beginProcessStart(name); err != nil {
++	volume, err := pm.beginProcessStart(req.Spec.Name)
++	if err != nil {
 +		return nil, err
 +	}
 +	var p *Process
-+	defer func() { pm.finishProcessStart(name, p) }()
++	defer func() { pm.finishProcessStart(volume, p) }()
  
  	logrus.Infof("Process Manager: prepare to create process %v", req.Spec.Name)
  	logger, err := util.NewLonghornWriter(req.Spec.Name, pm.logsDir)
@@ -507,12 +507,12 @@ index 22d53a0..851c7a2 100644
  	if req.TerminateSignal != "SIGHUP" {
  		return nil, status.Errorf(codes.InvalidArgument, "doesn't support terminate signal %v", req.TerminateSignal)
  	}
-+	name := req.Spec.Name
-+	if err := pm.beginProcessStart(name); err != nil {
++	volume, err := pm.beginProcessStart(req.Spec.Name)
++	if err != nil {
 +		return nil, err
 +	}
 +	var p *Process
-+	defer func() { pm.finishProcessStart(name, p) }()
++	defer func() { pm.finishProcessStart(volume, p) }()
  	terminateSignal := syscall.SIGHUP
  
  	logrus.Infof("Process Manager: prepare to replace process %v", req.Spec.Name)
@@ -527,10 +527,10 @@ index 22d53a0..851c7a2 100644
  		Args:      req.Spec.Args,
 diff --git a/pkg/process/retirement.go b/pkg/process/retirement.go
 new file mode 100644
-index 0000000..0f64836
+index 0000000..5eb71cd
 --- /dev/null
 +++ b/pkg/process/retirement.go
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,176 @@
 +package process
 +
 +import (
@@ -543,7 +543,10 @@ index 0000000..0f64836
 +	"google.golang.org/grpc/status"
 +)
 +
-+var validRetirementName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)
++const dynamicVolume = `pvc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
++
++var validRetirementVolume = regexp.MustCompile("^" + dynamicVolume + "$")
++var retirementProcessVolume = regexp.MustCompile("^(" + dynamicVolume + ")-[er]-[a-z0-9]+$")
 +
 +type processRetirement struct {
 +	starting int
@@ -551,12 +554,12 @@ index 0000000..0f64836
 +	sealed   bool
 +}
 +
-+// SealProcess blocks further creates and replacements of this exact name in
-+// this manager epoch. The caller can proceed only once all previously
-+// admitted operations and their actual child commands have returned.
-+func (pm *Manager) SealProcess(name string) (bool, error) {
-+	if len(name) > 253 || !validRetirementName.MatchString(name) {
-+		return false, status.Error(codes.InvalidArgument, "invalid process name")
++// SealVolume blocks further V1 engine and replica starts for this exact
++// dynamically provisioned volume, including names never seen by the caller.
++// It confirms completion only after every admitted child has exited.
++func (pm *Manager) SealVolume(name string) (bool, error) {
++	if !validRetirementVolume.MatchString(name) {
++		return false, status.Error(codes.InvalidArgument, "invalid retirement volume")
 +	}
 +	pm.lock.Lock()
 +	defer pm.lock.Unlock()
@@ -597,7 +600,7 @@ index 0000000..0f64836
 +}
 +
 +func (pm *Manager) storedRetirement(name string) (bool, error) {
-+	if pm.retirementRoot == nil || len(name) > 253 || !validRetirementName.MatchString(name) {
++	if pm.retirementRoot == nil {
 +		return false, nil
 +	}
 +	info, err := pm.retirementRoot.Lstat(name)
@@ -647,24 +650,32 @@ index 0000000..0f64836
 +	return r
 +}
 +
-+func (pm *Manager) beginProcessStart(name string) error {
++func (pm *Manager) beginProcessStart(processName string) (string, error) {
++	identity := retirementProcessVolume.FindStringSubmatch(processName)
++	if len(identity) != 2 {
++		return "", nil
++	}
++	name := identity[1]
 +	pm.lock.Lock()
 +	defer pm.lock.Unlock()
 +	r := pm.retirementEntry(name)
 +	stored, err := pm.storedRetirement(name)
 +	if err != nil {
 +		pm.discardRetirementEntry(name, r)
-+		return status.Error(codes.FailedPrecondition, "process retirement state cannot be read")
++		return "", status.Error(codes.FailedPrecondition, "volume retirement state cannot be read")
 +	}
 +	if r.sealed || stored {
 +		r.sealed = true
-+		return status.Error(codes.FailedPrecondition, "process name is sealed for retirement")
++		return "", status.Error(codes.FailedPrecondition, "volume is sealed for retirement")
 +	}
 +	r.starting++
-+	return nil
++	return name, nil
 +}
 +
 +func (pm *Manager) finishProcessStart(name string, p *Process) {
++	if name == "" {
++		return
++	}
 +	var done <-chan struct{}
 +	if p != nil {
 +		p.lock.RLock()
@@ -751,10 +762,10 @@ index 0000000..78c62a0
 +}
 diff --git a/pkg/process/retirement_manager_test.go b/pkg/process/retirement_manager_test.go
 new file mode 100644
-index 0000000..8aa4b70
+index 0000000..f48380a
 --- /dev/null
 +++ b/pkg/process/retirement_manager_test.go
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,269 @@
 +package process
 +
 +import (
@@ -766,7 +777,11 @@ index 0000000..8aa4b70
 +	"time"
 +
 +	rpc "github.com/longhorn/types/pkg/generated/imrpc"
++	"google.golang.org/grpc/codes"
++	"google.golang.org/grpc/status"
 +)
++
++const retirementFixtureVolume = "pvc-01234567-89ab-4cde-8f01-23456789abcd"
 +
 +func TestSealedNameRejectsNewCreateAndWaitsForInFlightCreate(t *testing.T) {
 +	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -785,7 +800,7 @@ index 0000000..8aa4b70
 +		}
 +		return nil, errors.New("fixture stops before a native child is created")
 +	}}
-+	request := &rpc.ProcessCreateRequest{Spec: &rpc.ProcessSpec{Name: "fixture-e-0", Binary: "delayed-command"}}
++	request := &rpc.ProcessCreateRequest{Spec: &rpc.ProcessSpec{Name: retirementFixtureVolume + "-e-0", Binary: "delayed-command"}}
 +	finished := make(chan struct{})
 +	go func() {
 +		defer close(finished)
@@ -796,7 +811,7 @@ index 0000000..8aa4b70
 +	case <-ctx.Done():
 +		t.Fatal("first create did not reach the injected start point")
 +	}
-+	if stopped, err := manager.SealProcess(request.Spec.Name); err != nil || stopped {
++	if stopped, err := manager.SealVolume(retirementFixtureVolume); err != nil || stopped {
 +		t.Fatalf("sealing reported a pending create as retired: %v", err)
 +	}
 +	if _, err := manager.ProcessCreate(ctx, request); err == nil {
@@ -812,10 +827,10 @@ index 0000000..8aa4b70
 +	case <-ctx.Done():
 +		t.Fatal("first create did not return")
 +	}
-+	if stopped, err := manager.SealProcess(request.Spec.Name); err != nil || !stopped {
++	if stopped, err := manager.SealVolume(retirementFixtureVolume); err != nil || !stopped {
 +		t.Fatalf("no-child create did not finish retiring: %v", err)
 +	}
-+	other := &rpc.ProcessCreateRequest{Spec: &rpc.ProcessSpec{Name: "unrelated-e-0", Binary: "unrelated-command"}}
++	other := &rpc.ProcessCreateRequest{Spec: &rpc.ProcessSpec{Name: "pvc-76543210-89ab-4cde-8f01-23456789abcd-e-0", Binary: "unrelated-command"}}
 +	if _, err := manager.ProcessCreate(ctx, other); err != nil {
 +		t.Fatalf("sealing one name affected an unrelated create: %v", err)
 +	}
@@ -828,7 +843,7 @@ index 0000000..8aa4b70
 +	if err != nil {
 +		t.Fatal(err)
 +	}
-+	const name = "fixture-r-0"
++	const name = retirementFixtureVolume + "-r-0"
 +	result, err := manager.ProcessCreate(ctx, &rpc.ProcessCreateRequest{
 +		Spec: &rpc.ProcessSpec{Name: name, Binary: "sleep", Args: []string{"30"}},
 +	})
@@ -843,14 +858,14 @@ index 0000000..8aa4b70
 +	if !process.cmd.IsRunning() {
 +		t.Fatal("the real child never started")
 +	}
-+	if stopped, err := manager.SealProcess(name); err != nil || stopped {
++	if stopped, err := manager.SealVolume(retirementFixtureVolume); err != nil || stopped {
 +		t.Fatalf("sealing acknowledged a live child: %v", err)
 +	}
 +	if _, err = manager.ProcessDelete(ctx, &rpc.ProcessDeleteRequest{Name: name, Uuid: result.Status.Uuid}); err != nil {
 +		t.Fatal(err)
 +	}
 +	for ctx.Err() == nil {
-+		stopped, err := manager.SealProcess(name)
++		stopped, err := manager.SealVolume(retirementFixtureVolume)
 +		if err != nil {
 +			t.Fatal(err)
 +		}
@@ -885,8 +900,8 @@ index 0000000..8aa4b70
 +	}
 +	original := makeManager()
 +	peer := makeManager()
-+	const name = "fixture-e-0"
-+	if done, err := original.SealProcess(name); err != nil || !done {
++	const name = retirementFixtureVolume + "-e-0"
++	if done, err := original.SealVolume(retirementFixtureVolume); err != nil || !done {
 +		t.Fatalf("initial seal failed: %v", err)
 +	}
 +	for _, manager := range []*Manager{peer, makeManager()} {
@@ -897,7 +912,7 @@ index 0000000..8aa4b70
 +		}
 +	}
 +	if _, err := peer.ProcessCreate(ctx, &rpc.ProcessCreateRequest{
-+		Spec: &rpc.ProcessSpec{Name: "unrelated-e-0", Binary: "fixture"},
++		Spec: &rpc.ProcessSpec{Name: "pvc-76543210-89ab-4cde-8f01-23456789abcd-e-0", Binary: "fixture"},
 +	}); err != nil {
 +		t.Fatalf("durable seal affected an unrelated name: %v", err)
 +	}
@@ -910,7 +925,7 @@ index 0000000..8aa4b70
 +	if err != nil {
 +		t.Fatal(err)
 +	}
-+	const name = "fixture-e-0"
++	const name = retirementFixtureVolume + "-e-0"
 +	if _, err = manager.ProcessCreate(ctx, &rpc.ProcessCreateRequest{
 +		Spec: &rpc.ProcessSpec{Name: name, Binary: "sleep", Args: []string{"30"}},
 +	}); err != nil {
@@ -946,7 +961,7 @@ index 0000000..8aa4b70
 +	case <-ctx.Done():
 +		t.Fatal("replacement never reached its delayed native start")
 +	}
-+	if complete, err := manager.SealProcess(name); err != nil || complete {
++	if complete, err := manager.SealVolume(retirementFixtureVolume); err != nil || complete {
 +		t.Fatalf("sealing acknowledged an in-flight replacement: %v", err)
 +	}
 +	select {
@@ -962,7 +977,7 @@ index 0000000..8aa4b70
 +	case <-ctx.Done():
 +		t.Fatal("original child did not exit")
 +	}
-+	if complete, err := manager.SealProcess(name); err != nil || complete {
++	if complete, err := manager.SealVolume(retirementFixtureVolume); err != nil || complete {
 +		t.Fatalf("sealing ignored the replacement command that can still run: %v", err)
 +	}
 +
@@ -979,7 +994,7 @@ index 0000000..8aa4b70
 +		t.Fatal(err)
 +	}
 +	for ctx.Err() == nil {
-+		complete, err := manager.SealProcess(name)
++		complete, err := manager.SealVolume(retirementFixtureVolume)
 +		if err != nil {
 +			t.Fatal(err)
 +		}
@@ -989,6 +1004,36 @@ index 0000000..8aa4b70
 +		time.Sleep(time.Millisecond)
 +	}
 +	t.Fatal("the seal did not observe the replacement exit")
++}
++
++func TestVolumeSealCoversPreviouslyUnobservedEngineAndReplicaNames(t *testing.T) {
++	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
++	defer cancel()
++	manager, err := NewManager(ctx, "30000-30010", t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	manager.Executor = &MockExecutor{CreationHook: func(*MockCommand) (*MockCommand, error) {
++		return nil, errors.New("fixture stops before launching a child")
++	}}
++	const volume = "pvc-01234567-89ab-4cde-8f01-23456789abcd"
++	if sealed, err := manager.SealVolume(volume); err != nil || !sealed {
++		t.Fatalf("unused volume could not be sealed: %v", err)
++	}
++	for _, suffix := range []string{"-e-0", "-e-19", "-r-3f6b10ae"} {
++		spec := &rpc.ProcessSpec{Name: volume + suffix, Binary: "fixture"}
++		if _, err := manager.ProcessCreate(ctx, &rpc.ProcessCreateRequest{Spec: spec}); status.Code(err) != codes.FailedPrecondition {
++			t.Fatalf("create for a previously unobserved sibling was not refused: %v", err)
++		}
++		if _, err := manager.ProcessReplace(ctx, &rpc.ProcessReplaceRequest{Spec: spec, TerminateSignal: "SIGHUP"}); status.Code(err) != codes.FailedPrecondition {
++			t.Fatalf("replacement for a previously unobserved sibling was not refused: %v", err)
++		}
++	}
++	for _, unrelated := range []string{volume + "-other-e-0", "pvc-76543210-89ab-4cde-8f01-23456789abcd-r-3f6b10ae"} {
++		if _, err := manager.ProcessCreate(ctx, &rpc.ProcessCreateRequest{Spec: &rpc.ProcessSpec{Name: unrelated, Binary: "fixture"}}); err != nil {
++			t.Fatalf("sealing one volume affected a different volume: %v", err)
++		}
++	}
 +}
 diff --git a/pkg/process/retirement_process_test.go b/pkg/process/retirement_process_test.go
 new file mode 100644

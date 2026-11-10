@@ -106,12 +106,12 @@ jobs:
           target="${RUNNER_TEMP}/longhorn-retirement"
           mkdir -p "${target}"
           binary="${target}/longhorn-instance-manager"
-          go build -mod=vendor -trimpath -tags netgo \
+          go build -mod=vendor -trimpath -tags netgo,osusergo \
             -ldflags "-X main.Version=v1.13.0 -X main.GitCommit=${UPSTREAM_SOURCE} -linkmode external -extldflags -static" \
             -o "${binary}" .
           file "${binary}" | rg 'x86-64.*statically linked'
           test "$("${binary}" --version)" = 'longhorn-instance-manager version v1.13.0'
-          "${binary}" process seal-for-retirement --help
+          "${binary}" process seal-volume-for-retirement --help
           printf 'binary_sha=%s\n' "$(sha256sum "${binary}" | cut -d ' ' -f1)" >> "${GITHUB_OUTPUT}"
           printf 'artifact_name=longhorn-retirement-%s-%s\n' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
 
@@ -123,7 +123,7 @@ jobs:
             --tag "${IMAGE}:${IMAGE_TAG}" "${RUNNER_TEMP}/longhorn-retirement"
           docker run --rm --network none --read-only --cap-drop ALL \
             --entrypoint /usr/local/bin/longhorn-instance-manager "${IMAGE}:${IMAGE_TAG}" \
-            process seal-for-retirement --help
+            process seal-volume-for-retirement --help
 
       - name: Retain the tested binary for publication
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -175,7 +175,7 @@ jobs:
             --tag "${IMAGE}:${IMAGE_TAG}" "${RUNNER_TEMP}/longhorn-retirement"
           docker run --rm --network none --read-only --cap-drop ALL \
             --entrypoint /usr/local/bin/longhorn-instance-manager "${IMAGE}:${IMAGE_TAG}" \
-            process seal-for-retirement --help
+            process seal-volume-for-retirement --help
 
       - name: Install verified signing and inventory tools
         run: bash .github/scripts/setup-supply-chain-tools.sh
