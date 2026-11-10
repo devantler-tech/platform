@@ -555,6 +555,16 @@ at v0.36.5; no `siderolabs` or YAML module moves, so the Talos machinery and its
 YAML encoders are unchanged. This audit changes no cluster configuration or
 vulnerability exception.
 
+**7.206.77**, commit `44531613b995adec14a635ce17db5814f8e1428d`, is audited
+against 7.206.75. The configuration-manager tree, Talos generator, cluster API
+and charts are byte-identical, so `applySchematic`, `schematicKernelArgs`,
+`reconcileFoldedKernelArgs` and the schematic-ID guard are unchanged. `go.mod`
+and `go.sum` add `go-licenses/v2` with its `licenseclassifier/v2` and
+`httpreplay` dependencies, and move only the indirect `loft-sh/external-types`
+and `openreports/reports-api` modules; no `siderolabs` or YAML module moves, so
+the Talos machinery and its YAML encoders are unchanged. This audit changes no
+cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
