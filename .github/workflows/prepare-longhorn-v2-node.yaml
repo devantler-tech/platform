@@ -31,6 +31,7 @@ name: Prepare Longhorn V2 Migration
             inspect-host-memory,
             reboot-host-for-hugepages,
             repair-v1-reservation,
+            reserve-v1-scratch,
             retain-v1-source,
           ]
       node:
@@ -117,6 +118,9 @@ jobs:
               ;;
             repair-v1-reservation)
               [[ "${LONGHORN_V2_NODE}" == prod-worker-1 && "${LONGHORN_V2_CONFIRM}" == repair-longhorn-v1-reservation ]]
+              ;;
+            reserve-v1-scratch)
+              [[ "${LONGHORN_V2_NODE}" == prod-worker-1 && "${LONGHORN_V2_CONFIRM}" == reserve-longhorn-v1-scratch ]]
               ;;
             retain-v1-source)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-longhorn-v1-source:[a-z0-9][-a-z0-9]*/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]

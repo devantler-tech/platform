@@ -30,6 +30,8 @@ func main() {
 		authorization = authorizeHostReboot(os.Getenv, target)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
+	case "reserve-v1-scratch":
+		authorization = authorizeV1ScratchHeadroom(os.Getenv, target)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
 	case "inventory-storage-root":
@@ -48,6 +50,13 @@ func main() {
 	if operation == "repair-v1-reservation" {
 		if err := repairV1Reservation(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
 			fmt.Fprintln(os.Stderr, "V1 reservation repair held:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if operation == "reserve-v1-scratch" {
+		if err := reserveV1ScratchHeadroom(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
+			fmt.Fprintln(os.Stderr, "V1 scratch reservation held:", err)
 			os.Exit(1)
 		}
 		return

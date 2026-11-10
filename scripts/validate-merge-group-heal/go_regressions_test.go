@@ -121,11 +121,13 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 	// Keep the bounded test concurrency and explicit per-package timeout in
 	// the pinned command without allowing package filters or skipped results.
 	positions := make(map[string]int)
-	for _, command := range []string{
-		"bash scripts/tests/test-go-modules-tidy.sh",
-		"bash scripts/check-go-modules-tidy.sh",
-		"bash scripts/tests/test-run-go-regressions.sh",
-		"bash scripts/run-go-regressions.sh \"$PARTITION\"",
+	for command, condition := range map[string]string{
+		"shellcheck scripts/check-go-modules-tidy.sh scripts/tests/test-go-modules-tidy.sh": "matrix.suite == 'helpers'",
+		"bash scripts/tests/test-go-modules-tidy.sh":                                        "matrix.suite == 'helpers'",
+		"bash scripts/check-go-modules-tidy.sh":                                             "matrix.suite == 'helpers'",
+		"shellcheck scripts/run-go-regressions.sh scripts/tests/test-run-go-regressions.sh": "matrix.suite == 'helpers'",
+		"bash scripts/tests/test-run-go-regressions.sh":                                     "matrix.suite == 'helpers'",
+		"bash scripts/run-go-regressions.sh \"$PARTITION\"":                                 "",
 	} {
 		found := false
 		for name, candidate := range workflow.Jobs {
@@ -133,8 +135,8 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 				if strings.TrimSpace(step.Run) != command {
 					continue
 				}
-				if name != "validate-go-regressions" || step.If != "" || step.Continue != nil {
-					t.Fatalf("complete suite must run once, unconditionally in its independent job: %s", command)
+				if name != "validate-go-regressions" || step.If != condition || step.Continue != nil {
+					t.Fatalf("regression command %q must run with condition %q and propagate failures", command, condition)
 				}
 				if strings.Contains(command, "\"$PARTITION\"") && step.Env["PARTITION"] != "${{ matrix.suite }}" {
 					t.Fatal("the runner must bind its real matrix partition")
