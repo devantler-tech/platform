@@ -3,7 +3,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - namespace.yaml
-  - benchmark-namespace.yaml
+  - namespace-benchmark.yaml
   - helm-repository.yaml
   - helm-release.yaml
   # Default WaitForFirstConsumer StorageClass (see storage-class-longhorn-wffc.yaml);
