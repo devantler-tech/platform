@@ -17,7 +17,7 @@ type nativeBlockLayoutReader interface {
 	ListBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error)
 }
 type nativeRetainedBlockLayoutReader interface {
-	ListRetainedBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error)
+	ListRetainedBlockLayout(context.Context, bool) (longhorninventory.BlockLayoutReport, longhorninventory.RetainedLayoutIdentity, error)
 }
 type storageRootReceipt struct {
 	Schema              int                                  `json:"schema"`
@@ -133,8 +133,8 @@ func observeNativeBlockLayout(ctx context.Context, reader nativeReplicaReader, t
 		if !ok {
 			return longhorninventory.BlockLayoutReport{}, stageClient
 		}
-		layout, err := retainedReader.ListRetainedBlockLayout(ctx)
-		if err == nil && !layout.RawExtentObserved {
+		layout, identity, err := retainedReader.ListRetainedBlockLayout(ctx, false)
+		if err == nil && (!layout.RawExtentObserved || !inventoryBoot.MatchString(identity.PartitionUUID) || len(identity.ExtentDigest) != 64) {
 			return longhorninventory.BlockLayoutReport{}, stageBlockLayout
 		}
 		return layout, err

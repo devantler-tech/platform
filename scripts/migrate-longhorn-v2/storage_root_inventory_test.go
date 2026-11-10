@@ -29,12 +29,15 @@ func (r *storageRootReaderFixture) ListBlockLayout(context.Context) (longhorninv
 	return longhorninventory.BlockLayoutReport{VolumeStatuses: 2, DiscoveredVolumes: 1, EphemeralPhase: "ready", RawPhase: "waiting", Digest: strings.Repeat("a", 64)}, nil
 }
 
-func (r *storageRootReaderFixture) ListRetainedBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error) {
+func (r *storageRootReaderFixture) ListRetainedBlockLayout(_ context.Context, closed bool) (longhorninventory.BlockLayoutReport, longhorninventory.RetainedLayoutIdentity, error) {
 	r.retainedCalls++
+	if closed {
+		return longhorninventory.BlockLayoutReport{}, longhorninventory.RetainedLayoutIdentity{}, errors.New("public observation must require the original mapper")
+	}
 	return longhorninventory.BlockLayoutReport{
 		VolumeStatuses: 2, DiscoveredVolumes: 2, EphemeralPhase: "ready", RawPhase: "ready",
 		RawExtentObserved: r.retainedObserved, Digest: strings.Repeat("a", 64),
-	}, nil
+	}, longhorninventory.RetainedLayoutIdentity{PartitionUUID: "12345678-1234-4234-8234-000000000099", ExtentDigest: strings.Repeat("b", 64)}, nil
 }
 
 func (r *storageRootReaderFixture) ListStorageRoot(context.Context) (longhorninventory.Listing, error) {

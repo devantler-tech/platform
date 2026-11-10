@@ -28,21 +28,43 @@ type BlockLayoutReport struct {
 	RawDiscoveredPartitions, OtherUserVolumes                   int
 	RawExtentObserved                                           bool `json:",omitempty"`
 	Digest                                                      string
+	retained                                                    RetainedLayoutIdentity
 }
+
+// RetainedLayoutIdentity binds the raw and STATE physical extents across
+// boots. It is private journal evidence, separate from the public report.
+type RetainedLayoutIdentity struct {
+	PartitionUUID, ExtentDigest string
+}
+
+type blockLayoutMode int
+
+const (
+	ordinaryLayout blockLayoutMode = iota
+	retainedOpen
+	retainedClosed
+)
 
 // ListBlockLayout reads the block layout twice and reports it only when both
 // complete reads agree.
 func (n Native) ListBlockLayout(ctx context.Context) (BlockLayoutReport, error) {
-	return n.listBlockLayout(ctx, false)
+	return n.listBlockLayout(ctx, ordinaryLayout)
 }
 
-// ListRetainedBlockLayout additionally joins the configured r-longhorn status
-// to its physical partition and compares the byte extent in both reads.
-func (n Native) ListRetainedBlockLayout(ctx context.Context) (BlockLayoutReport, error) {
-	return n.listBlockLayout(ctx, true)
+// ListRetainedBlockLayout compares the raw and STATE extents and the expected
+// raw-volume controller state in both reads.
+func (n Native) ListRetainedBlockLayout(ctx context.Context, closed bool) (BlockLayoutReport, RetainedLayoutIdentity, error) {
+	mode := retainedOpen
+	if closed {
+		mode = retainedClosed
+	}
+	report, err := n.listBlockLayout(ctx, mode)
+	identity := report.retained
+	report.retained = RetainedLayoutIdentity{}
+	return report, identity, err
 }
 
-func (n Native) listBlockLayout(ctx context.Context, retainRaw bool) (BlockLayoutReport, error) {
+func (n Native) listBlockLayout(ctx context.Context, mode blockLayoutMode) (BlockLayoutReport, error) {
 	ctx, cancel, err := n.requestContext(ctx)
 	if err != nil {
 		return BlockLayoutReport{}, nativeFailure{code: "request"}
@@ -51,11 +73,11 @@ func (n Native) listBlockLayout(ctx context.Context, retainRaw bool) (BlockLayou
 	if n.Blocks == nil {
 		return BlockLayoutReport{}, nativeFailure{code: "block-client"}
 	}
-	first, _, err := n.readBlockLayout(ctx, retainRaw)
+	first, _, err := n.readBlockLayout(ctx, mode)
 	if err != nil {
 		return BlockLayoutReport{}, err
 	}
-	second, report, err := n.readBlockLayout(ctx, retainRaw)
+	second, report, err := n.readBlockLayout(ctx, mode)
 	if err != nil {
 		return BlockLayoutReport{}, err
 	}
@@ -74,7 +96,7 @@ func (n Native) listBlockLayout(ctx context.Context, retainRaw bool) (BlockLayou
 // Selected layout metadata is compared privately. The public commitment covers
 // only reported counters and properties, without private device identities,
 // key material, configuration contents, filesystem contents or provider errors.
-func (n Native) readBlockLayout(ctx context.Context, retainRaw bool) ([]byte, BlockLayoutReport, error) {
+func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]byte, BlockLayoutReport, error) {
 	if !active(ctx) {
 		return nil, BlockLayoutReport{}, nativeFailure{code: "block-list"}
 	}
@@ -167,7 +189,7 @@ func (n Native) readBlockLayout(ctx context.Context, retainRaw bool) ([]byte, Bl
 		return nil, BlockLayoutReport{}, invalid
 	}
 	seen = map[string]bool{}
-	var rawPartition *block.DiscoveredVolumeSpec
+	var rawPartition, statePartition *block.DiscoveredVolumeSpec
 	for _, item := range discovered.Items {
 		v, ok := item.(*block.DiscoveredVolume)
 		if !ok || v == nil || v.Metadata().Namespace() != block.NamespaceName || v.Metadata().Phase() != resource.PhaseRunning || v.Metadata().ID() == "" || len(v.Metadata().ID()) > 256 || seen[v.Metadata().ID()] {
@@ -182,6 +204,12 @@ func (n Native) readBlockLayout(ctx context.Context, retainRaw bool) ([]byte, Bl
 			report.RawDiscoveredPartitions++
 			rawPartition = s
 		}
+		if mode != ordinaryLayout && s.PartitionLabel == "STATE" {
+			if statePartition != nil {
+				return nil, BlockLayoutReport{}, invalid
+			}
+			statePartition = s
+		}
 		if !appendRow(struct {
 			Kind, ID string
 			Metadata any
@@ -189,15 +217,29 @@ func (n Native) readBlockLayout(ctx context.Context, retainRaw bool) ([]byte, Bl
 			return nil, BlockLayoutReport{}, invalid
 		}
 	}
-	if retainRaw {
-		if report.RawDiscoveredPartitions != 1 || !report.RawLUKS2 || !report.RawLockedToState ||
-			!report.RawNodeIDOnly || !retainedRawMatches(rawStatus, rawPartition) ||
-			!appendRow(struct {
-				Kind, FilesystemUUID string
-				Offset               uint64
-			}{"retained-extent", rawPartition.UUID, rawPartition.Offset}) {
+	if mode != ordinaryLayout {
+		if report.RawDiscoveredPartitions != 1 || !validRetainedRaw(rawPartition) ||
+			!retainedStateMatches(statePartition, rawPartition) {
 			return nil, BlockLayoutReport{}, invalid
 		}
+		if (mode == retainedOpen && (!report.RawLUKS2 || !report.RawLockedToState || !report.RawNodeIDOnly ||
+			!retainedRawMatches(rawStatus, rawPartition))) || (mode == retainedClosed && rawStatus != nil) {
+			return nil, BlockLayoutReport{}, invalid
+		}
+		if mode == retainedClosed {
+			if err := n.verifyEmptyPartitionHolders(ctx, rawPartition.DevPath); err != nil {
+				return nil, BlockLayoutReport{}, err
+			}
+		}
+		extent := []any{"retained-extent", rawPartition.ParentDevPath,
+			rawPartition.PartitionUUID, rawPartition.UUID, rawPartition.PartitionType, rawPartition.Offset, rawPartition.Size,
+			statePartition.PartitionUUID, statePartition.PartitionType, statePartition.Offset, statePartition.Size}
+		encoded, err := json.Marshal(extent)
+		if err != nil || !appendRow(extent) {
+			return nil, BlockLayoutReport{}, invalid
+		}
+		digest := sha256.Sum256(encoded)
+		report.retained = RetainedLayoutIdentity{PartitionUUID: rawPartition.PartitionUUID, ExtentDigest: hex.EncodeToString(digest[:])}
 		report.RawExtentObserved = true
 	}
 	slices.SortFunc(rows, bytes.Compare)
@@ -208,12 +250,24 @@ func (n Native) readBlockLayout(ctx context.Context, retainRaw bool) ([]byte, Bl
 	return encoded, report, nil
 }
 
+func validRetainedRaw(partition *block.DiscoveredVolumeSpec) bool {
+	return partition != nil && partition.Type == "partition" && partition.Name == "luks" && partition.UUID != "" &&
+		partition.PartitionUUID != "" && partition.ParentDevPath != "" && partition.Size == 96<<30 && validPartitionExtent(partition)
+}
+
 func retainedRawMatches(status *block.VolumeStatusSpec, partition *block.DiscoveredVolumeSpec) bool {
-	return status != nil && partition != nil && status.Phase == block.VolumePhaseReady &&
-		status.Type == block.VolumeTypePartition && partition.Type == "partition" && partition.Name == "luks" && partition.UUID != "" &&
-		status.Location == partition.DevPath && status.ParentLocation != "" && status.ParentLocation == partition.ParentDevPath &&
-		status.PartitionUUID != "" && status.PartitionUUID == partition.PartitionUUID &&
-		status.PartitionIndex > 0 && uint(status.PartitionIndex) == partition.PartitionIndex &&
-		status.Size == 96<<30 && status.Size == partition.Size &&
-		partition.Offset > 0 && partition.Offset%512 == 0 && partition.Offset <= math.MaxUint64-partition.Size
+	return status != nil && status.Phase == block.VolumePhaseReady && status.Type == block.VolumeTypePartition &&
+		status.Location == partition.DevPath && status.ParentLocation == partition.ParentDevPath &&
+		status.PartitionUUID == partition.PartitionUUID && status.PartitionIndex > 0 &&
+		uint(status.PartitionIndex) == partition.PartitionIndex && status.Size == partition.Size
+}
+
+func retainedStateMatches(state, raw *block.DiscoveredVolumeSpec) bool {
+	return state != nil && state.Type == "partition" && state.PartitionUUID != "" && state.PartitionUUID != raw.PartitionUUID &&
+		state.DevPath != raw.DevPath && state.ParentDevPath == raw.ParentDevPath && validPartitionExtent(state) &&
+		(state.Offset+state.Size <= raw.Offset || raw.Offset+raw.Size <= state.Offset)
+}
+
+func validPartitionExtent(p *block.DiscoveredVolumeSpec) bool {
+	return p.Offset > 0 && p.Offset%512 == 0 && p.Size > 0 && p.Size%512 == 0 && p.Offset <= math.MaxUint64-p.Size
 }

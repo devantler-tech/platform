@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	resource "github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/state"
+	machine "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/resources/block"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -21,6 +25,8 @@ type blockLayoutFixture struct {
 	mode     string
 	rawPhase *block.VolumePhase
 	retained bool
+	closed   bool
+	shifted  bool
 }
 
 func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, options ...state.ListOption) (resource.List, error) {
@@ -55,6 +61,9 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 			}
 		}
 		result.Items = []resource.Resource{eph, raw}
+		if f.closed {
+			result.Items = []resource.Resource{eph}
+		}
 		if f.mode == "duplicate" {
 			result.Items = append(result.Items, eph)
 		}
@@ -72,11 +81,20 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 		*v.TypedSpec() = block.DiscoveredVolumeSpec{DevPath: "/dev/sda6", ParentDevPath: "/dev/sda", PartitionLabel: "EPHEMERAL", PartitionUUID: "private-partition-canary", Size: 150 << 30}
 		result.Items = []resource.Resource{v}
 		if f.retained {
-			raw := block.NewDiscoveredVolume(block.NamespaceName, "sda3")
+			rawID, rawIndex := "sda3", uint(3)
+			if f.shifted {
+				rawID, rawIndex = "sda4", 4
+			}
+			raw := block.NewDiscoveredVolume(block.NamespaceName, rawID)
+			state := block.NewDiscoveredVolume(block.NamespaceName, "sda2")
+			*state.TypedSpec() = block.DiscoveredVolumeSpec{
+				Type: "partition", DevPath: "/dev/sda2", ParentDevPath: "/dev/sda", PartitionLabel: "STATE",
+				PartitionUUID: "private-state-uuid-canary", PartitionIndex: 2, Size: 100 << 20, Offset: 500 << 20,
+			}
 			*raw.TypedSpec() = block.DiscoveredVolumeSpec{
-				Type: "partition", DevPath: "/dev/sda3", ParentDevPath: "/dev/sda", PartitionLabel: "r-longhorn",
+				Type: "partition", DevPath: "/dev/" + rawID, ParentDevPath: "/dev/sda", PartitionLabel: "r-longhorn",
 				Name: "luks", UUID: "private-luks-canary",
-				PartitionUUID: "private-raw-uuid-canary", PartitionIndex: 3, Size: 96 << 30, Offset: 1 << 30,
+				PartitionUUID: "private-raw-uuid-canary", PartitionIndex: rawIndex, Size: 96 << 30, Offset: 1 << 30,
 			}
 			switch f.mode {
 			case "offset missing":
@@ -99,8 +117,19 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 				}
 			case "duplicate raw label":
 				v.TypedSpec().PartitionLabel = "r-longhorn"
+			case "STATE changed":
+				if f.calls > 2 {
+					state.TypedSpec().Offset += 512
+				}
+			case "STATE overlaps raw":
+				state.TypedSpec().Offset = raw.TypedSpec().Offset
+			case "STATE on other disk":
+				state.TypedSpec().ParentDevPath = "/dev/sdb"
 			}
 			result.Items = append(result.Items, raw)
+			if f.mode != "STATE missing" {
+				result.Items = append(result.Items, state)
+			}
 		}
 	}
 	if f.mode == "partial" && f.calls == 2 {
@@ -110,23 +139,62 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 }
 
 func TestNativeRetainedBlockLayoutRequiresStablePhysicalExtent(t *testing.T) {
-	for _, mode := range []string{"stable", "offset missing", "offset changed", "wrong identity", "wrong parent", "wrong size", "LUKS header missing", "LUKS header changed", "duplicate raw label"} {
+	for _, mode := range []string{"stable", "offset missing", "offset changed", "wrong identity", "wrong parent", "wrong size", "LUKS header missing", "LUKS header changed", "duplicate raw label", "STATE changed", "STATE overlaps raw", "STATE on other disk", "STATE missing"} {
 		t.Run(mode, func(t *testing.T) {
 			f := &blockLayoutFixture{t: t, mode: mode, retained: true}
-			report, err := (Native{API: fileAPI{}, Target: "10.0.0.8", Blocks: f}).ListRetainedBlockLayout(context.Background())
+			report, identity, err := (Native{API: fileAPI{}, Target: "10.0.0.8", Blocks: f}).ListRetainedBlockLayout(context.Background(), false)
 			if mode != "stable" {
-				if err == nil || report != (BlockLayoutReport{}) || strings.Contains(err.Error(), "canary") {
+				if err == nil || report != (BlockLayoutReport{}) || identity != (RetainedLayoutIdentity{}) || strings.Contains(err.Error(), "canary") {
 					t.Fatal("unverified physical extent retained success or leaked identity")
 				}
 				return
 			}
 			encoded, marshalErr := json.Marshal(report)
-			if err != nil || marshalErr != nil || !report.RawExtentObserved || f.calls != 4 ||
+			if err != nil || marshalErr != nil || !report.RawExtentObserved || identity.PartitionUUID == "" || len(identity.ExtentDigest) != 64 || f.calls != 4 ||
 				strings.Contains(string(encoded), "canary") || strings.Contains(string(encoded), "/dev/") ||
-				strings.Contains(string(encoded), "1073741824") {
+				strings.Contains(string(encoded), "1073741824") || strings.Contains(string(encoded), identity.ExtentDigest) {
 				t.Fatalf("physical extent observation was incomplete or exposed private geometry: %v", err)
 			}
 		})
+	}
+}
+
+func TestRetainedLayoutDigestSurvivesOnlyAnUnchangedPhysicalExtent(t *testing.T) {
+	observe := func(f *blockLayoutFixture, closed bool) (RetainedLayoutIdentity, error) {
+		api := fileAPI{list: func(ctx context.Context, req *machine.ListRequest) (grpc.ServerStreamingClient[machine.FileInfo], error) {
+			const root = "/sys/class/block/sda4/holders"
+			md, _ := metadata.FromOutgoingContext(ctx)
+			if !closed || req.GetRoot() != root || req.GetRecursionDepth() != 1 || len(md.Get("node")) != 1 || md.Get("node")[0] != "10.0.0.8" {
+				t.Fatal("retained-volume inspection escaped the selected partition")
+			}
+			items := []*machine.FileInfo{{Name: root, RelativeName: ".", Mode: uint32(os.ModeDir), IsDir: true}}
+			end := io.EOF
+			if f.mode == "live holder" {
+				items = append(items, &machine.FileInfo{Name: root + "/dm-2", RelativeName: "dm-2", Link: "../../dm-2"})
+			}
+			if f.mode == "incomplete holders" {
+				end = errors.Join(io.EOF, errors.New("private-transport"))
+			}
+			return &fileStream{items: items, err: end}, nil
+		}}
+		_, identity, err := (Native{API: api, Target: "10.0.0.8", Blocks: f}).ListRetainedBlockLayout(t.Context(), closed)
+		return identity, err
+	}
+	open, err := observe(&blockLayoutFixture{t: t, retained: true}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := observe(&blockLayoutFixture{t: t, retained: true, closed: true, shifted: true}, true)
+	if err != nil || closed != open {
+		t.Fatal("closing the mapping and changing its GPT index lost the retained identity:", err)
+	}
+	if _, err = observe(&blockLayoutFixture{t: t, retained: true}, true); err == nil {
+		t.Fatal("an open mapper qualified as closed")
+	}
+	for _, mode := range []string{"live holder", "incomplete holders"} {
+		if _, err = observe(&blockLayoutFixture{t: t, retained: true, closed: true, shifted: true, mode: mode}, true); err == nil || strings.Contains(err.Error(), "private-transport") {
+			t.Fatalf("unproven holders %s qualified or leaked provider data", mode)
+		}
 	}
 }
 
