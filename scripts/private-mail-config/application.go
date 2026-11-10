@@ -34,7 +34,7 @@ func pinnedApplicationDigestFor(version string) (string, error) {
 		return "", err
 	}
 	metadata := applicationReleaseJSON
-	if profile.version == "1.0.2" {
+	if profile.v1 {
 		metadata = applicationV1ReleaseJSON
 	}
 	var release struct {
@@ -124,7 +124,7 @@ func validateApplicationsFor(methods [][]json.RawMessage, version string) error 
 	app := get.List[0]
 	chosen, foreign := app.Enabled, app.Enable
 	factoryResource := "https://github.com/stalwartlabs/webui/releases/download/v1.0.11/webui.zip"
-	if profile.version == "1.0.2" {
+	if profile.v1 {
 		chosen, foreign = foreign, chosen
 		factoryResource = "https://github.com/stalwartlabs/webui/releases/download/v2/webui.zip"
 	}

@@ -94,7 +94,7 @@ func validateInventoryFor(raw []byte, version string) error {
 	}
 	for _, item := range get.List {
 		chosen, foreign := item.ImplicitTLS, item.ImplicitTLSV1
-		if profile.version == "1.0.2" {
+		if profile.v1 {
 			chosen, foreign = foreign, chosen
 		}
 		implicitTLS, err := nativeSchemaBool(chosen, foreign)

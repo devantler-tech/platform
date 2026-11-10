@@ -79,7 +79,8 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 	if runtime.proxyClientIP != nil {
 		v.UseProxyClientIP = *runtime.proxyClientIP
 	}
-	if v.RuntimeVersion == "1.0.2" && verifyRuntimeTools(ctx, runtime) != nil {
+	profile, err := schemaFor(v.RuntimeVersion)
+	if err != nil || (profile.v1 && verifyRuntimeTools(ctx, runtime, profile.version) != nil) {
 		return errConfiguration
 	}
 	if runtime.applicationFile == "" {
