@@ -60,6 +60,14 @@ manager="$(jq -c '[.customManagers[] | select(.depNameTemplate == "devantler-tec
   | select(any(.matchStrings[]; startswith("ARG AGENT_PLUGINS_COMMIT=")))] | length' \
   "${root}/.github/renovate.json")"
 [[ "${manager}" == 1 ]] || fail 'Renovate does not move the plugin commit'
+# The lane's Harness runs this image, pinned by digest as kagent requires; the built-in image has
+# neither the tools nor the whole plugin.
+command -v yq >/dev/null || fail 'yq is required'
+harness_image="$(yq '.spec.workload.image' "${root}/k8s/providers/hetzner/apps/agentic-engineer/harness.yaml")"
+[[ "${harness_image}" =~ ^ghcr\.io/devantler-tech/platform-kagent-claude-harness@sha256:[0-9a-f]{64}$ ]] ||
+  fail "the lane's Harness does not run this image by digest: ${harness_image}"
+grep -Fq 'IMAGE: ghcr.io/devantler-tech/platform-kagent-claude-harness' "${root}/.github/workflows/publish-kagent-claude-harness.yaml" ||
+  fail 'the Harness image is not the one the publish workflow builds'
 
 # The stub Claude Code records its arguments one per line, then its input, and exits with $STUB_EXIT.
 cat >"${work}/real-claude" <<'STUB'

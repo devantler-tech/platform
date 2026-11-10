@@ -74,8 +74,9 @@ spec:
             - name: TIME_ZONE
               value: Europe/Copenhagen
             # Paused until every sub-issue of devantler-tech/monorepo#4866 is
-            # done (ADR 0014, point 6). The canary runs once, started from the
-            # kagent UI; the PR that swaps in the full run message unpauses it.
+            # done (ADR 0014, point 6). The full run is first tried once, started
+            # from the kagent UI with "run now", which works while paused; the
+            # PR that unpauses it follows that run and the maintainer's go-ahead.
             - name: PAUSED
               value: "true"
             # A run has no time limit: cutting one off mid-task wastes what it
@@ -86,20 +87,39 @@ spec:
             # reaches.
             - name: EXECUTION_TIMEOUT
               value: 315360000s
-            # The current message is the canary (devantler-tech/monorepo#4869):
-            # it proves the model, GitHub and Git paths and changes nothing.
-            # The full engineering run replaces it once the canary has passed.
+            # The full run: the same thin pointer the host lanes' scheduler
+            # entries use, plus the lane store, because each run starts in a
+            # fresh sandbox (devantler-tech/monorepo#4869). The role itself
+            # comes from the agentic-engineering plugin in the harness image,
+            # never from this prompt.
             - name: PROMPT
               value: |
-                Canary run. Change nothing: create no branch, commit, issue, comment or
-                pull request.
-                1. Name the model you are running as.
-                2. Run `git -c http.extraHeader='Authorization: Basic kagent-credential-injected' ls-remote https://github.com/devantler-tech/monorepo.git HEAD`
-                   and report the commit it prints.
-                3. Shallow-clone that repository the same way and report the first line of
-                   its AGENTS.md.
-                4. Report which of the commands gh, curl, jq and yq exist in your sandbox.
-                Reply with a short report of each step and anything that failed.
+                Scheduled run of the devantler-tech Agentic Engineer on its kagent lane:
+                instance `kagent-cluster`, writer namespace `kagent/*`, one run a day.
+
+                1. Restore your native memory from the lane store. List memory/ with a
+                   WebDAV PROPFIND (`curl -fsS -X PROPFIND -H 'Depth: 1'` plus the store
+                   header) and download every file into ~/lane-memory/. Only a 404 for
+                   memory/ means a first run, so start with an empty ~/lane-memory/. Any
+                   other failure means the store is unreachable: stop and report it.
+                2. Shallow-clone devantler-tech/monorepo, read its AGENTS.md, load the
+                   agentic-engineering plugin and invoke its agentic-engineer entrypoint
+                   as this scheduled run. ~/lane-memory/ is your native memory (the
+                   legacy layout), as the durable-memory guide says for this lane.
+                   Follow the consumer contract and fail closed on missing deployment
+                   facts. Do not duplicate the role here.
+                3. Before you stop, however the run ended, upload ~/lane-memory/ back to
+                   memory/ on the lane store, and upload this session's transcript (the
+                   newest Claude Code session JSONL under your Claude config directory)
+                   and your run report to runs/<UTC date>/transcript.jsonl and
+                   runs/<UTC date>/report.md. Create a missing folder with MKCOL before
+                   writing into it, and check that every upload succeeded.
+
+                This run may open, update and review devantler-tech pull requests and
+                issues, per AGENTS.md. It never merges. Only when genuinely blocked on a
+                decision only the maintainer can make, and only after trying to resolve
+                it yourself, open one public-safe `maintainer-ask` issue, following
+                AGENTS.md#Maintainer channels.
             # Retries of one Job share its uid, so a create whose reply was lost
             # returns the schedule it made instead of making a second one.
             - name: REQUEST_ID

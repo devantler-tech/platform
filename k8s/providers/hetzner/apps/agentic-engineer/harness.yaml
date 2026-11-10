@@ -11,6 +11,12 @@ metadata:
   namespace: agentic-engineer
 spec:
   claude: {}
+  # The lane's own harness image, pinned by digest as kagent requires: kagent's
+  # Claude harness plus the engineer's tools and the whole agentic-engineering
+  # plugin (scripts/kagent-claude-harness, devantler-tech/monorepo#4867, #4868).
+  # Main publishes and signs it; move this pin after each publish.
+  workload:
+    image: ghcr.io/devantler-tech/platform-kagent-claude-harness@sha256:5777ced3082c426842d7d43e73869d3cdc8828f93ec96ce78c9a30b558862097
   substrate:
     workerPoolRef:
       name: agentic-engineer
