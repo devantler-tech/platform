@@ -20,7 +20,7 @@ done
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 case "${2:-0.16.27}" in
   0.16.27) pins="$root/webui-pins.json" ;;
-  1.0.2) pins="$root/webui-v1-pins.json" ;;
+  1.0.2 | 1.0.3) pins="$root/webui-v1-pins.json" ;;
   *)
     echo 'Unsupported Email runtime version.' >&2
     exit 2

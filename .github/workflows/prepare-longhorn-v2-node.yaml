@@ -31,6 +31,7 @@ name: Prepare Longhorn V2 Migration
             inventory-storage-layout,
             inspect-host-memory,
             reboot-host-for-hugepages,
+            observe-database,
             repair-v1-reservation,
             reserve-v1-scratch,
           ]
@@ -47,6 +48,11 @@ name: Prepare Longhorn V2 Migration
             temporary-v1-2,
             temporary-v2-1,
           ]
+      database:
+        description: Fixed database for a read-only migration observation; leave node empty
+        required: false
+        type: choice
+        options: [coroot-db, umami-db, wedding-db, substrate-db, kagent-db]
       confirm:
         description: "Type the exact confirmation documented for the selected operation"
         required: true
@@ -90,6 +96,7 @@ jobs:
       queue: max
     env:
       LONGHORN_V2_NODE: ${{ inputs.node }}
+      LONGHORN_V2_DATABASE: ${{ inputs.database }}
       LONGHORN_V2_OPERATION: ${{ inputs.operation }}
       LONGHORN_V2_CONFIRM: ${{ inputs.confirm }}
     steps:
@@ -101,6 +108,9 @@ jobs:
           set -euo pipefail
           [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
           case "${LONGHORN_V2_OPERATION}" in
+            observe-database)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
+              ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
               ;;

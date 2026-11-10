@@ -10,15 +10,16 @@ import (
 
 type runtimeSchema struct {
 	version, domainEnabled, implicitTLS, applicationEnabled, applicationInterval, aliasEnabled string
+	v1                                                                                         bool
 }
 
 // schemaFor selects an audited schema. Omission preserves the deployed baseline.
 func schemaFor(version string) (runtimeSchema, error) {
 	switch version {
 	case "", "0.16.27":
-		return runtimeSchema{"0.16.27", "isEnabled", "tlsImplicit", "enabled", "autoUpdateFrequency", "enabled"}, nil
-	case "1.0.2":
-		return runtimeSchema{"1.0.2", "enable", "implicitTls", "enable", "autoUpdateInterval", "enable"}, nil
+		return runtimeSchema{"0.16.27", "isEnabled", "tlsImplicit", "enabled", "autoUpdateFrequency", "enabled", false}, nil
+	case "1.0.2", "1.0.3":
+		return runtimeSchema{version, "enable", "implicitTls", "enable", "autoUpdateInterval", "enable", true}, nil
 	default:
 		return runtimeSchema{}, errConfiguration
 	}
@@ -34,9 +35,9 @@ func nativeSchemaBool(chosen, foreign json.RawMessage) (bool, error) {
 }
 
 // verifyRuntimeTools refuses an incompatible migration toolchain before store access.
-func verifyRuntimeTools(ctx context.Context, runtime bootstrapRuntime) error {
+func verifyRuntimeTools(ctx context.Context, runtime bootstrapRuntime, serverVersion string) error {
 	for _, tool := range []struct{ path, version string }{
-		{runtime.server, "1.0.2"},
+		{runtime.server, serverVersion},
 		{runtime.cli, "stalwart-cli 1.0.14"},
 	} {
 		versionCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -58,7 +59,7 @@ func httpSettings(v inputs, profile runtimeSchema) map[string]any {
 		"allowedEndpoints":  map[string]any{"match": map[string]any{"0": map[string]any{"if": "starts_with(path, '/jmap/upload/')", "then": "403"}}, "else": "200"},
 		"usePermissiveCors": false,
 	}
-	if profile.version == "1.0.2" {
+	if profile.v1 {
 		source := "peer"
 		if v.UseForwardedClientIP {
 			source = "xForwardedFor"
@@ -77,7 +78,7 @@ func inventoryRequestFor(version string) ([]byte, error) {
 		return nil, err
 	}
 	request := bytes.Clone(inventoryRequest)
-	if profile.version == "1.0.2" {
+	if profile.v1 {
 		request = bytes.ReplaceAll(request, []byte(`"tlsImplicit"`), []byte(`"implicitTls"`))
 		request = bytes.ReplaceAll(request, []byte(`"enabled"`), []byte(`"enable"`))
 	}
@@ -87,7 +88,7 @@ func inventoryRequestFor(version string) ([]byte, error) {
 // mailboxPermissionsFor applies the audited normal-user permission delta only.
 func mailboxPermissionsFor(profile runtimeSchema) map[string]bool {
 	permissions := normalMailboxPermissions()
-	if profile.version == "1.0.2" {
+	if profile.v1 {
 		for _, name := range []string{"jmapPrincipalCreate", "jmapPrincipalDestroy", "jmapPrincipalUpdate", "sysArchivedItemCreate", "sysSpamTrainingSampleUpdate"} {
 			delete(permissions, name)
 		}

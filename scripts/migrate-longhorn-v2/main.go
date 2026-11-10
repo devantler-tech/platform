@@ -29,6 +29,8 @@ func main() {
 		authorization = authorizeHostMemory(os.Getenv, target)
 	case "reboot-host-for-hugepages":
 		authorization = authorizeHostReboot(os.Getenv, target)
+	case "observe-database":
+		authorization = authorizeCNPGObservation(os.Getenv)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
 	case "reserve-v1-scratch":
@@ -46,6 +48,17 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == "observe-database" {
+		observationContext, stop := context.WithTimeout(ctx, 5*time.Minute)
+		defer stop()
+		observation, err := observeCNPGMigration(observationContext, client{run: execute, context: "admin@prod"}, os.Getenv("LONGHORN_V2_DATABASE"), os.Getenv("GITHUB_SHA"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Database migration observation held:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("CNPG_MIGRATION_OBSERVATION=PASS databases=1 instances=%d writes=0\n", len(observation.States))
+		return
+	}
 	if operation == "repair-v1-reservation" {
 		if err := repairV1Reservation(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
 			fmt.Fprintln(os.Stderr, "V1 reservation repair held:", err)
