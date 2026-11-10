@@ -30,6 +30,13 @@ spec:
   timeout: 10m
   # https://github.com/longhorn/charts/blob/master/charts/longhorn/values.yaml
   values:
+    image:
+      longhorn:
+        # Temporary V1 runtime for the guarded benchmark retirement operation (#5665).
+        instanceManager:
+          registry: ghcr.io
+          repository: devantler-tech/platform-longhorn-instance-manager
+          tag: v1.13.0-retirement.1-725bb1d09517c84f8b73ff2c0cf175421df351f1-1@sha256:93cfc83d8bab91f9b6fbffe20bf9bdaca28e877d91d7b740cae003bf6853059f
     defaultSettings:
       defaultDataPath: /var/lib/longhorn
       # Match the number of workers so every volume is replicated across
