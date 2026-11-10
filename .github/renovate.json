@@ -150,7 +150,9 @@
       "customType": "regex",
       "description": "Track the agent-plugins commit the kagent lane's harness image bakes the agentic-engineering plugin in at, as a digest of the main branch: only reviewed pull requests reach it, and the lane must not run an old brain (devantler-tech/monorepo#4868). The datasource is github-digest, NOT git-refs, for the same release-date reason as the origin-ca-issuer commit above; the matching packageRule below sets its cooldown.",
       "managerFilePatterns": ["/^scripts/kagent-claude-harness/Dockerfile$/"],
-      "matchStrings": ["ARG AGENT_PLUGINS_COMMIT=(?<currentDigest>[0-9a-f]{40})"],
+      "matchStrings": [
+        "ARG AGENT_PLUGINS_COMMIT=(?<currentDigest>[0-9a-f]{40})"
+      ],
       "currentValueTemplate": "main",
       "datasourceTemplate": "github-digest",
       "depNameTemplate": "devantler-tech/agent-plugins",
