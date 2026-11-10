@@ -112,7 +112,7 @@ jobs:
           go build -mod=vendor -trimpath -tags netgo,osusergo \
             -ldflags "-X main.Version=v1.13.0 -X main.GitCommit=${UPSTREAM_SOURCE} -linkmode external -extldflags -static" \
             -o "${binary}" .
-          file "${binary}" | rg 'x86-64.*statically linked'
+          file "${binary}" | grep -E 'x86-64.*statically linked'
           test "$("${binary}" --version)" = 'longhorn-instance-manager version v1.13.0'
           "${binary}" process seal-volume-for-retirement --help
           printf 'binary_sha=%s\n' "$(sha256sum "${binary}" | cut -d ' ' -f1)" >> "${GITHUB_OUTPUT}"
