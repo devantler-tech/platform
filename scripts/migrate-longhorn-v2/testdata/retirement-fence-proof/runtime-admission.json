@@ -11,18 +11,10 @@
       "matchPolicy": "Exact",
       "resourceRules": [
         {
-          "apiGroups": [
-            ""
-          ],
-          "apiVersions": [
-            "v1"
-          ],
-          "operations": [
-            "CREATE"
-          ],
-          "resources": [
-            "pods"
-          ],
+          "apiGroups": [""],
+          "apiVersions": ["v1"],
+          "operations": ["CREATE"],
+          "resources": ["pods"],
           "scope": "Namespaced"
         }
       ]
