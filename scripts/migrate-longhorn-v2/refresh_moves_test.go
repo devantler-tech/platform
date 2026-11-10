@@ -242,6 +242,8 @@ func (f *refreshCluster) refresh(ctx context.Context) error {
 	return refreshHugepages(ctx, client{run: f.run, context: "admin@prod"}, strings.Repeat("1", 40), f.node, f.pods)
 }
 
+// TestRefreshStopsForwardWritesWhenMainMoves exercises stale-source stops at
+// each mutation boundary and confirms that the owned cordon is released.
 func TestRefreshStopsForwardWritesWhenMainMoves(t *testing.T) {
 	worker := text(refreshWorker(), "metadata", "name")
 	for _, tc := range []struct {

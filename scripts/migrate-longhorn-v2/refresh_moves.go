@@ -243,6 +243,8 @@ func (c client) patchNode(ctx context.Context, name string, changes func(object)
 	return err
 }
 
+// cordonForRefresh adopts only its own existing fence and checks current main
+// before attempting a new cordon.
 func (c client) cordonForRefresh(ctx context.Context, name, source string) error {
 	return c.patchNode(ctx, name, func(n object) ([]object, error) {
 		fence := value(n, "metadata", "annotations", fenceAnnotation)
