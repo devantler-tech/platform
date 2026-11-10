@@ -37,7 +37,13 @@ func TestObservationForwarderChild(_ *testing.T) {
 	}
 	got := os.Args[len(os.Args)-8:]
 	want := []string{"--context=admin@prod", "--namespace=email-data-recovery-41561215415", "port-forward", "pod/reader", "0:8080", "--address=127.0.0.1", "--pod-running-timeout=15s"}
-	if len(got) != 8 || got[0] != "--" || !reflect.DeepEqual(got[1:], want) {
+	serving := append([]string(nil), want...)
+	serving[1], serving[3] = "--namespace=private-mail", "pod/private-mail-0"
+	switch {
+	case got[0] == "--" && reflect.DeepEqual(got[1:], want):
+	case got[0] == "--" && reflect.DeepEqual(got[1:], serving) && os.Getenv("EMAIL_OBSERVATION_SOURCE_PORT") != "":
+		port = os.Getenv("EMAIL_OBSERVATION_SOURCE_PORT")
+	default:
 		os.Exit(3)
 	}
 	fmt.Printf("Forwarding from 127.0.0.1:%s -> 8080\n", port)
@@ -45,9 +51,11 @@ func TestObservationForwarderChild(_ *testing.T) {
 }
 
 type observedReaderAPI struct {
-	ns, pod              object
-	secretReads, nsReads int
-	replace              bool
+	ns, pod                                              object
+	servingPod, servingClaim, servingVolume, readerClaim object
+	password                                             string
+	secretReads, nsReads                                 int
+	replace                                              bool
 }
 
 func (a *observedReaderAPI) call(_ context.Context, input []byte, args ...string) ([]byte, error) {
@@ -62,19 +70,37 @@ func (a *observedReaderAPI) call(_ context.Context, input []byte, args ...string
 		}
 		return json.Marshal(a.ns)
 	case "Pod":
+		if args[2] == "private-mail-0" && a.servingPod != nil {
+			return json.Marshal(a.servingPod)
+		}
 		return json.Marshal(a.pod)
+	case "PersistentVolumeClaim":
+		if args[2] == "private-mail-data" && a.servingClaim != nil {
+			return json.Marshal(a.servingClaim)
+		}
+		if args[2] == "data" && a.readerClaim != nil {
+			return json.Marshal(a.readerClaim)
+		}
+	case "PersistentVolume":
+		if args[2] == "serving-volume" && a.servingVolume != nil {
+			return json.Marshal(a.servingVolume)
+		}
 	case "Secret":
 		a.secretReads++
-		return json.Marshal(object{"metadata": object{"name": "private-mail-maintainer"}, "data": object{"password": base64.StdEncoding.EncodeToString([]byte("synthetic-account-passphrase"))}})
-	default:
-		return nil, fmt.Errorf("private-scope-canary")
+		password := a.password
+		if password == "" {
+			password = "synthetic-account-passphrase"
+		}
+		return json.Marshal(object{"metadata": object{"name": "private-mail-maintainer"}, "data": object{"password": base64.StdEncoding.EncodeToString([]byte(password))}})
 	}
+	return nil, fmt.Errorf("private-scope-canary")
 }
 
 // This exercises the actual command protocol, forwarding process, HTTP client,
 // account-session decoder and final UID fence. Only the external Kubernetes API
 // and port-forward transport are controlled by local fixtures.
-func TestObservationRetainedReaderLifecycle(t *testing.T) {
+func observationForwarderFixture(t *testing.T) string {
+	t.Helper()
 	t.Chdir("../..")
 	image, err := loadRecoveryImage()
 	if err != nil {
@@ -90,6 +116,11 @@ func TestObservationRetainedReaderLifecycle(t *testing.T) {
 		t.Fatal("fixture forwarder unavailable")
 	}
 	t.Setenv("PATH", bin)
+	return image
+}
+
+func TestObservationRetainedReaderLifecycle(t *testing.T) {
+	image := observationForwarderFixture(t)
 	for _, tc := range []struct {
 		name            string
 		health, session int
@@ -154,6 +185,63 @@ func TestObservationRetainedReaderLifecycle(t *testing.T) {
 			}
 			if strings.Contains(out.String(), "synthetic-account") || strings.Contains(out.String(), "private-") {
 				t.Fatal("observation exposed private details")
+			}
+		})
+	}
+}
+
+// TestObservationVerifiesRetainedMessageWithoutBackupOrCleanup exercises the
+// read-only comparison and checks that failure stages reveal no mailbox data.
+func TestObservationVerifiesRetainedMessageWithoutBackupOrCleanup(t *testing.T) {
+	image := observationForwarderFixture(t)
+	for _, tc := range []struct {
+		name, readerUID, want string
+	}{
+		{"matching", "reader-original", "EMAIL_RETAINED_PARITY=VERIFIED source_writes=0 original_trial=UNVERIFIED"},
+		{"missing diagnostic", "reader-original", "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=retained-reader-mailbox-missing"},
+		{"different diagnostic", "reader-original", "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=retained-source-mismatch"},
+		{"invalid source query", "reader-original", "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=retained-source-email-query"},
+		{"replaced reader", "foreign-reader", "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=reader-identity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &retainedMessageServer{mutate: func(method string, _ int, result object) {
+				if tc.name == "missing diagnostic" && method == "Mailbox/get" {
+					result["list"] = items(result, "list")[:1]
+				}
+			}}
+			s := &retainedMessageServer{mutate: func(method string, _ int, result object) {
+				if tc.name == "different diagnostic" && method == "Email/get" {
+					items(result, "list")[0]["blobId"] = "different-blob"
+				}
+				if tc.name == "invalid source query" && method == "Email/query" {
+					result["total"] = "private-provider-canary"
+				}
+			}}
+			t.Setenv("EMAIL_OBSERVATION_FORWARD_PORT", strings.TrimPrefix(retainedMessageEndpoint(t, r), "http://127.0.0.1:"))
+			t.Setenv("EMAIL_OBSERVATION_SOURCE_PORT", strings.TrimPrefix(retainedMessageEndpoint(t, s), "http://127.0.0.1:"))
+			ns := recoveryManifest(retainedRecovery, "Namespace", retainedRecovery.namespace, "", "v1")
+			child(ns, "metadata")["uid"] = "namespace-original"
+			pod := recoveryReader(retainedRecovery, image)
+			child(pod, "metadata")["uid"] = "reader-original"
+			pod["status"] = object{"phase": "Running"}
+			p, c, v := servingFixture()
+			items(child(p, "spec"), "containers")[0]["image"] = image
+			claim := recoveryManifest(retainedRecovery, "PersistentVolumeClaim", "data", retainedRecovery.namespace, "v1")
+			child(claim, "metadata")["uid"] = "claim-original"
+			claim["spec"] = object{"volumeName": "reader-volume"}
+			claim["status"] = object{"phase": "Bound"}
+			api := &observedReaderAPI{ns: ns, pod: pod, servingPod: p, servingClaim: c, servingVolume: v, readerClaim: claim, password: "private-retained-fixture"}
+			e := observationEnv()
+			e["EMAIL_DATA_RECOVERY_CONFIRM"] = "verify-retained-email-parity"
+			e["EMAIL_RETAINED_READER_UID"] = tc.readerUID
+			e["EMAIL_RETAINED_CLAIM_UID"] = "claim-original"
+			var out bytes.Buffer
+			rc := runRecoveryObservation(context.Background(), func(k string) string { return e[k] }, api, &out)
+			if (rc == 0) != (tc.name == "matching") || !strings.Contains(out.String(), tc.want) {
+				t.Fatalf("wrong parity result: %q exit=%d", out.String(), rc)
+			}
+			if strings.Contains(out.String(), "diagnostic-blob") || strings.Contains(out.String(), retainedFixtureNonce) || strings.Contains(out.String(), api.password) || strings.Contains(out.String(), "private-provider-canary") {
+				t.Fatal("mailbox evidence escaped the observer")
 			}
 		})
 	}

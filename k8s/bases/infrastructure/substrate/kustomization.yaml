@@ -25,6 +25,7 @@ resources:
   - external-secret-actor-id-ca-certs.yaml
   - external-secret-actor-id-ca-pool.yaml
   - external-secret-actor-id-jwt-pool.yaml
+  - external-secret-db-coroot-monitor.yaml
   - external-secret-db-owner.yaml
   - external-secret-db-readwrite.yaml
   - external-secret-egress-mitm-ca-pool.yaml
@@ -32,6 +33,7 @@ resources:
   - external-secret-postgres-ca-pool.yaml
   - external-secret-rustfs.yaml
   - external-secret-service-dns-ca-pool.yaml
+  - password-db-coroot-monitor.yaml
   - password-db-owner.yaml
   - password-db-readwrite.yaml
   - password-rustfs.yaml
@@ -46,6 +48,7 @@ resources:
   - helm-release-crds.yaml
   - helm-release-podcert.yaml
   - cilium-network-policy-atelet.yaml
+  - cilium-network-policy-coroot.yaml
   - cilium-network-policy-database.yaml
   - cilium-network-policy-egress-gateway.yaml
   - cilium-network-policy-namespace.yaml

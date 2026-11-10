@@ -1,0 +1,46 @@
+# Expose the kagent UI behind oauth2-proxy SSO (the same forward-auth pattern
+# as the Policy Reporter UI): the route backends to the oauth2-proxy Service;
+# after authentication oauth2-proxy forwards to auth-proxy, which routes
+# agents.${domain} by Host to the kagent-ui Service (see auth-proxy
+# config-map.yaml). The controller runs kagent's default `insecure`
+# authentication, which trusts any caller that reaches it, so this SSO gate is
+# the only access control in front of the UI. The UI can also start agent
+# runs, and every run spends from the Anthropic budget. The UI serves on port
+# 8080 and proxies its API calls to the controller inside the namespace.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kagent
+  namespace: kagent
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: kagent
+    gethomepage.dev/description: AI agents, their runs and their tools.
+    gethomepage.dev/group: Artificial Intelligence
+    # Status dot: the default selector (app.kubernetes.io/name=kagent) also
+    # matches the controller pod, so key on the UI pod.
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=kagent,app.kubernetes.io/component=ui
+    # kagent isn't in the icon sets Homepage resolves, so point at the
+    # upstream UI's own favicon (the same upstream-URL pattern the Coroot and
+    # Policy Reporter routes use). Homepage fetches icons client-side, so the
+    # cluster egress NetworkPolicy doesn't block it.
+    gethomepage.dev/icon: https://raw.githubusercontent.com/kagent-dev/kagent/main/ui/public/favicon.svg
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - agents.${domain}
+  rules:
+    - filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80

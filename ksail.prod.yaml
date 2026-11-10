@@ -383,3 +383,7 @@ spec:
         - Canary
         - ResourceGraphDefinition
         - Tenant
+      # Consulted before the default CRD catalogue.
+      schemaLocations:
+        # Generated one-field correction from the pinned Kubescape Rules CRD.
+        - schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json

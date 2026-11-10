@@ -12,9 +12,15 @@ resources:
   - password-db-readwrite.yaml
   - external-secret-db-owner.yaml
   - external-secret-db-readwrite.yaml
+  # Coroot's Postgres integration for kagent-db (cluster.yaml).
+  - password-db-coroot-monitor.yaml
+  - external-secret-db-coroot-monitor.yaml
+  - cilium-network-policy-coroot.yaml
   - cluster.yaml
   - helm-repository.yaml
   - oci-repository-crds.yaml
   - helm-release-control-plane.yaml
   - helm-release-crds.yaml
   - cilium-network-policy.yaml
+  - cilium-network-policy-ui.yaml
+  - http-route.yaml

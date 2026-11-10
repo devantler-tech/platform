@@ -10,7 +10,8 @@
 // No renderer can see the result, because flux-operator applies these patches
 // at reconcile time. So each target is checked against what this FluxInstance
 // itself declares the operator will generate: one Deployment per component,
-// all carrying fluxComponentLabelSelector, plus the root source. The two
+// all carrying fluxComponentLabelSelector, the generated HelmRelease CRD, and
+// the root source. The two
 // flux-operator behaviours recorded in the production FluxInstance are
 // enforced as well: component patches run before the namespace transformer,
 // so a namespaced Deployment selector matches nothing, and only the first of
@@ -28,6 +29,8 @@ import (
 // controller Deployment it generates. A label-selected patch using anything
 // else cannot be proven to match a generated resource.
 const fluxComponentLabelSelector = "app.kubernetes.io/part-of=flux"
+
+const helmReleaseCRDName = "helmreleases.helm.toolkit.fluxcd.io"
 
 // defaultFluxComponents is what flux-operator deploys when a FluxInstance
 // omits spec.components.
@@ -69,8 +72,9 @@ type patchSelector struct {
 // generatedGroupVersions are the API group and version of each kind a patch
 // may target. An empty group or version in a target matches any.
 var generatedGroupVersions = map[string][2]string{
-	"Deployment":   {"apps", "v1"},
-	rootSourceKind: {"source.toolkit.fluxcd.io", "v1"},
+	"Deployment":               {"apps", "v1"},
+	"CustomResourceDefinition": {"apiextensions.k8s.io", "v1"},
+	rootSourceKind:             {"source.toolkit.fluxcd.io", "v1"},
 }
 
 // validatePatchTargets reports every spec.kustomize.patches entry that cannot
@@ -106,7 +110,7 @@ func validatePatchTargets(manifest []byte) error {
 		}
 		components = append(components, component)
 	}
-	namedDeployments := map[string]int{}
+	namedComponentTargets := map[string]int{}
 	for index, entry := range entries {
 		patch, ok := asMapping(entry)
 		if !ok {
@@ -119,11 +123,12 @@ func validatePatchTargets(manifest []byte) error {
 		if reason == "" {
 			reason = selectorProblem(selector, components)
 		}
-		if reason == "" && selector.kind == "Deployment" && selector.name != "" {
-			if first, seen := namedDeployments[selector.name]; seen {
+		if reason == "" && selector.name != "" && (selector.kind == "Deployment" || selector.kind == "CustomResourceDefinition") {
+			key := selector.kind + "/" + selector.name
+			if first, seen := namedComponentTargets[key]; seen {
 				reason = fmt.Sprintf("patch %d already targets %q by name; flux-operator applies only the first, so merge them", first, selector.name)
 			} else {
-				namedDeployments[selector.name] = index
+				namedComponentTargets[key] = index
 			}
 		}
 		if reason != "" {
@@ -242,6 +247,18 @@ func selectorProblem(selector patchSelector, components []string) string {
 		default:
 			return fmt.Sprintf("namespace %q is not %q, the namespace of the root %s", selector.namespace, rootSourceName, rootSourceKind)
 		}
+	}
+	if selector.kind == "CustomResourceDefinition" {
+		if selector.name != helmReleaseCRDName {
+			return fmt.Sprintf("name %q is not the generated HelmRelease CRD %q", selector.name, helmReleaseCRDName)
+		}
+		if !slices.Contains(components, "helm-controller") {
+			return "the generated HelmRelease CRD requires helm-controller"
+		}
+		if selector.namespace != "" || selector.labelSelector != "" || selector.annotationSelector {
+			return "select the cluster-scoped HelmRelease CRD by name without a namespace, label or annotation selector"
+		}
+		return ""
 	}
 	if selector.kind != "Deployment" {
 		return fmt.Sprintf("kind %q is neither a controller Deployment nor the root %s; if flux-operator generates it, teach this check about it (with a test) rather than working around it", selector.kind, rootSourceKind)

@@ -14,7 +14,8 @@ import (
 
 type temporaryPreparation struct {
 	preparation
-	reader inventoryReaderFactory
+	reader  inventoryReaderFactory
+	staging bool
 }
 
 // prepare advances the separately journaled unused-worker profile, recording reset
@@ -53,6 +54,14 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 		if err := waitReady(ctx, func(ctx context.Context) error { _, err := p.unusedPostState(ctx); return err }); err != nil {
 			return err
 		}
+		var stagedUUID string
+		if p.retainsRaw() {
+			var err error
+			stagedUUID, err = p.reopenRetained(ctx)
+			if err != nil {
+				return err
+			}
+		}
 		n, err := p.unusedPostState(ctx)
 		if err != nil {
 			return err
@@ -65,7 +74,7 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 		} else if fence != "" || value(n, "spec", "unschedulable") == true {
 			return errInventory
 		}
-		if err = p.advance(ctx, "prepared"); err != nil {
+		if err = p.advanceWithStage(ctx, "prepared", stagedUUID); err != nil {
 			return err
 		}
 	}
@@ -94,8 +103,12 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 // hugepage capacity, tolerating only this journal's own cordon during preparation.
 // Once pinned, every temporary pool member must retain the migration-owned pin.
 func (p temporaryPreparation) unusedCapacity(s inventory, pinned bool) error {
-	if err := verifyRebuildBudget(p.target, s); err != nil {
-		return err
+	checkBudget := verifyRebuildBudget(p.target, s)
+	if p.staging {
+		checkBudget = verifyStagingBudget(s)
+	}
+	if checkBudget != nil {
+		return checkBudget
 	}
 	nodes := s.nodes
 	for _, n := range nodes {
@@ -140,6 +153,7 @@ func (p *temporaryPreparation) beginUnused(ctx context.Context) error {
 		if err = p.claimRecord(ctx, journal{}); err != nil {
 			return err
 		}
+		p.staging = p.j.StagingLayout
 		n, _, nodeErr := p.node(ctx, true)
 		if nodeErr != nil {
 			return nodeErr
@@ -176,12 +190,18 @@ func (p *temporaryPreparation) beginUnused(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	p.j = journal{Schema: 2, Target: p.target, Source: p.source, OwnerRun: p.owner, Phase: "evacuating", NodeUID: text(n, "metadata", "uid"), ProviderID: text(n, "spec", "providerID"), MachineUUID: text(n, "status", "nodeInfo", "systemUUID"), LonghornUID: text(lh, "metadata", "uid"), OriginalDisks: object{}, TemporarySelection: p.temporarySelection, OriginalBootID: text(n, "status", "nodeInfo", "bootID")}
+	p.j = journal{Schema: 2, Target: p.target, Source: p.source, OwnerRun: p.owner, Phase: "evacuating", NodeUID: text(n, "metadata", "uid"), ProviderID: text(n, "spec", "providerID"), MachineUUID: text(n, "status", "nodeInfo", "systemUUID"), LonghornUID: text(lh, "metadata", "uid"), OriginalDisks: object{}, TemporarySelection: p.temporarySelection, OriginalBootID: text(n, "status", "nodeInfo", "bootID"), StagingLayout: p.staging}
 	_, address, err := p.node(ctx, true)
 	if err != nil {
 		return err
 	}
-	if err = p.desiredLayout(ctx, address); err != nil {
+	if p.retainsRaw() {
+		p.j.Schema = 3
+		err = p.verifyRetainedLayoutConfig(ctx, address, true)
+	} else {
+		err = p.desiredLayout(ctx, address)
+	}
+	if err != nil {
 		return err
 	}
 	eph, err := p.c.talosVolume(ctx, address, "EPHEMERAL")
@@ -189,6 +209,16 @@ func (p *temporaryPreparation) beginUnused(ctx context.Context) error {
 		return errInventory
 	}
 	p.j.EphemeralUUID = text(eph, "spec", "uuid")
+	if p.retainsRaw() {
+		receipt, err := p.observeRetainedPreparation(ctx, false, false)
+		if err != nil {
+			return err
+		}
+		p.j.NativeEmptyDigest = temporaryStorageDigest(receipt)
+		p.j.RetainedRawUUID = receipt.retainedLayout.PartitionUUID
+		p.j.RetainedExtentDigest = receipt.retainedLayout.ExtentDigest
+		return p.claimRecord(ctx, p.j)
+	}
 	digest, err := p.observeUnused(ctx, false)
 	if err != nil {
 		return err
@@ -201,8 +231,26 @@ func (p *temporaryPreparation) beginUnused(ctx context.Context) error {
 // and API identity checks, then commits the original encrypted partition and
 // cache-only parent directory evidence into the journal's digest.
 func (p temporaryPreparation) observeUnused(ctx context.Context, owned bool) (string, error) {
-	if err := sourceCurrent(ctx, p.c.run, p.source); err != nil {
+	receipt, err := p.observeTemporaryStorage(ctx, owned, storageLayout)
+	if err != nil {
 		return "", err
+	}
+	// The allocated original partition alone must cover the new 152 GiB
+	// reservation and 40 GiB root minimum, with 8 GiB for geometry overhead.
+	if p.staging && receipt.BlockLayout.EphemeralSizeBytes < 200<<30 {
+		return "", errors.New("native storage cannot fit the reviewed staging layout")
+	}
+	return temporaryStorageDigest(receipt), nil
+}
+
+func temporaryStorageDigest(receipt storageRootReceipt) string {
+	digest := sha256.Sum256([]byte(receipt.APIProjectionDigest + ":" + receipt.Report.Digest + ":" + receipt.BlockLayout.Digest))
+	return hex.EncodeToString(digest[:])
+}
+
+func (p temporaryPreparation) observeTemporaryStorage(ctx context.Context, owned bool, scope storageObservationScope) (storageRootReceipt, error) {
+	if err := sourceCurrent(ctx, p.c.run, p.source); err != nil {
+		return storageRootReceipt{}, err
 	}
 	c := p.c
 	c.inventoryPools = p.pools
@@ -211,29 +259,32 @@ func (p temporaryPreparation) observeUnused(ctx context.Context, owned bool) (st
 	}
 	before, n, err := c.inventoryProjection(ctx, p.temporarySelection)
 	if err != nil {
-		return "", err
+		return storageRootReceipt{}, err
 	}
 	if _, err = verifyNode(n, p.j, true); err != nil || before.Registered || len(before.Replicas) != 0 || before.BootID != p.j.OriginalBootID || before.StorageUID != p.j.LonghornUID {
-		return "", errInventory
+		return storageRootReceipt{}, errInventory
 	}
 	factory := p.reader
 	if factory == nil {
-		factory = func(ctx context.Context, address string) (nativeReplicaReader, func() error, error) {
-			return openInventoryReader(ctx, address, p.j.EphemeralUUID)
+		if p.temporarySelection == "temporary-v2-1" {
+			factory = newInventoryReader
+		} else {
+			factory = func(ctx context.Context, address string) (nativeReplicaReader, func() error, error) {
+				return openInventoryReader(ctx, address, p.j.EphemeralUUID)
+			}
 		}
 	}
-	receipt, err := observeStorageLayout(ctx, c, p.temporarySelection, factory)
+	receipt, err := observeStorageRootScope(ctx, c, p.temporarySelection, factory, scope)
 	if err != nil {
-		return "", errors.New(inventoryFailureMessage(err))
+		return storageRootReceipt{}, errors.New(inventoryFailureMessage(err))
 	}
 	if receipt.APIProjectionDigest != before.Digest || !unusedParentAbsent(receipt.Report) || receipt.BlockLayout == nil {
-		return "", errInventory
+		return storageRootReceipt{}, errInventory
 	}
 	if err = sourceCurrent(ctx, p.c.run, p.source); err != nil {
-		return "", err
+		return storageRootReceipt{}, err
 	}
-	digest := sha256.Sum256([]byte(receipt.APIProjectionDigest + ":" + receipt.Report.Digest + ":" + receipt.BlockLayout.Digest))
-	return hex.EncodeToString(digest[:]), nil
+	return receipt, nil
 }
 
 // Only recognized non-volume cache directories may remain on this fixed,
@@ -322,7 +373,7 @@ func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 	if _, err = p.c.kubectl(ctx, nil, "drain", p.target, "--ignore-daemonsets", "--delete-emptydir-data", "--timeout=40m"); err != nil {
 		return errors.New("temporary worker drain was blocked; no reset was requested")
 	}
-	for range 2 {
+	for pass := range 2 {
 		s, err := p.c.snapshot(ctx)
 		if err != nil {
 			return err
@@ -336,10 +387,28 @@ func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 		if err = requireBenchmarkBaseline(ctx, p.c, s.nodes); err != nil {
 			return err
 		}
-		if err = p.desiredLayout(ctx, address); err != nil {
-			return err
+		if p.retainsRaw() {
+			if pass == 0 {
+				err = p.closeRetainedForReset(ctx, address)
+			} else {
+				_, err = p.observeRetainedPreparation(ctx, true, true)
+				if err == nil {
+					err = p.verifyRetainedLayoutConfig(ctx, address, false)
+				}
+			}
+			if err != nil {
+				return err
+			}
+			continue
 		}
 		if _, err = p.observeUnused(ctx, true); err != nil {
+			return err
+		}
+		if p.staging && pass == 0 {
+			if err = p.installStagingLayout(ctx, address); err != nil {
+				return err
+			}
+		} else if err = p.verifyUnusedLayout(ctx, address); err != nil {
 			return err
 		}
 	}
@@ -347,6 +416,9 @@ func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 		return err
 	}
 	if err = p.advance(ctx, "reset-requested"); err != nil {
+		return err
+	}
+	if err = p.checkOwner(ctx); err != nil {
 		return err
 	}
 	_, resetErr := p.c.run(ctx, nil, "talosctl", "--nodes="+address, "reset", "--system-labels-to-wipe=EPHEMERAL", "--reboot", "--graceful=true", "--wait", "--timeout=15m")
@@ -369,6 +441,23 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	if !ready(status) || !hugepagesReady(n) || !inventoryBoot.MatchString(boot) || boot == p.j.OriginalBootID {
 		return nil, errInventory
 	}
+	if p.retainsRaw() {
+		if _, err = p.readRetainedRecovery(ctx, address, boot, false); err != nil && p.j.Phase == "reset-requested" {
+			_, err = p.readRetainedRecovery(ctx, address, boot, true)
+		}
+		if err != nil {
+			return nil, err
+		}
+		lh, err := p.storageNode(ctx)
+		if err != nil || !unusedStorageFenced(lh) {
+			return nil, errInventory
+		}
+		current, currentAddress, err := p.node(ctx, true)
+		if err != nil || currentAddress != address || text(current, "status", "nodeInfo", "bootID") != boot {
+			return nil, errInventory
+		}
+		return current, nil
+	}
 	factory := p.reader
 	if factory == nil {
 		factory = newInventoryReader
@@ -387,7 +476,7 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	if err != nil || actualBoot != boot {
 		return nil, errInventory
 	}
-	if err = p.desiredLayout(ctx, address); err != nil {
+	if err = p.verifyUnusedLayout(ctx, address); err != nil {
 		return nil, err
 	}
 	raw, err := p.c.talosVolume(ctx, address, "r-longhorn")
@@ -401,7 +490,11 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	if text(eph, "spec", "uuid") == p.j.EphemeralUUID {
 		return nil, errInventory
 	}
-	if err = verifyEncryptedLocalLayout(raw, eph); err != nil {
+	rawGiB := uint64(permanentRawDiskGiB)
+	if p.staging {
+		rawGiB = stagingRawDiskGiB
+	}
+	if err = verifyEncryptedRawDisk(raw, eph, rawGiB); err != nil {
 		return nil, err
 	}
 	lh, err := p.storageNode(ctx)

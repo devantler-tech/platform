@@ -71,18 +71,28 @@ alone.
 What it does **not** do: it is **detection-only**. It will tell you a process
 misbehaved; it will not stop it.
 
-**Detection needs rules, and production does not load them yet.** The node-agent
+**Detection needs definitions and an enabled binding.** The node-agent
 checks only the rules it finds in `Rules` and `RuntimeRuleAlertBinding` objects.
 The chart installs its default rule set and a binding over every scanned namespace
-only when `alertCRD.installDefault` is true. Production declares that switch,
-**off**, in
+only when `alertCRD.installDefault` is true. Production declares that switch on in
 [`install-default-runtime-rules.yaml`](../k8s/providers/hetzner/infrastructure/controllers/kubescape/patches/install-default-runtime-rules.yaml),
-so the agent keeps building profiles but raises no alerts: an empty alert route
-means nothing was checked. Turning the switch on adds exactly those two objects
-and sends alerts through the existing Alertmanager (Slack) and stdout
-(Coroot) routes. `scripts/tests/test-kubescape-runtime-rules-switch.sh` renders
-the pinned chart in both states and refuses an undeclared switch, an on state
-that binds no enabled rule, and an on state that changes anything else (#4968).
+and appends a post-renderer that retains only the vendor's **R2001** definition,
+pod port-forward detection, and binds its stable ID. The pinned rule does not require a learned profile, so incomplete
+profiles do not prevent this initial baseline. The scanned namespace scope and the
+existing Alertmanager and stdout (Coroot) routes are unchanged. Installing the
+definitions and binding changes no RBAC, workload or CRD.
+
+This baseline is a first stage, not complete runtime coverage. Anomaly rules and
+other currently unbound rules need separate execution and alert-volume evidence
+before expanding the binding (#4968, #4978). A successful render is not evidence
+that an alert reached its destination: rollout acceptance needs non-zero live rule
+and binding readback, a controlled port-forward event, and observed delivery.
+
+`scripts/tests/test-kubescape-runtime-rules-switch.sh` renders the pinned chart
+in both switch states, as installs and upgrades. It rejects an enabled detector
+with no installed baseline, unknown or additional bound rules, a profile-dependent
+or changed port-forward definition, changed namespace scope, and changes to other
+objects. Renaming a rule while retaining its ID must preserve the binding.
 
 ### Tetragon — *enforcement and precise kernel observability*
 

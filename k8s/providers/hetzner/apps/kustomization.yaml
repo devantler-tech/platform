@@ -24,6 +24,7 @@ resources:
   - aws/
   # Owner-only scripted zone trial; public packages need no registry credential fanout.
   - world-at-ruin/
+  - agentic-engineer/
   # Default-off disposable proof for user namespaces + Longhorn idmapped mounts
   # (platform#2599). Activate in a short-lived PR by uncommenting this resource,
   # capture the completed Job's logs, then remove it again so its generic

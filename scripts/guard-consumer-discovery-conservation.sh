@@ -483,11 +483,25 @@ refuse_source_overrides() {
     [ -z "$check" ] || [ "$check" = true ] ||
       refuse "production render $label holds a FluxInstance platform source override, so its consumers are UNKNOWN"
   done <<<"$checks"
-  # Controller Deployment patches cannot target the source. All other patch targets could
-  # select it; verification operations and ref changes that preserve latest are established
-  # as preserving its identity and artifact. A strategic patch or broader operation is UNKNOWN.
+  # A Deployment or the exact audited HelmRelease CRD cannot be the root source.
+  # Keep unknown CRDs in the refusal path, including any added beside the audited one.
+  local crd_predicate='true'
+  if ! yq -N -o=json 'select(.kind == "FluxInstance" and .metadata.name == "flux" and .metadata.namespace == "flux-system")
+      | select([.spec.kustomize.patches[] | select(.target.kind == "CustomResourceDefinition")] | length > 0)' \
+    "$file" >"$work/helm-profile.json" 2>"$work/yq.err"; then
+    refuse "could not read the FluxInstance CRD targets in $label, so its consumers are UNKNOWN"
+  fi
+  if [ -s "$work/helm-profile.json" ]; then
+    if ! jq -se 'length == 1' "$work/helm-profile.json" >/dev/null ||
+      ! bash "$GUARD_DIR/guard-controller-helm-profile.sh" "$work/helm-profile.json"; then
+      refuse "could not prove the FluxInstance HelmRelease CRD patch in $label, so its consumers are UNKNOWN"
+    fi
+    crd_predicate='.target.kind != "CustomResourceDefinition"'
+  fi
+  # Verification and ref operations that preserve latest may reach the source.
+  # A strategic patch or broader operation is UNKNOWN.
   if ! checks="$(yq -N -r 'select(.kind == "FluxInstance" and .metadata.name == "flux" and .metadata.namespace == "flux-system")
-      | .spec.kustomize.patches[] | select(.target.kind != "Deployment") | (.patch | from_yaml) | .[]
+      | .spec.kustomize.patches[] | select(.target.kind != "Deployment" and ('"$crd_predicate"')) | (.patch | from_yaml) | .[]
       | (.op == "test" or ((.op == "add" or .op == "replace" or .op == "remove")
           and (((.path // "") | test("^/spec/verify(/|$)"))
             or (.op == "remove" and (.path == "/spec/ref" or .path == "/spec/ref/tag"))

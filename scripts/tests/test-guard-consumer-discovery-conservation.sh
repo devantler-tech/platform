@@ -3065,6 +3065,15 @@ YAML
 printf '  - flux-instance.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
 expect_pass 'verification and ref patches preserve platform source attribution' "$root" '2 consumer(s)'
 
+root="$(fixture audited-helm-crd)"
+instance="$root/k8s/providers/prod/infrastructure/flux-instance.yaml"
+cp "$REPO_ROOT/k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml" "$instance"
+printf '  - flux-instance.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+expect_pass 'the audited HelmRelease CRD patch does not change the platform source' "$root" '2 consumer(s)'
+yq -i '(.spec.kustomize.patches[] | select(.target.kind == "CustomResourceDefinition").target.name) = "ocirepositories.source.toolkit.fluxcd.io"' "$instance"
+expect_refusal 'an unrecognised CRD target is not accepted as the audited HelmRelease schema' "$root" \
+  'could not prove the FluxInstance HelmRelease CRD patch' 'consumers are UNKNOWN'
+
 root="$(fixture partial-kind-reader)"
 mkdir "$WORK/partial-kind-bin"
 cat >"$WORK/partial-kind-bin/yq" <<'SH'

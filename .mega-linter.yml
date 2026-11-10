@@ -356,7 +356,9 @@ SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
 # so markdownlint's fixes would fail that test. New approvals go in approved-surface.txt instead.
 MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: (\.agents/.*|scripts/validate-eks-ci-role-policy/approved-surface-history\.md)
 
-# prettier rewrites JSON in place, and these three sets must keep their exact bytes:
+# prettier rewrites JSON in place, and these four sets must keep their exact bytes:
+#   * schemas/ holds generated kubeconform schemas written by jq -S;
+#     scripts/generate-kubescape-rule-schema.sh --check compares their exact bytes.
 #   * tests/chart-rendered-rbac-policy/ baselines are written by jq (UPDATE_BASELINE=1) and compared
 #     with `diff -u`, so prettier's layout fails the test that owns them.
 #   * scripts/validate-feature-flags/schema/ holds upstream flagd schemas whose sha256 the README
@@ -364,7 +366,7 @@ MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: (\.agents/.*|scripts/validate-eks-ci
 #   * scripts/diagnose-email-startup/testdata/ holds compact JSON captured from a real Stalwart store.
 #     access_test.go builds its negative controls by replacing exact compact substrings such as
 #     `"total":1`, so prettier's `"total": 1` layout would fail those controls.
-JSON_PRETTIER_FILTER_REGEX_EXCLUDE: (tests/chart-rendered-rbac-policy/.*\.json|scripts/validate-feature-flags/schema/.*\.json|scripts/diagnose-email-startup/testdata/.*\.json)
+JSON_PRETTIER_FILTER_REGEX_EXCLUDE: (schemas/.*\.json|tests/chart-rendered-rbac-policy/.*\.json|scripts/validate-feature-flags/schema/.*\.json|scripts/diagnose-email-startup/testdata/.*\.json)
 
 # The only HTML file here is a byte-exact copy of the released Hubble UI v0.13.6 entry point, which
 # check-hubble-ui-streaming's regression test reads and requires unaltered, minifier output included.
@@ -438,3 +440,10 @@ REPOSITORY_TRIVY_ARGUMENTS:
 # instead of disabling the linter. Measured: 1 error -> 0, audit performed.
 ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES:
   - GITHUB_TOKEN
+
+# grype scans the whole tree and refreshes its vulnerability database in the same run, so it sits
+# close to MegaLinter's 300-second default: 232s on 2026-11-09 11:40Z, then killed at 300s on two
+# consecutive runs that afternoon. A killed scan reports one error and fails the gate without
+# having examined anything. More time keeps the full scan; nothing is excluded or downgraded.
+# The key is `_TIMEOUT_SECONDS`: the `_TIMEOUT_SEC` name in the timeout message is not in the schema.
+REPOSITORY_GRYPE_TIMEOUT_SECONDS: 900

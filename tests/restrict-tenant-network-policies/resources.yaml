@@ -832,6 +832,46 @@ spec:
         - matchLabels:
             io.cilium.k8s.policy.cluster: other-cluster
 ---
+# ATTACK: a carved-out reserved key matched NEGATIVELY beside an ordinary label.
+# Cilium skips namespace injection for a selector that names a `reserved:` key,
+# so `DoesNotExist` here selects `app: db` in every namespace.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-selector-reserved-does-not-exist-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app: db
+          matchExpressions:
+            - key: reserved:kube-apiserver
+              operator: DoesNotExist
+---
+# ATTACK, ingress side: the same escape through `NotIn` on `reserved:ingress`.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-selector-reserved-not-in-ingress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: client
+          matchExpressions:
+            - key: reserved:ingress
+              operator: NotIn
+              values:
+                - ""
+---
 # ATTACK: a reserved identity sitting BESIDE a properly pinned selector. Cilium
 # unions allow rules, so the broad entry decides — the check has to be per
 # selector, not "does this policy pin any ordinary label".

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-[ "$#" = 1 ] && [ -d "$1" ] && [ ! -L "$1" ] || {
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] && [ -d "$1" ] && [ ! -L "$1" ] || {
   echo 'An existing application build directory is required.' >&2
   exit 2
 }
@@ -18,10 +18,18 @@ for name in webui.zip webui.LICENSE webui.SOURCE; do
   fi
 done
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-version="$(jq -er '.version | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$root/webui-pins.json")"
-url="$(jq -er '.url | select(type == "string")' "$root/webui-pins.json")"
-digest="$(jq -er '.sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' "$root/webui-pins.json")"
-license_digest="$(jq -er '.license_sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' "$root/webui-pins.json")"
+case "${2:-0.16.27}" in
+  0.16.27) pins="$root/webui-pins.json" ;;
+  1.0.2) pins="$root/webui-v1-pins.json" ;;
+  *)
+    echo 'Unsupported Email runtime version.' >&2
+    exit 2
+    ;;
+esac
+version="$(jq -er '.version | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$pins")"
+url="$(jq -er '.url | select(type == "string")' "$pins")"
+digest="$(jq -er '.sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' "$pins")"
+license_digest="$(jq -er '.license_sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' "$pins")"
 [ "$url" = "https://github.com/stalwartlabs/webui/releases/download/v${version}/webui.zip" ] || {
   echo 'Application release metadata is invalid.' >&2
   exit 2
