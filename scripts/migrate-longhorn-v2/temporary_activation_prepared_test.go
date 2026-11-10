@@ -13,7 +13,7 @@ func temporaryPreparedFixture(t *testing.T, binding temporaryV2Binding) object {
 	j := journal{Schema: 2, Target: binding.Name, Source: strings.Repeat("1", 40), OwnerRun: "7777", Phase: "prepared",
 		NodeUID: binding.NodeUID, ProviderID: binding.ProviderID, MachineUUID: binding.MachineUUID, LonghornUID: binding.LonghornUID,
 		EphemeralUUID: "original-ephemeral", OriginalDisks: object{}, TemporarySelection: binding.Selection,
-		NativeEmptyDigest: strings.Repeat("c", 64), OriginalBootID: "12345678-1234-4234-8234-000000000099", RawVolumeAbsent: true}
+		NativeEmptyDigest: strings.Repeat("c", 64), OriginalBootID: "12345678-1234-4234-8234-000000000099", RawVolumeAbsent: true, StagingLayout: true}
 	data, err := json.Marshal(j)
 	if err != nil {
 		t.Fatal(err)
@@ -42,6 +42,9 @@ func TestTemporaryActivationRequiresTheCompletedPreparationIdentity(t *testing.T
 		"pending deletion": func(cm object) { cm["metadata"].(object)["deletionTimestamp"] = "2026-11-03T09:00:00Z" },
 		"unfinished preparation": func(cm object) {
 			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), `"phase":"prepared"`, `"phase":"reset-requested"`, 1)
+		},
+		"old smaller preparation": func(cm object) {
+			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), `,"stagingLayout":true`, "", 1)
 		},
 		"replaced worker": func(cm object) {
 			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), binding.NodeUID, "other-node", 1)

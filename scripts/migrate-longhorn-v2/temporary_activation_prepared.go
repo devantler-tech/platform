@@ -17,13 +17,13 @@ func preparedTemporaryBinding(cm object, binding temporaryV2Binding) (journal, e
 		return journal{}, errTemporaryActivation
 	}
 	data := []byte(text(cm, "data", "record"))
-	fields := map[string][]string{"": {"schema", "target", "source", "ownerRun", "phase", "nodeUID", "providerID", "machineUUID", "longhornUID", "ephemeralUUID", "originalDisks", "temporarySelection", "nativeEmptyDigest", "originalBootID", "rawVolumeAbsent"}}
+	fields := map[string][]string{"": {"schema", "target", "source", "ownerRun", "phase", "nodeUID", "providerID", "machineUUID", "longhornUID", "ephemeralUUID", "originalDisks", "temporarySelection", "nativeEmptyDigest", "originalBootID", "rawVolumeAbsent", "stagingLayout"}}
 	var record journal
 	if len(data) == 0 || len(data) > 32<<10 || strictjson.Validate(data, fields) != nil || json.Unmarshal(data, &record) != nil {
 		return journal{}, errTemporaryActivation
 	}
 	p := preparation{target: binding.Name, name: name, temporarySelection: binding.Selection}
-	if p.validateRecord(record) != nil || record.Schema != 2 || record.Phase != "prepared" || record.NodeUID != binding.NodeUID ||
+	if p.validateRecord(record) != nil || record.Schema != 2 || !record.StagingLayout || record.Phase != "prepared" || record.NodeUID != binding.NodeUID ||
 		record.ProviderID != binding.ProviderID || record.MachineUUID != binding.MachineUUID || record.LonghornUID != binding.LonghornUID ||
 		record.OriginalBootID == binding.BootID || strings.EqualFold(record.EphemeralUUID, binding.EphemeralUUID) {
 		return journal{}, errTemporaryActivation

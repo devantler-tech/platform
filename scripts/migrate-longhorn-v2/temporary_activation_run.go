@@ -72,6 +72,9 @@ func (a temporaryV2Activation) environment(ctx context.Context) (inventory, erro
 	if err != nil || verifyMigrationCapacity(s.nodes, a.pools) != nil || verifyRedundancy(s) != nil {
 		return inventory{}, errTemporaryActivation
 	}
+	if err = verifyStagingBudget(s); err != nil {
+		return inventory{}, err
+	}
 	managers, err := a.c.list(ctx, "instancemanagers.longhorn.io", "longhorn-system")
 	if err != nil || verifyV2Clients(s, managers, a.pools, v2ManagerImage) != nil {
 		return inventory{}, errTemporaryActivation

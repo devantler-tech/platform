@@ -14,6 +14,7 @@ func temporaryRawBindingFixture() (object, object, object, object, migrationPool
 	lh := resource(text(n, "metadata", "name"))
 	lh["metadata"].(object)["namespace"] = "longhorn-system"
 	raw, eph := rawFixture()
+	valueObject(raw, "spec")["size"] = float64(144 << 30)
 	raw["spec"].(object)["partitionUUID"] = "12345678-1234-4234-8234-000000000002"
 	return n, lh, raw, eph, migrationPool{name: "autoscale-longhorn-v1", role: "v1", serverType: "cpx42", count: 2}
 }
@@ -31,7 +32,7 @@ func TestTemporaryRawRegistrationBindsTheNativePartitionsAndPoolMember(t *testin
 		"missing raw identity":               func(_, _ object, raw, _ object) { delete(raw["spec"].(object), "partitionUUID") },
 		"raw and filesystem identity reused": func(_, _ object, raw, eph object) { raw["spec"].(object)["partitionUUID"] = text(eph, "spec", "uuid") },
 		"unencrypted raw disk":               func(_, _ object, raw, _ object) { raw["spec"].(object)["encryptionProvider"] = "" },
-		"wrong raw capacity":                 func(_, _ object, raw, _ object) { raw["spec"].(object)["size"] = float64(95 << 30) },
+		"original smaller raw capacity":      func(_, _ object, raw, _ object) { raw["spec"].(object)["size"] = float64(96 << 30) },
 		"cordoned member":                    func(n, _, _, _ object) { n["spec"].(object)["unschedulable"] = true },
 		"unowned capacity": func(n, _, _, _ object) {
 			delete(n["metadata"].(object)["annotations"].(object), capacityOwnerAnnotation)

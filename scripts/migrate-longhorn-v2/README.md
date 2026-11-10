@@ -92,6 +92,9 @@ raw-layout preparation, select `register-temporary-v2-storage` and confirm
 fixed temporary pool members. It requires intact original V1 replicas, healthy
 database quorums, the cleaned baseline, reviewed storage capacity, no competing
 maintenance, and ready V2 clients on all six workers before its first write.
+Every selected worker must present its own 144 GiB encrypted raw partition. The
+complete volume inventory must fit on each disk with the working reserves and
+free-space margin available.
 
 The journal `longhorn-v2-temporary-activation` binds each temporary selection to
 the node, provider, hardware, boot, encrypted EPHEMERAL and raw GPT partition

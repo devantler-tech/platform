@@ -112,7 +112,7 @@ func projectTemporaryV2Binding(selection string, node, storage, raw, ephemeral o
 		BootID: text(node, "status", "nodeInfo", "bootID"), OSImage: text(node, "status", "nodeInfo", "osImage"),
 		LonghornUID: text(storage, "metadata", "uid"), EphemeralUUID: text(ephemeral, "spec", "uuid"), RawPartitionUUID: text(raw, "spec", "partitionUUID")}
 	if !inventoryTemporarySelection.MatchString(selection) || !strings.HasPrefix(selection, "temporary-"+pool.role+"-") ||
-		!inventoryTemporaryNode.MatchString(b.Name) || verifyMigrationNode(node, pool) != nil || verifyEncryptedLocalLayout(raw, ephemeral) != nil ||
+		!inventoryTemporaryNode.MatchString(b.Name) || verifyMigrationNode(node, pool) != nil || verifyEncryptedRawDisk(raw, ephemeral, stagingRawDiskGiB) != nil ||
 		b.NodeUID == "" || !regexp.MustCompile(`^hcloud://[1-9][0-9]*$`).MatchString(b.ProviderID) || b.MachineUUID == "" || b.OSImage == "" ||
 		!inventoryBoot.MatchString(b.BootID) || nativeBoot != b.BootID || !inventoryBoot.MatchString(strings.ToLower(b.RawPartitionUUID)) || b.RawPartitionUUID == b.EphemeralUUID ||
 		text(node, "status", "nodeInfo", "architecture") != "amd64" || !hugepagesReady(node) || text(node, "status", "allocatable", "cpu") != "8" ||

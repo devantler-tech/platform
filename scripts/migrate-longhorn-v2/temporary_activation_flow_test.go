@@ -50,12 +50,17 @@ func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
 		}
 	}
 	f := &activationAPI{t: t, s: s, managers: managers, baseline: unusedBaselineFixture(t, s)}
-	for _, selected := range []struct{ namespace, name string }{{"observability", "coroot-db"}, {"umami", "umami-db"}, {"wedding-app", "wedding-db"}} {
-		db := resource(selected.name)
-		db["metadata"].(object)["namespace"] = selected.namespace
-		db["spec"] = object{"instances": float64(3)}
-		db["status"] = object{"readyInstances": float64(3), "systemID": "123456789", "phase": "Cluster in healthy state"}
+	for key, profile := range hostDatabases {
+		namespace, name, _ := strings.Cut(key, "/")
+		db := resource(name)
+		db["metadata"].(object)["namespace"] = namespace
+		db["spec"] = object{"instances": profile.instances}
+		db["status"] = object{"readyInstances": profile.instances, "systemID": "123456789", "phase": "Cluster in healthy state"}
 		f.databases = append(f.databases, db)
+	}
+	for _, volume := range s.volumes {
+		valueObject(volume, "spec")["size"] = "1073741824"
+		valueObject(volume, "status")["actualSize"] = float64(1 << 20)
 	}
 	pools, err := configuredMigrationPools(poolConfigFixture())
 	if err != nil {
@@ -130,6 +135,7 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 				return json.Marshal(object{"metadata": object{"id": "systeminformation", "namespace": "hardware"}, "spec": object{"uuid": text(node, "status", "nodeInfo", "systemUUID")}})
 			}
 			raw, eph := rawFixture()
+			valueObject(raw, "spec")["size"] = float64(144 << 30)
 			raw["spec"].(object)["partitionUUID"] = fmt.Sprintf("12345678-1234-4234-8234-%012x", i+100)
 			eph["spec"].(object)["uuid"] = fmt.Sprintf("ephemeral-%d", i)
 			if args[2] == "volumestatus" && args[3] == "r-longhorn" {
@@ -294,6 +300,14 @@ func TestTemporaryActivationHoldsBeforeWritesWithoutSuccessfulPreparation(t *tes
 				t.Fatal("activation wrote before successful native preparation was bound:", err)
 			}
 		})
+	}
+}
+
+func TestTemporaryActivationHoldsWhenTheDatasetOutgrowsStaging(t *testing.T) {
+	f, a := newActivationAPI(t)
+	valueObject(f.s.volumes[0], "spec")["size"] = fmt.Sprint(135 << 30)
+	if err := a.run(t.Context()); err == nil || f.writes != 0 || f.record != nil {
+		t.Fatal("activation accepted data beyond the per-worker storage budget", err)
 	}
 }
 
