@@ -1,0 +1,17 @@
+# The lane store for the agent (deployment-lane-store.yaml). The gateway
+# replaces the Authorization header with the store credential, so the agent
+# sends only `Authorization: Basic kagent-credential-injected`.
+apiVersion: api.kagent.dev/v1alpha3
+kind: EgressPolicy
+metadata:
+  name: lane-store
+  namespace: agentic-engineer
+spec:
+  destinations:
+    - origin: http://lane-store.agentic-engineer.svc.cluster.local:8080
+      authentication:
+        header: Authorization
+        prefix: "Basic "
+        secretKeyRef:
+          name: lane-store
+          key: basic
