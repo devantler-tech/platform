@@ -1,0 +1,197 @@
+# The daily run, as a kagent scheduled run: once a day (the kagent row of the
+# monorepo's cadence table) at 05:15 host time. kagent keeps scheduled runs in
+# its database rather than as a Kubernetes resource (kagent-dev/kagent#2853), so
+# this Job writes the one below through kagent's ScheduledRunService: it creates
+# the schedule when it is missing and updates it when it differs. Each firing is
+# a fresh kagent session, shown in the kagent UI with the schedule's history.
+#
+# Flux recreates the Job whenever this manifest changes, so a change here
+# reaches kagent on the next reconcile. The completed Job stays: deleting it
+# with a TTL would make Flux rerun it on every apps reconciliation. An edit made
+# in the kagent UI lasts until the next change here.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agentic-engineer-schedule
+  namespace: agentic-engineer
+  annotations:
+    kustomize.toolkit.fluxcd.io/force: enabled
+spec:
+  # Kubernetes stores this as a signed int32. A Failed Job can never turn
+  # healthy for the apps layer's wait, so a Job that cannot reach kagent keeps
+  # retrying with the controller's backoff instead of failing for good.
+  backoffLimit: 2147483647
+  template:
+    metadata:
+      labels:
+        app: agentic-engineer-schedule
+    spec:
+      restartPolicy: Never
+      serviceAccountName: schedule
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      # grpcurl reads kagent's API from gRPC reflection (the kagent HelmRelease
+      # enables it); its image has no jq, so its static binary is copied over.
+      initContainers:
+        - name: grpcurl
+          image: docker.io/fullstorydev/grpcurl:v1.9.3-alpine@sha256:4614424ed58e9b9837c48b6b8eadb9ef40491d5af3499bcc8b378e9c64a9e4a9
+          imagePullPolicy: IfNotPresent
+          command: ["cp", "/bin/grpcurl", "/tools/grpcurl"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tools
+              mountPath: /tools
+      containers:
+        - name: schedule
+          image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NAME
+              value: agentic-engineer-daily
+            - name: AGENT_NAMESPACE
+              value: agentic-engineer
+            - name: AGENT_NAME
+              value: agentic-engineer
+            - name: SCHEDULE
+              value: "15 5 * * *"
+            - name: TIME_ZONE
+              value: Europe/Copenhagen
+            # Paused until every sub-issue of devantler-tech/monorepo#4866 is
+            # done (ADR 0014, point 6). The canary runs once, started from the
+            # kagent UI; the PR that swaps in the full run message unpauses it.
+            - name: PAUSED
+              value: "true"
+            # A run has no time limit: cutting one off mid-task wastes what it
+            # has already spent, so the Anthropic workspace's monthly limit is
+            # the lane's only spend cap (maintainer decision, 2026-11-09).
+            # kagent requires a deadline and cancels a run that passes it (15
+            # minutes when unset), so it is set to ten years, which no run
+            # reaches.
+            - name: EXECUTION_TIMEOUT
+              value: 315360000s
+            # The current message is the canary (devantler-tech/monorepo#4869):
+            # it proves the model, GitHub and Git paths and changes nothing.
+            # The full engineering run replaces it once the canary has passed.
+            - name: PROMPT
+              value: |
+                Canary run. Change nothing: create no branch, commit, issue, comment or
+                pull request.
+                1. Name the model you are running as.
+                2. Run `git -c http.extraHeader='Authorization: Basic kagent-credential-injected' ls-remote https://github.com/devantler-tech/monorepo.git HEAD`
+                   and report the commit it prints.
+                3. Shallow-clone that repository the same way and report the first line of
+                   its AGENTS.md.
+                4. Report which of the commands gh, curl, jq and yq exist in your sandbox.
+                Reply with a short report of each step and anything that failed.
+            # Retries of one Job share its uid, so a create whose reply was lost
+            # returns the schedule it made instead of making a second one.
+            - name: REQUEST_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['batch.kubernetes.io/controller-uid']
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              # Flux substitutes braced variables in this manifest, so the
+              # script uses none. Each reply is kept before it is formatted: a
+              # pipeline's status is its last command's, which would hide a
+              # failed call.
+              PATH="/tools:$PATH"
+              api=kagent-controller.kagent.svc.cluster.local:8083
+              # No X-User-Id: kagent's insecure auth gives a caller without one
+              # the kagent UI's default user, and the UI shows only its own
+              # user's schedules and sessions.
+              call() {
+                grpcurl -plaintext -emit-defaults -max-time 30 -d @ \
+                  "$api" "kagent.api.v1.ScheduledRunService/$1"
+              }
+              # Print what a create or update returned, or fail if it is not a schedule.
+              show() {
+                printf '%s' "$2" | jq -er --arg verb "$1" '.scheduledRun |
+                  select(.id != null and .id != "") |
+                  "\($verb) scheduled run \(.id): \(.config.schedule) \(.config.timeZone), paused \(.config.paused), next \(.nextExecutionTime // "none")"'
+              }
+              want=$(jq -n --arg name "$NAME" --arg schedule "$SCHEDULE" \
+                --arg timeZone "$TIME_ZONE" --arg prompt "$PROMPT" \
+                --argjson paused "$PAUSED" --arg timeout "$EXECUTION_TIMEOUT" \
+                '{name: $name, schedule: $schedule, timeZone: $timeZone,
+                  prompt: $prompt, paused: $paused, executionTimeout: $timeout}')
+              agent=$(jq -n --arg namespace "$AGENT_NAMESPACE" --arg name "$AGENT_NAME" \
+                '{namespace: $namespace, name: $name}')
+              # Every schedule of that user, across pages.
+              runs='[]'
+              token=''
+              while :; do
+                page=$(jq -n --arg token "$token" '{page: {limit: 100, pageToken: $token}}' |
+                  call ListScheduledRuns)
+                runs=$(printf '%s' "$runs" |
+                  jq --argjson page "$page" '. + ($page.scheduledRuns // [])')
+                token=$(printf '%s' "$page" | jq -r '.page.nextPageToken // ""')
+                [ -n "$token" ] || break
+              done
+              matches=$(printf '%s' "$runs" | jq -c --arg name "$NAME" '[.[] | select(.config.name == $name)]')
+              count=$(printf '%s' "$matches" | jq length)
+              case "$count" in
+                0)
+                  created=$(jq -n --argjson agent "$agent" --arg id "$REQUEST_ID" --argjson config "$want" \
+                    '{agent: $agent, requestId: $id, config: $config}' | call CreateScheduledRun)
+                  show created "$created"
+                  ;;
+                1)
+                  have=$(printf '%s' "$matches" | jq -c '.[0]')
+                  if ! printf '%s' "$have" | jq -e --argjson agent "$agent" '.agent == $agent' >/dev/null; then
+                    echo "scheduled run $NAME targets $(printf '%s' "$have" | jq -c .agent), not $agent" >&2
+                    exit 1
+                  fi
+                  if printf '%s' "$have" | jq -e --argjson want "$want" '.config == $want' >/dev/null; then
+                    show unchanged "$(printf '%s' "$have" | jq '{scheduledRun: .}')"
+                  else
+                    updated=$(printf '%s' "$have" | jq --argjson config "$want" \
+                      '{scheduledRunId: .id, etag: .etag, config: $config}' | call UpdateScheduledRun)
+                    show updated "$updated"
+                  fi
+                  ;;
+                *)
+                  echo "found $count scheduled runs named $NAME: delete all but one in the kagent UI" >&2
+                  exit 1
+                  ;;
+              esac
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tools
+              mountPath: /tools
+              readOnly: true
+      volumes:
+        - name: tools
+          emptyDir:
+            sizeLimit: 64Mi

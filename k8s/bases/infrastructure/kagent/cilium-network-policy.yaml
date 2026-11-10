@@ -1,6 +1,6 @@
-# kagent's controller, UI and database. The controller serves the A2A and task
-# APIs on 8083 to agents (through Substrate's egress gateway) and to the
-# agent namespaces' triggers, and calls the Substrate API, router and IdP.
+# kagent's controller, UI and database. The controller serves its APIs on 8083
+# to agents (through Substrate's egress gateway) and to the Agentic Engineer's
+# schedule Job, and calls the Substrate API, router and IdP.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -18,7 +18,7 @@ spec:
             app: atenet-egress
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: agentic-engineer
-            app: agentic-engineer-trigger
+            app: agentic-engineer-schedule
       toPorts:
         - ports:
             - port: "8083"

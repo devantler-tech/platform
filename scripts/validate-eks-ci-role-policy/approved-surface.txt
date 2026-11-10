@@ -66,7 +66,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|flux-system|flux-operator 0cbdc24c2b42ef3d
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|homepage|homepage 73c235e4a91bde46f5eeb0400fb986c47b52860d188f97822024b09fd4752b2a
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent 0bd52db1b6b8ed350e60b4580f9386e405c9a62f0e2c1cc73303187ed5bf121c
+helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent 09e3fb96d3d4cb33ebc67aa6cdba8ace8c3ef995de8064d0acc57fd07674cc34
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent-crds e1765ef34c0535f7101afad08e946cb5ed9815eb370636b8e735cd0af82a1be2
 
