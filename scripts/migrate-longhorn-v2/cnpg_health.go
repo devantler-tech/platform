@@ -52,13 +52,14 @@ func cnpgInstanceID(name, cluster string) (uint64, error) {
 	return id, nil
 }
 
-// healthyCNPGPods binds the three stable owned instances from a complete Pod
+// healthyCNPGPods binds the required stable owned instances from a complete Pod
 // inventory. It establishes neither maintenance exclusivity nor storage clearance.
 func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 	primary := text(cluster, "status", "currentPrimary")
 	name, ns := text(cluster, "metadata", "name"), text(cluster, "metadata", "namespace")
-	if !knownCNPGSource(ns, name) || ns == "" || text(cluster, "metadata", "uid") == "" || text(cluster, "metadata", "resourceVersion") == "" || value(cluster, "metadata", "deletionTimestamp") != nil ||
-		value(cluster, "spec", "instances") != float64(3) || value(cluster, "status", "instances") != float64(3) || value(cluster, "status", "readyInstances") != float64(3) || !cnpgCondition(cluster, "Ready") || !cnpgCondition(cluster, "ContinuousArchiving") || primary == "" || primary != text(cluster, "status", "targetPrimary") {
+	profile, selected := hostDatabases[ns+"/"+name]
+	if !selected || text(cluster, "metadata", "uid") == "" || text(cluster, "metadata", "resourceVersion") == "" || value(cluster, "metadata", "deletionTimestamp") != nil ||
+		value(cluster, "spec", "instances") != profile.instances || value(cluster, "status", "instances") != profile.instances || value(cluster, "status", "readyInstances") != profile.instances || !cnpgCondition(cluster, "Ready") || !cnpgCondition(cluster, "ContinuousArchiving") || primary == "" || primary != text(cluster, "status", "targetPrimary") {
 		return nil, errors.New("the selected database is not stable, archived and ready")
 	}
 	if fence := text(cluster, "metadata", "annotations", "cnpg.io/fencedInstances"); fence != "" && fence != "[]" {
@@ -76,8 +77,8 @@ func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 		}
 		known[instance] = true
 	}
-	if len(known) != 3 || !known[primary] {
-		return nil, errors.New("three current healthy database instances are required")
+	if len(known) != int(profile.instances) || !known[primary] {
+		return nil, errors.New("all reviewed healthy database instances are required")
 	}
 	pods := []object{}
 	for _, pod := range allPods {
@@ -85,14 +86,14 @@ func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 			pods = append(pods, pod)
 		}
 	}
-	if len(pods) != 3 {
+	if len(pods) != len(known) {
 		return nil, errors.New("database pod inventory does not match the healthy instances")
 	}
 	byName, err := indexed(pods)
 	if err != nil {
 		return nil, err
 	}
-	instances := make([]string, 0, 3)
+	instances := make([]string, 0, len(known))
 	for instance := range known {
 		instances = append(instances, instance)
 	}
@@ -101,7 +102,7 @@ func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 		b, _ := cnpgInstanceID(instances[j], name)
 		return a < b
 	})
-	ordered := make([]object, 0, 3)
+	ordered := make([]object, 0, len(known))
 	for _, instance := range instances {
 		pod := byName[instance]
 		status, _ := value(pod, "status").(object)

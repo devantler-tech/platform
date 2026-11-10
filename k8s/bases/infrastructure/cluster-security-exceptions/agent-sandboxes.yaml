@@ -1,0 +1,49 @@
+# Substrate (kagent 1.0's sandbox runtime) needs host access by design.
+# atelet, its node agent, runs as root with host paths for its node state,
+# image cache and device plugins. Each WorkerPool's worker pods run root with
+# SYS_ADMIN, NET_ADMIN and an unconfined seccomp profile, because gVisor's
+# sandbox pivots root and builds its own user and network namespaces inside
+# them; the agents run inside those gVisor sandboxes, not in the pods.
+# The RustFS snapshot store receives its generated keys as Helm values, which
+# its chart renders into environment variables.
+---
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: agent-sandboxes
+spec:
+  reason: >-
+    Substrate's atelet node agent and gVisor sandbox workers need root, host
+    paths, added capabilities and an unconfined seccomp profile to run agent
+    sandboxes, and its RustFS store takes its keys as environment variables.
+  posture:
+    - controlID: C-0012
+      action: ignore
+    - controlID: C-0013
+      action: ignore
+    - controlID: C-0016
+      action: ignore
+    - controlID: C-0017
+      action: ignore
+    - controlID: C-0038
+      action: ignore
+    - controlID: C-0044
+      action: ignore
+    - controlID: C-0045
+      action: ignore
+    - controlID: C-0046
+      action: ignore
+    - controlID: C-0048
+      action: ignore
+    - controlID: C-0055
+      action: ignore
+    - controlID: C-0057
+      action: ignore
+  match:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - ate-system
+            - agentic-engineer

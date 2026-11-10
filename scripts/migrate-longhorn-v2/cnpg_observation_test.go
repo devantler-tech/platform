@@ -87,3 +87,40 @@ func TestCNPGObservationAcceptsOnlyStablePhysicalReplication(t *testing.T) {
 		})
 	}
 }
+
+// TestCNPGObservationCoversTheCurrentTwoInstanceSources requires both members
+// and the same native physical replay evidence as the three-instance sources.
+func TestCNPGObservationCoversTheCurrentTwoInstanceSources(t *testing.T) {
+	for _, scope := range []struct{ namespace, name string }{{"ate-system", "substrate-db"}, {"kagent", "kagent-db"}} {
+		t.Run(scope.name, func(t *testing.T) {
+			before := cnpgObservationFixture(t)
+			before.Pods = before.Pods[:2]
+			meta := before.Cluster["metadata"].(object)
+			meta["name"], meta["namespace"] = scope.name, scope.namespace
+			before.Cluster["spec"].(object)["instances"] = float64(2)
+			status := before.Cluster["status"].(object)
+			status["instances"], status["readyInstances"] = float64(2), float64(2)
+			status["currentPrimary"], status["targetPrimary"] = scope.name+"-1", scope.name+"-1"
+			status["instancesStatus"] = object{"healthy": []any{scope.name + "-1", scope.name + "-2"}}
+			delete(before.States, "umami-db-3")
+			for _, pod := range before.Pods {
+				podMeta := pod["metadata"].(object)
+				oldName := podMeta["name"].(string)
+				newName := scope.name + "-" + oldName[len(oldName)-1:]
+				podMeta["name"], podMeta["namespace"] = newName, scope.namespace
+				podMeta["labels"].(object)["cnpg.io/cluster"] = scope.name
+				podMeta["ownerReferences"].([]any)[0].(object)["name"] = scope.name
+				before.States[newName] = before.States[oldName]
+				delete(before.States, oldName)
+			}
+			after := cloneCNPGObservation(t, before)
+			if err := validateCNPGObservation(before, after); err != nil {
+				t.Fatalf("complete healthy two-instance source was rejected: %v", err)
+			}
+			delete(after.States, scope.name+"-2")
+			if validateCNPGObservation(before, after) == nil {
+				t.Fatal("missing physical coverage was accepted")
+			}
+		})
+	}
+}

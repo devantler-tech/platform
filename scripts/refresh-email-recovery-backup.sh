@@ -42,7 +42,7 @@ jq -e '
     $p.automountServiceAccountToken==false and $p.hostNetwork!=true and
     ($p.initContainers|length)==2 and ($p.containers|length)==1 and
     $p.initContainers[0].name=="install-mirror-tools" and
-    $p.initContainers[0].image=="docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8" and
+    $p.initContainers[0].image=="docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6" and
     $p.initContainers[1].name=="snapshot" and
     $p.initContainers[1].image=="quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806" and
     $p.containers[0].name=="mirror" and

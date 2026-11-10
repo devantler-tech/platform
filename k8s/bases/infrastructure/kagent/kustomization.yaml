@@ -1,0 +1,26 @@
+# kagent 1.0 (release candidate 3), the agent control plane the Agentic
+# Engineer's cluster lane runs on (devantler-tech/monorepo#4866,
+# devantler-tech/platform#5892). Prod-only, opted in by the Hetzner
+# infrastructure overlay together with Substrate, which it requires.
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - namespace-agentic-engineer.yaml
+  - password-db-owner.yaml
+  - password-db-readwrite.yaml
+  - external-secret-db-owner.yaml
+  - external-secret-db-readwrite.yaml
+  # Coroot's Postgres integration for kagent-db (cluster.yaml).
+  - password-db-coroot-monitor.yaml
+  - external-secret-db-coroot-monitor.yaml
+  - cilium-network-policy-coroot.yaml
+  - cluster.yaml
+  - helm-repository.yaml
+  - oci-repository-crds.yaml
+  - helm-release-control-plane.yaml
+  - helm-release-crds.yaml
+  - cilium-network-policy.yaml
+  - cilium-network-policy-ui.yaml
+  - http-route.yaml

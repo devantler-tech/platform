@@ -1,0 +1,35 @@
+# GitHub access for the agent. The gateway replaces the Authorization header
+# of requests that carry one with the App's installation token, so the agent
+# only ever holds a placeholder. Download hosts get plain access.
+apiVersion: api.kagent.dev/v1alpha3
+kind: EgressPolicy
+metadata:
+  name: github
+  namespace: agentic-engineer
+spec:
+  destinations:
+    - origin: https://api.github.com
+      authentication:
+        header: Authorization
+        prefix: "Bearer "
+        secretKeyRef:
+          name: github-token
+          key: token
+    - origin: https://uploads.github.com
+      authentication:
+        header: Authorization
+        prefix: "Bearer "
+        secretKeyRef:
+          name: github-token
+          key: token
+    - origin: https://github.com
+      authentication:
+        header: Authorization
+        prefix: "Basic "
+        secretKeyRef:
+          name: github-token
+          key: basic
+    - origin: https://codeload.github.com
+    - origin: https://objects.githubusercontent.com
+    - origin: https://raw.githubusercontent.com
+    - origin: https://release-assets.githubusercontent.com

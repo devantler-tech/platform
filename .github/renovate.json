@@ -23,6 +23,33 @@
   "customManagers": [
     {
       "customType": "regex",
+      "description": "Track the exact Flux base separately from the adjacent-minor Helm controller override. Changing either requires native composition and recovery proof.",
+      "managerFilePatterns": [
+        "/^k8s/providers/(?:docker|hetzner)/infrastructure/controllers/flux-instance/flux-instance\\.yaml$/"
+      ],
+      "matchStrings": [
+        "\\n    version: \"(?<currentValue>2\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "fluxcd/flux2",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the signed Helm controller in FluxInstance patches. An update needs the generated CRD and the matching SDK audit.",
+      "managerFilePatterns": [
+        "/^k8s/providers/(?:docker|hetzner)/infrastructure/controllers/flux-instance/flux-instance\\.yaml$/"
+      ],
+      "matchStrings": [
+        "value: ghcr\\.io/fluxcd/helm-controller:(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "ghcr.io/fluxcd/helm-controller",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
       "description": "Bump pinned CLI versions in the shared installers under .github/scripts. Same pair as the workflow manager below, in shell assignment syntax: '# renovate: ...\\n<NAME>_VERSION=\"<ver>\"'. Those installers also pin the asset's SHA-256 on the next line, which no datasource can supply — a bump here therefore fails the install with the digest to write rather than installing unverified bytes.",
       "managerFilePatterns": ["/^\\.github/scripts/.+\\.sh$/"],
       "matchStrings": [
@@ -39,6 +66,17 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) extractVersion=(?<extractVersion>\\S+)\\s+[A-Z][A-Z0-9_]*_VERSION:\\s*\"(?<currentValue>[^\"]+)\""
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Keep the digest-pinned images the Coroot security-progress validation workflow exercises in step with the manifests it checks them against. The workflow requires each pin to appear in the deployment, so a manifest update that leaves the workflow behind fails that check; with this manager both files move in the same update PR. COROOT_IMAGE is left out: it is this repository's own build, which Renovate does not track in the manifest either.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/validate-coroot-security-progress\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "(?:COLLECTOR|SERVER|RECONCILER|PROMETHEUS)_IMAGE:\\s*(?<depName>[a-z0-9][a-z0-9./_-]*):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker"
     },
     {
       "customType": "regex",
@@ -386,10 +424,10 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "The Helm SDK is HARD-PINNED at v4.2.4 in every Go module here (scripts/render-helm-chart, scripts/tests/openbao-strategy-transition): they build the exact Helm the deployed Flux helm-controller embeds, so an offline render matches what production renders. scripts/build-controller-helm.sh refuses any other version or module sum, so a standalone update can never go green, and closing it only delays the next offer (#4424, #4731, tracked in #4738). The version moves with the controller instead: when a Flux update changes the embedded Helm, update this pattern, the version and sum in scripts/build-controller-helm.sh, its expected build metadata, HELM_VERSION in .github/workflows/ci.yaml, scripts/guard-helm-post-renderers.sh and both go.mod files in one reviewed change. scripts/tests/test-controller-helm-sdk-renovate-pin.sh fails when this pattern and the build guard disagree. Placed last so no earlier rule can widen it.",
+      "description": "The Helm SDK is HARD-PINNED at v4.3.1 in every Go module here (scripts/render-helm-chart, scripts/tests/openbao-strategy-transition): they build the exact Helm the deployed Flux helm-controller embeds, so an offline render matches what production renders. scripts/build-controller-helm.sh refuses any other version or module sum, so a standalone update can never go green, and closing it only delays the next offer (#4424, #4731, tracked in #4738). The version moves with the controller instead: when a Flux update changes the embedded Helm, update this pattern, the version and sum in scripts/build-controller-helm.sh, its expected build metadata, HELM_VERSION in .github/workflows/ci.yaml, scripts/guard-helm-post-renderers.sh and both go.mod files in one reviewed change. scripts/tests/test-controller-helm-sdk-renovate-pin.sh fails when this pattern and the build guard disagree. Placed last so no earlier rule can widen it.",
       "matchManagers": ["gomod"],
       "matchPackageNames": ["helm.sh/helm/v4"],
-      "allowedVersions": "/^v?4\\.2\\.4$/",
+      "allowedVersions": "/^v?4\\.3\\.1$/",
       "automerge": false
     },
     {
@@ -400,6 +438,18 @@
         "github.com/project-velero/kopia"
       ],
       "enabled": false
+    },
+    {
+      "description": "The recovery profile uses Flux 2.9.6 with the separately pinned Helm controller. Update the base only with a new composition and recovery audit.",
+      "matchPackageNames": ["fluxcd/flux2"],
+      "allowedVersions": "/^v?2\\.9\\.6$/",
+      "automerge": false
+    },
+    {
+      "description": "The signed Helm controller image, generated CRD and SDK move together.",
+      "matchPackageNames": ["ghcr.io/fluxcd/helm-controller"],
+      "allowedVersions": "/^v?1\\.7\\.1$/",
+      "automerge": false
     }
   ],
   "ignorePaths": [

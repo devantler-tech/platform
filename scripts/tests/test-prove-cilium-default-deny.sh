@@ -84,7 +84,7 @@ if [[ "$args" == *'get pods client-allowed client-denied server-allowed server-d
     {metadata:{name:"server-allowed",namespace:"deny-proof",uid:"pod-server-allowed"},status:{podIP:"10.1.0.10"}},
     {metadata:{name:"server-denied",namespace:"deny-proof",uid:"pod-server-denied"},status:{podIP:"10.1.0.11"}}
   ]} | .items |= map(
-    .spec={containers:[{name:"probe",image:"docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8"}]} |
+    .spec={containers:[{name:"probe",image:"docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6"}]} |
     .status += {phase:"Running",conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:"probe",ready:true,restartCount:0,containerID:("containerd://"+.metadata.uid),imageID:"docker-pullable://busybox@sha256:abc",state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}
   )')"
   if [[ -f "${FAKE_STATE}/enforced" || "${FAKE_CASE}" == probe_baseline_not_ready ]]; then

@@ -1,0 +1,32 @@
+# The Agentic Engineer's kagent lane (devantler-tech/monorepo#4866): the agent,
+# its Substrate workers, its GitHub and Anthropic credentials, and the daily
+# trigger. Prod-only, on the kagent and Substrate infrastructure.
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace-credentials.yaml
+  - service-account-anthropic-federation.yaml
+  - service-account-trigger.yaml
+  - service-account-workers.yaml
+  - external-secret-anthropic-federation.yaml
+  - config-map-anthropic-proxy.yaml
+  - deployment-anthropic-proxy.yaml
+  - service-anthropic-proxy.yaml
+  - external-secret-github-app.yaml
+  - github-access-token.yaml
+  - external-secret-github-token.yaml
+  - password-model-placeholder.yaml
+  - external-secret-model-placeholder.yaml
+  - worker-pool.yaml
+  - model-config.yaml
+  - harness.yaml
+  - egress-policy-github.yaml
+  - agent-template.yaml
+  - agent.yaml
+  - config-map-trigger.yaml
+  - cron-job.yaml
+  - cilium-network-policy-agents.yaml
+  - cilium-network-policy-credentials.yaml
+  - cilium-network-policy-trigger.yaml
+  - cilium-network-policy-external-secrets.yaml

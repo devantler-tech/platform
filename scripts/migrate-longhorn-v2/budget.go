@@ -17,6 +17,10 @@ func verifyBudgetSettings(ctx context.Context, c client) error {
 }
 
 func verifyRebuildBudget(target string, s inventory) error {
+	return verifyRawDiskBudget(target, s, permanentRawDiskGiB)
+}
+
+func verifyRawDiskBudget(target string, s inventory, rawGiB uint64) error {
 	const gib = uint64(1024 * 1024 * 1024)
 	var logical, actual uint64
 	if len(s.volumes) == 0 {
@@ -27,21 +31,21 @@ func verifyRebuildBudget(target string, s inventory) error {
 			return errors.New("the last V1 worker cannot be rebuilt while any V1 volume remains")
 		}
 		size, err := strconv.ParseUint(text(v, "spec", "size"), 10, 64)
-		if err != nil || size == 0 || size > 96*gib {
+		if err != nil || size == 0 || size > rawGiB*gib {
 			return errors.New("volume logical size is unknown or outside the raw-disk budget")
 		}
 		// Unlike spec.size, status.actualSize is a JSON number.
 		measured, ok := value(v, "status", "actualSize").(float64)
-		if !ok || measured < 0 || measured > float64(96*gib) {
+		if !ok || measured < 0 || measured > float64(rawGiB*gib) {
 			return errors.New("volume actual size is unknown or outside the raw-disk budget")
 		}
 		used := uint64(measured)
 		logical += size
 		actual += used
-		// 96 GiB per target, 4 GiB disk reserve, 2 GiB metadata margin,
+		// 4 GiB disk reserve, 2 GiB metadata margin,
 		// and one 4 GiB disposable canary or benchmark at a time. Actual data
 		// must additionally leave the current 25% minimum free-space margin.
-		if logical > (96-4-2-4)*gib || actual > (96*75/100-4-2-4)*gib {
+		if logical > (rawGiB-4-2-4)*gib || actual > (rawGiB*75/100-4-2-4)*gib {
 			return errors.New("current volumes leave insufficient raw-disk and canary headroom")
 		}
 	}

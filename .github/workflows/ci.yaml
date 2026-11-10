@@ -64,8 +64,13 @@ jobs:
   # Full suites produce no path outputs. Run them independently, but require
   # their success before production access and the final merge verdict.
   validate-go-regressions:
-    name: 🧪 Validate Complete Go Regressions
+    name: 🧪 Validate Complete Go Regressions (${{ matrix.suite }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        suite: [bridge, helpers]
     permissions:
       contents: read
     steps:
@@ -89,6 +94,12 @@ jobs:
 
       - name: 🧹 Verify every tracked Go module is tidy
         run: bash scripts/check-go-modules-tidy.sh
+
+      - name: 🔍 Lint complete regression routing
+        run: shellcheck scripts/run-go-regressions.sh scripts/tests/test-run-go-regressions.sh
+
+      - name: 🧪 Exercise complete regression routing offline
+        run: bash scripts/tests/test-run-go-regressions.sh
 
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5
@@ -115,11 +126,37 @@ jobs:
       # evicts an unrelated PR (#4893). 20 minutes keeps the slowest measured run
       # under half the bound. Resize it only from fresh hosted timings, never to
       # hide a hung test.
-      # Bound already parallel-safe cases to eight slots: the complete
-      # credential-bridge suite improved from 407s to 245s at four CPUs,
-      # preserving the same 582 passing cases and every deadline.
+      # Both isolated partitions retain eight test workers and every deadline.
+      # Both discover the complete root inventory. One runs the full bridge
+      # package while the other runs every remaining package without a filter.
+      # The matrix result remains required before production and merge.
       - name: 🧪 Validate the complete Go helper regression suite
-        run: go test -parallel 8 -timeout 20m ./...
+        env:
+          PARTITION: ${{ matrix.suite }}
+        run: bash scripts/run-go-regressions.sh "$PARTITION"
+
+  # The organization's required Go workflow only applies while GitHub detects this
+  # repository's language as Go, and Go and Shell are within a few kilobytes of each
+  # other. Call the same workflow here so every same-repository pull request runs it
+  # whichever language is detected, and a regression cannot merge while the rule is
+  # not selecting this repository (#5852). While the language is Go both runs happen;
+  # this call stays read-only so the required run remains the only signed-fix writer.
+  validate-go-project:
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@ea4d0d8c1ba4bcad612ef9c9e9b18ac932e7ff0e # v20.1.11
+    with:
+      apply-signed-fixes: false
+      # Same measured eight-slot bound as the helper regression job above;
+      # input-free required runs read it from .go-test-execution.json (#5862).
+      enable-test-parallelism: true
+      test-parallelism: 8
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      code-quality: write
 
   changes:
     name: 🔍 Detect Changes
@@ -159,6 +196,9 @@ jobs:
           filters: |
             k8s:
               - 'k8s/**'
+              # The k8s-gated database monitoring gate, so a change to the
+              # test alone still runs it.
+              - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
               - 'scripts/tests/private-mail-preparation/**'
               - 'scripts/tests/ingress-client-address/**'
               - 'scripts/tests/vault-email-credentials/**'
@@ -402,6 +442,7 @@ jobs:
               # up, and that no address reaches the public log.
               - 'scripts/probe-gateway-denied-peer.sh'
               - 'scripts/tests/test-probe-gateway-denied-peer.sh'
+              - 'scripts/tests/gateway-denied-peer-wire/**'
               - '.github/workflows/probe-gateway-denied-peer.yaml'
               # The #3144 admission probe, its test and its workflow are one
               # contract: the test pins that every write the probe sends is a
@@ -558,6 +599,8 @@ jobs:
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
+              - 'scripts/tests/test-agentic-engineer-trigger.sh'
+              - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-cancellation-release.sh'
               - 'scripts/tests/test-velero-node-agent-priority.sh'
@@ -679,9 +722,15 @@ jobs:
               - 'scripts/floating-image-tag-exceptions.tsv'
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-helm-post-renderers.sh'
+              - 'scripts/guard-controller-helm-profile.sh'
+              - 'scripts/tests/test-controller-helm-profile.sh'
               - 'scripts/tests/test-guard-helm-post-renderers.sh'
               - 'scripts/tests/test-kubescape-storage-placement.sh'
               - 'scripts/tests/test-kubescape-runtime-rules-switch.sh'
+              - 'scripts/generate-kubescape-rule-schema.sh'
+              - 'scripts/tests/kubescape-rule-schema/**'
+              - 'schemas/**'
+              - 'scripts/tests/test-substrate-bucket-init-hook.sh'
               - 'scripts/build-controller-helm.sh'
               - 'scripts/prepare-helm-render-input-capture.sh'
               - 'scripts/render-helm-chart/**'
@@ -1100,8 +1149,8 @@ jobs:
       - name: ⎈ Install checksum-verified native Helm
         shell: bash
         env:
-          HELM_VERSION: v4.2.4
-          HELM_SHA256: c306b46f719b0a4da32d0f78ee21bf90ce8d602f15b22ab753f0674d1670a7f3
+          HELM_VERSION: v4.3.1
+          HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
         run: |
           set -euo pipefail
           native_dir="$(mktemp -d)"
@@ -1218,6 +1267,20 @@ jobs:
           go run ./scripts/validate-flux-verify \
             ksail.prod.yaml \
             k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml
+
+      - name: 🧩 Verify the exact reversible controller profile natively
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          shellcheck scripts/guard-controller-helm-profile.sh scripts/tests/test-controller-helm-profile.sh
+          tool_dir="$(mktemp -d "$RUNNER_TEMP/flux-profile.XXXXXX")"
+          archive="$tool_dir/flux-operator.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.62.1/flux-operator_0.62.1_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 7bb9e54d370039d8701d4271b38aed57d6c89668432b7caddce69f4e26e24c1b "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$tool_dir" flux-operator
+          FLUX_OPERATOR_BIN="$tool_dir/flux-operator" bash scripts/tests/test-controller-helm-profile.sh
 
       # The step above covers the ROOT source. These are the other eight cosign
       # subjects — app OCIRepositories, the tenant RGD, the Kyverno policy and the
@@ -1554,8 +1617,8 @@ jobs:
       - name: ⎈ Install checksum-verified native Helm
         shell: bash
         env:
-          HELM_VERSION: v4.2.4
-          HELM_SHA256: c306b46f719b0a4da32d0f78ee21bf90ce8d602f15b22ab753f0674d1670a7f3
+          HELM_VERSION: v4.3.1
+          HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
         run: |
           set -euo pipefail
           native_dir="$(mktemp -d)"
@@ -1869,7 +1932,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.35"
+          KSAIL_VERSION: "7.206.69"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2244,15 +2307,18 @@ jobs:
         # cleanup cannot silently turn every scoped disposition back on.
         run: bash scripts/tests/test-megalinter-scan-counts-ignorefile.sh
 
+      - name: Install checksum-verified Trivy for disposition boundaries
+        if: needs.changes.outputs.k8s == 'true'
+        run: bash .github/scripts/setup-supply-chain-tools.sh trivy-boundary
+
       - name: 🧱 Validate vendored-operator disposition boundary
         if: needs.changes.outputs.k8s == 'true'
         # The KubeVirt/CDI RBAC dispositions are path-scoped to those two
         # vendored bundles. If one ever loses its paths key or widens, the
         # same checks go quiet on the first-party cluster roles this
         # repository authors, where they are still open findings — and the
-        # count would drop, which reads exactly like progress. yq-only
-        # structural checks always run here; the trivy paired control runs
-        # wherever trivy is installed.
+        # count would drop, which reads exactly like progress. CI requires both
+        # the structural checks and the Trivy paired control.
         run: |
           shellcheck scripts/tests/test-trivyignore-vendored-operator-boundary.sh
           bash scripts/tests/test-trivyignore-vendored-operator-boundary.sh
@@ -2265,7 +2331,7 @@ jobs:
         # so a container added later at a low UID would be silently suppressed and the count
         # would simply not rise — which reads exactly like nothing happened. The premise is
         # asserted per container here; the paired trivy control runs wherever trivy is
-        # installed and skips loudly where it is not.
+        # installed; CI requires it.
         run: |
           shellcheck scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
           bash scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
@@ -2285,8 +2351,7 @@ jobs:
         # Every private-mail container runs at uid/gid 2000, the stalwart identity the pinned
         # Stalwart digest defines and the bootstrap image restates. The path-scoped entry would
         # also hide a container added later at another low identity, so the guard asserts the
-        # identity and image of every container. Its identical-probe trivy control runs only
-        # where trivy is installed, which this job is not yet (#5864).
+        # identity and image of every container. Trivy checks the identical probe at both paths.
         run: |
           shellcheck scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
           bash scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
@@ -2321,7 +2386,7 @@ jobs:
         # application ConfigMap that genuinely embeds a secret would go quiet too, and the
         # count would simply drop — which reads exactly like progress. The paired control
         # scans the same bytes at an excepted and a non-excepted path, so only the path can
-        # explain the difference. It skips where trivy is absent rather than passing blindly.
+        # explain the difference. CI requires this control and the reviewed matched-key sets.
         run: |
           shellcheck scripts/tests/test-trivyignore-configmap-content-boundary.sh
           bash scripts/tests/test-trivyignore-configmap-content-boundary.sh
@@ -2516,7 +2581,8 @@ jobs:
       - name: 🚧 Validate Gateway denied-peer probe
         if: needs.changes.outputs.k8s == 'true'
         # The probe needs prod, runs only on dispatch and writes while it runs. Its
-        # test fakes kubectl and pins each verdict against a one-fixture control.
+        # test pins verdicts and cleanup, then executes both rendered transport modes with
+        # real curl and synthetic loopback HTTP/TLS peers.
         run: |
           shellcheck scripts/probe-gateway-denied-peer.sh scripts/tests/test-probe-gateway-denied-peer.sh
           bash scripts/tests/test-probe-gateway-denied-peer.sh
@@ -2589,8 +2655,9 @@ jobs:
 
       - name: 🐘 Validate Coroot Postgres scrape policy
         if: needs.changes.outputs.k8s == 'true'
-        # Schema validation cannot detect a valid selector that matches no pod.
-        # Pin both cross-namespace policies to the operator's generated labels.
+        # Every production database must ship Coroot's Postgres integration,
+        # and schema validation cannot detect a valid selector that matches no
+        # pod: pin each scrape policy to the operator's generated labels.
         run: |
           shellcheck scripts/tests/test-coroot-postgres-scrape-policy.sh
           bash scripts/tests/test-coroot-postgres-scrape-policy.sh
@@ -2766,6 +2833,24 @@ jobs:
           shellcheck scripts/tests/test-coroot-helper-image-pull-policy.sh
           bash scripts/tests/test-coroot-helper-image-pull-policy.sh
 
+      - name: ⏱️ Validate the Agentic Engineer trigger
+        if: needs.changes.outputs.k8s == 'true'
+        # Replays kagent's A2A API against the manifest's real script: a run is
+        # watched until the agent ends it and never cancelled, a lost send is
+        # resent with the same message ID, and the Job's result is the run's.
+        run: |
+          shellcheck scripts/tests/test-agentic-engineer-trigger.sh
+          bash scripts/tests/test-agentic-engineer-trigger.sh
+
+      - name: 🔑 Validate the Anthropic proxy's Envoy bootstrap
+        if: needs.changes.outputs.k8s == 'true'
+        # The proxy crash-looped on a bootstrap Envoy rejects at startup (#5905).
+        # Validates it with the Deployment's pinned Envoy image, and proves the
+        # check catches a bootstrap without its node identity.
+        run: |
+          shellcheck scripts/tests/test-anthropic-proxy-envoy-config.sh
+          bash scripts/tests/test-anthropic-proxy-envoy-config.sh
+
       - name: 💾 Validate the Velero maintenance OOM alert
         if: needs.changes.outputs.k8s == 'true'
         # Replays an OOMKilled attempt plus a later successful retry against the
@@ -2912,7 +2997,7 @@ jobs:
 
       - name: 🔗 Validate the pod-security exception still matches its mutation's scope
         if: needs.changes.outputs.k8s == 'true'
-        # The exception suppresses C-0016/C-0055 everywhere EXCEPT the twelve
+        # The exception suppresses C-0016/C-0055 everywhere EXCEPT the fourteen
         # namespaces its compensating mutation does not reach. #2824 happened because
         # those two scopes drifted apart in silence, and the narrowing that fixed it
         # left the agreement resting on a code comment. Both directions of drift read
@@ -2922,7 +3007,7 @@ jobs:
         # now runs, producing findings that are not real gaps.
         #
         # The comparison is NOT against the exclusion list: add-pod-security-context
-        # excludes fourteen namespaces, and two of them (cert-manager and keda)
+        # excludes sixteen namespaces, and two of them (cert-manager and keda)
         # are reached by the by-name add-imageuid rule. Reading exclusions
         # alone reports two false differences on a correct tree, and the natural way
         # to silence that is to add them to the exception — the very drift this
@@ -3114,7 +3199,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.35"
+          KSAIL_VERSION: "7.206.69"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3453,7 +3538,7 @@ jobs:
           !cancelled() &&
           steps.normalize-sarif.outputs.sarif == 'ready' &&
           github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
         with:
           sarif_file: ${{ runner.temp }}/kubescape.sarif
           # Distinguishes these alerts from the CodeQL and zizmor analyses that
@@ -3548,7 +3633,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.35"
+          KSAIL_VERSION: "7.206.69"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3661,7 +3746,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup Go
-        # Runs the complete offline credential-bridge regression family.
+        # Supplies the reviewed YAML parser for the selected shell controls.
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -3703,7 +3788,9 @@ jobs:
           bash scripts/tests/test-use-prod-stable-api-endpoint.sh
           bash scripts/tests/test-wait-for-prod-api-stability.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
-          go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
+          # The unconditional validate-go-regressions job runs the complete
+          # refresh-flux-ghcr-auth package on this same checkout.
+          # Required CI rejects every non-success result from either job.
 
   naming:
     name: 🏷️ Validate Naming Conventions
@@ -3730,7 +3817,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@56ceec6717a1faa0686d865424cd2d1d45f18a0a # v20.1.6
+        uses: devantler-tech/.github/actions/validate-naming@1a0eb6f18b88a7816b91cbf692b8ad8ea9a08123 # v20.1.17
 
       - name: Confirm naming validation completed
         env:
@@ -4051,14 +4138,14 @@ jobs:
       - name: ⚙️ Setup the audited controller's Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: scripts/render-helm-chart/go.mod
+          go-version: "1.27.3"
           cache: false
 
       - name: 🧩 Install the audited controller's Helm renderer
-        # Flux 2.9.6 / helm-controller 1.6.5 embeds upstream Helm 4.2.4. The
+        # Flux 2.9.6 with the signed helm-controller 1.7.1 override embeds Helm 4.3.1. The
         # runner's ambient Helm is not proof of matching template capabilities.
         env:
-          HELM_VERSION: v4.2.4
+          HELM_VERSION: v4.3.1
         run: |
           install_dir="$(mktemp -d)"
           cd "$install_dir"
@@ -4071,12 +4158,20 @@ jobs:
 
       - name: 🧩 Validate the post-renderer guard
         run: |
-          shellcheck scripts/build-controller-helm.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          shellcheck scripts/build-controller-helm.sh scripts/guard-controller-helm-profile.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
           export CONTROLLER_HELM="$controller_helm"
           bash scripts/tests/test-guard-helm-post-renderers.sh
+
+      - name: 🧩 Verify Substrate's bucket-init Job runs as a hook
+        # The chart's Job carries the RustFS keys in its immutable pod template.
+        # As an ordinary release object, a finished Job fails every upgrade that
+        # changes them or the image (#5903). The release patches it into a hook.
+        run: |
+          shellcheck scripts/tests/test-substrate-bucket-init-hook.sh
+          bash scripts/tests/test-substrate-bucket-init-hook.sh
 
       - name: 🧩 Validate Reloader chart selection
         run: |
@@ -4163,7 +4258,7 @@ jobs:
             ${{ github.event.pull_request.base.sha ||
             github.event.merge_group.base_sha }}
         run: |
-          shellcheck scripts/tests/test-kubescape-runtime-rules-switch.sh
+          shellcheck scripts/tests/test-kubescape-runtime-rules-switch.sh scripts/generate-kubescape-rule-schema.sh
           changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
             .github/workflows/ci.yaml \
             k8s/bases/infrastructure/controllers/kubescape \
@@ -4172,6 +4267,7 @@ jobs:
             k8s/providers/hetzner/infrastructure/controllers/kubescape \
             k8s/bases/components ksail.prod.yaml \
             scripts/tests/test-kubescape-runtime-rules-switch.sh \
+            scripts/generate-kubescape-rule-schema.sh schemas \
             scripts/build-controller-helm.sh \
             scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
           if [[ -n "$changed_inputs" ]]; then
@@ -4247,7 +4343,7 @@ jobs:
       - name: ⚙️ Setup the audited controller's Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: scripts/render-helm-chart/go.mod
+          go-version: "1.27.3"
           cache: false
 
       - name: 🛟 Validate the PodDisruptionBudget selector guard
@@ -4541,7 +4637,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.35"
+          KSAIL_VERSION: "7.206.69"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -4652,6 +4748,7 @@ jobs:
         validate-publication-generator,
         validate-manifest-regressions,
         validate-go-regressions,
+        validate-go-project,
         validate-webapp-compiler,
         validate-consumer-discovery,
         validate-publication-contract,
@@ -4675,6 +4772,29 @@ jobs:
     permissions:
       actions: read
     steps:
+      - name: 🧪 Require the organization Go workflow on same-repository pull requests
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+          GO_PROJECT_RESULT: ${{ needs.validate-go-project.result }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request)
+              if [ "$HEAD_REPOSITORY" = "$REPOSITORY" ]; then
+                expected=success
+              else
+                expected=skipped
+              fi
+              ;;
+            merge_group) expected=skipped ;;
+            *) echo '::error::Unknown Go workflow event'; exit 1 ;;
+          esac
+          if [ "$GO_PROJECT_RESULT" != "$expected" ]; then
+            echo "::error::Organization Go workflow result was $GO_PROJECT_RESULT; expected $expected"
+            exit 1
+          fi
+
       - name: 🧩 Require complete selected WebApp compilation
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -4746,7 +4866,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@56ceec6717a1faa0686d865424cd2d1d45f18a0a # v20.1.6
+        uses: devantler-tech/.github/actions/aggregate-job-checks@e6db1a4ed5b23ce6f69e755deeddd6649313e9dc # v20.1.12
         with:
           check-workflow-startup: "true"
           job-results: >-
@@ -4758,6 +4878,7 @@ jobs:
             ${{ needs.validate-publication-generator.result }}
             ${{ needs.validate-manifest-regressions.result }}
             ${{ needs.validate-go-regressions.result }}
+            ${{ needs.validate-go-project.result }}
             ${{ needs.validate-webapp-compiler.result }}
             ${{ needs.validate-consumer-discovery.result }}
             ${{ needs.validate-publication-contract.result }}

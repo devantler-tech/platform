@@ -104,10 +104,10 @@ index 1ebcc2f..2e7c763 100644
  	skipIfNotVM(t)
  	src := `
 diff --git a/go.mod b/go.mod
-index 4cd9b06..e82b749 100644
+index 4cd9b06..3e74f39 100644
 --- a/go.mod
 +++ b/go.mod
-@@ -16,8 +16,8 @@ require (
+@@ -16,14 +16,14 @@ require (
  	github.com/florianl/go-conntrack v0.3.0
  	github.com/gobwas/glob v0.2.3
  	github.com/godbus/dbus/v5 v5.2.2
@@ -118,6 +118,13 @@ index 4cd9b06..e82b749 100644
  	github.com/google/winops v0.0.0-20260218212338-878c3f651658
  	github.com/grafana/jfr-parser v0.15.0
  	github.com/hashicorp/golang-lru/v2 v2.0.7
+ 	github.com/ianlancetaylor/demangle v0.0.0-20250417193237-f615e6bd150b
+ 	github.com/jpillora/backoff v1.0.0
+-	github.com/klauspost/compress v1.20.0
++	github.com/klauspost/compress v1.20.2
+ 	github.com/mdlayher/taskstats v0.0.0-20230712191918-387b3d561d14
+ 	github.com/moby/moby/api v1.55.0
+ 	github.com/moby/moby/client v0.5.1
 @@ -31,13 +31,13 @@ require (
  	github.com/prometheus/client_golang v1.24.1
  	github.com/prometheus/client_model v0.6.2
@@ -201,7 +208,7 @@ index 4cd9b06..e82b749 100644
 +
 +replace github.com/coroot/coroot-cluster-agent => ../cluster-agent
 diff --git a/go.sum b/go.sum
-index 98da4bc..95308dd 100644
+index 98da4bc..3046ae8 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -1,7 +1,7 @@
@@ -255,6 +262,17 @@ index 98da4bc..95308dd 100644
  github.com/grobie/gomemcache v0.0.0-20230213081705-239240bbc445 h1:FlKQKUYPZ5yDCN248M3R7x8yu2E3yEZ0H7aLomE4EoE=
  github.com/grobie/gomemcache v0.0.0-20230213081705-239240bbc445/go.mod h1:L69/dBlPQlWkcnU76WgcppK5e4rrxzQdi6LhLnK/ytA=
  github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePCEX9iuS+cneUwncnw=
+@@ -169,8 +167,8 @@ github.com/jsimonetti/rtnetlink/v2 v2.0.1 h1:xda7qaHDSVOsADNouv7ukSuicKZO7GgVUCX
+ github.com/jsimonetti/rtnetlink/v2 v2.0.1/go.mod h1:7MoNYNbb3UaDHtF8udiJo/RH6VsTKP1pqKLUTVCvToE=
+ github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
+ github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
+-github.com/klauspost/compress v1.20.0 h1:a3C1ke2ohxFymNlb2HWAHjDeKCI90scRskErZkR0ezA=
+-github.com/klauspost/compress v1.20.0/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
++github.com/klauspost/compress v1.20.2 h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=
++github.com/klauspost/compress v1.20.2/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
+ github.com/kr/fs v0.1.0/go.mod h1:FFnZGqtBN9Gxj7eW1uZ42v5BccTP0vu6NEaFoC2HwRg=
+ github.com/kr/pretty v0.2.1/go.mod h1:ipq/a2n7PKx3OHsz4KJII5eveXtPO4qwEXGdVfWzfnI=
+ github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
 @@ -255,8 +253,8 @@ github.com/prometheus/memcached_exporter v0.14.3 h1:Of+E4D+VysIicZjLDoSvlWAM7Yu0
  github.com/prometheus/memcached_exporter v0.14.3/go.mod h1:5RnZhcAXAu6rwwlGl4pz8NJjAjvBdHr1ZL5F8vYLJnU=
  github.com/prometheus/procfs v0.21.1 h1:GljZCt+zSTS+NZq88cyQ1LjZ+RCHp3uVuabBWA5+OJI=

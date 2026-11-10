@@ -25,6 +25,7 @@ type journal struct {
 	NativeEmptyDigest  string `json:"nativeEmptyDigest,omitempty"`
 	OriginalBootID     string `json:"originalBootID,omitempty"`
 	RawVolumeAbsent    bool   `json:"rawVolumeAbsent,omitempty"`
+	StagingLayout      bool   `json:"stagingLayout,omitempty"`
 }
 
 // validateJournal requires complete original identities and a known procedure
@@ -50,7 +51,7 @@ func validateJournal(j journal, target string) error {
 		}
 		return nil
 	}
-	if j.Schema != 1 || !inventoryTarget.MatchString(target) || j.TemporarySelection != "" || j.NativeEmptyDigest != "" || j.OriginalBootID != "" || j.RawVolumeAbsent {
+	if j.Schema != 1 || !inventoryTarget.MatchString(target) || j.TemporarySelection != "" || j.NativeEmptyDigest != "" || j.OriginalBootID != "" || j.RawVolumeAbsent || j.StagingLayout {
 		return errors.New("journal schema and preparation scope do not match")
 	}
 	if len(j.OriginalDisks) != 1 {

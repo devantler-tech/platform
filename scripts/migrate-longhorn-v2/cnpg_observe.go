@@ -70,10 +70,10 @@ func (c client) readCNPGObservation(ctx context.Context, selected cnpgSource) (c
 	return cnpgObservation{Cluster: cluster, Pods: owned, States: map[string]postgresState{}}, nil
 }
 
-// readCNPGPhysicalState captures the primary barrier before either standby.
+// readCNPGPhysicalState captures the primary barrier before the standbys.
 func (c client) readCNPGPhysicalState(ctx context.Context, observation *cnpgObservation) error {
 	primary := text(observation.Cluster, "status", "currentPrimary")
-	ordered := make([]object, 0, 3)
+	ordered := make([]object, 0, len(observation.Pods))
 	for _, pod := range observation.Pods {
 		if text(pod, "metadata", "name") == primary {
 			ordered = append(ordered, pod)
@@ -84,7 +84,7 @@ func (c client) readCNPGPhysicalState(ctx context.Context, observation *cnpgObse
 			ordered = append(ordered, pod)
 		}
 	}
-	if len(ordered) != 3 {
+	if len(ordered) == 0 || text(ordered[0], "metadata", "name") != primary {
 		return errors.New("complete physical database coverage is required")
 	}
 	for _, pod := range ordered {

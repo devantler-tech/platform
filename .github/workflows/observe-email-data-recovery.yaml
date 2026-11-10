@@ -5,7 +5,7 @@ name: Observe Retained Email Recovery
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type exactly: observe-email-data-recovery"
+        description: "Type observe-email-data-recovery or verify-retained-email-parity"
         required: true
         type: string
 
@@ -29,7 +29,7 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/observe-email-data-recovery.yaml@refs/heads/main || "$GITHUB_ACTOR" != devantler || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted || "$CONFIRM" != observe-email-data-recovery ]]; then
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/observe-email-data-recovery.yaml@refs/heads/main || "$GITHUB_ACTOR" != devantler || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted || ( "$CONFIRM" != observe-email-data-recovery && "$CONFIRM" != verify-retained-email-parity ) ]]; then
             printf '%s\n' 'EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=dispatch' >&2
             exit 2
           fi
@@ -71,6 +71,8 @@ jobs:
           KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
           EMAIL_DATA_RECOVERY_CONFIRM: ${{ inputs.confirm }}
+          EMAIL_RETAINED_READER_UID: ${{ secrets.EMAIL_RETAINED_READER_UID }}
+          EMAIL_RETAINED_CLAIM_UID: ${{ secrets.EMAIL_RETAINED_CLAIM_UID }}
         run: |
           set +x
           set -euo pipefail

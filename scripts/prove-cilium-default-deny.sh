@@ -15,7 +15,7 @@ readonly name="deny-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 readonly context="kind-${name}" kubeconfig="${work}/kubeconfig"
 readonly candidate="${RUNNER_TEMP}/cilium-deny-candidate"
 readonly cilium_image='quay.io/cilium/cilium:v1.20.2@sha256:2939231d0d3e3ebddcd80fffa168b7ddcc78fdf0dc864d1c8c126ff523c54f01'
-readonly image='docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8'
+readonly image='docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6'
 export KUBECONFIG="$kubeconfig"
 
 receipt_update() {

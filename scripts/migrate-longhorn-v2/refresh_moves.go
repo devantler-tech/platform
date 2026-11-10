@@ -243,7 +243,9 @@ func (c client) patchNode(ctx context.Context, name string, changes func(object)
 	return err
 }
 
-func (c client) cordonForRefresh(ctx context.Context, name string) error {
+// cordonForRefresh adopts only its own existing fence and checks current main
+// before attempting a new cordon.
+func (c client) cordonForRefresh(ctx context.Context, name, source string) error {
 	return c.patchNode(ctx, name, func(n object) ([]object, error) {
 		fence := value(n, "metadata", "annotations", fenceAnnotation)
 		if value(n, "spec", "unschedulable") == true && fence == refreshFencePrefix+name {
@@ -251,6 +253,9 @@ func (c client) cordonForRefresh(ctx context.Context, name string) error {
 		}
 		if value(n, "spec", "unschedulable") == true || fence != nil {
 			return nil, errors.New("worker cordon appeared during the kubelet refresh")
+		}
+		if err := sourceCurrent(ctx, c.run, source); err != nil {
+			return nil, err
 		}
 		return append(annotationPatch(n, refreshFencePrefix+name), object{"op": "add", "path": "/spec/unschedulable", "value": true}), nil
 	})
@@ -304,7 +309,7 @@ func podLeaving(pods []object, uid string) bool {
 
 // movePod asks for an eviction, so disruption budgets decide, and waits until the
 // workload is back at its Ready count before the next Pod may leave.
-func (c client) movePod(ctx context.Context, pod object, pods []object) error {
+func (c client) movePod(ctx context.Context, source string, pod object, pods []object) error {
 	namespace, name, uid := text(pod, "metadata", "namespace"), text(pod, "metadata", "name"), text(pod, "metadata", "uid")
 	if err := safeKubeRequest("pods", namespace, name, false); err != nil || namespace == "" {
 		return errors.New("a moved Pod's identity cannot select another request scope")
@@ -347,6 +352,9 @@ func (c client) movePod(ctx context.Context, pod object, pods []object) error {
 				return err
 			}
 		}
+		if err = sourceCurrent(ctx, c.run, source); err != nil {
+			return err
+		}
 		if _, err = c.kubectl(ctx, eviction, "create", "--raw", "/api/v1/namespaces/"+namespace+"/pods/"+name+"/eviction", "-f", "-"); err == nil {
 			break
 		}
@@ -371,7 +379,7 @@ func (c client) movePod(ctx context.Context, pod object, pods []object) error {
 
 // moveForRefresh makes the worker fit and returns with its cordon held. Scheduling must
 // stay closed until kubelet reports the smaller allocatable, or evicted Pods can return.
-func (c client) moveForRefresh(ctx context.Context, n object, moves, pods []object, held *bool) error {
+func (c client) moveForRefresh(ctx context.Context, source string, n object, moves, pods []object, held *bool) error {
 	name := text(n, "metadata", "name")
 	nodes, err := c.list(ctx, "nodes", "")
 	if err != nil {
@@ -382,7 +390,7 @@ func (c client) moveForRefresh(ctx context.Context, n object, moves, pods []obje
 	}
 	// Held before the request: a lost response may still have placed the cordon.
 	*held = true
-	if err = c.cordonForRefresh(ctx, name); err != nil {
+	if err = c.cordonForRefresh(ctx, name, source); err != nil {
 		return err
 	}
 	for _, pod := range moves {
@@ -390,7 +398,7 @@ func (c client) moveForRefresh(ctx context.Context, n object, moves, pods []obje
 		if listErr != nil {
 			return listErr
 		}
-		if err = c.movePod(ctx, pod, live); err != nil {
+		if err = c.movePod(ctx, source, pod, live); err != nil {
 			return err
 		}
 	}

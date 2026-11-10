@@ -26,7 +26,7 @@ func validateCNPGObservation(before, after cnpgObservation) error {
 		!reflect.DeepEqual(value(before.Cluster, "spec"), value(after.Cluster, "spec")) ||
 		value(before.Cluster, "metadata", "generation") != value(after.Cluster, "metadata", "generation") ||
 		text(before.Cluster, "status", "currentPrimary") != text(after.Cluster, "status", "currentPrimary") ||
-		len(before.States) != 3 || len(after.States) != 3 {
+		len(before.States) != len(original) || len(after.States) != len(current) || len(original) != len(current) {
 		return refused
 	}
 	primaryName := text(before.Cluster, "status", "currentPrimary")

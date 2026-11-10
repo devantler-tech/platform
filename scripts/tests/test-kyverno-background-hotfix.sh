@@ -19,7 +19,7 @@ fail() {
 [[ "$(yq -r '.jobs.publish.if' "$workflow")" == "github.event_name == 'push' && github.ref == 'refs/heads/main'" &&
 "$(yq -r '.jobs.publish.needs' "$workflow")" == verify ]] || fail 'publish only tested main pushes'
 [[ "$(yq -r '.env.SOURCE_COMMIT' "$workflow")" == e63308f1e16c05cd009ac4864be6ec25c66b49be &&
-"$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == 52bd71206733efbd2a2ce86595315c9706ada94a &&
+"$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == a9fcf39f19241ac127b2a9d8a70eadae54c22de8 &&
 "$(yq -r '.env.IMAGE' "$workflow")" == ghcr.io/devantler-tech/platform-kyverno-background ]] || fail 'source or destination changed'
 # This expression belongs to GitHub, not the shell.
 # shellcheck disable=SC2016

@@ -71,7 +71,7 @@ spec:
     # Recognize actual checkpoint-record progress on idle archived databases;
     # retain the existing warning when that evidence is missing or invalid.
     image:
-      name: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:9a2782f405f9ee673301912b3b2cf85a4a154fbfeb1542df2d4937d6600396f1
+      name: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.2-900535fee5b7a2f6615a72ef2097038099c1f976@sha256:0f77bc490a377f6bf966fa5c0caa0b7e8e4583fe6707b037526870994b49630f
 
   # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
   # existing oauth2-proxy (Dex) via http-route.yaml — exactly how Prometheus /
@@ -225,7 +225,7 @@ spec:
     # carries the reviewed 512-page-per-CPU patch (2 MiB per CPU) and retries a
     # network metric dump the kernel interrupted, so no interface goes missing.
     image:
-      name: ghcr.io/devantler-tech/platform-coroot-node-agent:v1.38.1-alerts.1-457bde99cb232c5427bbd0c4aa990c2f87ff1ca1@sha256:c9f4fcaad065e45bcd1dabee6ffec934785fcd958b5dad6e3b4c5497af2ae4a6
+      name: ghcr.io/devantler-tech/platform-coroot-node-agent:v1.38.1-alerts.1-adb150c0a8c590b13d548a272d09535809f52702@sha256:df15440e7005c4b5e3b3354a9c55ff54e6926177f69654d647181c4b3137d589
     priorityClassName: platform-critical
     # Authored memory sizing — REQUIRED. DaemonSet VPAs are CPU-only (see
     # cluster-policies/best-practices/auto-vpa-daemonset.yaml: VPA sized every node's

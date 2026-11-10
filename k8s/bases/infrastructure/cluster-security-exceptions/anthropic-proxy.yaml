@@ -1,0 +1,21 @@
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: anthropic-proxy
+spec:
+  reason: >-
+    C-0012's generic credential-text pattern matches the token-exchange script
+    and Envoy configuration in the agentic-engineer lane's anthropic-proxy
+    ConfigMap, which name the bearer header and the file the exchanged token is
+    written to. The ConfigMap holds no credential: the token is exchanged at
+    runtime from a projected identity token and written only to an in-memory
+    volume Envoy reads. Other ConfigMaps, controls and genuine credentials
+    remain scanned.
+  match:
+    resources:
+      - apiGroup: ""
+        kind: ConfigMap
+        name: ^anthropic-proxy$
+  posture:
+    - controlID: C-0012
+      action: ignore

@@ -1,0 +1,20 @@
+---
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 40GiB
+  maxSize: -152GiB
+  grow: false
+---
+apiVersion: v1alpha1
+kind: RawVolumeConfig
+name: longhorn
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 144GiB
+  maxSize: 144GiB
+  grow: false

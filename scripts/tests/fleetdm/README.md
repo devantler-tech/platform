@@ -11,7 +11,7 @@ charted Fleet image, including hook Jobs, must also match the rendered server;
 hooks are checked unchanged rather than incorrectly post-rendered.
 The retained disruption budget must also select the rendered server's Pod labels.
 
-CI requires native Helm and kubectl. Run the same check locally with Helm 4.2.4:
+CI requires native Helm and kubectl. Run the same check locally with Helm 4.3.1:
 
 ```sh
 FLEETDM_REQUIRE_NATIVE=1 FLEETDM_HELM_BIN=/path/to/helm \

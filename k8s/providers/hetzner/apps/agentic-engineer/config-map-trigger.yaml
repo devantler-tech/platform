@@ -1,0 +1,109 @@
+# The daily run's trigger. It sends the run message over kagent's A2A API and
+# watches the task until the agent ends it. There is no per-run time limit:
+# cutting a run off mid-task wastes what it has already spent, so the
+# Anthropic workspace's monthly limit is the lane's only spend cap (maintainer
+# decision, 2026-11-09). The message ID is per day, and kagent returns the
+# existing task for a resent opening message, so a resend continues the same
+# run instead of starting a second one.
+#
+# The current message is the canary (devantler-tech/monorepo#4869): it proves
+# the model, GitHub and Git paths and changes nothing. The full engineering
+# run replaces it once the canary has passed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trigger
+  namespace: agentic-engineer
+data:
+  message.txt: |
+    Canary run. Change nothing: create no branch, commit, issue, comment or
+    pull request.
+    1. Name the model you are running as.
+    2. Run `git -c http.extraHeader='Authorization: Basic kagent-credential-injected' ls-remote https://github.com/devantler-tech/monorepo.git HEAD`
+       and report the commit it prints.
+    3. Shallow-clone that repository the same way and report the first line of
+       its AGENTS.md.
+    4. Report which of the commands gh, curl, jq and yq exist in your sandbox.
+    Reply with a short report of each step and anything that failed.
+  trigger.sh: |
+    #!/bin/sh
+    set -eu
+    endpoint=http://kagent-controller.kagent.svc.cluster.local:8083/agents/agentic-engineer/agentic-engineer
+    run_id="run-$(date -u +%Y%m%d)"
+    poll="${POLL_SECONDS:-30}"
+    message="${MESSAGE_FILE:-/etc/trigger/message.txt}"
+    rpc() {
+      curl -sS --fail-with-body --max-time 60 -H 'content-type: application/json' \
+        -H 'A2A-Version: 1.0' -H 'X-User-Id: agentic-engineer-scheduler' \
+        --data-binary @- "$endpoint"
+    }
+    get_task() {
+      jq -n --arg id "$id" '{jsonrpc: "2.0", id: "get", method: "GetTask", params: {id: $id}}' | rpc
+    }
+    # An unreadable response is an unknown state, never a reason to stop
+    # watching a task that may still be running.
+    task_state() {
+      printf '%s' "$task" | jq -r '.result.status.state // "unknown"' 2>/dev/null || echo unknown
+    }
+    # A state the task does not leave on its own: the run has ended.
+    terminal() {
+      case "$1" in
+        *COMPLETED|*FAILED|*CANCELED|*REJECTED|*INPUT_REQUIRED|*AUTH_REQUIRED) return 0 ;;
+      esac
+      return 1
+    }
+    send() {
+      jq -n --arg id "$run_id" --rawfile text "$message" \
+        '{jsonrpc: "2.0", id: $id, method: "SendMessage", params: {
+           message: {messageId: $id, role: "ROLE_USER", parts: [{text: $text}]},
+           configuration: {returnImmediately: true}}}' | rpc
+    }
+    # A send whose reply is lost may still have started the run. kagent
+    # treats a resent opening message as the same request and returns the
+    # task the first send started (InteractionService.PrepareSend, kagent
+    # v1.0.0-rc3), so the trigger resends until it knows the task. A run it
+    # never learns of fails the Job.
+    id=""
+    attempt=0
+    while [ -z "$id" ] && [ "$attempt" -lt 5 ]; do
+      attempt=$((attempt + 1))
+      task=$(send) || task=""
+      id=$(printf '%s' "$task" | jq -er '.result.task.id // .result.id' 2>/dev/null) || id=""
+      if [ -z "$id" ]; then
+        echo "SendMessage attempt $attempt gave no task id: $(printf '%s' "$task" | head -c 300)" >&2
+        if [ "$attempt" -lt 5 ]; then sleep "$poll"; fi
+      fi
+    done
+    if [ -z "$id" ]; then
+      echo "no task id for $run_id after $attempt attempts: a run may have started that this trigger cannot watch" >&2
+      exit 2
+    fi
+    echo "started $run_id as task $id"
+    # Watch until the agent ends the run. A failed or unreadable GetTask is
+    # retried at the next poll; the trigger never cancels the task. The Job's
+    # activeDeadlineSeconds bounds only this watcher (cron-job.yaml). Each
+    # change of what a poll sees is logged once, so the Pod log tells a long
+    # healthy run from a watcher that cannot reach or read the task.
+    state=""
+    seen=""
+    until terminal "$state"; do
+      sleep "$poll"
+      if task=$(get_task); then
+        state=$(task_state)
+        now=$state
+      else
+        now="unreachable (GetTask failed)"
+      fi
+      if [ "$now" != "$seen" ]; then
+        echo "task $id: $now"
+        seen=$now
+      fi
+    done
+    echo "final state: $state"
+    # A streamed reply arrives as many parts: join one message's parts as
+    # written, and separate the messages with a newline.
+    printf '%s' "$task" | jq -r '
+      [(.result.artifacts[]? | [.parts[]?.text | select(. != null)] | join("")),
+       ([.result.status.message.parts[]?.text | select(. != null)] | join(""))]
+      | map(select(. != "")) | join("\n")' | tail -c 4000
+    case "$state" in *COMPLETED) exit 0 ;; *) exit 1 ;; esac

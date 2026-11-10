@@ -1,9 +1,9 @@
 # Prepare Longhorn V2 workers
 
 `observe-database` is a protected, read-only PostgreSQL observation for
-platform#5842. Select one of the three fixed databases with `database`, leave
+platform#5842. Select one of the five fixed databases with `database`, leave
 `node` empty, and confirm with `observe-longhorn-v2-database-<database>`.
-It requires three healthy, owned instances with stable primary and archive
+It requires all reviewed healthy, owned instances with stable primary and archive
 state. Fixed SQL reads physical database identity, timeline and WAL positions;
 the primary's captured flush position must be replayed by both standbys. The
 client uses the Pod's fixed local socket with a cleared connection environment
@@ -14,6 +14,14 @@ prints only a success summary, with no application rows, credentials or physical
 identities. Changed source, cluster, process or replication evidence holds the
 operation. This observation neither proves backup recovery nor authorizes
 replacement, promotion, storage retirement or application cutover.
+
+`repair-v1-reservation` selects the fixed original worker and requires
+`repair-longhorn-v1-reservation` on a first-attempt main dispatch. It admits the
+two identified missing V1 copies only when both surviving copies, the complete
+disk allocation ledger and the physical free-space floor agree. The only write
+adjusts the filesystem disk reservation by the required logical capacity.
+Success requires all volumes to regain three healthy copies with the original
+affected volume and disk identities.
 
 `inventory-storage-layout` adds read-only native block metadata to the storage-root
 observation for a fixed temporary worker. Confirm it with
@@ -56,6 +64,12 @@ complete redundancy, databases and original storage still precede durable
 reboot intent. The single reboot request has no reset or disk-wipe selector.
 An unfinished or unreadable peer journal, another worker's cordon, or lost proof
 of a peer's recorded recovery prevents starting the next worker.
+
+New journals bind all five production PostgreSQL clusters and their full declared
+replica counts. The two-instance kagent and Substrate databases must both recover
+before the reboot, alongside Coroot, Umami and Wedding. Existing journals preserve
+their original identities. A legacy journal that has yet to request a reboot must
+bind the current database roster before moving the worker.
 
 Recovery never repeats an uncertain reboot. It requires a changed boot with the
 same node, hardware, OS, encrypted partition, registered disks and database system
@@ -106,9 +120,15 @@ All three temporary workers receive owned scale-down protection before the selec
 cordoned. Drain uses eviction and respects disruption budgets. Two fresh storage observations
 after drain precede the recorded reset intent.
 
+For new preparations, the native original partition must show at least 200 GiB. After drain
+and a fresh empty-storage read, the workflow applies the 144 GiB raw profile without rebooting
+the selected worker. It checks the loaded configuration and repeats the native empty-storage
+read before recording reset intent. The profile retains a 40 GiB minimum for EPHEMERAL and
+keeps both encryption keys locked to STATE. Existing journals retain their recorded geometry.
+
 Recovery from `reset-requested` only observes post-state. An uncertain response never causes a
-second reset. A new boot and encrypted EPHEMERAL UUID, the reviewed 96 GiB encrypted raw
-partition, loaded configuration and huge-page readiness must be observed before releasing the
+second reset. A new boot and encrypted EPHEMERAL UUID, the exact encrypted raw size bound
+by the journal, loaded configuration and huge-page readiness must be observed before releasing the
 owned cordon. CPX42 workers retain their larger root capacity; the permanent-worker root-size
 cap does not apply to this separate profile. The raw disk remains unregistered and fenced;
 storage activation and volume migration follow separately. Original storage replicas remain on
@@ -159,6 +179,13 @@ The restart holds under node pressure, and when Pods that landed since the first
 no longer fit. For two minutes after kubelet reports its new capacity, a rejected Pod or a Pod
 that was running and has gone fails the run and keeps any cordon. Ordinary Pod churn can trip
 this too; check the worker, then dispatch again.
+
+Dispatch a refresh while the platform merge queue is empty, and hold the agent lanes' own
+platform enqueues until the run ends. Prefer 00:00–06:00 UTC outside the 02:17 UTC backup.
+The refresh checks current main before cordoning, every eviction attempt and the kubelet
+restart. If main moves before a restart attempt, the refresh releases only its own cordon.
+An unproven restart keeps the cordon for a new first-attempt main run to adopt after the
+earlier run finishes. A proven restart follows the normal release path.
 
 Next select `benchmark-v1` with `benchmark-longhorn-storage`, before enabling any
 temporary replica storage. It holds until every permanent worker reports its huge pages,

@@ -31,6 +31,7 @@ name: Prepare Longhorn V2 Migration
             inspect-host-memory,
             reboot-host-for-hugepages,
             observe-database,
+            repair-v1-reservation,
           ]
       node:
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
@@ -49,7 +50,7 @@ name: Prepare Longhorn V2 Migration
         description: Fixed database for a read-only migration observation; leave node empty
         required: false
         type: choice
-        options: [coroot-db, umami-db, wedding-db]
+        options: [coroot-db, umami-db, wedding-db, substrate-db, kagent-db]
       confirm:
         description: "Type the exact confirmation documented for the selected operation"
         required: true
@@ -106,7 +107,7 @@ jobs:
           [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
           case "${LONGHORN_V2_OPERATION}" in
             observe-database)
-              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
               ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
@@ -122,6 +123,9 @@ jobs:
               ;;
             reboot-host-for-hugepages)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "reboot-longhorn-v2-host-${LONGHORN_V2_NODE}" ]]
+              ;;
+            repair-v1-reservation)
+              [[ "${LONGHORN_V2_NODE}" == prod-worker-1 && "${LONGHORN_V2_CONFIRM}" == repair-longhorn-v1-reservation ]]
               ;;
             inventory-storage-root)
               [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-root-${LONGHORN_V2_NODE}" ]]

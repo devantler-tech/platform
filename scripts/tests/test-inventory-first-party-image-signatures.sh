@@ -300,12 +300,13 @@ expected_globs="$(printf '%s\n' \
   'ghcr.io/devantler-tech/platform-kyverno-migrate' \
   'ghcr.io/devantler-tech/platform-kyverno-background' \
   'ghcr.io/devantler-tech/business-site-identity' \
+  'ghcr.io/devantler-tech/platform-dex' \
   'ghcr.io/devantler-tech/*')"
 if [ "$real_globs" != "$expected_globs" ]; then
-  echo "FAIL  the real rules must retain all fifteen exact ordered image routes"
+  echo "FAIL  the real rules must retain all sixteen exact ordered image routes"
   failures=$((failures + 1))
 else
-  echo "ok    real rules: fifteen ordered rules, dedicated publishers before catch-all"
+  echo "ok    real rules: sixteen ordered rules, dedicated publishers before catch-all"
 fi
 
 # The real file must also satisfy the completeness gate the fixtures exercise.
@@ -450,6 +451,41 @@ for image in "$background_repository" "$background_repository:revision" "$backgr
     OUT="$(ACCEPT_SUBJECTS="$accepted_subject" INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
       "$script" --rules "$real" --images "${work}/images-background" 2>&1)" || RC=$?
     check "background signer isolation: $image / $signer" "$want_rc" '' "$RC" "$OUT"
+  done
+done
+# The source-built Dex distribution has its own exact main-only publisher (#5811).
+# Exercise first-match routing with the real rules, including tag and digest
+# references, and prove that neither publisher can authenticate the other's image.
+dex_repository='ghcr.io/devantler-tech/platform-dex'
+dex_identity='^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$'
+talos_dex_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-dex") | .keyless.subjectRegex' "$real")"
+talos_dex_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-dex") | .keyless.issuer' "$real")"
+admission_dex_identity="$(yq -r '.spec.attestors[] | select(.name == "publishdexsecurity") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+admission_dex_issuer="$(yq -r '.spec.attestors[] | select(.name == "publishdexsecurity") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
+if [ "$talos_dex_identity" != "$dex_identity" ] ||
+  [ "$admission_dex_identity" != "$dex_identity" ] ||
+  [ "$talos_dex_issuer" != 'https://token.actions.githubusercontent.com' ] ||
+  [ "$admission_dex_issuer" != "$talos_dex_issuer" ]; then
+  echo 'FAIL  Dex image must retain its exact main publisher in both verifiers'
+  failures=$((failures + 1))
+else
+  echo 'ok    Dex publisher identity matches both verifiers'
+fi
+for image in "$dex_repository" "$dex_repository:revision" "$dex_repository@sha256:aa" "$dex_repository:revision@sha256:aa" "$dex_repository-other:revision"; do
+  printf '%s\n' "$image" >"${work}/images-dex"
+  for signer in dex app; do
+    accepted_subject="$dex_identity"
+    [ "$signer" = dex ] || accepted_subject="$app_identity"
+    want_rc=1
+    case "$image/$signer" in
+      "$dex_repository-other:revision/app") want_rc=0 ;;
+      "$dex_repository-other:revision/dex") ;;
+      */dex) want_rc=0 ;;
+    esac
+    RC=0
+    OUT="$(ACCEPT_SUBJECTS="$accepted_subject" INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
+      "$script" --rules "$real" --images "${work}/images-dex" 2>&1)" || RC=$?
+    check "Dex signer isolation: $image / $signer" "$want_rc" '' "$RC" "$OUT"
   done
 done
 

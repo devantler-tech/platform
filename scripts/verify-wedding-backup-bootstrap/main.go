@@ -37,7 +37,7 @@ const dedicatedPath = "apps/wedding-app/backup/r2"
 const projectedSecret = "wedding-db-backup-r2-dedicated"
 const baoImage = "quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806"
 const mcImage = "quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f"
-const toolsImage = "docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8"
+const toolsImage = "docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6"
 
 // This reviewed startup tuple must match the local-provider recipe. The fixture
 // refuses a configuration that could omit authentication or expose other APIs.
