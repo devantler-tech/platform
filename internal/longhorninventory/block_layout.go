@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"slices"
 	"strings"
 
@@ -25,12 +26,23 @@ type BlockLayoutReport struct {
 	RawSizeBytes                                                uint64
 	RawLUKS2, RawLockedToState, RawNodeIDOnly                   bool
 	RawDiscoveredPartitions, OtherUserVolumes                   int
+	RawExtentObserved                                           bool `json:",omitempty"`
 	Digest                                                      string
 }
 
 // ListBlockLayout reads the block layout twice and reports it only when both
 // complete reads agree.
 func (n Native) ListBlockLayout(ctx context.Context) (BlockLayoutReport, error) {
+	return n.listBlockLayout(ctx, false)
+}
+
+// ListRetainedBlockLayout additionally joins the configured r-longhorn status
+// to its physical partition and compares the byte extent in both reads.
+func (n Native) ListRetainedBlockLayout(ctx context.Context) (BlockLayoutReport, error) {
+	return n.listBlockLayout(ctx, true)
+}
+
+func (n Native) listBlockLayout(ctx context.Context, retainRaw bool) (BlockLayoutReport, error) {
 	ctx, cancel, err := n.requestContext(ctx)
 	if err != nil {
 		return BlockLayoutReport{}, nativeFailure{code: "request"}
@@ -39,11 +51,11 @@ func (n Native) ListBlockLayout(ctx context.Context) (BlockLayoutReport, error) 
 	if n.Blocks == nil {
 		return BlockLayoutReport{}, nativeFailure{code: "block-client"}
 	}
-	first, _, err := n.readBlockLayout(ctx)
+	first, _, err := n.readBlockLayout(ctx, retainRaw)
 	if err != nil {
 		return BlockLayoutReport{}, err
 	}
-	second, report, err := n.readBlockLayout(ctx)
+	second, report, err := n.readBlockLayout(ctx, retainRaw)
 	if err != nil {
 		return BlockLayoutReport{}, err
 	}
@@ -62,7 +74,7 @@ func (n Native) ListBlockLayout(ctx context.Context) (BlockLayoutReport, error) 
 // Selected layout metadata is compared privately. The public commitment covers
 // only reported counters and properties, without private device identities,
 // key material, configuration contents, filesystem contents or provider errors.
-func (n Native) readBlockLayout(ctx context.Context) ([]byte, BlockLayoutReport, error) {
+func (n Native) readBlockLayout(ctx context.Context, retainRaw bool) ([]byte, BlockLayoutReport, error) {
 	if !active(ctx) {
 		return nil, BlockLayoutReport{}, nativeFailure{code: "block-list"}
 	}
@@ -92,6 +104,7 @@ func (n Native) readBlockLayout(ctx context.Context) ([]byte, BlockLayoutReport,
 	}
 	seen := map[string]bool{}
 	ephFound := false
+	var rawStatus *block.VolumeStatusSpec
 	for _, item := range statuses.Items {
 		v, ok := item.(*block.VolumeStatus)
 		if !ok || v == nil || v.Metadata().Namespace() != block.NamespaceName || v.Metadata().Phase() != resource.PhaseRunning || v.Metadata().ID() == "" || len(v.Metadata().ID()) > 256 || seen[v.Metadata().ID()] {
@@ -131,6 +144,7 @@ func (n Native) readBlockLayout(ctx context.Context) ([]byte, BlockLayoutReport,
 			report.EphemeralLockedToState = s.EncryptionLockedToState
 			report.EphemeralNodeIDOnly = nodeIDOnly
 		case "r-longhorn":
+			rawStatus = s
 			report.RawPresent = true
 			report.RawPhase = phase
 			report.RawSizeBytes = s.Size
@@ -153,6 +167,7 @@ func (n Native) readBlockLayout(ctx context.Context) ([]byte, BlockLayoutReport,
 		return nil, BlockLayoutReport{}, invalid
 	}
 	seen = map[string]bool{}
+	var rawPartition *block.DiscoveredVolumeSpec
 	for _, item := range discovered.Items {
 		v, ok := item.(*block.DiscoveredVolume)
 		if !ok || v == nil || v.Metadata().Namespace() != block.NamespaceName || v.Metadata().Phase() != resource.PhaseRunning || v.Metadata().ID() == "" || len(v.Metadata().ID()) > 256 || seen[v.Metadata().ID()] {
@@ -165,6 +180,7 @@ func (n Native) readBlockLayout(ctx context.Context) ([]byte, BlockLayoutReport,
 		}
 		if s.PartitionLabel == "r-longhorn" {
 			report.RawDiscoveredPartitions++
+			rawPartition = s
 		}
 		if !appendRow(struct {
 			Kind, ID string
@@ -173,10 +189,31 @@ func (n Native) readBlockLayout(ctx context.Context) ([]byte, BlockLayoutReport,
 			return nil, BlockLayoutReport{}, invalid
 		}
 	}
+	if retainRaw {
+		if report.RawDiscoveredPartitions != 1 || !report.RawLUKS2 || !report.RawLockedToState ||
+			!report.RawNodeIDOnly || !retainedRawMatches(rawStatus, rawPartition) ||
+			!appendRow(struct {
+				Kind, FilesystemUUID string
+				Offset               uint64
+			}{"retained-extent", rawPartition.UUID, rawPartition.Offset}) {
+			return nil, BlockLayoutReport{}, invalid
+		}
+		report.RawExtentObserved = true
+	}
 	slices.SortFunc(rows, bytes.Compare)
 	encoded, err := json.Marshal(rows)
 	if err != nil || len(encoded) > MaxMetadataBytes || !active(ctx) {
 		return nil, BlockLayoutReport{}, invalid
 	}
 	return encoded, report, nil
+}
+
+func retainedRawMatches(status *block.VolumeStatusSpec, partition *block.DiscoveredVolumeSpec) bool {
+	return status != nil && partition != nil && status.Phase == block.VolumePhaseReady &&
+		status.Type == block.VolumeTypePartition && partition.Type == "partition" && partition.Name == "luks" && partition.UUID != "" &&
+		status.Location == partition.DevPath && status.ParentLocation != "" && status.ParentLocation == partition.ParentDevPath &&
+		status.PartitionUUID != "" && status.PartitionUUID == partition.PartitionUUID &&
+		status.PartitionIndex > 0 && uint(status.PartitionIndex) == partition.PartitionIndex &&
+		status.Size == 96<<30 && status.Size == partition.Size &&
+		partition.Offset > 0 && partition.Offset%512 == 0 && partition.Offset <= math.MaxUint64-partition.Size
 }

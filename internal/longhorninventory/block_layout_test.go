@@ -20,6 +20,7 @@ type blockLayoutFixture struct {
 	calls    int
 	mode     string
 	rawPhase *block.VolumePhase
+	retained bool
 }
 
 func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, options ...state.ListOption) (resource.List, error) {
@@ -45,6 +46,14 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 		if f.mode == "changed" && f.calls > 2 {
 			raw.TypedSpec().Phase = block.VolumePhaseReady
 		}
+		if f.retained {
+			*raw.TypedSpec() = block.VolumeStatusSpec{
+				Phase: block.VolumePhaseReady, Type: block.VolumeTypePartition, Location: "/dev/sda3",
+				ParentLocation: "/dev/sda", PartitionUUID: "private-raw-uuid-canary", PartitionIndex: 3,
+				Size: 96 << 30, EncryptionProvider: block.EncryptionProviderLUKS2,
+				EncryptionLockedToState: true, ConfiguredEncryptionKeys: []string{"nodeID"},
+			}
+		}
 		result.Items = []resource.Resource{eph, raw}
 		if f.mode == "duplicate" {
 			result.Items = append(result.Items, eph)
@@ -62,11 +71,63 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 		v := block.NewDiscoveredVolume(block.NamespaceName, "private-device-canary")
 		*v.TypedSpec() = block.DiscoveredVolumeSpec{DevPath: "/dev/sda6", ParentDevPath: "/dev/sda", PartitionLabel: "EPHEMERAL", PartitionUUID: "private-partition-canary", Size: 150 << 30}
 		result.Items = []resource.Resource{v}
+		if f.retained {
+			raw := block.NewDiscoveredVolume(block.NamespaceName, "sda3")
+			*raw.TypedSpec() = block.DiscoveredVolumeSpec{
+				Type: "partition", DevPath: "/dev/sda3", ParentDevPath: "/dev/sda", PartitionLabel: "r-longhorn",
+				Name: "luks", UUID: "private-luks-canary",
+				PartitionUUID: "private-raw-uuid-canary", PartitionIndex: 3, Size: 96 << 30, Offset: 1 << 30,
+			}
+			switch f.mode {
+			case "offset missing":
+				raw.TypedSpec().Offset = 0
+			case "offset changed":
+				if f.calls > 2 {
+					raw.TypedSpec().Offset += 512
+				}
+			case "wrong identity":
+				raw.TypedSpec().PartitionUUID = "other"
+			case "wrong parent":
+				raw.TypedSpec().ParentDevPath = "/dev/sdb"
+			case "wrong size":
+				raw.TypedSpec().Size = 144 << 30
+			case "LUKS header missing":
+				raw.TypedSpec().UUID = ""
+			case "LUKS header changed":
+				if f.calls > 2 {
+					raw.TypedSpec().UUID = "other"
+				}
+			case "duplicate raw label":
+				v.TypedSpec().PartitionLabel = "r-longhorn"
+			}
+			result.Items = append(result.Items, raw)
+		}
 	}
 	if f.mode == "partial" && f.calls == 2 {
 		return result, errors.New("private-provider-canary")
 	}
 	return result, nil
+}
+
+func TestNativeRetainedBlockLayoutRequiresStablePhysicalExtent(t *testing.T) {
+	for _, mode := range []string{"stable", "offset missing", "offset changed", "wrong identity", "wrong parent", "wrong size", "LUKS header missing", "LUKS header changed", "duplicate raw label"} {
+		t.Run(mode, func(t *testing.T) {
+			f := &blockLayoutFixture{t: t, mode: mode, retained: true}
+			report, err := (Native{API: fileAPI{}, Target: "10.0.0.8", Blocks: f}).ListRetainedBlockLayout(context.Background())
+			if mode != "stable" {
+				if err == nil || report != (BlockLayoutReport{}) || strings.Contains(err.Error(), "canary") {
+					t.Fatal("unverified physical extent retained success or leaked identity")
+				}
+				return
+			}
+			encoded, marshalErr := json.Marshal(report)
+			if err != nil || marshalErr != nil || !report.RawExtentObserved || f.calls != 4 ||
+				strings.Contains(string(encoded), "canary") || strings.Contains(string(encoded), "/dev/") ||
+				strings.Contains(string(encoded), "1073741824") {
+				t.Fatalf("physical extent observation was incomplete or exposed private geometry: %v", err)
+			}
+		})
+	}
 }
 
 func TestNativeBlockLayoutReportsObservedStateWithoutPrivateIdentities(t *testing.T) {

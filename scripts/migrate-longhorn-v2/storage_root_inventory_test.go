@@ -17,6 +17,8 @@ type storageRootReaderFixture struct {
 	change, partial, reboot bool
 	blockCalls              int
 	blockError              bool
+	retainedCalls           int
+	retainedObserved        bool
 }
 
 func (r *storageRootReaderFixture) ListBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error) {
@@ -25,6 +27,14 @@ func (r *storageRootReaderFixture) ListBlockLayout(context.Context) (longhorninv
 		return longhorninventory.BlockLayoutReport{}, errors.New("private-block-canary")
 	}
 	return longhorninventory.BlockLayoutReport{VolumeStatuses: 2, DiscoveredVolumes: 1, EphemeralPhase: "ready", RawPhase: "waiting", Digest: strings.Repeat("a", 64)}, nil
+}
+
+func (r *storageRootReaderFixture) ListRetainedBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error) {
+	r.retainedCalls++
+	return longhorninventory.BlockLayoutReport{
+		VolumeStatuses: 2, DiscoveredVolumes: 2, EphemeralPhase: "ready", RawPhase: "ready",
+		RawExtentObserved: r.retainedObserved, Digest: strings.Repeat("a", 64),
+	}, nil
 }
 
 func (r *storageRootReaderFixture) ListStorageRoot(context.Context) (longhorninventory.Listing, error) {
@@ -44,9 +54,14 @@ func (r *storageRootReaderFixture) BootID(context.Context) (string, error) {
 }
 
 func TestRootObserverBracketsNativeParentMetadataAndNeverGrantsResetClearance(t *testing.T) {
-	for _, scenario := range []string{"complete", "partial", "root changed", "peer changed", "boot changed", "close failed", "layout complete", "layout read failed"} {
+	for _, scenario := range []string{"complete", "partial", "root changed", "peer changed", "boot changed", "close failed", "layout complete", "layout read failed", "layout retained", "layout retained missing proof"} {
 		t.Run(scenario, func(t *testing.T) {
 			nodes := temporaryInventoryRoster()
+			target, selected := "temporary-v1-1", nodes[0]
+			retained := strings.HasPrefix(scenario, "layout retained")
+			if retained {
+				target, selected = "temporary-v2-1", nodes[2]
+			}
 			pools, err := configuredMigrationPools(poolConfigFixture())
 			if err != nil {
 				t.Fatal(err)
@@ -57,7 +72,7 @@ func TestRootObserverBracketsNativeParentMetadataAndNeverGrantsResetClearance(t 
 					t.Fatal("parent observer escaped fixed read scope")
 				}
 				if program == "talosctl" {
-					return json.Marshal(object{"metadata": object{"id": "systeminformation", "namespace": "hardware"}, "spec": object{"uuid": text(nodes[0], "status", "nodeInfo", "systemUUID")}})
+					return json.Marshal(object{"metadata": object{"id": "systeminformation", "namespace": "hardware"}, "spec": object{"uuid": text(selected, "status", "nodeInfo", "systemUUID")}})
 				}
 				api, kind := "v1", "NodeList"
 				items := []any{}
@@ -73,7 +88,7 @@ func TestRootObserverBracketsNativeParentMetadataAndNeverGrantsResetClearance(t 
 				case "--raw=" + inventoryStorageNodes:
 					api = "longhorn.io/v1beta2"
 					_, lh := temporaryInventoryFixture()
-					lh["metadata"].(object)["name"] = text(nodes[0], "metadata", "name")
+					lh["metadata"].(object)["name"] = text(selected, "metadata", "name")
 					items = []any{lh}
 				case "--raw=" + inventoryReplicas:
 					api, kind = "longhorn.io/v1beta2", "ReplicaList"
@@ -82,14 +97,18 @@ func TestRootObserverBracketsNativeParentMetadataAndNeverGrantsResetClearance(t 
 				}
 				return json.Marshal(object{"apiVersion": api, "kind": kind, "metadata": object{"resourceVersion": "1"}, "items": items})
 			}}
-			reader := &storageRootReaderFixture{temporaryNativeReader: temporaryNativeReader{boot: text(nodes[0], "status", "nodeInfo", "bootID")}, change: scenario == "root changed", partial: scenario == "partial", reboot: scenario == "boot changed", blockError: scenario == "layout read failed"}
+			reader := &storageRootReaderFixture{
+				temporaryNativeReader: temporaryNativeReader{boot: text(selected, "status", "nodeInfo", "bootID")},
+				change:                scenario == "root changed", partial: scenario == "partial", reboot: scenario == "boot changed",
+				blockError: scenario == "layout read failed", retainedObserved: scenario == "layout retained",
+			}
 			closed := false
 			observe := observeStorageRoot
 			if strings.HasPrefix(scenario, "layout ") {
 				observe = observeStorageLayout
 			}
-			receipt, err := observe(context.Background(), c, "temporary-v1-1", func(_ context.Context, address string) (nativeReplicaReader, func() error, error) {
-				projection, _, projectionErr := c.inventoryProjection(context.Background(), "temporary-v1-1")
+			receipt, err := observe(context.Background(), c, target, func(_ context.Context, address string) (nativeReplicaReader, func() error, error) {
+				projection, _, projectionErr := c.inventoryProjection(context.Background(), target)
 				if projectionErr != nil || address != projection.Address {
 					t.Fatal("parent observer selected another endpoint")
 				}
@@ -101,8 +120,11 @@ func TestRootObserverBracketsNativeParentMetadataAndNeverGrantsResetClearance(t 
 					return nil
 				}, nil
 			})
-			if !closed || (err == nil) != (scenario == "complete" || scenario == "layout complete") {
+			if !closed || (err == nil) != (scenario == "complete" || scenario == "layout complete" || scenario == "layout retained") {
 				t.Fatal("incomplete or changed parent metadata was accepted:", err)
+			}
+			if retained != (reader.retainedCalls == 1) || (retained && reader.blockCalls != 0) {
+				t.Fatal("retained extent observation escaped its fixed worker")
 			}
 			encoded, _ := json.Marshal(receipt)
 			if strings.Contains(string(encoded), "private-parent-canary") || strings.Contains(string(encoded), "private-close-canary") {
@@ -117,6 +139,10 @@ func TestRootObserverBracketsNativeParentMetadataAndNeverGrantsResetClearance(t 
 			if scenario == "layout complete" {
 				if reader.blockCalls != 1 || receipt.Schema != 2 || receipt.BlockLayout == nil || receipt.BlockLayout.RawPhase != "waiting" {
 					t.Fatal("layout mode omitted native block facts")
+				}
+			} else if retained {
+				if receipt.Schema != 2 || receipt.BlockLayout == nil || !receipt.BlockLayout.RawExtentObserved {
+					t.Fatal("retained layout omitted its native extent proof")
 				}
 			} else if reader.blockCalls != 0 || receipt.Schema != 1 || receipt.BlockLayout != nil {
 				t.Fatal("legacy root mode expanded its read scope")

@@ -16,6 +16,9 @@ type nativeStorageRootReader interface {
 type nativeBlockLayoutReader interface {
 	ListBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error)
 }
+type nativeRetainedBlockLayoutReader interface {
+	ListRetainedBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error)
+}
 type storageRootReceipt struct {
 	Schema              int                                  `json:"schema"`
 	ObservationOnly     bool                                 `json:"observationOnly"`
@@ -80,11 +83,7 @@ func observeStorageRootScope(ctx context.Context, c client, target string, facto
 	}
 	var blockLayout *longhorninventory.BlockLayoutReport
 	if includeBlocks {
-		blockReader, ok := reader.(nativeBlockLayoutReader)
-		if !ok {
-			return storageRootReceipt{}, stageClient
-		}
-		layout, layoutErr := blockReader.ListBlockLayout(ctx)
+		layout, layoutErr := observeNativeBlockLayout(ctx, reader, target)
 		if layoutErr != nil {
 			return storageRootReceipt{}, errors.Join(stageBlockLayout, layoutErr)
 		}
@@ -126,6 +125,25 @@ func observeStorageRootScope(ctx context.Context, c client, target string, facto
 		schema = 2
 	}
 	return storageRootReceipt{Schema: schema, ObservationOnly: true, ResetClearance: false, APIProjectionDigest: before.Digest, Report: report, BlockLayout: blockLayout}, nil
+}
+
+func observeNativeBlockLayout(ctx context.Context, reader nativeReplicaReader, target string) (longhorninventory.BlockLayoutReport, error) {
+	if target == "temporary-v2-1" {
+		retainedReader, ok := reader.(nativeRetainedBlockLayoutReader)
+		if !ok {
+			return longhorninventory.BlockLayoutReport{}, stageClient
+		}
+		layout, err := retainedReader.ListRetainedBlockLayout(ctx)
+		if err == nil && !layout.RawExtentObserved {
+			return longhorninventory.BlockLayoutReport{}, stageBlockLayout
+		}
+		return layout, err
+	}
+	blockReader, ok := reader.(nativeBlockLayoutReader)
+	if !ok {
+		return longhorninventory.BlockLayoutReport{}, stageClient
+	}
+	return blockReader.ListBlockLayout(ctx)
 }
 
 func authorizeStorageRoot(getenv func(string) string, target string) error {
