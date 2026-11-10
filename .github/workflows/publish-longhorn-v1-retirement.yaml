@@ -79,7 +79,8 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${LIBQCOW_SOURCE}"
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends autoconf automake libtool gcc make zlib1g-dev
+          sudo apt-get install --yes --no-install-recommends \
+            autoconf automake autopoint gcc gettext libtool make pkg-config zlib1g-dev
           autoreconf -i
           ./configure --prefix="${RUNNER_TEMP}/libqcow" --enable-static --disable-shared
           make -j2
