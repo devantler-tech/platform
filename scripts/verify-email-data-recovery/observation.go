@@ -236,7 +236,7 @@ func observeRetainedParity(ctx context.Context, d *recoveryDriver, reader *mailb
 		return "source-endpoint"
 	}
 	if _, err = verifyRetainedMessage(ctx, reader, source); err != nil {
-		return "retained-message"
+		return err.Error()
 	}
 	if err = d.sourceRetained(ctx); err != nil {
 		return "source-replaced"

@@ -95,34 +95,47 @@ func newRetainedMailboxClient(endpoint, password string) (*mailboxClient, error)
 // Private client copies ensure even callers supplying ordinary mailbox clients
 // cannot accidentally grant this path a mutating HTTP capability.
 func verifyRetainedMessage(ctx context.Context, reader, source *mailboxClient) (messageIdentity, error) {
-	fail := func() (messageIdentity, error) { return messageIdentity{}, errors.New("retained-message-unverified") }
+	// Report only stages chosen here or by readRetainedDiagnostic. Never
+	// propagate client errors or values from either mailbox to workflow logs.
+	fail := func(stage string) (messageIdentity, error) {
+		return messageIdentity{}, errors.New("retained-" + stage)
+	}
 	if reader == nil || source == nil || reader.endpoint == source.endpoint {
-		return fail()
+		return fail("endpoints")
 	}
 	r, err := newRetainedMailboxClient(reader.endpoint, reader.password)
 	if err != nil {
-		return fail()
+		return fail("reader-endpoint")
 	}
 	r.account = reader.account
 	if err = r.session(ctx); err != nil {
-		return fail()
+		return fail("reader-session")
 	}
 	s, err := newRetainedMailboxClient(source.endpoint, source.password)
-	if err != nil || (source.account != "" && source.account != r.account) {
-		return fail()
+	if err != nil {
+		return fail("source-endpoint")
+	}
+	if source.account != "" && source.account != r.account {
+		return fail("source-account")
 	}
 	s.account = r.account
 	if err = s.session(ctx); err != nil {
-		return fail()
+		return fail("source-session")
 	}
-	expected, err := readRetainedDiagnostic(ctx, r)
-	if err != nil {
-		return fail()
+	expected, stage := readRetainedDiagnostic(ctx, r)
+	if stage != "" {
+		return fail("reader-" + stage)
 	}
-	for _, c := range []*mailboxClient{s, r, s} {
-		actual, err := readRetainedDiagnostic(ctx, c)
-		if err != nil || actual != expected {
-			return fail()
+	for _, read := range []struct {
+		side   string
+		client *mailboxClient
+	}{{"source", s}, {"reader", r}, {"source", s}} {
+		actual, stage := readRetainedDiagnostic(ctx, read.client)
+		if stage != "" {
+			return fail(read.side + "-" + stage)
+		}
+		if actual != expected {
+			return fail(read.side + "-mismatch")
 		}
 	}
 	return expected, nil
@@ -171,15 +184,15 @@ func retainedQueryID(result object) (string, bool) {
 	return id, ok && mailboxIDPattern.MatchString(id)
 }
 
-func readRetainedDiagnostic(ctx context.Context, c *mailboxClient) (messageIdentity, error) {
-	fail := func() (messageIdentity, error) { return messageIdentity{}, errors.New("retained-diagnostic") }
+// The second result is a fixed failure stage suitable for workflow logs.
+func readRetainedDiagnostic(ctx context.Context, c *mailboxClient) (messageIdentity, string) {
 	result, err := c.call(ctx, "Mailbox/get", object{"properties": []any{"id", "name", "isSubscribed"}})
 	if err != nil {
-		return fail()
+		return messageIdentity{}, "mailbox-list"
 	}
 	boxes, complete := retainedGetList(result, retainedMailboxLimit)
 	if !complete {
-		return fail()
+		return messageIdentity{}, "mailbox-list"
 	}
 	var expected messageIdentity
 	seen := map[string]bool{}
@@ -187,7 +200,7 @@ func readRetainedDiagnostic(ctx context.Context, c *mailboxClient) (messageIdent
 		id, name := text(box, "id"), text(box, "name")
 		subscribed, valid := box["isSubscribed"].(bool)
 		if !mailboxIDPattern.MatchString(id) || seen[id] || name == "" || !valid {
-			return fail()
+			return messageIdentity{}, "mailbox-list"
 		}
 		seen[id] = true
 		match := retainedDiagnosticName.FindStringSubmatch(name)
@@ -195,35 +208,35 @@ func readRetainedDiagnostic(ctx context.Context, c *mailboxClient) (messageIdent
 			continue
 		}
 		if subscribed || expected.mailbox != "" {
-			return fail()
+			return messageIdentity{}, "mailbox-ambiguous"
 		}
 		expected.mailbox, expected.body = id, name
 		expected.messageID = "email-recovery-" + match[1] + "@example.invalid"
 	}
 	if expected.mailbox == "" {
-		return fail()
+		return messageIdentity{}, "mailbox-missing"
 	}
 	result, err = c.call(ctx, "Email/query", object{"filter": object{"inMailbox": expected.mailbox}, "calculateTotal": true, "position": 0, "limit": 2})
 	if err != nil {
-		return fail()
+		return messageIdentity{}, "email-query"
 	}
 	var completeID bool
 	expected.email, completeID = retainedQueryID(result)
 	if !completeID {
-		return fail()
+		return messageIdentity{}, "email-query"
 	}
 	result, err = c.call(ctx, "Email/get", object{"ids": []any{expected.email}, "properties": retainedMessageProperties(), "fetchTextBodyValues": true})
 	if err != nil {
-		return fail()
+		return messageIdentity{}, "email-get"
 	}
 	messages, complete := retainedGetList(result, 1)
 	if !complete || len(messages) != 1 {
-		return fail()
+		return messageIdentity{}, "email-get"
 	}
 	expected.blob = text(messages[0], "blobId")
 	parts := items(messages[0], "textBody")
 	if !mailboxIDPattern.MatchString(expected.blob) || len(parts) != 1 || !mailboxIDPattern.MatchString(text(parts[0], "partId")) || len(child(messages[0], "bodyValues")) != 1 || !proveMessage(messages[0], expected) {
-		return fail()
+		return messageIdentity{}, "email-content"
 	}
-	return expected, nil
+	return expected, ""
 }
