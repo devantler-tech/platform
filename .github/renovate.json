@@ -440,6 +440,12 @@
       "enabled": false
     },
     {
+      "description": "Offer only the modern v0.x family of k8s.io/client-go (#5813). client-go also carries legacy v1.x to v12.x tags from before Kubernetes moved its libraries to v0.x; Go reports the higher ones as v11.0.0+incompatible (or v12.0.0 when read from the source tags), which outranks every v0.x release, so Renovate proposed it as a major update that cannot build (#5812). Upstream keeps the major version at zero for Kubernetes v1 releases. Patch and minor updates within v0.x, and the grouped Kubernetes update, stay unchanged. scripts/tests/renovate-client-go checks this rule.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["k8s.io/client-go"],
+      "allowedVersions": "/^v?0\\./"
+    },
+    {
       "description": "The recovery profile uses Flux 2.9.6 with the separately pinned Helm controller. Update the base only with a new composition and recovery audit.",
       "matchPackageNames": ["fluxcd/flux2"],
       "allowedVersions": "/^v?2\\.9\\.6$/",
