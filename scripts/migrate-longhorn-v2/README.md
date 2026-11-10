@@ -367,3 +367,20 @@ replicas. Its native listing must be empty and accounted for; unexpected
 directories hold the observation. This can inform a later reviewed decision
 to reuse capacity for V2. It changes no disk, pool, host setting or volume,
 and does not authorize preparing a temporary worker through `prepare-worker`.
+
+## Retain one V1 source before replacing its claim
+
+Use `retain-v1-source` with no worker selection as part of an application
+migration. Read the bound application PVC, its PV and the V1 Longhorn volume.
+Compute a SHA-256 digest, with no trailing newline, over the colon-separated
+values `namespace/claim:claim-uid:pv-name:pv-uid:volume-name:volume-uid`. Supply
+`retain-longhorn-v1-source:<namespace>/<claim>:<digest>` as the confirmation.
+The digest lets the protected workflow recheck the same identities without
+passing UIDs to GitHub Actions.
+
+The workflow changes only the confirmed PV's reclaim policy from `Delete` to
+`Retain` and reads the three original identities back. It excludes backup movers,
+migration scratch and unbound claims. A lost write response is checked without
+repeating the patch. This operation neither replaces claims nor changes storage
+classes. Keep the original PV and backend until the application's recovery and
+cutover checks pass.
