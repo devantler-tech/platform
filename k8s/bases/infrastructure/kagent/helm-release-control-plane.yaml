@@ -50,6 +50,13 @@ spec:
       substrateClientCertificate:
         enabled: true
     config:
+      server:
+        # The Agentic Engineer's schedule Job manages its kagent scheduled run
+        # with grpcurl, which reads the API from gRPC reflection
+        # (apps/agentic-engineer/job-schedule.yaml). kagent serves reflection
+        # without authentication, and only this namespace, Substrate's egress
+        # gateway and that Job reach the port (cilium-network-policy.yaml).
+        grpcReflection: true
       runtimeDefaults:
         # Every agent runtime needs CPU and memory limits. Claude Code working
         # a Git checkout needs more than the 1 CPU / 1 GiB default.

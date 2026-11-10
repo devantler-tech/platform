@@ -1,14 +1,14 @@
-# Only the daily trigger reaches kagent's A2A API. The agent itself processes
+# Only the schedule Job reaches kagent's API. The agent itself processes
 # untrusted content, so its worker pods get no direct path to the controller.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-agentic-engineer-trigger
+  name: allow-agentic-engineer-schedule
   namespace: agentic-engineer
 spec:
   endpointSelector:
     matchLabels:
-      app: agentic-engineer-trigger
+      app: agentic-engineer-schedule
   egress:
     - toEndpoints:
         - matchLabels:
