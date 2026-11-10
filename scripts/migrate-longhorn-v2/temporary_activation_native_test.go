@@ -26,7 +26,7 @@ func (r *activationBootReader) BootID(context.Context) (string, error) {
 // A binding requires matching native boot, hardware and API identities plus a
 // successful reader close; durable identity comparison cannot waive this bracket.
 func TestTemporaryRawBindingBracketsNativeReadsAndClosesItsReader(t *testing.T) {
-	for _, mode := range []string{"valid", "boot changed", "hardware changed", "node changed", "partition unreadable", "close failed"} {
+	for _, mode := range []string{"valid", "boot changed", "hardware changed", "node changed", "partition unreadable", "partition changed", "close failed"} {
 		t.Run(mode, func(t *testing.T) {
 			n, storage, raw, eph, pool := temporaryRawBindingFixture()
 			n["status"].(object)["addresses"] = []any{object{"type": "InternalIP", "address": "10.0.99.10"}}
@@ -59,6 +59,9 @@ func TestTemporaryRawBindingBracketsNativeReadsAndClosesItsReader(t *testing.T) 
 						if mode == "partition unreadable" {
 							return nil, errors.New("native read failed")
 						}
+						if mode == "partition changed" && volumes > 2 {
+							raw["spec"].(object)["partitionUUID"] = "12345678-1234-4234-8234-000000000099"
+						}
 						return json.Marshal(raw)
 					case args[2] == "volumestatus" && args[3] == "EPHEMERAL":
 						volumes++
@@ -78,7 +81,7 @@ func TestTemporaryRawBindingBracketsNativeReadsAndClosesItsReader(t *testing.T) 
 			if (err == nil) != (mode == "valid") {
 				t.Fatal("native binding validity did not match its complete identity bracket:", err)
 			}
-			if mode == "valid" && (closed != 1 || reader.reads != 2 || volumes != 2 || binding.BootID != boot) {
+			if mode == "valid" && (closed != 1 || reader.reads != 2 || volumes != 4 || binding.BootID != boot) {
 				t.Fatal("successful binding omitted a native read or close")
 			}
 		})

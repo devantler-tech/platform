@@ -22,7 +22,7 @@ func (e engine) migrationStorageEligible(ctx context.Context, node, storage obje
 		return false, err
 	}
 	var activation object
-	if str(node, "metadata", "labels", longhornmigration.PoolLabel) == "v1" && val(storage, "spec", "disks", "longhorn-v2") != nil {
+	if longhornmigration.RequiresActivationRecord(node, storage) {
 		activation, err = e.c.read(ctx, "configmap", "longhorn-system", longhornmigration.ActivationJournal)
 		if err != nil {
 			return false, err

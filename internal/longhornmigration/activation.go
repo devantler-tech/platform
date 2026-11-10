@@ -15,6 +15,8 @@ const (
 	ActivationJournal = "longhorn-v2-temporary-activation"
 	// ActivationOwner binds registered storage to that receipt's Kubernetes UID.
 	ActivationOwner = "storage.platform.devantler.tech/v2-activation"
+	// RetainedStageRawID is the new partition on the worker with existing raw storage.
+	RetainedStageRawID = "r-longhorn-stage"
 )
 
 // ActivationBinding retains the native identities verified before registration.
@@ -100,16 +102,10 @@ func (r ActivationRecord) Validate() error {
 			!uuid.MatchString(strings.ToLower(b.RawPartitionUUID)) || strings.EqualFold(b.RawPartitionUUID, b.EphemeralUUID) {
 			return errActivation
 		}
-		if selection == "temporary-v2-1" {
-			if b.PreparationUID != "" {
-				return errActivation
-			}
-		} else {
-			if b.PreparationUID == "" || preparations[b.PreparationUID] {
-				return errActivation
-			}
-			preparations[b.PreparationUID] = true
+		if b.PreparationUID == "" || preparations[b.PreparationUID] {
+			return errActivation
 		}
+		preparations[b.PreparationUID] = true
 		for i, identity := range []string{b.Name, b.NodeUID, b.ProviderID, strings.ToLower(b.MachineUUID), b.LonghornUID, strings.ToLower(b.EphemeralUUID), strings.ToLower(b.RawPartitionUUID)} {
 			if seen[i][identity] {
 				return errActivation

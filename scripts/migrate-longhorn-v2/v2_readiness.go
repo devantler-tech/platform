@@ -29,7 +29,7 @@ func verifyV2Runtime(s inventory, managers []object, pools map[string]migrationP
 	if _, err = indexed(managers); err != nil {
 		return err
 	}
-	workers, raw := map[string]bool{}, map[string]bool{}
+	workers, raw := map[string]bool{}, map[string]string{}
 	for name, n := range nodes {
 		if strings.HasPrefix(name, "prod-control-plane-") {
 			continue
@@ -38,21 +38,22 @@ func verifyV2Runtime(s inventory, managers []object, pools map[string]migrationP
 			return errors.New("V2 migration workers must be schedulable with eight allocatable CPUs")
 		}
 		workers[name] = true
-		if _, temporary := pools[text(n, "metadata", "labels", migrationPoolLabel)]; temporary {
-			raw[name] = true
+		role := text(n, "metadata", "labels", migrationPoolLabel)
+		if _, temporary := pools[role]; temporary {
+			raw[name] = temporaryRawID("temporary-" + role + "-1")
 		}
 	}
 	if len(workers) != 6 || len(raw) != 3 {
 		return errors.New("V2 canary storage and client roster is incomplete")
 	}
 	diskIDs := map[string]bool{}
-	for name := range raw {
+	for name, rawID := range raw {
 		lh := storage[name]
 		status, _ := value(lh, "status").(object)
 		diskStatus, _ := value(lh, "status", "diskStatus").(object)
 		disk, _ := diskStatus["longhorn-v2"].(object)
 		id := text(disk, "diskUUID")
-		if !reviewedBlockDisks(value(lh, "spec", "disks")) || value(lh, "spec", "allowScheduling") != true || value(lh, "spec", "evictionRequested") != false ||
+		if !reviewedBlockDisksFor(value(lh, "spec", "disks"), rawID) || value(lh, "spec", "allowScheduling") != true || value(lh, "spec", "evictionRequested") != false ||
 			!ready(status) || len(diskStatus) != 1 || !ready(disk) || id == "" || diskIDs[id] {
 			return errors.New("three distinct ready canonical raw disks are not proven")
 		}

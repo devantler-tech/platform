@@ -86,7 +86,7 @@ Longhorn 1.13.0 instance-manager image and the admitted client resources and
 arguments must match before registration. Enabling the setting proves neither
 raw-disk readiness nor application recovery.
 
-After both temporary V1 workers have completed their independently confirmed
+After all three temporary workers have completed their independently confirmed
 raw-layout preparation, select `register-temporary-v2-storage` and confirm
 `register-longhorn-v2-temporary-storage`. This operation always selects all three
 fixed temporary pool members. It requires intact original V1 replicas, healthy
@@ -102,10 +102,11 @@ identities. Complete native reads bracket the partition observations. Each rebui
 worker also binds its completed preparation journal UID and the successful
 first-attempt main workflow that produced it. A prepared-looking disk without that
 record, a replaced journal or a failed preparation workflow cannot authorize
-registration. The V2-born worker has no reset operation and requires its native
-encrypted raw-layout proof. Each conditional Longhorn Node update registers only
-the canonical raw disk and adds
-the journal UID as its ownership annotation. Matching unowned disks are refused.
+registration. The third worker needs a completed preservation receipt and a new
+encrypted staging partition with a GPT identity distinct from its original raw
+partition. Each conditional Longhorn Node update registers the selected worker's
+reviewed mapper and adds the journal UID as its ownership annotation. Matching
+unowned disks are refused.
 An uncertain response stops the run. A new first-attempt main dispatch may resume
 an owned partial registration only after the previous workflow is terminal, and
 it revalidates all three native bindings and every remaining prerequisite.
@@ -114,8 +115,9 @@ it grants no application cutover or original-disk reset authority.
 
 The two rebuilt workers retain their original `migration-pool=v1` allocation
 label. The shared publication and replica-exclusion checks recognize their raw
-disks only with the completed activation journal, its matching ownership UID,
-and the unchanged Kubernetes, provider, hardware and Longhorn node identities.
+disks and the third worker's distinct staging mapper only with the completed
+activation journal, its matching ownership UID, and the unchanged Kubernetes,
+provider, hardware and Longhorn node identities.
 An ordinary later reboot or OS upgrade does not revoke this registration.
 
 The journal retains the original boot and OS observations for audit. Later
@@ -133,7 +135,8 @@ For the unused temporary-worker route (platform#5787), finish the client refresh
 cleaned V1 baseline first. Select `prepare-unused-temporary-worker`, `temporary-v1-1` or
 `temporary-v1-2`, and the matching confirmation `prepare-unused-longhorn-v2-temporary-v1-1`
 or `prepare-unused-longhorn-v2-temporary-v1-2`. Each selection is resolved from the complete,
-reviewed two-member V1 pool and one-member V2 pool. The fresh V2 pool has no reset operation.
+reviewed two-member V1 pool and one-member V2 pool. This preparation operation
+admits only the two V1-born workers.
 
 This operation wipes **only the selected temporary worker's EPHEMERAL partition** and reboots
 it. Its separate journal binds the original node UID, provider and hardware identities, boot,

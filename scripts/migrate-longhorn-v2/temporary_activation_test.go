@@ -73,11 +73,14 @@ func TestTemporaryRawRegistrationAcceptsOnlyItsOwnPartialActivation(t *testing.T
 		}
 		return lh
 	}
-	if registered, err := temporaryRegistrationState(storage(false), "journal-uid"); err != nil || registered {
+	if registered, err := temporaryRegistrationState(storage(false), "journal-uid", "temporary-v1-1"); err != nil || registered {
 		t.Fatal("empty fenced storage could not be registered:", err)
 	}
-	if registered, err := temporaryRegistrationState(storage(true), "journal-uid"); err != nil || !registered {
+	if registered, err := temporaryRegistrationState(storage(true), "journal-uid", "temporary-v1-1"); err != nil || !registered {
 		t.Fatal("the journal's exact existing activation could not resume:", err)
+	}
+	if _, err := temporaryRegistrationState(storage(true), "journal-uid", "temporary-v2-1"); err == nil {
+		t.Fatal("the retained mapper qualified as staged storage")
 	}
 	for name, change := range map[string]func(object){
 		"foreign journal":   func(lh object) { lh["metadata"].(object)["annotations"].(object)[temporaryActivationOwner] = "foreign" },
@@ -90,12 +93,12 @@ func TestTemporaryRawRegistrationAcceptsOnlyItsOwnPartialActivation(t *testing.T
 		t.Run(name, func(t *testing.T) {
 			lh := storage(true)
 			change(lh)
-			if _, err := temporaryRegistrationState(lh, "journal-uid"); err == nil {
+			if _, err := temporaryRegistrationState(lh, "journal-uid", "temporary-v1-1"); err == nil {
 				t.Fatal("a foreign or changed disk registration was adopted")
 			}
 		})
 	}
-	if _, err := temporaryRegistrationState(storage(true), ""); err == nil {
+	if _, err := temporaryRegistrationState(storage(true), "", "temporary-v1-1"); err == nil {
 		t.Fatal("an unjournaled existing registration was adopted")
 	}
 }

@@ -35,7 +35,11 @@ func verifyNode(n object, j journal, original bool) (string, error) {
 }
 
 func blockDisks() object {
-	return object{"longhorn-v2": object{"path": "/dev/mapper/luks2-r-longhorn", "diskType": "block", "diskDriver": "aio", "allowScheduling": true, "evictionRequested": false, "storageReserved": float64(4 * 1024 * 1024 * 1024), "tags": []any{}}}
+	return blockDisksFor("r-longhorn")
+}
+
+func blockDisksFor(rawID string) object {
+	return object{"longhorn-v2": object{"path": "/dev/mapper/luks2-" + rawID, "diskType": "block", "diskDriver": "aio", "allowScheduling": true, "evictionRequested": false, "storageReserved": float64(4 * 1024 * 1024 * 1024), "tags": []any{}}}
 }
 
 func verifyDiskDefaults(n object) error {
@@ -53,12 +57,16 @@ func verifyDiskDefaults(n object) error {
 }
 
 func reviewedBlockDisks(raw any) bool {
+	return reviewedBlockDisksFor(raw, "r-longhorn")
+}
+
+func reviewedBlockDisksFor(raw any, rawID string) bool {
 	disks, ok := raw.(map[string]any)
 	if !ok || len(disks) != 1 {
 		return false
 	}
 	d, ok := disks["longhorn-v2"].(map[string]any)
-	expected := blockDisks()["longhorn-v2"].(object)
+	expected := blockDisksFor(rawID)["longhorn-v2"].(object)
 	if !ok || len(d) != len(expected) {
 		return false
 	}

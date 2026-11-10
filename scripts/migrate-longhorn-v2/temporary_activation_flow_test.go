@@ -67,12 +67,12 @@ func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
 		t.Fatal(err)
 	}
 	f.preparations = map[string]object{}
-	for ordinal, selection := range []string{"temporary-v1-1", "temporary-v1-2"} {
+	for ordinal, selection := range []string{"temporary-v1-1", "temporary-v1-2", "temporary-v2-1"} {
 		name, _, err := resolveTemporaryInventoryTarget(selection, s.nodes, pools)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, node := range s.nodes {
+		for nodeIndex, node := range s.nodes {
 			if text(node, "metadata", "name") != name {
 				continue
 			}
@@ -83,7 +83,8 @@ func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
 				}
 			}
 			binding := temporaryV2Binding{Selection: selection, Name: name, NodeUID: text(node, "metadata", "uid"), ProviderID: text(node, "spec", "providerID"),
-				MachineUUID: text(node, "status", "nodeInfo", "systemUUID"), LonghornUID: text(lh, "metadata", "uid")}
+				MachineUUID: text(node, "status", "nodeInfo", "systemUUID"), LonghornUID: text(lh, "metadata", "uid"),
+				RawPartitionUUID: fmt.Sprintf("12345678-1234-4234-8234-%012x", nodeIndex+100)}
 			cm := temporaryPreparedFixture(t, binding)
 			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), `"ownerRun":"7777"`, fmt.Sprintf(`"ownerRun":"%d"`, 7777+ordinal), 1)
 			f.preparations[selection] = cm
@@ -114,7 +115,7 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 		source := strings.Repeat("1", 40)
 		status := "completed"
 		conclusion := "success"
-		if strings.Contains(args[1], "/7777/") || strings.Contains(args[1], "/7778/") {
+		if strings.Contains(args[1], "/7777/") || strings.Contains(args[1], "/7778/") || strings.Contains(args[1], "/7779/") {
 			if f.preparationFailed {
 				conclusion = "failure"
 			}
@@ -138,7 +139,10 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 			valueObject(raw, "spec")["size"] = float64(144 << 30)
 			raw["spec"].(object)["partitionUUID"] = fmt.Sprintf("12345678-1234-4234-8234-%012x", i+100)
 			eph["spec"].(object)["uuid"] = fmt.Sprintf("ephemeral-%d", i)
-			if args[2] == "volumestatus" && args[3] == "r-longhorn" {
+			role := text(node, "metadata", "labels", migrationPoolLabel)
+			rawID := temporaryRawID("temporary-" + role + "-1")
+			if args[2] == "volumestatus" && args[3] == rawID {
+				raw["metadata"].(object)["id"] = rawID
 				return json.Marshal(raw)
 			}
 			if args[2] == "volumestatus" && args[3] == "EPHEMERAL" {

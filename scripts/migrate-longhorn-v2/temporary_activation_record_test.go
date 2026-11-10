@@ -24,9 +24,7 @@ func temporaryActivationRecordFixture(t *testing.T) temporaryActivationRecord {
 		b.NodeUID, b.ProviderID, b.MachineUUID = fmt.Sprintf("node-%d", i), fmt.Sprintf("hcloud://%d", 100+i), fmt.Sprintf("hardware-%d", i)
 		b.LonghornUID, b.EphemeralUUID = fmt.Sprintf("longhorn-%d", i), fmt.Sprintf("ephemeral-%d", i)
 		b.RawPartitionUUID = fmt.Sprintf("12345678-1234-4234-8234-%012x", i+10)
-		if selection != "temporary-v2-1" {
-			b.PreparationUID = fmt.Sprintf("preparation-%d", i)
-		}
+		b.PreparationUID = fmt.Sprintf("preparation-%d", i)
 		record.Targets[selection] = b
 	}
 	return record
@@ -48,6 +46,11 @@ func TestTemporaryActivationRecordRequiresThreeDistinctCompleteBindings(t *testi
 			b := r.Targets["temporary-v1-1"]
 			b.PreparationUID = ""
 			r.Targets["temporary-v1-1"] = b
+		},
+		"missing preserving preparation": func(r *temporaryActivationRecord) {
+			b := r.Targets["temporary-v2-1"]
+			b.PreparationUID = ""
+			r.Targets["temporary-v2-1"] = b
 		},
 		"duplicated preparation identity": func(r *temporaryActivationRecord) {
 			b := r.Targets["temporary-v1-2"]

@@ -2,12 +2,47 @@ package longhornmigration
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
 
 func sourceFixture() []byte {
 	return []byte(`{"spec":{"cluster":{"controlPlanes":3,"workers":3,"autoscaler":{"node":{"maxNodesTotal":9,"pools":[{"name":"autoscale-longhorn-v1","serverType":"cpx42","location":"fsn1","min":2,"max":2,"labels":{"storage.platform.devantler.tech/migration-pool":"v1"}},{"name":"autoscale-longhorn-v2","serverType":"cpx42","location":"fsn1","min":1,"max":1,"labels":{"storage.platform.devantler.tech/migration-pool":"v2"}}]}}},"provider":{"hetzner":{"serverLimit":10}}}}`)
+}
+
+func TestStagedRawDiskRequiresItsCompletedRegistration(t *testing.T) {
+	n, lh := eligibilityFixture("v2")
+	value(lh, "spec", "disks", "longhorn-v2").(Object)["path"] = "/dev/mapper/luks2-" + RetainedStageRawID
+	lh["metadata"].(Object)["annotations"] = Object{ActivationOwner: "owned-registration"}
+	record := ActivationRecord{Version: 1, Source: strings.Repeat("a", 40), OwnerRun: "12", Completed: true, Targets: map[string]ActivationBinding{}}
+	for i, selection := range ActivationSelections() {
+		role := strings.Split(selection, "-")[1]
+		record.Targets[selection] = ActivationBinding{
+			Selection: selection, Name: fmt.Sprintf("autoscale-longhorn-%s-%016x", role, i),
+			NodeUID: fmt.Sprintf("node-%d", i), ProviderID: fmt.Sprintf("hcloud://%d", i+1),
+			MachineUUID: fmt.Sprintf("machine-%d", i), BootID: "12345678-1234-4234-8234-000000000099", OSImage: "Talos fixture",
+			LonghornUID: fmt.Sprintf("longhorn-%d", i), EphemeralUUID: fmt.Sprintf("ephemeral-%d", i),
+			RawPartitionUUID: fmt.Sprintf("12345678-1234-4234-8234-%012x", i), PreparationUID: fmt.Sprintf("prep-%d", i),
+		}
+	}
+	stage := record.Targets["temporary-v2-1"]
+	stage.Name, stage.NodeUID, stage.ProviderID = text(n, "metadata", "name"), text(n, "metadata", "uid"), text(n, "spec", "providerID")
+	stage.MachineUUID, stage.LonghornUID = text(n, "status", "nodeInfo", "systemUUID"), text(lh, "metadata", "uid")
+	record.Targets[stage.Selection] = stage
+	cm := Object{"metadata": Object{"name": ActivationJournal, "namespace": "longhorn-system", "uid": "owned-registration"}}
+	for _, complete := range []bool{true, false} {
+		record.Completed = complete
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cm["data"] = Object{"record": string(encoded)}
+		ok, err := Eligible(sourceFixture(), n, lh, cm)
+		if ok != complete || (err == nil) != complete {
+			t.Fatalf("staged raw eligibility completed=%t got %t: %v", complete, ok, err)
+		}
+	}
 }
 
 // eligibilityFixture binds one fixed pool member to owned scale-down protection

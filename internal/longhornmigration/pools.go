@@ -152,11 +152,14 @@ func Eligible(data []byte, n, lh, activation Object) (bool, error) {
 			return false, errors.New("migration filesystem differs from its reviewed scope")
 		}
 	} else {
-		if role == "v1" && !registeredRawTransition(n, lh, activation) {
+		if RequiresActivationRecord(n, lh) && !registeredRawTransition(n, lh, activation) {
 			return false, errors.New("migration raw transition lacks its completed identity-bound registration")
 		}
 		disk, _ = disks["longhorn-v2"].(map[string]any)
-		if text(disk, "path") != "/dev/mapper/luks2-r-longhorn" || text(disk, "diskType") != "block" || text(disk, "diskDriver") != "aio" {
+		path := text(disk, "path")
+		standard := path == "/dev/mapper/luks2-r-longhorn"
+		staged := role == "v2" && path == "/dev/mapper/luks2-"+RetainedStageRawID
+		if (!standard && !staged) || text(disk, "diskType") != "block" || text(disk, "diskDriver") != "aio" {
 			return false, errors.New("migration raw disk differs from its reviewed scope")
 		}
 	}
@@ -164,4 +167,13 @@ func Eligible(data []byte, n, lh, activation Object) (bool, error) {
 		return false, errors.New("migration disk scheduling state drifted")
 	}
 	return true, nil
+}
+
+// RequiresActivationRecord identifies storage transitions that cannot use the
+// original pool's scheduling exception without a completed registration.
+func RequiresActivationRecord(node, storage Object) bool {
+	role := text(node, "metadata", "labels", PoolLabel)
+	disk := value(storage, "spec", "disks", "longhorn-v2")
+	return disk != nil && (role == "v1" || role == "v2" &&
+		text(storage, "spec", "disks", "longhorn-v2", "path") == "/dev/mapper/luks2-"+RetainedStageRawID)
 }

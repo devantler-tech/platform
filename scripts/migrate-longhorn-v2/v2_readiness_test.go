@@ -36,7 +36,7 @@ func v2ReadinessFixtureForRoute(legacy bool) (inventory, []object) {
 			continue
 		}
 		lh := resource(text(n, "metadata", "name"))
-		lh["spec"] = object{"disks": blockDisks(), "allowScheduling": true, "evictionRequested": false, "instanceManagerCPURequest": float64(0)}
+		lh["spec"] = object{"disks": blockDisksFor(temporaryRawID("temporary-" + role + "-1")), "allowScheduling": true, "evictionRequested": false, "instanceManagerCPURequest": float64(0)}
 		lh["status"] = object{"conditions": readyConditions(), "diskStatus": object{"longhorn-v2": object{"diskUUID": "raw-" + text(n, "metadata", "name"), "conditions": readyConditions()}}}
 		s.storageNodes = append(s.storageNodes, lh)
 	}

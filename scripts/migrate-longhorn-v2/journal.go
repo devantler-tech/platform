@@ -7,25 +7,29 @@ import (
 	"errors"
 	"io"
 	"regexp"
+	"strings"
 )
 
 type journal struct {
-	Schema             int    `json:"schema"`
-	Target             string `json:"target"`
-	Source             string `json:"source"`
-	OwnerRun           string `json:"ownerRun"`
-	Phase              string `json:"phase"`
-	NodeUID            string `json:"nodeUID"`
-	ProviderID         string `json:"providerID"`
-	MachineUUID        string `json:"machineUUID"`
-	LonghornUID        string `json:"longhornUID"`
-	EphemeralUUID      string `json:"ephemeralUUID"`
-	OriginalDisks      object `json:"originalDisks"`
-	TemporarySelection string `json:"temporarySelection,omitempty"`
-	NativeEmptyDigest  string `json:"nativeEmptyDigest,omitempty"`
-	OriginalBootID     string `json:"originalBootID,omitempty"`
-	RawVolumeAbsent    bool   `json:"rawVolumeAbsent,omitempty"`
-	StagingLayout      bool   `json:"stagingLayout,omitempty"`
+	Schema               int    `json:"schema"`
+	Target               string `json:"target"`
+	Source               string `json:"source"`
+	OwnerRun             string `json:"ownerRun"`
+	Phase                string `json:"phase"`
+	NodeUID              string `json:"nodeUID"`
+	ProviderID           string `json:"providerID"`
+	MachineUUID          string `json:"machineUUID"`
+	LonghornUID          string `json:"longhornUID"`
+	EphemeralUUID        string `json:"ephemeralUUID"`
+	OriginalDisks        object `json:"originalDisks"`
+	TemporarySelection   string `json:"temporarySelection,omitempty"`
+	NativeEmptyDigest    string `json:"nativeEmptyDigest,omitempty"`
+	OriginalBootID       string `json:"originalBootID,omitempty"`
+	RawVolumeAbsent      bool   `json:"rawVolumeAbsent,omitempty"`
+	StagingLayout        bool   `json:"stagingLayout,omitempty"`
+	RetainedRawUUID      string `json:"retainedRawUUID,omitempty"`
+	RetainedExtentDigest string `json:"retainedExtentDigest,omitempty"`
+	PreparedRawUUID      string `json:"preparedRawUUID,omitempty"`
 }
 
 // validateJournal requires complete original identities and a known procedure
@@ -41,6 +45,12 @@ func validateJournal(j journal, target string) error {
 	case "evacuating", "draining", "reset-requested", "prepared":
 	default:
 		return errors.New("journal phase is outside the node-preparation procedure")
+	}
+	if j.Schema == 3 {
+		return validateRetainedPreparation(j)
+	}
+	if j.RetainedRawUUID != "" || j.RetainedExtentDigest != "" || j.PreparedRawUUID != "" {
+		return errors.New("retained extent proof belongs to a different preparation profile")
 	}
 	if j.Schema == 2 {
 		if !regexp.MustCompile(`^autoscale-longhorn-v1-[0-9a-f]{16}$`).MatchString(target) ||
@@ -66,6 +76,21 @@ func validateJournal(j journal, target string) error {
 	return nil
 }
 
+func validateRetainedPreparation(j journal) error {
+	preparedUUID := strings.ToLower(j.PreparedRawUUID)
+	if !regexp.MustCompile(`^autoscale-longhorn-v2-[0-9a-f]{16}$`).MatchString(j.Target) ||
+		j.TemporarySelection != "temporary-v2-1" || !j.StagingLayout || j.RawVolumeAbsent ||
+		j.OriginalDisks == nil || len(j.OriginalDisks) != 0 || !inventoryBoot.MatchString(j.OriginalBootID) ||
+		!regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(j.NativeEmptyDigest) ||
+		!regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(j.RetainedExtentDigest) ||
+		!inventoryBoot.MatchString(strings.ToLower(j.RetainedRawUUID)) ||
+		(j.Phase == "prepared" && (!inventoryBoot.MatchString(preparedUUID) || strings.EqualFold(j.RetainedRawUUID, preparedUUID))) ||
+		(j.Phase != "prepared" && preparedUUID != "") {
+		return errors.New("retained preparation lacks distinct original and staged storage evidence")
+	}
+	return nil
+}
+
 type preparation struct {
 	c                  client
 	target, name       string
@@ -81,7 +106,7 @@ func (p preparation) validateRecord(j journal) error {
 	if err := validateJournal(j, p.target); err != nil {
 		return err
 	}
-	if p.temporarySelection != j.TemporarySelection || (j.Schema == 2 && p.name != "longhorn-v2-prepare-"+j.TemporarySelection) {
+	if p.temporarySelection != j.TemporarySelection || (j.TemporarySelection != "" && p.name != "longhorn-v2-prepare-"+j.TemporarySelection) {
 		return errors.New("journal does not match the explicitly selected preparation profile")
 	}
 	return nil

@@ -32,6 +32,13 @@ type temporaryV2Activation struct {
 	reader        inventoryReaderFactory
 }
 
+func temporaryRawID(selection string) string {
+	if selection == "temporary-v2-1" {
+		return longhornmigration.RetainedStageRawID
+	}
+	return "r-longhorn"
+}
+
 // readBinding brackets the exact native partition reads with hardware and boot
 // identity, then repeats the Kubernetes projection. An incomplete read or failed
 // close cannot produce a binding for a subsequent registration mutation.
@@ -62,15 +69,18 @@ func (a temporaryV2Activation) readBinding(ctx context.Context, selection string
 	if err != nil {
 		return temporaryV2Binding{}, errTemporaryActivation
 	}
-	raw, err := a.c.talosVolume(ctx, address, "r-longhorn")
-	if err != nil {
-		return temporaryV2Binding{}, errTemporaryActivation
+	observe := func(worker object) (temporaryV2Binding, error) {
+		raw, rawErr := a.c.talosVolume(ctx, address, temporaryRawID(selection))
+		if rawErr != nil {
+			return temporaryV2Binding{}, errTemporaryActivation
+		}
+		ephemeral, ephemeralErr := a.c.talosVolume(ctx, address, "EPHEMERAL")
+		if ephemeralErr != nil {
+			return temporaryV2Binding{}, errTemporaryActivation
+		}
+		return projectTemporaryV2Binding(selection, worker, storage, raw, ephemeral, pool, boot)
 	}
-	ephemeral, err := a.c.talosVolume(ctx, address, "EPHEMERAL")
-	if err != nil {
-		return temporaryV2Binding{}, errTemporaryActivation
-	}
-	before, err := projectTemporaryV2Binding(selection, node, storage, raw, ephemeral, pool, boot)
+	before, err := observe(node)
 	if err != nil {
 		return temporaryV2Binding{}, err
 	}
@@ -78,12 +88,12 @@ func (a temporaryV2Activation) readBinding(ctx context.Context, selection string
 	if err != nil {
 		return temporaryV2Binding{}, errTemporaryActivation
 	}
-	boot, err = reader.BootID(ctx)
-	if err != nil || a.c.verifyHost(ctx, address, fresh) != nil {
+	after, err := observe(fresh)
+	if err != nil || before != after || a.c.verifyHost(ctx, address, fresh) != nil {
 		return temporaryV2Binding{}, errTemporaryActivation
 	}
-	after, err := projectTemporaryV2Binding(selection, fresh, storage, raw, ephemeral, pool, boot)
-	if err != nil || before != after {
+	finalBoot, err := reader.BootID(ctx)
+	if err != nil || finalBoot != boot {
 		return temporaryV2Binding{}, errTemporaryActivation
 	}
 	return after, nil
@@ -91,13 +101,14 @@ func (a temporaryV2Activation) readBinding(ctx context.Context, selection string
 
 // temporaryRegistrationState accepts an empty fence or this journal's exact
 // partial activation. A matching disk path without the journal UID is not owned.
-func temporaryRegistrationState(storage object, journalUID string) (bool, error) {
+func temporaryRegistrationState(storage object, journalUID, selection string) (bool, error) {
 	owner := text(storage, "metadata", "annotations", temporaryActivationOwner)
 	if owner == "" && unusedStorageFenced(storage) {
 		return false, nil
 	}
 	if journalUID == "" || owner != journalUID || text(storage, "metadata", "labels", migrationEnabledLabel) != "true" ||
-		value(storage, "spec", "allowScheduling") != true || value(storage, "spec", "evictionRequested") != false || !reviewedBlockDisks(value(storage, "spec", "disks")) {
+		value(storage, "spec", "allowScheduling") != true || value(storage, "spec", "evictionRequested") != false ||
+		!reviewedBlockDisksFor(value(storage, "spec", "disks"), temporaryRawID(selection)) {
 		return false, errTemporaryActivation
 	}
 	return true, nil
@@ -112,7 +123,8 @@ func projectTemporaryV2Binding(selection string, node, storage, raw, ephemeral o
 		BootID: text(node, "status", "nodeInfo", "bootID"), OSImage: text(node, "status", "nodeInfo", "osImage"),
 		LonghornUID: text(storage, "metadata", "uid"), EphemeralUUID: text(ephemeral, "spec", "uuid"), RawPartitionUUID: text(raw, "spec", "partitionUUID")}
 	if !inventoryTemporarySelection.MatchString(selection) || !strings.HasPrefix(selection, "temporary-"+pool.role+"-") ||
-		!inventoryTemporaryNode.MatchString(b.Name) || verifyMigrationNode(node, pool) != nil || verifyEncryptedRawDisk(raw, ephemeral, stagingRawDiskGiB) != nil ||
+		!inventoryTemporaryNode.MatchString(b.Name) || verifyMigrationNode(node, pool) != nil ||
+		verifyNamedEncryptedRawDisk(raw, ephemeral, temporaryRawID(selection), stagingRawDiskGiB) != nil ||
 		b.NodeUID == "" || !regexp.MustCompile(`^hcloud://[1-9][0-9]*$`).MatchString(b.ProviderID) || b.MachineUUID == "" || b.OSImage == "" ||
 		!inventoryBoot.MatchString(b.BootID) || nativeBoot != b.BootID || !inventoryBoot.MatchString(strings.ToLower(b.RawPartitionUUID)) || b.RawPartitionUUID == b.EphemeralUUID ||
 		text(node, "status", "nodeInfo", "architecture") != "amd64" || !hugepagesReady(node) || text(node, "status", "allocatable", "cpu") != "8" ||

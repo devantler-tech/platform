@@ -124,7 +124,7 @@ func (a temporaryV2Activation) targets(ctx context.Context, s inventory, journal
 				return nil, errTemporaryActivation
 			}
 		}
-		if _, err = temporaryRegistrationState(storage[name], journalUID); err != nil {
+		if _, err = temporaryRegistrationState(storage[name], journalUID, selection); err != nil {
 			return nil, err
 		}
 		role := text(nodes[name], "metadata", "labels", migrationPoolLabel)
@@ -143,7 +143,7 @@ func (a temporaryV2Activation) targets(ctx context.Context, s inventory, journal
 
 // registrationChanges adds ownership and the canonical raw disk in one
 // conditional Longhorn-node patch, preserving unrelated metadata.
-func registrationChanges(storage object, journalUID string) []object {
+func registrationChanges(storage object, journalUID, selection string) []object {
 	changes := []object{}
 	if value(storage, "metadata", "labels") == nil {
 		changes = append(changes, object{"op": "add", "path": "/metadata/labels", "value": object{}})
@@ -154,7 +154,7 @@ func registrationChanges(storage object, journalUID string) []object {
 	changes = append(changes,
 		object{"op": "add", "path": "/metadata/labels/" + strings.ReplaceAll(migrationEnabledLabel, "/", "~1"), "value": "true"},
 		object{"op": "add", "path": "/metadata/annotations/" + strings.ReplaceAll(temporaryActivationOwner, "/", "~1"), "value": journalUID},
-		object{"op": "replace", "path": "/spec/disks", "value": blockDisks()},
+		object{"op": "replace", "path": "/spec/disks", "value": blockDisksFor(temporaryRawID(selection))},
 		object{"op": "replace", "path": "/spec/allowScheduling", "value": true},
 		object{"op": "replace", "path": "/spec/evictionRequested", "value": false})
 	return changes
@@ -213,7 +213,7 @@ func (a temporaryV2Activation) run(ctx context.Context) error {
 		if err != nil || text(storage, "metadata", "uid") != record.Targets[selection].LonghornUID {
 			return errTemporaryActivation
 		}
-		registered, err := temporaryRegistrationState(storage, uid)
+		registered, err := temporaryRegistrationState(storage, uid, selection)
 		if err != nil {
 			return err
 		}
@@ -223,7 +223,7 @@ func (a temporaryV2Activation) run(ctx context.Context) error {
 		if _, err = a.owned(ctx, uid, record); err != nil {
 			return err
 		}
-		if err = a.c.patch(ctx, "nodes.longhorn.io", "longhorn-system", storage, registrationChanges(storage, uid)...); err != nil {
+		if err = a.c.patch(ctx, "nodes.longhorn.io", "longhorn-system", storage, registrationChanges(storage, uid, selection)...); err != nil {
 			return err
 		}
 	}
@@ -279,7 +279,7 @@ func (a temporaryV2Activation) accepted(ctx context.Context) error {
 		return err
 	}
 	for _, binding := range record.Targets {
-		registered, err := temporaryRegistrationState(storage[binding.Name], uid)
+		registered, err := temporaryRegistrationState(storage[binding.Name], uid, binding.Selection)
 		if err != nil || !registered {
 			return errTemporaryActivation
 		}
