@@ -109,6 +109,10 @@ echo "PASS(structural): KSV-0020/KSV-0021 are scoped to the three private-mail f
 
 # ---------------------------------------------------------------- behaviour --
 command -v trivy >/dev/null 2>&1 || {
+  if [[ ${CI:-} == true ]]; then
+    fail "trivy is required for behavioural checks in CI"
+    exit 1
+  fi
   echo "SKIP(behavioural): trivy not installed; structural and premise checks above still passed"
   exit 0
 }

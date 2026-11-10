@@ -2307,15 +2307,18 @@ jobs:
         # cleanup cannot silently turn every scoped disposition back on.
         run: bash scripts/tests/test-megalinter-scan-counts-ignorefile.sh
 
+      - name: Install checksum-verified Trivy for disposition boundaries
+        if: needs.changes.outputs.k8s == 'true'
+        run: bash .github/scripts/setup-supply-chain-tools.sh trivy-boundary
+
       - name: 🧱 Validate vendored-operator disposition boundary
         if: needs.changes.outputs.k8s == 'true'
         # The KubeVirt/CDI RBAC dispositions are path-scoped to those two
         # vendored bundles. If one ever loses its paths key or widens, the
         # same checks go quiet on the first-party cluster roles this
         # repository authors, where they are still open findings — and the
-        # count would drop, which reads exactly like progress. yq-only
-        # structural checks always run here; the trivy paired control runs
-        # wherever trivy is installed.
+        # count would drop, which reads exactly like progress. CI requires both
+        # the structural checks and the Trivy paired control.
         run: |
           shellcheck scripts/tests/test-trivyignore-vendored-operator-boundary.sh
           bash scripts/tests/test-trivyignore-vendored-operator-boundary.sh
@@ -2328,7 +2331,7 @@ jobs:
         # so a container added later at a low UID would be silently suppressed and the count
         # would simply not rise — which reads exactly like nothing happened. The premise is
         # asserted per container here; the paired trivy control runs wherever trivy is
-        # installed and skips loudly where it is not.
+        # installed; CI requires it.
         run: |
           shellcheck scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
           bash scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
@@ -2348,8 +2351,7 @@ jobs:
         # Every private-mail container runs at uid/gid 2000, the stalwart identity the pinned
         # Stalwart digest defines and the bootstrap image restates. The path-scoped entry would
         # also hide a container added later at another low identity, so the guard asserts the
-        # identity and image of every container. Its identical-probe trivy control runs only
-        # where trivy is installed, which this job is not yet (#5864).
+        # identity and image of every container. Trivy checks the identical probe at both paths.
         run: |
           shellcheck scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
           bash scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
@@ -2384,7 +2386,7 @@ jobs:
         # application ConfigMap that genuinely embeds a secret would go quiet too, and the
         # count would simply drop — which reads exactly like progress. The paired control
         # scans the same bytes at an excepted and a non-excepted path, so only the path can
-        # explain the difference. It skips where trivy is absent rather than passing blindly.
+        # explain the difference. CI requires this control and the reviewed matched-key sets.
         run: |
           shellcheck scripts/tests/test-trivyignore-configmap-content-boundary.sh
           bash scripts/tests/test-trivyignore-configmap-content-boundary.sh
