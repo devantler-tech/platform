@@ -19,7 +19,7 @@ func (a freshGraphAPI) call(_ context.Context, input []byte, args ...string) ([]
 
 func freshGraphFixture(w *freshRecoveryWitness) freshGraphAPI {
 	i := freshRetainedRecovery
-	backup, snapshot, _, _ := backupProofFixture()
+	backup, snapshot, source, _ := backupProofFixture()
 	child(backup, "metadata")["name"] = i.namespace + "-backup"
 	child(backup, "metadata")["uid"] = w.Backup.UID
 	child(backup, "metadata")["creationTimestamp"] = w.Backup.Created
@@ -29,6 +29,7 @@ func freshGraphFixture(w *freshRecoveryWitness) freshGraphAPI {
 	child(backup, "status")["completionTimestamp"] = "2026-11-10T12:45:40Z"
 	owner := items(child(snapshot, "metadata"), "ownerReferences")[0]
 	owner["name"], owner["uid"] = i.namespace+"-backup", w.Backup.UID
+	child(snapshot, "metadata")["labels"] = object{"velero.io/pvc-uid": source.claimUID}
 	child(snapshot, "status")["completionTimestamp"] = "2026-11-10T12:45:30Z"
 	download := downloadManifest(i, text(child(snapshot, "status"), "snapshotID"))
 	child(download, "metadata")["uid"] = w.Download.UID
@@ -72,6 +73,10 @@ func TestFreshGraphBindsTheUnexpiredBackupToSeparateEncryptedScratch(t *testing.
 		}},
 		{"transfer points to another snapshot", "fresh-transfer", func(a freshGraphAPI, _ *time.Time) {
 			child(a["datadownloads.velero.io"], "spec")["snapshotID"] = "fedcba9876543210fedcba9876543210"
+		}},
+		{"snapshot points to another source claim", "fresh-transfer", func(a freshGraphAPI, _ *time.Time) {
+			snapshot := items(a["podvolumebackups.velero.io"], "items")[0]
+			child(child(snapshot, "metadata"), "labels")["velero.io/pvc-uid"] = "other-claim"
 		}},
 		{"scratch size differs", "fresh-storage", func(a freshGraphAPI, _ *time.Time) {
 			child(child(a["PersistentVolumeClaim"], "status"), "capacity")["storage"] = "3Gi"

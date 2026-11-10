@@ -111,7 +111,8 @@ func observeFreshRecoveryGraph(ctx context.Context, d *recoveryDriver, w *freshR
 	}
 	progress := child(status, "progress")
 	total, ok := progress["totalBytes"].(float64)
-	if !ok || total <= 0 || progress["bytesDone"] != total || d.retainedSnapshot(ctx) != nil {
+	if !ok || total <= 0 || progress["bytesDone"] != total || d.source.claimUID == "" ||
+		d.retainedSnapshot(ctx, d.source.claimUID) != nil {
 		return "fresh-transfer"
 	}
 	claimRef, err := d.ref("PersistentVolumeClaim", "data", d.i.namespace)
@@ -119,7 +120,8 @@ func observeFreshRecoveryGraph(ctx context.Context, d *recoveryDriver, w *freshR
 		return "fresh-storage"
 	}
 	claim, err := d.owned(ctx, claimRef)
-	if err != nil || text(child(child(child(claim, "spec"), "resources"), "requests"), "storage") != "2Gi" ||
+	if err != nil || child(claim, "metadata")["deletionTimestamp"] != nil ||
+		text(child(child(child(claim, "spec"), "resources"), "requests"), "storage") != "2Gi" ||
 		text(child(child(claim, "status"), "capacity"), "storage") != "2Gi" {
 		return "fresh-storage"
 	}
