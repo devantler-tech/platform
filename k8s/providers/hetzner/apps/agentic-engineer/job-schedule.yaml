@@ -112,8 +112,11 @@ spec:
                    memory/ on the lane store, and upload this session's transcript (the
                    newest Claude Code session JSONL under your Claude config directory)
                    and your run report to runs/<UTC date>/transcript.jsonl and
-                   runs/<UTC date>/report.md. Create a missing folder with MKCOL before
-                   writing into it, and check that every upload succeeded.
+                   runs/<UTC date>/report.md. If an earlier run that day already wrote
+                   them, never replace them: write yours beside them as
+                   transcript-<UTC time HHMMSS>.jsonl and report-<UTC time HHMMSS>.md.
+                   Create a missing folder with MKCOL before writing into it, and check
+                   that every upload succeeded.
 
                 This run may open, update and review devantler-tech pull requests and
                 issues, per AGENTS.md. It never merges. Only when genuinely blocked on a
