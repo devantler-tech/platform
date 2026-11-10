@@ -343,11 +343,7 @@ data:
         - Project Board:
             - icon: si-github-#181717
               href: https://github.com/orgs/devantler-tech/projects/5/views/1
-        # No brand colour: Simple Icons' GitHub Copilot hex is #000000, which
-        # vanishes on the dark backdrop; uncoloured, it takes the theme gradient.
-        - Copilot Agents:
-            - icon: si-githubcopilot
-              href: https://github.com/copilot/agents
+        # GitHub Copilot lives in the Artificial Intelligence service group.
         # mdi, not si-githubcodespaces: Simple Icons has no Codespaces slug (404).
         - Codespaces:
             - icon: mdi-cloud-braces

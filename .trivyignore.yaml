@@ -840,8 +840,8 @@ misconfigurations:
   # security-progress ConfigMap it matched jq source that builds `{key, value}` entries. Neither
   # holds credential material. The security-progress match for KSV-0109 is the prose comment
   # "never a clean pass" in the embedded scripts/check-kubescape-result-coverage.sh. Both files'
-  # matched sets are pinned by scripts/tests/test-trivyignore-configmap-content-boundary.sh where
-  # trivy is installed; CI does not install it yet (#5864), so there only its shape checks run.
+  # matched sets are checked by scripts/tests/test-trivyignore-configmap-content-boundary.sh
+  # against the same Trivy version as the CI scan.
   - id: KSV-01010
     paths:
       - k8s/bases/apps/homepage/config-map.yaml

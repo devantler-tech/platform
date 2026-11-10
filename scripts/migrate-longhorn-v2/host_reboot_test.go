@@ -28,6 +28,8 @@ type hostRebootFixture struct {
 	evictUnfilteredRuntime     bool
 }
 
+// hostRebootAPI supplies a healthy V1 replica graph and five healthy database
+// clusters around a worker that needs its huge-page reservation restored.
 func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
 	t.Helper()
 	b, old := newPreparationAPI(t, "draining")
@@ -99,6 +101,8 @@ func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
 	return f, h
 }
 
+// TestHostRebootRecordsEveryDeclaredDatabase checks that a fresh journal binds
+// all five clusters and refuses a recovering or replaced two-instance cluster.
 func TestHostRebootRecordsEveryDeclaredDatabase(t *testing.T) {
 	f, h := hostRebootAPI(t)
 	r, err := h.initialize(context.Background())
@@ -116,6 +120,8 @@ func TestHostRebootRecordsEveryDeclaredDatabase(t *testing.T) {
 	}
 }
 
+// TestLegacyPreRebootJournalBindsNewDatabasesBeforeMovingTheWorker checks that
+// resuming a version-1 journal records the full roster before draining.
 func TestLegacyPreRebootJournalBindsNewDatabasesBeforeMovingTheWorker(t *testing.T) {
 	f, h := hostRebootAPI(t)
 	r, err := h.initialize(context.Background())

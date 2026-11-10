@@ -13,6 +13,15 @@ COSIGN_SHA256="424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
 SYFT_VERSION="1.55.0"
 # syft_1.55.0_checksums.txt: syft_1.55.0_linux_amd64.tar.gz
 SYFT_SHA256="bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d"
+# renovate: datasource=github-releases depName=aquasecurity/trivy extractVersion=^v(?<version>.+)$
+TRIVY_VERSION="0.76.1"
+# trivy_0.76.1_checksums.txt: trivy_0.76.1_Linux-64bit.tar.gz
+TRIVY_SHA256="c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0"
+
+if (($# > 1)) || [[ $# == 1 && $1 != trivy-boundary ]]; then
+  echo "Usage: $0 [trivy-boundary]" >&2
+  exit 2
+fi
 
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   echo '::error::Supply-chain tool pins support Linux x86_64 runners. Add reviewed release digests before using another platform.' >&2
@@ -38,6 +47,20 @@ download() {
   curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
     --retry 5 --retry-delay 3 "$1" --output "$2"
 }
+
+if [[ ${1:-} == trivy-boundary ]]; then
+  : "${RUNNER_TEMP:?RUNNER_TEMP must name the runner temporary directory}"
+  trivy_dir="${RUNNER_TEMP}/platform-validation-tools"
+  download "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+    "${download_dir}/trivy.tar.gz"
+  verify_digest trivy "${TRIVY_SHA256}" "${download_dir}/trivy.tar.gz"
+  tar -xzf "${download_dir}/trivy.tar.gz" -C "${download_dir}" trivy
+  mkdir -p "${trivy_dir}"
+  install -m 0755 "${download_dir}/trivy" "${trivy_dir}/trivy"
+  "${trivy_dir}/trivy" --version
+  printf '%s\n' "${trivy_dir}" >>"${GITHUB_PATH}"
+  exit 0
+fi
 
 download "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
   "${download_dir}/cosign"

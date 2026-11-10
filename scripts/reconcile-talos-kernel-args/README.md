@@ -533,6 +533,28 @@ schematic-ID guard are unchanged. `go.mod` and `go.sum` move only cloud SDK,
 Talos machinery and its YAML encoders are unchanged. This audit changes no
 cluster configuration or vulnerability exception.
 
+**7.206.69**, commit `1c0ef8798d6623b39c61352f3122aa587de3987f`, is audited
+against 7.206.57; 7.206.68 has the same inputs, and 7.206.58 through 7.206.67
+have the inputs audited at 7.206.57. The configuration manager, Talos generator,
+cluster API, charts and `go.sum` are byte-identical, so `applySchematic`,
+`schematicKernelArgs`, `reconcileFoldedKernelArgs` and the schematic-ID guard are
+unchanged. The only `go.mod` change (KSail #8126) moves the existing
+`klauspost/compress` v1.20.1 requirement from the indirect block to the direct
+one; no module version changes, so the Talos machinery and its YAML encoders are
+unchanged. This audit changes no cluster configuration or vulnerability exception.
+
+**7.206.75**, commit `7d2b40a1919e2172916157ba03b3ef69b0b40540`, is audited
+against 7.206.69. The Talos generator, cluster API and charts are byte-identical.
+In the configuration-manager tree the only changed file is `vcluster/Dockerfile`,
+which moves the vCluster Pro image from 0.37.5 to 0.37.6; `talos/` and `ksail/`
+are byte-identical, so `applySchematic`, `schematicKernelArgs`,
+`reconcileFoldedKernelArgs` and the schematic-ID guard are unchanged. `go.mod`
+and `go.sum` move only `cel-go`, AWS SDK, Flux `pkg/apis/meta`, `gomega` and
+Wails modules, and the `k8s.io/apimachinery` requirement whose replacement stays
+at v0.36.5; no `siderolabs` or YAML module moves, so the Talos machinery and its
+YAML encoders are unchanged. This audit changes no cluster configuration or
+vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

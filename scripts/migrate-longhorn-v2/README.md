@@ -1,5 +1,23 @@
 # Prepare Longhorn V2 workers
 
+`repair-v1-reservation` selects the fixed original worker and requires
+`repair-longhorn-v1-reservation` on a first-attempt main dispatch. It admits the
+two identified missing V1 copies only when both surviving copies, the complete
+disk allocation ledger and the physical free-space floor agree. The only write
+adjusts the filesystem disk reservation by the required logical capacity.
+Success requires all volumes to regain three healthy copies with the original
+affected volume and disk identities.
+
+`reserve-v1-scratch` selects the same worker and requires
+`reserve-longhorn-v1-scratch` on a first-attempt main dispatch. Run it after
+the original volumes have three healthy copies. It qualifies one 4 GiB V1
+scratch claim across the three permanent disks under the existing scheduling
+settings and keeps an additional 4 GiB above the physical free-space floor.
+It changes the exhausted disk's reservation once and reads back the original
+disks, volume identities and available capacity. An uncertain write stops
+the run. Check the live reservation and storage health before a new dispatch.
+Use the qualified capacity for one recovery or benchmark claim at a time.
+
 `inventory-storage-layout` adds read-only native block metadata to the storage-root
 observation for a fixed temporary worker. Confirm it with
 `inventory-longhorn-storage-layout-<selection>`. Two complete, bounded native volume
@@ -231,6 +249,13 @@ The restart holds under node pressure, and when Pods that landed since the first
 no longer fit. For two minutes after kubelet reports its new capacity, a rejected Pod or a Pod
 that was running and has gone fails the run and keeps any cordon. Ordinary Pod churn can trip
 this too; check the worker, then dispatch again.
+
+Dispatch a refresh while the platform merge queue is empty, and hold the agent lanes' own
+platform enqueues until the run ends. Prefer 00:00–06:00 UTC outside the 02:17 UTC backup.
+The refresh checks current main before cordoning, every eviction attempt and the kubelet
+restart. If main moves before a restart attempt, the refresh releases only its own cordon.
+An unproven restart keeps the cordon for a new first-attempt main run to adopt after the
+earlier run finishes. A proven restart follows the normal release path.
 
 Next select `benchmark-v1` with `benchmark-longhorn-storage`, before enabling any
 temporary replica storage. It holds until every permanent worker reports its huge pages,

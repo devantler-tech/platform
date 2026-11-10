@@ -108,8 +108,13 @@ wait_json "${base}/api/user" \
   "${artifacts}/user.json"
 # v1.28.1 has no --version option. main.go logs the compiled version before
 # loading configuration; assert that real startup line after API readiness.
-docker logs "${prefix}-coroot" 2>&1 | grep -E 'version: v1\.28\.1-checkpoints\.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477([[:space:]]|$)' \
-  >"${artifacts}/coroot-version.txt"
+coroot_tagged_image="${COROOT_IMAGE%@*}"
+coroot_version="${coroot_tagged_image##*:}"
+docker logs "${prefix}-coroot" 2>&1 |
+  awk -v expected="${coroot_version}" '
+    NF >= 2 && $(NF - 1) == "version:" && $NF == expected { print; found = 1 }
+    END { exit !found }
+  ' >"${artifacts}/coroot-version.txt"
 # db/project.go PrometheusConfig adds this selector when using the global
 # backend. A successful unscoped Prometheus scrape alone cannot prove that the
 # project's actual dashboard queries can read the fixture.

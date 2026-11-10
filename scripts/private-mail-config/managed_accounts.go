@@ -8,6 +8,10 @@ import (
 // managedAccountIDs binds password updates to the complete non-secret census.
 // A missing account is created explicitly; an upsert must never race into a replacement.
 func managedAccountIDs(raw []byte, v inputs) (map[string]string, error) {
+	profile, err := schemaFor(v.RuntimeVersion)
+	if err != nil {
+		return nil, err
+	}
 	var response struct {
 		Methods [][]json.RawMessage `json:"methodResponses"`
 	}
@@ -61,7 +65,7 @@ func managedAccountIDs(raw []byte, v inputs) (map[string]string, error) {
 			}
 			ids[name] = id
 		}
-		aliases, err := canonicalReceivingAliases(account["aliases"])
+		aliases, err := canonicalReceivingAliasesFor(account["aliases"], profile.aliasEnabled)
 		if err != nil {
 			return nil, errConfiguration
 		}

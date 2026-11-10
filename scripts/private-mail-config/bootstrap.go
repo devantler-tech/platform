@@ -43,16 +43,10 @@ func bootstrapCommand(args []string, log io.Writer) int {
 	defer cancel()
 	ctx, timeout := context.WithTimeout(ctx, 3*time.Minute)
 	defer timeout()
-	applicationDigest, err := pinnedApplicationDigest()
-	if err != nil {
-		_, _ = fmt.Fprintln(log, "Email bootstrap refused invalid administration asset metadata.")
-		return 2
-	}
 	runtime := bootstrapRuntime{
 		server: "/usr/local/bin/stalwart", cli: "/usr/local/bin/stalwart-cli", url: "http://127.0.0.1:" + bootstrapRecoveryPort,
 		dataDir: "/var/lib/stalwart", serverArgs: []string{"--config", "/etc/stalwart/config.json"},
 		startup: time.Minute, shutdown: 30 * time.Second,
-		applicationFile: applicationAssetPath(applicationDigest), applicationDigest: applicationDigest,
 		proxyClientIP: proxy.value,
 	}
 	if err := bootstrap(ctx, *dir, runtime); err != nil {
@@ -84,6 +78,16 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 	}
 	if runtime.proxyClientIP != nil {
 		v.UseProxyClientIP = *runtime.proxyClientIP
+	}
+	if v.RuntimeVersion == "1.0.2" && verifyRuntimeTools(ctx, runtime) != nil {
+		return errConfiguration
+	}
+	if runtime.applicationFile == "" {
+		runtime.applicationDigest, err = pinnedApplicationDigestFor(v.RuntimeVersion)
+		if err != nil {
+			return errConfiguration
+		}
+		runtime.applicationFile = applicationAssetPath(runtime.applicationDigest)
 	}
 	if verifyApplicationAsset(runtime.applicationFile, runtime.applicationDigest) != nil {
 		return errConfiguration
@@ -171,8 +175,12 @@ prepared:
 		return errConfiguration
 	default:
 	}
-	inventory, err := m.request(ctx, "/jmap", inventoryRequest)
-	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
+	request, err := inventoryRequestFor(v.RuntimeVersion)
+	if err != nil {
+		return errConfiguration
+	}
+	inventory, err := m.request(ctx, "/jmap", request)
+	if err != nil || validateInventoryFor(inventory, v.RuntimeVersion) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return fmt.Errorf("initial inventory: %w", errConfiguration)
 	}
 	v.accountIDs, err = managedAccountIDs(inventory, v)
@@ -198,8 +206,8 @@ prepared:
 	}
 	// Recovery intentionally authenticates only the recovery administrator.
 	// Normal account authentication is proved after this process has stopped.
-	inventory, err = m.request(ctx, "/jmap", inventoryRequest)
-	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
+	inventory, err = m.request(ctx, "/jmap", request)
+	if err != nil || validateInventoryFor(inventory, v.RuntimeVersion) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return errConfiguration
 	}
 	// A successful configuration cannot mask an early child exit or a forced

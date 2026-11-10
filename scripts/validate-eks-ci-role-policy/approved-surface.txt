@@ -66,7 +66,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|flux-system|flux-operator 0cbdc24c2b42ef3d
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|homepage|homepage 73c235e4a91bde46f5eeb0400fb986c47b52860d188f97822024b09fd4752b2a
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent 0bd52db1b6b8ed350e60b4580f9386e405c9a62f0e2c1cc73303187ed5bf121c
+helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent 09e3fb96d3d4cb33ebc67aa6cdba8ace8c3ef995de8064d0acc57fd07674cc34
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent-crds e1765ef34c0535f7101afad08e946cb5ed9815eb370636b8e735cd0af82a1be2
 
@@ -162,7 +162,7 @@ pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-upjet-unifi 29887f0d
 
 pkg.crossplane.io/v1|Provider||provider-aws-iam 4d46cd8dd698528258e074ad138bbecbb3e54dfc13647ea3166efc89f4cf6561
 
-pkg.crossplane.io/v1|Provider||provider-upjet-github 4f11a8519c6713e95c23cefaa758af3a4a949436477a482b6684f838c1372555
+pkg.crossplane.io/v1|Provider||provider-upjet-github 719f3ea7799fbb895e20bf9da54098e37f67da5cc397a94a5c13df3f6fbb187b
 
 pkg.crossplane.io/v1|Provider||provider-upjet-unifi 9ddcac5e67d0ab6c75f6f0ba60f8e225d61809052616a111539bd87574c4225b
 

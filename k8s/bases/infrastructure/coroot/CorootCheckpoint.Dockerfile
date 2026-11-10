@@ -5,7 +5,7 @@ RUN npm ci
 COPY front/ ./
 RUN npm run build-prod
 
-FROM docker.io/library/golang:1.27.3-bookworm@sha256:fea12ba16096adec0f699ce1c4da2154d320450e56c1f63671f95d2a3551c77b AS builder
+FROM docker.io/library/golang:1.27.3-bookworm@sha256:e482b31b5d30c31f9e495f4b8cbdf41429b2d74955dfbcd9c0a904483d738390 AS builder
 RUN apt-get update && apt-get install --yes --no-install-recommends liblz4-dev=1.9.4-1 && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY go.mod go.sum ./
