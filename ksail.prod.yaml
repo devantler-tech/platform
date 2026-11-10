@@ -134,6 +134,28 @@ spec:
             max: 2
             labels:
               storage.platform.devantler.tech/migration-pool: v1
+            talosPatches:
+              - |
+                ---
+                apiVersion: v1alpha1
+                kind: VolumeConfig
+                name: EPHEMERAL
+                provisioning:
+                  diskSelector:
+                    match: system_disk
+                  minSize: 40GiB
+                  maxSize: -152GiB
+                  grow: false
+                ---
+                apiVersion: v1alpha1
+                kind: RawVolumeConfig
+                name: longhorn
+                provisioning:
+                  diskSelector:
+                    match: system_disk
+                  minSize: 144GiB
+                  maxSize: 144GiB
+                  grow: false
           # Fresh raw-disk capacity; created after the worker layout changed.
           # Together with rebuilt permanent workers 1 and 2, this provides three
           # V2 targets while V1 retains worker 3 and its two migration workers.
@@ -144,6 +166,33 @@ spec:
             max: 1
             labels:
               storage.platform.devantler.tech/migration-pool: v2
+            talosPatches:
+              - |
+                apiVersion: v1alpha1
+                kind: VolumeConfig
+                name: EPHEMERAL
+                provisioning:
+                  diskSelector:
+                    match: system_disk
+                  grow: false
+                  minSize: 40GiB
+                  maxSize: 44GiB
+                ---
+                apiVersion: v1alpha1
+                kind: RawVolumeConfig
+                name: longhorn-stage
+                provisioning:
+                  diskSelector:
+                    match: system_disk
+                  grow: false
+                  minSize: 144GiB
+                  maxSize: 144GiB
+                encryption:
+                  provider: luks2
+                  keys:
+                    - slot: 0
+                      nodeID: {}
+                      lockToState: true
           - name: autoscale-cx43
             serverType: cx43
             location: fsn1
