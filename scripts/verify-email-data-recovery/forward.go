@@ -50,6 +50,39 @@ func (c *mailboxClient) session(ctx context.Context) error {
 	return nil
 }
 
+// A connection before the reader starts listening can close kubectl's entire
+// forwarding stream. Reopen it through the same identity check on transport
+// failure. An HTTP response means the tunnel can still carry the next probe.
+func waitReaderReady(ctx context.Context, endpoint string, stop func(), reopen func(context.Context) (string, func(), error)) (string, func(), error) {
+	err := waitRecovery(ctx, 90*time.Second, func() (bool, error) {
+		if stop == nil {
+			var err error
+			endpoint, stop, err = reopen(ctx)
+			if err != nil {
+				return false, err
+			}
+		}
+		probe, err := newMailboxClient(endpoint, "unused-readiness-probe")
+		if err != nil {
+			return false, err
+		}
+		status, err := observationHealth(ctx, probe)
+		if err != nil {
+			stop()
+			stop = nil
+			return false, nil
+		}
+		return status == http.StatusOK, nil
+	})
+	if err != nil {
+		if stop != nil {
+			stop()
+		}
+		return "", nil, err
+	}
+	return endpoint, stop, nil
+}
+
 // kubectl's forwarding stream stays private. The only address it may supply is
 // its own ephemeral IPv4 loopback port; neither the JMAP session nor a backup
 // can select a destination for the account credential.
