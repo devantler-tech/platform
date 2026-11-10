@@ -201,12 +201,14 @@ for result in success failure cancelled skipped pending unknown ''; do
 done
 echo 'PASS: both guard families retain the native proof; 14 incomplete routes and every non-success result refused'
 
-jq -e '
+jq -e --arg routing_condition "matrix.suite == 'bootstrap'" '
   .jobs["validate-publication-generator"] as $job |
   ($job.permissions == {contents: "read"}) and
   ($job | has("if") | not) and
   (($job["continue-on-error"] // false) == false) and
-  all($job.steps[]; .if == null and ((.["continue-on-error"] // false) == false)) and
+  all($job.steps[]; ((.["continue-on-error"] // false) == false) and
+    (if .name == "🔍 Lint and exercise publication fixture routing"
+     then .if == $routing_condition else .if == null end)) and
   ([$job.steps[] | select(.name == "🔐 Validate the approved-revisions generator"
     and .if == null and (.run | type == "string" and length > 0))] | length) == 1 and
   (.jobs["ci-required-checks"].needs | index("validate-publication-generator") != null) and
