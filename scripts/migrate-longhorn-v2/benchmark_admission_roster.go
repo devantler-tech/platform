@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
+	"net/url"
 	"regexp"
 	"sort"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
 const benchmarkControlPlaneCount = 3
@@ -16,6 +21,50 @@ type benchmarkAPIServer struct {
 	Node, NodeUID, ProviderID, BootID, PodUID, ContainerID string
 	InternalIP, ExternalIP                                 netip.Addr
 	StartedAt                                              time.Time
+}
+
+func observeBenchmarkAPIServers(ctx context.Context, c client) ([]benchmarkAPIServer, error) {
+	if c.context != "admin@prod" {
+		return nil, errors.New("the protected production API roster is required")
+	}
+	lists := [3][]object{}
+	for index, query := range []struct {
+		path, selector, apiVersion, kind string
+	}{
+		{"/api/v1/nodes", "node-role.kubernetes.io/control-plane", "v1", "NodeList"},
+		{"/api/v1/namespaces/kube-system/pods", "component=kube-apiserver,tier=control-plane", "v1", "PodList"},
+		{"/apis/discovery.k8s.io/v1/namespaces/default/endpointslices", "kubernetes.io/service-name=kubernetes", "discovery.k8s.io/v1", "EndpointSliceList"},
+	} {
+		path := query.path + "?" + url.Values{"labelSelector": {query.selector}}.Encode()
+		raw, err := c.kubectl(ctx, nil, "get", "--raw="+path)
+		if err != nil {
+			return nil, errors.New("serving API server inventory is unavailable")
+		}
+		lists[index], err = decodeBenchmarkAdmissionList(raw, query.apiVersion, query.kind)
+		if err != nil {
+			return nil, errors.New("serving API server inventory is incomplete")
+		}
+	}
+	return qualifyBenchmarkAPIServers(lists[0], lists[1], lists[2])
+}
+
+func decodeBenchmarkAdmissionList(raw []byte, apiVersion, kind string) ([]object, error) {
+	var envelope struct {
+		APIVersion string `json:"apiVersion"`
+		Kind       string `json:"kind"`
+		Metadata   struct {
+			Version   string `json:"resourceVersion"`
+			Remaining int64  `json:"remainingItemCount"`
+		} `json:"metadata"`
+	}
+	if strictjson.Validate(raw, map[string][]string{
+		"":         {"apiVersion", "kind", "metadata", "items"},
+		"metadata": {"resourceVersion", "remainingItemCount", "continue"},
+	}) != nil || json.Unmarshal(raw, &envelope) != nil || envelope.APIVersion != apiVersion ||
+		envelope.Kind != kind || envelope.Metadata.Version == "" || envelope.Metadata.Remaining != 0 {
+		return nil, errors.New("native API server inventory did not identify a complete revision")
+	}
+	return decodeList(raw)
 }
 
 // The service publishes internal addresses. Each address must match the mirror

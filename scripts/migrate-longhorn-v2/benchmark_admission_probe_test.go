@@ -3,17 +3,65 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"strconv"
 	"sync/atomic"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestBenchmarkPVFenceRequiresExactPolicyAndDenyBinding(t *testing.T) {
+	for _, fault := range []string{"", "policy changed", "policy terminating", "binding narrowed", "binding warns", "different policy"} {
+		t.Run(fault, func(t *testing.T) {
+			policies, err := benchmarkRetirementFences(retirementFenceFixture(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			desired := policies[0]
+			name := text(desired, "metadata", "name")
+			policy := object{"metadata": object{"name": name, "uid": "original-policy", "resourceVersion": "100"}, "spec": maps.Clone(valueObject(desired, "spec"))}
+			binding := object{"metadata": object{"name": name, "uid": "original-binding", "resourceVersion": "101"},
+				"spec": object{"policyName": name, "validationActions": []any{"Deny"}}}
+			switch fault {
+			case "policy changed":
+				valueObject(policy, "spec")["failurePolicy"] = "Ignore"
+			case "policy terminating":
+				valueObject(policy, "metadata")["deletionTimestamp"] = "2026-01-01T00:00:00Z"
+			case "binding narrowed":
+				valueObject(binding, "spec")["matchResources"] = object{"namespaceSelector": object{"matchLabels": object{"missing": "true"}}}
+			case "binding warns":
+				valueObject(binding, "spec")["validationActions"] = []any{"Warn"}
+			case "different policy":
+				valueObject(binding, "spec")["policyName"] = "unrelated"
+			}
+			c := client{context: "admin@prod", run: func(_ context.Context, data []byte, program string, args ...string) ([]byte, error) {
+				if data != nil || program != "kubectl" || len(args) != 6 ||
+					!slices.Equal(args[:3], []string{"--context=admin@prod", "--request-timeout=20s", "get"}) ||
+					!slices.Equal(args[4:], []string{name, "--output=json"}) {
+					return nil, errors.New("unexpected benchmark fence read")
+				}
+				switch args[3] {
+				case "validatingadmissionpolicies.admissionregistration.k8s.io":
+					return json.Marshal(policy)
+				case "validatingadmissionpolicybindings.admissionregistration.k8s.io":
+					return json.Marshal(binding)
+				}
+				return nil, errors.New("unexpected benchmark fence kind")
+			}}
+			got, err := observeBenchmarkPVFence(context.Background(), c, desired)
+			if fault != "" && err == nil || fault == "" && (err != nil || got != (benchmarkAdmissionEpoch{"original-policy", "100", "original-binding", "101"})) {
+				t.Fatalf("policy and binding readback mismatch: %v", err)
+			}
+		})
+	}
+}
 
 func TestBenchmarkRetainedPVAdmissionRequiresBothDryRuns(t *testing.T) {
 	for _, test := range []struct {

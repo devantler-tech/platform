@@ -143,6 +143,19 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 	if client.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
 		t.Fatal("direct client permits a redirect")
 	}
+	for _, test := range []struct{ method, query string }{
+		{http.MethodPatch, ""},
+		{http.MethodPatch, "?dryRun=All&dryRun="},
+		{http.MethodDelete, "?dryRun=All"},
+	} {
+		req, err := http.NewRequest(test.method, endpoint.String()+"/api/v1/persistentvolumes/scratch"+test.query, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.Do(req); err == nil || !strings.Contains(err.Error(), "only observations and server dry-runs") {
+			t.Fatal("direct API client did not reject a write-capable request locally")
+		}
+	}
 }
 
 func TestBenchmarkCredentialLoaderRefusesOutsideProtectedDispatch(t *testing.T) {

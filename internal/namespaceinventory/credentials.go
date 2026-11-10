@@ -240,5 +240,14 @@ func (peer directAPIPeer) RoundTrip(req *http.Request) (*http.Response, error) {
 		(req.Host != "" && req.Host != peer.host) {
 		return nil, errors.New("direct API request addressed another peer")
 	}
+	if req.Method != http.MethodGet && (req.Method != http.MethodPatch || req.URL.RawQuery != "dryRun=All") {
+		return nil, errors.New("direct API client permits only observations and server dry-runs")
+	}
 	return peer.transport.RoundTrip(req)
+}
+
+func (peer directAPIPeer) CloseIdleConnections() {
+	if transport, ok := peer.transport.(interface{ CloseIdleConnections() }); ok {
+		transport.CloseIdleConnections()
+	}
 }

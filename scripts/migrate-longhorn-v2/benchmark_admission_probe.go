@@ -8,12 +8,87 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"reflect"
+	"slices"
 
+	"github.com/devantler-tech/platform/internal/namespaceinventory"
 	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
 const benchmarkPVFenceMessage = "Benchmark backend references are fenced for retirement"
+
+type benchmarkAdmissionEpoch struct {
+	PolicyUID, PolicyVersion, BindingUID, BindingVersion string
+}
+
+// This proves the Retain PV policy only. Other fences and original journal
+// ownership must still be re-established before a storage delete.
+func proveBenchmarkPVFenceOnServingAPIs(ctx context.Context, c client, record benchmarkRecord, pv object) error {
+	if err := authorizeBenchmark(os.Getenv, "v1"); err != nil {
+		return err
+	}
+	source := os.Getenv("GITHUB_SHA")
+	if err := sourceCurrent(ctx, c.run, source); err != nil {
+		return err
+	}
+	policies, err := benchmarkRetirementFences(record)
+	if err != nil || record.Phase != "v1" {
+		return errors.New("original V1 benchmark PV fence is unverified")
+	}
+	policy := policies[0]
+	before, err := observeBenchmarkPVFence(ctx, c, policy)
+	if err != nil {
+		return err
+	}
+	roster, err := observeBenchmarkAPIServers(ctx, c)
+	if err != nil {
+		return err
+	}
+	if err := verifyBenchmarkProviderEndpoints(ctx, os.Getenv("HCLOUD_TOKEN"), roster); err != nil {
+		return err
+	}
+	for _, endpoint := range roster {
+		direct, address, err := namespaceinventory.LoadBenchmarkAdmissionClient(os.Getenv, endpoint.ExternalIP)
+		if err != nil {
+			return err
+		}
+		proof := probeBenchmarkRetainedPVAdmission(ctx, direct, address, record, pv)
+		direct.CloseIdleConnections()
+		if proof != nil {
+			return proof
+		}
+	}
+	after, err := observeBenchmarkAPIServers(ctx, c)
+	if err != nil || !slices.Equal(roster, after) {
+		return errors.New("serving API processes changed during benchmark admission proof")
+	}
+	bound, err := observeBenchmarkPVFence(ctx, c, policy)
+	if err != nil || before != bound {
+		return errors.New("the benchmark PV fence changed during native admission proof")
+	}
+	return sourceCurrent(ctx, c.run, source)
+}
+
+func observeBenchmarkPVFence(ctx context.Context, c client, desired object) (benchmarkAdmissionEpoch, error) {
+	unverified := errors.New("the exact Deny policy and binding for the original PV are unverified")
+	name := text(desired, "metadata", "name")
+	policy, err := c.get(ctx, "validatingadmissionpolicies.admissionregistration.k8s.io", "", name, false)
+	if err != nil || text(policy, "metadata", "name") != name || value(policy, "metadata", "deletionTimestamp") != nil ||
+		!reflect.DeepEqual(value(policy, "spec"), value(desired, "spec")) {
+		return benchmarkAdmissionEpoch{}, unverified
+	}
+	binding, err := c.get(ctx, "validatingadmissionpolicybindings.admissionregistration.k8s.io", "", name, false)
+	if err != nil || text(binding, "metadata", "name") != name || value(binding, "metadata", "deletionTimestamp") != nil ||
+		text(binding, "spec", "policyName") != name || !reflect.DeepEqual(value(binding, "spec", "validationActions"), []any{"Deny"}) ||
+		value(binding, "spec", "paramRef") != nil || value(binding, "spec", "matchResources") != nil {
+		return benchmarkAdmissionEpoch{}, unverified
+	}
+	return benchmarkAdmissionEpoch{
+		PolicyUID: text(policy, "metadata", "uid"), PolicyVersion: text(policy, "metadata", "resourceVersion"),
+		BindingUID: text(binding, "metadata", "uid"), BindingVersion: text(binding, "metadata", "resourceVersion"),
+	}, nil
+}
 
 func probeBenchmarkRetainedPVAdmission(ctx context.Context, client *http.Client, endpoint *url.URL, record benchmarkRecord, pv object) error {
 	unverified := errors.New("the original Retain PV fence is unverified on this API server")

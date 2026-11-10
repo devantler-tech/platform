@@ -1,10 +1,54 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestBenchmarkObservesNativeAdmissionListRevisions(t *testing.T) {
+	nodes, pods, endpoints := benchmarkAdmissionFixture()
+	for _, corrupt := range []string{"", "wrong kind", "missing revision", "continued"} {
+		t.Run(corrupt, func(t *testing.T) {
+			calls := 0
+			paths := []string{
+				"/api/v1/nodes?labelSelector=node-role.kubernetes.io%2Fcontrol-plane",
+				"/api/v1/namespaces/kube-system/pods?labelSelector=component%3Dkube-apiserver%2Ctier%3Dcontrol-plane",
+				"/apis/discovery.k8s.io/v1/namespaces/default/endpointslices?labelSelector=kubernetes.io%2Fservice-name%3Dkubernetes",
+			}
+			c := client{context: "admin@prod", run: func(_ context.Context, data []byte, program string, args ...string) ([]byte, error) {
+				if data != nil || program != "kubectl" || calls >= len(paths) || !slices.Equal(args, []string{
+					"--context=admin@prod", "--request-timeout=20s", "get", "--raw=" + paths[calls],
+				}) {
+					t.Fatal("API server inventory issued an unexpected command")
+				}
+				kind := []string{"NodeList", "PodList", "EndpointSliceList"}[calls]
+				apiVersion := []string{"v1", "v1", "discovery.k8s.io/v1"}[calls]
+				items := [][]object{nodes, pods, endpoints}[calls]
+				metadata := object{"resourceVersion": "100"}
+				calls++
+				if calls == 3 {
+					switch corrupt {
+					case "wrong kind":
+						kind = "List"
+					case "missing revision":
+						delete(metadata, "resourceVersion")
+					case "continued":
+						metadata["continue"] = "another-page"
+					}
+				}
+				return json.Marshal(object{"apiVersion": apiVersion, "kind": kind, "metadata": metadata, "items": items})
+			}}
+			roster, err := observeBenchmarkAPIServers(context.Background(), c)
+			if calls != 3 || (corrupt == "") != (err == nil) || err == nil && len(roster) != 3 {
+				t.Fatalf("native inventory completion mismatch: calls=%d error=%v", calls, err)
+			}
+		})
+	}
+}
 
 func TestBenchmarkAdmissionRequiresEveryServingAPIServer(t *testing.T) {
 	for _, tc := range []struct {
