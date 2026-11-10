@@ -61,6 +61,10 @@ reader_port="$(container reader '.ports[] | select(.name == "reader") | .contain
 [[ "$(q "${service}" '.spec.ports[0].targetPort')" == webdav ]] || fail 'the store Service does not front the WebDAV listener'
 [[ "$(q "${reader_service}" '.spec.ports[0].targetPort')" == reader ]] ||
   fail 'the reader Service does not front the read-only listener'
+# The documented proxy path names no port, and the API server resolves that only to one unnamed
+# port; a named port would answer 503 behind a grant that could never be used.
+reader_ports="$(q "${reader_service}" '[.spec.ports[] | .name // ""] | join(",")')"
+[[ "${reader_ports}" == "" ]] || fail "the reader Service port is named (${reader_ports}), so the proxy path cannot reach it"
 service_port="$(q "${service}" '.spec.ports[0].port')"
 
 # The agent's way in: the EgressPolicy names the Service's real address, the Agent uses the
