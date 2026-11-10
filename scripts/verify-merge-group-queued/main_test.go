@@ -331,7 +331,7 @@ func TestWaitForTurnUsesSameCandidateAndCurrentParent(t *testing.T) {
 			{receipt: initial, main: baseSHA, position: 1},
 		}
 		if replaced {
-			turns[2].receipt.Entry = "replacement"
+			turns[2].Entry = "replacement"
 		}
 		var stdout bytes.Buffer
 		read := func() (witness, error) {
