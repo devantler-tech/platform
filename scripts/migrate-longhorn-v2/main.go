@@ -28,6 +28,10 @@ func main() {
 		authorization = authorizeHostMemory(os.Getenv, target)
 	case "reboot-host-for-hugepages":
 		authorization = authorizeHostReboot(os.Getenv, target)
+	case "repair-v1-reservation":
+		authorization = authorizeV1ReservationRepair(os.Getenv, target)
+	case "reserve-v1-scratch":
+		authorization = authorizeV1ScratchHeadroom(os.Getenv, target)
 	case "inventory-storage-root":
 		authorization = authorizeStorageRoot(os.Getenv, target)
 	case "inventory-storage-layout":
@@ -41,6 +45,20 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == "repair-v1-reservation" {
+		if err := repairV1Reservation(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
+			fmt.Fprintln(os.Stderr, "V1 reservation repair held:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if operation == "reserve-v1-scratch" {
+		if err := reserveV1ScratchHeadroom(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
+			fmt.Fprintln(os.Stderr, "V1 scratch reservation held:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if operation == "inventory-storage-layout" {
 		if err := runStorageLayoutInventory(ctx, target, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
 			fmt.Fprintln(os.Stderr, inventoryFailureMessage(err))
@@ -123,7 +141,7 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		p := temporaryPreparation{preparation: preparation{c: c, target: resolved, name: "longhorn-v2-prepare-" + target, temporarySelection: target, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}}
+		p := temporaryPreparation{preparation: preparation{c: c, target: resolved, name: "longhorn-v2-prepare-" + target, temporarySelection: target, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}, staging: true}
 		if err = p.prepare(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "Unused temporary preparation held:", err)
 			fmt.Fprintln(os.Stderr, "Preserve its journal and owned cordon; uncertain resets are never replayed.")

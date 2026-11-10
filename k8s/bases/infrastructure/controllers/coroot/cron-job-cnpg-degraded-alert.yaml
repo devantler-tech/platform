@@ -207,9 +207,10 @@ spec:
                     | ($c.spec.instances // 0) as $d
                     | (([($c.spec.plugins // [])[] | select(.enabled != false and .isWALArchiver == true)] | length > 0)
                        or ($c.spec.backup.barmanObjectStore? != null)) as $archiveConfigured
-                    | (if $ready.lastTransitionTime == null
+                    | ($ready.lastTransitionTime // $c.metadata.creationTimestamp) as $replicaSince
+                    | (if $replicaSince == null
                        then false
-                       else (($now - ($ready.lastTransitionTime | fromdate)) >= $grace)
+                       else (($now - ($replicaSince | fromdate)) >= $grace)
                        end) as $replicaPastGrace
                     | ($archive.lastTransitionTime // $c.metadata.creationTimestamp) as $archiveSince
                     | (if $archiveSince == null
@@ -218,7 +219,7 @@ spec:
                        end) as $archivePastGrace
                     | [
                         if (($r < $d or (($ready.status // "Unknown") != "True")) and $replicaPastGrace)
-                        then "• `\($c.metadata.namespace)/\($c.metadata.name)` — \($r)/\($d) instances ready, Ready=\($ready.status // "Unknown") since \($ready.lastTransitionTime)"
+                        then "• `\($c.metadata.namespace)/\($c.metadata.name)` — \($r)/\($d) instances ready, Ready=\($ready.status // "Unknown") since \($replicaSince)"
                         else empty
                         end,
                         if ($archiveConfigured and (($archive.status // "Unknown") != "True") and $archivePastGrace)

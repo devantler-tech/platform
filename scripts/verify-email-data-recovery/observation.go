@@ -19,19 +19,37 @@ var retainedRecovery = invocation{
 	namespace: "email-data-recovery-41561215415",
 }
 
-type observationReadOnly struct{ base kubernetes }
+const retainedParityConfirm = "verify-retained-email-parity"
 
-// call permits only two identity reads and the existing account credential.
+type observationReadOnly struct {
+	base          kubernetes
+	parity        bool
+	servingVolume string
+}
+
+// call permits fixed reads and the existing account credential. Parity also
+// reads the serving identity and its bound volume, named by the fixed claim.
 // Input bytes, extra flags, other targets and every write are refused.
 func (o observationReadOnly) call(ctx context.Context, input []byte, args ...string) ([]byte, error) {
 	if len(input) != 0 {
 		return nil, errors.New("observation-scope")
 	}
-	for _, allowed := range [][]string{
+	allowedReads := [][]string{
 		{"get", "Namespace", retainedRecovery.namespace, "--ignore-not-found=true", "-o=json"},
 		{"get", "Pod", "reader", "--ignore-not-found=true", "-o=json", "--namespace=" + retainedRecovery.namespace},
 		{"get", "Secret", "private-mail-maintainer", "--ignore-not-found=true", "-o=json", "--namespace=private-mail"},
-	} {
+	}
+	if o.parity {
+		allowedReads = append(allowedReads,
+			[]string{"get", "Pod", "private-mail-0", "--ignore-not-found=true", "-o=json", "--namespace=private-mail"},
+			[]string{"get", "PersistentVolumeClaim", "private-mail-data", "--ignore-not-found=true", "-o=json", "--namespace=private-mail"},
+			[]string{"get", "PersistentVolumeClaim", "data", "--ignore-not-found=true", "-o=json", "--namespace=" + retainedRecovery.namespace},
+		)
+		if o.servingVolume != "" {
+			allowedReads = append(allowedReads, []string{"get", "PersistentVolume", o.servingVolume, "--ignore-not-found=true", "-o=json"})
+		}
+	}
+	for _, allowed := range allowedReads {
 		if reflect.DeepEqual(args, allowed) {
 			return o.base.call(ctx, nil, args...)
 		}
@@ -58,13 +76,16 @@ func observationHealth(ctx context.Context, c *mailboxClient) (int, error) {
 }
 
 // runRecoveryObservation uses the same UID-fenced private forwarding path as
-// recovery. It performs no mailbox write and does not prove message recovery.
+// recovery. Parity mode compares a diagnostic message without authorizing
+// cleanup or establishing a fresh backup restore.
 func runRecoveryObservation(ctx context.Context, env func(string) string, k kubernetes, output io.Writer) int {
 	fail := func(stage string) int {
 		_, _ = fmt.Fprintf(output, "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=%s\n", stage)
 		return 2
 	}
-	if env("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/observe-email-data-recovery.yaml@refs/heads/main" || env("EMAIL_DATA_RECOVERY_CONFIRM") != "observe-email-data-recovery" {
+	confirm := env("EMAIL_DATA_RECOVERY_CONFIRM")
+	parity := confirm == retainedParityConfirm
+	if env("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/observe-email-data-recovery.yaml@refs/heads/main" || (!parity && confirm != "observe-email-data-recovery") {
 		return fail("dispatch")
 	}
 	if _, err := authorizeDataRecovery(func(key string) string {
@@ -81,7 +102,8 @@ func runRecoveryObservation(ctx context.Context, env func(string) string, k kube
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	d := &recoveryDriver{i: retainedRecovery, k: observationReadOnly{base: k}, refs: map[string]ownedReference{}}
+	reads := observationReadOnly{base: k, parity: parity}
+	d := &recoveryDriver{i: retainedRecovery, k: reads, refs: map[string]ownedReference{}}
 	ns, found, err := d.lookup(ctx, "Namespace", d.i.namespace, "")
 	if err != nil || !found || text(child(child(ns, "metadata"), "labels"), recoveryLabel) != d.i.run || child(ns, "metadata")["deletionTimestamp"] != nil {
 		return fail("reader-identity")
@@ -104,7 +126,16 @@ func runRecoveryObservation(ctx context.Context, env func(string) string, k kube
 		}
 		d.refs[ref.key()] = ref
 	}
-	endpoint, stop, err := d.forward(ctx, d.i.namespace, "reader", text(child(pod, "metadata"), "uid"))
+	readerUID := text(child(pod, "metadata"), "uid")
+	if parity {
+		if readerUID != env("EMAIL_RETAINED_READER_UID") {
+			return fail("reader-identity")
+		}
+		if stage := bindObservationParity(ctx, d, reads, readerUID, env("EMAIL_RETAINED_CLAIM_UID")); stage != "" {
+			return fail(stage)
+		}
+	}
+	endpoint, stop, err := d.forward(ctx, d.i.namespace, "reader", readerUID)
 	if err != nil {
 		return fail("reader-forward")
 	}
@@ -147,13 +178,68 @@ func runRecoveryObservation(ctx context.Context, env func(string) string, k kube
 			return fail("reader-session-response")
 		}
 	}
+	if parity {
+		if stage := observeRetainedParity(ctx, d, reader); stage != "" {
+			return fail(stage)
+		}
+	}
 	for _, ref := range d.refs {
 		if _, err = d.owned(ctx, ref); err != nil {
 			return fail("reader-replaced")
 		}
 	}
+	if parity {
+		if _, err = fmt.Fprintln(output, "EMAIL_RETAINED_PARITY=VERIFIED source_writes=0 original_trial=UNVERIFIED"); err != nil {
+			return 2
+		}
+		return 0
+	}
 	if _, err = fmt.Fprintln(output, "EMAIL_RECOVERY_OBSERVATION=PASS readiness=VERIFIED session=VERIFIED writes=0"); err != nil {
 		return 2
 	}
 	return 0
+}
+
+func bindObservationParity(ctx context.Context, d *recoveryDriver, reads observationReadOnly, readerUID, claimUID string) string {
+	claim, found, err := d.lookup(ctx, "PersistentVolumeClaim", "data", d.i.namespace)
+	m := child(claim, "metadata")
+	readerVolume := text(child(claim, "spec"), "volumeName")
+	if err != nil || !found || claimUID == "" || text(m, "uid") != claimUID || m["deletionTimestamp"] != nil || text(child(claim, "status"), "phase") != "Bound" || !kubernetesName.MatchString(readerVolume) {
+		return "reader-claim"
+	}
+	ref := ownedReference{kind: "PersistentVolumeClaim", name: "data", namespace: d.i.namespace, uid: claimUID}
+	d.refs[ref.key()] = ref
+	if _, err = d.owned(ctx, ref); err != nil {
+		return "reader-claim"
+	}
+	claim, found, err = d.lookup(ctx, "PersistentVolumeClaim", "private-mail-data", "private-mail")
+	reads.servingVolume = text(child(claim, "spec"), "volumeName")
+	if err != nil || !found || !kubernetesName.MatchString(reads.servingVolume) {
+		return "source-identity"
+	}
+	d.k = reads
+	d.source, err = d.readSource(ctx)
+	if err != nil || d.source.podUID == readerUID || d.source.claimUID == claimUID || d.source.pv == readerVolume {
+		return "source-identity"
+	}
+	return ""
+}
+
+func observeRetainedParity(ctx context.Context, d *recoveryDriver, reader *mailboxClient) string {
+	endpoint, stop, err := d.forward(ctx, "private-mail", "private-mail-0", d.source.podUID)
+	if err != nil {
+		return "source-forward"
+	}
+	defer stop()
+	source, err := newRetainedMailboxClient(endpoint, reader.password)
+	if err != nil {
+		return "source-endpoint"
+	}
+	if _, err = verifyRetainedMessage(ctx, reader, source); err != nil {
+		return "retained-message"
+	}
+	if err = d.sourceRetained(ctx); err != nil {
+		return "source-replaced"
+	}
+	return ""
 }

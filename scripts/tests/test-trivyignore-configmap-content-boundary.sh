@@ -102,8 +102,7 @@ fail() {
   exit 1
 }
 
-# --- Layer 1: structural checks. These need only yq, so they still hold in a CI job that has no
-# --- trivy — which is exactly where the behavioural control below would otherwise skip silently.
+# --- Layer 1: structural checks. These need only yq and can run locally without Trivy.
 command -v yq >/dev/null 2>&1 || fail "yq is required to check the KSV-01010 disposition boundary"
 
 readonly EXPECTED_PATHS="k8s/bases/apps/actual-budget/config-map.yaml
@@ -300,6 +299,7 @@ echo "PASS(selftest): both content detectors pin their own coverage (10 credenti
 
 # --- Layer 2: behavioural paired control. Needs trivy; skips (loudly) where it is unavailable.
 command -v trivy >/dev/null 2>&1 || {
+  [[ ${CI:-} != true ]] || fail "trivy is required for behavioural checks in CI"
   echo "SKIP(behavioural): trivy not installed; structural checks above still passed"
   exit 0
 }
@@ -419,9 +419,8 @@ assert_reviewed_key_sets() {
     '[ .Results[]?.Misconfigurations[]? | select(.ID == $id) ] | length' "$WORK/no-ignore.json")"
 
   if [ "$treewide" -eq 0 ]; then
-    # The running trivy does not implement this check at all (CI may pin an older version than the
-    # one these sets were reviewed with). Nothing to assert, and nothing is wrong — say so rather
-    # than failing, and rather than passing silently.
+    [[ ${CI:-} != true ]] || fail "$id is required for the reviewed matched-key sets in CI"
+    # Older local Trivy versions may not emit this check.
     echo "SKIP(premise): $id is not emitted by this trivy version; matched-key sets not asserted."
     return 0
   fi

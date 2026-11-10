@@ -28,15 +28,20 @@ func (p preparation) storageNode(ctx context.Context) (object, error) {
 }
 
 func (p preparation) desiredLayout(ctx context.Context, address string) error {
-	raw, err := p.c.talosResource(ctx, address, "volumeconfig", "r-longhorn")
-	if err != nil {
-		return err
-	}
-	ephemeral, err := p.c.talosResource(ctx, address, "volumeconfig", "EPHEMERAL")
+	raw, ephemeral, err := p.readDesiredLayout(ctx, address)
 	if err != nil {
 		return err
 	}
 	return verifyDesiredLayout(raw, ephemeral)
+}
+
+func (p preparation) readDesiredLayout(ctx context.Context, address string) (object, object, error) {
+	raw, err := p.c.talosResource(ctx, address, "volumeconfig", "r-longhorn")
+	if err != nil {
+		return nil, nil, err
+	}
+	ephemeral, err := p.c.talosResource(ctx, address, "volumeconfig", "EPHEMERAL")
+	return raw, ephemeral, err
 }
 
 func (p *preparation) begin(ctx context.Context) error {

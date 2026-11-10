@@ -13,7 +13,8 @@ type listener struct {
 	Protocol      string          `json:"protocol"`
 	Bind          map[string]bool `json:"bind"`
 	UseTLS        *bool           `json:"useTls"`
-	ImplicitTLS   *bool           `json:"tlsImplicit"`
+	ImplicitTLS   json.RawMessage `json:"tlsImplicit"`
+	ImplicitTLSV1 json.RawMessage `json:"implicitTls"`
 	ProxyNetworks map[string]bool `json:"overrideProxyTrustedNetworks"`
 	DisabledTLS   map[string]bool `json:"tlsDisableProtocols"`
 }
@@ -22,13 +23,22 @@ type listener struct {
 // the same exclusive recovery session. A CLI's empty NDJSON is insufficient:
 // it omits query totals, missing IDs and coverage of the get response.
 func validateInventory(raw []byte) error {
+	return validateInventoryFor(raw, "")
+}
+
+// validateInventoryFor requires a complete census in the selected native schema.
+func validateInventoryFor(raw []byte, version string) error {
+	profile, err := schemaFor(version)
+	if err != nil {
+		return err
+	}
 	var response struct {
 		Methods [][]json.RawMessage `json:"methodResponses"`
 	}
 	if len(raw) > 65536 || json.Unmarshal(raw, &response) != nil || (len(response.Methods) != 9 && len(response.Methods) != 13) {
 		return errConfiguration
 	}
-	if validateDomains(response.Methods[5:7]) != nil || validateApplications(response.Methods[7:9]) != nil {
+	if validateDomains(response.Methods[5:7]) != nil || validateApplicationsFor(response.Methods[7:9], version) != nil {
 		return errConfiguration
 	}
 	if len(response.Methods) == 13 {
@@ -83,7 +93,15 @@ func validateInventory(raw []byte) error {
 		ids[id] = true
 	}
 	for _, item := range get.List {
-		if !ids[item.ID] || names[item.Name] || item.UseTLS == nil || item.ImplicitTLS == nil || item.ProxyNetworks == nil || item.DisabledTLS == nil || len(item.DisabledTLS) != 0 {
+		chosen, foreign := item.ImplicitTLS, item.ImplicitTLSV1
+		if profile.version == "1.0.2" {
+			chosen, foreign = foreign, chosen
+		}
+		implicitTLS, err := nativeSchemaBool(chosen, foreign)
+		if err != nil {
+			return errConfiguration
+		}
+		if !ids[item.ID] || names[item.Name] || item.UseTLS == nil || item.ProxyNetworks == nil || item.DisabledTLS == nil || len(item.DisabledTLS) != 0 {
 			return errConfiguration
 		}
 		localProxyTrust := item.Name == "client-proxy" && len(item.ProxyNetworks) == 1 && (item.ProxyNetworks["127.0.0.1"] || item.ProxyNetworks["127.0.0.1/32"])
@@ -108,7 +126,7 @@ func validateInventory(raw []byte) error {
 		default:
 			return errConfiguration
 		}
-		if item.Protocol != protocol || *item.UseTLS != tls || *item.ImplicitTLS != implicit || !reflect.DeepEqual(item.Bind, map[string]bool{bind: true}) {
+		if item.Protocol != protocol || *item.UseTLS != tls || implicitTLS != implicit || !reflect.DeepEqual(item.Bind, map[string]bool{bind: true}) {
 			return errConfiguration
 		}
 	}

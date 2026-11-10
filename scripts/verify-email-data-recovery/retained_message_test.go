@@ -25,6 +25,10 @@ func retainedMessageEndpoint(t *testing.T, f *retainedMessageServer) string {
 	t.Helper()
 	f.calls = map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/healthz/ready" && r.Header.Get("Authorization") == "" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		user, password, ok := r.BasicAuth()
 		if !ok || user != "ned@devantler.tech" || password != "private-retained-fixture" {
 			t.Error("readback lost its fixed account authentication")

@@ -280,6 +280,25 @@ the pin therefore changes the native resource URL and invalidates Stalwart's
 cached ZIP while preserving the Application identity; verifying an image file
 at a permanent URL alone would still permit a previously cached interface.
 
+The compiler accepts an explicit `runtimeVersion` of `0.16.27` or `1.0.2`;
+omitting it preserves the deployed 0.16.27 schema. Unknown, empty, null or
+duplicate selectors are refused. The 1.0.2 profile uses its native property
+names, audited normal-user permissions, and Web Interface 2.0.4. Its inventory
+and alias checks reject foreign or mixed schema fields. Before opening the
+datastore, that profile requires server 1.0.2 and CLI 1.0.14; CLI 1.0.13 cannot
+parse the new server schema. Stage the corresponding verified asset with
+`stage-webui.sh <absolute-build-directory> 1.0.2`. The default build and serving
+image remain on the deployed baseline.
+
+Selecting a schema does not migrate a datastore. Stalwart 1.0 refuses stores
+created before 1.0. A coordinated upgrade requires the
+[upstream migration procedure](https://stalw.art/docs/migration/upgrade-0-16/):
+an empty target, a retained source and its external dependencies, stopped
+writers for final synchronization, full verification with no error or mismatch
+reports, and a tested rollback using the forward migration state. The migration,
+image change, storage activation and identity cutover have separate deployment
+and recovery gates.
+
 Its default entrypoint is bootstrap; it cannot silently fall
 through to an unconfigured normal server. It expects private inputs under
 `/etc/private-mail`, the datastore at `/var/lib/stalwart`, native configuration

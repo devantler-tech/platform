@@ -102,15 +102,9 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 		return err
 	}
 	if len(moves) > 0 {
-		if err = sourceCurrent(ctx, c.run, source); err != nil {
+		if err = c.moveForRefresh(ctx, source, n, moves, pods, &held); err != nil {
 			return err
 		}
-		if err = c.moveForRefresh(ctx, n, moves, pods, &held); err != nil {
-			return err
-		}
-	}
-	if err = sourceCurrent(ctx, c.run, source); err != nil {
-		return err
 	}
 	if n, _, err = get(ctx); err != nil {
 		return err
@@ -124,6 +118,9 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 		return err
 	}
 	if err = verifyRefreshFits(n, before); err != nil {
+		return err
+	}
+	if err = sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
 	// Never repeat an uncertain service request. Positive capacity and identity

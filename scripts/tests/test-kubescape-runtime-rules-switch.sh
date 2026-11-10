@@ -143,7 +143,7 @@ controller_helm="${CONTROLLER_HELM:-$scratch/controller-helm}"
 if [[ -z "${CONTROLLER_HELM:-}" ]]; then
   bash "$root/scripts/build-controller-helm.sh" "$controller_helm"
 fi
-[[ "$("$controller_helm" version --template '{{ printf "%#v" . }}')" == 'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ]] ||
+[[ "$("$controller_helm" version --template '{{ printf "%#v" . }}')" == 'version.BuildInfo{Version:"v4.3", GitCommit:"", GitTreeState:"", GoVersion:"go1.27.3", KubeClientVersion:"v1.37"}' ]] ||
   fail 'the audited controller renderer is required'
 
 # Render the chart with one switch state and apply the release's post-renderers as Flux does.
