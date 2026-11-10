@@ -4,3 +4,4 @@ kind: Kustomization
 resources:
   - oidc-view.yaml
   - oidc-cluster-reader.yaml
+  - oidc-service-account-issuer-discovery.yaml
