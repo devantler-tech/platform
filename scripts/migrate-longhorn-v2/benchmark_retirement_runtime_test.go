@@ -7,9 +7,50 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 var testRetirementImage = "ghcr.io/devantler-tech/platform-longhorn-instance-manager@sha256:" + strings.Repeat("a", 64)
+
+func TestBenchmarkV1RuntimeReceiptRequiresOriginalDistinctEpochs(t *testing.T) {
+	for _, fault := range []string{"", "missing", "wrong image", "reused container", "reused UID", "missing worker", "missing start", "unexpected V2"} {
+		t.Run(fault, func(t *testing.T) {
+			record := recoveryFixture(t)
+			if err := validateBenchmarkRuntimeReceipt(record); err != nil {
+				t.Fatalf("legacy journals must remain readable: %v", err)
+			}
+			record.Version = 3
+			runtime := &benchmarkV1Runtime{Image: testRetirementImage, SettingUID: "setting-uid", SettingVersion: "17"}
+			for _, index := range []string{"1", "2", "3"} {
+				runtime.Epochs = append(runtime.Epochs, benchmarkManagerEpoch{
+					Pod: "instance-manager-" + index, PodUID: "pod-" + index, ManagerUID: "manager-" + index,
+					Node: "prod-worker-" + index, ContainerID: "containerd://" + strings.Repeat(index, 64),
+					StartedAt: time.Date(2026, 11, 10, 1, 2, 3, 0, time.UTC),
+				})
+			}
+			record.V1Runtime = runtime
+			switch fault {
+			case "missing":
+				record.V1Runtime = nil
+			case "wrong image":
+				runtime.Image = "longhornio/longhorn-instance-manager:v1.13.0"
+			case "reused container":
+				runtime.Epochs[1].ContainerID = runtime.Epochs[0].ContainerID
+			case "reused UID":
+				runtime.Epochs[1].ManagerUID = runtime.Epochs[0].PodUID
+			case "missing worker":
+				runtime.Epochs[2].Node = "different-worker"
+			case "missing start":
+				runtime.Epochs[2].StartedAt = time.Time{}
+			case "unexpected V2":
+				record.Phase = "v2"
+			}
+			if err := validateBenchmarkRuntimeReceipt(record); (err == nil) != (fault == "") {
+				t.Fatalf("runtime receipt validation did not match %q: %v", fault, err)
+			}
+		})
+	}
+}
 
 func TestObserveBenchmarkV1RuntimeRequiresStableDefaultImage(t *testing.T) {
 	for _, scenario := range []string{"stable", "stock default", "changed default epoch"} {

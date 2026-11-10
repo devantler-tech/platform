@@ -24,6 +24,7 @@ type benchmarkMachine struct{ ProviderID, SystemUUID, OSImage, Architecture stri
 type benchmarkResource struct{ Name, Namespace, UID string }
 type benchmarkRecord struct {
 	Recovery                                                                  *benchmarkRecoveryOwner          `json:",omitempty"`
+	V1Runtime                                                                 *benchmarkV1Runtime              `json:",omitempty"`
 	Fences                                                                    map[string]benchmarkFenceReceipt `json:",omitempty"`
 	FenceCheckpoint                                                           string                           `json:",omitempty"`
 	FencePending                                                              string                           `json:",omitempty"`
@@ -98,8 +99,10 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 	var record benchmarkRecord
 	raw := text(cm, "data", "record")
 	fields := map[string][]string{
-		"":         {"Recovery", "Fences", "FenceCheckpoint", "FencePending", "PendingCreate", "TagNodes", "Resources", "Version", "Phase", "Source", "Run", "Image", "Workload", "Namespace", "NamespaceUID", "CompletedAt", "Machines", "Measurements", "Cleaned", "CPU"},
-		"Recovery": {"Source", "Run", "JournalUID", "Deletes"},
+		"":                   {"Recovery", "V1Runtime", "Fences", "FenceCheckpoint", "FencePending", "PendingCreate", "TagNodes", "Resources", "Version", "Phase", "Source", "Run", "Image", "Workload", "Namespace", "NamespaceUID", "CompletedAt", "Machines", "Measurements", "Cleaned", "CPU"},
+		"Recovery":           {"Source", "Run", "JournalUID", "Deletes"},
+		"V1Runtime":          {"Image", "SettingUID", "SettingVersion", "Epochs"},
+		"V1Runtime.Epochs[]": {"Pod", "PodUID", "ManagerUID", "Node", "ContainerID", "StartedAt"},
 	}
 	for _, kind := range []string{"Namespace", "NetworkPolicy", "Pod", "PersistentVolumeClaim", "StorageClass", "PersistentVolume", "LonghornVolume"} {
 		fields["Resources."+kind] = []string{"Name", "Namespace", "UID"}
@@ -134,6 +137,9 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 		return nil, record, err
 	}
 	if err = validateBenchmarkFenceReceipts(record); err != nil {
+		return nil, record, err
+	}
+	if err = validateBenchmarkRuntimeReceipt(record); err != nil {
 		return nil, record, err
 	}
 	if len(record.Fences) != 0 {
@@ -318,12 +324,13 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 			return err
 		}
 	}
-	var v1Runtime benchmarkV1Runtime
+	var v1Runtime *benchmarkV1Runtime
 	if phase == "v1" {
-		v1Runtime, err = captureBenchmarkV1Runtime(ctx, c, slices.Sorted(maps.Keys(machines)))
-		if err != nil {
-			return err
+		runtime, captureErr := captureBenchmarkV1Runtime(ctx, c, slices.Sorted(maps.Keys(machines)))
+		if captureErr != nil {
+			return captureErr
 		}
+		v1Runtime = &runtime
 	}
 	prior, _, err := readBenchmark(ctx, c, phase)
 	if err != nil {
@@ -353,7 +360,10 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	}
 	namespaceIdentity := benchmarkIdentity(namespace)
 	record := benchmarkRecord{Version: 3, Phase: phase, Source: source, Run: runID, Image: fioImage, Workload: benchmarkWorkload(), Namespace: benchmarkNamespace, NamespaceUID: namespaceIdentity.UID,
-		Resources: map[string]benchmarkResource{"Namespace": namespaceIdentity}, Machines: machines, TagNodes: tagNodes}
+		Resources: map[string]benchmarkResource{"Namespace": namespaceIdentity}, Machines: machines, TagNodes: tagNodes, V1Runtime: v1Runtime}
+	if err := validateBenchmarkRuntimeReceipt(record); err != nil {
+		return err
+	}
 	body, _ := json.Marshal(record)
 	cm, err := c.create(ctx, source, object{"apiVersion": "v1", "kind": "ConfigMap", "metadata": object{"name": "longhorn-v2-benchmark-" + phase, "namespace": "longhorn-system"}, "data": object{"record": string(body)}})
 	if err != nil {
@@ -507,7 +517,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err != nil || !reflect.DeepEqual(endingCPU, record.CPU) {
 		return errors.New("admitted client or storage CPU context changed during the benchmark")
 	}
-	if err = cleanupBenchmark(ctx, c, &record, v1Runtime, created, claim, pv, volume); err != nil {
+	if err = cleanupBenchmark(ctx, c, &record, created, claim, pv, volume); err != nil {
 		return err
 	}
 	if err = benchmarkTags(ctx, c, source, tag, record.TagNodes, false); err != nil {
@@ -638,6 +648,9 @@ func saveBenchmarkProgress(ctx context.Context, c client, source, runID string, 
 	}
 	if !reflect.DeepEqual(previous.Fences, record.Fences) || previous.FenceCheckpoint != record.FenceCheckpoint || previous.FencePending != record.FencePending {
 		return errors.New("benchmark fence receipts changed outside their journal transition")
+	}
+	if !reflect.DeepEqual(previous.V1Runtime, record.V1Runtime) {
+		return errors.New("benchmark retirement runtime receipts changed")
 	}
 	for kind, old := range previous.Resources {
 		if record.Resources[kind] != old {

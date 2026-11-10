@@ -26,6 +26,38 @@ type benchmarkV1Runtime struct {
 	Epochs                            []benchmarkManagerEpoch
 }
 
+func validateBenchmarkRuntimeReceipt(record benchmarkRecord) error {
+	runtime := record.V1Runtime
+	if record.Version != 3 || record.Phase != "v1" {
+		if runtime != nil {
+			return errors.New("a V1 runtime receipt is outside this benchmark journal")
+		}
+		return nil
+	}
+	unproven := errors.New("the benchmark journal lacks its complete original V1 runtime")
+	if runtime == nil || !benchmarkRetirementImage.MatchString(runtime.Image) || runtime.SettingUID == "" ||
+		runtime.SettingVersion == "" || len(runtime.Epochs) < len(record.Machines) {
+		return unproven
+	}
+	nodes, pods, uids, containers := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, epoch := range runtime.Epochs {
+		if !strings.HasPrefix(epoch.Pod, "instance-manager-") || safeKubeRequest("pod", "longhorn-system", epoch.Pod, false) != nil ||
+			!kubeNamespace.MatchString(epoch.Node) || epoch.PodUID == "" || epoch.ManagerUID == "" || epoch.PodUID == epoch.ManagerUID ||
+			!benchmarkContainerID.MatchString(epoch.ContainerID) || epoch.StartedAt.IsZero() ||
+			nodes[epoch.Node] || pods[epoch.Pod] || uids[epoch.PodUID] || uids[epoch.ManagerUID] || containers[epoch.ContainerID] {
+			return unproven
+		}
+		nodes[epoch.Node], pods[epoch.Pod] = true, true
+		uids[epoch.PodUID], uids[epoch.ManagerUID], containers[epoch.ContainerID] = true, true, true
+	}
+	for node := range record.Machines {
+		if !nodes[node] {
+			return unproven
+		}
+	}
+	return nil
+}
+
 func captureBenchmarkV1Runtime(ctx context.Context, c client, requiredNodes []string) (benchmarkV1Runtime, error) {
 	setting, err := c.get(ctx, "settings.longhorn.io", "longhorn-system", "default-instance-manager-image", false)
 	if err != nil {
@@ -34,7 +66,11 @@ func captureBenchmarkV1Runtime(ctx context.Context, c client, requiredNodes []st
 	return observeBenchmarkV1Runtime(ctx, c, text(setting, "value"), requiredNodes)
 }
 
-func retireBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRecord, baseline benchmarkV1Runtime) error {
+func retireBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRecord) error {
+	if !activeBenchmarkV1FenceOwner(c, *record) || validateBenchmarkRuntimeReceipt(*record) != nil || record.V1Runtime == nil {
+		return errors.New("only the active benchmark with its original runtime may retire this V1 backend")
+	}
+	baseline := *record.V1Runtime
 	requiredNodes := slices.Sorted(maps.Keys(record.Machines))
 	verifyRuntime := func() error {
 		current, err := observeBenchmarkV1Runtime(ctx, c, baseline.Image, requiredNodes)
@@ -42,9 +78,6 @@ func retireBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRe
 			return errors.New("the approved V1 runtime epochs changed since the benchmark started")
 		}
 		return nil
-	}
-	if !activeBenchmarkV1FenceOwner(c, *record) {
-		return errors.New("only the active benchmark may checkpoint this V1 backend")
 	}
 	if err := verifyRuntime(); err != nil {
 		return err

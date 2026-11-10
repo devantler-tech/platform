@@ -89,7 +89,7 @@ func observeBenchmarkWorkspace(ctx context.Context, c client, expectedUID string
 	return namespace, nil
 }
 
-func cleanupBenchmark(ctx context.Context, c client, record *benchmarkRecord, v1Runtime benchmarkV1Runtime, created map[string]object, claim, pv, volume object) error {
+func cleanupBenchmark(ctx context.Context, c client, record *benchmarkRecord, created map[string]object, claim, pv, volume object) error {
 	source, namespace := record.Source, record.Namespace
 	if record.Version != 3 || namespace != benchmarkNamespace || record.NamespaceUID == "" {
 		return errors.New("scratch cleanup requires the dedicated benchmark namespace receipt")
@@ -160,7 +160,7 @@ func cleanupBenchmark(ctx context.Context, c client, record *benchmarkRecord, v1
 		if err := retireBenchmarkV1PV(ctx, c, record, volume, claim, class); err != nil {
 			return err
 		}
-		if err := retireBenchmarkV1Backend(ctx, c, record, v1Runtime); err != nil {
+		if err := retireBenchmarkV1Backend(ctx, c, record); err != nil {
 			return err
 		}
 	} else {
