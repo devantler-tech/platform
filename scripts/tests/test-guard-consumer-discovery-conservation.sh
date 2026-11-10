@@ -1188,7 +1188,7 @@ YAML
       fail "native benchmark runtime negative control did not change $variant"
     fi
     printf '  - benchmark-runtime.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
-    expect_refusal "an altered native benchmark runtime $variant cannot inherit approval" "$root" 'CEL admission mutation' 'consumers are UNKNOWN'
+    expect_refusal "an altered native benchmark runtime $variant cannot inherit approval" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
   done
 
   # #5096: the one reviewed CEL mutation shape passes; each variant widens

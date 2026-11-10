@@ -129,7 +129,11 @@ func TestNativeRetirementRuntimeAdmission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			security := retirementContainerSecurity(out.(*unstructured.Unstructured))
+			patched, ok := out.(*unstructured.Unstructured)
+			if !ok {
+				t.Fatalf("patched object has type %T, want *unstructured.Unstructured", out)
+			}
+			security := retirementContainerSecurity(patched)
 			if security["runAsUser"] != int64(0) || security["runAsGroup"] != int64(0) || security["privileged"] != true || security["seLinuxOptions"] == nil {
 				t.Fatalf("unexpected security context: %+v", security)
 			}
