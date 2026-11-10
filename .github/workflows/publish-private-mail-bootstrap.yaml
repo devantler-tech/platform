@@ -23,14 +23,27 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  IMAGE: ghcr.io/devantler-tech/platform-private-mail-bootstrap
-  IMAGE_TAG: v0.16.27-bootstrap-${{ github.sha }}
-
 jobs:
   verify:
     name: Verify and build bootstrap without publishing
     runs-on: ubuntu-latest
+    strategy:
+      matrix: &bootstrap_profiles
+        include:
+          - runtime: "0.16.27"
+            server: v0.16.27@sha256:c429b311c93db5606598abc1c68225a85a6953183848ae01bee9c6a98885836c
+            cli: 1.0.13@sha256:9a1e07307d6f890a193322c4b737fc0868405f0f8486a19922cbf362f43884fd
+            image: ghcr.io/devantler-tech/platform-private-mail-bootstrap
+          - runtime: "1.0.3"
+            server: v1.0.3@sha256:73c684a84c24f5b4206ec266a8deb8986fe44a9f623997e07f084388d943c8bd
+            cli: 1.0.14@sha256:5b70732cb69cdab3ff0894c501544cf0bfa180fa75bcd0eeba4eebe04c1064e1
+            image: ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate
+    env: &build_inputs
+      STALWART_RUNTIME: ${{ matrix.runtime }}
+      STALWART_SERVER_PIN: ${{ matrix.server }}
+      STALWART_CLI_PIN: ${{ matrix.cli }}
+      IMAGE: ${{ matrix.image }}
+      IMAGE_TAG: v${{ matrix.runtime }}-bootstrap-${{ github.sha }}
     permissions:
       contents: read
     steps:
@@ -47,22 +60,54 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Test and build static initializer
+      - name: Run Email configuration tests
+        run: go test -race ./scripts/private-mail-config
+      - name: Build static initializer
+        run: &stage_bootstrap |
+          set -euo pipefail
+          build_dir="${RUNNER_TEMP}/private-mail-build"
+          dockerfile=scripts/private-mail-config/Dockerfile
+          mkdir -p "${build_dir}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
+            -o "${build_dir}/private-mail-bootstrap" ./scripts/private-mail-config
+          awk -v server="${STALWART_SERVER_PIN}" -v cli="${STALWART_CLI_PIN}" '
+            /^FROM ghcr\.io\/stalwartlabs\/stalwart:[^ ]+$/ {
+              print "FROM ghcr.io/stalwartlabs/stalwart:" server
+              server_count++
+              next
+            }
+            /^FROM ghcr\.io\/stalwartlabs\/cli:[^ ]+ AS cli$/ {
+              print "FROM ghcr.io/stalwartlabs/cli:" cli " AS cli"
+              cli_count++
+              next
+            }
+            { print }
+            END { if (server_count != 1 || cli_count != 1) exit 1 }
+          ' "${dockerfile}" > "${build_dir}/Dockerfile"
+          if [[ "${STALWART_RUNTIME}" == '0.16.27' ]]; then
+            cmp -s "${dockerfile}" "${build_dir}/Dockerfile"
+          fi
+          bash scripts/private-mail-config/stage-webui.sh "${build_dir}" "${STALWART_RUNTIME}"
+      - name: Build the selected image locally
+        run: docker buildx build --platform linux/amd64 --load --tag email-bootstrap-verify "${RUNNER_TEMP}/private-mail-build"
+      - name: Verify candidate server and CLI in the built image
+        if: matrix.runtime == '1.0.3'
         run: |
           set -euo pipefail
-          go test -race ./scripts/private-mail-config
-          mkdir -p "${RUNNER_TEMP}/private-mail-build"
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
-            -o "${RUNNER_TEMP}/private-mail-build/private-mail-bootstrap" ./scripts/private-mail-config
-          cp scripts/private-mail-config/Dockerfile "${RUNNER_TEMP}/private-mail-build/Dockerfile"
-          bash scripts/private-mail-config/stage-webui.sh "${RUNNER_TEMP}/private-mail-build"
-          docker buildx build --platform linux/amd64 "${RUNNER_TEMP}/private-mail-build"
+          isolated=(--rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges)
+          server=$(docker run "${isolated[@]}" --entrypoint /usr/local/bin/stalwart email-bootstrap-verify --version)
+          cli=$(docker run "${isolated[@]}" --entrypoint /usr/local/bin/stalwart-cli email-bootstrap-verify --version)
+          test "${server}" = "${STALWART_RUNTIME}"
+          test "${cli}" = 'stalwart-cli 1.0.14'
 
   publish:
     name: Publish and sign immutable bootstrap
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify
     runs-on: ubuntu-latest
+    strategy:
+      matrix: *bootstrap_profiles
+    env: *build_inputs
     permissions:
       contents: read
       packages: write
@@ -82,13 +127,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Build static initializer
-        run: |
-          set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/private-mail-build"
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
-            -o "${RUNNER_TEMP}/private-mail-build/private-mail-bootstrap" ./scripts/private-mail-config
-          cp scripts/private-mail-config/Dockerfile "${RUNNER_TEMP}/private-mail-build/Dockerfile"
-          bash scripts/private-mail-config/stage-webui.sh "${RUNNER_TEMP}/private-mail-build"
+        run: *stage_bootstrap
       - name: Set up Buildx container driver
         uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
         with:

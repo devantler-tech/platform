@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -44,12 +45,18 @@ func publicationFixture(t *testing.T) assetPublicationFixture {
 		t.Fatal(err)
 	}
 	write(filepath.Join(assetDir, "webui-pins.json"), string(pins), 0644)
+	write(filepath.Join(assetDir, "webui-v1-pins.json"), `{
+  "version": "2.0.4",
+  "url": "https://github.com/stalwartlabs/webui/releases/download/v2.0.4/webui.zip",
+  "sha256": "73dd270926cf548ff40a41a8f7a523667df1f2cd665ed680de45711a1c2d04b2",
+  "license_sha256": "a7c6bf8df7d8fb707af606599f275e0eb192cd28492c95593b0608ca966c8df1"
+}`, 0644)
 	write(filepath.Join(f.root, "asset-source"), "verified admin asset fixture\n", 0644)
+	write(filepath.Join(f.root, "asset-v1-source"), "verified 1.0 admin asset fixture\n", 0644)
 	write(filepath.Join(f.root, "license-source"), "fixture license\n", 0644)
 	write(filepath.Join(f.bin, "go"), `#!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
-  test) exit 0 ;;
   build)
     output=''
     while [ "$#" -gt 0 ]; do
@@ -60,11 +67,6 @@ case "$1" in
     ;;
   *) exit 64 ;;
 esac
-`, 0755)
-	write(filepath.Join(f.bin, "docker"), `#!/usr/bin/env bash
-set -euo pipefail
-[ "$*" = "buildx build --platform linux/amd64 $RUNNER_TEMP/private-mail-build" ]
-test -s "$RUNNER_TEMP/private-mail-build/private-mail-bootstrap"
 `, 0755)
 	write(filepath.Join(f.bin, "curl"), `#!/usr/bin/env bash
 set -euo pipefail
@@ -82,7 +84,9 @@ case "$output" in "$RUNNER_TEMP/"*) ;; *) exit 64 ;; esac
 case "$url" in
   https://github.com/stalwartlabs/webui/releases/download/v1.0.11/webui.zip)
     if [ "${FAKE_DOWNLOAD_BAD:-}" = zip ]; then printf 'altered' >"$output"; else cp "$ASSET_FIXTURE_ROOT/asset-source" "$output"; fi ;;
-  https://raw.githubusercontent.com/stalwartlabs/webui/v1.0.11/LICENSES/AGPL-3.0-only.txt)
+  https://github.com/stalwartlabs/webui/releases/download/v2.0.4/webui.zip)
+    cp "$ASSET_FIXTURE_ROOT/asset-v1-source" "$output" ;;
+  https://raw.githubusercontent.com/stalwartlabs/webui/v1.0.11/LICENSES/AGPL-3.0-only.txt|https://raw.githubusercontent.com/stalwartlabs/webui/v2.0.4/LICENSES/AGPL-3.0-only.txt)
     if [ "${FAKE_DOWNLOAD_BAD:-}" = license ]; then printf 'altered' >"$output"; else cp "$ASSET_FIXTURE_ROOT/license-source" "$output"; fi ;;
   *) exit 65 ;;
 esac
@@ -106,34 +110,59 @@ func TestBothPublicationPathsStageTheAdministrationArtifacts(t *testing.T) {
 	}
 	var workflow struct {
 		Jobs map[string]struct {
-			Steps []struct{ Name, Run string }
+			Steps    []struct{ Name, Run string }
+			Strategy struct {
+				Matrix struct {
+					Include []struct{ Runtime, Server, CLI, Image string }
+				}
+			}
 		}
 	}
 	if yaml.Unmarshal(data, &workflow) != nil {
 		t.Fatal("publication workflow could not be decoded")
 	}
-	for _, tc := range []struct{ job, step string }{
-		{"verify", "Test and build static initializer"}, {"publish", "Build static initializer"},
-	} {
-		t.Run(tc.job, func(t *testing.T) {
+	for _, job := range []string{"verify", "publish"} {
+		t.Run(job, func(t *testing.T) {
 			var script string
-			for _, step := range workflow.Jobs[tc.job].Steps {
-				if step.Name == tc.step {
+			for _, step := range workflow.Jobs[job].Steps {
+				if step.Name == "Build static initializer" {
 					script = step.Run
 				}
 			}
 			if script == "" {
 				t.Fatal("publication producer is missing")
 			}
-			f := publicationFixture(t)
-			if output, err := f.run(script); err != nil {
-				t.Fatalf("publication producer failed: %v: %s", err, output)
+			profiles := workflow.Jobs[job].Strategy.Matrix.Include
+			if len(profiles) != 2 {
+				t.Fatalf("publication must cover the deployed and candidate versions, got %d profiles", len(profiles))
 			}
-			for name, want := range map[string]string{"webui.zip": "verified admin asset fixture\n", "webui.LICENSE": "fixture license\n"} {
-				got, err := os.ReadFile(filepath.Join(f.runner, "private-mail-build", name))
-				if err != nil || string(got) != want {
-					t.Fatalf("publication did not stage the required administration artifact %s", name)
-				}
+			for i, runtime := range []struct{ version, cli, asset, image string }{
+				{"0.16.27", "1.0.13", "verified admin asset fixture\n", "ghcr.io/devantler-tech/platform-private-mail-bootstrap"},
+				{"1.0.3", "1.0.14", "verified 1.0 admin asset fixture\n", "ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate"},
+			} {
+				t.Run(runtime.version, func(t *testing.T) {
+					profile := profiles[i]
+					if profile.Runtime != runtime.version || !strings.HasPrefix(profile.Server, "v"+runtime.version+"@sha256:") ||
+						!strings.HasPrefix(profile.CLI, runtime.cli+"@sha256:") || profile.Image != runtime.image {
+						t.Fatal("runtime must use the matching pinned server, CLI and publication repository")
+					}
+					f := publicationFixture(t)
+					if output, err := f.run(script, "STALWART_RUNTIME="+profile.Runtime,
+						"STALWART_SERVER_PIN="+profile.Server, "STALWART_CLI_PIN="+profile.CLI); err != nil {
+						t.Fatalf("publication producer failed: %v: %s", err, output)
+					}
+					buildRecipe, err := os.ReadFile(filepath.Join(f.runner, "private-mail-build", "Dockerfile"))
+					if err != nil || !strings.Contains(string(buildRecipe), "FROM ghcr.io/stalwartlabs/stalwart:"+profile.Server+"\n") ||
+						!strings.Contains(string(buildRecipe), "FROM ghcr.io/stalwartlabs/cli:"+profile.CLI+" AS cli\n") {
+						t.Fatal("staged recipe does not select the required server and CLI")
+					}
+					for name, want := range map[string]string{"webui.zip": runtime.asset, "webui.LICENSE": "fixture license\n"} {
+						got, err := os.ReadFile(filepath.Join(f.runner, "private-mail-build", name))
+						if err != nil || string(got) != want {
+							t.Fatalf("publication did not stage the selected administration artifact %s", name)
+						}
+					}
+				})
 			}
 		})
 	}
