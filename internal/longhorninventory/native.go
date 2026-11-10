@@ -100,7 +100,7 @@ func (n Native) listFixedRoot(ctx context.Context, root string) (Listing, error)
 		if size > maxMessageBytes || total > MaxMetadataBytes || len(listing.Entries) >= MaxEntries {
 			return Listing{}, nativeFailure{code: "bounds"}
 		}
-		if !n.validMetadata(item.GetMetadata()) {
+		if !ValidNodeMetadata(n.Target, item.GetMetadata()) {
 			return Listing{}, nativeFailure{code: "metadata"}
 		}
 		if item.GetError() != "" {
@@ -144,7 +144,7 @@ func (n Native) verifyEmptyPartitionHolders(ctx context.Context, devicePath stri
 	}
 	entry, err := stream.Recv()
 	if err != nil || !active(ctx) || entry == nil || proto.Size(entry) > maxMessageBytes ||
-		!n.validMetadata(entry.GetMetadata()) || entry.GetError() != "" || entry.GetLink() != "" ||
+		!ValidNodeMetadata(n.Target, entry.GetMetadata()) || entry.GetError() != "" || entry.GetLink() != "" ||
 		entry.GetRelativeName() != "." || entry.GetName() != root || !entry.GetIsDir() || !os.FileMode(entry.GetMode()).IsDir() {
 		return refused
 	}
@@ -176,7 +176,7 @@ func (n Native) BootID(ctx context.Context) (string, error) {
 			return strings.TrimSuffix(string(content), "\n"), nil
 		}
 		if recvErr != nil || !active(ctx) || item == nil || proto.Size(item) > maxMessageBytes ||
-			!n.validMetadata(item.GetMetadata()) || len(content)+len(item.GetBytes()) > 37 {
+			!ValidNodeMetadata(n.Target, item.GetMetadata()) || len(content)+len(item.GetBytes()) > 37 {
 			return "", errNative
 		}
 		content = append(content, item.GetBytes()...)
@@ -184,7 +184,9 @@ func (n Native) BootID(ctx context.Context) (string, error) {
 	return "", errNative
 }
 
-func (n Native) validMetadata(metadata proto.Message) bool {
+// ValidNodeMetadata checks the optional response metadata of a native Talos
+// one-to-one request. The caller must independently bracket the host identity.
+func ValidNodeMetadata(target string, metadata proto.Message) bool {
 	if metadata == nil {
 		// Native One2One routing does not inject a metadata envelope. Hardware and
 		// boot identity must be bracketed independently by the caller.
@@ -202,7 +204,7 @@ func (n Native) validMetadata(metadata proto.Message) bool {
 		return false
 	}
 	hostname := message.Get(fields.ByName("hostname")).String()
-	if hostname != "" && hostname != n.Target {
+	if hostname != "" && hostname != target {
 		return false
 	}
 	statusField := fields.ByName("status")
