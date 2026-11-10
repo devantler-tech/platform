@@ -48,7 +48,26 @@ jobs:
           persist-credentials: false
 
       - name: Build image
-        run: docker buildx build --platform linux/amd64 "${CONTEXT}"
+        run: docker buildx build --platform linux/amd64 --load --tag kagent-claude-harness:pr "${CONTEXT}"
+
+      # The image the harness runs: the wrapper is the `claude` on PATH, Claude
+      # Code still answers through it, the tools are there, and the plugin carries
+      # all of its agents and skills.
+      - name: Smoke-test the image
+        run: |
+          docker run --rm --entrypoint /bin/sh kagent-claude-harness:pr -c '
+            set -eu
+            test "$(command -v claude)" = /usr/local/bin/claude
+            claude --version
+            for tool in gh jq yq curl git; do command -v "${tool}"; done
+            plugin=/opt/agent-plugins/agentic-engineering
+            test -f "${plugin}/agents/agentic-engineer.agent.md"
+            agents=$(find "${plugin}/agents" -name "*.agent.md" | wc -l)
+            skills=$(find "${plugin}/skills" -name SKILL.md | wc -l)
+            echo "plugin: ${agents} agents, ${skills} skills"
+            test "${agents}" -ge 4
+            test "${skills}" -ge 80
+            test "$(id -u)" = 65532'
 
   publish:
     name: Publish and sign immutable image
