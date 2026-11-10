@@ -20,6 +20,9 @@ func benchmarkFenceNames(phase, run string) []string {
 }
 
 func validateBenchmarkFenceReceipts(record benchmarkRecord) error {
+	if record.Version == 3 && record.Phase == "v1" && record.Cleaned && len(record.Fences) != len(benchmarkFenceNames(record.Phase, record.Run)) {
+		return errors.New("a completed V1 benchmark needs all original retirement fence receipts")
+	}
 	if record.FencePending == "" && record.FenceCheckpoint == "" && len(record.Fences) == 0 {
 		return nil
 	}
@@ -191,5 +194,51 @@ func advanceBenchmarkFenceJournal(ctx context.Context, c client, record *benchma
 		return errors.New("benchmark fence progress readback changed")
 	}
 	*record = next
+	return nil
+}
+
+func removeCompletedBenchmarkFences(ctx context.Context, c client, record benchmarkRecord) error {
+	if !activeBenchmarkV1FenceOwner(c, record) || len(record.Fences) != len(benchmarkFenceNames(record.Phase, record.Run)) {
+		return errors.New("benchmark fence cleanup has no complete original receipts")
+	}
+	groups, _, err := readBenchmarkInstanceGroups(ctx, c)
+	if err != nil {
+		return err
+	}
+	children, err := qualifyRetirementInstances(record, groups)
+	if err != nil || len(children) != 0 {
+		return errors.New("native V1 benchmark children still depend on their retirement fence")
+	}
+	const bindingResource = "validatingadmissionpolicybindings.admissionregistration.k8s.io"
+	const policyResource = "validatingadmissionpolicies.admissionregistration.k8s.io"
+	bindings, err := c.list(ctx, bindingResource, "")
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		name := text(binding, "spec", "policyName")
+		if receipt, managed := record.Fences[name]; managed && text(binding, "metadata", "uid") != receipt.BindingUID {
+			return errors.New("a foreign binding references an original benchmark policy")
+		}
+	}
+	for _, name := range benchmarkFenceNames(record.Phase, record.Run) {
+		receipt := record.Fences[name]
+		binding, err := c.get(ctx, bindingResource, "", name, false)
+		if err != nil || text(binding, "metadata", "uid") != receipt.BindingUID || receipt.BindingUID == "" ||
+			text(binding, "spec", "policyName") != name {
+			return errors.New("the original benchmark policy binding changed before retirement")
+		}
+		policy, err := c.get(ctx, policyResource, "", name, false)
+		if err != nil || text(policy, "metadata", "uid") != receipt.PolicyUID || receipt.PolicyUID == "" {
+			return errors.New("the original benchmark policy changed before retirement")
+		}
+		base := "/apis/" + benchmarkAdmissionAPI + "/"
+		if err := removeScratch(ctx, c, record.Source, bindingResource, "", base+"validatingadmissionpolicybindings/"+name, binding); err != nil {
+			return err
+		}
+		if err := removeScratch(ctx, c, record.Source, policyResource, "", base+"validatingadmissionpolicies/"+name, policy); err != nil {
+			return err
+		}
+	}
 	return nil
 }
