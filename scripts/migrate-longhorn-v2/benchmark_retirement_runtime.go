@@ -18,6 +18,50 @@ type benchmarkManagerEpoch struct {
 	StartedAt                                  time.Time
 }
 
+type benchmarkV1Runtime struct {
+	SettingUID, SettingVersion string
+	Epochs                     []benchmarkManagerEpoch
+}
+
+func observeBenchmarkV1Runtime(ctx context.Context, c client, image string, requiredNodes []string) (benchmarkV1Runtime, error) {
+	if !benchmarkRetirementImage.MatchString(image) {
+		return benchmarkV1Runtime{}, errors.New("an immutable V1 retirement image is required")
+	}
+	beforeUID, beforeVersion, err := readBenchmarkDefaultManagerImage(ctx, c, image)
+	if err != nil {
+		return benchmarkV1Runtime{}, err
+	}
+	managers, err := c.list(ctx, "instancemanagers.longhorn.io", "longhorn-system")
+	if err != nil {
+		return benchmarkV1Runtime{}, err
+	}
+	pods, err := c.list(ctx, "pods", "longhorn-system")
+	if err != nil {
+		return benchmarkV1Runtime{}, err
+	}
+	epochs, err := qualifyV1RetirementManagerEpochs(image, requiredNodes, managers, pods)
+	if err != nil {
+		return benchmarkV1Runtime{}, err
+	}
+	afterUID, afterVersion, err := readBenchmarkDefaultManagerImage(ctx, c, image)
+	if err != nil || afterUID != beforeUID || afterVersion != beforeVersion {
+		return benchmarkV1Runtime{}, errors.New("the V1 default instance manager changed during observation")
+	}
+	return benchmarkV1Runtime{SettingUID: beforeUID, SettingVersion: beforeVersion, Epochs: epochs}, nil
+}
+
+func readBenchmarkDefaultManagerImage(ctx context.Context, c client, image string) (uid, version string, err error) {
+	const name = "default-instance-manager-image"
+	const namespace = "longhorn-system"
+	setting, err := c.get(ctx, "settings.longhorn.io", namespace, name, false)
+	if err != nil || text(setting, "metadata", "namespace") != namespace ||
+		text(setting, "metadata", "name") != name || value(setting, "metadata", "deletionTimestamp") != nil ||
+		text(setting, "value") != image {
+		return "", "", errors.New("the selected V1 default instance manager is unverified")
+	}
+	return text(setting, "metadata", "uid"), text(setting, "metadata", "resourceVersion"), nil
+}
+
 // The caller must recheck current main, ownership, active admission and the
 // observed epoch on both sides of this request. Its reply is runtime evidence
 // for this Pod alone, and does not authorize deletion.

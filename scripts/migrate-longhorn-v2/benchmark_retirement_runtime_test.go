@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -9,6 +10,50 @@ import (
 )
 
 var testRetirementImage = "ghcr.io/devantler-tech/platform-longhorn-instance-manager@sha256:" + strings.Repeat("a", 64)
+
+func TestObserveBenchmarkV1RuntimeRequiresStableDefaultImage(t *testing.T) {
+	for _, scenario := range []string{"stable", "stock default", "changed default epoch"} {
+		t.Run(scenario, func(t *testing.T) {
+			reads := 0
+			c := client{context: "admin@prod", run: func(_ context.Context, _ []byte, program string, args ...string) ([]byte, error) {
+				if program != "kubectl" || args[2] != "get" {
+					t.Fatal("runtime observation attempted a mutation")
+				}
+				switch args[3] {
+				case "settings.longhorn.io":
+					reads++
+					image, version := testRetirementImage, "1"
+					if scenario == "stock default" {
+						image = "longhornio/longhorn-instance-manager:v1.13.0"
+					}
+					if scenario == "changed default epoch" && reads == 2 {
+						version = "2"
+					}
+					return json.Marshal(object{
+						"metadata": object{"name": "default-instance-manager-image", "namespace": "longhorn-system",
+							"uid": "setting-uid", "resourceVersion": version},
+						"value": image,
+					})
+				case "instancemanagers.longhorn.io":
+					return json.Marshal(object{"items": []object{retirementManager("instance-manager-a", "worker-a", testRetirementImage)}})
+				case "pods":
+					return json.Marshal(object{"items": []object{retirementPod("instance-manager-a", "worker-a")}})
+				default:
+					t.Fatal("unexpected runtime observation")
+					return nil, nil
+				}
+			}}
+			observed, err := observeBenchmarkV1Runtime(t.Context(), c, testRetirementImage, []string{"worker-a"})
+			if scenario == "stable" {
+				if err != nil || reads != 2 || observed.SettingUID != "setting-uid" || len(observed.Epochs) != 1 {
+					t.Fatalf("native runtime was not verified: %v", err)
+				}
+			} else if err == nil {
+				t.Fatal("unverified default image qualified as the V1 runtime")
+			}
+		})
+	}
+}
 
 func TestV1RetirementSealRequiresExactVolumeAndNativeCompletion(t *testing.T) {
 	const claimUID = "a1b2c3d4-1234-5678-9abc-def012345678"
