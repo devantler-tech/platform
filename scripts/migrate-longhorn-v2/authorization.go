@@ -52,3 +52,18 @@ func authorizeBenchmark(getenv func(string) string, phase string) error {
 	}
 	return authorizeWorkflow(getenv, "benchmark-longhorn-storage")
 }
+
+// authorizeCNPGObservation keeps read-only SQL separate from storage operations.
+func authorizeCNPGObservation(getenv func(string) string) error {
+	target := getenv("LONGHORN_V2_DATABASE")
+	selected := false
+	for _, source := range cnpgSources() {
+		if source.Name == target {
+			selected = true
+		}
+	}
+	if !selected || getenv("LONGHORN_V2_OPERATION") != "observe-database" || getenv("LONGHORN_V2_NODE") != "" {
+		return errors.New("only the explicit fixed database observation is authorized")
+	}
+	return authorizeWorkflow(getenv, "observe-longhorn-v2-database-"+target)
+}

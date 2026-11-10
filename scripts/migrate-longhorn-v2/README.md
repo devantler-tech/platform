@@ -1,5 +1,20 @@
 # Prepare Longhorn V2 workers
 
+`observe-database` is a protected, read-only PostgreSQL observation for
+platform#5842. Select one of the five fixed databases with `database`, leave
+`node` empty, and confirm with `observe-longhorn-v2-database-<database>`.
+It requires all reviewed healthy, owned instances with stable primary and archive
+state. Fixed SQL reads physical database identity, timeline and WAL positions;
+the primary's captured flush position must be replayed by both standbys. The
+client uses the Pod's fixed local socket with a cleared connection environment
+and fixed executable search path, rather than inheriting libpq overrides.
+Complete namespace Pod inventories and process identities bracket the reads,
+including a final whole-cluster read after the last SQL command. The operation
+prints only a success summary, with no application rows, credentials or physical
+identities. Changed source, cluster, process or replication evidence holds the
+operation. This observation neither proves backup recovery nor authorizes
+replacement, promotion, storage retirement or application cutover.
+
 `repair-v1-reservation` selects the fixed original worker and requires
 `repair-longhorn-v1-reservation` on a first-attempt main dispatch. It admits the
 two identified missing V1 copies only when both surviving copies, the complete
@@ -359,3 +374,20 @@ replicas. Its native listing must be empty and accounted for; unexpected
 directories hold the observation. This can inform a later reviewed decision
 to reuse capacity for V2. It changes no disk, pool, host setting or volume,
 and does not authorize preparing a temporary worker through `prepare-worker`.
+
+## Retain one V1 source before replacing its claim
+
+Use `retain-v1-source` with no worker selection as part of an application
+migration. Read the bound application PVC, its PV and the V1 Longhorn volume.
+Compute a SHA-256 digest, with no trailing newline, over the colon-separated
+values `namespace/claim:claim-uid:pv-name:pv-uid:volume-name:volume-uid`. Supply
+`retain-longhorn-v1-source:<namespace>/<claim>:<digest>` as the confirmation.
+The digest lets the protected workflow recheck the same identities without
+passing UIDs to GitHub Actions.
+
+The workflow changes only the confirmed PV's reclaim policy from `Delete` to
+`Retain` and reads the three original identities back. It excludes backup movers,
+migration scratch and unbound claims. A lost write response is checked without
+repeating the patch. This operation neither replaces claims nor changes storage
+classes. Keep the original PV and backend until the application's recovery and
+cutover checks pass.
