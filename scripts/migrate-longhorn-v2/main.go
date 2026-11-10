@@ -28,6 +28,8 @@ func main() {
 		authorization = authorizeHostMemory(os.Getenv, target)
 	case "reboot-host-for-hugepages":
 		authorization = authorizeHostReboot(os.Getenv, target)
+	case "repair-v1-reservation":
+		authorization = authorizeV1ReservationRepair(os.Getenv, target)
 	case "inventory-storage-root":
 		authorization = authorizeStorageRoot(os.Getenv, target)
 	case "inventory-storage-layout":
@@ -41,6 +43,13 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == "repair-v1-reservation" {
+		if err := repairV1Reservation(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
+			fmt.Fprintln(os.Stderr, "V1 reservation repair held:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if operation == "inventory-storage-layout" {
 		if err := runStorageLayoutInventory(ctx, target, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
 			fmt.Fprintln(os.Stderr, inventoryFailureMessage(err))
