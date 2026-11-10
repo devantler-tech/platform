@@ -144,9 +144,15 @@ All three temporary workers receive owned scale-down protection before the selec
 cordoned. Drain uses eviction and respects disruption budgets. Two fresh storage observations
 after drain precede the recorded reset intent.
 
+For new preparations, the native original partition must show at least 200 GiB. After drain
+and a fresh empty-storage read, the workflow applies the 144 GiB raw profile without rebooting
+the selected worker. It checks the loaded configuration and repeats the native empty-storage
+read before recording reset intent. The profile retains a 40 GiB minimum for EPHEMERAL and
+keeps both encryption keys locked to STATE. Existing journals retain their recorded geometry.
+
 Recovery from `reset-requested` only observes post-state. An uncertain response never causes a
-second reset. A new boot and encrypted EPHEMERAL UUID, the reviewed 96 GiB encrypted raw
-partition, loaded configuration and huge-page readiness must be observed before releasing the
+second reset. A new boot and encrypted EPHEMERAL UUID, the exact encrypted raw size bound
+by the journal, loaded configuration and huge-page readiness must be observed before releasing the
 owned cordon. CPX42 workers retain their larger root capacity; the permanent-worker root-size
 cap does not apply to this separate profile. The raw disk remains unregistered and fenced;
 storage activation and volume migration follow separately. Original storage replicas remain on

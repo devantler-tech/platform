@@ -18,10 +18,85 @@ type unusedPreparationFixture struct {
 	base                        *preparationAPI
 	baseline                    object
 	nativeCalls                 int
+	layoutWrites                int
+	layoutInstalled             bool
+	layoutWriteUncertain        bool
 	badNativeAfter              int
 	missingBaseline, noRecovery bool
 	afterReset                  func()
 	dropPinWrites               bool
+}
+
+func TestUnusedStagingPreparationRequiresTheLargerNativeLayout(t *testing.T) {
+	f, p := unusedPreparationAPI(t)
+	p.staging = true
+	if err := p.prepare(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.layoutWrites != 1 || f.base.resets != 1 || p.j.Phase != "prepared" {
+		t.Fatal("larger capacity did not use one verified layout change and one guarded reset")
+	}
+	if err := p.prepare(context.Background()); err != nil || f.layoutWrites != 1 || f.base.resets != 1 {
+		t.Fatal("completed staging preparation repeated a mutation", err)
+	}
+}
+
+func TestUncertainStagingConfigurationRequiresNativeReadbackBeforeReset(t *testing.T) {
+	f, p := unusedPreparationAPI(t)
+	p.staging, f.layoutWriteUncertain = true, true
+	if err := p.prepare(context.Background()); err == nil || f.layoutWrites != 1 || f.base.resets != 0 || p.j.Phase != "draining" {
+		t.Fatal("an uncertain staging change authorized a reset", err)
+	}
+	if err := p.prepare(context.Background()); err != nil || f.layoutWrites != 1 || f.base.resets != 1 || p.j.Phase != "prepared" {
+		t.Fatal("native staging readback did not recover the guarded reset", err)
+	}
+}
+
+func TestStagingRejectsInsufficientNativePartitionSizeBeforeMutation(t *testing.T) {
+	f, p := unusedPreparationAPI(t)
+	p.staging = true
+	p.reader = func(context.Context, string) (nativeReplicaReader, func() error, error) {
+		r := &unusedParentReaderFixture{
+			temporaryNativeReader: temporaryNativeReader{boot: text(f.base.node, "status", "nodeInfo", "bootID")},
+			ephemeralSize:         190 << 30,
+		}
+		return r, func() error { return nil }, nil
+	}
+	if err := p.prepare(context.Background()); err == nil || f.base.cm != nil || f.layoutWrites != 0 || f.base.resets != 0 {
+		t.Fatal("smaller native partition allowed a staging change", err)
+	}
+}
+
+func TestStagingHoldsIfMainMovesAtEitherMutationBoundary(t *testing.T) {
+	for _, phase := range []string{"layout apply", "reset request"} {
+		t.Run(phase, func(t *testing.T) {
+			f, p := unusedPreparationAPI(t)
+			p.staging = true
+			oldLayoutRead := false
+			p.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+				if phase == "layout apply" && program == "talosctl" && len(args) == 5 && args[1] == "get" {
+					if args[2] == "volumeconfig" && args[3] == "EPHEMERAL" && f.nativeCalls == 2 {
+						oldLayoutRead = true
+					}
+					if args[2] == "systeminformation" && oldLayoutRead {
+						f.base.staleSource = true
+					}
+				}
+				response, err := f.run(ctx, input, program, args...)
+				if phase == "reset request" && program == "kubectl" && len(args) > 3 && args[2] == "patch" && args[3] == "configmap" {
+					var j journal
+					if json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &j) == nil && j.Phase == "reset-requested" {
+						f.base.staleSource = true
+					}
+				}
+				return response, err
+			}
+			err := p.prepare(context.Background())
+			if err == nil || !f.base.staleSource || f.base.resets != 0 || phase == "layout apply" && f.layoutWrites != 0 {
+				t.Fatal("moved main allowed a forward storage mutation", err)
+			}
+		})
+	}
 }
 
 func unusedBaselineFixture(t *testing.T, s inventory) object {
@@ -151,6 +226,30 @@ func (f *unusedPreparationFixture) run(ctx context.Context, input []byte, progra
 			f.base.t.Fatal("unknown node request")
 		}
 	}
+	if program == "talosctl" && len(args) > 1 && args[1] == "patch" {
+		want := []string{"--nodes=10.0.99.7", "patch", "machineconfig", "--mode=no-reboot", "--patch=" + stagingLayoutPatch}
+		var j journal
+		if !reflect.DeepEqual(args, want) || json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &j) != nil ||
+			!j.StagingLayout || j.Phase != "draining" || f.nativeCalls < 2 || value(f.base.node, "spec", "unschedulable") != true {
+			f.base.t.Fatal("staging patch lacked the exact target, journal, cordon and fresh native proof")
+		}
+		f.layoutWrites++
+		f.layoutInstalled = true
+		if f.layoutWriteUncertain {
+			return nil, errors.New("staging configuration accepted but response lost")
+		}
+		return nil, nil
+	}
+	if f.layoutInstalled && program == "talosctl" && len(args) == 5 && args[2] == "volumeconfig" {
+		raw, ephemeral := desiredConfigFixture()
+		rawPartition := valueObject(raw, "spec", "provisioning", "partitionSpec")
+		rawPartition["minSize"], rawPartition["maxSize"] = float64(144<<30), float64(144<<30)
+		valueObject(ephemeral, "spec", "provisioning", "partitionSpec")["maxSize"] = float64(152 << 30)
+		if args[3] == "EPHEMERAL" {
+			return json.Marshal(ephemeral)
+		}
+		return json.Marshal(raw)
+	}
 	if program == "talosctl" && len(args) > 1 && args[1] == "reset" {
 		want := []string{"--nodes=10.0.99.7", "reset", "--system-labels-to-wipe=EPHEMERAL", "--reboot", "--graceful=true", "--wait", "--timeout=15m"}
 		var j journal
@@ -171,12 +270,17 @@ func (f *unusedPreparationFixture) run(ctx context.Context, input []byte, progra
 		return nil, nil
 	}
 	data, err := f.base.run(ctx, input, program, args...)
-	if err == nil && f.base.postReset && program == "talosctl" && len(args) == 5 && args[2] == "volumestatus" && args[3] == "EPHEMERAL" {
+	if err == nil && f.base.postReset && program == "talosctl" && len(args) == 5 && args[2] == "volumestatus" &&
+		(args[3] == "EPHEMERAL" || f.layoutInstalled && args[3] == "r-longhorn") {
 		var volume object
 		if json.Unmarshal(data, &volume) != nil {
 			f.base.t.Fatal("malformed fixture volume")
 		}
-		volume["spec"].(object)["size"] = float64(128 << 30)
+		size := float64(128 << 30)
+		if args[3] == "r-longhorn" {
+			size = float64(144 << 30)
+		}
+		volume["spec"].(object)["size"] = size
 		return json.Marshal(volume)
 	}
 	return data, err
@@ -199,8 +303,9 @@ func TestUnusedTemporaryPreparationPreservesV1AndLeavesRawStorageFenced(t *testi
 
 type unusedParentReaderFixture struct {
 	temporaryNativeReader
-	rootCalls int
-	mode      string
+	rootCalls     int
+	mode          string
+	ephemeralSize uint64
 }
 
 func (*unusedParentReaderFixture) ListReplicas(context.Context) (longhorninventory.Listing, error) {
@@ -228,8 +333,12 @@ func (r *unusedParentReaderFixture) ListStorageRoot(context.Context) (longhornin
 	return longhorninventory.Listing{Complete: r.mode != "partial", Entries: entries}, nil
 }
 
-func (*unusedParentReaderFixture) ListBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error) {
-	return longhorninventory.BlockLayoutReport{VolumeStatuses: 2, DiscoveredVolumes: 1, EphemeralPhase: "ready", RawPresent: true, RawPhase: "waiting", Digest: strings.Repeat("a", 64)}, nil
+func (r *unusedParentReaderFixture) ListBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error) {
+	size := r.ephemeralSize
+	if size == 0 {
+		size = 270 << 30
+	}
+	return longhorninventory.BlockLayoutReport{VolumeStatuses: 2, DiscoveredVolumes: 1, EphemeralPhase: "ready", EphemeralSizeBytes: size, RawPresent: true, RawPhase: "waiting", Digest: strings.Repeat("a", 64)}, nil
 }
 
 func TestUnusedPreparationQualifiesStableParentAbsenceWithoutAReplicaPath(t *testing.T) {

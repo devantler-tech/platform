@@ -2,7 +2,13 @@ package main
 
 import "errors"
 
+const permanentRawDiskGiB = 96
+
 func verifyDesiredLayout(raw, ephemeral object) error {
+	return verifyRawDiskConfig(raw, ephemeral, permanentRawDiskGiB)
+}
+
+func verifyRawDiskConfig(raw, ephemeral object, rawGiB uint64) error {
 	if text(raw, "metadata", "id") != "r-longhorn" || text(ephemeral, "metadata", "id") != "EPHEMERAL" {
 		return errors.New("the expected Talos volume configurations are missing")
 	}
@@ -23,11 +29,11 @@ func verifyDesiredLayout(raw, ephemeral object) error {
 			return errors.New("talos encryption is not locked to the existing state partition")
 		}
 	}
-	if value(raw, "spec", "provisioning", "partitionSpec", "minSize") != float64(96*1024*1024*1024) ||
-		value(raw, "spec", "provisioning", "partitionSpec", "maxSize") != float64(96*1024*1024*1024) ||
+	if value(raw, "spec", "provisioning", "partitionSpec", "minSize") != float64(rawGiB<<30) ||
+		value(raw, "spec", "provisioning", "partitionSpec", "maxSize") != float64(rawGiB<<30) ||
 		value(raw, "spec", "provisioning", "partitionSpec", "negativeMaxSize") == true ||
 		value(ephemeral, "spec", "provisioning", "partitionSpec", "minSize") != float64(40*1024*1024*1024) ||
-		value(ephemeral, "spec", "provisioning", "partitionSpec", "maxSize") != float64(104*1024*1024*1024) ||
+		value(ephemeral, "spec", "provisioning", "partitionSpec", "maxSize") != float64((rawGiB+8)<<30) ||
 		value(ephemeral, "spec", "provisioning", "partitionSpec", "negativeMaxSize") != true {
 		return errors.New("talos has not reserved the reviewed raw-disk capacity")
 	}

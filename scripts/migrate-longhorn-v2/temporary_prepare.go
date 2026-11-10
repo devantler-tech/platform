@@ -14,7 +14,8 @@ import (
 
 type temporaryPreparation struct {
 	preparation
-	reader inventoryReaderFactory
+	reader  inventoryReaderFactory
+	staging bool
 }
 
 // prepare advances the separately journaled unused-worker profile, recording reset
@@ -94,8 +95,12 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 // hugepage capacity, tolerating only this journal's own cordon during preparation.
 // Once pinned, every temporary pool member must retain the migration-owned pin.
 func (p temporaryPreparation) unusedCapacity(s inventory, pinned bool) error {
-	if err := verifyRebuildBudget(p.target, s); err != nil {
-		return err
+	checkBudget := verifyRebuildBudget(p.target, s)
+	if p.staging {
+		checkBudget = verifyStagingBudget(s)
+	}
+	if checkBudget != nil {
+		return checkBudget
 	}
 	nodes := s.nodes
 	for _, n := range nodes {
@@ -140,6 +145,7 @@ func (p *temporaryPreparation) beginUnused(ctx context.Context) error {
 		if err = p.claimRecord(ctx, journal{}); err != nil {
 			return err
 		}
+		p.staging = p.j.StagingLayout
 		n, _, nodeErr := p.node(ctx, true)
 		if nodeErr != nil {
 			return nodeErr
@@ -176,7 +182,7 @@ func (p *temporaryPreparation) beginUnused(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	p.j = journal{Schema: 2, Target: p.target, Source: p.source, OwnerRun: p.owner, Phase: "evacuating", NodeUID: text(n, "metadata", "uid"), ProviderID: text(n, "spec", "providerID"), MachineUUID: text(n, "status", "nodeInfo", "systemUUID"), LonghornUID: text(lh, "metadata", "uid"), OriginalDisks: object{}, TemporarySelection: p.temporarySelection, OriginalBootID: text(n, "status", "nodeInfo", "bootID")}
+	p.j = journal{Schema: 2, Target: p.target, Source: p.source, OwnerRun: p.owner, Phase: "evacuating", NodeUID: text(n, "metadata", "uid"), ProviderID: text(n, "spec", "providerID"), MachineUUID: text(n, "status", "nodeInfo", "systemUUID"), LonghornUID: text(lh, "metadata", "uid"), OriginalDisks: object{}, TemporarySelection: p.temporarySelection, OriginalBootID: text(n, "status", "nodeInfo", "bootID"), StagingLayout: p.staging}
 	_, address, err := p.node(ctx, true)
 	if err != nil {
 		return err
@@ -228,6 +234,11 @@ func (p temporaryPreparation) observeUnused(ctx context.Context, owned bool) (st
 	}
 	if receipt.APIProjectionDigest != before.Digest || !unusedParentAbsent(receipt.Report) || receipt.BlockLayout == nil {
 		return "", errInventory
+	}
+	// The allocated original partition alone must cover the new 152 GiB
+	// reservation and 40 GiB root minimum, with 8 GiB for geometry overhead.
+	if p.staging && receipt.BlockLayout.EphemeralSizeBytes < 200<<30 {
+		return "", errors.New("native storage cannot fit the reviewed staging layout")
 	}
 	if err = sourceCurrent(ctx, p.c.run, p.source); err != nil {
 		return "", err
@@ -322,7 +333,7 @@ func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 	if _, err = p.c.kubectl(ctx, nil, "drain", p.target, "--ignore-daemonsets", "--delete-emptydir-data", "--timeout=40m"); err != nil {
 		return errors.New("temporary worker drain was blocked; no reset was requested")
 	}
-	for range 2 {
+	for pass := range 2 {
 		s, err := p.c.snapshot(ctx)
 		if err != nil {
 			return err
@@ -336,10 +347,14 @@ func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 		if err = requireBenchmarkBaseline(ctx, p.c, s.nodes); err != nil {
 			return err
 		}
-		if err = p.desiredLayout(ctx, address); err != nil {
+		if _, err = p.observeUnused(ctx, true); err != nil {
 			return err
 		}
-		if _, err = p.observeUnused(ctx, true); err != nil {
+		if p.staging && pass == 0 {
+			if err = p.installStagingLayout(ctx, address); err != nil {
+				return err
+			}
+		} else if err = p.verifyUnusedLayout(ctx, address); err != nil {
 			return err
 		}
 	}
@@ -347,6 +362,9 @@ func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 		return err
 	}
 	if err = p.advance(ctx, "reset-requested"); err != nil {
+		return err
+	}
+	if err = p.checkOwner(ctx); err != nil {
 		return err
 	}
 	_, resetErr := p.c.run(ctx, nil, "talosctl", "--nodes="+address, "reset", "--system-labels-to-wipe=EPHEMERAL", "--reboot", "--graceful=true", "--wait", "--timeout=15m")
@@ -387,7 +405,7 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	if err != nil || actualBoot != boot {
 		return nil, errInventory
 	}
-	if err = p.desiredLayout(ctx, address); err != nil {
+	if err = p.verifyUnusedLayout(ctx, address); err != nil {
 		return nil, err
 	}
 	raw, err := p.c.talosVolume(ctx, address, "r-longhorn")
@@ -401,7 +419,11 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	if text(eph, "spec", "uuid") == p.j.EphemeralUUID {
 		return nil, errInventory
 	}
-	if err = verifyEncryptedLocalLayout(raw, eph); err != nil {
+	rawGiB := uint64(permanentRawDiskGiB)
+	if p.staging {
+		rawGiB = stagingRawDiskGiB
+	}
+	if err = verifyEncryptedRawDisk(raw, eph, rawGiB); err != nil {
 		return nil, err
 	}
 	lh, err := p.storageNode(ctx)
