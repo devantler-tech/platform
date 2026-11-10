@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"reflect"
 	"regexp"
+	"time"
 )
 
 var retainedDiagnosticName = regexp.MustCompile(`^Email recovery verification ([0-9a-f]{64})$`)
@@ -19,6 +20,31 @@ type retainedMailboxTransport struct {
 	base     http.RoundTripper
 	endpoint string
 	account  *string
+	window   *retainedMessageWindow
+}
+
+type retainedMessageWindow struct{ after, before time.Time }
+
+func (w *retainedMessageWindow) queryFilter(mailbox string) object {
+	filter := object{"inMailbox": mailbox}
+	if w != nil {
+		filter["after"] = w.after.Format(time.RFC3339)
+		filter["before"] = w.before.Format(time.RFC3339)
+	}
+	return filter
+}
+
+func (w *retainedMessageWindow) properties() []any {
+	properties := []any{"id", "blobId", "messageId", "mailboxIds", "textBody", "bodyValues"}
+	if w != nil {
+		properties = append(properties, "receivedAt")
+	}
+	return properties
+}
+
+func (w *retainedMessageWindow) contains(value string) bool {
+	received, err := time.Parse(time.RFC3339, value)
+	return err == nil && received.After(w.after) && received.Before(w.before)
 }
 
 // This capability guards the actual HTTP boundary, including calls through
@@ -36,18 +62,14 @@ func (t *retainedMailboxTransport) RoundTrip(r *http.Request) (*http.Response, e
 	}
 	data, err := io.ReadAll(io.LimitReader(r.Body, (64<<10)+1))
 	_ = r.Body.Close()
-	if err != nil || len(data) > 64<<10 || !retainedJMAPRead(data, *t.account) {
+	if err != nil || len(data) > 64<<10 || !retainedJMAPRead(data, *t.account, t.window) {
 		return refuse()
 	}
 	r.Body = io.NopCloser(bytes.NewReader(data))
 	return t.base.RoundTrip(r)
 }
 
-func retainedMessageProperties() []any {
-	return []any{"id", "blobId", "messageId", "mailboxIds", "textBody", "bodyValues"}
-}
-
-func retainedJMAPRead(data []byte, account string) bool {
+func retainedJMAPRead(data []byte, account string, window *retainedMessageWindow) bool {
 	var envelope object
 	if !mailboxIDPattern.MatchString(account) || json.Unmarshal(data, &envelope) != nil || len(envelope) != 2 || !reflect.DeepEqual(envelope["using"], []any{"urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"}) {
 		return false
@@ -69,24 +91,30 @@ func retainedJMAPRead(data []byte, account string) bool {
 		return len(args) == 2 && reflect.DeepEqual(args["properties"], []any{"id", "name", "isSubscribed"})
 	case "Email/query":
 		filter := child(args, "filter")
-		return len(args) == 5 && len(filter) == 1 && mailboxIDPattern.MatchString(text(filter, "inMailbox")) && args["calculateTotal"] == true && args["position"] == float64(0) && args["limit"] == float64(2)
+		mailbox := text(filter, "inMailbox")
+		return len(args) == 5 && mailboxIDPattern.MatchString(mailbox) && reflect.DeepEqual(filter, window.queryFilter(mailbox)) &&
+			args["calculateTotal"] == true && args["position"] == float64(0) && args["limit"] == float64(2)
 	case "Email/get":
 		ids, ok := args["ids"].([]any)
 		id := ""
 		if ok && len(ids) == 1 {
 			id, _ = ids[0].(string)
 		}
-		return len(args) == 4 && mailboxIDPattern.MatchString(id) && args["fetchTextBodyValues"] == true && reflect.DeepEqual(args["properties"], retainedMessageProperties())
+		return len(args) == 4 && mailboxIDPattern.MatchString(id) && args["fetchTextBodyValues"] == true && reflect.DeepEqual(args["properties"], window.properties())
 	}
 	return false
 }
 
 func newRetainedMailboxClient(endpoint, password string) (*mailboxClient, error) {
+	return newRetainedMailboxClientInWindow(endpoint, password, nil)
+}
+
+func newRetainedMailboxClientInWindow(endpoint, password string, window *retainedMessageWindow) (*mailboxClient, error) {
 	c, err := newMailboxClient(endpoint, password)
 	if err != nil {
 		return nil, errors.New("retained-endpoint")
 	}
-	c.http.Transport = &retainedMailboxTransport{base: c.http.Transport, endpoint: c.endpoint, account: &c.account}
+	c.http.Transport = &retainedMailboxTransport{base: c.http.Transport, endpoint: c.endpoint, account: &c.account, window: window}
 	return c, nil
 }
 
@@ -96,6 +124,10 @@ func newRetainedMailboxClient(endpoint, password string) (*mailboxClient, error)
 // Private client copies ensure even callers supplying ordinary mailbox clients
 // cannot accidentally grant this path a mutating HTTP capability.
 func verifyRetainedMessage(ctx context.Context, reader, source *mailboxClient) (messageIdentity, error) {
+	return verifyRetainedMessageInWindow(ctx, reader, source, nil)
+}
+
+func verifyRetainedMessageInWindow(ctx context.Context, reader, source *mailboxClient, window *retainedMessageWindow) (messageIdentity, error) {
 	// Report only stages chosen here or by readRetainedDiagnostic. Never
 	// propagate client errors or values from either mailbox to workflow logs.
 	fail := func(stage string) (messageIdentity, error) {
@@ -104,7 +136,7 @@ func verifyRetainedMessage(ctx context.Context, reader, source *mailboxClient) (
 	if reader == nil || source == nil || reader.endpoint == source.endpoint {
 		return fail("endpoints")
 	}
-	r, err := newRetainedMailboxClient(reader.endpoint, reader.password)
+	r, err := newRetainedMailboxClientInWindow(reader.endpoint, reader.password, window)
 	if err != nil {
 		return fail("reader-endpoint")
 	}
@@ -112,7 +144,7 @@ func verifyRetainedMessage(ctx context.Context, reader, source *mailboxClient) (
 	if err = r.session(ctx); err != nil {
 		return fail("reader-session")
 	}
-	s, err := newRetainedMailboxClient(source.endpoint, source.password)
+	s, err := newRetainedMailboxClientInWindow(source.endpoint, source.password, window)
 	if err != nil {
 		return fail("source-endpoint")
 	}
@@ -123,7 +155,7 @@ func verifyRetainedMessage(ctx context.Context, reader, source *mailboxClient) (
 	if err = s.session(ctx); err != nil {
 		return fail("source-session")
 	}
-	expected, stage := readRetainedDiagnostic(ctx, r)
+	expected, stage := readRetainedDiagnostic(ctx, r, window)
 	if stage != "" {
 		return fail("reader-" + stage)
 	}
@@ -131,7 +163,7 @@ func verifyRetainedMessage(ctx context.Context, reader, source *mailboxClient) (
 		side   string
 		client *mailboxClient
 	}{{"source", s}, {"reader", r}, {"source", s}} {
-		actual, stage := readRetainedDiagnostic(ctx, read.client)
+		actual, stage := readRetainedDiagnostic(ctx, read.client, window)
 		if stage != "" {
 			return fail(read.side + "-" + stage)
 		}
@@ -172,8 +204,11 @@ func retainedQueryID(result object) (string, bool) {
 	}
 	state := text(result, "queryState")
 	ids, ok := result["ids"].([]any)
-	if !ok || len(ids) != 1 || state == "" || len(state) > 512 || result["position"] != float64(0) || result["total"] != float64(1) {
+	if !ok || len(ids) > 1 || state == "" || len(state) > 512 || result["position"] != float64(0) || result["total"] != float64(len(ids)) {
 		return "", false
+	}
+	if len(ids) == 0 {
+		return "", true
 	}
 	if limit, present := result["limit"]; present {
 		n, ok := limit.(float64)
@@ -187,7 +222,7 @@ func retainedQueryID(result object) (string, bool) {
 
 // readRetainedDiagnostic reads the marker from one mailbox. On failure it
 // returns a fixed stage suitable for workflow logs.
-func readRetainedDiagnostic(ctx context.Context, c *mailboxClient) (messageIdentity, string) {
+func readRetainedDiagnostic(ctx context.Context, c *mailboxClient, window *retainedMessageWindow) (messageIdentity, string) {
 	result, err := c.call(ctx, "Mailbox/get", object{"properties": []any{"id", "name", "isSubscribed"}})
 	if err != nil {
 		return messageIdentity{}, "mailbox-list"
@@ -209,25 +244,32 @@ func readRetainedDiagnostic(ctx context.Context, c *mailboxClient) (messageIdent
 		if len(match) == 0 {
 			continue
 		}
+		email := ""
+		if window != nil {
+			email, complete = queryRetainedDiagnostic(ctx, c, id, window)
+			if !complete {
+				return messageIdentity{}, "email-query"
+			}
+			if email == "" {
+				continue
+			}
+		}
 		if subscribed || expected.mailbox != "" {
 			return messageIdentity{}, "mailbox-ambiguous"
 		}
-		expected.mailbox, expected.body = id, name
+		expected.mailbox, expected.body, expected.email = id, name, email
 		expected.messageID = "email-recovery-" + match[1] + "@example.invalid"
 	}
 	if expected.mailbox == "" {
 		return messageIdentity{}, "mailbox-missing"
 	}
-	result, err = c.call(ctx, "Email/query", object{"filter": object{"inMailbox": expected.mailbox}, "calculateTotal": true, "position": 0, "limit": 2})
-	if err != nil {
-		return messageIdentity{}, "email-query"
+	if window == nil {
+		expected.email, complete = queryRetainedDiagnostic(ctx, c, expected.mailbox, nil)
+		if !complete || expected.email == "" {
+			return messageIdentity{}, "email-query"
+		}
 	}
-	var completeID bool
-	expected.email, completeID = retainedQueryID(result)
-	if !completeID {
-		return messageIdentity{}, "email-query"
-	}
-	result, err = c.call(ctx, "Email/get", object{"ids": []any{expected.email}, "properties": retainedMessageProperties(), "fetchTextBodyValues": true})
+	result, err = c.call(ctx, "Email/get", object{"ids": []any{expected.email}, "properties": window.properties(), "fetchTextBodyValues": true})
 	if err != nil {
 		return messageIdentity{}, "email-get"
 	}
@@ -235,10 +277,24 @@ func readRetainedDiagnostic(ctx context.Context, c *mailboxClient) (messageIdent
 	if !complete || len(messages) != 1 {
 		return messageIdentity{}, "email-get"
 	}
+	if window != nil {
+		expected.receivedAt = text(messages[0], "receivedAt")
+		if !window.contains(expected.receivedAt) {
+			return messageIdentity{}, "email-time"
+		}
+	}
 	expected.blob = text(messages[0], "blobId")
 	parts := items(messages[0], "textBody")
 	if !mailboxIDPattern.MatchString(expected.blob) || len(parts) != 1 || !mailboxIDPattern.MatchString(text(parts[0], "partId")) || len(child(messages[0], "bodyValues")) != 1 || !proveMessage(messages[0], expected) {
 		return messageIdentity{}, "email-content"
 	}
 	return expected, ""
+}
+
+func queryRetainedDiagnostic(ctx context.Context, c *mailboxClient, mailbox string, window *retainedMessageWindow) (string, bool) {
+	result, err := c.call(ctx, "Email/query", object{"filter": window.queryFilter(mailbox), "calculateTotal": true, "position": 0, "limit": 2})
+	if err != nil {
+		return "", false
+	}
+	return retainedQueryID(result)
 }
