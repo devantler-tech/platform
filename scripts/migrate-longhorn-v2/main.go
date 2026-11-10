@@ -37,6 +37,8 @@ func main() {
 		authorization = authorizeV1ScratchHeadroom(os.Getenv, target)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
+	case retainProviderSourceOperation:
+		authorization = authorizeProviderSourceRetention(os.Getenv)
 	case "inventory-storage-root":
 		authorization = authorizeStorageRoot(os.Getenv, target)
 	case "inventory-storage-layout":
@@ -88,8 +90,12 @@ func main() {
 		}
 		return
 	}
-	if operation == retainV1SourceOperation {
-		if err := retainV1Source(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("LONGHORN_V2_CONFIRM")); err != nil {
+	if operation == retainV1SourceOperation || operation == retainProviderSourceOperation {
+		retain := retainV1Source
+		if operation == retainProviderSourceOperation {
+			retain = retainProviderSource
+		}
+		if err := retain(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("LONGHORN_V2_CONFIRM")); err != nil {
 			fmt.Fprintln(os.Stderr, "Source retention held:", err)
 			os.Exit(1)
 		}
