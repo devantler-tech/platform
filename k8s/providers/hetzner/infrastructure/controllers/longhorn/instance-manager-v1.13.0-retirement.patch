@@ -1,0 +1,1074 @@
+diff --git a/app/cmd/process.go b/app/cmd/process.go
+index ea1ee34..2113e79 100644
+--- a/app/cmd/process.go
++++ b/app/cmd/process.go
+@@ -22,6 +22,7 @@ func ProcessCmd() *cli.Command {
+ 			ProcessGetCmd(),
+ 			ProcessListCmd(),
+ 			ProcessReplaceCmd(),
++			processRetirementCmd(),
+ 		},
+ 	}
+ }
+diff --git a/app/cmd/retirement.go b/app/cmd/retirement.go
+new file mode 100644
+index 0000000..1f007e8
+--- /dev/null
++++ b/app/cmd/retirement.go
+@@ -0,0 +1,124 @@
++package cmd
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"os"
++	"path/filepath"
++	"strings"
++	"syscall"
++	"time"
++
++	"github.com/urfave/cli/v3"
++
++	"github.com/longhorn/longhorn-instance-manager/pkg/process"
++)
++
++const (
++	platformRetirementState  = "/log/platform-v1-retirement"
++	platformRetirementSocket = "/run/longhorn-platform-retirement/process.sock"
++)
++
++func startPlatformV1Retirement(manager *process.Manager) (*http.Server, error) {
++	for _, directory := range []string{platformRetirementState, filepath.Dir(platformRetirementSocket)} {
++		if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
++			return nil, err
++		}
++	}
++	if err := manager.EnableDurableRetirement(platformRetirementState); err != nil {
++		return nil, err
++	}
++	return startRetirementSocket(platformRetirementSocket, manager.SealProcess)
++}
++
++func startRetirementSocket(socket string, seal func(string) (bool, error)) (*http.Server, error) {
++	directory, err := os.Lstat(filepath.Dir(socket))
++	if err != nil || !directory.IsDir() || directory.Mode().Perm() != 0o700 {
++		return nil, errors.New("retirement socket requires an owner-only directory")
++	}
++	owner, ok := directory.Sys().(*syscall.Stat_t)
++	if !ok || owner.Uid != uint32(os.Geteuid()) {
++		return nil, errors.New("retirement socket directory owner does not match the daemon")
++	}
++	listener, err := net.Listen("unix", socket)
++	if err != nil {
++		return nil, err
++	}
++	if err = os.Chmod(socket, 0o600); err != nil {
++		return nil, errors.Join(err, listener.Close())
++	}
++	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.Method != http.MethodPost || r.URL.Path != "/seal" {
++			http.NotFound(w, r)
++			return
++		}
++		name, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 253))
++		if err != nil || len(name) == 0 {
++			w.WriteHeader(http.StatusBadRequest)
++			return
++		}
++		complete, err := seal(string(name))
++		switch {
++		case err != nil:
++			w.WriteHeader(http.StatusPreconditionFailed)
++		case !complete:
++			w.WriteHeader(http.StatusConflict)
++		default:
++			w.WriteHeader(http.StatusNoContent)
++		}
++	})
++	server := &http.Server{Handler: handler, ReadHeaderTimeout: 3 * time.Second,
++		ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, MaxHeaderBytes: 1024}
++	go func() { _ = server.Serve(listener) }()
++	return server, nil
++}
++
++func requestRetirement(ctx context.Context, socket, name string) (bool, error) {
++	dialer := net.Dialer{Timeout: 3 * time.Second}
++	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
++		return dialer.DialContext(ctx, "unix", socket)
++	}}
++	client := &http.Client{Transport: transport, Timeout: 6 * time.Second,
++		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
++	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/seal", strings.NewReader(name))
++	if err != nil {
++		return false, err
++	}
++	response, err := client.Do(request)
++	if err != nil {
++		return false, err
++	}
++	defer response.Body.Close()
++	switch response.StatusCode {
++	case http.StatusNoContent:
++		return true, nil
++	case http.StatusConflict:
++		return false, nil
++	default:
++		return false, errors.New("local process retirement did not authorize cleanup")
++	}
++}
++
++func processRetirementCmd() *cli.Command {
++	return &cli.Command{
++		Name:  "seal-for-retirement",
++		Usage: "seal one process name through the local retirement socket",
++		Flags: []cli.Flag{&cli.StringFlag{Name: "name", Required: true}},
++		Action: func(ctx context.Context, c *cli.Command) error {
++			complete, err := requestRetirement(ctx, platformRetirementSocket, c.String("name"))
++			if err != nil {
++				return err
++			}
++			result := "PENDING"
++			if complete {
++				result = "SEALED"
++			}
++			_, err = fmt.Fprintln(c.Writer, result)
++			return err
++		},
++	}
++}
+diff --git a/app/cmd/retirement_test.go b/app/cmd/retirement_test.go
+new file mode 100644
+index 0000000..e101a51
+--- /dev/null
++++ b/app/cmd/retirement_test.go
+@@ -0,0 +1,63 @@
++package cmd
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync/atomic"
++	"testing"
++)
++
++func TestProcessRetirementSocketRestrictsAndReportsLocalRequests(t *testing.T) {
++	private := t.TempDir()
++	if err := os.Chmod(private, 0o700); err != nil {
++		t.Fatal(err)
++	}
++	socket := filepath.Join(private, "retirement.sock")
++	var calls atomic.Int32
++	server, err := startRetirementSocket(socket, func(name string) (bool, error) {
++		if name != "fixture-e-0" {
++			return false, errors.New("unexpected target")
++		}
++		return calls.Add(1) > 1, nil
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() {
++		if err := server.Close(); err != nil {
++			t.Error(err)
++		}
++	})
++	info, err := os.Lstat(socket)
++	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
++		t.Fatalf("socket is not owner-only: %v", err)
++	}
++	if sealed, err := requestRetirement(context.Background(), socket, "fixture-e-0"); err != nil || sealed {
++		t.Fatalf("in-flight child was acknowledged: %v", err)
++	}
++	if sealed, err := requestRetirement(context.Background(), socket, "fixture-e-0"); err != nil || !sealed {
++		t.Fatalf("completed seal was not acknowledged: %v", err)
++	}
++	if _, err := requestRetirement(context.Background(), socket, strings.Repeat("x", 254)); err == nil {
++		t.Fatal("oversized target was accepted")
++	}
++	if calls.Load() != 2 {
++		t.Fatal("oversized input reached the native retirement function")
++	}
++}
++
++func TestProcessRetirementSocketRejectsSharedDirectory(t *testing.T) {
++	dir := t.TempDir()
++	if err := os.Chmod(dir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	socket := filepath.Join(dir, "retirement.sock")
++	server, err := startRetirementSocket(socket, func(string) (bool, error) { return true, nil })
++	if err == nil {
++		_ = server.Close()
++		t.Fatal("retirement listener used a shared directory")
++	}
++}
+diff --git a/app/cmd/start.go b/app/cmd/start.go
+index 526d36e..6c8bedc 100644
+--- a/app/cmd/start.go
++++ b/app/cmd/start.go
+@@ -245,6 +245,13 @@ func start(c *cli.Command) (err error) {
+ 	}
+ 	servers[types.ProcessManagerGrpcService] = pmGRPCServer
+ 	listeners[types.ProcessManagerGrpcService] = pmGRPCListener
++	if !spdkEnabled && os.Getenv("LONGHORN_PLATFORM_V1_RETIREMENT") == "1" {
++		retirement, err := startPlatformV1Retirement(pm)
++		if err != nil {
++			return err
++		}
++		defer retirement.Close()
++	}
+ 
+ 	// Start spdk server
+ 	if spdkEnabled {
+diff --git a/pkg/process/command.go b/pkg/process/command.go
+index e636372..360eae3 100644
+--- a/pkg/process/command.go
++++ b/pkg/process/command.go
+@@ -1,6 +1,7 @@
+ package process
+ 
+ import (
++	"errors"
+ 	"io"
+ 	"os/exec"
+ 	"path/filepath"
+@@ -32,6 +33,8 @@ func (be *BinaryExecutor) NewCommand(name string, arg ...string) (Command, error
+ type BinaryCommand struct {
+ 	*sync.RWMutex
+ 	*exec.Cmd
++	stopped  bool
++	finished bool
+ }
+ 
+ func NewBinaryCommand(binary string, arg ...string) (*BinaryCommand, error) {
+@@ -64,16 +67,37 @@ func (bc *BinaryCommand) SetOutput(writer io.Writer) {
+ 	bc.Stderr = writer
+ }
+ 
++// Run serializes the native start with stop requests. Waiting for a started
++// child stays outside the lock so a stop can signal it.
++func (bc *BinaryCommand) Run() error {
++	bc.Lock()
++	if bc.stopped {
++		bc.Unlock()
++		return errors.New("command stopped before start")
++	}
++	err := bc.Cmd.Start()
++	bc.Unlock()
++	if err != nil {
++		return err
++	}
++	err = bc.Cmd.Wait()
++	bc.Lock()
++	bc.finished = true
++	bc.Unlock()
++	return err
++}
++
+ func (bc *BinaryCommand) IsRunning() bool {
+ 	bc.RLock()
+ 	defer bc.RUnlock()
+-	return bc.Process != nil && bc.ProcessState == nil
++	return bc.Process != nil && !bc.finished
+ }
+ 
+ func (bc *BinaryCommand) StopWithSignal(signal syscall.Signal) {
+-	bc.RLock()
+-	defer bc.RUnlock()
+-	if bc.Process != nil {
++	bc.Lock()
++	defer bc.Unlock()
++	bc.stopped = true
++	if bc.Process != nil && !bc.finished {
+ 		if err := bc.Process.Signal(signal); err != nil {
+ 			logrus.WithError(err).Error("failed to send signal to process")
+ 		}
+@@ -81,23 +105,11 @@ func (bc *BinaryCommand) StopWithSignal(signal syscall.Signal) {
+ }
+ 
+ func (bc *BinaryCommand) Stop() {
+-	bc.RLock()
+-	defer bc.RUnlock()
+-	if bc.Process != nil {
+-		if err := bc.Process.Signal(syscall.SIGINT); err != nil {
+-			logrus.WithError(err).Error("failed to send signal to process")
+-		}
+-	}
++	bc.StopWithSignal(syscall.SIGINT)
+ }
+ 
+ func (bc *BinaryCommand) Kill() {
+-	bc.RLock()
+-	defer bc.RUnlock()
+-	if bc.Process != nil {
+-		if err := bc.Process.Signal(syscall.SIGKILL); err != nil {
+-			logrus.WithError(err).Error("failed to send signal to process")
+-		}
+-	}
++	bc.StopWithSignal(syscall.SIGKILL)
+ }
+ 
+ type MockExecutor struct {
+diff --git a/pkg/process/process.go b/pkg/process/process.go
+index c7788fc..9f422e6 100644
+--- a/pkg/process/process.go
++++ b/pkg/process/process.go
+@@ -1,6 +1,7 @@
+ package process
+ 
+ import (
++	"errors"
+ 	"maps"
+ 	"sync"
+ 	"syscall"
+@@ -38,9 +39,10 @@ type Process struct {
+ 	PortEnd           int32
+ 	DeletionTimestamp *time.Time
+ 
+-	lock     *sync.RWMutex
+-	cmd      Command
+-	UpdateCh chan *Process
++	lock        *sync.RWMutex
++	cmd         Command
++	commandDone chan struct{}
++	UpdateCh    chan *Process
+ 
+ 	logger *util.LonghornWriter
+ 
+@@ -52,6 +54,9 @@ func (p *Process) Start() error {
+ 	p.lock.Lock()
+ 	defer p.lock.Unlock()
+ 
++	if p.State != StateStarting || p.cmd != nil {
++		return errors.New("process is no longer eligible to start")
++	}
+ 	cmd, err := p.executor.NewCommand(p.Binary, p.Args...)
+ 	if err != nil {
+ 		p.State = StateError
+@@ -60,24 +65,23 @@ func (p *Process) Start() error {
+ 	}
+ 	cmd.SetOutput(p.logger)
+ 	p.cmd = cmd
++	commandDone := make(chan struct{})
++	p.commandDone = commandDone
+ 
+ 	probeStopCh := make(chan struct{})
+ 	go func() {
+-		if err := cmd.Run(); err != nil {
+-			close(probeStopCh)
+-			p.lock.Lock()
++		err := cmd.Run()
++		close(commandDone)
++		close(probeStopCh)
++		p.lock.Lock()
++		if err != nil && p.DeletionTimestamp == nil {
+ 			p.State = StateError
+ 			p.ErrorMsg = err.Error()
+ 			logrus.Infof("Process Manager: process %v error out, error msg: %v", p.Name, p.ErrorMsg)
+-			p.lock.Unlock()
+-
+-			p.UpdateCh <- p
+-			return
++		} else {
++			p.State = StateStopped
++			logrus.Infof("Process Manager: process %v stopped", p.Name)
+ 		}
+-		close(probeStopCh)
+-		p.lock.Lock()
+-		p.State = StateStopped
+-		logrus.Infof("Process Manager: process %v stopped", p.Name)
+ 		p.lock.Unlock()
+ 
+ 		p.UpdateCh <- p
+@@ -86,24 +90,21 @@ func (p *Process) Start() error {
+ 	go func() {
+ 		if p.PortStart != 0 {
+ 			address := util.GetURL("localhost", int(p.PortStart))
+-			if p.healthChecker.WaitForRunning(address, p.Name, probeStopCh) {
+-				p.lock.Lock()
+-				p.State = StateRunning
+-				p.lock.Unlock()
+-				p.UpdateCh <- p
++			if !p.healthChecker.WaitForRunning(address, p.Name, probeStopCh) {
++				if !p.IsStopped() {
++					p.Stop()
++				}
+ 				return
+ 			}
+-			// fail to start the process, then try to stop it.
+-			if !p.IsStopped() {
+-				p.Stop()
+-			}
+-		} else {
+-			// Process Manager doesn't know the grpc address. directly set running state
+-			p.lock.Lock()
+-			p.State = StateRunning
++		}
++		p.lock.Lock()
++		if p.State != StateStarting {
+ 			p.lock.Unlock()
+-			p.UpdateCh <- p
++			return
+ 		}
++		p.State = StateRunning
++		p.lock.Unlock()
++		p.UpdateCh <- p
+ 	}()
+ 
+ 	return nil
+@@ -191,18 +192,24 @@ func (p *Process) StopWithSignal(signal syscall.Signal) {
+ 			}
+ 		}()
+ 
++		// Stop also seals a command whose Run goroutine has not entered the
++		// native start yet. Checking IsRunning first would miss that command.
++		if needStop && cmd != nil {
++			cmd.StopWithSignal(signal)
++		}
+ 		if cmd == nil || !cmd.IsRunning() {
+ 			logrus.Errorf("Process Manager: cmd of %v is not running anymore, no need to stop", p.Name)
++			p.lock.Lock()
+ 			if p.State != StateStopped && p.State != StateError {
+ 				p.State = StateStopped
+ 			}
++			p.lock.Unlock()
+ 			return
+ 		}
+ 
+ 		// no need for lock
+ 		if needStop {
+ 			logrus.Infof("Process Manager: trying to stop process %v", p.Name)
+-			cmd.StopWithSignal(signal)
+ 			for i := 0; i < types.WaitCount; i++ {
+ 				if p.IsStopped() {
+ 					return
+diff --git a/pkg/process/process_manager.go b/pkg/process/process_manager.go
+index 22d53a0..851c7a2 100644
+--- a/pkg/process/process_manager.go
++++ b/pkg/process/process_manager.go
+@@ -5,6 +5,7 @@ import (
+ 	"crypto/sha256"
+ 	"encoding/hex"
+ 	"fmt"
++	"os"
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+@@ -52,6 +53,8 @@ type Manager struct {
+ 	lock            *sync.RWMutex
+ 	processes       map[string]*Process
+ 	processUpdateCh chan *Process
++	retirement      map[string]*processRetirement
++	retirementRoot  *os.Root
+ 
+ 	availablePorts *lhBitmap.Bitmap
+ 
+@@ -182,9 +185,15 @@ func (pm *Manager) getProcessesToUpdateConditions(volumeMountPointMap map[string
+ // ProcessCreate will create a process according to the request.
+ // If the specified process name exists already, the creation will fail.
+ func (pm *Manager) ProcessCreate(ctx context.Context, req *rpc.ProcessCreateRequest) (ret *rpc.ProcessResponse, err error) {
+-	if req.Spec.Name == "" || req.Spec.Binary == "" {
++	if req.GetSpec() == nil || req.Spec.Name == "" || req.Spec.Binary == "" {
+ 		return nil, status.Errorf(codes.InvalidArgument, "missing required argument")
+ 	}
++	name := req.Spec.Name
++	if err := pm.beginProcessStart(name); err != nil {
++		return nil, err
++	}
++	var p *Process
++	defer func() { pm.finishProcessStart(name, p) }()
+ 
+ 	logrus.Infof("Process Manager: prepare to create process %v", req.Spec.Name)
+ 	logger, err := util.NewLonghornWriter(req.Spec.Name, pm.logsDir)
+@@ -192,7 +201,7 @@ func (pm *Manager) ProcessCreate(ctx context.Context, req *rpc.ProcessCreateRequ
+ 		return nil, err
+ 	}
+ 
+-	p := &Process{
++	p = &Process{
+ 		Name:      req.Spec.Name,
+ 		Binary:    req.Spec.Binary,
+ 		Args:      req.Spec.Args,
+@@ -447,12 +456,18 @@ func ParsePortRange(portRange string) (int32, int32, error) {
+ // ProcessReplace will replace a process with the new process according to the request.
+ // If the specified process name doesn't exist already, the replace will fail.
+ func (pm *Manager) ProcessReplace(ctx context.Context, req *rpc.ProcessReplaceRequest) (ret *rpc.ProcessResponse, err error) {
+-	if req.Spec.Name == "" || req.Spec.Binary == "" {
++	if req.GetSpec() == nil || req.Spec.Name == "" || req.Spec.Binary == "" {
+ 		return nil, status.Errorf(codes.InvalidArgument, "missing required argument")
+ 	}
+ 	if req.TerminateSignal != "SIGHUP" {
+ 		return nil, status.Errorf(codes.InvalidArgument, "doesn't support terminate signal %v", req.TerminateSignal)
+ 	}
++	name := req.Spec.Name
++	if err := pm.beginProcessStart(name); err != nil {
++		return nil, err
++	}
++	var p *Process
++	defer func() { pm.finishProcessStart(name, p) }()
+ 	terminateSignal := syscall.SIGHUP
+ 
+ 	logrus.Infof("Process Manager: prepare to replace process %v", req.Spec.Name)
+@@ -461,7 +476,7 @@ func (pm *Manager) ProcessReplace(ctx context.Context, req *rpc.ProcessReplaceRe
+ 		return nil, err
+ 	}
+ 
+-	p := &Process{
++	p = &Process{
+ 		Name:      req.Spec.Name,
+ 		Binary:    req.Spec.Binary,
+ 		Args:      req.Spec.Args,
+diff --git a/pkg/process/retirement.go b/pkg/process/retirement.go
+new file mode 100644
+index 0000000..0f64836
+--- /dev/null
++++ b/pkg/process/retirement.go
+@@ -0,0 +1,165 @@
++package process
++
++import (
++	"errors"
++	"os"
++	"regexp"
++	"syscall"
++
++	"google.golang.org/grpc/codes"
++	"google.golang.org/grpc/status"
++)
++
++var validRetirementName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)
++
++type processRetirement struct {
++	starting int
++	children int
++	sealed   bool
++}
++
++// SealProcess blocks further creates and replacements of this exact name in
++// this manager epoch. The caller can proceed only once all previously
++// admitted operations and their actual child commands have returned.
++func (pm *Manager) SealProcess(name string) (bool, error) {
++	if len(name) > 253 || !validRetirementName.MatchString(name) {
++		return false, status.Error(codes.InvalidArgument, "invalid process name")
++	}
++	pm.lock.Lock()
++	defer pm.lock.Unlock()
++	r := pm.retirementEntry(name)
++	r.sealed = true
++	if err := pm.persistRetirement(name); err != nil {
++		return false, status.Error(codes.FailedPrecondition, "process retirement is not durable")
++	}
++	return r.starting == 0 && r.children == 0, nil
++}
++
++// EnableDurableRetirement binds the seals to an owner-only directory before
++// the manager begins accepting requests.
++func (pm *Manager) EnableDurableRetirement(directory string) error {
++	info, err := os.Lstat(directory)
++	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
++		return errors.New("retirement requires an owner-only directory")
++	}
++	owner, ok := info.Sys().(*syscall.Stat_t)
++	if !ok || owner.Uid != uint32(os.Geteuid()) {
++		return errors.New("retirement directory owner is not the manager")
++	}
++	root, err := os.OpenRoot(directory)
++	if err != nil {
++		return err
++	}
++	current, err := root.Stat(".")
++	if err != nil || !os.SameFile(info, current) {
++		return errors.Join(errors.New("retirement directory identity changed"), root.Close())
++	}
++	pm.lock.Lock()
++	defer pm.lock.Unlock()
++	if pm.retirementRoot != nil || len(pm.retirement) != 0 {
++		return errors.Join(errors.New("retirement directory must be configured before processing requests"), root.Close())
++	}
++	pm.retirementRoot = root
++	return nil
++}
++
++func (pm *Manager) storedRetirement(name string) (bool, error) {
++	if pm.retirementRoot == nil || len(name) > 253 || !validRetirementName.MatchString(name) {
++		return false, nil
++	}
++	info, err := pm.retirementRoot.Lstat(name)
++	if errors.Is(err, os.ErrNotExist) {
++		return false, nil
++	}
++	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() != 0 {
++		return false, errors.New("stored process retirement could not be verified")
++	}
++	return true, nil
++}
++
++func (pm *Manager) persistRetirement(name string) error {
++	if pm.retirementRoot == nil {
++		return nil
++	}
++	file, err := pm.retirementRoot.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
++	if errors.Is(err, os.ErrExist) {
++		stored, readErr := pm.storedRetirement(name)
++		if readErr != nil || !stored {
++			return errors.New("previous process retirement could not be verified")
++		}
++		file, err = pm.retirementRoot.Open(name)
++	}
++	if err != nil {
++		return err
++	}
++	if err = errors.Join(file.Sync(), file.Close()); err != nil {
++		return err
++	}
++	dir, err := pm.retirementRoot.Open(".")
++	if err != nil {
++		return err
++	}
++	return errors.Join(dir.Sync(), dir.Close())
++}
++
++func (pm *Manager) retirementEntry(name string) *processRetirement {
++	if pm.retirement == nil {
++		pm.retirement = make(map[string]*processRetirement)
++	}
++	r := pm.retirement[name]
++	if r == nil {
++		r = &processRetirement{}
++		pm.retirement[name] = r
++	}
++	return r
++}
++
++func (pm *Manager) beginProcessStart(name string) error {
++	pm.lock.Lock()
++	defer pm.lock.Unlock()
++	r := pm.retirementEntry(name)
++	stored, err := pm.storedRetirement(name)
++	if err != nil {
++		pm.discardRetirementEntry(name, r)
++		return status.Error(codes.FailedPrecondition, "process retirement state cannot be read")
++	}
++	if r.sealed || stored {
++		r.sealed = true
++		return status.Error(codes.FailedPrecondition, "process name is sealed for retirement")
++	}
++	r.starting++
++	return nil
++}
++
++func (pm *Manager) finishProcessStart(name string, p *Process) {
++	var done <-chan struct{}
++	if p != nil {
++		p.lock.RLock()
++		done = p.commandDone
++		p.lock.RUnlock()
++	}
++	pm.lock.Lock()
++	defer pm.lock.Unlock()
++	r := pm.retirement[name]
++	r.starting--
++	if done != nil {
++		r.children++
++		go pm.observeProcessExit(name, done)
++	}
++	pm.discardRetirementEntry(name, r)
++}
++
++func (pm *Manager) observeProcessExit(name string, done <-chan struct{}) {
++	<-done
++	pm.lock.Lock()
++	defer pm.lock.Unlock()
++	r := pm.retirement[name]
++	r.children--
++	pm.discardRetirementEntry(name, r)
++}
++
++func (pm *Manager) discardRetirementEntry(name string, r *processRetirement) {
++	if !r.sealed && r.starting == 0 && r.children == 0 {
++		delete(pm.retirement, name)
++	}
++}
+diff --git a/pkg/process/retirement_command_test.go b/pkg/process/retirement_command_test.go
+new file mode 100644
+index 0000000..78c62a0
+--- /dev/null
++++ b/pkg/process/retirement_command_test.go
+@@ -0,0 +1,47 @@
++package process
++
++import (
++	"errors"
++	"os"
++	"path/filepath"
++	"syscall"
++	"testing"
++)
++
++func TestRetiredBinaryCannotStart(t *testing.T) {
++	for name, retire := range map[string]func(*BinaryCommand){
++		"stop":   (*BinaryCommand).Stop,
++		"signal": func(c *BinaryCommand) { c.StopWithSignal(syscall.SIGINT) },
++		"kill":   (*BinaryCommand).Kill,
++	} {
++		t.Run(name, func(t *testing.T) {
++			marker := filepath.Join(t.TempDir(), "started")
++			command, err := NewBinaryCommand("sh", "-c", "printf started > \"$1\"", "sh", marker)
++			if err != nil {
++				t.Fatal(err)
++			}
++			retire(command)
++			if err = command.Run(); err == nil {
++				t.Error("retired command entered the native start path")
++			}
++			if _, err = os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
++				t.Fatal("a native child executed after the retirement request")
++			}
++		})
++	}
++}
++
++func TestUnretiredBinaryStartsNormally(t *testing.T) {
++	marker := filepath.Join(t.TempDir(), "started")
++	command, err := NewBinaryCommand("sh", "-c", "printf started > \"$1\"", "sh", marker)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err = command.Run(); err != nil {
++		t.Fatal(err)
++	}
++	contents, err := os.ReadFile(marker)
++	if err != nil || string(contents) != "started" {
++		t.Fatalf("native active control failed: %v", err)
++	}
++}
+diff --git a/pkg/process/retirement_manager_test.go b/pkg/process/retirement_manager_test.go
+new file mode 100644
+index 0000000..8aa4b70
+--- /dev/null
++++ b/pkg/process/retirement_manager_test.go
+@@ -0,0 +1,235 @@
++package process
++
++import (
++	"context"
++	"errors"
++	"os"
++	"sync"
++	"testing"
++	"time"
++
++	rpc "github.com/longhorn/types/pkg/generated/imrpc"
++)
++
++func TestSealedNameRejectsNewCreateAndWaitsForInFlightCreate(t *testing.T) {
++	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
++	defer cancel()
++	manager, err := NewManager(ctx, "30000-30010", t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	entered, release := make(chan struct{}), make(chan struct{})
++	allowReturn := sync.OnceFunc(func() { close(release) })
++	defer allowReturn()
++	manager.Executor = &MockExecutor{CreationHook: func(c *MockCommand) (*MockCommand, error) {
++		if c.Binary == "delayed-command" {
++			close(entered)
++			<-release
++		}
++		return nil, errors.New("fixture stops before a native child is created")
++	}}
++	request := &rpc.ProcessCreateRequest{Spec: &rpc.ProcessSpec{Name: "fixture-e-0", Binary: "delayed-command"}}
++	finished := make(chan struct{})
++	go func() {
++		defer close(finished)
++		_, _ = manager.ProcessCreate(ctx, request)
++	}()
++	select {
++	case <-entered:
++	case <-ctx.Done():
++		t.Fatal("first create did not reach the injected start point")
++	}
++	if stopped, err := manager.SealProcess(request.Spec.Name); err != nil || stopped {
++		t.Fatalf("sealing reported a pending create as retired: %v", err)
++	}
++	if _, err := manager.ProcessCreate(ctx, request); err == nil {
++		t.Fatal("a second create was admitted after sealing the name")
++	}
++	replacement := &rpc.ProcessReplaceRequest{Spec: request.Spec, TerminateSignal: "SIGHUP"}
++	if _, err := manager.ProcessReplace(ctx, replacement); err == nil {
++		t.Fatal("a replacement was admitted after sealing the name")
++	}
++	allowReturn()
++	select {
++	case <-finished:
++	case <-ctx.Done():
++		t.Fatal("first create did not return")
++	}
++	if stopped, err := manager.SealProcess(request.Spec.Name); err != nil || !stopped {
++		t.Fatalf("no-child create did not finish retiring: %v", err)
++	}
++	other := &rpc.ProcessCreateRequest{Spec: &rpc.ProcessSpec{Name: "unrelated-e-0", Binary: "unrelated-command"}}
++	if _, err := manager.ProcessCreate(ctx, other); err != nil {
++		t.Fatalf("sealing one name affected an unrelated create: %v", err)
++	}
++}
++
++func TestSealedNameWaitsForActualChildExit(t *testing.T) {
++	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
++	defer cancel()
++	manager, err := NewManager(ctx, "30000-30010", t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	const name = "fixture-r-0"
++	result, err := manager.ProcessCreate(ctx, &rpc.ProcessCreateRequest{
++		Spec: &rpc.ProcessSpec{Name: name, Binary: "sleep", Args: []string{"30"}},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	process := manager.findProcess(name)
++	t.Cleanup(process.Stop)
++	for !process.cmd.IsRunning() && ctx.Err() == nil {
++		time.Sleep(time.Millisecond)
++	}
++	if !process.cmd.IsRunning() {
++		t.Fatal("the real child never started")
++	}
++	if stopped, err := manager.SealProcess(name); err != nil || stopped {
++		t.Fatalf("sealing acknowledged a live child: %v", err)
++	}
++	if _, err = manager.ProcessDelete(ctx, &rpc.ProcessDeleteRequest{Name: name, Uuid: result.Status.Uuid}); err != nil {
++		t.Fatal(err)
++	}
++	for ctx.Err() == nil {
++		stopped, err := manager.SealProcess(name)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if stopped {
++			return
++		}
++		time.Sleep(time.Millisecond)
++	}
++	t.Fatal("the manager never observed the native child exit")
++}
++
++func TestProcessSealSurvivesAnotherManagerEpoch(t *testing.T) {
++	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
++	defer cancel()
++	shared := t.TempDir()
++	if err := os.Chmod(shared, 0o700); err != nil {
++		t.Fatal(err)
++	}
++	makeManager := func() *Manager {
++		t.Helper()
++		manager, err := NewManager(ctx, "30000-30010", t.TempDir())
++		if err != nil {
++			t.Fatal(err)
++		}
++		if err = manager.EnableDurableRetirement(shared); err != nil {
++			t.Fatal(err)
++		}
++		manager.Executor = &MockExecutor{CreationHook: func(*MockCommand) (*MockCommand, error) {
++			return nil, errors.New("fixture must finish without a child")
++		}}
++		return manager
++	}
++	original := makeManager()
++	peer := makeManager()
++	const name = "fixture-e-0"
++	if done, err := original.SealProcess(name); err != nil || !done {
++		t.Fatalf("initial seal failed: %v", err)
++	}
++	for _, manager := range []*Manager{peer, makeManager()} {
++		if _, err := manager.ProcessCreate(ctx, &rpc.ProcessCreateRequest{
++			Spec: &rpc.ProcessSpec{Name: name, Binary: "fixture"},
++		}); err == nil {
++			t.Fatal("another manager epoch started the sealed name")
++		}
++	}
++	if _, err := peer.ProcessCreate(ctx, &rpc.ProcessCreateRequest{
++		Spec: &rpc.ProcessSpec{Name: "unrelated-e-0", Binary: "fixture"},
++	}); err != nil {
++		t.Fatalf("durable seal affected an unrelated name: %v", err)
++	}
++}
++
++func TestSealedNameWaitsForReplacementChild(t *testing.T) {
++	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
++	defer cancel()
++	manager, err := NewManager(ctx, "30000-30010", t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	const name = "fixture-e-0"
++	if _, err = manager.ProcessCreate(ctx, &rpc.ProcessCreateRequest{
++		Spec: &rpc.ProcessSpec{Name: name, Binary: "sleep", Args: []string{"30"}},
++	}); err != nil {
++		t.Fatal(err)
++	}
++	original := manager.findProcess(name)
++	t.Cleanup(original.Stop)
++	for !original.cmd.IsRunning() && ctx.Err() == nil {
++		time.Sleep(time.Millisecond)
++	}
++	if !original.cmd.IsRunning() {
++		t.Fatal("original process never started")
++	}
++
++	native, err := NewBinaryCommand("sleep", "30")
++	if err != nil {
++		t.Fatal(err)
++	}
++	delayed := &delayedBinary{BinaryCommand: native, entered: make(chan struct{}), release: make(chan struct{}), exited: make(chan struct{})}
++	release := sync.OnceFunc(func() { close(delayed.release) })
++	defer release()
++	manager.Executor = delayedExecutor{command: delayed}
++	result := make(chan error, 1)
++	go func() {
++		_, err := manager.ProcessReplace(ctx, &rpc.ProcessReplaceRequest{
++			Spec:            &rpc.ProcessSpec{Name: name, Binary: "fixture-replacement"},
++			TerminateSignal: "SIGHUP",
++		})
++		result <- err
++	}()
++	select {
++	case <-delayed.entered:
++	case <-ctx.Done():
++		t.Fatal("replacement never reached its delayed native start")
++	}
++	if complete, err := manager.SealProcess(name); err != nil || complete {
++		t.Fatalf("sealing acknowledged an in-flight replacement: %v", err)
++	}
++	select {
++	case err := <-result:
++		if err != nil {
++			t.Fatal(err)
++		}
++	case <-ctx.Done():
++		t.Fatal("replacement did not reach its terminal API response")
++	}
++	select {
++	case <-original.commandDone:
++	case <-ctx.Done():
++		t.Fatal("original child did not exit")
++	}
++	if complete, err := manager.SealProcess(name); err != nil || complete {
++		t.Fatalf("sealing ignored the replacement command that can still run: %v", err)
++	}
++
++	replacement := manager.findProcess(name)
++	t.Cleanup(replacement.Stop)
++	release()
++	for !native.IsRunning() && ctx.Err() == nil {
++		time.Sleep(time.Millisecond)
++	}
++	if !native.IsRunning() {
++		t.Fatal("native replacement did not start")
++	}
++	if _, err = manager.ProcessDelete(ctx, &rpc.ProcessDeleteRequest{Name: name, Uuid: replacement.UUID}); err != nil {
++		t.Fatal(err)
++	}
++	for ctx.Err() == nil {
++		complete, err := manager.SealProcess(name)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if complete {
++			return
++		}
++		time.Sleep(time.Millisecond)
++	}
++	t.Fatal("the seal did not observe the replacement exit")
++}
+diff --git a/pkg/process/retirement_process_test.go b/pkg/process/retirement_process_test.go
+new file mode 100644
+index 0000000..2419514
+--- /dev/null
++++ b/pkg/process/retirement_process_test.go
+@@ -0,0 +1,76 @@
++package process
++
++import (
++	"errors"
++	"os"
++	"path/filepath"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/longhorn/longhorn-instance-manager/pkg/util"
++)
++
++type delayedBinary struct {
++	*BinaryCommand
++	entered, release, exited chan struct{}
++}
++
++func (c *delayedBinary) Run() error {
++	close(c.entered)
++	<-c.release
++	defer close(c.exited)
++	return c.BinaryCommand.Run()
++}
++
++type delayedExecutor struct{ command *delayedBinary }
++
++func (e delayedExecutor) NewCommand(string, ...string) (Command, error) {
++	return e.command, nil
++}
++
++func TestStoppedProcessCannotLaunchDelayedChild(t *testing.T) {
++	dir := t.TempDir()
++	marker := filepath.Join(dir, "started")
++	command, err := NewBinaryCommand("sh", "-c", "printf started > \"$1\"", "sh", marker)
++	if err != nil {
++		t.Fatal(err)
++	}
++	delayed := &delayedBinary{BinaryCommand: command, entered: make(chan struct{}), release: make(chan struct{}), exited: make(chan struct{})}
++	release := sync.OnceFunc(func() { close(delayed.release) })
++	defer release()
++	logger, err := util.NewLonghornWriter("fixture", dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	process := &Process{State: StateStarting, Name: "fixture", lock: &sync.RWMutex{}, UpdateCh: make(chan *Process, 8),
++		logger: logger, executor: delayedExecutor{command: delayed}}
++	if err = process.Start(); err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case <-delayed.entered:
++	case <-time.After(2 * time.Second):
++		t.Fatal("native command never reached its delayed start point")
++	}
++	process.Stop()
++	deadline := time.Now().Add(2 * time.Second)
++	for !process.IsStopped() && time.Now().Before(deadline) {
++		time.Sleep(time.Millisecond)
++	}
++	if !process.IsStopped() {
++		t.Fatal("stop never reached a terminal state")
++	}
++	release()
++	select {
++	case <-delayed.exited:
++	case <-time.After(2 * time.Second):
++		t.Fatal("delayed native command did not return")
++	}
++	if _, err = os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
++		t.Fatal("the native child started after the owning process stopped")
++	}
++	if err = process.Start(); err == nil {
++		t.Fatal("the same stopped process accepted another start")
++	}
++}
