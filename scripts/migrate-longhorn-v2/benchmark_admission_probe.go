@@ -16,15 +16,15 @@ import (
 	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
-const benchmarkPVFenceMessage = "Benchmark backend references are fenced for retirement"
+const benchmarkReferenceFenceMessage = "Benchmark backend references are fenced for retirement"
 
 type benchmarkAdmissionEpoch struct {
 	PolicyUID, PolicyVersion, BindingUID, BindingVersion string
 }
 
-// This proves the Retain PV policy only. Other fences and original journal
-// ownership must still be re-established before a storage delete.
-func proveBenchmarkPVFenceOnServingAPIs(ctx context.Context, c client, record benchmarkRecord, pv object) error {
+// Prove the fence for the supplied original reference. Instance and namespace
+// fences and the journal still require separate evidence before any delete.
+func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, record benchmarkRecord, observed object) error {
 	if err := authorizeBenchmark(os.Getenv, "v1"); err != nil {
 		return err
 	}
@@ -34,10 +34,19 @@ func proveBenchmarkPVFenceOnServingAPIs(ctx context.Context, c client, record be
 	}
 	policies, err := benchmarkRetirementFences(record)
 	if err != nil || record.Phase != "v1" {
-		return errors.New("original V1 benchmark PV fence is unverified")
+		return errors.New("original V1 benchmark reference fence is unverified")
 	}
-	policy := policies[0]
-	before, err := observeBenchmarkPVFence(ctx, c, policy)
+	var policy object
+	var probe func(context.Context, *http.Client, *url.URL, benchmarkRecord, object) error
+	switch text(observed, "kind") {
+	case "PersistentVolume":
+		policy, probe = policies[0], probeBenchmarkRetainedPVAdmission
+	case "Volume":
+		policy, probe = policies[1], probeBenchmarkDetachedBackendAdmission
+	default:
+		return errors.New("benchmark reference fence received an unsupported resource")
+	}
+	before, err := observeBenchmarkReferenceFence(ctx, c, policy)
 	if err != nil {
 		return err
 	}
@@ -53,7 +62,7 @@ func proveBenchmarkPVFenceOnServingAPIs(ctx context.Context, c client, record be
 		if err != nil {
 			return err
 		}
-		proof := probeBenchmarkRetainedPVAdmission(ctx, direct, address, record, pv)
+		proof := probe(ctx, direct, address, record, observed)
 		direct.CloseIdleConnections()
 		if proof != nil {
 			return proof
@@ -63,15 +72,15 @@ func proveBenchmarkPVFenceOnServingAPIs(ctx context.Context, c client, record be
 	if err != nil || !slices.Equal(roster, after) {
 		return errors.New("serving API processes changed during benchmark admission proof")
 	}
-	bound, err := observeBenchmarkPVFence(ctx, c, policy)
+	bound, err := observeBenchmarkReferenceFence(ctx, c, policy)
 	if err != nil || before != bound {
-		return errors.New("the benchmark PV fence changed during native admission proof")
+		return errors.New("the benchmark reference fence changed during native admission proof")
 	}
 	return sourceCurrent(ctx, c.run, source)
 }
 
-func observeBenchmarkPVFence(ctx context.Context, c client, desired object) (benchmarkAdmissionEpoch, error) {
-	unverified := errors.New("the exact Deny policy and binding for the original PV are unverified")
+func observeBenchmarkReferenceFence(ctx context.Context, c client, desired object) (benchmarkAdmissionEpoch, error) {
+	unverified := errors.New("the exact Deny policy and binding for the original reference are unverified")
 	name := text(desired, "metadata", "name")
 	policy, err := c.get(ctx, "validatingadmissionpolicies.admissionregistration.k8s.io", "", name, false)
 	if err != nil || text(policy, "metadata", "name") != name || value(policy, "metadata", "deletionTimestamp") != nil ||
@@ -120,7 +129,43 @@ func probeBenchmarkRetainedPVAdmission(ctx context.Context, client *http.Client,
 	tested[2]["value"] = "Delete"
 	code, raw, err = benchmarkAdmissionDryRun(ctx, client, endpoint, path, tested)
 	name := "lh-benchmark-retire-pv-" + record.Phase + "-" + record.Run
-	if err != nil || !benchmarkDenialMatches(code, raw, "", "persistentvolumes", identity.Name, name, name, benchmarkPVFenceMessage) {
+	if err != nil || !benchmarkDenialMatches(code, raw, "", "persistentvolumes", identity.Name, name, name, benchmarkReferenceFenceMessage) {
+		return unverified
+	}
+	return nil
+}
+
+func probeBenchmarkDetachedBackendAdmission(ctx context.Context, client *http.Client, endpoint *url.URL, record benchmarkRecord, backend object) error {
+	unverified := errors.New("the detached backend fence is unverified on this API server")
+	identity := record.Resources["LonghornVolume"]
+	const group = "longhorn.io"
+	const version = group + "/v1beta2"
+	resourceVersion := text(backend, "metadata", "resourceVersion")
+	if verifyRetirementReceipts(record) != nil || benchmarkIdentity(backend) != identity || resourceVersion == "" ||
+		text(backend, "apiVersion") != version || text(backend, "kind") != "Volume" ||
+		text(backend, "spec", "dataEngine") != record.Phase ||
+		verifyBenchmarkDetachedBackendState(backend) != nil ||
+		verifyRecoveredBackendCascadeCleared(backend) != nil {
+		return unverified
+	}
+	path := "/apis/" + version + "/namespaces/longhorn-system/volumes/" + identity.Name
+	tested := []object{
+		{"op": "test", "path": "/metadata/uid", "value": identity.UID},
+		{"op": "test", "path": "/metadata/resourceVersion", "value": resourceVersion},
+		{"op": "replace", "path": "/spec/dataEngine", "value": record.Phase},
+	}
+	code, raw, err := benchmarkAdmissionDryRun(ctx, client, endpoint, path, tested)
+	var admitted object
+	if err != nil || code != http.StatusOK || strictjson.Validate(raw, nil) != nil || json.Unmarshal(raw, &admitted) != nil ||
+		benchmarkIdentity(admitted) != identity || text(admitted, "apiVersion") != version || text(admitted, "kind") != "Volume" ||
+		!reflect.DeepEqual(value(admitted, "spec"), value(backend, "spec")) ||
+		verifyBenchmarkDetachedBackendState(admitted) != nil || verifyRecoveredBackendCascadeCleared(admitted) != nil {
+		return unverified
+	}
+	tested[2] = object{"op": "add", "path": "/spec/nodeID", "value": "prod-worker-3"}
+	code, raw, err = benchmarkAdmissionDryRun(ctx, client, endpoint, path, tested)
+	name := "lh-benchmark-retire-backend-" + record.Phase + "-" + record.Run
+	if err != nil || !benchmarkDenialMatches(code, raw, group, "volumes", identity.Name, name, name, benchmarkReferenceFenceMessage) {
 		return unverified
 	}
 	return nil

@@ -55,7 +55,7 @@ func TestBenchmarkPVFenceRequiresExactPolicyAndDenyBinding(t *testing.T) {
 				}
 				return nil, errors.New("unexpected benchmark fence kind")
 			}}
-			got, err := observeBenchmarkPVFence(context.Background(), c, desired)
+			got, err := observeBenchmarkReferenceFence(context.Background(), c, desired)
 			if fault != "" && err == nil || fault == "" && (err != nil || got != (benchmarkAdmissionEpoch{"original-policy", "100", "original-binding", "101"})) {
 				t.Fatalf("policy and binding readback mismatch: %v", err)
 			}
@@ -148,6 +148,69 @@ func TestBenchmarkRetainedPVAdmissionRequiresBothDryRuns(t *testing.T) {
 			err = probeBenchmarkRetainedPVAdmission(context.Background(), server.Client(), endpoint, record, current)
 			if (err == nil) != test.proven || test.proven && calls.Load() != 2 || test.fault == "original-uid" && calls.Load() != 0 {
 				t.Fatalf("proven = %t, calls = %d, error = %v", test.proven, calls.Load(), err)
+			}
+		})
+	}
+}
+
+func TestBenchmarkBackendAdmissionProbesOnlyNaturallyClearedBackend(t *testing.T) {
+	for _, fault := range []string{"", "still references PV", "deny from other policy"} {
+		t.Run(fault, func(t *testing.T) {
+			record := retirementFenceFixture(t)
+			identity := record.Resources["LonghornVolume"]
+			backend := object{
+				"apiVersion": "longhorn.io/v1beta2", "kind": "Volume",
+				"metadata": object{"name": identity.Name, "namespace": identity.Namespace, "uid": identity.UID, "resourceVersion": "100"},
+				"spec":     object{"dataEngine": record.Phase},
+				"status":   object{"state": "detached", "kubernetesStatus": object{}},
+			}
+			if fault == "still references PV" {
+				valueObject(backend, "status", "kubernetesStatus")["pvName"] = record.Resources["PersistentVolume"].Name
+			}
+			var calls atomic.Int32
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				attempt := calls.Add(1)
+				var changes []object
+				if req.Method != http.MethodPatch || req.URL.RawQuery != "dryRun=All" ||
+					req.URL.Path != "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/"+identity.Name ||
+					json.NewDecoder(req.Body).Decode(&changes) != nil || len(changes) != 3 ||
+					text(changes[0], "value") != identity.UID || text(changes[1], "value") != "100" {
+					t.Error("unexpected backend probe")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if attempt == 1 {
+					if text(changes[2], "path") != "/spec/dataEngine" || text(changes[2], "value") != record.Phase {
+						t.Error("allowed probe attempted a changed backend")
+					}
+					_ = json.NewEncoder(w).Encode(backend)
+					return
+				}
+				if text(changes[2], "path") != "/spec/nodeID" || text(changes[2], "value") != "prod-worker-3" {
+					t.Error("negative probe did not challenge the detached fence")
+				}
+				policy := "lh-benchmark-retire-backend-" + record.Phase + "-" + record.Run
+				if fault == "deny from other policy" {
+					policy = "different-policy"
+				}
+				cause := "ValidatingAdmissionPolicy '" + policy + "' with binding '" + policy + "' denied request: " + benchmarkReferenceFenceMessage
+				status := metav1.Status{
+					TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"},
+					Status:   metav1.StatusFailure, Reason: metav1.StatusReasonForbidden, Code: http.StatusForbidden,
+					Message: "volumes.longhorn.io " + strconv.Quote(identity.Name) + " is forbidden: " + cause,
+					Details: &metav1.StatusDetails{Group: "longhorn.io", Name: identity.Name, Kind: "volumes", Causes: []metav1.StatusCause{{Message: cause}}},
+				}
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(status)
+			}))
+			t.Cleanup(server.Close)
+			address, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = probeBenchmarkDetachedBackendAdmission(context.Background(), server.Client(), address, record, backend)
+			if (fault == "") != (err == nil) || fault == "" && calls.Load() != 2 || fault == "still references PV" && calls.Load() != 0 {
+				t.Fatalf("unexpected backend fence verdict: requests=%d error=%v", calls.Load(), err)
 			}
 		})
 	}
