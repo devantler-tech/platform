@@ -280,15 +280,16 @@ the pin therefore changes the native resource URL and invalidates Stalwart's
 cached ZIP while preserving the Application identity; verifying an image file
 at a permanent URL alone would still permit a previously cached interface.
 
-The compiler accepts an explicit `runtimeVersion` of `0.16.27` or `1.0.2`;
-omitting it preserves the deployed 0.16.27 schema. Unknown, empty, null or
-duplicate selectors are refused. The 1.0.2 profile uses its native property
-names, audited normal-user permissions, and Web Interface 2.0.4. Its inventory
+The compiler accepts an explicit `runtimeVersion` of `0.16.27`, `1.0.2`, or
+`1.0.3`. Omitting it selects the deployed 0.16.27 schema. Unknown, empty, null
+or duplicate selectors are refused. Both 1.0 profiles use native property
+names, audited normal-user permissions, and Web Interface 2.0.4. Their inventory
 and alias checks reject foreign or mixed schema fields. Before opening the
-datastore, that profile requires server 1.0.2 and CLI 1.0.14; CLI 1.0.13 cannot
-parse the new server schema. Stage the corresponding verified asset with
-`stage-webui.sh <absolute-build-directory> 1.0.2`. The default build and serving
-image remain on the deployed baseline.
+datastore, each profile requires its exact server version and CLI 1.0.14.
+Pass the selected version to `stage-webui.sh` to stage its verified asset.
+The 1.0.3 profile supports the full OAuth scope needed for recovery administrator
+sign-in through a registered Web Interface client. The default build and
+serving image use the deployed baseline.
 
 Selecting a schema does not migrate a datastore. Stalwart 1.0 refuses stores
 created before 1.0. A coordinated upgrade requires the
