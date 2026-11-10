@@ -25,6 +25,7 @@ type observationReadOnly struct {
 	base          kubernetes
 	parity        bool
 	servingVolume string
+	fresh         *freshRecoveryWitness
 }
 
 // call permits fixed reads and the existing account credential. Parity also
@@ -34,20 +35,27 @@ func (o observationReadOnly) call(ctx context.Context, input []byte, args ...str
 	if len(input) != 0 {
 		return nil, errors.New("observation-scope")
 	}
+	target := retainedRecovery
+	if o.fresh != nil {
+		target = freshRetainedRecovery
+	}
 	allowedReads := [][]string{
-		{"get", "Namespace", retainedRecovery.namespace, "--ignore-not-found=true", "-o=json"},
-		{"get", "Pod", "reader", "--ignore-not-found=true", "-o=json", "--namespace=" + retainedRecovery.namespace},
+		{"get", "Namespace", target.namespace, "--ignore-not-found=true", "-o=json"},
+		{"get", "Pod", "reader", "--ignore-not-found=true", "-o=json", "--namespace=" + target.namespace},
 		{"get", "Secret", "private-mail-maintainer", "--ignore-not-found=true", "-o=json", "--namespace=private-mail"},
 	}
 	if o.parity {
 		allowedReads = append(allowedReads,
 			[]string{"get", "Pod", "private-mail-0", "--ignore-not-found=true", "-o=json", "--namespace=private-mail"},
 			[]string{"get", "PersistentVolumeClaim", "private-mail-data", "--ignore-not-found=true", "-o=json", "--namespace=private-mail"},
-			[]string{"get", "PersistentVolumeClaim", "data", "--ignore-not-found=true", "-o=json", "--namespace=" + retainedRecovery.namespace},
+			[]string{"get", "PersistentVolumeClaim", "data", "--ignore-not-found=true", "-o=json", "--namespace=" + target.namespace},
 		)
 		if o.servingVolume != "" {
 			allowedReads = append(allowedReads, []string{"get", "PersistentVolume", o.servingVolume, "--ignore-not-found=true", "-o=json"})
 		}
+	}
+	if o.fresh != nil {
+		allowedReads = append(allowedReads, o.fresh.reads()...)
 	}
 	for _, allowed := range allowedReads {
 		if reflect.DeepEqual(args, allowed) {
@@ -84,7 +92,8 @@ func runRecoveryObservation(ctx context.Context, env func(string) string, k kube
 		return 2
 	}
 	confirm := env("EMAIL_DATA_RECOVERY_CONFIRM")
-	parity := confirm == retainedParityConfirm
+	fresh := confirm == freshParityConfirm
+	parity := confirm == retainedParityConfirm || fresh
 	if env("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/observe-email-data-recovery.yaml@refs/heads/main" || (!parity && confirm != "observe-email-data-recovery") {
 		return fail("dispatch")
 	}
@@ -102,11 +111,28 @@ func runRecoveryObservation(ctx context.Context, env func(string) string, k kube
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	reads := observationReadOnly{base: k, parity: parity}
-	d := &recoveryDriver{i: retainedRecovery, k: reads, refs: map[string]ownedReference{}}
+	target := retainedRecovery
+	readerWitness, claimWitness := env("EMAIL_RETAINED_READER_UID"), env("EMAIL_RETAINED_CLAIM_UID")
+	var witness *freshRecoveryWitness
+	var window *retainedMessageWindow
+	if fresh {
+		var err error
+		witness, err = parseFreshRecoveryWitness(env("EMAIL_FRESH_RECOVERY_WITNESS"))
+		if err != nil {
+			return fail("fresh-witness")
+		}
+		target = freshRetainedRecovery
+		readerWitness, claimWitness = witness.Reader.UID, witness.Claim.UID
+		window = freshRecoveryWindow()
+	}
+	reads := observationReadOnly{base: k, parity: parity, fresh: witness}
+	d := &recoveryDriver{i: target, k: reads, refs: map[string]ownedReference{}}
 	ns, found, err := d.lookup(ctx, "Namespace", d.i.namespace, "")
 	if err != nil || !found || text(child(child(ns, "metadata"), "labels"), recoveryLabel) != d.i.run || child(ns, "metadata")["deletionTimestamp"] != nil {
 		return fail("reader-identity")
+	}
+	if fresh && text(child(ns, "metadata"), "uid") != witness.Namespace.UID {
+		return fail("fresh-witness")
 	}
 	if d.image, err = loadRecoveryImage(); err != nil {
 		return fail("image-declaration")
@@ -128,10 +154,15 @@ func runRecoveryObservation(ctx context.Context, env func(string) string, k kube
 	}
 	readerUID := text(child(pod, "metadata"), "uid")
 	if parity {
-		if readerUID != env("EMAIL_RETAINED_READER_UID") {
+		if readerUID != readerWitness {
 			return fail("reader-identity")
 		}
-		if stage := bindObservationParity(ctx, d, reads, readerUID, env("EMAIL_RETAINED_CLAIM_UID")); stage != "" {
+		if stage := bindObservationParity(ctx, d, reads, readerUID, claimWitness); stage != "" {
+			return fail(stage)
+		}
+	}
+	if fresh {
+		if stage := observeFreshRecoveryGraph(ctx, d, witness, time.Now()); stage != "" {
 			return fail(stage)
 		}
 	}
@@ -179,7 +210,7 @@ func runRecoveryObservation(ctx context.Context, env func(string) string, k kube
 		}
 	}
 	if parity {
-		if stage := observeRetainedParity(ctx, d, reader); stage != "" {
+		if stage := observeRetainedParity(ctx, d, reader, window); stage != "" {
 			return fail(stage)
 		}
 	}
@@ -187,6 +218,15 @@ func runRecoveryObservation(ctx context.Context, env func(string) string, k kube
 		if _, err = d.owned(ctx, ref); err != nil {
 			return fail("reader-replaced")
 		}
+	}
+	if fresh {
+		if stage := observeFreshRecoveryGraph(ctx, d, witness, time.Now()); stage != "" {
+			return fail(stage)
+		}
+		if _, err = fmt.Fprintln(output, "EMAIL_FRESH_RETAINED_PARITY=VERIFIED diagnostic=VERIFIED writes=0 cleanup=NOT_STARTED"); err != nil {
+			return 2
+		}
+		return 0
 	}
 	if parity {
 		if _, err = fmt.Fprintln(output, "EMAIL_RETAINED_PARITY=VERIFIED source_writes=0 original_trial=UNVERIFIED"); err != nil {
@@ -227,7 +267,7 @@ func bindObservationParity(ctx context.Context, d *recoveryDriver, reads observa
 
 // observeRetainedParity compares the retained reader with the bound serving
 // workload and returns a fixed failure stage if verification cannot finish.
-func observeRetainedParity(ctx context.Context, d *recoveryDriver, reader *mailboxClient) string {
+func observeRetainedParity(ctx context.Context, d *recoveryDriver, reader *mailboxClient, window *retainedMessageWindow) string {
 	endpoint, stop, err := d.forward(ctx, "private-mail", "private-mail-0", d.source.podUID)
 	if err != nil {
 		return "source-forward"
@@ -237,7 +277,7 @@ func observeRetainedParity(ctx context.Context, d *recoveryDriver, reader *mailb
 	if err != nil {
 		return "source-endpoint"
 	}
-	if _, err = verifyRetainedMessage(ctx, reader, source); err != nil {
+	if _, err = verifyRetainedMessageInWindow(ctx, reader, source, window); err != nil {
 		return err.Error()
 	}
 	if err = d.sourceRetained(ctx); err != nil {
