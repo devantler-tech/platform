@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/devantler-tech/platform/internal/strictjson"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,8 +29,16 @@ func benchmarkDenialMatches(code int, raw []byte, group, resource, name, policy,
 		len(status.Details.Causes) != 1 {
 		return false
 	}
-	attributed := fmt.Sprintf("ValidatingAdmissionPolicy '%s' with binding '%s' denied request: %s", policy, binding, message)
+	cause := status.Details.Causes[0]
+	if cause.Type != "" || cause.Field != "" {
+		return false
+	}
+	attribution, hasPrefix := strings.CutPrefix(cause.Message, "ValidatingAdmissionPolicy '")
+	denyingPolicy, attribution, hasBinding := strings.Cut(attribution, "' with binding '")
+	denyingBinding, denial, hasDenial := strings.Cut(attribution, "' denied request: ")
+	if !hasPrefix || !hasBinding || !hasDenial || denyingPolicy != policy || denyingBinding != binding || denial != message {
+		return false
+	}
 	qualified := schema.GroupResource{Group: group, Resource: resource}
-	return status.Details.Causes[0] == (metav1.StatusCause{Message: attributed}) &&
-		status.Message == fmt.Sprintf("%s %q is forbidden: %s", qualified.String(), name, attributed)
+	return status.Message == fmt.Sprintf("%s %q is forbidden: %s", qualified.String(), name, cause.Message)
 }

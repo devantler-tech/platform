@@ -15,6 +15,7 @@ func TestBenchmarkDenialMustComeFromExactNativePolicy(t *testing.T) {
 	const binding = "lh-benchmark-retire-pv-v1-1234"
 	const explanation = "Benchmark backend references are fenced for retirement"
 	const cause = "ValidatingAdmissionPolicy '" + policy + "' with binding '" + binding + "' denied request: " + explanation
+	messagePrefix := "persistentvolumes " + strconv.Quote(name) + " is forbidden: "
 	for _, test := range []struct {
 		name   string
 		code   int
@@ -28,7 +29,13 @@ func TestBenchmarkDenialMustComeFromExactNativePolicy(t *testing.T) {
 		{"only top-level echo", 403, func(s *metav1.Status) { s.Details.Causes[0].Message = "unrelated" }, false},
 		{"another binding", 403, func(s *metav1.Status) {
 			s.Details.Causes[0].Message = "ValidatingAdmissionPolicy '" + policy + "' with binding 'other' denied request: " + explanation
+			s.Message = messagePrefix + s.Details.Causes[0].Message
 		}, false},
+		{"another policy", 403, func(s *metav1.Status) {
+			s.Details.Causes[0].Message = "ValidatingAdmissionPolicy 'other' with binding '" + binding + "' denied request: " + explanation
+			s.Message = messagePrefix + s.Details.Causes[0].Message
+		}, false},
+		{"extra cause field", 403, func(s *metav1.Status) { s.Details.Causes[0].Field = "spec" }, false},
 		{"evaluation error", 403, func(s *metav1.Status) {
 			s.Details.Causes[0].Message = "ValidatingAdmissionPolicy '" + policy + "' with binding '" + binding + "' denied request: evaluation error"
 		}, false},
@@ -41,7 +48,7 @@ func TestBenchmarkDenialMustComeFromExactNativePolicy(t *testing.T) {
 			s := metav1.Status{
 				TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"},
 				Status:   metav1.StatusFailure, Reason: metav1.StatusReasonForbidden, Code: http.StatusForbidden,
-				Message: "persistentvolumes " + strconv.Quote(name) + " is forbidden: " + cause,
+				Message: messagePrefix + cause,
 				Details: &metav1.StatusDetails{Name: name, Kind: "persistentvolumes", Causes: []metav1.StatusCause{{Message: cause}}},
 			}
 			test.edit(&s)
