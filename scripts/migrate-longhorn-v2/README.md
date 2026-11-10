@@ -153,6 +153,13 @@ no longer fit. For two minutes after kubelet reports its new capacity, a rejecte
 that was running and has gone fails the run and keeps any cordon. Ordinary Pod churn can trip
 this too; check the worker, then dispatch again.
 
+Dispatch a refresh while the platform merge queue is empty, and hold the agent lanes' own
+platform enqueues until the run ends. Prefer 00:00–06:00 UTC outside the 02:17 UTC backup.
+The refresh checks current main before cordoning, every eviction attempt and the kubelet
+restart. If main moves before a restart attempt, the refresh releases only its own cordon.
+An unproven restart keeps the cordon for a new first-attempt main run to adopt after the
+earlier run finishes. A proven restart follows the normal release path.
+
 Next select `benchmark-v1` with `benchmark-longhorn-storage`, before enabling any
 temporary replica storage. It holds until every permanent worker reports its huge pages,
 so run `refresh-clients` first. The pinned fio 3.41 image runs eighteen 4 KiB direct
