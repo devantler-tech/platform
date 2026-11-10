@@ -3174,8 +3174,7 @@ func fakeKubectlCreateRuntimeProbe(namespace, manifestFile string) int {
 	container, _ := containers[0].(map[string]any)
 	securityContext, _ := container["securityContext"].(map[string]any)
 	image, _ := container["image"].(string)
-	if (image != fakeRuntimeProbeImage("devantler-tech/data-product-controller") &&
-		image != fakeRuntimeProbeImage("devantler-tech/wedding-app") &&
+	if (image != fakeRuntimeProbeImage("devantler-tech/wedding-app") &&
 		image != fakeRuntimeProbeImage("devantler-tech/ascoachingogvaner")) ||
 		container["imagePullPolicy"] != "Always" || securityContext["allowPrivilegeEscalation"] != false {
 		return commandFailure(91, "runtime probe does not prove a private package pull")

@@ -658,6 +658,49 @@ func TestRequiredPackageCoverageExactDeclaredKsailOperatorImageIsPreflighted(t *
 	}
 }
 
+// The data product workloads pull the package their HelmRelease names, so the
+// preflight must read that package rather than one the workloads stopped using
+// (#5688). That package is public, so it must not stand in for a runtime
+// credential probe, which only a private package can satisfy.
+func TestRequiredPackageCoverageReadsTheDataProductWorkloadPackage(t *testing.T) {
+	helper := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	release := readRepositoryFile(t, "k8s/bases/apps/data-product-controller/helm-release.yaml")
+
+	var repository string
+	for line := range strings.SplitSeq(release, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(trimmed, "repository: ghcr.io/"); ok {
+			if repository != "" {
+				t.Fatalf("data product release names more than one image repository: %s and %s", repository, value)
+			}
+			repository = value
+		}
+	}
+	if repository == "" {
+		t.Fatal("data product release names no ghcr.io image repository")
+	}
+
+	requiredStart := strings.Index(helper, "readonly -a REQUIRED_PULL_TARGETS=(")
+	probeStart := strings.Index(helper, "readonly -a RUNTIME_CREDENTIAL_PROBE_REPOSITORIES=(")
+	if requiredStart < 0 || probeStart < 0 {
+		t.Fatal("helper declares no required pull targets or runtime probe repositories")
+	}
+	block := func(start int) string {
+		end := strings.Index(helper[start:], "\n)\n")
+		if end < 0 {
+			t.Fatal("unterminated helper array")
+		}
+		return helper[start : start+end]
+	}
+	required, probes := block(requiredStart), block(probeStart)
+
+	requireContains(t, required, `"`+repository+`:latest"`)
+	requireNotContains(t, required, "devantler-tech/data-product-controller:")
+	for _, public := range []string{repository, "devantler-tech/data-product-controller"} {
+		requireNotContains(t, probes, `"`+public+`"`)
+	}
+}
+
 func TestRuntimeCredentialProbesUseAuthenticatedManifestDigests(t *testing.T) {
 	helper := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
 
