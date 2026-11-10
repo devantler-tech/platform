@@ -31,6 +31,7 @@ name: Prepare Longhorn V2 Migration
             inspect-host-memory,
             reboot-host-for-hugepages,
             repair-v1-reservation,
+            reserve-v1-scratch,
           ]
       node:
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
@@ -116,6 +117,9 @@ jobs:
               ;;
             repair-v1-reservation)
               [[ "${LONGHORN_V2_NODE}" == prod-worker-1 && "${LONGHORN_V2_CONFIRM}" == repair-longhorn-v1-reservation ]]
+              ;;
+            reserve-v1-scratch)
+              [[ "${LONGHORN_V2_NODE}" == prod-worker-1 && "${LONGHORN_V2_CONFIRM}" == reserve-longhorn-v1-scratch ]]
               ;;
             inventory-storage-root)
               [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-root-${LONGHORN_V2_NODE}" ]]

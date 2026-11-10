@@ -8,6 +8,16 @@ adjusts the filesystem disk reservation by the required logical capacity.
 Success requires all volumes to regain three healthy copies with the original
 affected volume and disk identities.
 
+`reserve-v1-scratch` selects the same worker and requires
+`reserve-longhorn-v1-scratch` on a first-attempt main dispatch. Run it after
+the original volumes have three healthy copies. It qualifies one 4 GiB V1
+scratch claim across the three permanent disks under the existing scheduling
+settings and keeps an additional 4 GiB above the physical free-space floor.
+It changes the exhausted disk's reservation once and reads back the original
+disks, volume identities and available capacity. An uncertain write stops
+the run. Check the live reservation and storage health before a new dispatch.
+Use the qualified capacity for one recovery or benchmark claim at a time.
+
 `inventory-storage-layout` adds read-only native block metadata to the storage-root
 observation for a fixed temporary worker. Confirm it with
 `inventory-longhorn-storage-layout-<selection>`. Two complete, bounded native volume
