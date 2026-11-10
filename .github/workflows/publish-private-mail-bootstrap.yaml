@@ -70,7 +70,9 @@ jobs:
           mkdir -p "${build_dir}"
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
             -o "${build_dir}/private-mail-bootstrap" ./scripts/private-mail-config
-          awk -v server="${STALWART_SERVER_PIN}" -v cli="${STALWART_CLI_PIN}" '
+          # Platform listeners bind unprivileged ports. Linux refuses to exec
+          # the candidate with its upstream effective file capability and no capabilities.
+          awk -v runtime="${STALWART_RUNTIME}" -v server="${STALWART_SERVER_PIN}" -v cli="${STALWART_CLI_PIN}" '
             /^FROM ghcr\.io\/stalwartlabs\/stalwart:[^ ]+$/ {
               print "FROM ghcr.io/stalwartlabs/stalwart:" server
               server_count++
@@ -81,8 +83,16 @@ jobs:
               cli_count++
               next
             }
+            /^USER 0$/ && runtime == "1.0.3" && server_count == 1 {
+              print
+              print "RUN setcap -r /usr/local/bin/stalwart && capability=\"$(getcap /usr/local/bin/stalwart)\" && test -z \"$capability\""
+              capability_count++
+              next
+            }
             { print }
-            END { if (server_count != 1 || cli_count != 1) exit 1 }
+            END {
+              if (server_count != 1 || cli_count != 1 || (runtime == "1.0.3" && capability_count != 1)) exit 1
+            }
           ' "${dockerfile}" > "${build_dir}/Dockerfile"
           if [[ "${STALWART_RUNTIME}" == '0.16.27' ]]; then
             cmp -s "${dockerfile}" "${build_dir}/Dockerfile"

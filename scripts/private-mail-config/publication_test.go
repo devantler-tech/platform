@@ -156,6 +156,10 @@ func TestBothPublicationPathsStageTheAdministrationArtifacts(t *testing.T) {
 						!strings.Contains(string(buildRecipe), "FROM ghcr.io/stalwartlabs/cli:"+profile.CLI+" AS cli\n") {
 						t.Fatal("staged recipe does not select the required server and CLI")
 					}
+					stripsServerCapability := strings.Contains(string(buildRecipe), "\nUSER 0\nRUN setcap -r /usr/local/bin/stalwart")
+					if stripsServerCapability != (runtime.version == "1.0.3") {
+						t.Fatal("only the candidate recipe must remove Stalwart's privileged-port file capability as root")
+					}
 					for name, want := range map[string]string{"webui.zip": runtime.asset, "webui.LICENSE": "fixture license\n"} {
 						got, err := os.ReadFile(filepath.Join(f.runner, "private-mail-build", name))
 						if err != nil || string(got) != want {
