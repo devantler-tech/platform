@@ -16,13 +16,13 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: longhorn-controller
-      expression: >-
+      expression: |-
         request.namespace == 'longhorn-system' &&
         request.userInfo.username == 'system:serviceaccount:longhorn-system:longhorn-service-account' &&
         object.metadata.namespace == request.namespace &&
         object.spec.serviceAccountName == 'longhorn-service-account'
     - name: native-v1-manager
-      expression: >-
+      expression: |-
         has(object.metadata.labels) &&
         object.metadata.name.matches('^instance-manager-[a-f0-9]{32}$') &&
         'longhorn.io/component' in object.metadata.labels &&
@@ -34,7 +34,7 @@ spec:
         'longhorn.io/managed-by' in object.metadata.labels &&
         object.metadata.labels['longhorn.io/managed-by'] == 'longhorn-manager'
     - name: instance-manager-owner
-      expression: >-
+      expression: |-
         has(object.metadata.ownerReferences) &&
         size(object.metadata.ownerReferences) == 1 &&
         object.metadata.ownerReferences.all(owner,
@@ -44,7 +44,7 @@ spec:
           owner.uid.matches('^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$') &&
           has(owner.controller) && owner.controller)
     - name: approved-privileged-container
-      expression: >-
+      expression: |-
         object.spec.restartPolicy == 'Never' &&
         (!has(object.spec.initContainers) || size(object.spec.initContainers) == 0) &&
         size(object.spec.containers) == 1 &&
@@ -56,14 +56,14 @@ spec:
           !has(container.securityContext.runAsUser) && !has(container.securityContext.runAsGroup) &&
           (!has(container.securityContext.runAsNonRoot) || !container.securityContext.runAsNonRoot))
     - name: no-pod-identity-override
-      expression: >-
+      expression: |-
         !has(object.spec.securityContext) ||
         (!has(object.spec.securityContext.runAsUser) && !has(object.spec.securityContext.runAsGroup) &&
          (!has(object.spec.securityContext.runAsNonRoot) || !object.spec.securityContext.runAsNonRoot))
   mutations:
     - patchType: JSONPatch
       jsonPatch:
-        expression: >-
+        expression: |-
           [
             JSONPatch{op: 'add', path: '/spec/containers/0/securityContext/runAsUser', value: 0},
             JSONPatch{op: 'add', path: '/spec/containers/0/securityContext/runAsGroup', value: 0}
