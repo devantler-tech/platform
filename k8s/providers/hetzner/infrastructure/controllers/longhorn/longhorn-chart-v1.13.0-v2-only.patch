@@ -125,10 +125,21 @@ index db6b9350e94dccca7a147330ed6300015bb69fa3..9c73a48c67bf6b34385c55ffafa0afd9
 +{{- end -}}
 +{{- end -}}
 diff --git a/chart/templates/daemonset-sa.yaml b/chart/templates/daemonset-sa.yaml
-index 35159428ff1dd9200cc81e3b8d98f08652fefab2..b1b3d8c9b68c273e8bc879e86e5a81f824e59513 100644
+index 35159428ff1dd9200cc81e3b8d98f08652fefab2..5715b5b6b8a89e289b2e2f50f93b5b93ba13a882 100644
 --- a/chart/templates/daemonset-sa.yaml
 +++ b/chart/templates/daemonset-sa.yaml
-@@ -31,6 +31,10 @@ spec:
+@@ -24,6 +24,10 @@ spec:
+         imagePullPolicy: {{ .Values.image.pullPolicy }}
+         securityContext:
+           privileged: true
++          {{- if eq .Values.dataEngineMode "v2-only" }}
++          runAsUser: 0
++          runAsGroup: 0
++          {{- end }}
+         command:
+         - longhorn-manager
+         - -d
+@@ -31,6 +35,10 @@ spec:
          - -j
          {{- end }}
          - daemon
@@ -139,6 +150,20 @@ index 35159428ff1dd9200cc81e3b8d98f08652fefab2..b1b3d8c9b68c273e8bc879e86e5a81f8
          - --engine-image
          - "{{ with (coalesce .Values.global.imageRegistry (include "registry_url" .) .Values.image.longhorn.engine.registry "docker.io") }}{{ . }}/{{ end }}{{ .Values.image.longhorn.engine.repository }}:{{ .Values.image.longhorn.engine.tag }}"
          - --instance-manager-image
+diff --git a/chart/templates/deployment-driver.yaml b/chart/templates/deployment-driver.yaml
+index 664471fc0c5dc08ff047ad47735d7c5df3ff59b3..32ff26a1f6f8fc7432736c8f1ec8d592a0487b04 100644
+--- a/chart/templates/deployment-driver.yaml
++++ b/chart/templates/deployment-driver.yaml
+@@ -153,6 +153,9 @@ spec:
+       serviceAccountName: longhorn-service-account
+       securityContext:
+         runAsUser: 0
++        {{- if eq .Values.dataEngineMode "v2-only" }}
++        runAsGroup: 0
++        {{- end }}
+       {{- if .Values.enableGoCoverDir }}
+       volumes:
+       - name: go-cover-dir
 diff --git a/chart/templates/deployment-global-manager.yaml b/chart/templates/deployment-global-manager.yaml
 index 46385acd4e164b53197e875f68feb7325bb82b5d..7d5ad21bb48e0eb71ba63df52b61e645faa357ed 100644
 --- a/chart/templates/deployment-global-manager.yaml
@@ -155,10 +180,17 @@ index 46385acd4e164b53197e875f68feb7325bb82b5d..7d5ad21bb48e0eb71ba63df52b61e645
          - containerPort: 9505
            name: healthz
 diff --git a/chart/templates/preupgrade-job.yaml b/chart/templates/preupgrade-job.yaml
-index 05b6d020825147f906217c5fd4b4dd58e4e8ed36..7842f05357d828b94fdf276d5b4d5b016fa2ed1b 100644
+index 05b6d020825147f906217c5fd4b4dd58e4e8ed36..e103759b72f3376d8f95a96e15806e8e2d7646c2 100644
 --- a/chart/templates/preupgrade-job.yaml
 +++ b/chart/templates/preupgrade-job.yaml
-@@ -25,6 +25,10 @@ spec:
+@@ -22,9 +22,17 @@ spec:
+         imagePullPolicy: {{ .Values.image.pullPolicy }}
+         securityContext:
+           privileged: true
++          {{- if eq .Values.dataEngineMode "v2-only" }}
++          runAsUser: 0
++          runAsGroup: 0
++          {{- end }}
          command:
          - longhorn-manager
          - pre-upgrade
@@ -205,10 +237,10 @@ index 4d57d3c159fc355ea9be0ca5081ca0fa0f6448ba..b7422f04e0f4c6b7c816d2d2f1eca8fb
    imageRegistry: ""
 diff --git a/scripts/test-data-engine-mode-chart.sh b/scripts/test-data-engine-mode-chart.sh
 new file mode 100644
-index 0000000000000000000000000000000000000000..ba6dc6dfad0e5d7cd99a088ee6e4165fd1353230
+index 0000000000000000000000000000000000000000..3535baa268dc2314d5cdc91bfcedb88dac89adce
 --- /dev/null
 +++ b/scripts/test-data-engine-mode-chart.sh
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,94 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
@@ -265,6 +297,18 @@ index 0000000000000000000000000000000000000000..ba6dc6dfad0e5d7cd99a088ee6e4165f
 +    failed=1
 +  fi
 +done
++for template in daemonset-sa preupgrade-job deployment-driver; do
++  render "${v2[@]}" --show-only "templates/$template.yaml" >"$chart_scratch/runtime.yaml"
++  if ! grep -q 'runAsUser: 0' "$chart_scratch/runtime.yaml" || ! grep -q 'runAsGroup: 0' "$chart_scratch/runtime.yaml"; then
++    printf '%s\n' "FAIL: host runtime identity missing from $template" >&2
++    failed=1
++  fi
++done
++render "${v2[@]}" --show-only templates/deployment-global-manager.yaml >"$chart_scratch/runtime.yaml"
++if grep -Eq 'runAs(User|Group): 0' "$chart_scratch/runtime.yaml"; then
++  printf '%s\n' 'FAIL: the global controller inherited a root override' >&2
++  failed=1
++fi
 +grep -q 'v1-data-engine: false' "$chart_scratch/v2.yaml"
 +grep -q 'v2-data-engine: true' "$chart_scratch/v2.yaml"
 +for counter in false ''; do
