@@ -205,18 +205,20 @@ readonly -a REQUIRED_PULL_TARGETS=(
   "devantler-tech/wedding-app/manifests:latest"
   "devantler-tech/ascoachingogvaner/manifests:latest"
   "devantler-tech/world-at-ruin/zone-manifests:0.114.0"
-  "devantler-tech/data-product-controller:latest"
+  "devantler-tech/khoist:latest"
   "devantler-tech/wedding-app:latest"
   "devantler-tech/ascoachingogvaner:latest"
   "devantler-tech/world-at-ruin/zone:v0.114.0"
   "devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
   "${PROVIDER_UPJET_UNIFI_PULL_TARGET}"
 )
-# These packages are intentionally private and have independent ACLs. A public
-# image (including KSail itself) can prove registry reachability but cannot
-# prove that containerd loaded a working credential.
+# These packages are private and have independent ACLs. A public image
+# (including KSail itself) can prove registry reachability but cannot prove
+# that containerd loaded a working credential, so only a package that refuses
+# an anonymous pull belongs here. The data product workloads now pull the public
+# KHoist package (#5688), so their package cannot prove the credential and is
+# not listed; the two private application packages still do.
 readonly -a RUNTIME_CREDENTIAL_PROBE_REPOSITORIES=(
-  "devantler-tech/data-product-controller"
   "devantler-tech/wedding-app"
   "devantler-tech/ascoachingogvaner"
 )
