@@ -230,9 +230,11 @@ identity and replaces its route map with the two approved prefixes.
 Known unversioned local resources and earlier digest-qualified resources are
 accepted only as input to reconciliation to the active image's verified pin.
 
-Apply the private plan with the pinned official Stalwart CLI 1.0.13, using its
-environment-based authentication from mounted credentials. Capture both output
-streams privately, check every operation and read back the resulting policy.
+Apply the private plan with the official Stalwart CLI pinned for the selected
+server profile. The deployed 0.16.27 profile uses CLI 1.0.13. The 1.0.2 and
+1.0.3 profiles require CLI 1.0.14. Authenticate through the environment from
+mounted credentials. Capture both output streams privately, check every
+operation and read back the resulting policy.
 Do not enable debug output, print plans or put passwords in command arguments.
 The plan updates the agent account by the exact ID returned by its upsert,
 preserving accounts, mail and certificates on replay. It replaces the complete
@@ -268,9 +270,9 @@ collects the owned child; a forced kill cannot produce success. A clean recovery
 shutdown is required before exit zero can allow a separate serving container to
 start. The command never starts that serving container itself.
 
-The bootstrap image contains the exact upstream server and CLI plus the static
-Go initializer and the pinned Web Interface v1.0.11 bundle. Both image build
-paths stage the bundle and its Community AGPL license only after verifying
+The deployed 0.16.27 bootstrap image contains the exact upstream server and CLI,
+the static Go initializer, and the pinned Web Interface v1.0.11 bundle. Both
+image build paths stage the bundle and its Community AGPL license after verifying
 their committed SHA-256 checksums. The image includes the upstream source URL.
 Bootstrap verifies the bundle again before starting recovery, refusing missing,
 altered, oversized or symbolic-link assets. The application uses the image's
@@ -285,8 +287,14 @@ The compiler accepts an explicit `runtimeVersion` of `0.16.27`, `1.0.2`, or
 or duplicate selectors are refused. Both 1.0 profiles use native property
 names, audited normal-user permissions, and Web Interface 2.0.4. Their inventory
 and alias checks reject foreign or mixed schema fields. Before opening the
-datastore, each profile requires its exact server version and CLI 1.0.14.
-Pass the selected version to `stage-webui.sh` to stage its verified asset.
+datastore, each 1.0 profile requires its exact server version and CLI 1.0.14.
+To stage the verified 1.0.3 asset, run this from the repository root with
+`build_dir` set to an existing absolute build directory.
+
+```bash
+bash scripts/private-mail-config/stage-webui.sh "$build_dir" 1.0.3
+```
+
 The 1.0.3 profile supports the full OAuth scope needed for recovery administrator
 sign-in through a registered Web Interface client. The default build and
 serving image use the deployed baseline.
