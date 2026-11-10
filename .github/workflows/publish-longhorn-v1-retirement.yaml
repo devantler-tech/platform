@@ -82,7 +82,9 @@ jobs:
           sudo apt-get install --yes --no-install-recommends \
             autoconf automake autopoint gcc gettext libtool make pkg-config zlib1g-dev
           autoreconf -i
-          ./configure --prefix="${RUNNER_TEMP}/libqcow" --enable-static --disable-shared
+          # Use libqcow's bundled AES on both local and hosted builders.
+          ./configure --prefix="${RUNNER_TEMP}/libqcow" \
+            --enable-static --disable-shared --without-openssl
           make -j2
           make install
           test -s "${RUNNER_TEMP}/libqcow/lib/libqcow.a"
