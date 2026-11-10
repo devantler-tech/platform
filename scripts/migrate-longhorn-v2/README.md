@@ -8,6 +8,16 @@ adjusts the filesystem disk reservation by the required logical capacity.
 Success requires all volumes to regain three healthy copies with the original
 affected volume and disk identities.
 
+`reserve-v1-scratch` selects the same worker and requires
+`reserve-longhorn-v1-scratch` on a first-attempt main dispatch. Run it after
+the original volumes have three healthy copies. It qualifies one 4 GiB V1
+scratch claim across the three permanent disks under the existing scheduling
+settings and keeps an additional 4 GiB above the physical free-space floor.
+It changes the exhausted disk's reservation once and reads back the original
+disks, volume identities and available capacity. An uncertain write stops
+the run. Check the live reservation and storage health before a new dispatch.
+Use the qualified capacity for one recovery or benchmark claim at a time.
+
 `inventory-storage-layout` adds read-only native block metadata to the storage-root
 observation for a fixed temporary worker. Confirm it with
 `inventory-longhorn-storage-layout-<selection>`. Two complete, bounded native volume
@@ -118,6 +128,22 @@ owned cordon. CPX42 workers retain their larger root capacity; the permanent-wor
 cap does not apply to this separate profile. The raw disk remains unregistered and fenced;
 storage activation and volume migration follow separately. Original storage replicas remain on
 the permanent workers throughout this preparation route.
+
+For the V2-born worker, use `prepare-retained-temporary-worker`,
+`temporary-v2-1` and `prepare-retained-longhorn-v2-temporary-v2-1`. The
+reviewed pool configuration must already declare the original raw volume,
+the distinct 144 GiB staging volume and a 40–44 GiB EPHEMERAL range. The
+protected operation verifies the original 96 GiB raw partition and STATE
+extents, drains the worker and closes the original mapper. It records reset
+intent only after complete native reads show the old configuration, volume
+status and partition holders cleared while the physical extents remain.
+
+After the EPHEMERAL-only reset, the worker must report a new boot, a replaced
+encrypted EPHEMERAL partition and a separate encrypted staging partition.
+The workflow reopens the original mapper only after rechecking the retained
+extents. It requires the same extents and an open original mapper before
+recording preparation complete. A lost reset response permits observation
+of recovery only. The original mapper remains outside Longhorn scheduling.
 
 When a replica-directory observation holds, `inventory-storage-root` inspects the fixed
 parent `/var/lib/longhorn` directory. Use the same fixed node selections with the matching

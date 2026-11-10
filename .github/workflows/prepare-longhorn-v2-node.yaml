@@ -22,6 +22,7 @@ name: Prepare Longhorn V2 Migration
           [
             prepare-worker,
             prepare-unused-temporary-worker,
+            prepare-retained-temporary-worker,
             refresh-clients,
             benchmark-v1,
             benchmark-v2,
@@ -31,6 +32,7 @@ name: Prepare Longhorn V2 Migration
             inspect-host-memory,
             reboot-host-for-hugepages,
             repair-v1-reservation,
+            reserve-v1-scratch,
           ]
       node:
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
@@ -105,6 +107,9 @@ jobs:
             prepare-unused-temporary-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^temporary-v1-[12]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-unused-longhorn-v2-${LONGHORN_V2_NODE}" ]]
               ;;
+            prepare-retained-temporary-worker)
+              [[ "${LONGHORN_V2_NODE}" == temporary-v2-1 && "${LONGHORN_V2_CONFIRM}" == prepare-retained-longhorn-v2-temporary-v2-1 ]]
+              ;;
             inventory-replicas)
               [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-replicas-${LONGHORN_V2_NODE}" ]]
               ;;
@@ -116,6 +121,9 @@ jobs:
               ;;
             repair-v1-reservation)
               [[ "${LONGHORN_V2_NODE}" == prod-worker-1 && "${LONGHORN_V2_CONFIRM}" == repair-longhorn-v1-reservation ]]
+              ;;
+            reserve-v1-scratch)
+              [[ "${LONGHORN_V2_NODE}" == prod-worker-1 && "${LONGHORN_V2_CONFIRM}" == reserve-longhorn-v1-scratch ]]
               ;;
             inventory-storage-root)
               [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-root-${LONGHORN_V2_NODE}" ]]

@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -20,6 +19,8 @@ func main() {
 		authorization = authorize(os.Getenv, target)
 	case "prepare-unused-temporary-worker":
 		authorization = authorizeTemporaryPreparation(os.Getenv, target)
+	case "prepare-retained-temporary-worker":
+		authorization = authorizeRetainedTemporaryPreparation(os.Getenv, target)
 	case "benchmark-v1", "benchmark-v2":
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
 	case "inventory-replicas":
@@ -30,6 +31,8 @@ func main() {
 		authorization = authorizeHostReboot(os.Getenv, target)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
+	case "reserve-v1-scratch":
+		authorization = authorizeV1ScratchHeadroom(os.Getenv, target)
 	case "inventory-storage-root":
 		authorization = authorizeStorageRoot(os.Getenv, target)
 	case "inventory-storage-layout":
@@ -46,6 +49,13 @@ func main() {
 	if operation == "repair-v1-reservation" {
 		if err := repairV1Reservation(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
 			fmt.Fprintln(os.Stderr, "V1 reservation repair held:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if operation == "reserve-v1-scratch" {
+		if err := reserveV1ScratchHeadroom(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
+			fmt.Fprintln(os.Stderr, "V1 scratch reservation held:", err)
 			os.Exit(1)
 		}
 		return
@@ -96,7 +106,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if operation == "prepare-unused-temporary-worker" {
+	if operation == "prepare-unused-temporary-worker" || operation == "prepare-retained-temporary-worker" {
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
 		nodes, readErr := c.list(ctx, "nodes", "")
 		if readErr != nil {
@@ -112,8 +122,8 @@ func main() {
 				fmt.Fprintln(os.Stderr, "Temporary preparation held: reviewed pool selection is unproven.")
 				os.Exit(1)
 			}
-			var record journal
-			if json.Unmarshal([]byte(text(cm, "data", "record")), &record) != nil || record.TemporarySelection != target {
+			record, recordErr := decodePreparationJournal([]byte(text(cm, "data", "record")))
+			if recordErr != nil || record.TemporarySelection != target {
 				fmt.Fprintln(os.Stderr, "Temporary preparation held: recovery identity is unproven.")
 				os.Exit(1)
 			}
@@ -134,7 +144,7 @@ func main() {
 		}
 		p := temporaryPreparation{preparation: preparation{c: c, target: resolved, name: "longhorn-v2-prepare-" + target, temporarySelection: target, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}, staging: true}
 		if err = p.prepare(ctx); err != nil {
-			fmt.Fprintln(os.Stderr, "Unused temporary preparation held:", err)
+			fmt.Fprintln(os.Stderr, "Temporary worker preparation held:", err)
 			fmt.Fprintln(os.Stderr, "Preserve its journal and owned cordon; uncertain resets are never replayed.")
 			os.Exit(1)
 		}

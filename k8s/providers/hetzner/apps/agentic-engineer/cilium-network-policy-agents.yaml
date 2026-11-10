@@ -1,7 +1,7 @@
 # Worker pods talk only to Substrate (its egress gateway carries the agent's
-# traffic; its router and API server reach the workers). The trigger pod is
-# excluded: its only path, to kagent's A2A API, is
-# cilium-network-policy-trigger.yaml.
+# traffic; its router and API server reach the workers). The schedule Job is
+# excluded: its only path, to kagent's API, is
+# cilium-network-policy-schedule.yaml.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -12,7 +12,7 @@ spec:
     matchExpressions:
       - key: app
         operator: NotIn
-        values: [agentic-engineer-trigger]
+        values: [agentic-engineer-schedule]
   ingress:
     - fromEndpoints:
         - matchLabels:

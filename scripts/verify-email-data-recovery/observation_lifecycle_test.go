@@ -190,21 +190,31 @@ func TestObservationRetainedReaderLifecycle(t *testing.T) {
 	}
 }
 
+// TestObservationVerifiesRetainedMessageWithoutBackupOrCleanup exercises the
+// read-only comparison and checks that failure stages reveal no mailbox data.
 func TestObservationVerifiesRetainedMessageWithoutBackupOrCleanup(t *testing.T) {
 	image := observationForwarderFixture(t)
 	for _, tc := range []struct {
 		name, readerUID, want string
-		mismatch              bool
 	}{
-		{"matching", "reader-original", "EMAIL_RETAINED_PARITY=VERIFIED source_writes=0 original_trial=UNVERIFIED", false},
-		{"different diagnostic", "reader-original", "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=retained-message", true},
-		{"replaced reader", "foreign-reader", "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=reader-identity", false},
+		{"matching", "reader-original", "EMAIL_RETAINED_PARITY=VERIFIED source_writes=0 original_trial=UNVERIFIED"},
+		{"missing diagnostic", "reader-original", "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=retained-reader-mailbox-missing"},
+		{"different diagnostic", "reader-original", "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=retained-source-mismatch"},
+		{"invalid source query", "reader-original", "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=retained-source-email-query"},
+		{"replaced reader", "foreign-reader", "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=reader-identity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &retainedMessageServer{}
+			r := &retainedMessageServer{mutate: func(method string, _ int, result object) {
+				if tc.name == "missing diagnostic" && method == "Mailbox/get" {
+					result["list"] = items(result, "list")[:1]
+				}
+			}}
 			s := &retainedMessageServer{mutate: func(method string, _ int, result object) {
-				if tc.mismatch && method == "Email/get" {
+				if tc.name == "different diagnostic" && method == "Email/get" {
 					items(result, "list")[0]["blobId"] = "different-blob"
+				}
+				if tc.name == "invalid source query" && method == "Email/query" {
+					result["total"] = "private-provider-canary"
 				}
 			}}
 			t.Setenv("EMAIL_OBSERVATION_FORWARD_PORT", strings.TrimPrefix(retainedMessageEndpoint(t, r), "http://127.0.0.1:"))
@@ -230,7 +240,7 @@ func TestObservationVerifiesRetainedMessageWithoutBackupOrCleanup(t *testing.T) 
 			if (rc == 0) != (tc.name == "matching") || !strings.Contains(out.String(), tc.want) {
 				t.Fatalf("wrong parity result: %q exit=%d", out.String(), rc)
 			}
-			if strings.Contains(out.String(), "diagnostic-blob") || strings.Contains(out.String(), retainedFixtureNonce) || strings.Contains(out.String(), api.password) {
+			if strings.Contains(out.String(), "diagnostic-blob") || strings.Contains(out.String(), retainedFixtureNonce) || strings.Contains(out.String(), api.password) || strings.Contains(out.String(), "private-provider-canary") {
 				t.Fatal("mailbox evidence escaped the observer")
 			}
 		})

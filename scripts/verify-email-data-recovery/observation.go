@@ -225,6 +225,8 @@ func bindObservationParity(ctx context.Context, d *recoveryDriver, reads observa
 	return ""
 }
 
+// observeRetainedParity compares the retained reader with the bound serving
+// workload and returns a fixed failure stage if verification cannot finish.
 func observeRetainedParity(ctx context.Context, d *recoveryDriver, reader *mailboxClient) string {
 	endpoint, stop, err := d.forward(ctx, "private-mail", "private-mail-0", d.source.podUID)
 	if err != nil {
@@ -236,7 +238,7 @@ func observeRetainedParity(ctx context.Context, d *recoveryDriver, reader *mailb
 		return "source-endpoint"
 	}
 	if _, err = verifyRetainedMessage(ctx, reader, source); err != nil {
-		return "retained-message"
+		return err.Error()
 	}
 	if err = d.sourceRetained(ctx); err != nil {
 		return "source-replaced"

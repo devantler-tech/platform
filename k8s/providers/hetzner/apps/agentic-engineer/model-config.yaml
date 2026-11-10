@@ -1,7 +1,7 @@
 # Claude Opus 5.5 through the in-cluster Anthropic proxy, which authenticates
 # with the lane's federated token (config-map-anthropic-proxy.yaml). Spend is
 # capped by the Anthropic workspace's monthly limit; a run has no time limit
-# (config-map-trigger.yaml).
+# (job-schedule.yaml).
 apiVersion: api.kagent.dev/v1alpha3
 kind: ModelConfig
 metadata:

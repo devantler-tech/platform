@@ -605,7 +605,7 @@ jobs:
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
-              - 'scripts/tests/test-agentic-engineer-trigger.sh'
+              - 'scripts/tests/test-agentic-engineer-schedule.sh'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-cancellation-release.sh'
@@ -1946,7 +1946,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.69"
+          KSAIL_VERSION: "7.206.75"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2847,14 +2847,14 @@ jobs:
           shellcheck scripts/tests/test-coroot-helper-image-pull-policy.sh
           bash scripts/tests/test-coroot-helper-image-pull-policy.sh
 
-      - name: ⏱️ Validate the Agentic Engineer trigger
+      - name: ⏱️ Validate the Agentic Engineer schedule
         if: needs.changes.outputs.k8s == 'true'
-        # Replays kagent's A2A API against the manifest's real script: a run is
-        # watched until the agent ends it and never cancelled, a lost send is
-        # resent with the same message ID, and the Job's result is the run's.
+        # Replays kagent's ScheduledRunService against the Job's real script: a
+        # missing schedule is created, a drifted one updated and an equal one left
+        # alone, and a run keeps no time limit.
         run: |
-          shellcheck scripts/tests/test-agentic-engineer-trigger.sh
-          bash scripts/tests/test-agentic-engineer-trigger.sh
+          shellcheck scripts/tests/test-agentic-engineer-schedule.sh
+          bash scripts/tests/test-agentic-engineer-schedule.sh
 
       - name: 🔑 Validate the Anthropic proxy's Envoy bootstrap
         if: needs.changes.outputs.k8s == 'true'
@@ -3213,7 +3213,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.69"
+          KSAIL_VERSION: "7.206.75"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3647,7 +3647,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.69"
+          KSAIL_VERSION: "7.206.75"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -4651,7 +4651,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.69"
+          KSAIL_VERSION: "7.206.75"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
