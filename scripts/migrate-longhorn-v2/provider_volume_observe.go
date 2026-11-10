@@ -83,7 +83,7 @@ func observeProviderVolumeFootprint(ctx context.Context, c client, source string
 	if err != nil {
 		return providerVolumeUsageReceipt{}, errors.New("the protected Talos reader is unavailable")
 	}
-	receipt, err := observeProviderVolumeUsage(ctx, c, talosClient)
+	receipt, err := observeProviderVolumeUsage(ctx, c, talosClient.MachineClient)
 	closeErr := talosClient.Close()
 	if err != nil {
 		return providerVolumeUsageReceipt{}, err

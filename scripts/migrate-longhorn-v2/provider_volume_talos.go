@@ -11,10 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/devantler-tech/platform/internal/longhorninventory"
 	"github.com/devantler-tech/platform/internal/strictjson"
 	machine "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talos "github.com/siderolabs/talos/pkg/machinery/client"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 const providerDeviceLink = "/dev/disk/by-id/scsi-0HC_Volume_"
@@ -22,7 +24,7 @@ const providerDeviceLink = "/dev/disk/by-id/scsi-0HC_Volume_"
 var providerDiskPath = regexp.MustCompile(`^/dev/[a-z][a-z0-9-]+$`)
 
 type providerTalosMountAPI interface {
-	Mounts(context.Context, ...grpc.CallOption) (*machine.MountsResponse, error)
+	Mounts(context.Context, *emptypb.Empty, ...grpc.CallOption) (*machine.MountsResponse, error)
 }
 
 func readProviderDevices(ctx context.Context, c client, address string) (map[string]string, error) {
@@ -77,12 +79,12 @@ func parseProviderDevices(raw []byte) (map[string]string, error) {
 }
 
 func readProviderMounts(ctx context.Context, api providerTalosMountAPI, address string, mounts []providerPodMount, devices map[string]string) (map[string]uint64, error) {
-	ctx, stop := context.WithTimeout(talos.WithNodes(ctx, address), 15*time.Second)
+	ctx, stop := context.WithTimeout(talos.WithNode(ctx, address), 15*time.Second)
 	defer stop()
-	response, err := api.Mounts(ctx, grpc.MaxCallRecvMsgSize(4<<20))
+	response, err := api.Mounts(ctx, &emptypb.Empty{}, grpc.MaxCallRecvMsgSize(4<<20))
 	messages := response.GetMessages()
-	if err != nil || len(messages) != 1 || messages[0].GetMetadata().GetHostname() != address ||
-		messages[0].GetMetadata().GetError() != "" || messages[0].GetMetadata().GetStatus().GetCode() != 0 {
+	if err != nil || ctx.Err() != nil || len(messages) != 1 || messages[0] == nil ||
+		!longhorninventory.ValidNodeMetadata(address, messages[0].GetMetadata()) {
 		return nil, errors.New("native Talos mount statistics came from an unverified host")
 	}
 	return matchProviderMounts(messages[0].GetStats(), mounts, devices)
