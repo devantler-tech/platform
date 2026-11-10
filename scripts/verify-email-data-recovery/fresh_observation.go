@@ -132,8 +132,8 @@ func observeFreshRecoveryGraph(ctx context.Context, d *recoveryDriver, w *freshR
 }
 
 func freshRecoveryWindow() *retainedMessageWindow {
-	// Query from the second before the protected step. Check the returned
-	// timestamp independently so that second cannot qualify as evidence.
+	// The adjacent seconds make this an open interval containing both
+	// recorded boundary seconds.
 	return &retainedMessageWindow{
 		after:  time.Date(2026, 11, 10, 12, 44, 22, 0, time.UTC),
 		before: time.Date(2026, 11, 10, 12, 44, 41, 0, time.UTC),

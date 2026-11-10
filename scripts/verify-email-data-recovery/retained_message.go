@@ -25,15 +25,6 @@ type retainedMailboxTransport struct {
 
 type retainedMessageWindow struct{ after, before time.Time }
 
-func (w *retainedMessageWindow) queryFilter(mailbox string) object {
-	filter := object{"inMailbox": mailbox}
-	if w != nil {
-		filter["after"] = w.after.Format(time.RFC3339)
-		filter["before"] = w.before.Format(time.RFC3339)
-	}
-	return filter
-}
-
 func (w *retainedMessageWindow) properties() []any {
 	properties := []any{"id", "blobId", "messageId", "mailboxIds", "textBody", "bodyValues"}
 	if w != nil {
@@ -42,9 +33,8 @@ func (w *retainedMessageWindow) properties() []any {
 	return properties
 }
 
-func (w *retainedMessageWindow) contains(value string) bool {
-	received, err := time.Parse(time.RFC3339, value)
-	return err == nil && received.After(w.after) && received.Before(w.before)
+func (w *retainedMessageWindow) contains(received time.Time) bool {
+	return received.After(w.after) && received.Before(w.before)
 }
 
 // This capability guards the actual HTTP boundary, including calls through
@@ -92,7 +82,7 @@ func retainedJMAPRead(data []byte, account string, window *retainedMessageWindow
 	case "Email/query":
 		filter := child(args, "filter")
 		mailbox := text(filter, "inMailbox")
-		return len(args) == 5 && mailboxIDPattern.MatchString(mailbox) && reflect.DeepEqual(filter, window.queryFilter(mailbox)) &&
+		return len(args) == 5 && len(filter) == 1 && mailboxIDPattern.MatchString(mailbox) &&
 			args["calculateTotal"] == true && args["position"] == float64(0) && args["limit"] == float64(2)
 	case "Email/get":
 		ids, ok := args["ids"].([]any)
@@ -100,7 +90,13 @@ func retainedJMAPRead(data []byte, account string, window *retainedMessageWindow
 		if ok && len(ids) == 1 {
 			id, _ = ids[0].(string)
 		}
-		return len(args) == 4 && mailboxIDPattern.MatchString(id) && args["fetchTextBodyValues"] == true && reflect.DeepEqual(args["properties"], window.properties())
+		if !mailboxIDPattern.MatchString(id) {
+			return false
+		}
+		if window != nil && len(args) == 3 {
+			return reflect.DeepEqual(args["properties"], []any{"id", "receivedAt"})
+		}
+		return len(args) == 4 && args["fetchTextBodyValues"] == true && reflect.DeepEqual(args["properties"], window.properties())
 	}
 	return false
 }
@@ -207,14 +203,14 @@ func retainedQueryID(result object) (string, bool) {
 	if !ok || len(ids) > 1 || state == "" || len(state) > 512 || result["position"] != float64(0) || result["total"] != float64(len(ids)) {
 		return "", false
 	}
-	if len(ids) == 0 {
-		return "", true
-	}
 	if limit, present := result["limit"]; present {
 		n, ok := limit.(float64)
 		if !ok || n < 1 || n != float64(int64(n)) {
 			return "", false
 		}
+	}
+	if len(ids) == 0 {
+		return "", true
 	}
 	id, ok := ids[0].(string)
 	return id, ok && mailboxIDPattern.MatchString(id)
@@ -244,13 +240,21 @@ func readRetainedDiagnostic(ctx context.Context, c *mailboxClient, window *retai
 		if len(match) == 0 {
 			continue
 		}
-		email := ""
+		email, receivedAt := "", ""
 		if window != nil {
-			email, complete = queryRetainedDiagnostic(ctx, c, id, window)
+			email, complete = queryRetainedDiagnostic(ctx, c, id)
 			if !complete {
 				return messageIdentity{}, "email-query"
 			}
 			if email == "" {
+				continue
+			}
+			receivedAt, complete = readRetainedReceivedAt(ctx, c, email)
+			received, err := time.Parse(time.RFC3339, receivedAt)
+			if !complete || err != nil {
+				return messageIdentity{}, "email-time"
+			}
+			if !window.contains(received) {
 				continue
 			}
 		}
@@ -258,13 +262,14 @@ func readRetainedDiagnostic(ctx context.Context, c *mailboxClient, window *retai
 			return messageIdentity{}, "mailbox-ambiguous"
 		}
 		expected.mailbox, expected.body, expected.email = id, name, email
+		expected.receivedAt = receivedAt
 		expected.messageID = "email-recovery-" + match[1] + "@example.invalid"
 	}
 	if expected.mailbox == "" {
 		return messageIdentity{}, "mailbox-missing"
 	}
 	if window == nil {
-		expected.email, complete = queryRetainedDiagnostic(ctx, c, expected.mailbox, nil)
+		expected.email, complete = queryRetainedDiagnostic(ctx, c, expected.mailbox)
 		if !complete || expected.email == "" {
 			return messageIdentity{}, "email-query"
 		}
@@ -277,11 +282,8 @@ func readRetainedDiagnostic(ctx context.Context, c *mailboxClient, window *retai
 	if !complete || len(messages) != 1 {
 		return messageIdentity{}, "email-get"
 	}
-	if window != nil {
-		expected.receivedAt = text(messages[0], "receivedAt")
-		if !window.contains(expected.receivedAt) {
-			return messageIdentity{}, "email-time"
-		}
+	if window != nil && text(messages[0], "receivedAt") != expected.receivedAt {
+		return messageIdentity{}, "email-time"
 	}
 	expected.blob = text(messages[0], "blobId")
 	parts := items(messages[0], "textBody")
@@ -291,10 +293,22 @@ func readRetainedDiagnostic(ctx context.Context, c *mailboxClient, window *retai
 	return expected, ""
 }
 
-func queryRetainedDiagnostic(ctx context.Context, c *mailboxClient, mailbox string, window *retainedMessageWindow) (string, bool) {
-	result, err := c.call(ctx, "Email/query", object{"filter": window.queryFilter(mailbox), "calculateTotal": true, "position": 0, "limit": 2})
+func queryRetainedDiagnostic(ctx context.Context, c *mailboxClient, mailbox string) (string, bool) {
+	result, err := c.call(ctx, "Email/query", object{"filter": object{"inMailbox": mailbox}, "calculateTotal": true, "position": 0, "limit": 2})
 	if err != nil {
 		return "", false
 	}
 	return retainedQueryID(result)
+}
+
+func readRetainedReceivedAt(ctx context.Context, c *mailboxClient, email string) (string, bool) {
+	result, err := c.call(ctx, "Email/get", object{"ids": []any{email}, "properties": []any{"id", "receivedAt"}})
+	if err != nil {
+		return "", false
+	}
+	messages, complete := retainedGetList(result, 1)
+	if !complete || len(messages) != 1 || len(messages[0]) != 2 || text(messages[0], "id") != email {
+		return "", false
+	}
+	return text(messages[0], "receivedAt"), true
 }
