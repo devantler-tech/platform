@@ -225,6 +225,33 @@ func TestQualifyV1RetirementManagerEpochs(t *testing.T) {
 	}
 }
 
+func TestQualifyV1RetirementManagerTagAndDigest(t *testing.T) {
+	repository, digest, _ := strings.Cut(testRetirementImage, "@")
+	tag := "v1.13.0-retirement.1-" + strings.Repeat("b", 40) + "-1"
+	pinned := repository + ":" + tag + "@" + digest
+	for _, tc := range []struct {
+		name, declared, running string
+		ok                      bool
+	}{
+		{"published tag with digest", pinned, "docker-pullable://" + testRetirementImage, true},
+		{"tag without digest", repository + ":" + tag, testRetirementImage, false},
+		{"unrecognized tag", repository + ":latest@" + digest, testRetirementImage, false},
+		{"foreign image", pinned, repository + "-other@" + digest, false},
+		{"different digest", pinned, repository + "@sha256:" + strings.Repeat("c", 64), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := retirementManager("instance-manager-a", "worker-a", tc.declared)
+			pod := retirementPod("instance-manager-a", "worker-a")
+			value(pod, "spec", "containers").([]any)[0].(object)["image"] = tc.declared
+			value(pod, "status", "containerStatuses").([]any)[0].(object)["imageID"] = tc.running
+			_, err := qualifyV1RetirementManagerEpochs(tc.declared, []string{"worker-a"}, []object{manager}, []object{pod})
+			if (err == nil) != tc.ok {
+				t.Fatalf("runtime qualification disagrees with pinned image provenance: %v", err)
+			}
+		})
+	}
+}
+
 func retirementManager(name, node, image string) object {
 	return object{
 		"metadata": object{"name": name, "namespace": "longhorn-system", "uid": "manager-" + name},

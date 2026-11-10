@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var benchmarkRetirementImage = regexp.MustCompile(`^ghcr\.io/devantler-tech/platform-longhorn-instance-manager@sha256:[a-f0-9]{64}$`)
+var benchmarkRetirementImage = regexp.MustCompile(`^ghcr\.io/devantler-tech/platform-longhorn-instance-manager(?::v1\.13\.0-retirement\.1-[a-f0-9]{40}-1)?@(sha256:[a-f0-9]{64})$`)
 var benchmarkContainerID = regexp.MustCompile(`^containerd://[a-f0-9]{64}$`)
 var benchmarkDynamicVolume = regexp.MustCompile(`^pvc-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
@@ -320,6 +320,10 @@ func verifyBenchmarkManagerPod(pod, manager object, image string) (benchmarkMana
 	owner, _ := refs[0].(object)
 	container, _ := containers[0].(object)
 	running, _ := statuses[0].(object)
+	// Helm renders a release tag with its immutable digest. Containerd can
+	// report the same image by repository and digest without the tag.
+	declaredDigest := benchmarkRetirementDigest(image)
+	runningDigest := benchmarkRetirementDigest(strings.TrimPrefix(text(running, "imageID"), "docker-pullable://"))
 	if text(owner, "kind") != "InstanceManager" || text(owner, "apiVersion") != "longhorn.io/v1beta2" ||
 		text(owner, "name") != name || text(owner, "uid") != epoch.ManagerUID || value(owner, "controller") != true ||
 		text(container, "name") != "instance-manager" || text(container, "image") != image ||
@@ -328,7 +332,7 @@ func verifyBenchmarkManagerPod(pod, manager object, image string) (benchmarkMana
 		value(container, "securityContext", "runAsGroup") != float64(0) ||
 		value(container, "securityContext", "runAsNonRoot") == true ||
 		text(running, "name") != "instance-manager" ||
-		strings.TrimPrefix(text(running, "imageID"), "docker-pullable://") != image ||
+		declaredDigest == "" || runningDigest != declaredDigest ||
 		value(running, "ready") != true || value(running, "started") != true ||
 		value(running, "restartCount") != float64(0) || !benchmarkManagerHasDurableLog(pod, container) {
 		return benchmarkManagerEpoch{}, errors.New("retirement manager container, image or durable marker mount is unverified")
@@ -340,6 +344,14 @@ func verifyBenchmarkManagerPod(pod, manager object, image string) (benchmarkMana
 		return benchmarkManagerEpoch{}, errors.New("retirement manager container epoch is unverified")
 	}
 	return epoch, nil
+}
+
+func benchmarkRetirementDigest(image string) string {
+	match := benchmarkRetirementImage.FindStringSubmatch(image)
+	if len(match) != 2 {
+		return ""
+	}
+	return match[1]
 }
 
 func benchmarkManagerHasDurableLog(pod, container object) bool {
