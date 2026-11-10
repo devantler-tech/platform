@@ -204,6 +204,8 @@ rbac.authorization.k8s.io/v1|ClusterRoleBinding||longhorn-stale-node-cleanup 32a
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-cluster-reader 34201cedeaffda9421ea61847cf168d050e501b5080477f9721f4779c37f3678
 
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-service-account-issuer-discovery 4e1efe26161bdfe17249e87070cbe914e714667b901fded7305e7f5f34f6e6a1
+
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-view f50a71214959c7ec60ed893a98512b78e1f56094def24bfd726d8f35fbd06919
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||posture-staleness-alert 1f2375a74fbe04a0b7fc079de84bdef31800d0066a9009336ee27a7a1e4134bb
