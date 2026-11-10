@@ -101,13 +101,19 @@ grep -qx -- '--read-only' <<<"$(container reader '.args[]')" || fail 'the reader
   fail 'the store policy does not deny by default'
 [[ "$(q "${network}" '.spec.egress // [] | length')" == 0 ]] || fail 'the store may make outbound calls'
 [[ "$(q "${network}" '.spec.ingress | length')" == 2 ]] || fail 'the store admits more than the gateway and the API server'
+# Every rule is exactly one peer list and its ports, so no second selector, CIDR or port can widen
+# a listener; the reader has no credential of its own.
+shapes="$(q "${network}" '[.spec.ingress[] | keys | sort | join("+")] | sort | join(",")')"
+[[ "${shapes}" == 'fromEndpoints+toPorts,fromEntities+toPorts' ]] || fail "an ingress rule admits other peers: ${shapes}"
+[[ "$(q "${network}" '.spec.ingress[] | select(.fromEndpoints) | .fromEndpoints | length')" == 1 ]] ||
+  fail 'the WebDAV rule admits more than one peer selector'
+# rule_ports <peer key>: every port the rule with that peer list admits, as port/protocol.
+rule_ports() { q "${network}" ".spec.ingress[] | select(.$1) | [.toPorts[].ports[] | (.port | tostring) + \"/\" + .protocol] | join(\",\")"; }
+[[ "$(rule_ports fromEndpoints)" == "${writer_port}/TCP" ]] || fail "the WebDAV rule admits ports $(rule_ports fromEndpoints)"
+[[ "$(rule_ports fromEntities)" == "${reader_port}/TCP" ]] || fail "the reader rule admits ports $(rule_ports fromEntities)"
 gateway_peer="$(q "${network}" '.spec.ingress[] | select(.fromEndpoints) | .fromEndpoints[0].matchLabels | to_entries | map(.key + "=" + .value) | sort | join(",")')"
 [[ "${gateway_peer}" == 'app=atenet-egress,k8s:io.kubernetes.pod.namespace=ate-system' ]] ||
   fail "the WebDAV port admits more than the egress gateway: ${gateway_peer}"
-[[ "$(q "${network}" '.spec.ingress[] | select(.fromEndpoints) | .toPorts[0].ports[0].port')" == "${writer_port}" ]] ||
-  fail 'the gateway is not admitted to the WebDAV port'
-[[ "$(q "${network}" '.spec.ingress[] | select(.fromEntities) | .toPorts[0].ports[0].port')" == "${reader_port}" ]] ||
-  fail 'the API server is not admitted to the reader port'
 [[ "$(q "${network}" '.spec.ingress[] | select(.fromEntities) | .fromEntities | sort | join(",")')" == host,kube-apiserver,remote-node ]] ||
   fail 'the reader port admits more than the API server'
 [[ "$(q "${workers}" '.spec.endpointSelector.matchExpressions[] | select(.key == "app.kubernetes.io/name" and .operator == "NotIn") | .values[]')" == lane-store ]] ||
