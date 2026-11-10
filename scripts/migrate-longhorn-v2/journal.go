@@ -5,9 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"regexp"
 	"strings"
+
+	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
 type journal struct {
@@ -119,17 +120,26 @@ func (p preparation) readRecord(ctx context.Context) (object, journal, error) {
 	if err != nil || cm == nil {
 		return cm, journal{}, err
 	}
-	var j journal
-	d := json.NewDecoder(bytes.NewBufferString(text(cm, "data", "record")))
-	d.DisallowUnknownFields()
-	if d.Decode(&j) != nil {
-		return nil, journal{}, errors.New("node-preparation journal cannot be decoded")
-	}
-	var extra any
-	if d.Decode(&extra) != io.EOF {
-		return nil, journal{}, errors.New("node-preparation journal is not singular")
+	j, err := decodePreparationJournal([]byte(text(cm, "data", "record")))
+	if err != nil {
+		return nil, journal{}, err
 	}
 	return cm, j, p.validateRecord(j)
+}
+
+func decodePreparationJournal(data []byte) (journal, error) {
+	fields := map[string][]string{"": {"schema", "target", "source", "ownerRun", "phase", "nodeUID", "providerID", "machineUUID", "longhornUID", "ephemeralUUID", "originalDisks", "temporarySelection", "nativeEmptyDigest", "originalBootID", "rawVolumeAbsent", "stagingLayout", "retainedRawUUID", "retainedExtentDigest", "preparedRawUUID"}}
+	refused := errors.New("node-preparation journal cannot be decoded")
+	if len(data) == 0 || len(data) > 32<<10 || strictjson.Validate(data, fields) != nil {
+		return journal{}, refused
+	}
+	var j journal
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if d.Decode(&j) != nil {
+		return journal{}, refused
+	}
+	return j, nil
 }
 
 // reviewedWorkflowPath accepts the bare path GitHub returns today and the suffixed
@@ -207,6 +217,10 @@ func (p preparation) mutate(ctx context.Context, kind, namespace string, o objec
 }
 
 func (p *preparation) advance(ctx context.Context, phase string) error {
+	return p.advanceWithStage(ctx, phase, "")
+}
+
+func (p *preparation) advanceWithStage(ctx context.Context, phase, stagedUUID string) error {
 	cm, j, err := p.readRecord(ctx)
 	if err != nil {
 		return err
@@ -215,6 +229,7 @@ func (p *preparation) advance(ctx context.Context, phase string) error {
 		return errors.New("node-preparation journal ownership changed")
 	}
 	j.Phase = phase
+	j.PreparedRawUUID = stagedUUID
 	if err = validateJournal(j, p.target); err != nil {
 		return err
 	}

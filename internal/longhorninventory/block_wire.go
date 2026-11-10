@@ -26,8 +26,8 @@ type BlockListAPI interface {
 	List(context.Context, *v1alpha1.ListRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[v1alpha1.ListResponse], error)
 }
 
-// BoundedBlocks is a BlockCollections limited to the block namespace's volume
-// status and discovered-volume kinds on the one node named by Target.
+// BoundedBlocks limits reads to the block namespace's volume statuses,
+// configurations and discovered volumes on the one node named by Target.
 type BoundedBlocks struct {
 	API    BlockListAPI
 	Target string
@@ -49,6 +49,7 @@ func (r BoundedBlocks) List(ctx context.Context, kind resource.Kind, options ...
 	limit := 128
 	switch kind.Type() {
 	case block.VolumeStatusType:
+	case block.VolumeConfigType:
 	case block.DiscoveredVolumeType:
 		limit = 512
 	default:

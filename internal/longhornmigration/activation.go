@@ -15,8 +15,6 @@ const (
 	ActivationJournal = "longhorn-v2-temporary-activation"
 	// ActivationOwner binds registered storage to that receipt's Kubernetes UID.
 	ActivationOwner = "storage.platform.devantler.tech/v2-activation"
-	// RetainedStageRawID is the new partition on the worker with existing raw storage.
-	RetainedStageRawID = "r-longhorn-stage"
 )
 
 // ActivationBinding retains the native identities verified before registration.

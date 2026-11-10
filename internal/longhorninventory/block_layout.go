@@ -35,6 +35,9 @@ type BlockLayoutReport struct {
 // boots. It is private journal evidence, separate from the public report.
 type RetainedLayoutIdentity struct {
 	PartitionUUID, ExtentDigest string
+	StagePartitionUUID          string
+	StageStatusPresent          bool
+	EphemeralUUID               string
 }
 
 type blockLayoutMode int
@@ -126,7 +129,8 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 	}
 	seen := map[string]bool{}
 	ephFound := false
-	var rawStatus *block.VolumeStatusSpec
+	var ephemeralUUID string
+	var rawStatus, stageStatus, ephemeralStatus *block.VolumeStatusSpec
 	for _, item := range statuses.Items {
 		v, ok := item.(*block.VolumeStatus)
 		if !ok || v == nil || v.Metadata().Namespace() != block.NamespaceName || v.Metadata().Phase() != resource.PhaseRunning || v.Metadata().ID() == "" || len(v.Metadata().ID()) > 256 || seen[v.Metadata().ID()] {
@@ -160,6 +164,8 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 		switch id {
 		case "EPHEMERAL":
 			ephFound = true
+			ephemeralUUID = s.UUID
+			ephemeralStatus = s
 			report.EphemeralPhase = phase
 			report.EphemeralSizeBytes = s.Size
 			report.EphemeralLUKS2 = s.EncryptionProvider == block.EncryptionProviderLUKS2
@@ -173,8 +179,14 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 			report.RawLUKS2 = s.EncryptionProvider == block.EncryptionProviderLUKS2
 			report.RawLockedToState = s.EncryptionLockedToState
 			report.RawNodeIDOnly = nodeIDOnly
+		case "r-longhorn-stage":
+			stageStatus = s
+			report.OtherUserVolumes++
 		default:
 			if strings.HasPrefix(id, "r-") || strings.HasPrefix(id, "u-") {
+				if mode != ordinaryLayout {
+					return nil, BlockLayoutReport{}, invalid
+				}
 				report.OtherUserVolumes++
 			}
 		}
@@ -189,7 +201,7 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 		return nil, BlockLayoutReport{}, invalid
 	}
 	seen = map[string]bool{}
-	var rawPartition, statePartition *block.DiscoveredVolumeSpec
+	var rawPartition, statePartition, stagePartition, ephemeralPartition *block.DiscoveredVolumeSpec
 	for _, item := range discovered.Items {
 		v, ok := item.(*block.DiscoveredVolume)
 		if !ok || v == nil || v.Metadata().Namespace() != block.NamespaceName || v.Metadata().Phase() != resource.PhaseRunning || v.Metadata().ID() == "" || len(v.Metadata().ID()) > 256 || seen[v.Metadata().ID()] {
@@ -210,6 +222,19 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 			}
 			statePartition = s
 		}
+		if mode != ordinaryLayout && s.PartitionLabel == "EPHEMERAL" {
+			if ephemeralPartition != nil {
+				return nil, BlockLayoutReport{}, invalid
+			}
+			ephemeralPartition = s
+		}
+		if mode != ordinaryLayout && s.PartitionLabel != "r-longhorn" &&
+			(strings.HasPrefix(s.PartitionLabel, "r-") || strings.HasPrefix(s.PartitionLabel, "u-")) {
+			if s.PartitionLabel != "r-longhorn-stage" || stagePartition != nil {
+				return nil, BlockLayoutReport{}, invalid
+			}
+			stagePartition = s
+		}
 		if !appendRow(struct {
 			Kind, ID string
 			Metadata any
@@ -218,8 +243,8 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 		}
 	}
 	if mode != ordinaryLayout {
-		if report.RawDiscoveredPartitions != 1 || !validRetainedRaw(rawPartition) ||
-			!retainedStateMatches(statePartition, rawPartition) {
+		if ephemeralUUID == "" || report.RawDiscoveredPartitions != 1 || !validRetainedRaw(rawPartition) ||
+			!retainedStateMatches(statePartition, rawPartition) || !retainedEphemeralMatches(ephemeralStatus, ephemeralPartition, rawPartition, statePartition) {
 			return nil, BlockLayoutReport{}, invalid
 		}
 		if (mode == retainedOpen && (!report.RawLUKS2 || !report.RawLockedToState || !report.RawNodeIDOnly ||
@@ -227,6 +252,9 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 			return nil, BlockLayoutReport{}, invalid
 		}
 		if mode == retainedClosed {
+			if err := n.verifyRetainedConfigClosed(ctx); err != nil {
+				return nil, BlockLayoutReport{}, err
+			}
 			if err := n.verifyEmptyPartitionHolders(ctx, rawPartition.DevPath); err != nil {
 				return nil, BlockLayoutReport{}, err
 			}
@@ -235,11 +263,21 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 			rawPartition.PartitionUUID, rawPartition.UUID, rawPartition.PartitionType, rawPartition.Offset, rawPartition.Size,
 			statePartition.PartitionUUID, statePartition.PartitionType, statePartition.Offset, statePartition.Size}
 		encoded, err := json.Marshal(extent)
-		if err != nil || !appendRow(extent) {
+		if err != nil || !appendRow(extent) || !appendRow([]any{"ephemeral-extent", ephemeralPartition.Offset}) ||
+			!validStagedPartition(stageStatus, stagePartition, rawPartition, statePartition) ||
+			(stagePartition != nil && (stagePartition.PartitionUUID == ephemeralPartition.PartitionUUID || !extentsDisjoint(stagePartition, ephemeralPartition))) {
 			return nil, BlockLayoutReport{}, invalid
 		}
 		digest := sha256.Sum256(encoded)
 		report.retained = RetainedLayoutIdentity{PartitionUUID: rawPartition.PartitionUUID, ExtentDigest: hex.EncodeToString(digest[:])}
+		report.retained.EphemeralUUID = ephemeralUUID
+		report.retained.StageStatusPresent = stageStatus != nil
+		if stagePartition != nil {
+			report.retained.StagePartitionUUID = stagePartition.PartitionUUID
+			if !appendRow([]any{"staging-extent", stagePartition.UUID, stagePartition.PartitionType, stagePartition.Offset}) {
+				return nil, BlockLayoutReport{}, invalid
+			}
+		}
 		report.RawExtentObserved = true
 	}
 	slices.SortFunc(rows, bytes.Compare)
@@ -250,6 +288,30 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 	return encoded, report, nil
 }
 
+func (n Native) verifyRetainedConfigClosed(ctx context.Context) error {
+	refused := nativeFailure{code: "block-config"}
+	configs, err := n.Blocks.List(ctx, block.NewVolumeConfig(block.NamespaceName, "").Metadata())
+	if err != nil || !active(ctx) || len(configs.Items) == 0 || len(configs.Items) > 128 {
+		return refused
+	}
+	seen := map[string]bool{}
+	for _, item := range configs.Items {
+		v, ok := item.(*block.VolumeConfig)
+		if !ok || v == nil || v.Metadata().Namespace() != block.NamespaceName || v.Metadata().Phase() != resource.PhaseRunning {
+			return refused
+		}
+		id := v.Metadata().ID()
+		if id == "" || id == "r-longhorn" || seen[id] {
+			return refused
+		}
+		seen[id] = true
+	}
+	if !seen["r-longhorn-stage"] || !seen["EPHEMERAL"] {
+		return refused
+	}
+	return nil
+}
+
 func validRetainedRaw(partition *block.DiscoveredVolumeSpec) bool {
 	return partition != nil && partition.Type == "partition" && partition.Name == "luks" && partition.UUID != "" &&
 		partition.PartitionUUID != "" && partition.ParentDevPath != "" && partition.Size == 96<<30 && validPartitionExtent(partition)
@@ -258,6 +320,7 @@ func validRetainedRaw(partition *block.DiscoveredVolumeSpec) bool {
 func retainedRawMatches(status *block.VolumeStatusSpec, partition *block.DiscoveredVolumeSpec) bool {
 	return status != nil && status.Phase == block.VolumePhaseReady && status.Type == block.VolumeTypePartition &&
 		status.Location == partition.DevPath && status.ParentLocation == partition.ParentDevPath &&
+		strings.HasPrefix(status.MountLocation, "/dev/dm-") &&
 		status.PartitionUUID == partition.PartitionUUID && status.PartitionIndex > 0 &&
 		uint(status.PartitionIndex) == partition.PartitionIndex && status.Size == partition.Size
 }
@@ -265,7 +328,35 @@ func retainedRawMatches(status *block.VolumeStatusSpec, partition *block.Discove
 func retainedStateMatches(state, raw *block.DiscoveredVolumeSpec) bool {
 	return state != nil && state.Type == "partition" && state.PartitionUUID != "" && state.PartitionUUID != raw.PartitionUUID &&
 		state.DevPath != raw.DevPath && state.ParentDevPath == raw.ParentDevPath && validPartitionExtent(state) &&
-		(state.Offset+state.Size <= raw.Offset || raw.Offset+raw.Size <= state.Offset)
+		extentsDisjoint(state, raw)
+}
+
+func retainedEphemeralMatches(status *block.VolumeStatusSpec, ephemeral, raw, state *block.DiscoveredVolumeSpec) bool {
+	return ephemeral != nil && ephemeral.Type == "partition" && ephemeral.PartitionUUID != "" &&
+		ephemeral.PartitionUUID != raw.PartitionUUID && ephemeral.PartitionUUID != state.PartitionUUID &&
+		ephemeral.ParentDevPath == raw.ParentDevPath && validPartitionExtent(ephemeral) &&
+		extentsDisjoint(ephemeral, raw) && extentsDisjoint(ephemeral, state) && retainedRawMatches(status, ephemeral)
+}
+
+func validStagedPartition(status *block.VolumeStatusSpec, stage, raw, state *block.DiscoveredVolumeSpec) bool {
+	if stage == nil {
+		if status == nil {
+			return true
+		}
+		waiting := status.Phase == block.VolumePhaseWaiting || status.Phase == block.VolumePhaseFailed &&
+			(status.PreFailPhase == block.VolumePhaseWaiting || status.PreFailPhase == block.VolumePhaseMissing)
+		return waiting && status.Type == block.VolumeTypePartition && status.Size == 0 && status.Location == "" &&
+			status.MountLocation == "" && status.ParentLocation == "" && status.UUID == "" && status.PartitionUUID == "" && status.PartitionIndex == 0
+	}
+	return stage.Type == "partition" && stage.Name == "luks" && stage.UUID != "" && stage.Size == 144<<30 &&
+		stage.PartitionUUID != "" && stage.PartitionUUID != raw.PartitionUUID && stage.PartitionUUID != state.PartitionUUID &&
+		stage.ParentDevPath == raw.ParentDevPath && validPartitionExtent(stage) && extentsDisjoint(stage, raw) && extentsDisjoint(stage, state) &&
+		retainedRawMatches(status, stage) && status.EncryptionProvider == block.EncryptionProviderLUKS2 && status.EncryptionLockedToState &&
+		len(status.ConfiguredEncryptionKeys) == 1 && status.ConfiguredEncryptionKeys[0] == "nodeID"
+}
+
+func extentsDisjoint(a, b *block.DiscoveredVolumeSpec) bool {
+	return a.Offset+a.Size <= b.Offset || b.Offset+b.Size <= a.Offset
 }
 
 func validPartitionExtent(p *block.DiscoveredVolumeSpec) bool {

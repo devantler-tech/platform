@@ -24,6 +24,9 @@ const (
 	ScaleDownDisabled = "cluster-autoscaler.kubernetes.io/scale-down-disabled"
 )
 
+// RetainedStageRawID names the new partition on the worker with existing raw storage.
+const RetainedStageRawID = "r-longhorn-stage"
+
 // Pool is one reviewed fixed-size migration pool from the cluster config.
 type Pool struct {
 	Name, Role, ServerType string

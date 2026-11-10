@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-
-	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
 // preparedTemporaryBinding validates a completed unused-storage reset journal
@@ -16,10 +14,8 @@ func preparedTemporaryBinding(cm object, binding temporaryV2Binding) (journal, e
 		text(cm, "metadata", "uid") == "" || text(cm, "metadata", "resourceVersion") == "" || value(cm, "metadata", "deletionTimestamp") != nil {
 		return journal{}, errTemporaryActivation
 	}
-	data := []byte(text(cm, "data", "record"))
-	fields := map[string][]string{"": {"schema", "target", "source", "ownerRun", "phase", "nodeUID", "providerID", "machineUUID", "longhornUID", "ephemeralUUID", "originalDisks", "temporarySelection", "nativeEmptyDigest", "originalBootID", "rawVolumeAbsent", "stagingLayout", "retainedRawUUID", "retainedExtentDigest", "preparedRawUUID"}}
-	var record journal
-	if len(data) == 0 || len(data) > 32<<10 || strictjson.Validate(data, fields) != nil || json.Unmarshal(data, &record) != nil {
+	record, err := decodePreparationJournal([]byte(text(cm, "data", "record")))
+	if err != nil {
 		return journal{}, errTemporaryActivation
 	}
 	p := preparation{target: binding.Name, name: name, temporarySelection: binding.Selection}

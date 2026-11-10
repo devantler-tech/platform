@@ -27,16 +27,26 @@ type blockLayoutFixture struct {
 	retained bool
 	closed   bool
 	shifted  bool
+	staged   bool
 }
 
 func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, options ...state.ListOption) (resource.List, error) {
 	f.t.Helper()
-	f.calls++
 	deadline, bounded := ctx.Deadline()
 	md, _ := metadata.FromOutgoingContext(ctx)
 	if !bounded || time.Until(deadline) > 15*time.Second || len(options) != 0 || kind.Namespace() != block.NamespaceName || len(md.Get("node")) != 1 || md.Get("node")[0] != "10.0.0.8" || len(md.Get("nodes")) != 0 {
 		f.t.Fatal("block observation escaped its bounded fixed-node scope")
 	}
+	if kind.Type() == block.VolumeConfigType {
+		result := resource.List{Items: []resource.Resource{
+			block.NewVolumeConfig(block.NamespaceName, "r-longhorn-stage"), block.NewVolumeConfig(block.NamespaceName, "EPHEMERAL"),
+		}}
+		if f.mode == "old config remains" {
+			result.Items = append(result.Items, block.NewVolumeConfig(block.NamespaceName, "r-longhorn"))
+		}
+		return result, nil
+	}
+	f.calls++
 	var result resource.List
 	if f.calls%2 == 1 {
 		if kind.Type() != block.VolumeStatusType {
@@ -53,9 +63,14 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 			raw.TypedSpec().Phase = block.VolumePhaseReady
 		}
 		if f.retained {
+			eph.TypedSpec().PartitionUUID = "private-partition-canary"
+			eph.TypedSpec().PartitionIndex = 6
+			if f.staged {
+				eph.TypedSpec().Size = 42 << 30
+			}
 			*raw.TypedSpec() = block.VolumeStatusSpec{
 				Phase: block.VolumePhaseReady, Type: block.VolumeTypePartition, Location: "/dev/sda3",
-				ParentLocation: "/dev/sda", PartitionUUID: "private-raw-uuid-canary", PartitionIndex: 3,
+				ParentLocation: "/dev/sda", MountLocation: "/dev/dm-1", PartitionUUID: "private-raw-uuid-canary", PartitionIndex: 3,
 				Size: 96 << 30, EncryptionProvider: block.EncryptionProviderLUKS2,
 				EncryptionLockedToState: true, ConfiguredEncryptionKeys: []string{"nodeID"},
 			}
@@ -63,6 +78,16 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 		result.Items = []resource.Resource{eph, raw}
 		if f.closed {
 			result.Items = []resource.Resource{eph}
+		}
+		if f.staged {
+			stage := block.NewVolumeStatus(block.NamespaceName, "r-longhorn-stage")
+			*stage.TypedSpec() = block.VolumeStatusSpec{Phase: block.VolumePhaseReady, Type: block.VolumeTypePartition, Location: "/dev/sda5",
+				ParentLocation: "/dev/sda", MountLocation: "/dev/dm-2", PartitionUUID: "private-stage-canary", PartitionIndex: 5,
+				Size: 144 << 30, EncryptionProvider: block.EncryptionProviderLUKS2, EncryptionLockedToState: true, ConfiguredEncryptionKeys: []string{"nodeID"}}
+			if f.mode == "staging mapper missing" {
+				stage.TypedSpec().MountLocation = ""
+			}
+			result.Items = append(result.Items, stage)
 		}
 		if f.mode == "duplicate" {
 			result.Items = append(result.Items, eph)
@@ -81,6 +106,13 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 		*v.TypedSpec() = block.DiscoveredVolumeSpec{DevPath: "/dev/sda6", ParentDevPath: "/dev/sda", PartitionLabel: "EPHEMERAL", PartitionUUID: "private-partition-canary", Size: 150 << 30}
 		result.Items = []resource.Resource{v}
 		if f.retained {
+			v.TypedSpec().Type, v.TypedSpec().PartitionIndex, v.TypedSpec().Offset = "partition", 6, 100<<30
+			if f.staged {
+				v.TypedSpec().Size, v.TypedSpec().Offset = 42<<30, 244<<30
+				if f.mode == "staging overlaps ephemeral" {
+					v.TypedSpec().Offset -= 512
+				}
+			}
 			rawID, rawIndex := "sda3", uint(3)
 			if f.shifted {
 				rawID, rawIndex = "sda4", 4
@@ -130,12 +162,38 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 			if f.mode != "STATE missing" {
 				result.Items = append(result.Items, state)
 			}
+			if f.staged {
+				stage := block.NewDiscoveredVolume(block.NamespaceName, "sda5")
+				*stage.TypedSpec() = block.DiscoveredVolumeSpec{Type: "partition", DevPath: "/dev/sda5", ParentDevPath: "/dev/sda",
+					PartitionLabel: "r-longhorn-stage", Name: "luks", UUID: "private-stage-luks-canary",
+					PartitionUUID: "private-stage-canary", PartitionIndex: 5, Size: 144 << 30, Offset: 100 << 30}
+				if f.mode == "staging overlaps old" {
+					stage.TypedSpec().Offset = raw.TypedSpec().Offset
+				}
+				result.Items = append(result.Items, stage)
+			}
 		}
 	}
 	if f.mode == "partial" && f.calls == 2 {
 		return result, errors.New("private-provider-canary")
 	}
 	return result, nil
+}
+
+func TestRetainedLayoutOnlyReturnsASeparateEncryptedStagingPartition(t *testing.T) {
+	for _, mode := range []string{"staged", "staging overlaps old", "staging overlaps ephemeral", "staging mapper missing"} {
+		t.Run(mode, func(t *testing.T) {
+			f := &blockLayoutFixture{t: t, retained: true, staged: true, mode: mode}
+			_, identity, err := (Native{API: fileAPI{}, Target: "10.0.0.8", Blocks: f}).ListRetainedBlockLayout(t.Context(), false)
+			if mode == "staged" {
+				if err != nil || identity.StagePartitionUUID != "private-stage-canary" || !identity.StageStatusPresent {
+					t.Fatal("separate staging partition did not qualify", err)
+				}
+			} else if err == nil || identity.StagePartitionUUID != "" {
+				t.Fatal("unqualified staging partition reached the retained identity")
+			}
+		})
+	}
 }
 
 func TestNativeRetainedBlockLayoutRequiresStablePhysicalExtent(t *testing.T) {
@@ -191,7 +249,7 @@ func TestRetainedLayoutDigestSurvivesOnlyAnUnchangedPhysicalExtent(t *testing.T)
 	if _, err = observe(&blockLayoutFixture{t: t, retained: true}, true); err == nil {
 		t.Fatal("an open mapper qualified as closed")
 	}
-	for _, mode := range []string{"live holder", "incomplete holders"} {
+	for _, mode := range []string{"live holder", "incomplete holders", "old config remains"} {
 		if _, err = observe(&blockLayoutFixture{t: t, retained: true, closed: true, shifted: true, mode: mode}, true); err == nil || strings.Contains(err.Error(), "private-transport") {
 			t.Fatalf("unproven holders %s qualified or leaked provider data", mode)
 		}
