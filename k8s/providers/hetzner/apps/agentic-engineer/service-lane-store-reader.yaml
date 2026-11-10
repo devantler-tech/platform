@@ -1,0 +1,15 @@
+# The lane store's read-only view, which the maintainer and the Agent Improver
+# read through the Kubernetes API (role-lane-store-reader.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: lane-store-reader
+  namespace: agentic-engineer
+spec:
+  selector:
+    app.kubernetes.io/name: lane-store
+  ports:
+    - name: http
+      port: 8081
+      targetPort: reader
+      protocol: TCP

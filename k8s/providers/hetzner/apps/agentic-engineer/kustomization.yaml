@@ -23,7 +23,9 @@ resources:
   - persistent-volume-claim-lane-store.yaml
   - deployment-lane-store.yaml
   - service-lane-store.yaml
+  - service-lane-store-reader.yaml
   - role-lane-store-reader.yaml
+  - role-binding-lane-store-reader.yaml
   - worker-pool.yaml
   - model-config.yaml
   - harness.yaml

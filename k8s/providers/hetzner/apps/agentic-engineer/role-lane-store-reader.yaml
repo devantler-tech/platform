@@ -1,8 +1,7 @@
 # The maintainer reads the lane store's read-only view through the Kubernetes
 # API (kubectl get --raw .../services/lane-store-reader/proxy/<path>), which is
 # how the Agent Improver on the agent host sees the lane's runs. Only get, and
-# only on that one Service's proxy.
----
+# only on that one Service's proxy (role-binding-lane-store-reader.yaml).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -13,17 +12,3 @@ rules:
     resources: [services/proxy]
     resourceNames: [lane-store-reader]
     verbs: [get]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: lane-store-reader
-  namespace: agentic-engineer
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: lane-store-reader
-subjects:
-  - apiGroup: rbac.authorization.k8s.io
-    kind: User
-    name: "oidc:${admin_email}"

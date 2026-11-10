@@ -1,7 +1,5 @@
-# The lane store's two listeners: the authenticated WebDAV store the agent
-# reaches through Substrate's egress gateway, and the read-only view the
-# maintainer and the Agent Improver read through the Kubernetes API.
----
+# The authenticated WebDAV store the agent reaches through Substrate's egress
+# gateway (egress-policy-lane-store.yaml).
 apiVersion: v1
 kind: Service
 metadata:
@@ -14,18 +12,4 @@ spec:
     - name: http
       port: 8080
       targetPort: webdav
-      protocol: TCP
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: lane-store-reader
-  namespace: agentic-engineer
-spec:
-  selector:
-    app.kubernetes.io/name: lane-store
-  ports:
-    - name: http
-      port: 8081
-      targetPort: reader
       protocol: TCP
