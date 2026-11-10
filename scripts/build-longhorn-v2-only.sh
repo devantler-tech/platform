@@ -8,7 +8,7 @@ manager_revision=20d9c0790312b45aafd5668674e73dbf2eba1832
 manager_port=cbf776c32bc406304545ca36a7291730b95148ff
 chart_revision=c3d88832bd8cec4f38dec65e79436984871dc313
 manager_patch=1861d01f016889dd622f479978a4a06a410a0e9984f3211084d81cd90a797356
-chart_patch=5cb59537b01c8099c7789ccbeffc930a27d48603436b8c0302c1043ed68f10ca
+chart_patch=dedefaf83a3ae8ddd7b03fd2e76ad6a07851776c64500003b93c6a0de71d714a
 
 if [[ $# != 2 || "$1" != /* || -e "$1" || -L "$1" || ! "$2" =~ ^[1-9][0-9]{0,11}$ ]]; then
   printf '%s\n' 'Usage: build-longhorn-v2-only.sh NEW_ABSOLUTE_OUTPUT_DIR PUBLISH_RUN_NUMBER' >&2
