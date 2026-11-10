@@ -29,6 +29,7 @@ name: Prepare Longhorn V2 Migration
             inventory-replicas,
             inventory-storage-root,
             inventory-storage-layout,
+            inventory-provider-volume-footprint,
             inspect-host-memory,
             reboot-host-for-hugepages,
             repair-v1-reservation,
@@ -130,6 +131,9 @@ jobs:
               ;;
             inventory-storage-layout)
               [[ "${LONGHORN_V2_NODE}" =~ ^temporary-(v1-[12]|v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-layout-${LONGHORN_V2_NODE}" ]]
+              ;;
+            inventory-provider-volume-footprint)
+              [[ "${LONGHORN_V2_CONFIRM}" == inventory-provider-volume-footprint ]]
               ;;
             refresh-clients)
               [[ "${LONGHORN_V2_CONFIRM}" == refresh-longhorn-v2-clients ]]

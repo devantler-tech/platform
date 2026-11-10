@@ -37,6 +37,8 @@ func main() {
 		authorization = authorizeStorageRoot(os.Getenv, target)
 	case "inventory-storage-layout":
 		authorization = authorizeStorageLayout(os.Getenv, target)
+	case "inventory-provider-volume-footprint":
+		authorization = authorizeProviderVolumeFootprint(os.Getenv)
 	default:
 		authorization = authorizeRefresh(os.Getenv)
 	}
@@ -46,6 +48,17 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == "inventory-provider-volume-footprint" {
+		receipt, err := observeProviderVolumeFootprint(ctx, client{run: providerFootprintReadCommand, context: "admin@prod"}, os.Getenv("GITHUB_SHA"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Provider volume footprint held:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("LONGHORN_PROVIDER_VOLUME_FOOTPRINT=OBSERVED claims=%d measured=%d unmeasured=%d requestedGiBUpper=%d measuredUsedGiBUpper=%d unmeasuredRequestedGiBUpper=%d\n",
+			receipt.Claims, receipt.Measured, receipt.Unmeasured, providerUsageGiBUpper(receipt.RequestedBytes),
+			providerUsageGiBUpper(receipt.MeasuredUsedBytes), providerUsageGiBUpper(receipt.UnmeasuredRequestedBytes))
+		return
+	}
 	if operation == "repair-v1-reservation" {
 		if err := repairV1Reservation(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
 			fmt.Fprintln(os.Stderr, "V1 reservation repair held:", err)
