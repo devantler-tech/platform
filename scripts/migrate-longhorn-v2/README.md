@@ -28,10 +28,10 @@ identities. It grants no reset clearance and never treats a failed read as absen
 The original root-only mode keeps its existing scope and schema.
 
 `inventory-provider-volume-footprint` reads the current provider-backed claims
-and native filesystem usage from their running mounts. Confirm with
+and native Talos filesystem usage from their running mounts. Confirm with
 `inventory-provider-volume-footprint` on a first-attempt main dispatch.
-It checks the original claim and volume bindings and the worker boot identities
-on both sides of the read. The receipt reports aggregate GiB rounded up, with
+It binds each running CSI mount to its provider disk and checks the claim,
+volume, disk and worker identities on both sides of the read. The receipt reports aggregate GiB rounded up, with
 unmounted claims accounted for at their full requested capacity. Use the result
 as an input to capacity planning and validate each restore before cutover.
 

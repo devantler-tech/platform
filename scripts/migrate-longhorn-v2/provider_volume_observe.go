@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"net/netip"
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 )
 
 var providerStatsWorker = regexp.MustCompile(`^prod-worker-[123]$`)
@@ -18,7 +18,7 @@ type providerVolumeUsageReceipt struct {
 	RequestedBytes, MeasuredUsedBytes, UnmeasuredRequestedBytes uint64
 }
 
-type providerStatsEpoch struct{ UID, ProviderID, BootID string }
+type providerStatsEpoch struct{ UID, ProviderID, BootID, Hardware, Address string }
 
 func providerUsageGiBUpper(bytes uint64) uint64 {
 	if bytes == 0 {
@@ -34,9 +34,7 @@ func authorizeProviderVolumeFootprint(getenv func(string) string) error {
 	return authorizeWorkflow(getenv, "inventory-provider-volume-footprint")
 }
 
-// Keep the production admin credential behind a read-only command allowlist.
-// The kubelet proxy route is fixed, and only the reviewed storage workers can
-// be addressed through it.
+// Keep the production credentials behind fixed Kubernetes and Talos reads.
 func providerFootprintReadCommand(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
 	if input != nil || !providerFootprintReadAllowed(program, args...) {
 		return nil, errors.New("the provider footprint operation permits only fixed reads")
@@ -45,23 +43,19 @@ func providerFootprintReadCommand(ctx context.Context, input []byte, program str
 }
 
 func providerFootprintReadAllowed(program string, args ...string) bool {
-	if program == "git" {
-		return inventoryReadAllowed(program, args...)
+	if (program == "git" || program == "talosctl") && inventoryReadAllowed(program, args...) {
+		return true
+	}
+	if program == "talosctl" && len(args) == 4 && slices.Equal(args[1:], []string{"get", "disks", "--output=json"}) {
+		target, ok := strings.CutPrefix(args[0], "--nodes=")
+		address, err := netip.ParseAddr(target)
+		return ok && err == nil && netip.MustParsePrefix("10.0.0.0/16").Contains(address)
 	}
 	if program != "kubectl" || len(args) < 4 ||
 		!slices.Equal(args[:3], []string{"--context=admin@prod", "--request-timeout=20s", "get"}) {
 		return false
 	}
 	switch tail := args[3:]; len(tail) {
-	case 1:
-		const prefix = "--raw=/api/v1/nodes/"
-		const suffix = "/proxy/stats/summary"
-		node, ok := strings.CutPrefix(tail[0], prefix)
-		if !ok {
-			return false
-		}
-		node, ok = strings.CutSuffix(node, suffix)
-		return ok && providerStatsWorker.MatchString(node)
 	case 2:
 		return slices.Equal(tail, []string{"persistentvolumes", "--output=json"})
 	case 3:
@@ -85,6 +79,25 @@ func observeProviderVolumeFootprint(ctx context.Context, c client, source string
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return providerVolumeUsageReceipt{}, err
 	}
+	talosClient, err := openInventoryTalosClient(ctx)
+	if err != nil {
+		return providerVolumeUsageReceipt{}, errors.New("the protected Talos reader is unavailable")
+	}
+	receipt, err := observeProviderVolumeUsage(ctx, c, talosClient)
+	closeErr := talosClient.Close()
+	if err != nil {
+		return providerVolumeUsageReceipt{}, err
+	}
+	if closeErr != nil {
+		return providerVolumeUsageReceipt{}, errors.New("the protected Talos reader could not close")
+	}
+	if err := sourceCurrent(ctx, c.run, source); err != nil {
+		return providerVolumeUsageReceipt{}, err
+	}
+	return receipt, nil
+}
+
+func observeProviderVolumeUsage(ctx context.Context, c client, api providerTalosMountAPI) (providerVolumeUsageReceipt, error) {
 	claims, mounts, err := observeProviderVolumeProjection(ctx, c)
 	if err != nil {
 		return providerVolumeUsageReceipt{}, err
@@ -98,35 +111,38 @@ func observeProviderVolumeFootprint(ctx context.Context, c client, source string
 	}
 	nodes := slices.Sorted(maps.Keys(byNode))
 	epochs := make(map[string]providerStatsEpoch, len(nodes))
+	devices := make(map[string]map[string]string, len(nodes))
 	used := make(map[string]uint64, len(mounts))
 	for _, node := range nodes {
 		epoch, err := readProviderStatsEpoch(ctx, c, node)
 		if err != nil {
 			return providerVolumeUsageReceipt{}, err
 		}
-		raw, err := c.kubectl(ctx, nil, "get", "--raw=/api/v1/nodes/"+node+"/proxy/stats/summary")
+		disks, err := readProviderDevices(ctx, c, epoch.Address)
 		if err != nil {
-			return providerVolumeUsageReceipt{}, errors.New("native kubelet filesystem statistics are unavailable")
+			return providerVolumeUsageReceipt{}, err
 		}
-		stats, err := readProviderNodeUsage(raw, node, byNode[node], time.Now().UTC())
+		stats, err := readProviderMounts(ctx, api, epoch.Address, byNode[node], disks)
 		if err != nil {
 			return providerVolumeUsageReceipt{}, err
 		}
 		maps.Copy(used, stats)
 		epochs[node] = epoch
+		devices[node] = disks
 	}
 	afterClaims, afterMounts, err := observeProviderVolumeProjection(ctx, c)
 	if err != nil || !slices.Equal(claims, afterClaims) || !slices.Equal(mounts, afterMounts) {
 		return providerVolumeUsageReceipt{}, errors.New("provider claim bindings or consumer mounts changed during observation")
 	}
 	for _, node := range nodes {
+		disks, err := readProviderDevices(ctx, c, epochs[node].Address)
+		if err != nil || !maps.Equal(disks, devices[node]) {
+			return providerVolumeUsageReceipt{}, errors.New("provider device identity changed during observation")
+		}
 		after, err := readProviderStatsEpoch(ctx, c, node)
 		if err != nil || after != epochs[node] {
 			return providerVolumeUsageReceipt{}, errors.New("provider claim worker identity changed during observation")
 		}
-	}
-	if err := sourceCurrent(ctx, c.run, source); err != nil {
-		return providerVolumeUsageReceipt{}, err
 	}
 	return summarizeProviderVolumeUsage(claims, used)
 }
@@ -189,8 +205,13 @@ func readProviderStatsEpoch(ctx context.Context, c client, name string) (provide
 	n, err := c.get(ctx, "node", "", name, false)
 	if err != nil || text(n, "metadata", "name") != name || value(n, "metadata", "deletionTimestamp") != nil ||
 		!ready(valueObject(n, "status")) || !providerStatsHost.MatchString(text(n, "spec", "providerID")) ||
-		text(n, "status", "nodeInfo", "bootID") == "" {
+		text(n, "metadata", "uid") == "" || text(n, "status", "nodeInfo", "bootID") == "" {
 		return providerStatsEpoch{}, errors.New("provider filesystem statistics worker is unverified")
 	}
-	return providerStatsEpoch{text(n, "metadata", "uid"), text(n, "spec", "providerID"), text(n, "status", "nodeInfo", "bootID")}, nil
+	address, err := workerPrivateAddress(n)
+	if err != nil || c.verifyHost(ctx, address, n) != nil {
+		return providerStatsEpoch{}, errors.New("provider filesystem statistics worker hardware is unverified")
+	}
+	return providerStatsEpoch{text(n, "metadata", "uid"), text(n, "spec", "providerID"),
+		text(n, "status", "nodeInfo", "bootID"), text(n, "status", "nodeInfo", "systemUUID"), address}, nil
 }

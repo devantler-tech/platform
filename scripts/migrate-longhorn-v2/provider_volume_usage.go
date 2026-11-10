@@ -1,12 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"sort"
-	"time"
-
-	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
 type providerPodMount struct {
@@ -43,7 +39,7 @@ func selectProviderPodMounts(claims []providerVolumeClaim, pods []object) ([]pro
 			}
 			volumeName := text(volume, "name")
 			if seen[claim.ClaimUID] || phase != "Running" || value(pod, "metadata", "deletionTimestamp") != nil ||
-				uid == "" || !kubeNamespace.MatchString(node) || safeKubeRequest("pods", ns, name, false) != nil ||
+				!kubeNamespace.MatchString(uid) || !kubeNamespace.MatchString(node) || safeKubeRequest("pods", ns, name, false) != nil ||
 				!kubeNamespace.MatchString(volumeName) || !providerPodUsesMount(pod, volumeName) {
 				return nil, unverified
 			}
@@ -68,73 +64,4 @@ func providerPodUsesMount(pod object, volume string) bool {
 		}
 	}
 	return false
-}
-
-type providerFilesystemStats struct {
-	Name   string    `json:"name"`
-	Time   time.Time `json:"time"`
-	PVCRef struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace"`
-	} `json:"pvcRef"`
-	Used      *uint64 `json:"usedBytes"`
-	Available *uint64 `json:"availableBytes"`
-	Capacity  *uint64 `json:"capacityBytes"`
-}
-
-func readProviderNodeUsage(raw []byte, node string, mounts []providerPodMount, now time.Time) (map[string]uint64, error) {
-	unverified := errors.New("provider filesystem usage is incomplete or unrelated to the observed mount")
-	if len(raw) > 16<<20 || node == "" || len(mounts) == 0 || now.IsZero() || strictjson.Validate(raw, map[string][]string{
-		"":                       {"node", "pods"},
-		"node":                   {"nodeName"},
-		"pods[]":                 {"podRef", "volume"},
-		"pods[].podRef":          {"name", "namespace", "uid"},
-		"pods[].volume[]":        {"name", "time", "pvcRef", "usedBytes", "availableBytes", "capacityBytes"},
-		"pods[].volume[].pvcRef": {"name", "namespace"},
-	}) != nil {
-		return nil, unverified
-	}
-	var summary struct {
-		Node struct {
-			Name string `json:"nodeName"`
-		} `json:"node"`
-		Pods []struct {
-			Ref struct {
-				UID       string `json:"uid"`
-				Name      string `json:"name"`
-				Namespace string `json:"namespace"`
-			} `json:"podRef"`
-			Volumes []providerFilesystemStats `json:"volume"`
-		} `json:"pods"`
-	}
-	if json.Unmarshal(raw, &summary) != nil || summary.Node.Name != node || summary.Pods == nil {
-		return nil, unverified
-	}
-	type podMountKey struct{ namespace, pod, uid, volume string }
-	lookup := make(map[podMountKey]providerFilesystemStats, len(mounts))
-	for _, pod := range summary.Pods {
-		for _, volume := range pod.Volumes {
-			key := podMountKey{pod.Ref.Namespace, pod.Ref.Name, pod.Ref.UID, volume.Name}
-			if _, exists := lookup[key]; exists {
-				return nil, unverified
-			}
-			lookup[key] = volume
-		}
-	}
-	usage := make(map[string]uint64, len(mounts))
-	for _, mount := range mounts {
-		stats, found := lookup[podMountKey{mount.Namespace, mount.Pod, mount.PodUID, mount.Volume}]
-		uid := mount.Claim.ClaimUID
-		_, repeated := usage[uid]
-		if !found || repeated || uid == "" || mount.PodUID == "" || mount.Node != node ||
-			stats.PVCRef.Name != mount.Claim.Claim || stats.PVCRef.Namespace != mount.Claim.Namespace ||
-			stats.Time.Before(now.Add(-3*time.Minute)) || stats.Time.After(now.Add(30*time.Second)) ||
-			stats.Used == nil || stats.Available == nil || stats.Capacity == nil || *stats.Capacity == 0 ||
-			*stats.Capacity > mount.Claim.RequestedBytes || *stats.Available > *stats.Capacity ||
-			*stats.Used > *stats.Capacity-*stats.Available {
-			return nil, unverified
-		}
-		usage[uid] = *stats.Used
-	}
-	return usage, nil
 }
