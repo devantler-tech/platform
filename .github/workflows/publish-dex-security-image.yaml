@@ -10,6 +10,7 @@ on:
       - go.mod
       - go.sum
       - .github/scripts/setup-supply-chain-tools.sh
+      - .github/scripts/release-asset-download.sh
       - k8s/bases/infrastructure/controllers/dex/DexSecurity.Dockerfile
       - k8s/bases/infrastructure/controllers/dex/dex-v2.46.1-network.patch
       - k8s/bases/infrastructure/controllers/dex/IMAGE-NOTICE
@@ -22,6 +23,7 @@ on:
       - go.mod
       - go.sum
       - .github/scripts/setup-supply-chain-tools.sh
+      - .github/scripts/release-asset-download.sh
       - k8s/bases/infrastructure/controllers/dex/DexSecurity.Dockerfile
       - k8s/bases/infrastructure/controllers/dex/dex-v2.46.1-network.patch
       - k8s/bases/infrastructure/controllers/dex/IMAGE-NOTICE

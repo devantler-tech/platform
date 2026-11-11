@@ -15,7 +15,7 @@ chmod +x "${fixture_dir}/ksail"
 tar -czf "${fixture_dir}/ksail.tar.gz" -C "${fixture_dir}" ksail
 digest=$(sha256sum "${fixture_dir}/ksail.tar.gz" | cut -d' ' -f1)
 
-printf '{"assets":[{"name":"ksail_7.178.25_linux_amd64.tar.gz","digest":"sha256:%s"}]}\n' \
+printf '{"assets":[{"name":"ksail_7.178.25_linux_amd64.tar.gz","id":1,"digest":"sha256:%s"},{"name":"ksail_7.178.25_checksums.txt","id":2}]}\n' \
   "${digest}" >"${fixture_dir}/release.json"
 printf '%s  ksail_7x178x25_linux_amd64.tar.gz\n' "${digest}" >"${fixture_dir}/checksums.txt"
 
@@ -32,10 +32,10 @@ while [ "$#" -gt 0 ]; do
       retry=$2
       shift 2
       ;;
-    --retry-delay | --retry-max-time)
+    --retry-delay | --retry-max-time | --proto | --proto-redir | --write-out)
       shift 2
       ;;
-    -o)
+    -o | --output)
       output=$2
       shift 2
       ;;
@@ -56,13 +56,13 @@ done
 printf '%s %s\n' "${retry}" "${url}" >>"${TEST_RETRY_LOG}"
 
 case "${url}" in
-  */ksail_7.178.25_linux_amd64.tar.gz)
+  */ksail_7.178.25_linux_amd64.tar.gz | */releases/assets/1)
     cp "${TEST_FIXTURE_DIR}/ksail.tar.gz" "${output}"
     ;;
   */releases/tags/v7.178.25)
     cp "${TEST_FIXTURE_DIR}/release.json" "${output}"
     ;;
-  */ksail_7.178.25_checksums.txt)
+  */ksail_7.178.25_checksums.txt | */releases/assets/2)
     cp "${TEST_FIXTURE_DIR}/checksums.txt" "${output}"
     ;;
   *)
@@ -158,12 +158,32 @@ if [ ! -e "${test_root}/authenticated" ]; then
   exit 1
 fi
 
+# With a token, both release assets come from the authenticated asset API (#5942).
+for asset in ksail_7.178.25_linux_amd64.tar.gz ksail_7.178.25_checksums.txt; do
+  case "${output}" in
+    *"release-asset asset=${asset} path=authenticated status="*" result=served"*) ;;
+    *)
+      printf 'setup-ksail.sh did not download %s through the authenticated asset API:\n%s\n' "${asset}" "${output}" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# A release that does not list the assets falls back to the public URL, and the
+# digest checks still decide the install.
 printf '%s  ksail_7.178.25_linux_amd64.tar.gz\n' "${digest}" >"${fixture_dir}/checksums.txt"
 printf '{"assets":[{"name":"ksail_7.178.25_linux_amd64.tar.gz","digest":"sha256:%064d"}]}\n' \
   0 >"${fixture_dir}/release.json"
 
 run_installer
 assert_rejected_before_install 'release metadata digest mismatch for ksail_7.178.25_linux_amd64.tar.gz'
+case "${output}" in
+  *'release-asset asset=ksail_7.178.25_linux_amd64.tar.gz path=anonymous status='*' result=served'*) ;;
+  *)
+    printf 'setup-ksail.sh did not fall back to the public URL for an unlisted asset:\n%s\n' "${output}" >&2
+    exit 1
+    ;;
+esac
 
 # One momentary error from the release host must not fail the job (#4549): every
 # download that decides the install asks curl to retry transient failures. Each
@@ -172,6 +192,8 @@ assert_rejected_before_install 'release metadata digest mismatch for ksail_7.178
 for url_suffix in \
   /ksail_7.178.25_linux_amd64.tar.gz \
   /ksail_7.178.25_checksums.txt \
+  /releases/assets/1 \
+  /releases/assets/2 \
   /releases/tags/v7.178.25; do
   verdict=$(awk -v suffix="${url_suffix}" '
     substr($2, length($2) - length(suffix) + 1) == suffix { seen = 1; if ($1 !~ /^[1-9][0-9]*$/) bad = 1 }

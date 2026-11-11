@@ -52,6 +52,9 @@ jobs:
           shellcheck scripts/tests/test-webapp-compiled-scan.sh
           bash scripts/tests/test-webapp-compiled-scan.sh
       - name: 🔏 Install reviewed public-image verification tools
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/setup-supply-chain-tools.sh
       - name: Validate the hosted runtime script
         run: |
@@ -245,6 +248,8 @@ jobs:
               - 'scripts/tests/test-setup-talosctl.sh'
               - '.github/scripts/setup-supply-chain-tools.sh'
               - 'scripts/tests/test-setup-supply-chain-tools.sh'
+              - '.github/scripts/release-asset-download.sh'
+              - 'scripts/tests/test-release-asset-download.sh'
               - '.github/actions/deploy-prod/action.yml'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
@@ -844,6 +849,7 @@ jobs:
               - 'ksail.prod.yaml'
               - 'ksail.yaml'
               - '.github/scripts/setup-talosctl.sh'
+              - '.github/scripts/release-asset-download.sh'
               - 'scripts/validate-talos-kubernetes-compatibility/**'
               - '.github/actions/deploy-prod/**'
               - 'go.mod'
@@ -2273,8 +2279,17 @@ jobs:
           shellcheck .github/scripts/setup-supply-chain-tools.sh scripts/tests/test-setup-supply-chain-tools.sh
           bash scripts/tests/test-setup-supply-chain-tools.sh
 
+      - name: 🔐 Validate the shared release-asset download
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck .github/scripts/release-asset-download.sh scripts/tests/test-release-asset-download.sh
+          bash scripts/tests/test-release-asset-download.sh
+
       - name: 🔐 Exercise verified supply-chain tools
         if: needs.changes.outputs.k8s == 'true'
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-supply-chain-tools.sh
           /usr/local/bin/syft scan dir:. --output cyclonedx-json=tool-integrity.cdx.json
@@ -2325,6 +2340,9 @@ jobs:
 
       - name: Install checksum-verified Trivy for disposition boundaries
         if: needs.changes.outputs.k8s == 'true'
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/setup-supply-chain-tools.sh trivy-boundary
 
       - name: 🧱 Validate vendored-operator disposition boundary
@@ -3870,6 +3888,9 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup talosctl
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-talosctl.sh
 

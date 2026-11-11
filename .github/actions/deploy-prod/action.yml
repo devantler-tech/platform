@@ -93,6 +93,9 @@ runs:
       # refresh-flux-ghcr-auth.sh uses the host API for a secret-safe,
       # per-node RegistryAuthConfig patch and exact image-pull proof.
       shell: bash
+      env:
+        # Download through the authenticated asset API first (#5942).
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-talosctl.sh
 
