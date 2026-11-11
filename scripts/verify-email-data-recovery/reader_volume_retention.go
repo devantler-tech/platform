@@ -164,11 +164,11 @@ func (d *recoveryDriver) readRetainedVolume(ctx context.Context, witness retaine
 
 func cloneRetainedVolumeObjects(objects []object) ([]object, error) {
 	raw, err := json.Marshal(objects)
-	var copy []object
-	if err != nil || json.Unmarshal(raw, &copy) != nil {
+	var cloned []object
+	if err != nil || json.Unmarshal(raw, &cloned) != nil {
 		return nil, errors.New("retained-volume-snapshot")
 	}
-	return copy, nil
+	return cloned, nil
 }
 
 func sameRetainedVolumeInputs(before, after []object) bool {
