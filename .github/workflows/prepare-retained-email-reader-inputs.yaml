@@ -93,7 +93,11 @@ jobs:
           export KUBECONFIG="$private_dir/kubeconfig"
           printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
           unset KUBE_CONFIG
-          if ! ./scripts/use-prod-stable-api-endpoint.sh > /dev/null 2>"$private_dir/endpoint.log"; then fail; fi
+          # The helper sends GitHub's masking commands on stderr. Preserve
+          # that stream so later native-client output remains redacted.
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+            fail
+          fi
           unset HCLOUD_TOKEN
           if ! ./scripts/verify-prod-recovery-source.sh "$GITHUB_SHA" > /dev/null 2>"$private_dir/source.log"; then fail; fi
           kc=(kubectl --context=admin@prod --request-timeout=20s)
