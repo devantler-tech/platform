@@ -747,6 +747,8 @@ jobs:
               - 'scripts/tests/test-substrate-bucket-init-hook.sh'
               - 'scripts/build-controller-helm.sh'
               - 'scripts/prepare-helm-render-input-capture.sh'
+              # The rendering library both chart-rendering guards source (#4465).
+              - 'scripts/flux-render.lib.sh'
               - 'scripts/render-helm-chart/**'
               # Both halves and the reviewed exception list, for the same reasons. The
               # guard renders charts with the renderer the two entries above build.
@@ -4214,7 +4216,7 @@ jobs:
 
       - name: 🧩 Validate the post-renderer guard
         run: |
-          shellcheck scripts/build-controller-helm.sh scripts/guard-controller-helm-profile.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          shellcheck -x scripts/build-controller-helm.sh scripts/guard-controller-helm-profile.sh scripts/prepare-helm-render-input-capture.sh scripts/flux-render.lib.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
@@ -4380,10 +4382,10 @@ jobs:
     # HelmReleases installed beside an unsatisfied budget are rendered too, with their values
     # and post-renderers, and a Flagger Canary's primary is derived from its target (#3596).
     #
-    # Pull requests only. Every run pulls the chart of each release it has to render, over
+    # Pull requests only. A full run pulls the chart of each release it has to render, over
     # twenty today, so on the merge group it would make every production deploy wait on that
     # many upstream registries. A chart bump, a selector edit and a new budget each run it on
-    # their own pull request.
+    # their own pull request, where only the budgets whose inputs changed pull their charts.
     if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     # A stalled registry fails this job instead of holding it for the default six hours.
@@ -4395,6 +4397,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The guard renders the base revision too, to find which budgets' inputs changed.
+          fetch-depth: 0
 
       - name: ⚙️ Setup the audited controller's Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -4406,7 +4410,7 @@ jobs:
         # The fixture suite pulls no chart: a stand-in packages its fixture charts, and the
         # renderer built here renders them.
         run: |
-          shellcheck scripts/prepare-helm-render-input-capture.sh scripts/guard-pdb-selector-match.sh scripts/tests/test-guard-pdb-selector-match.sh
+          shellcheck -x scripts/flux-render.lib.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-pdb-selector-match.sh scripts/tests/test-guard-pdb-selector-match.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
@@ -4414,9 +4418,15 @@ jobs:
           bash scripts/tests/test-guard-pdb-selector-match.sh
 
       - name: 🛟 Validate every PodDisruptionBudget selects a rendered workload
+        # Only budgets whose inputs changed since the base have their charts pulled; a change
+        # to the guard, its exception rows or a pinned file judges every budget (#4465).
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           kube_version="$(yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")' ksail.prod.yaml)"
-          bash scripts/guard-pdb-selector-match.sh --kube-version "$kube_version" k8s
+          base_kube_version="$(git show "${BASE_SHA}:ksail.prod.yaml" | yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")')"
+          bash scripts/guard-pdb-selector-match.sh --base "$BASE_SHA" --base-kube-version "$base_kube_version" \
+            --kube-version "$kube_version" k8s
 
   wait-for-production-turn:
     name: 🧾 Wait for the production deployment turn
