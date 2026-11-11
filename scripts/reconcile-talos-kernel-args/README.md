@@ -579,6 +579,18 @@ refusal. Other release changes update Argo CD, release-tag retention and KSail's
 own CI; none changes the mirrored fold. This audit changes no cluster
 configuration or vulnerability exception.
 
+**7.208.0**, commit `42888c3563d15113f842ef2c849eeb443d68d5ed`, is audited
+against 7.207.1, whose inputs equal the 7.206.81 set. The configuration manager,
+Talos generator, cluster API, charts and `go.sum` are byte-identical, so the
+normalized extension/argument trigger, both-role fold and explicit schematic-ID
+boundary are unchanged. The only `go.mod` change (KSail #8189) moves the
+existing `fluxcd/pkg/apis/kustomize` v1.19.2 requirement from the indirect block
+to the direct one; no module version changes, so the Talos machinery and its
+YAML encoders are unchanged. The release's other change generates Flux CEL
+health checks for HelmReleases in KSail's workload generator, which the
+mirrored fold does not use. This audit changes no cluster configuration or
+vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
