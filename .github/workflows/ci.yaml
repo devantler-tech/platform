@@ -612,6 +612,7 @@ jobs:
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
               - 'scripts/tests/test-agentic-engineer-schedule.sh'
               - 'scripts/tests/test-agentic-engineer-lane-store.sh'
+              - 'scripts/tests/test-agentic-engineer-lane-store-lease.sh'
               - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
               - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
@@ -2887,6 +2888,16 @@ jobs:
         run: |
           shellcheck scripts/tests/test-agentic-engineer-lane-store.sh
           bash scripts/tests/test-agentic-engineer-lane-store.sh
+
+      - name: 🔒 Validate the Agentic Engineer lane store lease
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the store's pinned rclone image with its own arguments: the lease a
+        # run takes on memory/ refuses every other run, even many at once, the
+        # store refuses a write there without its token, and after a restart the
+        # former holder can neither write nor release.
+        run: |
+          shellcheck scripts/tests/test-agentic-engineer-lane-store-lease.sh
+          bash scripts/tests/test-agentic-engineer-lane-store-lease.sh
 
       - name: 🧠 Validate the kagent harness plugin wrapper
         if: needs.changes.outputs.k8s == 'true'
