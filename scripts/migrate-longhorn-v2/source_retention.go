@@ -17,9 +17,9 @@ type retentionTarget struct {
 	namespace, claim, digest string
 }
 
-func parseRetentionTarget(approval string) (retentionTarget, error) {
+func parseRetentionTarget(approval, prefix string) (retentionTarget, error) {
 	fields := strings.Split(approval, ":")
-	if len(fields) == 3 && fields[0] == "retain-longhorn-v1-source" && retentionDigest.MatchString(fields[2]) {
+	if len(fields) == 3 && fields[0] == prefix && retentionDigest.MatchString(fields[2]) {
 		namespace, claim, joined := strings.Cut(fields[1], "/")
 		if joined && namespace != "" && namespace != "velero" && namespace != "longhorn-system" &&
 			!strings.HasPrefix(namespace, "longhorn-") && !strings.HasPrefix(namespace, "email-data-recovery-") &&
@@ -35,7 +35,7 @@ func authorizeV1SourceRetention(getenv func(string) string) error {
 	if getenv("LONGHORN_V2_OPERATION") != retainV1SourceOperation || getenv("LONGHORN_V2_NODE") != "" {
 		return errors.New("the explicit source retention operation is required without a worker selection")
 	}
-	if _, err := parseRetentionTarget(approval); err != nil {
+	if _, err := parseRetentionTarget(approval, "retain-longhorn-v1-source"); err != nil {
 		return err
 	}
 	return authorizeWorkflow(getenv, approval)
@@ -102,23 +102,29 @@ func (c client) observeRetainedSource(ctx context.Context, target retentionTarge
 }
 
 func retainV1Source(ctx context.Context, c client, source, approval string) error {
-	if c.context != "admin@prod" {
-		return errors.New("the protected production context is required")
-	}
-	target, err := parseRetentionTarget(approval)
+	target, err := parseRetentionTarget(approval, "retain-longhorn-v1-source")
 	if err != nil {
 		return err
 	}
-	if err = sourceCurrent(ctx, c.run, source); err != nil {
+	return retainObservedSource(ctx, c, source, "LONGHORN_V1_SOURCE_RETENTION", func(ctx context.Context) (object, error) {
+		return c.observeRetainedSource(ctx, target)
+	})
+}
+
+func retainObservedSource(ctx context.Context, c client, source, marker string, observe func(context.Context) (object, error)) error {
+	if c.context != "admin@prod" {
+		return errors.New("the protected production context is required")
+	}
+	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
-	pv, err := c.observeRetainedSource(ctx, target)
+	pv, err := observe(ctx)
 	if err != nil {
 		return err
 	}
 	switch text(pv, "spec", "persistentVolumeReclaimPolicy") {
 	case "Retain":
-		fmt.Println("LONGHORN_V1_SOURCE_RETENTION=RETAINED writes=0")
+		fmt.Printf("%s=RETAINED writes=0\n", marker)
 		return nil
 	case "Delete":
 	default:
@@ -131,17 +137,18 @@ func retainV1Source(ctx context.Context, c client, source, approval string) erro
 	// repeat the write in this run, including if the API returned a conflict.
 	writeErr := c.patch(ctx, "persistentvolume", "", pv,
 		object{"op": "test", "path": "/spec/claimRef", "value": value(pv, "spec", "claimRef")},
+		object{"op": "test", "path": "/spec/csi/driver", "value": text(pv, "spec", "csi", "driver")},
 		object{"op": "test", "path": "/spec/csi/volumeHandle", "value": text(pv, "spec", "csi", "volumeHandle")},
 		object{"op": "test", "path": "/spec/persistentVolumeReclaimPolicy", "value": "Delete"},
 		object{"op": "replace", "path": "/spec/persistentVolumeReclaimPolicy", "value": "Retain"})
-	current, err := c.observeRetainedSource(ctx, target)
+	current, err := observe(ctx)
 	if err != nil || text(current, "spec", "persistentVolumeReclaimPolicy") != "Retain" {
 		return errors.New("source retention is unconfirmed, preserve the claim and investigate before proceeding")
 	}
 	if writeErr != nil {
-		fmt.Println("LONGHORN_V1_SOURCE_RETENTION=RETAINED write=observed")
+		fmt.Printf("%s=RETAINED write=observed\n", marker)
 		return nil
 	}
-	fmt.Println("LONGHORN_V1_SOURCE_RETENTION=RETAINED writes=1")
+	fmt.Printf("%s=RETAINED writes=1\n", marker)
 	return nil
 }

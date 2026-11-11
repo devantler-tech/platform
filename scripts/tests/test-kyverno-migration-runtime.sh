@@ -51,7 +51,7 @@ diff --git a/cmd/platform-migrate/main_test.go b/cmd/platform-migrate/main_test.
 diff --git a/go.mod b/go.mod
 diff --git a/go.sum b/go.sum'
 [[ "$(grep '^diff --git ' "$patch")" == "$expected_headers" ]] || fail 'patch changes more than the scoped entry point and dependencies'
-grep -Fxq 'FROM docker.io/library/golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS builder' "$dockerfile" || fail 'patched compiler pin changed'
+grep -Fxq 'FROM docker.io/library/golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS builder' "$dockerfile" || fail 'patched compiler pin changed'
 grep -Fxq 'ENV GOTOOLCHAIN=local' "$dockerfile" || fail 'implicit compiler switching enabled'
 grep -Fq 'go list -mod=readonly -deps ./cmd/platform-migrate > /tmp/migration-packages' "$dockerfile" || fail 'actual dependency scope not observed'
 grep -Fq "github.com/kyverno/kyverno/pkg/engine/|golang.org/x/crypto/openpgp|github.com/chrismellard/docker-credential-acr-env|go.etcd.io/etcd/client/" "$dockerfile" || fail 'unrelated capability boundary missing'
@@ -65,7 +65,7 @@ grep -Fq "grep -Eq '\"pkgSymbols\": *\\[[^]]+\\]' /tmp/binary-extract.json" "$do
 # shellcheck disable=SC2016
 grep -Fq "test \"\$(tr '\\n' ' ' < /tmp/binary-findings)\" = 'GO-2025-3615 GO-2026-5337 GO-2026-5594 '" "$dockerfile" || fail 'accepted advisories changed'
 # shellcheck disable=SC2016
-grep -Fq 'test "$(go version /out/kubectl-kyverno)" = "/out/kubectl-kyverno: go1.26.10"' "$dockerfile" || fail 'actual compiler proof missing'
+grep -Fq 'test "$(go version /out/kubectl-kyverno)" = "/out/kubectl-kyverno: go1.26.11"' "$dockerfile" || fail 'actual compiler proof missing'
 # shellcheck disable=SC2016
 grep -Fq 'test "$(/out/kubectl-kyverno --version)" = "kubectl-kyverno version ${VERSION}"' "$dockerfile" || fail 'actual immutable executable identity missing'
 grep -Fq 'unknown command "apply"' "$dockerfile" || fail 'unsupported-command refusal missing'

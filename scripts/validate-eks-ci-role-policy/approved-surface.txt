@@ -168,7 +168,7 @@ pkg.crossplane.io/v1|Provider||provider-aws-iam 4d46cd8dd698528258e074ad138bbecb
 
 pkg.crossplane.io/v1|Provider||provider-upjet-github 719f3ea7799fbb895e20bf9da54098e37f67da5cc397a94a5c13df3f6fbb187b
 
-pkg.crossplane.io/v1|Provider||provider-upjet-unifi 9ddcac5e67d0ab6c75f6f0ba60f8e225d61809052616a111539bd87574c4225b
+pkg.crossplane.io/v1|Provider||provider-upjet-unifi 134e66f6ec74fb19b8103ba067b1b1fd6366bbdc3afbc0e7e475a3514d60c3a0
 
 pkg.crossplane.io/v1|Provider||upbound-provider-family-aws 64c7d602bf7460b7a38657a49539f5fa945ef8216be5e4296dddd04f69a944f8
 
@@ -276,6 +276,8 @@ rbac.authorization.k8s.io/v1|ClusterRole||tenant-external-dns-global 24084ed6f90
 
 rbac.authorization.k8s.io/v1|ClusterRole||vpa-updater-event-writer 3879241a89e481edb6edef4a634d689ca6cbf648cf0f18ecaa74304e9542e52f
 
+rbac.authorization.k8s.io/v1|RoleBinding|agentic-engineer|lane-store-reader 6cb9a46fe78f3579c7ce18908d16158a633fd3e2fdb3884ddaed99cc2ca083db
+
 rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner cb7ca7497e2f066851a9354b75f38962fea1e588598d96dde786f7043576a08d
 
 rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner-external-dns bd51e723eadb52df8b583fc8931be70ecade6863d8d2821ecad5f128c8bf6888
@@ -331,6 +333,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|wedding-app|wedding-app 8fb1f3e7ae50e8f
 rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin 593fd95bd84af8840c71270227cabdf8137cba9c58d844b5ca2db3406d4632a2
 
 rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-operator b14714377d4a5317c7d829bc1b378ecea44ed82f2b1fff32d4c923f9ee4809d6
+
+rbac.authorization.k8s.io/v1|Role|agentic-engineer|lane-store-reader 106d83767c8414ced671f67a43a09030e554a529851f0967021c98bc2a031542
 
 rbac.authorization.k8s.io/v1|Role|ate-system|substrate-ca-reader 153cc02bc210a1f00ad70fb8c260500fa9593e634302378d67d91af10cf3fafd
 
@@ -462,7 +466,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documen
 
 source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator fdc99e9413e88a5f8a99efa8b515dfbc340303dca5650d34137f1965d2788771
 
-source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config f9bd2c474ca3b3c33c5f7c88e41d0e3157f211704d2bfc82dd537f9fc52e0910
+source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config f473a2dc6febfa488f5ca59374ebeb704a82f21f39d2f7f3329215caf859c700
 
 source.toolkit.fluxcd.io/v1|OCIRepository|homepage|homepage ff2c2d1aac0b2315247df9f5266eeb00f4443ea551d6e92270bdf76a243c0f38
 

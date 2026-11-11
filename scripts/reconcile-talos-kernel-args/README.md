@@ -565,6 +565,20 @@ and `openreports/reports-api` modules; no `siderolabs` or YAML module moves, so
 the Talos machinery and its YAML encoders are unchanged. This audit changes no
 cluster configuration or vulnerability exception.
 
+**7.206.81**, commit `57b705c5379faf718d7ac8971f89154df8597474`, is audited
+against 7.206.77. The configuration manager, Talos generator, cluster API and
+charts are byte-identical, so the normalized extension/argument trigger,
+both-role fold and explicit schematic-ID boundary are unchanged. `go.mod` and
+`go.sum` move only the Google Container client, AWS EKS client, AWS Smithy,
+Copilot SDK and `klauspost/compress` modules. The first four are absent from
+the Talos configuration manager, generator and cluster API dependency closure;
+`compress` remains reachable through its Zstandard packages. Talos machinery
+stays at v1.14.0-alpha.2 and the YAML encoders are unchanged. The real offline
+render regression checks both roles, schematic-ID precedence and invalid-patch
+refusal. Other release changes update Argo CD, release-tag retention and KSail's
+own CI; none changes the mirrored fold. This audit changes no cluster
+configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
