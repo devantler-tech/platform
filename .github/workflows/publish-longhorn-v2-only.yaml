@@ -58,7 +58,7 @@ jobs:
           set -euo pipefail
           native_dir="$(mktemp -d)"
           archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
           printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
           tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
           printf '%s\n' "$native_dir/linux-amd64" >> "$GITHUB_PATH"
@@ -117,7 +117,7 @@ jobs:
           set -euo pipefail
           native_dir="$(mktemp -d)"
           archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
           printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
           tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
           printf '%s\n' "$native_dir/linux-amd64" >> "$GITHUB_PATH"
