@@ -55,7 +55,7 @@ func run(binary, scanner, advisory, web string) error {
 	if err != nil {
 		return fmt.Errorf("read native build information: %w", err)
 	}
-	if info.GoVersion != "go1.27.3" || info.Path != "github.com/dexidp/dex/cmd/dex" {
+	if info.GoVersion != "go1.27.4" || info.Path != "github.com/dexidp/dex/cmd/dex" {
 		return errors.New("unexpected executable or compiler")
 	}
 	revision, modified, netVersion := "", "", ""
@@ -82,7 +82,7 @@ func run(binary, scanner, advisory, web string) error {
 	if err != nil {
 		return err
 	}
-	if scanInfo.Path != "golang.org/x/vuln/cmd/govulncheck" || scanInfo.Main.Version != "v1.8.0" || scanInfo.GoVersion != "go1.27.3" {
+	if scanInfo.Path != "golang.org/x/vuln/cmd/govulncheck" || scanInfo.Main.Version != "v1.8.0" || scanInfo.GoVersion != "go1.27.4" {
 		return errors.New("unexpected scanner executable")
 	}
 	before, err := binaryDigest(binary)

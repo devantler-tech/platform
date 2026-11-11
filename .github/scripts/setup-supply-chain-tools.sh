@@ -41,17 +41,17 @@ verify_digest() {
 }
 
 # Release downloads retry curl's transient failures (timeouts, 408, 429 and 5xx) a few times,
-# because one momentary error from the release host would otherwise fail the job. Every byte
-# is still checked against the reviewed pin below, and a persistent failure still stops here.
-download() {
-  curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-    --retry 5 --retry-delay 3 "$1" --output "$2"
-}
+# because one momentary error from the release host would otherwise fail the job. With
+# GITHUB_TOKEN set they use the authenticated asset API first and fall back to the public
+# URL (#5942). Every byte is still checked against the reviewed pin below, and a
+# persistent failure still stops here.
+# shellcheck source=.github/scripts/release-asset-download.sh
+source "$(dirname "${BASH_SOURCE[0]}")/release-asset-download.sh"
 
 if [[ ${1:-} == trivy-boundary ]]; then
   : "${RUNNER_TEMP:?RUNNER_TEMP must name the runner temporary directory}"
   trivy_dir="${RUNNER_TEMP}/platform-validation-tools"
-  download "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+  release_asset_download aquasecurity/trivy "v${TRIVY_VERSION}" "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
     "${download_dir}/trivy.tar.gz"
   verify_digest trivy "${TRIVY_SHA256}" "${download_dir}/trivy.tar.gz"
   tar -xzf "${download_dir}/trivy.tar.gz" -C "${download_dir}" trivy
@@ -62,11 +62,11 @@ if [[ ${1:-} == trivy-boundary ]]; then
   exit 0
 fi
 
-download "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+release_asset_download sigstore/cosign "v${COSIGN_VERSION}" cosign-linux-amd64 \
   "${download_dir}/cosign"
 verify_digest cosign "${COSIGN_SHA256}" "${download_dir}/cosign"
 
-download "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+release_asset_download anchore/syft "v${SYFT_VERSION}" "syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
   "${download_dir}/syft.tar.gz"
 verify_digest syft "${SYFT_SHA256}" "${download_dir}/syft.tar.gz"
 

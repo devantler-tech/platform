@@ -39,7 +39,7 @@ while (( $# )); do
   case "$1" in
     -o|--output) output=$2; shift 2 ;;
     --retry) retry=$2; shift 2 ;;
-    --proto|--proto-redir|--retry-delay|--retry-max-time) shift 2 ;;
+    --proto|--proto-redir|--retry-delay|--retry-max-time|--write-out) shift 2 ;;
     -*) shift ;;
     *) url=$1; shift ;;
   esac
@@ -93,6 +93,8 @@ make_variant() {
     -e "s|/usr/local/bin/cosign version|${test_root}/installed/cosign version|" \
     -e "s|/usr/local/bin/syft version|${test_root}/installed/syft version|" \
     "${installer}" >"${test_root}/installer.sh"
+  # The installer sources its download function from beside itself.
+  cp "${repo_root}/.github/scripts/release-asset-download.sh" "${test_root}/"
   for assignment in 'COSIGN_VERSION="9.9.9"' 'SYFT_VERSION="9.9.9"' \
     "COSIGN_SHA256=\"$1\"" "SYFT_SHA256=\"$2\""; do
     grep -Fxq "${assignment}" "${test_root}/installer.sh" || fail "fixture did not substitute ${assignment}"
@@ -104,7 +106,7 @@ run_installer() {
   rm -f "${test_root}/installs" "${test_root}/executed" "${test_root}/downloads" "${test_root}/retries" "${test_root}/github-path" "${test_root}/installed/"*
   status=0
   output=$(PATH="${test_root}/bin:${test_root}/installed:${PATH}" \
-    RUNNER_TEMP="${test_root}/runner" GITHUB_PATH="${test_root}/github-path" \
+    RUNNER_TEMP="${test_root}/runner" GITHUB_PATH="${test_root}/github-path" GITHUB_TOKEN="" \
     bash "${test_root}/installer.sh" "$@" 2>&1) || status=$?
   [[ -z $(find "${test_root}/runner" -name 'supply-chain-tools.*' -print -quit) ]] || fail 'installer left temporary downloads behind'
 }
