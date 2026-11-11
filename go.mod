@@ -45,6 +45,8 @@ require (
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.6
+	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
+	github.com/emersion/go-smtp v0.25.1
 	github.com/google/go-github/v88 v88.0.0
 	k8s.io/apimachinery v0.37.2
 	k8s.io/client-go v0.37.2
