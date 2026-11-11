@@ -64,7 +64,8 @@ for step in 'Send a PROPFIND to memory/' 'Send a LOCK to memory/' 'at least 60 b
   previous="${position}"
 done
 for rule in 'Timeout: Infinite' 'A 423 means another run holds it' 'Never remove a lease you did not take' \
-  'its owner is yours' 'each PUT with that same If header' 'leave the lease alone' 'A 412' \
+  'its owner is yours' 'If header on every PUT' 'on the MKCOL of any folder inside memory/' \
+  'each folder it shows the same way' 'leave the lease alone' 'A 412' \
   'never UNLOCK it' 'wait out the difference'; do
   [[ "$(at "${rule}")" -ge 0 ]] || fail "the run message no longer says: ${rule}"
 done
@@ -200,6 +201,13 @@ status="$(put unfenced /memory/topic.md)"
 [[ "${status}" == 423 ]] || fail "the store let a write without the lease's token into memory/: ${status}"
 status="$(put forged-write /memory/topic.md '<999>')"
 [[ "${status}" == 412 ]] || fail "the store let a write with another token into memory/: ${status}"
+# A folder inside memory/ is a write too: its MKCOL needs the token, and a file in it then lands.
+status="$(dav unfenced-folder MKCOL /memory/archive/)"
+[[ "${status}" == 423 ]] || fail "the store let a MKCOL without the lease's token into memory/: ${status}"
+status="$(dav fenced-folder MKCOL /memory/archive/ -H "If: (${first})")"
+[[ "${status}" == 201 ]] || fail "the holder could not create a folder in memory/ with its token: ${status} $(body fenced-folder)"
+status="$(put fenced-nested /memory/archive/old.md "${first}")"
+[[ "${status}" == 201 ]] || fail "the holder could not write inside a folder of memory/: ${status} $(body fenced-nested)"
 status="$(put transcript /runs/transcript.jsonl)"
 [[ "${status}" == 201 ]] || fail "the lease held up a write outside memory/: ${status} $(body transcript)"
 

@@ -127,10 +127,11 @@ spec:
                       fails or names another owner, upload nothing, leave the lease
                       alone and report it.
                 2. Restore your native memory from the lane store: list memory/ with a
-                   PROPFIND (`-X PROPFIND -H 'Depth: 1'` plus the store header) and
-                   download every file into ~/lane-memory/, which stays empty on a first
-                   run. A listing or download you cannot complete stops the run: release
-                   the lease with the UNLOCK of step 4, upload nothing and report it.
+                   PROPFIND (`-X PROPFIND -H 'Depth: 1'` plus the store header), list
+                   each folder it shows the same way, and download every file into
+                   ~/lane-memory/, which stays empty on a first run. A listing or
+                   download you cannot complete stops the run: release the lease with
+                   the UNLOCK of step 4, upload nothing and report it.
                 3. Shallow-clone devantler-tech/monorepo, read its AGENTS.md, load the
                    agentic-engineering plugin and invoke its agentic-engineer entrypoint
                    as this scheduled run. ~/lane-memory/ is your native memory (the
@@ -143,11 +144,12 @@ spec:
                    `Lock-Token: <t>`). You still hold the lease only if the reply is 200
                    and its owner is yours. On any other reply, upload nothing, leave the
                    lease alone and report it. Otherwise upload ~/lane-memory/ back to
-                   memory/ one file at a time, each PUT with that same If header: the
-                   store refuses a write under memory/ that lacks the lease's token, and
-                   a second write with one token while the first is still running. A 412
-                   or 423 means you lost the lease: stop uploading, leave the lease alone
-                   and report it. Then upload this session's transcript (the newest
+                   memory/ one file at a time, with that same If header on every PUT and
+                   on the MKCOL of any folder inside memory/: the store refuses a write
+                   under memory/ that lacks the lease's token, and a second write with
+                   one token while the first is still running. A 412 or 423 means you
+                   lost the lease: stop uploading, leave the lease alone and report it.
+                   Then upload this session's transcript (the newest
                    Claude Code session JSONL under your Claude config directory) and your
                    run report, with no If header, to runs/<UTC date>/transcript.jsonl and
                    runs/<UTC date>/report.md. If an earlier run that day already wrote
