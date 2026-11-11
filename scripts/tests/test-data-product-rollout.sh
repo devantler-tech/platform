@@ -232,14 +232,10 @@ fi
 printf '%s\n' "$key" >>"$FIXTURE/reads"
 # Reproduce a loaded runner spending a control's whole budget before the first
 # snapshot is judged: the first read stalls until the verifier's deadline kills it.
+# The starved-once control reruns without its mode; starved-always keeps stalling.
 if [[ "$key" == apps ]]; then
   case "${MODE:-}" in
-    starved-once)
-      if [[ ! -e "$FIXTURE/starved" ]]; then
-        : >"$FIXTURE/starved"
-        sleep 30
-      fi ;;
-    starved-always) sleep 30 ;;
+    starved-once | starved-always) sleep 30 ;;
   esac
 fi
 if [[ "$key" == apps && "${MODE:-}" == hang ]]; then
@@ -742,6 +738,9 @@ require_rejection() {
   run_case "$name" fail "$mode" "$seconds"
   if [[ ! -s "$fixture/rejections" ]] && starved_report "$fixture/stdout"; then
     printf 'RETRY: %s: the budget ran out before any snapshot was judged\n' "$name"
+    # The simulated stall belongs to the first run only, even if that run starved
+    # in setup before it reached the stalled read.
+    if [[ "$mode" == starved-once ]]; then mode=''; fi
     run_case "$name" fail "$mode" "$starved_retry_seconds"
   fi
   [[ -s "$fixture/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
