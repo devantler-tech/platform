@@ -28,11 +28,9 @@ type server struct {
 	ServerType struct {
 		Name string `json:"name"`
 	} `json:"server_type"`
-	Datacenter struct {
-		Location struct {
-			Name string `json:"name"`
-		} `json:"location"`
-	} `json:"datacenter"`
+	Location struct {
+		Name string `json:"name"`
+	} `json:"location"`
 }
 
 type node struct {
@@ -131,7 +129,7 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 		if internalIPs != 1 {
 			return errors.New("node private address is missing or ambiguous")
 		}
-		if s.ServerType.Name == "" || s.ServerType.Name != n.Metadata.Labels["node.kubernetes.io/instance-type"] || s.Datacenter.Location.Name == "" || s.Datacenter.Location.Name != n.Metadata.Labels["topology.kubernetes.io/region"] {
+		if s.ServerType.Name == "" || s.ServerType.Name != n.Metadata.Labels["node.kubernetes.io/instance-type"] || s.Location.Name == "" || s.Location.Name != n.Metadata.Labels["topology.kubernetes.io/region"] {
 			return errors.New("node hardware or location does not match the provider")
 		}
 		role, isStatic := static[name]
@@ -150,7 +148,7 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 		if match == nil || n.Metadata.Labels["storage.platform.devantler.tech/migration-pool"] != match[1] || s.Labels["hcloud/node-group"] != "autoscale-longhorn-"+match[1] {
 			return errors.New("an unexpected worker or migration-pool identity remains")
 		}
-		if s.ServerType.Name != "cpx42" || s.Datacenter.Location.Name != "fsn1" || (s.Labels["ksail.cluster.name"] != "" && s.Labels["ksail.cluster.name"] != "prod") || (s.Labels["ksail.owned"] != "" && s.Labels["ksail.owned"] != "true") {
+		if s.ServerType.Name != "cpx42" || s.Location.Name != "fsn1" || (s.Labels["ksail.cluster.name"] != "" && s.Labels["ksail.cluster.name"] != "prod") || (s.Labels["ksail.owned"] != "" && s.Labels["ksail.owned"] != "true") {
 			return errors.New("migration provider hardware, location or ownership is unexpected")
 		}
 		counts[match[1]]++

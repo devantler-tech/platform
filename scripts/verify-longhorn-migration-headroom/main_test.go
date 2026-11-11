@@ -45,7 +45,7 @@ func roster(t *testing.T, v2 bool) ([]server, []node) {
 		} else if i >= 6 {
 			s.ServerType.Name = "cpx42"
 		}
-		s.Datacenter.Location.Name = "fsn1"
+		s.Location.Name = "fsn1"
 		servers = append(servers, s)
 		payload := fmt.Sprintf(`{"metadata":{"name":%q,"uid":"node-%d","labels":{"storage.platform.devantler.tech/migration-pool":%q}},"spec":{"providerID":"hcloud://%d"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}`, name, i, role, id)
 		var n node
@@ -93,7 +93,7 @@ func TestUnsafeHeadroomIsHeld(t *testing.T) {
 			(*s)[6].ServerType.Name = "cx43"
 			(*n)[6].Metadata.Labels["node.kubernetes.io/instance-type"] = "cx43"
 		},
-		"migration location mismatch": func(s *[]server, _ *[]node) { (*s)[6].Datacenter.Location.Name = "hel1" },
+		"migration location mismatch": func(s *[]server, _ *[]node) { (*s)[6].Location.Name = "hel1" },
 		"contradictory ownership":     func(s *[]server, _ *[]node) { (*s)[6].Labels["ksail.cluster.name"] = "foreign" },
 		"duplicate provider ID":       func(s *[]server, _ *[]node) { (*s)[1].ID = (*s)[0].ID },
 		"duplicate node UID":          func(_ *[]server, n *[]node) { (*n)[1].Metadata.UID = (*n)[0].Metadata.UID },
