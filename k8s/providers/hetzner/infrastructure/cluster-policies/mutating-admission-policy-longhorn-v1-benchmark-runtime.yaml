@@ -50,7 +50,7 @@ spec:
         size(object.spec.containers) == 1 &&
         object.spec.containers.all(container,
           container.name == 'instance-manager' &&
-          container.image == 'ghcr.io/devantler-tech/platform-longhorn-instance-manager:v1.13.0-retirement.1-725bb1d09517c84f8b73ff2c0cf175421df351f1-1@sha256:93cfc83d8bab91f9b6fbffe20bf9bdaca28e877d91d7b740cae003bf6853059f' &&
+          container.image == 'ghcr.io/devantler-tech/platform-longhorn-instance-manager:v1.13.0-retirement.1-591ed0ccebd032c4d9705c356c267e724b30e2a9-1@sha256:4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7' &&
           has(container.securityContext) &&
           has(container.securityContext.privileged) && container.securityContext.privileged &&
           !has(container.securityContext.runAsUser) && !has(container.securityContext.runAsGroup) &&

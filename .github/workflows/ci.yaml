@@ -613,6 +613,7 @@ jobs:
               - 'scripts/tests/test-agentic-engineer-schedule.sh'
               - 'scripts/tests/test-agentic-engineer-lane-store.sh'
               - 'scripts/tests/test-agentic-engineer-lane-store-lease.sh'
+              - 'scripts/tests/test-agentic-engineer-lane-store-gateway.sh'
               - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
               - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
@@ -2898,6 +2899,15 @@ jobs:
         run: |
           shellcheck scripts/tests/test-agentic-engineer-lane-store-lease.sh
           bash scripts/tests/test-agentic-engineer-lane-store-lease.sh
+
+      - name: 🚪 Validate the lane store through Substrate's egress gateway
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the gateway image Substrate deploys in front of the store's pinned
+        # rclone: a WebDAV method that opens a connection gets no reply, and the
+        # run message's own helper reaches PROPFIND, MKCOL, LOCK and UNLOCK.
+        run: |
+          shellcheck scripts/tests/test-agentic-engineer-lane-store-gateway.sh
+          bash scripts/tests/test-agentic-engineer-lane-store-gateway.sh
 
       - name: 🧠 Validate the kagent harness plugin wrapper
         if: needs.changes.outputs.k8s == 'true'

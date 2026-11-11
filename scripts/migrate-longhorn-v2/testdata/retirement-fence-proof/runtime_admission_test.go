@@ -21,7 +21,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const retirementImage = "ghcr.io/devantler-tech/platform-longhorn-instance-manager:v1.13.0-retirement.1-725bb1d09517c84f8b73ff2c0cf175421df351f1-1@sha256:93cfc83d8bab91f9b6fbffe20bf9bdaca28e877d91d7b740cae003bf6853059f"
+const retirementImage = "ghcr.io/devantler-tech/platform-longhorn-instance-manager:v1.13.0-retirement.1-591ed0ccebd032c4d9705c356c267e724b30e2a9-1@sha256:4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7"
 const longhornCreator = "system:serviceaccount:longhorn-system:longhorn-service-account"
 const retirementPolicyPath = "../../../../k8s/providers/hetzner/infrastructure/cluster-policies/"
 
@@ -86,6 +86,9 @@ func TestNativeRetirementRuntimeAdmission(t *testing.T) {
 		{"no labels", func(p *unstructured.Unstructured, _ *user.DefaultInfo) { p.SetLabels(nil) }, false},
 		{"different image", func(p *unstructured.Unstructured, _ *user.DefaultInfo) {
 			retirementPodContainers(p)[0].(map[string]any)["image"] = retirementImage[:len(retirementImage)-1] + "b"
+		}, false},
+		{"superseded unpatched image", func(p *unstructured.Unstructured, _ *user.DefaultInfo) {
+			retirementPodContainers(p)[0].(map[string]any)["image"] = "ghcr.io/devantler-tech/platform-longhorn-instance-manager:v1.13.0-retirement.1-725bb1d09517c84f8b73ff2c0cf175421df351f1-1@sha256:93cfc83d8bab91f9b6fbffe20bf9bdaca28e877d91d7b740cae003bf6853059f"
 		}, false},
 		{"stock image", func(p *unstructured.Unstructured, _ *user.DefaultInfo) {
 			retirementPodContainers(p)[0].(map[string]any)["image"] = "longhornio/longhorn-instance-manager:v1.13.0"
