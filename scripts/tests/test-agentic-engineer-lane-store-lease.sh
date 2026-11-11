@@ -10,8 +10,8 @@
 # - the lease never blocks the holder's own uploads;
 # - a refresh succeeds only with the holder's token and names the holder;
 # - only the holder's token releases it;
-# - a store restart frees it, and a run that held it before can never pass a later run's lease off
-#   as its own.
+# - a store restart frees it and can hand an earlier run's token to a later run's lease, so only a
+#   refresh that names the run as the holder shows the lease is still its own.
 # It also shows why the lease is not a MKCOL: the store accepts a MKCOL of a folder that exists.
 set -euo pipefail
 
@@ -194,25 +194,44 @@ winner="$(token "race-${winners[0]}")"
 names "race-${winners[0]}" "$(owner "$((100 + winners[0]))")" || fail 'the winning reply does not name the winner'
 [[ "$(unlock race-released "${winner}")" == 204 ]] || fail 'the winner could not release the lease'
 
-# A store restart frees the lease, and can hand an earlier run's token to a later run. So a run
-# that held the lease before the restart stops at its refresh: the refresh fails, or names the
-# later run as the holder, never the earlier one. Both runs here take the first lease after a
-# restart, the case where a token could repeat.
+# A store restart frees every lease, and can hand a token a run took before it to a later run's
+# lease: the store numbers its tokens up from the clock at its start, so a burst of writes after a
+# start runs the count ahead of the clock, and the restarted store counts through the same
+# numbers again. This builds exactly that case. The earlier run's refresh then succeeds on the
+# later run's lease, and only the owner shows that the lease is no longer its own.
 docker restart -t 5 "${container}" >/dev/null
 connect
+for burst in $(seq 1 200); do
+  [[ "$(lock burst "$(owner 7)")" == 200 ]] || fail "burst ${burst} could not take the lease: $(body burst)"
+  [[ "$(unlock burst-released "$(token burst)")" == 204 ]] || fail "burst ${burst} could not release the lease"
+done
 [[ "$(lock before-restart "$(owner 4)")" == 200 ]] || fail 'a run could not take the lease before the restart'
 before="$(token before-restart)"
+[[ "${before}" =~ ^\<[0-9]+\>$ ]] ||
+  fail "the store's lock tokens are no longer numbers (${before}): revisit whether a restart can reissue one"
 docker restart -t 5 "${container}" >/dev/null
 connect
-status="$(lock after-restart "$(owner 5)")"
-[[ "${status}" == 200 ]] || fail "the restart did not free the lease: ${status} $(body after-restart)"
-after="$(token after-restart)"
+# Later runs take and release the lease until the store hands out the earlier run's token.
+after=''
+for attempt in $(seq 1 400); do
+  status="$(lock after-restart "$(owner 5)")"
+  [[ "${status}" == 200 ]] || fail "the restart did not free the lease: ${status} $(body after-restart)"
+  after="$(token after-restart)"
+  [[ "${after}" =~ ^\<[0-9]+\>$ ]] || fail "the restarted store's token is not a number: ${after}"
+  reached="${after//[<>]/}"
+  target="${before//[<>]/}"
+  if ((reached >= target)); then
+    break
+  fi
+  [[ "$(unlock after-released "${after}")" == 204 ]] || fail 'a later run could not release the lease'
+done
+[[ "${after}" == "${before}" ]] ||
+  fail "the restarted store did not reissue the earlier token ${before} (reached ${after} after ${attempt} leases)"
 status="$(refresh stale "${before}")"
-if [[ "${status}" == 200 ]] && names stale "$(owner 4)"; then
-  fail 'after a restart, the earlier run passed the refresh as the holder of a lease it lost'
-fi
-if [[ "${before}" == "${after}" ]]; then
-  printf 'note: the restarted store reissued token %s, so only the owner shows who holds the lease\n' "${after}"
+[[ "${status}" == 200 ]] ||
+  fail "the earlier run's token no longer refreshes the later run's lease (${status}), so this no longer shows why the owner matters"
+if names stale "$(owner 4)" || ! names stale "$(owner 5)"; then
+  fail "the refresh on a reissued token does not name the later run as the holder: $(body stale)"
 fi
 [[ "$(lock after-stale "$(owner 6)")" == 423 ]] || fail "the earlier run's refresh released the later run's lease"
 
