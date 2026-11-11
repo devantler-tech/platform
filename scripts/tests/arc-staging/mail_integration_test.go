@@ -11,6 +11,7 @@ import (
 )
 
 const mailRepository = "ghcr.io/devantler-tech/platform-private-mail-bootstrap"
+const mailCandidateRepository = mailRepository + "-candidate"
 const mailPublisher = "https://github.com/devantler-tech/platform/.github/workflows/publish-private-mail-bootstrap.yaml@refs/heads/main"
 
 func mailField[T any](t *testing.T, value any, keys ...string) T {
@@ -85,8 +86,9 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 // Match the first node rule exactly as declared, including catch-all precedence.
 func TestPrivateMailImageUsesItsOwnExactNodeSigner(t *testing.T) {
 	rules := mailField[[]any](t, readYAML(t, "talos/cluster/verify-first-party-images.yaml"), "rules")
-	for _, repository := range []string{mailRepository, mailRepository + "-other", "ghcr.io/devantler-tech/wedding-app"} {
+	for _, repository := range []string{mailRepository, mailCandidateRepository, mailRepository + "-other", mailCandidateRepository + "-other", "ghcr.io/devantler-tech/wedding-app"} {
 		t.Run(repository, func(t *testing.T) {
+			isMail := repository == mailRepository || repository == mailCandidateRepository
 			for _, rule := range rules {
 				match, err := path.Match(mailField[string](t, rule, "image"), repository)
 				if err != nil {
@@ -100,8 +102,8 @@ func TestPrivateMailImageUsesItsOwnExactNodeSigner(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				equal(t, identity.MatchString(mailPublisher), repository == mailRepository)
-				if repository == mailRepository {
+				equal(t, identity.MatchString(mailPublisher), isMail)
+				if isMail {
 					for _, forbidden := range []string{
 						strings.Replace(mailPublisher, "refs/heads/main", "refs/pull/1/merge", 1),
 						strings.Replace(mailPublisher, "refs/heads/main", "refs/heads/other", 1),
@@ -123,11 +125,12 @@ func TestPrivateMailImageUsesItsOwnExactNodeSigner(t *testing.T) {
 
 func TestPrivateMailSignerCannotAuthorizeOtherImageRepositories(t *testing.T) {
 	evaluator := newImagePolicyEvaluator(t, readYAML(t, "k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"))
-	for _, repository := range []string{mailRepository, mailRepository + "-other", "ghcr.io/devantler-tech/wedding-app"} {
+	for _, repository := range []string{mailRepository, mailCandidateRepository, mailRepository + "-other", mailCandidateRepository + "-other", mailCandidateRepository + "/helper", "ghcr.io/devantler-tech/wedding-app"} {
+		isMail := repository == mailRepository || repository == mailCandidateRepository
 		image := repository + "@sha256:" + strings.Repeat("a", 64)
 		admitted, calls := evaluator.evaluate(t, map[string][]string{"containers": {image}, "initContainers": {}, "ephemeralContainers": {}}, map[string]certificateFixture{image: {issuer: githubIssuer, subject: mailPublisher}})
-		equal(t, admitted, repository == mailRepository)
-		if repository == mailRepository {
+		equal(t, admitted, isMail)
+		if isMail {
 			if !slices.Equal(calls, []string{image + "/publishprivatemail"}) {
 				t.Fatal("mail image must use only its dedicated attestor")
 			}

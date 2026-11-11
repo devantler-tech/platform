@@ -151,7 +151,8 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/ksail/\.github/workflows/publish-ksail-analysis-runner\.yaml@refs/heads/main$
-    # Only the mail bootstrap repository accepts its dedicated main publisher.
+    # Only the serving and staged mail bootstrap repositories accept their
+    # dedicated main publisher.
     - name: publishprivatemail
       cosign:
         keyless:
@@ -280,6 +281,9 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@') &&
+          image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate@') &&
           image != 'ghcr.io/devantler-tech/ksail-analysis-runner' &&
           !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:') &&
           !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@'))
@@ -294,7 +298,10 @@ spec:
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-private-mail-bootstrap' ||
           image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:') ||
-          image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@'))
+          image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@') ||
+          image == 'ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate@'))
         .map(image, verifyImageSignatures(image, [attestors.publishprivatemail]))
         .all(e, e > 0)
       message: >-
