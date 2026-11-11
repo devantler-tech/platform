@@ -21,8 +21,8 @@ metadata:
       publish-app for app images, the platform's dedicated compatibility-image
       publishers, each Crossplane provider's own package workflow, KSail's
       publish-ksail-analysis-runner.yaml workflow, the mail bootstrap publisher,
-      the dedicated customer identity publisher, the source-built Dex
-      publisher, and KSail's release workflow.
+      the dedicated customer identity, Dex and Longhorn migration publishers,
+      and KSail's release workflow.
       Each class is verified only against its own identity;
       third-party images admit unverified.
 spec:
@@ -112,6 +112,18 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-checkpoint-hotfix\.yaml@refs/heads/main$
+    - name: publishlonghornretirement
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v1-retirement\.yaml@refs/heads/main$
+    - name: publishlonghornv2
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
     # The reports-controller repair is signed only by its dedicated publisher.
     - name: publishkyvernoreports
       cosign:
@@ -236,6 +248,12 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-dex' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-dex:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-dex@') &&
+          image != 'ghcr.io/devantler-tech/platform-longhorn-instance-manager' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager@') &&
+          image != 'ghcr.io/devantler-tech/platform-longhorn-manager' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager@') &&
           image != 'ghcr.io/devantler-tech/platform-kubescape-storage' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@') &&
@@ -355,6 +373,28 @@ spec:
       message: >-
         Coroot node-agent compatibility image is not signed by the platform
         repository's dedicated main-branch publisher (keyless cosign)
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-longhorn-instance-manager' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishlonghornretirement]))
+        .all(e, e > 0)
+      message: >-
+        The Longhorn V1 retirement image must be signed by its dedicated
+        main-branch publisher.
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-longhorn-manager' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishlonghornv2]))
+        .all(e, e > 0)
+      message: >-
+        The Longhorn V2-only manager image must be signed by its dedicated
+        main-branch publisher.
     - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
