@@ -797,7 +797,7 @@ while IFS=$'\t' read -r file label; do
       43b7eaf13a1b754ed0449239ce9e337de6881751fd009c738efb46e367524824 | \
         691bf7d05ed9d87ae261f34d51e7cd062d345a6af8f6bb2dcf1ec1aeb3dade17 | \
         92dc171d2b1e73eec7679ae3f74e806a3fc8472f7ed3445bfca1541c3d27941d | \
-        55d0841bf6699a0cbf7bb40bcf2b154facc2305cae538b9f75b71774651895d3)
+        9773c0aa3daf4ad4e8939294f0802aa382cce33d5675f1f3e65e23f8791eb021)
         reviewed_cel_surfaces="$(jq -ce --argjson candidate "$candidate" '. + [$candidate]' <<<"$reviewed_cel_surfaces")" ||
           refuse 'could not record the complete reviewed mutation policy'
         ;;
