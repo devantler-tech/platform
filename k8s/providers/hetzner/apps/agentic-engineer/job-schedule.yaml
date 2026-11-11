@@ -97,26 +97,49 @@ spec:
                 Scheduled run of the devantler-tech Agentic Engineer on its kagent lane:
                 instance `kagent-cluster`, writer namespace `kagent/*`, one run a day.
 
-                1. Restore your native memory from the lane store. List memory/ with a
+                1. Take the lane store's single-writer lease, so that overlapping runs
+                   never overwrite each other's memory (devantler-tech/monorepo#4910).
+                   Send a WebDAV LOCK to lease (the store URL plus /lease) with the
+                   store header, `Timeout: Infinite` and `Content-Type: application/xml`,
+                   and this body with OWNER replaced by `agentic-engineer`, your UTC
+                   start time and a random 16-hex-digit nonce, which is your owner:
+                   `<?xml version="1.0"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype><D:owner>OWNER</D:owner></D:lockinfo>`
+                   Read the status with `curl -sS -D -`, not -f, which hides it. A 200
+                   or 201 means you hold the lease: keep the reply's Lock-Token value,
+                   angle brackets included. A 423 means another run holds it, or a run
+                   that crashed left it behind: stop, upload nothing and report it.
+                   Never remove a lease you did not take. Any other reply also stops
+                   the run before it touches memory.
+                2. Restore your native memory from the lane store. List memory/ with a
                    WebDAV PROPFIND (`curl -fsS -X PROPFIND -H 'Depth: 1'` plus the store
                    header) and download every file into ~/lane-memory/. Only a 404 for
                    memory/ means a first run, so start with an empty ~/lane-memory/. Any
-                   other failure means the store is unreachable: stop and report it.
-                2. Shallow-clone devantler-tech/monorepo, read its AGENTS.md, load the
+                   other failure, or a download you cannot complete, stops the run:
+                   release the lease with the UNLOCK of step 4, upload nothing and
+                   report it.
+                3. Shallow-clone devantler-tech/monorepo, read its AGENTS.md, load the
                    agentic-engineering plugin and invoke its agentic-engineer entrypoint
                    as this scheduled run. ~/lane-memory/ is your native memory (the
                    legacy layout), as the durable-memory guide says for this lane.
                    Follow the consumer contract and fail closed on missing deployment
                    facts. Do not duplicate the role here.
-                3. Before you stop, however the run ended, upload ~/lane-memory/ back to
-                   memory/ on the lane store, and upload this session's transcript (the
-                   newest Claude Code session JSONL under your Claude config directory)
-                   and your run report to runs/<UTC date>/transcript.jsonl and
-                   runs/<UTC date>/report.md. If an earlier run that day already wrote
-                   them, never replace them: write yours beside them as
-                   transcript-<UTC time HHMMSS>.jsonl and report-<UTC time HHMMSS>.md.
-                   Create a missing folder with MKCOL before writing into it, and check
-                   that every upload succeeded.
+                4. Before you stop, however the run ended, refresh the lease: a LOCK to
+                   lease with the store header, `Timeout: Infinite`, no body, and your
+                   Lock-Token value in parentheses as the If header (`If: (<t>)` for
+                   `Lock-Token: <t>`). You still hold the lease only if the reply is 200
+                   and its owner is yours: a store restart drops every lease and can
+                   hand your token to another run. On any other reply, upload nothing,
+                   leave the lease alone and report it. Otherwise upload ~/lane-memory/
+                   back to memory/,
+                   and upload this session's transcript (the newest Claude Code session
+                   JSONL under your Claude config directory) and your run report to
+                   runs/<UTC date>/transcript.jsonl and runs/<UTC date>/report.md. If
+                   an earlier run that day already wrote them, never replace them:
+                   write yours beside them as transcript-<UTC time HHMMSS>.jsonl and
+                   report-<UTC time HHMMSS>.md. Create a missing folder with MKCOL
+                   before writing into it, and check that every upload succeeded. Then
+                   release the lease: an UNLOCK to lease with the store header and your
+                   Lock-Token value as the Lock-Token header.
 
                 This run may open, update and review devantler-tech pull requests and
                 issues, per AGENTS.md. It never merges. Only when genuinely blocked on a
