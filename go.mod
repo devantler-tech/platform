@@ -145,3 +145,5 @@ require (
 )
 
 replace github.com/kopia/kopia => github.com/project-velero/kopia v0.0.0-20251230033609-d946b1e75197
+
+replace github.com/emersion/go-smtp => ./third_party/go-smtp

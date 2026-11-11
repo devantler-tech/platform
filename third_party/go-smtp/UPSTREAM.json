@@ -1,0 +1,15 @@
+{
+  "module": "github.com/emersion/go-smtp",
+  "version": "v0.25.1",
+  "sum": "h1:y6nzefT6PtFeMItFw97GX/ZCkVbh0rqSXG8b3ang8/w=",
+  "goModSum": "h1:ZtRRkbTyp2XTHCA+BmyTFTrj8xY4I+b4McvHxCU2gsQ=",
+  "origin": {
+    "VCS": "git",
+    "URL": "https://github.com/emersion/go-smtp",
+    "Hash": "0ed1f057d5110fb8071dcfb7b8d2e72ec05067a6",
+    "Ref": "refs/tags/v0.25.1"
+  },
+  "localChanges": [
+    "conn.go: reset both envelope states before MAIL parameter validation"
+  ]
+}

@@ -126,3 +126,66 @@ func TestNativeDeclaredMessageBound(t *testing.T) {
 	default:
 	}
 }
+
+func TestNativeNewMailReplacesNativeEnvelope(t *testing.T) {
+	cfg, peer, trust := fixtureConfiguration(t)
+	client := authenticatedClient(t, fixtureGateway(t, cfg, nil), trust, cfg)
+	if err := client.Mail(cfg.Settings.Sender, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Rcpt("earlier@example.invalid", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Mail(cfg.Settings.Sender, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Rcpt("current@example.invalid", nil); err != nil {
+		t.Fatal("native envelope retained the earlier recipient:", err)
+	}
+	writer, err := client.Data()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = io.WriteString(writer, validMessage); err != nil {
+		t.Fatal(err)
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case message := <-peer.messages:
+		if len(message.to) != 1 || message.to[0] != "current@example.invalid" {
+			t.Fatal("new transaction delivered to an earlier recipient")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replacement transaction missing upstream")
+	}
+}
+
+func TestNativeParserRejectedMailCannotReuseRecipient(t *testing.T) {
+	cfg, peer, trust := fixtureConfiguration(t)
+	client := authenticatedClient(t, fixtureGateway(t, cfg, nil), trust, cfg)
+	if err := client.Mail(cfg.Settings.Sender, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Rcpt("earlier@example.invalid", nil); err != nil {
+		t.Fatal(err)
+	}
+	// This SIZE is rejected by the SMTP parser before the backend Mail callback.
+	if err := client.Mail(cfg.Settings.Sender, &smtp.MailOptions{Size: maxMessageBytes + 2}); err == nil {
+		t.Fatal("parser accepted oversized MAIL")
+	}
+	writer, err := client.Data()
+	if err == nil {
+		_, _ = io.WriteString(writer, validMessage)
+		err = writer.Close()
+	}
+	if err == nil {
+		t.Fatal("parser-rejected MAIL left a reusable old envelope")
+	}
+	select {
+	case <-peer.messages:
+		t.Fatal("parser-rejected transaction reached upstream")
+	default:
+	}
+}

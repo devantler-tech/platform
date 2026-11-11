@@ -46,7 +46,8 @@ generation. Do not put actual settings, passwords or certificates in Git.
 requires TLS 1.2 or newer, bounds active connections to 16 and each connection to
 30 seconds, accepts at most three authentication attempts per connection and one
 recipient per message. Messages are limited to 1 MiB and headers to 64 KiB.
-Authentication has a shared burst allowance of sixteen attempts and replenishes\none allowance per second. Submission has a shared burst allowance of ten messages and replenishes one
+Authentication has a shared burst allowance of sixteen attempts and replenishes
+one allowance per second. Submission has a shared burst allowance of ten messages and replenishes one
 allowance every six seconds. RSET does not reset these budgets. The upstream
 connection has an absolute ten-second lifetime. Shutdown allows five seconds for
 active sessions, then closes them.
@@ -58,6 +59,9 @@ The original accepted message bytes are submitted unchanged.
 ## Validation and deployment boundary
 
 Run `go test -race ./scripts/mail-submission` and `go vet ./scripts/mail-submission`.
+Run `go -C third_party/go-smtp test -race -timeout 2m ./...` for the pinned
+protocol library, whose parser resets both envelopes before MAIL validation.
+Its upstream identity and unchanged license are recorded with that source.
 Tests use generated fictional certificates and native Go SMTP peers on loopback.
 They cover author and envelope refusals, credential separation, receiving and
 upstream TLS, unavailable peers, permanent refusals, lost acknowledgements,
@@ -70,6 +74,8 @@ upstream send-only policy and actual invitation-delivery acceptance. Its
 prerequisite recovery hold must remain intact. The portal remains closed until
 its separate end-to-end sign-in and invitation checks pass.
 
-The SMTP and SASL libraries are MIT-licensed (`github.com/emersion/go-smtp` and
-`github.com/emersion/go-sasl`). The repository's existing terms apply to this
-component's own source; no new license grant is introduced.
+The upstream SMTP and SASL libraries are MIT-licensed
+(`github.com/emersion/go-smtp` and `github.com/emersion/go-sasl`); those upstream
+terms remain with the copied SMTP source. The repository's existing terms apply
+to this component's own source and local modifications; no new own-code license
+grant is introduced.

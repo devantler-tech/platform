@@ -18,6 +18,11 @@ Its application credential differs from the upstream send-only credential and is
 not accepted by the upstream service. No successful acknowledgement is returned
 before the upstream accepts the complete message.
 
+The pinned SMTP protocol source in `third_party/go-smtp` resets both parser and
+backend envelope state before MAIL parameter validation. This prevents an early
+protocol refusal from leaving an earlier recipient available to DATA. Its
+upstream license, source identity and tests remain alongside the source snapshot.
+
 The executable has no default listener. It is not installed or enabled by this
 source delivery. Deployment, private credential custody and real delivery remain
 under the dedicated-sender issue. Existing mail, inbound routing and the agents'
