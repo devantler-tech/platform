@@ -93,7 +93,7 @@ jobs:
       - name: Exercise the reconciler toolchain and Prometheus configuration
         shell: bash
         env:
-          RECONCILER_IMAGE: docker.io/badouralix/curl-jq@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+          RECONCILER_IMAGE: docker.io/badouralix/curl-jq@sha256:7f3c18b2a7d72e8f6f89d5395f171d37a83d6015b6de718e5f4c5396305981b7
           PROMETHEUS_IMAGE: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
         run: |
           set -euo pipefail

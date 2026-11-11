@@ -26,7 +26,7 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/devantler-tech/platform-kagent-claude-harness
-  IMAGE_TAG: 1.0.0-rc3-${{ github.sha }}
+  IMAGE_TAG: 1.0.0-${{ github.sha }}
   CONTEXT: scripts/kagent-claude-harness
 
 jobs:

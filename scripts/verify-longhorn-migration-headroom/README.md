@@ -19,6 +19,14 @@ outcomes. A rejected provider envelope identifies which pagination or capacity
 checks failed, without printing response values or weakening those checks.
 Credentials and provider/node payloads remain in runner memory.
 
+If the account is full, confirm `observe-longhorn-provider-account` to reconcile
+the migration roster with up to ten provider records. This read-only diagnostic
+requires two matching provider lists between unchanged Kubernetes Node reads.
+It reports aggregate counts and a fixed classification of at most one
+unmatched server based on provider labels. Use a separate, reviewed ownership
+and cleanup procedure for any provider write. The normal headroom gate still
+requires a reserved builder slot.
+
 The later worker activation must repeat this check immediately before mutable
 publication and before updating the pool, then require the full nine-node roster
 after Talos readiness. An earlier workflow result alone is insufficient. These

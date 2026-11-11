@@ -1,0 +1,376 @@
+diff --git a/chart/README.md b/chart/README.md
+index 551ffaac28997988be1db16e35b95436e1be9428..9926f4578c79c68185c419f8cb051ad98a6bcd07 100644
+--- a/chart/README.md
++++ b/chart/README.md
+@@ -22,7 +22,36 @@ Longhorn is 100% open source software. Project source code is spread across a nu
+ 1. A container runtime compatible with Kubernetes (Docker v1.13+, containerd v1.3.7+, etc.)
+ 2. Kubernetes >= v1.34
+ 3. Make sure `bash`, `curl`, `findmnt`, `grep`, `awk` and `blkid` has been installed in all nodes of the Kubernetes cluster.
+-4. Make sure `open-iscsi` has been installed, and the `iscsid` daemon is running on all nodes of the Kubernetes cluster. For GKE, recommended Ubuntu as guest OS image since it contains `open-iscsi` already.
++4. In the default `v1-capable` mode, make sure `open-iscsi` is installed and the `iscsid` daemon is running on all nodes. This includes mixed V1/V2 installations. For GKE, Ubuntu includes `open-iscsi` already.
++
++## V2-only installation capability
++
++`dataEngineMode: v2-only` selects an explicit installation capability supported by a compatible Longhorn Manager release. It is separate from enabling V2 alongside V1. The default `v1-capable` mode preserves existing manager commands and iSCSI prerequisites.
++
++For a fresh V2-only installation with a chart-owned StorageClass, set these values and use the tag and digest from the matching signed manager release:
++
++```yaml
++dataEngineMode: v2-only
++image:
++  longhorn:
++    manager:
++      registry: ghcr.io
++      repository: devantler-tech/platform-longhorn-manager
++      tag: <published-tag>@sha256:<verified-digest>
++defaultSettings:
++  v1DataEngine: false
++  v2DataEngine: true
++persistence:
++  dataEngine: v2
++```
++
++The chart rejects the stock manager repository and unresolved or conflicting engine settings, including when upgrade hooks are disabled. The Platform manager repository requires a published `v1.13.0-platform.<run>` tag. Daemon, global manager and pre-upgrade commands receive the capability explicitly. The manager separately checks live storage and runtime before starting. V2 nodes still require their normal V2 disk, CPU, kernel, NVMe/TCP and memory/hugepage prerequisites.
++
++For an existing installation, retain iSCSI throughout migration. Move or restore every V1 volume and retained snapshot that must be kept, prove V2 recovery, and retire V1 engines, replicas and instance-manager runtime before selecting V2-only mode. This value does not convert existing data, snapshots or immutable StorageClass parameters. Remove host iSCSI dependencies only after the V2-only rollout is verified on every node.
++
++Apply and verify the explicit engine settings and StorageClass ownership while still in `v1-capable` mode first, then opt into `v2-only` in a separate upgrade. The pre-upgrade check receives the requested capability but validates the installed settings and runtime before the new ConfigMap is applied.
++
++The chart's `longhorn-storageclass` ConfigMap causes the manager to delete and recreate the generated `longhorn` StorageClass when its embedded definition changes. Prepare and select an external V2 StorageClass and set `persistence.createStorageClass=false` during an existing installation's migration, or establish that the chart-owned class already has matching parameters. The chart cannot verify that live ownership or parameter match during rendering.
+ 
+ ## Upgrading to Kubernetes v1.25+
+ 
+@@ -342,6 +371,7 @@ For more details, see the [ocp-readme](https://github.com/longhorn/longhorn/blob
+ | Key | Default | Description |
+ |-----|---------|-------------|
+ | annotations | `{}` | Annotation for the Longhorn Manager DaemonSet pods. This setting is optional. |
++| dataEngineMode | `"v1-capable"` | Installation capability. v1-capable preserves mixed-engine behavior and iSCSI requirements. v2-only requires explicit V1=false/V2=true settings and a V2 StorageClass when chart-owned. Use a manager release supporting this option. |
+ | defaultBackupStore | `{"backupTarget":null,"backupTargetCredentialSecret":null,"pollInterval":null}` | Setting that allows you to update the default backupstore. |
+ | defaultBackupStore.backupTarget | `nil` | Endpoint used to access the default backupstore. (Options: "NFS", "CIFS", "AWS", "GCP", "AZURE") |
+ | defaultBackupStore.backupTargetCredentialSecret | `nil` | Name of the Kubernetes secret associated with the default backup target. |
+diff --git a/chart/README.md.gotmpl b/chart/README.md.gotmpl
+index 727a6ac4b96fcb0c8366fd22175600b426c7fd7f..5065e4178e9d9d79f7ce5508e58ca2a602203fad 100644
+--- a/chart/README.md.gotmpl
++++ b/chart/README.md.gotmpl
+@@ -22,7 +22,36 @@ Longhorn is 100% open source software. Project source code is spread across a nu
+ 1. A container runtime compatible with Kubernetes (Docker v1.13+, containerd v1.3.7+, etc.)
+ 2. Kubernetes >= v1.34
+ 3. Make sure `bash`, `curl`, `findmnt`, `grep`, `awk` and `blkid` has been installed in all nodes of the Kubernetes cluster.
+-4. Make sure `open-iscsi` has been installed, and the `iscsid` daemon is running on all nodes of the Kubernetes cluster. For GKE, recommended Ubuntu as guest OS image since it contains `open-iscsi` already.
++4. In the default `v1-capable` mode, make sure `open-iscsi` is installed and the `iscsid` daemon is running on all nodes. This includes mixed V1/V2 installations. For GKE, Ubuntu includes `open-iscsi` already.
++
++## V2-only installation capability
++
++`dataEngineMode: v2-only` selects an explicit installation capability supported by a compatible Longhorn Manager release. It is separate from enabling V2 alongside V1. The default `v1-capable` mode preserves existing manager commands and iSCSI prerequisites.
++
++For a fresh V2-only installation with a chart-owned StorageClass, set these values and use the tag and digest from the matching signed manager release:
++
++```yaml
++dataEngineMode: v2-only
++image:
++  longhorn:
++    manager:
++      registry: ghcr.io
++      repository: devantler-tech/platform-longhorn-manager
++      tag: <published-tag>@sha256:<verified-digest>
++defaultSettings:
++  v1DataEngine: false
++  v2DataEngine: true
++persistence:
++  dataEngine: v2
++```
++
++The chart rejects the stock manager repository and unresolved or conflicting engine settings, including when upgrade hooks are disabled. The Platform manager repository requires a published `v1.13.0-platform.<run>` tag. Daemon, global manager and pre-upgrade commands receive the capability explicitly. The manager separately checks live storage and runtime before starting. V2 nodes still require their normal V2 disk, CPU, kernel, NVMe/TCP and memory/hugepage prerequisites.
++
++For an existing installation, retain iSCSI throughout migration. Move or restore every V1 volume and retained snapshot that must be kept, prove V2 recovery, and retire V1 engines, replicas and instance-manager runtime before selecting V2-only mode. This value does not convert existing data, snapshots or immutable StorageClass parameters. Remove host iSCSI dependencies only after the V2-only rollout is verified on every node.
++
++Apply and verify the explicit engine settings and StorageClass ownership while still in `v1-capable` mode first, then opt into `v2-only` in a separate upgrade. The pre-upgrade check receives the requested capability but validates the installed settings and runtime before the new ConfigMap is applied.
++
++The chart's `longhorn-storageclass` ConfigMap causes the manager to delete and recreate the generated `longhorn` StorageClass when its embedded definition changes. Prepare and select an external V2 StorageClass and set `persistence.createStorageClass=false` during an existing installation's migration, or establish that the chart-owned class already has matching parameters. The chart cannot verify that live ownership or parameter match during rendering.
+ 
+ ## Upgrading to Kubernetes v1.25+
+ 
+diff --git a/chart/questions.yaml b/chart/questions.yaml
+index 120da852bfff00c27811a502b8115e5513b0ebd5..5b58a560dc6b87b760187c7168bfcb2ffa40cf97 100644
+--- a/chart/questions.yaml
++++ b/chart/questions.yaml
+@@ -2,6 +2,15 @@ categories:
+   - storage
+ namespace: longhorn-system
+ questions:
++  - variable: dataEngineMode
++    default: v1-capable
++    description: Installation capability. v2-only requires explicit V1 disabled and V2 enabled settings, a V2 chart-owned StorageClass, and a compatible manager release. Migrate existing V1 storage before opting in.
++    label: Data Engine Installation Capability
++    type: enum
++    options:
++      - v1-capable
++      - v2-only
++    group: Longhorn Settings
+   - variable: image.defaultImage
+     default: 'true'
+     description: Use default Longhorn images
+diff --git a/chart/templates/_helpers.tpl b/chart/templates/_helpers.tpl
+index db6b9350e94dccca7a147330ed6300015bb69fa3..95f1aa2eb0452e5ae70aee01deae90859a8f9864 100644
+--- a/chart/templates/_helpers.tpl
++++ b/chart/templates/_helpers.tpl
+@@ -89,3 +89,31 @@ When .Values.global.timezone is set, this snippet renders a TZ env var.
+   value: {{ .Values.global.timezone | quote }}
+ {{- end }}
+ {{- end -}}
++
++{{/* Validate installation capability even when all optional hooks are disabled. */}}
++{{- define "longhorn.validateDataEngineMode" -}}
++{{- $mode := .Values.dataEngineMode -}}
++{{- if not (kindIs "string" $mode) -}}
++  {{- fail "dataEngineMode must be v1-capable or v2-only" -}}
++{{- else if not (or (eq $mode "v1-capable") (eq $mode "v2-only")) -}}
++  {{- fail "dataEngineMode must be v1-capable or v2-only" -}}
++{{- end -}}
++{{- if eq $mode "v2-only" -}}
++  {{- if or (ne (toString .Values.defaultSettings.v1DataEngine) "false") (ne (toString .Values.defaultSettings.v2DataEngine) "true") -}}
++    {{- fail "v2-only requires explicit defaultSettings.v1DataEngine=false and defaultSettings.v2DataEngine=true" -}}
++  {{- end -}}
++  {{- if and .Values.persistence.createStorageClass (ne .Values.persistence.dataEngine "v2") -}}
++    {{- fail "v2-only requires persistence.dataEngine=v2 when persistence.createStorageClass=true" -}}
++  {{- end -}}
++  {{- $managerRepository := .Values.image.longhorn.manager.repository -}}
++  {{- if or (empty $managerRepository) (eq $managerRepository "longhornio/longhorn-manager") -}}
++    {{- fail "v2-only requires an explicit compatible image.longhorn.manager.repository" -}}
++  {{- end -}}
++  {{- if eq $managerRepository "devantler-tech/platform-longhorn-manager" -}}
++    {{- $managerTag := toString .Values.image.longhorn.manager.tag -}}
++    {{- if not (regexMatch `^v1\.13\.0-platform\.[1-9][0-9]{0,11}(@sha256:[a-f0-9]{64})?$` $managerTag) -}}
++      {{- fail "v2-only requires a published v1.13.0-platform.<run> tag for the Platform manager" -}}
++    {{- end -}}
++  {{- end -}}
++{{- end -}}
++{{- end -}}
+diff --git a/chart/templates/daemonset-sa.yaml b/chart/templates/daemonset-sa.yaml
+index 35159428ff1dd9200cc81e3b8d98f08652fefab2..5715b5b6b8a89e289b2e2f50f93b5b93ba13a882 100644
+--- a/chart/templates/daemonset-sa.yaml
++++ b/chart/templates/daemonset-sa.yaml
+@@ -24,6 +24,10 @@ spec:
+         imagePullPolicy: {{ .Values.image.pullPolicy }}
+         securityContext:
+           privileged: true
++          {{- if eq .Values.dataEngineMode "v2-only" }}
++          runAsUser: 0
++          runAsGroup: 0
++          {{- end }}
+         command:
+         - longhorn-manager
+         - -d
+@@ -31,6 +35,10 @@ spec:
+         - -j
+         {{- end }}
+         - daemon
++        {{- if eq .Values.dataEngineMode "v2-only" }}
++        - --data-engine-mode
++        - v2-only
++        {{- end }}
+         - --engine-image
+         - "{{ with (coalesce .Values.global.imageRegistry (include "registry_url" .) .Values.image.longhorn.engine.registry "docker.io") }}{{ . }}/{{ end }}{{ .Values.image.longhorn.engine.repository }}:{{ .Values.image.longhorn.engine.tag }}"
+         - --instance-manager-image
+diff --git a/chart/templates/deployment-driver.yaml b/chart/templates/deployment-driver.yaml
+index 664471fc0c5dc08ff047ad47735d7c5df3ff59b3..32ff26a1f6f8fc7432736c8f1ec8d592a0487b04 100644
+--- a/chart/templates/deployment-driver.yaml
++++ b/chart/templates/deployment-driver.yaml
+@@ -153,6 +153,9 @@ spec:
+       serviceAccountName: longhorn-service-account
+       securityContext:
+         runAsUser: 0
++        {{- if eq .Values.dataEngineMode "v2-only" }}
++        runAsGroup: 0
++        {{- end }}
+       {{- if .Values.enableGoCoverDir }}
+       volumes:
+       - name: go-cover-dir
+diff --git a/chart/templates/deployment-global-manager.yaml b/chart/templates/deployment-global-manager.yaml
+index 46385acd4e164b53197e875f68feb7325bb82b5d..7d5ad21bb48e0eb71ba63df52b61e645faa357ed 100644
+--- a/chart/templates/deployment-global-manager.yaml
++++ b/chart/templates/deployment-global-manager.yaml
+@@ -30,6 +30,10 @@ spec:
+         - -j
+         {{- end }}
+         - global
++        {{- if eq .Values.dataEngineMode "v2-only" }}
++        - --data-engine-mode
++        - v2-only
++        {{- end }}
+         ports:
+         - containerPort: 9505
+           name: healthz
+diff --git a/chart/templates/preupgrade-job.yaml b/chart/templates/preupgrade-job.yaml
+index 05b6d020825147f906217c5fd4b4dd58e4e8ed36..e103759b72f3376d8f95a96e15806e8e2d7646c2 100644
+--- a/chart/templates/preupgrade-job.yaml
++++ b/chart/templates/preupgrade-job.yaml
+@@ -22,9 +22,17 @@ spec:
+         imagePullPolicy: {{ .Values.image.pullPolicy }}
+         securityContext:
+           privileged: true
++          {{- if eq .Values.dataEngineMode "v2-only" }}
++          runAsUser: 0
++          runAsGroup: 0
++          {{- end }}
+         command:
+         - longhorn-manager
+         - pre-upgrade
++        {{- if eq .Values.dataEngineMode "v2-only" }}
++        - --data-engine-mode
++        - v2-only
++        {{- end }}
+         volumeMounts:
+         - name: proc
+           mountPath: /host/proc/
+diff --git a/chart/templates/storageclass.yaml b/chart/templates/storageclass.yaml
+index c901003da6b876ce51e05a09b149d970a45dc497..e6ce3db7173f74f7725fb4f003e93711cbbd7fab 100644
+--- a/chart/templates/storageclass.yaml
++++ b/chart/templates/storageclass.yaml
+@@ -63,8 +63,8 @@ data:
+       {{- end }}
+       {{- if .Values.persistence.disableRevisionCounter }}
+       disableRevisionCounter: "{{ .Values.persistence.disableRevisionCounter }}"
+-      dataEngine: "{{ .Values.persistence.dataEngine }}"
+       {{- end }}
++      dataEngine: "{{ .Values.persistence.dataEngine }}"
+       {{- if .Values.persistence.backupTargetName }}
+       backupTargetName: "{{ .Values.persistence.backupTargetName }}"
+       {{- end }}
+diff --git a/chart/templates/validate-data-engine-mode.yaml b/chart/templates/validate-data-engine-mode.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..db5629dc450920863218854f554d5fae04f032f8
+--- /dev/null
++++ b/chart/templates/validate-data-engine-mode.yaml
+@@ -0,0 +1 @@
++{{- include "longhorn.validateDataEngineMode" . -}}
+diff --git a/chart/values.yaml b/chart/values.yaml
+index 4d57d3c159fc355ea9be0ca5081ca0fa0f6448ba..b7422f04e0f4c6b7c816d2d2f1eca8fb3997ee8d 100644
+--- a/chart/values.yaml
++++ b/chart/values.yaml
+@@ -1,6 +1,8 @@
+ # Default values for longhorn.
+ # This is a YAML-formatted file.
+ # Declare variables to be passed into your templates.
++# -- Installation capability. v1-capable preserves mixed-engine behavior and iSCSI requirements. v2-only requires explicit V1=false/V2=true settings and a V2 StorageClass when chart-owned. Use a manager release supporting this option.
++dataEngineMode: v1-capable
+ global:
+   # -- Global override for container image registry.
+   imageRegistry: ""
+diff --git a/scripts/test-data-engine-mode-chart.sh b/scripts/test-data-engine-mode-chart.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..93722a7fa14c005956793b9538f4c28f1fac863b
+--- /dev/null
++++ b/scripts/test-data-engine-mode-chart.sh
+@@ -0,0 +1,111 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++chart_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++chart_scratch="$(mktemp -d)"
++trap 'rm -rf "$chart_scratch"' EXIT
++failed=0
++
++render() {
++  helm template longhorn "$chart_root/chart" --namespace longhorn-system --kube-version 1.34.0 "$@"
++}
++
++expect_failure() {
++  if render "$@" >"$chart_scratch/rejected.yaml" 2>"$chart_scratch/rejected.stderr"; then
++    printf 'FAIL: invalid capability values rendered: %s\n' "$*" >&2
++    failed=1
++  fi
++}
++
++for mode in unknown V2-Only '' null 1; do
++  expect_failure --set "dataEngineMode=$mode"
++done
++expect_failure --set dataEngineMode=v2-only
++expect_failure --set dataEngineMode=v2-only --set defaultSettings.v1DataEngine=true --set defaultSettings.v2DataEngine=true --set persistence.dataEngine=v2
++expect_failure --set dataEngineMode=v2-only --set defaultSettings.v1DataEngine=false --set defaultSettings.v2DataEngine=false --set persistence.dataEngine=v2
++expect_failure --set dataEngineMode=v2-only --set defaultSettings.v1DataEngine=false --set defaultSettings.v2DataEngine=true
++expect_failure --set dataEngineMode=v2-only --set preUpgradeChecker.jobEnabled=false --set preUpgradeChecker.upgradeVersionCheck=false
++
++render >"$chart_scratch/default.yaml"
++render --set dataEngineMode=v1-capable >"$chart_scratch/explicit-default.yaml"
++cmp "$chart_scratch/default.yaml" "$chart_scratch/explicit-default.yaml"
++if grep -q -- '--data-engine-mode' "$chart_scratch/default.yaml"; then
++  printf '%s\n' 'FAIL: default argv changed' >&2
++  failed=1
++fi
++if [[ -n "${CHART_DEFAULT_BASELINE:-}" ]]; then
++  cmp "$CHART_DEFAULT_BASELINE" "$chart_scratch/default.yaml"
++fi
++
++v2=(--set dataEngineMode=v2-only --set defaultSettings.v1DataEngine=false --set defaultSettings.v2DataEngine=true --set persistence.dataEngine=v2)
++expect_failure "${v2[@]}"
++expect_failure "${v2[@]}" --set image.longhorn.manager.registry=mirror.example
++expect_failure "${v2[@]}" --set-string 'image.longhorn.manager.repository='
++platform_manager=(--set image.longhorn.manager.registry=ghcr.io --set image.longhorn.manager.repository=devantler-tech/platform-longhorn-manager)
++expect_failure "${v2[@]}" --set image.longhorn.manager.repository=devantler-tech/platform-longhorn-manager
++expect_failure "${v2[@]}" "${platform_manager[@]}"
++for tag in latest v1.13.0-platform.0 v1.13.0-platform.1@sha256:deadbeef; do
++  expect_failure "${v2[@]}" "${platform_manager[@]}" --set-string "image.longhorn.manager.tag=$tag"
++done
++render "${v2[@]}" --set image.longhorn.manager.registry=registry.example --set image.longhorn.manager.repository=compatible/longhorn-manager >"$chart_scratch/custom.yaml"
++grep -q 'image: registry.example/compatible/longhorn-manager:v1.13.0' "$chart_scratch/custom.yaml"
++manager=("${platform_manager[@]}" --set image.longhorn.manager.tag=v1.13.0-platform.1)
++v2+=("${manager[@]}")
++render "${v2[@]}" >"$chart_scratch/v2.yaml"
++grep -q 'image: ghcr.io/devantler-tech/platform-longhorn-manager:v1.13.0-platform.1' "$chart_scratch/v2.yaml"
++pinned_tag="v1.13.0-platform.1@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
++render "${v2[@]}" --set-string "image.longhorn.manager.tag=$pinned_tag" >"$chart_scratch/pinned.yaml"
++grep -Fq "image: ghcr.io/devantler-tech/platform-longhorn-manager:$pinned_tag" "$chart_scratch/pinned.yaml"
++if [[ "$(grep -c -- '--data-engine-mode' "$chart_scratch/v2.yaml" || true)" != 3 ]]; then
++  printf '%s\n' 'FAIL: V2 capability must reach daemon, global manager and pre-upgrade' >&2
++  failed=1
++fi
++for launch in daemon global pre-upgrade; do
++  if ! awk -v launch="$launch" '
++    $0 ~ "^[[:space:]]*-[[:space:]]+" launch "$" { state=1; next }
++    state==1 { if ($0 !~ /^[[:space:]]*-[[:space:]]+--data-engine-mode$/) exit 1; state=2; next }
++    state==2 { if ($0 !~ /^[[:space:]]*-[[:space:]]+v2-only$/) exit 1; found=1; state=0 }
++    END { if (!found) exit 1 }
++  ' "$chart_scratch/v2.yaml"; then
++    printf 'FAIL: explicit V2 capability missing after %s\n' "$launch" >&2
++    failed=1
++  fi
++done
++for template in daemonset-sa preupgrade-job deployment-driver; do
++  render "${v2[@]}" --show-only "templates/$template.yaml" >"$chart_scratch/runtime.yaml"
++  if ! grep -q 'runAsUser: 0' "$chart_scratch/runtime.yaml" || ! grep -q 'runAsGroup: 0' "$chart_scratch/runtime.yaml"; then
++    printf '%s\n' "FAIL: host runtime identity missing from $template" >&2
++    failed=1
++  fi
++done
++render "${v2[@]}" --show-only templates/deployment-global-manager.yaml >"$chart_scratch/runtime.yaml"
++if grep -Eq 'runAs(User|Group): 0' "$chart_scratch/runtime.yaml"; then
++  printf '%s\n' 'FAIL: the global controller inherited a root override' >&2
++  failed=1
++fi
++grep -q 'v1-data-engine: false' "$chart_scratch/v2.yaml"
++grep -q 'v2-data-engine: true' "$chart_scratch/v2.yaml"
++for counter in false ''; do
++  render "${v2[@]}" --set "persistence.disableRevisionCounter=$counter" >"$chart_scratch/counter.yaml"
++  if ! grep -q 'dataEngine: "v2"' "$chart_scratch/counter.yaml"; then
++    printf '%s\n' 'FAIL: revision-counter choice erased the StorageClass engine' >&2
++    failed=1
++  fi
++done
++render "${v2[@]}" --set-string persistence.disableRevisionCounter=false >"$chart_scratch/counter-string.yaml"
++grep -q 'dataEngine: "v2"' "$chart_scratch/counter-string.yaml"
++render "${manager[@]}" --set dataEngineMode=v2-only --set defaultSettings.v1DataEngine=false --set defaultSettings.v2DataEngine=true --set persistence.createStorageClass=false >"$chart_scratch/external-class.yaml"
++if grep -q 'name: longhorn-storageclass' "$chart_scratch/external-class.yaml"; then
++  printf '%s\n' 'FAIL: chart claimed an externally owned StorageClass' >&2
++  failed=1
++fi
++render "${v2[@]}" --set preUpgradeChecker.jobEnabled=false >"$chart_scratch/no-hook.yaml"
++if [[ "$(grep -c -- '--data-engine-mode' "$chart_scratch/no-hook.yaml" || true)" != 2 ]]; then
++  printf '%s\n' 'FAIL: disabling the hook changed manager capability' >&2
++  failed=1
++fi
++
++if (( failed )); then
++  exit 1
++fi
++printf '%s\n' 'PASS: chart capability validation, native argv, StorageClass intent and default compatibility'
