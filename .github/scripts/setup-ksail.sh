@@ -7,7 +7,6 @@ if [ -z "${KSAIL_VERSION:-}" ]; then
 fi
 
 asset_name="ksail_${KSAIL_VERSION}_linux_amd64.tar.gz"
-release_base="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
 api_url="https://api.github.com/repos/devantler-tech/ksail/releases/tags/v${KSAIL_VERSION}"
 tarball="${RUNNER_TEMP:-/tmp}/${asset_name}"
 checksums="${RUNNER_TEMP:-/tmp}/ksail_${KSAIL_VERSION}_checksums.txt"
@@ -22,13 +21,17 @@ fi
 # because one momentary error from the release host would otherwise fail the job and,
 # in a merge-group deploy, evict the pull request (#4549). Every byte is still checked
 # against both digest sources below, and a persistent failure still stops here. The
-# total is capped so a long server-requested wait cannot hold the job.
+# total is capped so a long server-requested wait cannot hold the job. The two release
+# assets use the authenticated asset API first when GITHUB_TOKEN is set, and fall back
+# to the public URL (#5942).
 download() {
   curl -fsSL --retry 5 --retry-delay 3 --retry-max-time 60 "$@"
 }
+# shellcheck source=.github/scripts/release-asset-download.sh
+source "$(dirname "${BASH_SOURCE[0]}")/release-asset-download.sh"
 
-download "${release_base}/${asset_name}" -o "${tarball}"
-download "${release_base}/ksail_${KSAIL_VERSION}_checksums.txt" -o "${checksums}"
+release_asset_download devantler-tech/ksail "v${KSAIL_VERSION}" "${asset_name}" "${tarball}"
+release_asset_download devantler-tech/ksail "v${KSAIL_VERSION}" "ksail_${KSAIL_VERSION}_checksums.txt" "${checksums}"
 download "${curl_headers[@]}" "${api_url}" -o "${release_json}"
 
 manifest_digest=$(awk -v asset="${asset_name}" '$2 == asset {print $1}' "${checksums}")

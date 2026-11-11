@@ -7,6 +7,7 @@ name: Publish Longhorn V1 Retirement Image
     paths:
       - .github/workflows/publish-longhorn-v1-retirement.yaml
       - .github/scripts/setup-supply-chain-tools.sh
+      - .github/scripts/release-asset-download.sh
       - k8s/providers/hetzner/infrastructure/controllers/longhorn/InstanceManagerRetirement.Dockerfile
       - k8s/providers/hetzner/infrastructure/controllers/longhorn/instance-manager-v1.13.0-retirement.patch
   push:
@@ -14,6 +15,7 @@ name: Publish Longhorn V1 Retirement Image
     paths:
       - .github/workflows/publish-longhorn-v1-retirement.yaml
       - .github/scripts/setup-supply-chain-tools.sh
+      - .github/scripts/release-asset-download.sh
       - k8s/providers/hetzner/infrastructure/controllers/longhorn/InstanceManagerRetirement.Dockerfile
       - k8s/providers/hetzner/infrastructure/controllers/longhorn/instance-manager-v1.13.0-retirement.patch
 
