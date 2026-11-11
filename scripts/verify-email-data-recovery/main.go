@@ -13,6 +13,11 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--protect-retained-volume" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		os.Exit(runRetainedVolumeProtection(ctx, os.Getenv, kubectl{}, verifyReaderCustodySource, os.Stdout))
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--prepare-reader-inputs" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()

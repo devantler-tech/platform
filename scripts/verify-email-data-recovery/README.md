@@ -119,6 +119,21 @@ The expired-backup disposal gate remains unchanged. If custody is refused,
 investigate the retained identities and destination before another confirmed
 first attempt; never replace a conflicting record or regenerate a missing key.
 
+`Protect Retained Email Volume` is a separate, default-off main-only operation
+with confirmation `protect-retained-email-volume`. It requires independent
+reader, claim and PV UID witnesses, including the private
+`EMAIL_RETAINED_PV_UID` setting, and validates the actual restored binding.
+It deliberately does not assume that the original PV name contains the current
+restored claim's UID. The command preserves the running reader and every
+claim, backend, key and configuration object. Its only permitted mutation is
+changing the bound original PV's reclaim policy from `Delete` to `Retain`,
+with atomic UID, name, resource-version and complete-spec tests. It then
+rechecks the original graph and serving source. An already-retained PV is
+verified without a write; an uncertain patch is never retried or rolled back.
+No credential export or reader lifecycle authority is available in this
+command. Protection does not unlock either expired-backup disposal path,
+establish key recovery or authorize a later reader pause.
+
 With confirmation `verify-fresh-retained-email-parity`, the workflow checks
 the separately retained fresh restore. The protected witness binds the
 namespace, reader, claim, backup and download. The backup must still be

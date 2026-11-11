@@ -18,6 +18,10 @@ func TestReaderInputCustodyWorkflowMainGuardAndCustody(t *testing.T) {
 	checkRetainedWorkflow(t, "prepare-retained-email-reader-inputs.yaml", "prepare", "prepare-retained-email-reader-inputs", "--prepare-reader-inputs", "EMAIL_READER_INPUTS_CONFIRM", readerCustodyDispatch())
 }
 
+func TestRetainedVolumeProtectionWorkflowMainGuardAndCustody(t *testing.T) {
+	checkRetainedWorkflow(t, "protect-retained-email-volume.yaml", "protect", "protect-retained-email-volume", "--protect-retained-volume", "EMAIL_RETAINED_VOLUME_CONFIRM", readerVolumeDispatch())
+}
+
 func checkRetainedWorkflow(t *testing.T, filename, jobName, confirm, flag, confirmEnv string, env map[string]string) {
 	t.Helper()
 	data, err := os.ReadFile("../../.github/workflows/" + filename)
@@ -52,7 +56,7 @@ func checkRetainedWorkflow(t *testing.T, filename, jobName, confirm, flag, confi
 	guard := job.Steps[0]
 	env["CONFIRM"] = confirm
 	guardKeys := []string{"", "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF", "GITHUB_ACTOR", "GITHUB_RUN_ATTEMPT", "RUNNER_ENVIRONMENT", "CONFIRM"}
-	if jobName == "prepare" {
+	if jobName != "dispose" {
 		guardKeys = append(guardKeys, "GITHUB_ACTIONS")
 	}
 	for _, key := range guardKeys {
@@ -84,6 +88,9 @@ func checkRetainedWorkflow(t *testing.T, filename, jobName, confirm, flag, confi
 		}
 	}
 	final := job.Steps[5]
+	if jobName == "protect" && (final.Env["EMAIL_RETAINED_PV_UID"] != "${{ secrets.EMAIL_RETAINED_PV_UID }}" || strings.Contains(final.Run, "get secret") || strings.Contains(final.Run, "port-forward")) {
+		t.Fatal("metadata protection lost its independent volume witness or gained credential export")
+	}
 	if final.Env["KUBE_CONFIG"] != "${{ secrets.KUBE_CONFIG }}" || final.Env["HCLOUD_TOKEN"] != "${{ secrets.HCLOUD_TOKEN }}" || final.Env[confirmEnv] != "${{ inputs.confirm }}" || !strings.HasSuffix(strings.TrimSpace(final.Run), `"$RUNNER_TEMP/verify-email-data-recovery" `+flag) {
 		t.Fatal("workflow invoked recovery writes or lost credential binding")
 	}
