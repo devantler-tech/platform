@@ -1,6 +1,6 @@
 module github.com/devantler-tech/platform/scripts/tests/gateway-receiver-admission
 
-go 1.26.10
+go 1.26.11
 
 require (
 	k8s.io/api v0.36.4

@@ -52,6 +52,9 @@ jobs:
           shellcheck scripts/tests/test-webapp-compiled-scan.sh
           bash scripts/tests/test-webapp-compiled-scan.sh
       - name: 🔏 Install reviewed public-image verification tools
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/setup-supply-chain-tools.sh
       - name: Validate the hosted runtime script
         run: |
@@ -245,6 +248,8 @@ jobs:
               - 'scripts/tests/test-setup-talosctl.sh'
               - '.github/scripts/setup-supply-chain-tools.sh'
               - 'scripts/tests/test-setup-supply-chain-tools.sh'
+              - '.github/scripts/release-asset-download.sh'
+              - 'scripts/tests/test-release-asset-download.sh'
               - '.github/actions/deploy-prod/action.yml'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
@@ -413,7 +418,7 @@ jobs:
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
               # Stages exact admission and pull-time signer routes before the
               # compatibility-image workloads consume them.
-              - 'scripts/tests/test-coroot-image-verifier-prerequisite.sh'
+              - 'scripts/tests/test-compatibility-image-verifier-prerequisite.sh'
               # The trigger-set test for the liveness WORKFLOW (listed above), so a
               # PR that edits only the test still runs it.
               - 'scripts/tests/test-validate-image-verifier-liveness-workflow.sh'
@@ -844,6 +849,7 @@ jobs:
               - 'ksail.prod.yaml'
               - 'ksail.yaml'
               - '.github/scripts/setup-talosctl.sh'
+              - '.github/scripts/release-asset-download.sh'
               - 'scripts/validate-talos-kubernetes-compatibility/**'
               - '.github/actions/deploy-prod/**'
               - 'go.mod'
@@ -2252,7 +2258,7 @@ jobs:
       - name: 🔐 Validate KSail installer integrity guard
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck .github/scripts/setup-ksail.sh scripts/tests/test-setup-ksail.sh
+          shellcheck -x .github/scripts/setup-ksail.sh scripts/tests/test-setup-ksail.sh
           bash scripts/tests/test-setup-ksail.sh
 
       - name: 🔐 Validate Cilium SNI hostname coverage
@@ -2264,17 +2270,26 @@ jobs:
       - name: 🔐 Validate talosctl installer integrity guard
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck .github/scripts/setup-talosctl.sh scripts/tests/test-setup-talosctl.sh
+          shellcheck -x .github/scripts/setup-talosctl.sh scripts/tests/test-setup-talosctl.sh
           bash scripts/tests/test-setup-talosctl.sh
 
       - name: 🔐 Validate supply-chain tool integrity
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck .github/scripts/setup-supply-chain-tools.sh scripts/tests/test-setup-supply-chain-tools.sh
+          shellcheck -x .github/scripts/setup-supply-chain-tools.sh scripts/tests/test-setup-supply-chain-tools.sh
           bash scripts/tests/test-setup-supply-chain-tools.sh
+
+      - name: 🔐 Validate the shared release-asset download
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck .github/scripts/release-asset-download.sh scripts/tests/test-release-asset-download.sh
+          bash scripts/tests/test-release-asset-download.sh
 
       - name: 🔐 Exercise verified supply-chain tools
         if: needs.changes.outputs.k8s == 'true'
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-supply-chain-tools.sh
           /usr/local/bin/syft scan dir:. --output cyclonedx-json=tool-integrity.cdx.json
@@ -2325,6 +2340,9 @@ jobs:
 
       - name: Install checksum-verified Trivy for disposition boundaries
         if: needs.changes.outputs.k8s == 'true'
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/setup-supply-chain-tools.sh trivy-boundary
 
       - name: 🧱 Validate vendored-operator disposition boundary
@@ -2550,11 +2568,11 @@ jobs:
           bash scripts/tests/test-validate-image-verifier-liveness.sh
           bash scripts/tests/test-validate-image-verifier-liveness-workflow.sh
 
-      - name: 🔏 Validate Coroot compatibility-image verifier prerequisite
+      - name: 🔏 Validate compatibility-image verifier prerequisites
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck scripts/tests/test-coroot-image-verifier-prerequisite.sh
-          bash scripts/tests/test-coroot-image-verifier-prerequisite.sh
+          shellcheck scripts/tests/test-compatibility-image-verifier-prerequisite.sh
+          bash scripts/tests/test-compatibility-image-verifier-prerequisite.sh
 
       - name: 🔏 Validate image-signature enforcement probe
         if: needs.changes.outputs.k8s == 'true'
@@ -3870,6 +3888,9 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup talosctl
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-talosctl.sh
 
@@ -4387,6 +4408,36 @@ jobs:
           kube_version="$(yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")' ksail.prod.yaml)"
           bash scripts/guard-pdb-selector-match.sh --kube-version "$kube_version" k8s
 
+  wait-for-production-turn:
+    name: 🧾 Wait for the production deployment turn
+    needs: [changes]
+    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # Wait outside the shared production lock so a later candidate cannot
+      # hold that lock while the first candidate still needs it to merge.
+      - name: 🧾 Wait until the candidate is first on current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}
+        run: go run ./scripts/verify-merge-group-queued wait
+
   # Every merge-group validator that ci-required-checks enforces is listed here too.
   # A required validator the deploy does not wait for runs in parallel with it, so
   # production can receive a revision that validator then rejects (#4148).
@@ -4412,6 +4463,7 @@ jobs:
         validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
+        wait-for-production-turn,
       ]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
@@ -4791,6 +4843,7 @@ jobs:
         validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
+        wait-for-production-turn,
         deploy-prod,
       ]
     if: always()
@@ -4921,7 +4974,24 @@ jobs:
             ${{ needs.validate-root-verify-merge-group.result }}
             ${{ needs.validate-rgd-templates-merge-group.result }}
             ${{ needs.validate-ghcr-fanout-merge-group.result }}
+            ${{ needs.wait-for-production-turn.result }}
             ${{ needs.deploy-prod.result }}
+
+      - name: 🚀 Require the selected production deployment
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          K8S_CHANGED: ${{ needs.changes.outputs.k8s }}
+          DEPLOY_RESULT: ${{ needs.deploy-prod.result }}
+        run: |
+          case "$EVENT_NAME:$K8S_CHANGED" in
+            merge_group:true) expected=success ;;
+            merge_group:false|pull_request:true|pull_request:false) expected=skipped ;;
+            *) echo '::error::Cannot determine production deployment selection'; exit 1 ;;
+          esac
+          if [ "$DEPLOY_RESULT" != "$expected" ]; then
+            echo "::error::Production deployment result was $DEPLOY_RESULT; expected $expected"
+            exit 1
+          fi
 
       - name: 🛡️ Require successful repository guards
         env:
