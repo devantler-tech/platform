@@ -23,7 +23,7 @@ func TestKubectlDownloadCurlChild(_ *testing.T) {
 			break
 		}
 	}
-	want := []string{"--disable", "--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--max-redirs", "3", "--connect-timeout", "10", "--max-time", "60", "https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl", "-o", os.Getenv("RUNNER_TEMP") + "/alert-routes-kubectl"}
+	want := []string{"--disable", "--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--max-redirs", "3", "--connect-timeout", "10", "--max-time", "60", "--retry", "3", "--retry-all-errors", "--retry-delay", "5", "--retry-max-time", "120", "https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl", "-o", os.Getenv("RUNNER_TEMP") + "/alert-routes-kubectl"}
 	if !reflect.DeepEqual(args, want) {
 		os.Exit(31)
 	}
