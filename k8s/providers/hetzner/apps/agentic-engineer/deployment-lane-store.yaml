@@ -8,9 +8,11 @@
 #   the agent's placeholder (egress-policy-lane-store.yaml). It also holds
 #   the lane's single-writer lease, a WebDAV LOCK on memory/ kept only in
 #   its memory, and refuses a write under memory/ without that lock's token
-#   (devantler-tech/monorepo#4910). A run that dies before releasing the
-#   lease leaves it held, and every later run stops at it; restarting this
-#   Deployment frees it.
+#   (devantler-tech/monorepo#4910). Lock tokens count up from the second the
+#   store started, so a run trusts one only once it is a minute behind the
+#   store's clock; this relies on node clocks agreeing within a minute. A run
+#   that dies before releasing the lease leaves it held, and every later run
+#   stops at it; restarting this Deployment frees it.
 # - reader (8081): read only, with no credential of its own. Only the
 #   Kubernetes API server reaches it, so a reader needs the
 #   services/proxy grant in role-lane-store-reader.yaml.

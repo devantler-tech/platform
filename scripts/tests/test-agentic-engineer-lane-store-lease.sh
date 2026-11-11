@@ -12,9 +12,10 @@
 # - a refresh succeeds only with the holder's token and names the holder;
 # - only the holder's token releases the lease;
 # - a store restart frees the lease and refuses the former holder's writes and release;
-# - the store numbers its tokens up from the second it started, so a token at least 10 below the
-#   reply's Date is never handed out again after a restart, while a token above it can be: that
-#   is why the run refuses a token above it.
+# - the store numbers its tokens up from the second it started, so a token at least 60 below a
+#   reply's Date is never handed out again after a restart. A token above it can be, and an
+#   UNLOCK of it could then release a later run's lease: that is why a run that takes the lease
+#   on a fresh store waits until its token is safe, and never releases one that is not.
 # It also shows why the lease is not a MKCOL: the store accepts a MKCOL of a folder that exists.
 set -euo pipefail
 
@@ -56,14 +57,15 @@ at() {
   if [[ "${before}" == "${prompt}" ]]; then printf '%s' -1; else printf '%s' "${#before}"; fi
 }
 previous=-1
-for step in 'Send a PROPFIND to memory/' 'Send a LOCK to memory/' 'at least 10 below the reply' \
-  'download every file' 'refresh the lease' 'one file at a time' 'UNLOCK to memory/'; do
+for step in 'Send a PROPFIND to memory/' 'Send a LOCK to memory/' 'at least 60 below a reply' \
+  'download every file' 'however the run ended, refresh the lease' 'one file at a time' 'UNLOCK to memory/'; do
   position="$(at "${step}")"
   [[ "${position}" -gt "${previous}" ]] || fail "the run message does not say, in order: ${step}"
   previous="${position}"
 done
 for rule in 'Timeout: Infinite' 'A 423 means another run holds it' 'Never remove a lease you did not take' \
-  'its owner is yours' 'each PUT with that same If header' 'leave the lease alone' 'A 412'; do
+  'its owner is yours' 'each PUT with that same If header' 'leave the lease alone' 'A 412' \
+  'never UNLOCK it' 'wait out the difference'; do
   [[ "$(at "${rule}")" -ge 0 ]] || fail "the run message no longer says: ${rule}"
 done
 pattern='(<[?]xml [^`]*</D:lockinfo>)'
@@ -237,15 +239,24 @@ winner="$(token "race-${winners[0]}")"
 names "race-${winners[0]}" "$(owner "$((100 + winners[0]))")" || fail 'the winning reply does not name the winner'
 [[ "$(unlock race-released "${winner}")" == 204 ]] || fail 'the winner could not release the lease'
 
-# A lease whose token is at least 10 below the reply's Date, as the run message requires, outlives
-# no restart and is never handed out again: the restart frees it, the store refuses the former
+# A run that takes the lease moments after the store started holds a token that is not yet safe.
+# As the run message says, it never releases that token: it waits out the difference and
+# refreshes, and the token is then at least 60 below the Date. A safe token outlives no restart
+# and is never handed out again: the restart frees the lease, the store refuses the former
 # holder's writes and release, and the next run's lease stands.
 restart
-sleep 12
-[[ "$(lock settled "$(owner 4)")" == 200 ]] || fail 'a run could not take the lease on a settled store'
-held="$(token settled)"
-(($(number "${held}") <= $(clock settled) - 10)) ||
-  fail "a settled store's token ${held} is not 10 below its Date $(clock settled): the run would refuse every lease"
+[[ "$(lock fresh "$(owner 4)")" == 200 ]] || fail 'a run could not take the lease on a fresh store'
+held="$(token fresh)"
+wait_for=$(($(number "${held}") + 60 - $(clock fresh)))
+if ((wait_for > 0)); then
+  sleep "$((wait_for + 1))"
+fi
+status="$(refresh settled "${held}")"
+if [[ "${status}" != 200 ]] || ! names settled "$(owner 4)"; then
+  fail "the run's refresh after waiting did not hold the lease: ${status} $(body settled)"
+fi
+(($(number "${held}") <= $(clock settled) - 60)) ||
+  fail "after the wait, the token ${held} is still not 60 below the Date $(clock settled)"
 restart
 status="$(put stale-write /memory/MEMORY.md "${held}")"
 [[ "${status}" == 412 ]] || fail "after a restart, the store took the former holder's write: ${status}"
@@ -259,10 +270,11 @@ next="$(token next)"
 [[ "$(lock still-next "$(owner 6)")" == 423 ]] || fail "the former holder's UNLOCK released the next run's lease"
 [[ "$(unlock next-released "${next}")" == 204 ]] || fail 'the next run could not release the lease'
 
-# Why the run refuses a token above the Date: a burst of writes after a start runs the store's
-# count ahead of the clock, and a restarted store then counts through the same numbers again. The
-# later run's lease gets the earlier token, the earlier run's writes pass the fence under it, and
-# only the owner in a refresh still tells the two apart.
+# Why a token that is not yet safe is never used or released: a burst of writes after a start runs
+# the store's count ahead of the clock, and a restarted store then counts through the same numbers
+# again. The later run's lease gets the earlier token, the earlier run's writes pass the fence
+# under it, only the owner in a refresh still tells the two apart, and the earlier run's UNLOCK
+# would release the later run's lease.
 restart
 for burst in $(seq 1 200); do
   [[ "$(lock burst "$(owner 7)")" == 200 ]] || fail "burst ${burst} could not take the lease: $(body burst)"
@@ -270,8 +282,8 @@ for burst in $(seq 1 200); do
 done
 [[ "$(lock ahead "$(owner 8)")" == 200 ]] || fail 'a run could not take the lease after the burst'
 ahead="$(token ahead)"
-(($(number "${ahead}") > $(clock ahead) - 10)) ||
-  fail "after the burst the token ${ahead} is still 10 below the Date $(clock ahead), so this case shows nothing"
+(($(number "${ahead}") > $(clock ahead) - 60)) ||
+  fail "after the burst the token ${ahead} is still 60 below the Date $(clock ahead), so this case shows nothing"
 restart
 reached=''
 for attempt in $(seq 1 400); do
@@ -290,6 +302,10 @@ status="$(refresh reused "${ahead}")"
 if [[ "${status}" != 200 ]] || ! names reused "$(owner 9)" || names reused "$(owner 8)"; then
   fail "a refresh on a reissued token does not name the later run: ${status} $(body reused)"
 fi
+[[ "$(unlock reused-unlock "${ahead}")" == 204 ]] ||
+  fail "the earlier run's UNLOCK no longer releases a lease that reissued its token, so this no longer shows why the run never releases a token that is not yet safe"
+[[ "$(lock taken-over "$(owner 10)")" == 200 ]] ||
+  fail "a third run could not take the lease the earlier run's UNLOCK released"
 
 grep -Fq 'bash scripts/tests/test-agentic-engineer-lane-store-lease.sh' "${root}/.github/workflows/ci.yaml" ||
   fail 'CI does not run this test'

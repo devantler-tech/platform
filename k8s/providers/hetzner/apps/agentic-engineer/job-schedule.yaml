@@ -114,11 +114,18 @@ spec:
                       run that crashed left it behind: stop, upload nothing and report
                       it. Never remove a lease you did not take. Any other reply also
                       stops the run before it touches memory.
-                   c. The store numbers its tokens up from the second it started, so a
-                      restarted store can hand a number out again. Your token's number
-                      must be at least 10 below the reply's Date header in Unix seconds,
-                      so that no restart can reissue it. Otherwise release the lease
-                      with the UNLOCK of step 4, upload nothing and report it.
+                   c. The store numbers its tokens up from the second it started, and an
+                      UNLOCK checks only the token, so a restarted store could hand your
+                      token to another run whose lease your UNLOCK would then release.
+                      Your token is safe once its number is at least 60 below a reply's
+                      Date header in Unix seconds: no restart can reissue it then, since
+                      the cluster keeps its nodes' clocks within a minute of each other.
+                      Until it is safe, never UNLOCK it. If the LOCK reply shows it is not yet
+                      safe, the store started moments ago: wait out the difference plus
+                      a second, if that is under 10 minutes, then refresh the lease as in
+                      step 4 and check again. If it is still not safe, or the refresh
+                      fails or names another owner, upload nothing, leave the lease
+                      alone and report it.
                 2. Restore your native memory from the lane store: list memory/ with a
                    PROPFIND (`-X PROPFIND -H 'Depth: 1'` plus the store header) and
                    download every file into ~/lane-memory/, which stays empty on a first
