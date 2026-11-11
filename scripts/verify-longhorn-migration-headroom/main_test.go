@@ -75,6 +75,8 @@ func TestQualifiedActivationRoster(t *testing.T) {
 	}
 }
 
+// TestUnsafeHeadroomIsHeld refuses incomplete or contradictory rosters without
+// treating an unmatched provider member as free capacity.
 func TestUnsafeHeadroomIsHeld(t *testing.T) {
 	cases := map[string]func(*[]server, *[]node){
 		"leftover provider server": func(s *[]server, _ *[]node) {

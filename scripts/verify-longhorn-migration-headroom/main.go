@@ -59,6 +59,8 @@ type node struct {
 var migrationName = regexp.MustCompile(`^autoscale-longhorn-(v[12])-[0-9a-f]{16}$`)
 var controlPlaneName = regexp.MustCompile(`^prod-control-plane-[1-9][0-9]*$`)
 
+// qualify requires the complete migration roster and matching live identities,
+// hardware, location, ownership and availability before reporting headroom.
 func qualify(servers []server, nodes []node, requireV2 bool) error {
 	if len(servers) != len(nodes) || len(nodes) < 8 || len(nodes) > 9 {
 		return fmt.Errorf("inventory count gate failed: provider_servers=%d kubernetes_nodes=%d expected_equal=true permitted_nodes=8..9", len(servers), len(nodes))

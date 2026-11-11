@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +25,8 @@ func TestAccountCensusUsesCurrentProviderLocation(t *testing.T) {
 	}
 }
 
+// TestAccountCensusRefusesUnverifiedCurrentLocation requires current evidence
+// even when an obsolete field appears to agree with the node.
 func TestAccountCensusRefusesUnverifiedCurrentLocation(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -51,6 +54,31 @@ func TestAccountCensusRefusesUnverifiedCurrentLocation(t *testing.T) {
 			got, err := observeAccountCensus(t.Context(), providerClient(t, body, 200), "private-test-token", read)
 			if err == nil || got != (accountCensus{}) {
 				t.Fatalf("unverified current location produced a receipt: got=%+v err=%v", got, err)
+			}
+		})
+	}
+}
+
+// TestAccountCensusRefusesAmbiguousLocationFields exercises raw JSON aliases
+// that encoding/json would otherwise accept case-insensitively.
+func TestAccountCensusRefusesAmbiguousLocationFields(t *testing.T) {
+	valid := providerResponse(t, nil)
+	for _, tc := range []struct{ name, replacement string }{
+		{"location alias", `"Location":{"name":"fsn1"}`},
+		{"contradictory locations", `"location":{"name":"hel1"},"Location":{"name":"fsn1"}`},
+		{"name alias", `"location":{"Name":"fsn1"}`},
+		{"contradictory names", `"location":{"name":"hel1","Name":"fsn1"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.Replace(valid, `"location":{"name":"fsn1"}`, tc.replacement, 1)
+			if body == valid {
+				t.Fatal("raw location mutation was not exercised")
+			}
+			_, nodes := roster(t, false)
+			read := func(context.Context) ([]byte, error) { return nodeResponse(t, nodes), nil }
+			got, err := observeAccountCensus(t.Context(), providerClient(t, body, 200), "private-test-token", read)
+			if err == nil || got != (accountCensus{}) {
+				t.Fatalf("ambiguous location produced a receipt: got=%+v err=%v", got, err)
 			}
 		})
 	}
