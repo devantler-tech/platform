@@ -1,0 +1,178 @@
+---
+name: Publish Longhorn V2-only Runtime
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-longhorn-v2-only.yaml
+      - .github/scripts/setup-supply-chain-tools.sh
+      - scripts/build-longhorn-v2-only.sh
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/ManagerV2Only.Dockerfile
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/longhorn-*-v1.13.0-v2-only.patch
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-longhorn-v2-only.yaml
+      - .github/scripts/setup-supply-chain-tools.sh
+      - scripts/build-longhorn-v2-only.sh
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/ManagerV2Only.Dockerfile
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/longhorn-*-v1.13.0-v2-only.patch
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/devantler-tech/platform-longhorn-manager
+  CHART_REGISTRY: ghcr.io/devantler-tech/platform-charts
+  HELM_VERSION: v4.3.1
+  HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
+
+jobs:
+  verify:
+    name: Build and verify the pinned Longhorn V2-only artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - name: Check out the reviewed compatibility patches
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the reviewed Go compiler
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install verified Helm
+        run: |
+          set -euo pipefail
+          native_dir="$(mktemp -d)"
+          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
+          tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
+          printf '%s\n' "$native_dir/linux-amd64" >> "$GITHUB_PATH"
+      - name: Test both compatibility patches and build the artifacts
+        run: ./scripts/build-longhorn-v2-only.sh "${RUNNER_TEMP}/longhorn-v2-only" "${GITHUB_RUN_NUMBER}"
+      - name: Exercise the packaged manager with its default user
+        run: |
+          set -euo pipefail
+          validation_image="longhorn-v2-only:verify-${GITHUB_RUN_ID}"
+          docker build --platform linux/amd64 \
+            --file k8s/providers/hetzner/infrastructure/controllers/longhorn/ManagerV2Only.Dockerfile \
+            --tag "$validation_image" "${RUNNER_TEMP}/longhorn-v2-only/manager"
+          test "$(docker image inspect --format '{{.Config.User}}' "$validation_image")" = '65532:65532'
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --entrypoint /usr/local/sbin/longhorn-manager "$validation_image" daemon --help |
+            grep -F -- '--data-engine-mode'
+      - name: Keep this run's checked artifacts
+        if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: longhorn-v2-only-${{ github.run_id }}
+          path: ${{ runner.temp }}/longhorn-v2-only
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish and verify the signed image and OCI chart
+    if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # Check out and verify the current main revision.
+      packages: write # Publish the verified manager image and OCI chart to GHCR.
+      id-token: write # Obtain the identity for keyless Cosign signing and attestation.
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - name: Check out the reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+      - name: Download this run's verified artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: longhorn-v2-only-${{ github.run_id }}
+          path: ${{ runner.temp }}/longhorn-v2-only
+      - name: Install verified Helm
+        run: |
+          set -euo pipefail
+          native_dir="$(mktemp -d)"
+          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
+          tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
+          printf '%s\n' "$native_dir/linux-amd64" >> "$GITHUB_PATH"
+      - name: Verify inputs and package the manager
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/longhorn-v2-only"
+          [[ "${GITHUB_RUN_NUMBER}" =~ ^[1-9][0-9]{0,11}$ ]]
+          chart="chart/longhorn-1.13.0-platform.${GITHUB_RUN_NUMBER}.tgz"
+          [[ "$(wc -l < SHA256SUMS)" -eq 2 && -f manager/longhorn-manager && -f "$chart" ]]
+          cmp SHA256SUMS <(sha256sum manager/longhorn-manager "$chart")
+          docker build --platform linux/amd64 \
+            --file "${GITHUB_WORKSPACE}/k8s/providers/hetzner/infrastructure/controllers/longhorn/ManagerV2Only.Dockerfile" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "${IMAGE}:v1.13.0-platform.${GITHUB_RUN_NUMBER}" manager
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --entrypoint /usr/local/sbin/longhorn-manager "${IMAGE}:v1.13.0-platform.${GITHUB_RUN_NUMBER}" daemon --help |
+            grep -F -- '--data-engine-mode'
+      - name: Install verified signing and inventory tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
+      - name: Publish and verify image and chart signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+          output="${RUNNER_TEMP}/longhorn-v2-only"
+          release="1.13.0-platform.${GITHUB_RUN_NUMBER}"
+          chart="$output/chart/longhorn-$release.tgz"
+          image_tag="${IMAGE}:v$release"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$image_tag"
+          image_ref="$(docker image inspect --format '{{json .RepoDigests}}' "$image_tag" |
+            jq -er --arg prefix "${IMAGE}@sha256:" 'map(select(startswith($prefix))) | if length == 1 then .[0] else error("ambiguous image digest") end')"
+          helm push "$chart" "oci://${CHART_REGISTRY}" 2>&1 | tee "$output/chart-push.log"
+          chart_digest="$(awk '$1 == "Digest:" && NF == 2 { print $2 }' "$output/chart-push.log")"
+          [[ "$chart_digest" =~ ^sha256:[a-f0-9]{64}$ && "${image_ref##*@}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          chart_ref="${CHART_REGISTRY}/longhorn@$chart_digest"
+          identity="https://github.com/devantler-tech/platform/.github/workflows/publish-longhorn-v2-only.yaml@refs/heads/main"
+          issuer="https://token.actions.githubusercontent.com"
+          predicate="https://devantler.tech/attestations/longhorn-v2-only-build/v1"
+          binary_sha="$(sha256sum "$output/manager/longhorn-manager" | cut -d ' ' -f 1)"
+          chart_sha="$(sha256sum "$chart" | cut -d ' ' -f 1)"
+          jq -n --arg revision "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" --arg release "$release" \
+            --arg binary "$binary_sha" --arg chart "$chart_sha" \
+            '{sourceRevision:$revision,workflowRunId:$run,release:$release,binarySha256:$binary,chartSha256:$chart}' >"$output/build-receipt.json"
+          syft "docker:$image_tag" --output "cyclonedx-json=$output/sbom.json"
+          for artifact in "$image_ref" "$chart_ref"; do
+            cosign sign --yes "$artifact"
+            cosign attest --yes --predicate "$output/build-receipt.json" --type "$predicate" "$artifact"
+            cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$artifact"
+            cosign verify-attestation --type "$predicate" --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$artifact" >/dev/null
+          done
+          cosign attest --yes --predicate "$output/sbom.json" --type cyclonedx "$image_ref"
+          cosign verify-attestation --type cyclonedx --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$image_ref" >/dev/null
+          printf 'Published and verified manager %s and chart %s\n' "$image_ref" "$chart_ref"

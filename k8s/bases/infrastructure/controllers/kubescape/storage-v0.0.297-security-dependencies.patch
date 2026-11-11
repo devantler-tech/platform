@@ -531,7 +531,7 @@ diff --git a/build/Dockerfile b/build/Dockerfile
 +++ b/build/Dockerfile
 @@ -1 +1 @@
 -FROM --platform=$BUILDPLATFORM golang:1.25-trixie AS builder
-+FROM --platform=$BUILDPLATFORM golang:1.26.10-trixie@sha256:a050dcceee6eb9bf110151662dfac7662f3bec40927c7dee48731e3d92083d42 AS builder
++FROM --platform=$BUILDPLATFORM golang:1.26.11-trixie@sha256:fa340cb59ebeb1d53ac1cccfc334201d938fe5f3458003cccb767096d8e032b8 AS builder
 @@ -5 +5 @@
 -ENV GO111MODULE=on CGO_ENABLED=0
 +ENV GO111MODULE=on CGO_ENABLED=0 GOTOOLCHAIN=local
