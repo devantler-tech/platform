@@ -36,6 +36,7 @@ name: Prepare Longhorn V2 Migration
             repair-v1-reservation,
             reserve-v1-scratch,
             retain-v1-source,
+            retain-provider-source,
           ]
       node:
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
@@ -139,6 +140,9 @@ jobs:
               ;;
             retain-v1-source)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-longhorn-v1-source:[a-z0-9][-a-z0-9]*/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
+              ;;
+            retain-provider-source)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-hetzner-source:(observability|openbao|kube-system)/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
               ;;
             inventory-storage-root)
               [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-root-${LONGHORN_V2_NODE}" ]]

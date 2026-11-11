@@ -392,3 +392,16 @@ migration scratch and unbound claims. A lost write response is checked without
 repeating the patch. This operation neither replaces claims nor changes storage
 classes. Keep the original PV and backend until the application's recovery and
 cutover checks pass.
+
+## Retain one Hetzner source before replacing its claim
+
+Select `retain-provider-source` with no worker. Read the original bound
+Filesystem PVC and PV plus their `hcloud` StorageClass. Compute a SHA-256
+digest without a trailing newline over
+`csi.hetzner.cloud:namespace/claim:claim-uid:pv-name:pv-uid:volume-handle:pv-capacity-bytes`.
+Supply `retain-hetzner-source:<namespace>/<claim>:<digest>` as confirmation.
+
+The workflow verifies the original binding and provider handle, changes
+only that PV's reclaim policy, and reads the same binding back. Keep the
+retained provider volume until the workload has passed its V2 recovery and
+application checks.
