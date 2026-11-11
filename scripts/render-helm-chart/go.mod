@@ -1,6 +1,6 @@
 module github.com/devantler-tech/platform/scripts/render-helm-chart
 
-go 1.26.10
+go 1.26.11
 
 tool helm.sh/helm/v4/cmd/helm
 
