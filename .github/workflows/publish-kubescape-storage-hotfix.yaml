@@ -42,7 +42,7 @@ env:
   NATIVE_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
   SBOM_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
   DEPENDENCY_SECURITY_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch
-  STORAGE_GO_VERSION: "1.26.10"
+  STORAGE_GO_VERSION: "1.26.11"
   GOTOOLCHAIN: local
 
 jobs:
@@ -119,7 +119,7 @@ jobs:
           git apply --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"
           test "$(git hash-object go.mod)" = a2c6f7d0c07f3f3254d3ec51f804174397c430ea
           test "$(git hash-object go.sum)" = ea04b6bd297b61ba4ffb84649a28da1692d49b85
-          test "$(git hash-object build/Dockerfile)" = b38800dc24c63c9ba3abf6992a8d6a2bdaea91c5
+          test "$(git hash-object build/Dockerfile)" = cc7845cc268352216faf22bba941901095200760
           git diff --check
           go test -race ./pkg/apis/softwarecomposition/... ./pkg/registry/file
 
@@ -223,7 +223,7 @@ jobs:
           git apply --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"
           test "$(git hash-object go.mod)" = a2c6f7d0c07f3f3254d3ec51f804174397c430ea
           test "$(git hash-object go.sum)" = ea04b6bd297b61ba4ffb84649a28da1692d49b85
-          test "$(git hash-object build/Dockerfile)" = b38800dc24c63c9ba3abf6992a8d6a2bdaea91c5
+          test "$(git hash-object build/Dockerfile)" = cc7845cc268352216faf22bba941901095200760
           git diff --check
 
       - name: Set up Buildx container driver

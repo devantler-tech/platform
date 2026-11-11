@@ -224,6 +224,15 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$
+  # The migration images have separate, exact main-branch publishers.
+  - image: ghcr.io/devantler-tech/platform-longhorn-instance-manager
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v1-retirement\.yaml@refs/heads/main$
+  - image: ghcr.io/devantler-tech/platform-longhorn-manager
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
   # First-party APP images retain legacy full-commit verification and accept the
   # two reviewed maintained publisher revisions (v8.0.0 #5213, v19.0.5 #5404).
   # Mutable refs, tags and other maintained commits are refused, as in the app
