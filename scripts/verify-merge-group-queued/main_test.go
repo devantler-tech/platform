@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -347,5 +348,37 @@ func TestWaitForTurnUsesSameCandidateAndCurrentParent(t *testing.T) {
 		if len(turns) != 0 || (err != nil) != replaced {
 			t.Fatalf("unexpected turn result (replaced=%t): %v, %d unread observations", replaced, err, len(turns))
 		}
+	}
+}
+
+func TestWaitForTurnRecoversOnlyFromTransportFailure(t *testing.T) {
+	initial := receipt{Entry: "original"}
+	// The production check never polls, even for a retryable transport error.
+	for _, tc := range []struct {
+		name     string
+		readErr  error
+		interval time.Duration
+		reads    int
+	}{
+		{"poll retries transport", errQueueTransport, time.Millisecond, 2},
+		{"poll refuses invalid witness", errors.New("queue entry was replaced"), time.Millisecond, 1},
+		{"production refuses transport", errQueueTransport, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			reads := 0
+			read := func() (witness, error) {
+				reads++
+				if reads == 1 {
+					return witness{}, tc.readErr
+				}
+				return witness{receipt: initial, main: baseSHA, position: 1}, nil
+			}
+			err := waitForTurn(ctx, read, initial, baseSHA, tc.interval, &bytes.Buffer{})
+			if reads != tc.reads || (err == nil) != (tc.reads == 2) {
+				t.Fatalf("read %d times, want %d, got %v", reads, tc.reads, err)
+			}
+		})
 	}
 }

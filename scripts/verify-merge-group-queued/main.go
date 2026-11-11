@@ -23,6 +23,7 @@ const repository = "devantler-tech/platform"
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var queueRefPattern = regexp.MustCompile(`^refs/heads/gh-readonly-queue/main/pr-([1-9][0-9]*)-[0-9a-f]{40}$`)
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,200}$`)
+var errQueueTransport = errors.New("bounded queue or checkout read failed")
 
 type event struct {
 	Action     string
@@ -161,7 +162,10 @@ func command(ctx context.Context, workspace, name string, args ...string) ([]byt
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		return nil, errors.New("bounded queue or checkout read failed")
+		if out.Len() == 0 {
+			return nil, errQueueTransport
+		}
+		return nil, errors.New("queue or checkout command returned an unsuccessful response")
 	}
 	if out.Len() > 4<<20 {
 		return nil, errors.New("queue read is too large")
@@ -182,6 +186,9 @@ func readQueue(ctx context.Context, workspace string, number int, ref string) ([
 		if err == nil {
 			return data, nil
 		}
+		if !errors.Is(err, errQueueTransport) {
+			return nil, err
+		}
 		if attempt == 2 || ctx.Err() != nil {
 			break
 		}
@@ -189,7 +196,7 @@ func readQueue(ctx context.Context, workspace string, number int, ref string) ([
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, errors.New("queue read deadline expired")
+			return nil, fmt.Errorf("%w: read deadline expired", errQueueTransport)
 		case <-timer.C:
 		}
 	}
@@ -203,23 +210,23 @@ func waitForTurn(ctx context.Context, read func() (witness, error), initial rece
 	waiting := false
 	for {
 		current, err := read()
-		if err != nil {
+		switch {
+		case err != nil && (interval == 0 || !errors.Is(err, errQueueTransport)):
 			return err
-		}
-		if current.receipt != initial {
+		case err != nil:
+			// No response to evaluate. Use the next poll within the same deadline.
+		case current.receipt != initial:
 			return errors.New("initial queue entry or source head was replaced")
-		}
-		if current.position < 1 || !shaPattern.MatchString(current.main) {
+		case current.position < 1 || !shaPattern.MatchString(current.main):
 			return errors.New("missing queue position or main revision")
-		}
-		if current.position == 1 && current.main == parent {
+		case current.position == 1 && current.main == parent:
 			return nil
 		}
 		if interval == 0 {
 			return errors.New("merge group is not first on the current main revision")
 		}
 		if !waiting {
-			_, _ = fmt.Fprintln(stdout, "Waiting for the previous merge group to finish.")
+			_, _ = fmt.Fprintln(stdout, "Waiting for queue admission on the current main revision.")
 			waiting = true
 		}
 		timer := time.NewTimer(interval)
