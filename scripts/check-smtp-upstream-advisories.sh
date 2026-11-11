@@ -14,9 +14,16 @@ module=$(jq -er '.module | select(. == "github.com/emersion/go-smtp")' "$metadat
 version=$(jq -er '.version | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$metadata")
 expected_sum=$(jq -er '.sum | select(test("^h1:[A-Za-z0-9+/]{43}=$"))' "$metadata")
 expected_mod_sum=$(jq -er '.goModSum | select(test("^h1:[A-Za-z0-9+/]{43}=$"))' "$metadata")
+export GOTOOLCHAIN=local GOWORK=off
+# A dependency updater must not change only the displayed requirement while
+# leaving the copied implementation and its advisory base at another version.
+resolved=$(cd "$root" && go list -mod=readonly -m -json "$module")
+jq -e --arg module "$module" --arg version "$version" '
+  .Path == $module and .Version == $version and
+  .Replace.Path == "./third_party/go-smtp"
+' <<<"$resolved" >/dev/null
 work=$(mktemp -d "${TMPDIR:-/tmp}/smtp-upstream-advisories.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
-export GOTOOLCHAIN=local GOWORK=off
 cd "$work"
 go mod init example.invalid/smtp-upstream-advisories >/dev/null
 go mod edit "-require=$module@$version"
