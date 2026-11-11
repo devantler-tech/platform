@@ -16,7 +16,7 @@ spec:
   # plugin (scripts/kagent-claude-harness, devantler-tech/monorepo#4867, #4868).
   # Main publishes and signs it; move this pin after each publish.
   workload:
-    image: ghcr.io/devantler-tech/platform-kagent-claude-harness@sha256:5777ced3082c426842d7d43e73869d3cdc8828f93ec96ce78c9a30b558862097
+    image: ghcr.io/devantler-tech/platform-kagent-claude-harness@sha256:cf42b9058923744b31327d251bab2d230032b4b7412d7c8353fe4ad6bd9fc348
   substrate:
     workerPoolRef:
       name: agentic-engineer
