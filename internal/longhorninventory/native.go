@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -40,6 +41,7 @@ const maxMessageBytes = 64 << 10
 
 var errNative = errors.New("native file observation is incomplete, changed or outside its reviewed scope")
 var bootFormat = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\n$`)
+var kernelPartitionName = regexp.MustCompile(`^[a-z][a-z0-9]{0,62}$`)
 
 func (n Native) requestContext(ctx context.Context) (context.Context, context.CancelFunc, error) {
 	address, err := netip.ParseAddr(n.Target)
@@ -98,7 +100,7 @@ func (n Native) listFixedRoot(ctx context.Context, root string) (Listing, error)
 		if size > maxMessageBytes || total > MaxMetadataBytes || len(listing.Entries) >= MaxEntries {
 			return Listing{}, nativeFailure{code: "bounds"}
 		}
-		if !n.validMetadata(item.GetMetadata()) {
+		if !ValidNodeMetadata(n.Target, item.GetMetadata()) {
 			return Listing{}, nativeFailure{code: "metadata"}
 		}
 		if item.GetError() != "" {
@@ -126,6 +128,32 @@ func classifyNativeFailure(err error, fallback string) nativeFailure {
 	}
 }
 
+// verifyEmptyPartitionHolders admits only the complete, empty sysfs directory
+// for the physical partition named by the native discovery record. It does not
+// assert that every possible raw file descriptor on the node is closed.
+func (n Native) verifyEmptyPartitionHolders(ctx context.Context, devicePath string) error {
+	device, ok := strings.CutPrefix(devicePath, "/dev/")
+	refused := nativeFailure{code: "block-holders"}
+	if !ok || !kernelPartitionName.MatchString(device) || !active(ctx) {
+		return refused
+	}
+	root := path.Join("/sys/class/block", device, "holders")
+	stream, err := n.API.List(ctx, &machine.ListRequest{Root: root, RecursionDepth: 1}, grpc.MaxCallRecvMsgSize(maxMessageBytes))
+	if err != nil || stream == nil {
+		return refused
+	}
+	entry, err := stream.Recv()
+	if err != nil || !active(ctx) || entry == nil || proto.Size(entry) > maxMessageBytes ||
+		!ValidNodeMetadata(n.Target, entry.GetMetadata()) || entry.GetError() != "" || entry.GetLink() != "" ||
+		entry.GetRelativeName() != "." || entry.GetName() != root || !entry.GetIsDir() || !os.FileMode(entry.GetMode()).IsDir() {
+		return refused
+	}
+	if _, err = stream.Recv(); err != io.EOF || !active(ctx) {
+		return refused
+	}
+	return nil
+}
+
 // BootID reads a fixed, exact-format kernel identity. It does not accept a
 // successful stream ending after a partial file, or legacy error envelopes.
 func (n Native) BootID(ctx context.Context) (string, error) {
@@ -148,7 +176,7 @@ func (n Native) BootID(ctx context.Context) (string, error) {
 			return strings.TrimSuffix(string(content), "\n"), nil
 		}
 		if recvErr != nil || !active(ctx) || item == nil || proto.Size(item) > maxMessageBytes ||
-			!n.validMetadata(item.GetMetadata()) || len(content)+len(item.GetBytes()) > 37 {
+			!ValidNodeMetadata(n.Target, item.GetMetadata()) || len(content)+len(item.GetBytes()) > 37 {
 			return "", errNative
 		}
 		content = append(content, item.GetBytes()...)
@@ -156,7 +184,9 @@ func (n Native) BootID(ctx context.Context) (string, error) {
 	return "", errNative
 }
 
-func (n Native) validMetadata(metadata proto.Message) bool {
+// ValidNodeMetadata checks the optional response metadata of a native Talos
+// one-to-one request. The caller must independently bracket the host identity.
+func ValidNodeMetadata(target string, metadata proto.Message) bool {
 	if metadata == nil {
 		// Native One2One routing does not inject a metadata envelope. Hardware and
 		// boot identity must be bracketed independently by the caller.
@@ -174,7 +204,7 @@ func (n Native) validMetadata(metadata proto.Message) bool {
 		return false
 	}
 	hostname := message.Get(fields.ByName("hostname")).String()
-	if hostname != "" && hostname != n.Target {
+	if hostname != "" && hostname != target {
 		return false
 	}
 	statusField := fields.ByName("status")

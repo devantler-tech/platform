@@ -116,7 +116,7 @@ func TestRefreshesRootAndFanoutWithoutLeakingPlaintext(t *testing.T) {
 		"devantler-tech/wedding-app/manifests:latest",
 		"devantler-tech/ascoachingogvaner/manifests:latest",
 		"devantler-tech/world-at-ruin/zone-manifests:0.114.0",
-		"devantler-tech/data-product-controller:latest",
+		"devantler-tech/khoist:latest",
 		"devantler-tech/wedding-app:latest",
 		"devantler-tech/ascoachingogvaner:latest",
 		"devantler-tech/world-at-ruin/zone:v0.114.0",

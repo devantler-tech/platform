@@ -13,11 +13,11 @@ import (
 
 // TestSelectedRuntimeEmitsItsNativeSchema protects policy and asset selection across both APIs.
 func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
-	for _, version := range []string{"0.16.27", "1.0.2"} {
+	for _, version := range []string{"0.16.27", "1.0.2", "1.0.3"} {
 		t.Run(version, func(t *testing.T) {
 			settings := strings.Replace(aliasesSettings, "{", `{"runtimeVersion":"`+version+`",`, 1)
 			inventory := receivingInventory(nil, nil)
-			if version == "1.0.2" {
+			if version != "0.16.27" {
 				listener := inventoryListener(inventory)
 				listener["implicitTls"] = listener["tlsImplicit"]
 				delete(listener, "tlsImplicit")
@@ -36,7 +36,7 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 				t.Fatal(err)
 			}
 			domainFlag, listenerFlag, appFlag, interval, aliasFlag := "isEnabled", "tlsImplicit", "enabled", "autoUpdateFrequency", "enabled"
-			if version == "1.0.2" {
+			if version != "0.16.27" {
 				domainFlag, listenerFlag, appFlag, interval, aliasFlag = "enable", "implicitTls", "enable", "autoUpdateInterval", "enable"
 			}
 			found := map[string]bool{}
@@ -60,7 +60,7 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 						t.Fatal("application schema changed")
 					}
 					digest := "d67e68caba02024301c79da9f15fe465de9bf5382cee54bdf9c309a97b4179a5"
-					if version == "1.0.2" {
+					if version != "0.16.27" {
 						digest = "7278be67087463e011abf40178a2ff073d01bbf02e62ad2a3ff04435140022b0"
 					}
 					if a["resourceUrl"] != "file:///usr/local/share/stalwart/webui-"+digest+".zip" {
@@ -68,7 +68,7 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 					}
 					found["application"] = true
 				case "Http":
-					if version == "1.0.2" {
+					if version != "0.16.27" {
 						if op.Value["clientIpSource"] != "peer" || op.Value["forwardedHops"] != float64(1) {
 							t.Fatal("untrusted forwarded identity enabled")
 						}
@@ -90,7 +90,7 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 					}
 					p := m["permissions"].(map[string]any)["enabledPermissions"].(map[string]any)
 					wantCount := 244
-					if version == "1.0.2" {
+					if version != "0.16.27" {
 						wantCount = 248
 					}
 					if len(p) != wantCount || p["authenticate"] != true || p["jmapEmailGet"] != true || p["sysAccountUpdate"] != nil {
@@ -108,7 +108,7 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 
 // TestRuntimeVersionRefusesUnknownOrAmbiguousInputs prevents unsafe selector fallbacks.
 func TestRuntimeVersionRefusesUnknownOrAmbiguousInputs(t *testing.T) {
-	for _, member := range []string{`"runtimeVersion":""`, `"runtimeVersion":null`, `"runtimeVersion":1`, `"runtimeVersion":"1.0.3"`, `"runtimeVersion":"1.0.2","runtimeVersion":"0.16.27"`} {
+	for _, member := range []string{`"runtimeVersion":""`, `"runtimeVersion":null`, `"runtimeVersion":1`, `"runtimeVersion":"1.0.4"`, `"runtimeVersion":"1.0.2","runtimeVersion":"0.16.27"`} {
 		input, output := aliasInputs(t, strings.Replace(aliasesSettings, "{", "{"+member+",", 1), receivingInventory(nil, nil))
 		if command([]string{"--input-dir", input, "--output-file", output}, &bytes.Buffer{}) == 0 {
 			t.Fatal("unsupported runtime created a plan")
@@ -121,7 +121,7 @@ func TestRuntimeVersionRefusesUnknownOrAmbiguousInputs(t *testing.T) {
 
 // TestSchemaSelectionRefusesForeignOrMixedListenerFields rejects cross-version TLS declarations.
 func TestSchemaSelectionRefusesForeignOrMixedListenerFields(t *testing.T) {
-	for _, version := range []string{"0.16.27", "1.0.2"} {
+	for _, version := range []string{"0.16.27", "1.0.2", "1.0.3"} {
 		for _, mixed := range []bool{false, true} {
 			inventory := receivingInventory(nil, nil)
 			l := inventoryListener(inventory)
@@ -144,11 +144,11 @@ func TestSchemaSelectionRefusesForeignOrMixedListenerFields(t *testing.T) {
 
 // TestSchemaSelectionRefusesForeignNullFields prevents null values from hiding mixed schemas.
 func TestSchemaSelectionRefusesForeignNullFields(t *testing.T) {
-	for _, version := range []string{"0.16.27", "1.0.2"} {
+	for _, version := range []string{"0.16.27", "1.0.2", "1.0.3"} {
 		for _, family := range []string{"listener", "application"} {
 			app := applicationInventoryFixture()
 			inventory := withApplicationInventory(inventoryFixture(), app)
-			if version == "1.0.2" {
+			if version != "0.16.27" {
 				l := inventoryListener(inventory)
 				l["implicitTls"] = true
 				delete(l, "tlsImplicit")
@@ -162,13 +162,13 @@ func TestSchemaSelectionRefusesForeignNullFields(t *testing.T) {
 			}
 			if family == "listener" {
 				field := "implicitTls"
-				if version == "1.0.2" {
+				if version != "0.16.27" {
 					field = "tlsImplicit"
 				}
 				inventoryListener(inventory)[field] = nil
 			} else {
 				field := "enable"
-				if version == "1.0.2" {
+				if version != "0.16.27" {
 					field = "enabled"
 				}
 				app[field] = nil
@@ -187,15 +187,17 @@ func TestSchemaSelectionRefusesForeignNullFields(t *testing.T) {
 // TestNewRuntimeChecksMatchedToolsBeforeOpeningTheDatastore fences incompatible native binaries.
 func TestNewRuntimeChecksMatchedToolsBeforeOpeningTheDatastore(t *testing.T) {
 	for _, tc := range []struct {
-		server, cli string
-		starts      bool
+		selected, server, cli string
+		starts                bool
 	}{
-		{"1.0.2", "stalwart-cli 1.0.14", true},
-		{"0.16.27", "stalwart-cli 1.0.14", false},
-		{"1.0.2", "stalwart-cli 1.0.13", false},
-		{"1.0.2 extra", "stalwart-cli 1.0.14", false},
+		{"1.0.2", "1.0.2", "stalwart-cli 1.0.14", true},
+		{"1.0.2", "0.16.27", "stalwart-cli 1.0.14", false},
+		{"1.0.2", "1.0.2", "stalwart-cli 1.0.13", false},
+		{"1.0.2", "1.0.2 extra", "stalwart-cli 1.0.14", false},
+		{"1.0.3", "1.0.3", "stalwart-cli 1.0.14", true},
+		{"1.0.3", "1.0.2", "stalwart-cli 1.0.14", false},
 	} {
-		t.Run(tc.server+"/"+tc.cli, func(t *testing.T) {
+		t.Run(tc.selected+"/"+tc.server+"/"+tc.cli, func(t *testing.T) {
 			dir := bootstrapInputs(t)
 			data := t.TempDir()
 			started := filepath.Join(data, "started")
@@ -212,7 +214,7 @@ func TestNewRuntimeChecksMatchedToolsBeforeOpeningTheDatastore(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			settings = bytes.Replace(settings, []byte("{"), []byte(`{"runtimeVersion":"1.0.2",`), 1)
+			settings = bytes.Replace(settings, []byte("{"), []byte(`{"runtimeVersion":"`+tc.selected+`",`), 1)
 			if err := os.WriteFile(filepath.Join(dir, "settings.json"), settings, 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -268,13 +270,13 @@ func TestNewRuntimeReceivingAliasesStayWithTheirOwner(t *testing.T) {
 
 // TestNativeInventoryAndClientIdentityFollowTheSelectedSchema preserves explicit identity trust.
 func TestNativeInventoryAndClientIdentityFollowTheSelectedSchema(t *testing.T) {
-	for _, version := range []string{"0.16.27", "1.0.2"} {
+	for _, version := range []string{"0.16.27", "1.0.2", "1.0.3"} {
 		request, err := inventoryRequestFor(version)
 		if err != nil {
 			t.Fatal(err)
 		}
 		implicit, enabled := `"tlsImplicit"`, `"enabled"`
-		if version == "1.0.2" {
+		if version != "0.16.27" {
 			implicit, enabled = `"implicitTls"`, `"enable"`
 		}
 		if !bytes.Contains(request, []byte(implicit)) || !bytes.Contains(request, []byte(enabled)) {
@@ -297,7 +299,7 @@ func TestNativeInventoryAndClientIdentityFollowTheSelectedSchema(t *testing.T) {
 					continue
 				}
 				found = true
-				if version == "1.0.2" {
+				if version != "0.16.27" {
 					want := "peer"
 					if forwarded {
 						want = "xForwardedFor"

@@ -1,0 +1,223 @@
+---
+name: Publish Longhorn V1 Retirement Image
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-longhorn-v1-retirement.yaml
+      - .github/scripts/setup-supply-chain-tools.sh
+      - .github/scripts/release-asset-download.sh
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/InstanceManagerRetirement.Dockerfile
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/instance-manager-v1.13.0-retirement.patch
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-longhorn-v1-retirement.yaml
+      - .github/scripts/setup-supply-chain-tools.sh
+      - .github/scripts/release-asset-download.sh
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/InstanceManagerRetirement.Dockerfile
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/instance-manager-v1.13.0-retirement.patch
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_SOURCE: 583914ba5eb9742a8a481a42af11a38bc19a2765
+  LIBQCOW_SOURCE: be16287a2b9691347936be43fcffe93b8f74cf54
+  IMAGE: ghcr.io/devantler-tech/platform-longhorn-instance-manager
+  IMAGE_TAG: v1.13.0-retirement.1-${{ github.sha }}-${{ github.run_attempt }}
+  BUILD_FILES: k8s/providers/hetzner/infrastructure/controllers/longhorn
+
+jobs:
+  verify:
+    name: Verify the patched Longhorn release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      binary_sha: ${{ steps.build.outputs.binary_sha }}
+      artifact_name: ${{ steps.build.outputs.artifact_name }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Check out the reviewed compatibility patch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the exact Longhorn release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: longhorn/longhorn-instance-manager
+          ref: ${{ env.UPSTREAM_SOURCE }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Check out the release's libqcow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: longhorn/libqcow
+          ref: ${{ env.LIBQCOW_SOURCE }}
+          path: libqcow
+          persist-credentials: false
+
+      - name: Set up the reviewed Go compiler
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.11
+          cache: false
+
+      - name: Build the pinned native dependency
+        working-directory: libqcow
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${LIBQCOW_SOURCE}"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            autoconf automake autopoint gcc gettext libtool make pkg-config zlib1g-dev
+          autoreconf -i
+          # Use libqcow's bundled AES on both local and hosted builders.
+          ./configure --prefix="${RUNNER_TEMP}/libqcow" \
+            --enable-static --disable-shared --without-openssl
+          make -j2
+          make install
+          test -s "${RUNNER_TEMP}/libqcow/lib/libqcow.a"
+
+      - name: Apply the patch, test, and build the native binary
+        id: build
+        working-directory: upstream
+        env:
+          CGO_ENABLED: "1"
+          GOPROXY: "off"
+          GOSUMDB: "off"
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${UPSTREAM_SOURCE}"
+          patch="${GITHUB_WORKSPACE}/${BUILD_FILES}/instance-manager-v1.13.0-retirement.patch"
+          git apply --check --whitespace=error "${patch}"
+          git apply --whitespace=error "${patch}"
+          export CGO_CFLAGS="-I${RUNNER_TEMP}/libqcow/include"
+          export CGO_LDFLAGS="-L${RUNNER_TEMP}/libqcow/lib"
+          go test -race -mod=vendor -count=1 -timeout=8m ./...
+          target="${RUNNER_TEMP}/longhorn-retirement"
+          mkdir -p "${target}"
+          binary="${target}/longhorn-instance-manager"
+          go build -mod=vendor -trimpath -tags netgo,osusergo \
+            -ldflags "-X main.Version=v1.13.0 -X main.GitCommit=${UPSTREAM_SOURCE} -linkmode external -extldflags -static" \
+            -o "${binary}" .
+          file "${binary}" | grep -E 'x86-64.*statically linked'
+          test "$("${binary}" --version)" = 'longhorn-instance-manager version v1.13.0'
+          "${binary}" process seal-volume-for-retirement --help
+          printf 'binary_sha=%s\n' "$(sha256sum "${binary}" | cut -d ' ' -f1)" >> "${GITHUB_OUTPUT}"
+          printf 'artifact_name=longhorn-retirement-%s-%s\n' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify the binary in the official runtime image
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            --file "${GITHUB_WORKSPACE}/${BUILD_FILES}/InstanceManagerRetirement.Dockerfile" \
+            --tag "${IMAGE}:${IMAGE_TAG}" "${RUNNER_TEMP}/longhorn-retirement"
+          test "$(docker image inspect --format '{{.Config.User}}' "${IMAGE}:${IMAGE_TAG}")" = 65532:65532
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --entrypoint /usr/local/bin/longhorn-instance-manager "${IMAGE}:${IMAGE_TAG}" \
+            process seal-volume-for-retirement --help
+
+      - name: Retain the tested binary for publication
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.build.outputs.artifact_name }}
+          path: ${{ runner.temp }}/longhorn-retirement/longhorn-instance-manager
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish and verify the reviewed image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Check out the reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download this run's verified binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.verify.outputs.artifact_name }}
+          path: ${{ runner.temp }}/longhorn-retirement
+
+      - name: Verify and package the exact binary
+        env:
+          BINARY_SHA: ${{ needs.verify.outputs.binary_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${BINARY_SHA}" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "${BINARY_SHA}" "${RUNNER_TEMP}/longhorn-retirement/longhorn-instance-manager" | sha256sum --check
+          docker build --platform linux/amd64 \
+            --file "${GITHUB_WORKSPACE}/${BUILD_FILES}/InstanceManagerRetirement.Dockerfile" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "${IMAGE}:${IMAGE_TAG}" "${RUNNER_TEMP}/longhorn-retirement"
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --entrypoint /usr/local/bin/longhorn-instance-manager "${IMAGE}:${IMAGE_TAG}" \
+            process seal-volume-for-retirement --help
+
+      - name: Install verified signing and inventory tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
+
+      - name: Inventory the release image
+        run: syft "docker:${IMAGE}:${IMAGE_TAG}" --output "cyclonedx-json=${RUNNER_TEMP}/longhorn-sbom.json"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish, sign, and verify the immutable digest
+        env:
+          BINARY_SHA: ${{ needs.verify.outputs.binary_sha }}
+        run: |
+          set -euo pipefail
+          docker push "${IMAGE}:${IMAGE_TAG}"
+          digest_ref="$(docker image inspect --format '{{json .RepoDigests}}' "${IMAGE}:${IMAGE_TAG}" | jq -er --arg prefix "${IMAGE}@sha256:" 'map(select(startswith($prefix))) | if length == 1 then .[0] else error("ambiguous image digest") end')"
+          identity=https://github.com/devantler-tech/platform/.github/workflows/publish-longhorn-v1-retirement.yaml@refs/heads/main
+          issuer=https://token.actions.githubusercontent.com
+          receipt_type=https://devantler.tech/attestations/longhorn-retirement-build/v1
+          base_image="$(awk 'NR == 1 && $1 == "FROM" { print $2 }' "${BUILD_FILES}/InstanceManagerRetirement.Dockerfile")"
+          [[ "${base_image}" =~ ^docker\.io/longhornio/longhorn-instance-manager:v1\.13\.0@sha256:[0-9a-f]{64}$ ]]
+          jq -n --arg revision "${GITHUB_SHA}" --arg upstream "${UPSTREAM_SOURCE}" --arg libqcow "${LIBQCOW_SOURCE}" \
+            --arg base "${base_image}" --arg binary "${BINARY_SHA}" --arg run "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" \
+            '{sourceRevision:$revision,upstreamRevision:$upstream,libqcowRevision:$libqcow,baseImage:$base,binarySha256:$binary,workflowRunId:$run,workflowRunAttempt:$attempt}' \
+            > "${RUNNER_TEMP}/longhorn-build.json"
+          cosign sign --yes "${digest_ref}"
+          cosign attest --yes --predicate "${RUNNER_TEMP}/longhorn-build.json" --type "${receipt_type}" "${digest_ref}"
+          cosign attest --yes --predicate "${RUNNER_TEMP}/longhorn-sbom.json" --type cyclonedx "${digest_ref}"
+          cosign verify --certificate-identity "${identity}" --certificate-oidc-issuer "${issuer}" "${digest_ref}"
+          for kind in "${receipt_type}" cyclonedx; do
+            cosign verify-attestation --type "${kind}" --certificate-identity "${identity}" \
+              --certificate-oidc-issuer "${issuer}" "${digest_ref}" > /dev/null
+          done
+          printf 'Published and verified: %s\n' "${digest_ref}"

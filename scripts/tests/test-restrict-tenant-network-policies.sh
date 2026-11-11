@@ -268,6 +268,16 @@ legacy_plural="$(jq -c '.specs = [.spec]' <<<"${existing}")"
         hold_control "platform-hold-${operation}-${managed:-unlabelled}-${actor}" \
           "${actor}" "${operation}" business-site business-site-staging-hold skip "${managed}"
       done
+      for actor in system:serviceaccount:business-site:business-site \
+        system:serviceaccount:business-site:kustomize-controller "${kyverno_sa}"; do
+        hold_control "identity-hold-${operation}-${managed:-unlabelled}-${actor}" \
+          "${actor}" "${operation}" business-site business-site-customer-identity-hold fail "${managed}"
+      done
+      hold_control "platform-identity-hold-${operation}-${managed:-unlabelled}" \
+        "${flux_sa}" "${operation}" business-site business-site-customer-identity-hold skip "${managed}"
+      hold_control "other-namespace-identity-hold-${operation}-${managed:-unlabelled}" "${tenant}" \
+        "${operation}" other-tenant business-site-customer-identity-hold \
+        "$(if [[ -n "${managed}" ]]; then echo pass; else echo skip; fi)" "${managed}"
       hold_control "other-name-${operation}-${managed:-unlabelled}" "${tenant}" \
         "${operation}" business-site tenant-allow-gateway \
         "$(if [[ -n "${managed}" ]]; then echo pass; else echo skip; fi)" "${managed}"

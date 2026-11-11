@@ -84,7 +84,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.206.75"
+        KSAIL_VERSION: "7.207.0"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -93,6 +93,9 @@ runs:
       # refresh-flux-ghcr-auth.sh uses the host API for a secret-safe,
       # per-node RegistryAuthConfig patch and exact image-pull proof.
       shell: bash
+      env:
+        # Download through the authenticated asset API first (#5942).
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-talosctl.sh
 

@@ -14,9 +14,11 @@ import (
 const retainedFixtureNonce = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 type retainedMessageServer struct {
-	calls  map[string]int
-	mutate func(string, int, object)
-	raw    func(string, http.ResponseWriter) bool
+	calls      map[string]int
+	mutate     func(string, int, object)
+	raw        func(string, http.ResponseWriter) bool
+	query      func(object) object
+	receivedAt func(string) string
 }
 
 // These independent HTTP receipts exercise the real client, including its
@@ -80,7 +82,7 @@ func retainedMessageEndpoint(t *testing.T, f *retainedMessageServer) string {
 			result["notFound"] = []any{}
 			result["list"] = []any{object{"id": "inbox", "name": "Inbox", "isSubscribed": true}, object{"id": "diagnostic-box", "name": "Email recovery verification " + retainedFixtureNonce, "isSubscribed": false}}
 		case "Email/query":
-			if !reflect.DeepEqual(args["filter"], object{"inMailbox": "diagnostic-box"}) || args["calculateTotal"] != true || args["position"] != float64(0) || args["limit"] != float64(2) {
+			if args["calculateTotal"] != true || args["position"] != float64(0) || args["limit"] != float64(2) {
 				t.Error("diagnostic query lost its mailbox or completeness bound")
 			}
 			result["queryState"] = "query-state"
@@ -88,7 +90,27 @@ func retainedMessageEndpoint(t *testing.T, f *retainedMessageServer) string {
 			result["position"] = float64(0)
 			result["total"] = float64(1)
 			result["ids"] = []any{"diagnostic-email"}
+			filter := child(args, "filter")
+			if f.query != nil {
+				for key, value := range f.query(filter) {
+					result[key] = value
+				}
+			} else if !reflect.DeepEqual(filter, object{"inMailbox": "diagnostic-box"}) {
+				t.Error("diagnostic query lost its fixed mailbox")
+			}
 		case "Email/get":
+			if reflect.DeepEqual(args["properties"], []any{"id", "receivedAt"}) && f.receivedAt != nil {
+				ids, _ := args["ids"].([]any)
+				if len(ids) != 1 || len(args) != 3 {
+					t.Error("timestamp read requested additional data")
+					return
+				}
+				id, _ := ids[0].(string)
+				result["state"] = "email-state"
+				result["notFound"] = []any{}
+				result["list"] = []any{object{"id": id, "receivedAt": f.receivedAt(id)}}
+				break
+			}
 			if !reflect.DeepEqual(args["ids"], []any{"diagnostic-email"}) || args["fetchTextBodyValues"] != true {
 				t.Error("message readback lost its exact identity or body")
 			}
@@ -132,6 +154,100 @@ func TestRetainedMessageReadsMatchingDiagnosticTwiceWithoutWrites(t *testing.T) 
 		if !reflect.DeepEqual(endpoint.calls, map[string]int{"session": 1, "Mailbox/get": 2, "Email/query": 2, "Email/get": 2}) {
 			t.Fatal("readback did not repeat the complete diagnostic observation")
 		}
+	}
+}
+
+func TestFreshParitySelectsOnlyOneDiagnosticInTheProtectedWindow(t *testing.T) {
+	window := freshRecoveryWindow()
+	const inWindow = "2026-11-10T12:44:30Z"
+	fixture := func(at string, ambiguous, changed bool) *retainedMessageServer {
+		return &retainedMessageServer{
+			mutate: func(method string, _ int, result object) {
+				switch method {
+				case "Mailbox/get":
+					result["list"] = append(result["list"].([]any), object{
+						"id": "older-box", "name": "Email recovery verification " + strings.Repeat("f", 64), "isSubscribed": true,
+					})
+				case "Email/get":
+					msg := items(result, "list")[0]
+					if text(msg, "blobId") != "" {
+						msg["receivedAt"] = at
+						if changed {
+							msg["receivedAt"] = "2026-11-10T12:44:31Z"
+						}
+					}
+				}
+			},
+			query: func(filter object) object {
+				if len(filter) != 1 {
+					t.Error("query exceeded the mailbox bound")
+				}
+				if text(filter, "inMailbox") == "older-box" {
+					return object{"ids": []any{"older-email"}}
+				}
+				return nil
+			},
+			receivedAt: func(id string) string {
+				if id == "older-email" && !ambiguous {
+					return "2026-11-03T10:00:00Z"
+				}
+				return at
+			},
+		}
+	}
+	for _, tc := range []struct {
+		name, readerTime, sourceTime, wantStage string
+		ambiguous, changed                      bool
+	}{
+		{name: "matching", readerTime: inWindow, sourceTime: inWindow},
+		{name: "two candidates", readerTime: inWindow, sourceTime: inWindow, ambiguous: true, wantStage: "retained-reader-mailbox-ambiguous"},
+		{name: "no timestamp in range", readerTime: "2026-11-10T12:44:22Z", sourceTime: inWindow, wantStage: "retained-reader-mailbox-missing"},
+		{name: "malformed timestamp", readerTime: "invalid", sourceTime: inWindow, wantStage: "retained-reader-email-time"},
+		{name: "timestamp changed on full read", readerTime: inWindow, sourceTime: inWindow, changed: true, wantStage: "retained-reader-email-time"},
+		{name: "source timestamp differs", readerTime: inWindow, sourceTime: "2026-11-10T12:44:31Z", wantStage: "retained-source-mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, s := fixture(tc.readerTime, tc.ambiguous, tc.changed), fixture(tc.sourceTime, false, false)
+			reader := retainedFixtureClient(t, retainedMessageEndpoint(t, r))
+			source := retainedFixtureClient(t, retainedMessageEndpoint(t, s))
+			identity, err := verifyRetainedMessageInWindow(context.Background(), reader, source, window)
+			if tc.wantStage != "" {
+				if err == nil || err.Error() != tc.wantStage {
+					t.Fatalf("expected refusal %s, got %v", tc.wantStage, err)
+				}
+				return
+			}
+			if err != nil || identity.email != "diagnostic-email" || identity.receivedAt != inWindow {
+				t.Fatalf("matching fresh diagnostic was not verified: %v", err)
+			}
+			for _, endpoint := range []*retainedMessageServer{r, s} {
+				if !reflect.DeepEqual(endpoint.calls, map[string]int{"session": 1, "Mailbox/get": 2, "Email/query": 4, "Email/get": 6}) {
+					t.Fatal("parity did not repeat both bounded mailbox queries and exact message reads")
+				}
+			}
+		})
+	}
+}
+
+func TestFreshParityCapabilityBoundsCandidateMetadataReads(t *testing.T) {
+	window := freshRecoveryWindow()
+	args := object{"accountId": "company-account", "ids": []string{"diagnostic-email"}, "properties": []string{"id", "receivedAt"}}
+	envelope := func() []byte {
+		data, err := json.Marshal(object{
+			"using":       []string{"urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"},
+			"methodCalls": []any{[]any{"Email/get", args, "proof"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	if !retainedJMAPRead(envelope(), "company-account", window) || retainedJMAPRead(envelope(), "company-account", nil) {
+		t.Fatal("bounded timestamp read was refused or leaked into the original mode")
+	}
+	args["properties"] = []string{"id", "receivedAt", "subject"}
+	if retainedJMAPRead(envelope(), "company-account", window) {
+		t.Fatal("metadata read exceeded its fixed properties")
 	}
 }
 

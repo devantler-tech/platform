@@ -173,8 +173,6 @@ func fakeCurl(args []string) int {
 func fakeManifestDigest(repository string) string {
 	digit := "d"
 	switch repository {
-	case "devantler-tech/data-product-controller":
-		digit = "a"
 	case "devantler-tech/wedding-app":
 		digit = "b"
 	case "devantler-tech/ascoachingogvaner":

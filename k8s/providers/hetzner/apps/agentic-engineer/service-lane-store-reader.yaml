@@ -1,0 +1,17 @@
+# The lane store's read-only view, which the maintainer and the Agent Improver
+# read through the Kubernetes API (role-lane-store-reader.yaml). Its one port is
+# deliberately unnamed: a proxy path without a port, .../services/
+# lane-store-reader/proxy/, resolves only to an unnamed port, and the Role
+# grants exactly that name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lane-store-reader
+  namespace: agentic-engineer
+spec:
+  selector:
+    app.kubernetes.io/name: lane-store
+  ports:
+    - port: 8081
+      targetPort: reader
+      protocol: TCP

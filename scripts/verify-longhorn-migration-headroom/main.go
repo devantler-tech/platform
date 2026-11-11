@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -161,13 +162,28 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 }
 
 func main() {
-	if len(os.Args) != 2 || (os.Args[1] != "before-publish" && os.Args[1] != "before-update" && os.Args[1] != "after-update") || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" {
+	if len(os.Args) != 2 || !slices.Contains([]string{"before-publish", "before-update", "after-update", "account-census"}, os.Args[1]) ||
+		os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" {
 		fmt.Fprintln(os.Stderr, "HOLD: migration headroom requires a protected production deployment")
 		os.Exit(1)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 15 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
+	if os.Args[1] == "account-census" {
+		if !authorizeAccountCensus(os.Getenv) {
+			fmt.Fprintln(os.Stderr, "HOLD: provider account reconciliation requires a confirmed first attempt on main")
+			os.Exit(1)
+		}
+		result, err := observeAccountCensus(ctx, client, os.Getenv("HCLOUD_TOKEN"), readNativeNodes)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "HOLD: provider account reconciliation: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("OBSERVED: account_servers=%d joined_nodes=%d provider_only=%d classification=%s state=%s admission=none\n",
+			result.Servers, result.Nodes, result.Extra, result.Classification, result.State)
+		return
+	}
 	n, err := observe(ctx, client, os.Getenv("HCLOUD_TOKEN"), readNativeNodes, os.Args[1] == "after-update")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "HOLD: migration headroom stage=%s: %v\n", os.Args[1], err)
