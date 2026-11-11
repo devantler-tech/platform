@@ -92,6 +92,33 @@ comparison. `EMAIL_RETAINED_PARITY=VERIFIED` reports present message parity.
 The original trial stays unverified and disposal still requires its own backup
 and ownership checks.
 
+The separately confirmed `Prepare Retained Email Reader Inputs` workflow
+prepares custody for the original retained reader. It runs only on the first
+maintainer-dispatched attempt from current reviewed main, under the production
+deployment lock. It binds the independently recorded reader and claim, reads
+the exact retained encryption key, recovery authentication, configuration and
+declared workload inputs, and rechecks their identities and contents immediately
+before the one conditional OpenBao write. Kubernetes access is read-only.
+
+The destination is a create-only, original-version KV2 record under
+`infrastructure/email/recovery/retained-reader-inputs`. The command uses CAS=0;
+an identical existing record is read back without rewriting it. The command
+never updates or deletes the record. Changed,
+deleted, newer, malformed or unreadable records refuse preparation. A failed
+or lost write response is uncertain and is not retried. Original inputs remain
+in place on every outcome. Neither credentials nor resource identities are
+printed; the short-lived credential files exist only in runner memory.
+
+`EMAIL_READER_INPUT_CUSTODY=STORED` proves the observed record matches those
+retained inputs. Its receipt explicitly says `restart=NOT_AUTHORIZED` and
+`recovery=UNVERIFIED`: independent recovery of the stored inputs, a durable
+restart witness, the separate protected pause/resume operations and native
+detachment proof remain required. This workflow never stops the reader,
+allocates storage, changes the source mailbox or grants disposal authority.
+The expired-backup disposal gate remains unchanged. If custody is refused,
+investigate the retained identities and destination before another confirmed
+first attempt; never replace a conflicting record or regenerate a missing key.
+
 With confirmation `verify-fresh-retained-email-parity`, the workflow checks
 the separately retained fresh restore. The protected witness binds the
 namespace, reader, claim, backup and download. The backup must still be
