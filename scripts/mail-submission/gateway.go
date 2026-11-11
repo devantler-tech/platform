@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
@@ -129,7 +130,9 @@ func newGateway(cfg configuration, output io.Writer) (*gateway, error) {
 	g.server.Domain = "submission.invalid"
 	g.server.ReadTimeout = 10 * time.Second
 	g.server.WriteTimeout = 5 * time.Second
-	g.server.MaxMessageBytes = maxMessageBytes
+	// The DATA reader needs one extra byte to observe its terminator. The
+	// application still enforces the exact payload bound in Mail and Data.
+	g.server.MaxMessageBytes = maxMessageBytes + 1
 	g.server.MaxRecipients = 1
 	g.server.ErrorLog = safeSMTPLogger{g.logger}
 	return g, nil
@@ -190,12 +193,16 @@ func refusal(code int, message string) error {
 	return &smtp.SMTPError{Code: code, Message: message}
 }
 
-func (s *session) Mail(from string, _ *smtp.MailOptions) error {
+func (s *session) Mail(from string, options *smtp.MailOptions) error {
 	if !s.authenticated {
 		return smtp.ErrAuthRequired
 	}
+	s.Reset()
 	if from != s.gateway.cfg.Settings.Sender {
 		return refusal(550, "Sender refused")
+	}
+	if options != nil && options.Size > maxMessageBytes {
+		return smtp.ErrDataTooLarge
 	}
 	s.from = from
 	return nil
@@ -266,11 +273,15 @@ func (s *session) Data(reader io.Reader) error {
 }
 
 func (s *session) forward(raw []byte) error {
-	conn, err := net.DialTimeout("tcp", s.gateway.cfg.Settings.UpstreamAddress, 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), upstreamLifetime)
+	defer cancel()
+	dialer := &net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", s.gateway.cfg.Settings.UpstreamAddress)
 	if err != nil {
 		return errUpstreamTemporary
 	}
-	bounded := &deadlineConn{Conn: conn, expires: time.Now().Add(upstreamLifetime)}
+	deadline, _ := ctx.Deadline()
+	bounded := &deadlineConn{Conn: conn, expires: deadline}
 	defer func() { _ = bounded.Close() }()
 	client, err := smtp.NewClientStartTLS(bounded, s.gateway.cfg.UpstreamTLS)
 	if err != nil {

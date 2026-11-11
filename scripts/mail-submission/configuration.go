@@ -26,7 +26,7 @@ func privateFile(root *os.Root, name string, limit int64) ([]byte, error) {
 		return nil, errConfiguration
 	}
 	owner, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || (owner.Uid != 0 && owner.Uid != uint32(os.Geteuid())) {
+	if !ok || (owner.Uid != 0 && int64(owner.Uid) != int64(os.Geteuid())) {
 		return nil, errConfiguration
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, limit+1))
