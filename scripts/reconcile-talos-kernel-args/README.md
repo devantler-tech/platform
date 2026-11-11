@@ -591,6 +591,18 @@ health checks for HelmReleases in KSail's workload generator, which the
 mirrored fold does not use. This audit changes no cluster configuration or
 vulnerability exception.
 
+**7.211.0**, commit `ad13d562d14268e1e0dc7b986f88e25153f01ca4`, is audited
+against 7.208.0. The configuration manager, Talos generator, `go.mod` and
+`go.sum` are byte-identical, so the normalized extension/argument trigger,
+both-role fold, explicit schematic-ID boundary and Talos machinery are
+unchanged. The cluster API and chart changes add two observed-state status
+fields, `status.observedDistribution` and `status.observedProvider`, with their
+CRD print columns and a chart upgrade note, and keep the status out of
+spec-default pruning so the operator's status round-trips. `options.go`, which
+defines `spec.cluster.talos.extensions` and `schematicId`, is unchanged, so both
+fields keep their names, types and defaults. This audit changes no cluster
+configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
