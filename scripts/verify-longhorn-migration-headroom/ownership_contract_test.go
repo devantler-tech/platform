@@ -2,7 +2,7 @@ package main
 
 import "testing"
 
-// KSail v7.209.0 NodeLabels and the Talos server-creation path use the
+// KSail v7.210.0 NodeLabels and the Talos server-creation path use the
 // provider role "controlplane", independently of Kubernetes' role-label spelling.
 func TestPublishedProviderControlPlaneOwnership(t *testing.T) {
 	servers, nodes := roster(t, true)
