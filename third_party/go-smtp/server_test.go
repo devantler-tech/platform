@@ -81,7 +81,7 @@ func (s *session) AuthMechanisms() []string {
 	return []string{sasl.Plain}
 }
 
-func (s *session) Auth(mech string) (sasl.Server, error) {
+func (s *session) Auth(_ string) (sasl.Server, error) {
 	if s.backend.authDisabled {
 		return nil, smtp.ErrAuthUnsupported
 	}
@@ -138,21 +138,21 @@ func (s *session) Data(r io.Reader) error {
 		return err
 	}
 
-	if b, err := ioutil.ReadAll(r); err != nil {
+	b, err := ioutil.ReadAll(r)
+	if err != nil {
 		if s.backend.dataErrors != nil {
 			s.backend.dataErrors <- err
 		}
 		return err
+	}
+	s.msg.Data = b
+	if s.anonymous {
+		s.backend.anonmsgs = append(s.backend.anonmsgs, s.msg)
 	} else {
-		s.msg.Data = b
-		if s.anonymous {
-			s.backend.anonmsgs = append(s.backend.anonmsgs, s.msg)
-		} else {
-			s.backend.messages = append(s.backend.messages, s.msg)
-		}
-		if s.backend.dataErrors != nil {
-			s.backend.dataErrors <- nil
-		}
+		s.backend.messages = append(s.backend.messages, s.msg)
+	}
+	if s.backend.dataErrors != nil {
+		s.backend.dataErrors <- nil
 	}
 	return nil
 }
@@ -294,12 +294,11 @@ func testServerEhlo(t *testing.T, fn ...serverConfigureFunc) (be *backend, s *sm
 		if strings.HasPrefix(s, "250 ") {
 			caps[strings.TrimPrefix(s, "250 ")] = true
 			break
-		} else {
-			if !strings.HasPrefix(s, "250-") {
-				t.Fatal("Invalid capability response:", s)
-			}
-			caps[strings.TrimPrefix(s, "250-")] = true
 		}
+		if !strings.HasPrefix(s, "250-") {
+			t.Fatal("Invalid capability response:", s)
+		}
+		caps[strings.TrimPrefix(s, "250-")] = true
 	}
 
 	for _, cap := range expectedCaps {
@@ -1183,7 +1182,7 @@ func TestServer_Chunking_EarlyError(t *testing.T) {
 	defer s.Close()
 	defer c.Close()
 
-	be.dataErr = &smtp.SMTPError{
+	be.dataErr = &smtp.Error{
 		Code:         555,
 		EnhancedCode: smtp.EnhancedCode{5, 0, 0},
 		Message:      "I failed",
@@ -1214,7 +1213,7 @@ func TestServer_Chunking_EarlyErrorDuringChunk(t *testing.T) {
 	defer s.Close()
 	defer c.Close()
 
-	be.dataErr = &smtp.SMTPError{
+	be.dataErr = &smtp.Error{
 		Code:         555,
 		EnhancedCode: smtp.EnhancedCode{5, 0, 0},
 		Message:      "I failed",

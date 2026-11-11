@@ -42,6 +42,14 @@ func TestNativeMessageRefusals(t *testing.T) {
 		"sender":                  "Sender: someone@example.invalid\r\n" + validMessage,
 		"resent author":           "Resent-From: someone@example.invalid\r\n" + validMessage,
 		"return path":             "Return-Path: someone@example.invalid\r\n" + validMessage,
+		"duplicate return path":   "Return-Path: invitations@example.invalid\r\nReturn-Path: invitations@example.invalid\r\n" + validMessage,
+		"mixed case return path":  "Return-Path: invitations@example.invalid\r\nrEtUrN-pAtH: someone@example.invalid\r\n" + validMessage,
+		"named return path":       "Return-Path: Impersonator <invitations@example.invalid>\r\n" + validMessage,
+		"empty return path":       "Return-Path: <>\r\n" + validMessage,
+		"multiple return paths":   "Return-Path: invitations@example.invalid, someone@example.invalid\r\n" + validMessage,
+		"spaced return path":      "Return-Path : someone@example.invalid\r\n" + validMessage,
+		"spaced sender":           "Sender : someone@example.invalid\r\n" + validMessage,
+		"spaced resent author":    "Resent-From : someone@example.invalid\r\n" + validMessage,
 		"reply to":                "Reply-To: someone@example.invalid\r\n" + validMessage,
 		"missing header boundary": from + "Subject: fixture\r\n",
 		"header bound":            from + "X-Fixture: a\r\n" + strings.Repeat(" aaaaaaaaaaaaaaaaaaaa\r\n", 3200) + "\r\nbody\r\n",
@@ -146,7 +154,7 @@ func TestNativeUpstreamRefusals(t *testing.T) {
 			}
 			client := authenticatedClient(t, fixtureGateway(t, cfg, logs), trust, cfg)
 			err := client.SendMail(cfg.Settings.Sender, []string{"client@example.invalid"}, strings.NewReader(validMessage))
-			var protocol *smtp.SMTPError
+			var protocol *smtp.Error
 			if !errors.As(err, &protocol) {
 				t.Fatalf("expected classified refusal, got %v", err)
 			}

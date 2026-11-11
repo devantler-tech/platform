@@ -22,6 +22,7 @@ import (
 // Number of errors we'll tolerate per connection before closing. Defaults to 3.
 const errThreshold = 3
 
+// Conn is an SMTP connection and its session state.
 type Conn struct {
 	conn   net.Conn
 	text   *textproto.Conn
@@ -150,10 +151,12 @@ func (c *Conn) handle(cmd string, arg string) {
 	}
 }
 
+// Server returns the server that owns this connection.
 func (c *Conn) Server() *Server {
 	return c.server
 }
 
+// Session returns the active backend session.
 func (c *Conn) Session() Session {
 	c.locker.Lock()
 	defer c.locker.Unlock()
@@ -166,6 +169,7 @@ func (c *Conn) setSession(session Session) {
 	c.session = session
 }
 
+// Close closes the connection and its backend session.
 func (c *Conn) Close() error {
 	c.locker.Lock()
 	defer c.locker.Unlock()
@@ -193,10 +197,12 @@ func (c *Conn) TLSConnectionState() (state tls.ConnectionState, ok bool) {
 	return tc.ConnectionState(), true
 }
 
+// Hostname returns the client's declared greeting hostname.
 func (c *Conn) Hostname() string {
 	return c.helo
 }
 
+// Conn returns the underlying network connection.
 func (c *Conn) Conn() net.Conn {
 	return c.conn
 }
@@ -1131,7 +1137,7 @@ func (c *Conn) handleBdat(arg string) {
 // send another BDAT command and instead closes connection or issues RSET command.
 var ErrDataReset = errors.New("smtp: message transmission aborted")
 
-var errPanic = &SMTPError{
+var errPanic = &Error{
 	Code:         421,
 	EnhancedCode: EnhancedCode{4, 0, 0},
 	Message:      "Internal server error",
@@ -1230,7 +1236,7 @@ func (c *Conn) handleDataLMTP() {
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
-					status.fillRemaining(&SMTPError{
+					status.fillRemaining(&Error{
 						Code:         421,
 						EnhancedCode: EnhancedCode{4, 0, 0},
 						Message:      "Internal server error",
@@ -1263,16 +1269,16 @@ func (c *Conn) handleDataLMTP() {
 
 func dataErrorToStatus(err error) (code int, enchCode EnhancedCode, msg string) {
 	if err != nil {
-		if smtperr, ok := err.(*SMTPError); ok {
+		if smtperr, ok := err.(*Error); ok {
 			return smtperr.Code, smtperr.EnhancedCode, smtperr.Message
-		} else {
-			return 554, EnhancedCode{5, 0, 0}, "Error: transaction failed: " + err.Error()
 		}
+		return 554, EnhancedCode{5, 0, 0}, "Error: transaction failed: " + err.Error()
 	}
 
 	return 250, EnhancedCode{2, 0, 0}, "OK: queued"
 }
 
+// Reject refuses the connection with a temporary busy response and closes it.
 func (c *Conn) Reject() {
 	c.writeResponse(421, EnhancedCode{4, 4, 5}, "Too busy. Try again later.")
 	c.Close()
@@ -1319,7 +1325,7 @@ func (c *Conn) writeResponse(code int, enhCode EnhancedCode, text ...string) {
 }
 
 func (c *Conn) writeError(code int, enhCode EnhancedCode, err error) {
-	if smtpErr, ok := err.(*SMTPError); ok {
+	if smtpErr, ok := err.(*Error); ok {
 		c.writeResponse(smtpErr.Code, smtpErr.EnhancedCode, smtpErr.Message)
 	} else {
 		c.writeResponse(code, enhCode, err.Error())

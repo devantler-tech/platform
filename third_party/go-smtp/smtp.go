@@ -24,16 +24,20 @@ import (
 	"time"
 )
 
+// BodyType identifies an SMTP message body encoding.
 type BodyType string
 
+// Supported body encodings.
 const (
 	Body7Bit       BodyType = "7BIT"
 	Body8BitMIME   BodyType = "8BITMIME"
 	BodyBinaryMIME BodyType = "BINARYMIME"
 )
 
+// DSNReturn selects which message content a delivery notification returns.
 type DSNReturn string
 
+// Supported delivery-notification return modes.
 const (
 	DSNReturnFull    DSNReturn = "FULL"
 	DSNReturnHeaders DSNReturn = "HDRS"
@@ -73,8 +77,10 @@ type MailOptions struct {
 	Auth *string
 }
 
+// DSNNotify selects delivery-notification conditions.
 type DSNNotify string
 
+// Supported delivery-notification conditions.
 const (
 	DSNNotifyNever   DSNNotify = "NEVER"
 	DSNNotifyDelayed DSNNotify = "DELAY"
@@ -82,28 +88,35 @@ const (
 	DSNNotifySuccess DSNNotify = "SUCCESS"
 )
 
+// DSNAddressType identifies an original-recipient address encoding.
 type DSNAddressType string
 
+// Supported original-recipient address encodings.
 const (
 	DSNAddressTypeRFC822 DSNAddressType = "RFC822"
 	DSNAddressTypeUTF8   DSNAddressType = "UTF-8"
 )
 
+// DeliverByMode selects the action when a delivery deadline expires.
 type DeliverByMode string
 
+// Supported delivery-deadline actions.
 const (
 	DeliverByNotify DeliverByMode = "N"
 	DeliverByReturn DeliverByMode = "R"
 )
 
+// DeliverByOptions carries the requested delivery deadline and action.
 type DeliverByOptions struct {
 	Time  time.Duration
 	Mode  DeliverByMode
 	Trace bool
 }
 
+// PriorityProfile identifies an SMTP message priority policy.
 type PriorityProfile string
 
+// Supported priority profiles.
 const (
 	PriorityUnspecified PriorityProfile = ""
 	PriorityMIXER       PriorityProfile = "MIXER"

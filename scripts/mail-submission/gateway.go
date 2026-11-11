@@ -190,7 +190,7 @@ func (s *session) Auth(_ string) (sasl.Server, error) {
 }
 
 func refusal(code int, message string) error {
-	return &smtp.SMTPError{Code: code, Message: message}
+	return &smtp.Error{Code: code, Message: message}
 }
 
 func (s *session) Mail(from string, options *smtp.MailOptions) error {
@@ -237,16 +237,49 @@ func (s *session) validMessage(raw []byte) bool {
 		return false
 	}
 	for key := range message.Header {
-		lower := strings.ToLower(key)
-		if lower == "sender" || lower == "return-path" || strings.HasPrefix(lower, "resent-") {
+		// net/mail deliberately accepts obsolete spaces in field names without
+		// canonicalizing them. Refuse those names so a downstream parser cannot
+		// reinterpret an apparently unrelated field as a sender or trace field.
+		if strings.ContainsAny(key, " \t") {
 			return false
 		}
+		lower := strings.ToLower(key)
+		if lower == "sender" || strings.HasPrefix(lower, "resent-") {
+			return false
+		}
+	}
+	// ZITADEL submits its enforced sender as Return-Path. Accept only that
+	// exact identity, then remove the submitted trace header before forwarding;
+	// the delivery service owns the final Return-Path.
+	if values, exists := message.Header["Return-Path"]; exists && !oneAddress(values, s.from, "", true) {
+		return false
 	}
 	replies := message.Header["Reply-To"]
 	if s.gateway.cfg.Settings.ReplyTo == "" {
 		return len(replies) == 0
 	}
 	return oneAddress(replies, s.gateway.cfg.Settings.ReplyTo, "", false)
+}
+
+func stripSubmittedReturnPath(raw []byte) []byte {
+	header, body, found := bytes.Cut(raw, []byte("\r\n\r\n"))
+	if !found {
+		return raw
+	}
+	var result []byte
+	skip := false
+	for _, line := range bytes.Split(header, []byte("\r\n")) {
+		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+			name, _, _ := bytes.Cut(line, []byte(":"))
+			skip = bytes.EqualFold(name, []byte("Return-Path"))
+		}
+		if !skip {
+			result = append(result, line...)
+			result = append(result, '\r', '\n')
+		}
+	}
+	result = append(result, '\r', '\n')
+	return append(result, body...)
 }
 
 func (s *session) Data(reader io.Reader) error {
@@ -261,7 +294,7 @@ func (s *session) Data(reader io.Reader) error {
 	if !permitted {
 		return refusal(451, "Submission temporarily unavailable")
 	}
-	if err = s.forward(raw); err != nil {
+	if err = s.forward(stripSubmittedReturnPath(raw)); err != nil {
 		s.gateway.logger.Print("upstream refused")
 		if errors.Is(err, errUpstreamPermanent) {
 			return refusal(554, "Submission refused")
@@ -299,7 +332,7 @@ func (s *session) forward(raw []byte) error {
 	if err == nil {
 		return nil
 	}
-	var protocolError *smtp.SMTPError
+	var protocolError *smtp.Error
 	if errors.As(err, &protocolError) && protocolError.Code >= 500 && protocolError.Code < 600 {
 		return errUpstreamPermanent
 	}

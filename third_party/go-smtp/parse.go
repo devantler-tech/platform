@@ -132,9 +132,8 @@ func (p *parser) expectByte(ch byte) error {
 	if !p.acceptByte(ch) {
 		if len(p.s) == 0 {
 			return fmt.Errorf("expected '%v', got EOF", string(ch))
-		} else {
-			return fmt.Errorf("expected '%v', got '%v'", string(ch), string(p.s[0]))
 		}
+		return fmt.Errorf("expected '%v', got '%v'", string(ch), string(p.s[0]))
 	}
 	return nil
 }

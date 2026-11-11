@@ -5,7 +5,7 @@ fixture=$(mktemp -d "${TMPDIR:-/tmp}/smtp-advisory-controls.XXXXXX")
 trap 'rm -rf -- "$fixture"' EXIT
 mkdir "$fixture/bin"
 export SMTP_ADVISORY_METADATA="$root/third_party/go-smtp/UPSTREAM.json"
-cat > "$fixture/bin/go" <<'GO'
+cat >"$fixture/bin/go" <<'GO'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1 $2" in
@@ -14,7 +14,7 @@ case "$1 $2" in
   *) exit 2 ;;
 esac
 GO
-cat > "$fixture/scanner" <<'SCANNER'
+cat >"$fixture/scanner" <<'SCANNER'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $* == '-json -scan=module' ]] || exit 2
@@ -32,12 +32,12 @@ SCANNER
 chmod +x "$fixture/bin/go" "$fixture/scanner"
 for control in missing wrong finding failed; do
   if PATH="$fixture/bin:$PATH" SMTP_ADVISORY_CASE="$control" \
-    bash "$root/scripts/check-smtp-upstream-advisories.sh" "$fixture/scanner" > "$fixture/$control.log" 2>&1; then
+    bash "$root/scripts/check-smtp-upstream-advisories.sh" "$fixture/scanner" >"$fixture/$control.log" 2>&1; then
     echo "FAIL: $control scanner result accepted" >&2
     exit 1
   fi
 done
 PATH="$fixture/bin:$PATH" SMTP_ADVISORY_CASE=valid \
-  bash "$root/scripts/check-smtp-upstream-advisories.sh" "$fixture/scanner" > "$fixture/valid.log" 2>&1
+  bash "$root/scripts/check-smtp-upstream-advisories.sh" "$fixture/scanner" >"$fixture/valid.log" 2>&1
 grep -q 'SMTP_UPSTREAM_ADVISORIES=PASS' "$fixture/valid.log"
 echo 'PASS: exact upstream identity, missing/wrong evidence, findings and scanner failures'

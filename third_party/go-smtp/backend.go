@@ -6,30 +6,31 @@ import (
 	"github.com/emersion/go-sasl"
 )
 
+// ErrAuthFailed and related errors describe SMTP authentication refusals.
 var (
-	ErrAuthFailed = &SMTPError{
+	ErrAuthFailed = &Error{
 		Code:         535,
 		EnhancedCode: EnhancedCode{5, 7, 8},
 		Message:      "Authentication failed",
 	}
-	ErrAuthRequired = &SMTPError{
+	ErrAuthRequired = &Error{
 		Code:         502,
 		EnhancedCode: EnhancedCode{5, 7, 0},
 		Message:      "Please authenticate first",
 	}
-	ErrAuthUnsupported = &SMTPError{
+	ErrAuthUnsupported = &Error{
 		Code:         502,
 		EnhancedCode: EnhancedCode{5, 7, 0},
 		Message:      "Authentication not supported",
 	}
-	ErrAuthUnknownMechanism = &SMTPError{
+	ErrAuthUnknownMechanism = &Error{
 		Code:         504,
 		EnhancedCode: EnhancedCode{5, 7, 4},
 		Message:      "Unsupported authentication mechanism",
 	}
 )
 
-// A SMTP server backend.
+// Backend handles SMTP server sessions.
 type Backend interface {
 	NewSession(c *Conn) (Session, error)
 }

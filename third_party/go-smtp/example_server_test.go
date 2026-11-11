@@ -14,7 +14,7 @@ import (
 type Backend struct{}
 
 // NewSession is called after client greeting (EHLO, HELO).
-func (bkd *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
+func (bkd *Backend) NewSession(_ *smtp.Conn) (smtp.Session, error) {
 	return &Session{}, nil
 }
 
@@ -30,8 +30,8 @@ func (s *Session) AuthMechanisms() []string {
 }
 
 // Auth is the handler for supported authenticators.
-func (s *Session) Auth(mech string) (sasl.Server, error) {
-	return sasl.NewPlainServer(func(identity, username, password string) error {
+func (s *Session) Auth(_ string) (sasl.Server, error) {
+	return sasl.NewPlainServer(func(_, username, password string) error {
 		if username != "username" || password != "password" {
 			return errors.New("Invalid username or password")
 		}
@@ -40,7 +40,7 @@ func (s *Session) Auth(mech string) (sasl.Server, error) {
 	}), nil
 }
 
-func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
+func (s *Session) Mail(from string, _ *smtp.MailOptions) error {
 	if !s.auth {
 		return smtp.ErrAuthRequired
 	}
@@ -48,7 +48,7 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 	return nil
 }
 
-func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
+func (s *Session) Rcpt(to string, _ *smtp.RcptOptions) error {
 	if !s.auth {
 		return smtp.ErrAuthRequired
 	}
@@ -60,11 +60,11 @@ func (s *Session) Data(r io.Reader) error {
 	if !s.auth {
 		return smtp.ErrAuthRequired
 	}
-	if b, err := io.ReadAll(r); err != nil {
+	b, err := io.ReadAll(r)
+	if err != nil {
 		return err
-	} else {
-		log.Println("Data:", string(b))
 	}
+	log.Println("Data:", string(b))
 	return nil
 }
 

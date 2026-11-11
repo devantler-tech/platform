@@ -3,7 +3,10 @@
 # Keep a separate, version-bound module scan of the copied source's upstream base.
 set -euo pipefail
 
-[[ $# == 1 && -x $1 ]] || { echo 'usage: check-smtp-upstream-advisories.sh SCANNER' >&2; exit 2; }
+[[ $# == 1 && -x $1 ]] || {
+  echo 'usage: check-smtp-upstream-advisories.sh SCANNER' >&2
+  exit 2
+}
 scanner=$1
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 metadata="$root/third_party/go-smtp/UPSTREAM.json"
@@ -17,12 +20,12 @@ export GOTOOLCHAIN=local GOWORK=off
 cd "$work"
 go mod init example.invalid/smtp-upstream-advisories >/dev/null
 go mod edit "-require=$module@$version"
-printf '%s\n' 'package main' 'import _ "github.com/emersion/go-smtp"' 'func main() {}' > main.go
+printf '%s\n' 'package main' 'import _ "github.com/emersion/go-smtp"' 'func main() {}' >main.go
 go mod tidy
-go mod download -json "$module@$version" > origin.json
+go mod download -json "$module@$version" >origin.json
 jq -e --arg sum "$expected_sum" --arg mod_sum "$expected_mod_sum" \
   '.Sum == $sum and .GoModSum == $mod_sum' origin.json >/dev/null
-"$scanner" -json -scan=module > report.json
+"$scanner" -json -scan=module >report.json
 jq -s -e --arg module "$module" --arg version "$version" '
   [.[] | select(has("SBOM"))] as $sboms |
   ($sboms | length) == 1 and

@@ -5,6 +5,7 @@ import (
 	"io"
 )
 
+// ErrTooLongLine refuses an input line beyond the configured limit.
 var ErrTooLongLine = errors.New("smtp: too long a line in input stream")
 
 // lineLimitReader reads from the underlying Reader but restricts

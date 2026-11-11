@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// ErrServerClosed reports that the server has stopped accepting connections.
 var ErrServerClosed = errors.New("smtp: server already closed")
 
 // Logger interface is used by Server to report unexpected internal errors.
@@ -20,7 +21,7 @@ type Logger interface {
 	Println(v ...interface{})
 }
 
-// A SMTP server.
+// Server accepts SMTP connections using a backend.
 type Server struct {
 	// The type of network, "tcp" or "unix".
 	Network string
@@ -90,7 +91,7 @@ type Server struct {
 	conns     map[*Conn]struct{}
 }
 
-// New creates a new SMTP server.
+// NewServer creates a new SMTP server.
 func NewServer(be Backend) *Server {
 	return &Server{
 		// Doubled maximum line length per RFC 5321 (Section 4.5.3.1.6)
@@ -126,8 +127,8 @@ func (s *Server) Serve(l net.Listener) error {
 				} else {
 					tempDelay *= 2
 				}
-				if max := 1 * time.Second; tempDelay > max {
-					tempDelay = max
+				if maximum := 1 * time.Second; tempDelay > maximum {
+					tempDelay = maximum
 				}
 				s.ErrorLog.Printf("accept error: %s; retrying in %s", err, tempDelay)
 				time.Sleep(tempDelay)

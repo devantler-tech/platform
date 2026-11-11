@@ -53,8 +53,13 @@ connection has an absolute ten-second lifetime. Shutdown allows five seconds for
 active sessions, then closes them.
 
 A missing `replyTo` refuses all Reply-To headers. When configured, exactly one
-matching address is required. Sender, Return-Path and Resent headers are refused.
-The original accepted message bytes are submitted unchanged.
+matching address is required. Sender and Resent headers are refused. A submitted
+Return-Path must contain exactly the enforced sender, without a display name;
+duplicate, empty or alternative identities are refused. The component removes
+that trace field before forwarding, so the delivery service owns the final
+Return-Path. All other accepted header and body bytes are preserved.
+Obsolete whitespace in header field names is refused so another parser cannot
+reinterpret a field as a sender or trace header.
 
 ## Validation and deployment boundary
 

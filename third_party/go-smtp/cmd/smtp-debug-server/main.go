@@ -17,25 +17,25 @@ func init() {
 
 type backend struct{}
 
-func (bkd *backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
+func (bkd *backend) NewSession(_ *smtp.Conn) (smtp.Session, error) {
 	return &session{}, nil
 }
 
 type session struct{}
 
-func (s *session) AuthPlain(username, password string) error {
+func (s *session) AuthPlain(_, _ string) error {
 	return nil
 }
 
-func (s *session) Mail(from string, opts *smtp.MailOptions) error {
+func (s *session) Mail(_ string, _ *smtp.MailOptions) error {
 	return nil
 }
 
-func (s *session) Rcpt(to string, opts *smtp.RcptOptions) error {
+func (s *session) Rcpt(_ string, _ *smtp.RcptOptions) error {
 	return nil
 }
 
-func (s *session) Data(r io.Reader) error {
+func (s *session) Data(_ io.Reader) error {
 	return nil
 }
 

@@ -212,7 +212,7 @@ func (c *Client) hello() error {
 
 	c.didHello = true
 	if err := c.ehlo(); err != nil {
-		var smtpError *SMTPError
+		var smtpError *Error
 		if errors.As(err, &smtpError) && (smtpError.Code == 500 || smtpError.Code == 502) {
 			// The server doesn't support EHLO, fallback to HELO
 			c.helloError = c.helo()
@@ -229,7 +229,7 @@ func (c *Client) hello() error {
 // automatically otherwise. If Hello is called, it must be called before
 // any of the other methods.
 //
-// If server returns an error, it will be of type *SMTPError.
+// If server returns an error, it will be of type *Error.
 func (c *Client) Hello(localName string) error {
 	if err := validateLine(localName); err != nil {
 		return err
@@ -250,7 +250,7 @@ func (c *Client) readResponse(expectCode int) (int, string, error) {
 }
 
 // cmd is a convenience function that sends a command and returns the response
-// textproto.Error returned by c.text.ReadResponse is converted into SMTPError.
+// textproto.Error returned by c.text.ReadResponse is converted into Error.
 func (c *Client) cmd(expectCode int, format string, args ...interface{}) (int, string, error) {
 	c.conn.SetDeadline(time.Now().Add(c.CommandTimeout))
 	defer c.conn.SetDeadline(time.Time{})
@@ -307,7 +307,7 @@ func (c *Client) ehlo() error {
 //
 // A nil config is equivalent to a zero tls.Config.
 //
-// If server returns an error, it will be of type *SMTPError.
+// If server returns an error, it will be of type *Error.
 func (c *Client) startTLS(config *tls.Config) error {
 	if err := c.hello(); err != nil {
 		return err
@@ -348,7 +348,7 @@ func (c *Client) TLSConnectionState() (state tls.ConnectionState, ok bool) {
 // does not necessarily indicate an invalid address. Many servers
 // will not verify addresses for security reasons.
 //
-// If server returns an error, it will be of type *SMTPError.
+// If server returns an error, it will be of type *Error.
 func (c *Client) Verify(addr string) error {
 	if err := validateLine(addr); err != nil {
 		return err
@@ -363,7 +363,7 @@ func (c *Client) Verify(addr string) error {
 // Auth authenticates a client using the provided authentication mechanism.
 // Only servers that advertise the AUTH extension support this function.
 //
-// If server returns an error, it will be of type *SMTPError.
+// If server returns an error, it will be of type *Error.
 func (c *Client) Auth(a sasl.Client) error {
 	if err := c.hello(); err != nil {
 		return err
@@ -422,7 +422,7 @@ func (c *Client) Auth(a sasl.Client) error {
 // If opts is not nil, MAIL arguments provided in the structure will be added
 // to the command. Handling of unsupported options depends on the extension.
 //
-// If server returns an error, it will be of type *SMTPError.
+// If server returns an error, it will be of type *Error.
 func (c *Client) Mail(from string, opts *MailOptions) error {
 	if err := validateLine(from); err != nil {
 		return err
@@ -494,7 +494,7 @@ func (c *Client) Mail(from string, opts *MailOptions) error {
 // If opts is not nil, RCPT arguments provided in the structure will be added
 // to the command. Handling of unsupported options depends on the extension.
 //
-// If server returns an error, it will be of type *SMTPError.
+// If server returns an error, it will be of type *Error.
 func (c *Client) Rcpt(to string, opts *RcptOptions) error {
 	if err := validateLine(to); err != nil {
 		return err
@@ -593,7 +593,7 @@ func (cmd *DataCommand) Close() error {
 // CloseWithResponse is equivalent to Close, but also returns the server
 // response. It cannot be called when the LMTP protocol is used.
 //
-// If server returns an error, it will be of type *SMTPError.
+// If server returns an error, it will be of type *Error.
 func (cmd *DataCommand) CloseWithResponse() (*DataResponse, error) {
 	if cmd.client.lmtp {
 		return nil, errors.New("smtp: CloseWithResponse used with an LMTP client")
@@ -637,7 +637,7 @@ func (cmd *DataCommand) CloseWithLMTPResponse() (map[string]*DataResponse, error
 		rcpt := cmd.client.rcpts[i]
 		_, msg, err := cmd.client.readResponse(250)
 		if err != nil {
-			if smtpErr, ok := err.(*SMTPError); ok {
+			if smtpErr, ok := err.(*Error); ok {
 				lmtpErr[rcpt] = smtpErr
 			} else {
 				if len(lmtpErr) > 0 {
@@ -680,7 +680,7 @@ type DataResponse struct {
 
 // LMTPDataError is a collection of errors returned by an LMTP server for a
 // DATA command. It holds per-recipient errors.
-type LMTPDataError map[string]*SMTPError
+type LMTPDataError map[string]*Error
 
 // Error implements error.
 func (lmtpErr LMTPDataError) Error() string {
@@ -923,10 +923,10 @@ func parseEnhancedCode(s string) (EnhancedCode, error) {
 	return code, nil
 }
 
-// toSMTPErr converts textproto.Error into SMTPError, parsing
+// toSMTPErr converts textproto.Error into Error, parsing
 // enhanced status code if it is present.
-func toSMTPErr(protoErr *textproto.Error) *SMTPError {
-	smtpErr := &SMTPError{
+func toSMTPErr(protoErr *textproto.Error) *Error {
+	smtpErr := &Error{
 		Code:    protoErr.Code,
 		Message: protoErr.Msg,
 	}

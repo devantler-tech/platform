@@ -6,11 +6,12 @@ import (
 	"io"
 )
 
+// EnhancedCode is a three-part SMTP enhanced status code.
 type EnhancedCode [3]int
 
-// SMTPError specifies the error code, enhanced error code (if any) and
+// Error specifies the error code, enhanced error code (if any) and
 // message returned by the server.
-type SMTPError struct {
+type Error struct {
 	Code         int
 	EnhancedCode EnhancedCode
 	Message      string
@@ -24,12 +25,12 @@ type SMTPError struct {
 // should probably use EnhancedCodeNotSet instead.
 var NoEnhancedCode = EnhancedCode{-1, -1, -1}
 
-// EnhancedCodeNotSet is a nil value of EnhancedCode field in SMTPError, used
+// EnhancedCodeNotSet is a nil value of EnhancedCode field in Error, used
 // to indicate that backend failed to provide enhanced status code. X.0.0 will
 // be used (X is derived from error code).
 var EnhancedCodeNotSet = EnhancedCode{0, 0, 0}
 
-func (err *SMTPError) Error() string {
+func (err *Error) Error() string {
 	s := fmt.Sprintf("SMTP error %03d", err.Code)
 	if err.Message != "" {
 		s += ": " + err.Message
@@ -37,11 +38,13 @@ func (err *SMTPError) Error() string {
 	return s
 }
 
-func (err *SMTPError) Temporary() bool {
+// Temporary reports whether the server returned a transient refusal.
+func (err *Error) Temporary() bool {
 	return err.Code/100 == 4
 }
 
-var ErrDataTooLarge = &SMTPError{
+// ErrDataTooLarge refuses a message beyond the configured size limit.
+var ErrDataTooLarge = &Error{
 	Code:         552,
 	EnhancedCode: EnhancedCode{5, 3, 4},
 	Message:      "Maximum message size exceeded",
