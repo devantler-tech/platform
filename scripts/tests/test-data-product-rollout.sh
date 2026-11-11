@@ -230,6 +230,18 @@ else
   fi
 fi
 printf '%s\n' "$key" >>"$FIXTURE/reads"
+# Reproduce a loaded runner spending a control's whole budget before the first
+# snapshot is judged: the first read stalls until the verifier's deadline kills it.
+if [[ "$key" == apps ]]; then
+  case "${MODE:-}" in
+    starved-once)
+      if [[ ! -e "$FIXTURE/starved" ]]; then
+        : >"$FIXTURE/starved"
+        sleep 30
+      fi ;;
+    starved-always) sleep 30 ;;
+  esac
+fi
 if [[ "$key" == apps && "${MODE:-}" == hang ]]; then
   (trap '' TERM; sleep 30) &
   printf '%s\n' "$!" >"$FIXTURE/child.pid"
@@ -712,6 +724,69 @@ run_case transfer-timeout fail transfer-timeout 15
 jq -e '(.publicStartedAfterSeconds | type == "number" and . >= 0) and .attempt == 1' "${scratch}/transfer-timeout/stdout" >/dev/null ||
   fail 'transfer-timeout: the refusal did not say when the public pass began'
 
+# A starved control spent its whole budget before any snapshot was judged: it has
+# no rejection record and the verifier refused with nothing but its deadline,
+# either before the first read or while the initial snapshot was still being read.
+readonly starved_retry_seconds=10
+# starved_report accepts only a verifier refusal that names the deadline and no judged snapshot.
+starved_report() {
+  jq -e '.failure == "deadline_exceeded" and ((has("phase") | not) or
+    (.phase == "initial_readiness" and .reason == "deadline_exceeded"))' "$1" >/dev/null 2>&1
+}
+# require_rejection runs one unsafe-fixture control, which must record an actual
+# projection/predicate rejection. A starved first run proves nothing either way on a
+# loaded runner, so only that outcome runs once more with a budget a loaded runner
+# meets; the second run must still reach the rejection. Any other refusal fails here.
+require_rejection() {
+  local name=$1 seconds=$2 mode=${3:-} fixture="${scratch}/$1"
+  run_case "$name" fail "$mode" "$seconds"
+  if [[ ! -s "$fixture/rejections" ]] && starved_report "$fixture/stdout"; then
+    printf 'RETRY: %s: the budget ran out before any snapshot was judged\n' "$name"
+    run_case "$name" fail "$mode" "$starved_retry_seconds"
+  fi
+  [[ -s "$fixture/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+}
+# A starved first run is retried once and must then record the real rejection.
+mkdir "${scratch}/starved-once"
+cp "${scratch}/healthy/"*.json "${scratch}/starved-once/"
+jq '.status.observedGeneration=2' "${scratch}/healthy/apps.json" >"${scratch}/starved-once/apps.json"
+require_rejection starved-once 3 starved-once >"${scratch}/starved-once.out"
+cat "${scratch}/starved-once.out"
+grep -qx 'RETRY: starved-once: the budget ran out before any snapshot was judged' "${scratch}/starved-once.out" ||
+  fail 'starved-once: the starved control was not retried'
+jq -e '.failure=="deadline_exceeded" and .phase=="initial_readiness" and .role=="apps" and .reason=="predicate_not_ready"' \
+  "${scratch}/starved-once/stdout" >/dev/null || fail 'starved-once: the retry did not reach the predicate'
+# A control that stays starved still fails, so the retry cannot hide a predicate that never runs.
+mkdir "${scratch}/starved-always"
+cp "${scratch}/starved-once/"*.json "${scratch}/starved-always/"
+if (require_rejection starved-always 3 starved-always) >"${scratch}/starved-always.out" 2>&1; then
+  fail 'starved-always: a control that never reached the predicate was accepted'
+fi
+grep -qx 'RETRY: starved-always: the budget ran out before any snapshot was judged' "${scratch}/starved-always.out" ||
+  fail 'starved-always: the starved control was not retried'
+grep -qx 'FAIL: starved-always: rejection did not reach snapshot validation' "${scratch}/starved-always.out" ||
+  fail 'starved-always: the starved retry failed for another reason'
+# Only a deadline refusal before any judged snapshot counts as starved; every other
+# refusal, including a deadline after a judged or later snapshot, is never retried.
+mkdir "${scratch}/starved-reports"
+while IFS='|' read -r verdict report; do
+  printf '%s\n' "$report" >"${scratch}/starved-reports/report"
+  if starved_report "${scratch}/starved-reports/report"; then actual=starved; else actual=judged; fi
+  [[ "$actual" == "$verdict" ]] || fail "starved-reports: $report was classified $actual"
+done <<'REPORTS'
+starved|{"complete":false,"failure":"deadline_exceeded"}
+starved|{"complete":false,"failure":"deadline_exceeded","phase":"initial_readiness","role":"apps","reason":"deadline_exceeded"}
+starved|{"complete":false,"failure":"deadline_exceeded","phase":"initial_readiness","role":"snapshot","reason":"deadline_exceeded"}
+judged|{"complete":false,"failure":"deadline_exceeded","phase":"initial_readiness","role":"apps","reason":"predicate_not_ready"}
+judged|{"complete":false,"failure":"deadline_exceeded","phase":"initial_readiness","role":"snapshot","reason":"observation_invalid"}
+judged|{"complete":false,"failure":"deadline_exceeded","phase":"rollout_stability","role":"apps","reason":"deadline_exceeded"}
+judged|{"complete":false,"failure":"deadline_exceeded","phase":"public_contract","role":"sample_health","reason":"request_timeout"}
+judged|{"complete":false,"failure":"read_incomplete","phase":"initial_readiness","role":"chart","reason":"read_incomplete"}
+judged|{"complete":false,"failure":"invalid_verification_policy"}
+judged|not a report
+REPORTS
+printf 'PASS: starved-reports\n'
+
 # mutate_case verifies that a dormant-profile mutation reaches snapshot rejection.
 # mutate_case_impl copies the immutable healthy seed and checks one isolated rollout mutation.
 mutate_case_impl() {
@@ -719,8 +794,7 @@ mutate_case_impl() {
   mkdir "${scratch}/$name"
   cp "${scratch}/healthy/"*.json "${scratch}/$name/"
   jq "$mutation" "${scratch}/healthy/$key.json" >"${scratch}/$name/$key.json"
-  run_case "$name" fail '' "${4:-3}"
-  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+  require_rejection "$name" "${4:-3}"
 }
 fixture_pool_register mutate_case_impl
 # mutate_case schedules a rollout mutation under the bounded worker and receipt contract.
@@ -762,8 +836,7 @@ publisher_mutation_impl() {
   mkdir "${scratch}/$name"
   cp "${scratch}/declared-publisher-true/"*.json "${scratch}/$name/"
   jq "$mutation" "${scratch}/declared-publisher-true/$key.json" >"${scratch}/$name/$key.json"
-  run_case "$name" fail '' 3
-  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+  require_rejection "$name" 3
 }
 fixture_pool_register publisher_mutation_impl
 # publisher_mutation schedules a publisher identity mutation without sharing writable fixtures.
@@ -816,8 +889,7 @@ mutate_case unexpected-live-ksail-activation helm '.spec.values.demoProduct.ksai
 mkdir "${scratch}/withdrawn-release-still-registered"
 cp "${scratch}/healthy/"*.json "${scratch}/withdrawn-release-still-registered/"
 jq '.metadata.name="ksail-releases"' "${scratch}/healthy/product.json" >"${scratch}/withdrawn-release-still-registered/release-product.json"
-run_case withdrawn-release-still-registered fail '' 3
-[[ -s "${scratch}/withdrawn-release-still-registered/rejections" ]] || fail 'withdrawn product did not reach snapshot rejection'
+require_rejection withdrawn-release-still-registered 3
 for mode in release-forbidden release-partial-forbidden release-null release-malformed; do
   run_case "$mode" fail "$mode" 3
 done
@@ -897,8 +969,7 @@ independent_probe_mutation() {
   cp "${scratch}/independent-probe/"*.json "${scratch}/$name/"
   cp "${scratch}/independent-probe/expected-probe-runtime" "${scratch}/$name/"
   jq "$mutation" "${scratch}/independent-probe/$key.json" >"${scratch}/$name/$key.json"
-  run_case "$name" fail '' 3
-  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+  require_rejection "$name" 3
 }
 independent_probe_mutation probe-wrong-deployment-image deployment-probe '.spec.template.spec.containers[0].image="ghcr.io/devantler-tech/khoist:9.0.4@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"'
 independent_probe_mutation probe-wrong-replicaset-image replicasets '(.items[] | select(.spec.template.spec.containers[0].name=="contract-probe") | .spec.template.spec.containers[0].image)="ghcr.io/devantler-tech/khoist@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
@@ -927,8 +998,7 @@ ksail_mutation_impl() {
   mkdir "${scratch}/$name"
   cp "${scratch}/ksail/"*.json "${scratch}/$name/"
   jq "$mutation" "${scratch}/ksail/$key.json" >"${scratch}/$name/$key.json"
-  run_case "$name" fail '' 3
-  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+  require_rejection "$name" 3
 }
 fixture_pool_register ksail_mutation_impl
 # ksail_mutation schedules an independent release-product mutation and completion receipt.
@@ -968,8 +1038,7 @@ active_mutation_impl() {
   mkdir "${scratch}/$name"
   cp "${scratch}/active/"*.json "${scratch}/$name/"
   jq "$mutation" "${scratch}/active/$key.json" >"${scratch}/$name/$key.json"
-  run_case "$name" fail '' "${4:-3}"
-  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+  require_rejection "$name" "${4:-3}"
 }
 fixture_pool_register active_mutation_impl
 # active_mutation schedules an active-state mutation within the same strict worker bound.
