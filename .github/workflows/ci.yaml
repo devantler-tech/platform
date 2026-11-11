@@ -119,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -612,6 +612,7 @@ jobs:
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
               - 'scripts/tests/test-agentic-engineer-schedule.sh'
               - 'scripts/tests/test-agentic-engineer-lane-store.sh'
+              - 'scripts/tests/test-agentic-engineer-lane-store-lease.sh'
               - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
               - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
@@ -985,7 +986,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -1143,7 +1144,7 @@ jobs:
           set -euo pipefail
           native_hubble="$(mktemp -d)"
           trap 'rm -rf "$native_hubble"' EXIT
-          curl --fail --silent --show-error --location --retry 2 --max-time 60 \
+          curl --fail --silent --show-error --location --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
             https://github.com/cilium/hubble/releases/download/v1.20.2/hubble-linux-amd64.tar.gz \
             --output "$native_hubble/hubble.tar.gz"
           printf '%s  %s\n' 03f248a50cad11e728bf9383382392c57148fd6a19853ad359fb7598dae29312 "$native_hubble/hubble.tar.gz" \
@@ -1172,7 +1173,7 @@ jobs:
           set -euo pipefail
           native_dir="$(mktemp -d)"
           archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
           printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
           tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
           printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$native_dir/linux-amd64/helm" >> "$GITHUB_ENV"
@@ -1292,7 +1293,7 @@ jobs:
           shellcheck scripts/guard-controller-helm-profile.sh scripts/tests/test-controller-helm-profile.sh
           tool_dir="$(mktemp -d "$RUNNER_TEMP/flux-profile.XXXXXX")"
           archive="$tool_dir/flux-operator.tar.gz"
-          curl --fail --silent --show-error --location \
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.62.1/flux-operator_0.62.1_linux_amd64.tar.gz \
             --output "$archive"
           printf '%s  %s\n' 7bb9e54d370039d8701d4271b38aed57d6c89668432b7caddce69f4e26e24c1b "$archive" | sha256sum --check
@@ -1498,7 +1499,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -1627,7 +1628,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -1645,7 +1646,7 @@ jobs:
           set -euo pipefail
           native_dir="$(mktemp -d)"
           archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
           printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
           tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
           printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$native_dir/linux-amd64/helm" >> "$GITHUB_ENV"
@@ -1926,7 +1927,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -1957,7 +1958,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.209.0"
+          KSAIL_VERSION: "7.210.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2888,6 +2889,16 @@ jobs:
           shellcheck scripts/tests/test-agentic-engineer-lane-store.sh
           bash scripts/tests/test-agentic-engineer-lane-store.sh
 
+      - name: 🔒 Validate the Agentic Engineer lane store lease
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the store's pinned rclone image with its own arguments: the lease a
+        # run takes on memory/ refuses every other run, even many at once, the
+        # store refuses a write there without its token, and after a restart the
+        # former holder can neither write nor release.
+        run: |
+          shellcheck scripts/tests/test-agentic-engineer-lane-store-lease.sh
+          bash scripts/tests/test-agentic-engineer-lane-store-lease.sh
+
       - name: 🧠 Validate the kagent harness plugin wrapper
         if: needs.changes.outputs.k8s == 'true'
         # Runs the image's real `claude` wrapper against a stub Claude Code: a
@@ -3254,7 +3265,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.209.0"
+          KSAIL_VERSION: "7.210.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3688,7 +3699,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.209.0"
+          KSAIL_VERSION: "7.210.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -4208,8 +4219,8 @@ jobs:
           install_dir="$(mktemp -d)"
           cd "$install_dir"
           archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$archive" "https://get.helm.sh/$archive"
-          curl --fail --location --retry 3 --output "$archive.sha256sum" "https://get.helm.sh/$archive.sha256sum"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$archive.sha256sum" "https://get.helm.sh/$archive.sha256sum"
           sha256sum --check "$archive.sha256sum"
           tar -xzf "$archive"
           echo "$install_dir/linux-amd64" >> "$GITHUB_PATH"
@@ -4734,7 +4745,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.209.0"
+          KSAIL_VERSION: "7.210.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
