@@ -20,9 +20,10 @@ var serverFields = map[string][]string{
 	"":                              {"servers", "meta"},
 	"meta":                          {"pagination"},
 	"meta.pagination":               {"page", "per_page", "last_page", "next_page", "total_entries"},
-	"servers[]":                     {"id", "name", "status", "labels", "private_net", "server_type", "datacenter"},
+	"servers[]":                     {"id", "name", "status", "labels", "private_net", "server_type", "datacenter", "location"},
 	"servers[].private_net[]":       {"network", "ip"},
 	"servers[].server_type":         {"name"},
+	"servers[].location":            {"name"},
 	"servers[].datacenter":          {"location"},
 	"servers[].datacenter.location": {"name"},
 }
