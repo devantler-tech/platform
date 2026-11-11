@@ -1,6 +1,6 @@
 module github.com/devantler-tech/platform
 
-go 1.26.10
+go 1.26.11
 
 require (
 	cel.dev/cel-go v0.33.2
