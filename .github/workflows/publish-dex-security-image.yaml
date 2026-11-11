@@ -10,6 +10,7 @@ on:
       - go.mod
       - go.sum
       - .github/scripts/setup-supply-chain-tools.sh
+      - .github/scripts/release-asset-download.sh
       - k8s/bases/infrastructure/controllers/dex/DexSecurity.Dockerfile
       - k8s/bases/infrastructure/controllers/dex/dex-v2.46.1-network.patch
       - k8s/bases/infrastructure/controllers/dex/IMAGE-NOTICE
@@ -22,6 +23,7 @@ on:
       - go.mod
       - go.sum
       - .github/scripts/setup-supply-chain-tools.sh
+      - .github/scripts/release-asset-download.sh
       - k8s/bases/infrastructure/controllers/dex/DexSecurity.Dockerfile
       - k8s/bases/infrastructure/controllers/dex/dex-v2.46.1-network.patch
       - k8s/bases/infrastructure/controllers/dex/IMAGE-NOTICE
@@ -69,7 +71,7 @@ jobs:
       - name: Set up reviewed Go compiler
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.27.3
+          go-version: 1.27.4
           cache: false
       - name: Install the static musl compiler
         run: |

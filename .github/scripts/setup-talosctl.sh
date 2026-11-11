@@ -35,9 +35,12 @@ trap 'rm -f "${target}"' EXIT
 
 # The download retries curl's transient failures (timeouts, 408, 429 and 5xx) a few
 # times, because one momentary error from the release host would otherwise fail the job
-# (#4549). The bytes are still checked against the pin above, and a persistent failure
-# still stops here.
-curl -fsSL --retry 5 --retry-delay 3 --retry-max-time 60 "${release_base}/${asset_name}" -o "${target}"
+# (#4549). With GITHUB_TOKEN set it uses the authenticated asset API first and falls
+# back to the public URL (#5942). The bytes are still checked against the pin above,
+# and a persistent failure still stops here.
+# shellcheck source=.github/scripts/release-asset-download.sh
+source "$(dirname "${BASH_SOURCE[0]}")/release-asset-download.sh"
+release_asset_download siderolabs/talos "v${TALOS_VERSION}" "${asset_name}" "${target}"
 
 actual_digest=$(sha256sum "${target}" | cut -d' ' -f1)
 
