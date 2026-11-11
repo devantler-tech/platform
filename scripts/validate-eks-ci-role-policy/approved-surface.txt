@@ -18,7 +18,7 @@ admissionregistration.k8s.io/v1|MutatingAdmissionPolicyBinding||longhorn-v1-benc
 
 admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||gateway-receiver 29a4c24f83df36bb1a1cc5880703564b5b853f46e27828aca4493fdc5017d983
 
-admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||longhorn-v1-benchmark-runtime e2296d89bf4177747418a2ad65850712990fc84a5e9bb4333490038bf73f817d
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||longhorn-v1-benchmark-runtime 0cc9ea5c1aec7925eb2409b923967ead9b791913ca3740c2bae2ae3b8b1d7868
 
 admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||gateway-receiver 02e679b3bede26c8ef6793955787d34b266667cafe41636288c87e1fcb83d339
 

@@ -57,16 +57,16 @@ at() {
   if [[ "${before}" == "${prompt}" ]]; then printf '%s' -1; else printf '%s' "${#before}"; fi
 }
 previous=-1
-for step in 'Send a PROPFIND to memory/' 'Send a LOCK to memory/' 'at least 60 below a reply' \
-  'download every file' 'however the run ended, refresh the lease' 'one file at a time' 'UNLOCK to memory/'; do
+for step in "dav PROPFIND memory/ -H 'Depth: 0'" 'Take the lease with' 'at least 60 below a reply' \
+  "dav PROPFIND memory/ -H 'Depth: 1'" 'download every file' 'however the run ended, refresh the lease' \
+  "dav LOCK memory/ -H 'Timeout: Infinite' -H 'If:" 'one file at a time' "dav UNLOCK memory/ -H 'Lock-Token:"; do
   position="$(at "${step}")"
   [[ "${position}" -gt "${previous}" ]] || fail "the run message does not say, in order: ${step}"
   previous="${position}"
 done
 for rule in 'Timeout: Infinite' 'A 423 means another run holds it' 'Never remove a lease you did not take' \
-  'its owner is yours' 'If header on every PUT' 'on the MKCOL of any folder inside memory/' \
-  'each folder it shows the same way' 'leave the lease alone' 'A 412' \
-  'never UNLOCK it' 'wait out the difference'; do
+  'its owner is yours' 'header on every PUT' 'of any folder inside' 'list each folder it shows the' \
+  'leave the lease alone' 'A 412' 'never UNLOCK it' 'wait out the difference'; do
   [[ "$(at "${rule}")" -ge 0 ]] || fail "the run message no longer says: ${rule}"
 done
 pattern='(<[?]xml [^`]*</D:lockinfo>)'
