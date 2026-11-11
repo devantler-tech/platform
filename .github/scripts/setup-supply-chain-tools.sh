@@ -10,9 +10,9 @@ COSIGN_VERSION="3.1.4"
 # cosign_checksums.txt: cosign-linux-amd64
 COSIGN_SHA256="424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
 # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-SYFT_VERSION="1.55.0"
-# syft_1.55.0_checksums.txt: syft_1.55.0_linux_amd64.tar.gz
-SYFT_SHA256="bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d"
+SYFT_VERSION="1.56.0"
+# syft_1.56.0_checksums.txt: syft_1.56.0_linux_amd64.tar.gz
+SYFT_SHA256="1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528"
 # renovate: datasource=github-releases depName=aquasecurity/trivy extractVersion=^v(?<version>.+)$
 TRIVY_VERSION="0.76.1"
 # trivy_0.76.1_checksums.txt: trivy_0.76.1_Linux-64bit.tar.gz

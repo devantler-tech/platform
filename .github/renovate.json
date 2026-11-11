@@ -148,6 +148,18 @@
     },
     {
       "customType": "regex",
+      "description": "Track the agent-plugins commit the kagent lane's harness image bakes the agentic-engineering plugin in at, as a digest of the main branch: only reviewed pull requests reach it, and the lane must not run an old brain (devantler-tech/monorepo#4868). The datasource is github-digest, NOT git-refs, for the same release-date reason as the origin-ca-issuer commit above; the matching packageRule below sets its cooldown.",
+      "managerFilePatterns": ["/^scripts/kagent-claude-harness/Dockerfile$/"],
+      "matchStrings": [
+        "ARG AGENT_PLUGINS_COMMIT=(?<currentDigest>[0-9a-f]{40})"
+      ],
+      "currentValueTemplate": "main",
+      "datasourceTemplate": "github-digest",
+      "depNameTemplate": "devantler-tech/agent-plugins",
+      "packageNameTemplate": "devantler-tech/agent-plugins"
+    },
+    {
+      "customType": "regex",
       "description": "Track the Kubernetes version pinned for the prod cluster in ksail.prod.yaml (kubernetesVersion), resolved from the authoritative kubernetes/kubernetes GitHub releases. This pin is the version's ONLY home in the repo, so Renovate edits ksail.prod.yaml to bump it. KSail/Talos own this pin and the docker system-test runs off ksail.yaml (which has no kubernetesVersion), so the built-in kubernetes/flux managers — scoped to k8s/** — never see it; a custom manager is the only way to track it. The v regex literal sits outside the capture group and extractVersionTemplate strips the leading v from the vX.Y.Z release tags, so the resolved version matches the captured X.Y.Z while the file keeps its v prefix. Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged (see the matching packageRule): CI never validates this prod pin, and a Kubernetes minor/major can exceed the pinned Talos version's supported Kubernetes ceiling, so each bump is reviewed and promoted in lockstep with Talos.",
       "managerFilePatterns": ["/^ksail\\.prod\\.ya?ml$/"],
       "matchStrings": ["kubernetesVersion:\\s*v(?<currentValue>[0-9.]+)"],
@@ -379,6 +391,13 @@
       ]
     },
     {
+      "description": "The kagent lane's harness image bakes the agentic-engineering plugin in at an agent-plugins commit (custom manager above). minimumReleaseAge is 0 days because a branch head's age is its newest commit's, so a main branch that moves daily would never be proposed. Not automerged: the image publishes from main and a new plugin changes how the lane works, so each bump is read like any other plugin release, and the Harness only moves when its pinned digest is updated after publishing.",
+      "matchDatasources": ["github-digest"],
+      "matchPackageNames": ["devantler-tech/agent-plugins"],
+      "minimumReleaseAge": "0 days",
+      "automerge": false
+    },
+    {
       "description": "Keep Fleet's chart/server and database-preparation image together. Independent publication timing can still produce a one-sided group; the native Fleet Deployment image check must pass before merge.",
       "matchPackageNames": ["fleet", "fleetdm/fleet"],
       "groupName": "fleet",
@@ -438,6 +457,12 @@
         "github.com/project-velero/kopia"
       ],
       "enabled": false
+    },
+    {
+      "description": "Offer only the modern v0.x family of k8s.io/client-go (#5813). client-go also carries legacy v1.x to v12.x tags from before Kubernetes moved its libraries to v0.x; Go reports the higher ones as v11.0.0+incompatible (or v12.0.0 when read from the source tags), which outranks every v0.x release, so Renovate proposed it as a major update that cannot build (#5812). Upstream keeps the major version at zero for Kubernetes v1 releases. Patch and minor updates within v0.x, and the grouped Kubernetes update, stay unchanged. scripts/tests/renovate-client-go checks this rule.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["k8s.io/client-go"],
+      "allowedVersions": "/^v?0\\./"
     },
     {
       "description": "The recovery profile uses Flux 2.9.6 with the separately pinned Helm controller. Update the base only with a new composition and recovery audit.",
