@@ -276,6 +276,8 @@ rbac.authorization.k8s.io/v1|ClusterRole||tenant-external-dns-global 24084ed6f90
 
 rbac.authorization.k8s.io/v1|ClusterRole||vpa-updater-event-writer 3879241a89e481edb6edef4a634d689ca6cbf648cf0f18ecaa74304e9542e52f
 
+rbac.authorization.k8s.io/v1|RoleBinding|agentic-engineer|lane-store-reader 6cb9a46fe78f3579c7ce18908d16158a633fd3e2fdb3884ddaed99cc2ca083db
+
 rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner cb7ca7497e2f066851a9354b75f38962fea1e588598d96dde786f7043576a08d
 
 rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner-external-dns bd51e723eadb52df8b583fc8931be70ecade6863d8d2821ecad5f128c8bf6888
@@ -331,6 +333,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|wedding-app|wedding-app 8fb1f3e7ae50e8f
 rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin 593fd95bd84af8840c71270227cabdf8137cba9c58d844b5ca2db3406d4632a2
 
 rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-operator b14714377d4a5317c7d829bc1b378ecea44ed82f2b1fff32d4c923f9ee4809d6
+
+rbac.authorization.k8s.io/v1|Role|agentic-engineer|lane-store-reader 106d83767c8414ced671f67a43a09030e554a529851f0967021c98bc2a031542
 
 rbac.authorization.k8s.io/v1|Role|ate-system|substrate-ca-reader 153cc02bc210a1f00ad70fb8c260500fa9593e634302378d67d91af10cf3fafd
 

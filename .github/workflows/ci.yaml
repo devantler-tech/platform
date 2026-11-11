@@ -611,6 +611,7 @@ jobs:
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
               - 'scripts/tests/test-agentic-engineer-schedule.sh'
+              - 'scripts/tests/test-agentic-engineer-lane-store.sh'
               - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
               - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
@@ -2875,6 +2876,15 @@ jobs:
         run: |
           shellcheck scripts/tests/test-agentic-engineer-schedule.sh
           bash scripts/tests/test-agentic-engineer-schedule.sh
+
+      - name: 🗄️ Validate the Agentic Engineer lane store
+        if: needs.changes.outputs.k8s == 'true'
+        # Renders the lane and Substrate: the agent reaches the store only through
+        # the egress gateway with the store credential, and the maintainer reads it
+        # only through the API server.
+        run: |
+          shellcheck scripts/tests/test-agentic-engineer-lane-store.sh
+          bash scripts/tests/test-agentic-engineer-lane-store.sh
 
       - name: 🧠 Validate the kagent harness plugin wrapper
         if: needs.changes.outputs.k8s == 'true'
