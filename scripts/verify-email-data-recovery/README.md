@@ -100,6 +100,12 @@ encrypted scratch claim. The observer compares the one diagnostic from the
 protected run's creation window on both copies. Its receipt reports message
 parity and leaves disposal to a separately reviewed operation.
 
+After the fresh parity check passes, the confirmed
+`dispose-fresh-retained-email-copy` mode repeats the graph, inventory and
+message checks before disposal. It requires the witnessed backup to remain
+valid through the cleanup budget. It releases the fresh reader and scratch
+while retaining the source messages and backup, and reports its own result.
+
 The pass receipt covers message recovery, encrypted disposable storage, source
 retention and disposal of the restored copy. It does not establish an independent
 cluster rebuild, archive migration, transport delivery, OIDC, or production

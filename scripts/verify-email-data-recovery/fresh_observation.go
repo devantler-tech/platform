@@ -87,6 +87,9 @@ func observeFreshRecoveryGraph(ctx context.Context, d *recoveryDriver, w *freshR
 	backupRef := ownedReference{"Backup", d.i.namespace + "-backup", "velero", w.Backup.UID}
 	downloadRef := ownedReference{"DataDownload", d.i.namespace + "-download", "velero", w.Download.UID}
 	for _, ref := range []ownedReference{backupRef, downloadRef} {
+		if tracked, present := d.refs[ref.key()]; present && tracked != ref {
+			return "fresh-witness"
+		}
 		d.refs[ref.key()] = ref
 	}
 	backup, err := d.owned(ctx, backupRef)
@@ -116,7 +119,7 @@ func observeFreshRecoveryGraph(ctx context.Context, d *recoveryDriver, w *freshR
 		return "fresh-transfer"
 	}
 	claimRef, err := d.ref("PersistentVolumeClaim", "data", d.i.namespace)
-	if err != nil {
+	if err != nil || claimRef.uid != w.Claim.UID {
 		return "fresh-storage"
 	}
 	claim, err := d.owned(ctx, claimRef)
