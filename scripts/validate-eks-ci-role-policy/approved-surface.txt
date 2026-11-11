@@ -168,7 +168,7 @@ pkg.crossplane.io/v1|Provider||provider-aws-iam 4d46cd8dd698528258e074ad138bbecb
 
 pkg.crossplane.io/v1|Provider||provider-upjet-github 719f3ea7799fbb895e20bf9da54098e37f67da5cc397a94a5c13df3f6fbb187b
 
-pkg.crossplane.io/v1|Provider||provider-upjet-unifi 9ddcac5e67d0ab6c75f6f0ba60f8e225d61809052616a111539bd87574c4225b
+pkg.crossplane.io/v1|Provider||provider-upjet-unifi 134e66f6ec74fb19b8103ba067b1b1fd6366bbdc3afbc0e7e475a3514d60c3a0
 
 pkg.crossplane.io/v1|Provider||upbound-provider-family-aws 64c7d602bf7460b7a38657a49539f5fa945ef8216be5e4296dddd04f69a944f8
 
