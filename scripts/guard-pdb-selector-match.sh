@@ -122,7 +122,6 @@
 #      a budget that cannot be decided, a malformed exception row, or an anti-vacuity failure.
 #      Budgets found detached in the same run are still listed.
 
-
 set -uo pipefail
 
 die() {
@@ -887,7 +886,6 @@ while IFS="$tab" read -r row_cluster key || [ -n "$row_cluster" ]; do
       "$row_cluster" "$key" "$row_cluster" >>"$scratch/findings"
   fi
 done <"$scratch/exception-keys"
-
 
 summary="$clusters cluster(s), $total_pdbs PodDisruptionBudget(s), $total_rendered HelmRelease chart(s) rendered"
 if [ "$base_usable" = 1 ]; then
