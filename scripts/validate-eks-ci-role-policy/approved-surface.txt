@@ -18,7 +18,7 @@ admissionregistration.k8s.io/v1|MutatingAdmissionPolicyBinding||longhorn-v1-benc
 
 admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||gateway-receiver 29a4c24f83df36bb1a1cc5880703564b5b853f46e27828aca4493fdc5017d983
 
-admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||longhorn-v1-benchmark-runtime e2296d89bf4177747418a2ad65850712990fc84a5e9bb4333490038bf73f817d
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||longhorn-v1-benchmark-runtime 0cc9ea5c1aec7925eb2409b923967ead9b791913ca3740c2bae2ae3b8b1d7868
 
 admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||gateway-receiver 02e679b3bede26c8ef6793955787d34b266667cafe41636288c87e1fcb83d339
 
@@ -100,7 +100,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape cd313c675760792a4acd04
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno cba1d622347666781a22316d3c466cb9df54ea4951809e8efa9917b048032867
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn c1fd12408b15785bb3a75c65cb2bedbd10752f50b5fac96cc623789c04d01d8b
+helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn 3687bc9ddaa8177bc383eb7d25fc8f1bff732a935e2874656fdd8b438aea6e03
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|oauth2-proxy|oauth2-proxy d16150bb9a7d264f002fd3cb8d82d459a368d6428207e23fd0b8479e4194f60d
 
