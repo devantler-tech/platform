@@ -187,6 +187,9 @@ jq '.root.spec.verify' "${scratch}/all.json" >"${scratch}/apps-verify.json"
 cat >"${scratch}/bin/kubectl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+# A failed read reaches the projection with no object, which the jq wrapper also
+# records as a rejection. Record every failed read so a control can tell them apart.
+trap 'result=$?; if ((result != 0)); then printf "%s\n" "$result" >>"$FIXTURE/read-failures"; fi' EXIT
 [[ "$1" == --kubeconfig && "$2" == "$KUBECONFIG" && "$3 $4 $5" == '--context synthetic-ci --namespace' ]] || exit 91
 namespace=$6
 [[ "$7" == --request-timeout && "$8" =~ ^[1-5]s$ && "$9" == get ]] || exit 92
@@ -744,6 +747,7 @@ require_rejection() {
     run_case "$name" fail "$mode" "$starved_retry_seconds"
   fi
   [[ -s "$fixture/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+  [[ ! -e "$fixture/read-failures" ]] || fail "$name: a failed read was refused, not the mutated snapshot"
 }
 # A starved first run is retried once and must then record the real rejection.
 mkdir "${scratch}/starved-once"
@@ -765,6 +769,16 @@ grep -qx 'RETRY: starved-always: the budget ran out before any snapshot was judg
   fail 'starved-always: the starved control was not retried'
 grep -qx 'FAIL: starved-always: rejection did not reach snapshot validation' "${scratch}/starved-always.out" ||
   fail 'starved-always: the starved retry failed for another reason'
+# An unmutated snapshot whose read keeps failing records a projection rejection too.
+# That refusal must not satisfy a control meant to prove a judged mutation.
+mkdir "${scratch}/read-failure-control"
+cp "${scratch}/healthy/"*.json "${scratch}/read-failure-control/"
+if (require_rejection read-failure-control 3 forbidden) >"${scratch}/read-failure-control.out" 2>&1; then
+  fail 'read-failure-control: a failed read satisfied a mutation control'
+fi
+[[ -s "${scratch}/read-failure-control/rejections" ]] || fail 'read-failure-control: the failed read recorded no projection rejection'
+grep -qx 'FAIL: read-failure-control: a failed read was refused, not the mutated snapshot' "${scratch}/read-failure-control.out" ||
+  fail 'read-failure-control: the failed read was not named'
 # Only a deadline refusal before any judged snapshot counts as starved; every other
 # refusal, including a deadline after a judged or later snapshot, is never retried.
 mkdir "${scratch}/starved-reports"
