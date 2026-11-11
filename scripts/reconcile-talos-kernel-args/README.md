@@ -612,3 +612,22 @@ silently skipped. Its [final-head provider trial](https://github.com/devantler-t
 verified a same-version image update, readiness, a second no-change plan and
 cleanup on a temporary single-node cluster. That trial does not cover autoscaled
 nodes or an interrupted rollout; the release's regression tests cover those paths.
+
+**7.213.4**, commit `695328215555c4d957498569f4cf788c7343dc4c`, retains
+byte-identical configuration-manager and Talos-generator trees relative to
+7.207.1. The fold's trigger, normalized arguments, both-role output and explicit
+schematic-ID boundary are unchanged. The API adds ordered per-pool Talos patches
+and observed host status; status preservation in its marshaler does not change
+desired configuration. The chart adds those fields and a node-list permission
+for nested Kind provisioning. Talos machinery and both YAML encoders are
+unchanged; COSI runtime moves from 1.16.3 to 1.16.4, Kubernetes clients from
+0.36.5 to 0.36.6, and the build toolchain from Go 1.27.3 to 1.27.4.
+
+The source audit covers the published releases and complete commit range from
+7.207.0 through 7.213.4, including changes between retained unpublished tags.
+Per-pool patches are applied after shared worker configuration; they do not
+replace this shared post-installer fold. The consumer fixtures exercise all
+five pool profiles during bootstrap and reconciliation with the patched
+toolchain, and their generated configurations validate with Talos 1.13.12.
+The offline render regression still checks both shared roles, schematic-ID
+precedence and invalid-patch refusal. This audit changes no runtime exception.
