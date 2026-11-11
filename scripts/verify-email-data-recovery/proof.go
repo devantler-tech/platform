@@ -20,7 +20,7 @@ type sourceContainer struct {
 	image, runtime string
 	restarts       int64
 }
-type messageIdentity struct{ email, blob, mailbox, messageID, body string }
+type messageIdentity struct{ email, blob, mailbox, messageID, body, receivedAt string }
 
 // Scratch receipts may coexist with the data receipt. Select one data volume;
 // proveBackup still binds its owner, source Pod, completion and byte accounting.

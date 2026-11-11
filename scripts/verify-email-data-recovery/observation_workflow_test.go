@@ -62,13 +62,15 @@ func TestObservationWorkflowMainGuardAndCustody(t *testing.T) {
 			}
 		})
 	}
-	cmd := exec.Command("/bin/bash", "--noprofile", "--norc", "-c", guard.Run+"\nprintf PARITY_ADMITTED\n")
-	env["CONFIRM"] = "verify-retained-email-parity"
-	for key, value := range env {
-		cmd.Env = append(cmd.Env, key+"="+value)
-	}
-	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "PARITY_ADMITTED" {
-		t.Fatal("read-only parity dispatch refused")
+	for _, confirm := range []string{retainedParityConfirm, freshParityConfirm} {
+		cmd := exec.Command("/bin/bash", "--noprofile", "--norc", "-c", guard.Run+"\nprintf PARITY_ADMITTED\n")
+		env["CONFIRM"] = confirm
+		for key, value := range env {
+			cmd.Env = append(cmd.Env, key+"="+value)
+		}
+		if out, err := cmd.CombinedOutput(); err != nil || string(out) != "PARITY_ADMITTED" {
+			t.Fatalf("read-only parity dispatch refused for %s", confirm)
+		}
 	}
 	checkout := job.Steps[1]
 	if checkout.With["ref"] != "${{ github.sha }}" || checkout.With["persist-credentials"] != false || !strings.HasPrefix(checkout.Uses, "actions/checkout@") {
@@ -78,7 +80,7 @@ func TestObservationWorkflowMainGuardAndCustody(t *testing.T) {
 		if i < 5 && (step.Env["KUBE_CONFIG"] != "" || step.Env["HCLOUD_TOKEN"] != "") {
 			t.Fatal("credential restored before build")
 		}
-		if i < 5 && (step.Env["EMAIL_RETAINED_READER_UID"] != "" || step.Env["EMAIL_RETAINED_CLAIM_UID"] != "") {
+		if i < 5 && (step.Env["EMAIL_RETAINED_READER_UID"] != "" || step.Env["EMAIL_RETAINED_CLAIM_UID"] != "" || step.Env["EMAIL_FRESH_RECOVERY_WITNESS"] != "") {
 			t.Fatal("retained identities restored before build")
 		}
 	}
@@ -88,6 +90,9 @@ func TestObservationWorkflowMainGuardAndCustody(t *testing.T) {
 	}
 	if final.Env["EMAIL_RETAINED_READER_UID"] != "${{ secrets.EMAIL_RETAINED_READER_UID }}" || final.Env["EMAIL_RETAINED_CLAIM_UID"] != "${{ secrets.EMAIL_RETAINED_CLAIM_UID }}" {
 		t.Fatal("workflow lost the original reader or claim binding")
+	}
+	if final.Env["EMAIL_FRESH_RECOVERY_WITNESS"] != "${{ secrets.EMAIL_FRESH_RECOVERY_WITNESS }}" {
+		t.Fatal("fresh witness lost its protected binding")
 	}
 	for _, step := range job.Steps {
 		if strings.Contains(step.Uses, "upload-artifact") {

@@ -58,7 +58,7 @@
 # pods, a compromised registry serving a tampered image).
 #
 # Scope: FIRST-PARTY images (ghcr.io/devantler-tech/*). All are keyless-cosign
-# signed through eleven image routes:
+# signed through repository-specific image routes:
 #   1. ghcr.io/devantler-tech/ksail — the ksail-operator image — is signed by
 #      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
 #      cd.yaml; see that repo's GoReleaser `docker_signs` step), at a release tag.
@@ -76,14 +76,14 @@
 #      dedicated main-only publish-ksail-analysis-runner.yaml workflow.
 #   7. the private World at Ruin zone is signed by that repository's server-cd
 #      workflow on stable release tags only.
-#   8. the mail bootstrap image is signed by this repository's dedicated
-#      publish-private-mail-bootstrap.yaml workflow on main.
+#   8. the serving and staged mail bootstrap images are signed by this
+#      repository's dedicated publish-private-mail-bootstrap.yaml workflow on main.
 #   9. the app images (wedding-app, ascoachingogvaner, …) are signed by the
 #      shared publish-app.yaml workflow: legacy full-commit compatibility or an
 #      explicitly reviewed maintained revision, matching the app admission rule.
 # The two checkpoint compatibility images use the main-only
 # publish-coroot-checkpoint-hotfix.yaml workflow, separately from the node agent.
-# Talos evaluates rules in order, first match wins, so the ten specific rules
+# Talos evaluates rules in order, first match wins, so the specific rules
 # MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
 # FAIL-OPEN by design for everything else: an image matching NO rule is pulled
@@ -199,6 +199,11 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-private-mail-bootstrap\.yaml@refs/heads/main$
+  # The staged runtime uses the same publisher, scoped to its exact repository.
+  - image: ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-private-mail-bootstrap\.yaml@refs/heads/main$
   # Reports-controller repair: exact repository before the generic app rule.
   - image: ghcr.io/devantler-tech/platform-kyverno-reports
     keyless:
@@ -224,6 +229,15 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$
+  # The migration images have separate, exact main-branch publishers.
+  - image: ghcr.io/devantler-tech/platform-longhorn-instance-manager
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v1-retirement\.yaml@refs/heads/main$
+  - image: ghcr.io/devantler-tech/platform-longhorn-manager
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
   # First-party APP images retain legacy full-commit verification and accept the
   # two reviewed maintained publisher revisions (v8.0.0 #5213, v19.0.5 #5404).
   # Mutable refs, tags and other maintained commits are refused, as in the app

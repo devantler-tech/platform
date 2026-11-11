@@ -296,8 +296,13 @@ bash scripts/private-mail-config/stage-webui.sh "$build_dir" 1.0.3
 ```
 
 The 1.0.3 profile supports the full OAuth scope needed for recovery administrator
-sign-in through a registered Web Interface client. The default build and
-serving image use the deployed baseline.
+sign-in through a registered Web Interface client. The default container build
+uses the deployed baseline. The publisher builds the 0.16.27 and 1.0.3 profiles
+from their pinned server, CLI and Web Interface inputs. It checks the versions
+inside the built 1.0.3 image without network access. Protected main publishes
+the candidate to a separate image repository so the 0.16 recovery reader can
+continue to require the legacy image repository. Selecting the candidate for
+serving requires a separate deployment.
 
 Selecting a schema does not migrate a datastore. Stalwart 1.0 refuses stores
 created before 1.0. A coordinated upgrade requires the

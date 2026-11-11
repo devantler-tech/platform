@@ -2,7 +2,8 @@
 # actor's own egress policy (the destinations its kagent EgressPolicies and
 # model grant) at layer 7, so this rule does not repeat that allow-list: it
 # lets the gateway reach the internet over HTTP(S), the kagent controller
-# (agents' task store calls) and the in-cluster credential services.
+# (agents' task store calls), the in-cluster credential services and the
+# Agentic Engineer lane's store.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -26,3 +27,11 @@ spec:
             k8s:io.kubernetes.pod.namespace: kagent
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kagent-credentials
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: agentic-engineer
+            app.kubernetes.io/name: lane-store
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

@@ -21,6 +21,40 @@ check_hold "$scratch/production.json" || {
   echo 'missing or broadened staging ingress hold' >&2
   exit 1
 }
+check_identity_hold() {
+  jq -e '
+    [.[] | select(.kind == "CiliumNetworkPolicy" and .metadata.name == "business-site-customer-identity-hold")] |
+    length == 1 and .[0].metadata.namespace == "business-site" and
+    .[0].spec == {
+      endpointSelector: {matchExpressions: [{
+        key: "app.kubernetes.io/name", operator: "In", values: ["customer-dex", "customer-zitadel"]
+      }]},
+      enableDefaultDeny: {ingress: false},
+      ingressDeny: [{fromEntities: ["ingress"]}]
+    }
+  ' "$1" >/dev/null
+}
+check_identity_hold "$scratch/production.json" || {
+  echo 'missing or broadened customer identity ingress hold' >&2
+  exit 1
+}
+for change in \
+  'empty' \
+  '.metadata.namespace="another-app"' \
+  '.spec.endpointSelector={}' \
+  '.spec.endpointSelector.matchExpressions[0].values=["customer-dex"]' \
+  '.spec.endpointSelector.matchExpressions[0].values += ["business-site"]' \
+  'del(.spec.enableDefaultDeny)' \
+  '.spec.ingress=.spec.ingressDeny | del(.spec.ingressDeny)' \
+  '.spec.ingressDeny[0].fromEntities=["world"]' \
+  '.spec.ingressDeny[0].toPorts=[{ports:[{port:"5556",protocol:"TCP"}]}]'; do
+  jq "map(if .metadata.name == \"business-site-customer-identity-hold\" then ($change) else . end)" \
+    "$scratch/production.json" >"$scratch/changed.json"
+  if check_identity_hold "$scratch/changed.json"; then
+    echo 'unsafe customer identity hold mutation was accepted' >&2
+    exit 1
+  fi
+done
 # These controls prevent an empty selector, a changed port/direction, or a mere
 # additive allow policy from satisfying the independently enforced hold.
 for change in \
@@ -45,5 +79,6 @@ jq -e '
   .[0].spec.source.reconcileApplication == false
 ' "$scratch/production.json" >/dev/null
 kubectl kustomize "$root/k8s/providers/docker/apps" >"$scratch/local.yaml"
-yq -o=json -I=0 '.' "$scratch/local.yaml" | jq -es 'all(.[]; .metadata.name != "business-site-staging-hold")' >/dev/null
-printf 'PASS: production-only staging hold; seven unsafe mutations refused; application remains disabled\n'
+yq -o=json -I=0 '.' "$scratch/local.yaml" |
+  jq -es 'all(.[]; .metadata.name != "business-site-staging-hold" and .metadata.name != "business-site-customer-identity-hold")' >/dev/null
+printf 'PASS: production-only staging and identity holds; 16 unsafe mutations refused; application remains disabled\n'

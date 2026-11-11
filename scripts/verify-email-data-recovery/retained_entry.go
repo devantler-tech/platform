@@ -55,7 +55,7 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 	if err = d.observeRestoredStorage(ctx); err != nil {
 		return fail()
 	}
-	if err = d.retainedSnapshot(ctx); err != nil {
+	if err = d.retainedSnapshot(ctx, ""); err != nil {
 		return fail()
 	}
 	stage = "complete-inventory"
@@ -203,7 +203,7 @@ func retainedInventoryResource(binding namespaceinventory.Binding) bool {
 
 // Bind the retained transfer to the controller-owned volume snapshot. The
 // creation time is only a controller chronology check, never marker freshness.
-func (d *recoveryDriver) retainedSnapshot(ctx context.Context) error {
+func (d *recoveryDriver) retainedSnapshot(ctx context.Context, sourceClaimUID string) error {
 	backup, err := d.ref("Backup", d.i.namespace+"-backup", "velero")
 	if err != nil {
 		return err
@@ -228,6 +228,9 @@ func (d *recoveryDriver) retainedSnapshot(ctx context.Context) error {
 	volume, err := sourceVolumeBackup(volumes, d.source.volume)
 	if err != nil {
 		return err
+	}
+	if sourceClaimUID != "" && text(child(child(volume, "metadata"), "labels"), "velero.io/pvc-uid") != sourceClaimUID {
+		return errors.New("retained-snapshot-source-claim")
 	}
 	sourceAtBackup := d.source
 	sourceAtBackup.podUID = text(child(child(volume, "spec"), "pod"), "uid")

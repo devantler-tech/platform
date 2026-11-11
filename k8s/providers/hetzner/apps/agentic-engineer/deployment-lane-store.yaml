@@ -1,0 +1,143 @@
+# The lane store (devantler-tech/monorepo#4869, #4870). A run starts in a fresh
+# sandbox, so the lane keeps its memory here between runs, and each run leaves
+# its transcript here for the Agent Improver. Two rclone listeners share one
+# volume:
+#
+# - webdav (8080): read and write, behind the lane-store credential. Only
+#   Substrate's egress gateway reaches it, sending that credential in place of
+#   the agent's placeholder (egress-policy-lane-store.yaml).
+# - reader (8081): read only, with no credential of its own. Only the
+#   Kubernetes API server reaches it, so a reader needs the
+#   services/proxy grant in role-lane-store-reader.yaml.
+#
+# One replica on a ReadWriteOnce volume: the lane runs once a day.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lane-store
+  namespace: agentic-engineer
+  labels:
+    app.kubernetes.io/name: lane-store
+    platform.devantler.tech/replica-floor: exempt
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lane-store
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lane-store
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: webdav
+          image: docker.io/rclone/rclone:1.75.2@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - webdav
+            - /data
+            - --addr=:8080
+            - --htpasswd=/etc/lane-store/htpasswd
+            - --config=/tmp/rclone.conf
+            - --cache-dir=/tmp/cache
+          ports:
+            - name: webdav
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: webdav
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: webdav
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: credential
+              mountPath: /etc/lane-store
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+        - name: reader
+          image: docker.io/rclone/rclone:1.75.2@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - http
+            - /data
+            - --addr=:8081
+            - --read-only
+            - --config=/tmp/rclone.conf
+            - --cache-dir=/tmp/cache
+          ports:
+            - name: reader
+              containerPort: 8081
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: reader
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: reader
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: lane-store
+        - name: credential
+          secret:
+            secretName: lane-store
+            items:
+              - key: htpasswd
+                path: htpasswd
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
