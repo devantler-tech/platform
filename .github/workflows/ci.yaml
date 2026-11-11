@@ -2258,7 +2258,7 @@ jobs:
       - name: 🔐 Validate KSail installer integrity guard
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck .github/scripts/setup-ksail.sh scripts/tests/test-setup-ksail.sh
+          shellcheck -x .github/scripts/setup-ksail.sh scripts/tests/test-setup-ksail.sh
           bash scripts/tests/test-setup-ksail.sh
 
       - name: 🔐 Validate Cilium SNI hostname coverage
@@ -2270,13 +2270,13 @@ jobs:
       - name: 🔐 Validate talosctl installer integrity guard
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck .github/scripts/setup-talosctl.sh scripts/tests/test-setup-talosctl.sh
+          shellcheck -x .github/scripts/setup-talosctl.sh scripts/tests/test-setup-talosctl.sh
           bash scripts/tests/test-setup-talosctl.sh
 
       - name: 🔐 Validate supply-chain tool integrity
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck .github/scripts/setup-supply-chain-tools.sh scripts/tests/test-setup-supply-chain-tools.sh
+          shellcheck -x .github/scripts/setup-supply-chain-tools.sh scripts/tests/test-setup-supply-chain-tools.sh
           bash scripts/tests/test-setup-supply-chain-tools.sh
 
       - name: 🔐 Validate the shared release-asset download
