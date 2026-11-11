@@ -640,6 +640,7 @@ The source audit covers the published releases and complete commit range from
 Per-pool patches are applied after shared worker configuration; they do not
 replace this shared post-installer fold. The consumer fixtures exercise all
 five pool profiles during bootstrap and reconciliation with the patched
-toolchain, and their generated configurations validate with Talos 1.13.12.
+toolchain, and their generated configurations validate with the platform's
+pinned Talos client.
 The offline render regression still checks both shared roles, schematic-ID
 precedence and invalid-patch refusal. This audit changes no runtime exception.
