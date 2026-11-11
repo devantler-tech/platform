@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestReaderCustodyTokenRequiresPrivateRegularLocalFiles deliberately creates unsafe modes and links to verify refusal without disclosure.
 func TestReaderCustodyTokenRequiresPrivateRegularLocalFiles(t *testing.T) {
 	for _, failure := range []string{"", "public-directory", "public-file", "file-symlink", "directory-symlink", "empty", "oversized", "newline"} {
 		t.Run(failure, func(t *testing.T) {
@@ -61,6 +63,7 @@ func TestReaderCustodyTokenRequiresPrivateRegularLocalFiles(t *testing.T) {
 	}
 }
 
+// TestReaderCustodyTransportRefusesRemoteOrAmbiguousEndpoints checks destination and authentication syntax before any network access.
 func TestReaderCustodyTransportRefusesRemoteOrAmbiguousEndpoints(t *testing.T) {
 	for _, endpoint := range []string{"https://127.0.0.1:38200", "http://example.invalid:38200", "http://localhost:38200", "http://127.0.0.1", "http://127.0.0.1:0", "http://127.0.0.1:65536", "http://user@127.0.0.1:38200", "http://127.0.0.1:38200/path", "http://127.0.0.1:38200?", "http://127.0.0.1:38200#other"} {
 		if store, err := newReaderCustodyStore(endpoint, "fixture-reader-custody-token"); err == nil || store != nil {
@@ -72,6 +75,7 @@ func TestReaderCustodyTransportRefusesRemoteOrAmbiguousEndpoints(t *testing.T) {
 	}
 }
 
+// TestReaderCustodyCommandUsesTheSeparateProtectedDispatch executes the real CLI with no tools available to expose an incorrect branch.
 func TestReaderCustodyCommandUsesTheSeparateProtectedDispatch(t *testing.T) {
 	if os.Getenv("EMAIL_READER_CUSTODY_CHILD") == "1" {
 		os.Args = []string{"verify-email-data-recovery", "--prepare-reader-inputs"}
@@ -90,8 +94,8 @@ func TestReaderCustodyCommandUsesTheSeparateProtectedDispatch(t *testing.T) {
 			stage = "source"
 		}
 		output, err := command.CombinedOutput()
-		exit, ok := err.(*exec.ExitError)
-		if !ok || exit.ExitCode() != 2 || !strings.Contains(string(output), "EMAIL_READER_INPUT_CUSTODY=UNVERIFIED stage="+stage+" restart=NOT_AUTHORIZED recovery=UNVERIFIED") || strings.Contains(string(output), "EMAIL_DATA_RECOVERY=PASS") {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(output), "EMAIL_READER_INPUT_CUSTODY=UNVERIFIED stage="+stage+" restart=NOT_AUTHORIZED recovery=UNVERIFIED") || strings.Contains(string(output), "EMAIL_DATA_RECOVERY=PASS") {
 			t.Fatalf("custody command lost its distinct dispatch boundary: %q", output)
 		}
 	}

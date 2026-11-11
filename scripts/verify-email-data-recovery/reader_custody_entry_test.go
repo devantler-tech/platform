@@ -11,6 +11,7 @@ import (
 	"testing"
 )
 
+// readerCustodyDispatch supplies the fixed first-attempt workflow identity for custody tests.
 func readerCustodyDispatch() map[string]string {
 	env := confirmedInvocation()
 	env["GITHUB_ACTIONS"] = "true"
@@ -19,6 +20,7 @@ func readerCustodyDispatch() map[string]string {
 	return env
 }
 
+// readerCustodyNativeFixture separates retained inputs from a distinct serving mailbox graph.
 func readerCustodyNativeFixture(t *testing.T) (*cleanupAPI, string, string) {
 	t.Helper()
 	t.Chdir("../..")
@@ -46,6 +48,7 @@ func readerCustodyNativeFixture(t *testing.T) (*cleanupAPI, string, string) {
 	return a, reader, claim
 }
 
+// TestReaderCustodyDispatchRefusesBeforeAnyAccess proves invalid dispatch never reads credentials or invokes native clients.
 func TestReaderCustodyDispatchRefusesBeforeAnyAccess(t *testing.T) {
 	for _, invalid := range []string{"GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_REPOSITORY", "GITHUB_RUN_ATTEMPT", "GITHUB_ACTOR", "GITHUB_WORKFLOW_REF", "RUNNER_ENVIRONMENT", "GITHUB_SHA", "GITHUB_RUN_ID", "EMAIL_READER_INPUTS_CONFIRM", "EMAIL_RETAINED_READER_UID", "EMAIL_RETAINED_CLAIM_UID"} {
 		t.Run(invalid, func(t *testing.T) {
@@ -66,6 +69,7 @@ func TestReaderCustodyDispatchRefusesBeforeAnyAccess(t *testing.T) {
 	}
 }
 
+// TestReaderCustodyOperatorStoresInputsWithoutChangingAnyKubernetesObject checks storage readback and rejects input changes around the write.
 func TestReaderCustodyOperatorStoresInputsWithoutChangingAnyKubernetesObject(t *testing.T) {
 	for _, changeAt := range []int{0, 2, 3} {
 		t.Run(map[int]string{0: "stable", 2: "changed-before-write", 3: "changed-after-write"}[changeAt], func(t *testing.T) {
@@ -132,6 +136,7 @@ func TestReaderCustodyOperatorStoresInputsWithoutChangingAnyKubernetesObject(t *
 	}
 }
 
+// TestReaderCustodyKubernetesCapabilityHasNoMutationOrForeignSecretRead verifies rejected requests never reach the underlying client.
 func TestReaderCustodyKubernetesCapabilityHasNoMutationOrForeignSecretRead(t *testing.T) {
 	for _, args := range [][]string{
 		{"delete", "Pod", "reader"}, {"create", "-f=-"}, {"patch", "Secret", "storage-key"},
@@ -150,6 +155,7 @@ func TestReaderCustodyKubernetesCapabilityHasNoMutationOrForeignSecretRead(t *te
 	}
 }
 
+// TestReaderCustodyLostOutputOrUnverifiedSourceStopsBeforeNativeAccess prevents silent operation without source and output evidence.
 func TestReaderCustodyLostOutputOrUnverifiedSourceStopsBeforeNativeAccess(t *testing.T) {
 	for _, failure := range []string{"output", "source"} {
 		t.Run(failure, func(t *testing.T) {
@@ -173,6 +179,7 @@ func TestReaderCustodyLostOutputOrUnverifiedSourceStopsBeforeNativeAccess(t *tes
 	}
 }
 
+// TestReaderCustodyWrongIndependentReaderStopsBeforeKeyAccess checks identity before any retained or service credential is read.
 func TestReaderCustodyWrongIndependentReaderStopsBeforeKeyAccess(t *testing.T) {
 	a, _, claim := readerCustodyNativeFixture(t)
 	secretReads, loaded := 0, 0

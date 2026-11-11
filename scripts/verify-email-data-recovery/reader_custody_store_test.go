@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// custodyBundle freezes independently witnessed fixture inputs for storage protocol tests.
 func custodyBundle(t *testing.T) retainedReaderInputs {
 	t.Helper()
 	graph, reader, claim := readerInputFixture(t)
@@ -22,6 +23,7 @@ func custodyBundle(t *testing.T) retainedReaderInputs {
 	return bundle
 }
 
+// custodyResponse models KV2 data with explicit original-version and deletion metadata.
 func custodyResponse(t *testing.T, w http.ResponseWriter, data any, version int) {
 	t.Helper()
 	if err := json.NewEncoder(w).Encode(object{"data": object{"data": data, "metadata": object{"version": version, "destroyed": false, "deletion_time": "", "created_time": "2026-01-01T00:00:00Z"}}}); err != nil {
@@ -29,6 +31,7 @@ func custodyResponse(t *testing.T, w http.ResponseWriter, data any, version int)
 	}
 }
 
+// TestReaderCustodyCreatesOnlyOnceAndRebindsImmediatelyBeforeWrite checks the final native rebind, readback and zero-overwrite repeat.
 func TestReaderCustodyCreatesOnlyOnceAndRebindsImmediatelyBeforeWrite(t *testing.T) {
 	bundle := custodyBundle(t)
 	var stored object
@@ -94,6 +97,7 @@ func TestReaderCustodyCreatesOnlyOnceAndRebindsImmediatelyBeforeWrite(t *testing
 	}
 }
 
+// TestReaderCustodyRejectsChangedInputsAfterFinalPreflight models drift in the last interval before a credential write.
 func TestReaderCustodyRejectsChangedInputsAfterFinalPreflight(t *testing.T) {
 	posts, preflight := 0, false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +130,7 @@ func TestReaderCustodyRejectsChangedInputsAfterFinalPreflight(t *testing.T) {
 	}
 }
 
+// TestReaderCustodyRefusesAmbiguousExistingOrUnreadableRecords preserves existing history when API evidence cannot establish safe creation.
 func TestReaderCustodyRefusesAmbiguousExistingOrUnreadableRecords(t *testing.T) {
 	for _, failure := range []string{"different", "newer-version", "deleted", "destroyed", "absent-metadata", "unreadable", "duplicate-json", "oversized", "wrong-mount"} {
 		t.Run(failure, func(t *testing.T) {
@@ -184,6 +189,7 @@ func TestReaderCustodyRefusesAmbiguousExistingOrUnreadableRecords(t *testing.T) 
 	}
 }
 
+// TestReaderCustodyNeverFollowsCredentialRedirects uses a second server to detect any forwarded authentication request.
 func TestReaderCustodyNeverFollowsCredentialRedirects(t *testing.T) {
 	forwarded := 0
 	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { forwarded++ }))
@@ -202,6 +208,7 @@ func TestReaderCustodyNeverFollowsCredentialRedirects(t *testing.T) {
 	}
 }
 
+// TestReaderCustodyCASConflictCannotOverwriteAnotherRecord distinguishes an identical concurrent winner from foreign custody.
 func TestReaderCustodyCASConflictCannotOverwriteAnotherRecord(t *testing.T) {
 	for _, identical := range []bool{false, true} {
 		t.Run(map[bool]string{false: "foreign-winner", true: "identical-winner"}[identical], func(t *testing.T) {
@@ -247,6 +254,7 @@ func TestReaderCustodyCASConflictCannotOverwriteAnotherRecord(t *testing.T) {
 	}
 }
 
+// TestReaderCustodyLostWriteResponseIsNotRetriedOrReportedStored models a committed request whose response connection is lost.
 func TestReaderCustodyLostWriteResponseIsNotRetriedOrReportedStored(t *testing.T) {
 	posts, postWriteReads := 0, 0
 	committed := make(chan struct{})

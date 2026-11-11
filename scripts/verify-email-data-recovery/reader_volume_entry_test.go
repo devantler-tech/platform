@@ -37,7 +37,10 @@ func (a *readerVolumeAPI) call(ctx context.Context, input []byte, args ...string
 		a.beforePatch()
 	}
 	key := cleanupKey("PersistentVolume", "", a.name)
-	raw, _ := json.Marshal(a.inner.objects[key])
+	raw, err := json.Marshal(a.inner.objects[key])
+	if err != nil {
+		return nil, err
+	}
 	patch, err := jsonpatch.DecodePatch(input)
 	if err != nil {
 		return nil, err
@@ -61,6 +64,7 @@ func (a *readerVolumeAPI) call(ctx context.Context, input []byte, args ...string
 	return json.Marshal(a.inner.objects[key])
 }
 
+// readerVolumeDispatch supplies the separate confirmation and workflow identity for volume protection tests.
 func readerVolumeDispatch() map[string]string {
 	env := readerCustodyDispatch()
 	delete(env, "EMAIL_READER_INPUTS_CONFIRM")
@@ -69,6 +73,7 @@ func readerVolumeDispatch() map[string]string {
 	return env
 }
 
+// readerVolumeNativeFixture models a restored binding with independently witnessed reader, claim and volume identities.
 func readerVolumeNativeFixture(t *testing.T) (*readerVolumeAPI, map[string]string) {
 	t.Helper()
 	a, _, _ := readerCustodyNativeFixture(t)
@@ -87,9 +92,13 @@ func readerVolumeNativeFixture(t *testing.T) (*readerVolumeAPI, map[string]strin
 	return &readerVolumeAPI{inner: a, name: text(child(pv, "metadata"), "name")}, env
 }
 
+// TestRetainedVolumeProtectionChangesOnlyTheBoundReclaimPolicyAndIsIdempotent compares the complete graph across two invocations.
 func TestRetainedVolumeProtectionChangesOnlyTheBoundReclaimPolicyAndIsIdempotent(t *testing.T) {
 	a, env := readerVolumeNativeFixture(t)
-	before, _ := json.Marshal(a.inner.objects)
+	before, err := json.Marshal(a.inner.objects)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for pass := 0; pass < 2; pass++ {
 		var out bytes.Buffer
 		checks := 0
@@ -113,6 +122,7 @@ func TestRetainedVolumeProtectionChangesOnlyTheBoundReclaimPolicyAndIsIdempotent
 	}
 }
 
+// TestRetainedVolumeProtectionRejectsForeignDispatchBeforeAccess verifies every admission field before native reads or writes.
 func TestRetainedVolumeProtectionRejectsForeignDispatchBeforeAccess(t *testing.T) {
 	for _, field := range []string{"GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_REPOSITORY", "GITHUB_ACTOR", "GITHUB_RUN_ATTEMPT", "RUNNER_ENVIRONMENT", "GITHUB_WORKFLOW_REF", "GITHUB_RUN_ID", "GITHUB_SHA", "EMAIL_RETAINED_VOLUME_CONFIRM", "EMAIL_RETAINED_READER_UID", "EMAIL_RETAINED_CLAIM_UID", "EMAIL_RETAINED_PV_UID"} {
 		t.Run(field, func(t *testing.T) {
@@ -129,6 +139,7 @@ func TestRetainedVolumeProtectionRejectsForeignDispatchBeforeAccess(t *testing.T
 	}
 }
 
+// TestRetainedVolumeProtectionNeverRetriesOrCertifiesAnUncertainMutation models identity races, lost responses and changed readback.
 func TestRetainedVolumeProtectionNeverRetriesOrCertifiesAnUncertainMutation(t *testing.T) {
 	for _, failure := range []string{"stale-version", "replacement", "lost-response", "changed-readback", "changed-before-write", "changed-after-write"} {
 		t.Run(failure, func(t *testing.T) {
@@ -167,6 +178,7 @@ func TestRetainedVolumeProtectionNeverRetriesOrCertifiesAnUncertainMutation(t *t
 	}
 }
 
+// TestRetainedVolumeCapabilityCannotBorrowCustodyOrLifecyclePermissions refuses secret reads and any unqualified mutation payload.
 func TestRetainedVolumeCapabilityCannotBorrowCustodyOrLifecyclePermissions(t *testing.T) {
 	for _, args := range [][]string{
 		{"get", "Secret", "storage-key", "--ignore-not-found=true", "-o=json", "--namespace=" + retainedRecovery.namespace},
@@ -191,6 +203,7 @@ func TestRetainedVolumeCapabilityCannotBorrowCustodyOrLifecyclePermissions(t *te
 	}
 }
 
+// TestRetainedVolumeCommandUsesItsSeparateProtectedDispatch executes the CLI to distinguish admission from source verification.
 func TestRetainedVolumeCommandUsesItsSeparateProtectedDispatch(t *testing.T) {
 	if os.Getenv("EMAIL_RETAINED_VOLUME_CHILD") == "1" {
 		os.Args = []string{"verify-email-data-recovery", "--protect-retained-volume"}
@@ -209,8 +222,8 @@ func TestRetainedVolumeCommandUsesItsSeparateProtectedDispatch(t *testing.T) {
 			stage = "source"
 		}
 		output, err := command.CombinedOutput()
-		exit, ok := err.(*exec.ExitError)
-		if !ok || exit.ExitCode() != 2 || !strings.Contains(string(output), "EMAIL_RETAINED_VOLUME=UNVERIFIED stage="+stage+" reader=UNVERIFIED restart=NOT_AUTHORIZED recovery=UNVERIFIED") || strings.Contains(string(output), "EMAIL_DATA_RECOVERY=PASS") {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(output), "EMAIL_RETAINED_VOLUME=UNVERIFIED stage="+stage+" reader=UNVERIFIED restart=NOT_AUTHORIZED recovery=UNVERIFIED") || strings.Contains(string(output), "EMAIL_DATA_RECOVERY=PASS") {
 			t.Fatalf("volume command lost its separate dispatch boundary: %q", output)
 		}
 	}

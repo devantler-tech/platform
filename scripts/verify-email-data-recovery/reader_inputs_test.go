@@ -22,7 +22,11 @@ func readerInputFixture(t *testing.T) ([]object, string, string) {
 		if text(o, "kind") == "Secret" {
 			data := object{}
 			for k, v := range child(o, "stringData") {
-				data[k] = base64.StdEncoding.EncodeToString([]byte(v.(string)))
+				value, ok := v.(string)
+				if !ok {
+					t.Fatal("fixture secret value is not a string")
+				}
+				data[k] = base64.StdEncoding.EncodeToString([]byte(value))
 			}
 			o["data"] = data
 			delete(o, "stringData")
@@ -40,6 +44,7 @@ func readerInputFixture(t *testing.T) ([]object, string, string) {
 	return graph, readerUID, claimUID
 }
 
+// TestReaderInputBundleKeepsTheActualPerCopyCredentials verifies complete credentials, stable ordering and independence from later mutations.
 func TestReaderInputBundleKeepsTheActualPerCopyCredentials(t *testing.T) {
 	graph, reader, claim := readerInputFixture(t)
 	bundle, err := captureRetainedReaderInputs(retainedRecovery, fixtureImage, reader, claim, "ffffffff-1111-2222-3333-444444444444", graph)
@@ -80,6 +85,7 @@ func TestReaderInputBundleKeepsTheActualPerCopyCredentials(t *testing.T) {
 	}
 }
 
+// TestReaderInputBundleBindsValidChangedKeyBytes requires a content binding to change when the retained encryption key changes.
 func TestReaderInputBundleBindsValidChangedKeyBytes(t *testing.T) {
 	graph, reader, claim := readerInputFixture(t)
 	source := "ffffffff-1111-2222-3333-444444444444"
@@ -97,6 +103,7 @@ func TestReaderInputBundleBindsValidChangedKeyBytes(t *testing.T) {
 	}
 }
 
+// TestReaderInputBundleRefusesBorrowedReplacedOrIncompleteInputs exercises foreign identity, missing input and configuration substitutions.
 func TestReaderInputBundleRefusesBorrowedReplacedOrIncompleteInputs(t *testing.T) {
 	for _, failure := range []string{"reader", "claim", "source", "missing", "duplicate", "key", "authentication", "configuration", "storage-class", "executable", "not-ready", "terminating", "controller", "namespace", "identity", "resource-version", "labels", "foreign-target"} {
 		t.Run(failure, func(t *testing.T) {

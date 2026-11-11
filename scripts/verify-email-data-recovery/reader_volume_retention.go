@@ -16,6 +16,7 @@ import (
 
 type retainedVolumeWitness struct{ ReaderUID, ClaimUID, PVUID string }
 
+// runRetainedVolumeProtection rebinds the restored graph, fences the Retain-only patch and verifies actual readback.
 func runRetainedVolumeProtection(ctx context.Context, env func(string) string, k kubernetes, verifyMain func(context.Context, string) error, output io.Writer) int {
 	stage := "dispatch"
 	fail := func() int {
@@ -96,6 +97,7 @@ func runRetainedVolumeProtection(ctx context.Context, env func(string) string, k
 	return 0
 }
 
+// authorizeRetainedVolumeProtection admits only the confirmed first-attempt main workflow with three distinct native witnesses.
 func authorizeRetainedVolumeProtection(env func(string) string, witness retainedVolumeWitness) error {
 	for key, want := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform",
@@ -141,6 +143,7 @@ func (k *retainedVolumeKubernetes) call(ctx context.Context, input []byte, args 
 	return raw, nil
 }
 
+// readRetainedVolume reads and qualifies the independently witnessed restored binding while excluding serving storage.
 func (d *recoveryDriver) readRetainedVolume(ctx context.Context, witness retainedVolumeWitness) ([]object, error) {
 	fail := func() ([]object, error) { return nil, errors.New("retained-volume-read") }
 	reader, found, err := d.lookup(ctx, "Pod", "reader", retainedRecovery.namespace)
@@ -162,6 +165,7 @@ func (d *recoveryDriver) readRetainedVolume(ctx context.Context, witness retaine
 	return []object{reader, claim, volume}, nil
 }
 
+// cloneRetainedVolumeObjects takes an independent JSON snapshot for comparison after protection.
 func cloneRetainedVolumeObjects(objects []object) ([]object, error) {
 	raw, err := json.Marshal(objects)
 	var cloned []object
@@ -171,6 +175,7 @@ func cloneRetainedVolumeObjects(objects []object) ([]object, error) {
 	return cloned, nil
 }
 
+// sameRetainedVolumeInputs compares stable definitions and annotations while allowing API resource versions to advance.
 func sameRetainedVolumeInputs(before, after []object) bool {
 	if len(before) != 3 || len(after) != 3 {
 		return false
@@ -183,6 +188,7 @@ func sameRetainedVolumeInputs(before, after []object) bool {
 	return true
 }
 
+// validRetainedVolumeWitness requires distinct well-formed reader, claim and volume identities.
 func validRetainedVolumeWitness(witness retainedVolumeWitness) bool {
 	uuid := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	seen := map[string]bool{}
@@ -195,6 +201,7 @@ func validRetainedVolumeWitness(witness retainedVolumeWitness) bool {
 	return true
 }
 
+// qualifyRetainedVolume verifies the ready restored reader and encrypted binding without assuming an original provisioning name.
 func qualifyRetainedVolume(reader, claim, volume object, source sourceIdentity, image string, witness retainedVolumeWitness) error {
 	fail := func() error { return errors.New("retained-volume-binding") }
 	if !validRetainedVolumeWitness(witness) {

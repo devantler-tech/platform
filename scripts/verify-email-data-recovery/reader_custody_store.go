@@ -44,6 +44,7 @@ func newReaderCustodyStore(endpoint, token string) (*readerCustodyStore, error) 
 	return &readerCustodyStore{client: client, endpoint: endpoint, token: token}, nil
 }
 
+// readerCustodyDocument binds the complete copy-specific input set to its content digests and fixed record schema.
 func readerCustodyDocument(bundle retainedReaderInputs) (object, error) {
 	fail := func() (object, error) { return nil, errors.New("custody-document") }
 	uuid := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -132,6 +133,7 @@ func (s *readerCustodyStore) ensure(ctx context.Context, bundle retainedReaderIn
 	return nil
 }
 
+// matches accepts only an identical, undeleted original KV2 version; missing data is not recovery proof.
 func (s *readerCustodyStore) matches(ctx context.Context, expected object) (bool, error) {
 	o, status, err := s.request(ctx, http.MethodGet, retainedReaderDataPath, nil)
 	if err != nil {
@@ -153,6 +155,7 @@ func (s *readerCustodyStore) matches(ctx context.Context, expected object) (bool
 	return true, nil
 }
 
+// request restricts custody HTTP methods and destinations and rejects ambiguous or oversized responses.
 func (s *readerCustodyStore) request(ctx context.Context, method, path string, payload []byte) (object, int, error) {
 	fail := func() (object, int, error) { return nil, 0, errors.New("custody-request") }
 	if (method != http.MethodGet || (path != "/v1/sys/mounts" && path != retainedReaderDataPath && path != retainedReaderMetadataPath)) && (method != http.MethodPost || path != retainedReaderDataPath) {

@@ -14,14 +14,17 @@ func TestRetainedDisposalWorkflowMainGuardAndCustody(t *testing.T) {
 	checkRetainedWorkflow(t, "dispose-retained-email-copy.yaml", "dispose", "dispose-retained-email-copy", "--dispose-retained", "EMAIL_RETAINED_COPY_CONFIRM", retainedDispatch())
 }
 
+// TestReaderInputCustodyWorkflowMainGuardAndCustody exercises the authored guard before credentials are restored.
 func TestReaderInputCustodyWorkflowMainGuardAndCustody(t *testing.T) {
 	checkRetainedWorkflow(t, "prepare-retained-email-reader-inputs.yaml", "prepare", "prepare-retained-email-reader-inputs", "--prepare-reader-inputs", "EMAIL_READER_INPUTS_CONFIRM", readerCustodyDispatch())
 }
 
+// TestRetainedVolumeProtectionWorkflowMainGuardAndCustody checks the metadata-only workflow and independent volume witness.
 func TestRetainedVolumeProtectionWorkflowMainGuardAndCustody(t *testing.T) {
 	checkRetainedWorkflow(t, "protect-retained-email-volume.yaml", "protect", "protect-retained-email-volume", "--protect-retained-volume", "EMAIL_RETAINED_VOLUME_CONFIRM", readerVolumeDispatch())
 }
 
+// checkRetainedWorkflow reads only filenames supplied by the fixed workflow tests and executes each authored admission guard.
 func checkRetainedWorkflow(t *testing.T, filename, jobName, confirm, flag, confirmEnv string, env map[string]string) {
 	t.Helper()
 	data, err := os.ReadFile("../../.github/workflows/" + filename)

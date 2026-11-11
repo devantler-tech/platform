@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// readReaderCustodyToken reads a bounded regular token from a private directory without exposing failures or credential contents.
 func readReaderCustodyToken(directory string) (token string, err error) {
 	fail := func() (string, error) { return "", errors.New("reader-custody-token") }
 	info, err := os.Lstat(directory)
@@ -50,6 +51,7 @@ func readReaderCustodyToken(directory string) (token string, err error) {
 	return string(raw), nil
 }
 
+// loadReaderCustodyStore accepts only the workflow's private tmpfs workspace and fixed loopback service tunnel.
 func loadReaderCustodyStore(env func(string) string) (*readerCustodyStore, error) {
 	directory := env("EMAIL_READER_INPUTS_WORK_DIR")
 	if !regexp.MustCompile(`^/dev/shm/email-reader-inputs\.[A-Za-z0-9]{8}$`).MatchString(directory) || filepath.Clean(directory) != directory {
@@ -62,6 +64,7 @@ func loadReaderCustodyStore(env func(string) string) (*readerCustodyStore, error
 	return newReaderCustodyStore("http://127.0.0.1:38200", token)
 }
 
+// verifyReaderCustodySource runs the fixed reviewed source guard with a validated revision and bounded execution time.
 func verifyReaderCustodySource(ctx context.Context, revision string) error {
 	if !recoveryRevisionPattern.MatchString(revision) {
 		return errors.New("reader-custody-source")

@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// main selects one independently authorized recovery operation; unknown flags fail closed.
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--protect-retained-volume" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

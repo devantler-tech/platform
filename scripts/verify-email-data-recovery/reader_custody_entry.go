@@ -51,6 +51,7 @@ func (k readerInputKubernetes) call(ctx context.Context, input []byte, args ...s
 	return k.inner.call(ctx, nil, args...)
 }
 
+// authorizeReaderInputCustody requires the confirmed main workflow and distinct independently recorded copy identities.
 func authorizeReaderInputCustody(env func(string) string) error {
 	for key, expected := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform",
@@ -70,6 +71,7 @@ func authorizeReaderInputCustody(env func(string) string) error {
 	return nil
 }
 
+// runReaderInputCustody captures and rebinds native inputs before create-only custody without granting restart authority.
 func runReaderInputCustody(ctx context.Context, env func(string) string, k kubernetes, verifyMain func(context.Context, string) error, loadStore func(func(string) string) (*readerCustodyStore, error), output io.Writer) int {
 	stage := "dispatch"
 	fail := func() int {
@@ -130,6 +132,7 @@ func runReaderInputCustody(ctx context.Context, env func(string) string, k kuber
 	return 0
 }
 
+// captureCustodyInputs reads the fixed retained graph and excludes the serving claim before freezing credential values.
 func (d *recoveryDriver) captureCustodyInputs(ctx context.Context, readerUID, claimUID string) (retainedReaderInputs, error) {
 	fail := func() (retainedReaderInputs, error) { return retainedReaderInputs{}, errors.New("reader-inputs") }
 	reader, found, err := d.lookup(ctx, "Pod", "reader", retainedRecovery.namespace)

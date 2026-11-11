@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+// retainedVolumeFixture models a restored claim whose UID differs from the volume's original provisioning identity.
 func retainedVolumeFixture(t *testing.T) (object, object, object, sourceIdentity, retainedVolumeWitness) {
 	t.Helper()
 	graph, readerUID, claimUID := readerInputFixture(t)
@@ -26,6 +27,7 @@ func retainedVolumeFixture(t *testing.T) (object, object, object, sourceIdentity
 	return reader, claim, volume, source, witness
 }
 
+// TestRetainedVolumeQualificationAcceptsTheRestoredBindingWithoutChangingIt verifies both permitted policies without mutating the graph.
 func TestRetainedVolumeQualificationAcceptsTheRestoredBindingWithoutChangingIt(t *testing.T) {
 	for _, policy := range []string{"Delete", "Retain"} {
 		t.Run(policy, func(t *testing.T) {
@@ -43,6 +45,7 @@ func TestRetainedVolumeQualificationAcceptsTheRestoredBindingWithoutChangingIt(t
 	}
 }
 
+// TestRetainedVolumeQualificationRejectsChangedOrForeignBindings rejects drift in each independent identity and storage boundary.
 func TestRetainedVolumeQualificationRejectsChangedOrForeignBindings(t *testing.T) {
 	for _, change := range []string{"reader-witness", "claim-witness", "pv-witness", "same-witness", "reader-uid", "claim-uid", "pv-uid", "reader-version", "pv-version", "pv-terminating", "claim-terminating", "reader-terminating", "reader-command", "reader-not-ready", "reader-owner", "source-claim", "source-volume", "source-pv-uid", "missing-source", "claim-namespace", "claim-unbound", "pv-name", "pv-kind", "pv-unbound", "claim-reference", "foreign-reference", "driver", "handle", "unencrypted", "key-reference", "foreign-key-namespace", "unknown-policy", "storage-class"} {
 		t.Run(change, func(t *testing.T) {
