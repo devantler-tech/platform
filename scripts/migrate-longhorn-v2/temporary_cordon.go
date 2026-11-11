@@ -10,7 +10,7 @@ func temporaryInventoryNodes(nodes []object, record *journal) ([]object, error) 
 	if record == nil {
 		return nodes, nil
 	}
-	if record.Schema != 2 || validateJournal(*record, record.Target) != nil || (record.Phase != "evacuating" && record.Phase != "draining") {
+	if (record.Schema != 2 && record.Schema != 3) || validateJournal(*record, record.Target) != nil || (record.Phase != "evacuating" && record.Phase != "draining") {
 		return nil, errInventory
 	}
 	result := append([]object(nil), nodes...)

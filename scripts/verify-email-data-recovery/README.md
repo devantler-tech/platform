@@ -92,6 +92,14 @@ comparison. `EMAIL_RETAINED_PARITY=VERIFIED` reports present message parity.
 The original trial stays unverified and disposal still requires its own backup
 and ownership checks.
 
+With confirmation `verify-fresh-retained-email-parity`, the workflow checks
+the separately retained fresh restore. The protected witness binds the
+namespace, reader, claim, backup and download. The backup must still be
+unexpired and the completed transfer must match its mailbox snapshot and the
+encrypted scratch claim. The observer compares the one diagnostic from the
+protected run's creation window on both copies. Its receipt reports message
+parity and leaves disposal to a separately reviewed operation.
+
 The pass receipt covers message recovery, encrypted disposable storage, source
 retention and disposal of the restored copy. It does not establish an independent
 cluster rebuild, archive migration, transport delivery, OIDC, or production
