@@ -152,10 +152,9 @@ func NewClientLMTP(conn net.Conn) *Client {
 func (c *Client) setConn(conn net.Conn) {
 	c.conn = conn
 
-	var r io.Reader = conn
 	var w io.Writer = conn
 
-	r = &lineLimitReader{
+	var r io.Reader = &lineLimitReader{
 		R: conn,
 		// Doubled maximum line length per RFC 5321 (Section 4.5.3.1.6)
 		LineLimit: 2000,
