@@ -42,7 +42,7 @@ env:
   NATIVE_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
   SBOM_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
   DEPENDENCY_SECURITY_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch
-  STORAGE_GO_VERSION: "1.26.10"
+  STORAGE_GO_VERSION: "1.26.11"
   GOTOOLCHAIN: local
 
 jobs:
