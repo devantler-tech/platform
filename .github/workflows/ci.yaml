@@ -4944,7 +4944,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@e6db1a4ed5b23ce6f69e755deeddd6649313e9dc # v20.1.12
+        uses: devantler-tech/.github/actions/aggregate-job-checks@02183e4b176d3bdbedda8519a1f63ee324b8412c # v21.0.2
         with:
           check-workflow-startup: "true"
           job-results: >-
