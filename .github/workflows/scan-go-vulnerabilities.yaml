@@ -148,3 +148,10 @@ jobs:
         run: >-
           bash scripts/judge-go-vulnerability-scan.sh --module "$MODULE" --expect "$EXPECT"
           --outcome "$OUTCOME" --verdict "$VERDICT" --report "$REPORT"
+
+      - name: 🛡️ Verify the pinned SMTP upstream advisory identity
+        if: matrix.directory == '.'
+        env:
+          SCANNER: ${{ runner.temp }}/govulncheck-bin/govulncheck
+          GOTOOLCHAIN: local
+        run: bash scripts/check-smtp-upstream-advisories.sh "$SCANNER"

@@ -62,6 +62,10 @@ Run `go test -race ./scripts/mail-submission` and `go vet ./scripts/mail-submiss
 Run `go -C third_party/go-smtp test -race -timeout 2m ./...` for the pinned
 protocol library, whose parser resets both envelopes before MAIL validation.
 Its upstream identity and unchanged license are recorded with that source.
+The vulnerability workflow scans both the patched source and the original
+version: local replacements otherwise lose the upstream version in the scanner's
+dependency report. `scripts/check-smtp-upstream-advisories.sh` requires a scanner
+report naming that exact version and refuses findings or incomplete reports.
 Tests use generated fictional certificates and native Go SMTP peers on loopback.
 They cover author and envelope refusals, credential separation, receiving and
 upstream TLS, unavailable peers, permanent refusals, lost acknowledgements,

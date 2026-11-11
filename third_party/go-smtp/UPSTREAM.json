@@ -10,6 +10,7 @@
     "Ref": "refs/tags/v0.25.1"
   },
   "localChanges": [
-    "conn.go: reset both envelope states before MAIL parameter validation"
+    "conn.go: reset both envelope states before MAIL parameter validation",
+    "go.mod: select the maintained caller Go toolchain"
   ]
 }
