@@ -60,7 +60,8 @@ func TestFreshRetainedAuxiliaryBindsTheSelectedFixedCopy(t *testing.T) {
 					t.Fatal("fresh child lost its independent reader witness during GC")
 				}
 			}
-			if len(d.refs) != 0 || len(d.k.(*cleanupAPI).objects) != 1 {
+			api, ok := d.k.(*cleanupAPI)
+			if !ok || len(d.refs) != 0 || len(api.objects) != 1 {
 				t.Fatal("fresh auxiliary observation adopted or mutated a resource")
 			}
 		})
@@ -97,7 +98,8 @@ func TestFreshRetainedAuxiliaryRefusesCrossCopyBindings(t *testing.T) {
 			if err == nil || parent != "" {
 				t.Fatal("fresh child accepted a cross-copy or changed identity")
 			}
-			if len(d.refs) != 0 || len(d.k.(*cleanupAPI).objects) != 1 {
+			api, ok := d.k.(*cleanupAPI)
+			if !ok || len(d.refs) != 0 || len(api.objects) != 1 {
 				t.Fatal("refused fresh observation adopted or mutated a resource")
 			}
 		})

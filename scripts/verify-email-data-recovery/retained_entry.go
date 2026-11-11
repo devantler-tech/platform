@@ -204,16 +204,44 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 		copyReceipt = "EMAIL_FRESH_RETAINED_COPY=VERIFIED source_writes=0"
 		pass = "EMAIL_FRESH_RETAINED_DISPOSAL=PASS diagnostic=VERIFIED cleanup=VERIFIED source_writes=0 source=RETAINED backup=RETAINED"
 	}
-	if _, err = fmt.Fprintln(output, copyReceipt); err != nil {
-		return 2
-	}
-	stopReader()
-	stopSource()
 	stage = "owned-disposal"
-	cleanup = "UNVERIFIED"
 	cleanupCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), cleanupLimit)
 	defer finish()
-	if err = d.cleanupRestore(cleanupCtx); err != nil {
+	var verifyBeforeRemoval func(context.Context) error
+	if witness != nil {
+		verifyBeforeRemoval = func(finalCtx context.Context) error {
+			deadline, ok := finalCtx.Deadline()
+			if !ok {
+				return errors.New("cleanup-budget")
+			}
+			if stage = verifyFreshDisposalGraph(finalCtx, d, witness, deadline); stage != "" {
+				return errors.New("fresh-graph-changed")
+			}
+			stage = "read-only-message"
+			if e := d.sourceRetained(finalCtx); e != nil {
+				return e
+			}
+			if _, e := verifyRetainedMessageInWindow(finalCtx, reader, source, window); e != nil {
+				return e
+			}
+			if _, e := fmt.Fprintln(output, copyReceipt); e != nil {
+				return e
+			}
+			stopReader()
+			stopSource()
+			stage = "owned-disposal"
+			cleanup = "UNVERIFIED"
+			return nil
+		}
+	} else {
+		if _, err = fmt.Fprintln(output, copyReceipt); err != nil {
+			return 2
+		}
+		stopReader()
+		stopSource()
+		cleanup = "UNVERIFIED"
+	}
+	if err = d.cleanupRestoreAfterVerification(cleanupCtx, verifyBeforeRemoval); err != nil {
 		return fail()
 	}
 	if _, err = fmt.Fprintln(output, pass); err != nil {
@@ -222,6 +250,8 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 	return 0
 }
 
+// verifyFreshDisposalGraph binds the fixed namespace and restore graph to the
+// private witness, including backup validity through the complete cleanup budget.
 func verifyFreshDisposalGraph(ctx context.Context, d *recoveryDriver, w *freshRecoveryWitness, mustRemainUntil time.Time) string {
 	ns, err := d.ref("Namespace", d.i.namespace, "")
 	if err != nil || d.i != freshRetainedRecovery || ns.uid != w.Namespace.UID {

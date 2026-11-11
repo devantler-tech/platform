@@ -172,6 +172,50 @@ func TestCleanupRetainsTheKeyUntilBothStorageObjectsAreAbsent(t *testing.T) {
 	})
 }
 
+// A diagnostic can change while the non-destructive graph preflight is running.
+// The final verifier must see that change before any deletion is authorized.
+func TestCleanupFinalVerificationFollowsPreflightBeforeAnyRemoval(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("changed-%t", changed), func(t *testing.T) {
+			d, a, ctx := cleanupFixture(t, false)
+			preflightDone, diagnosticChanged, verified, removed := false, false, false, 0
+			d.completeNamespaceInventory = func(context.Context) error {
+				preflightDone = true
+				diagnosticChanged = changed
+				return nil
+			}
+			a.onDelete = func(object) {
+				removed++
+				if !verified {
+					t.Error("resource removed before final verification")
+				}
+			}
+			err := d.cleanupRestoreAfterVerification(ctx, func(context.Context) error {
+				if !preflightDone || removed != 0 {
+					t.Fatal("final verification did not follow preflight before removal")
+				}
+				if diagnosticChanged {
+					return errors.New("diagnostic changed during preflight")
+				}
+				verified = true
+				return nil
+			})
+			if changed {
+				if err == nil || removed != 0 {
+					t.Fatal("changed diagnostic authorized deletion")
+				}
+				for _, key := range []string{cleanupKey("Pod", d.i.namespace, "reader"), cleanupKey("PersistentVolumeClaim", d.i.namespace, "data"), cleanupKey("Secret", d.i.namespace, "storage-key")} {
+					if _, present := a.objects[key]; !present {
+						t.Fatal("failed verification lost the retained recovery graph")
+					}
+				}
+			} else if err != nil || !verified || removed == 0 {
+				t.Fatalf("unchanged diagnostic did not complete verified cleanup: %v", err)
+			}
+		})
+	}
+}
+
 // A fresh recovery can still see Velero's transfer helpers when cleanup starts.
 // The preflight waits for them, as the transfer step does, instead of retaining
 // a verified copy.

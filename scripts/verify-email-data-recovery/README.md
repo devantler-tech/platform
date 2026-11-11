@@ -1,11 +1,14 @@
 # Verify Email mailbox-data recovery
 
-The separate `Dispose Verified Retained Email Copy` workflow targets only the
-fixed retained diagnostic invocation. It requires the independent reader and
-claim UID witnesses in the private `EMAIL_RETAINED_READER_UID` and
-`EMAIL_RETAINED_CLAIM_UID` metadata settings. These are object identities, not
-service credentials. Missing or replaced identities refuse disposal. No identity
-value or mailbox content belongs in a public workflow input or receipt.
+The separate `Dispose Verified Retained Email Copy` workflow accepts two fixed
+confirmation modes. `dispose-retained-email-copy` selects the original retained
+diagnostic and requires the independent reader and claim UID witnesses in the
+private `EMAIL_RETAINED_READER_UID` and `EMAIL_RETAINED_CLAIM_UID` settings.
+`dispose-fresh-retained-email-copy` selects the separately retained fresh restore
+and takes its namespace, reader, claim, backup and download identities from the
+private `EMAIL_FRESH_RECOVERY_WITNESS` setting instead. These are object identities,
+not service credentials. Missing or replaced identities refuse disposal. No
+identity value or mailbox content belongs in a public workflow input or receipt.
 
 Before deleting anything, it verifies the reviewed workload, encrypted clone,
 completed snapshot/transfer, backup retention, absence of transfer helpers, and a
@@ -13,6 +16,9 @@ complete metadata inventory across all served namespaced APIs. It requires one
 exact diagnostic with matching account, mailbox, message, blob and content on
 both source and retained copy, then repeats both reads. Source mailbox writes are
 blocked at the HTTP boundary. All source messages and the backup remain intact.
+For the fresh mode, it repeats graph and mailbox verification after the final
+non-destructive preflight and before authorizing the first removal; a mismatch
+preserves the entire copy and cannot emit a verified-diagnostic receipt.
 Only UID-fenced test resources are removed; the key remains until both storage
 backends are absent. Changed, foreign or uncertain evidence retains the copy.
 

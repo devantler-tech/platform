@@ -107,7 +107,16 @@ func TestFreshRetainedEmailInventoryHasItsOwnFixedNamespace(t *testing.T) {
 	if err == nil || len(result.Bindings()) != 0 {
 		t.Fatal("a replaced fresh namespace was accepted")
 	}
-	if result, err = Observe(context.Background(), nil, nil, namespace, "uid"); err == nil || len(result.Bindings()) != 0 {
+	requests := 0
+	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return nil, errors.New("unexpected request")
+	})}
+	endpoint := &url.URL{Scheme: "https", Host: "reviewed.invalid"}
+	if namespacePattern.MatchString(namespace) {
+		t.Fatal("fresh recovery namespace overlaps the benchmark namespace grammar")
+	}
+	if result, err = Observe(context.Background(), client, endpoint, namespace, "uid"); err == nil || requests != 0 || len(result.Bindings()) != 0 {
 		t.Fatal("fresh namespace admitted by the benchmark API")
 	}
 }

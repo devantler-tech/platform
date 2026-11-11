@@ -9,6 +9,13 @@ import (
 // Failed or uncertain runs retain the diagnostic namespace and its storage key.
 // Callers must first verify the copy's diagnostic and preserve the source.
 func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
+	return d.cleanupRestoreAfterVerification(ctx, nil)
+}
+
+// cleanupRestoreAfterVerification repeats a caller's live readback after the
+// non-destructive preflight, immediately before authorizing the first removal.
+// A failed readback preserves the entire diagnostic graph and its storage key.
+func (d *recoveryDriver) cleanupRestoreAfterVerification(ctx context.Context, verify func(context.Context) error) error {
 	if d.uncertain || d.volumeName == "" || d.volumeUID == "" || d.pvUID == "" {
 		return errors.New("cleanup-retained")
 	}
@@ -21,6 +28,11 @@ func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
 	reader, err := d.ref("Pod", "reader", d.i.namespace)
 	if err != nil {
 		return err
+	}
+	if verify != nil {
+		if err = verify(ctx); err != nil {
+			return err
+		}
 	}
 	if err = d.remove(ctx, reader); err != nil {
 		return err
