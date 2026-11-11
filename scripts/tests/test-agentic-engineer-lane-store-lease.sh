@@ -3,15 +3,18 @@
 #
 # kagent starts each day's run whether or not the last one has finished, and a run has no time
 # limit, so two runs can overlap (devantler-tech/monorepo#4910). Before a run touches its memory it
-# takes an exclusive WebDAV LOCK on the lane store's lease, refreshes it before it uploads, and
-# releases it afterwards (job-schedule.yaml). This starts the store's own pinned rclone image with
-# the Deployment's own arguments, minus the credential the egress gateway adds, and proves on it:
+# takes an exclusive WebDAV LOCK on the lane store's memory/, writes there only with that lock's
+# token, and releases it last (job-schedule.yaml). This starts the store's own pinned rclone image
+# with the Deployment's own arguments, minus the credential the egress gateway adds, and proves:
 # - a held lease refuses every other run, including many at once;
-# - the lease never blocks the holder's own uploads;
+# - the store fences memory/: it refuses a write there without the lease's token, and lets the
+#   holder's writes, and every write outside memory/, through;
 # - a refresh succeeds only with the holder's token and names the holder;
-# - only the holder's token releases it;
-# - a store restart frees it and can hand an earlier run's token to a later run's lease, so only a
-#   refresh that names the run as the holder shows the lease is still its own.
+# - only the holder's token releases the lease;
+# - a store restart frees the lease and refuses the former holder's writes and release;
+# - the store numbers its tokens up from the second it started, so a token at least 10 below the
+#   reply's Date is never handed out again after a restart, while a token above it can be: that
+#   is why the run refuses a token above it.
 # It also shows why the lease is not a MKCOL: the store accepts a MKCOL of a folder that exists.
 set -euo pipefail
 
@@ -42,8 +45,9 @@ for tool in curl docker yq; do
   command -v "${tool}" >/dev/null || fail "${tool} is required"
 done
 
-# The run message takes the lease before it reads memory, refreshes it before it uploads, and
-# releases it last. The body this test locks with is the one the run message gives.
+# The run message checks for memory/, takes the lease, checks its token against the clock,
+# downloads, refreshes, uploads one file at a time with the token, and releases the lease last.
+# The body this test locks with is the one the run message gives.
 prompt="$(yq '.spec.template.spec.containers[] | select(.name == "schedule") | .env[] |
   select(.name == "PROMPT") | .value' "${dir}/job-schedule.yaml")"
 # at <text>: how many characters of the run message come before text, or -1 when it is missing.
@@ -52,14 +56,14 @@ at() {
   if [[ "${before}" == "${prompt}" ]]; then printf '%s' -1; else printf '%s' "${#before}"; fi
 }
 previous=-1
-for step in 'Send a WebDAV LOCK to lease' 'PROPFIND' 'refresh the lease' 'upload ~/lane-memory/' \
-  'UNLOCK to lease'; do
+for step in 'Send a PROPFIND to memory/' 'Send a LOCK to memory/' 'at least 10 below the reply' \
+  'download every file' 'refresh the lease' 'one file at a time' 'UNLOCK to memory/'; do
   position="$(at "${step}")"
   [[ "${position}" -gt "${previous}" ]] || fail "the run message does not say, in order: ${step}"
   previous="${position}"
 done
 for rule in 'Timeout: Infinite' 'A 423 means another run holds it' 'Never remove a lease you did not take' \
-  'its owner is yours' 'leave the lease alone'; do
+  'its owner is yours' 'each PUT with that same If header' 'leave the lease alone' 'A 412'; do
   [[ "$(at "${rule}")" -ge 0 ]] || fail "the run message no longer says: ${rule}"
 done
 pattern='(<[?]xml [^`]*</D:lockinfo>)'
@@ -108,6 +112,11 @@ connect() {
   done
   fail "the store did not answer after ${attempt} tries: $(docker logs "${container}" 2>&1 | tail -c 600)"
 }
+# restart: restarts the store, which drops every lease, and waits for it.
+restart() {
+  docker restart -t 5 "${container}" >/dev/null
+  connect
+}
 connect
 
 # dav <name> <method> <path> [curl arguments...]: sends one request, keeps its headers and body
@@ -118,20 +127,41 @@ dav() {
   curl -sS -o "${work}/${name}.body" -D "${work}/${name}.headers" -w '%{http_code}' \
     -X "${method}" "$@" "${url}${path}"
 }
-# lock <name> <owner>: takes the lease with the run message's body, as owner.
+# lock <name> <owner>: takes the lease on memory/ with the run message's body, as owner.
 lock() {
-  dav "$1" LOCK /lease -H 'Timeout: Infinite' -H 'Content-Type: application/xml' \
+  dav "$1" LOCK /memory/ -H 'Timeout: Infinite' -H 'Content-Type: application/xml' \
     --data-binary "${lockinfo/OWNER/$2}"
 }
 # refresh <name> <token>: refreshes the lease as the run message does, with no body.
-refresh() { dav "$1" LOCK /lease -H 'Timeout: Infinite' -H "If: ($2)"; }
+refresh() { dav "$1" LOCK /memory/ -H 'Timeout: Infinite' -H "If: ($2)"; }
 # unlock <name> <token>: releases the lease.
-unlock() { dav "$1" UNLOCK /lease -H "Lock-Token: $2"; }
+unlock() { dav "$1" UNLOCK /memory/ -H "Lock-Token: $2"; }
+# put <name> <path> [token]: writes a file, with the lease's token when one is given.
+put() {
+  if [[ -n "${3:-}" ]]; then
+    dav "$1" PUT "$2" --data-binary "$1" -H "If: ($3)"
+  else
+    dav "$1" PUT "$2" --data-binary "$1"
+  fi
+}
+# header <name> <header>: one header of a reply, or nothing.
+header() {
+  tr -d '\r' <"${work}/$1.headers" | awk -v h="$2" 'BEGIN {h = tolower(h) ":"}
+    tolower(substr($0, 1, length(h))) == h {sub(/^[^:]*:[[:space:]]*/, ""); print; exit}'
+}
 # token <name>: the Lock-Token a reply carried, angle brackets included, or nothing.
 token() {
   local value
-  value="$(tr -d '\r' <"${work}/$1.headers" | sed -n 's/^[Ll][Oo][Cc][Kk]-[Tt][Oo][Kk][Ee][Nn]:[[:space:]]*//p')"
-  if [[ "${value}" =~ ^\<[^\<\>]+\>$ ]]; then printf '%s' "${value}"; fi
+  value="$(header "$1" Lock-Token)"
+  if [[ "${value}" =~ ^\<[0-9]+\>$ ]]; then printf '%s' "${value}"; fi
+}
+# number <token>: the number inside a token.
+number() { printf '%s' "${1//[<>]/}"; }
+# clock <name>: a reply's Date header in Unix seconds.
+clock() {
+  local value
+  value="$(header "$1" Date)"
+  date -u -d "${value}" +%s 2>/dev/null || date -u -j -f '%a, %d %b %Y %H:%M:%S GMT' "${value}" +%s
 }
 # names <name> <owner>: whether a lock reply names owner as the lease's holder.
 names() { grep -Fq ">$2<" "${work}/$1.body"; }
@@ -141,37 +171,50 @@ body() { tr -d '\r\n' <"${work}/$1.body" | head -c 400; }
 owner() { printf 'agentic-engineer 2026-11-11T05:15:%02dZ %016x' "$(($1 % 60))" "$1"; }
 
 # A MKCOL is no lease: the store answers 201 for a folder that already exists.
-[[ "$(dav mkcol-new MKCOL /memory)" == 201 ]] || fail "the store refused a MKCOL: $(body mkcol-new)"
-status="$(dav mkcol-again MKCOL /memory)"
+[[ "$(dav mkcol-new MKCOL /runs/)" == 201 ]] || fail "the store refused a MKCOL: $(body mkcol-new)"
+status="$(dav mkcol-again MKCOL /runs/)"
 [[ "${status}" == 201 ]] ||
   fail "the store now refuses a MKCOL of an existing folder (${status}): it could serve as a lease, so revisit why the lease is a LOCK"
 
-# A first run takes the lease, and the reply names it as the holder.
+# A first run finds no memory/, creates it, and takes the lease, which names it as the holder.
+[[ "$(dav first-check PROPFIND /memory/ -H 'Depth: 0')" == 404 ]] || fail 'a fresh store already has memory/'
+[[ "$(dav first-mkcol MKCOL /memory/)" == 201 ]] || fail "a first run could not create memory/: $(body first-mkcol)"
 status="$(lock first "$(owner 1)")"
-[[ "${status}" == 201 ]] || fail "the first run did not take the lease: ${status} $(body first)"
+[[ "${status}" == 200 ]] || fail "the first run did not take the lease: ${status} $(body first)"
 first="$(token first)"
-[[ -n "${first}" ]] || fail 'the lease reply carried no Lock-Token'
+[[ -n "${first}" ]] || fail "the lease reply carried no numbered Lock-Token: $(header first Lock-Token)"
 names first "$(owner 1)" || fail "the lease reply does not name its holder: $(body first)"
+[[ "$(dav first-list PROPFIND /memory/ -H 'Depth: 1')" == 207 ]] || fail 'the lease blocked a listing of memory/'
 
-# While it holds the lease, another run is refused, and the holder's own uploads still land.
+# While it holds the lease, another run is refused it.
 status="$(lock second "$(owner 2)")"
 [[ "${status}" == 423 ]] || fail "a second run was not refused the held lease: ${status} $(body second)"
-status="$(dav upload PUT /memory/MEMORY.md --data-binary 'memory')"
-[[ "${status}" == 201 ]] || fail "the lease blocked an upload to memory/: ${status} $(body upload)"
+
+# The store fences memory/: the holder's writes with its token land, a write without it or with
+# another token is refused, and writes outside memory/ are not held up.
+status="$(put fenced /memory/MEMORY.md "${first}")"
+[[ "${status}" == 201 ]] || fail "the holder could not write memory/ with its token: ${status} $(body fenced)"
+status="$(put unfenced /memory/topic.md)"
+[[ "${status}" == 423 ]] || fail "the store let a write without the lease's token into memory/: ${status}"
+status="$(put forged-write /memory/topic.md '<999>')"
+[[ "${status}" == 412 ]] || fail "the store let a write with another token into memory/: ${status}"
+status="$(put transcript /runs/transcript.jsonl)"
+[[ "${status}" == 201 ]] || fail "the lease held up a write outside memory/: ${status} $(body transcript)"
 
 # Only the holder's token refreshes the lease, and the refresh names the holder.
 status="$(refresh refreshed "${first}")"
 [[ "${status}" == 200 ]] || fail "the holder could not refresh the lease: ${status} $(body refreshed)"
 names refreshed "$(owner 1)" || fail "the refresh does not name the holder: $(body refreshed)"
-status="$(refresh forged '<opaquelocktoken:not-a-lease>')"
+status="$(refresh forged '<999>')"
 [[ "${status}" != 200 ]] || fail 'a refresh with a token nobody holds succeeded'
 
-# Only the holder's token releases it.
-status="$(unlock forged-unlock '<opaquelocktoken:not-a-lease>')"
+# Only the holder's token releases it, and a release opens memory/ again.
+status="$(unlock forged-unlock '<999>')"
 [[ "${status}" != 204 ]] || fail 'an UNLOCK with a token nobody holds succeeded'
 [[ "$(lock still-held "$(owner 3)")" == 423 ]] || fail 'an UNLOCK with a wrong token released the lease'
 status="$(unlock released "${first}")"
 [[ "${status}" == 204 ]] || fail "the holder could not release the lease: ${status} $(body released)"
+[[ "$(put after-release /memory/topic.md)" == 201 ]] || fail 'memory/ stayed fenced after the release'
 
 # Of many runs that try at once, exactly one takes the lease.
 racers=20
@@ -183,7 +226,7 @@ winners=()
 refused=0
 for racer in $(seq 1 "${racers}"); do
   case "$(cat "${work}/race-${racer}.status")" in
-    200 | 201) winners+=("${racer}") ;;
+    200) winners+=("${racer}") ;;
     423) refused=$((refused + 1)) ;;
     *) fail "racer ${racer} got neither the lease nor a 423: $(cat "${work}/race-${racer}.status")" ;;
   esac
@@ -194,46 +237,59 @@ winner="$(token "race-${winners[0]}")"
 names "race-${winners[0]}" "$(owner "$((100 + winners[0]))")" || fail 'the winning reply does not name the winner'
 [[ "$(unlock race-released "${winner}")" == 204 ]] || fail 'the winner could not release the lease'
 
-# A store restart frees every lease, and can hand a token a run took before it to a later run's
-# lease: the store numbers its tokens up from the clock at its start, so a burst of writes after a
-# start runs the count ahead of the clock, and the restarted store counts through the same
-# numbers again. This builds exactly that case. The earlier run's refresh then succeeds on the
-# later run's lease, and only the owner shows that the lease is no longer its own.
-docker restart -t 5 "${container}" >/dev/null
-connect
+# A lease whose token is at least 10 below the reply's Date, as the run message requires, outlives
+# no restart and is never handed out again: the restart frees it, the store refuses the former
+# holder's writes and release, and the next run's lease stands.
+restart
+sleep 12
+[[ "$(lock settled "$(owner 4)")" == 200 ]] || fail 'a run could not take the lease on a settled store'
+held="$(token settled)"
+(($(number "${held}") <= $(clock settled) - 10)) ||
+  fail "a settled store's token ${held} is not 10 below its Date $(clock settled): the run would refuse every lease"
+restart
+status="$(put stale-write /memory/MEMORY.md "${held}")"
+[[ "${status}" == 412 ]] || fail "after a restart, the store took the former holder's write: ${status}"
+[[ "$(lock next "$(owner 5)")" == 200 ]] || fail 'the restart did not free the lease'
+next="$(token next)"
+(($(number "${next}") > $(number "${held}"))) ||
+  fail "the restarted store handed out ${next}, not above the earlier ${held}"
+[[ "$(put stale-write-again /memory/MEMORY.md "${held}")" == 412 ]] ||
+  fail "the store took the former holder's write under the next run's lease"
+[[ "$(unlock stale-unlock "${held}")" != 204 ]] || fail "the former holder's UNLOCK succeeded after a restart"
+[[ "$(lock still-next "$(owner 6)")" == 423 ]] || fail "the former holder's UNLOCK released the next run's lease"
+[[ "$(unlock next-released "${next}")" == 204 ]] || fail 'the next run could not release the lease'
+
+# Why the run refuses a token above the Date: a burst of writes after a start runs the store's
+# count ahead of the clock, and a restarted store then counts through the same numbers again. The
+# later run's lease gets the earlier token, the earlier run's writes pass the fence under it, and
+# only the owner in a refresh still tells the two apart.
+restart
 for burst in $(seq 1 200); do
   [[ "$(lock burst "$(owner 7)")" == 200 ]] || fail "burst ${burst} could not take the lease: $(body burst)"
   [[ "$(unlock burst-released "$(token burst)")" == 204 ]] || fail "burst ${burst} could not release the lease"
 done
-[[ "$(lock before-restart "$(owner 4)")" == 200 ]] || fail 'a run could not take the lease before the restart'
-before="$(token before-restart)"
-[[ "${before}" =~ ^\<[0-9]+\>$ ]] ||
-  fail "the store's lock tokens are no longer numbers (${before}): revisit whether a restart can reissue one"
-docker restart -t 5 "${container}" >/dev/null
-connect
-# Later runs take and release the lease until the store hands out the earlier run's token.
-after=''
+[[ "$(lock ahead "$(owner 8)")" == 200 ]] || fail 'a run could not take the lease after the burst'
+ahead="$(token ahead)"
+(($(number "${ahead}") > $(clock ahead) - 10)) ||
+  fail "after the burst the token ${ahead} is still 10 below the Date $(clock ahead), so this case shows nothing"
+restart
+reached=''
 for attempt in $(seq 1 400); do
-  status="$(lock after-restart "$(owner 5)")"
-  [[ "${status}" == 200 ]] || fail "the restart did not free the lease: ${status} $(body after-restart)"
-  after="$(token after-restart)"
-  [[ "${after}" =~ ^\<[0-9]+\>$ ]] || fail "the restarted store's token is not a number: ${after}"
-  reached="${after//[<>]/}"
-  target="${before//[<>]/}"
-  if ((reached >= target)); then
+  [[ "$(lock reissued "$(owner 9)")" == 200 ]] || fail "the restart did not free the lease: $(body reissued)"
+  reached="$(token reissued)"
+  if (($(number "${reached}") >= $(number "${ahead}"))); then
     break
   fi
-  [[ "$(unlock after-released "${after}")" == 204 ]] || fail 'a later run could not release the lease'
+  [[ "$(unlock reissued-released "${reached}")" == 204 ]] || fail 'a later run could not release the lease'
 done
-[[ "${after}" == "${before}" ]] ||
-  fail "the restarted store did not reissue the earlier token ${before} (reached ${after} after ${attempt} leases)"
-status="$(refresh stale "${before}")"
-[[ "${status}" == 200 ]] ||
-  fail "the earlier run's token no longer refreshes the later run's lease (${status}), so this no longer shows why the owner matters"
-if names stale "$(owner 4)" || ! names stale "$(owner 5)"; then
-  fail "the refresh on a reissued token does not name the later run as the holder: $(body stale)"
+[[ "${reached}" == "${ahead}" ]] ||
+  fail "the restarted store did not reissue ${ahead} (reached ${reached} after ${attempt} leases), so the Date check guards nothing"
+[[ "$(put reused-write /memory/MEMORY.md "${ahead}")" == 201 ]] ||
+  fail "the earlier run's reissued token no longer passes the fence, so this no longer shows why the Date check matters"
+status="$(refresh reused "${ahead}")"
+if [[ "${status}" != 200 ]] || ! names reused "$(owner 9)" || names reused "$(owner 8)"; then
+  fail "a refresh on a reissued token does not name the later run: ${status} $(body reused)"
 fi
-[[ "$(lock after-stale "$(owner 6)")" == 423 ]] || fail "the earlier run's refresh released the later run's lease"
 
 grep -Fq 'bash scripts/tests/test-agentic-engineer-lane-store-lease.sh' "${root}/.github/workflows/ci.yaml" ||
   fail 'CI does not run this test'

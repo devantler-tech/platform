@@ -2890,9 +2890,9 @@ jobs:
       - name: 🔒 Validate the Agentic Engineer lane store lease
         if: needs.changes.outputs.k8s == 'true'
         # Runs the store's pinned rclone image with its own arguments: the lease a
-        # run takes before it touches memory refuses every other run, even many at
-        # once, releases only for its holder, and a store restart cannot pass one
-        # run's lease off as another's.
+        # run takes on memory/ refuses every other run, even many at once, the
+        # store refuses a write there without its token, and after a restart the
+        # former holder can neither write nor release.
         run: |
           shellcheck scripts/tests/test-agentic-engineer-lane-store-lease.sh
           bash scripts/tests/test-agentic-engineer-lane-store-lease.sh

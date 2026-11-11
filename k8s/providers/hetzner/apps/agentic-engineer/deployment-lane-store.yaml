@@ -6,10 +6,11 @@
 # - webdav (8080): read and write, behind the lane-store credential. Only
 #   Substrate's egress gateway reaches it, sending that credential in place of
 #   the agent's placeholder (egress-policy-lane-store.yaml). It also holds
-#   the lane's single-writer lease, a WebDAV LOCK on /lease kept only in its
-#   memory (devantler-tech/monorepo#4910). A run that dies before releasing
-#   the lease leaves it held, and every later run stops at it; restarting
-#   this Deployment frees it.
+#   the lane's single-writer lease, a WebDAV LOCK on memory/ kept only in
+#   its memory, and refuses a write under memory/ without that lock's token
+#   (devantler-tech/monorepo#4910). A run that dies before releasing the
+#   lease leaves it held, and every later run stops at it; restarting this
+#   Deployment frees it.
 # - reader (8081): read only, with no credential of its own. Only the
 #   Kubernetes API server reaches it, so a reader needs the
 #   services/proxy grant in role-lane-store-reader.yaml.
