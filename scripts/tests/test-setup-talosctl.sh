@@ -31,11 +31,13 @@ set -euo pipefail
 output=''
 url=''
 retry=0
+write_out=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -o) output=$2; shift 2 ;;
+    -o | --output) output=$2; shift 2 ;;
     --retry) retry=$2; shift 2 ;;
-    --retry-delay | --retry-max-time) shift 2 ;;
+    --retry-delay | --retry-max-time | --proto | --proto-redir) shift 2 ;;
+    --write-out) write_out=$2; shift 2 ;;
     -*) shift ;;
     *) url=$1; shift ;;
   esac
@@ -44,6 +46,7 @@ printf '%s %s\n' "${retry}" "${url}" >>"${TEST_RETRY_LOG}"
 case "${url}" in
   */talosctl-linux-amd64)
     cp "${TEST_FIXTURE_DIR}/talosctl" "${output}"
+    [ -z "${write_out}" ] || printf 200
     ;;
   */sha256sum.txt)
     if [ "${TEST_MANIFEST_REACHABLE}" != '1' ]; then
@@ -79,6 +82,8 @@ chmod +x "${fake_bin}/curl" "${fake_bin}/sudo" "${fake_bin}/talosctl"
 make_variant() {
   pinned_digest=$1
   variant="${test_root}/setup-talosctl-variant.sh"
+  # The installer sources its download function from beside itself.
+  cp "${repo_root}/.github/scripts/release-asset-download.sh" "${test_root}/"
   sed \
     -e "s|^TALOS_VERSION=.*|TALOS_VERSION=\"${test_version}\"|" \
     -e "s|^TALOSCTL_SHA256=.*|TALOSCTL_SHA256=\"${pinned_digest}\"|" \
@@ -103,6 +108,7 @@ run_installer() {
     cd "${repo_root}" &&
       PATH="${fake_bin}:${PATH}" \
         RUNNER_TEMP="${runner_temp}" \
+        GITHUB_TOKEN="" \
         TEST_FIXTURE_DIR="${fixture_dir}" \
         TEST_INSTALL_MARKER="${test_root}/installed" \
         TEST_MANIFEST_REACHABLE="${manifest_reachable:-1}" \
