@@ -169,6 +169,39 @@ Practically the same — rebuild from zero. But this is *much* easier than
 the leak case because there is no time pressure to outrun the attacker, and
 the existing cluster keeps serving traffic until DNS cuts over.
 
+### The service-account signing key and the Anthropic federation
+
+The cluster secret bundle also holds the key that signs every service-account
+token. One party outside the cluster trusts it: the Anthropic workload identity
+federation of the Agentic Engineer's kagent lane. Its federation rule trusts the
+cluster's issuer with the issuer's public keys **registered inline**, because
+the issuer is not publicly reachable. The lane's Anthropic proxy exchanges a
+service-account token for each model access token, so the registered keys must
+match the cluster's.
+
+**Re-register the issuer's keys after anything that replaces the cluster secret
+bundle:** a rebuild from zero, a restore into a new cluster, or a
+service-account key rotation. Until then every exchange is rejected and the lane
+makes no model calls. Nothing else breaks.
+
+1. Read the issuer and its current keys with the maintainer's OIDC identity,
+   which the `oidc-service-account-issuer-discovery` binding allows:
+
+   ```sh
+   kubectl get --raw /.well-known/openid-configuration
+   kubectl get --raw /openid/v1/jwks
+   ```
+
+2. In the Anthropic Console, replace the federation issuer's inline keys with
+   that JWKS. The rule's subject
+   (`system:serviceaccount:kagent-credentials:anthropic-federation`) and
+   audience (`https://api.anthropic.com`) stay as they are.
+3. Confirm the anthropic-proxy's token refresher logs a successful exchange.
+
+A leaked signing key lets its holder mint service-account tokens, including
+ones the federation accepts, so it is the same cluster-rebuild event as a
+leaked talosconfig. Re-register only the new cluster's keys.
+
 ---
 
 ## OpenBao unseal key &amp; root token

@@ -1,6 +1,6 @@
 # The Agentic Engineer's kagent lane (devantler-tech/monorepo#4866): the agent,
-# its Substrate workers, its GitHub and Anthropic credentials, and the daily
-# schedule. Prod-only, on the kagent and Substrate infrastructure.
+# its Substrate workers, its GitHub and Anthropic credentials, its store and
+# the daily schedule. Prod-only, on the kagent and Substrate infrastructure.
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -18,14 +18,24 @@ resources:
   - external-secret-github-token.yaml
   - password-model-placeholder.yaml
   - external-secret-model-placeholder.yaml
+  - password-lane-store.yaml
+  - external-secret-lane-store.yaml
+  - persistent-volume-claim-lane-store.yaml
+  - deployment-lane-store.yaml
+  - service-lane-store.yaml
+  - service-lane-store-reader.yaml
+  - role-lane-store-reader.yaml
+  - role-binding-lane-store-reader.yaml
   - worker-pool.yaml
   - model-config.yaml
   - harness.yaml
   - egress-policy-github.yaml
+  - egress-policy-lane-store.yaml
   - agent-template.yaml
   - agent.yaml
   - job-schedule.yaml
   - cilium-network-policy-agents.yaml
   - cilium-network-policy-credentials.yaml
   - cilium-network-policy-schedule.yaml
+  - cilium-network-policy-lane-store.yaml
   - cilium-network-policy-external-secrets.yaml

@@ -32,8 +32,10 @@ func TestDispatchConfirmationRefusesRerunAndOtherRefs(t *testing.T) {
 		ok                          bool
 	}{
 		{"confirmed main", "refs/heads/main", "1", "observe-longhorn-migration-headroom", true},
+		{"confirmed account reconciliation", "refs/heads/main", "1", "observe-longhorn-provider-account", true},
 		{"foreign ref", "refs/heads/feature", "1", "observe-longhorn-migration-headroom", false},
 		{"rerun", "refs/heads/main", "2", "observe-longhorn-migration-headroom", false},
+		{"account reconciliation rerun", "refs/heads/main", "2", "observe-longhorn-provider-account", false},
 		{"missing confirmation", "refs/heads/main", "1", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

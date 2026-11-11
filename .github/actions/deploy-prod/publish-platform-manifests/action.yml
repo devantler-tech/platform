@@ -49,6 +49,9 @@ runs:
     - name: 🔐 Install verified supply-chain tools
       id: setup_supply_chain_tools
       shell: bash
+      env:
+        # Download through the authenticated asset API first (#5942).
+        GITHUB_TOKEN: ${{ github.token }}
       run: .github/scripts/setup-supply-chain-tools.sh
 
     - name: 🏷️ Create unique staging reference
