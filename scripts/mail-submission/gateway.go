@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
@@ -159,13 +158,24 @@ type session struct {
 	recipient     string
 }
 
+// credentialsEqual compares provisioned machine secrets, not password hashes.
+// Padding keeps comparison work independent of either credential length.
+func credentialsEqual(actual, expected string) bool {
+	const maximum = 256
+	if len(actual) > maximum || len(expected) > maximum {
+		return false
+	}
+	var a, b [maximum]byte
+	copy(a[:], actual)
+	copy(b[:], expected)
+	return subtle.ConstantTimeEq(int32(len(actual)), int32(len(expected)))&subtle.ConstantTimeCompare(a[:], b[:]) == 1
+}
+
 func (s *session) AuthMechanisms() []string { return []string{sasl.Plain} }
 func (s *session) Auth(_ string) (sasl.Server, error) {
 	return sasl.NewPlainServer(func(identity, user, password string) error {
 		s.attempts++
-		actual := sha256.Sum256([]byte(password))
-		expected := sha256.Sum256([]byte(s.gateway.cfg.ClientPassword))
-		if s.attempts > maxAuthAttempts || !s.gateway.authenticationLimiter.Allow() || identity != "" || user != s.gateway.cfg.Settings.ClientUser || subtle.ConstantTimeCompare(actual[:], expected[:]) != 1 {
+		if s.attempts > maxAuthAttempts || !s.gateway.authenticationLimiter.Allow() || identity != "" || user != s.gateway.cfg.Settings.ClientUser || !credentialsEqual(password, s.gateway.cfg.ClientPassword) {
 			return smtp.ErrAuthFailed
 		}
 		s.authenticated = true

@@ -240,3 +240,15 @@ func TestAuthenticationBudgetSurvivesNewConnections(t *testing.T) {
 		t.Fatal("new connection reset shared authentication budget")
 	}
 }
+
+func TestCredentialComparisonRejectsLengthAndPaddingCollisions(t *testing.T) {
+	expected := "fictional-application-password-0123456789"
+	for _, candidate := range []string{expected[:len(expected)-1], expected + "x", expected + "\x00", strings.Repeat("x", 257), strings.Repeat("x", 256) + expected} {
+		if credentialsEqual(candidate, expected) {
+			t.Fatal("different credential accepted")
+		}
+	}
+	if !credentialsEqual(expected, expected) {
+		t.Fatal("matching credential refused")
+	}
+}
