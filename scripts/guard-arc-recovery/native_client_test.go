@@ -68,7 +68,7 @@ func nativeKubectl(t *testing.T) string {
 	return path
 }
 
-func downloadNativeKubectl(ctx context.Context, client *http.Client, url, digest, destination string) error {
+func downloadNativeKubectl(ctx context.Context, client *http.Client, url, digest, destination string) (err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return errors.New("invalid native kubectl download request")
@@ -77,7 +77,11 @@ func downloadNativeKubectl(ctx context.Context, client *http.Client, url, digest
 	if err != nil {
 		return errors.New("native kubectl download failed")
 	}
-	defer response.Body.Close()
+	defer func() {
+		if closeErr := response.Body.Close(); closeErr != nil {
+			err = errors.Join(err, errors.New("native kubectl response cleanup failed"))
+		}
+	}()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("native kubectl download status %d", response.StatusCode)
 	}
@@ -85,7 +89,11 @@ func downloadNativeKubectl(ctx context.Context, client *http.Client, url, digest
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
+	defer func() {
+		if removeErr := os.Remove(file.Name()); removeErr != nil && !os.IsNotExist(removeErr) {
+			err = errors.Join(err, errors.New("native kubectl temporary download cleanup failed"))
+		}
+	}()
 	const maxBytes = 80 << 20
 	hash := sha256.New()
 	size, copyErr := io.Copy(io.MultiWriter(file, hash), io.LimitReader(response.Body, maxBytes+1))
