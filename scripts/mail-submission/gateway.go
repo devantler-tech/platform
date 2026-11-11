@@ -173,9 +173,12 @@ func credentialsEqual(actual, expected string) bool {
 
 func (s *session) AuthMechanisms() []string { return []string{sasl.Plain} }
 func (s *session) Auth(_ string) (sasl.Server, error) {
+	s.attempts++
+	if s.attempts > maxAuthAttempts || !s.gateway.authenticationLimiter.Allow() {
+		return nil, smtp.ErrAuthFailed
+	}
 	return sasl.NewPlainServer(func(identity, user, password string) error {
-		s.attempts++
-		if s.attempts > maxAuthAttempts || !s.gateway.authenticationLimiter.Allow() || identity != "" || user != s.gateway.cfg.Settings.ClientUser || !credentialsEqual(password, s.gateway.cfg.ClientPassword) {
+		if identity != "" || user != s.gateway.cfg.Settings.ClientUser || !credentialsEqual(password, s.gateway.cfg.ClientPassword) {
 			return smtp.ErrAuthFailed
 		}
 		s.authenticated = true

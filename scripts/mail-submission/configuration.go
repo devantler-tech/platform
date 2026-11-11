@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"syscall"
+	"time"
 )
 
 // privateFile only reads regular, non-executable files in the selected directory.
@@ -150,6 +151,14 @@ func loadConfiguration(directory string) (cfg configuration, resultErr error) {
 	cfg.UpstreamPassword = string(members["upstream-password"])
 	pair, err := tls.X509KeyPair(members["server.crt"], members["server.key"])
 	if err != nil {
+		return cfg, errConfiguration
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return cfg, errConfiguration
+	}
+	now := time.Now()
+	if now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
 		return cfg, errConfiguration
 	}
 	roots, err := trustCertificates(members["upstream-ca.pem"])
