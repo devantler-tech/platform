@@ -22,7 +22,7 @@ func roster(t *testing.T, v2 bool) ([]server, []node) {
 		id := int64(100 + i)
 		labels := map[string]string{"ksail.owned": "true", "ksail.cluster.name": "prod", "ksail.node.type": "worker"}
 		if i < 3 {
-			labels["ksail.node.type"] = "control-plane"
+			labels["ksail.node.type"] = "controlplane"
 		}
 		if i < 6 {
 			labels["ksail.node.index"] = name[strings.LastIndex(name, "-")+1:]
