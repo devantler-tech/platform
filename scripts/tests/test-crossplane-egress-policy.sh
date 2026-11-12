@@ -912,14 +912,16 @@ for suffix in enable-tests remediation-retries; do
   assert_helm_rules_accept \
     "helm-default-${suffix}" "${default_fixture}" \
     'the complete reviewed Helm default must preserve effective-policy inspection'
-  for target in missing-kind source-kind no-label condition-side-effect patch-side-effect values-path failure-policy mutate-existing target-constraints variables extra-selector resource-names second-mutation; do
+  for target in wildcard-scope source-kind missing-condition no-label condition-side-effect patch-side-effect values-path failure-policy mutate-existing target-constraints variables extra-selector resource-names second-mutation; do
     default_candidate="${test_temp_root}/default-${suffix}-${target}.yaml"
     printf '%s\n' "${default_fixture}" >"${default_candidate}"
     case "${target}" in
-      missing-kind) yq -i 'del(.spec.matchConditions[0])' "${default_candidate}" ;;
-      source-kind) yq -i '.spec.matchConditions[0].expression = "object.kind == '\''CiliumNetworkPolicy'\''"' "${default_candidate}" ;;
+      # #6135: the pre-#6135 match on every resource must stay unreviewed.
+      wildcard-scope) yq -i '.spec.matchConstraints.resourceRules[0].apiGroups = ["*"] | .spec.matchConstraints.resourceRules[0].resources = ["*"]' "${default_candidate}" ;;
+      source-kind) yq -i '.spec.matchConstraints.resourceRules[0].apiGroups = ["cilium.io"] | .spec.matchConstraints.resourceRules[0].resources = ["ciliumnetworkpolicies"]' "${default_candidate}" ;;
+      missing-condition) yq -i 'del(.spec.matchConditions[0])' "${default_candidate}" ;;
       no-label) yq -i 'del(.spec.matchConstraints.objectSelector)' "${default_candidate}" ;;
-      condition-side-effect) yq -i '.spec.matchConditions[1].expression += " && http.Get(\"https://example.test\") != null"' "${default_candidate}" ;;
+      condition-side-effect) yq -i '.spec.matchConditions[0].expression += " && http.Get(\"https://example.test\") != null"' "${default_candidate}" ;;
       patch-side-effect) yq -i '.spec.mutations[0].jsonPatch.expression += " + resource.Get(\"v1\", \"configmaps\", \"default\", \"x\")"' "${default_candidate}" ;;
       values-path) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("/spec/"; "/spec/values/")' "${default_candidate}" ;;
       failure-policy) yq -i '.spec.failurePolicy = "Ignore"' "${default_candidate}" ;;

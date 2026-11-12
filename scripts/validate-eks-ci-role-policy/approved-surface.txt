@@ -178,11 +178,11 @@ policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-deployment 99b7770d4b156520f5c
 
 policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-statefulset 5c94d40212f54a6106e1a2f1027cbcaa216db4cc09e5099c2213bbc37d959697
 
-policies.kyverno.io/v1|MutatingPolicy||helm-release-enable-tests 6fce3cb1f80d3cb86e7fc83da0772e640299774d072c9b4d477bbb7cdd78c038
+policies.kyverno.io/v1|MutatingPolicy||helm-release-enable-tests 39ee7a21ce13b80032ec52d650116e09d1be5e43538ab18d33769a8e575f532f
 
 policies.kyverno.io/v1|MutatingPolicy||helm-release-install-crds e4eff687fb6ed05f18ab75747073569c4cede6309f560dd10d17adcfc71da2df
 
-policies.kyverno.io/v1|MutatingPolicy||helm-release-remediation-retries 8d2bfea94dd9cb569f2a1de97d401052630a2e9575c62d410bb2e19ef0f134be
+policies.kyverno.io/v1|MutatingPolicy||helm-release-remediation-retries 7f8b71876b6fddd408d6daed4af8374c3f2e611b0143570e1a15c9291ace9659
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||agentic-engineer-cluster-reader fab82da6caa88262bd6e43d64e258f899afc8783c180725b8d7e83992c7d5f6d
 

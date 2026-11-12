@@ -769,7 +769,8 @@ while IFS=$'\t' read -r file label; do
       refuse "production render $label holds consumer generation or cloning that cannot be accounted for by a static build, so its consumers are UNKNOWN"
   done <<<"$generated"
   # Admit only complete reviewed apiVersion/kind/spec surfaces: the two
-  # HelmRelease defaults (#5357), the native Gateway peer policy, and the V1
+  # HelmRelease defaults (#5357, matching only Flux HelmReleases since #6135),
+  # the native Gateway peer policy, and the V1
   # benchmark runtime policy (#5665). The Gateway policy changes peer fields
   # on one fixed CiliumEnvoyConfig. The benchmark policy sets container UID
   # and GID only on CREATE of an exact Longhorn Pod shape. Neither kind carries
@@ -794,8 +795,8 @@ while IFS=$'\t' read -r file label; do
       candidate_digest="$(printf '%s\n' "$candidate" | shasum -a 256)" || refuse 'could not fingerprint reviewed mutation policy'
     fi
     case "${candidate_digest%% *}" in
-      43b7eaf13a1b754ed0449239ce9e337de6881751fd009c738efb46e367524824 | \
-        691bf7d05ed9d87ae261f34d51e7cd062d345a6af8f6bb2dcf1ec1aeb3dade17 | \
+      e684b08469a755f0370d8c88c0b6bb262060b11a5d085ec6b2f51ccb2dd51be4 | \
+        314ee80814da53af4f075d48ebb2e10c4aea25986277d53b40ac2aa102892553 | \
         92dc171d2b1e73eec7679ae3f74e806a3fc8472f7ed3445bfca1541c3d27941d | \
         9773c0aa3daf4ad4e8939294f0802aa382cce33d5675f1f3e65e23f8791eb021)
         reviewed_cel_surfaces="$(jq -ce --argjson candidate "$candidate" '. + [$candidate]' <<<"$reviewed_cel_surfaces")" ||
