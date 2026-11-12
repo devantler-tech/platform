@@ -136,10 +136,10 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 		}
 		role, isStatic := static[name]
 		if controlPlaneName.MatchString(name) {
-			role, isStatic = "controlplane", true
+			role, isStatic = "control-plane", true
 		}
 		if isStatic {
-			// Report only a fixed assertion code. Provider labels, addresses and
+			// Report only fixed assertion and shape codes. Labels, addresses and
 			// native identities must never become public diagnostic payloads.
 			mismatch := ""
 			switch {
@@ -157,7 +157,7 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 				mismatch = "node_pool"
 			}
 			if mismatch != "" {
-				return fmt.Errorf("static provider ownership does not match the production roster: field=%s", mismatch)
+				return staticOwnershipFailure(s, n, role, mismatch)
 			}
 			counts["static"]++
 			counts[role]++
@@ -172,10 +172,40 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 		}
 		counts[match[1]]++
 	}
-	if counts["static"] != 6 || counts["controlplane"] != 3 || counts["worker"] != 3 || counts["v1"] != 2 || counts["v2"] > 1 || (requireV2 && counts["v2"] != 1) {
+	if counts["static"] != 6 || counts["control-plane"] != 3 || counts["worker"] != 3 || counts["v1"] != 2 || counts["v2"] > 1 || (requireV2 && counts["v2"] != 1) {
 		return errors.New("the required migration roster is incomplete")
 	}
 	return nil
+}
+
+// staticOwnershipFailure describes known label shapes with fixed vocabulary.
+// A diagnostic classification never changes the qualification predicates above.
+func staticOwnershipFailure(s server, n node, role, field string) error {
+	observed := "unrecognized"
+	switch s.Labels["ksail.node.type"] {
+	case "":
+		observed = "missing"
+	case "controlplane":
+		observed = "generic-controlplane"
+	case "worker":
+		observed = "canonical-worker"
+	case "control-plane":
+		observed = "talos-controlplane"
+	case "control_plane":
+		observed = "underscore-controlplane"
+	}
+	wantIndex := n.Metadata.Name[strings.LastIndex(n.Metadata.Name, "-")+1:]
+	number, _ := strconv.Atoi(wantIndex)
+	index := "unrecognized"
+	switch s.Labels["ksail.node.index"] {
+	case "":
+		index = "missing"
+	case wantIndex:
+		index = "matches-name"
+	case strconv.Itoa(number - 1):
+		index = "zero-based"
+	}
+	return fmt.Errorf("static provider ownership does not match the production roster: field=%s role_expected=%s role_observed=%s index=%s", field, role, observed, index)
 }
 
 func main() {
