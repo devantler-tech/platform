@@ -263,6 +263,109 @@ index 17edc53..8528f71 100644
  }
  
  func (sm *SpaceManager) dropPartition(ctx context.Context, client *Client, part PartitionInfo) error {
+diff --git a/clickhouse/space_manager_integration_test.go b/clickhouse/space_manager_integration_test.go
+new file mode 100644
+index 0000000..6629f1e
+--- /dev/null
++++ b/clickhouse/space_manager_integration_test.go
+@@ -0,0 +1,97 @@
++//go:build clickhouse_integration
++
++package clickhouse
++
++import (
++	"context"
++	"os"
++	"testing"
++
++	"github.com/coroot/coroot/config"
++	"github.com/coroot/coroot/db"
++	"github.com/coroot/coroot/utils"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++const integrationDatabase = "space_manager_it"
++
++// TestSpaceManagerIntegrationKeepsTheNewestPartition runs the real cleanup path (the
++// system.parts query, the per-disk decision and ALTER TABLE ... DROP PARTITION) against a real
++// ClickHouse server named by CLICKHOUSE_ADDR, on a table partitioned exactly like Coroot's
++// telemetry tables, with merges stopped so that one day really holds several data parts.
++func TestSpaceManagerIntegrationKeepsTheNewestPartition(t *testing.T) {
++	addr := os.Getenv("CLICKHOUSE_ADDR")
++	require.NotEmpty(t, addr, "CLICKHOUSE_ADDR must name the ClickHouse server under test")
++	ctx := context.Background()
++
++	admin := integrationClient(t, addr, "default")
++	integrationExec(t, admin, "DROP DATABASE IF EXISTS "+integrationDatabase+" SYNC")
++	integrationExec(t, admin, "CREATE DATABASE "+integrationDatabase)
++	t.Cleanup(func() { _ = admin.conn.Exec(ctx, "DROP DATABASE IF EXISTS "+integrationDatabase+" SYNC") })
++
++	client := integrationClient(t, addr, integrationDatabase)
++	integrationExec(t, client, `
++CREATE TABLE otel_logs (
++	Timestamp DateTime64(9) CODEC(Delta, ZSTD(1)),
++	Body String CODEC(ZSTD(1))
++)
++ENGINE = MergeTree()
++PARTITION BY toDate(Timestamp)
++ORDER BY Timestamp`)
++	integrationExec(t, client, "SYSTEM STOP MERGES otel_logs")
++	for i := 0; i < 3; i++ {
++		integrationExec(t, client, "INSERT INTO otel_logs VALUES (now64(9), 'today')")
++	}
++
++	sm := &SpaceManager{
++		client:    client,
++		cfg:       config.ClickHouseSpaceManager{Enabled: true, UsageThresholdPercent: 70, MinPartitions: 1},
++		databases: []string{integrationDatabase},
++	}
++
++	parts, err := sm.getPartitionsFromDiskOnServer(ctx, client, "default")
++	require.NoError(t, err)
++	require.Len(t, parts, 3, "system.parts must list one row per data part of today's partition")
++
++	// Over the cleanup threshold, below the emergency ceiling: today's only partition stays.
++	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 75}))
++	assert.Equal(t, uint64(3), integrationCount(t, client, "toDate(Timestamp) = today()"))
++
++	// With an older day present, only that day is dropped.
++	for i := 0; i < 2; i++ {
++		integrationExec(t, client, "INSERT INTO otel_logs VALUES (now64(9) - INTERVAL 1 DAY, 'yesterday')")
++	}
++	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 75}))
++	assert.Equal(t, uint64(0), integrationCount(t, client, "toDate(Timestamp) < today()"))
++	assert.Equal(t, uint64(3), integrationCount(t, client, "toDate(Timestamp) = today()"))
++
++	// At the emergency ceiling the last partition is freed as well.
++	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 90}))
++	assert.Equal(t, uint64(0), integrationCount(t, client, "1"))
++}
++
++func integrationClient(t *testing.T, addr, database string) *Client {
++	t.Helper()
++	client, err := NewClient(&db.IntegrationClickhouse{
++		Protocol: "native",
++		Addr:     addr,
++		Auth:     utils.BasicAuth{User: "default"},
++		Database: database,
++	}, nil)
++	require.NoError(t, err)
++	t.Cleanup(func() { _ = client.Close() })
++	return client
++}
++
++func integrationExec(t *testing.T, client *Client, query string) {
++	t.Helper()
++	require.NoError(t, client.conn.Exec(context.Background(), query))
++}
++
++func integrationCount(t *testing.T, client *Client, where string) uint64 {
++	t.Helper()
++	var n uint64
++	require.NoError(t, client.conn.QueryRow(context.Background(), "SELECT count() FROM otel_logs WHERE "+where).Scan(&n))
++	return n
++}
 diff --git a/clickhouse/space_manager_test.go b/clickhouse/space_manager_test.go
 new file mode 100644
 index 0000000..828767e
