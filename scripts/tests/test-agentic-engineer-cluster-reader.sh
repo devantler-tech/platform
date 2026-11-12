@@ -105,41 +105,43 @@ host='cluster-reader.agentic-engineer.svc.cluster.local'
 [[ " ${args[*]} " == *' --reject-methods='* ]] || fail 'the proxy does not refuse write methods itself'
 [[ " ${args[*]} " != *' --reject-paths='* && " ${args[*]} " != *' --disable-filter'* ]] ||
   fail 'the proxy drops its default refusal of exec and attach'
-[[ "$(q "${service}" '.spec.selector."app.kubernetes.io/name"')" == cluster-reader &&
-  "$(q "${service}" '.spec.ports[0].port')" == "${port}" && "$(q "${service}" '.spec.ports[0].targetPort')" == http ]] ||
-  fail 'the Service does not lead to the proxy'
+# expect <actual> <want> <reason>: fails with the reason unless actual is exactly want.
+expect() { [[ "$1" == "$2" ]] || fail "$3 (got: $1)"; }
+expect "$(q "${service}" '.spec.selector."app.kubernetes.io/name"')" cluster-reader 'the Service does not select the proxy'
+expect "$(q "${service}" '.spec.ports[0].port')" "${port}" 'the Service does not serve the proxy port'
+expect "$(q "${service}" '.spec.ports[0].targetPort')" http 'the Service does not lead to the proxy container port'
 
 # Only the egress gateway reaches the proxy, and the proxy reaches only the API server.
-[[ "$(q "${network}" '.spec.endpointSelector.matchLabels."app.kubernetes.io/name"')" == cluster-reader &&
-  "$(q "${network}" '.spec.enableDefaultDeny.ingress')" == true && "$(q "${network}" '.spec.enableDefaultDeny.egress')" == true ]] ||
-  fail 'the proxy policy is not deny-by-default on the proxy'
-[[ "$(q "${network}" '.spec.ingress | length')" == 1 &&
-  "$(q "${network}" '.spec.ingress[0].fromEndpoints | length')" == 1 &&
-  "$(q "${network}" '.spec.ingress[0].fromEndpoints[0].matchLabels | to_entries | map(.key + "=" + .value) | sort | join(",")')" == 'app=atenet-egress,k8s:io.kubernetes.pod.namespace=ate-system' &&
-  "$(q "${network}" '[.spec.ingress[0].toPorts[].ports[] | .port + "/" + .protocol] | join(",")')" == "${port}/TCP" ]] ||
-  fail 'the proxy takes traffic from more than the egress gateway on its port'
-[[ "$(q "${network}" '.spec.egress | length')" == 1 &&
-  "$(q "${network}" '.spec.egress[0].toEntities | join(",")')" == kube-apiserver &&
-  "$(q "${network}" '[.spec.egress[0].toPorts[].ports[] | .port + "/" + .protocol] | sort | join(",")')" == '443/TCP,6443/TCP' ]] ||
-  fail 'the proxy reaches more than the API server'
-[[ "$(q "${gateway}" "[.spec.egress[] | select(.toEndpoints[0].matchLabels.\"app.kubernetes.io/name\" == \"cluster-reader\" and
-  .toEndpoints[0].matchLabels.\"k8s:io.kubernetes.pod.namespace\" == \"agentic-engineer\") | .toPorts[].ports[] | .port] | join(\",\")")" == "${port}" ]] ||
-  fail 'the egress gateway may not reach the proxy on its port'
+expect "$(q "${network}" '.spec.endpointSelector.matchLabels."app.kubernetes.io/name"')" cluster-reader \
+  'the proxy policy does not select the proxy'
+expect "$(q "${network}" '.spec.enableDefaultDeny.ingress') $(q "${network}" '.spec.enableDefaultDeny.egress')" 'true true' \
+  'the proxy policy is not deny-by-default both ways'
+expect "$(q "${network}" '.spec.ingress | length') $(q "${network}" '.spec.ingress[0].fromEndpoints | length')" '1 1' \
+  'the proxy takes traffic from more than one peer'
+expect "$(q "${network}" '.spec.ingress[0].fromEndpoints[0].matchLabels | to_entries | map(.key + "=" + .value) | sort | join(",")')" \
+  'app=atenet-egress,k8s:io.kubernetes.pod.namespace=ate-system' 'the proxy takes traffic from more than the egress gateway'
+expect "$(q "${network}" '[.spec.ingress[0].toPorts[].ports[] | .port + "/" + .protocol] | join(",")')" "${port}/TCP" \
+  'the proxy takes traffic on more than its port'
+expect "$(q "${network}" '.spec.egress | length') $(q "${network}" '.spec.egress[0].toEntities | join(",")')" '1 kube-apiserver' \
+  'the proxy reaches more than the API server'
+expect "$(q "${network}" '[.spec.egress[0].toPorts[].ports[] | .port + "/" + .protocol] | sort | join(",")')" '443/TCP,6443/TCP' \
+  'the proxy reaches the API server on other ports'
+expect "$(q "${gateway}" '[.spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "cluster-reader" and
+  .toEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "agentic-engineer") | .toPorts[].ports[] | .port] | join(",")')" \
+  "${port}" 'the egress gateway may not reach the proxy on its port'
 
 # The agent's way there: one plaintext destination, no credential, named by the harness kubeconfig.
 origin="http://${host}:${port}"
-[[ "$(q "${policy}" '[.spec.destinations[].origin] | join(" ")')" == "${origin}" &&
-  "$(q "${policy}" '[.spec.destinations[] | select(has("authentication"))] | length')" == 0 ]] ||
-  fail "the egress policy does not grant exactly ${origin}"
+expect "$(q "${policy}" '[.spec.destinations[].origin] | join(" ")')" "${origin}" "the egress policy does not grant exactly ${origin}"
+expect "$(q "${policy}" '[.spec.destinations[] | select(has("authentication"))] | length')" 0 'the egress policy sends a credential'
 grep -qx cluster-reader <<<"$(q "${agent}" '.spec.egressPolicyRefs[].name')" || fail 'the Agent does not use the cluster-reader policy'
 kubeconfig="${root}/scripts/kagent-claude-harness/kubeconfig"
-[[ "$(yq '.contexts | length' "${kubeconfig}")" == 1 && "$(yq '.contexts[0].context.cluster' "${kubeconfig}")" == prod &&
-  "$(yq '.current-context' "${kubeconfig}")" == "$(yq '.contexts[0].name' "${kubeconfig}")" ]] ||
-  fail 'the harness kubeconfig does not have exactly one current context on the cluster named prod'
-[[ "$(yq '.clusters | length' "${kubeconfig}")" == 1 && "$(yq '.clusters[0].cluster.server' "${kubeconfig}")" == "${origin}" ]] ||
-  fail "the harness kubeconfig does not point at ${origin}"
-[[ "$(yq -o=json -I=0 '.users' "${kubeconfig}")" == '[{"name":"cluster-reader","user":{}}]' ]] ||
-  fail 'the harness kubeconfig carries a credential'
+expect "$(yq '.contexts | length' "${kubeconfig}") $(yq '.contexts[0].context.cluster' "${kubeconfig}")" '1 prod' \
+  'the harness kubeconfig does not have exactly one context, on the cluster named prod'
+expect "$(yq '.current-context' "${kubeconfig}")" "$(yq '.contexts[0].name' "${kubeconfig}")" 'the harness kubeconfig does not use its context'
+expect "$(yq '.clusters | length' "${kubeconfig}") $(yq '.clusters[0].cluster.server' "${kubeconfig}")" "1 ${origin}" \
+  "the harness kubeconfig does not point at ${origin}"
+expect "$(yq -o=json -I=0 '.users' "${kubeconfig}")" '[{"name":"cluster-reader","user":{}}]' 'the harness kubeconfig carries a credential'
 dockerfile="${root}/scripts/kagent-claude-harness/Dockerfile"
 if ! grep -Fxq 'COPY --chmod=0644 kubeconfig /opt/kagent-lane/kubeconfig' "${dockerfile}" ||
   ! grep -Fxq 'ENV KUBECONFIG=/opt/kagent-lane/kubeconfig' "${dockerfile}"; then
