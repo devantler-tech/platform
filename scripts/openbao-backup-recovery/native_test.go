@@ -147,7 +147,8 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 				if err != nil || json.Unmarshal(b, &records) != nil {
 					t.Fatal("invalid synthetic records")
 				}
-				if suffix == "-email-retained-inputs" {
+				switch suffix {
+				case "-email-retained-inputs":
 					var record map[string]any
 					if json.Unmarshal(records[retainedInputTestPath], &record) != nil {
 						t.Fatal("invalid retained input fixture")
@@ -165,11 +166,11 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 						t.Fatal(err)
 					}
 					records[retainedInputTestPath] = raw
-				} else if suffix == "-email-storage" {
+				case "-email-storage":
 					// Preserve all three account expectations and alter the actual
 					// storage key, so native restoration reaches key comparison.
 					records[storageCredentialPath] = json.RawMessage(`{"passphrase":"` + strings.Repeat("d", 64) + `"}`)
-				} else {
+				default:
 					path := "apps/private-mail/maintainer"
 					if suffix != "" {
 						path = "infrastructure/email/maintainer"
@@ -203,9 +204,10 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 			out, err := run("verify"+suffix, dir)
 			if test == "matching" {
 				count := 3
-				if suffix == "-email-storage" {
+				switch suffix {
+				case "-email-storage":
 					count = 4
-				} else if suffix == "-email-retained-inputs" {
+				case "-email-retained-inputs":
 					count = 1
 				}
 				if err != nil || strings.TrimSpace(out) != fmt.Sprintf("OPENBAO_BACKUP_RESTORE=PASS records=%d version=2.6.3", count) {
