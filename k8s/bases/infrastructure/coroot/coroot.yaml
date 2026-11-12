@@ -71,7 +71,7 @@ spec:
     # Recognize actual checkpoint-record progress on idle archived databases;
     # retain the existing warning when that evidence is missing or invalid.
     image:
-      name: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.2-900535fee5b7a2f6615a72ef2097038099c1f976@sha256:0f77bc490a377f6bf966fa5c0caa0b7e8e4583fe6707b037526870994b49630f
+      name: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.3-5ee96b6ee0e5cb7f1730218ae7c3ee2bcfbfb740@sha256:0f9ee31ae80446fad1f8c7f051645c3399c61aedba86ba570c6990a375ce4fe7
 
   # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
   # existing oauth2-proxy (Dex) via http-route.yaml — exactly how Prometheus /
