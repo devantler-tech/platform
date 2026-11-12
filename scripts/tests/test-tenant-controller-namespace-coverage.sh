@@ -27,6 +27,7 @@ restrict-tenant-secret-stores	5	7	0
 restrict-tenant-issuer-refs	4	3	0
 restrict-tenant-route-hostnames	3	13	0
 restrict-tenant-network-policies	18	80	1
+restrict-tenant-image-repositories	6	10	0
 CASES
 [[ "$failures" == 0 ]] || exit 1
-echo 'PASS: all four tenant admission families evaluate their full controls under ksail and kro ownership'
+echo 'PASS: all five tenant admission families evaluate their full controls under ksail and kro ownership'

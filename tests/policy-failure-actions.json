@@ -8,6 +8,7 @@
   "disallow-latest-tag": "Audit",
   "restrict-homepage-service-groups": "Enforce",
   "require-homepage-href-for-non-root-routes": "Enforce",
+  "restrict-tenant-image-repositories": "Audit",
   "restrict-tenant-issuer-refs": "Enforce",
   "restrict-tenant-route-hostnames": "Enforce",
   "restrict-tenant-secret-stores": "Enforce",

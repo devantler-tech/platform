@@ -1,0 +1,64 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-image-repositories
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-image-repositories.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  # A tenant's own repository (tag, digest-only or sub-path) and any
+  # third-party image are admitted.
+  - policy: restrict-tenant-image-repositories
+    resources:
+      - wedding-app/own-digest-only
+      - wedding-app/own-tag-plus-third-party
+      - ascoachingogvaner/own-subpath-image
+      - business-site/third-party-only
+    kind: Pod
+    result: pass
+  # Another tenant's or the platform's first-party image is reported, including
+  # a look-alike name, an init or ephemeral container, and case or port variants
+  # of the registry host. A tenant whose namespace matches no repository gets
+  # no first-party image at all.
+  - policy: restrict-tenant-image-repositories
+    resources:
+      - wedding-app/other-tenant-image
+      - wedding-app/lookalike-repository
+      - ascoachingogvaner/lookalike-prefix
+      - wedding-app/foreign-init-container
+      - wedding-app/foreign-ephemeral-container
+      - wedding-app/uppercase-host-variant
+      - wedding-app/explicit-port-variant
+      - future-tenant/unlisted-tenant-first-party
+    kind: Pod
+    result: fail
+  # Platform namespaces are outside the boundary.
+  - policy: restrict-tenant-image-repositories
+    resources:
+      - platform-ns/platform-pod
+    kind: Pod
+    result: skip
+  - policy: restrict-tenant-image-repositories
+    resources:
+      - wedding-app/own-manifests
+    kind: OCIRepository
+    result: pass
+  - policy: restrict-tenant-image-repositories
+    resources:
+      - wedding-app/foreign-manifests
+    kind: OCIRepository
+    result: fail
+  - policy: restrict-tenant-image-repositories
+    resources:
+      - ascoachingogvaner/third-party-charts
+    kind: HelmRepository
+    result: pass
+  - policy: restrict-tenant-image-repositories
+    resources:
+      - ascoachingogvaner/foreign-oci-charts
+    kind: HelmRepository
+    result: fail
