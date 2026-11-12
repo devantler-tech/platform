@@ -12,7 +12,8 @@ readonly DR_WORKFLOW="${RGD_WIRING_DR_WORKFLOW:-${REPO_ROOT}/.github/workflows/d
 readonly SETUP_TRIVY="aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567"
 readonly BEHAVIORAL_RUN=$'shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh\nbash scripts/tests/test-rgd-template-static-scan.sh\n'
 readonly WIRING_RUN=$'shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh\nbash scripts/tests/test-rgd-template-static-scan-wiring.sh\n'
-YAML_PARSER_INSTALL="$(cat <<'EOF'
+YAML_PARSER_INSTALL="$(
+  cat <<'EOF'
 go install github.com/mikefarah/yq/v4@v4.54.1
 printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
 EOF
