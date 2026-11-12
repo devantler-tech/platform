@@ -15,10 +15,16 @@ cleanup() {
   local rc=$?
   trap - EXIT
   if [[ -n "$forward_pid" ]]; then
-    if ! kill "$forward_pid" 2>/dev/null; then rc=2; stage=connection-cleanup; fi
+    if ! kill "$forward_pid" 2>/dev/null; then
+      rc=2
+      stage=connection-cleanup
+    fi
     wait "$forward_pid" 2>/dev/null || true
   fi
-  if ! rm -rf -- "$native_dir" "$proof_dir" 2>/dev/null; then rc=2; stage=private-cleanup; fi
+  if ! rm -rf -- "$native_dir" "$proof_dir" 2>/dev/null; then
+    rc=2
+    stage=private-cleanup
+  fi
   if [[ $rc == 0 && $verified == true && $fingerprint =~ ^[0-9a-f]{64}$ ]]; then
     printf 'EMAIL_READER_RESTART_WITNESS=STORED record_sha256=%s source_writes=0 key=UNVERIFIED restart=NOT_AUTHORIZED recovery=UNVERIFIED\n' "$fingerprint"
   else
@@ -62,7 +68,10 @@ open_forward() {
   for ((attempt = 0; attempt < 20; attempt++)); do
     kill -0 "$forward_pid" 2>/dev/null || fail
     if curl --disable --silent --fail --noproxy '*' --connect-timeout 1 --max-time 2 http://127.0.0.1:38200/v1/sys/health >"$native_dir/health.json" 2>"$native_dir/health.log" &&
-      jq -e '.initialized==true and .sealed==false and .standby==false' "$native_dir/health.json" >/dev/null; then ready=true; break; fi
+      jq -e '.initialized==true and .sealed==false and .standby==false' "$native_dir/health.json" >/dev/null; then
+      ready=true
+      break
+    fi
     sleep 1
   done
   [[ "$ready" == true ]] || fail
