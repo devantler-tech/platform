@@ -8,6 +8,9 @@
 # but GET and HEAD before a request reaches the API (--reject-methods: each pattern rejects one
 # shape of method that is neither, as the flag takes a comma-separated list). Its default
 # --reject-paths still refuse exec and attach.
+#
+# The account's token is not mounted automatically. The proxy alone gets a projected, hour-long
+# token where client-go looks for it, and kubectl re-reads it as the kubelet rotates it.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,8 +19,6 @@ metadata:
   labels:
     app.kubernetes.io/name: cluster-reader
     platform.devantler.tech/replica-floor: exempt
-  annotations:
-    checkov.io/skip1: "CKV_K8S_38=the proxy reads the API as its service account, whose token is its only identity; the account may only get and list what the live-health check reads"
 spec:
   replicas: 1
   selector:
@@ -29,7 +30,7 @@ spec:
         app.kubernetes.io/name: cluster-reader
     spec:
       serviceAccountName: cluster-reader
-      automountServiceAccountToken: true
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -79,7 +80,21 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        - name: api-access
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt

@@ -91,6 +91,13 @@ done
 # only accepted Host, and every method but GET and HEAD refused.
 [[ "$(q "${deployment}" '.spec.template.spec.serviceAccountName')" == cluster-reader ]] ||
   fail 'the proxy does not run as the cluster-reader account'
+# The token is not mounted automatically: the proxy alone gets a projected, expiring one.
+[[ "$(q "${deployment}" '.spec.template.spec.automountServiceAccountToken')" == false ]] ||
+  fail 'the account token is mounted automatically'
+[[ "$(q "${deployment}" '.spec.template.spec.volumes[] | select(.name == "api-access") | .projected.sources[0].serviceAccountToken.expirationSeconds')" == 3600 ]] ||
+  fail 'the proxy has no projected, expiring token'
+[[ "$(q "${deployment}" '.spec.template.spec.containers[0].volumeMounts[] | select(.name == "api-access") | .mountPath')" == /var/run/secrets/kubernetes.io/serviceaccount ]] ||
+  fail 'the projected token is not where kubectl reads it'
 image="$(q "${deployment}" '.spec.template.spec.containers[0].image')"
 [[ "${image}" =~ ^docker\.io/alpine/k8s:[^@]+@sha256:[0-9a-f]{64}$ ]] || fail "the proxy image is not digest-pinned: ${image}"
 [[ "$(q "${deployment}" '.spec.template.spec.containers[0].command | join(" ")')" == kubectl ]] || fail 'the proxy is not kubectl'
