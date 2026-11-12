@@ -271,6 +271,12 @@ patches:
       group: gateway.networking.k8s.io
       kind: Gateway
       name: platform
+  - path: patches/add-apex-https-listener.yaml
+    target:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: platform
+      namespace: kube-system
   # Prod-only Coroot tuning: hcloud-backed persistent storage + Slack webhook
   # wiring. The CR it patches comes from ../../../bases/infrastructure/coroot/
   # (the `infrastructure` layer); the strategic-merge patch matches on the
