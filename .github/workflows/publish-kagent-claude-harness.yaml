@@ -62,6 +62,13 @@ jobs:
             claude --version
             for tool in gh jq yq curl git go kubectl; do command -v "${tool}"; done
             go version
+            test "$(go env GOTOOLCHAIN)" = local
+            # A Go guard as the monorepo writes them builds offline: no toolchain or
+            # module download, as in the sandbox.
+            guard=$(mktemp -d)
+            printf "module guard\n\ngo 1.26.11\n" >"${guard}/go.mod"
+            printf "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(0) }\n" >"${guard}/main.go"
+            (cd "${guard}" && GOPROXY=off GOCACHE="${guard}/cache" go build -o "${guard}/guard" . && "${guard}/guard")
             timeout --version | grep -q "GNU coreutils"
             date -u -d "7 days ago" +%s
             test "${KUBECONFIG}" = /opt/kagent-lane/kubeconfig

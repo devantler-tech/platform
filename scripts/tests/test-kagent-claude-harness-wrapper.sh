@@ -54,6 +54,20 @@ done <<<"${froms}"
 bases="$(grep -F 'ghcr.io/kagent-dev/kagent/claude-harness:' <<<"${froms}" | sort -u || true)"
 [[ "$(grep -c . <<<"${bases}")" -eq 1 ]] || fail "the plugin stage and the image do not share one base: ${bases}"
 [[ "$(tail -n 1 <<<"${froms}")" == "${bases}" ]] || fail 'the image is not built on the kagent Claude harness'
+# Go comes from Go's own pinned release, first on PATH, and never downloads a toolchain: Alpine's
+# package is too old for the monorepo's Go guards, and a run cannot fetch a newer one.
+grep -Eq '^FROM docker\.io/library/golang:[0-9.]+-alpine@sha256:[0-9a-f]{64} AS go$' "${dockerfile}" ||
+  fail 'Go does not come from a pinned upstream release'
+grep -Fxq 'COPY --from=go /usr/local/go /usr/local/go' "${dockerfile}" ||
+  fail 'the image does not copy the pinned Go release'
+# shellcheck disable=SC2016 # a literal line of the Dockerfile, not an expansion
+grep -Fxq 'ENV PATH=/usr/local/go/bin:${PATH}' "${dockerfile}" ||
+  fail 'the pinned Go is not first on PATH'
+grep -Fxq 'ENV GOTOOLCHAIN=local' "${dockerfile}" ||
+  fail 'Go may try to download a toolchain'
+if grep -Eq '^RUN apk add .*[[:space:]]go([[:space:]]|$)' "${dockerfile}"; then
+  fail "Alpine's go package is back"
+fi
 grep -Eq '^ARG AGENT_PLUGINS_COMMIT=[0-9a-f]{40}$' "${dockerfile}" ||
   fail 'the plugin is not pinned by a full commit'
 # shellcheck disable=SC2016 # a literal line of the Dockerfile, not an expansion
