@@ -46,10 +46,6 @@ func observeAccountCensus(ctx context.Context, client *http.Client, token string
 	if err != nil {
 		return accountCensus{}, err
 	}
-	result, err := classifyAccountCensus(first, before)
-	if err != nil {
-		return accountCensus{}, err
-	}
 	second, err := collectServerInventory(ctx, client, token, maxAccountServers)
 	if err != nil {
 		return accountCensus{}, err
@@ -70,7 +66,9 @@ func observeAccountCensus(ctx context.Context, client *http.Client, token string
 	if active(ctx) != nil {
 		return accountCensus{}, fmt.Errorf("%w: observation deadline or cancellation reached", errCensusHeld)
 	}
-	return result, nil
+	// Even a held roster's label-only diagnosis requires both complete provider
+	// lists inside unchanged native Node reads. Never diagnose an unstable sample.
+	return classifyAccountCensus(first, before)
 }
 
 // Classify the one provider-only row for investigation. Its labels never
@@ -101,17 +99,26 @@ func classifyAccountCensus(servers []server, nodes []node) (accountCensus, error
 	if len(joined) != len(nodes) {
 		return accountCensus{}, fmt.Errorf("%w: provider-to-node join is incomplete", errCensusHeld)
 	}
-	if err := qualify(joined, nodes, false); err != nil {
-		// qualify reports only fixed gate descriptions and bounded counts.
-		return accountCensus{}, fmt.Errorf("%w: %w", errCensusHeld, err)
-	}
 	result := accountCensus{Servers: len(servers), Nodes: len(nodes), Extra: extra, Classification: "none", State: "none"}
 	if extra == 1 {
 		result.State = "not-running"
 		if unmatched.Status == "running" {
 			result.State = "running"
 		}
-		result.Classification = classifyProviderOnly(unmatched, joined[0].PrivateNet[0].Network)
+		var network int64
+		for _, server := range joined {
+			if len(server.PrivateNet) != 1 || server.PrivateNet[0].Network <= 0 || network != 0 && network != server.PrivateNet[0].Network {
+				network = 0
+				break
+			}
+			network = server.PrivateNet[0].Network
+		}
+		result.Classification = classifyProviderOnly(unmatched, network)
+	}
+	if err := qualify(joined, nodes, false); err != nil {
+		// These are labels on the provider-only candidate, not ownership or
+		// available capacity. Every original qualification predicate still holds.
+		return accountCensus{}, fmt.Errorf("%w: %w: provider_only=%d classification=%s state=%s ownership=UNVERIFIED headroom=UNVERIFIED", errCensusHeld, err, result.Extra, result.Classification, result.State)
 	}
 	return result, nil
 }
@@ -127,7 +134,7 @@ func classifyProviderOnly(s server, network int64) string {
 		return "snapshot-build-labeled"
 	case cluster == "prod" && s.Labels["ksail.owned"] == "true":
 		return "production-managed-labeled"
-	case group != "" && len(s.PrivateNet) == 1 && s.PrivateNet[0].Network == network:
+	case group != "" && network > 0 && len(s.PrivateNet) == 1 && s.PrivateNet[0].Network == network:
 		return "autoscaler-labeled"
 	default:
 		return "unclassified"
