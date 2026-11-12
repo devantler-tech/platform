@@ -2508,6 +2508,9 @@ jobs:
 
       - name: 🔒 Validate Umami provisioning serialization
         if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 4
+        env:
+          UMAMI_PROVISIONER_IMAGE_PROOF: "true"
         run: |
           shellcheck scripts/tests/test-umami-provisioning-bootstrap.sh
           bash scripts/tests/test-umami-provisioning-bootstrap.sh

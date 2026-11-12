@@ -39,7 +39,23 @@ jq -e '
 rendered_file="$(mktemp)"
 cron_template_file="$(mktemp)"
 job_template_file="$(mktemp)"
-trap 'rm -f "${rendered_file}" "${cron_template_file}" "${job_template_file}"' EXIT
+runtime_image_dir=''
+cleanup() {
+  if [[ -n "${runtime_image_dir}" ]]; then
+    if [[ -s "${runtime_image_dir}/container.cid" ]]; then
+      local container_id
+      container_id="$(cat "${runtime_image_dir}/container.cid")"
+      if [[ "${container_id}" =~ ^[0-9a-f]{64}$ ]]; then
+        docker --config "${runtime_image_dir}" rm --force "${container_id}" >/dev/null 2>&1 || true
+      fi
+    fi
+    rm -rf "${runtime_image_dir}"
+  fi
+  rm -f "${rendered_file}" "${cron_template_file}" "${job_template_file}"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 kubectl kustomize "${umami_dir}" >"${rendered_file}" || fail 'Umami base must render'
 
@@ -273,7 +289,30 @@ job_health_count="$(yq eval '[.spec.healthCheckExprs[] | select(.apiVersion == "
 # leaves an old server pod answering 500 for about 80 seconds (platform#2915),
 # so a 5xx must be retried through that window and still fail the run after it.
 command -v node >/dev/null 2>&1 || fail 'node is required to exercise the provisioner request helpers'
-PROVISIONER_SCRIPT="${provisioner_script}" node - <<'EOF' || fail 'the provisioner must retry a transient 5xx and still surface one that outlasts its window'
+provisioner_node=(node)
+case "${UMAMI_PROVISIONER_IMAGE_PROOF:-false}" in
+  false) ;;
+  true)
+    command -v docker >/dev/null 2>&1 || fail 'docker is required for the selected-image runtime proof'
+    command -v timeout >/dev/null 2>&1 || fail 'timeout is required to bound the selected-image runtime proof'
+    runtime_image="$(jq -er '.spec.jobTemplate.spec.template.spec.containers[0].image' <<<"${cron_json}")"
+    [[ "${runtime_image}" =~ ^ghcr\.io/umami-software/umami:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]] ||
+      fail 'the runtime proof requires the exact digest-pinned Umami image'
+    runtime_image_dir="$(mktemp -d)"
+    provisioner_node=(
+      timeout --signal=TERM --kill-after=10s 180s
+      docker --config "${runtime_image_dir}" run --rm --pull=always -i
+      --cidfile "${runtime_image_dir}/container.cid"
+      --network none --read-only --user 65534:65534
+      --cap-drop ALL --security-opt no-new-privileges
+      --pids-limit 64 --memory 128m
+      --tmpfs '/tmp:rw,noexec,nosuid,size=16m'
+      --env PROVISIONER_SCRIPT --entrypoint node "${runtime_image}"
+    )
+    ;;
+  *) fail 'UMAMI_PROVISIONER_IMAGE_PROOF must be true or false' ;;
+esac
+PROVISIONER_SCRIPT="${provisioner_script}" "${provisioner_node[@]}" - <<'EOF' || fail 'the provisioner must retry a transient 5xx and still surface one that outlasts its window'
 const script = process.env.PROVISIONER_SCRIPT;
 const start = script.indexOf('const umamiRequestTimeoutMilliseconds');
 const end = script.indexOf('// The bootstrap Job and CronJob are different Kubernetes');
@@ -320,6 +359,8 @@ const run = async (name, responses, expectStatus, expectCalls, deadlineMs = 1200
 };
 
 (async () => {
+  const nativeResponse = await globalThis.fetch('data:text/plain,umami-runtime-proof');
+  if (await nativeResponse.text() !== 'umami-runtime-proof') throw new Error('native fetch response was not readable');
   await run('success is returned at once', [200], 200, 1);
   await run('a client error is not retried', [404], 404, 1);
   await run('a transient 5xx is retried until it clears', [500, 500, 503, 200], 200, 4);
@@ -332,6 +373,7 @@ const run = async (name, responses, expectStatus, expectCalls, deadlineMs = 1200
   await run('network failures still give up after five attempts', ['throw'], 'threw', 5);
   await run('5xx retries stop at the provisioning deadline', [500], 500, undefined, 12000);
   await run('a caller that opts out gets the 5xx at once', [500, 200], 500, 1, 1200000, false);
+  console.log('Umami provisioner request contracts passed on Node ' + process.version);
 })().catch((e) => { console.error(e.message); process.exit(1); });
 EOF
 
