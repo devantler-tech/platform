@@ -177,3 +177,33 @@ metadata:
 spec:
   interval: 10m
   url: https://charts.example.com
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: own-image-volume
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app:1.2.3
+  volumes:
+    - name: data
+      image:
+        reference: ghcr.io/devantler-tech/wedding-app/data:1.0.0
+    - name: scratch
+      emptyDir: {}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: foreign-image-volume
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app:1.2.3
+  volumes:
+    - name: data
+      image:
+        reference: ghcr.io/devantler-tech/ascoachingogvaner/data:1.0.0

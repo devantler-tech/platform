@@ -19,7 +19,8 @@
 #
 # Covered objects: Pods (containers, initContainers, ephemeralContainers — the
 # pods/ephemeralcontainers subresource too, so `kubectl debug` cannot smuggle
-# one in) and the Flux sources a tenant can create (OCIRepository and
+# one in — and image volumes, whose OCI reference the kubelet pulls with the
+# same node credential) and the Flux sources a tenant can create (OCIRepository and
 # HelmRepository, whose OCI form points at the registry).
 #
 # Matching is done on the lower-cased reference, so a case variant, an explicit
@@ -80,6 +81,7 @@ spec:
         ? object.spec.?containers.orValue([]).map(c, c.image)
           + object.spec.?initContainers.orValue([]).map(c, c.image)
           + object.spec.?ephemeralContainers.orValue([]).map(c, c.image)
+          + object.spec.?volumes.orValue([]).filter(v, has(v.image)).map(v, v.image.?reference.orValue(''))
         : [object.spec.?url.orValue('')]
     - name: firstParty
       expression: "'^([a-z]+://)?ghcr\\\\.io\\\\.?(:[0-9]+)?/devantler-tech/'"

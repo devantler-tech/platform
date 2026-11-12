@@ -18,10 +18,11 @@ results:
       - wedding-app/own-tag-plus-third-party
       - ascoachingogvaner/own-subpath-image
       - business-site/third-party-only
+      - wedding-app/own-image-volume
     kind: Pod
     result: pass
   # Another tenant's or the platform's first-party image is reported, including
-  # a look-alike name, an init or ephemeral container, and case or port variants
+  # a look-alike name, an init or ephemeral container, an image volume, and case or port variants
   # of the registry host. A tenant whose namespace matches no repository gets
   # no first-party image at all.
   - policy: restrict-tenant-image-repositories
@@ -31,6 +32,7 @@ results:
       - ascoachingogvaner/lookalike-prefix
       - wedding-app/foreign-init-container
       - wedding-app/foreign-ephemeral-container
+      - wedding-app/foreign-image-volume
       - wedding-app/uppercase-host-variant
       - wedding-app/explicit-port-variant
       - future-tenant/unlisted-tenant-first-party
