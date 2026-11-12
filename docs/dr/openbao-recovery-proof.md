@@ -1,6 +1,35 @@
 # Isolated credential recovery proof
 
-The main-only verification workflow reads the fixed deployment facts and a fresh
+## Retained reader inputs
+
+`Verify Retained Email Reader Inputs` is a separate, explicitly confirmed,
+first-attempt main-only read-only operation. It selects only the fixed original
+retained-reader record, never the operational Email account or storage-key set.
+The complete frozen per-copy key, authentication, configuration and reader inputs
+must match fresh independent reader/claim witnesses before and after restoration.
+The collector and isolated server require explicit original KV2 version 1,
+creation time, undeleted/undestroyed metadata, exact trial/schema identity and
+every nested input value and digest. Ambiguous, incomplete or changed records
+remain unverified.
+
+The existing isolated runner restores a post-capture off-cluster snapshot using
+independently archived recovery credentials. A snapshot predating the input
+capture cannot pass, even when its timestamp is recent. The live read-only
+connection credential stays in a separate private RAM directory, outside the
+sandbox; the production tunnel is closed during the restore. A fresh current-main
+and native-input check follows the restore. Only the fixed final verdict is
+published after connection, container and private-workspace cleanup.
+
+`EMAIL_RETAINED_INPUT_RECOVERY=VERIFIED` proves recovery of these exact inputs
+only. It explicitly leaves mailbox data, the actual encryption-key test and
+restart authority unverified. It neither pauses a reader nor changes any volume,
+claim, replica, source or existing expired-backup disposal gate. Full native
+lifecycle witnesses, actual key-versus-device proof and separately qualified
+mailbox-data protection remain independent prerequisites.
+
+## Existing account recovery
+
+The main-only account verification workflow reads the fixed deployment facts and a fresh
 off-cluster snapshot. Recovery credentials come from a completed Velero resource
 backup at the same declared storage destination. It never reads the running
 service's recovery-key Secret. Moving credential custody remains a separate

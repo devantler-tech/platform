@@ -4,12 +4,17 @@ import (
 	"encoding/json"
 	"regexp"
 
+	"github.com/devantler-tech/platform/internal/emailreaderinputs"
 	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
 const storageCredentialPath = "infrastructure/email/storage"
 
 func recordValueAtPath(path string, raw json.RawMessage) (map[string]any, bool) {
+	if path == emailreaderinputs.Path {
+		value, err := emailreaderinputs.RecordValue(raw)
+		return value, err == nil
+	}
 	if path == storageCredentialPath {
 		var value map[string]string
 		if strictjson.Validate(raw, map[string][]string{"": {"passphrase"}}) != nil || json.Unmarshal(raw, &value) != nil || len(value) != 1 || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(value["passphrase"]) {

@@ -15,11 +15,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/devantler-tech/platform/internal/emailreaderinputs"
 	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
-const retainedReaderDataPath = "/v1/secret/data/infrastructure/email/recovery/retained-reader-inputs"
-const retainedReaderMetadataPath = "/v1/secret/metadata/infrastructure/email/recovery/retained-reader-inputs"
+const retainedReaderDataPath = "/v1/secret/data/" + emailreaderinputs.Path
+const retainedReaderMetadataPath = "/v1/secret/metadata/" + emailreaderinputs.Path
 
 type readerCustodyStore struct {
 	client   *http.Client
@@ -81,7 +82,12 @@ func readerCustodyDocument(bundle retainedReaderInputs) (object, error) {
 	if json.Unmarshal(raw, &value) != nil {
 		return fail()
 	}
-	return object{"schema": "email-reader-inputs/v1", "trial_run": retainedRecovery.run, "trial_revision": retainedRecovery.revision, "bundle": value}, nil
+	document := object{"schema": "email-reader-inputs/v1", "trial_run": retainedRecovery.run, "trial_revision": retainedRecovery.revision, "bundle": value}
+	raw, err = json.Marshal(document)
+	if err != nil || emailreaderinputs.ValidateDocument(raw) != nil {
+		return fail()
+	}
+	return document, nil
 }
 
 // ensure creates the one fixed record with CAS=0, or verifies an identical

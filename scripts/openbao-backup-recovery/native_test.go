@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -24,6 +26,11 @@ func TestPinnedServerRestoresCanonicalEmailCredentials(t *testing.T) {
 
 func TestPinnedServerRestoresEmailStorageKeyAndAccountCredentials(t *testing.T) {
 	testPinnedRecovery(t, "-email-storage")
+}
+
+// TestPinnedServerRestoresTheFullOriginalRetainedInputRecord uses an actual independently unsealed Raft restore.
+func TestPinnedServerRestoresTheFullOriginalRetainedInputRecord(t *testing.T) {
+	testPinnedRecovery(t, "-email-retained-inputs")
 }
 
 func testPinnedRecovery(t *testing.T, suffix string) {
@@ -83,7 +90,11 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 			t.Fatal("could not remove original synthetic credentials")
 		}
 	}
-	for _, test := range []string{"matching", "corrupt-snapshot", "different-record", "wrong-unseal-key", "wrong-custody-scope"} {
+	scenarios := []string{"matching", "corrupt-snapshot", "different-record", "wrong-unseal-key", "wrong-custody-scope"}
+	if suffix == "-email-retained-inputs" {
+		scenarios = append(scenarios, "pre-capture-snapshot")
+	}
+	for _, test := range scenarios {
 		t.Run(test, func(t *testing.T) {
 			dir, err := os.MkdirTemp("/dev/shm", "openbao-recovery-case-")
 			if err != nil {
@@ -116,6 +127,11 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 				}
 			}
 			switch test {
+			case "pre-capture-snapshot":
+				b, err := privateInput(filepath.Join(fixture, "pre-capture.snap"), maxSnapshotBytes)
+				if err != nil || os.WriteFile(filepath.Join(dir, "snapshot.snap"), b, 0600) != nil {
+					t.Fatal("could not select independently captured pre-input snapshot")
+				}
 			case "corrupt-snapshot":
 				b, err := os.ReadFile(filepath.Join(dir, "snapshot.snap"))
 				if err != nil || len(b) == 0 {
@@ -131,7 +147,25 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 				if err != nil || json.Unmarshal(b, &records) != nil {
 					t.Fatal("invalid synthetic records")
 				}
-				if suffix == "-email-storage" {
+				if suffix == "-email-retained-inputs" {
+					var record map[string]any
+					if json.Unmarshal(records[retainedInputTestPath], &record) != nil {
+						t.Fatal("invalid retained input fixture")
+					}
+					entry := record["data"].(map[string]any)["bundle"].(map[string]any)["Inputs"].([]any)[6].(map[string]any)
+					entry["Values"].(map[string]any)["synthetic"] = "changed-synthetic-key"
+					raw, err := json.Marshal(entry["Values"])
+					if err != nil {
+						t.Fatal(err)
+					}
+					digest := sha256.Sum256(raw)
+					entry["Digest"] = hex.EncodeToString(digest[:])
+					raw, err = json.Marshal(record)
+					if err != nil {
+						t.Fatal(err)
+					}
+					records[retainedInputTestPath] = raw
+				} else if suffix == "-email-storage" {
 					// Preserve all three account expectations and alter the actual
 					// storage key, so native restoration reaches key comparison.
 					records[storageCredentialPath] = json.RawMessage(`{"passphrase":"` + strings.Repeat("d", 64) + `"}`)
@@ -171,12 +205,14 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 				count := 3
 				if suffix == "-email-storage" {
 					count = 4
+				} else if suffix == "-email-retained-inputs" {
+					count = 1
 				}
 				if err != nil || strings.TrimSpace(out) != fmt.Sprintf("OPENBAO_BACKUP_RESTORE=PASS records=%d version=2.6.3", count) {
 					t.Fatalf("actual snapshot restoration not proven: %v %s", err, out)
 				}
 			} else {
-				stage := map[string]string{"corrupt-snapshot": "restore", "different-record": "records", "wrong-unseal-key": "unseal", "wrong-custody-scope": "inputs"}[test]
+				stage := map[string]string{"corrupt-snapshot": "restore", "different-record": "records", "wrong-unseal-key": "unseal", "wrong-custody-scope": "inputs", "pre-capture-snapshot": "restored_state"}[test]
 				if err == nil || strings.TrimSpace(out) != "OPENBAO_BACKUP_RESTORE=FAIL stage="+stage {
 					t.Fatalf("native refusal did not prove its intended failure: %v %s", err, out)
 				}
