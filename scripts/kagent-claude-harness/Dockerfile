@@ -51,12 +51,17 @@ RUN apk add --no-cache coreutils curl github-cli jq yq-go && \
     esac
 
 COPY --from=go /usr/local/go /usr/local/go
-ENV PATH=/usr/local/go/bin:${PATH}
-# GOTOOLCHAIN=local makes a guard that needs a newer Go fail at once with the
-# version it needs, instead of trying a download the sandbox cannot make.
-ENV GOTOOLCHAIN=local
-RUN go version && \
-    test "$(command -v go)" = /usr/local/go/bin/go
+# Nothing here relies on the image's ENV, since the Harness, not the image,
+# decides a run's environment: Go is linked onto the default PATH, and
+# GOTOOLCHAIN=local is set in Go's own go.env. It makes a guard that needs a
+# newer Go fail at once with the version it needs, instead of trying a download
+# the sandbox cannot make.
+RUN ln -s /usr/local/go/bin/go /usr/local/go/bin/gofmt /usr/local/bin/ && \
+    sed -i 's/^GOTOOLCHAIN=.*/GOTOOLCHAIN=local/' /usr/local/go/go.env && \
+    grep -qx 'GOTOOLCHAIN=local' /usr/local/go/go.env && \
+    test "$(command -v go)" = /usr/local/bin/go && \
+    test "$(env -u GOTOOLCHAIN go env GOTOOLCHAIN)" = local && \
+    go version
 
 COPY --from=kubectl /usr/bin/kubectl /usr/local/bin/kubectl
 # A COPY --chmod gives the folder it creates the file's mode too, so the folder comes first.
