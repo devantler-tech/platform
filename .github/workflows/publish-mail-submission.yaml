@@ -24,7 +24,7 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/devantler-tech/platform-mail-submission
-  IMAGE_TAG: sha-${{ github.sha }}
+  IMAGE_TAG: sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   verify:
@@ -38,6 +38,8 @@ jobs:
       image_id: ${{ steps.build.outputs.image_id }}
       binary_sha: ${{ steps.build.outputs.binary_sha }}
       artifact_name: ${{ steps.artifact.outputs.name }}
+      image_tag: ${{ steps.artifact.outputs.image_tag }}
+      verification_run: ${{ steps.artifact.outputs.verification_run }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -59,7 +61,12 @@ jobs:
         run: bash scripts/build-mail-submission-image.sh "${IMAGE}:${IMAGE_TAG}"
       - name: Name the verified archive
         id: artifact
-        run: printf 'name=mail-submission-image-%s-%s\n' "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}" >> "${GITHUB_OUTPUT:?}"
+        run: |
+          {
+            printf 'name=mail-submission-image-%s-%s\n' "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}"
+            printf 'image_tag=%s\n' "${IMAGE_TAG:?}"
+            printf 'verification_run=%s/%s/actions/runs/%s/attempts/%s\n' "${GITHUB_SERVER_URL:?}" "${GITHUB_REPOSITORY:?}" "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}"
+          } >> "${GITHUB_OUTPUT:?}"
       - name: Retain verified image without rebuilding
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -75,10 +82,13 @@ jobs:
     needs: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      # A publication-only retry must retain the producer's tag and receipt.
+      IMAGE_TAG: ${{ needs.verify.outputs.image_tag }}
     permissions:
-      contents: read
-      packages: write
-      id-token: write
+      contents: read # Load the reviewed source and verified tool installer.
+      packages: write # Publish the verified distribution and attestations.
+      id-token: write # Sign as this main-only publisher using keyless Cosign.
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -99,6 +109,7 @@ jobs:
           IMAGE_ID: ${{ needs.verify.outputs.image_id }}
         run: |
           set -euo pipefail
+          [[ "${IMAGE_TAG}" =~ ^sha-${GITHUB_SHA}-${GITHUB_RUN_ID}-[1-9][0-9]*$ ]]
           [[ "${ARCHIVE_SHA}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${IMAGE_ID}" =~ ^sha256:[0-9a-f]{64}$ ]]
           printf '%s  %s\n' "${ARCHIVE_SHA}" "${RUNNER_TEMP}/mail-submission-verified/mail-submission-image.tar" | sha256sum --check
@@ -119,6 +130,7 @@ jobs:
           ARCHIVE_SHA: ${{ needs.verify.outputs.archive_sha }}
           IMAGE_ID: ${{ needs.verify.outputs.image_id }}
           BINARY_SHA: ${{ needs.verify.outputs.binary_sha }}
+          VERIFICATION_RUN: ${{ needs.verify.outputs.verification_run }}
         run: |
           set -euo pipefail
           [[ "${BINARY_SHA}" =~ ^[0-9a-f]{64}$ ]]
@@ -130,7 +142,7 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com "${digest_ref}" > /dev/null
           jq -n --arg source "${GITHUB_SHA}" --arg archive "${ARCHIVE_SHA}" \
             --arg image "${IMAGE_ID}" --arg binary "${BINARY_SHA}" \
-            --arg run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}" \
+            --arg run "${VERIFICATION_RUN}" \
             '{sourceRevision:$source,verifiedArchiveSHA256:$archive,verifiedImageID:$image,binarySHA256:$binary,verificationRun:$run}' > "${RUNNER_TEMP}/mail-submission-provenance.json"
           cosign attest --yes --type cyclonedx --predicate "${RUNNER_TEMP}/mail-submission-sbom.json" "${digest_ref}"
           cosign attest --yes --type https://devantler.tech/attestations/mail-submission-build/v1 --predicate "${RUNNER_TEMP}/mail-submission-provenance.json" "${digest_ref}"

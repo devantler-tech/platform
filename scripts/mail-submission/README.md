@@ -82,9 +82,13 @@ with no network, a read-only root and no capabilities. This is distribution
 proof, not Kubernetes Secret ownership, projected-volume or production TLS proof.
 
 `Publish Automated Mail Sender` retains the verified image for the same run's
-main-only publisher; publication does not rebuild it. Immutable `sha-<commit>`
-tags carry a verified digest signature, dependency inventory and source/archive/
-binary provenance. Consumers must pin the digest and verify the publisher identity
+main-only publisher; publication does not rebuild it. Each complete verification
+attempt uses its own `sha-<commit>-<run>-<attempt>` locator. A publication-only
+retry retains the original verified locator and verification receipt, rather than
+selecting the retry's attempt. Tags are discovery aids, not immutable identities.
+Only the registry's content digest supplies that identity. Digest signatures,
+dependency inventory and source/archive/binary provenance bind the distribution
+to its verified bytes. Consumers must pin the digest and verify the publisher identity
 `https://github.com/devantler-tech/platform/.github/workflows/publish-mail-submission.yaml@refs/heads/main`.
 Image admission does not yet authorize this new signer. Deployment must add only
 the selected consumer's exact permission after its separate review.

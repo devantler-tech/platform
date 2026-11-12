@@ -42,11 +42,9 @@ MAIL_SUBMISSION_BINARY="$packaged/mail-submission" go -C "$root" test -count=1 -
 
 # Default image identity starts without capabilities, writable root or network.
 # No private inputs are embedded, so this must refuse configuration cleanly.
-set +e
+status=0
 output="$(docker run --rm --platform linux/amd64 --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges "$image" check --config-dir /missing 2>&1)"
-status=$?
-set -e
+  --security-opt no-new-privileges "$image" check --config-dir /missing 2>&1)" || status=$?
 [[ $status == 1 && "$output" == 'Submission configuration refused' ]]
 docker save --output "${RUNNER_TEMP}/mail-submission-image.tar" "$image"
 sha256sum "${RUNNER_TEMP}/mail-submission-image.tar" | awk '{print "archive_sha=" $1}' >>"${GITHUB_OUTPUT:?}"
