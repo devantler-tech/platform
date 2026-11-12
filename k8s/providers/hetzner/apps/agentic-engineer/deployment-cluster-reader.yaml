@@ -1,0 +1,82 @@
+# The lane's read-only view of the cluster. A run's sandbox has no credential and no route to the
+# Kubernetes API; Substrate's egress gateway lets it reach only this proxy
+# (egress-policy-cluster-reader.yaml), and the proxy reads the API as the cluster-reader service
+# account, which may only get and list what the live-health check needs. The gateway cannot carry
+# the API's TLS itself: it trusts only public certificate authorities upstream.
+#
+# Two layers keep it read-only. RBAC grants no write verb at all, and the proxy refuses every method
+# but GET and HEAD before a request reaches the API (--reject-methods: each pattern rejects one
+# shape of method that is neither, as the flag takes a comma-separated list). Its default
+# --reject-paths still refuse exec and attach.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-reader
+  namespace: agentic-engineer
+  labels:
+    app.kubernetes.io/name: cluster-reader
+    platform.devantler.tech/replica-floor: exempt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cluster-reader
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cluster-reader
+    spec:
+      serviceAccountName: cluster-reader
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: proxy
+          image: docker.io/alpine/k8s:1.37.2@sha256:dcb7185e112a453aa72f426754849a97357727ef8f40168fb208c8cf59952042
+          imagePullPolicy: IfNotPresent
+          command: ["kubectl"]
+          args:
+            - proxy
+            - --address=0.0.0.0
+            - --port=8001
+            - --accept-hosts=^cluster-reader\.agentic-engineer\.svc\.cluster\.local$
+            - --reject-methods=^.?.?$,^.....+$,^[^G]..$,^G[^E].$,^GE[^T]$,^[^H]...$,^H[^E]..$,^HE[^A].$,^HEA[^D]$
+          env:
+            # kubectl keeps its HTTP cache under the home directory, on the writable tmpfs.
+            - name: HOME
+              value: /tmp
+          ports:
+            - name: http
+              containerPort: 8001
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
