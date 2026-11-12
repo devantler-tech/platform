@@ -36,13 +36,34 @@ while IFS= read -r -d '' modfile; do
   printf '%s\0%s\0' "$directory" "$module_root" >>"$work/validated"
 done <"$work/modules"
 
+if ! installed="$(GOENV=off GOTOOLCHAIN=local go env GOVERSION)" || [[ ! "$installed" =~ ^go[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+  echo 'UNKNOWN: cannot read the installed Go version' >&2
+  exit 1
+fi
+installed="${installed#go}"
+
 checked=0
 while IFS= read -r -d '' directory && IFS= read -r -d '' module_root; do
   printf 'Checking Go module %s\n' "$directory"
+  # A module may declare a newer Go than the CI toolchain installed from the
+  # root go.mod (the KRO compiler module does). Check that module with exactly
+  # the release it declares, fetched through Go's own verified toolchain path;
+  # every other module uses the installed toolchain and never upgrades.
+  declared="$(awk '$1 == "go" && NF == 2 { print $2; exit }' "$module_root/go.mod")"
+  if [[ ! "$declared" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+    printf 'UNKNOWN: cannot read the go directive of module %s\n' "$directory" >&2
+    exit 1
+  fi
+  toolchain=local
+  if [ "$declared" != "$installed" ] &&
+    [ "$(printf '%s\n%s\n' "$installed" "$declared" | sort -V | tail -n 1)" = "$declared" ]; then
+    toolchain="go$declared"
+    printf 'Module %s declares Go %s, newer than the installed %s; checking it with go%s\n' \
+      "$directory" "$declared" "$installed" "$declared"
+  fi
   # -diff produces the proposed changes and fails on drift, without writing
-  # either file. Ignore ambient workspace/modfile settings; use the CI toolchain
-  # already installed from go.mod rather than downloading another toolchain.
-  if ! GOENV=off GOFLAGS='' GOWORK=off GOTOOLCHAIN=local \
+  # either file. Ignore ambient workspace/modfile settings.
+  if ! GOENV=off GOFLAGS='' GOWORK=off GOTOOLCHAIN="$toolchain" \
     go -C "$module_root" mod tidy -diff; then
     printf 'FAIL: cannot verify tidy files for module %s.\n' "$directory" >&2
     printf 'Run (cd %q && go mod tidy), review the changes, and retry.\n' "$directory" >&2
