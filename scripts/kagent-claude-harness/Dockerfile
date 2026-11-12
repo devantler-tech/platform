@@ -41,6 +41,8 @@ RUN apk add --no-cache coreutils curl github-cli go jq yq-go && \
     timeout --version | grep -q 'GNU coreutils' && date --version | grep -q 'GNU coreutils'
 
 COPY --from=kubectl /usr/bin/kubectl /usr/local/bin/kubectl
+# A COPY --chmod gives the folder it creates the file's mode too, so the folder comes first.
+RUN install -d -m 0755 /opt/kagent-lane
 COPY --chmod=0644 kubeconfig /opt/kagent-lane/kubeconfig
 ENV KUBECONFIG=/opt/kagent-lane/kubeconfig
 RUN kubectl version --client && \
