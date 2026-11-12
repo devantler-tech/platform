@@ -636,6 +636,21 @@ require_cleaned_up
 pass 'unresolved route references stop the run before any pod is created'
 
 reset_fixtures
+printf '%s\n' '{"items":[{"metadata":{"name":"externalauth-probe-authz-12345"},"status":{"parents":[{"conditions":[{"type":"Accepted","status":"True","reason":"Accepted"},{"type":"ResolvedRefs","status":"False","reason":"RefNotPermitted","message":"backend 10.0.10.7 on prod-worker-1 not permitted"}]}]}}]}' >"${fixtures}/routes.json"
+run_default
+require_inconclusive 'a held-back ExternalAuth route must say which condition held it' 'ExternalAuth route: ResolvedRefs=False (RefNotPermitted)'
+refute_text 'not permitted' 'a condition message reached the log'
+refute_text 'Accepted=True' 'a satisfied condition was reported as a blocker'
+require_cleaned_up
+pass 'an INCONCLUSIVE route wait names the blocking condition and reason, never its message'
+
+reset_fixtures
+printf '%s\n' '{"items":[{"metadata":{"name":"externalauth-probe-authz-12345"}}]}' >"${fixtures}/routes.json"
+run_default
+require_inconclusive 'a route the gateway never answered must say so' 'ExternalAuth route: no Accepted or ResolvedRefs condition yet'
+pass 'a route with no status is reported as unanswered, not as blocked'
+
+reset_fixtures
 run_default
 require_rc 0 'the ordering fixture run must still be conclusive'
 first_route="$(awk '/^kind: HTTPRoute$/ {r = 1; next} r && /^  name: / {print $2; exit}' "${fixtures}/applied.yaml")"
