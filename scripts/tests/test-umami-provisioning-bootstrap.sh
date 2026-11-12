@@ -41,17 +41,27 @@ cron_template_file="$(mktemp)"
 job_template_file="$(mktemp)"
 runtime_image_dir=''
 cleanup() {
+  local script_exit=$?
   if [[ -n "${runtime_image_dir}" ]]; then
     if [[ -s "${runtime_image_dir}/container.cid" ]]; then
-      local container_id
+      local container_id remaining_containers
       container_id="$(cat "${runtime_image_dir}/container.cid")"
       if [[ "${container_id}" =~ ^[0-9a-f]{64}$ ]]; then
         docker --config "${runtime_image_dir}" rm --force "${container_id}" >/dev/null 2>&1 || true
+        if ! remaining_containers="$(docker --config "${runtime_image_dir}" ps --all --quiet --no-trunc --filter "id=${container_id}")" ||
+          [[ -n "${remaining_containers}" ]]; then
+          printf 'FAIL: selected-image proof container removal is unverified\n' >&2
+          script_exit=1
+        fi
+      else
+        printf 'FAIL: selected-image proof container identity is invalid\n' >&2
+        script_exit=1
       fi
     fi
     rm -rf "${runtime_image_dir}"
   fi
   rm -f "${rendered_file}" "${cron_template_file}" "${job_template_file}"
+  exit "${script_exit}"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
