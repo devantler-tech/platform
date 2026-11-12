@@ -108,6 +108,403 @@ index 0000000..b7e980a
 +		})
 +	}
 +}
+diff --git a/clickhouse/space_manager.go b/clickhouse/space_manager.go
+index 17edc53..f1b4463 100644
+--- a/clickhouse/space_manager.go
++++ b/clickhouse/space_manager.go
+@@ -71,7 +71,24 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
+ 		return nil
+ 	}
+ 
+-	var cleanupNeeded []string
++	for _, disk := range disksToClean(diskInfo, sm.cfg.UsageThresholdPercent) {
++		if err := sm.cleanupOldestPartitionsFromDisk(ctx, client, disk); err != nil {
++			return fmt.Errorf("failed to cleanup partitions from disk %s: %w", disk.Name, err)
++		}
++	}
++	return nil
++}
++
++// diskUsage is a local disk over the cleanup threshold, with the usage that put it there.
++type diskUsage struct {
++	Name         string
++	UsagePercent float64
++}
++
++// disksToClean returns the local disks whose usage exceeds thresholdPercent, each with its
++// usage, so the cleanup decides with the same reading that selected the disk.
++func disksToClean(diskInfo []DiskInfo, thresholdPercent int) []diskUsage {
++	var res []diskUsage
+ 	for _, disk := range diskInfo {
+ 		if disk.Type != "Local" {
+ 			continue
+@@ -80,54 +97,103 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
+ 		usedSpace := disk.TotalSpace - disk.FreeSpace
+ 		usagePercent := float64(usedSpace) / float64(disk.TotalSpace) * 100
+ 
+-		klog.Infof("disk \"%s\" usage: %.2f%%, threshold: %d%%", disk.Name, usagePercent, sm.cfg.UsageThresholdPercent)
++		klog.Infof("disk \"%s\" usage: %.2f%%, threshold: %d%%", disk.Name, usagePercent, thresholdPercent)
+ 
+-		if int(usagePercent) > sm.cfg.UsageThresholdPercent {
++		if int(usagePercent) > thresholdPercent {
+ 			klog.Infof("disk %s usage (%.2f%%) exceeds threshold (%d%%), marking for cleanup",
+-				disk.Name, usagePercent, sm.cfg.UsageThresholdPercent)
+-			cleanupNeeded = append(cleanupNeeded, disk.Name)
++				disk.Name, usagePercent, thresholdPercent)
++			res = append(res, diskUsage{Name: disk.Name, UsagePercent: usagePercent})
+ 		}
+ 	}
++	return res
++}
+ 
+-	if len(cleanupNeeded) == 0 {
+-		return nil
++func (sm *SpaceManager) cleanupOldestPartitionsFromDisk(ctx context.Context, client *Client, disk diskUsage) error {
++	partitions, err := sm.getPartitionsFromDiskOnServer(ctx, client, disk.Name)
++	if err != nil {
++		return fmt.Errorf("failed to get partitions from disk %s: %w", disk.Name, err)
+ 	}
+ 
+-	for _, diskName := range cleanupNeeded {
+-		if err := sm.cleanupOldestPartitionsFromDisk(ctx, client, diskName); err != nil {
+-			return fmt.Errorf("failed to cleanup partitions from disk %s: %w", diskName, err)
++	for _, oldestPartition := range partitionsToDropFromDisk(partitions, disk, sm.cfg.UsageThresholdPercent, sm.cfg.MinPartitions) {
++		if err := sm.dropPartition(ctx, client, oldestPartition); err != nil {
++			klog.Errorf("failed to drop partition %s from table %s.%s on disk %s: %v",
++				oldestPartition.PartitionId, oldestPartition.Database, oldestPartition.Table, disk.Name, err)
++			continue
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+-func (sm *SpaceManager) cleanupOldestPartitionsFromDisk(ctx context.Context, client *Client, diskName string) error {
+-	partitions, err := sm.getPartitionsFromDiskOnServer(ctx, client, diskName)
+-	if err != nil {
+-		return fmt.Errorf("failed to get partitions from disk %s: %w", diskName, err)
++// partitionsToDropFromDisk applies the emergency ceiling to the disk's usage, then returns the
++// oldest partition of every table that holds more partitions than are kept at that usage.
++func partitionsToDropFromDisk(parts []PartitionInfo, disk diskUsage, thresholdPercent, minPartitions int) []PartitionInfo {
++	keep := partitionsToKeep(disk.UsagePercent, thresholdPercent, minPartitions)
++	if keep < minPartitions {
++		klog.Warningf("disk %s usage (%.2f%%) is at or above %d%%: freeing the oldest partition of every table, including a table's last one, to keep ClickHouse writable",
++			disk.Name, disk.UsagePercent, emergencyUsagePercent(thresholdPercent))
+ 	}
++	return partitionsToDrop(parts, keep)
++}
+ 
+-	tablePartitions := make(map[string][]PartitionInfo)
+-	for _, partition := range partitions {
+-		tableKey := partition.Database + "." + partition.Table
+-		tablePartitions[tableKey] = append(tablePartitions[tableKey], partition)
++// emergencyUsagePercent is the disk usage, halfway between the cleanup threshold and a full
++// disk, at which keeping the minimum number of partitions gives way to keeping ClickHouse
++// writable: 85% at the default 70% threshold.
++func emergencyUsagePercent(thresholdPercent int) int {
++	return (thresholdPercent + 100) / 2
++}
++
++// partitionsToKeep returns how many partitions each table keeps at the given disk usage:
++// the configured minimum, or none once usage reaches the emergency level. Below that level
++// a table's newest partitions, normally the current day's data, are never dropped, as
++// Coroot's documentation promises; above it, a disk that fills faster than old days are
++// released still frees space rather than refusing writes.
++//
++// Cleanup visits each replica of a replicated cluster in turn, and dropped parts keep their
++// disk space until ClickHouse removes them, so in an emergency a later replica can still read
++// the earlier usage and free the next day as well. Below the ceiling the minimum still holds,
++// so this needs the disk to cross the ceiling while an older day is still present.
++func partitionsToKeep(usagePercent float64, thresholdPercent, minPartitions int) int {
++	if usagePercent >= float64(emergencyUsagePercent(thresholdPercent)) {
++		return 0
+ 	}
++	return minPartitions
++}
+ 
+-	for tableKey, tablePartitionList := range tablePartitions {
+-		if len(tablePartitionList) <= sm.cfg.MinPartitions {
+-			klog.Infof("table %s has %d partitions, keeping minimum %d",
+-				tableKey, len(tablePartitionList), sm.cfg.MinPartitions)
++// partitionsToDrop returns the oldest partition of every table that holds more than
++// minPartitions distinct partitions.
++//
++// system.parts has one row per active data part, and a partition usually holds several
++// parts, so the rows are collapsed into distinct partitions before they are counted.
++// Counting parts let the cleanup drop a table's last remaining partition, normally the
++// current day's data. The rows arrive ordered by each part's min_time, so the first row
++// seen for a partition is its oldest part and the first partition of a table is its oldest.
++func partitionsToDrop(parts []PartitionInfo, minPartitions int) []PartitionInfo {
++	var tables []string
++	tablePartitions := make(map[string][]PartitionInfo)
++	seen := make(map[PartitionInfo]bool)
++	for _, part := range parts {
++		if seen[part] {
+ 			continue
+ 		}
++		seen[part] = true
++		tableKey := part.Database + "." + part.Table
++		if _, ok := tablePartitions[tableKey]; !ok {
++			tables = append(tables, tableKey)
++		}
++		tablePartitions[tableKey] = append(tablePartitions[tableKey], part)
++	}
+ 
+-		oldestPartition := tablePartitionList[0]
+-		if err := sm.dropPartition(ctx, client, oldestPartition); err != nil {
+-			klog.Errorf("failed to drop partition %s from table %s on disk %s: %v",
+-				oldestPartition.PartitionId, tableKey, diskName, err)
++	var res []PartitionInfo
++	for _, tableKey := range tables {
++		partitions := tablePartitions[tableKey]
++		if len(partitions) <= minPartitions {
++			klog.Infof("table %s has %d partitions, keeping minimum %d",
++				tableKey, len(partitions), minPartitions)
+ 			continue
+ 		}
++		res = append(res, partitions[0])
+ 	}
+-	return nil
++	return res
+ }
+ 
+ func (sm *SpaceManager) dropPartition(ctx context.Context, client *Client, part PartitionInfo) error {
+diff --git a/clickhouse/space_manager_integration_test.go b/clickhouse/space_manager_integration_test.go
+new file mode 100644
+index 0000000..6396535
+--- /dev/null
++++ b/clickhouse/space_manager_integration_test.go
+@@ -0,0 +1,101 @@
++//go:build clickhouse_integration
++
++package clickhouse
++
++import (
++	"context"
++	"os"
++	"testing"
++
++	"github.com/coroot/coroot/config"
++	"github.com/coroot/coroot/db"
++	"github.com/coroot/coroot/utils"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++const integrationDatabase = "space_manager_it"
++
++// TestSpaceManagerIntegrationKeepsTheNewestPartition runs the real cleanup path (the
++// system.parts query, the per-disk decision and ALTER TABLE ... DROP PARTITION) against a real
++// ClickHouse server named by CLICKHOUSE_ADDR, on a table partitioned exactly like Coroot's
++// telemetry tables, with merges stopped so that one day really holds several data parts.
++func TestSpaceManagerIntegrationKeepsTheNewestPartition(t *testing.T) {
++	addr := os.Getenv("CLICKHOUSE_ADDR")
++	require.NotEmpty(t, addr, "CLICKHOUSE_ADDR must name the ClickHouse server under test")
++	ctx := context.Background()
++
++	admin := integrationClient(t, addr, "default")
++	integrationExec(t, admin, "DROP DATABASE IF EXISTS "+integrationDatabase+" SYNC")
++	integrationExec(t, admin, "CREATE DATABASE "+integrationDatabase)
++	t.Cleanup(func() { _ = admin.conn.Exec(ctx, "DROP DATABASE IF EXISTS "+integrationDatabase+" SYNC") })
++
++	client := integrationClient(t, addr, integrationDatabase)
++	integrationExec(t, client, `
++CREATE TABLE otel_logs (
++	Timestamp DateTime64(9) CODEC(Delta, ZSTD(1)),
++	Body String CODEC(ZSTD(1))
++)
++ENGINE = MergeTree()
++PARTITION BY toDate(Timestamp)
++ORDER BY Timestamp`)
++	integrationExec(t, client, "SYSTEM STOP MERGES otel_logs")
++	for i := 0; i < 3; i++ {
++		integrationExec(t, client, "INSERT INTO otel_logs VALUES ('2026-01-02 12:00:00', 'newest day')")
++	}
++
++	sm := &SpaceManager{
++		client:    client,
++		cfg:       config.ClickHouseSpaceManager{Enabled: true, UsageThresholdPercent: 70, MinPartitions: 1},
++		databases: []string{integrationDatabase},
++	}
++
++	parts, err := sm.getPartitionsFromDiskOnServer(ctx, client, "default")
++	require.NoError(t, err)
++	require.Len(t, parts, 3, "system.parts must list one row per data part")
++	for _, p := range parts {
++		require.Equal(t, PartitionInfo{Database: integrationDatabase, Table: "otel_logs", PartitionId: "20260102"}, p,
++			"all three parts must belong to the one daily partition")
++	}
++
++	// Over the cleanup threshold, below the emergency ceiling: the only partition stays.
++	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 75}))
++	assert.Equal(t, uint64(3), integrationCount(t, client, "toDate(Timestamp) = '2026-01-02'"))
++
++	// With an older day present, only that day is dropped.
++	for i := 0; i < 2; i++ {
++		integrationExec(t, client, "INSERT INTO otel_logs VALUES ('2026-01-01 12:00:00', 'older day')")
++	}
++	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 75}))
++	assert.Equal(t, uint64(0), integrationCount(t, client, "toDate(Timestamp) = '2026-01-01'"))
++	assert.Equal(t, uint64(3), integrationCount(t, client, "toDate(Timestamp) = '2026-01-02'"))
++
++	// At the emergency ceiling the last partition is freed as well.
++	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 90}))
++	assert.Equal(t, uint64(0), integrationCount(t, client, "1"))
++}
++
++func integrationClient(t *testing.T, addr, database string) *Client {
++	t.Helper()
++	client, err := NewClient(&db.IntegrationClickhouse{
++		Protocol: "native",
++		Addr:     addr,
++		Auth:     utils.BasicAuth{User: "default"},
++		Database: database,
++	}, nil)
++	require.NoError(t, err)
++	t.Cleanup(func() { _ = client.Close() })
++	return client
++}
++
++func integrationExec(t *testing.T, client *Client, query string) {
++	t.Helper()
++	require.NoError(t, client.conn.Exec(context.Background(), query))
++}
++
++func integrationCount(t *testing.T, client *Client, where string) uint64 {
++	t.Helper()
++	var n uint64
++	require.NoError(t, client.conn.QueryRow(context.Background(), "SELECT count() FROM otel_logs WHERE "+where).Scan(&n))
++	return n
++}
+diff --git a/clickhouse/space_manager_test.go b/clickhouse/space_manager_test.go
+new file mode 100644
+index 0000000..828767e
+--- /dev/null
++++ b/clickhouse/space_manager_test.go
+@@ -0,0 +1,124 @@
++package clickhouse
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++)
++
++func testPart(table, partitionId string) PartitionInfo {
++	return PartitionInfo{Database: "coroot", Table: table, PartitionId: partitionId}
++}
++
++func TestPartitionsToDropKeepsTheLastPartitionWhateverItsPartCount(t *testing.T) {
++	// system.parts returns one row per active data part, ordered by min_time. A single
++	// daily partition normally holds several parts; counting them as partitions let the
++	// cleanup drop the only remaining (current) day.
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261112"),
++		testPart("otel_logs", "20261112"),
++		testPart("otel_logs", "20261112"),
++		testPart("otel_traces", "20261112"),
++		testPart("otel_traces", "20261112"),
++	}
++	assert.Empty(t, partitionsToDrop(parts, 1))
++}
++
++func TestPartitionsToDropDropsOnlyTheOldestPartitionOfEachTable(t *testing.T) {
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261111"),
++		testPart("otel_traces", "20261111"),
++		testPart("otel_logs", "20261111"),
++		testPart("otel_logs", "20261112"),
++		testPart("otel_traces", "20261112"),
++		testPart("otel_logs", "20261112"),
++		testPart("profiling_samples", "20261112"),
++	}
++	assert.Equal(t,
++		[]PartitionInfo{testPart("otel_logs", "20261111"), testPart("otel_traces", "20261111")},
++		partitionsToDrop(parts, 1),
++	)
++}
++
++func TestPartitionsToDropHonoursAHigherMinimum(t *testing.T) {
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261110"),
++		testPart("otel_logs", "20261111"),
++		testPart("otel_logs", "20261111"),
++		testPart("otel_logs", "20261112"),
++		testPart("otel_traces", "20261111"),
++		testPart("otel_traces", "20261112"),
++		testPart("otel_traces", "20261112"),
++	}
++	assert.Equal(t, []PartitionInfo{testPart("otel_logs", "20261110")}, partitionsToDrop(parts, 2))
++}
++
++func TestPartitionsToKeepKeepsTheMinimumBelowTheEmergencyCeiling(t *testing.T) {
++	assert.Equal(t, 1, partitionsToKeep(71, 70, 1))
++	assert.Equal(t, 1, partitionsToKeep(84.99, 70, 1))
++	assert.Equal(t, 2, partitionsToKeep(84.99, 70, 2))
++}
++
++func TestPartitionsToKeepFreesTheLastPartitionAtTheEmergencyCeiling(t *testing.T) {
++	// Halfway between the cleanup threshold and a full disk: 85% at the default 70%.
++	assert.Equal(t, 0, partitionsToKeep(85, 70, 1))
++	assert.Equal(t, 0, partitionsToKeep(97, 70, 2))
++	assert.Equal(t, 1, partitionsToKeep(89.9, 80, 1))
++	assert.Equal(t, 0, partitionsToKeep(90, 80, 1))
++}
++
++func TestEmergencyCleanupDropsTheLastPartitionOfEachTable(t *testing.T) {
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261112"),
++		testPart("otel_logs", "20261112"),
++		testPart("otel_traces", "20261111"),
++		testPart("otel_traces", "20261112"),
++	}
++	assert.Equal(t,
++		[]PartitionInfo{testPart("otel_logs", "20261112"), testPart("otel_traces", "20261111")},
++		partitionsToDrop(parts, partitionsToKeep(90, 70, 1)),
++	)
++}
++
++func TestDisksToCleanCarriesTheUsageThatSelectedEachDisk(t *testing.T) {
++	disks := []DiskInfo{
++		{Name: "default", Type: "Local", TotalSpace: 1000, FreeSpace: 100},
++		{Name: "cold", Type: "Local", TotalSpace: 1000, FreeSpace: 400},
++		{Name: "s3", Type: "ObjectStorage", TotalSpace: 1000, FreeSpace: 0},
++	}
++	assert.Equal(t, []diskUsage{{Name: "default", UsagePercent: 90}}, disksToClean(disks, 70))
++	assert.Empty(t, disksToClean(disks, 90))
++}
++
++func TestCleanupDecisionKeepsTodayAboveTheThresholdAndFreesItAtTheCeiling(t *testing.T) {
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261112"),
++		testPart("otel_logs", "20261112"),
++	}
++	disk := func(free uint64) diskUsage {
++		return disksToClean([]DiskInfo{{Name: "default", Type: "Local", TotalSpace: 1000, FreeSpace: free}}, 70)[0]
++	}
++	assert.Empty(t, partitionsToDropFromDisk(parts, disk(200), 70, 1))
++	assert.Equal(t,
++		[]PartitionInfo{testPart("otel_logs", "20261112")},
++		partitionsToDropFromDisk(parts, disk(150), 70, 1),
++	)
++}
++
++func TestPartitionsToDropWithNoMinimumDropsEvenTheOnlyPartition(t *testing.T) {
++	parts := []PartitionInfo{testPart("otel_logs", "20261112"), testPart("otel_logs", "20261112")}
++	assert.Equal(t, []PartitionInfo{testPart("otel_logs", "20261112")}, partitionsToDrop(parts, 0))
++}
++
++func TestPartitionsToDropWithNoPartsDropsNothing(t *testing.T) {
++	assert.Empty(t, partitionsToDrop(nil, 1))
++	assert.Empty(t, partitionsToDrop(nil, 0))
++}
++
++func TestPartitionsToDropSeparatesDatabases(t *testing.T) {
++	parts := []PartitionInfo{
++		{Database: "a", Table: "otel_logs", PartitionId: "20261111"},
++		{Database: "b", Table: "otel_logs", PartitionId: "20261112"},
++	}
++	assert.Empty(t, partitionsToDrop(parts, 1))
++}
 diff --git a/constructor/postgres.go b/constructor/postgres.go
 index 741ec38..961b004 100644
 --- a/constructor/postgres.go
