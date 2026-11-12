@@ -108,6 +108,143 @@ index 0000000..b7e980a
 +		})
 +	}
 +}
+diff --git a/clickhouse/space_manager.go b/clickhouse/space_manager.go
+index 17edc53..47d252a 100644
+--- a/clickhouse/space_manager.go
++++ b/clickhouse/space_manager.go
+@@ -107,27 +107,51 @@ func (sm *SpaceManager) cleanupOldestPartitionsFromDisk(ctx context.Context, cli
+ 		return fmt.Errorf("failed to get partitions from disk %s: %w", diskName, err)
+ 	}
+ 
+-	tablePartitions := make(map[string][]PartitionInfo)
+-	for _, partition := range partitions {
+-		tableKey := partition.Database + "." + partition.Table
+-		tablePartitions[tableKey] = append(tablePartitions[tableKey], partition)
++	for _, oldestPartition := range partitionsToDrop(partitions, sm.cfg.MinPartitions) {
++		if err := sm.dropPartition(ctx, client, oldestPartition); err != nil {
++			klog.Errorf("failed to drop partition %s from table %s.%s on disk %s: %v",
++				oldestPartition.PartitionId, oldestPartition.Database, oldestPartition.Table, diskName, err)
++			continue
++		}
+ 	}
++	return nil
++}
+ 
+-	for tableKey, tablePartitionList := range tablePartitions {
+-		if len(tablePartitionList) <= sm.cfg.MinPartitions {
+-			klog.Infof("table %s has %d partitions, keeping minimum %d",
+-				tableKey, len(tablePartitionList), sm.cfg.MinPartitions)
++// partitionsToDrop returns the oldest partition of every table that holds more than
++// minPartitions distinct partitions.
++//
++// system.parts has one row per active data part, and a partition usually holds several
++// parts, so the rows are collapsed into distinct partitions before they are counted.
++// Counting parts let the cleanup drop a table's last remaining partition, which is the
++// current day's data. The rows arrive ordered by each part's min_time, so the first row
++// seen for a partition is its oldest part and the first partition of a table is its oldest.
++func partitionsToDrop(parts []PartitionInfo, minPartitions int) []PartitionInfo {
++	var tables []string
++	tablePartitions := make(map[string][]PartitionInfo)
++	seen := make(map[PartitionInfo]bool)
++	for _, part := range parts {
++		if seen[part] {
+ 			continue
+ 		}
++		seen[part] = true
++		tableKey := part.Database + "." + part.Table
++		if _, ok := tablePartitions[tableKey]; !ok {
++			tables = append(tables, tableKey)
++		}
++		tablePartitions[tableKey] = append(tablePartitions[tableKey], part)
++	}
+ 
+-		oldestPartition := tablePartitionList[0]
+-		if err := sm.dropPartition(ctx, client, oldestPartition); err != nil {
+-			klog.Errorf("failed to drop partition %s from table %s on disk %s: %v",
+-				oldestPartition.PartitionId, tableKey, diskName, err)
++	var res []PartitionInfo
++	for _, tableKey := range tables {
++		partitions := tablePartitions[tableKey]
++		if len(partitions) <= minPartitions {
++			klog.Infof("table %s has %d partitions, keeping minimum %d",
++				tableKey, len(partitions), minPartitions)
+ 			continue
+ 		}
++		res = append(res, partitions[0])
+ 	}
+-	return nil
++	return res
+ }
+ 
+ func (sm *SpaceManager) dropPartition(ctx context.Context, client *Client, part PartitionInfo) error {
+diff --git a/clickhouse/space_manager_test.go b/clickhouse/space_manager_test.go
+new file mode 100644
+index 0000000..008fecc
+--- /dev/null
++++ b/clickhouse/space_manager_test.go
+@@ -0,0 +1,62 @@
++package clickhouse
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++)
++
++func part(table, partitionId string) PartitionInfo {
++	return PartitionInfo{Database: "coroot", Table: table, PartitionId: partitionId}
++}
++
++func TestPartitionsToDropKeepsTheLastPartitionWhateverItsPartCount(t *testing.T) {
++	// system.parts returns one row per active data part, ordered by min_time. A single
++	// daily partition normally holds several parts; counting them as partitions let the
++	// cleanup drop the only remaining (current) day.
++	parts := []PartitionInfo{
++		part("otel_logs", "20261112"),
++		part("otel_logs", "20261112"),
++		part("otel_logs", "20261112"),
++		part("otel_traces", "20261112"),
++		part("otel_traces", "20261112"),
++	}
++	assert.Empty(t, partitionsToDrop(parts, 1))
++}
++
++func TestPartitionsToDropDropsOnlyTheOldestPartitionOfEachTable(t *testing.T) {
++	parts := []PartitionInfo{
++		part("otel_logs", "20261111"),
++		part("otel_traces", "20261111"),
++		part("otel_logs", "20261111"),
++		part("otel_logs", "20261112"),
++		part("otel_traces", "20261112"),
++		part("otel_logs", "20261112"),
++		part("profiling_samples", "20261112"),
++	}
++	assert.Equal(t,
++		[]PartitionInfo{part("otel_logs", "20261111"), part("otel_traces", "20261111")},
++		partitionsToDrop(parts, 1),
++	)
++}
++
++func TestPartitionsToDropHonoursAHigherMinimum(t *testing.T) {
++	parts := []PartitionInfo{
++		part("otel_logs", "20261110"),
++		part("otel_logs", "20261111"),
++		part("otel_logs", "20261111"),
++		part("otel_logs", "20261112"),
++		part("otel_traces", "20261111"),
++		part("otel_traces", "20261112"),
++		part("otel_traces", "20261112"),
++	}
++	assert.Equal(t, []PartitionInfo{part("otel_logs", "20261110")}, partitionsToDrop(parts, 2))
++}
++
++func TestPartitionsToDropSeparatesDatabases(t *testing.T) {
++	parts := []PartitionInfo{
++		{Database: "a", Table: "otel_logs", PartitionId: "20261111"},
++		{Database: "b", Table: "otel_logs", PartitionId: "20261112"},
++	}
++	assert.Empty(t, partitionsToDrop(parts, 1))
++}
 diff --git a/constructor/postgres.go b/constructor/postgres.go
 index 741ec38..961b004 100644
 --- a/constructor/postgres.go
