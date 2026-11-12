@@ -92,6 +92,12 @@ helm install kro oci://registry.k8s.io/kro/charts/kro@sha256:56561368ed4c574520e
 kubectl -n kro-system get deployment kro -o json | jq -e '
   [.spec.template.spec.containers[].image] ==
   ["registry.k8s.io/kro/kro:v0.10.0@sha256:ec329ba111448553ca9f77f020c875a6348caa0382de79620414bb14a227395e"]' >/dev/null || fail 'installed controller image differs from the reviewed pin'
+# The chart digest above must resolve to the release production pins, not only
+# carry its tag text: the installed chart labels its own release.
+release="v$(yq -er '.spec.ref.tag' "$root/k8s/bases/infrastructure/controllers/kro/oci-repository.yaml")"
+kubectl -n kro-system get deployment kro -o json | jq -e --arg release "$release" '
+  .metadata.labels["helm.sh/chart"] == "kro-\($release)" and
+  .metadata.labels["app.kubernetes.io/version"] == $release' >/dev/null || fail 'installed chart differs from the controller pin'
 kubectl apply -f "$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml" >/dev/null
 kubectl apply -f "$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml" >/dev/null
 for _attempt in {1..60}; do
