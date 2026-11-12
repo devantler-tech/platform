@@ -100,3 +100,32 @@ func TestReaderCustodyCommandUsesTheSeparateProtectedDispatch(t *testing.T) {
 		}
 	}
 }
+
+// TestReaderInputParityCommandHasASeparateReadOnlyDispatch catches an unwired flag or borrowed custody authority.
+func TestReaderInputParityCommandHasASeparateReadOnlyDispatch(t *testing.T) {
+	if os.Getenv("EMAIL_READER_PARITY_CHILD") == "1" {
+		os.Args = []string{"verify-email-data-recovery", "--verify-reader-inputs"}
+		main()
+		return
+	}
+	for _, confirmed := range []bool{false, true} {
+		command := exec.Command(os.Args[0], "-test.run=^TestReaderInputParityCommandHasASeparateReadOnlyDispatch$")
+		command.Env = []string{"EMAIL_READER_PARITY_CHILD=1", "PATH=/nonexistent", "GOCOVERDIR=" + t.TempDir()}
+		stage := "dispatch"
+		if confirmed {
+			env := readerCustodyDispatch()
+			env["GITHUB_WORKFLOW_REF"] = "devantler-tech/platform/.github/workflows/verify-retained-email-reader-inputs.yaml@refs/heads/main"
+			env["EMAIL_READER_INPUTS_CONFIRM"] = "verify-retained-email-reader-inputs"
+			for key, value := range env {
+				command.Env = append(command.Env, key+"="+value)
+			}
+			command.Env = append(command.Env, "EMAIL_RETAINED_READER_UID=11111111-1111-2222-3333-444444444444", "EMAIL_RETAINED_CLAIM_UID=22222222-1111-2222-3333-444444444444")
+			stage = "source"
+		}
+		output, err := command.CombinedOutput()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(output), "EMAIL_READER_INPUT_PARITY=UNVERIFIED stage="+stage+" restart=NOT_AUTHORIZED recovery=UNVERIFIED") || strings.Contains(string(output), "CUSTODY=STORED") {
+			t.Fatalf("read-only parity command lost its dispatch boundary: %q", output)
+		}
+	}
+}

@@ -53,11 +53,16 @@ func (k readerInputKubernetes) call(ctx context.Context, input []byte, args ...s
 
 // authorizeReaderInputCustody requires the confirmed main workflow and distinct independently recorded copy identities.
 func authorizeReaderInputCustody(env func(string) string) error {
+	return authorizeReaderInputOperation(env, "prepare-retained-email-reader-inputs.yaml", "prepare-retained-email-reader-inputs")
+}
+
+// authorizeReaderInputOperation binds a caller-declared fixed operator to its exact workflow, confirmation and witnesses.
+func authorizeReaderInputOperation(env func(string) string, workflow, confirmation string) error {
 	for key, expected := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform",
 		"GITHUB_ACTOR": "devantler", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted",
-		"GITHUB_WORKFLOW_REF":         "devantler-tech/platform/.github/workflows/prepare-retained-email-reader-inputs.yaml@refs/heads/main",
-		"EMAIL_READER_INPUTS_CONFIRM": "prepare-retained-email-reader-inputs",
+		"GITHUB_WORKFLOW_REF":         "devantler-tech/platform/.github/workflows/" + workflow + "@refs/heads/main",
+		"EMAIL_READER_INPUTS_CONFIRM": confirmation,
 	} {
 		if env(key) != expected {
 			return errors.New("reader-input-dispatch")
