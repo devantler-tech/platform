@@ -109,7 +109,7 @@ index 0000000..b7e980a
 +	}
 +}
 diff --git a/clickhouse/space_manager.go b/clickhouse/space_manager.go
-index 17edc53..8528f71 100644
+index 17edc53..f1b4463 100644
 --- a/clickhouse/space_manager.go
 +++ b/clickhouse/space_manager.go
 @@ -71,7 +71,24 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
@@ -138,7 +138,7 @@ index 17edc53..8528f71 100644
  	for _, disk := range diskInfo {
  		if disk.Type != "Local" {
  			continue
-@@ -80,54 +97,98 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
+@@ -80,54 +97,103 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
  		usedSpace := disk.TotalSpace - disk.FreeSpace
  		usagePercent := float64(usedSpace) / float64(disk.TotalSpace) * 100
  
@@ -209,6 +209,11 @@ index 17edc53..8528f71 100644
 +// a table's newest partitions, normally the current day's data, are never dropped, as
 +// Coroot's documentation promises; above it, a disk that fills faster than old days are
 +// released still frees space rather than refusing writes.
++//
++// Cleanup visits each replica of a replicated cluster in turn, and dropped parts keep their
++// disk space until ClickHouse removes them, so in an emergency a later replica can still read
++// the earlier usage and free the next day as well. Below the ceiling the minimum still holds,
++// so this needs the disk to cross the ceiling while an older day is still present.
 +func partitionsToKeep(usagePercent float64, thresholdPercent, minPartitions int) int {
 +	if usagePercent >= float64(emergencyUsagePercent(thresholdPercent)) {
 +		return 0
@@ -265,10 +270,10 @@ index 17edc53..8528f71 100644
  func (sm *SpaceManager) dropPartition(ctx context.Context, client *Client, part PartitionInfo) error {
 diff --git a/clickhouse/space_manager_integration_test.go b/clickhouse/space_manager_integration_test.go
 new file mode 100644
-index 0000000..6629f1e
+index 0000000..6396535
 --- /dev/null
 +++ b/clickhouse/space_manager_integration_test.go
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,101 @@
 +//go:build clickhouse_integration
 +
 +package clickhouse
@@ -312,7 +317,7 @@ index 0000000..6629f1e
 +ORDER BY Timestamp`)
 +	integrationExec(t, client, "SYSTEM STOP MERGES otel_logs")
 +	for i := 0; i < 3; i++ {
-+		integrationExec(t, client, "INSERT INTO otel_logs VALUES (now64(9), 'today')")
++		integrationExec(t, client, "INSERT INTO otel_logs VALUES ('2026-01-02 12:00:00', 'newest day')")
 +	}
 +
 +	sm := &SpaceManager{
@@ -323,19 +328,23 @@ index 0000000..6629f1e
 +
 +	parts, err := sm.getPartitionsFromDiskOnServer(ctx, client, "default")
 +	require.NoError(t, err)
-+	require.Len(t, parts, 3, "system.parts must list one row per data part of today's partition")
++	require.Len(t, parts, 3, "system.parts must list one row per data part")
++	for _, p := range parts {
++		require.Equal(t, PartitionInfo{Database: integrationDatabase, Table: "otel_logs", PartitionId: "20260102"}, p,
++			"all three parts must belong to the one daily partition")
++	}
 +
-+	// Over the cleanup threshold, below the emergency ceiling: today's only partition stays.
++	// Over the cleanup threshold, below the emergency ceiling: the only partition stays.
 +	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 75}))
-+	assert.Equal(t, uint64(3), integrationCount(t, client, "toDate(Timestamp) = today()"))
++	assert.Equal(t, uint64(3), integrationCount(t, client, "toDate(Timestamp) = '2026-01-02'"))
 +
 +	// With an older day present, only that day is dropped.
 +	for i := 0; i < 2; i++ {
-+		integrationExec(t, client, "INSERT INTO otel_logs VALUES (now64(9) - INTERVAL 1 DAY, 'yesterday')")
++		integrationExec(t, client, "INSERT INTO otel_logs VALUES ('2026-01-01 12:00:00', 'older day')")
 +	}
 +	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 75}))
-+	assert.Equal(t, uint64(0), integrationCount(t, client, "toDate(Timestamp) < today()"))
-+	assert.Equal(t, uint64(3), integrationCount(t, client, "toDate(Timestamp) = today()"))
++	assert.Equal(t, uint64(0), integrationCount(t, client, "toDate(Timestamp) = '2026-01-01'"))
++	assert.Equal(t, uint64(3), integrationCount(t, client, "toDate(Timestamp) = '2026-01-02'"))
 +
 +	// At the emergency ceiling the last partition is freed as well.
 +	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 90}))
