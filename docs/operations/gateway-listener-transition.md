@@ -5,6 +5,11 @@ section name. Its hostname selects the matching HTTPS listener. Keep that port
 constraint throughout the transition: an unconstrained parent can also attach
 to a plaintext listener.
 
+Production includes an apex HTTPS listener using the existing Gateway
+certificate. The original hostname-less HTTPS listener remains unchanged.
+Local overlays retain their existing listener configuration. Confirm current
+Gateway and route generations before advancing to the next stage.
+
 The customer identity TLS work is tracked in [#5829](https://github.com/devantler-tech/platform/issues/5829).
 Its listener transition has separate, observed deployment stages:
 

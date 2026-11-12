@@ -1,0 +1,20 @@
+# Keep the original HTTPS listener during this separately observed stage. The
+# port-constrained Homepage route follows this more-specific hostname while
+# all other routes retain their existing listeners and certificate references.
+- op: add
+  path: /spec/listeners/-
+  value:
+    name: https-apex
+    hostname: ${domain}
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - name: gateway-tls
+    allowedRoutes:
+      namespaces:
+        from: All
+      kinds:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute

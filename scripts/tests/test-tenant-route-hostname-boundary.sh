@@ -22,7 +22,7 @@ repo_root="$(cd "${script_dir}/../.." && pwd)"
 
 role_file="${repo_root}/k8s/bases/infrastructure/cluster-roles/gateway-tenant-edit.yaml"
 # The prod overlay is what carries every listener: two come from the base
-# Gateway and two more are appended by the hetzner JSON6902 patch, which a
+# Gateway and more are appended by the hetzner JSON6902 patches, which a
 # per-file check would never see.
 overlay="${repo_root}/k8s/providers/hetzner/infrastructure"
 
@@ -82,6 +82,18 @@ unpinned="$(yq eval \
   "${gateway}" | tr '\n' ' ')"
 [ -z "${unpinned// /}" ] ||
   fail "these Gateway listeners do not pin allowedRoutes.kinds to exactly [HTTPRoute]: ${unpinned}— an unpinned HTTPS listener also accepts GRPCRoute, which restrict-tenant-route-hostnames does not match."
+
+# Introduce the apex listener before narrowing the original listener. Homepage
+# already uses a port-only parent, so the more-specific listener can take over
+# its hostname without changing the app layer in the same deployment.
+apex_listeners="$(yq -o=json -I=0 '[.spec.listeners[] | select(.name == "https-apex")]' "${gateway}")"
+jq -e 'length == 1 and .[0].hostname == "${domain}" and .[0].port == 443 and .[0].protocol == "HTTPS" and .[0].allowedRoutes.namespaces.from == "All"' <<<"${apex_listeners}" >/dev/null ||
+  fail 'expected exactly one production apex HTTPS listener on port 443 with the existing route namespace scope'
+original_listeners="$(yq -o=json -I=0 '[.spec.listeners[] | select(.name == "https")]' "${gateway}")"
+jq -e 'length == 1 and (.[0] | has("hostname") | not) and .[0].port == 443 and .[0].protocol == "HTTPS"' <<<"${original_listeners}" >/dev/null ||
+  fail 'keep the original hostname-less HTTPS listener until the separately observed narrowing stage'
+jq -e --argjson original "${original_listeners}" '.[0].tls == $original[0].tls and .[0].tls.mode == "Terminate" and (.[0].tls.certificateRefs | length) == 1' <<<"${apex_listeners}" >/dev/null ||
+  fail 'the apex listener must terminate TLS with the same existing certificate reference as the original HTTPS listener'
 
 # --- Layer 3: what the policy's CLI fixtures cannot show ---------------------
 # A ValidatingPolicy's operations only decide which requests the webhook
