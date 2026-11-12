@@ -34,7 +34,10 @@
 # Rollout: Audit first (the acceptance criteria on #6080). Background evaluation
 # is enabled so the policy reports any existing tenant workload that would be
 # denied; switch validationActions (and tests/policy-failure-actions.json) to
-# Deny once the reports show none.
+# Deny once the reports show none. An empty report only counts while the policy
+# status is ready: reporting needs the reports controller to read every matched
+# resource, including pods/ephemeralcontainers (granted by
+# controllers/kyverno/cluster-role-reports-controller-read-pod-ephemeral-containers.yaml).
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:

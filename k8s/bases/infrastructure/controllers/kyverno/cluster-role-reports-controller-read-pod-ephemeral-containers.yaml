@@ -1,0 +1,31 @@
+# Extra permissions for Kyverno's reports controller.
+#
+# Kyverno aggregates any ClusterRole carrying the
+# rbac.kyverno.io/aggregate-to-reports-controller label into the reports
+# controller's ClusterRole (kyverno:reports-controller). Before a policy with
+# background evaluation may report, Kyverno checks that the reports controller
+# can get, list and watch every resource the policy matches.
+#
+# The restrict-tenant-image-repositories ValidatingPolicy (cluster-policies, the
+# next Flux layer) matches the pods/ephemeralcontainers subresource, so that
+# `kubectl debug` cannot attach another tenant's image. The bundled view role
+# does not cover that subresource, so without this grant the policy stays
+# not-ready for reporting (RBACPermissionsGranted=False) and writes no policy
+# reports at all: an empty report then means "not evaluated", never "compliant".
+# The grant is read-only and ships one layer earlier (infrastructure-controllers)
+# than the policy, so it is aggregated before the policy is admitted.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:reports-controller:read-pod-ephemeral-containers
+  labels:
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods/ephemeralcontainers
+    verbs:
+      - get
+      - list
+      - watch
