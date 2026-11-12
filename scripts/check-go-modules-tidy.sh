@@ -57,9 +57,13 @@ while IFS= read -r -d '' directory && IFS= read -r -d '' module_root; do
   toolchain=local
   if [ "$declared" != "$installed" ] &&
     [ "$(printf '%s\n%s\n' "$installed" "$declared" | sort -V | tail -n 1)" = "$declared" ]; then
-    toolchain="go$declared"
-    printf 'Module %s declares Go %s, newer than the installed %s; checking it with go%s\n' \
-      "$directory" "$declared" "$installed" "$declared"
+    # A two-part directive names that line's first release. Go runs a matching
+    # binary from PATH before it downloads one, so CI runners must not ship one.
+    release="$declared"
+    [[ "$release" =~ ^[0-9]+\.[0-9]+$ ]] && release="$release.0"
+    toolchain="go$release"
+    printf 'Module %s declares Go %s, newer than the installed %s; checking it with %s\n' \
+      "$directory" "$declared" "$installed" "$toolchain"
   fi
   # -diff produces the proposed changes and fails on drift, without writing
   # either file. Ignore ambient workspace/modfile settings.
