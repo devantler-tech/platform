@@ -32,7 +32,6 @@ spec:
   containers:
     - name: app
       image: ghcr.io/devantler-tech/ascoachingogvaner/worker:1.0.0
-  containers:
     - name: extra
       image: registry.k8s.io/external-dns/external-dns:v0.21.0
 ---
