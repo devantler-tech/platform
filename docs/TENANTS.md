@@ -359,6 +359,14 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   The shared platform Gateway intentionally accepts routes from all namespaces, so the
   admission policy is the boundary that prevents a tenant artifact from claiming another
   platform hostname.
+- **A tenant uses only its own first-party images.** In a tenant namespace, every image under
+  `ghcr.io/devantler-tech/` and every Flux OCI source URL there must sit under
+  `ghcr.io/devantler-tech/<namespace>/…`, so name the tenant namespace after its repository.
+  The nodes authenticate every first-party pull, so a per-tenant pull credential cannot keep
+  one tenant from running another tenant's private image; the admission policy
+  [`restrict-tenant-image-repositories.yaml`](../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-image-repositories.yaml)
+  is that boundary. Third-party images are unaffected. It reports in Audit mode first and
+  moves to Deny once no current tenant workload is reported (#6080).
 - **A tenant with no allow-list of its own is denied by default.** Adding the allow-list entry is
   therefore part of onboarding, not an optional hardening step: until a tenant namespace has
   an allow-list naming its approved hostnames, its HTTPRoutes are refused at admission with a

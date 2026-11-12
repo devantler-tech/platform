@@ -30,12 +30,14 @@ name: Prepare Longhorn V2 Migration
             inventory-storage-root,
             inventory-storage-layout,
             inventory-provider-volume-footprint,
+            inventory-v1-runtime,
             inspect-host-memory,
             reboot-host-for-hugepages,
             observe-database,
             repair-v1-reservation,
             reserve-v1-scratch,
             retain-v1-source,
+            retain-provider-source,
           ]
       node:
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
@@ -110,6 +112,9 @@ jobs:
           set -euo pipefail
           [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
           case "${LONGHORN_V2_OPERATION}" in
+            inventory-v1-runtime)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == inventory-v1-runtime ]]
+              ;;
             observe-database)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
               ;;
@@ -139,6 +144,9 @@ jobs:
               ;;
             retain-v1-source)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-longhorn-v1-source:[a-z0-9][-a-z0-9]*/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
+              ;;
+            retain-provider-source)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-hetzner-source:(observability|openbao|kube-system)/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
               ;;
             inventory-storage-root)
               [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-root-${LONGHORN_V2_NODE}" ]]
@@ -181,7 +189,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="${RUNNER_TEMP}/longhorn-v2-kubectl"
-          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "${kubectl_path}"
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "${kubectl_path}"
           printf '%s  %s\n' "${KUBECTL_SHA256}" "${kubectl_path}" | sha256sum --check
           sudo install "${kubectl_path}" /usr/local/bin/kubectl
       - name: Restore production credentials in memory

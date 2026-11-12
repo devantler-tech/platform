@@ -790,12 +790,14 @@ misconfigurations:
   # projects a short-lived token, through an explicit volume, into the one container that
   # authenticates with it: the vault-backup snapshot container logs in to OpenBao through its
   # Kubernetes auth method (the checkov.io/skip1 CKV_K8S_38 annotation on both workloads records
-  # the same reason), and the security-progress collector reads its scan results through the API.
+  # the same reason), the security-progress collector reads its scan results through the API, and
+  # the Agentic Engineer lane's cluster-reader proxy reads the API as its read-only account.
   - id: KSV-0036
     paths:
       - k8s/bases/infrastructure/vault-backup/job.yaml
       - k8s/bases/infrastructure/vault-backup/cron-job.yaml
       - k8s/bases/infrastructure/coroot/components/security-progress/deployment.yaml
+      - k8s/providers/hetzner/apps/agentic-engineer/deployment-cluster-reader.yaml
     statement: >-
       The pods disable token automounting and project a short-lived token only into the container
       that authenticates with it; the check cannot see the pod-level setting.

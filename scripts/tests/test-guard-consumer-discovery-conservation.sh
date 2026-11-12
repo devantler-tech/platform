@@ -1176,13 +1176,22 @@ YAML
   cp "$benchmark_policies/mutating-admission-policy-binding-longhorn-v1-benchmark-runtime.yaml" "$root/k8s/providers/prod/apps/benchmark-binding.yaml"
   printf '  - benchmark-runtime.yaml\n  - benchmark-binding.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'the native benchmark runtime changes only the exact Pod security context' "$root" '2 consumer(s)'
-  for variant in resource-scope patch-path; do
+  for variant in resource-scope patch-path superseded-image unapproved-image; do
     root="$(fixture "native-longhorn-benchmark-$variant")"
     cp "$WORK/reviewed-native-longhorn-benchmark/k8s/providers/prod/apps/benchmark-runtime.yaml" "$root/k8s/providers/prod/apps/benchmark-runtime.yaml"
     policy="$root/k8s/providers/prod/apps/benchmark-runtime.yaml"
     case "$variant" in
       resource-scope) yq -i '.spec.matchConstraints.resourceRules[0].resources += ["*"]' "$policy" ;;
       patch-path) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("securityContext/runAsUser", "image")' "$policy" ;;
+      superseded-image)
+        yq -i '.spec.matchConditions[3].expression |=
+          (sub("591ed0ccebd032c4d9705c356c267e724b30e2a9", "725bb1d09517c84f8b73ff2c0cf175421df351f1") |
+           sub("4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7", "93cfc83d8bab91f9b6fbffe20bf9bdaca28e877d91d7b740cae003bf6853059f"))' "$policy"
+        ;;
+      unapproved-image)
+        yq -i '.spec.matchConditions[3].expression |=
+          sub("4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7", "0000000000000000000000000000000000000000000000000000000000000000")' "$policy"
+        ;;
     esac
     if cmp -s "$WORK/reviewed-native-longhorn-benchmark/k8s/providers/prod/apps/benchmark-runtime.yaml" "$policy"; then
       fail "native benchmark runtime negative control did not change $variant"
@@ -1269,15 +1278,17 @@ YAML
     cp "$REPO_ROOT/k8s/bases/infrastructure/cluster-policies/flux/helm-release-$suffix.yaml" "$policy"
     printf '  - helm-default.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
     expect_pass "the reviewed $suffix default preserves consumer discovery" "$root" '2 consumer(s)'
-    for target in missing-kind source-kind no-label condition-side-effect patch-side-effect values-path failure-policy mutate-existing target-constraints variables extra-field foreign-api foreign-kind; do
+    for target in wildcard-scope source-kind missing-condition no-label condition-side-effect patch-side-effect values-path failure-policy mutate-existing target-constraints variables extra-field foreign-api foreign-kind; do
       root="$(fixture "reviewed-helm-default-$suffix-$target")"
       policy="$root/k8s/providers/prod/apps/helm-default.yaml"
       cp "$WORK/reviewed-helm-default-$suffix/k8s/providers/prod/apps/helm-default.yaml" "$policy"
       case "$target" in
-        missing-kind) yq -i 'del(.spec.matchConditions[0])' "$policy" ;;
-        source-kind) yq -i '.spec.matchConditions[0].expression = "object.kind == '\''OCIRepository'\''"' "$policy" ;;
+        # #6135: the pre-#6135 match on every resource must stay unreviewed.
+        wildcard-scope) yq -i '.spec.matchConstraints.resourceRules[0].apiGroups = ["*"] | .spec.matchConstraints.resourceRules[0].resources = ["*"]' "$policy" ;;
+        source-kind) yq -i '.spec.matchConstraints.resourceRules[0].apiGroups = ["source.toolkit.fluxcd.io"] | .spec.matchConstraints.resourceRules[0].resources = ["ocirepositories"]' "$policy" ;;
+        missing-condition) yq -i 'del(.spec.matchConditions[0])' "$policy" ;;
         no-label) yq -i 'del(.spec.matchConstraints.objectSelector)' "$policy" ;;
-        condition-side-effect) yq -i '.spec.matchConditions[1].expression += " && http.Get(\"https://example.test\") != null"' "$policy" ;;
+        condition-side-effect) yq -i '.spec.matchConditions[0].expression += " && http.Get(\"https://example.test\") != null"' "$policy" ;;
         patch-side-effect) yq -i '.spec.mutations[0].jsonPatch.expression += " + resource.Get(\"v1\", \"configmaps\", \"default\", \"x\")"' "$policy" ;;
         values-path) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("/spec/"; "/spec/values/")' "$policy" ;;
         failure-policy) yq -i '.spec.failurePolicy = "Ignore"' "$policy" ;;

@@ -1,0 +1,29 @@
+---
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: longhorn
+      namespace: longhorn-system
+    patch: |-
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: longhorn
+        namespace: longhorn-system
+      spec:
+        values:
+          image:
+            longhorn:
+              instanceManager:
+                registry: ghcr.io
+                repository: devantler-tech/platform-longhorn-instance-manager
+                tag: v1.13.0-retirement.1-591ed0ccebd032c4d9705c356c267e724b30e2a9-1@sha256:4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7
+          longhornManager:
+            updateStrategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxUnavailable: 1

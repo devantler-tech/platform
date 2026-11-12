@@ -7,6 +7,7 @@ name: Publish Longhorn V1 Retirement Image
     paths:
       - .github/workflows/publish-longhorn-v1-retirement.yaml
       - .github/scripts/setup-supply-chain-tools.sh
+      - .github/scripts/release-asset-download.sh
       - k8s/providers/hetzner/infrastructure/controllers/longhorn/InstanceManagerRetirement.Dockerfile
       - k8s/providers/hetzner/infrastructure/controllers/longhorn/instance-manager-v1.13.0-retirement.patch
   push:
@@ -14,6 +15,7 @@ name: Publish Longhorn V1 Retirement Image
     paths:
       - .github/workflows/publish-longhorn-v1-retirement.yaml
       - .github/scripts/setup-supply-chain-tools.sh
+      - .github/scripts/release-asset-download.sh
       - k8s/providers/hetzner/infrastructure/controllers/longhorn/InstanceManagerRetirement.Dockerfile
       - k8s/providers/hetzner/infrastructure/controllers/longhorn/instance-manager-v1.13.0-retirement.patch
 
@@ -70,7 +72,7 @@ jobs:
       - name: Set up the reviewed Go compiler
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.26.9
+          go-version: 1.26.11
           cache: false
 
       - name: Build the pinned native dependency
@@ -188,7 +190,7 @@ jobs:
         run: syft "docker:${IMAGE}:${IMAGE_TAG}" --output "cyclonedx-json=${RUNNER_TEMP}/longhorn-sbom.json"
 
       - name: Log in to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

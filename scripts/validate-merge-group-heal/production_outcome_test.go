@@ -73,6 +73,8 @@ func TestProductionOutcomeMutations(t *testing.T) {
 	jobAnchor := "    # `true` only when the queue preflight refused"
 	stepsAnchor := "stopped_before_production }}\n    steps:\n      - name: 📑 Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n"
 	setupAnchor := stepsAnchor + "          persist-credentials: false\n          fetch-depth: 0\n\n      - name: ⚙️ Setup Go\n        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0\n        with:\n"
+	receiptLine := "          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}\n"
+	checkLine := "        run: go run ./scripts/verify-merge-group-queued check\n"
 	for _, tc := range []struct{ name, from, to string }{
 		{"output from another step", "${{ steps.production-outcome.outputs.stopped_before_production }}", "${{ steps.queue-preflight.outputs.stopped_before_production }}"},
 		{"extra output", "      stopped_before_production: ${{ steps.production-outcome.outputs.stopped_before_production }}", "      stopped_before_production: ${{ steps.production-outcome.outputs.stopped_before_production }}\n      other: 'true'"},
@@ -89,8 +91,8 @@ func TestProductionOutcomeMutations(t *testing.T) {
 		{"preflight is conditional", "        id: queue-preflight\n", "        id: queue-preflight\n        if: success()\n"},
 		{"preflight is suppressed", "        id: queue-preflight\n", "        id: queue-preflight\n        continue-on-error: true\n"},
 		{"preflight changes shell", "        run: go run ./scripts/verify-merge-group-queued check\n", "        shell: sh\n        run: go run ./scripts/verify-merge-group-queued check\n"},
-		{"preflight gains a variable", "          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}\n        run: go run", "          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}\n          GOFLAGS: -toolexec=./deploy\n        run: go run"},
-		{"preflight reads another receipt", "          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}\n        run: go run", "          QUEUE_RECEIPT: forged\n        run: go run"},
+		{"preflight gains a variable", receiptLine + checkLine, receiptLine + "          GOFLAGS: -toolexec=./deploy\n" + checkLine},
+		{"preflight reads another receipt", receiptLine + checkLine, "          QUEUE_RECEIPT: forged\n" + checkLine},
 		{"preflight runs elsewhere", "        run: go run ./scripts/verify-merge-group-queued check\n", "        working-directory: other\n        run: go run ./scripts/verify-merge-group-queued check\n"},
 		{"workflow environment", "\njobs:\n", "\nenv:\n  BASH_ENV: ./deploy.sh\njobs:\n"},
 		{"workflow defaults", "\njobs:\n", "\ndefaults:\n  run:\n    working-directory: other\njobs:\n"},

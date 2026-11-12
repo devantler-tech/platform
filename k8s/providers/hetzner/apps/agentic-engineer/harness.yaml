@@ -4,6 +4,11 @@
 # GH_TOKEN is a placeholder, not a credential: gh sends it in the
 # Authorization header and Substrate's gateway replaces it with a GitHub App
 # installation token (egress-policy-github.yaml).
+#
+# KUBECONFIG names the image's kubeconfig, which points kubectl at the lane's
+# read-only cluster view (deployment-cluster-reader.yaml). The image sets it
+# too; it is set here as well because the Harness, not the image, decides the
+# sandbox's environment.
 apiVersion: api.kagent.dev/v1alpha3
 kind: Harness
 metadata:
@@ -11,6 +16,12 @@ metadata:
   namespace: agentic-engineer
 spec:
   claude: {}
+  # The lane's own harness image, pinned by digest as kagent requires: kagent's
+  # Claude harness plus the engineer's tools and the whole agentic-engineering
+  # plugin (scripts/kagent-claude-harness, devantler-tech/monorepo#4867, #4868).
+  # Main publishes and signs it; move this pin after each publish.
+  workload:
+    image: ghcr.io/devantler-tech/platform-kagent-claude-harness@sha256:d4a3d5a541cb6a87402ad5e844e9a402ef3117c2ad193c9c6117873f3bb6a207
   substrate:
     workerPoolRef:
       name: agentic-engineer
@@ -19,3 +30,5 @@ spec:
   env:
     - name: GH_TOKEN
       value: kagent-credential-injected
+    - name: KUBECONFIG
+      value: /opt/kagent-lane/kubeconfig

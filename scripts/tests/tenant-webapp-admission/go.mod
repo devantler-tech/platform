@@ -1,6 +1,6 @@
 module github.com/devantler-tech/platform/scripts/tests/tenant-webapp-admission
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/kyverno/api v0.0.1-alpha.5

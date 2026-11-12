@@ -1,6 +1,6 @@
 module github.com/devantler-tech/platform/scripts/tests/webapp-compiler
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/go-logr/logr v1.4.4

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -33,7 +34,7 @@ func observeAccountCensus(ctx context.Context, client *http.Client, token string
 	read := func() ([]node, error) {
 		raw, err := readNodes(ctx)
 		if err != nil {
-			return nil, errCensusHeld
+			return nil, fmt.Errorf("%w: native node inventory is unavailable", errCensusHeld)
 		}
 		return decodeNodes(raw)
 	}
@@ -57,8 +58,17 @@ func observeAccountCensus(ctx context.Context, client *http.Client, token string
 	slices.SortFunc(first, byID)
 	slices.SortFunc(second, byID)
 	after, err := read()
-	if err != nil || !reflect.DeepEqual(first, second) || !reflect.DeepEqual(before, after) || active(ctx) != nil {
-		return accountCensus{}, errCensusHeld
+	if err != nil {
+		return accountCensus{}, fmt.Errorf("%w: final native node inventory is unavailable or incomplete", errCensusHeld)
+	}
+	if !reflect.DeepEqual(first, second) {
+		return accountCensus{}, fmt.Errorf("%w: provider identity or state changed during observation", errCensusHeld)
+	}
+	if !reflect.DeepEqual(before, after) {
+		return accountCensus{}, fmt.Errorf("%w: node identity or availability changed during observation", errCensusHeld)
+	}
+	if active(ctx) != nil {
+		return accountCensus{}, fmt.Errorf("%w: observation deadline or cancellation reached", errCensusHeld)
 	}
 	return result, nil
 }
@@ -68,7 +78,7 @@ func observeAccountCensus(ctx context.Context, client *http.Client, token string
 func classifyAccountCensus(servers []server, nodes []node) (accountCensus, error) {
 	extra := len(servers) - len(nodes)
 	if len(servers) > maxAccountServers || extra < 0 || extra > 1 {
-		return accountCensus{}, errCensusHeld
+		return accountCensus{}, fmt.Errorf("%w: account and node counts exceed the reconciliation bound", errCensusHeld)
 	}
 	nodeIDs := make(map[string]bool, len(nodes))
 	for _, node := range nodes {
@@ -79,7 +89,7 @@ func classifyAccountCensus(servers []server, nodes []node) (accountCensus, error
 	var unmatched server
 	for _, server := range servers {
 		if server.ID <= 0 || server.Name == "" || server.Status == "" || ids[server.ID] || names[server.Name] {
-			return accountCensus{}, errCensusHeld
+			return accountCensus{}, fmt.Errorf("%w: provider identities are incomplete or duplicated", errCensusHeld)
 		}
 		ids[server.ID], names[server.Name] = true, true
 		if nodeIDs["hcloud://"+strconv.FormatInt(server.ID, 10)] {
@@ -88,8 +98,12 @@ func classifyAccountCensus(servers []server, nodes []node) (accountCensus, error
 			unmatched = server
 		}
 	}
-	if len(joined) != len(nodes) || qualify(joined, nodes, false) != nil {
-		return accountCensus{}, errCensusHeld
+	if len(joined) != len(nodes) {
+		return accountCensus{}, fmt.Errorf("%w: provider-to-node join is incomplete", errCensusHeld)
+	}
+	if err := qualify(joined, nodes, false); err != nil {
+		// qualify reports only fixed gate descriptions and bounded counts.
+		return accountCensus{}, fmt.Errorf("%w: %w", errCensusHeld, err)
 	}
 	result := accountCensus{Servers: len(servers), Nodes: len(nodes), Extra: extra, Classification: "none", State: "none"}
 	if extra == 1 {

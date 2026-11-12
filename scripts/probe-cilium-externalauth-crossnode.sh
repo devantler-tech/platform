@@ -655,6 +655,35 @@ ready_routes() {
     | length' <<<"${json}" 2>/dev/null || printf '0'
 }
 
+# Prints, for each named route that is not ready, which condition held it back — its condition type,
+# status and reason, e.g. `ResolvedRefs=False (RefNotPermitted)` — so an INCONCLUSIVE run says why.
+# Reasons are Gateway API's fixed CamelCase words; anything outside [A-Za-z] is dropped so a message
+# field, address or name can never reach the public log. The route is named by its role, not its name.
+route_blockers() {
+  local json
+  json="$(kc -n "${probe_namespace}" get httproutes -l "${probe_label}=${run_id}" -o json)" || {
+    printf 'route status unreadable'
+    return 0
+  }
+  jq -r --arg authz "${authz_route}" --arg control "${control_route}" --arg names "$*" '
+    def clean: tostring | gsub("[^A-Za-z]"; "");
+    ($names | split(" ")) as $want
+    | [ $want[] as $n
+        | ([.items[]? | select(.metadata.name == $n)] | first) as $r
+        | (if $n == $authz then "ExternalAuth route" elif $n == $control then "control route" else "route" end) as $role
+        | if $r == null then "\($role): not found"
+          else ([$r.status.parents[]?.conditions[]?
+                  | select((.type == "Accepted" or .type == "ResolvedRefs") and .status != "True")
+                  | "\(.type | clean)=\(.status | clean) (\(.reason // "" | clean))"] | unique) as $bad
+            | if ($bad | length) > 0 then "\($role): \($bad | join(", "))"
+              elif ([$r.status.parents[]?.conditions[]? | select(.type == "Accepted" or .type == "ResolvedRefs")] | length) == 0
+              then "\($role): no Accepted or ResolvedRefs condition yet"
+              else empty end
+          end ]
+    | if length > 0 then join("; ") else "no blocking condition seen" end' <<<"${json}" 2>/dev/null ||
+    printf 'route status unreadable'
+}
+
 # Waits, under the shared wall-clock deadline, until every named route is ready. It always checks at
 # least once before honouring the deadline: the two phases share one deadline, so a slow first phase
 # must not leave the second phase refusing without ever looking.
@@ -680,12 +709,12 @@ if ! kc apply -f - <<<"${manifest}" >/dev/null; then
   inconclusive 'could not create the ExternalAuth probe route, grant and policy'
 fi
 wait_routes "${authz_route}" ||
-  inconclusive 'the ExternalAuth probe route was not accepted with resolved references in time'
+  inconclusive "the ExternalAuth probe route was not accepted with resolved references in time ($(route_blockers "${authz_route}"))"
 if ! kc apply -f - <<<"$(route_manifest "${control_route}" "${control_host}" '')" >/dev/null; then
   inconclusive 'could not create the control probe route'
 fi
 wait_routes "${authz_route}" "${control_route}" ||
-  inconclusive 'the control probe route was not accepted with resolved references in time'
+  inconclusive "the control probe route was not accepted with resolved references in time ($(route_blockers "${authz_route}" "${control_route}"))"
 
 pods_manifest="$(
   pod_manifest "${cross_pod}" "${cross_host}" cross

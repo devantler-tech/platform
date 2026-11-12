@@ -1,6 +1,6 @@
 module github.com/devantler-tech/platform/testfixtures/longhorn-benchmark-delete-guard
 
-go 1.26.10
+go 1.26.11
 
 require (
 	k8s.io/api v0.37.2

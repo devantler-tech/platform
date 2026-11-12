@@ -37,12 +37,16 @@ func main() {
 		authorization = authorizeV1ScratchHeadroom(os.Getenv, target)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
+	case retainProviderSourceOperation:
+		authorization = authorizeProviderSourceRetention(os.Getenv)
 	case "inventory-storage-root":
 		authorization = authorizeStorageRoot(os.Getenv, target)
 	case "inventory-storage-layout":
 		authorization = authorizeStorageLayout(os.Getenv, target)
 	case "inventory-provider-volume-footprint":
 		authorization = authorizeProviderVolumeFootprint(os.Getenv)
+	case runtimeInventoryOperation:
+		authorization = authorizeRuntimeInventory(os.Getenv)
 	default:
 		authorization = authorizeRefresh(os.Getenv)
 	}
@@ -52,6 +56,15 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == runtimeInventoryOperation {
+		receipt, err := observeRuntimeInventory(ctx, client{run: runtimeInventoryReadCommand, context: "admin@prod"}, os.Getenv("GITHUB_SHA"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("LONGHORN_RUNTIME_INVENTORY=OBSERVED kubernetesNodes=%d storageNodes=%d pods=%d instanceManagers=%d v1Volumes=%d v2Volumes=%d default=%s epochSHA256=%s adoption=UNVERIFIED headroom=UNVERIFIED writes=0\n", receipt.KubernetesNodes, receipt.Nodes, receipt.Pods, receipt.InstanceManagers, receipt.V1Volumes, receipt.V2Volumes, receipt.Default, receipt.EpochSHA)
+		return
+	}
 	if operation == "inventory-provider-volume-footprint" {
 		receipt, err := observeProviderVolumeFootprint(ctx, client{run: providerFootprintReadCommand, context: "admin@prod"}, os.Getenv("GITHUB_SHA"))
 		if err != nil {
@@ -88,8 +101,12 @@ func main() {
 		}
 		return
 	}
-	if operation == retainV1SourceOperation {
-		if err := retainV1Source(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("LONGHORN_V2_CONFIRM")); err != nil {
+	if operation == retainV1SourceOperation || operation == retainProviderSourceOperation {
+		retain := retainV1Source
+		if operation == retainProviderSourceOperation {
+			retain = retainProviderSource
+		}
+		if err := retain(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("LONGHORN_V2_CONFIRM")); err != nil {
 			fmt.Fprintln(os.Stderr, "Source retention held:", err)
 			os.Exit(1)
 		}

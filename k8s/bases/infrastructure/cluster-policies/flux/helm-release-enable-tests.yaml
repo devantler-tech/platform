@@ -18,18 +18,17 @@ spec:
     objectSelector:
       matchLabels:
         helm.toolkit.fluxcd.io/helm-test: "enabled"
+    # Name Flux's HelmRelease resource itself, not every resource narrowed by
+    # a kind condition: Kyverno marks a policy ready for reporting only when
+    # its reports controller can read everything the match names (#6135).
     resourceRules:
-      # Preserve the legacy kind-only match across API groups and plurals.
-      # The CEL kind condition prevents matching other resource kinds.
-      - apiGroups: ["*"]
+      - apiGroups: ["helm.toolkit.fluxcd.io"]
         apiVersions: ["*"]
         operations: ["CREATE", "UPDATE"]
-        resources: ["*"]
+        resources: ["helmreleases"]
   # The admission selector can match the previous object during UPDATE.
   # Only the incoming object's opt-in permits changing its test settings.
   matchConditions:
-    - name: helm-release-kind
-      expression: object.kind == 'HelmRelease'
     - name: tests-enabled-on-incoming-object
       expression: >-
         has(object.metadata.labels) &&
