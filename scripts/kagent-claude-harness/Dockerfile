@@ -38,7 +38,10 @@ USER 0
 # hadolint ignore=DL3018
 RUN apk add --no-cache coreutils curl github-cli go jq yq-go && \
     gh --version && jq --version && yq --version && curl --version && go version && \
-    timeout --version | grep -q 'GNU coreutils' && date --version | grep -q 'GNU coreutils'
+    case "$(timeout --version) $(date --version)" in \
+      *'GNU coreutils'*' '*'GNU coreutils'*) ;; \
+      *) echo 'BusyBox still shadows GNU timeout or date' >&2; exit 1 ;; \
+    esac
 
 COPY --from=kubectl /usr/bin/kubectl /usr/local/bin/kubectl
 # A COPY --chmod gives the folder it creates the file's mode too, so the folder comes first.

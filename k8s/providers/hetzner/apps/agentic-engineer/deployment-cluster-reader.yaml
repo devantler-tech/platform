@@ -16,6 +16,8 @@ metadata:
   labels:
     app.kubernetes.io/name: cluster-reader
     platform.devantler.tech/replica-floor: exempt
+  annotations:
+    checkov.io/skip1: "CKV_K8S_38=the proxy reads the API as its service account, whose token is its only identity; the account may only get and list what the live-health check reads"
 spec:
   replicas: 1
   selector:
@@ -27,6 +29,7 @@ spec:
         app.kubernetes.io/name: cluster-reader
     spec:
       serviceAccountName: cluster-reader
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
