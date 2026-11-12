@@ -21,8 +21,8 @@ initiates expansion. The dispatch defaults to read-only `preflight`.
 Capacity cannot subsequently shrink. The workflow reads the project owner's
 current EUR gross volume price from Hetzner's pricing API immediately before
 each patch. It conservatively budgets the entire 120 GiB target as 132 provider GB
-against a ceiling of €10/month, proposed in devantler-tech/monorepo#4976 and
-awaiting the maintainer. The per-GB bound is unchanged from the earlier
+against a ceiling of €10/month, which the maintainer approved in
+devantler-tech/monorepo#4976. The per-GB bound is unchanged from the earlier
 €5/month for 66 GB. An unknown currency,
 price, response or price above the ceiling stops the operation. The token stays
 in memory and neither pricing payloads nor audit data are printed.
