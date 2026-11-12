@@ -27,6 +27,17 @@ func TestOwnershipFailureIdentifiesTheAssertionWithoutPublishingItsValue(t *test
 				}
 				err := qualify(servers, nodes, true)
 				want := "static provider ownership does not match the production roster: field=" + tc.code
+				role, observed, indexing := "controlplane", "canonical-controlplane", "matches-name"
+				if index == 3 {
+					role, observed = "worker", "canonical-worker"
+				}
+				if tc.code == "role" {
+					observed = "unrecognized"
+				}
+				if tc.code == "index" {
+					indexing = "unrecognized"
+				}
+				want += " role_expected=" + role + " role_observed=" + observed + " index=" + indexing
 				if err == nil || err.Error() != want {
 					t.Fatalf("failed ownership assertion was not identified: got=%v want=%s", err, want)
 				}
