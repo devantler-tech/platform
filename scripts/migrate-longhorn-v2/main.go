@@ -45,6 +45,8 @@ func main() {
 		authorization = authorizeStorageLayout(os.Getenv, target)
 	case "inventory-provider-volume-footprint":
 		authorization = authorizeProviderVolumeFootprint(os.Getenv)
+	case runtimeInventoryOperation:
+		authorization = authorizeRuntimeInventory(os.Getenv)
 	default:
 		authorization = authorizeRefresh(os.Getenv)
 	}
@@ -54,6 +56,15 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == runtimeInventoryOperation {
+		receipt, err := observeRuntimeInventory(ctx, client{run: runtimeInventoryReadCommand, context: "admin@prod"}, os.Getenv("GITHUB_SHA"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("LONGHORN_RUNTIME_INVENTORY=OBSERVED kubernetesNodes=%d storageNodes=%d pods=%d instanceManagers=%d v1Volumes=%d v2Volumes=%d default=%s epochSHA256=%s adoption=UNVERIFIED headroom=UNVERIFIED writes=0\n", receipt.KubernetesNodes, receipt.Nodes, receipt.Pods, receipt.InstanceManagers, receipt.V1Volumes, receipt.V2Volumes, receipt.Default, receipt.EpochSHA)
+		return
+	}
 	if operation == "inventory-provider-volume-footprint" {
 		receipt, err := observeProviderVolumeFootprint(ctx, client{run: providerFootprintReadCommand, context: "admin@prod"}, os.Getenv("GITHUB_SHA"))
 		if err != nil {
