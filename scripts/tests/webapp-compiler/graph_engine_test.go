@@ -27,9 +27,15 @@ func resolveChildren(t *testing.T, engine *gecompiler.Compiler, definition *kroa
 		t.Fatalf("build the controller runtime: %v", err)
 	}
 	objects := map[string]*unstructured.Unstructured{}
+	identities := map[string]string{}
 	var ignored []string
 	sawSchema := false
 	for _, node := range resolved.Nodes() {
+		// A collection node publishes a list, not one object, so this helper's
+		// single-object scope would misrepresent it.
+		if node.IsCollection() {
+			t.Fatalf("collection node %s is not modelled by this helper", node.ID())
+		}
 		ignore, err := node.IsIgnored()
 		if err != nil {
 			t.Fatalf("evaluate inclusion %s: %v", node.ID(), err)
@@ -49,7 +55,14 @@ func resolveChildren(t *testing.T, engine *gecompiler.Compiler, definition *kroa
 			}
 			sawSchema = true
 		case gecompiler.NodeKindTemplate:
-			objects[node.ID()] = desired[0]
+			// The executor refuses two nodes that render the same object.
+			child := desired[0]
+			identity := child.GetAPIVersion() + "/" + child.GetKind() + "/" + child.GetNamespace() + "/" + child.GetName()
+			if other, taken := identities[identity]; taken {
+				t.Fatalf("nodes %s and %s render the same object %s", other, node.ID(), identity)
+			}
+			identities[identity] = node.ID()
+			objects[node.ID()] = child
 		default:
 			t.Fatalf("unexpected %s node %s in a graph of plain children", node.Kind(), node.ID())
 		}
