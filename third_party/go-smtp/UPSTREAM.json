@@ -11,6 +11,8 @@
   },
   "localChanges": [
     "conn.go: reset both envelope states before MAIL parameter validation",
+    "conn.go: require exact BDAT chunk lengths and propagate incomplete transport reads to the backend",
+    "server_test.go: require unexpected EOF for a connection closed inside a declared BDAT chunk",
     "go.mod: select the maintained caller Go toolchain",
     "Go sources: document exported declarations, rename SMTPError to Error and satisfy repository lint without exclusions",
     "client_test.go: generate a fresh TLS fixture key and certificate per test process"

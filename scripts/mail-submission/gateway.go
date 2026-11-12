@@ -232,6 +232,15 @@ func (s *session) validMessage(raw []byte) bool {
 	if end < 0 || end > maxHeaderBytes {
 		return false
 	}
+	// Validation and trace removal must agree on field boundaries. net/mail
+	// accepts bare LF, but SMTP headers and the byte-preserving stripper use CRLF.
+	// Admit only that framing; body bytes are not header delimiters.
+	for index, char := range raw[:end] {
+		if char == '\r' && (index+1 == end || raw[index+1] != '\n') ||
+			char == '\n' && (index == 0 || raw[index-1] != '\r') {
+			return false
+		}
+	}
 	message, err := mail.ReadMessage(bytes.NewReader(raw))
 	if err != nil || !oneAddress(message.Header["From"], s.from, s.gateway.cfg.Settings.SenderName, true) {
 		return false

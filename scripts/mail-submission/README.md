@@ -60,12 +60,16 @@ that trace field before forwarding, so the delivery service owns the final
 Return-Path. All other accepted header and body bytes are preserved.
 Obsolete whitespace in header field names is refused so another parser cannot
 reinterpret a field as a sender or trace header.
+Header lines require CRLF boundaries so identity validation and trace removal
+interpret the same fields. Every BDAT chunk must supply its complete declared
+length; a truncated transport read fails the message before upstream submission.
 
 ## Validation and deployment boundary
 
 Run `go test -race ./scripts/mail-submission` and `go vet ./scripts/mail-submission`.
 Run `go -C third_party/go-smtp test -race -timeout 2m ./...` for the pinned
 protocol library, whose parser resets both envelopes before MAIL validation.
+The same protocol boundary rejects incomplete BDAT chunks.
 Its upstream identity and unchanged license are recorded with that source.
 The vulnerability workflow scans both the patched source and the original
 version: local replacements otherwise lose the upstream version in the scanner's

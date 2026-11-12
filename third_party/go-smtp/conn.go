@@ -1089,8 +1089,14 @@ func (c *Conn) handleBdat(arg string) {
 	}()
 
 	chunk := io.LimitReader(c.text.R, int64(size))
-	_, err = io.Copy(c.bdatPipe, chunk)
+	copied, err := io.Copy(c.bdatPipe, chunk)
+	if err == nil && copied != int64(size) {
+		err = io.ErrUnexpectedEOF
+	}
 	if err != nil {
+		// A short or failed transport read is not a complete chunk. Propagate
+		// that failure before the backend can accept the partially read message.
+		c.bdatPipe.CloseWithError(err)
 		// Backend might return an error early using CloseWithError without consuming
 		// the whole chunk.
 		io.Copy(ioutil.Discard, chunk)

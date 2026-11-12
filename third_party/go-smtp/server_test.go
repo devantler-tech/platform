@@ -1172,7 +1172,7 @@ func TestServer_Chunking_ClosedInTheMiddle(t *testing.T) {
 	// Bye!
 	c.Close()
 
-	if err := <-be.dataErrors; err != smtp.ErrDataReset {
+	if err := <-be.dataErrors; err != io.ErrUnexpectedEOF {
 		t.Fatal("Backend received a different error:", err)
 	}
 }
