@@ -2,11 +2,18 @@
 # what the Agentic Engineer's runs use (devantler-tech/monorepo#4867, #4868):
 #
 # - gh for the GitHub API, jq and yq for JSON and YAML, and curl.
+# - GNU coreutils in place of BusyBox's, and Go: the engineer's pre-flight
+#   scripts use GNU `timeout` and `date` options and build Go guards.
+# - kubectl and a kubeconfig for the lane's read-only cluster view (kubeconfig).
 # - The whole agentic-engineering plugin at a pinned agent-plugins commit,
 #   loaded by a `claude` wrapper until kagent loads it whole itself (claude).
 #
 # The harness binary, Claude Code and its pinned version are the base image's,
 # unchanged.
+
+# kubectl, from the image the platform's own jobs and the cluster-reader proxy
+# run, pinned by digest.
+FROM docker.io/alpine/k8s:1.37.2@sha256:dcb7185e112a453aa72f426754849a97357727ef8f40168fb208c8cf59952042 AS kubectl
 
 # The plugin, fetched by its exact commit. Renovate moves the commit to the
 # head of agent-plugins' main (.github/renovate.json), which only reviewed pull
@@ -29,8 +36,20 @@ USER 0
 # published image is pinned by digest wherever it runs, so versions are not
 # pinned here.
 # hadolint ignore=DL3018
-RUN apk add --no-cache curl github-cli jq yq-go && \
-    gh --version && jq --version && yq --version && curl --version
+RUN apk add --no-cache coreutils curl github-cli go jq yq-go && \
+    gh --version && jq --version && yq --version && curl --version && go version && \
+    case "$(timeout --version) $(date --version)" in \
+      *'GNU coreutils'*' '*'GNU coreutils'*) ;; \
+      *) echo 'BusyBox still shadows GNU timeout or date' >&2; exit 1 ;; \
+    esac
+
+COPY --from=kubectl /usr/bin/kubectl /usr/local/bin/kubectl
+# A COPY --chmod gives the folder it creates the file's mode too, so the folder comes first.
+RUN install -d -m 0755 /opt/kagent-lane
+COPY --chmod=0644 kubeconfig /opt/kagent-lane/kubeconfig
+ENV KUBECONFIG=/opt/kagent-lane/kubeconfig
+RUN kubectl version --client && \
+    test "$(kubectl config view -o jsonpath='{.contexts[0].context.cluster}')" = prod
 
 COPY --from=plugin /tmp/src/plugins/agentic-engineering /opt/agent-plugins/agentic-engineering
 # The wrapper takes Claude Code's place on PATH, where the harness looks for it.

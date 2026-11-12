@@ -45,10 +45,15 @@ grep -Fq 'COPY --chmod=0755 claude /usr/local/bin/claude' "${dockerfile}" ||
   fail 'the Dockerfile does not put the wrapper where the harness finds Claude Code'
 grep -Fq "COPY --from=plugin /tmp/src/plugins/agentic-engineering ${plugin}" "${dockerfile}" ||
   fail "the Dockerfile does not copy the plugin to ${plugin}"
-# One base image for both stages, pinned by digest, and the plugin pinned by a full commit.
-bases="$(sed -n 's/^FROM \([^ ]*\).*/\1/p' "${dockerfile}" | sort -u)"
-[[ "$(wc -l <<<"${bases}")" -eq 1 && "${bases}" =~ @sha256:[0-9a-f]{64}$ ]] ||
-  fail "the stages do not share one digest-pinned base: ${bases}"
+# Every stage pinned by digest, the plugin stage and the image on one kagent harness base, and the
+# plugin pinned by a full commit.
+froms="$(sed -n 's/^FROM \([^ ]*\).*/\1/p' "${dockerfile}")"
+while IFS= read -r from; do
+  [[ "${from}" =~ @sha256:[0-9a-f]{64}$ ]] || fail "a stage is not pinned by digest: ${from}"
+done <<<"${froms}"
+bases="$(grep -F 'ghcr.io/kagent-dev/kagent/claude-harness:' <<<"${froms}" | sort -u || true)"
+[[ "$(grep -c . <<<"${bases}")" -eq 1 ]] || fail "the plugin stage and the image do not share one base: ${bases}"
+[[ "$(tail -n 1 <<<"${froms}")" == "${bases}" ]] || fail 'the image is not built on the kagent Claude harness'
 grep -Eq '^ARG AGENT_PLUGINS_COMMIT=[0-9a-f]{40}$' "${dockerfile}" ||
   fail 'the plugin is not pinned by a full commit'
 # shellcheck disable=SC2016 # a literal line of the Dockerfile, not an expansion

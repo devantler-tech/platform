@@ -2,7 +2,8 @@
 name: Publish kagent Claude Harness
 
 # The Agentic Engineer's kagent lane runs on kagent's Claude Code harness
-# with gh, jq, yq and curl added (scripts/kagent-claude-harness/Dockerfile,
+# with gh, jq, yq, curl, GNU coreutils, Go and kubectl added
+# (scripts/kagent-claude-harness/Dockerfile,
 # devantler-tech/monorepo#4867). Pull requests build it; main publishes and
 # signs one immutable image, which the lane's Harness pins by digest.
 "on":
@@ -59,7 +60,14 @@ jobs:
             set -eu
             test "$(command -v claude)" = /usr/local/bin/claude
             claude --version
-            for tool in gh jq yq curl git; do command -v "${tool}"; done
+            for tool in gh jq yq curl git go kubectl; do command -v "${tool}"; done
+            go version
+            timeout --version | grep -q "GNU coreutils"
+            date -u -d "7 days ago" +%s
+            test "${KUBECONFIG}" = /opt/kagent-lane/kubeconfig
+            test "$(kubectl config view -o jsonpath="{.contexts[*].context.cluster}")" = prod
+            test "$(kubectl config view -o jsonpath="{.clusters[0].cluster.server}")" = \
+              http://cluster-reader.agentic-engineer.svc.cluster.local:8001
             plugin=/opt/agent-plugins/agentic-engineering
             test -f "${plugin}/agents/agentic-engineer.agent.md"
             agents=$(find "${plugin}/agents" -name "*.agent.md" | wc -l)

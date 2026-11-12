@@ -184,6 +184,8 @@ policies.kyverno.io/v1|MutatingPolicy||helm-release-install-crds e4eff687fb6ed05
 
 policies.kyverno.io/v1|MutatingPolicy||helm-release-remediation-retries 8d2bfea94dd9cb569f2a1de97d401052630a2e9575c62d410bb2e19ef0f134be
 
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||agentic-engineer-cluster-reader fab82da6caa88262bd6e43d64e258f899afc8783c180725b8d7e83992c7d5f6d
+
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||ascoachingogvaner-external-dns 2aac6fc040557b155131fdc2ad9261f6ad2b337835915d7dcb50a3704e032478
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||cnpg-degraded-alert 51487655b693fe18c5d7196d0042e4bc8345a15b0ea3afe03216e69d37905940
@@ -221,6 +223,8 @@ rbac.authorization.k8s.io/v1|ClusterRoleBinding||stranded-autoscaler-node-alerte
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||stranded-volume-attach-alert bc524f2fa40174671bba225581c6eb1104007fb5189fbc3f1fe4d2f1990c267a
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||vpa-updater-event-writer 8ef30122cf0855be6427ad4fda8272c0a7509678f2e538e193be4c25a7197a7f
+
+rbac.authorization.k8s.io/v1|ClusterRole||agentic-engineer-cluster-reader aba58df6e27ebf86f4eb4a46a68edc083d62b4c740cc2677e8dbddf9e761641d
 
 rbac.authorization.k8s.io/v1|ClusterRole||cert-manager-tenant-edit 7b6c10de4ae32f1d5e081040eae7d6834987c306ee68df85190e518c8e14f2da
 
@@ -292,6 +296,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|khoist-document
 
 rbac.authorization.k8s.io/v1|RoleBinding|default|events:kubelet-serving-cert-approver 420a3e2f5bb524138bf1a7ee8f953d738a70d03c6f5567541ec03fd093a042f4
 
+rbac.authorization.k8s.io/v1|RoleBinding|flux-system|agentic-engineer-cluster-reader 3dda1a78c8ab2d3ea62c27155cccb62303bcb0a0585ebaf1ea76ef31f6bd98b6
+
 rbac.authorization.k8s.io/v1|RoleBinding|github-config|github-config-managed-resources 149f5d805afc668821f5d25d1d5e9b05f5ef79d3e69929a8999faddb1078d417
 
 rbac.authorization.k8s.io/v1|RoleBinding|kube-system|ascoachingogvaner-external-dns 2eff515ebdab80cc259b97acf6d67ef92567d34e440455a70db54c5d34fe943d
@@ -343,6 +349,8 @@ rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources bcbd97adfa055719ff19
 rbac.authorization.k8s.io/v1|Role|data-product-controller|data-product-readiness-observer 10df039485be13b0344199a50eacc4fbd942f2bb9b831a84b11c024918a3422a
 
 rbac.authorization.k8s.io/v1|Role|data-product-controller|khoist-documentation 35e63ab8f23f3de55976023d5c6144ac5a3cd7ed5c0947f1c451d74cf4167bef
+
+rbac.authorization.k8s.io/v1|Role|flux-system|agentic-engineer-cluster-reader 35be0ebfc937ebd838330aeeabdb0249c1c886685c3d4f3469466f8d8b8726b8
 
 rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources f25e2b6e9407f0c330c23b428d3f467745fcdcdc1fa23153b4c8fcd7a286d8be
 

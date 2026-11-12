@@ -628,6 +628,7 @@ jobs:
               - 'scripts/tests/test-agentic-engineer-lane-store.sh'
               - 'scripts/tests/test-agentic-engineer-lane-store-lease.sh'
               - 'scripts/tests/test-agentic-engineer-lane-store-gateway.sh'
+              - 'scripts/tests/test-agentic-engineer-cluster-reader.sh'
               - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
               - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
@@ -2925,6 +2926,16 @@ jobs:
         run: |
           shellcheck scripts/tests/test-agentic-engineer-lane-store-gateway.sh
           bash scripts/tests/test-agentic-engineer-lane-store-gateway.sh
+
+      - name: 🔭 Validate the Agentic Engineer's read-only cluster view
+        if: needs.changes.outputs.k8s == 'true'
+        # Renders the lane: the proxy's account may only get and list what the
+        # live-health check reads, only the egress gateway reaches it, and the
+        # harness kubeconfig names it. Then runs the proxy's own image and proves
+        # it refuses every method but GET and HEAD, other hosts and exec.
+        run: |
+          shellcheck scripts/tests/test-agentic-engineer-cluster-reader.sh
+          bash scripts/tests/test-agentic-engineer-cluster-reader.sh
 
       - name: 🧠 Validate the kagent harness plugin wrapper
         if: needs.changes.outputs.k8s == 'true'
