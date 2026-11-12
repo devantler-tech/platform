@@ -22,7 +22,7 @@ func TestRealKubectlPatchCarriesIdentityPreconditions(t *testing.T) {
 	}
 	for _, conflict := range []bool{false, true} {
 		t.Run(map[bool]string{false: "accepted", true: "conflict"}[conflict], func(t *testing.T) {
-			patch := []map[string]any{{"op": "test", "path": "/metadata/uid", "value": "claim-uid"}, {"op": "test", "path": "/metadata/resourceVersion", "value": "42"}, {"op": "replace", "path": "/spec/resources/requests/storage", "value": "20Gi"}}
+			patch := []map[string]any{{"op": "test", "path": "/metadata/uid", "value": "claim-uid"}, {"op": "test", "path": "/metadata/resourceVersion", "value": "42"}, {"op": "replace", "path": "/spec/resources/requests/storage", "value": "40Gi"}}
 			patches := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -51,7 +51,7 @@ func TestRealKubectlPatchCarriesIdentityPreconditions(t *testing.T) {
 							break
 						}
 					}
-					response = map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "audit-openbao-0", "namespace": "openbao", "uid": "claim-uid", "resourceVersion": "43"}, "spec": map[string]any{"resources": map[string]any{"requests": map[string]any{"storage": "20Gi"}}}}
+					response = map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "audit-openbao-0", "namespace": "openbao", "uid": "claim-uid", "resourceVersion": "43"}, "spec": map[string]any{"resources": map[string]any{"requests": map[string]any{"storage": "40Gi"}}}}
 				default:
 					t.Errorf("unexpected native API path %s", r.URL.Path)
 					w.WriteHeader(404)
@@ -70,7 +70,7 @@ func TestRealKubectlPatchCarriesIdentityPreconditions(t *testing.T) {
 			t.Setenv("KUBECONFIG", config)
 			e := engine{execute: capture}
 			r, err := e.write(context.Background(), patch, "--namespace=openbao", "patch", "persistentvolumeclaim", "audit-openbao-0", "--type=json", "--patch-file=REQUEST", "--output=json")
-			if patches != 1 || (err != nil) != conflict || !conflict && field(r, "spec", "resources", "requests", "storage") != "20Gi" {
+			if patches != 1 || (err != nil) != conflict || !conflict && field(r, "spec", "resources", "requests", "storage") != "40Gi" {
 				t.Fatalf("wrong native outcome patches=%d error=%v", patches, err)
 			}
 		})

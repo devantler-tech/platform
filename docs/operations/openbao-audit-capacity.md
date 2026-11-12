@@ -8,8 +8,9 @@ change its immutable claim template to create headroom.
 ## Approved scope
 
 The manual **Expand OpenBao Audit Capacity** workflow expands only the three
-existing `audit-openbao-0`, `audit-openbao-1` and `audit-openbao-2` claims to
-`20Gi`. Database and snapshot claims, audit settings and records remain untouched.
+existing `audit-openbao-0`, `audit-openbao-1` and `audit-openbao-2` claims from
+`20Gi` to `40Gi`. The 13 October 2026 run moved them to `20Gi`; that is now the
+only reviewed starting size. Database and snapshot claims, audit settings and records remain untouched.
 The protected `prod` environment and shared `prod-deploy` concurrency group
 serialize the operation with normal deployments. Environment secrets, reviewers,
 wait timers and branch policy remain required, but this operation creates no
@@ -19,8 +20,10 @@ initiates expansion. The dispatch defaults to read-only `preflight`.
 
 Capacity cannot subsequently shrink. The workflow reads the project owner's
 current EUR gross volume price from Hetzner's pricing API immediately before
-each patch. It conservatively budgets the entire 60 GiB target as 66 provider GB
-against the approved additional-cost ceiling of €5/month. An unknown currency,
+each patch. It conservatively budgets the entire 120 GiB target as 132 provider GB
+against a ceiling of €10/month, proposed in devantler-tech/monorepo#4976 and
+awaiting the maintainer. The per-GB bound is unchanged from the earlier
+€5/month for 66 GB. An unknown currency,
 price, response or price above the ceiling stops the operation. The token stays
 in memory and neither pricing payloads nor audit data are printed.
 
@@ -35,7 +38,7 @@ in memory and neither pricing payloads nor audit data are printed.
    service telemetry private.
 3. First dispatch the workflow on `main` in `preflight` mode with `accepted_deployment_run`,
    `deployed_revision` (`latest@sha256:` plus the exact digest), and confirmation
-   `EXPAND OPENBAO AUDIT ONLY TO 20GI`. The checkout must still be current main.
+   `EXPAND OPENBAO AUDIT ONLY TO 40GI`. The checkout must still be current main.
    The first dispatch attempt is the only executable attempt; never re-run it.
    Preflight runs all source, price, binding, mount and service-health checks,
    including two separated snapshots, but creates no receipt and changes no
@@ -46,12 +49,12 @@ in memory and neither pricing payloads nor audit data are printed.
    initial samples must preserve workload, pod, storage-class, claim and volume
    identities. An immutable, run-bound consumption receipt is created before
    any capacity patch. Each patch tests the captured claim UID and resource
-   version, and changes only its storage request to `20Gi`.
+   version, and changes only its storage request to `40Gi`.
 5. Success requires two separated readbacks showing all claim requests, claim
-   capacities and backing-volume capacities at `20Gi`, no pending resize
+   capacities and backing-volume capacities at `40Gi`, no pending resize
    conditions, unchanged workload/storage identities and healthy unsealed HA
    service. The only success marker is
-   `OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=20Gi preservationSamples=2`.
+   `OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=40Gi preservationSamples=2`.
 
 If any patch may have been submitted, failure reports
 `OPENBAO_AUDIT_CAPACITY=HOLD_CAPACITY_MAY_HAVE_CHANGED`, followed by a bounded
