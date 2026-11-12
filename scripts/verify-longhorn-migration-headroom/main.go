@@ -139,8 +139,25 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 			role, isStatic = "controlplane", true
 		}
 		if isStatic {
-			if s.Labels["ksail.owned"] != "true" || s.Labels["ksail.cluster.name"] != "prod" || s.Labels["ksail.node.type"] != role || s.Labels["ksail.node.index"] != name[strings.LastIndex(name, "-")+1:] || s.Labels["hcloud/node-group"] != "" || n.Metadata.Labels["storage.platform.devantler.tech/migration-pool"] != "" {
-				return errors.New("static provider ownership does not match the production roster")
+			// Report only a fixed assertion code. Provider labels, addresses and
+			// native identities must never become public diagnostic payloads.
+			mismatch := ""
+			switch {
+			case s.Labels["ksail.owned"] != "true":
+				mismatch = "owned"
+			case s.Labels["ksail.cluster.name"] != "prod":
+				mismatch = "cluster"
+			case s.Labels["ksail.node.type"] != role:
+				mismatch = "role"
+			case s.Labels["ksail.node.index"] != name[strings.LastIndex(name, "-")+1:]:
+				mismatch = "index"
+			case s.Labels["hcloud/node-group"] != "":
+				mismatch = "provider_pool"
+			case n.Metadata.Labels["storage.platform.devantler.tech/migration-pool"] != "":
+				mismatch = "node_pool"
+			}
+			if mismatch != "" {
+				return fmt.Errorf("static provider ownership does not match the production roster: field=%s", mismatch)
 			}
 			counts["static"]++
 			counts[role]++

@@ -92,6 +92,48 @@ comparison. `EMAIL_RETAINED_PARITY=VERIFIED` reports present message parity.
 The original trial stays unverified and disposal still requires its own backup
 and ownership checks.
 
+The separately confirmed `Prepare Retained Email Reader Inputs` workflow
+prepares custody for the original retained reader. It runs only on the first
+maintainer-dispatched attempt from current reviewed main, under the production
+deployment lock. It binds the independently recorded reader and claim, reads
+the exact retained encryption key, recovery authentication, configuration and
+declared workload inputs, and rechecks their identities and contents immediately
+before the one conditional OpenBao write. Kubernetes access is read-only.
+
+The destination is a create-only, original-version KV2 record under
+`infrastructure/email/recovery/retained-reader-inputs`. The command uses CAS=0;
+an identical existing record is read back without rewriting it. The command
+never updates or deletes the record. Changed,
+deleted, newer, malformed or unreadable records refuse preparation. A failed
+or lost write response is uncertain and is not retried. Original inputs remain
+in place on every outcome. Neither credentials nor resource identities are
+printed; the short-lived credential files exist only in runner memory.
+
+`EMAIL_READER_INPUT_CUSTODY=STORED` proves the observed record matches those
+retained inputs. Its receipt explicitly says `restart=NOT_AUTHORIZED` and
+`recovery=UNVERIFIED`: independent recovery of the stored inputs, a durable
+restart witness, the separate protected pause/resume operations and native
+detachment proof remain required. This workflow never stops the reader,
+allocates storage, changes the source mailbox or grants disposal authority.
+The expired-backup disposal gate remains unchanged. If custody is refused,
+investigate the retained identities and destination before another confirmed
+first attempt; never replace a conflicting record or regenerate a missing key.
+
+`Protect Retained Email Volume` is a separate, default-off main-only operation
+with confirmation `protect-retained-email-volume`. It requires independent
+reader, claim and PV UID witnesses, including the private
+`EMAIL_RETAINED_PV_UID` setting, and validates the actual restored binding.
+It deliberately does not assume that the original PV name contains the current
+restored claim's UID. The command preserves the running reader and every
+claim, backend, key and configuration object. Its only permitted mutation is
+changing the bound original PV's reclaim policy from `Delete` to `Retain`,
+with atomic UID, name, resource-version and complete-spec tests. It then
+rechecks the original graph and serving source. An already-retained PV is
+verified without a write; an uncertain patch is never retried or rolled back.
+No credential export or reader lifecycle authority is available in this
+command. Protection does not unlock either expired-backup disposal path,
+establish key recovery or authorize a later reader pause.
+
 With confirmation `verify-fresh-retained-email-parity`, the workflow checks
 the separately retained fresh restore. The protected witness binds the
 namespace, reader, claim, backup and download. The backup must still be
