@@ -603,6 +603,16 @@ defines `spec.cluster.talos.extensions` and `schematicId`, is unchanged, so both
 fields keep their names, types and defaults. This audit changes no cluster
 configuration or vulnerability exception.
 
+**7.212.0**, commit `308077e2888966260c55e0fdd086347cfcb4ccc3`, is audited
+against 7.211.0. The configuration manager, Talos generator and cluster API
+are byte-identical, preserving the normalized extension/argument trigger,
+both-role fold and explicit schematic-ID boundary. The chart adds only
+`list nodes` to the operator role for the nested Kind network collision guard;
+the Talos schema is unchanged. The module changes update AWS, gRPC and
+Kubernetes dependencies and their transitive requirements; Talos machinery and
+its YAML encoders retain their versions. The real offline render controls
+exercise both roles, explicit schematic IDs and invalid patches.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
