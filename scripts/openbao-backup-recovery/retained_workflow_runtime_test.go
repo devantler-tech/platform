@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,7 +110,6 @@ printf '%s\n' "$dir"
 				"bin/kubectl": `#!/bin/bash
 set -eu
 case "$*" in
-  *"get secret openbao-unseal"*) printf '%s' '` + base64.StdEncoding.EncodeToString([]byte("PRIVATE_SYNTHETIC_RUNTIME_SECRET")) + `' ;;
   *"port-forward"*) printf '%s' "$$" > "$FIXTURE_DIR/forward-pid"; exec /bin/sleep 30 ;;
   *) exit 91 ;;
 esac
@@ -128,7 +126,7 @@ if [[ $FIXTURE_CASE == post-source && $count == 2 ]]; then exit 91; fi
 `,
 				"runner/email-input-recovery-tools/reader": `#!/bin/bash
 set -eu
-[[ $* == --verify-reader-inputs && -s $KUBECONFIG && -s $EMAIL_READER_INPUTS_WORK_DIR/token ]] || exit 91
+[[ $* == --verify-reader-inputs && -s $KUBECONFIG && -s $EMAIL_READER_INPUTS_WORK_DIR/token && -s $EMAIL_READER_INPUTS_WORK_DIR/expected.json ]] || exit 91
 count=0
 [[ ! -e "$FIXTURE_DIR/parity-count" ]] || count=$(cat "$FIXTURE_DIR/parity-count")
 count=$((count+1)); printf '%s' "$count" > "$FIXTURE_DIR/parity-count"

@@ -53,10 +53,6 @@ stage=stable-api
 if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then fail; fi
 unset HCLOUD_TOKEN
 kc=(kubectl --context=admin@prod --request-timeout=20s)
-stage=read-only-credential
-if ! "${kc[@]}" -n openbao get secret openbao-unseal -o jsonpath='{.data.root-token}' 2>"$native_dir/token-read.log" |
-  base64 --decode >"$native_dir/token" 2>"$native_dir/decode.log"; then fail; fi
-[[ -s "$native_dir/token" ]] || fail
 
 open_forward() {
   "${kc[@]}" -n openbao port-forward --address=127.0.0.1 service/openbao-active 38200:8200 >"$native_dir/forward.log" 2>&1 &
@@ -83,18 +79,21 @@ native_parity() {
   [[ $(cat "$native_dir/parity-result") == 'EMAIL_READER_INPUT_PARITY=VERIFIED source_writes=0 restart=NOT_AUTHORIZED recovery=UNVERIFIED' ]] || fail
 }
 
-stage=pre-restore-parity
-open_forward
-export EMAIL_READER_INPUTS_WORK_DIR="$native_dir"
-native_parity
 stage=collection
+open_forward
 export OPENBAO_RECOVERY_DIR="$proof_dir"
 if ! "$binary" collect-email-retained-inputs >"$native_dir/collection-result" 2>"$native_dir/collection.log"; then fail; fi
 [[ $(cat "$native_dir/collection-result") == OPENBAO_BACKUP_INPUTS=PASS ]] || fail
+stage=original-record-witness
+cp "$proof_dir/root-token" "$native_dir/token"
+cp "$proof_dir/expected.json" "$native_dir/expected.json"
+export EMAIL_READER_INPUTS_WORK_DIR="$native_dir"
+stage=pre-restore-parity
+native_parity
 stage=private-handoff
 close_forward
 unset KUBECONFIG EMAIL_READER_INPUTS_WORK_DIR OPENBAO_RECOVERY_DIR
-# The live token/kubeconfig remain in a separate, unmounted RAM directory.
+# Native connection files remain in a separate, unmounted RAM directory.
 # Only independently archived recovery keys and complete expectations enter /proof.
 stage=image
 image=$("$binary" image) || fail

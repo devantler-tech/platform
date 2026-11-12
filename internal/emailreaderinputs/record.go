@@ -125,3 +125,15 @@ func RecordValue(raw []byte) (map[string]any, error) {
 	}
 	return map[string]any{"data": data, "metadata": map[string]any{"version": json.Number("1"), "created_time": *record.Metadata.Created, "deletion_time": "", "destroyed": false}}, nil
 }
+
+// Expectation reads exactly the one fixed original record from the collector's private handoff.
+func Expectation(raw []byte) (map[string]any, error) {
+	if len(raw) == 0 || len(raw) > 1<<20 || strictjson.Validate(raw, nil) != nil {
+		return nil, errInvalid
+	}
+	var records map[string]json.RawMessage
+	if json.Unmarshal(raw, &records) != nil || len(records) != 1 || records[Path] == nil {
+		return nil, errInvalid
+	}
+	return RecordValue(records[Path])
+}

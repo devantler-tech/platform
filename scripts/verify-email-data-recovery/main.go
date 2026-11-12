@@ -17,7 +17,7 @@ func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--verify-reader-inputs" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		os.Exit(runReaderInputParity(ctx, os.Getenv, kubectl{}, verifyReaderCustodySource, loadReaderCustodyStore, os.Stdout))
+		os.Exit(runReaderInputParity(ctx, os.Getenv, kubectl{}, verifyReaderCustodySource, loadReaderInputVerificationStore, os.Stdout))
 	}
 	if len(os.Args) == 2 && os.Args[1] == "--protect-retained-volume" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

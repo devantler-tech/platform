@@ -46,7 +46,7 @@ func runReaderInputParity(ctx context.Context, env func(string) string, k kubern
 	}
 	stage = "credentials"
 	store, err := loadStore(env)
-	if err != nil || store == nil || store.client == nil {
+	if err != nil || store == nil || store.client == nil || store.originalRecord == nil {
 		return fail()
 	}
 	defer store.client.CloseIdleConnections()
@@ -64,7 +64,7 @@ func runReaderInputParity(ctx context.Context, env func(string) string, k kubern
 	if verify() != nil {
 		return fail()
 	}
-	found, err := store.matches(ctx, expected)
+	found, err := store.matchesOriginalInputs(ctx, expected)
 	if err != nil || !found || verify() != nil {
 		return fail()
 	}

@@ -13,11 +13,15 @@ every nested input value and digest. Ambiguous, incomplete or changed records
 remain unverified.
 
 The existing isolated runner restores a post-capture off-cluster snapshot using
-independently archived recovery credentials. A snapshot predating the input
+independently archived recovery credentials. Live input comparisons use that
+same archived token; the operation never reads a live OpenBao recovery-key Secret.
+A snapshot predating the input
 capture cannot pass, even when its timestamp is recent. The live read-only
 connection credential stays in a separate private RAM directory, outside the
 sandbox; the production tunnel is closed during the restore. A fresh current-main
-and native-input check follows the restore. Only the fixed final verdict is
+and native-input check follows the restore, comparing the original record's
+creation identity and complete values again. A recreated version-one record is
+not accepted as the original witness. Only the fixed final verdict is
 published after connection, container and private-workspace cleanup.
 
 `EMAIL_RETAINED_INPUT_RECOVERY=VERIFIED` proves recovery of these exact inputs

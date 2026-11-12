@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strconv"
 	"time"
@@ -23,9 +24,35 @@ const retainedReaderDataPath = "/v1/secret/data/" + emailreaderinputs.Path
 const retainedReaderMetadataPath = "/v1/secret/metadata/" + emailreaderinputs.Path
 
 type readerCustodyStore struct {
-	client   *http.Client
-	endpoint string
-	token    string
+	client         *http.Client
+	endpoint       string
+	token          string
+	originalRecord map[string]any
+}
+
+// matchesOriginalInputs binds the live metadata and all values to the independently collected original record.
+func (s *readerCustodyStore) matchesOriginalInputs(ctx context.Context, expected object) (bool, error) {
+	if s.originalRecord == nil {
+		return false, errors.New("original-input-witness")
+	}
+	response, status, err := s.request(ctx, http.MethodGet, retainedReaderDataPath, nil)
+	if err != nil || status != http.StatusOK {
+		return false, errors.New("original-input-read")
+	}
+	raw, err := json.Marshal(child(response, "data"))
+	if err != nil {
+		return false, errors.New("original-input-read")
+	}
+	actual, err := emailreaderinputs.RecordValue(raw)
+	if err != nil || !reflect.DeepEqual(actual, s.originalRecord) {
+		return false, errors.New("original-input-changed")
+	}
+	actualData, err := json.Marshal(actual["data"])
+	expectedData, expectedErr := json.Marshal(expected)
+	if err != nil || expectedErr != nil || !bytes.Equal(actualData, expectedData) {
+		return false, errors.New("original-input-native-parity")
+	}
+	return true, nil
 }
 
 // Only the protected workflow's loopback tunnel is accepted. No environment
