@@ -37,6 +37,7 @@ func checkRetainedWorkflow(t *testing.T, filename, jobName, confirm, flag, confi
 		Concurrency struct {
 			Group  string
 			Cancel bool `yaml:"cancel-in-progress"`
+			Queue  string
 		}
 		Jobs map[string]struct {
 			Environment string
@@ -49,7 +50,7 @@ func checkRetainedWorkflow(t *testing.T, filename, jobName, confirm, flag, confi
 			}
 		}
 	}
-	if yaml.Unmarshal(data, &w) != nil || len(w.On) != 1 || w.On["workflow_dispatch"] == nil || len(w.Permissions) != 0 || len(w.Jobs) != 1 || w.Concurrency.Group != "prod-deploy" || w.Concurrency.Cancel {
+	if yaml.Unmarshal(data, &w) != nil || len(w.On) != 1 || w.On["workflow_dispatch"] == nil || len(w.Permissions) != 0 || len(w.Jobs) != 1 || w.Concurrency.Group != "prod-deploy" || w.Concurrency.Cancel || w.Concurrency.Queue != "max" {
 		t.Fatal("workflow widened its trigger, permission or concurrency boundary")
 	}
 	job := w.Jobs[jobName]
