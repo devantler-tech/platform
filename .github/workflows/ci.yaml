@@ -2135,6 +2135,15 @@ jobs:
           jq -es 'any(.[]; .Action == "pass" and .Test == "TestPublishedProbeImage")' \
             "${RUNNER_TEMP}/contract-probe-image.jsonl"
 
+      # The WebApp container-security check below compiles the KRO compiler
+      # module, which needs a newer Go than the root module.
+      - name: ⚙️ Setup pinned compiler for resolved WebApp admission (placement)
+        if: matrix.suite == 'placement'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: scripts/tests/webapp-compiler/go.mod
+          cache: false
+
       - name: ⚖️ Validate cluster policies (placement)
         if: matrix.suite == 'placement'
         run: |
