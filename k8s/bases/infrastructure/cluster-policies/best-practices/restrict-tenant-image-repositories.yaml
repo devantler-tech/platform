@@ -38,11 +38,19 @@
 # status is ready: reporting needs the reports controller to read every matched
 # resource, including pods/ephemeralcontainers (granted by
 # controllers/kyverno/cluster-role-reports-controller-read-pod-ephemeral-containers.yaml).
+#
+# Kyverno (v1.19.2) checks those permissions only when the policy object
+# changes: its policy-status controller reconciles on add/update events whose
+# resourceVersion differs, so a later RBAC grant is never noticed and the policy
+# keeps reporting ready=false. After changing the reports controller's grants
+# for this policy, change the reports-rbac-revision annotation below to the PR
+# number, so Flux updates the policy and Kyverno re-runs the check (#6080).
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
   name: restrict-tenant-image-repositories
   annotations:
+    platform.devantler.tech/reports-rbac-revision: "6132"
     policies.kyverno.io/title: Restrict Tenant Image Repositories
     policies.kyverno.io/category: Multi-Tenancy, Supply Chain
     policies.kyverno.io/severity: high
