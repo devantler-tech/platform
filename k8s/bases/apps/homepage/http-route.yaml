@@ -7,7 +7,9 @@ spec:
   parentRefs:
     - name: platform
       namespace: kube-system
-      sectionName: https
+      # Keep the apex route attached while the HTTPS listener is separated.
+      # The port constraint excludes plaintext listeners; see the transition runbook.
+      port: 443
   hostnames:
     - ${domain}
   rules:
