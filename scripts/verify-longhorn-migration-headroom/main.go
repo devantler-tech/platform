@@ -136,7 +136,7 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 		}
 		role, isStatic := static[name]
 		if controlPlaneName.MatchString(name) {
-			role, isStatic = "control-plane", true
+			role, isStatic = "controlplane", true
 		}
 		if isStatic {
 			if s.Labels["ksail.owned"] != "true" || s.Labels["ksail.cluster.name"] != "prod" || s.Labels["ksail.node.type"] != role || s.Labels["ksail.node.index"] != name[strings.LastIndex(name, "-")+1:] || s.Labels["hcloud/node-group"] != "" || n.Metadata.Labels["storage.platform.devantler.tech/migration-pool"] != "" {
@@ -155,7 +155,7 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 		}
 		counts[match[1]]++
 	}
-	if counts["static"] != 6 || counts["control-plane"] != 3 || counts["worker"] != 3 || counts["v1"] != 2 || counts["v2"] > 1 || (requireV2 && counts["v2"] != 1) {
+	if counts["static"] != 6 || counts["controlplane"] != 3 || counts["worker"] != 3 || counts["v1"] != 2 || counts["v2"] > 1 || (requireV2 && counts["v2"] != 1) {
 		return errors.New("the required migration roster is incomplete")
 	}
 	return nil
