@@ -13,7 +13,7 @@ import (
 
 // Charge the complete maximum target, not merely its increment: three 40 GiB
 // volumes round up to at most 132 provider GB. Gross EUR pricing must fit within
-// the proposed EUR 10 monthly ceiling (devantler-tech/monorepo#4976) even under this conservative bound.
+// the EUR 10 monthly ceiling approved in devantler-tech/monorepo#4976 even under this conservative bound.
 func priceWithinBudget(b []byte) bool {
 	return priceCode(b) == "WITHIN_BUDGET"
 }
