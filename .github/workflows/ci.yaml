@@ -102,6 +102,17 @@ jobs:
         if: matrix.suite == 'helpers'
         run: bash scripts/check-go-modules-tidy.sh
 
+      - name: 🧪 Verify pinned SMTP protocol regressions
+        if: matrix.suite == 'helpers'
+        working-directory: third_party/go-smtp
+        run: go test -race -timeout 2m ./...
+
+      - name: 🛡️ Verify SMTP advisory evidence refusals
+        if: matrix.suite == 'helpers'
+        run: |
+          shellcheck scripts/check-smtp-upstream-advisories.sh scripts/tests/test-smtp-upstream-advisories.sh
+          bash scripts/tests/test-smtp-upstream-advisories.sh
+
       - name: 🔍 Lint complete regression routing
         if: matrix.suite == 'helpers'
         run: shellcheck scripts/run-go-regressions.sh scripts/tests/test-run-go-regressions.sh
