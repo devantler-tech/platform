@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-var testRetirementImage = "ghcr.io/devantler-tech/platform-longhorn-instance-manager@sha256:" + strings.Repeat("a", 64)
+const testRetirementImage = "ghcr.io/devantler-tech/platform-longhorn-instance-manager:v1.13.0-retirement.1-591ed0ccebd032c4d9705c356c267e724b30e2a9-1@sha256:4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7"
 
 func TestBenchmarkV1RuntimeReceiptRequiresOriginalDistinctEpochs(t *testing.T) {
-	for _, fault := range []string{"", "missing", "wrong image", "reused container", "reused UID", "missing worker", "missing start", "unexpected V2"} {
+	for _, fault := range []string{"", "missing", "wrong image", "old published image", "digest-only declaration", "unreviewed release tag", "unreviewed digest", "reused container", "reused UID", "missing worker", "missing start", "unexpected V2"} {
 		t.Run(fault, func(t *testing.T) {
 			record := recoveryFixture(t)
 			if err := validateBenchmarkRuntimeReceipt(record); err != nil {
@@ -34,6 +34,16 @@ func TestBenchmarkV1RuntimeReceiptRequiresOriginalDistinctEpochs(t *testing.T) {
 				record.V1Runtime = nil
 			case "wrong image":
 				runtime.Image = "longhornio/longhorn-instance-manager:v1.13.0"
+			case "old published image":
+				runtime.Image = "ghcr.io/devantler-tech/platform-longhorn-instance-manager:v1.13.0-retirement.1-725bb1d09517c84f8b73ff2c0cf175421df351f1-1@sha256:93cfc83d8bab91f9b6fbffe20bf9bdaca28e877d91d7b740cae003bf6853059f"
+			case "digest-only declaration":
+				_, digest, _ := strings.Cut(testRetirementImage, "@")
+				runtime.Image = "ghcr.io/devantler-tech/platform-longhorn-instance-manager@" + digest
+			case "unreviewed release tag":
+				runtime.Image = strings.Replace(testRetirementImage, "591ed0ccebd032c4d9705c356c267e724b30e2a9", strings.Repeat("b", 40), 1)
+			case "unreviewed digest":
+				ref, _, _ := strings.Cut(testRetirementImage, "@")
+				runtime.Image = ref + "@sha256:" + strings.Repeat("a", 64)
 			case "reused container":
 				runtime.Epochs[1].ContainerID = runtime.Epochs[0].ContainerID
 			case "reused UID":
@@ -226,18 +236,22 @@ func TestQualifyV1RetirementManagerEpochs(t *testing.T) {
 }
 
 func TestQualifyV1RetirementManagerTagAndDigest(t *testing.T) {
-	repository, digest, _ := strings.Cut(testRetirementImage, "@")
-	tag := "v1.13.0-retirement.1-" + strings.Repeat("b", 40) + "-1"
-	pinned := repository + ":" + tag + "@" + digest
+	const repository = "ghcr.io/devantler-tech/platform-longhorn-instance-manager"
+	ref, digest, _ := strings.Cut(testRetirementImage, "@")
+	running := repository + "@" + digest
 	for _, tc := range []struct {
 		name, declared, running string
 		ok                      bool
 	}{
-		{"published tag with digest", pinned, "docker-pullable://" + testRetirementImage, true},
-		{"tag without digest", repository + ":" + tag, testRetirementImage, false},
+		{"published tag with digest", testRetirementImage, "docker-pullable://" + running, true},
+		{"tag retained by runtime", testRetirementImage, testRetirementImage, true},
+		{"digest-only declaration", running, running, false},
+		{"different release tag", strings.Replace(testRetirementImage, "591ed0ccebd032c4d9705c356c267e724b30e2a9", strings.Repeat("b", 40), 1), running, false},
+		{"unreviewed digest", ref + "@sha256:" + strings.Repeat("a", 64), repository + "@sha256:" + strings.Repeat("a", 64), false},
+		{"tag without digest", ref, testRetirementImage, false},
 		{"unrecognized tag", repository + ":latest@" + digest, testRetirementImage, false},
-		{"foreign image", pinned, repository + "-other@" + digest, false},
-		{"different digest", pinned, repository + "@sha256:" + strings.Repeat("c", 64), false},
+		{"foreign image", testRetirementImage, repository + "-other@" + digest, false},
+		{"different digest", testRetirementImage, repository + "@sha256:" + strings.Repeat("c", 64), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manager := retirementManager("instance-manager-a", "worker-a", tc.declared)

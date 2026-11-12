@@ -258,6 +258,13 @@ Kubernetes worker before host configuration can be trusted or a host command can
 
 ## Benchmark retirement safeguards
 
+The V1 benchmark requires the exact reviewed retirement image, including its
+release tag and immutable digest. The default setting and each selected manager
+declaration must agree with that image; a matching tag shape, older publication
+or digest-only declaration does not qualify. Containerd may report the approved
+running image by repository and digest without its tag. Publication and admission
+rules alone do not prove that this runtime has been adopted.
+
 Recovery builds per-run admission policies from all seven original resource UID receipts. One
 protects the retained PV's original claim and backend handle; one keeps the original backend
 detached after its Kubernetes status clears naturally; and one keeps the recorded engines,

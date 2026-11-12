@@ -12,7 +12,10 @@ import (
 	"time"
 )
 
-var benchmarkRetirementImage = regexp.MustCompile(`^ghcr\.io/devantler-tech/platform-longhorn-instance-manager(?::v1\.13\.0-retirement\.1-[a-f0-9]{40}-1)?@(sha256:[a-f0-9]{64})$`)
+const benchmarkRetirementRepository = "ghcr.io/devantler-tech/platform-longhorn-instance-manager"
+const benchmarkRetirementImageDigest = "sha256:4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7"
+const benchmarkRetirementImage = benchmarkRetirementRepository + ":v1.13.0-retirement.1-591ed0ccebd032c4d9705c356c267e724b30e2a9-1@" + benchmarkRetirementImageDigest
+
 var benchmarkContainerID = regexp.MustCompile(`^containerd://[a-f0-9]{64}$`)
 var benchmarkDynamicVolume = regexp.MustCompile(`^pvc-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
@@ -35,7 +38,7 @@ func validateBenchmarkRuntimeReceipt(record benchmarkRecord) error {
 		return nil
 	}
 	unproven := errors.New("the benchmark journal lacks its complete original V1 runtime")
-	if runtime == nil || !benchmarkRetirementImage.MatchString(runtime.Image) || runtime.SettingUID == "" ||
+	if runtime == nil || runtime.Image != benchmarkRetirementImage || runtime.SettingUID == "" ||
 		runtime.SettingVersion == "" || len(runtime.Epochs) < len(record.Machines) {
 		return unproven
 	}
@@ -186,7 +189,7 @@ func retireBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRe
 }
 
 func observeBenchmarkV1Runtime(ctx context.Context, c client, image string, requiredNodes []string) (benchmarkV1Runtime, error) {
-	if !benchmarkRetirementImage.MatchString(image) {
+	if image != benchmarkRetirementImage {
 		return benchmarkV1Runtime{}, errors.New("an immutable V1 retirement image is required")
 	}
 	beforeUID, beforeVersion, err := readBenchmarkDefaultManagerImage(ctx, c, image)
@@ -249,7 +252,7 @@ func requestBenchmarkV1Seal(ctx context.Context, c client, record benchmarkRecor
 // Longhorn v1.13.0 places new V1 instances only in its selected default image.
 // Other image generations can continue to host previously attached volumes.
 func qualifyV1RetirementManagerEpochs(image string, requiredNodes []string, managers, pods []object) ([]benchmarkManagerEpoch, error) {
-	if !benchmarkRetirementImage.MatchString(image) || len(requiredNodes) == 0 || managers == nil || pods == nil {
+	if image != benchmarkRetirementImage || len(requiredNodes) == 0 || managers == nil || pods == nil {
 		return nil, errors.New("complete V1 retirement runtime inputs are required")
 	}
 	managerByName, err := indexed(managers)
@@ -347,11 +350,10 @@ func verifyBenchmarkManagerPod(pod, manager object, image string) (benchmarkMana
 }
 
 func benchmarkRetirementDigest(image string) string {
-	match := benchmarkRetirementImage.FindStringSubmatch(image)
-	if len(match) != 2 {
+	if image != benchmarkRetirementImage && image != benchmarkRetirementRepository+"@"+benchmarkRetirementImageDigest {
 		return ""
 	}
-	return match[1]
+	return benchmarkRetirementImageDigest
 }
 
 func benchmarkManagerHasDurableLog(pod, container object) bool {
