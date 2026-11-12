@@ -5,7 +5,7 @@ name: Observe Retained Email Recovery
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type observe-email-data-recovery or verify-retained-email-parity"
+        description: "Type observe-email-data-recovery, verify-retained-email-parity or verify-fresh-retained-email-parity"
         required: true
         type: string
 
@@ -29,7 +29,16 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/observe-email-data-recovery.yaml@refs/heads/main || "$GITHUB_ACTOR" != devantler || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted || ( "$CONFIRM" != observe-email-data-recovery && "$CONFIRM" != verify-retained-email-parity ) ]]; then
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ||
+                "$GITHUB_REF" != refs/heads/main ||
+                "$GITHUB_REPOSITORY" != devantler-tech/platform ||
+                "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/observe-email-data-recovery.yaml@refs/heads/main ||
+                "$GITHUB_ACTOR" != devantler ||
+                "$GITHUB_RUN_ATTEMPT" != 1 ||
+                "$RUNNER_ENVIRONMENT" != github-hosted ||
+                ( "$CONFIRM" != observe-email-data-recovery &&
+                  "$CONFIRM" != verify-retained-email-parity &&
+                  "$CONFIRM" != verify-fresh-retained-email-parity ) ]]; then
             printf '%s\n' 'EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=dispatch' >&2
             exit 2
           fi
@@ -58,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/email-observation-kubectl"
-          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 \
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
           mkdir -p "$RUNNER_TEMP/email-observation-tools"
@@ -73,6 +82,7 @@ jobs:
           EMAIL_DATA_RECOVERY_CONFIRM: ${{ inputs.confirm }}
           EMAIL_RETAINED_READER_UID: ${{ secrets.EMAIL_RETAINED_READER_UID }}
           EMAIL_RETAINED_CLAIM_UID: ${{ secrets.EMAIL_RETAINED_CLAIM_UID }}
+          EMAIL_FRESH_RECOVERY_WITNESS: ${{ secrets.EMAIL_FRESH_RECOVERY_WITNESS }}
         run: |
           set +x
           set -euo pipefail

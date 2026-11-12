@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,11 +28,9 @@ type server struct {
 	ServerType struct {
 		Name string `json:"name"`
 	} `json:"server_type"`
-	Datacenter struct {
-		Location struct {
-			Name string `json:"name"`
-		} `json:"location"`
-	} `json:"datacenter"`
+	Location struct {
+		Name string `json:"name"`
+	} `json:"location"`
 }
 
 type node struct {
@@ -60,6 +59,8 @@ type node struct {
 var migrationName = regexp.MustCompile(`^autoscale-longhorn-(v[12])-[0-9a-f]{16}$`)
 var controlPlaneName = regexp.MustCompile(`^prod-control-plane-[1-9][0-9]*$`)
 
+// qualify requires the complete migration roster and matching live identities,
+// hardware, location, ownership and availability before reporting headroom.
 func qualify(servers []server, nodes []node, requireV2 bool) error {
 	if len(servers) != len(nodes) || len(nodes) < 8 || len(nodes) > 9 {
 		return fmt.Errorf("inventory count gate failed: provider_servers=%d kubernetes_nodes=%d expected_equal=true permitted_nodes=8..9", len(servers), len(nodes))
@@ -130,7 +131,7 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 		if internalIPs != 1 {
 			return errors.New("node private address is missing or ambiguous")
 		}
-		if s.ServerType.Name == "" || s.ServerType.Name != n.Metadata.Labels["node.kubernetes.io/instance-type"] || s.Datacenter.Location.Name == "" || s.Datacenter.Location.Name != n.Metadata.Labels["topology.kubernetes.io/region"] {
+		if s.ServerType.Name == "" || s.ServerType.Name != n.Metadata.Labels["node.kubernetes.io/instance-type"] || s.Location.Name == "" || s.Location.Name != n.Metadata.Labels["topology.kubernetes.io/region"] {
 			return errors.New("node hardware or location does not match the provider")
 		}
 		role, isStatic := static[name]
@@ -138,8 +139,25 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 			role, isStatic = "control-plane", true
 		}
 		if isStatic {
-			if s.Labels["ksail.owned"] != "true" || s.Labels["ksail.cluster.name"] != "prod" || s.Labels["ksail.node.type"] != role || s.Labels["ksail.node.index"] != name[strings.LastIndex(name, "-")+1:] || s.Labels["hcloud/node-group"] != "" || n.Metadata.Labels["storage.platform.devantler.tech/migration-pool"] != "" {
-				return errors.New("static provider ownership does not match the production roster")
+			// Report only fixed assertion and shape codes. Labels, addresses and
+			// native identities must never become public diagnostic payloads.
+			mismatch := ""
+			switch {
+			case s.Labels["ksail.owned"] != "true":
+				mismatch = "owned"
+			case s.Labels["ksail.cluster.name"] != "prod":
+				mismatch = "cluster"
+			case s.Labels["ksail.node.type"] != role:
+				mismatch = "role"
+			case s.Labels["ksail.node.index"] != name[strings.LastIndex(name, "-")+1:]:
+				mismatch = "index"
+			case s.Labels["hcloud/node-group"] != "":
+				mismatch = "provider_pool"
+			case n.Metadata.Labels["storage.platform.devantler.tech/migration-pool"] != "":
+				mismatch = "node_pool"
+			}
+			if mismatch != "" {
+				return staticOwnershipFailure(s, n, role, mismatch)
 			}
 			counts["static"]++
 			counts[role]++
@@ -149,7 +167,7 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 		if match == nil || n.Metadata.Labels["storage.platform.devantler.tech/migration-pool"] != match[1] || s.Labels["hcloud/node-group"] != "autoscale-longhorn-"+match[1] {
 			return errors.New("an unexpected worker or migration-pool identity remains")
 		}
-		if s.ServerType.Name != "cpx42" || s.Datacenter.Location.Name != "fsn1" || (s.Labels["ksail.cluster.name"] != "" && s.Labels["ksail.cluster.name"] != "prod") || (s.Labels["ksail.owned"] != "" && s.Labels["ksail.owned"] != "true") {
+		if s.ServerType.Name != "cpx42" || s.Location.Name != "fsn1" || (s.Labels["ksail.cluster.name"] != "" && s.Labels["ksail.cluster.name"] != "prod") || (s.Labels["ksail.owned"] != "" && s.Labels["ksail.owned"] != "true") {
 			return errors.New("migration provider hardware, location or ownership is unexpected")
 		}
 		counts[match[1]]++
@@ -160,14 +178,59 @@ func qualify(servers []server, nodes []node, requireV2 bool) error {
 	return nil
 }
 
+// staticOwnershipFailure describes known label shapes with fixed vocabulary.
+// A diagnostic classification never changes the qualification predicates above.
+func staticOwnershipFailure(s server, n node, role, field string) error {
+	observed := "unrecognized"
+	switch s.Labels["ksail.node.type"] {
+	case "":
+		observed = "missing"
+	case "controlplane":
+		observed = "generic-controlplane"
+	case "worker":
+		observed = "canonical-worker"
+	case "control-plane":
+		observed = "talos-controlplane"
+	case "control_plane":
+		observed = "underscore-controlplane"
+	}
+	wantIndex := n.Metadata.Name[strings.LastIndex(n.Metadata.Name, "-")+1:]
+	number, _ := strconv.Atoi(wantIndex)
+	index := "unrecognized"
+	switch s.Labels["ksail.node.index"] {
+	case "":
+		index = "missing"
+	case wantIndex:
+		index = "matches-name"
+	case strconv.Itoa(number - 1):
+		index = "zero-based"
+	}
+	return fmt.Errorf("static provider ownership does not match the production roster: field=%s role_expected=%s role_observed=%s index=%s", field, role, observed, index)
+}
+
 func main() {
-	if len(os.Args) != 2 || (os.Args[1] != "before-publish" && os.Args[1] != "before-update" && os.Args[1] != "after-update") || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" {
+	if len(os.Args) != 2 || !slices.Contains([]string{"before-publish", "before-update", "after-update", "account-census"}, os.Args[1]) ||
+		os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" {
 		fmt.Fprintln(os.Stderr, "HOLD: migration headroom requires a protected production deployment")
 		os.Exit(1)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 15 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
+	if os.Args[1] == "account-census" {
+		if !authorizeAccountCensus(os.Getenv) {
+			fmt.Fprintln(os.Stderr, "HOLD: provider account reconciliation requires a confirmed first attempt on main")
+			os.Exit(1)
+		}
+		result, err := observeAccountCensus(ctx, client, os.Getenv("HCLOUD_TOKEN"), readNativeNodes)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "HOLD: provider account reconciliation: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("OBSERVED: account_servers=%d joined_nodes=%d provider_only=%d classification=%s state=%s admission=none\n",
+			result.Servers, result.Nodes, result.Extra, result.Classification, result.State)
+		return
+	}
 	n, err := observe(ctx, client, os.Getenv("HCLOUD_TOKEN"), readNativeNodes, os.Args[1] == "after-update")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "HOLD: migration headroom stage=%s: %v\n", os.Args[1], err)

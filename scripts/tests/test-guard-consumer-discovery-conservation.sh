@@ -1168,6 +1168,38 @@ YAML
     expect_refusal "an altered native Gateway peer $variant cannot inherit approval" "$root" 'CEL admission mutation' 'consumers are UNKNOWN'
   done
 
+  # Only the complete benchmark runtime spec can pass. Its real binding adds
+  # a second namespace restriction, while the policy also fences the request.
+  root="$(fixture reviewed-native-longhorn-benchmark)"
+  benchmark_policies="$REPO_ROOT/k8s/providers/hetzner/infrastructure/cluster-policies"
+  cp "$benchmark_policies/mutating-admission-policy-longhorn-v1-benchmark-runtime.yaml" "$root/k8s/providers/prod/apps/benchmark-runtime.yaml"
+  cp "$benchmark_policies/mutating-admission-policy-binding-longhorn-v1-benchmark-runtime.yaml" "$root/k8s/providers/prod/apps/benchmark-binding.yaml"
+  printf '  - benchmark-runtime.yaml\n  - benchmark-binding.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'the native benchmark runtime changes only the exact Pod security context' "$root" '2 consumer(s)'
+  for variant in resource-scope patch-path superseded-image unapproved-image; do
+    root="$(fixture "native-longhorn-benchmark-$variant")"
+    cp "$WORK/reviewed-native-longhorn-benchmark/k8s/providers/prod/apps/benchmark-runtime.yaml" "$root/k8s/providers/prod/apps/benchmark-runtime.yaml"
+    policy="$root/k8s/providers/prod/apps/benchmark-runtime.yaml"
+    case "$variant" in
+      resource-scope) yq -i '.spec.matchConstraints.resourceRules[0].resources += ["*"]' "$policy" ;;
+      patch-path) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("securityContext/runAsUser", "image")' "$policy" ;;
+      superseded-image)
+        yq -i '.spec.matchConditions[3].expression |=
+          (sub("591ed0ccebd032c4d9705c356c267e724b30e2a9", "725bb1d09517c84f8b73ff2c0cf175421df351f1") |
+           sub("4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7", "93cfc83d8bab91f9b6fbffe20bf9bdaca28e877d91d7b740cae003bf6853059f"))' "$policy"
+        ;;
+      unapproved-image)
+        yq -i '.spec.matchConditions[3].expression |=
+          sub("4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7", "0000000000000000000000000000000000000000000000000000000000000000")' "$policy"
+        ;;
+    esac
+    if cmp -s "$WORK/reviewed-native-longhorn-benchmark/k8s/providers/prod/apps/benchmark-runtime.yaml" "$policy"; then
+      fail "native benchmark runtime negative control did not change $variant"
+    fi
+    printf '  - benchmark-runtime.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "an altered native benchmark runtime $variant cannot inherit approval" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
+  done
+
   # #5096: the one reviewed CEL mutation shape passes; each variant widens
   # exactly one thing and must be refused again.
   root="$(fixture reviewed-cel-mutation)"

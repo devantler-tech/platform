@@ -180,8 +180,11 @@ readonly migrate_pattern='ghcr.io/devantler-tech/platform-kyverno-migrate'
 readonly background_pattern='ghcr.io/devantler-tech/platform-kyverno-background'
 readonly zone_pattern='ghcr.io/devantler-tech/world-at-ruin/zone'
 readonly mail_pattern='ghcr.io/devantler-tech/platform-private-mail-bootstrap'
+readonly mail_candidate_pattern='ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate'
 readonly customer_identity_pattern='ghcr.io/devantler-tech/business-site-identity'
 readonly dex_pattern='ghcr.io/devantler-tech/platform-dex'
+readonly longhorn_retirement_pattern='ghcr.io/devantler-tech/platform-longhorn-instance-manager'
+readonly longhorn_v2_pattern='ghcr.io/devantler-tech/platform-longhorn-manager'
 readonly app_pattern='ghcr.io/devantler-tech/*'
 fixture_rules_json="$(yq -o=json '.rules' "${root_dir}/talos/cluster/verify-first-party-images.yaml" | jq '
   map({imagePattern: .image, skip: (.skip // false), deny: (.deny // false),
@@ -242,12 +245,15 @@ write_healthy_rules() {
     resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_collector_pattern}"
     resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
     resource_obj 0009 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
-    resource_obj 0010 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${reports_pattern}"
-    resource_obj 0011 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${migrate_pattern}"
-    resource_obj 0012 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${background_pattern}"
-    resource_obj 0013 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${customer_identity_pattern}"
-    resource_obj 0014 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${dex_pattern}"
-    resource_obj 0015 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0010 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_candidate_pattern}"
+    resource_obj 0011 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${reports_pattern}"
+    resource_obj 0012 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${migrate_pattern}"
+    resource_obj 0013 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${background_pattern}"
+    resource_obj 0014 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${customer_identity_pattern}"
+    resource_obj 0015 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${dex_pattern}"
+    resource_obj 0016 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_retirement_pattern}"
+    resource_obj 0017 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_v2_pattern}"
+    resource_obj 0018 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -273,7 +279,7 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '16 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '19 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
 
@@ -313,27 +319,12 @@ require_text "${output}" 'declared rule set' 'case 1a: names the incomplete poli
 # Case 1b — RED: the right NUMBER of rules is running, but the last pattern is
 # stale. Counts alone cannot prove that the declared ordered policy materialised.
 # ===========================================================================
-write_node driftrules
-{
-  resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${analysis_pattern}"
-  resource_obj 0001 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${ksail_pattern}"
-  resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${provider_pattern}"
-  resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
-  resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
-  resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-  resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_server_pattern}"
-  resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_collector_pattern}"
-  resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
-  resource_obj 0009 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
-  resource_obj 0010 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${reports_pattern}"
-  resource_obj 0011 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${migrate_pattern}"
-  resource_obj 0012 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${background_pattern}"
-  resource_obj 0013 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${customer_identity_pattern}"
-  resource_obj 0014 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${dex_pattern}"
-  resource_obj 0015 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
-} | write_rules driftrules
-resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
-  write_roots driftrules
+healthy_node driftrules
+drift_rules="${fixtures}/driftrules/resources/${rules_type}"
+jq -s --arg pattern "${app_pattern}" \
+  'map(if .spec.imagePattern == $pattern then .spec.imagePattern = "ghcr.io/devantler-tech/stale-*" else . end)[]' \
+  "${drift_rules}" >"${work_dir}/changed-rules.json"
+mv "${work_dir}/changed-rules.json" "${drift_rules}"
 status=0
 output="$(run_script TALOS_NODES=driftrules 2>&1)" || status=$?
 [[ "${status}" -eq 1 ]] || fail 'case 1b: a runtime rule pattern that differs from the declaration MUST fail'
@@ -365,29 +356,31 @@ status=0
 output="$(run_script TALOS_NODES=analysissignerdrift 2>&1)" || status=$?
 [[ "${status}" -eq 1 ]] || fail 'legacy KSail release signer must not satisfy the analysis route'
 
-# A complete node policy must include the dedicated mail route, and must not
+# A complete node policy must include both dedicated mail routes, and must not
 # substitute the ordinary application publisher while retaining its pattern.
-healthy_node oldmailpolicy
-mail_rules="${fixtures}/oldmailpolicy/resources/${rules_type}"
-jq -s --arg pattern "${mail_pattern}" 'map(select(.spec.imagePattern != $pattern))[]' \
-  "${mail_rules}" >"${work_dir}/changed-rules.json"
-mv "${work_dir}/changed-rules.json" "${mail_rules}"
-status=0
-output="$(run_script TALOS_NODES=oldmailpolicy 2>&1)" || status=$?
-[[ "${status}" -eq 1 ]] || fail 'missing exact mail route must fail'
-require_text "${output}" 'declared rule set' 'missing mail route must name policy drift'
-
-healthy_node mailsignerdrift
 app_verifier=$(jq -c --arg pattern "${app_pattern}" \
   '.[] | select(.imagePattern == $pattern) | .keylessVerifier' <<<"${fixture_rules_json}")
-mail_rules="${fixtures}/mailsignerdrift/resources/${rules_type}"
-jq -s --arg pattern "${mail_pattern}" --argjson verifier "${app_verifier}" \
-  'map(if .spec.imagePattern == $pattern then .spec.keylessVerifier = $verifier else . end)[]' \
-  "${mail_rules}" >"${work_dir}/changed-rules.json"
-mv "${work_dir}/changed-rules.json" "${mail_rules}"
-status=0
-output="$(run_script TALOS_NODES=mailsignerdrift 2>&1)" || status=$?
-[[ "${status}" -eq 1 ]] || fail 'ordinary app signer must not satisfy the mail route'
+for pattern in "${mail_pattern}" "${mail_candidate_pattern}"; do
+  healthy_node oldmailpolicy
+  mail_rules="${fixtures}/oldmailpolicy/resources/${rules_type}"
+  jq -s --arg pattern "${pattern}" 'map(select(.spec.imagePattern != $pattern))[]' \
+    "${mail_rules}" >"${work_dir}/changed-rules.json"
+  mv "${work_dir}/changed-rules.json" "${mail_rules}"
+  status=0
+  output="$(run_script TALOS_NODES=oldmailpolicy 2>&1)" || status=$?
+  [[ "${status}" -eq 1 ]] || fail "missing exact mail route must fail: ${pattern}"
+  require_text "${output}" 'declared rule set' 'missing mail route must name policy drift'
+
+  healthy_node mailsignerdrift
+  mail_rules="${fixtures}/mailsignerdrift/resources/${rules_type}"
+  jq -s --arg pattern "${pattern}" --argjson verifier "${app_verifier}" \
+    'map(if .spec.imagePattern == $pattern then .spec.keylessVerifier = $verifier else . end)[]' \
+    "${mail_rules}" >"${work_dir}/changed-rules.json"
+  mv "${work_dir}/changed-rules.json" "${mail_rules}"
+  status=0
+  output="$(run_script TALOS_NODES=mailsignerdrift 2>&1)" || status=$?
+  [[ "${status}" -eq 1 ]] || fail "ordinary app signer must not satisfy the mail route: ${pattern}"
+done
 
 # A previously healthy six-rule fleet cannot clear activation of the new zone.
 # The existing app catch-all is present, but uses the wrong signer for this image.

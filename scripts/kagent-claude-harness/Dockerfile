@@ -1,4 +1,4 @@
-# kagent's Claude Code harness, as the kagent 1.0.0-rc3 release pins it, plus
+# kagent's Claude Code harness, as the kagent 1.0.0 release pins it, plus
 # what the Agentic Engineer's runs use (devantler-tech/monorepo#4867, #4868):
 #
 # - gh for the GitHub API, jq and yq for JSON and YAML, and curl.
@@ -11,8 +11,8 @@
 # The plugin, fetched by its exact commit. Renovate moves the commit to the
 # head of agent-plugins' main (.github/renovate.json), which only reviewed pull
 # requests reach.
-FROM ghcr.io/kagent-dev/kagent/claude-harness@sha256:216613bf155d3d437765675144fee19c9045cb21cd2e481189f2dcae36c24b3b AS plugin
-ARG AGENT_PLUGINS_COMMIT=18d5a7f0bb9c0bcd1804afa6fbd0840d192fcf76
+FROM ghcr.io/kagent-dev/kagent/claude-harness:1.0.0@sha256:54629b4e47ad08ab931ae815492d2533f4a3dd6ce007eda06863675afb4f99d2 AS plugin
+ARG AGENT_PLUGINS_COMMIT=a47b8bd2ada67e48d059081a04a7abf9bbf53502
 # The base image's unprivileged user fetches into /tmp, which it can write.
 RUN git init -q /tmp/src && \
     git -C /tmp/src fetch -q --depth 1 https://github.com/devantler-tech/agent-plugins.git "${AGENT_PLUGINS_COMMIT}" && \
@@ -22,7 +22,7 @@ RUN git init -q /tmp/src && \
     test -d /tmp/src/plugins/agentic-engineering/agents && \
     test -d /tmp/src/plugins/agentic-engineering/skills
 
-FROM ghcr.io/kagent-dev/kagent/claude-harness@sha256:216613bf155d3d437765675144fee19c9045cb21cd2e481189f2dcae36c24b3b
+FROM ghcr.io/kagent-dev/kagent/claude-harness:1.0.0@sha256:54629b4e47ad08ab931ae815492d2533f4a3dd6ce007eda06863675afb4f99d2
 
 USER 0
 # Alpine's package index moves with the base image's release branch, and the

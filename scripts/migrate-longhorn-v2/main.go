@@ -37,10 +37,14 @@ func main() {
 		authorization = authorizeV1ScratchHeadroom(os.Getenv, target)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
+	case retainProviderSourceOperation:
+		authorization = authorizeProviderSourceRetention(os.Getenv)
 	case "inventory-storage-root":
 		authorization = authorizeStorageRoot(os.Getenv, target)
 	case "inventory-storage-layout":
 		authorization = authorizeStorageLayout(os.Getenv, target)
+	case "inventory-provider-volume-footprint":
+		authorization = authorizeProviderVolumeFootprint(os.Getenv)
 	default:
 		authorization = authorizeRefresh(os.Getenv)
 	}
@@ -50,6 +54,17 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == "inventory-provider-volume-footprint" {
+		receipt, err := observeProviderVolumeFootprint(ctx, client{run: providerFootprintReadCommand, context: "admin@prod"}, os.Getenv("GITHUB_SHA"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Provider volume footprint held:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("LONGHORN_PROVIDER_VOLUME_FOOTPRINT=OBSERVED claims=%d measured=%d unmeasured=%d requestedGiBUpper=%d measuredUsedGiBUpper=%d unmeasuredRequestedGiBUpper=%d\n",
+			receipt.Claims, receipt.Measured, receipt.Unmeasured, providerUsageGiBUpper(receipt.RequestedBytes),
+			providerUsageGiBUpper(receipt.MeasuredUsedBytes), providerUsageGiBUpper(receipt.UnmeasuredRequestedBytes))
+		return
+	}
 	if operation == "observe-database" {
 		observationContext, stop := context.WithTimeout(ctx, 5*time.Minute)
 		defer stop()
@@ -75,8 +90,12 @@ func main() {
 		}
 		return
 	}
-	if operation == retainV1SourceOperation {
-		if err := retainV1Source(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("LONGHORN_V2_CONFIRM")); err != nil {
+	if operation == retainV1SourceOperation || operation == retainProviderSourceOperation {
+		retain := retainV1Source
+		if operation == retainProviderSourceOperation {
+			retain = retainProviderSource
+		}
+		if err := retain(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("LONGHORN_V2_CONFIRM")); err != nil {
 			fmt.Fprintln(os.Stderr, "Source retention held:", err)
 			os.Exit(1)
 		}

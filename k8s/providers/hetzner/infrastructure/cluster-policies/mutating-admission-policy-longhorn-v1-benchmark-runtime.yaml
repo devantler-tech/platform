@@ -1,0 +1,70 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: longhorn-v1-benchmark-runtime
+spec:
+  failurePolicy: Fail
+  reinvocationPolicy: IfNeeded
+  matchConstraints:
+    matchPolicy: Exact
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+        scope: Namespaced
+  matchConditions:
+    - name: longhorn-controller
+      expression: |-
+        request.namespace == 'longhorn-system' &&
+        request.userInfo.username == 'system:serviceaccount:longhorn-system:longhorn-service-account' &&
+        object.metadata.namespace == request.namespace &&
+        object.spec.serviceAccountName == 'longhorn-service-account'
+    - name: native-v1-manager
+      expression: |-
+        has(object.metadata.labels) &&
+        object.metadata.name.matches('^instance-manager-[a-f0-9]{32}$') &&
+        'longhorn.io/component' in object.metadata.labels &&
+        object.metadata.labels['longhorn.io/component'] == 'instance-manager' &&
+        'longhorn.io/instance-manager-type' in object.metadata.labels &&
+        object.metadata.labels['longhorn.io/instance-manager-type'] == 'aio' &&
+        'longhorn.io/data-engine' in object.metadata.labels &&
+        object.metadata.labels['longhorn.io/data-engine'] == 'v1' &&
+        'longhorn.io/managed-by' in object.metadata.labels &&
+        object.metadata.labels['longhorn.io/managed-by'] == 'longhorn-manager'
+    - name: instance-manager-owner
+      expression: |-
+        has(object.metadata.ownerReferences) &&
+        size(object.metadata.ownerReferences) == 1 &&
+        object.metadata.ownerReferences.all(owner,
+          owner.apiVersion == 'longhorn.io/v1beta2' &&
+          owner.kind == 'InstanceManager' &&
+          owner.name == object.metadata.name &&
+          owner.uid.matches('^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$') &&
+          has(owner.controller) && owner.controller)
+    - name: approved-privileged-container
+      expression: |-
+        object.spec.restartPolicy == 'Never' &&
+        (!has(object.spec.initContainers) || size(object.spec.initContainers) == 0) &&
+        size(object.spec.containers) == 1 &&
+        object.spec.containers.all(container,
+          container.name == 'instance-manager' &&
+          container.image == 'ghcr.io/devantler-tech/platform-longhorn-instance-manager:v1.13.0-retirement.1-591ed0ccebd032c4d9705c356c267e724b30e2a9-1@sha256:4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7' &&
+          has(container.securityContext) &&
+          has(container.securityContext.privileged) && container.securityContext.privileged &&
+          !has(container.securityContext.runAsUser) && !has(container.securityContext.runAsGroup) &&
+          (!has(container.securityContext.runAsNonRoot) || !container.securityContext.runAsNonRoot))
+    - name: no-pod-identity-override
+      expression: |-
+        !has(object.spec.securityContext) ||
+        (!has(object.spec.securityContext.runAsUser) && !has(object.spec.securityContext.runAsGroup) &&
+         (!has(object.spec.securityContext.runAsNonRoot) || !object.spec.securityContext.runAsNonRoot))
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: |-
+          [
+            JSONPatch{op: 'add', path: '/spec/containers/0/securityContext/runAsUser', value: 0},
+            JSONPatch{op: 'add', path: '/spec/containers/0/securityContext/runAsGroup', value: 0}
+          ]

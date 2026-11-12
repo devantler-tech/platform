@@ -42,6 +42,14 @@ phases, encryption properties and counts, while withholding device paths and
 identities. It grants no reset clearance and never treats a failed read as absence.
 The original root-only mode keeps its existing scope and schema.
 
+`inventory-provider-volume-footprint` reads the current provider-backed claims
+and native Talos filesystem usage from their running mounts. Confirm with
+`inventory-provider-volume-footprint` on a first-attempt main dispatch.
+It binds each running CSI mount to its provider disk and checks the claim,
+volume, disk and worker identities on both sides of the read. The receipt reports aggregate GiB rounded up, with
+unmounted claims accounted for at their full requested capacity. Use the result
+as an input to capacity planning and validate each restore before cutover.
+
 `inspect-host-memory` is a read-only diagnostic for a fixed permanent worker,
 confirmed with `inspect-longhorn-v2-host-memory-<worker>`. It reads only the native
 huge-page allocation and selected `/proc/meminfo` counters, bracketed by unchanged
@@ -385,3 +393,16 @@ migration scratch and unbound claims. A lost write response is checked without
 repeating the patch. This operation neither replaces claims nor changes storage
 classes. Keep the original PV and backend until the application's recovery and
 cutover checks pass.
+
+## Retain one Hetzner source before replacing its claim
+
+Select `retain-provider-source` with no worker. Read the original bound
+Filesystem PVC and PV plus their `hcloud` StorageClass. Compute a SHA-256
+digest without a trailing newline over
+`csi.hetzner.cloud:namespace/claim:claim-uid:pv-name:pv-uid:volume-handle:pv-capacity-bytes`.
+Supply `retain-hetzner-source:<namespace>/<claim>:<digest>` as confirmation.
+
+The workflow verifies the original binding and provider handle, changes
+only that PV's reclaim policy, and reads the same binding back. Keep the
+retained provider volume until the workload has passed its V2 recovery and
+application checks.

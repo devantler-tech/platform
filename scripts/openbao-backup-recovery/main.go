@@ -19,6 +19,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/emailreaderinputs"
+	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
 // This is the actual server release and digest observed on all three servers,
@@ -164,6 +167,24 @@ func (a *baoAPI) credentialRecords(ctx context.Context, token string) (map[strin
 	records := map[string]json.RawMessage{}
 	for _, path := range credentialPaths {
 		status, b, err := a.request(ctx, http.MethodGet, "/v1/secret/data/"+path, token, nil, 1<<20)
+		if path == emailreaderinputs.Path {
+			var response struct {
+				Data json.RawMessage `json:"data"`
+			}
+			if err != nil || status != http.StatusOK || strictjson.Validate(b, map[string][]string{"": {"data"}}) != nil || json.Unmarshal(b, &response) != nil {
+				return nil, errEvidence
+			}
+			value, err := emailreaderinputs.RecordValue(response.Data)
+			if err != nil {
+				return nil, errEvidence
+			}
+			canonical, err := json.Marshal(value)
+			if err != nil {
+				return nil, errEvidence
+			}
+			records[path] = canonical
+			continue
+		}
 		var response struct {
 			Data struct {
 				Data     json.RawMessage `json:"data"`
@@ -228,7 +249,7 @@ func (a *baoAPI) restore(ctx context.Context, temporaryRoot, dir string) error {
 		return stageError("inputs")
 	}
 	var expected map[string]json.RawMessage
-	if json.Unmarshal(b, &expected) != nil || !recordsEqual(expected, expected) {
+	if (len(credentialPaths) == 1 && credentialPaths[0] == emailreaderinputs.Path && strictjson.Validate(b, nil) != nil) || json.Unmarshal(b, &expected) != nil || !recordsEqual(expected, expected) {
 		return stageError("inputs")
 	}
 	snapshot, err := privateInput(filepath.Join(dir, "snapshot.snap"), maxSnapshotBytes)
@@ -311,6 +332,12 @@ func (a *baoAPI) createFixture(ctx context.Context, root, key, dir string) error
 	if err != nil || status != 204 {
 		return stageError("fixture")
 	}
+	if len(credentialPaths) == 1 && credentialPaths[0] == emailreaderinputs.Path {
+		status, snapshot, err := a.request(ctx, http.MethodGet, "/v1/sys/storage/raft/snapshot", root, nil, maxSnapshotBytes)
+		if err != nil || status != http.StatusOK || len(snapshot) == 0 || writePrivate(filepath.Join(dir, "pre-capture.snap"), snapshot) != nil {
+			return stageError("fixture")
+		}
+	}
 	expected := map[string]json.RawMessage{}
 	for i, path := range credentialPaths {
 		random := make([]byte, 32)
@@ -321,7 +348,13 @@ func (a *baoAPI) createFixture(ctx context.Context, root, key, dir string) error
 		// native restoration proves both minimum-schema admission and retention
 		// of every optional field.
 		data := map[string]any{"password": hex.EncodeToString(random)}
-		if path == storageCredentialPath {
+		if path == emailreaderinputs.Path {
+			var err error
+			data, err = retainedInputFixture(hex.EncodeToString(random))
+			if err != nil {
+				return stageError("fixture")
+			}
+		} else if path == storageCredentialPath {
 			data = map[string]any{"passphrase": hex.EncodeToString(random)}
 		} else if i > 0 {
 			data["username"] = fmt.Sprintf("synthetic-%d", i)
@@ -338,6 +371,13 @@ func (a *baoAPI) createFixture(ctx context.Context, root, key, dir string) error
 		}
 		status, _, err := a.request(ctx, http.MethodPost, "/v1/secret/data/"+path, root, bytes.NewReader(body), 16384)
 		if err != nil || status != 200 {
+			return stageError("fixture")
+		}
+	}
+	if len(credentialPaths) == 1 && credentialPaths[0] == emailreaderinputs.Path {
+		var err error
+		expected, err = a.credentialRecords(ctx, root)
+		if err != nil {
 			return stageError("fixture")
 		}
 	}

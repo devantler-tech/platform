@@ -87,6 +87,7 @@ func TestWatchedResourceWithoutNamespaceFailsClosed(t *testing.T) {
 	}{
 		{kind: "HelmRelease", name: "release-0"},
 		{kind: "Kustomization", name: "layer-0"},
+		{kind: "OCIRepository", name: "source-0"},
 	}
 
 	for _, tt := range tests {
@@ -122,6 +123,120 @@ func TestWatchedResourceWithoutNamespaceFailsClosed(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A tenant's cosign-verified source keeps its last verified artifact when it
+// refuses a release, so its Kustomization stays Ready (#5287). The source's own
+// namespace must therefore be watched, and adding one elsewhere must fail.
+func TestOCIRepositoryInUnwatchedNamespaceFails(t *testing.T) {
+	fixture := newValidatorFixture(t)
+	resourcePath := filepath.Join(fixture.workspace, layers[len(layers)-1], "resources.yaml")
+	resources, err := os.ReadFile(resourcePath)
+	if err != nil {
+		t.Fatalf("read resource fixture: %v", err)
+	}
+	resources = append(resources, []byte(`---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: tenant
+  namespace: tenant-a
+spec: {}
+`)...)
+	writeFile(t, resourcePath, string(resources), 0o600)
+
+	result := fixture.runValidator(t, nil)
+	output := result.stdout + result.stderr
+	if result.exitCode == 0 {
+		t.Fatalf("validator unexpectedly succeeded; output = %q", output)
+	}
+	for _, want := range []string{
+		"does not watch every namespace holding an OCIRepository",
+		"- kind: OCIRepository\n      name: \"*\"\n      namespace: tenant-a",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("validator output = %q, want %q", output, want)
+		}
+	}
+
+	// Watching that namespace is exactly what the diagnostic asks for, and it passes.
+	alertPath := filepath.Join(fixture.workspace, "k8s", "providers", "hetzner", "infrastructure", "flux-notifications", "alert.yaml")
+	alert, err := os.ReadFile(alertPath)
+	if err != nil {
+		t.Fatalf("read alert fixture: %v", err)
+	}
+	alert = append(alert, []byte("    - kind: OCIRepository\n      name: \"*\"\n      namespace: tenant-a\n")...)
+	writeFile(t, alertPath, string(alert), 0o600)
+	if result := fixture.runValidator(t, nil); result.exitCode != 0 {
+		t.Fatalf("validator exit code = %d after watching tenant-a, want 0; output = %q", result.exitCode, result.stdout+result.stderr)
+	}
+}
+
+// A kro Tenant generates its OCIRepository at reconcile time in the namespace
+// its spec.name gives, so that namespace needs watching although no
+// OCIRepository is rendered there; a Tenant without that name fails closed.
+func TestKroTenantDeclaresItsOCIRepositoryNamespace(t *testing.T) {
+	tests := []struct {
+		name   string
+		tenant string
+		want   string
+	}{
+		{
+			name:   "named",
+			tenant: "spec:\n  name: tenant-c\n",
+			want:   "- kind: OCIRepository\n      name: \"*\"\n      namespace: tenant-c",
+		},
+		{
+			name:   "unnamed",
+			tenant: "spec: {}\n",
+			want:   "have no spec.name",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newValidatorFixture(t)
+			resourcePath := filepath.Join(fixture.workspace, layers[len(layers)-1], "resources.yaml")
+			resources, err := os.ReadFile(resourcePath)
+			if err != nil {
+				t.Fatalf("read resource fixture: %v", err)
+			}
+			resources = append(resources, []byte("---\napiVersion: kro.run/v1alpha1\nkind: Tenant\nmetadata:\n  name: tenant-c\n  namespace: flux-system\n"+tt.tenant)...)
+			writeFile(t, resourcePath, string(resources), 0o600)
+
+			result := fixture.runValidator(t, nil)
+			output := result.stdout + result.stderr
+			if result.exitCode == 0 {
+				t.Fatalf("validator unexpectedly succeeded; output = %q", output)
+			}
+			if !strings.Contains(output, tt.want) {
+				t.Fatalf("validator output = %q, want %q", output, tt.want)
+			}
+		})
+	}
+}
+
+// Only Flux's source API counts: another group's OCIRepository is not a Flux
+// source and must neither need nor satisfy coverage.
+func TestOCIRepositoryOfAnotherAPIGroupIsIgnored(t *testing.T) {
+	fixture := newValidatorFixture(t)
+	resourcePath := filepath.Join(fixture.workspace, layers[len(layers)-1], "resources.yaml")
+	resources, err := os.ReadFile(resourcePath)
+	if err != nil {
+		t.Fatalf("read resource fixture: %v", err)
+	}
+	resources = append(resources, []byte(`---
+apiVersion: example.com/v1
+kind: OCIRepository
+metadata:
+  name: lookalike
+  namespace: tenant-b
+spec: {}
+`)...)
+	writeFile(t, resourcePath, string(resources), 0o600)
+
+	if result := fixture.runValidator(t, nil); result.exitCode != 0 {
+		t.Fatalf("validator exit code = %d, want 0; output = %q", result.exitCode, result.stdout+result.stderr)
 	}
 }
 
@@ -222,7 +337,14 @@ metadata:
   name: layer-%d
   namespace: flux-system
 spec: {}
-`, index, index), 0o600)
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: source-%d
+  namespace: flux-system
+spec: {}
+`, index, index, index), 0o600)
 }
 
 func (fixture validatorFixture) writeAlert(t *testing.T, wildcard bool) {
@@ -257,7 +379,10 @@ spec:
     - kind: Kustomization
       name: %q
       namespace: flux-system
-`, name, name), 0o600)
+    - kind: OCIRepository
+      name: %q
+      namespace: flux-system
+`, name, name, name), 0o600)
 }
 
 func (fixture validatorFixture) runValidator(t *testing.T, environmentOverrides map[string]string) commandResult {

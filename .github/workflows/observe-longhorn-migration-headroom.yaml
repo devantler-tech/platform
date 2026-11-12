@@ -5,7 +5,7 @@ name: Observe Longhorn Migration Headroom
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type exactly: observe-longhorn-migration-headroom"
+        description: Type observe-longhorn-migration-headroom or observe-longhorn-provider-account
         required: true
         type: string
 
@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 10
     environment: prod
     permissions:
-      contents: read
+      contents: read # Check out and verify the current reviewed source.
     concurrency:
       group: prod-deploy
       cancel-in-progress: false
@@ -33,7 +33,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
-          [[ "${LONGHORN_HEADROOM_CONFIRM}" == observe-longhorn-migration-headroom ]]
+          [[ "${LONGHORN_HEADROOM_CONFIRM}" == observe-longhorn-migration-headroom ||
+             "${LONGHORN_HEADROOM_CONFIRM}" == observe-longhorn-provider-account ]]
       - name: Checkout reviewed source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="${RUNNER_TEMP}/longhorn-headroom-kubectl"
-          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "${kubectl_path}"
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "${kubectl_path}"
           printf '%s  %s\n' "${KUBECTL_SHA256}" "${kubectl_path}" | sha256sum --check
           sudo install "${kubectl_path}" /usr/local/bin/kubectl
       - name: Restore production kubeconfig in memory
@@ -76,10 +77,21 @@ jobs:
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh
-      - name: Read migration headroom
+      - name: Read the confirmed provider inventory
+        shell: bash
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-        run: go run ./scripts/verify-longhorn-migration-headroom before-publish
+        run: |
+          set -euo pipefail
+          case "${LONGHORN_HEADROOM_CONFIRM}" in
+            observe-longhorn-migration-headroom)
+              go run ./scripts/verify-longhorn-migration-headroom before-publish
+              ;;
+            observe-longhorn-provider-account)
+              go run ./scripts/verify-longhorn-migration-headroom account-census
+              ;;
+            *) exit 1 ;;
+          esac
       - name: Require unchanged current main after observation
         env:
           GH_TOKEN: ${{ github.token }}

@@ -52,6 +52,9 @@ jobs:
           shellcheck scripts/tests/test-webapp-compiled-scan.sh
           bash scripts/tests/test-webapp-compiled-scan.sh
       - name: 🔏 Install reviewed public-image verification tools
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/setup-supply-chain-tools.sh
       - name: Validate the hosted runtime script
         run: |
@@ -99,6 +102,17 @@ jobs:
         if: matrix.suite == 'helpers'
         run: bash scripts/check-go-modules-tidy.sh
 
+      - name: 🧪 Verify pinned SMTP protocol regressions
+        if: matrix.suite == 'helpers'
+        working-directory: third_party/go-smtp
+        run: go test -race -timeout 2m ./...
+
+      - name: 🛡️ Verify SMTP advisory evidence refusals
+        if: matrix.suite == 'helpers'
+        run: |
+          shellcheck scripts/check-smtp-upstream-advisories.sh scripts/tests/test-smtp-upstream-advisories.sh
+          bash scripts/tests/test-smtp-upstream-advisories.sh
+
       - name: 🔍 Lint complete regression routing
         if: matrix.suite == 'helpers'
         run: shellcheck scripts/run-go-regressions.sh scripts/tests/test-run-go-regressions.sh
@@ -116,7 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -245,6 +259,8 @@ jobs:
               - 'scripts/tests/test-setup-talosctl.sh'
               - '.github/scripts/setup-supply-chain-tools.sh'
               - 'scripts/tests/test-setup-supply-chain-tools.sh'
+              - '.github/scripts/release-asset-download.sh'
+              - 'scripts/tests/test-release-asset-download.sh'
               - '.github/actions/deploy-prod/action.yml'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
@@ -254,6 +270,9 @@ jobs:
               - 'scripts/check-business-disclosure-reader/**'
               - 'scripts/tests/vault-backup-recovery/**'
               - 'scripts/openbao-backup-recovery/**'
+              - 'internal/emailreaderinputs/**'
+              - 'scripts/verify-retained-email-reader-inputs.sh'
+              - '.github/workflows/verify-retained-email-reader-inputs.yaml'
               - 'scripts/run-openbao-backup-sandbox.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
               - 'scripts/tests/test-ksail-operator-startup-order.sh'
@@ -413,7 +432,7 @@ jobs:
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
               # Stages exact admission and pull-time signer routes before the
               # compatibility-image workloads consume them.
-              - 'scripts/tests/test-coroot-image-verifier-prerequisite.sh'
+              - 'scripts/tests/test-compatibility-image-verifier-prerequisite.sh'
               # The trigger-set test for the liveness WORKFLOW (listed above), so a
               # PR that edits only the test still runs it.
               - 'scripts/tests/test-validate-image-verifier-liveness-workflow.sh'
@@ -606,6 +625,9 @@ jobs:
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
               - 'scripts/tests/test-agentic-engineer-schedule.sh'
+              - 'scripts/tests/test-agentic-engineer-lane-store.sh'
+              - 'scripts/tests/test-agentic-engineer-lane-store-lease.sh'
+              - 'scripts/tests/test-agentic-engineer-lane-store-gateway.sh'
               - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
               - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
@@ -741,6 +763,8 @@ jobs:
               - 'scripts/tests/test-substrate-bucket-init-hook.sh'
               - 'scripts/build-controller-helm.sh'
               - 'scripts/prepare-helm-render-input-capture.sh'
+              # The rendering library both chart-rendering guards source (#4465).
+              - 'scripts/flux-render.lib.sh'
               - 'scripts/render-helm-chart/**'
               # Both halves and the reviewed exception list, for the same reasons. The
               # guard renders charts with the renderer the two entries above build.
@@ -844,6 +868,7 @@ jobs:
               - 'ksail.prod.yaml'
               - 'ksail.yaml'
               - '.github/scripts/setup-talosctl.sh'
+              - '.github/scripts/release-asset-download.sh'
               - 'scripts/validate-talos-kubernetes-compatibility/**'
               - '.github/actions/deploy-prod/**'
               - 'go.mod'
@@ -976,7 +1001,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -1134,7 +1159,7 @@ jobs:
           set -euo pipefail
           native_hubble="$(mktemp -d)"
           trap 'rm -rf "$native_hubble"' EXIT
-          curl --fail --silent --show-error --location --retry 2 --max-time 60 \
+          curl --fail --silent --show-error --location --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
             https://github.com/cilium/hubble/releases/download/v1.20.2/hubble-linux-amd64.tar.gz \
             --output "$native_hubble/hubble.tar.gz"
           printf '%s  %s\n' 03f248a50cad11e728bf9383382392c57148fd6a19853ad359fb7598dae29312 "$native_hubble/hubble.tar.gz" \
@@ -1163,7 +1188,7 @@ jobs:
           set -euo pipefail
           native_dir="$(mktemp -d)"
           archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
           printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
           tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
           printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$native_dir/linux-amd64/helm" >> "$GITHUB_ENV"
@@ -1283,7 +1308,7 @@ jobs:
           shellcheck scripts/guard-controller-helm-profile.sh scripts/tests/test-controller-helm-profile.sh
           tool_dir="$(mktemp -d "$RUNNER_TEMP/flux-profile.XXXXXX")"
           archive="$tool_dir/flux-operator.tar.gz"
-          curl --fail --silent --show-error --location \
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.62.1/flux-operator_0.62.1_linux_amd64.tar.gz \
             --output "$archive"
           printf '%s  %s\n' 7bb9e54d370039d8701d4271b38aed57d6c89668432b7caddce69f4e26e24c1b "$archive" | sha256sum --check
@@ -1489,7 +1514,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -1618,7 +1643,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -1636,7 +1661,7 @@ jobs:
           set -euo pipefail
           native_dir="$(mktemp -d)"
           archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
           printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
           tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
           printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$native_dir/linux-amd64/helm" >> "$GITHUB_ENV"
@@ -1917,7 +1942,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -1948,7 +1973,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.75"
+          KSAIL_VERSION: "7.211.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2252,7 +2277,7 @@ jobs:
       - name: 🔐 Validate KSail installer integrity guard
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck .github/scripts/setup-ksail.sh scripts/tests/test-setup-ksail.sh
+          shellcheck -x .github/scripts/setup-ksail.sh scripts/tests/test-setup-ksail.sh
           bash scripts/tests/test-setup-ksail.sh
 
       - name: 🔐 Validate Cilium SNI hostname coverage
@@ -2264,17 +2289,26 @@ jobs:
       - name: 🔐 Validate talosctl installer integrity guard
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck .github/scripts/setup-talosctl.sh scripts/tests/test-setup-talosctl.sh
+          shellcheck -x .github/scripts/setup-talosctl.sh scripts/tests/test-setup-talosctl.sh
           bash scripts/tests/test-setup-talosctl.sh
 
       - name: 🔐 Validate supply-chain tool integrity
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck .github/scripts/setup-supply-chain-tools.sh scripts/tests/test-setup-supply-chain-tools.sh
+          shellcheck -x .github/scripts/setup-supply-chain-tools.sh scripts/tests/test-setup-supply-chain-tools.sh
           bash scripts/tests/test-setup-supply-chain-tools.sh
+
+      - name: 🔐 Validate the shared release-asset download
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck .github/scripts/release-asset-download.sh scripts/tests/test-release-asset-download.sh
+          bash scripts/tests/test-release-asset-download.sh
 
       - name: 🔐 Exercise verified supply-chain tools
         if: needs.changes.outputs.k8s == 'true'
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-supply-chain-tools.sh
           /usr/local/bin/syft scan dir:. --output cyclonedx-json=tool-integrity.cdx.json
@@ -2325,6 +2359,9 @@ jobs:
 
       - name: Install checksum-verified Trivy for disposition boundaries
         if: needs.changes.outputs.k8s == 'true'
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/setup-supply-chain-tools.sh trivy-boundary
 
       - name: 🧱 Validate vendored-operator disposition boundary
@@ -2485,6 +2522,9 @@ jobs:
 
       - name: 🔒 Validate Umami provisioning serialization
         if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 4
+        env:
+          UMAMI_PROVISIONER_IMAGE_PROOF: "true"
         run: |
           shellcheck scripts/tests/test-umami-provisioning-bootstrap.sh
           bash scripts/tests/test-umami-provisioning-bootstrap.sh
@@ -2550,11 +2590,11 @@ jobs:
           bash scripts/tests/test-validate-image-verifier-liveness.sh
           bash scripts/tests/test-validate-image-verifier-liveness-workflow.sh
 
-      - name: 🔏 Validate Coroot compatibility-image verifier prerequisite
+      - name: 🔏 Validate compatibility-image verifier prerequisites
         if: needs.changes.outputs.k8s == 'true'
         run: |
-          shellcheck scripts/tests/test-coroot-image-verifier-prerequisite.sh
-          bash scripts/tests/test-coroot-image-verifier-prerequisite.sh
+          shellcheck scripts/tests/test-compatibility-image-verifier-prerequisite.sh
+          bash scripts/tests/test-compatibility-image-verifier-prerequisite.sh
 
       - name: 🔏 Validate image-signature enforcement probe
         if: needs.changes.outputs.k8s == 'true'
@@ -2857,6 +2897,34 @@ jobs:
         run: |
           shellcheck scripts/tests/test-agentic-engineer-schedule.sh
           bash scripts/tests/test-agentic-engineer-schedule.sh
+
+      - name: 🗄️ Validate the Agentic Engineer lane store
+        if: needs.changes.outputs.k8s == 'true'
+        # Renders the lane and Substrate: the agent reaches the store only through
+        # the egress gateway with the store credential, and the maintainer reads it
+        # only through the API server.
+        run: |
+          shellcheck scripts/tests/test-agentic-engineer-lane-store.sh
+          bash scripts/tests/test-agentic-engineer-lane-store.sh
+
+      - name: 🔒 Validate the Agentic Engineer lane store lease
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the store's pinned rclone image with its own arguments: the lease a
+        # run takes on memory/ refuses every other run, even many at once, the
+        # store refuses a write there without its token, and after a restart the
+        # former holder can neither write nor release.
+        run: |
+          shellcheck scripts/tests/test-agentic-engineer-lane-store-lease.sh
+          bash scripts/tests/test-agentic-engineer-lane-store-lease.sh
+
+      - name: 🚪 Validate the lane store through Substrate's egress gateway
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the gateway image Substrate deploys in front of the store's pinned
+        # rclone: a WebDAV method that opens a connection gets no reply, and the
+        # run message's own helper reaches PROPFIND, MKCOL, LOCK and UNLOCK.
+        run: |
+          shellcheck scripts/tests/test-agentic-engineer-lane-store-gateway.sh
+          bash scripts/tests/test-agentic-engineer-lane-store-gateway.sh
 
       - name: 🧠 Validate the kagent harness plugin wrapper
         if: needs.changes.outputs.k8s == 'true'
@@ -3224,7 +3292,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.75"
+          KSAIL_VERSION: "7.211.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3563,7 +3631,7 @@ jobs:
           !cancelled() &&
           steps.normalize-sarif.outputs.sarif == 'ready' &&
           github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: ${{ runner.temp }}/kubescape.sarif
           # Distinguishes these alerts from the CodeQL and zizmor analyses that
@@ -3658,7 +3726,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.75"
+          KSAIL_VERSION: "7.211.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3870,6 +3938,9 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup talosctl
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-talosctl.sh
 
@@ -4175,15 +4246,15 @@ jobs:
           install_dir="$(mktemp -d)"
           cd "$install_dir"
           archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$archive" "https://get.helm.sh/$archive"
-          curl --fail --location --retry 3 --output "$archive.sha256sum" "https://get.helm.sh/$archive.sha256sum"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$archive.sha256sum" "https://get.helm.sh/$archive.sha256sum"
           sha256sum --check "$archive.sha256sum"
           tar -xzf "$archive"
           echo "$install_dir/linux-amd64" >> "$GITHUB_PATH"
 
       - name: 🧩 Validate the post-renderer guard
         run: |
-          shellcheck scripts/build-controller-helm.sh scripts/guard-controller-helm-profile.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          shellcheck -x scripts/build-controller-helm.sh scripts/guard-controller-helm-profile.sh scripts/prepare-helm-render-input-capture.sh scripts/flux-render.lib.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
@@ -4349,10 +4420,10 @@ jobs:
     # HelmReleases installed beside an unsatisfied budget are rendered too, with their values
     # and post-renderers, and a Flagger Canary's primary is derived from its target (#3596).
     #
-    # Pull requests only. Every run pulls the chart of each release it has to render, over
+    # Pull requests only. A full run pulls the chart of each release it has to render, over
     # twenty today, so on the merge group it would make every production deploy wait on that
     # many upstream registries. A chart bump, a selector edit and a new budget each run it on
-    # their own pull request.
+    # their own pull request, where only the budgets whose inputs changed pull their charts.
     if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     # A stalled registry fails this job instead of holding it for the default six hours.
@@ -4364,6 +4435,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The guard renders the base revision too, to find which budgets' inputs changed.
+          fetch-depth: 0
 
       - name: ⚙️ Setup the audited controller's Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -4375,7 +4448,7 @@ jobs:
         # The fixture suite pulls no chart: a stand-in packages its fixture charts, and the
         # renderer built here renders them.
         run: |
-          shellcheck scripts/prepare-helm-render-input-capture.sh scripts/guard-pdb-selector-match.sh scripts/tests/test-guard-pdb-selector-match.sh
+          shellcheck -x scripts/flux-render.lib.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-pdb-selector-match.sh scripts/tests/test-guard-pdb-selector-match.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
@@ -4383,9 +4456,45 @@ jobs:
           bash scripts/tests/test-guard-pdb-selector-match.sh
 
       - name: 🛟 Validate every PodDisruptionBudget selects a rendered workload
+        # Only budgets whose inputs changed since the base have their charts pulled; a change
+        # to the guard, its exception rows or a pinned file judges every budget (#4465).
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           kube_version="$(yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")' ksail.prod.yaml)"
-          bash scripts/guard-pdb-selector-match.sh --kube-version "$kube_version" k8s
+          base_kube_version="$(git show "${BASE_SHA}:ksail.prod.yaml" | yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")')"
+          bash scripts/guard-pdb-selector-match.sh --base "$BASE_SHA" --base-kube-version "$base_kube_version" \
+            --kube-version "$kube_version" k8s
+
+  wait-for-production-turn:
+    name: 🧾 Wait for the production deployment turn
+    needs: [changes]
+    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # Wait outside the shared production lock so a later candidate cannot
+      # hold that lock while the first candidate still needs it to merge.
+      - name: 🧾 Wait until the candidate is first on current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}
+        run: go run ./scripts/verify-merge-group-queued wait
 
   # Every merge-group validator that ci-required-checks enforces is listed here too.
   # A required validator the deploy does not wait for runs in parallel with it, so
@@ -4412,6 +4521,7 @@ jobs:
         validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
+        wait-for-production-turn,
       ]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
@@ -4662,7 +4772,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.75"
+          KSAIL_VERSION: "7.211.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -4791,6 +4901,7 @@ jobs:
         validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
+        wait-for-production-turn,
         deploy-prod,
       ]
     if: always()
@@ -4891,7 +5002,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@e6db1a4ed5b23ce6f69e755deeddd6649313e9dc # v20.1.12
+        uses: devantler-tech/.github/actions/aggregate-job-checks@02183e4b176d3bdbedda8519a1f63ee324b8412c # v21.0.2
         with:
           check-workflow-startup: "true"
           job-results: >-
@@ -4921,7 +5032,24 @@ jobs:
             ${{ needs.validate-root-verify-merge-group.result }}
             ${{ needs.validate-rgd-templates-merge-group.result }}
             ${{ needs.validate-ghcr-fanout-merge-group.result }}
+            ${{ needs.wait-for-production-turn.result }}
             ${{ needs.deploy-prod.result }}
+
+      - name: 🚀 Require the selected production deployment
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          K8S_CHANGED: ${{ needs.changes.outputs.k8s }}
+          DEPLOY_RESULT: ${{ needs.deploy-prod.result }}
+        run: |
+          case "$EVENT_NAME:$K8S_CHANGED" in
+            merge_group:true) expected=success ;;
+            merge_group:false|pull_request:true|pull_request:false) expected=skipped ;;
+            *) echo '::error::Cannot determine production deployment selection'; exit 1 ;;
+          esac
+          if [ "$DEPLOY_RESULT" != "$expected" ]; then
+            echo "::error::Production deployment result was $DEPLOY_RESULT; expected $expected"
+            exit 1
+          fi
 
       - name: 🛡️ Require successful repository guards
         env:

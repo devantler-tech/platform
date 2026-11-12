@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Regression contract for staging the two agent compatibility-image signer
-# routes before either DaemonSet consumes those images in production.
+# Regression contract for staging dedicated compatibility-image signers
+# before production workloads consume those images.
 
 set -euo pipefail
 
@@ -53,9 +53,16 @@ while IFS='|' read -r repository attestor workflow; do
   })" || fail "the Talos verifier rule for ${repository} is missing"
   [[ "${node_identity}" == "${expected_identity}" ]] ||
     fail "the Talos and admission identities differ for ${repository}"
+  first_rule="$({
+    REPOSITORY="${repository}" yq -er '[.rules[].image | select(. == strenv(REPOSITORY) or test("^ghcr[.]io/devantler-tech/[*]$"))] | .[0]' "${node_verifier}"
+  })" || fail "the Talos rule order is unreadable for ${repository}"
+  [[ "${first_rule}" == "${repository}" ]] ||
+    fail "the Talos generic rule shadows ${repository}"
 done <<'ROUTES'
 ghcr.io/devantler-tech/platform-kubescape-node-agent|publishkubescapenodeagent|publish-kubescape-node-agent-hotfix
 ghcr.io/devantler-tech/platform-coroot-node-agent|publishcorootnodeagent|publish-coroot-node-agent-hotfix
+ghcr.io/devantler-tech/platform-longhorn-instance-manager|publishlonghornretirement|publish-longhorn-v1-retirement
+ghcr.io/devantler-tech/platform-longhorn-manager|publishlonghornv2|publish-longhorn-v2-only
 ROUTES
 
-printf 'Agent compatibility-image verifier prerequisite is valid.\n'
+printf 'Compatibility-image verifier prerequisites are valid.\n'

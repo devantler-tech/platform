@@ -1,4 +1,4 @@
-FROM docker.io/library/golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS builder
+FROM docker.io/library/golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS builder
 ENV GOTOOLCHAIN=local
 WORKDIR /src
 COPY . .
@@ -15,7 +15,7 @@ ARG VERSION=development
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
     -ldflags="-X main.buildVersion=${VERSION}" \
     -o /out/kubectl-kyverno ./cmd/platform-migrate \
-    && test "$(go version /out/kubectl-kyverno)" = "/out/kubectl-kyverno: go1.26.10" \
+    && test "$(go version /out/kubectl-kyverno)" = "/out/kubectl-kyverno: go1.26.11" \
     && go version -m /out/kubectl-kyverno > /tmp/build-info \
     && grep -Eq '^[[:space:]]+mod[[:space:]]+github\.com/kyverno/kyverno[[:space:]]+v1\.19\.2[[:space:]]' /tmp/build-info \
     && grep -Eq '^[[:space:]]+build[[:space:]]+vcs\.modified=false$' /tmp/build-info \
