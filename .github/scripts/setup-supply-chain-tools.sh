@@ -13,7 +13,10 @@ COSIGN_SHA256="424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
 SYFT_VERSION="1.56.0"
 # syft_1.56.0_checksums.txt: syft_1.56.0_linux_amd64.tar.gz
 SYFT_SHA256="1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528"
-# renovate: datasource=github-releases depName=aquasecurity/trivy extractVersion=^v(?<version>.+)$
+# Not tracked by Renovate: this Trivy runs the paired scanner-exception checks,
+# so it must be the release MegaLinter runs in CI (CI_TRIVY_VERSION in
+# scripts/megalinter-scan-counts.sh; scripts/tests/test-setup-supply-chain-tools.sh
+# refuses a mismatch). Move it, with its SHA-256, when that constant moves.
 TRIVY_VERSION="0.76.1"
 # trivy_0.76.1_checksums.txt: trivy_0.76.1_Linux-64bit.tar.gz
 TRIVY_SHA256="c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0"
