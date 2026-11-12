@@ -14,6 +14,11 @@ import (
 
 // main selects one independently authorized recovery operation; unknown flags fail closed.
 func main() {
+	if len(os.Args) == 2 && (os.Args[1] == "--inspect-reader-witness" || os.Args[1] == "--prepare-reader-witness") {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		os.Exit(runReaderRestartWitness(ctx, os.Getenv, kubectl{}, verifyReaderCustodySource, loadReaderInputVerificationStore, os.Stdout, os.Args[1] == "--prepare-reader-witness"))
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--verify-reader-inputs" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()

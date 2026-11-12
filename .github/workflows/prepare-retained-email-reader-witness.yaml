@@ -1,0 +1,79 @@
+---
+name: Prepare Retained Email Reader Witness
+
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: prepare-retained-email-reader-witness"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  prepare:
+    name: Preserve the original restart graph without pausing the reader
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the confirmed first-attempt main dispatch
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [[ "$GITHUB_ACTIONS" != true || "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/prepare-retained-email-reader-witness.yaml@refs/heads/main || "$GITHUB_ACTOR" != devantler || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted || "$CONFIRM" != prepare-retained-email-reader-witness ]]; then
+            printf '%s\n' 'EMAIL_READER_RESTART_WITNESS=UNVERIFIED stage=dispatch restart=NOT_AUTHORIZED recovery=UNVERIFIED' >&2
+            exit 2
+          fi
+
+      - name: Check out the confirmed immutable revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up the repository Go version
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build both commands before restoring credentials
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/email-restart-witness-tools"
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/email-restart-witness-tools/recovery" ./scripts/openbao-backup-recovery
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/email-restart-witness-tools/reader" ./scripts/verify-email-data-recovery
+
+      - name: Install the repository-approved Kubernetes reader
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/email-witness-kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+            https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl -o "$kubectl_path"
+          printf '%s  %s\n' 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 "$kubectl_path" | sha256sum --check
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/email-restart-witness-tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/email-restart-witness-tools" >> "$GITHUB_PATH"
+
+      - name: Restore the inputs and preserve the independently bound restart graph
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          EMAIL_RETAINED_READER_UID: ${{ secrets.EMAIL_RETAINED_READER_UID }}
+          EMAIL_RETAINED_CLAIM_UID: ${{ secrets.EMAIL_RETAINED_CLAIM_UID }}
+          EMAIL_RETAINED_PV_UID: ${{ secrets.EMAIL_RETAINED_PV_UID }}
+          EMAIL_RETAINED_BACKEND_UID: ${{ secrets.EMAIL_RETAINED_BACKEND_UID }}
+          EMAIL_RETAINED_REPLICA_UIDS: ${{ secrets.EMAIL_RETAINED_REPLICA_UIDS }}
+          EMAIL_READER_WITNESS_CONFIRM: ${{ inputs.confirm }}
+        run: bash scripts/prepare-retained-email-reader-witness.sh

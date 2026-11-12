@@ -13,10 +13,15 @@ import (
 
 // readInputProofFile refuses links, foreign ownership, shared modes and incomplete private handoffs.
 func readInputProofFile(directory, name string, limit int64) (result []byte, resultErr error) {
-	fail := func() ([]byte, error) { return nil, errors.New("input-proof-file") }
 	if name != "token" && name != "expected.json" {
-		return fail()
+		return nil, errors.New("input-proof-file")
 	}
+	return readOwnedProofFile(directory, name, limit)
+}
+
+// readOwnedProofFile reads only a caller-fixed handoff file; entrypoints retain their separate filename allowlists.
+func readOwnedProofFile(directory, name string, limit int64) (result []byte, resultErr error) {
+	fail := func() ([]byte, error) { return nil, errors.New("input-proof-file") }
 	info, err := os.Lstat(directory)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
 		return fail()

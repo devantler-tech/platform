@@ -273,6 +273,8 @@ jobs:
               - 'internal/emailreaderinputs/**'
               - 'scripts/verify-retained-email-reader-inputs.sh'
               - '.github/workflows/verify-retained-email-reader-inputs.yaml'
+              - 'scripts/prepare-retained-email-reader-witness.sh'
+              - '.github/workflows/prepare-retained-email-reader-witness.yaml'
               - 'scripts/run-openbao-backup-sandbox.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
               - 'scripts/tests/test-ksail-operator-startup-order.sh'
@@ -3765,6 +3767,7 @@ jobs:
           OPENBAO_BACKUP_RECOVERY_NATIVE_TEST: "1"
         run: |
           shellcheck scripts/run-openbao-backup-sandbox.sh
+          shellcheck scripts/prepare-retained-email-reader-witness.sh
           go test -count=1 -v ./scripts/openbao-backup-recovery
       - name: 🔒 Validate Crossplane provider egress policy
         if: matrix.suite == 'contracts'

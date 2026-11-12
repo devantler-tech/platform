@@ -31,6 +31,47 @@ claim, replica, source or existing expired-backup disposal gate. Full native
 lifecycle witnesses, actual key-versus-device proof and separately qualified
 mailbox-data protection remain independent prerequisites.
 
+## Separate retained-reader restart witness
+
+`Prepare Retained Email Reader Witness` is an explicitly confirmed, first-attempt
+main-only preparation. It covers the original fixed recovery copy only. The
+independent reader, claim, PV, backend and three replica identities must be
+rebound before dispatch. A healthy attached encrypted V1 graph, the original PV's
+`Retain` policy and the exact immutable retained-input record are prerequisites.
+
+The operator freezes the complete reader, claim, PV, backend, Engine, replicas
+and both native attachment definitions in private RAM. It also records the
+reader's resource version, original-input record fingerprint and source
+exclusion. Incomplete list reads, replacement identities, ambiguous attachment
+tickets, changed definitions or a changed current-main source refuse custody.
+Transient controller heartbeat fields are excluded from the frozen comparison.
+
+The existing isolated runner must independently restore the exact original input
+record before the preparation can store this separate witness. The production
+tunnel is closed and its connection files remain outside the network-disabled
+sandbox. After restoration, fresh native, original-input and current-main checks
+must match the preflight witness. Another complete comparison follows the final
+non-destructive storage preflight immediately before one KV2 CAS-zero create at
+`infrastructure/email/recovery/retained-reader-restart-witness`. Existing records,
+uncertain responses, non-original versions or mismatched readback refuse success;
+the operation never overwrites, retries, deletes or rolls back a record.
+
+`EMAIL_READER_RESTART_WITNESS=STORED` is published only after connection and private
+workspace cleanup. Its `record_sha256` binds the complete witness to the explicit
+original version-one creation metadata. Retain that opaque fingerprint
+independently for later exact-record recovery; a newly created version-one record
+must not replace it. No native definitions, credentials or private record values
+are printed. A refused or uncertain create requires a separately reviewed
+read-only observation before any further action.
+
+This is metadata custody, with key and recovery unverified and restart explicitly
+unauthorized. Independent restoration of this new witness, actual current-key
+validation, a separately reviewed ordinary UID/resource-version-fenced pause and
+resume path, native detachment proof and durable replacement-reader identity are
+still required. The operation does not stop a reader, detach storage, protect a
+different copy, verify mailbox data, dispose of anything or release capacity.
+Existing mailbox-data protection and expired-backup disposal gates remain intact.
+
 ## Existing account recovery
 
 The main-only account verification workflow reads the fixed deployment facts and a fresh
