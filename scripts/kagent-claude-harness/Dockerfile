@@ -2,8 +2,11 @@
 # what the Agentic Engineer's runs use (devantler-tech/monorepo#4867, #4868):
 #
 # - gh for the GitHub API, jq and yq for JSON and YAML, and curl.
-# - GNU coreutils in place of BusyBox's, and Go: the engineer's pre-flight
-#   scripts use GNU `timeout` and `date` options and build Go guards.
+# - GNU coreutils in place of BusyBox's: the engineer's pre-flight scripts use
+#   GNU `timeout` and `date` options.
+# - Go, from an upstream release: the pre-flight scripts build Go guards whose
+#   go.mod needs a newer Go than Alpine packages, and a run cannot download a
+#   toolchain.
 # - kubectl and a kubeconfig for the lane's read-only cluster view (kubeconfig).
 # - The whole agentic-engineering plugin at a pinned agent-plugins commit,
 #   loaded by a `claude` wrapper until kagent loads it whole itself (claude).
@@ -14,6 +17,10 @@
 # kubectl, from the image the platform's own jobs and the cluster-reader proxy
 # run, pinned by digest.
 FROM docker.io/alpine/k8s:1.37.2@sha256:dcb7185e112a453aa72f426754849a97357727ef8f40168fb208c8cf59952042 AS kubectl
+
+# Go's own release, pinned by digest; Renovate moves it. It must be at least
+# the highest `go` line of devantler-tech/monorepo's Go guards (1.26.11 today).
+FROM docker.io/library/golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS go
 
 # The plugin, fetched by its exact commit. Renovate moves the commit to the
 # head of agent-plugins' main (.github/renovate.json), which only reviewed pull
@@ -36,12 +43,25 @@ USER 0
 # published image is pinned by digest wherever it runs, so versions are not
 # pinned here.
 # hadolint ignore=DL3018
-RUN apk add --no-cache coreutils curl github-cli go jq yq-go && \
-    gh --version && jq --version && yq --version && curl --version && go version && \
+RUN apk add --no-cache coreutils curl github-cli jq yq-go && \
+    gh --version && jq --version && yq --version && curl --version && \
     case "$(timeout --version) $(date --version)" in \
       *'GNU coreutils'*' '*'GNU coreutils'*) ;; \
       *) echo 'BusyBox still shadows GNU timeout or date' >&2; exit 1 ;; \
     esac
+
+COPY --from=go /usr/local/go /usr/local/go
+# Nothing here relies on the image's ENV, since the Harness, not the image,
+# decides a run's environment: Go is linked onto the default PATH, and
+# GOTOOLCHAIN=local is set in Go's own go.env. It makes a guard that needs a
+# newer Go fail at once with the version it needs, instead of trying a download
+# the sandbox cannot make.
+RUN ln -s /usr/local/go/bin/go /usr/local/go/bin/gofmt /usr/local/bin/ && \
+    sed -i 's/^GOTOOLCHAIN=.*/GOTOOLCHAIN=local/' /usr/local/go/go.env && \
+    grep -qx 'GOTOOLCHAIN=local' /usr/local/go/go.env && \
+    test "$(command -v go)" = /usr/local/bin/go && \
+    test "$(env -u GOTOOLCHAIN go env GOTOOLCHAIN)" = local && \
+    go version
 
 COPY --from=kubectl /usr/bin/kubectl /usr/local/bin/kubectl
 # A COPY --chmod gives the folder it creates the file's mode too, so the folder comes first.
