@@ -8,6 +8,9 @@ state. Fixed SQL reads physical database identity, timeline and WAL positions;
 the primary's captured flush position must be replayed by both standbys. The
 client uses the Pod's fixed local socket with a cleared connection environment
 and fixed executable search path, rather than inheriting libpq overrides.
+It qualifies PostgreSQL built-ins explicitly and fixes catalog lookup and
+read-only transaction defaults for the connection. Persisted role or database
+settings cannot redirect this physical-state query through a shadow function.
 Complete namespace Pod inventories and process identities bracket the reads,
 including a final whole-cluster read after the last SQL command. The operation
 prints only a success summary, with no application rows, credentials or physical
