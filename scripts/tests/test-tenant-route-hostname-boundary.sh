@@ -109,4 +109,20 @@ for tenant in wedding-app ascoachingogvaner; do
     fail "${namespace_file} must carry app.kubernetes.io/managed-by: ksail or its routes escape restrict-tenant-route-hostnames (found: '${owner}')"
 done
 
+# Homepage must remain attached only to the shared Gateway's HTTPS port while
+# its listener name changes. A name-only parent would lose the apex route when
+# Cilium isolates a new, more-specific listener; an unconstrained parent could
+# attach to a future plaintext listener. Check the shared input AND its actual
+# production apps render, rather than assuming an overlay preserves the base.
+apps_render="${workdir}/apps.yaml"
+kubectl kustomize "${repo_root}/k8s/providers/hetzner/apps" >"${apps_render}" 2>"${workdir}/apps.err" ||
+  fail "prod apps overlay failed to build: $(tail -5 "${workdir}/apps.err")"
+for route_input in "${repo_root}/k8s/bases/apps/homepage/http-route.yaml" "${apps_render}"; do
+  homepage_count="$(yq -o=json -I=0 'select(.kind == "HTTPRoute" and .metadata.namespace == "homepage" and .metadata.name == "homepage")' "${route_input}" | jq -s 'length')"
+  [ "${homepage_count}" = 1 ] || fail "expected exactly one Homepage route in ${route_input}"
+  homepage_parents="$(yq -o=json -I=0 'select(.kind == "HTTPRoute" and .metadata.namespace == "homepage" and .metadata.name == "homepage") | .spec.parentRefs' "${route_input}")"
+  jq -e 'length == 1 and .[0].name == "platform" and .[0].namespace == "kube-system" and .[0].port == 443 and (.[0].group // "gateway.networking.k8s.io") == "gateway.networking.k8s.io" and (.[0].kind // "Gateway") == "Gateway"' <<<"${homepage_parents}" >/dev/null ||
+    fail "Homepage must have exactly one parent on Gateway kube-system/platform, constrained to HTTPS port 443 (${route_input})"
+done
+
 echo "Tenant route-kind boundary holds: RBAC grants HTTPRoute only and all ${listener_count} listeners pin kinds to HTTPRoute."
