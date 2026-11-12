@@ -109,67 +109,94 @@ index 0000000..b7e980a
 +	}
 +}
 diff --git a/clickhouse/space_manager.go b/clickhouse/space_manager.go
-index 17edc53..61abdca 100644
+index 17edc53..8528f71 100644
 --- a/clickhouse/space_manager.go
 +++ b/clickhouse/space_manager.go
-@@ -72,6 +72,7 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
+@@ -71,7 +71,24 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
+ 		return nil
  	}
  
- 	var cleanupNeeded []string
-+	usage := make(map[string]float64)
+-	var cleanupNeeded []string
++	for _, disk := range disksToClean(diskInfo, sm.cfg.UsageThresholdPercent) {
++		if err := sm.cleanupOldestPartitionsFromDisk(ctx, client, disk); err != nil {
++			return fmt.Errorf("failed to cleanup partitions from disk %s: %w", disk.Name, err)
++		}
++	}
++	return nil
++}
++
++// diskUsage is a local disk over the cleanup threshold, with the usage that put it there.
++type diskUsage struct {
++	Name         string
++	UsagePercent float64
++}
++
++// disksToClean returns the local disks whose usage exceeds thresholdPercent, each with its
++// usage, so the cleanup decides with the same reading that selected the disk.
++func disksToClean(diskInfo []DiskInfo, thresholdPercent int) []diskUsage {
++	var res []diskUsage
  	for _, disk := range diskInfo {
  		if disk.Type != "Local" {
  			continue
-@@ -86,6 +87,7 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
+@@ -80,54 +97,98 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
+ 		usedSpace := disk.TotalSpace - disk.FreeSpace
+ 		usagePercent := float64(usedSpace) / float64(disk.TotalSpace) * 100
+ 
+-		klog.Infof("disk \"%s\" usage: %.2f%%, threshold: %d%%", disk.Name, usagePercent, sm.cfg.UsageThresholdPercent)
++		klog.Infof("disk \"%s\" usage: %.2f%%, threshold: %d%%", disk.Name, usagePercent, thresholdPercent)
+ 
+-		if int(usagePercent) > sm.cfg.UsageThresholdPercent {
++		if int(usagePercent) > thresholdPercent {
  			klog.Infof("disk %s usage (%.2f%%) exceeds threshold (%d%%), marking for cleanup",
- 				disk.Name, usagePercent, sm.cfg.UsageThresholdPercent)
- 			cleanupNeeded = append(cleanupNeeded, disk.Name)
-+			usage[disk.Name] = usagePercent
+-				disk.Name, usagePercent, sm.cfg.UsageThresholdPercent)
+-			cleanupNeeded = append(cleanupNeeded, disk.Name)
++				disk.Name, usagePercent, thresholdPercent)
++			res = append(res, diskUsage{Name: disk.Name, UsagePercent: usagePercent})
  		}
  	}
++	return res
++}
  
-@@ -94,40 +96,88 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
+-	if len(cleanupNeeded) == 0 {
+-		return nil
++func (sm *SpaceManager) cleanupOldestPartitionsFromDisk(ctx context.Context, client *Client, disk diskUsage) error {
++	partitions, err := sm.getPartitionsFromDiskOnServer(ctx, client, disk.Name)
++	if err != nil {
++		return fmt.Errorf("failed to get partitions from disk %s: %w", disk.Name, err)
  	}
  
- 	for _, diskName := range cleanupNeeded {
+-	for _, diskName := range cleanupNeeded {
 -		if err := sm.cleanupOldestPartitionsFromDisk(ctx, client, diskName); err != nil {
-+		if err := sm.cleanupOldestPartitionsFromDisk(ctx, client, diskName, usage[diskName]); err != nil {
- 			return fmt.Errorf("failed to cleanup partitions from disk %s: %w", diskName, err)
+-			return fmt.Errorf("failed to cleanup partitions from disk %s: %w", diskName, err)
++	for _, oldestPartition := range partitionsToDropFromDisk(partitions, disk, sm.cfg.UsageThresholdPercent, sm.cfg.MinPartitions) {
++		if err := sm.dropPartition(ctx, client, oldestPartition); err != nil {
++			klog.Errorf("failed to drop partition %s from table %s.%s on disk %s: %v",
++				oldestPartition.PartitionId, oldestPartition.Database, oldestPartition.Table, disk.Name, err)
++			continue
  		}
  	}
  	return nil
  }
  
 -func (sm *SpaceManager) cleanupOldestPartitionsFromDisk(ctx context.Context, client *Client, diskName string) error {
-+func (sm *SpaceManager) cleanupOldestPartitionsFromDisk(ctx context.Context, client *Client, diskName string, usagePercent float64) error {
- 	partitions, err := sm.getPartitionsFromDiskOnServer(ctx, client, diskName)
- 	if err != nil {
- 		return fmt.Errorf("failed to get partitions from disk %s: %w", diskName, err)
+-	partitions, err := sm.getPartitionsFromDiskOnServer(ctx, client, diskName)
+-	if err != nil {
+-		return fmt.Errorf("failed to get partitions from disk %s: %w", diskName, err)
++// partitionsToDropFromDisk applies the emergency ceiling to the disk's usage, then returns the
++// oldest partition of every table that holds more partitions than are kept at that usage.
++func partitionsToDropFromDisk(parts []PartitionInfo, disk diskUsage, thresholdPercent, minPartitions int) []PartitionInfo {
++	keep := partitionsToKeep(disk.UsagePercent, thresholdPercent, minPartitions)
++	if keep < minPartitions {
++		klog.Warningf("disk %s usage (%.2f%%) is at or above %d%%: freeing the oldest partition of every table, including a table's last one, to keep ClickHouse writable",
++			disk.Name, disk.UsagePercent, emergencyUsagePercent(thresholdPercent))
  	}
++	return partitionsToDrop(parts, keep)
++}
  
 -	tablePartitions := make(map[string][]PartitionInfo)
 -	for _, partition := range partitions {
 -		tableKey := partition.Database + "." + partition.Table
 -		tablePartitions[tableKey] = append(tablePartitions[tableKey], partition)
-+	minPartitions := partitionsToKeep(usagePercent, sm.cfg.UsageThresholdPercent, sm.cfg.MinPartitions)
-+	if minPartitions < sm.cfg.MinPartitions {
-+		klog.Warningf("disk %s usage (%.2f%%) is at or above %d%%: freeing the oldest partition of every table, even its last one, to keep ClickHouse writable",
-+			diskName, usagePercent, emergencyUsagePercent(sm.cfg.UsageThresholdPercent))
-+	}
-+	for _, oldestPartition := range partitionsToDrop(partitions, minPartitions) {
-+		if err := sm.dropPartition(ctx, client, oldestPartition); err != nil {
-+			klog.Errorf("failed to drop partition %s from table %s.%s on disk %s: %v",
-+				oldestPartition.PartitionId, oldestPartition.Database, oldestPartition.Table, diskName, err)
-+			continue
-+		}
- 	}
-+	return nil
-+}
- 
--	for tableKey, tablePartitionList := range tablePartitions {
--		if len(tablePartitionList) <= sm.cfg.MinPartitions {
--			klog.Infof("table %s has %d partitions, keeping minimum %d",
--				tableKey, len(tablePartitionList), sm.cfg.MinPartitions)
 +// emergencyUsagePercent is the disk usage, halfway between the cleanup threshold and a full
 +// disk, at which keeping the minimum number of partitions gives way to keeping ClickHouse
 +// writable: 85% at the default 70% threshold.
@@ -185,10 +212,14 @@ index 17edc53..61abdca 100644
 +func partitionsToKeep(usagePercent float64, thresholdPercent, minPartitions int) int {
 +	if usagePercent >= float64(emergencyUsagePercent(thresholdPercent)) {
 +		return 0
-+	}
+ 	}
 +	return minPartitions
 +}
-+
+ 
+-	for tableKey, tablePartitionList := range tablePartitions {
+-		if len(tablePartitionList) <= sm.cfg.MinPartitions {
+-			klog.Infof("table %s has %d partitions, keeping minimum %d",
+-				tableKey, len(tablePartitionList), sm.cfg.MinPartitions)
 +// partitionsToDrop returns the oldest partition of every table that holds more than
 +// minPartitions distinct partitions.
 +//
@@ -234,10 +265,10 @@ index 17edc53..61abdca 100644
  func (sm *SpaceManager) dropPartition(ctx context.Context, client *Client, part PartitionInfo) error {
 diff --git a/clickhouse/space_manager_test.go b/clickhouse/space_manager_test.go
 new file mode 100644
-index 0000000..15bd012
+index 0000000..828767e
 --- /dev/null
 +++ b/clickhouse/space_manager_test.go
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,124 @@
 +package clickhouse
 +
 +import (
@@ -317,6 +348,31 @@ index 0000000..15bd012
 +	assert.Equal(t,
 +		[]PartitionInfo{testPart("otel_logs", "20261112"), testPart("otel_traces", "20261111")},
 +		partitionsToDrop(parts, partitionsToKeep(90, 70, 1)),
++	)
++}
++
++func TestDisksToCleanCarriesTheUsageThatSelectedEachDisk(t *testing.T) {
++	disks := []DiskInfo{
++		{Name: "default", Type: "Local", TotalSpace: 1000, FreeSpace: 100},
++		{Name: "cold", Type: "Local", TotalSpace: 1000, FreeSpace: 400},
++		{Name: "s3", Type: "ObjectStorage", TotalSpace: 1000, FreeSpace: 0},
++	}
++	assert.Equal(t, []diskUsage{{Name: "default", UsagePercent: 90}}, disksToClean(disks, 70))
++	assert.Empty(t, disksToClean(disks, 90))
++}
++
++func TestCleanupDecisionKeepsTodayAboveTheThresholdAndFreesItAtTheCeiling(t *testing.T) {
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261112"),
++		testPart("otel_logs", "20261112"),
++	}
++	disk := func(free uint64) diskUsage {
++		return disksToClean([]DiskInfo{{Name: "default", Type: "Local", TotalSpace: 1000, FreeSpace: free}}, 70)[0]
++	}
++	assert.Empty(t, partitionsToDropFromDisk(parts, disk(200), 70, 1))
++	assert.Equal(t,
++		[]PartitionInfo{testPart("otel_logs", "20261112")},
++		partitionsToDropFromDisk(parts, disk(150), 70, 1),
 +	)
 +}
 +

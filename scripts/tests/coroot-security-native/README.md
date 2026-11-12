@@ -64,8 +64,9 @@ The compatibility build uses upstream revision
 [checkpoint patch](../../../k8s/bases/infrastructure/coroot/coroot-v1.28.1-checkpoint-record.patch).
 That patch changes the PostgreSQL inspection, its metric construction and model,
 the alert watcher's handling of unknown, missing and no-longer-applicable check
-reports, the ClickHouse space manager's count of a table's remaining partitions,
-and their regression tests. It changes none of the entrypoint, flags, bootstrap,
+reports, the ClickHouse space manager's count of a table's remaining partitions and
+its last-resort release of even a table's last partition when the disk is nearly
+full, and their regression tests. It changes none of the entrypoint, flags, bootstrap,
 project selector, dashboard panel API, range-query alignment or browser routes
 audited above. The final image retains the digest-pinned upstream runtime and
 entrypoint. The fixture nevertheless runs the exact proposed image through all
