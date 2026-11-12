@@ -30,6 +30,7 @@ name: Prepare Longhorn V2 Migration
             inventory-storage-root,
             inventory-storage-layout,
             inventory-provider-volume-footprint,
+            inventory-v1-runtime,
             inspect-host-memory,
             reboot-host-for-hugepages,
             observe-database,
@@ -111,6 +112,9 @@ jobs:
           set -euo pipefail
           [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
           case "${LONGHORN_V2_OPERATION}" in
+            inventory-v1-runtime)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == inventory-v1-runtime ]]
+              ;;
             observe-database)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
               ;;
