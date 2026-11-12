@@ -158,19 +158,20 @@ index 0a6938f..05ac049 100644
  	DatabaseSize    map[string]*timeseries.TimeSeries
  	TableSize       map[DbTableKey]*timeseries.TimeSeries
 diff --git a/watchers/alerts.go b/watchers/alerts.go
-index 6a2b363..559e289 100644
+index 6a2b363..cdb3726 100644
 --- a/watchers/alerts.go
 +++ b/watchers/alerts.go
-@@ -105,6 +105,8 @@ func (w *Alerts) Check(project *db.Project, world *model.World, from, to timeser
+@@ -105,6 +105,9 @@ func (w *Alerts) Check(project *db.Project, world *model.World, from, to timeser
  					}
  					check, report := app.GetCheckWithReport(rule.Source.Check.CheckId)
  					if check == nil {
 +						// A missing report is unobserved time too: restart any pending period.
 +						delete(w.pendingAlerts, calcFingerprint(string(rule.Id), app.Id.String(), nil))
++						w.retireInapplicableCheckAlert(project, rule, app, now)
  						continue
  					}
  					alertsEvaluated++
-@@ -137,6 +139,11 @@ func (w *Alerts) Check(project *db.Project, world *model.World, from, to timeser
+@@ -137,6 +140,11 @@ func (w *Alerts) Check(project *db.Project, world *model.World, from, to timeser
  
  func (w *Alerts) evaluateCheckAlert(project *db.Project, rule *model.AlertingRule, app *model.Application, check *model.Check, report model.AuditReportName, now timeseries.Time) {
  	fingerprint := calcFingerprint(string(rule.Id), app.Id.String(), nil)
@@ -182,12 +183,57 @@ index 6a2b363..559e289 100644
  
  	isFiring := check.Status > model.OK
  
+@@ -1032,3 +1040,44 @@ func renderTemplate(tmpl string, labels map[string]any) string {
+ 	}
+ 	return buf.String()
+ }
++
++// retireInapplicableCheckAlert resolves a check alert whose report no longer applies to the
++// application. Absence alone is not evidence: a check can also be missing because its telemetry
++// is. The alert is retired only when it records the report that produced it, a fresh audit no
++// longer creates that report at all (a report kept as UNKNOWN or without checks means missing
++// instrumentation), and at least one current instance is observed running on a node whose agent
++// is reporting. Applications without observed instances, and collector outages, keep the alert.
++func (w *Alerts) retireInapplicableCheckAlert(project *db.Project, rule *model.AlertingRule, app *model.Application, now timeseries.Time) {
++	fingerprint := calcFingerprint(string(rule.Id), app.Id.String(), nil)
++	alert, err := w.db.GetActiveOrSuppressedAlertByFingerprint(project.Id, fingerprint)
++	if err != nil {
++		klog.Errorln("failed to get alert:", err)
++		return
++	}
++	if alert == nil || alert.Report == "" || !reportNoLongerApplies(app, alert.Report) {
++		return
++	}
++	alert.ResolvedAt = now
++	if err := w.db.ResolveAlert(project.Id, alert.Id, now); err != nil {
++		klog.Errorln("failed to resolve inapplicable alert:", err)
++		return
++	}
++	w.notifier.Enqueue(project, app, alert, rule, now)
++}
++
++func reportNoLongerApplies(app *model.Application, report model.AuditReportName) bool {
++	for _, r := range app.Reports {
++		if r.Name == report {
++			return false
++		}
++	}
++	for _, i := range app.Instances {
++		if i.IsObsolete() {
++			continue
++		}
++		if i.IsUp() && i.Node != nil && i.Node.IsUp() {
++			return true
++		}
++	}
++	return false
++}
 diff --git a/watchers/alerts_test.go b/watchers/alerts_test.go
 new file mode 100644
-index 0000000..1042ad8
+index 0000000..915a5d7
 --- /dev/null
 +++ b/watchers/alerts_test.go
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,295 @@
 +package watchers
 +
 +import (
@@ -373,4 +419,113 @@ index 0000000..1042ad8
 +	alerts, err = database.GetLatestAlertsByRule(project.Id, string(rule.Id))
 +	require.NoError(t, err)
 +	require.Len(t, alerts, 1)
++}
++
++// observedSeries is a synthetic series whose recent points are present, so TailIsEmpty is false.
++func observedSeries(world *model.World) *timeseries.TimeSeries {
++	points := int((world.Ctx.To - world.Ctx.From) / timeseries.Time(world.Ctx.Step))
++	data := make([]float32, points)
++	for i := range data {
++		data[i] = 1
++	}
++	return timeseries.NewWithData(world.Ctx.From, world.Ctx.Step, data)
++}
++
++// addInstance gives the application one instance whose container and node agent may each be observed.
++func addInstance(world *model.World, app *model.Application, containerObserved, agentObserved bool, types ...model.ApplicationType) {
++	node := model.NewNode("test-cluster", model.NewNodeId("machine-1", "uuid-1"))
++	if agentObserved {
++		series := observedSeries(world)
++		node.Name.Update(series, "node-1")
++		node.CpuUsagePercent = series
++	}
++	instance := app.GetOrCreateInstance("service-1", node)
++	container := instance.GetOrCreateContainer("container-1", "service")
++	if containerObserved {
++		container.MemoryRss = observedSeries(world)
++	}
++	for _, t := range types {
++		container.ApplicationTypes[t] = true
++	}
++}
++
++func firingPostgresAlert(t *testing.T) (*db.DB, *db.Project, *Alerts, *model.World, *model.Application, *model.AlertingRule, *model.Alert) {
++	t.Helper()
++	database, project, watcher, world, app, rule := checkAlertFixture(t)
++	rule.Source.Check.CheckId = model.Checks.PostgresAvailability.Id
++	require.NoError(t, database.UpdateAlertingRule(project.Id, rule))
++	app.Reports = []*model.AuditReport{{Name: model.AuditReportPostgres, Checks: []*model.Check{{Id: rule.Source.Check.CheckId, Status: model.WARNING, Message: "synthetic failure"}}}}
++	watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++	alerts, err := database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Len(t, alerts, 1)
++	require.Equal(t, model.AuditReportPostgres, alerts[0].Report)
++	return database, project, watcher, world, app, rule, alerts[0]
++}
++
++func TestCheckAlertRetiresWhenReportNoLongerApplies(t *testing.T) {
++	for _, suppressed := range []bool{false, true} {
++		t.Run(map[bool]string{false: "active", true: "suppressed"}[suppressed], func(t *testing.T) {
++			database, project, watcher, world, app, _, alert := firingPostgresAlert(t)
++			if suppressed {
++				require.NoError(t, database.SuppressAlerts(project.Id, []string{alert.Id}, "test"))
++			}
++			// The application keeps running and stays observed, but is no longer a database.
++			addInstance(world, app, true, true)
++			app.Reports = nil
++			auditor.Audit(world, project, nil, nil)
++			for _, r := range app.Reports {
++				require.NotEqual(t, model.AuditReportPostgres, r.Name)
++			}
++			watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++			after, err := database.GetAlert(project.Id, alert.Id)
++			require.NoError(t, err)
++			require.NotZero(t, after.ResolvedAt, "an observed application without the report no longer has the condition")
++		})
++	}
++}
++
++func TestCheckAlertMissingDataIsNotRetirement(t *testing.T) {
++	for _, tc := range []struct {
++		name              string
++		containerObserved bool
++		agentObserved     bool
++		types             []model.ApplicationType
++		forgetReport      bool
++	}{
++		{name: "no instances"},
++		{name: "collector outage on the node", containerObserved: true},
++		{name: "container not observed", agentObserved: true},
++		{name: "database without its instrumentation (UNKNOWN report)", containerObserved: true, agentObserved: true, types: []model.ApplicationType{model.ApplicationTypePostgres}},
++		{name: "alert without a recorded report", containerObserved: true, agentObserved: true, forgetReport: true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			database, project, watcher, world, app, _, alert := firingPostgresAlert(t)
++			if tc.forgetReport {
++				_, err := database.Exec("UPDATE alert SET report = '' WHERE id = $1", alert.Id)
++				require.NoError(t, err)
++			}
++			if tc.containerObserved || tc.agentObserved {
++				addInstance(world, app, tc.containerObserved, tc.agentObserved, tc.types...)
++			}
++			app.Reports = nil
++			auditor.Audit(world, project, nil, nil)
++			check, _ := app.GetCheckWithReport(model.Checks.PostgresAvailability.Id)
++			require.Nil(t, check)
++			if len(tc.types) > 0 {
++				var report *model.AuditReport
++				for _, r := range app.Reports {
++					if r.Name == model.AuditReportPostgres {
++						report = r
++					}
++				}
++				require.NotNil(t, report, "the auditor keeps the report for an uninstrumented database")
++				require.Equal(t, model.UNKNOWN, report.Status)
++			}
++			watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++			after, err := database.GetAlert(project.Id, alert.Id)
++			require.NoError(t, err)
++			require.Zero(t, after.ResolvedAt, "missing data must keep the alert visible")
++		})
++	}
 +}
