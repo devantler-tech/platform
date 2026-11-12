@@ -83,15 +83,15 @@ created=true
 kind create cluster --name "$fixture" --kubeconfig "$KUBECONFIG" \
   --image kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed --wait 120s
 kubectl apply -f "$gateway/config/crd/standard/gateway.networking.k8s.io_httproutes.yaml" >/dev/null
-helm install kro oci://registry.k8s.io/kro/charts/kro@sha256:bafeda52939e319d231ad8d59d082d4f68f5bccad2d8b9ea0433bc872609e732 \
+helm install kro oci://registry.k8s.io/kro/charts/kro@sha256:56561368ed4c574520e8bd6a677a2e6c66333fb90e759ff4f2f068341fe9956c \
   --namespace kro-system --create-namespace --set fullnameOverride=kro --set rbac.mode=aggregation \
   --set config.allowCRDDeletion=false --set config.featureGates.CELOmitFunction=false \
   --set deployment.replicaCount=1 \
-  --set-string image.tag=v0.9.2@sha256:4adde767d11163f3064a3431ab6bb87c8dc70498fdaac3109d9b9df7ffa494e3 \
+  --set-string image.tag=v0.10.0@sha256:ec329ba111448553ca9f77f020c875a6348caa0382de79620414bb14a227395e \
   --wait --timeout 180s >"$work/helm.log"
 kubectl -n kro-system get deployment kro -o json | jq -e '
   [.spec.template.spec.containers[].image] ==
-  ["registry.k8s.io/kro/kro:v0.9.2@sha256:4adde767d11163f3064a3431ab6bb87c8dc70498fdaac3109d9b9df7ffa494e3"]' >/dev/null || fail 'installed controller image differs from the reviewed pin'
+  ["registry.k8s.io/kro/kro:v0.10.0@sha256:ec329ba111448553ca9f77f020c875a6348caa0382de79620414bb14a227395e"]' >/dev/null || fail 'installed controller image differs from the reviewed pin'
 kubectl apply -f "$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml" >/dev/null
 kubectl apply -f "$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml" >/dev/null
 for _attempt in {1..60}; do
