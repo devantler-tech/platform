@@ -630,6 +630,15 @@ indirect OpenAPI, OpenTelemetry, gRPC gateway, genproto and `golang.org/x`
 modules. Talos machinery and its YAML encoders keep their versions. This audit
 changes no cluster configuration or vulnerability exception.
 
+**7.212.7**, commit `c9d252980ef7e6c52536851fea600b3616aaf3e4`, is audited
+against 7.212.6. Only `go.mod` and `go.sum` change; the configuration manager,
+Talos generator, cluster API and chart are byte-identical, so the fold's
+trigger, both-role output and explicit schematic-ID boundary are unchanged. The
+only module change moves the snapshot-test library `go-snaps` from v0.5.23 to
+v0.5.25 and its two checksum lines. Talos machinery and its YAML encoders keep
+their versions. This audit changes no cluster configuration or vulnerability
+exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
