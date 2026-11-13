@@ -34,7 +34,11 @@ printf 'business-site\tpublish-app\tdevantler-tech/.github\t467f07582436a26b62cf
 printf 'business-site\tpublish-app\tdevantler-tech/.github\taf042c540ce8db4d64add98c34b5c57691e0e812\n' >>"$upgrade_test_work/two-approved.tsv"
 mv "$upgrade_test_work/two-approved.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv"
 cp "$tree/scripts/publish-workflow-canonical-approvals.tsv" "$upgrade_test_work/original-approvals.tsv"
-export PUBLISH_CONSUMER_ROOT="$tree" APPROVED_REVISIONS_FILE="$tree/scripts/publish-workflow-approved-revisions.tsv"
+# Stamp every preparation with one day: two runs that straddle UTC midnight would
+# otherwise record different verification and observation dates and fail the
+# idempotence comparison below for a reason unrelated to the candidate.
+APPROVED_REVISIONS_OBSERVED_ON="$(date -u +%Y-%m-%d)"
+export PUBLISH_CONSUMER_ROOT="$tree" APPROVED_REVISIONS_FILE="$tree/scripts/publish-workflow-approved-revisions.tsv" APPROVED_REVISIONS_OBSERVED_ON
 export APPROVED_IDENTITIES_FILE="$tree/scripts/publish-workflow-approved-revisions.identities.tsv"
 export CANONICAL_APPROVALS_FILE="$tree/scripts/publish-workflow-canonical-approvals.tsv"
 export PUBLISH_BOOTSTRAP_FILE="$tree/scripts/publish-workflow-bootstrap-publications.json" PUBLISH_KUBE_CONTEXT=fixture
