@@ -104,21 +104,21 @@ func TestProtectionRequiresTheFixedBackupWithBothCompletedVolumes(t *testing.T) 
 		change func(*recoveryDriver, *protectedAPI)
 	}{
 		{"partially failed daily backup with both volumes", true, func(*recoveryDriver, *protectedAPI) {}},
-		{"completed daily backup", true, func(d *recoveryDriver, a *protectedAPI) {
+		{"completed daily backup", true, func(_ *recoveryDriver, a *protectedAPI) {
 			child(a.objects[cleanupKey("Backup", "velero", disposalProtectionBackup)], "status")["phase"] = "Completed"
 		}},
 		{"another protection point", false, func(d *recoveryDriver, _ *protectedAPI) { d.protection.backup = "velero-daily-full-20261113021735" }},
 		{"no witnessed reader", false, func(d *recoveryDriver, _ *protectedAPI) { d.protection.readerUID = "" }},
-		{"backup collected", false, func(d *recoveryDriver, a *protectedAPI) {
+		{"backup collected", false, func(_ *recoveryDriver, a *protectedAPI) {
 			delete(a.objects, cleanupKey("Backup", "velero", disposalProtectionBackup))
 		}},
-		{"backup being deleted", false, func(d *recoveryDriver, a *protectedAPI) {
+		{"backup being deleted", false, func(_ *recoveryDriver, a *protectedAPI) {
 			child(a.objects[cleanupKey("Backup", "velero", disposalProtectionBackup)], "metadata")["deletionTimestamp"] = "2026-11-13T00:00:00Z"
 		}},
-		{"backup expires before cleanup ends", false, func(d *recoveryDriver, a *protectedAPI) {
+		{"backup expires before cleanup ends", false, func(_ *recoveryDriver, a *protectedAPI) {
 			child(a.objects[cleanupKey("Backup", "velero", disposalProtectionBackup)], "status")["expiration"] = time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339)
 		}},
-		{"backup failed", false, func(d *recoveryDriver, a *protectedAPI) {
+		{"backup failed", false, func(_ *recoveryDriver, a *protectedAPI) {
 			child(a.objects[cleanupKey("Backup", "velero", disposalProtectionBackup)], "status")["phase"] = "Failed"
 		}},
 		{"serving mailbox missing", false, func(_ *recoveryDriver, a *protectedAPI) { a.volumes = a.volumes[1:] }},
