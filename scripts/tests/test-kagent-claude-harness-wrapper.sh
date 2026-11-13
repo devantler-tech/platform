@@ -54,6 +54,26 @@ done <<<"${froms}"
 bases="$(grep -F 'ghcr.io/kagent-dev/kagent/claude-harness:' <<<"${froms}" | sort -u || true)"
 [[ "$(grep -c . <<<"${bases}")" -eq 1 ]] || fail "the plugin stage and the image do not share one base: ${bases}"
 [[ "$(tail -n 1 <<<"${froms}")" == "${bases}" ]] || fail 'the image is not built on the kagent Claude harness'
+# Go comes from Go's own pinned release and never downloads a toolchain: Alpine's package is too
+# old for the monorepo's Go guards, and a run cannot fetch a newer one. Neither may rest on the
+# image's ENV, which a run need not get: Go is linked onto the default PATH and GOTOOLCHAIN is set in
+# Go's own go.env.
+grep -Eq '^FROM docker\.io/library/golang:[0-9.]+-alpine@sha256:[0-9a-f]{64} AS go$' "${dockerfile}" ||
+  fail 'Go does not come from a pinned upstream release'
+grep -Fxq 'COPY --from=go /usr/local/go /usr/local/go' "${dockerfile}" ||
+  fail 'the image does not copy the pinned Go release'
+grep -Fxq "RUN ln -s /usr/local/go/bin/go /usr/local/go/bin/gofmt /usr/local/bin/ && \\" "${dockerfile}" ||
+  fail 'Go is not on the default PATH'
+grep -Fxq "    sed -i 's/^GOTOOLCHAIN=.*/GOTOOLCHAIN=local/' /usr/local/go/go.env && \\" "${dockerfile}" ||
+  fail "Go's own go.env does not set GOTOOLCHAIN=local"
+grep -Fxq "    test \"\$(env -u GOTOOLCHAIN go env GOTOOLCHAIN)\" = local && \\" "${dockerfile}" ||
+  fail 'the build does not check GOTOOLCHAIN=local holds without the environment'
+if grep -Eq '^ENV (PATH|GO[A-Z]*)=' "${dockerfile}"; then
+  fail "Go's setup rests on the image's ENV, which a run need not get"
+fi
+if grep -Eq '^RUN apk add .*[[:space:]]go([[:space:]]|$)' "${dockerfile}"; then
+  fail "Alpine's go package is back"
+fi
 grep -Eq '^ARG AGENT_PLUGINS_COMMIT=[0-9a-f]{40}$' "${dockerfile}" ||
   fail 'the plugin is not pinned by a full commit'
 # shellcheck disable=SC2016 # a literal line of the Dockerfile, not an expansion

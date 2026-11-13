@@ -421,6 +421,16 @@
       "allowedVersions": "<1.20.0"
     },
     {
+      "description": "Keep the two Kyverno 1.19 source builds (background controller and migration runtime) on Go 1.26. They compile Kyverno 1.19, which upstream builds with Go 1.26, and lint it with golangci-lint v2.11.4, which cannot read Go 1.27 export data; a Go 1.27 builder fails their image builds and their compiler-pin tests (#6164). Go 1.26 still receives security releases, so its patch updates stay visible. Remove this rule when these builds move to Kyverno 1.20 (#4994), or are moved to Go 1.27 together with their linter and accepted-advisory list.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["docker.io/library/golang"],
+      "matchFileNames": [
+        "k8s/bases/infrastructure/controllers/kyverno/BackgroundDownstreamCleanup.Dockerfile",
+        "k8s/bases/infrastructure/controllers/kyverno/MigrationRuntime.Dockerfile"
+      ],
+      "allowedVersions": "/^1\\.26\\./"
+    },
+    {
       "description": "This test-only parser witnesses the verified Coroot node-agent source, not the latest library. Keep proposals visible, but require the consumer regression and a verified deployed-source refresh before adopting a different parser (platform#4934).",
       "matchManagers": ["gomod"],
       "matchPackageNames": ["github.com/coroot/logparser"],

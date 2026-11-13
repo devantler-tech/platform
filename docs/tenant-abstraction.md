@@ -100,7 +100,7 @@ and annotations; they cannot force orphaning by removing that finalizer.
 The existing platform-owned `flux-system/wedding-app` pilot is an exact
 exception, not a wildcard namespace exemption.
 
-KRO 0.9.4 identifies children through ApplySet and `kro.run/instance-*` labels,
+KRO 0.10.0 identifies children through ApplySet and `kro.run/instance-*` labels,
 not WebApp owner references, and its apply path adopts an existing unlabelled
 object. Child admission therefore checks their complete placement/identity and
 refuses updates that would adopt an unlabelled or
@@ -171,7 +171,7 @@ rejects duplicate members before jq can keep a last value; the maintained YAML
 decoder also checks the original source before conversion. Complete inputs are
 bounded to 1 MiB, with at most 1024 raw YAML documents. This is the platform's committed
 source gate, not proof of a future tenant publisher's input validation. The actual
-KRO 0.9.4 compiler/generated API tests admission, defaults, literal arguments and
+KRO 0.10.0 compiler/generated API tests admission, defaults, literal arguments and
 resolved children. Resolved deployments are separately scanned with Trivy 0.74.0;
 the writable-root and low-ID compatibility findings remain explicit rather than
 disappearing behind expressions. Both resolved states pass the actual container

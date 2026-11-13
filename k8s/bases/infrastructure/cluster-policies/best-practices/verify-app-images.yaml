@@ -21,7 +21,8 @@ metadata:
       publish-app for app images, the platform's dedicated compatibility-image
       publishers, each Crossplane provider's own package workflow, KSail's
       publish-ksail-analysis-runner.yaml workflow, the mail bootstrap publisher,
-      the dedicated customer identity, Dex and Longhorn migration publishers,
+      the dedicated customer identity, Dex, automated mail sender and Longhorn
+      migration publishers,
       and KSail's release workflow.
       Each class is verified only against its own identity;
       third-party images admit unverified.
@@ -183,6 +184,14 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$
+    # The automated company sender has its own main-only publisher. Its
+    # signature cannot satisfy any other image class (platform#5400).
+    - name: publishmailsubmission
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-mail-submission\.yaml@refs/heads/main$
     # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
     # reusable publish workflow they use cannot sign, so each provider repo
     # attaches the keyless signature in its own publish-provider-package.yml
@@ -284,6 +293,9 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate@') &&
+          image != 'ghcr.io/devantler-tech/platform-mail-submission' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-mail-submission:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-mail-submission@') &&
           image != 'ghcr.io/devantler-tech/ksail-analysis-runner' &&
           !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:') &&
           !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@'))
@@ -329,6 +341,17 @@ spec:
       message: >-
         Dex image is not signed by the platform repository's dedicated
         main-branch publisher (keyless cosign)
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-mail-submission' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-mail-submission:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-mail-submission@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishmailsubmission]))
+        .all(e, e > 0)
+      message: >-
+        automated mail sender image is not signed by its main-only publisher;
+        other first-party images retain their existing signer.
     - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,

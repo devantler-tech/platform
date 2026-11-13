@@ -5,7 +5,7 @@
       "consumer": "business-site",
       "consumerRepository": "devantler-tech/business-site",
       "workflow": "publish-app",
-      "kind": "published-upgrade",
+      "kind": "published-binding",
       "sourcePath": "k8s/providers/hetzner/apps/business-site/tenant.yaml",
       "constructorSpecSha256": "f48b056756b6d49c9b3f741fd597b70ae7c195cadf1ba523a3fec63c1c336d8d",
       "tenantIdentity": {
@@ -31,44 +31,6 @@
         "workflowRunId": 41631861843,
         "workflowRunAttempt": 1,
         "verifiedOn": "2026-11-03"
-      },
-      "previousBinding": {
-        "consumer": "business-site",
-        "consumerRepository": "devantler-tech/business-site",
-        "workflow": "publish-app",
-        "kind": "published-binding",
-        "sourcePath": "k8s/providers/hetzner/apps/business-site/tenant.yaml",
-        "constructorSpecSha256": "f48b056756b6d49c9b3f741fd597b70ae7c195cadf1ba523a3fec63c1c336d8d",
-        "tenantIdentity": {
-          "apiVersion": "kro.run/v1alpha1",
-          "kind": "Tenant",
-          "namespace": "flux-system",
-          "name": "business-site"
-        },
-        "sourceIdentity": {
-          "apiVersion": "source.toolkit.fluxcd.io/v1",
-          "kind": "OCIRepository",
-          "namespace": "business-site",
-          "name": "business-site",
-          "artifactURL": "oci://ghcr.io/devantler-tech/business-site/manifests",
-          "digest": "sha256:2f43bf60c87e373ab99f9fc08f187287d9526b3f1b3212b6234e2ae80b9c5e82"
-        },
-        "publication": {
-          "gitTag": "v2.0.0",
-          "sourceSHA": "2eca5f823676adde374556848cf8bf86eb139804",
-          "publisherIdentity": "devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0",
-          "callerWorkflow": ".github/workflows/publish-runtime.yaml",
-          "event": "release",
-          "workflowRunId": 40247127226,
-          "workflowRunAttempt": 1,
-          "verifiedOn": "2026-10-26"
-        }
-      },
-      "previousObservation": {
-        "uidSha256": "38aff5c8aafbd89fc51dbbe131d27c9a3fb0e78108a20779d0e7a5680a6cc2d2",
-        "generation": 2,
-        "snapshotSha256": "1cea4a0991ae5e6093e4f057256fd5ce316599d214fa4b3196a272556879835b",
-        "observedOn": "2026-11-03"
       }
     }
   ]
