@@ -30,8 +30,8 @@ judge_openbao_replacement() {
   "$bin/judge-openbao-quorum" --input "$private/quorum.json" \
     --expect-servers "$OPENBAO_SERVERS" --replace "$REPLACEMENT_SERVER" --max-age 5m || quorum=$?
   for code in "$health" "$quorum"; do
-    if (( code > 2 )); then code=2; fi
-    if (( code > status )); then status=$code; fi
+    if ((code > 2)); then code=2; fi
+    if ((code > status)); then status=$code; fi
   done
   return "$status"
 }
