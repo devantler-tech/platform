@@ -168,11 +168,11 @@ readonly kubevuln_cpu_limit
 # instant. Both scans are high-volume writers to one SQLite-backed storage API;
 # keep their authored windows separated so detailed posture writes do not lose
 # the single-writer lock to vulnerability results. These value paths and their
-# CronJob mapping were verified against immutable chart 1.41.0; fail on a chart
+# CronJob mapping were verified against immutable chart 1.42.0; fail on a chart
 # bump so the new chart must be rendered and this contract deliberately renewed.
-# Chart 1.41.0 keeps both value paths and CronJob names; its schedulers now run
-# kubectl to create OperatorCommand objects from the same request body instead
-# of posting it to the operator's trigger endpoint (kubescape/helm-charts#964).
+# Chart 1.42.0 keeps both value paths and CronJob names; its schedulers run
+# kubescape-ops-tool create-operator-command (kubectl until 1.41.0) to create
+# OperatorCommand objects from the same request body (kubescape/helm-charts#964).
 chart_version="$(yq -er '
   .spec.chart.spec.version |
   select(tag == "!!str" and length > 0)
@@ -314,10 +314,10 @@ readonly node_agent_profile_reader_count
 [[ "${node_agent_profile_reader_count}" == "1" ]] ||
   fail 'the Helm post-renderer must restore exactly the node-agent profile read rule removed by chart 1.40.4'
 
-# Chart 1.41.0 runs both schedulers with a mounted token for the scanner's and
+# Chart 1.42.0 runs both schedulers with a mounted token for the scanner's and
 # kubevuln's ServiceAccounts, whose ClusterRoles reach far beyond creating one
 # OperatorCommand. Require the post-renderer to move both onto the dedicated
-# kubescape-scheduler identity and a digest-pinned kubectl image.
+# kubescape-scheduler identity and a digest-pinned scheduler image.
 for scheduler in kubescape-scheduler kubevuln-scheduler; do
   scheduler_identity="$(SCHEDULER="${scheduler}" yq ea -er '
     select(.kind == "CronJob" and .metadata.name == strenv(SCHEDULER)) |
