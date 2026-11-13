@@ -13,13 +13,19 @@ import (
 	"github.com/devantler-tech/platform/internal/namespaceinventory"
 )
 
-// Disposal is distinct from the lost original trial. It preserves all source
-// messages and the backup and never emits the fresh recovery PASS receipt.
+// Disposal preserves all source messages and every backup. It gives the fixed
+// original and fresh copies separate receipts without rewriting either run, and
+// binds each to the fixed protection backup in place of its expired own one.
 func runRetainedDisposal(ctx context.Context, env func(string) string, k kubernetes, output io.Writer) int {
+	fresh := env("EMAIL_RETAINED_COPY_CONFIRM") == namespaceinventory.FreshEmailDisposalConfirm
+	receipt := "EMAIL_RETAINED_DISPOSAL"
+	if fresh {
+		receipt = "EMAIL_FRESH_RETAINED_DISPOSAL"
+	}
 	stage := "dispatch"
 	cleanup := "NOT_STARTED"
 	fail := func() int {
-		_, _ = fmt.Fprintf(output, "EMAIL_RETAINED_DISPOSAL=UNVERIFIED stage=%s cleanup=%s\n", stage, cleanup)
+		_, _ = fmt.Fprintf(output, "%s=UNVERIFIED stage=%s cleanup=%s\n", receipt, stage, cleanup)
 		return 2
 	}
 	if namespaceinventory.AuthorizeRetainedEmailDispatch(env) != nil {
@@ -27,10 +33,28 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 	}
 	uuid := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	readerUID, claimUID := env("EMAIL_RETAINED_READER_UID"), env("EMAIL_RETAINED_CLAIM_UID")
+	target := retainedRecovery
+	observeInventory := namespaceinventory.ObserveRetainedEmailRecovery
+	var witness *freshRecoveryWitness
+	var window *retainedMessageWindow
+	start := "EMAIL_RETAINED_DISPOSAL=STARTED source_writes=0 original_trial=UNVERIFIED"
+	if fresh {
+		var err error
+		stage = "fresh-witness"
+		witness, err = parseFreshRecoveryWitness(env("EMAIL_FRESH_RECOVERY_WITNESS"))
+		if err != nil {
+			return fail()
+		}
+		target = freshRetainedRecovery
+		readerUID, claimUID = witness.Reader.UID, witness.Claim.UID
+		window = freshRecoveryWindow()
+		observeInventory = namespaceinventory.ObserveFreshRetainedEmailRecovery
+		start = "EMAIL_FRESH_RETAINED_DISPOSAL=STARTED source_writes=0"
+	}
 	if !uuid.MatchString(readerUID) || !uuid.MatchString(claimUID) || readerUID == claimUID {
 		return fail()
 	}
-	if _, err := fmt.Fprintln(output, "EMAIL_RETAINED_DISPOSAL=STARTED source_writes=0 original_trial=UNVERIFIED"); err != nil {
+	if _, err := fmt.Fprintln(output, start); err != nil {
 		return 2
 	}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Minute)
@@ -40,7 +64,7 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 	if err != nil {
 		return fail()
 	}
-	d := &recoveryDriver{i: retainedRecovery, k: k, refs: map[string]ownedReference{}}
+	d := &recoveryDriver{i: target, k: k, refs: map[string]ownedReference{}, protection: protectionPoint{backup: disposalProtectionBackup, readerUID: readerUID, claimUID: claimUID}}
 	stage = "source"
 	if d.source, err = d.readSource(ctx); err != nil {
 		return fail()
@@ -52,10 +76,16 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 	if err = d.adoptRetainedGraph(ctx, readerUID, claimUID); err != nil {
 		return fail()
 	}
-	if err = d.observeRestoredStorage(ctx); err != nil {
+	const cleanupLimit = 10 * time.Minute
+	if witness != nil {
+		if stage = verifyFreshDisposalGraph(ctx, d, witness, time.Now().Add(cleanupLimit)); stage != "" {
+			return fail()
+		}
+	} else if d.observeRestoredStorage(ctx) != nil {
 		return fail()
 	}
-	if err = d.retainedSnapshot(ctx, ""); err != nil {
+	stage = "protection"
+	if d.verifyProtection(ctx, time.Now().Add(cleanupLimit)) != nil {
 		return fail()
 	}
 	stage = "complete-inventory"
@@ -69,7 +99,7 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 		if e != nil {
 			return e
 		}
-		inventory, e := namespaceinventory.ObserveRetainedEmailRecovery(ctx, client, endpoint, ns.uid)
+		inventory, e := observeInventory(ctx, client, endpoint, ns.uid)
 		if e != nil {
 			return e
 		}
@@ -164,28 +194,79 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 	if err != nil {
 		return fail()
 	}
-	if _, err = verifyRetainedMessage(ctx, reader, source); err != nil {
+	if _, err = verifyRetainedMessageInWindow(ctx, reader, source, window); err != nil {
 		return fail()
 	}
 	if err = d.sourceRetained(ctx); err != nil || ctx.Err() != nil {
 		return fail()
 	}
-	if _, err = fmt.Fprintln(output, "EMAIL_RETAINED_COPY=VERIFIED source_writes=0 original_trial=UNVERIFIED"); err != nil {
-		return 2
+	copyReceipt := "EMAIL_RETAINED_COPY=VERIFIED source_writes=0 original_trial=UNVERIFIED"
+	pass := "EMAIL_RETAINED_DISPOSAL=PASS source_writes=0 source=RETAINED backup=RETAINED original_trial=UNVERIFIED"
+	if witness != nil {
+		if stage = verifyFreshDisposalGraph(ctx, d, witness, time.Now().Add(cleanupLimit)); stage != "" {
+			return fail()
+		}
+		copyReceipt = "EMAIL_FRESH_RETAINED_COPY=VERIFIED source_writes=0"
+		pass = "EMAIL_FRESH_RETAINED_DISPOSAL=PASS diagnostic=VERIFIED cleanup=VERIFIED source_writes=0 source=RETAINED backup=RETAINED"
 	}
-	stopReader()
-	stopSource()
 	stage = "owned-disposal"
-	cleanup = "UNVERIFIED"
-	cleanupCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+	cleanupCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), cleanupLimit)
 	defer finish()
-	if err = d.cleanupRestore(cleanupCtx); err != nil {
+	var verifyBeforeRemoval func(context.Context) error
+	if witness != nil {
+		verifyBeforeRemoval = func(finalCtx context.Context) error {
+			deadline, ok := finalCtx.Deadline()
+			if !ok {
+				return errors.New("cleanup-budget")
+			}
+			if stage = verifyFreshDisposalGraph(finalCtx, d, witness, deadline); stage != "" {
+				return errors.New("fresh-graph-changed")
+			}
+			stage = "read-only-message"
+			if e := d.sourceRetained(finalCtx); e != nil {
+				return e
+			}
+			if _, e := verifyRetainedMessageInWindow(finalCtx, reader, source, window); e != nil {
+				return e
+			}
+			if _, e := fmt.Fprintln(output, copyReceipt); e != nil {
+				return e
+			}
+			stopReader()
+			stopSource()
+			stage = "owned-disposal"
+			cleanup = "UNVERIFIED"
+			return nil
+		}
+	} else {
+		if _, err = fmt.Fprintln(output, copyReceipt); err != nil {
+			return 2
+		}
+		stopReader()
+		stopSource()
+		cleanup = "UNVERIFIED"
+	}
+	if err = d.cleanupRestoreAfterVerification(cleanupCtx, verifyBeforeRemoval); err != nil {
 		return fail()
 	}
-	if _, err = fmt.Fprintln(output, "EMAIL_RETAINED_DISPOSAL=PASS source_writes=0 source=RETAINED backup=RETAINED original_trial=UNVERIFIED"); err != nil {
+	if _, err = fmt.Fprintln(output, pass); err != nil {
 		return 2
 	}
 	return 0
+}
+
+// verifyFreshDisposalGraph binds the fixed namespace and restore graph to the
+// private witness, including backup validity through the complete cleanup budget.
+func verifyFreshDisposalGraph(ctx context.Context, d *recoveryDriver, w *freshRecoveryWitness, mustRemainUntil time.Time) string {
+	ns, err := d.ref("Namespace", d.i.namespace, "")
+	if err != nil || d.i != freshRetainedRecovery || ns.uid != w.Namespace.UID {
+		return "fresh-namespace"
+	}
+	actual, err := d.owned(ctx, ns)
+	if err != nil || child(actual, "metadata")["deletionTimestamp"] != nil {
+		return "fresh-namespace"
+	}
+	return observeFreshRecoveryGraph(ctx, d, w, mustRemainUntil)
 }
 
 // retainedTransientResource reports an Event, from either Event API. The

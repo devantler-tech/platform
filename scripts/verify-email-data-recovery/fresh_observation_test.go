@@ -97,3 +97,44 @@ func TestFreshGraphBindsTheUnexpiredBackupToSeparateEncryptedScratch(t *testing.
 		})
 	}
 }
+
+func TestFreshDisposalRequiresLiveNamespaceAndTimeToFinish(t *testing.T) {
+	w, err := parseFreshRecoveryWitness(freshFixtureWitness)
+	if err != nil {
+		t.Fatal("invalid test witness")
+	}
+	i := freshRetainedRecovery
+	_, _, source, _ := backupProofFixture()
+	beforeExpiry := time.Date(2026, 11, 11, 12, 43, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, stage    string
+		replace, drift bool
+		horizon        time.Time
+	}{
+		{name: "exact graph", horizon: beforeExpiry},
+		{name: "backup expires during cleanup", stage: "fresh-backup", horizon: beforeExpiry.Add(10 * time.Minute)},
+		{name: "live namespace replaced", stage: "fresh-namespace", replace: true, horizon: beforeExpiry},
+		{name: "frozen backup identity differs", stage: "fresh-witness", drift: true, horizon: beforeExpiry},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := freshGraphFixture(w)
+			ns := recoveryManifest(i, "Namespace", i.namespace, "", "v1")
+			child(ns, "metadata")["uid"] = w.Namespace.UID
+			if tc.replace {
+				child(ns, "metadata")["uid"] = "replacement"
+			}
+			api["Namespace"] = ns
+			nsRef := ownedReference{"Namespace", i.namespace, "", w.Namespace.UID}
+			claim := ownedReference{"PersistentVolumeClaim", "data", i.namespace, w.Claim.UID}
+			backup := ownedReference{"Backup", i.namespace + "-backup", "velero", w.Backup.UID}
+			if tc.drift {
+				backup.uid = "replacement"
+			}
+			refs := map[string]ownedReference{nsRef.key(): nsRef, claim.key(): claim, backup.key(): backup}
+			d := &recoveryDriver{i: i, k: observationReadOnly{base: api, parity: true, fresh: w}, source: source, refs: refs}
+			if stage := verifyFreshDisposalGraph(context.Background(), d, w, tc.horizon); stage != tc.stage || d.refs[backup.key()] != backup {
+				t.Fatalf("expected stable backup binding and stage %q, got %q", tc.stage, stage)
+			}
+		})
+	}
+}
