@@ -17,9 +17,10 @@ shares the `prod-deploy` lock with deployments.
    [health judge](../../scripts/judge-openbao-health/README.md) and the
    [quorum judge](../../scripts/judge-openbao-quorum/README.md) for the named server. Anything but
    `PROVEN` from both stops the run. `preflight` mode ends here and changes nothing.
-2. **Replace** (`replace` mode only). It first checks that the StatefulSet's live pod template already
-   runs the reviewed release, so the pod cannot restart on an older one, and that every volume claim
-   the pod mounts is Bound. It then deletes the pod, but only while it still has the UID the judged
+2. **Replace** (`replace` mode only). It first checks that the pod will restart from the reviewed
+   deployment: the `openbao` HelmRelease is Ready at its current generation on the reviewed chart, and
+   the StatefulSet's live template runs the reviewed release. It also checks that the server mounts
+   exactly its two claims, `data-<server>` and `audit-<server>`, and that both are Bound. It then deletes the pod, but only while it still has the UID the judged
    capture saw; the API server enforces that, so a pod that changed in the meantime is never deleted.
    It waits up to ten minutes for a successor that mounts the same claims, unchanged.
 3. **Recover.** It captures and judges again every 20 seconds, for up to fifteen minutes, until both
@@ -59,8 +60,8 @@ To replace a server without an upgrade, for example to move it to a new node, le
 | `OPENBAO_REPLACEMENT_PREFLIGHT=HOLD` or `UNKNOWN` | Nothing was changed. | Read the judges' finding lines, fix the cause, and run `preflight` again. |
 | `OPENBAO_REPLACEMENT=NOT_STARTED` | The judgement in `replace` mode failed. Nothing was changed. | As above. |
 | `OPENBAO_POD_REPLACEMENT=REFUSED reason=pod-changed-since-capture` | The pod changed after the capture. Nothing was deleted. | Run `preflight` again; something else is replacing servers. |
-| `OPENBAO_POD_REPLACEMENT=REFUSED reason=template-not-on-reviewed-release` | The chart update has not deployed yet. Nothing was deleted. | Wait for the deploy, then run again. |
-| `OPENBAO_POD_REPLACEMENT=REFUSED reason=storage-not-bound` or `no-retained-storage` | A claim the pod mounts is missing or not Bound. Nothing was deleted. | Fix the storage first; replacing the pod now could lose its data. |
+| `OPENBAO_POD_REPLACEMENT=REFUSED reason=template-not-on-reviewed-release` | The reviewed chart has not been applied, or the HelmRelease is not Ready. Nothing was deleted. | Wait for the deploy, or fix the HelmRelease, then run again. |
+| `OPENBAO_POD_REPLACEMENT=REFUSED reason=storage-not-mounted` or `storage-not-bound` | The server does not mount exactly its data and audit claims, or one is not Bound. Nothing was deleted. | Fix the storage first; replacing the pod now could lose its data. |
 | `OPENBAO_POD_REPLACEMENT=UNVERIFIED` | A read or the delete failed, no successor appeared, or the successor does not mount the same claims. | Check the StatefulSet and its events before anything else. |
 | `OPENBAO_REPLACEMENT=NOT_RECOVERED` | The pod was replaced but the judges never returned `PROVEN`. | Use the recovery path below. Replace no other server. |
 | `OPENBAO_SECRET_DELIVERY=UNVERIFIED` | The servers are healthy, but External Secrets did not read from OpenBao. | Check the `openbao` ClusterSecretStore and the External Secrets controller. |
@@ -77,13 +78,16 @@ recover. Replace no other server until the procedure returns `PROVEN` again.
   workflow cannot replace the failed server, because it replaces a server only while every server is
   proven healthy. Once the revert deploys, an operator with production access deletes that one pod by
   hand (`kubectl --context admin@prod --namespace openbao delete pod <server>`); it restarts on the
-  release the other two still run and keeps its data volume, so it rejoins with its Raft state. Then
-  run `preflight` until it returns `PROVEN`.
+  reverted release and keeps its data volume, so it rejoins with its Raft state. When no earlier run
+  had replaced a server, a default `preflight` then returns `PROVEN`.
 - **The release failed after earlier runs succeeded.** The servers replaced by those runs still run the
   new release, because nothing restarts them. After the revert has deployed and the failed server is
-  back, roll them back with the same procedure, the two releases swapped: `previous_version` is now
-  the new release, and each run replaces one server still on it, standbys first. Until all are back,
-  a default preflight returns `HOLD`.
+  back, roll them back with the same procedure, the two releases swapped. The reverted chart is now
+  the reviewed release; set `previous_version` to the failed release, list the servers already back
+  on the reverted release (the failed one included) in `replaced`, and replace one server still on
+  the failed release per run, standbys first. Use those same inputs for the `preflight` between runs.
+  Recovery is complete only when a default `preflight`, with `previous_version` and `replaced` empty,
+  returns `PROVEN`.
 - **Quorum is lost or data is damaged.** Follow Scenario 2 of the
   [OpenBao disaster-recovery runbook](../dr/openbao.md), which restores the newest snapshot.
 

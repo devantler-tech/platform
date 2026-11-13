@@ -3,7 +3,8 @@
 // Replace OpenBao Server workflow runs it only after both judges returned
 // PROVEN for the named server.
 //
-//	replace-openbao-pod delete --server openbao-2 --expect-uid <uid> --expect-release 2.7.2 --timeout 10m
+//	replace-openbao-pod delete --server openbao-2 --expect-uid <uid> --expect-chart 0.30.7 \
+//	  --expect-release 2.7.2 --timeout 10m
 //	replace-openbao-pod deliver --timeout 5m
 //
 // delete removes the named server's pod only while it still has the UID the
@@ -38,6 +39,8 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -72,6 +75,12 @@ type claimInfo struct {
 	uid, phase string
 }
 
+// helmState is the part of the openbao HelmRelease the binding check reads.
+type helmState struct {
+	chart             string // the chart version Flux last attempted
+	readyAtGeneration bool   // Ready=True for the current generation
+}
+
 // syncState is the part of the canary ExternalSecret the delivery check reads.
 type syncState struct {
 	syncedVersion string
@@ -86,6 +95,8 @@ type cluster interface {
 	pod(ctx context.Context, name string) (podInfo, error)
 	// claim returns a PersistentVolumeClaim's UID and phase.
 	claim(ctx context.Context, name string) (claimInfo, error)
+	// releaseState returns what Flux last applied for the openbao HelmRelease.
+	releaseState(ctx context.Context) (helmState, error)
 	// templateRelease returns the release the StatefulSet's live pod template
 	// runs, from its openbao container image tag.
 	templateRelease(ctx context.Context) (string, error)
@@ -126,7 +137,24 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // release normalises an image tag or a chart appVersion to a bare version.
 func release(tag string) string { return strings.TrimPrefix(tag, "v") }
 
-func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Duration) error, server, expect, want string) (int, string) {
+// reviewed is what the reviewed render pins: the chart version and the release
+// it ships.
+type reviewed struct{ chart, release string }
+
+// retainedClaims are the claims a server must mount from the StatefulSet's
+// claim templates: its Raft data and its audit log. Nothing else counts.
+func retainedClaims(server string) []string {
+	return []string{"audit-" + server, "data-" + server}
+}
+
+// sameClaims reports whether got names exactly the claims in want.
+func sameClaims(got, want []string) bool {
+	got = append([]string(nil), got...)
+	sort.Strings(got)
+	return slices.Equal(got, want)
+}
+
+func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Duration) error, server, expect string, want reviewed) (int, string) {
 	line := func(verdict, detail string) string {
 		return fmt.Sprintf("OPENBAO_POD_REPLACEMENT=%s server=%s%s", verdict, server, detail)
 	}
@@ -137,22 +165,29 @@ func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Du
 	if current.uid != expect {
 		return 1, line("REFUSED", " reason=pod-changed-since-capture")
 	}
-	// The pod restarts from the live template, which reaches the reviewed
-	// release only once its chart update has deployed.
+	// The pod restarts from the live template. Only a release Flux applied
+	// from the reviewed chart, at its current generation and without failure,
+	// binds that template to the reviewed values; the image tag then shows the
+	// template carries the reviewed release.
+	state, err := k.releaseState(ctx)
+	if err != nil {
+		return 2, line("UNVERIFIED", " stage=deployment-binding")
+	}
 	tag, err := k.templateRelease(ctx)
 	if err != nil {
 		return 2, line("UNVERIFIED", " stage=deployment-binding")
 	}
-	if release(tag) != want {
+	if state.chart != want.chart || !state.readyAtGeneration || release(tag) != want.release {
 		return 1, line("REFUSED", " reason=template-not-on-reviewed-release")
 	}
 	// Deleting the pod keeps its claims; record them so the successor can be
 	// shown to mount the same ones.
-	if len(current.claims) == 0 {
-		return 1, line("REFUSED", " reason=no-retained-storage")
+	expected := retainedClaims(server)
+	if !sameClaims(current.claims, expected) {
+		return 1, line("REFUSED", " reason=storage-not-mounted")
 	}
-	retained := make(map[string]string, len(current.claims))
-	for _, name := range current.claims {
+	retained := make(map[string]string, len(expected))
+	for _, name := range expected {
 		c, err := k.claim(ctx, name)
 		if err != nil {
 			return 2, line("UNVERIFIED", " stage=storage")
@@ -179,12 +214,12 @@ func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Du
 	}
 	err = wait(ctx, sleep, func() (bool, error) {
 		next, err := k.pod(ctx, server)
-		if err != nil || next.uid == expect || len(next.claims) != len(retained) {
+		if err != nil || next.uid == expect || !sameClaims(next.claims, expected) {
 			return false, nil
 		}
-		for _, name := range next.claims {
+		for _, name := range expected {
 			c, err := k.claim(ctx, name)
-			if err != nil || retained[name] == "" || c.uid != retained[name] || c.phase != "Bound" {
+			if err != nil || c.uid != retained[name] || c.phase != "Bound" {
 				return false, nil
 			}
 		}
@@ -265,15 +300,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, k cluster
 		server := set.String("server", "", "the one server whose pod to replace")
 		expect := set.String("expect-uid", "", "the pod UID the judged capture saw")
 		want := set.String("expect-release", "", "the release the reviewed chart pins")
+		chart := set.String("expect-chart", "", "the reviewed chart version")
 		if err := parse(set, args[1:]); err != nil {
 			return invalid(err)
 		}
-		if !serverName.MatchString(*server) || !podUID.MatchString(*expect) || !version.MatchString(*want) || *timeout <= 0 || *timeout > 30*time.Minute {
-			return invalid(errors.New("--server, --expect-uid, --expect-release and a --timeout of at most 30m are required"))
+		if !serverName.MatchString(*server) || !podUID.MatchString(*expect) || !version.MatchString(*want) || !version.MatchString(*chart) || *timeout <= 0 || *timeout > 30*time.Minute {
+			return invalid(errors.New("--server, --expect-uid, --expect-release, --expect-chart and a --timeout of at most 30m are required"))
 		}
 		ctx, cancel := context.WithTimeout(ctx, *timeout)
 		defer cancel()
-		code, line = replace(ctx, k, sleep, *server, *expect, *want)
+		code, line = replace(ctx, k, sleep, *server, *expect, reviewed{chart: *chart, release: *want})
 	case "deliver":
 		if err := parse(set, args[1:]); err != nil {
 			return invalid(err)
@@ -319,13 +355,23 @@ func (k kubectl) pod(ctx context.Context, name string) (podInfo, error) {
 	return parsePod(b)
 }
 
+// parsePod returns the pod's UID and the claims mounted into its openbao
+// container, the one container that keeps Raft data and the audit log. A claim
+// in the pod spec that this container does not mount is not retained storage.
 func parsePod(b []byte) (podInfo, error) {
 	var p struct {
 		Metadata struct {
 			UID string `json:"uid"`
 		} `json:"metadata"`
 		Spec struct {
+			Containers []struct {
+				Name         string `json:"name"`
+				VolumeMounts []struct {
+					Name string `json:"name"`
+				} `json:"volumeMounts"`
+			} `json:"containers"`
 			Volumes []struct {
+				Name                  string `json:"name"`
 				PersistentVolumeClaim *struct {
 					ClaimName string `json:"claimName"`
 				} `json:"persistentVolumeClaim"`
@@ -338,14 +384,32 @@ func parsePod(b []byte) (podInfo, error) {
 	if p.Metadata.UID == "" {
 		return podInfo{}, errors.New("pod without a UID")
 	}
-	info := podInfo{uid: p.Metadata.UID}
+	claimOf := map[string]string{}
 	for _, v := range p.Spec.Volumes {
 		if v.PersistentVolumeClaim != nil {
 			if v.PersistentVolumeClaim.ClaimName == "" {
 				return podInfo{}, errors.New("claim volume without a claim name")
 			}
-			info.claims = append(info.claims, v.PersistentVolumeClaim.ClaimName)
+			claimOf[v.Name] = v.PersistentVolumeClaim.ClaimName
 		}
+	}
+	info := podInfo{uid: p.Metadata.UID}
+	found := 0
+	for _, c := range p.Spec.Containers {
+		if c.Name != statefulSet {
+			continue
+		}
+		found++
+		seen := map[string]bool{}
+		for _, m := range c.VolumeMounts {
+			if claim, ok := claimOf[m.Name]; ok && !seen[claim] {
+				seen[claim] = true
+				info.claims = append(info.claims, claim)
+			}
+		}
+	}
+	if found != 1 {
+		return podInfo{}, errors.New("not exactly one openbao container")
 	}
 	return info, nil
 }
@@ -482,4 +546,51 @@ func main() {
 // failed".
 func preconditionRefused(stderr []byte) bool {
 	return bytes.Contains(stderr, []byte("does not match the UID in record")) || bytes.Contains(stderr, []byte("Precondition failed"))
+}
+
+func (k kubectl) releaseState(ctx context.Context) (helmState, error) {
+	b, _, err := k.output(ctx, nil, "get", "helmrelease", statefulSet, "--output=json")
+	if err != nil {
+		return helmState{}, err
+	}
+	return parseHelmRelease(b)
+}
+
+// parseHelmRelease reads the chart version Flux last attempted and whether the
+// release is Ready for its current generation; a stale or failed reconcile is
+// not ready.
+func parseHelmRelease(b []byte) (helmState, error) {
+	var hr struct {
+		Metadata struct {
+			Generation int64 `json:"generation"`
+		} `json:"metadata"`
+		Status struct {
+			ObservedGeneration    int64  `json:"observedGeneration"`
+			LastAttemptedRevision string `json:"lastAttemptedRevision"`
+			Conditions            []struct {
+				Type               string `json:"type"`
+				Status             string `json:"status"`
+				ObservedGeneration int64  `json:"observedGeneration"`
+			} `json:"conditions"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(b, &hr); err != nil {
+		return helmState{}, err
+	}
+	if hr.Metadata.Generation == 0 || hr.Status.LastAttemptedRevision == "" {
+		return helmState{}, errors.New("helm release without a generation or attempted revision")
+	}
+	s := helmState{chart: hr.Status.LastAttemptedRevision}
+	ready := 0
+	for _, c := range hr.Status.Conditions {
+		if c.Type == "Ready" {
+			ready++
+			s.readyAtGeneration = c.Status == "True" && c.ObservedGeneration == hr.Metadata.Generation
+		}
+	}
+	if ready != 1 {
+		return helmState{}, errors.New("not exactly one Ready condition")
+	}
+	s.readyAtGeneration = s.readyAtGeneration && hr.Status.ObservedGeneration == hr.Metadata.Generation
+	return s, nil
 }

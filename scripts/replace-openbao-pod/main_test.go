@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"regexp"
@@ -29,6 +30,8 @@ type fake struct {
 	claimErr    error
 	release     string
 	releaseErr  error
+	helm        helmState
+	helmErr     error
 	deleted     []string
 	deleteErr   error
 	states      []syncState
@@ -45,6 +48,7 @@ func healthy(uids ...string) *fake {
 		mounts:  []string{"data-openbao-2", "audit-openbao-2"},
 		claims:  map[string]claimInfo{"data-openbao-2": {"c-data", "Bound"}, "audit-openbao-2": {"c-audit", "Bound"}},
 		release: "v2.7.2",
+		helm:    helmState{chart: "0.30.7", readyAtGeneration: true},
 	}
 }
 
@@ -73,6 +77,8 @@ func (f *fake) claim(_ context.Context, name string) (claimInfo, error) {
 }
 
 func (f *fake) templateRelease(context.Context) (string, error) { return f.release, f.releaseErr }
+
+func (f *fake) releaseState(context.Context) (helmState, error) { return f.helm, f.helmErr }
 
 func (f *fake) deleteIfUID(_ context.Context, name, uid string) error {
 	if f.deleteErr != nil {
@@ -122,7 +128,7 @@ func runWith(t *testing.T, f *fake, sleep func(context.Context, time.Duration) e
 }
 
 func TestDelete(t *testing.T) {
-	deleteArgs := []string{"delete", "--server", "openbao-2", "--expect-uid", oldUID, "--expect-release", "2.7.2", "--timeout", "10m"}
+	deleteArgs := []string{"delete", "--server", "openbao-2", "--expect-uid", oldUID, "--expect-chart", "0.30.7", "--expect-release", "2.7.2", "--timeout", "10m"}
 	with := func(f *fake, change func(*fake)) *fake { change(f); return f }
 	deleted := []string{"openbao-2@" + oldUID}
 	refused := func(reason string) string {
@@ -149,7 +155,12 @@ func TestDelete(t *testing.T) {
 			refused("pod-changed-since-capture"), nil},
 		{"refuses a template still on the old release", with(healthy(oldUID), func(f *fake) { f.release = "v2.6.3" }), noSleep, 1,
 			refused("template-not-on-reviewed-release"), nil},
-		{"refuses a pod with no claims", with(healthy(oldUID), func(f *fake) { f.mounts = nil }), noSleep, 1, refused("no-retained-storage"), nil},
+		{"refuses a pod with no claims", with(healthy(oldUID), func(f *fake) { f.mounts = nil }), noSleep, 1, refused("storage-not-mounted"), nil},
+		{"refuses a pod without its data claim", with(healthy(oldUID), func(f *fake) { f.mounts = []string{"audit-openbao-2"} }), noSleep, 1, refused("storage-not-mounted"), nil},
+		{"refuses another server's claim", with(healthy(oldUID), func(f *fake) { f.mounts = []string{"audit-openbao-2", "data-openbao-1"} }), noSleep, 1, refused("storage-not-mounted"), nil},
+		{"refuses a release on another chart", with(healthy(oldUID), func(f *fake) { f.helm.chart = "0.30.6" }), noSleep, 1, refused("template-not-on-reviewed-release"), nil},
+		{"refuses a release not Ready at its generation", with(healthy(oldUID), func(f *fake) { f.helm.readyAtGeneration = false }), noSleep, 1, refused("template-not-on-reviewed-release"), nil},
+		{"an unreadable release is unverified", with(healthy(oldUID), func(f *fake) { f.helmErr = errors.New("forbidden") }), noSleep, 2, unverified("deployment-binding"), nil},
 		{"refuses a claim that is not Bound", with(healthy(oldUID), func(f *fake) { f.claims["audit-openbao-2"] = claimInfo{"c-audit", "Lost"} }), noSleep, 1,
 			refused("storage-not-bound"), nil},
 		{"refuses a missing claim", with(healthy(oldUID), func(f *fake) { delete(f.claims, "data-openbao-2") }), noSleep, 1, refused("storage-not-bound"), nil},
@@ -257,7 +268,7 @@ func TestKubectlVerbs(t *testing.T) {
 	for _, c := range calls {
 		seen[c[1]]++
 	}
-	if !reflect.DeepEqual(seen, map[string]int{"get": 4, "delete": 1, "annotate": 1}) {
+	if !reflect.DeepEqual(seen, map[string]int{"get": 5, "delete": 1, "annotate": 1}) {
 		t.Fatalf("kubectl verbs changed: %v", seen)
 	}
 	src := string(b)
@@ -291,11 +302,13 @@ func TestPreconditionRefusal(t *testing.T) {
 }
 
 func TestParsePodAndTemplate(t *testing.T) {
-	p, err := parsePod([]byte(`{"metadata":{"uid":"` + oldUID + `"},"spec":{"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"data-openbao-2"}},{"name":"unseal-keys","secret":{"secretName":"openbao-unseal"}},{"name":"audit","persistentVolumeClaim":{"claimName":"audit-openbao-2"}}]}}`))
-	if err != nil || p.uid != oldUID || !reflect.DeepEqual(p.claims, []string{"data-openbao-2", "audit-openbao-2"}) {
+	volumes := `"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"data-openbao-2"}},{"name":"unseal-keys","secret":{"secretName":"openbao-unseal"}},{"name":"audit","persistentVolumeClaim":{"claimName":"audit-openbao-2"}},{"name":"scratch","persistentVolumeClaim":{"claimName":"scratch-openbao-2"}}]`
+	// Only claims the openbao container mounts count; the sidecar's does not.
+	p, err := parsePod([]byte(`{"metadata":{"uid":"` + oldUID + `"},"spec":{"containers":[{"name":"openbao","volumeMounts":[{"name":"audit"},{"name":"unseal-keys"},{"name":"data"},{"name":"data"}]},{"name":"sidecar","volumeMounts":[{"name":"scratch"}]}],` + volumes + `}}`))
+	if err != nil || p.uid != oldUID || !reflect.DeepEqual(p.claims, []string{"audit-openbao-2", "data-openbao-2"}) {
 		t.Fatalf("got %+v %v", p, err)
 	}
-	for _, bad := range []string{`not json`, `{"metadata":{}}`, `{"metadata":{"uid":"x"},"spec":{"volumes":[{"persistentVolumeClaim":{}}]}}`} {
+	for _, bad := range []string{`not json`, `{"metadata":{}}`, `{"metadata":{"uid":"x"},"spec":{"volumes":[{"persistentVolumeClaim":{}}]}}`, `{"metadata":{"uid":"x"},"spec":{"containers":[{"name":"sidecar"}]}}`, `{"metadata":{"uid":"x"},"spec":{"containers":[{"name":"openbao"},{"name":"openbao"}]}}`} {
 		if _, err := parsePod([]byte(bad)); err == nil {
 			t.Fatalf("accepted %s", bad)
 		}
@@ -322,6 +335,32 @@ func TestParsePodAndTemplate(t *testing.T) {
 	for _, bad := range [][]byte{sts("registry:5000/openbao/openbao"), sts("openbao/openbao@sha256:abc"), sts("openbao:"), sts(), sts("a:1", "b:2"), []byte(`nope`)} {
 		if got, err := parseTemplateRelease(bad); err == nil {
 			t.Fatalf("accepted %s as %q", bad, got)
+		}
+	}
+}
+
+func TestParseHelmRelease(t *testing.T) {
+	hr := func(gen, observed, condGen int64, status string) []byte {
+		return []byte(fmt.Sprintf(`{"metadata":{"generation":%d},"status":{"observedGeneration":%d,"lastAttemptedRevision":"0.30.7","conditions":[{"type":"Ready","status":%q,"observedGeneration":%d}]}}`, gen, observed, status, condGen))
+	}
+	for _, c := range []struct {
+		doc   []byte
+		ready bool
+	}{
+		{hr(4, 4, 4, "True"), true},
+		{hr(5, 4, 4, "True"), false},
+		{hr(5, 5, 4, "True"), false},
+		{hr(4, 4, 4, "False"), false},
+	} {
+		s, err := parseHelmRelease(c.doc)
+		if err != nil || s.chart != "0.30.7" || s.readyAtGeneration != c.ready {
+			t.Fatalf("%s: got %+v %v", c.doc, s, err)
+		}
+	}
+	for _, bad := range []string{`nope`, `{"metadata":{"generation":1},"status":{}}`, `{"metadata":{"generation":1},"status":{"lastAttemptedRevision":"0.30.7"}}`,
+		`{"metadata":{"generation":1},"status":{"lastAttemptedRevision":"0.30.7","conditions":[{"type":"Ready","status":"True"},{"type":"Ready","status":"True"}]}}`} {
+		if _, err := parseHelmRelease([]byte(bad)); err == nil {
+			t.Fatalf("accepted %s", bad)
 		}
 	}
 }

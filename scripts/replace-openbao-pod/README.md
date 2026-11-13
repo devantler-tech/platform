@@ -8,22 +8,23 @@ procedure is described in the [runbook](../../docs/operations/openbao-server-rep
 
 ```sh
 replace-openbao-pod delete --server openbao-2 --expect-uid <uid-from-the-judged-capture> \
-  --expect-release 2.7.2 --timeout 10m
+  --expect-chart 0.30.7 --expect-release 2.7.2 --timeout 10m
 replace-openbao-pod deliver --timeout 5m
 ```
 
 | Step | Exit | Line | Meaning |
 | --- | --- | --- | --- |
 | `delete` | 0 | `OPENBAO_POD_REPLACEMENT=REPLACED` | The pod was deleted and a successor with a different UID exists. |
-| `delete` | 1 | `OPENBAO_POD_REPLACEMENT=REFUSED reason=<reason>` | Nothing was deleted: `pod-changed-since-capture`, `template-not-on-reviewed-release`, `no-retained-storage` or `storage-not-bound`. |
+| `delete` | 1 | `OPENBAO_POD_REPLACEMENT=REFUSED reason=<reason>` | Nothing was deleted: `pod-changed-since-capture`, `template-not-on-reviewed-release`, `storage-not-mounted` or `storage-not-bound`. |
 | `delete` | 2 | `OPENBAO_POD_REPLACEMENT=UNVERIFIED stage=<stage>` | `pod-identity`, `deployment-binding`, `storage`, `delete`, `successor` or `storage-retained` failed or ran out of time. |
 | `deliver` | 0 | `OPENBAO_SECRET_DELIVERY=CONFIRMED` | The canary ExternalSecret synced successfully after the request. |
 | `deliver` | 2 | `OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=<stage>` | `canary-read`, `sync-request` or `sync` failed or ran out of time. |
 
 Invalid arguments also exit 2 and change nothing, including any flag given twice.
 
-- **delete** first reads the StatefulSet's live pod template and requires its `openbao` image tag to
-  be the reviewed release, then requires every claim the pod mounts to be Bound. It sends the delete
+- **delete** first requires the `openbao` HelmRelease to be Ready at its current generation on the
+  reviewed chart, and the StatefulSet's live template to run the reviewed release. It then requires
+  the `openbao` container to mount exactly `data-<server>` and `audit-<server>`, both Bound. It sends the delete
   with a UID precondition, so the API server refuses it when the pod was replaced after the capture,
   and then waits for a successor that mounts the same claims with the same UIDs. Whether the successor is healthy is the judges' call, not this
   command's.
@@ -32,7 +33,7 @@ Invalid arguments also exit 2 and change nothing, including any flag given twice
   version only after a successful sync with the changed annotation, so only that counts; a failed
   read records none and the wait runs out.
 
-The only kubectl verbs it uses are `get` (pods, claims, the StatefulSet and the canary), one `delete`
+The only kubectl verbs it uses are `get` (pods, claims, the HelmRelease, the StatefulSet and the canary), one `delete`
 and one `annotate`; the regressions pin them.
 It prints one status line and never a pod UID, secret or response body.
 
