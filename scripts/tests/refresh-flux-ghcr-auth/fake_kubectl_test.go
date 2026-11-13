@@ -1203,10 +1203,12 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 17 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 18 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
-	longhornPublishers := map[string]struct {
+	// Each dedicated publisher in this table needs its exact identity, an
+	// exclusion from the shared app rule and its own repository route.
+	tablePublishers := map[string]struct {
 		repository string
 		subject    string
 	}{
@@ -1218,8 +1220,12 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			repository: "ghcr.io/devantler-tech/platform-longhorn-manager",
 			subject:    `^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$`,
 		},
+		"publishmailsubmission": {
+			repository: "ghcr.io/devantler-tech/platform-mail-submission",
+			subject:    `^https://github\.com/devantler-tech/platform/\.github/workflows/publish-mail-submission\.yaml@refs/heads/main$`,
+		},
 	}
-	longhornAttestors := make(map[string]bool, len(longhornPublishers))
+	tableAttestors := make(map[string]bool, len(tablePublishers))
 	storageAttestorValid := false
 	kubescapeNodeAgentAttestorValid := false
 	corootNodeAgentAttestorValid := false
@@ -1235,8 +1241,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		longhornPublisher, isLonghornPublisher := longhornPublishers[name]
-		if !isLonghornPublisher && name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishcorootcheckpoint" && name != "publishkyvernoreports" && name != "publishkyvernomigrate" && name != "publishkyvernobackground" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" && name != "publishcustomeridentity" && name != "publishdexsecurity" {
+		tablePublisher, isTablePublisher := tablePublishers[name]
+		if !isTablePublisher && name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishcorootcheckpoint" && name != "publishkyvernoreports" && name != "publishkyvernomigrate" && name != "publishkyvernobackground" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" && name != "publishcustomeridentity" && name != "publishdexsecurity" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1248,8 +1254,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 		identity, _ := identities[0].(map[string]any)
 		issuerValid := identity["issuer"] == "https://token.actions.githubusercontent.com"
 		subject, _ := identity["subjectRegExp"].(string)
-		if isLonghornPublisher {
-			longhornAttestors[name] = issuerValid && subject == longhornPublisher.subject
+		if isTablePublisher {
+			tableAttestors[name] = issuerValid && subject == tablePublisher.subject
 			continue
 		}
 		switch name {
@@ -1304,17 +1310,17 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesCustomerIdentity := false
 	genericExcludesDex := false
 	dedicatedRoutesDex := false
-	genericExcludesLonghorn := make(map[string]bool, len(longhornPublishers))
-	dedicatedRoutesLonghorn := make(map[string]bool, len(longhornPublishers))
+	genericExcludesTable := make(map[string]bool, len(tablePublishers))
+	dedicatedRoutesTable := make(map[string]bool, len(tablePublishers))
 	for _, rawValidation := range validations {
 		validation, _ := rawValidation.(map[string]any)
 		expression, _ := validation["expression"].(string)
-		for name, publisher := range longhornPublishers {
+		for name, publisher := range tablePublishers {
 			if strings.Contains(expression, "attestors.publishapp") {
-				genericExcludesLonghorn[name] = imageRouteContains(expression, publisher.repository, true)
+				genericExcludesTable[name] = imageRouteContains(expression, publisher.repository, true)
 			}
 			if strings.Contains(expression, "attestors."+name) {
-				dedicatedRoutesLonghorn[name] = imageRouteContains(expression, publisher.repository, false)
+				dedicatedRoutesTable[name] = imageRouteContains(expression, publisher.repository, false)
 			}
 		}
 		if strings.Contains(expression, "attestors.publishapp") {
@@ -1412,8 +1418,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-dex@')")
 		}
 	}
-	for name := range longhornPublishers {
-		if !longhornAttestors[name] || !genericExcludesLonghorn[name] || !dedicatedRoutesLonghorn[name] {
+	for name := range tablePublishers {
+		if !tableAttestors[name] || !genericExcludesTable[name] || !dedicatedRoutesTable[name] {
 			return commandFailure(91, "consolidated image-validating policy patch omitted the exact %s publisher identity or repository routing", name)
 		}
 	}
