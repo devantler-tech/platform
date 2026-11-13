@@ -246,7 +246,7 @@ rbac.authorization.k8s.io/v1|ClusterRole||certificates:kubelet-serving-cert-appr
 
 rbac.authorization.k8s.io/v1|ClusterRole||cilium-tenant-edit c19d0d98692a1a6b918bc78646df10924b2050d10142be92fa65540977f5417f
 
-rbac.authorization.k8s.io/v1|ClusterRole||cluster-reader 20e4b8161fb84aacd02d314fe8da03fe2aa726d7f01e8ba927b3c24c0304eb2b
+rbac.authorization.k8s.io/v1|ClusterRole||cluster-reader 71a7ab978d4840e4eda92e86be061f5bf1812ce9999fd6a246d2e8c3ed944b16
 
 rbac.authorization.k8s.io/v1|ClusterRole||cnpg-degraded-alert 42c958c00b28103b38a39a68780018e23dd665fcf53bfb7e409aafd956338482
 
