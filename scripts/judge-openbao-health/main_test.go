@@ -245,6 +245,8 @@ func TestCommandExitCodesAndPrivateOutput(t *testing.T) {
 		{"replaced server still on the previous release", document(recent, healthy...), []string{"--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.7.2", "--previous-version", "2.6.3", "--require-current", "openbao-0"}, 1, verdictHold},
 		{"replaced servers without a declared upgrade", document(recent, healthy...), append(append([]string(nil), all...), "--require-current", "openbao-0"), 2, ""},
 		{"repeated flag cannot swap the previous release", document(recent, healthy...), []string{"--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.7.2", "--previous-version", "2.6.3", "--previous-version=2.6.2"}, 2, ""},
+		{"repeated flag cannot narrow the replaced servers", document(recent, healthy...), []string{"--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.7.2", "--previous-version", "2.6.3", "--require-current", "openbao-0", "--require-current", "openbao-1"}, 2, ""},
+		{"an explicitly empty replaced-server list is refused", document(recent, healthy...), []string{"--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.7.2", "--previous-version", "2.6.3", "--require-current", ""}, 2, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "capture.json")
@@ -310,6 +312,8 @@ func TestDeclaredRollingUpgrade(t *testing.T) {
 		{"a replaced server still on the previous release", healthy, rolling(t, "openbao-1"), verdictHold},
 		{"a release that is neither the new nor the previous one", replace(healthy, 2, server("openbao-2", "uid-2", 200, body(true, false, true, "2.6.2", "cluster-a"))), rolling(t, ""), verdictHold},
 		{"without a declared upgrade the previous release still holds", upgraded, func() expectation { w := want(); w.version = "2.7.2"; return w }(), verdictHold},
+		{"an empty reported release holds without a declared upgrade", replace(healthy, 2, server("openbao-2", "uid-2", 200, body(true, false, true, "", "cluster-a"))), want(), verdictHold},
+		{"an empty reported release holds during a declared upgrade", replace(healthy, 2, server("openbao-2", "uid-2", 200, body(true, false, true, "", "cluster-a"))), rolling(t, ""), verdictHold},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := judge(strings.NewReader(fresh(test.servers...)), test.want, now)

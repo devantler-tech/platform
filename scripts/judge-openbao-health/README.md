@@ -54,8 +54,17 @@ go run ./scripts/judge-openbao-health \
 ```
 
 Without `--previous-version`, every server must run `--expect-version`, as before. Any third
-release is still a `HOLD`. `--require-current` without `--previous-version`, a previous release
-equal to the new one, or a replaced server outside `--expect-servers` is invalid (exit 2).
+release is still a `HOLD`. `--require-current` without `--previous-version`, an explicitly empty
+`--require-current`, a previous release equal to the new one, or a replaced server outside
+`--expect-servers` is invalid (exit 2).
+
+The caller owns three rules the judge cannot check:
+
+- `--previous-version` is the release the reviewed render pinned before the upgrade. Never read it
+  from the capture or the live cluster: then any release a server happens to run would pass.
+- `--require-current` lists every server replaced so far, not only the latest one.
+- Only a run without `--previous-version`, or one that lists every server in `--require-current`,
+  proves the upgrade is complete.
 
 ## Capture format
 

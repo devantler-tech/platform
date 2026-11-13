@@ -390,6 +390,15 @@ func main() {
 	if err == nil {
 		want, err = parseExpectation(*servers, *version, *maxAge)
 	}
+	// An explicit empty list would read as "nothing replaced yet", so an unset
+	// variable in the procedure could hide a replacement that did not take.
+	if err == nil {
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "require-current" && *current == "" {
+				err = errors.New("--require-current was given no servers")
+			}
+		})
+	}
 	if err == nil {
 		want, err = parseRollout(want, *previous, *current)
 	}
