@@ -2,11 +2,42 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// testRelayPassword has an SES SMTP password's structure: version byte 4 and
+// a 32-byte signature, Base64 encoded. It authenticates nowhere.
+var testRelayPassword = relayPasswordWithVersion(0x04)
+
+func relayPasswordWithVersion(version byte) string {
+	return base64.StdEncoding.EncodeToString(append([]byte{version}, bytes.Repeat([]byte{0x5a}, 32)...))
+}
+
+// TestRelayPasswordMustBeAnSESSMTPPassword refuses values that would only fail
+// once mail is sent: a raw IAM secret, another version, truncation or wrapping.
+func TestRelayPasswordMustBeAnSESSMTPPassword(t *testing.T) {
+	if !validRelayPassword(testRelayPassword) {
+		t.Fatal("structurally valid SES SMTP password refused")
+	}
+	for name, value := range map[string]string{
+		"raw IAM secret":   "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		"other version":    relayPasswordWithVersion(0x02),
+		"truncated":        testRelayPassword[:43],
+		"extended":         testRelayPassword + "A",
+		"wrapped":          testRelayPassword[:22] + "\n" + testRelayPassword[22:],
+		"trailing newline": testRelayPassword[:43] + "\n",
+		"not Base64":       strings.Repeat("-", 44),
+		"empty":            "",
+	} {
+		if validRelayPassword(value) {
+			t.Fatalf("%s accepted as an SES SMTP password", name)
+		}
+	}
+}
 
 // relayInputs writes a complete private input set for the relay tests.
 func relayInputs(t *testing.T) (string, string) {
@@ -23,7 +54,7 @@ func relayInputs(t *testing.T) (string, string) {
 		"listener-inventory.json": string(emptyInventory(t)),
 		"settings.json":           `{"domain":"example.test","hostname":"mail.example.test","maintainer":"maintainer","agent":"agents","administrator":"operator"}`,
 		"administrator-password":  strings.Repeat("A", 40), "maintainer-password": strings.Repeat("B", 40), "agent-password": strings.Repeat("C", 40),
-		"relay-username": "AKIAEXAMPLE000000000", "relay-password": strings.Repeat("D", 44),
+		"relay-username": "AKIAEXAMPLE000000000", "relay-password": testRelayPassword,
 	} {
 		if err := os.WriteFile(filepath.Join(input, name), []byte(value), 0600); err != nil {
 			t.Fatal(err)
@@ -79,7 +110,7 @@ func TestRelayCredentialIsRequiredAndNeverEchoed(t *testing.T) {
 func TestRelayPasswordIsNeverReadBack(t *testing.T) {
 	fields := publicPolicyFields(map[string]any{
 		"name": "ses", "authUsername": "AKIAEXAMPLE000000000",
-		"authSecret": map[string]any{"@type": "Value", "secret": strings.Repeat("D", 44)},
+		"authSecret": map[string]any{"@type": "Value", "secret": testRelayPassword},
 	})
 	if _, present := fields["authSecret"]; present || fields["authUsername"] != "AKIAEXAMPLE000000000" || fields["name"] != "ses" || len(fields) != 2 {
 		t.Fatal("relay secret is read back, or public relay fields are skipped")

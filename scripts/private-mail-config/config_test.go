@@ -7,7 +7,7 @@ import (
 )
 
 func fixture() inputs {
-	return inputs{settings: settings{Domain: "example.test", Hostname: "mail.example.test", Maintainer: "maintainer", Agent: "agents", Administrator: "operator"}, administratorPassword: strings.Repeat("A", 40), maintainerPassword: strings.Repeat("B", 40), agentPassword: strings.Repeat("C", 40), relayUsername: "AKIAEXAMPLE000000000", relayPassword: strings.Repeat("D", 44)}
+	return inputs{settings: settings{Domain: "example.test", Hostname: "mail.example.test", Maintainer: "maintainer", Agent: "agents", Administrator: "operator"}, administratorPassword: strings.Repeat("A", 40), maintainerPassword: strings.Repeat("B", 40), agentPassword: strings.Repeat("C", 40), relayUsername: "AKIAEXAMPLE000000000", relayPassword: testRelayPassword}
 }
 
 func TestPrivateInputsCannotChangePolicyOrInjectExpressions(t *testing.T) {
@@ -30,8 +30,9 @@ func TestPrivateInputsCannotChangePolicyOrInjectExpressions(t *testing.T) {
 		func(v *inputs) { v.relayUsername = "AKIAEXAMPLE000000000' || true" },
 		func(v *inputs) { v.relayUsername += "\n" },
 		func(v *inputs) { v.relayPassword = "" },
-		func(v *inputs) { v.relayPassword = strings.Repeat("D", 39) },
-		func(v *inputs) { v.relayPassword = strings.Repeat("D", 43) + `"` },
+		func(v *inputs) { v.relayPassword = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" },
+		func(v *inputs) { v.relayPassword = relayPasswordWithVersion(0x02) },
+		func(v *inputs) { v.relayPassword = v.relayPassword[:43] },
 		func(v *inputs) { v.relayPassword += "\n" },
 	} {
 		v := fixture()

@@ -89,7 +89,7 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 					if op.Type != "upsert" || len(op.Value) != 1 || len(r) != 9 || r["@type"] != "Relay" || r["name"] != "ses" ||
 						r[host] != "email-smtp.eu-central-1.amazonaws.com" || r[foreign] != nil || r["port"] != float64(587) ||
 						r["protocol"] != "smtp" || r["implicitTls"] != false || r["allowInvalidCerts"] != false ||
-						r["authUsername"] != "AKIAEXAMPLE000000000" || len(secret) != 2 || secret["@type"] != "Value" || secret["secret"] != strings.Repeat("D", 44) {
+						r["authUsername"] != "AKIAEXAMPLE000000000" || len(secret) != 2 || secret["@type"] != "Value" || secret["secret"] != testRelayPassword {
 						t.Fatal("relay route schema, endpoint or credential changed")
 					}
 					found["route"] = true

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -36,7 +37,15 @@ var domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:
 var localPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,31}$`)
 var passwordPattern = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
 var relayUsernamePattern = regexp.MustCompile(`^AKIA[A-Z0-9]{16}$`)
-var relayPasswordPattern = regexp.MustCompile(`^[A-Za-z0-9+/]{40,128}={0,2}$`)
+
+// validRelayPassword accepts only an SES SMTP password: version byte 4 and a
+// 32-byte signature, Base64 encoded. A raw IAM secret key, or a truncated or
+// wrapped value, would fail authentication only when mail is sent. The decoder
+// skips line breaks, so the exact encoded length is checked first.
+func validRelayPassword(password string) bool {
+	decoded, err := base64.StdEncoding.Strict().DecodeString(password)
+	return len(password) == 44 && err == nil && len(decoded) == 33 && decoded[0] == 0x04
+}
 
 // The outbound relay is fixed by the reviewed decision, not by private input.
 // SES derives the SMTP password per region, so the host and the credential's
@@ -78,7 +87,7 @@ func render(v inputs) ([]byte, error) {
 		}
 		seen[password] = true
 	}
-	if !relayUsernamePattern.MatchString(v.relayUsername) || !relayPasswordPattern.MatchString(v.relayPassword) {
+	if !relayUsernamePattern.MatchString(v.relayUsername) || !validRelayPassword(v.relayPassword) {
 		return nil, errConfiguration
 	}
 	// Expression values contain only the validated conservative address alphabet.
