@@ -1,6 +1,7 @@
 # Email outbound relay
 
-**Status:** Proposed
+**Status:** Accepted. The maintainer chose a hosted relay, Amazon SES in
+`eu-central-1`, on 2026-11-13.
 
 ## Context
 
