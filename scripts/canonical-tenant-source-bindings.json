@@ -20,17 +20,17 @@
         "namespace": "business-site",
         "name": "business-site",
         "artifactURL": "oci://ghcr.io/devantler-tech/business-site/manifests",
-        "digest": "sha256:7ec5b206635db783d8fd18789605a771cc772946f65339d3f0a2b4e08a14ebc6"
+        "digest": "sha256:78401ed9c68e66427e826bb610d42c6c307ec67135b99be4ce956f21073baaa8"
       },
       "publication": {
-        "gitTag": "v3.0.0",
-        "sourceSHA": "84d4cc47b800597f7683e22dad1c23cfa320434f",
-        "publisherIdentity": "devantler-tech/.github/.github/workflows/publish-app.yaml@d8b5d0e9429cebf12907e0d4cb448433d3108e4b",
+        "gitTag": "v3.2.2",
+        "sourceSHA": "6fdbbf6db9357c8754e55be2c737308378690d20",
+        "publisherIdentity": "devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812",
         "callerWorkflow": ".github/workflows/publish-runtime.yaml",
         "event": "release",
-        "workflowRunId": 41631861843,
+        "workflowRunId": 43435792740,
         "workflowRunAttempt": 1,
-        "verifiedOn": "2026-11-03"
+        "verifiedOn": "2026-11-13"
       },
       "previousBinding": {
         "consumer": "business-site",
@@ -51,24 +51,24 @@
           "namespace": "business-site",
           "name": "business-site",
           "artifactURL": "oci://ghcr.io/devantler-tech/business-site/manifests",
-          "digest": "sha256:2f43bf60c87e373ab99f9fc08f187287d9526b3f1b3212b6234e2ae80b9c5e82"
+          "digest": "sha256:7ec5b206635db783d8fd18789605a771cc772946f65339d3f0a2b4e08a14ebc6"
         },
         "publication": {
-          "gitTag": "v2.0.0",
-          "sourceSHA": "2eca5f823676adde374556848cf8bf86eb139804",
-          "publisherIdentity": "devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0",
+          "gitTag": "v3.0.0",
+          "sourceSHA": "84d4cc47b800597f7683e22dad1c23cfa320434f",
+          "publisherIdentity": "devantler-tech/.github/.github/workflows/publish-app.yaml@d8b5d0e9429cebf12907e0d4cb448433d3108e4b",
           "callerWorkflow": ".github/workflows/publish-runtime.yaml",
           "event": "release",
-          "workflowRunId": 40247127226,
+          "workflowRunId": 41631861843,
           "workflowRunAttempt": 1,
-          "verifiedOn": "2026-10-26"
+          "verifiedOn": "2026-11-03"
         }
       },
       "previousObservation": {
         "uidSha256": "38aff5c8aafbd89fc51dbbe131d27c9a3fb0e78108a20779d0e7a5680a6cc2d2",
-        "generation": 2,
-        "snapshotSha256": "1cea4a0991ae5e6093e4f057256fd5ce316599d214fa4b3196a272556879835b",
-        "observedOn": "2026-11-03"
+        "generation": 3,
+        "snapshotSha256": "8b662b4f0b5ec50bd31eb3fbfc74eeb256288a2dbbae5f482d8f968eb6f2b33a",
+        "observedOn": "2026-11-13"
       }
     }
   ]

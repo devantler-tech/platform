@@ -11,6 +11,11 @@ resources:
   - provider-config.yaml
   - policy-eks-ci-smoke-boundary.yaml
   - role-eks-ci.yaml
+  - user-email-smtp.yaml
+  - policy-email-smtp-send.yaml
+  - user-policy-attachment-email-smtp.yaml
+  - access-key-email-smtp.yaml
+  - push-secret-email-smtp.yaml
   - role-ses-account-setup.yaml
   - external-secret.yaml
   - oci-repository.yaml

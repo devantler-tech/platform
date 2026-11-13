@@ -206,7 +206,7 @@ echo 'bootstrap requires complete inventory and a verified immutable publication
 biz_work="$test_work/business"
 mkdir -p "$biz_work/bin"
 export BIZ_WORK="$biz_work"
-export BIZ_SIGNER=467f07582436a26b62cf4aa756423512f85ba0c0
+export BIZ_SIGNER=af042c540ce8db4d64add98c34b5c57691e0e812
 for approval in publish-workflow-approved-revisions.tsv publish-workflow-approved-revisions.identities.tsv \
   publish-workflow-canonical-approvals.tsv publish-workflow-bootstrap-publications.json; do
   cp "$test_repo_root/scripts/$approval" "$biz_work/before-$approval"
@@ -320,7 +320,7 @@ jq -e 'keys == ["callerWorkflow","consumer","deploymentAuthorized","digest","eve
   .deploymentAuthorized==false and .gitTag=="v1.0.2" and
   .sourceSHA=="e5eb256dcb5dbf3857257e9072937ab95f1ea6c3" and
   .digest=="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" and
-  .publisherIdentity=="devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0" and
+  .publisherIdentity=="devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812" and
   .callerWorkflow==".github/workflows/publish-runtime.yaml" and .event=="release" and
   .workflowRunId==39869859801 and .workflowRunAttempt==1' "$biz_work/receipt.json" >/dev/null
 if read_bound_publications "$test_repo_root" "$biz_work/receipt.json" >/dev/null 2>&1; then
@@ -365,7 +365,7 @@ for BIZ_SIGNER in f5d078cc4b04ecb15432ed4e34cba1142a6279d4 111111111111111111111
   fi
   test ! -s "$biz_work/refusal"
 done
-BIZ_SIGNER=467f07582436a26b62cf4aa756423512f85ba0c0
+BIZ_SIGNER=af042c540ce8db4d64add98c34b5c57691e0e812
 for BIZ_CASE in wrong-event wrong-caller wrong-source wrong-tag wrong-product wrong-publisher duplicate-publisher \
   malformed-list trailing-list incomplete-list run-read-failure tag-read-failure wrong-caller-pin multi-document-caller \
   signature-failure malformed-signature trailing-signature wrong-digest wrong-reference changed-attempt moved-tag withdrawn-release \

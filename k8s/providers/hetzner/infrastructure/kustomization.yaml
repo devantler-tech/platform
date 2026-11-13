@@ -277,6 +277,14 @@ patches:
       kind: Gateway
       name: platform
       namespace: kube-system
+  # Adds HTTPS listeners for the business-site public and portal names; see the
+  # file header.
+  - path: patches/add-devantler-tech-listeners.yaml
+    target:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: platform
+      namespace: kube-system
   # Prod-only Coroot tuning: hcloud-backed persistent storage + Slack webhook
   # wiring. The CR it patches comes from ../../../bases/infrastructure/coroot/
   # (the `infrastructure` layer); the strategic-merge patch matches on the

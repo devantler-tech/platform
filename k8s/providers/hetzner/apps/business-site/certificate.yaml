@@ -1,0 +1,23 @@
+# Platform-applied DNS-01 issuance for the names the business-site package
+# routes: the public site (devantler.tech, www) and the portal. The shared
+# Cloudflare ClusterIssuer already issues the zone's other names (see
+# world-at-ruin/certificate.yaml); the Gateway listeners in
+# infrastructure/patches/add-devantler-tech-listeners.yaml read this Secret
+# through reference-grant.yaml. Issuance needs no listener and no DNS record,
+# so it can complete before the apex and www leave GitHub Pages
+# (devantler-tech/monorepo#3939).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: devantler-tech
+  namespace: business-site
+spec:
+  secretName: devantler-tech-tls
+  dnsNames:
+    - devantler.tech
+    - www.devantler.tech
+    - portal.devantler.tech
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: letsencrypt-prod
