@@ -26,10 +26,11 @@ are unchanged.
   with STARTTLS and SMTP authentication.
 - **One send-only credential.** An IAM user may only `ses:SendRawEmail` on that
   identity, with the sender limited to the mail domain. Crossplane creates its
-  access key, and the provider publishes the derived SES SMTP password. That
-  password is valid only for the provider's own region, which is why SES runs
-  in `eu-central-1`. A dedicated push identity stores it in OpenBao, and the
-  Email server reads it from there. Nobody reads the value.
+  access key and publishes the key ID, which is the SMTP username, and the
+  derived SES SMTP password. That password is valid only for the provider's
+  own region, which is why SES runs in `eu-central-1`. A platform-applied
+  PushSecret copies the username and password to one exact OpenBao key, and the
+  Email server reads both from there. Nobody reads the values.
 - **Ownership.** The identity and MAIL FROM domain grant no permission, so the
   `aws` tenant owns them. The SMTP user, its policy and its key stay
   platform-owned, like the EKS CI role, so the public tenant cannot widen them.
@@ -48,7 +49,10 @@ are unchanged.
 3. Create the send-only SMTP identity and store its credential in OpenBao.
 4. Publish the DNS records once the identity's DKIM tokens exist.
 5. Request production access.
-6. Add Stalwart's relay route and its egress to the SES endpoint.
+6. Add Stalwart's relay route. Its network policy now denies all egress, and a
+   deny overrides any allow, so this step replaces the deny with egress to DNS
+   and to the SES SMTP endpoint on port 587 only. That ends the server's
+   preparation-only network contract.
 7. Send real mail to external mailboxes. Check that SPF, DKIM and DMARC pass,
    and that replies thread against the sender's Sent copy despite SES's
    Message-ID rewrite. If threading fails, report it before switching relay.
