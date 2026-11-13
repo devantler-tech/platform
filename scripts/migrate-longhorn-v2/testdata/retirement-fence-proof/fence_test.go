@@ -133,7 +133,7 @@ func TestNativeOriginalReferenceFences(t *testing.T) {
 								caseGVK.Kind = map[string]string{"engines": "Engine", "replicas": "Replica", "enginefrontends": "EngineFrontend", "volumeattachments": "VolumeAttachment"}[tc.resource]
 							}
 							attr := admission.NewAttributesRecord(tc.current, tc.old, caseGVK, namespace, "", caseGVR, tc.subresource, tc.operation, &metav1.UpdateOptions{}, false, nil)
-							versioned := &admission.VersionedAttributes{Attributes: attr, VersionedObject: tc.current, VersionedOldObject: tc.old, VersionedKind: caseGVK}
+							versioned := &admission.VersionedAttributes{Attributes: attr, VersionedObject: admission.NewLazyObject(tc.current), VersionedOldObject: admission.NewLazyObject(tc.old), VersionedKind: caseGVK}
 							result := validator.Validate(context.Background(), caseGVR, versioned, nil, nil, celconfig.RuntimeCELCostBudget, nil)
 							if !tc.selected {
 								if len(result.Decisions) != 0 {

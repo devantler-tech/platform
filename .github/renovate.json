@@ -216,6 +216,12 @@
       "allowedVersions": "<=1.5.1"
     },
     {
+      "description": "Hold the Kubernetes client libraries below 0.37 in the tenant web-app admission test module, which builds Kyverno v1.19.2. Kyverno v1.20.0 is the first release built on k8s.io v0.37, and it still replaces github.com/kyverno/api with a fork in a personal account; against the newest published kyverno/api (v0.0.1-alpha.5) the module does not compile on v0.37 (#5191). Every other module moves to v0.37. Remove this rule once a Kyverno release builds on v0.37 from a published kyverno/api.",
+      "matchFileNames": ["scripts/tests/tenant-webapp-admission/go.mod"],
+      "matchPackageNames": ["k8s.io/**"],
+      "allowedVersions": "<0.37.0"
+    },
+    {
       "description": "flux-operator is tracked by the dedicated regex customManager above (the built-in `flux` manager stalled on it). Disable the `flux` manager for this chart so the two managers cannot open duplicate PRs if the flux manager later resumes.",
       "matchManagers": ["flux"],
       "matchPackageNames": [
