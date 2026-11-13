@@ -194,7 +194,12 @@ control() {
 }
 hold_control() {
   local label="$1" actor="$2" operation="$3" namespace="$4" name="$5" expected="$6" managed="$7"
-  yq -o=json '.' "${repo_root}/k8s/providers/hetzner/apps/business-site/cilium-network-policy-staging-hold.yaml" |
+  # The former staging hold's body: the hold itself was lifted, but its name stays
+  # reserved, so these controls still exercise it (devantler-tech/business-site#554).
+  jq -n '{apiVersion: "cilium.io/v2", kind: "CiliumNetworkPolicy",
+    metadata: {name: "business-site-staging-hold", namespace: "business-site"},
+    spec: {endpointSelector: {matchLabels: {"app.kubernetes.io/name": "business-site"}},
+      ingressDeny: [{fromEntities: ["ingress"], toPorts: [{ports: [{port: "8080", protocol: "TCP"}]}]}]}}' |
     jq -c --arg label "${label}" --arg actor "${actor}" --arg operation "${operation}" \
       --arg namespace "${namespace}" --arg name "${name}" --arg expected "${expected}" --arg managed "${managed}" '
       .metadata.namespace = $namespace | .metadata.name = $name | . as $resource |

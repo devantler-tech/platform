@@ -196,9 +196,12 @@ templated verbatim.
 
 ### Public business-site staging hold
 
-The platform installs `business-site-staging-hold` before enabling the public
-business application. Tenant writers cannot create, update or delete that named
-Cilium policy in `business-site`, including through reconciliation or pruning.
+The platform installed `business-site-staging-hold` before enabling the public
+business application, and lifted it once the signed application ran healthy
+behind it (devantler-tech/business-site#554). The name stays reserved, so only
+the platform can put the hold back. Tenant writers cannot create, update or
+delete that named Cilium policy in `business-site`, including through
+reconciliation or pruning.
 The existing trusted platform-controller carve-outs remain; a controller name
 in a tenant namespace does not grant the same authority. Other policy names and
 the same name in other namespaces retain their ordinary admission rules.
