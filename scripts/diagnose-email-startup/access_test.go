@@ -332,8 +332,11 @@ func TestSecurityStateRefusesPartialOrAmbiguousResponses(t *testing.T) {
 }
 
 // accessPod supplies the real projection shape with documentation-only IPs.
-func accessPod(t *testing.T) []byte {
-	return changePod(t, fixturePod(t), func(p map[string]any) {
+func accessPod(t *testing.T) []byte { return withAccessInputs(t, fixturePod(t)) }
+
+// withAccessInputs adds the addresses and credential projections the access observer binds.
+func withAccessInputs(t *testing.T, pod []byte) []byte {
+	return changePod(t, pod, func(p map[string]any) {
 		p["metadata"].(map[string]any)["creationTimestamp"] = "2026-10-25T00:00:00Z"
 		status := p["status"].(map[string]any)
 		status["podIP"] = "192.0.2.20"
@@ -369,9 +372,15 @@ func accessMeasurement(t *testing.T, security []byte) []byte {
 
 // TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv exercises the complete collector.
 func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t *testing.T) {
-	for _, scenario := range []string{"healthy", "blocked", "cilium-blocked", "cilium-cidr-blocked", "cilium-allow-override", "cilium-expired", "ingress-blocked", "ingress-unblocked", "ingress-rules-changed", "ingress-observer-failed", "ingress-observer-stage", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced", "cilium-missing", "cilium-foreign-node", "cilium-replaced", "cilium-address-changed", "cilium-version-changed", "cilium-ambiguous", "cilium-malformed", "cilium-host-mismatch", "cilium-pod-address", "cilium-host-address", "cilium-non-unicast", "metadata-missing", "pod-creation-changed"} {
+	for _, scenario := range []string{"healthy", "blocked", "cilium-blocked", "cilium-cidr-blocked", "cilium-allow-override", "cilium-expired", "ingress-blocked", "ingress-unblocked", "ingress-rules-changed", "ingress-observer-failed", "ingress-observer-stage", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced", "cilium-missing", "cilium-foreign-node", "cilium-replaced", "cilium-address-changed", "cilium-version-changed", "cilium-ambiguous", "cilium-malformed", "cilium-host-mismatch", "cilium-pod-address", "cilium-host-address", "cilium-non-unicast", "metadata-missing", "pod-creation-changed", "proxy-distinct-clients", "proxy-cilium-blocked"} {
 		t.Run(scenario, func(t *testing.T) {
 			pod := accessPod(t)
+			proxied := strings.HasPrefix(scenario, "proxy-")
+			var proxyMap []byte
+			if proxied {
+				pod, proxyMap = proxyFixture(t)
+				pod = withAccessInputs(t, pod)
+			}
 			after := append([]byte(nil), pod...)
 			cm := fixtureMap(t)
 			afterCM := append([]byte(nil), cm...)
@@ -396,6 +405,11 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 				measured = accessMeasurement(t, securityStateFor(t, []any{accessEntry("192.0.2.30", nil)}, []any{accessEntry("192.0.2.28/30", nil)}))
 			case "cilium-expired":
 				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{accessEntry("192.0.2.30", "2026-10-26T00:00:00Z")}))
+			case "proxy-distinct-clients":
+				// The retained shared-address block predates the Pod and stays in place.
+				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{identityBlock("old", "192.0.2.30", "2026-10-24T00:00:00Z"), identityBlock("b0", "203.0.113.7", "2026-10-26T00:00:00Z"), identityBlock("b1", "198.51.100.9", "2026-10-26T00:00:00Z")}))
+			case "proxy-cilium-blocked":
+				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{identityBlock("b0", "203.0.113.7", "2026-10-26T00:00:00Z"), identityBlock("b1", "198.51.100.9", "2026-10-26T00:00:00Z"), identityBlock("b2", "192.0.2.30", "2026-10-26T00:00:00Z")}))
 			case "pod-replaced":
 				after = []byte(strings.Replace(string(after), "000000000001", "000000000009", 1))
 			case "restarted":
@@ -488,6 +502,12 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 					}
 					return pod, nil
 				case "configmap":
+					if args[5] == approvedProxyMap {
+						if !proxied {
+							t.Fatal("adapter configuration read without a bound adapter")
+						}
+						return proxyMap, nil
+					}
 					if execs > 0 {
 						return afterCM, nil
 					}
@@ -555,9 +575,25 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 				}
 				return
 			}
+			if proxied {
+				want := map[string]clientIdentity{"proxy-distinct-clients": {"DISTINCT_PUBLIC_CLIENTS", 2}, "proxy-cilium-blocked": {"NON_CLIENT_ADDRESS_BLOCKED", 2}}[scenario]
+				if e != nil || got.Paths != "ALL_LOCAL_TARGETS_HTTP_200" || !got.Ready || got.Identity != want || ciliumReads != 2 {
+					t.Fatalf("adapter collection %+v/%v, want identity %+v", got, e, want)
+				}
+				if got.CiliumAccess != "STORED_CILIUM_BLOCK_MATCH" {
+					t.Fatalf("retained Cilium block not reported: %s", got.CiliumAccess)
+				}
+				if execs != 1 || calls != 14 {
+					t.Fatalf("unbounded adapter reads/execs %d/%d", calls, execs)
+				}
+				return
+			}
 			if scenario == "healthy" || scenario == "blocked" || scenario == "cilium-blocked" || scenario == "cilium-cidr-blocked" || scenario == "cilium-allow-override" || scenario == "cilium-expired" {
 				if e != nil || got.Paths != "ALL_LOCAL_TARGETS_HTTP_200" || !got.Ready {
 					t.Fatalf("valid collection %v/%v", got, e)
+				}
+				if got.Identity.Verdict != "NOT_APPLICABLE" {
+					t.Fatalf("identity claimed without the adapter: %+v", got.Identity)
 				}
 				if (got.Access == "STORED_HOST_BLOCK_MATCH") != (scenario == "blocked") {
 					t.Fatalf("block result %s", got.Access)
