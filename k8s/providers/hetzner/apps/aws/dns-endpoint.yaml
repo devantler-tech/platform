@@ -1,0 +1,31 @@
+# Company Email's Amazon SES DNS records (platform#5481), published DNS-only by
+# the platform's external-dns. These are new names, so each has one owner: the
+# MAIL FROM domain's MX and SPF records, so that SPF aligns with the mailbox
+# domain for DMARC. The mailbox domain's own SPF and DMARC records are not
+# managed here. restrict-explicit-dns-records admits exactly this endpoint list
+# in this namespace and under this name.
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: company-mail-ses
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  endpoints:
+    - dnsName: bounce.devantler.tech
+      recordTTL: 300
+      recordType: MX
+      targets:
+        - 10 feedback-smtp.eu-central-1.amazonses.com
+      providerSpecific:
+        - name: cloudflare/proxied
+          value: "false"
+    - dnsName: bounce.devantler.tech
+      recordTTL: 300
+      recordType: TXT
+      targets:
+        - v=spf1 include:amazonses.com ~all
+      providerSpecific:
+        - name: cloudflare/proxied
+          value: "false"
