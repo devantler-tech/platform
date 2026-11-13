@@ -143,25 +143,33 @@ current Pod, with the bound [client adapter](operations/email-proxy-identity.md)
 was serving. Through the adapter, each external connection carries one client
 address, so the server's automatic blocks name the clients it judged. The
 blocks created since the Pod's creation timestamp are classified, whatever their
-expiry or a matching allow rule:
+expiry or a matching allow rule. The window starts at Pod creation, not container
+start, because the Pod spec fixes the adapter and the Pod's initializer sets the
+listener trust, so a container restart keeps the same transport.
 
-- `DISTINCT_PUBLIC_CLIENTS`: at least two distinct public addresses, and nothing
-  else. One shared address cannot produce two, so the server told real clients
-  apart.
-- `NON_CLIENT_ADDRESS_BLOCKED`: at least one block names a private, loopback,
-  link-local or shared (100.64.0.0/10) address, the bound node, Pod or Cilium
-  address, or a range wider than one address. A shared intermediary being
-  judged is what the adapter replaced.
-- `INSUFFICIENT_EVIDENCE`: fewer than two distinct public addresses and nothing
-  else. Real traffic has not produced the evidence yet.
+- `DISTINCT_PUBLIC_CLIENTS`: automatic blocks (authentication failure,
+  loitering, port scanning or recipient failure) on at least two distinct public
+  addresses, and no failing block. One shared address cannot produce two, so the
+  server told real clients apart. Manual and `other` blocks on public addresses
+  are not evidence either way.
+- `NON_CLIENT_ADDRESS_BLOCKED`: at least one block, whatever its reason, names a
+  private, loopback, link-local or shared (100.64.0.0/10) address, the bound
+  node, Pod or Cilium address, or a range wider than one address. A shared
+  intermediary being judged is what the adapter replaced.
+- `INSUFFICIENT_EVIDENCE`: fewer than two distinct public addresses with
+  automatic blocks, and no failing block. Real traffic has not produced the
+  evidence yet.
 - `NOT_APPLICABLE`: no adapter is bound.
 
 `MAIL_CLIENT_DISTINCT_PUBLIC_BLOCKS` is the count of those distinct public
 addresses. Addresses are never printed. A block created before the Pod, such as
-the retained shared-address block, is outside the window; it is still reported by
-the Cilium fields and is neither removed nor exempted. A stored creation time is
-administrator editable, so this is evidence from the server's own decisions, not
-an attestation of each connection. Forged forwarding metadata and direct
+the retained shared-address block, is outside the window. With the adapter it
+deliberately does not decide the exit code, because no visitor arrives as that
+address and removing stored rules is no substitute for proving identity. It is
+still reported by the access and Cilium fields, the server keeps enforcing it,
+and nothing adds an allow rule for it. Stored reasons and creation times are
+administrator editable, so this is evidence from the server's stored decisions,
+not an attestation of each connection. Forged forwarding metadata and direct
 untrusted peers are refused before the server by the Gateway and adapter; their
 proofs are the native controls and the Gateway denied-peer probe.
 

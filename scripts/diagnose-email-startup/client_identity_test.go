@@ -18,11 +18,19 @@ func identityBlock(id, address, created string) map[string]any {
 	return map[string]any{"id": id, "address": address, "expiresAt": nil, "reason": "portScanning", "createdAt": created}
 }
 
-// identityBlocks numbers each address, so repeated addresses stay distinct records.
+// identityBlocks stores automatic port-scanning blocks.
 func identityBlocks(created string, addresses ...string) []any {
+	return identityBlocksFor("portScanning", created, addresses...)
+}
+
+// identityBlocksFor numbers each address within its reason, so repeated
+// addresses and mixed reasons stay distinct records.
+func identityBlocksFor(reason, created string, addresses ...string) []any {
 	blocks := []any{}
 	for i, address := range addresses {
-		blocks = append(blocks, identityBlock(fmt.Sprintf("b%d", i), address, created))
+		block := identityBlock(fmt.Sprintf("%s%d", reason, i), address, created)
+		block["reason"] = reason
+		blocks = append(blocks, block)
 	}
 	return blocks
 }
@@ -54,6 +62,13 @@ func TestClientIdentityCountsOnlyDistinctPublicClientsBlockedDuringThePod(t *tes
 		{"Pod address", identityBlocks(during, "203.0.113.7", "198.51.100.9", "192.0.2.20"), "NON_CLIENT_ADDRESS_BLOCKED", 2},
 		{"Cilium address", identityBlocks(during, "203.0.113.7", "198.51.100.9", "192.0.2.30"), "NON_CLIENT_ADDRESS_BLOCKED", 2},
 		{"range", identityBlocks(during, "203.0.113.7", "198.51.100.9", "203.0.113.0/24"), "NON_CLIENT_ADDRESS_BLOCKED", 2},
+		{"manual clients", identityBlocksFor("manual", during, "203.0.113.7", "198.51.100.9"), "INSUFFICIENT_EVIDENCE", 0},
+		{"unknown-cause clients", identityBlocksFor("other", during, "203.0.113.7", "198.51.100.9"), "INSUFFICIENT_EVIDENCE", 0},
+		{"one automatic, one manual", append(identityBlocks(during, "203.0.113.7"), identityBlocksFor("manual", during, "198.51.100.9")[0].(map[string]any)), "INSUFFICIENT_EVIDENCE", 1},
+		{"manual private", append(identityBlocks(during, "203.0.113.7", "198.51.100.9"), identityBlocksFor("manual", during, "10.244.3.17")[0].(map[string]any)), "NON_CLIENT_ADDRESS_BLOCKED", 2},
+		{"authentication failures", identityBlocksFor("authFailure", during, "203.0.113.7", "198.51.100.9"), "DISTINCT_PUBLIC_CLIENTS", 2},
+		{"loitering", identityBlocksFor("loitering", during, "203.0.113.7", "198.51.100.9"), "DISTINCT_PUBLIC_CLIENTS", 2},
+		{"recipient failures", identityBlocksFor("rcptToFailure", during, "203.0.113.7", "198.51.100.9"), "DISTINCT_PUBLIC_CLIENTS", 2},
 		{"host-length prefix", identityBlocks(during, "203.0.113.7/32", "2001:db8::9/128"), "DISTINCT_PUBLIC_CLIENTS", 2},
 		{"same client as address and prefix", identityBlocks(during, "203.0.113.7", "203.0.113.7/32"), "INSUFFICIENT_EVIDENCE", 1},
 	} {
@@ -91,6 +106,8 @@ func TestClientIdentityRefusesIncompleteEvidence(t *testing.T) {
 		platform []netip.Addr
 	}{
 		{"missing creation", accessMeasurement(t, securityStateFor(t, []any{}, []any{map[string]any{"id": "b0", "address": "203.0.113.7", "expiresAt": nil, "reason": "manual", "createdAt": nil}})), identityPodCreated, identityPlatform},
+		{"missing reason", accessMeasurement(t, securityStateFor(t, []any{}, []any{map[string]any{"id": "b0", "address": "203.0.113.7", "expiresAt": nil, "reason": nil, "createdAt": during}})), identityPodCreated, identityPlatform},
+		{"unknown reason", accessMeasurement(t, securityStateFor(t, []any{}, identityBlocksFor("unreviewed", during, "203.0.113.7"))), identityPodCreated, identityPlatform},
 		{"future creation", accessMeasurement(t, securityStateFor(t, []any{}, identityBlocks("2026-10-28T00:00:00Z", "203.0.113.7"))), identityPodCreated, identityPlatform},
 		{"invalid creation", accessMeasurement(t, securityStateFor(t, []any{}, identityBlocks("yesterday", "203.0.113.7"))), identityPodCreated, identityPlatform},
 		{"invalid address", accessMeasurement(t, securityStateFor(t, []any{}, identityBlocks(during, "203.0.113.300"))), identityPodCreated, identityPlatform},

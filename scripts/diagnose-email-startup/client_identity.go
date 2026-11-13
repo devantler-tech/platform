@@ -12,6 +12,13 @@ const minimumDistinctClients = 2
 
 var sharedAddressSpace = netip.MustParsePrefix("100.64.0.0/10")
 
+// automaticReasons are the server's own blocking decisions. A manual block or
+// one of unknown cause is an administrator's choice, never client evidence.
+var automaticReasons = map[string]bool{"rcptToFailure": true, "authFailure": true, "loitering": true, "portScanning": true}
+
+// storedReasons are every reason the supported server stores.
+var storedReasons = map[string]bool{"rcptToFailure": true, "authFailure": true, "loitering": true, "portScanning": true, "manual": true, "other": true}
+
 type clientIdentity struct {
 	Verdict string
 	Public  int
@@ -21,14 +28,18 @@ type clientIdentity struct {
 // while the current Pod, with its bound client adapter, was serving. Through the
 // adapter, each external connection carries one client address, so automatic
 // blocks on distinct public addresses show that real clients were judged
-// separately. Any other block created in that window, such as a private,
-// loopback, node or Gateway address or a range, is refused as client evidence:
-// a shared intermediary is what this transport replaced.
+// separately. A manual block or one of unknown cause on a public address is
+// not evidence either way. Any block in that window naming a private, loopback,
+// node, Pod or Cilium address or a range, whatever its reason, fails: a shared
+// intermediary is what this transport replaced.
 //
-// Blocks created before the Pod are outside the window and remain unchanged.
-// Expiry does not matter here: an expired block was still a decision about the
-// address it names. The complete inventory is validated exactly as for the
-// host classification first, so a partial answer is never counted.
+// The window starts at Pod creation, not container start: the Pod spec fixes
+// the adapter, and the Pod's initializer sets the server's listener trust, so a
+// container restart in the same Pod keeps the same transport. Blocks created
+// before the Pod are outside the window and remain unchanged. Expiry does not
+// matter here: an expired block was still a decision about the address it
+// names. The complete inventory is validated exactly as for the host
+// classification first, so a partial answer is never counted.
 func decodeClientIdentity(raw []byte, podCreated, now time.Time, platform ...netip.Addr) (clientIdentity, error) {
 	bad := errors.New("incomplete client identity evidence")
 	if podCreated.IsZero() || podCreated.After(now) || len(raw) > maxAccessOutput || len(platform) == 0 {
@@ -62,15 +73,15 @@ func decodeClientIdentity(raw []byte, podCreated, now time.Time, platform ...net
 		}
 		var body struct {
 			List []struct {
-				Address   string
-				CreatedAt *string
+				Address           string
+				Reason, CreatedAt *string
 			}
 		}
 		if json.Unmarshal(call[1], &body) != nil {
 			return clientIdentity{}, bad
 		}
 		for _, entry := range body.List {
-			if entry.CreatedAt == nil {
+			if entry.Reason == nil || !storedReasons[*entry.Reason] || entry.CreatedAt == nil {
 				return clientIdentity{}, bad
 			}
 			created, e := time.Parse(time.RFC3339, *entry.CreatedAt)
@@ -98,7 +109,9 @@ func decodeClientIdentity(raw []byte, podCreated, now time.Time, platform ...net
 				other++
 				continue
 			}
-			public[address] = true
+			if automaticReasons[*entry.Reason] {
+				public[address] = true
+			}
 		}
 	}
 	result := clientIdentity{Public: len(public)}

@@ -714,8 +714,13 @@ func runAccessEntry(ctx context.Context, env func(string) string, run executor, 
 // Without the client adapter, any active block can be a shared-address block,
 // so acceptance needs none. With it, per-client blocks are the intended
 // behaviour: acceptance needs evidence that the server judged distinct public
-// clients and blocked nothing else in the current Pod. A block retained from
-// before the Pod is reported but not removed or exempted.
+// clients and blocked nothing else in the current Pod.
+//
+// With the adapter, a block retained from before the Pod, such as the one on the
+// shared Cilium address, deliberately does not decide acceptance: no visitor
+// arrives as that address any more, and #5448 rules out removing stored rules as
+// a substitute for proving identity. It is still printed in the access and
+// Cilium fields, and the server keeps enforcing it; nothing adds an allow rule.
 func accessReport(result accessResult) (string, int) {
 	ready := "FALSE"
 	if result.Ready {
