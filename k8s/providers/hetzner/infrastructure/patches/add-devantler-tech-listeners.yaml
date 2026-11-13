@@ -1,0 +1,83 @@
+# Serve the business-site package's public and portal names on the shared
+# platform Gateway (platform#6177). SNI picks the most specific listener, so
+# these terminate TLS with the names' own certificate while every other
+# hostname keeps the hostname-less `https` listener and its ${domain} wildcard.
+# JSON patch, not strategic merge: Gateway is a CRD, so a strategic-merge patch
+# would replace the whole listeners list instead of appending.
+#
+# The section names are the ones the package's HTTPRoutes attach to
+# (business-site deploy/http-route-public.yaml and http-route-portal.yaml).
+# The certificateRefs point cross-namespace at the platform-issued
+# business-site/devantler-tech-tls Secret (apps/business-site/certificate.yaml),
+# which apps/business-site/reference-grant.yaml lets this Gateway read. Until the
+# certificate issues, a listener stays ResolvedRefs=False while the Gateway
+# stays Programmed, so it never gates reconciliation.
+#
+# external-dns creates portal.devantler.tech from its route. The apex and www
+# keep their GitHub Pages records until the cutover hands them to external-dns
+# (devantler-tech/monorepo#3939), because external-dns never overwrites a record
+# it does not own.
+#
+# Each listener pins `allowedRoutes.kinds` to HTTPRoute, matching the base
+# Gateway's listeners; see k8s/bases/infrastructure/gateway/gateway.yaml for why
+# an unpinned HTTPS listener is a hostname-claiming gap.
+- op: add
+  path: /spec/listeners/-
+  value:
+    name: https-devantler-tech
+    hostname: devantler.tech
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - kind: Secret
+          group: ""
+          namespace: business-site
+          name: devantler-tech-tls
+    allowedRoutes:
+      namespaces:
+        from: All
+      kinds:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute
+- op: add
+  path: /spec/listeners/-
+  value:
+    name: https-www-devantler-tech
+    hostname: www.devantler.tech
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - kind: Secret
+          group: ""
+          namespace: business-site
+          name: devantler-tech-tls
+    allowedRoutes:
+      namespaces:
+        from: All
+      kinds:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute
+- op: add
+  path: /spec/listeners/-
+  value:
+    name: https-portal-devantler-tech
+    hostname: portal.devantler.tech
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - kind: Secret
+          group: ""
+          namespace: business-site
+          name: devantler-tech-tls
+    allowedRoutes:
+      namespaces:
+        from: All
+      kinds:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute
