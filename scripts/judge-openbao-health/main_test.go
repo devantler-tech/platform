@@ -241,6 +241,10 @@ func TestCommandExitCodesAndPrivateOutput(t *testing.T) {
 		{"repeated flag cannot swap the release", document(recent, healthy...), append(append([]string(nil), all...), "--expect-version=2.6.2"), 2, ""},
 		{"repeated flags after a -- value", document(recent, healthy...), []string{"--expect-servers", "--", "--expect-version", "--", "--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.6.3"}, 2, ""},
 		{"positional argument", document(recent, healthy...), append(append([]string(nil), all...), "extra"), 2, ""},
+		{"declared upgrade before the first replacement", document(recent, healthy...), []string{"--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.7.2", "--previous-version", "2.6.3"}, 0, verdictProven},
+		{"replaced server still on the previous release", document(recent, healthy...), []string{"--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.7.2", "--previous-version", "2.6.3", "--require-current", "openbao-0"}, 1, verdictHold},
+		{"replaced servers without a declared upgrade", document(recent, healthy...), append(append([]string(nil), all...), "--require-current", "openbao-0"), 2, ""},
+		{"repeated flag cannot swap the previous release", document(recent, healthy...), []string{"--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.7.2", "--previous-version", "2.6.3", "--previous-version=2.6.2"}, 2, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "capture.json")
@@ -275,6 +279,70 @@ func TestCommandExitCodesAndPrivateOutput(t *testing.T) {
 				t.Fatalf("printed %q, want verdict %s", stdout.String(), test.verdict)
 			}
 		})
+	}
+}
+
+// rolling declares an upgrade from 2.6.3 to 2.7.2 in which the named servers
+// have already been replaced.
+func rolling(t *testing.T, current string) expectation {
+	t.Helper()
+	upgrade := want()
+	upgrade.version = "2.7.2"
+	got, err := parseRollout(upgrade, "2.6.3", current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestDeclaredRollingUpgrade(t *testing.T) {
+	healthy := healthyServers()
+	upgraded := replace(healthy, 1, server("openbao-1", "uid-1", 200, body(true, false, true, "2.7.2", "cluster-a")))
+	for _, test := range []struct {
+		name    string
+		servers []string
+		want    expectation
+		verdict string
+	}{
+		{"every server still on the previous release before the first step", healthy, rolling(t, ""), verdictProven},
+		{"a replaced server on the new release beside unreplaced ones", upgraded, rolling(t, "openbao-1"), verdictProven},
+		{"an unreplaced server may already run the new release", upgraded, rolling(t, ""), verdictProven},
+		{"a replaced server still on the previous release", healthy, rolling(t, "openbao-1"), verdictHold},
+		{"a release that is neither the new nor the previous one", replace(healthy, 2, server("openbao-2", "uid-2", 200, body(true, false, true, "2.6.2", "cluster-a"))), rolling(t, ""), verdictHold},
+		{"without a declared upgrade the previous release still holds", upgraded, func() expectation { w := want(); w.version = "2.7.2"; return w }(), verdictHold},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := judge(strings.NewReader(fresh(test.servers...)), test.want, now)
+			if got.Verdict != test.verdict {
+				t.Fatalf("want %s, got %+v", test.verdict, got)
+			}
+			if test.verdict == verdictHold && !hasReason(got, "server is not on the expected release") {
+				t.Fatalf("hold must name the release, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestRolloutExpectationsComeOnlyFromReviewedArguments(t *testing.T) {
+	base := want()
+	for _, test := range []struct {
+		name, previous, current string
+	}{
+		{"replaced servers without a declared upgrade", "", "openbao-0"},
+		{"an upgrade to the release already expected", "2.6.3", ""},
+		{"an unexpected replaced server", "2.6.2", "openbao-9"},
+		{"a replaced server named twice", "2.6.2", "openbao-0,openbao-0"},
+		{"an empty replaced server name", "2.6.2", "openbao-0,"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := parseRollout(base, test.previous, test.current); err == nil {
+				t.Fatalf("accepted %+v", test)
+			}
+		})
+	}
+	unchanged, err := parseRollout(base, "", "")
+	if err != nil || unchanged.previous != "" || unchanged.current != nil {
+		t.Fatalf("no declared upgrade must leave the expectation unchanged: %+v %v", unchanged, err)
 	}
 }
 
