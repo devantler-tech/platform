@@ -47,6 +47,10 @@ var moduleImport = regexp.MustCompile("(?:\\bfrom|\\bimport|\\brequire)\\s*\\(?\
 // it can be read.
 var templatedPath = regexp.MustCompile(`(?:\./)?((?:\.github|scripts|internal|third_party|k8s|talos|tests|schemas)(?:/[A-Za-z0-9_.-]+)*)/\{\{`)
 
+// A value in a configuration that is a single word, as in "distributionConfig: talos-local"
+// or "- k8s". Where it is a tracked top-level directory, anything below it can be read.
+var configWord = regexp.MustCompile(`(?m)^\s*(?:-\s*|[A-Za-z0-9_.-]+:\s*)([A-Za-z0-9_.-]+)\s*$`)
+
 // tree is the tracked content the trace walks.
 type tree struct {
 	repository string
@@ -232,6 +236,16 @@ func trace(repository string) ([]string, error) {
 		for _, match := range templatedPath.FindAllStringSubmatch(current.text, -1) {
 			if err := reach(match[1]); err != nil {
 				return nil, err
+			}
+		}
+		if extension := path.Ext(current.file); extension == ".yaml" || extension == ".yml" {
+			for _, match := range configWord.FindAllStringSubmatch(current.text, -1) {
+				if len(walked.under(match[1])) == 0 {
+					continue
+				}
+				if err := reach(match[1]); err != nil {
+					return nil, err
+				}
 			}
 		}
 		if extension := path.Ext(current.file); extension == ".mjs" || extension == ".js" {

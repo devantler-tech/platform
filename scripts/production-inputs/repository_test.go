@@ -336,6 +336,8 @@ func TestTheListCoversEverythingTheDeployCanReach(t *testing.T) {
 		"scripts/wedding-backup-projection.mjs",
 		"scripts/tests/production-authorization-rules.yaml",
 		"schemas/kubescape.io/rules_v1.json",
+		// A directory a configuration names by a single word.
+		"talos-local/cluster/enable-dex-oidc.yaml",
 		"ksail.prod.yaml",
 		"go.mod",
 		listPath,

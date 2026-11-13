@@ -21,8 +21,10 @@ ksail.prod.yaml
 .gitignore
 
 # KSail loads ksail.yaml from the working directory on every command, including
-# the ones the deploy runs with no --config.
+# the ones the deploy runs with no --config. It names the local cluster's Talos
+# patches as its distribution configuration.
 ksail.yaml
+talos-local/
 
 # What both KSail configurations name for validation: the schemas here, and the
 # admission rules further down.
