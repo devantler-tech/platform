@@ -198,8 +198,8 @@ lock for 36 of 198 hours, 18%.
    file and the Go module files stay on the list at first. The post-merge observer must judge
    whether production is behind `main` by the same list. Today it uses the `k8s` filter
    (`scripts/resolve-prod-convergence`); left as it is, it would read production as behind after
-   every change that did not deploy and redeploy `main`, and the saving would be gone. These change
-   in the same delivery.
+   every change that did not deploy and redeploy `main`, and the saving would be gone. It changes
+   in the delivery that first lets a change skip its deploy.
 3. **Pull-request checks do less runner work where that costs no proof**: run the Go validation
    once ([#6204](https://github.com/devantler-tech/platform/issues/6204)), push a change once per
    round ([monorepo#5009](https://github.com/devantler-tech/monorepo/issues/5009)), and reduce the
@@ -228,7 +228,8 @@ lock for 36 of 198 hours, 18%.
   or recovery holding the production lock for more than 70% of a week.
 - **Building more queued changes at once.** On 2026-11-13, 9 of 14 deploys had finished
   validating before their turn came; the other 5 were late by 5.4 minutes at the median. (The 7
-  pairs counted earlier are fewer: they also need the deploy ahead to have succeeded.) A third
+  pairs counted earlier are fewer: they count only changes that had finished validating when the
+  deploy ahead ended, not when their turn came.) A third
   candidate would remove that wait. It would also add about 23 jobs to a full pool, and a candidate
   that starts earlier waits longer for its turn, against that job's 90-minute limit. Revisit after
   step 2: a change that does not deploy takes a build slot without taking the lane.
