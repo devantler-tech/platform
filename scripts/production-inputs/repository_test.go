@@ -34,7 +34,7 @@ if [ -n "$QUEUE_HEAD_SHA" ] && [ "$checked_out" = "$QUEUE_HEAD_SHA" ] &&
     answer=production=false
   fi
 else
-  echo '- Production inputs: production=true (the classifier or its Go module files changed, or the queue commits could not be confirmed).' >>"$GITHUB_STEP_SUMMARY"
+  echo '- Production inputs: production=true (the classifier or its Go module files changed, or the queue commits could not be confirmed).' >>"${GITHUB_STEP_SUMMARY:-/dev/null}" || true
 fi
 echo "$answer"
 echo "$answer" >>"$GITHUB_OUTPUT"`
