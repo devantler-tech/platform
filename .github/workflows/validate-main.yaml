@@ -539,11 +539,11 @@ jobs:
     name: 🚦 Wait for an idle merge queue
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # The wait polls for at most an hour (120 reads, 30s apart).
+    # The wait ends within its own hour; the rest covers the last pause and reads.
     timeout-minutes: 75
     permissions:
-      contents: read # checkout the wait script
-      pull-requests: read # read the merge queue
+      contents: read # checkout the wait script and read the merge queue
+      checks: read # read whether a later change deployed, and whether a later push waits
     outputs:
       observe: ${{ steps.idle.outputs.observe }}
     steps:
