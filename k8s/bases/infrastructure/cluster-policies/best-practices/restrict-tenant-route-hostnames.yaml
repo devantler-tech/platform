@@ -19,8 +19,10 @@
 # domain). Each list is that tenant's own declared set from its
 # deploy/httproute.yaml, covering the production hostname and the *.platform.lan
 # name used on local/dev clusters where the tenant declares one. business-site
-# declares its host in deploy/webapp.yaml and has one public staging name only;
-# its production hostname stays on GitHub Pages until a separate cutover.
+# declares its staging host in deploy/webapp.yaml and its public and portal
+# names in deploy/http-route-public.yaml and http-route-portal.yaml
+# (platform#6177). The apex and www keep their GitHub Pages DNS records until a
+# separate cutover, so admitting them here changes no live traffic before it.
 #
 # Fail-closed for anything NOT listed: the final validation denies every HTTPRoute in a
 # ksail tenant namespace that has no allow-list above, so a newly onboarded
@@ -119,11 +121,12 @@ spec:
     - expression: >-
         object.metadata.namespace != 'business-site' ||
         (size(variables.hostnames) > 0 &&
-        variables.hostnames.all(h, h in ['business-site.platform.devantler.tech']))
+        variables.hostnames.all(h, h in ['business-site.platform.devantler.tech', 'devantler.tech', 'www.devantler.tech', 'portal.devantler.tech']))
       message: >-
         business-site HTTPRoutes must set spec.hostnames and may only use
-        business-site.platform.devantler.tech. Omitting hostnames claims every
-        hostname on the shared platform Gateway listener.
+        business-site.platform.devantler.tech, devantler.tech,
+        www.devantler.tech or portal.devantler.tech. Omitting hostnames claims
+        every hostname on the shared platform Gateway listener.
     # Catch-all: any ksail tenant namespace without an allow-list above. This is
     # what makes onboarding fail loudly instead of silently unrestricted, the
     # exact gap that once left this policy covering only wedding-app while other

@@ -4,3 +4,5 @@ resources:
   - tenant.yaml
   - cilium-network-policy-staging-hold.yaml
   - cilium-network-policy-customer-identity-hold.yaml
+  - certificate.yaml
+  - reference-grant.yaml
