@@ -20,6 +20,11 @@
 # (policy-eks-ci-smoke-boundary.yaml) and the role it constrains
 # (role-eks-ci.yaml) are platform-owned. The artifact keeps only the OIDC
 # provider, which is what it legitimately owns.
+#
+# Company Email's SES domain identity and its MAIL FROM domain (platform#5481)
+# grant no AWS permission to anyone, so the tenant may own them. The IAM user,
+# policy and access key of the SMTP sending identity stay platform-owned for the
+# same reason as the boundary above, so no IAM user kind is granted here.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -32,6 +37,19 @@ rules:
       - iam.aws.m.upbound.io
     resources:
       - openidconnectproviders
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - sesv2.aws.m.upbound.io
+    resources:
+      - emailidentities
+      - emailidentitymailfromattributes
     verbs:
       - get
       - list
