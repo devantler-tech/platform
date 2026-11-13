@@ -128,9 +128,8 @@ func TestDelete(t *testing.T) {
 }
 
 func TestDeliver(t *testing.T) {
-	requested := clock.Truncate(time.Second)
-	before := syncState{syncedVersion: "1-a", refreshed: requested.Add(-time.Hour), ready: "True"}
-	fresh := syncState{syncedVersion: "1-b", refreshed: requested, ready: "True"}
+	before := syncState{syncedVersion: "1-a", ready: "True"}
+	fresh := syncState{syncedVersion: "1-b", ready: "True"}
 	cases := []struct {
 		name  string
 		f     *fake
@@ -139,9 +138,8 @@ func TestDeliver(t *testing.T) {
 		line  string
 	}{
 		{"confirmed after a new successful sync", &fake{states: []syncState{before, before, fresh}}, noSleep, 0, "OPENBAO_SECRET_DELIVERY=CONFIRMED"},
-		{"a new sync that failed is a finding", &fake{states: []syncState{before, {syncedVersion: "1-b", refreshed: requested, ready: "False"}}}, noSleep, 1, "OPENBAO_SECRET_DELIVERY=FAILED"},
-		{"an old refresh with a new version is not this request", &fake{states: []syncState{before, {syncedVersion: "1-b", refreshed: requested.Add(-time.Second), ready: "True"}}}, limitedSleep(2), 2, "OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=sync"},
-		{"an unchanged version is not this request", &fake{states: []syncState{before, {syncedVersion: "1-a", refreshed: requested, ready: "True"}}}, limitedSleep(2), 2, "OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=sync"},
+		{"a failed sync never confirms", &fake{states: []syncState{before, {syncedVersion: "1-a", ready: "False"}}}, limitedSleep(2), 2, "OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=sync"},
+		{"an unchanged version is not this request", &fake{states: []syncState{before, {syncedVersion: "1-a", ready: "True"}}}, limitedSleep(2), 2, "OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=sync"},
 		{"an unreadable canary is unverified", &fake{stateErr: errors.New("forbidden")}, noSleep, 2, "OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=canary-read"},
 		{"a refused sync request is unverified", &fake{states: []syncState{before}, syncErr: errors.New("forbidden")}, noSleep, 2, "OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=sync-request"},
 	}
@@ -185,12 +183,11 @@ func TestInvalidArgumentsChangeNothing(t *testing.T) {
 
 func TestParseCanary(t *testing.T) {
 	s, err := parseCanary([]byte(`{"status":{"syncedResourceVersion":"1-b","refreshTime":"2026-11-13T14:00:00Z","conditions":[{"type":"Ready","status":"True","reason":"SecretSynced"}]}}`))
-	if err != nil || s.syncedVersion != "1-b" || !s.refreshed.Equal(clock.Truncate(time.Second)) || s.ready != "True" {
+	if err != nil || s.syncedVersion != "1-b" || s.ready != "True" {
 		t.Fatalf("got %+v %v", s, err)
 	}
 	for _, bad := range []string{
 		`not json`,
-		`{"status":{"refreshTime":"yesterday"}}`,
 		`{"status":{"conditions":[{"type":"Ready","status":"True"},{"type":"Ready","status":"False"}]}}`,
 	} {
 		if _, err := parseCanary([]byte(bad)); err == nil {
@@ -222,6 +219,24 @@ func TestKubectlVerbs(t *testing.T) {
 	} {
 		if !strings.Contains(src, want) {
 			t.Fatalf("missing %s", want)
+		}
+	}
+}
+
+// Both ways the API server reports a UID mismatch are a refusal; anything
+// else, including a pod that is already gone, is not.
+func TestPreconditionRefusal(t *testing.T) {
+	for _, stderr := range []string{
+		`Error from server (Conflict): Operation cannot be fulfilled on Pod "openbao-2": the UID in the precondition (` + oldUID + `) does not match the UID in record (` + newUID + `). The object might have been deleted and then recreated`,
+		`Error from server (Conflict): Precondition failed: UID in precondition: ` + oldUID + `, UID in object meta: ` + newUID,
+	} {
+		if !preconditionRefused([]byte(stderr)) {
+			t.Fatalf("not recognised as a refusal: %s", stderr)
+		}
+	}
+	for _, stderr := range []string{`Error from server (NotFound): pods "openbao-2" not found`, `Unable to connect to the server: i/o timeout`, ``} {
+		if preconditionRefused([]byte(stderr)) {
+			t.Fatalf("taken for a refusal: %s", stderr)
 		}
 	}
 }

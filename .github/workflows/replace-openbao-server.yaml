@@ -207,9 +207,11 @@ jobs:
             sleep 20
             status=0
             judge_openbao_replacement "$private" "$after" || status=$?
-            if (( status == 0 )) && [[ "$(openbao_pod_uid "$private" "$REPLACEMENT_SERVER")" == "$judged_uid" ]]; then
-              status=2 # a verdict about the old pod says nothing about its successor
-            fi
+            # Only a capture of the successor counts: a verdict about the old
+            # pod, or one whose pod cannot be read, says nothing about it.
+            uid_now=""
+            if (( status == 0 )); then uid_now="$(openbao_pod_uid "$private" "$REPLACEMENT_SERVER")" || uid_now=""; fi
+            if (( status == 0 )) && [[ -z "$uid_now" || "$uid_now" == "$judged_uid" ]]; then status=2; fi
             if (( status == 0 )); then break; fi
           done
           if (( status != 0 )); then

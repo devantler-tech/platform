@@ -20,8 +20,8 @@
 //
 // It prints one closed status line and never a UID, secret or response body.
 //
-// Exit codes: 0 REPLACED or CONFIRMED, 1 REFUSED or FAILED (a definite
-// finding), 2 UNVERIFIED (a read failed, the wait ran out, or the arguments
+// Exit codes: 0 REPLACED or CONFIRMED, 1 REFUSED (the pod changed since the
+// capture, so nothing was deleted), 2 UNVERIFIED (a read failed, the wait ran out, or the arguments
 // are invalid).
 package main
 
@@ -61,7 +61,6 @@ var (
 // syncState is the part of the canary ExternalSecret the delivery check reads.
 type syncState struct {
 	syncedVersion string
-	refreshed     time.Time
 	ready         string // "True", "False" or "" when there is no Ready condition
 }
 
@@ -138,27 +137,21 @@ func deliver(ctx context.Context, k cluster, sleep func(context.Context, time.Du
 	if err != nil {
 		return 2, "OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=canary-read"
 	}
-	// Whole seconds, because the status reports its refresh time in seconds.
-	requested := now().UTC().Truncate(time.Second)
-	if err := k.requestSync(ctx, strconv.FormatInt(requested.Unix(), 10)); err != nil {
+	if err := k.requestSync(ctx, strconv.FormatInt(now().Unix(), 10)); err != nil {
 		return 2, "OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=sync-request"
 	}
-	var after syncState
 	err = wait(ctx, sleep, func() (bool, error) {
 		s, err := k.canaryState(ctx)
 		if err != nil {
 			return false, nil
 		}
-		after = s
-		// A new synced version proves the controller acted on this request;
-		// the refresh time proves it read OpenBao after the request.
-		return s.syncedVersion != before.syncedVersion && !s.refreshed.Before(requested) && s.ready != "", nil
+		// External Secrets records a new synced version only after a successful
+		// sync with the changed annotation, so it proves this request was
+		// answered from OpenBao. A failed read never records one.
+		return s.syncedVersion != before.syncedVersion && s.ready == "True", nil
 	})
 	if err != nil {
 		return 2, "OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=sync"
-	}
-	if after.ready != "True" {
-		return 1, "OPENBAO_SECRET_DELIVERY=FAILED"
 	}
 	return 0, "OPENBAO_SECRET_DELIVERY=CONFIRMED"
 }
@@ -271,7 +264,7 @@ func (k kubectl) deleteIfUID(ctx context.Context, name, uid string) error {
 	}
 	path := "/api/v1/namespaces/" + namespace + "/pods/" + name
 	_, errOut, err := k.output(ctx, body, "delete", "--raw="+path, "--filename=-")
-	if err != nil && bytes.Contains(errOut, []byte("Precondition failed")) {
+	if err != nil && preconditionRefused(errOut) {
 		return errPreconditionFailed
 	}
 	return err
@@ -289,7 +282,6 @@ func parseCanary(b []byte) (syncState, error) {
 	var es struct {
 		Status struct {
 			SyncedResourceVersion string `json:"syncedResourceVersion"`
-			RefreshTime           string `json:"refreshTime"`
 			Conditions            []struct {
 				Type   string `json:"type"`
 				Status string `json:"status"`
@@ -300,13 +292,6 @@ func parseCanary(b []byte) (syncState, error) {
 		return syncState{}, err
 	}
 	s := syncState{syncedVersion: es.Status.SyncedResourceVersion}
-	if es.Status.RefreshTime != "" {
-		t, err := time.Parse(time.RFC3339, es.Status.RefreshTime)
-		if err != nil {
-			return syncState{}, err
-		}
-		s.refreshed = t
-	}
 	for _, c := range es.Status.Conditions {
 		if c.Type == "Ready" {
 			if s.ready != "" {
@@ -327,4 +312,12 @@ func (k kubectl) requestSync(ctx context.Context, marker string) error {
 
 func main() {
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, kubectl{}, sleepCtx, time.Now))
+}
+
+// preconditionRefused tells a delete the API server refused for a UID
+// mismatch from any other failure. The registry reports the mismatch as a
+// Conflict naming the UID in the record; the storage layer as "Precondition
+// failed".
+func preconditionRefused(stderr []byte) bool {
+	return bytes.Contains(stderr, []byte("does not match the UID in record")) || bytes.Contains(stderr, []byte("Precondition failed"))
 }

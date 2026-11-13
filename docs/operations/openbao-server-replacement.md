@@ -58,7 +58,7 @@ To replace a server without an upgrade, for example to move it to a new node, le
 | `OPENBAO_POD_REPLACEMENT=REFUSED` | The pod changed after the capture. Nothing was deleted. | Run `preflight` again; something else is replacing servers. |
 | `OPENBAO_POD_REPLACEMENT=UNVERIFIED` | The pod could not be read or deleted, or no successor appeared. | Check the StatefulSet and its events before anything else. |
 | `OPENBAO_REPLACEMENT=NOT_RECOVERED` | The pod was replaced but the judges never returned `PROVEN`. | Use the recovery path below. Replace no other server. |
-| `OPENBAO_SECRET_DELIVERY=FAILED` or `UNVERIFIED` | The servers are healthy, but External Secrets did not read from OpenBao. | Check the `openbao` ClusterSecretStore and the External Secrets controller. |
+| `OPENBAO_SECRET_DELIVERY=UNVERIFIED` | The servers are healthy, but External Secrets did not read from OpenBao. | Check the `openbao` ClusterSecretStore and the External Secrets controller. |
 
 ## Recovery path
 
@@ -68,9 +68,12 @@ recover. Replace no other server until the procedure returns `PROVEN` again.
 - **The new server is sealed.** It unseals itself from the `openbao-unseal` Secret when it starts.
   Check that its `postStart` hook ran and that the Secret still holds the key, as in Scenario 1 of the
   [OpenBao disaster-recovery runbook](../dr/openbao.md).
-- **The new release does not start or does not join.** Revert the chart update in a pull request. Once
-  it deploys, replace the failed server with `previous_version` and `replaced` empty: it returns to the
-  release the other two still run. Its data volume is kept, so it rejoins with its Raft state.
+- **The new release does not start or does not join.** Revert the chart update in a pull request. The
+  workflow cannot replace the failed server, because it replaces a server only while every server is
+  proven healthy. Once the revert deploys, an operator with production access deletes that one pod by
+  hand (`kubectl --context admin@prod --namespace openbao delete pod <server>`); it restarts on the
+  release the other two still run and keeps its data volume, so it rejoins with its Raft state. Then
+  run `preflight` until it returns `PROVEN`.
 - **Quorum is lost or data is damaged.** Follow Scenario 2 of the
   [OpenBao disaster-recovery runbook](../dr/openbao.md), which restores the newest snapshot.
 

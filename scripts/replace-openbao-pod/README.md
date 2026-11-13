@@ -16,8 +16,7 @@ replace-openbao-pod deliver --timeout 5m
 | `delete` | 0 | `OPENBAO_POD_REPLACEMENT=REPLACED` | The pod was deleted and a successor with a different UID exists. |
 | `delete` | 1 | `OPENBAO_POD_REPLACEMENT=REFUSED reason=pod-changed-since-capture` | The pod no longer has the judged UID, so nothing was deleted. |
 | `delete` | 2 | `OPENBAO_POD_REPLACEMENT=UNVERIFIED stage=<stage>` | `pod-identity`, `delete` or `successor` failed or ran out of time. |
-| `deliver` | 0 | `OPENBAO_SECRET_DELIVERY=CONFIRMED` | The canary ExternalSecret synced again after the request, successfully. |
-| `deliver` | 1 | `OPENBAO_SECRET_DELIVERY=FAILED` | It synced again after the request, and the sync failed. |
+| `deliver` | 0 | `OPENBAO_SECRET_DELIVERY=CONFIRMED` | The canary ExternalSecret synced successfully after the request. |
 | `deliver` | 2 | `OPENBAO_SECRET_DELIVERY=UNVERIFIED stage=<stage>` | `canary-read`, `sync-request` or `sync` failed or ran out of time. |
 
 Invalid arguments also exit 2 and change nothing, including any flag given twice.
@@ -26,8 +25,9 @@ Invalid arguments also exit 2 and change nothing, including any flag given twice
   replaced after the capture. Whether the successor is healthy is the judges' call, not this
   command's.
 - **deliver** changes the `force-sync` annotation on `openbao/vault-snapshot-r2`, which External
-  Secrets reads as a request to sync now. It counts only a sync with a new synced version and a
-  refresh time no earlier than the request.
+  Secrets reads as a request to sync now. External Secrets records a new synced
+  version only after a successful sync with the changed annotation, so only that counts; a failed
+  read records none and the wait runs out.
 
 The only kubectl verbs it uses are `get`, one `delete` and one `annotate`; the regressions pin them.
 It prints one status line and never a pod UID, secret or response body.
