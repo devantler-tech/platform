@@ -12,6 +12,22 @@ import (
 
 const mainPushOnly = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
 
+// The observer keeps the whole push/main fence and adds one narrowing condition: the
+// answer of the job that waits, without the production lock, for an idle merge queue
+// (#6205). A condition can only stop a writer from running, never start one elsewhere.
+const (
+	idleQueueWait     = "await-idle-merge-queue"
+	observerCondition = mainPushOnly + " && needs." + idleQueueWait + ".outputs.observe == 'true'"
+)
+
+// writerCondition is the only condition a job with write permissions may carry.
+func writerCondition(name string) string {
+	if name == "observe-prod-convergence" {
+		return observerCondition
+	}
+	return mainPushOnly
+}
+
 var premergeReaders = []string{
 	"validate-eks-authorization", "validate-shared-publish-pin",
 	"validate-talos-kubernetes-compatibility", "validate-rgd-templates",
@@ -65,16 +81,27 @@ func premergeMainProblems(w workflow) []string {
 		for _, level := range permissions {
 			writer = writer || level == "write"
 		}
-		if writer && normalizeCondition(parsed.If) != mainPushOnly {
+		if writer && normalizeCondition(parsed.If) != writerCondition(name) {
 			add("%s write permissions must be fenced to push/main", name)
 		}
 	}
 	for name, scope := range map[string]string{"kubescape-baseline": "security-events", "observe-prod-convergence": "actions"} {
 		parsed, exists := w.Jobs[name]
 		permissions, ok := explicitPermissions(parsed.Permissions)
-		if !exists || !ok || permissions[scope] != "write" || normalizeCondition(parsed.If) != mainPushOnly {
+		if !exists || !ok || permissions[scope] != "write" || normalizeCondition(parsed.If) != writerCondition(name) {
 			add("%s must retain its writer permission and whole-job push/main fence", name)
 		}
+	}
+	// The wait reads the queue and nothing else, on the same fence, and the observer
+	// depends on it alone: a wait that failed or was skipped must not let it run.
+	wait, exists := w.Jobs[idleQueueWait]
+	waitPermissions, ok := explicitPermissions(wait.Permissions)
+	if !exists || !ok || len(waitPermissions) != 2 || waitPermissions["contents"] != "read" || waitPermissions["pull-requests"] != "read" ||
+		normalizeCondition(wait.If) != mainPushOnly || errorIsTolerated(wait.ContinueOnError) {
+		add("%s must stay a read-only job fenced to push/main that reports its failures", idleQueueWait)
+	}
+	if needs, ok := w.Jobs["observe-prod-convergence"].needsOf(); !ok || len(needs) != 1 || needs[0] != idleQueueWait {
+		add("observe-prod-convergence must depend on %s alone", idleQueueWait)
 	}
 	for _, name := range premergeReaders {
 		parsed, exists := w.Jobs[name]
@@ -155,6 +182,52 @@ func TestValidateMainPremergeBoundaryRejectsRealWorkflowMutations(t *testing.T) 
 			j.If = ""
 			w.Jobs["observe-prod-convergence"] = j
 		},
+		"observer ignores the wait's answer": func(w *workflow) {
+			j := w.Jobs["observe-prod-convergence"]
+			j.If = mainPushOnly
+			w.Jobs["observe-prod-convergence"] = j
+		},
+		"observer runs unless told not to": func(w *workflow) {
+			j := w.Jobs["observe-prod-convergence"]
+			j.If = mainPushOnly + " && needs." + idleQueueWait + ".outputs.observe != 'false'"
+			w.Jobs["observe-prod-convergence"] = j
+		},
+		"observer runs whatever the wait did": func(w *workflow) {
+			j := w.Jobs["observe-prod-convergence"]
+			j.If = "always() && " + observerCondition
+			w.Jobs["observe-prod-convergence"] = j
+		},
+		"observer does not depend on the wait": func(w *workflow) {
+			j := w.Jobs["observe-prod-convergence"]
+			j.Needs = nil
+			w.Jobs["observe-prod-convergence"] = j
+		},
+		"observer depends on a second job": func(w *workflow) {
+			j := w.Jobs["observe-prod-convergence"]
+			j.Needs = []any{idleQueueWait, "validate-shared-publish-pin"}
+			w.Jobs["observe-prod-convergence"] = j
+		},
+		"wait acquires a write permission": func(w *workflow) {
+			j := w.Jobs[idleQueueWait]
+			j.Permissions.(map[string]any)["actions"] = "write"
+			w.Jobs[idleQueueWait] = j
+		},
+		"wait reads more than the queue": func(w *workflow) {
+			j := w.Jobs[idleQueueWait]
+			j.Permissions.(map[string]any)["packages"] = "read"
+			w.Jobs[idleQueueWait] = j
+		},
+		"wait leaves the push/main fence": func(w *workflow) {
+			j := w.Jobs[idleQueueWait]
+			j.If = ""
+			w.Jobs[idleQueueWait] = j
+		},
+		"wait tolerates its own failure": func(w *workflow) {
+			j := w.Jobs[idleQueueWait]
+			j.ContinueOnError = true
+			w.Jobs[idleQueueWait] = j
+		},
+		"wait is removed":                 func(w *workflow) { delete(w.Jobs, idleQueueWait) },
 		"privileged pull-request trigger": func(w *workflow) { w.On["pull_request_target"] = triggerSpec{} },
 		"path-filter main pushes":         func(w *workflow) { p := w.On["push"]; p.Paths = []string{"docs/**"}; w.On["push"] = p },
 		"reader write permission": func(w *workflow) {

@@ -529,9 +529,44 @@ jobs:
   # It takes the prod-deploy lock so it reads `:latest` only after any deploy or heal
   # already in flight has finished publishing. Read earlier, a heal that checked out
   # main before this push landed could still overwrite prod after a CONVERGED reading.
+  #
+  # A job takes its lock before it gets a runner. Taken on the push itself, the lock sat
+  # in front of the next queued change's deploy for as long as this job waited for a
+  # runner (#6205). The job below waits, without the lock, until no change is queued;
+  # this one runs only on its explicit yes. A newer push takes the observation over, so
+  # this job is then skipped, and a failed wait skips it too and is red in its own job.
+  await-idle-merge-queue:
+    name: 🚦 Wait for an idle merge queue
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The wait polls for at most an hour (120 reads, 30s apart).
+    timeout-minutes: 75
+    permissions:
+      contents: read # checkout the wait script
+      pull-requests: read # read the merge queue
+    outputs:
+      observe: ${{ steps.idle.outputs.observe }}
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/await-idle-merge-queue.sh
+          sparse-checkout-cone-mode: false
+
+      - name: 🚦 Wait until no change is queued
+        id: idle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IDLE_REPOSITORY: ${{ github.repository }}
+          IDLE_BRANCH: main
+          IDLE_SHA: ${{ github.sha }}
+        run: scripts/await-idle-merge-queue.sh
+
   observe-prod-convergence:
     name: 🧭 Observe Production Convergence
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [await-idle-merge-queue]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.await-idle-merge-queue.outputs.observe == 'true'
     runs-on: ubuntu-latest
     concurrency:
       group: prod-deploy
