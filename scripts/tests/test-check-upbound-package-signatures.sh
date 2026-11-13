@@ -27,6 +27,13 @@ spec:
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
+  name: upbound-provider-aws-sesv2
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-sesv2:v2.6.1
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
   name: provider-upjet-github
 spec:
   package: ghcr.io/crossplane-contrib/provider-upjet-github:v0.20.0
@@ -61,6 +68,10 @@ sed "s|package: xpkg.upbound.io\/upbound\/provider-aws-iam:v2.6.1|package: ghcr.
   "$scratch/rendered.yaml" >"$scratch/repointed.yaml"
 # A privileged provider that is no longer rendered at all.
 yq ea 'select(.metadata.name != "provider-aws-iam")' "$scratch/rendered.yaml" >"$scratch/missing.yaml"
+# The SES provider holds the same AWS credential, so it is guarded by name too.
+sed "s|package: xpkg.upbound.io\/upbound\/provider-aws-sesv2:v2.6.1|package: ghcr.io\/evil\/provider-aws-sesv2:v2.6.1|" \
+  "$scratch/rendered.yaml" >"$scratch/repointed-sesv2.yaml"
+yq ea 'select(.metadata.name != "upbound-provider-aws-sesv2")' "$scratch/rendered.yaml" >"$scratch/missing-sesv2.yaml"
 
 # Fake cosign: `cosign verify --certificate-oidc-issuer I --certificate-identity ID REF`.
 # COSIGN_MODE picks the behaviour; every call is logged so the test can see
@@ -129,13 +140,13 @@ expect() {
   echo "ok: $name"
 }
 
-expect 'both signed Upbound packages verify' 0 \
-  '2 Upbound package signatures verified' "$scratch/rendered.yaml"
-if [[ "$(cat "$scratch/events.log")" != $'verify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify' ]]; then
+expect 'every signed Upbound package verifies' 0 \
+  '3 Upbound package signatures verified' "$scratch/rendered.yaml"
+if [[ "$(cat "$scratch/events.log")" != $'verify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify' ]]; then
   echo 'FAIL: every consecutive verifier call must be separated, including controls and package boundaries' >&2
   failures=$((failures + 1))
 fi
-if grep -qv '^xpkg\.upbound\.io/upbound/provider-\(family-aws\|aws-iam\):v2\.6\.1$' "$scratch/calls.log"; then
+if grep -qv '^xpkg\.upbound\.io/upbound/provider-\(family-aws\|aws-iam\|aws-sesv2\):v2\.6\.1$' "$scratch/calls.log"; then
   echo 'FAIL: a non-Upbound or non-Provider reference was sent to cosign:' >&2
   sed 's/^/  /' "$scratch/calls.log" >&2
   failures=$((failures + 1))
@@ -147,7 +158,7 @@ expect 'a verifier that accepts any identity is caught' 1 \
 expect 'an outage during the negative control is not read as a refusal' 1 \
   'stopped verifying after the negative control' "$scratch/rendered.yaml" outage-after-first
 expect 'a registry enforcing burst limits verifies with paced requests' 0 \
-  '2 Upbound package signatures verified' "$scratch/rendered.yaml" burst
+  '3 Upbound package signatures verified' "$scratch/rendered.yaml" burst
 expect 'an HTTP 429 is not reported as an unsigned package' 1 \
   'FAIL: could not verify' "$scratch/rendered.yaml" registry-rate-limit
 if grep -qF 'is not signed' "$scratch/out.log"; then
@@ -163,7 +174,7 @@ fi
 expect 'a failed wait before the negative control stops the whole gate' 1 \
   'verification pacing wait failed' "$scratch/rendered.yaml" control-wait-fails
 if [[ "$(wc -l <"$scratch/calls.log" | tr -d ' ')" -ne 1 ]] ||
-  grep -qF '2 Upbound package signatures verified' "$scratch/out.log"; then
+  grep -qF '3 Upbound package signatures verified' "$scratch/out.log"; then
   echo 'FAIL: a missing negative control was accepted after a failed wait' >&2
   failures=$((failures + 1))
 fi
@@ -171,6 +182,10 @@ expect 'a privileged provider repointed to another registry is refused' 1 \
   'Provider provider-aws-iam must use xpkg.upbound.io/upbound/provider-aws-iam' "$scratch/repointed.yaml"
 expect 'a privileged provider that is not rendered is refused' 1 \
   'expected exactly one rendered Provider named provider-aws-iam' "$scratch/missing.yaml"
+expect 'the SES provider repointed to another registry is refused' 1 \
+  'Provider upbound-provider-aws-sesv2 must use xpkg.upbound.io/upbound/provider-aws-sesv2' "$scratch/repointed-sesv2.yaml"
+expect 'the SES provider that is not rendered is refused' 1 \
+  'expected exactly one rendered Provider named upbound-provider-aws-sesv2' "$scratch/missing-sesv2.yaml"
 expect 'a lookalike registry or organisation is not Upbound' 1 \
   'must use xpkg.upbound.io/upbound/provider-' "$scratch/lookalikes.yaml"
 

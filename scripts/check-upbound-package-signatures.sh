@@ -62,10 +62,11 @@ expected_repository() {
   case "$1" in
     provider-aws-iam) echo "${UPBOUND_PREFIX}provider-aws-iam" ;;
     upbound-provider-family-aws) echo "${UPBOUND_PREFIX}provider-family-aws" ;;
+    upbound-provider-aws-sesv2) echo "${UPBOUND_PREFIX}provider-aws-sesv2" ;;
     *) return 1 ;;
   esac
 }
-for name in provider-aws-iam upbound-provider-family-aws; do
+for name in provider-aws-iam upbound-provider-family-aws upbound-provider-aws-sesv2; do
   repository="$(expected_repository "$name")"
   yq ea -r "select(.apiVersion == \"pkg.crossplane.io/v1\" and .kind == \"Provider\" and .metadata.name == \"$name\") | .spec.package" \
     "$rendered" >"$scratch/named.txt"

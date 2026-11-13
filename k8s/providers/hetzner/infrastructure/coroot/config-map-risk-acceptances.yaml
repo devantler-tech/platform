@@ -230,6 +230,12 @@ data:
         "reason": "platform#3812: provider revision names rotate; a singleton remains off the serving path and prevents duplicate AWS writes"
       },
       {
+        "application_pattern": "^crossplane-system:Deployment:upbound-provider-aws-sesv2-[0-9a-f]{12}\\z",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: provider revision names rotate; a singleton remains off the serving path and prevents duplicate AWS writes"
+      },
+      {
         "application": "velero:Deployment:velero",
         "category": "Availability",
         "type": "single-instance-app",
