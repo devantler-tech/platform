@@ -1,5 +1,7 @@
-# Source-only staging: the signed manifest can be fetched and verified, but no
-# tenant application, route or private identity configuration is reconciled.
+# Public-only staging: the tenant reconciles its signed v3.0.0 package — the
+# WebApp at business-site.platform.devantler.tech, its network policy, budget
+# and disclosure input — while the platform-owned staging hold still denies
+# gateway traffic. Portal identity, payments and devantler.tech stay off.
 apiVersion: kro.run/v1alpha1
 kind: Tenant
 metadata:
@@ -9,8 +11,8 @@ spec:
   name: business-site
   externalDns: false
   sops: false
-  webApp: false
+  webApp: true
   source:
     digest: sha256:7ec5b206635db783d8fd18789605a771cc772946f65339d3f0a2b4e08a14ebc6
     publisherRevision: d8b5d0e9429cebf12907e0d4cb448433d3108e4b
-    reconcileApplication: false
+    reconcileApplication: true
