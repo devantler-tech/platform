@@ -1,5 +1,6 @@
 ---
 # Prod-only: receive the original client address from the Hetzner load balancer.
+# Off for the #5448 rollback rehearsal; the next change turns it back on.
 #
 # Cilium's Gateway listeners accept only PROXY traffic once this is on, so it
 # must match load-balancer.hetzner.cloud/uses-proxyprotocol in
@@ -13,4 +14,4 @@ metadata:
 spec:
   values:
     gatewayAPI:
-      enableProxyProtocol: true
+      enableProxyProtocol: false

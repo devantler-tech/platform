@@ -2,9 +2,11 @@
 
 # Ingress client-address transport
 
-Production enables PROXY protocol on both sides:
-`gatewayAPI.enableProxyProtocol: true` in the Hetzner Cilium patch and
-`load-balancer.hetzner.cloud/uses-proxyprotocol: "true"` on the Hetzner Gateway.
+Production is in the rollback rehearsal for
+[#5448](https://github.com/devantler-tech/platform/issues/5448): PROXY protocol is
+explicitly off on both sides, with `gatewayAPI.enableProxyProtocol: false` in the
+Hetzner Cilium patch and `load-balancer.hetzner.cloud/uses-proxyprotocol: "false"`
+on the Hetzner Gateway. The next change turns both back on.
 The Gateway controller propagates the provider annotation to its generated
 LoadBalancer Service. The base stays `false`, because a local cluster has no
 load balancer sending PROXY traffic.
