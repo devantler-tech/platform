@@ -15,6 +15,13 @@ jq -e --arg version "v${version}" '
   echo 'FAIL: compiler dependency differs from the controller pin' >&2
   exit 1
 }
+# The hosted trial installs its own digest-pinned controller; it proves nothing
+# about the production engine unless it runs the same release.
+hosted_tag="$(grep -Eo 'image\.tag=v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}' "${root}/scripts/tests/test-webapp-runtime-hosted.sh" | sort -u || true)"
+[[ "${hosted_tag}" == "image.tag=v${version}@sha256:"* && "$(grep -c . <<<"${hosted_tag}")" == 1 ]] || {
+  echo 'FAIL: the hosted controller trial differs from the controller pin' >&2
+  exit 1
+}
 # Module metadata exists before its source is downloaded on a clean runner.
 # Resolve the verified source explicitly rather than relying on a warm module cache.
 kro="$(go -C "${fixture}" mod download -json github.com/kubernetes-sigs/kro | jq -er '.Dir | select(type == "string" and length > 0)')"
