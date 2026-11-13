@@ -50,10 +50,10 @@ deploy_job='🚀 Deploy to Prod'
 wait_job='🚦 Wait for an idle merge queue'
 
 # Fixed here, not read from the environment: the workflow's job timeout is sized for them.
-poll_seconds=30    # pause between two reads of the queue
-read_seconds=60    # one read may take this long before it counts as failed
-wait_seconds=3600  # this run observes after this long, whatever the queue holds
-successor_reads=4  # reads a later push gets to list its own wait before it counts as absent
+poll_seconds=30   # pause between two reads of the queue
+read_seconds=60   # one read may take this long before it counts as failed
+wait_seconds=3600 # this run observes after this long, whatever the queue holds
+successor_reads=4 # reads a later push gets to list its own wait before it counts as absent
 
 fail() {
   printf '::error title=Merge-queue wait misconfigured::%s\n' "$1"
@@ -99,8 +99,8 @@ count_check_runs() {
 }
 
 polls=0
-judged=""  # the later tip whose deploy has been read
-absent=0   # reads, with nothing queued, that found no wait on that tip
+judged="" # the later tip whose deploy has been read
+absent=0  # reads, with nothing queued, that found no wait on that tip
 while :; do
   polls=$((polls + 1))
   if ! state="$(queue_state)"; then
