@@ -304,12 +304,13 @@ expected_globs="$(printf '%s\n' \
   'ghcr.io/devantler-tech/platform-dex' \
   'ghcr.io/devantler-tech/platform-longhorn-instance-manager' \
   'ghcr.io/devantler-tech/platform-longhorn-manager' \
+  'ghcr.io/devantler-tech/platform-mail-submission' \
   'ghcr.io/devantler-tech/*')"
 if [ "$real_globs" != "$expected_globs" ]; then
-  echo "FAIL  the real rules must retain all nineteen exact ordered image routes"
+  echo "FAIL  the real rules must retain all twenty exact ordered image routes"
   failures=$((failures + 1))
 else
-  echo "ok    real rules: nineteen ordered rules, dedicated publishers before catch-all"
+  echo "ok    real rules: twenty ordered rules, dedicated publishers before catch-all"
 fi
 
 # The real file must also satisfy the completeness gate the fixtures exercise.
@@ -489,6 +490,41 @@ for image in "$dex_repository" "$dex_repository:revision" "$dex_repository@sha25
     OUT="$(ACCEPT_SUBJECTS="$accepted_subject" INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
       "$script" --rules "$real" --images "${work}/images-dex" 2>&1)" || RC=$?
     check "Dex signer isolation: $image / $signer" "$want_rc" '' "$RC" "$OUT"
+  done
+done
+# The automated company sender has its own exact main-only publisher (#5400).
+# Exercise first-match routing with the real rules, including tag and digest
+# references, and prove that neither publisher can authenticate the other's image.
+sender_repository='ghcr.io/devantler-tech/platform-mail-submission'
+sender_identity='^https://github\.com/devantler-tech/platform/\.github/workflows/publish-mail-submission\.yaml@refs/heads/main$'
+talos_sender_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-mail-submission") | .keyless.subjectRegex' "$real")"
+talos_sender_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-mail-submission") | .keyless.issuer' "$real")"
+admission_sender_identity="$(yq -r '.spec.attestors[] | select(.name == "publishmailsubmission") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+admission_sender_issuer="$(yq -r '.spec.attestors[] | select(.name == "publishmailsubmission") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
+if [ "$talos_sender_identity" != "$sender_identity" ] ||
+  [ "$admission_sender_identity" != "$sender_identity" ] ||
+  [ "$talos_sender_issuer" != 'https://token.actions.githubusercontent.com' ] ||
+  [ "$admission_sender_issuer" != "$talos_sender_issuer" ]; then
+  echo 'FAIL  automated sender image must retain its exact main publisher in both verifiers'
+  failures=$((failures + 1))
+else
+  echo 'ok    automated sender publisher identity matches both verifiers'
+fi
+for image in "$sender_repository" "$sender_repository:revision" "$sender_repository@sha256:aa" "$sender_repository:revision@sha256:aa" "$sender_repository-other:revision"; do
+  printf '%s\n' "$image" >"${work}/images-sender"
+  for signer in sender app; do
+    accepted_subject="$sender_identity"
+    [ "$signer" = sender ] || accepted_subject="$app_identity"
+    want_rc=1
+    case "$image/$signer" in
+      "$sender_repository-other:revision/app") want_rc=0 ;;
+      "$sender_repository-other:revision/sender") ;;
+      */sender) want_rc=0 ;;
+    esac
+    RC=0
+    OUT="$(ACCEPT_SUBJECTS="$accepted_subject" INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
+      "$script" --rules "$real" --images "${work}/images-sender" 2>&1)" || RC=$?
+    check "automated sender signer isolation: $image / $signer" "$want_rc" '' "$RC" "$OUT"
   done
 done
 
