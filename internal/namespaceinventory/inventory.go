@@ -107,12 +107,19 @@ func ObserveRetainedEmailRecovery(ctx context.Context, client *http.Client, endp
 	return observeNamespace(ctx, client, endpoint, "email-data-recovery-41561215415", uid)
 }
 
+// ObserveFreshRetainedEmailRecovery inventories the fixed fresh restore with
+// its separately witnessed namespace identity.
+func ObserveFreshRetainedEmailRecovery(ctx context.Context, client *http.Client, endpoint *url.URL, uid string) (Inventory, error) {
+	return observeNamespace(ctx, client, endpoint, "email-data-recovery-42818236850", uid)
+}
+
 func observeNamespace(ctx context.Context, client *http.Client, endpoint *url.URL, namespace, uid string) (Inventory, error) {
 	if endpoint == nil {
 		return Inventory{}, errors.New("authenticated API root is required")
 	}
 	root := *endpoint
-	if client == nil || root.Scheme != "https" || root.Host == "" || root.Opaque != "" || root.ForceQuery || root.User != nil || root.RawQuery != "" || root.Fragment != "" || (root.Path != "" && root.Path != "/") || (!namespacePattern.MatchString(namespace) && namespace != "longhorn-system" && namespace != "email-data-recovery-41561215415") || len(namespace) > 63 || uid == "" || len(uid) > 128 {
+	fixed := namespace == "longhorn-system" || namespace == "email-data-recovery-41561215415" || namespace == "email-data-recovery-42818236850"
+	if client == nil || root.Scheme != "https" || root.Host == "" || root.Opaque != "" || root.ForceQuery || root.User != nil || root.RawQuery != "" || root.Fragment != "" || (root.Path != "" && root.Path != "/") || (!namespacePattern.MatchString(namespace) && !fixed) || len(namespace) > 63 || uid == "" || len(uid) > 128 {
 		return Inventory{}, errors.New("fixed benchmark namespace and authenticated API root are required")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)

@@ -34,7 +34,11 @@ printf 'business-site\tpublish-app\tdevantler-tech/.github\t467f07582436a26b62cf
 printf 'business-site\tpublish-app\tdevantler-tech/.github\taf042c540ce8db4d64add98c34b5c57691e0e812\n' >>"$upgrade_test_work/two-approved.tsv"
 mv "$upgrade_test_work/two-approved.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv"
 cp "$tree/scripts/publish-workflow-canonical-approvals.tsv" "$upgrade_test_work/original-approvals.tsv"
-export PUBLISH_CONSUMER_ROOT="$tree" APPROVED_REVISIONS_FILE="$tree/scripts/publish-workflow-approved-revisions.tsv"
+# Stamp every preparation with one day: two runs that straddle UTC midnight would
+# otherwise record different verification and observation dates and fail the
+# idempotence comparison below for a reason unrelated to the candidate.
+APPROVED_REVISIONS_OBSERVED_ON="$(date -u +%Y-%m-%d)"
+export PUBLISH_CONSUMER_ROOT="$tree" APPROVED_REVISIONS_FILE="$tree/scripts/publish-workflow-approved-revisions.tsv" APPROVED_REVISIONS_OBSERVED_ON
 export APPROVED_IDENTITIES_FILE="$tree/scripts/publish-workflow-approved-revisions.identities.tsv"
 export CANONICAL_APPROVALS_FILE="$tree/scripts/publish-workflow-canonical-approvals.tsv"
 export PUBLISH_BOOTSTRAP_FILE="$tree/scripts/publish-workflow-bootstrap-publications.json" PUBLISH_KUBE_CONTEXT=fixture
@@ -83,7 +87,7 @@ kubectl() {
           jq '.bindings[0].publication.workflowRunAttempt=2' "$binding_file" >"$upgrade_test_work/raced.json"
           mv "$upgrade_test_work/raced.json" "$binding_file"
           ;;
-        tenant) yq -i '.spec.webApp=true' "$tree/$tenant_path" ;;
+        tenant) yq -i '.spec.externalDns=true' "$tree/$tenant_path" ;;
         constructor) yq -i '.spec.schema.group="unapproved.example"' "$tree/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" ;;
         output)
           mkdir "$upgrade_test_work/candidate"
@@ -144,7 +148,9 @@ jq -e --arg digest "$next_digest" --argjson old "$old_record" '
  .previousBinding==$old and .previousObservation.generation==2 and
  (.previousObservation.uidSha256|test("^[0-9a-f]{64}$"))' "$candidate_record" >/dev/null
 test "$(yq '.spec.source.digest' "$upgrade_test_work/candidate/$tenant_path")" = "$next_digest"
-test "$(yq '.spec.webApp or .spec.externalDns or .spec.sops or .spec.source.reconcileApplication' "$upgrade_test_work/candidate/$tenant_path")" = false
+# A digest upgrade keeps every reviewed switch exactly as it was.
+switches='[.spec.webApp, .spec.externalDns, .spec.sops, .spec.source.reconcileApplication]'
+test "$(yq -o=json -I=0 "$switches" "$upgrade_test_work/candidate/$tenant_path")" = "$(yq -o=json -I=0 "$switches" "$upgrade_test_work/original-tenant.yaml")"
 if prepare >"$upgrade_test_work/result" 2>&1; then
   echo 'existing candidate directory overwritten' >&2
   exit 1

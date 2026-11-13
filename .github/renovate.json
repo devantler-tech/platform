@@ -216,6 +216,12 @@
       "allowedVersions": "<=1.5.1"
     },
     {
+      "description": "Hold the Kubernetes client libraries below 0.37 in the tenant web-app admission test module, which builds Kyverno v1.19.2. Kyverno v1.20.0 is the first release built on k8s.io v0.37, and it still replaces github.com/kyverno/api with a fork in a personal account; against the newest published kyverno/api (v0.0.1-alpha.5) the module does not compile on v0.37 (#5191). Every other module moves to v0.37. Remove this rule once a Kyverno release builds on v0.37 from a published kyverno/api.",
+      "matchFileNames": ["scripts/tests/tenant-webapp-admission/go.mod"],
+      "matchPackageNames": ["k8s.io/**"],
+      "allowedVersions": "<0.37.0"
+    },
+    {
       "description": "flux-operator is tracked by the dedicated regex customManager above (the built-in `flux` manager stalled on it). Disable the `flux` manager for this chart so the two managers cannot open duplicate PRs if the flux manager later resumes.",
       "matchManagers": ["flux"],
       "matchPackageNames": [
@@ -419,6 +425,16 @@
       "description": "Hold the Kyverno CI policy CLI below 1.20.0 for the same reason and with the same removal condition as the chart rule above (#4994).",
       "matchPackageNames": ["kyverno/kyverno"],
       "allowedVersions": "<1.20.0"
+    },
+    {
+      "description": "Keep the two Kyverno 1.19 source builds (background controller and migration runtime) on Go 1.26. They compile Kyverno 1.19, which upstream builds with Go 1.26, and lint it with golangci-lint v2.11.4, which cannot read Go 1.27 export data; a Go 1.27 builder fails their image builds and their compiler-pin tests (#6164). Go 1.26 still receives security releases, so its patch updates stay visible. Remove this rule when these builds move to Kyverno 1.20 (#4994), or are moved to Go 1.27 together with their linter and accepted-advisory list.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["docker.io/library/golang"],
+      "matchFileNames": [
+        "k8s/bases/infrastructure/controllers/kyverno/BackgroundDownstreamCleanup.Dockerfile",
+        "k8s/bases/infrastructure/controllers/kyverno/MigrationRuntime.Dockerfile"
+      ],
+      "allowedVersions": "/^1\\.26\\./"
     },
     {
       "description": "This test-only parser witnesses the verified Coroot node-agent source, not the latest library. Keep proposals visible, but require the consumer regression and a verified deployed-source refresh before adopting a different parser (platform#4934).",

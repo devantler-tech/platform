@@ -21,6 +21,7 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 	identityPublisher := "https://github.com/devantler-tech/business-site/.github/workflows/publish-identity.yaml@refs/heads/main"
 	retirementPublisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-longhorn-v1-retirement.yaml@refs/heads/main"
 	v2Publisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-longhorn-v2-only.yaml@refs/heads/main"
+	senderPublisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-mail-submission.yaml@refs/heads/main"
 	tests := []struct {
 		repository, attestor, subject string
 	}{
@@ -54,6 +55,9 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 		{"ghcr.io/devantler-tech/platform-kyverno-background-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{"ghcr.io/devantler-tech/platform-dex", "publishdexsecurity", "https://github.com/devantler-tech/platform/.github/workflows/publish-dex-security-image.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-dex-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-mail-submission", "publishmailsubmission", senderPublisher},
+		{"ghcr.io/devantler-tech/platform-mail-submission-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-mail-submission/helper", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{"ghcr.io/devantler-tech/world-at-ruin/zone", "publishwarzone", "https://github.com/devantler-tech/world-at-ruin/.github/workflows/server-cd.yaml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/provider-upjet-unifi", "publishprovider", "https://github.com/devantler-tech/provider-upjet-unifi/.github/workflows/publish-provider-package.yml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/ksail", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
@@ -86,6 +90,7 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 						{"migrate signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-migration-runtime.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernomigrate"},
 						{"background signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-background-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernobackground"},
 						{"dex signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-dex-security-image.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishdexsecurity"},
+						{"automated sender signer", senderPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishmailsubmission"},
 						{"wrong ref", strings.Split(fixture.subject, "@")[0] + "@refs/heads/other", githubIssuer, fixture.attestor == ""},
 						{"wrong repository", strings.Replace(fixture.subject, "devantler-tech/", "other-owner/", 1), githubIssuer, fixture.attestor == ""},
 					} {

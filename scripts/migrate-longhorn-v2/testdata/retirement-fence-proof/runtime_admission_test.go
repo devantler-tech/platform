@@ -118,7 +118,7 @@ func TestNativeRetirementRuntimeAdmission(t *testing.T) {
 			gvk := schema.GroupVersionKind{Version: "v1", Kind: "Pod"}
 			gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
 			a := admission.NewAttributesRecord(pod, nil, gvk, pod.GetNamespace(), pod.GetName(), gvr, "", admission.Create, &metav1.CreateOptions{}, false, creator)
-			v := &admission.VersionedAttributes{Attributes: a, VersionedKind: gvk, VersionedObject: pod}
+			v := &admission.VersionedAttributes{Attributes: a, VersionedKind: gvk, VersionedObject: admission.NewLazyObject(pod)}
 			result := matcher.Match(context.Background(), v, nil, nil)
 			if result.Error != nil || result.Matches != test.matches {
 				t.Fatalf("match = %+v, want %v", result, test.matches)

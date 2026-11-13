@@ -70,8 +70,9 @@ spec:
   communityEdition:
     # Recognize actual checkpoint-record progress on idle archived databases;
     # retain the existing warning when that evidence is missing or invalid.
+    # The ClickHouse space manager keeps the newest daily partition (#6143).
     image:
-      name: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.3-5ee96b6ee0e5cb7f1730218ae7c3ee2bcfbfb740@sha256:0f9ee31ae80446fad1f8c7f051645c3399c61aedba86ba570c6990a375ce4fe7
+      name: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.4-1ced73529e32d1269bfbb474d3887edbe52bd7f3@sha256:349e38658eda82fb8d4e605d649bd4777f6c664ed1791920500254feed00786d
 
   # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
   # existing oauth2-proxy (Dex) via http-route.yaml — exactly how Prometheus /

@@ -9,6 +9,13 @@ import (
 // Failed or uncertain runs retain the diagnostic namespace and its storage key.
 // Callers must first verify the copy's diagnostic and preserve the source.
 func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
+	return d.cleanupRestoreAfterVerification(ctx, nil)
+}
+
+// cleanupRestoreAfterVerification repeats a caller's live readback after the
+// non-destructive preflight, immediately before authorizing the first removal.
+// A failed readback preserves the entire diagnostic graph and its storage key.
+func (d *recoveryDriver) cleanupRestoreAfterVerification(ctx context.Context, verify func(context.Context) error) error {
 	if d.uncertain || d.volumeName == "" || d.volumeUID == "" || d.pvUID == "" {
 		return errors.New("cleanup-retained")
 	}
@@ -20,6 +27,16 @@ func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
 	}
 	reader, err := d.ref("Pod", "reader", d.i.namespace)
 	if err != nil {
+		return err
+	}
+	if verify != nil {
+		if err = verify(ctx); err != nil {
+			return err
+		}
+	}
+	// Before the first removal, so a refused patch leaves the copy and its reader
+	// intact for a later confirmed attempt.
+	if err = d.restoreDeleteReclaim(ctx); err != nil {
 		return err
 	}
 	if err = d.remove(ctx, reader); err != nil {
@@ -107,6 +124,17 @@ func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
 			return e
 		}
 	}
+	// A protected disposal never owned a backup. Its protection point must
+	// outlast the removal it protected; the backup itself is never touched.
+	if d.protection.backup != "" {
+		if len(d.refs) != 0 {
+			return errors.New("cleanup-residue")
+		}
+		if d.verifyProtection(ctx, time.Now()) != nil {
+			return errors.New("backup-retention")
+		}
+		return d.sourceRetained(ctx)
+	}
 	// This fresh recovery point deliberately remains under Velero's 24-hour TTL.
 	// Only the disposable restored storage is removed by this invocation.
 	backup, err := d.ref("Backup", d.i.namespace+"-backup", "velero")
@@ -146,6 +174,12 @@ func (d *recoveryDriver) cleanupPreflight(ctx context.Context) error {
 		{kind: "DataDownload", name: d.i.namespace + "-download", namespace: "velero"},
 		{kind: "Backup", name: d.i.namespace + "-backup", namespace: "velero"},
 	} {
+		if descriptor.kind == "Backup" && d.protection.backup != "" {
+			if d.verifyProtection(ctx, time.Now().Add(15*time.Minute)) != nil {
+				return errors.New("cleanup-backup-retention")
+			}
+			continue
+		}
 		ref, err := d.ref(descriptor.kind, descriptor.name, descriptor.namespace)
 		if err != nil {
 			return err

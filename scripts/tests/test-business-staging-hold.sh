@@ -71,14 +71,15 @@ for change in \
     exit 1
   fi
 done
-# Installing the hold is deliberately independent of enabling the application.
+# The public staging application reconciles behind the hold; the hold, not the
+# Tenant, decides whether gateway traffic reaches it.
 jq -e '
   [.[] | select(.kind == "Tenant" and .metadata.name == "business-site")] |
   length == 1 and .[0].metadata.namespace == "flux-system" and
-  .[0].spec.webApp == false and .[0].spec.externalDns == false and
-  .[0].spec.source.reconcileApplication == false
+  .[0].spec.webApp == true and .[0].spec.externalDns == false and
+  .[0].spec.source.reconcileApplication == true
 ' "$scratch/production.json" >/dev/null
 kubectl kustomize "$root/k8s/providers/docker/apps" >"$scratch/local.yaml"
 yq -o=json -I=0 '.' "$scratch/local.yaml" |
   jq -es 'all(.[]; .metadata.name != "business-site-staging-hold" and .metadata.name != "business-site-customer-identity-hold")' >/dev/null
-printf 'PASS: production-only staging and identity holds; 16 unsafe mutations refused; application remains disabled\n'
+printf 'PASS: production-only staging and identity holds; 16 unsafe mutations refused; application reconciles behind the hold\n'
