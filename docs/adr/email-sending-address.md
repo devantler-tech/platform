@@ -11,10 +11,10 @@ or a node is replaced, and it has no reverse DNS for the mail host name, so
 receivers would treat the mail as suspect.
 
 On 2026-11-03 the maintainer approved one dedicated, movable IPv4 address and
-its recurring cost. Hetzner blocks outbound SMTP per account, and the protected
-no-message check has already reached an external mail server on port 25 from a
-cluster node ([proof](../dr/email-provider-smtp-proof.md)). So the account permits
-direct delivery; what is missing is a stable sending address.
+its recurring cost. Hetzner blocks outbound SMTP by default, per account. The
+protected no-message check has already reached an external mail server on port
+25 from a cluster node ([proof](../dr/email-provider-smtp-proof.md)), so the
+account permits direct delivery. What is missing is a stable sending address.
 
 ## Decision
 
@@ -39,8 +39,9 @@ direct delivery; what is missing is a stable sending address.
   queue retries the messages. Moving the gateway means labelling another static
   worker and reassigning the address through a reviewed main-only workflow. No
   in-cluster controller or cloud token is added.
-- The address and host name stay in private configuration. Public manifests
-  read them from the platform's encrypted substitution variables.
+- The address and host name stay in private configuration. Kubernetes
+  manifests read them from the platform's encrypted substitution variables, and
+  the Talos patch from a deploy-time secret, as the WireGuard key already does.
 
 ## Order
 
