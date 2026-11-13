@@ -58,6 +58,8 @@ func TestClientIdentityCountsOnlyDistinctPublicClientsBlockedDuringThePod(t *tes
 		{"IPv6 loopback", identityBlocks(during, "203.0.113.7", "198.51.100.9", "::1"), "NON_CLIENT_ADDRESS_BLOCKED", 2},
 		{"unique local", identityBlocks(during, "203.0.113.7", "198.51.100.9", "fd00::7"), "NON_CLIENT_ADDRESS_BLOCKED", 2},
 		{"shared address space", identityBlocks(during, "203.0.113.7", "198.51.100.9", "100.64.0.7"), "NON_CLIENT_ADDRESS_BLOCKED", 2},
+		{"benchmarking range", identityBlocks(during, "203.0.113.7", "198.51.100.9", "198.18.0.7"), "NON_CLIENT_ADDRESS_BLOCKED", 2},
+		{"reserved range", identityBlocks(during, "203.0.113.7", "198.51.100.9", "240.0.0.7"), "NON_CLIENT_ADDRESS_BLOCKED", 2},
 		{"node address", identityBlocks(during, "203.0.113.7", "198.51.100.9", "192.0.2.10"), "NON_CLIENT_ADDRESS_BLOCKED", 2},
 		{"Pod address", identityBlocks(during, "203.0.113.7", "198.51.100.9", "192.0.2.20"), "NON_CLIENT_ADDRESS_BLOCKED", 2},
 		{"Cilium address", identityBlocks(during, "203.0.113.7", "198.51.100.9", "192.0.2.30"), "NON_CLIENT_ADDRESS_BLOCKED", 2},

@@ -10,14 +10,13 @@ import (
 // minimumDistinctClients is the smallest count a single shared address cannot produce.
 const minimumDistinctClients = 2
 
-var sharedAddressSpace = netip.MustParsePrefix("100.64.0.0/10")
+// nonClientNetworks are unicast ranges no external client connects from: shared
+// carrier space, benchmarking and the reserved class E block.
+var nonClientNetworks = []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("198.18.0.0/15"), netip.MustParsePrefix("240.0.0.0/4")}
 
 // automaticReasons are the server's own blocking decisions. A manual block or
 // one of unknown cause is an administrator's choice, never client evidence.
 var automaticReasons = map[string]bool{"rcptToFailure": true, "authFailure": true, "loitering": true, "portScanning": true}
-
-// storedReasons are every reason the supported server stores.
-var storedReasons = map[string]bool{"rcptToFailure": true, "authFailure": true, "loitering": true, "portScanning": true, "manual": true, "other": true}
 
 type clientIdentity struct {
 	Verdict string
@@ -81,7 +80,7 @@ func decodeClientIdentity(raw []byte, podCreated, now time.Time, platform ...net
 			return clientIdentity{}, bad
 		}
 		for _, entry := range body.List {
-			if entry.Reason == nil || !storedReasons[*entry.Reason] || entry.CreatedAt == nil {
+			if entry.Reason == nil || blockReasons[*entry.Reason] == "" || entry.CreatedAt == nil {
 				return clientIdentity{}, bad
 			}
 			created, e := time.Parse(time.RFC3339, *entry.CreatedAt)
@@ -128,8 +127,13 @@ func decodeClientIdentity(raw []byte, podCreated, now time.Time, platform ...net
 
 // publicClient admits only an address an external client can connect from.
 func publicClient(address netip.Addr, platform []netip.Addr) bool {
-	if !address.IsGlobalUnicast() || address.IsPrivate() || sharedAddressSpace.Contains(address) {
+	if !address.IsGlobalUnicast() || address.IsPrivate() {
 		return false
+	}
+	for _, network := range nonClientNetworks {
+		if network.Contains(address) {
+			return false
+		}
 	}
 	for _, known := range platform {
 		if address == known.Unmap() {

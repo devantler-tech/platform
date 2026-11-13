@@ -153,8 +153,9 @@ listener trust, so a container restart keeps the same transport.
   server told real clients apart. Manual and `other` blocks on public addresses
   are not evidence either way.
 - `NON_CLIENT_ADDRESS_BLOCKED`: at least one block, whatever its reason, names a
-  private, loopback, link-local or shared (100.64.0.0/10) address, the bound
-  node, Pod or Cilium address, or a range wider than one address. A shared
+  private, loopback, link-local, shared (100.64.0.0/10), benchmarking
+  (198.18.0.0/15) or reserved (240.0.0.0/4) address, the bound node, Pod or
+  Cilium address, or a range wider than one address. A shared
   intermediary being judged is what the adapter replaced.
 - `INSUFFICIENT_EVIDENCE`: fewer than two distinct public addresses with
   automatic blocks, and no failing block. Real traffic has not produced the
