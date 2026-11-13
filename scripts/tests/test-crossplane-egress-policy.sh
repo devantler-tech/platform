@@ -1576,7 +1576,7 @@ https_egress_contract() {
   ' <<<"$1"
 }
 
-expected_https_egress=$'  - toFQDNs:\n    - matchName: ghcr.io\n    - matchName: pkg-containers.githubusercontent.com\n    - matchName: api.github.com\n    - matchName: xpkg.upbound.io\n    - matchName: d3qrbvrml4iuq4.cloudfront.net\n    - matchName: sts.eu-central-1.amazonaws.com\n    - matchName: iam.amazonaws.com\n    - matchName: api.ui.com\n    toPorts:\n    - ports:\n      - port: "443"\n        protocol: TCP'
+expected_https_egress=$'  - toFQDNs:\n    - matchName: ghcr.io\n    - matchName: pkg-containers.githubusercontent.com\n    - matchName: api.github.com\n    - matchName: xpkg.upbound.io\n    - matchName: d3qrbvrml4iuq4.cloudfront.net\n    - matchName: sts.eu-central-1.amazonaws.com\n    - matchName: iam.amazonaws.com\n    - matchName: email.eu-central-1.amazonaws.com\n    - matchName: api.ui.com\n    toPorts:\n    - ports:\n      - port: "443"\n        protocol: TCP'
 readonly expected_https_egress
 
 assert_direct_https_contract() {
@@ -1634,7 +1634,7 @@ assert_dns_contract() {
   local expected_contract
 
   actual_contract="$(dns_egress_contract "${candidate_policy}")"
-  expected_contract=$'  - toEndpoints:\n    - matchLabels:\n        k8s-app: kube-dns\n        k8s:io.kubernetes.pod.namespace: kube-system\n    toPorts:\n    - ports:\n      - port: "53"\n        protocol: UDP\n      - port: "53"\n        protocol: TCP\n      rules:\n        dns:\n        - matchName: ghcr.io\n        - matchName: pkg-containers.githubusercontent.com\n        - matchName: api.github.com\n        - matchName: xpkg.upbound.io\n        - matchName: d3qrbvrml4iuq4.cloudfront.net\n        - matchName: sts.eu-central-1.amazonaws.com\n        - matchName: iam.amazonaws.com\n        - matchName: api.ui.com\n        - matchPattern: \x27*.cluster.local\x27'
+  expected_contract=$'  - toEndpoints:\n    - matchLabels:\n        k8s-app: kube-dns\n        k8s:io.kubernetes.pod.namespace: kube-system\n    toPorts:\n    - ports:\n      - port: "53"\n        protocol: UDP\n      - port: "53"\n        protocol: TCP\n      rules:\n        dns:\n        - matchName: ghcr.io\n        - matchName: pkg-containers.githubusercontent.com\n        - matchName: api.github.com\n        - matchName: xpkg.upbound.io\n        - matchName: d3qrbvrml4iuq4.cloudfront.net\n        - matchName: sts.eu-central-1.amazonaws.com\n        - matchName: iam.amazonaws.com\n        - matchName: email.eu-central-1.amazonaws.com\n        - matchName: api.ui.com\n        - matchPattern: \x27*.cluster.local\x27'
   [ "${actual_contract}" = "${expected_contract}" ] ||
     fail 'Crossplane DNS egress must remain the exact reviewed resolver, port, and name contract'
 }

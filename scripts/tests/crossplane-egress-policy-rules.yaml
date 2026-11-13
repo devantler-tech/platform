@@ -63,6 +63,7 @@ rules:
                 {'matchName': 'd3qrbvrml4iuq4.cloudfront.net'},
                 {'matchName': 'sts.eu-central-1.amazonaws.com'},
                 {'matchName': 'iam.amazonaws.com'},
+                {'matchName': 'email.eu-central-1.amazonaws.com'},
                 {'matchName': 'api.ui.com'}
               ],
               'toPorts': [{'ports': [
@@ -87,6 +88,7 @@ rules:
                   {'matchName': 'd3qrbvrml4iuq4.cloudfront.net'},
                   {'matchName': 'sts.eu-central-1.amazonaws.com'},
                   {'matchName': 'iam.amazonaws.com'},
+                  {'matchName': 'email.eu-central-1.amazonaws.com'},
                   {'matchName': 'api.ui.com'},
                   {'matchPattern': '*.cluster.local'}
                 ]}

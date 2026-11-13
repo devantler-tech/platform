@@ -1,0 +1,15 @@
+# provider-aws-sesv2 — the SES v2 family member for company Email's outbound
+# relay (platform#5481). It reconciles the sending domain identity and its MAIL
+# FROM domain. Canonically named after its package, so Crossplane's dependency
+# resolution finds it. Its package version must match provider-family-aws (see
+# provider-family-aws.yaml). Resource-bounded via
+# deployment-runtime-config-aws-sesv2.yaml.
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: upbound-provider-aws-sesv2
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-sesv2:v2.9.1
+  runtimeConfigRef:
+    name: provider-aws-sesv2
