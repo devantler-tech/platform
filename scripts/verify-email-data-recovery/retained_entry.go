@@ -64,7 +64,7 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 	if err != nil {
 		return fail()
 	}
-	d := &recoveryDriver{i: target, k: k, refs: map[string]ownedReference{}, protection: protectionPoint{disposalProtectionBackup, readerUID, claimUID}}
+	d := &recoveryDriver{i: target, k: k, refs: map[string]ownedReference{}, protection: protectionPoint{backup: disposalProtectionBackup, readerUID: readerUID, claimUID: claimUID}}
 	stage = "source"
 	if d.source, err = d.readSource(ctx); err != nil {
 		return fail()

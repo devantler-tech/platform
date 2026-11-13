@@ -34,6 +34,11 @@ func (d *recoveryDriver) cleanupRestoreAfterVerification(ctx context.Context, ve
 			return err
 		}
 	}
+	// Before the first removal, so a refused patch leaves the copy and its reader
+	// intact for a later confirmed attempt.
+	if err = d.restoreDeleteReclaim(ctx); err != nil {
+		return err
+	}
 	if err = d.remove(ctx, reader); err != nil {
 		return err
 	}
@@ -45,9 +50,6 @@ func (d *recoveryDriver) cleanupRestoreAfterVerification(ctx context.Context, ve
 	}
 	claim, err := d.ref("PersistentVolumeClaim", "data", d.i.namespace)
 	if err != nil {
-		return err
-	}
-	if err = d.restoreDeleteReclaim(ctx); err != nil {
 		return err
 	}
 	if err = d.remove(ctx, claim); err != nil {

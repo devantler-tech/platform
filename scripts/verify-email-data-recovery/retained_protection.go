@@ -17,8 +17,10 @@ import (
 const disposalProtectionBackup = "velero-daily-full-20261112021735"
 
 // protectionPoint binds a disposal to the fixed protection backup and to the
-// copy's independently witnessed reader and claim identities.
-type protectionPoint struct{ backup, readerUID, claimUID string }
+// copy's independently witnessed reader and claim identities. The backup's UID
+// is pinned on its first observation, so a later read cannot accept a
+// replacement of the same name.
+type protectionPoint struct{ backup, readerUID, claimUID, backupUID string }
 
 // verifyProtection requires the fixed protection backup to remain valid past
 // mustRemainUntil and to hold one completed, fully transferred volume backup
@@ -38,7 +40,7 @@ func (d *recoveryDriver) verifyProtection(ctx context.Context, mustRemainUntil t
 	phase, uid := text(status, "phase"), text(m, "uid")
 	// The daily backup is PartiallyFailed for unrelated namespaces; only the
 	// two volume backups below establish this protection.
-	if err != nil || uid == "" || text(m, "name") != p.backup || text(m, "namespace") != "velero" || m["deletionTimestamp"] != nil ||
+	if err != nil || uid == "" || (p.backupUID != "" && uid != p.backupUID) || text(m, "name") != p.backup || text(m, "namespace") != "velero" || m["deletionTimestamp"] != nil ||
 		!expires.After(mustRemainUntil) || (phase != "Completed" && phase != "PartiallyFailed") {
 		return fail
 	}
@@ -57,6 +59,7 @@ func (d *recoveryDriver) verifyProtection(ctx context.Context, mustRemainUntil t
 		!protectedVolume(volumes, uid, d.i.namespace, p.readerUID, "data", p.claimUID) {
 		return fail
 	}
+	d.protection.backupUID = uid
 	return nil
 }
 
@@ -78,19 +81,21 @@ func protectedVolume(volumes []object, backupUID, namespace, podUID, volume, cla
 	if selected == nil {
 		return false
 	}
-	labels, status := child(child(selected, "metadata"), "labels"), child(selected, "status")
+	meta, status := child(selected, "metadata"), child(selected, "status")
+	labels := child(meta, "labels")
 	progress := child(status, "progress")
 	total, ok := progress["totalBytes"].(float64)
 	return text(labels, "velero.io/backup-uid") == backupUID && text(labels, "velero.io/pvc-uid") == claimUID &&
 		(podUID == "" || text(child(child(selected, "spec"), "pod"), "uid") == podUID) &&
+		meta["deletionTimestamp"] == nil && text(status, "snapshotID") != "" &&
 		text(status, "phase") == "Completed" && ok && total > 0 && progress["bytesDone"] == total
 }
 
 // restoreDeleteReclaim returns a protected copy's volume from Retain to its
-// StorageClass's Delete policy immediately before the claim is removed, so the
-// backend is released with the claim. Only a protected disposal may do this.
-// The patch is fenced on the observed identity, version and policy, and an
-// uncertain response stops cleanup without retrying.
+// StorageClass's Delete policy after the final verification and before the
+// first removal, so the backend is released with the claim. Only a protected
+// disposal may do this. The patch is fenced on the observed identity, version
+// and policy, and an uncertain response stops cleanup without retrying.
 func (d *recoveryDriver) restoreDeleteReclaim(ctx context.Context) error {
 	if d.protection.backup == "" {
 		return nil
