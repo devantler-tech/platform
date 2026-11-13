@@ -80,9 +80,9 @@ fi
 # kubevuln v0.3.159 swallows an exhausted conflict retry while updating a
 # VulnerabilityManifestSummary: it logs the original AlreadyExists result and
 # returns success. kubescape/kubevuln#745 fixed both error reporting and
-# propagation, first released in v0.3.404. Chart 1.41.0 selects v0.3.571;
+# propagation, first released in v0.3.404. Chart 1.42.0 selects v0.3.578;
 # verify the rendered image below so a later chart cannot regress silently.
-readonly kubevuln_tag='v0.3.571'
+readonly kubevuln_tag='v0.3.578'
 
 keep_local="$(yq -er '
   .spec.values.kubescapeScheduler.requestBody.commands[] |
@@ -178,7 +178,7 @@ chart_version="$(yq -er '
   select(tag == "!!str" and length > 0)
 ' "${helm_release}")" || fail 'the Kubescape chart version must be an exact string'
 readonly chart_version
-[[ "${chart_version}" == "1.41.0" ]] ||
+[[ "${chart_version}" == "1.42.0" ]] ||
   fail 'the Kubescape chart changed; revalidate both rendered scheduler CronJobs before updating this guard'
 
 posture_schedule="$(yq -er '
@@ -205,7 +205,7 @@ readonly vulnerability_schedule
 # render additionally proves that the reviewed chart maps each authored value to
 # the intended CronJob. Pin the archive bytes so a republished tag fails closed.
 readonly chart_repository='https://kubescape.github.io/helm-charts/'
-readonly chart_archive_sha256='055db0597fb5d5ba533dbc96774a0ed14a0bad10cc796bd02ca8b43f3b5bdd5d'
+readonly chart_archive_sha256='be45f83398f28db8f2ff395e5d8ab411328041e9e2165a42e5fb92a4ba369079'
 chart_dir="$(mktemp -d "${TMPDIR:-/tmp}/kubescape-chart.XXXXXX")" ||
   fail 'could not create a temporary directory for the Kubescape chart'
 readonly chart_dir
@@ -324,8 +324,8 @@ for scheduler in kubescape-scheduler kubevuln-scheduler; do
     .spec.jobTemplate.spec.template.spec |
     .serviceAccountName + " " + .containers[0].image
   ' "${postrendered_chart}")" || fail "the post-rendered ${scheduler} CronJob is missing"
-  [[ "${scheduler_identity}" == 'kubescape-scheduler quay.io/kubescape/kubectl:1.36.1@sha256:e2b97dde9666986c61c56d49aae85a714b89b69392baa531438e74ec34096fb4' ]] ||
-    fail "the ${scheduler} CronJob must run as kubescape-scheduler with the digest-pinned kubectl image (got: ${scheduler_identity})"
+  [[ "${scheduler_identity}" == 'kubescape-scheduler quay.io/kubescape/kubescape-ops-tool:0.2.0-r1@sha256:2f1d8c9a76f05049f73ebefa292d4b65ce3ef3811317c4cc023b4df792a592e4' ]] ||
+    fail "the ${scheduler} CronJob must run as kubescape-scheduler with the digest-pinned scheduler image (got: ${scheduler_identity})"
 done
 
 readonly scheduler_role="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/role-scheduler.yaml"
