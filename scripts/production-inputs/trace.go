@@ -23,6 +23,12 @@ var deployEntrypoints = []string{
 	".github/actions/deploy-prod",
 }
 
+// implicitInputs are files a tool the deploy runs loads without being told to, so no
+// script names them. KSail reads ksail.yaml from the working directory on every command.
+var implicitInputs = []string{
+	"ksail.yaml",
+}
+
 // A repository path written out in a script, an action or a Go source file.
 // docs/ is left out on purpose: scripts name runbooks in their messages and
 // never read them, and the restricted working tree is what proves that.
@@ -35,7 +41,7 @@ var siblingPath = regexp.MustCompile(`(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|[)"])/((
 
 // A module a JavaScript file imports by a relative path, as in
 // `import {x} from './lib.mjs'`. It is resolved against the importing file.
-var moduleImport = regexp.MustCompile(`(?:\bfrom|\bimport|\brequire)\s*\(?\s*['"](\.{1,2}/[A-Za-z0-9_./-]*[A-Za-z0-9_-])['"]`)
+var moduleImport = regexp.MustCompile("(?:\\bfrom|\\bimport|\\brequire)\\s*\\(?\\s*['\"`](\\.{1,2}/[A-Za-z0-9_./-]*[A-Za-z0-9_-])['\"`]")
 
 // A directory named up to a template, as in "schemas/{{.Group}}/x.json": anything below
 // it can be read.
@@ -154,7 +160,7 @@ func trace(repository string) ([]string, error) {
 	reached := map[string]bool{}
 	packages := map[string]bool{}
 	type pending struct{ file, text string }
-	queue := []pending{{file: listPath, text: listPath + "\n" + strings.Join(deployEntrypoints, "\n")}}
+	queue := []pending{{file: listPath, text: strings.Join(append(append([]string{listPath}, deployEntrypoints...), implicitInputs...), "\n")}}
 
 	var reach func(candidate string) error
 	reach = func(candidate string) error {
@@ -233,6 +239,11 @@ func trace(repository string) ([]string, error) {
 				candidate := path.Join(path.Dir(current.file), match[1])
 				if strings.HasPrefix(candidate, "..") {
 					continue
+				}
+				// An import that names no tracked file (one written without its extension,
+				// say) is one the trace cannot follow, so it must not pass as followed.
+				if !walked.files[candidate] && len(walked.under(candidate)) == 0 {
+					return nil, fmt.Errorf("%s imports %s, which is not a tracked file", current.file, match[1])
 				}
 				if err := reach(candidate); err != nil {
 					return nil, err

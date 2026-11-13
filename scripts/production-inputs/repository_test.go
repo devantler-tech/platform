@@ -366,7 +366,12 @@ var (
 	shellGit   = regexp.MustCompile(`(^|[^A-Za-z0-9_./-])git([[:space:]]|$)|git\[@\]|[A-Za-z0-9]_git([[:space:]]|$)`)
 	goGit      = regexp.MustCompile(`"git"|\bgit\(`)
 	quotedWord = regexp.MustCompile(`"([a-z][a-z-]*)"`)
-	bareWord   = regexp.MustCompile(`[a-z][a-z-]*`)
+	// JavaScript passes git's arguments as strings in any of its three quotes, and
+	// names the program wherever it likes, so a file that mentions git at all is read
+	// whole.
+	scriptGit    = regexp.MustCompile(`\bgit\b`)
+	scriptQuoted = regexp.MustCompile("['\"`]([a-z][a-z-]*)['\"`]")
+	bareWord     = regexp.MustCompile(`[a-z][a-z-]*`)
 )
 
 // historyReads returns the history-reading git subcommands a file can run.
@@ -374,7 +379,15 @@ var (
 // and the arguments that follow "git" in a Go call wherever they are written.
 func historyReads(file, text string) []string {
 	found := map[string]bool{}
-	if path.Ext(file) == ".go" {
+	if extension := path.Ext(file); extension == ".mjs" || extension == ".js" {
+		if scriptGit.MatchString(text) {
+			for _, word := range scriptQuoted.FindAllStringSubmatch(text, -1) {
+				if historyCommands[word[1]] {
+					found[word[1]] = true
+				}
+			}
+		}
+	} else if extension == ".go" {
 		for _, at := range goGit.FindAllStringIndex(text, -1) {
 			window := text[at[0]:min(len(text), at[0]+400)]
 			for _, word := range quotedWord.FindAllStringSubmatch(window, -1) {
@@ -413,6 +426,8 @@ func TestHistoryReadsSeeEveryWayToCallGit(t *testing.T) {
 		"a split Go call":      {"a.go", "exec.Command(\n\t\"git\",\n\t\"-C\", dir,\n\t\"ls-tree\", \"-r\", sha,\n)\n", "ls-tree"},
 		"a Go helper":          {"a.go", "git(repository, \"restore\", \"--source\", sha)\n", "restore"},
 		"two commands":         {"a.sh", "git fetch origin\ngit grep -n x \"$sha\"\n", "fetch grep"},
+		"a JavaScript spawn":   {"a.mjs", "const run=args=>capture(git,['-C',workspace,...args]);\nawait run(['show',sha+':'+file]);\nawait run([\"ls-tree\",sha]);\n", "ls-tree show"},
+		"JavaScript, no git":   {"a.mjs", "const mode='show';\nconsole.log('show the diff');\n", ""},
 		"no history read":      {"a.sh", "git rev-parse HEAD\ngit status --porcelain\n", ""},
 		"a word that is not a": {"a.sh", "echo show the diff in the log\n", ""},
 	} {
@@ -440,6 +455,11 @@ func TestReadsFromGitHistoryAreReviewed(t *testing.T) {
 		// diff --quiet compares the working tree with its commit. It runs only
 		// in recovery deploys, which keep the whole checkout.
 		"scripts/verify-prod-recovery-source.sh": "diff",
+		// show and ls-tree read the committed copy and mode of five named files: the
+		// wedding cipher, the production bootstrap kustomization and the three recipe
+		// modules. All five are listed, and each working-tree copy is read and must
+		// equal the committed one.
+		"scripts/wedding-backup-io.mjs": "ls-tree show",
 	}
 	root := repositoryRoot(t)
 	traced, err := trace(root)
