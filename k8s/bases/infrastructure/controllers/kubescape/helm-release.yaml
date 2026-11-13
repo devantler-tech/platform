@@ -12,7 +12,7 @@ spec:
   chart:
     spec:
       chart: kubescape-operator
-      version: 1.41.0
+      version: 1.42.0
       sourceRef:
         kind: HelmRepository
         name: kubescape
@@ -471,13 +471,15 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/securityContext/seLinuxOptions
                 value: {}
-          # The schedulers run kubectl with a mounted token to create one
-          # OperatorCommand owned by their Job. The chart reuses the scanner's
-          # and kubevuln's ServiceAccounts, whose ClusterRoles include
+          # The schedulers run a program with a mounted token to create one
+          # OperatorCommand owned by their Job. Chart 1.42.0 replaced the
+          # kubectl script with `kubescape-ops-tool create-operator-command`,
+          # still given the Job name through JOB_NAME. The chart reuses the
+          # scanner's and kubevuln's ServiceAccounts, whose ClusterRoles include
           # cluster-wide reads such as secrets. Run them as kubescape-scheduler,
           # which may only create OperatorCommands and read Jobs in this
-          # namespace, and pin the kubectl image by digest so the code that
-          # holds the token is the code that was reviewed.
+          # namespace, and pin the image by digest so the code that holds the
+          # token is the code that was reviewed.
           - target:
               kind: CronJob
               name: ^(kubescape|kubevuln)-scheduler$
@@ -487,20 +489,22 @@ spec:
                 value: kubescape-scheduler
               - op: test
                 path: /spec/jobTemplate/spec/template/spec/containers/0/image
-                value: quay.io/kubescape/kubectl:1.36.1
+                value: quay.io/kubescape/kubescape-ops-tool:0.2.0-r1
               - op: replace
                 path: /spec/jobTemplate/spec/template/spec/containers/0/image
-                value: quay.io/kubescape/kubectl:1.36.1@sha256:e2b97dde9666986c61c56d49aae85a714b89b69392baa531438e74ec34096fb4
+                value: quay.io/kubescape/kubescape-ops-tool:0.2.0-r1@sha256:2f1d8c9a76f05049f73ebefa292d4b65ce3ef3811317c4cc023b4df792a592e4
           # Chart 1.41.0 sets GOMEMLIMIT to a fixed fraction of the authored
           # memory limit. The VPA resizes these limits, often far below the
           # authored value, so a fixed GOMEMLIMIT can sit above the real limit
           # and the Go GC no longer works harder before the OOM killer fires.
           # Keep it tied to the container's actual limit, as chart 1.40.5 did
           # for these three. The test op fails the render if the chart moves
-          # the variable, rather than replacing the wrong one.
+          # the variable, rather than replacing the wrong one. Chart 1.42.0
+          # prepends its API-auth variables to kubescape and the operator, so
+          # GOMEMLIMIT sits at index 2 and 5 there and stays at 0 in storage.
           - target:
               kind: Deployment
-              name: ^(kubescape|storage)$
+              name: ^storage$
             patch: |
               - op: test
                 path: /spec/template/spec/containers/0/env/0/name
@@ -515,13 +519,28 @@ spec:
                       divisor: "1"
           - target:
               kind: Deployment
-              name: ^operator$
+              name: ^kubescape$
             patch: |
               - op: test
                 path: /spec/template/spec/containers/0/env/2/name
                 value: GOMEMLIMIT
               - op: replace
                 path: /spec/template/spec/containers/0/env/2
+                value:
+                  name: GOMEMLIMIT
+                  valueFrom:
+                    resourceFieldRef:
+                      resource: limits.memory
+                      divisor: "1"
+          - target:
+              kind: Deployment
+              name: ^operator$
+            patch: |
+              - op: test
+                path: /spec/template/spec/containers/0/env/5/name
+                value: GOMEMLIMIT
+              - op: replace
+                path: /spec/template/spec/containers/0/env/5
                 value:
                   name: GOMEMLIMIT
                   valueFrom:
