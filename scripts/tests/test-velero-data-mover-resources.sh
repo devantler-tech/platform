@@ -122,9 +122,8 @@ hcloud_pvcs="$(
 )" || fail 'the production hcloud PVC inventory could not be read'
 readonly hcloud_pvcs
 
-# The replacement is deliberately unused until main owns its retained claim.
-# It has no independently-mirrored marker yet, so the existing labelled skip
-# rule below still exempts only the original snapshot cache.
+# The retained original and active replacement snapshot caches use the same
+# independently mirrored route. Other hcloud data must retain filesystem backup.
 expected_hcloud_pvcs=$'openbao/vault-snapshots\nopenbao/vault-snapshots-recovery'
 readonly expected_hcloud_pvcs
 
@@ -142,8 +141,8 @@ independently_mirrored_pvcs="$(
 )" || fail 'the independently mirrored PVC inventory could not be read'
 readonly independently_mirrored_pvcs
 
-[[ "${independently_mirrored_pvcs}" == 'openbao/vault-snapshots' ]] ||
-  fail "only openbao/vault-snapshots may opt out of Velero volume-data backup; found: ${independently_mirrored_pvcs:-none}"
+[[ "${independently_mirrored_pvcs}" == "${expected_hcloud_pvcs}" ]] ||
+  fail "only the retained original and active replacement snapshot caches must use independent mirrors; found: ${independently_mirrored_pvcs:-none}"
 
 controller_hcloud_claims="$({
   yq -r '

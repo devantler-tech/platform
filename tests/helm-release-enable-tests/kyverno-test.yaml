@@ -1,3 +1,4 @@
+---
 # Opted-in Helm releases receive these defaults without changing other settings (#4997).
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
@@ -14,7 +15,6 @@ results:
       - controllers/enabled-existing
       - controllers/enabled-one-parent
       - controllers/enabled-null-parents
-      - controllers/same-kind-other-group
     kind: HelmRelease
     result: pass
     patchedResources: patched-resources.yaml
@@ -22,6 +22,7 @@ results:
     resources:
       - controllers/unlabelled
       - controllers/disabled
+      - controllers/same-kind-other-group
     kind: HelmRelease
     result: skip
   - policy: helm-release-enable-tests

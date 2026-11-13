@@ -91,7 +91,7 @@ esac
 lookup() {
   # `$1 "" == k ""` forces a STRING compare: awk compares two numeric-looking strings as
   # numbers, so `100` would match a key of `1e2`.
-  printf '%s\n' "$1" | awk -F'\t' -v k="$2" '$1 "" == k "" { sub(/^[^\t]*\t/, ""); print; exit }'
+  printf '%s\n' "$1" | awk -F'\t' -v k="$2" '!found && $1 "" == k "" { sub(/^[^\t]*\t/, ""); print; found=1 }'
 }
 
 # approved_revisions <signer> <pin> <candidate> → each distinct approved revision on its own line,
@@ -127,7 +127,10 @@ ref_matches_approved() {
   local ref="$1" body got want
   shift
   case "$ref" in
-    '('*')') body="${ref#\(}"; body="${body%\)}" ;;
+    '('*')')
+      body="${ref#\(}"
+      body="${body%\)}"
+      ;;
     *'|'*) return 1 ;;
     *) body="$ref" ;;
   esac
@@ -148,7 +151,7 @@ while IFS= read -r row; do
   tabs="${row//[!$'\t']/}"
   IFS=$'\t' read -r consumer workflow applied_tag applied_digest signer pin candidate observed_on extra <<<"$row"
   [ -n "$consumer" ] || continue
-  [ "$line_no" -gt 2 ] || [ "$consumer" != 'consumer' ] || continue  # the header
+  [ "$line_no" -gt 2 ] || [ "$consumer" != 'consumer' ] || continue # the header
   { [ "${#tabs}" -le 7 ] && [ -z "${extra:-}" ]; } || refuse "approved set line $line_no has more than eight fields"
   { [ "${#tabs}" -eq 7 ] && [ -n "$observed_on" ]; } || refuse "approved set line $line_no has fewer than eight fields"
   plausible_repo "$consumer" || refuse "approved set line $line_no names an implausible consumer '$consumer'"
@@ -237,7 +240,7 @@ canonical=""
 line_no=0
 while IFS= read -r row || [ -n "$row" ]; do
   line_no=$((line_no + 1))
-  [ "$line_no" -gt 1 ] || continue  # the header, checked above
+  [ "$line_no" -gt 1 ] || continue # the header, checked above
   tabs="${row//[!$'\t']/}"
   [ "${#tabs}" -eq 3 ] || refuse "canonical approvals line $line_no does not have exactly four fields"
   IFS=$'\t' read -r consumer workflow repository commit <<<"$row"
@@ -271,8 +274,12 @@ done <"$CANONICAL_SET"
 while IFS= read -r canonical_entry; do
   canonical_consumer="$(printf '%s\n' "$canonical_entry" | jq -r .consumer)"
   canonical_publisher="$(printf '%s\n' "$canonical_entry" | jq -r .publication.publisherIdentity)"
-  [ "$(lookup "$canonical" "$canonical_consumer")" = "${canonical_publisher##*@}" ] ||
-    refuse "$canonical_consumer: canonical-only publisher differs from its exact approval"
+  canonical_pin="${canonical_publisher##*@}"
+  canonical_approved="$(lookup "$canonical" "$canonical_consumer")"
+  case "$canonical_approved" in
+    "$canonical_pin" | "($canonical_pin|"*")" | "("*"|$canonical_pin)") ;;
+    *) refuse "$canonical_consumer: canonical-only publisher is not an exact approved member" ;;
+  esac
 done < <(printf '%s\n' "$canonical_only" | jq -c '.bindings[]')
 
 # canonical_ref_ok <ref> → success when <ref> is one 40-hex commit, or exactly two distinct ones
@@ -284,8 +291,10 @@ canonical_ref_ok() {
     '('*'|'*')') ;;
     *) return 1 ;;
   esac
-  first="${1#\(}"; first="${first%%\|*}"
-  second="${1#*\|}"; second="${second%\)}"
+  first="${1#\(}"
+  first="${first%%\|*}"
+  second="${1#*\|}"
+  second="${second%\)}"
   [ "$1" = "($first|$second)" ] && is_sha "$first" && is_sha "$second" && [ "$first" != "$second" ]
 }
 
@@ -321,7 +330,7 @@ while IFS= read -r file; do
   [ -n "$file" ] || continue
   rel="${file#"$SCAN_ROOT"/}"
   case "$rel" in
-    scripts/*) continue ;;  # test fixtures under scripts/ carry subjects that verify nothing
+    scripts/*) continue ;; # test fixtures under scripts/ carry subjects that verify nothing
   esac
   is_generic=0
   for generic in "${GENERIC_SUBJECT_FILES[@]}"; do
@@ -359,7 +368,8 @@ while IFS= read -r file; do
   # OCIRepository selection, and would otherwise pass unjudged.
   line_count="$(grep -cE "$FAMILY_SUBJECT_PATTERN" "$file" || true)"
   [ "$line_count" = "1" ] || refuse "$rel: $line_count shared-publish-workflow subject lines found but exactly one OCIRepository entry was read; a subject outside the OCIRepository document is unjudged"
-  repo="${url#oci://ghcr.io/devantler-tech/}"; repo="${repo%%/*}"
+  repo="${url#oci://ghcr.io/devantler-tech/}"
+  repo="${repo%%/*}"
   repo="$(oci_name_to_repo "$repo")"
   plausible_repo "$repo" || refuse "$rel: consumer name '$repo' derived from $url is implausible"
   [ -n "$(lookup "$approved" "$repo")" ] || refuse "$rel is a shared-workflow consumer ($repo) with no row in the approved set and no entry in GENERIC_SUBJECT_FILES"
@@ -369,7 +379,7 @@ while IFS= read -r file; do
   canonical_ref='-'
   case "$subject" in
     "$SUBJECT_PREFIX"*)
-      rest="${subject#"$SUBJECT_PREFIX"}"          # <workflow>\.yaml@<ref>$
+      rest="${subject#"$SUBJECT_PREFIX"}" # <workflow>\.yaml@<ref>$
       case "$rest" in
         *'$') rest="${rest%\$}" ;;
         *) refuse "$rel: subject is not anchored with a trailing \$: $subject" ;;
@@ -391,7 +401,7 @@ while IFS= read -r file; do
         "$LEGACY_FAMILY"*"$family_boundary"*) ;;
         *) refuse "$rel: two-family subject is not the legacy family followed by the canonical family: $subject" ;;
       esac
-      canonical_part="${inner#*"$family_boundary"}"   # <workflow>\.yaml@<commit>
+      canonical_part="${inner#*"$family_boundary"}" # <workflow>\.yaml@<commit>
       legacy_part="${inner%"$family_boundary$canonical_part"}"
       case "$canonical_part" in
         *"$CANONICAL_FAMILY"* | *"$LEGACY_FAMILY"*) refuse "$rel: two-family subject names a publisher family more than once: $subject" ;;
@@ -402,7 +412,7 @@ while IFS= read -r file; do
       esac
       canonical_ref="${canonical_part#*\\.yaml@}"
       canonical_ref_ok "$canonical_ref" || refuse "$rel: canonical family pins '@$canonical_ref', which is not one 40-hex commit, or two distinct ones written as (first|second)"
-      rest="${legacy_part#"$LEGACY_FAMILY"}"          # <workflow>\.yaml@<ref>
+      rest="${legacy_part#"$LEGACY_FAMILY"}" # <workflow>\.yaml@<ref>
       [ "publish-${canonical_part%%\\.yaml@*}" = "publish-${rest%%\\.yaml@*}" ] ||
         refuse "$rel: the two publisher families name different workflows: $subject"
       ;;

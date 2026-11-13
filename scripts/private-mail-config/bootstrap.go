@@ -25,36 +25,35 @@ type bootstrapRuntime struct {
 	applicationFile, applicationDigest string
 	serverArgs                         []string
 	startup, shutdown                  time.Duration
+	proxyClientIP                      *bool
 }
 
+// bootstrapCommand runs the bounded bootstrap lifecycle using private file inputs.
 func bootstrapCommand(args []string, log io.Writer) int {
 	f := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	dir := f.String("input-dir", "/etc/private-mail", "mounted private inputs")
+	var proxy proxyOption
+	f.Var(&proxy, "proxy-client-ip", "explicit deployment transport override")
 	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap refused invalid arguments.")
+		_, _ = fmt.Fprintln(log, "Email bootstrap refused invalid arguments.")
 		return 2
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	ctx, timeout := context.WithTimeout(ctx, 3*time.Minute)
 	defer timeout()
-	applicationDigest, err := pinnedApplicationDigest()
-	if err != nil {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap refused invalid administration asset metadata.")
-		return 2
-	}
 	runtime := bootstrapRuntime{
 		server: "/usr/local/bin/stalwart", cli: "/usr/local/bin/stalwart-cli", url: "http://127.0.0.1:" + bootstrapRecoveryPort,
 		dataDir: "/var/lib/stalwart", serverArgs: []string{"--config", "/etc/stalwart/config.json"},
 		startup: time.Minute, shutdown: 30 * time.Second,
-		applicationFile: applicationAssetPath(applicationDigest), applicationDigest: applicationDigest,
+		proxyClientIP: proxy.value,
 	}
 	if err := bootstrap(ctx, *dir, runtime); err != nil {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap failed; serving must remain stopped.", err)
+		_, _ = fmt.Fprintln(log, "Email bootstrap failed; serving must remain stopped.", err)
 		return 2
 	}
-	if _, err := fmt.Fprintln(log, "Private mail configuration verified; recovery process stopped."); err != nil {
+	if _, err := fmt.Fprintln(log, "Email configuration verified; recovery process stopped."); err != nil {
 		return 2
 	}
 	return 0
@@ -62,6 +61,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 
 type boundedOutput struct{ bytes.Buffer }
 
+// Write retains only the configured amount of bootstrap diagnostics.
 func (b *boundedOutput) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > 1048576 {
 		return 0, errConfiguration
@@ -76,9 +76,19 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 	if err != nil {
 		return errConfiguration
 	}
-	plan, err := render(v)
-	if err != nil {
+	if runtime.proxyClientIP != nil {
+		v.UseProxyClientIP = *runtime.proxyClientIP
+	}
+	profile, err := schemaFor(v.RuntimeVersion)
+	if err != nil || (profile.v1 && verifyRuntimeTools(ctx, runtime, profile.version) != nil) {
 		return errConfiguration
+	}
+	if runtime.applicationFile == "" {
+		runtime.applicationDigest, err = pinnedApplicationDigestFor(v.RuntimeVersion)
+		if err != nil {
+			return errConfiguration
+		}
+		runtime.applicationFile = applicationAssetPath(runtime.applicationDigest)
 	}
 	if verifyApplicationAsset(runtime.applicationFile, runtime.applicationDigest) != nil {
 		return errConfiguration
@@ -110,9 +120,6 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 		}
 	}()
 	planPath := filepath.Join(work, "plan.ndjson")
-	if os.WriteFile(planPath, plan, 0600) != nil {
-		return errConfiguration
-	}
 	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 2 * time.Second}).DialContext, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	m := management{client: &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, url: runtime.url, password: v.administratorPassword}
@@ -169,9 +176,21 @@ prepared:
 		return errConfiguration
 	default:
 	}
-	inventory, err := m.request(ctx, "/jmap", inventoryRequest)
-	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
+	request, err := inventoryRequestFor(v.RuntimeVersion)
+	if err != nil {
+		return errConfiguration
+	}
+	inventory, err := m.request(ctx, "/jmap", request)
+	if err != nil || validateInventoryFor(inventory, v.RuntimeVersion) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return fmt.Errorf("initial inventory: %w", errConfiguration)
+	}
+	v.accountIDs, err = managedAccountIDs(inventory, v)
+	if err != nil {
+		return fmt.Errorf("initial inventory: %w", errConfiguration)
+	}
+	plan, err := render(v)
+	if err != nil || os.WriteFile(planPath, plan, 0600) != nil {
+		return errConfiguration
 	}
 	applyCtx, applyCancel := context.WithTimeout(ctx, time.Minute)
 	defer applyCancel()
@@ -188,8 +207,8 @@ prepared:
 	}
 	// Recovery intentionally authenticates only the recovery administrator.
 	// Normal account authentication is proved after this process has stopped.
-	inventory, err = m.request(ctx, "/jmap", inventoryRequest)
-	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
+	inventory, err = m.request(ctx, "/jmap", request)
+	if err != nil || validateInventoryFor(inventory, v.RuntimeVersion) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return errConfiguration
 	}
 	// A successful configuration cannot mask an early child exit or a forced
@@ -202,6 +221,7 @@ prepared:
 	return nil
 }
 
+// stopOwned terminates the bootstrap child within the cleanup grace period.
 func stopOwned(child *exec.Cmd, done <-chan error, grace time.Duration) error {
 	select {
 	case <-done:

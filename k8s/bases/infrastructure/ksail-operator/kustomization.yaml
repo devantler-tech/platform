@@ -1,0 +1,8 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# The namespace, signed chart source, policy and route stay in the preceding
+# controllers layer. Apply the OIDC-dependent release alongside the Gateway so
+# startup discovery cannot prevent the Gateway recovery configuration applying.
+resources:
+  - helm-release.yaml

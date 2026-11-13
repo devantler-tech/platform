@@ -30,7 +30,9 @@ spec:
   # cluster-wide, `--reload-strategy=annotations`) watches the named Secret and
   # rolls the server's pods on change; the annotation goes on the pod template via
   # podAnnotations, matching the platform's existing convention (auth-proxy,
-  # oauth2-proxy, coredns).
+  # oauth2-proxy, coredns). It also watches coroot-mcp-agent: the operator passes
+  # the agents' MCP service-account key to Coroot through an env var too, so a
+  # rotated key takes effect only after a restart.
   #
   # The DNS-policy rollout token is deliberately repeated on every Coroot-owned
   # pod template below. set-observability-dns-ndots is admission-only, so this
@@ -39,7 +41,7 @@ spec:
   # before this rollout. Change the token only after a new admission-time DNS
   # policy is Ready; combining both changes can recreate pods under the old rule.
   podAnnotations:
-    secret.reloader.stakater.com/reload: coroot-db-app
+    secret.reloader.stakater.com/reload: coroot-db-app,coroot-mcp-agent
     platform.devantler.tech/dns-policy-rollout: 2026-09-30-ndots-3
 
   # COMPONENT IMAGE PINS. The operator does NOT bake a fixed tag into its
@@ -57,21 +59,41 @@ spec:
   # container tags as BARE semver (`1.22.2`), NOT the `v`-prefixed GitHub
   # *release* tag (`v1.22.2`); a `v`-prefixed ref 404s on ghcr → ErrImagePull →
   # the operator's StatefulSet/DaemonSet rollout wedges and stalls the
-  # infrastructure Kustomization health check. Always pin the bare tag. The
+  # infrastructure Kustomization health check. Use bare tags for upstream
+  # releases; platform compatibility builds use their publisher's exact tag
+  # and immutable digest. The
   # three pins below are kept
   # Renovate-trackable by a dedicated regex customManager in
   # `.github/renovate.json` (the built-in kubernetes manager only reads a bare
   # `image:` string, not this `image.name` mapping). There is no spec.version
   # field; the operator HelmRelease itself also stays Flux/Renovate-pinned.
   communityEdition:
+    # Recognize actual checkpoint-record progress on idle archived databases;
+    # retain the existing warning when that evidence is missing or invalid.
     image:
-      name: ghcr.io/coroot/coroot:1.28.1
+      name: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.3-5ee96b6ee0e5cb7f1730218ae7c3ee2bcfbfb740@sha256:0f9ee31ae80446fad1f8c7f051645c3399c61aedba86ba570c6990a375ce4fe7
 
   # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
   # existing oauth2-proxy (Dex) via http-route.yaml — exactly how Prometheus /
   # Alertmanager were exposed. Every request that clears the proxy is treated
   # as Admin, mirroring the old single-operator "everyone -> Grafana Admin".
   authAnonymousRole: Admin
+
+  # A Viewer service account for the agents' MCP access. Coroot's /mcp endpoint
+  # never uses the anonymous role above: every request needs a bearer token (an
+  # OAuth token or a service-account API key), and every tool call is checked
+  # against that identity's role. A Viewer can read topology, alerts, incidents,
+  # traces, metrics and logs but cannot resolve alerts. The operator generates
+  # the key into the coroot-mcp-agent Secret when it is missing; nothing about
+  # the key is committed. http-route.yaml routes /mcp past oauth2-proxy for it.
+  serviceAccounts:
+    - name: agentic-engineer
+      role: Viewer
+      apiKeys:
+        - description: Agentic Engineer MCP access (agent-plugins coroot server)
+          keySecret:
+            name: coroot-mcp-agent
+            key: api-key
 
   # Metric resolution. The operator default is 15s; 30s halves the bundled
   # Prometheus ingest, the node-agent scrape volume, and Coroot's continuous
@@ -194,15 +216,16 @@ spec:
       # report the expected refusal as an application error.
       - name: PROVIDER
         value: Hetzner
-    # Exact signed compatibility build from upstream 1.35.8. It retains the
+    # Exact signed compatibility build from upstream 1.38.1. It retains the
     # upstream behavior while classifying unavailable Talos journald, expected
     # non-AWS metadata, unsupported stripped-binary TLS uprobes, and collector
     # reconnects as optional lifecycle warnings. Its original 128-page-per-CPU
     # L7 ring reduced the upstream overflow rate but still dropped 164 samples
     # during a production burst. This main-only-published and signed successor
-    # carries the reviewed 512-page-per-CPU patch (2 MiB per CPU).
+    # carries the reviewed 512-page-per-CPU patch (2 MiB per CPU) and retries a
+    # network metric dump the kernel interrupted, so no interface goes missing.
     image:
-      name: ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-d72441cff6e32c8cabdf631a882a28af1e503e84@sha256:e71f4d608092ccd150ad33d5443e16d9fdccca659ebc1fd5b336c49d27fa5d63
+      name: ghcr.io/devantler-tech/platform-coroot-node-agent:v1.38.1-alerts.1-adb150c0a8c590b13d548a272d09535809f52702@sha256:df15440e7005c4b5e3b3354a9c55ff54e6926177f69654d647181c4b3137d589
     priorityClassName: platform-critical
     # Authored memory sizing — REQUIRED. DaemonSet VPAs are CPU-only (see
     # cluster-policies/best-practices/auto-vpa-daemonset.yaml: VPA sized every node's
@@ -244,4 +267,4 @@ spec:
       # operator-managed components; the database has a separate DNS policy.
       platform.devantler.tech/dns-policy-rollout: 2026-09-30-ndots-3
     image:
-      name: ghcr.io/coroot/coroot-cluster-agent:1.11.7
+      name: ghcr.io/devantler-tech/platform-coroot-cluster-agent:v1.11.7-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:46b6abe52dbf5445277ef3e3bbcb469a89a88e2c610411c5d9a4270a8a8a88c3

@@ -535,6 +535,22 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 	}
 }
 
+// mutateMergeQueueDeploy keeps negative controls on the production job even
+// when another job has the same condition or dependency.
+func mutateMergeQueueDeploy(workflow, old, replacement string) string {
+	const deployHeader = "\n  deploy-prod:\n"
+	const nextJob = "\n  merge-group-queue-membership:\n"
+	before, fromDeploy, found := strings.Cut(workflow, deployHeader)
+	if !found {
+		return workflow
+	}
+	deploy, after, found := strings.Cut(fromDeploy, nextJob)
+	if !found {
+		return workflow
+	}
+	return before + deployHeader + strings.Replace(deploy, old, replacement, 1) + nextJob + after
+}
+
 func TestMergeQueueProductionRoutesUseTheCheckedAction(t *testing.T) {
 	t.Parallel()
 
@@ -579,11 +595,10 @@ func TestMergeQueueProductionRoutesUseTheCheckedAction(t *testing.T) {
 		// signing validator runs inside `changes`, so the publishing job runs
 		// behind a gate that already failed while this check reports success.
 		"merge-queue deploy overrides a failed dependency with always()": func(s string) string {
-			return strings.Replace(
+			return mutateMergeQueueDeploy(
 				s,
 				"    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'",
 				"    if: always() && github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'",
-				1,
 			)
 		},
 		// #2942 on the route production normally takes. Requiring the job to
@@ -1596,42 +1611,13 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		validatorLine = "          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml\n"
 		testLine      = "          go test ./scripts/validate-dr-signing\n"
 		gateJobHeader = "  validate-publication-contract:\n"
-		deployNeeds   = `    needs:
+		healNeeds     = `    needs:
       [
         changes,
-        validate-repository-guards,
-        validate-publication-generator,
-        validate-go-regressions,
-        validate-webapp-compiler,
-        validate-consumer-discovery,
-        validate-floating-image-tags,
-        validate-helm-post-renderers,
-        validate-eks-authorization,
+        deploy-prod,
         validate-publication-contract,
-        validate-matcher-efficacy,
-        validate-talos,
-        validate-root-verify-merge-group,
-        validate-rgd-templates-merge-group,
-        validate-ghcr-fanout-merge-group,
+        merge-group-queue-membership,
       ]`
-		deployNeedsWithoutGate = `    needs:
-      [
-        changes,
-        validate-repository-guards,
-        validate-publication-generator,
-        validate-go-regressions,
-        validate-webapp-compiler,
-        validate-consumer-discovery,
-        validate-floating-image-tags,
-        validate-helm-post-renderers,
-        validate-eks-authorization,
-        validate-matcher-efficacy,
-        validate-talos,
-        validate-root-verify-merge-group,
-        validate-rgd-templates-merge-group,
-        validate-ghcr-fanout-merge-group,
-      ]`
-		healNeeds = "    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]"
 	)
 
 	for name, arm := range map[string]struct {
@@ -1703,7 +1689,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		// are not redundant.
 		"deploy-prod no longer requires the gate job": {
 			func(s string) string {
-				return strings.Replace(s, deployNeeds, deployNeedsWithoutGate, 1)
+				return mutateMergeQueueDeploy(s, "        validate-publication-contract,\n", "")
 			},
 			"does not require validate-publication-contract",
 		},

@@ -7,7 +7,7 @@
 # These verbs also let a tenant change any namespaced CiliumNetworkPolicy, and
 # Cilium combines matching allow rules, so RBAC alone does not make the
 # namespace boundary hold. Admission does: the
-# `restrict-tenant-network-policies` ClusterPolicy requires every tenant ingress
+# `restrict-tenant-network-policies` ValidatingPolicy requires every tenant ingress
 # source and egress destination to carry a real constraint, refuses the broad
 # `all`/`world`/`cluster` entities and the world-equivalent CIDRs, and reserves
 # the generated `default-deny` and `allow-dns` names — so these verbs stay

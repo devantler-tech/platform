@@ -12,6 +12,13 @@ readonly DR_WORKFLOW="${RGD_WIRING_DR_WORKFLOW:-${REPO_ROOT}/.github/workflows/d
 readonly SETUP_TRIVY="aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567"
 readonly BEHAVIORAL_RUN=$'shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh\nbash scripts/tests/test-rgd-template-static-scan.sh\n'
 readonly WIRING_RUN=$'shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh\nbash scripts/tests/test-rgd-template-static-scan-wiring.sh\n'
+YAML_PARSER_INSTALL="$(
+  cat <<'EOF'
+go install github.com/mikefarah/yq/v4@v4.54.1
+printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+EOF
+)"
+readonly YAML_PARSER_INSTALL
 
 fail() {
   echo "FAIL: $*" >&2
@@ -62,6 +69,35 @@ check_scanner_go "$ci_workflow_json" heal-prod-on-failure go.mod heal
 check_scanner_go "$main_workflow_json" validate-rgd-templates go.mod main
 check_scanner_go "$cd_workflow_json" validate-rgd-templates go.mod CD
 check_scanner_go "$dr_workflow_json" rebuild go.mod DR
+
+# An ambient runner parser may assign different coordinates to identical YAML. Every route must
+# install and select the reviewed parser in this job, after Go setup and before the actual scan.
+check_scanner_parser() {
+  local workflow="$1" job="$2" label="$3"
+  jq -e --arg job "$job" --arg behavior_run "$BEHAVIORAL_RUN" \
+    --arg install "$YAML_PARSER_INSTALL" '
+    .jobs[$job].steps as $steps
+    | [$steps | to_entries[] | select(.value.run == $behavior_run) | .key] as $scans
+    | [$steps | to_entries[] | select(
+        ((.value.run // "") | startswith($install))
+        and ((.value.env.GOBIN // "") | test("^\\$\\{\\{ runner.temp \\}\\}/[a-z-]+$"))
+        and (.value | has("if") | not)
+        and (.value["continue-on-error"] // false) == false
+      ) | .key] as $parsers
+    | [$steps | to_entries[] | select(
+        (.value.uses // "") | startswith("actions/setup-go@")
+      ) | .key] as $compilers
+    | ($scans | length) == 1 and ($parsers | length) == 1
+      and ($compilers | length) == 1
+      and $compilers[0] < $parsers[0] and $parsers[0] < $scans[0]
+  ' <<<"$workflow" >/dev/null || fail "$label scanner lacks the reviewed YAML parser before execution"
+}
+check_scanner_parser "$ci_workflow_json" validate-rgd-templates PR
+check_scanner_parser "$ci_workflow_json" validate-rgd-templates-merge-group merge-group
+check_scanner_parser "$ci_workflow_json" heal-prod-on-failure heal
+check_scanner_parser "$main_workflow_json" validate-rgd-templates main
+check_scanner_parser "$cd_workflow_json" validate-rgd-templates CD
+check_scanner_parser "$dr_workflow_json" rebuild DR
 
 jq -e --arg wiring_run "$WIRING_RUN" '
   .jobs["validate-repository-guards"] as $wiring_job
@@ -242,10 +278,22 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
     'dr|rebuild|DR'; do
     IFS='|' read -r workflow_kind go_job go_label <<<"$route"
     case "$workflow_kind" in
-      ci) go_workflow="$CI_WORKFLOW"; go_override=RGD_WIRING_CI_WORKFLOW ;;
-      main) go_workflow="$MAIN_WORKFLOW"; go_override=RGD_WIRING_MAIN_WORKFLOW ;;
-      cd) go_workflow="$CD_WORKFLOW"; go_override=RGD_WIRING_CD_WORKFLOW ;;
-      dr) go_workflow="$DR_WORKFLOW"; go_override=RGD_WIRING_DR_WORKFLOW ;;
+      ci)
+        go_workflow="$CI_WORKFLOW"
+        go_override=RGD_WIRING_CI_WORKFLOW
+        ;;
+      main)
+        go_workflow="$MAIN_WORKFLOW"
+        go_override=RGD_WIRING_MAIN_WORKFLOW
+        ;;
+      cd)
+        go_workflow="$CD_WORKFLOW"
+        go_override=RGD_WIRING_CD_WORKFLOW
+        ;;
+      dr)
+        go_workflow="$DR_WORKFLOW"
+        go_override=RGD_WIRING_DR_WORKFLOW
+        ;;
     esac
     go_ablation_index=0
     for mutation in \
@@ -280,6 +328,26 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
     fi
     grep -Fq "$go_label scanner lacks unconditional checkout-bound Go setup" \
       "${ablation_work}/go-override.log" || fail "$go_label override failed for an unrelated reason"
+
+    parser_ablation_index=0
+    for mutation in \
+      'del(.jobs[strenv(GO_JOB)].steps[] | select((.run // "") | contains("go install github.com/mikefarah/yq/v4@")))' \
+      '.jobs[strenv(GO_JOB)].steps |= (map(select(((.run // "") | contains("go install github.com/mikefarah/yq/v4@")) | not)) + map(select((.run // "") | contains("go install github.com/mikefarah/yq/v4@"))))' \
+      '(.jobs[strenv(GO_JOB)].steps[] | select((.run // "") | contains("go install github.com/mikefarah/yq/v4@"))).if = false' \
+      '(.jobs[strenv(GO_JOB)].steps[] | select((.run // "") | contains("go install github.com/mikefarah/yq/v4@"))).continue-on-error = true' \
+      '(.jobs[strenv(GO_JOB)].steps[] | select((.run // "") | contains("go install github.com/mikefarah/yq/v4@"))).run |= sub("v4.54.1"; "v4.54.3")' \
+      '(.jobs[strenv(GO_JOB)].steps[] | select((.run // "") | contains("go install github.com/mikefarah/yq/v4@"))).run |= sub("GITHUB_PATH"; "IGNORED_PATH")'; do
+      parser_ablation_index=$((parser_ablation_index + 1))
+      parser_fixture="${ablation_work}/parser-${workflow_kind}-${go_job}-${parser_ablation_index}.yaml"
+      cp "$go_workflow" "$parser_fixture"
+      GO_JOB="$go_job" yq -i "$mutation" "$parser_fixture"
+      if env "$go_override=$parser_fixture" RGD_WIRING_SKIP_ABLATIONS=true \
+        "$0" >"${ablation_work}/parser-refused.log" 2>&1; then
+        fail "the wiring validator accepted $go_label parser mutation $parser_ablation_index"
+      fi
+      grep -Fq "$go_label scanner lacks the reviewed YAML parser" \
+        "${ablation_work}/parser-refused.log" || fail "$go_label parser mutation failed for an unrelated reason"
+    done
   done
 
   # Prove the independent PR route and required aggregate cannot lose the scan.

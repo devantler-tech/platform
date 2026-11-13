@@ -47,7 +47,8 @@ func object(t *testing.T, objects []map[string]any, kind, name string) map[strin
 	return nil
 }
 
-func TestPreparationPreservesExistingStorageAndConsumers(t *testing.T) {
+// TestCutoverPreservesOldStorageAndUsesRetainedReplacement fences the storage handoff.
+func TestCutoverPreservesOldStorageAndUsesRetainedReplacement(t *testing.T) {
 	production := render(t, "k8s/providers/hetzner/infrastructure")
 	for _, name := range []string{"vault-snapshots", "vault-snapshots-recovery"} {
 		claim := object(t, production, "PersistentVolumeClaim", name)
@@ -66,6 +67,15 @@ func TestPreparationPreservesExistingStorageAndConsumers(t *testing.T) {
 		if _, assigned := spec["volumeName"]; assigned {
 			t.Fatal("recovery must not rebind the missing provider volume")
 		}
+		if name == "vault-snapshots-recovery" {
+			labels, _ := metadata["labels"].(map[string]any)
+			if labels["backup.platform.devantler.tech/volume-data"] != "independently-mirrored" {
+				t.Fatal("active snapshot storage must use the existing independently mirrored backup route")
+			}
+			if _, marked := labels["platform.devantler.tech/storage-stage"]; marked {
+				t.Fatal("active recovery storage must leave the prepared-only health exemption")
+			}
+		}
 	}
 	for _, workload := range []struct{ kind, name string }{{"Job", "vault-snapshot-init"}, {"CronJob", "vault-snapshot"}} {
 		spec := object(t, production, workload.kind, workload.name)["spec"].(map[string]any)
@@ -79,17 +89,31 @@ func TestPreparationPreservesExistingStorageAndConsumers(t *testing.T) {
 			if !ok {
 				continue
 			}
-			if claim["claimName"] == "vault-snapshots-recovery" {
-				t.Fatalf("%s must not activate speculative recovery storage", workload.name)
+			if claim["claimName"] == "vault-snapshots" {
+				t.Fatalf("%s must stop mounting the missing provider volume", workload.name)
 			}
-			found = found || claim["claimName"] == "vault-snapshots"
+			found = found || claim["claimName"] == "vault-snapshots-recovery"
 		}
 		if !found {
-			t.Fatalf("%s lost its existing snapshot mount", workload.name)
+			t.Fatalf("%s must mount the main-owned retained replacement", workload.name)
+		}
+		strictMirror := false
+		for _, container := range pod["containers"].([]any) {
+			c := container.(map[string]any)
+			if c["name"] != "mirror" {
+				continue
+			}
+			for _, entry := range c["env"].([]any) {
+				e := entry.(map[string]any)
+				strictMirror = strictMirror || e["name"] == "REQUIRE_REMOTE_SNAPSHOT" && e["value"] == "true"
+			}
+		}
+		if !strictMirror {
+			t.Fatal("production snapshots must not succeed without their off-cluster mirror")
 		}
 	}
 	// Bootstrap reads the offsite mirror into scratch space. Keep it independent
-	// of both the failed RWO claim and its deliberately inactive replacement.
+	// of both the failed RWO claim and its retained replacement.
 	bootstrap := object(t, production, "Job", "vault-config")["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
 	foundScratch := false
 	for _, volume := range bootstrap["volumes"].([]any) {
@@ -111,10 +135,11 @@ func TestPreparationPreservesExistingStorageAndConsumers(t *testing.T) {
 	}
 }
 
-func TestOnlyUnconsumedPreparedRecoveryStorageCanBePending(t *testing.T) {
+// TestActiveSnapshotStorageRequiresBinding evaluates the deployed CEL predicates.
+func TestActiveSnapshotStorageRequiresBinding(t *testing.T) {
 	infrastructure := object(t, render(t, "k8s/clusters/prod"), "Kustomization", "infrastructure")["spec"].(map[string]any)
 	if infrastructure["wait"] != true || infrastructure["force"] != false {
-		t.Fatal("recovery preparation must retain health waiting and immutable-conflict protection")
+		t.Fatal("recovery must retain health waiting and immutable-conflict protection")
 	}
 	var current, failed string
 	for _, item := range infrastructure["healthCheckExprs"].([]any) {
@@ -125,7 +150,7 @@ func TestOnlyUnconsumedPreparedRecoveryStorageCanBePending(t *testing.T) {
 		}
 	}
 	if current == "" || failed == "" {
-		t.Fatal("prepared WFFC recovery storage needs an explicit health predicate")
+		t.Fatal("active snapshot storage needs its binding health predicate")
 	}
 	env, err := cel.NewEnv(cel.Variable("metadata", cel.DynType), cel.Variable("spec", cel.DynType), cel.Variable("status", cel.DynType))
 	if err != nil {
@@ -149,7 +174,9 @@ func TestOnlyUnconsumedPreparedRecoveryStorageCanBePending(t *testing.T) {
 		want        bool
 		wantFailed  bool
 	}{
-		{name: "unconsumed prepared claim", phase: "Pending", want: true},
+		{name: "old prepared marker cannot bypass binding", phase: "Pending", mutate: func(m, _ map[string]any) {
+			m["labels"] = map[string]any{"platform.devantler.tech/storage-stage": "prepared"}
+		}},
 		{name: "bound claim", phase: "Bound", want: true},
 		{name: "lost claim", phase: "Lost", wantFailed: true},
 		{name: "unobserved status"},

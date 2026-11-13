@@ -21,6 +21,7 @@ metadata:
       publish-app for app images, the platform's dedicated compatibility-image
       publishers, each Crossplane provider's own package workflow, KSail's
       publish-ksail-analysis-runner.yaml workflow, the mail bootstrap publisher,
+      the dedicated customer identity, Dex and Longhorn migration publishers,
       and KSail's release workflow.
       Each class is verified only against its own identity;
       third-party images admit unverified.
@@ -61,7 +62,7 @@ spec:
         keyless:
           # The legacy publisher retains its full-commit compatibility rule
           # (#3746). The maintained publisher accepts only the explicitly
-          # reviewed revisions during the v8 transition (#5213), not every
+          # reviewed revisions (v8.0.0 #5213, v19.0.5 #5404), not every
           # commit in its repository. Mutable refs and tags satisfy neither
           # location. Keep this to exactly ONE identity
           # entry: the IVPOL engine verifies cosign v3 bundles through
@@ -74,7 +75,7 @@ spec:
           # form as an alternation inside this one regex.
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0))$
+              subjectRegExp: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(467f07582436a26b62cf4aa756423512f85ba0c0|af042c540ce8db4d64add98c34b5c57691e0e812))$
     # The Kubescape storage compatibility image is produced inside this
     # repository rather than through actions/publish-app.yaml: its publisher
     # checks out one immutable upstream storage commit, applies the reviewed
@@ -104,13 +105,54 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-node-agent-hotfix\.yaml@refs/heads/main$
+    # Only the two checkpoint compatibility repositories use this publisher.
+    - name: publishcorootcheckpoint
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-checkpoint-hotfix\.yaml@refs/heads/main$
+    - name: publishlonghornretirement
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v1-retirement\.yaml@refs/heads/main$
+    - name: publishlonghornv2
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
+    # The reports-controller repair is signed only by its dedicated publisher.
+    - name: publishkyvernoreports
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-reports-hotfix\.yaml@refs/heads/main$
+    # The patched migration runtime is signed only by its dedicated publisher.
+    - name: publishkyvernomigrate
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-migration-runtime\.yaml@refs/heads/main$
+    # The patched background controller is signed only by its dedicated publisher.
+    - name: publishkyvernobackground
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-background-hotfix\.yaml@refs/heads/main$
     - name: publishksailanalysis
       cosign:
         keyless:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/ksail/\.github/workflows/publish-ksail-analysis-runner\.yaml@refs/heads/main$
-    # Only the mail bootstrap repository accepts its dedicated main publisher.
+    # Only the serving and staged mail bootstrap repositories accept their
+    # dedicated main publisher.
     - name: publishprivatemail
       cosign:
         keyless:
@@ -125,6 +167,22 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/server-cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
+    # The retained original identity image has a business-site-owned main-only
+    # publisher. Its signature cannot satisfy any other image class.
+    - name: publishcustomeridentity
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/business-site/\.github/workflows/publish-identity\.yaml@refs/heads/main$
+    # The source-built Dex distribution has its own main-only publisher. Its
+    # signature cannot satisfy any other image class (platform#5811).
+    - name: publishdexsecurity
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$
     # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
     # reusable publish workflow they use cannot sign, so each provider repo
     # attaches the keyless signature in its own publish-provider-package.yml
@@ -176,7 +234,7 @@ spec:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
   validations:
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/') &&
           !image.startsWith('ghcr.io/devantler-tech/ksail') &&
@@ -184,6 +242,18 @@ spec:
           image != 'ghcr.io/devantler-tech/world-at-ruin/zone' &&
           !image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:') &&
           !image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@') &&
+          image != 'ghcr.io/devantler-tech/business-site-identity' &&
+          !image.startsWith('ghcr.io/devantler-tech/business-site-identity:') &&
+          !image.startsWith('ghcr.io/devantler-tech/business-site-identity@') &&
+          image != 'ghcr.io/devantler-tech/platform-dex' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-dex:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-dex@') &&
+          image != 'ghcr.io/devantler-tech/platform-longhorn-instance-manager' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager@') &&
+          image != 'ghcr.io/devantler-tech/platform-longhorn-manager' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager@') &&
           image != 'ghcr.io/devantler-tech/platform-kubescape-storage' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@') &&
@@ -193,9 +263,27 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-coroot-node-agent' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@') &&
+          image != 'ghcr.io/devantler-tech/platform-coroot' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-coroot:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-coroot@') &&
+          image != 'ghcr.io/devantler-tech/platform-coroot-cluster-agent' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-coroot-cluster-agent:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-coroot-cluster-agent@') &&
+          image != 'ghcr.io/devantler-tech/platform-kyverno-reports' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports@') &&
+          image != 'ghcr.io/devantler-tech/platform-kyverno-migrate' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate@') &&
+          image != 'ghcr.io/devantler-tech/platform-kyverno-background' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background@') &&
           image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@') &&
+          image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate@') &&
           image != 'ghcr.io/devantler-tech/ksail-analysis-runner' &&
           !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:') &&
           !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@'))
@@ -205,18 +293,43 @@ spec:
         first-party app image is not signed by the publish-app release
         pipeline (keyless cosign, legacy full-commit identity or the explicitly
         approved maintained revision — a release tag is not accepted)
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-private-mail-bootstrap' ||
           image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:') ||
-          image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@'))
+          image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@') ||
+          image == 'ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate@'))
         .map(image, verifyImageSignatures(image, [attestors.publishprivatemail]))
         .all(e, e > 0)
       message: >-
         mail bootstrap image is not signed by its main-only publisher;
         other first-party images retain their existing signer.
-    - expression: >-
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/business-site-identity' ||
+          image.startsWith('ghcr.io/devantler-tech/business-site-identity:') ||
+          image.startsWith('ghcr.io/devantler-tech/business-site-identity@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishcustomeridentity]))
+        .all(e, e > 0)
+      message: >-
+        customer identity image is not signed by its main-only original
+        publisher; other first-party images retain their existing signer.
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-dex' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-dex:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-dex@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishdexsecurity]))
+        .all(e, e > 0)
+      message: >-
+        Dex image is not signed by the platform repository's dedicated
+        main-branch publisher (keyless cosign)
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/world-at-ruin/zone' ||
@@ -227,7 +340,7 @@ spec:
       message: >-
         World at Ruin zone image is not signed by its server-cd stable release
         workflow; other first-party images retain their existing signer.
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-kubescape-storage' ||
@@ -238,7 +351,7 @@ spec:
       message: >-
         Kubescape storage compatibility image is not signed by the platform
         repository's dedicated main-branch publisher (keyless cosign)
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-kubescape-node-agent' ||
@@ -249,7 +362,7 @@ spec:
       message: >-
         Kubescape node-agent compatibility image is not signed by the platform
         repository's dedicated main-branch publisher (keyless cosign)
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-coroot-node-agent' ||
@@ -260,7 +373,29 @@ spec:
       message: >-
         Coroot node-agent compatibility image is not signed by the platform
         repository's dedicated main-branch publisher (keyless cosign)
-    - expression: >-
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-longhorn-instance-manager' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishlonghornretirement]))
+        .all(e, e > 0)
+      message: >-
+        The Longhorn V1 retirement image must be signed by its dedicated
+        main-branch publisher.
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-longhorn-manager' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishlonghornv2]))
+        .all(e, e > 0)
+      message: >-
+        The Longhorn V2-only manager image must be signed by its dedicated
+        main-branch publisher.
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/ksail-analysis-runner' ||
@@ -271,7 +406,54 @@ spec:
       message: >-
         KSail analysis runner image is not signed by the KSail repository's
         dedicated main-branch publisher (keyless cosign)
-    - expression: >-
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-coroot' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-coroot:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-coroot@') ||
+          image == 'ghcr.io/devantler-tech/platform-coroot-cluster-agent' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-coroot-cluster-agent:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-coroot-cluster-agent@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishcorootcheckpoint]))
+        .all(e, e > 0)
+      message: >-
+        Coroot checkpoint compatibility image is not signed by its main-only
+        publisher; other first-party images retain their existing signer.
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-kyverno-reports' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishkyvernoreports]))
+        .all(e, e > 0)
+      message: >-
+        Kyverno reports compatibility image is not signed by the platform
+        repository's dedicated main-branch publisher (keyless cosign)
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-kyverno-migrate' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishkyvernomigrate]))
+        .all(e, e > 0)
+      message: >-
+        Kyverno migration runtime image is not signed by the platform
+        repository's dedicated main-branch publisher (keyless cosign)
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-kyverno-background' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishkyvernobackground]))
+        .all(e, e > 0)
+      message: >-
+        Kyverno background controller image is not signed by the platform
+        repository's dedicated main-branch publisher (keyless cosign)
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/provider-upjet-'))
         .map(image, verifyImageSignatures(image, [attestors.publishprovider]))
@@ -279,7 +461,7 @@ spec:
       message: >-
         provider-upjet package image is not signed by its repo's
         publish-provider-package workflow from a release tag (keyless cosign)
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image.startsWith('ghcr.io/devantler-tech/ksail') &&

@@ -53,13 +53,15 @@ assert "${infrastructure}" \
 
 # Component images stay pinned. The operator lists the registry only when an
 # image is unset, so pins remain the primary path and GHCR egress the fallback.
-# The node-agent may use either Coroot's upstream image or the platform's
-# signed compatibility build; both repositories are explicit allow-list entries.
+# The node-agent also accepts its platform compatibility repository. The server
+# and collector additionally accept only these exact reviewed checkpoint builds.
 assert "${infrastructure}" \
   "${coroot} | .[0].spec |
-    (.communityEdition.image.name | test(\"^ghcr[.]io/coroot/coroot:[0-9]\")) and
+    ((.communityEdition.image.name | test(\"^ghcr[.]io/coroot/coroot:[0-9]\")) or
+      .communityEdition.image.name == \"ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.3-5ee96b6ee0e5cb7f1730218ae7c3ee2bcfbfb740@sha256:0f9ee31ae80446fad1f8c7f051645c3399c61aedba86ba570c6990a375ce4fe7\") and
     (.nodeAgent.image.name | test(\"^ghcr[.]io/(coroot/coroot-node-agent:[0-9]|devantler-tech/platform-coroot-node-agent:v[0-9])\")) and
-    (.clusterAgent.image.name | test(\"^ghcr[.]io/coroot/coroot-cluster-agent:[0-9]\"))" \
+    ((.clusterAgent.image.name | test(\"^ghcr[.]io/coroot/coroot-cluster-agent:[0-9]\")) or
+      .clusterAgent.image.name == \"ghcr.io/devantler-tech/platform-coroot-cluster-agent:v1.11.7-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:46b6abe52dbf5445277ef3e3bbcb469a89a88e2c610411c5d9a4270a8a8a88c3\")" \
   'the Coroot component images must remain pinned to explicit GHCR tags'
 
 policy='map(select(.kind == "CiliumNetworkPolicy" and .metadata.namespace == "observability" and .metadata.name == "allow-coroot"))'
@@ -77,4 +79,32 @@ assert "${controllers}" \
   "${policy} | [.[0].spec.egress[] | ((.toFQDNs[]? | select(has(\"matchPattern\"))), (.toEntities[]? | select(. == \"world\" or . == \"all\")))] | length == 0" \
   'allow-coroot must not allow wildcard FQDNs or the world/all entities'
 
-printf 'PASS: Coroot agents, project and audit forwarder share one API key; GHCR egress is exact\n'
+# Agents' MCP access. The UI runs with the anonymous Admin role behind SSO, so the
+# only path that may reach Coroot without oauth2-proxy is exactly /mcp, which
+# authenticates every request itself. Its backend pins sessions to one pod, and
+# every service account that can hold an MCP key is a Viewer.
+# shellcheck disable=SC2016 # $ns is a jq variable, not a shell expansion
+coroot_backed='[.[] | select(.kind == "HTTPRoute") | .metadata.namespace as $ns | .spec.rules[]? |
+  select(any(.backendRefs[]?; (.namespace // $ns) == "observability" and
+    (.name == "coroot-coroot" or .name == "coroot-mcp")))]'
+
+assert "${controllers}" \
+  "${coroot_backed} | length == 1 and
+    .[0].matches == [{\"path\": {\"type\": \"Exact\", \"value\": \"/mcp\"}}] and
+    .[0].backendRefs == [{\"name\": \"coroot-mcp\", \"port\": 8080}]" \
+  'the only route rule that reaches Coroot directly must be Exact /mcp, backed by coroot-mcp'
+
+assert "${controllers}" \
+  '[.[] | select(.kind == "Service" and .metadata.namespace == "observability" and .metadata.name == "coroot-mcp") | .spec.selector] ==
+    [{"app.kubernetes.io/part-of": "coroot", "app.kubernetes.io/component": "coroot", "statefulset.kubernetes.io/pod-name": "coroot-coroot-0"}]' \
+  'coroot-mcp must send MCP sessions to the single pod coroot-coroot-0'
+
+assert "${infrastructure}" \
+  "${coroot} | [.[0].spec.serviceAccounts[]?] | length >= 1 and all(.role == \"Viewer\")" \
+  'every Coroot service account must have the Viewer role'
+
+assert "${infrastructure}" \
+  "${coroot} | [.[0].spec.serviceAccounts[]?.apiKeys[]?.keySecret | select(. == {\"name\": \"coroot-mcp-agent\", \"key\": \"api-key\"})] | length == 1" \
+  'exactly one service-account API key must be generated into coroot-mcp-agent/api-key'
+
+printf 'PASS: Coroot agents, project and audit forwarder share one API key; GHCR egress is exact; only /mcp bypasses SSO, as a Viewer, on one pod\n'

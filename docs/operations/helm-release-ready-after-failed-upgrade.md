@@ -24,7 +24,7 @@ version production runs, with Flux 2.9) and on its `main` branch on 2026-10-07:
 ## What tells you
 
 | Signal | Lasts | Where |
-|---|---|---|
+| --- | --- | --- |
 | The Flux reconciliation alert | One message, at the moment of the failure | Slack, from [`alert.yaml`](../../k8s/providers/hetzner/infrastructure/flux-notifications/alert.yaml); it carried the full error text on 2026-09-04 |
 | A Warning `UpgradeFailed` event on the release | As long as the API server keeps events, about an hour | `kubectl get events --namespace <the release's namespace>`; events are namespaced, so the bare command reads the wrong place |
 | The release's own failure count | Until its chart version, values or generation next change | `status.failures` (`status.upgradeFailures` stays at zero, because the failed attempt stored no release) |

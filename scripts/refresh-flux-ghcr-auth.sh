@@ -205,18 +205,20 @@ readonly -a REQUIRED_PULL_TARGETS=(
   "devantler-tech/wedding-app/manifests:latest"
   "devantler-tech/ascoachingogvaner/manifests:latest"
   "devantler-tech/world-at-ruin/zone-manifests:0.114.0"
-  "devantler-tech/data-product-controller:latest"
+  "devantler-tech/khoist:latest"
   "devantler-tech/wedding-app:latest"
   "devantler-tech/ascoachingogvaner:latest"
   "devantler-tech/world-at-ruin/zone:v0.114.0"
   "devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
   "${PROVIDER_UPJET_UNIFI_PULL_TARGET}"
 )
-# These packages are intentionally private and have independent ACLs. A public
-# image (including KSail itself) can prove registry reachability but cannot
-# prove that containerd loaded a working credential.
+# These packages are private and have independent ACLs. A public image
+# (including KSail itself) can prove registry reachability but cannot prove
+# that containerd loaded a working credential, so only a package that refuses
+# an anonymous pull belongs here. The data product workloads now pull the public
+# KHoist package (#5688), so their package cannot prove the credential and is
+# not listed; the two private application packages still do.
 readonly -a RUNTIME_CREDENTIAL_PROBE_REPOSITORIES=(
-  "devantler-tech/data-product-controller"
   "devantler-tech/wedding-app"
   "devantler-tech/ascoachingogvaner"
 )
@@ -338,6 +340,7 @@ current_root_bearer_curl_config="${work_dir}/current-root-curl-bearer.config"
 patch_file="${work_dir}/patch.json"
 variables_patch_file="${work_dir}/variables-patch.json"
 expected_normalized="${work_dir}/expected-normalized.json"
+expected_ksail_root_normalized="${work_dir}/expected-ksail-root-normalized.json"
 fanout_api_resources="${work_dir}/fanout-api-resources.txt"
 talos_auth_patch_file="${work_dir}/talos-registry-auth.json"
 talos_revision_patch_file="${work_dir}/talos-registry-revision.json"
@@ -1365,6 +1368,8 @@ if [[ "${report_fences}" == "true" || "${recover_fences}" == "true" ]]; then
 fi
 
 # Force an ESO resource to reconcile and observe a post-annotation Ready edge.
+# Callers handle failure conditionally, which disables Bash's implicit errexit
+# inside this function. Never consume an API response whose command failed.
 force_sync_resource() {
   local kind="$1"
   local namespace="$2"
@@ -1382,8 +1387,13 @@ force_sync_resource() {
     --namespace "${namespace}" \
     get "${kind}" "${name}" \
     -o json \
-    >"${before_file}"
-  before_refresh="$(jq -r '.status.refreshTime // ""' "${before_file}")"
+    >"${before_file}" || return 1
+  before_refresh="$(jq -ser '
+    if length == 1 and (.[0] | type) == "object" then
+      (.[0].status.refreshTime // "")
+      | if type == "string" then . else error("invalid refresh time") end
+    else error("invalid initial resource response") end
+  ' "${before_file}")" || return 1
   stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
 
   kubectl \
@@ -1393,9 +1403,14 @@ force_sync_resource() {
     "force-sync=${stamp}" \
     --overwrite \
     -o json \
-    >"${annotated_file}"
-  annotated_resource_version="$(jq -er '.metadata.resourceVersion' \
-    "${annotated_file}")"
+    >"${annotated_file}" || return 1
+  annotated_resource_version="$(jq -ser '
+    if length == 1
+      and (.[0].metadata.resourceVersion | type) == "string"
+      and (.[0].metadata.resourceVersion | length) > 0 then
+      .[0].metadata.resourceVersion
+    else error("invalid annotation acknowledgement") end
+  ' "${annotated_file}")" || return 1
 
   for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
     kubectl \
@@ -1403,7 +1418,7 @@ force_sync_resource() {
       --namespace "${namespace}" \
       get "${kind}" "${name}" \
       -o json \
-      >"${current_file}"
+      >"${current_file}" || return 1
     if jq -e \
       --arg before "${before_refresh}" \
       --arg annotated_resource_version "${annotated_resource_version}" '
@@ -1435,7 +1450,7 @@ verify_consumer_secret() {
     --namespace "${namespace}" \
     get secret ghcr-auth \
     -o json \
-    >"${secret_file}"
+    >"${secret_file}" || return 1
   if ! jq -er '.data[".dockerconfigjson"] | @base64d' \
     "${secret_file}" \
     >"${decoded_file}" 2>/dev/null ||
@@ -4669,6 +4684,15 @@ record_runtime_proof() {
 decrypt_flux_ghcr_docker_config "${docker_config}" "${SECRET_FILE}"
 write_flux_ghcr_credentials "${docker_config}" "${credentials_file}"
 jq -S -c . "${docker_config}" >"${expected_normalized}"
+# KSail writes the root Secret on cluster update in this exact form. The deploy
+# hands KSail this same credential (run-ksail-prod-with-pull-auth.sh).
+jq -S -c '
+  {auths: {"ghcr.io": {
+    username,
+    password,
+    auth: ((.username + ":" + .password) | @base64)
+  }}}
+' "${credentials_file}" >"${expected_ksail_root_normalized}"
 
 # Build curl's Basic-auth config without putting the credential in argv or
 # stdout. Support both Docker config representations used in this repository:
@@ -4876,7 +4900,7 @@ renew_sync_lease() {
   local lease_file="${work_dir}/sync-lease-renew-${invocation_id}.json"
   local patch_file_local="${work_dir}/sync-lease-renew-patch-${invocation_id}.json"
   local result_file="${work_dir}/sync-lease-renew-result-${invocation_id}.txt"
-  local resource_version now observed_holder
+  local now jq_status
 
   sync_lease_renewal_failure=""
   [[ "${sync_lease_acquired}" == "true" && -n "${sync_lease_holder}" ]] || return 1
@@ -4888,31 +4912,42 @@ renew_sync_lease() {
     sync_lease_renewal_failure="api-unreachable"
     return 1
   fi
-  observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
-    sync_lease_renewal_failure="invalid-lease-state"
-    return 1
-  }
-  if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
-    sync_lease_renewal_failure="held-by-another"
-    return 1
-  fi
-  resource_version="$(jq -er '.metadata.resourceVersion' "${lease_file}")" || {
-    sync_lease_renewal_failure="invalid-lease-state"
-    return 1
-  }
+  # One jq process proves the observed holder, reads the resourceVersion and
+  # writes the compare-and-swap patch. This runs before every guarded cluster
+  # mutation, so each process saved here is saved hundreds of times a run.
+  # Exit 7 means another holder; any other failure (unparseable state, or a
+  # missing resourceVersion) means the state could not be proved.
   now="$(kubernetes_microtime_now)"
-  jq -n \
-    --arg resource_version "${resource_version}" \
+  jq_status=0
+  jq -e \
     --arg holder "${sync_lease_holder}" \
     --arg now "${now}" \
     --argjson duration "${SYNC_LEASE_DURATION_SECONDS}" '
-    [
-      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-      {op: "test", path: "/spec/holderIdentity", value: $holder},
-      {op: "replace", path: "/spec/renewTime", value: $now},
-      {op: "replace", path: "/spec/leaseDurationSeconds", value: $duration}
-    ]
-  ' >"${patch_file_local}"
+    (.spec.holderIdentity // "") as $observed
+    | if ($observed | if type == "string" then . else tojson end) != $holder then
+        ("" | halt_error(7))
+      else . end
+    | (.metadata.resourceVersion
+        | if . == null or . == false then ("" | halt_error(8))
+          elif type == "string" then . else tojson end) as $resource_version
+    | [
+        {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+        {op: "test", path: "/spec/holderIdentity", value: $holder},
+        {op: "replace", path: "/spec/renewTime", value: $now},
+        {op: "replace", path: "/spec/leaseDurationSeconds", value: $duration}
+      ]
+  ' "${lease_file}" >"${patch_file_local}" || jq_status=$?
+  case "${jq_status}" in
+    0) ;;
+    7)
+      sync_lease_renewal_failure="held-by-another"
+      return 1
+      ;;
+    *)
+      sync_lease_renewal_failure="invalid-lease-state"
+      return 1
+      ;;
+  esac
   if kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
@@ -4934,27 +4969,40 @@ renew_sync_lease() {
     sync_lease_renewal_failure="api-unreachable"
     return 1
   fi
-  observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
-    sync_lease_renewal_failure="invalid-lease-state"
-    return 1
-  }
-  if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
-    sync_lease_renewal_failure="held-by-another"
-    return 1
-  fi
-  if jq -e \
+  # Exit 0 is live, 1 is not live (including an unreadable renew time), 7 is
+  # another holder, and any other failure means the state could not be proved.
+  jq_status=0
+  jq -e \
     --arg holder "${sync_lease_holder}" \
     --argjson now_epoch "$(date -u +%s)" '
-    .spec.holderIdentity == $holder
-    and (((.spec.renewTime // .spec.acquireTime)
-      | sub("\\.[0-9]+Z$"; "Z")
-      | fromdateiso8601) + .spec.leaseDurationSeconds > $now_epoch)
-  ' "${lease_file}" >/dev/null; then
-    return 0
-  fi
-
-  sync_lease_renewal_failure="not-live"
-  return 1
+    (.spec.holderIdentity // "") as $observed
+    | if ($observed | if type == "string" then . else tojson end) != $holder then
+        ("" | halt_error(7))
+      else . end
+    | try (
+        .spec.holderIdentity == $holder
+        and (((.spec.renewTime // .spec.acquireTime)
+          | sub("\\.[0-9]+Z$"; "Z")
+          | fromdateiso8601) + .spec.leaseDurationSeconds > $now_epoch)
+      ) catch false
+  ' "${lease_file}" >/dev/null || jq_status=$?
+  case "${jq_status}" in
+    0)
+      return 0
+      ;;
+    1)
+      sync_lease_renewal_failure="not-live"
+      return 1
+      ;;
+    7)
+      sync_lease_renewal_failure="held-by-another"
+      return 1
+      ;;
+    *)
+      sync_lease_renewal_failure="invalid-lease-state"
+      return 1
+      ;;
+  esac
 }
 
 # Advance this transaction's own fence from "claimed" to "mutating", immediately
@@ -6816,9 +6864,9 @@ eso_resource_is_reconciled() {
     ' "${state_file}" >/dev/null 2>&1
 }
 
-# Report whether a Secret's data key decodes to exactly the Git/SOPS docker
-# config. Read-only; an unreadable Secret or payload is a mismatch.
-secret_matches_sops_credential() {
+# Decode a Secret's data key into converged_decoded_file. Read-only; an unreadable
+# Secret or payload fails, and the file must then not be compared.
+read_converged_secret_credential() {
   local namespace="$1"
   local name="$2"
   local data_key="$3"
@@ -6830,8 +6878,26 @@ secret_matches_sops_credential() {
     -o json >"${converged_secret_file}" 2>/dev/null &&
     jq -er --arg key "${data_key}" '.data[$key] | @base64d' \
       "${converged_secret_file}" 2>/dev/null |
-    jq -S -c . >"${converged_decoded_file}" 2>/dev/null &&
+    jq -S -c . >"${converged_decoded_file}" 2>/dev/null
+}
+
+# Report whether a Secret's data key decodes to exactly the Git/SOPS docker
+# config. Read-only; an unreadable Secret or payload is a mismatch.
+secret_matches_sops_credential() {
+  read_converged_secret_credential "$1" "$2" "$3" &&
     cmp -s "${expected_normalized}" "${converged_decoded_file}"
+}
+
+# Report whether the root Secret holds the Git/SOPS credential: exactly the Git/SOPS
+# docker config, or exactly the form KSail writes for that same credential. Any
+# other payload, in either format, is a mismatch. Read-only.
+root_secret_matches_sops_credential() {
+  read_converged_secret_credential \
+    flux-system ksail-registry-credentials .dockerconfigjson &&
+    {
+      cmp -s "${expected_normalized}" "${converged_decoded_file}" ||
+        cmp -s "${expected_ksail_root_normalized}" "${converged_decoded_file}"
+    }
 }
 
 # Decide, without taking any fence or writing anything, whether the whole
@@ -6844,18 +6910,23 @@ secret_matches_sops_credential() {
 # unready or stale seed probe, unproved node, and failed or malformed read
 # returns non-zero, and the caller then runs today's full fenced transaction
 # unchanged. A failed read can therefore never select the no-write path.
+# converged_check holds the check in progress, so the caller can name where it ended.
+converged_check="not-started"
 ghcr_chain_is_converged_without_writes() {
   local namespace lease_version started_epoch deadline
 
+  converged_check=seed-probe-config
   [[ "${GHCR_SEED_PROBE_WAIT_SECONDS}" =~ ^[0-9]+$ ]] || return 1
   started_epoch="$(date -u +%s)"
 
   # No transaction may be in flight: its writes could still be landing. The
   # Lease is read again at the end, so a transaction that starts while these
   # reads run also sends this run down the fenced path.
+  converged_check=lease-read
   lease_version="$(converged_lease_version)" || return 1
 
   # Neither Flux policy fence may be held or left behind by a crashed run.
+  converged_check=flux-policy-fences
   read_flux_policy_fences >/dev/null 2>&1 || return 1
   jq -e \
     --arg owner_annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" \
@@ -6871,11 +6942,13 @@ ghcr_chain_is_converged_without_writes() {
   ' "${flux_policy_parent_state_file}" >/dev/null 2>&1 || return 1
 
   # Root auth and the staged seed source already hold the SOPS credential.
-  secret_matches_sops_credential \
-    flux-system ksail-registry-credentials .dockerconfigjson || return 1
+  converged_check=root-auth
+  root_secret_matches_sops_credential || return 1
+  converged_check=variables-base
   secret_matches_sops_credential \
     flux-system variables-base ghcr_dockerconfigjson || return 1
 
+  converged_check=fanout-api
   # The complete fan-out exists and every consumer materialised the credential.
   kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -6885,10 +6958,12 @@ ghcr_chain_is_converged_without_writes() {
     -o name >"${fanout_api_resources}" 2>/dev/null || return 1
   grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" || return 1
   grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}" || return 1
+  converged_check=seed-pushsecret
   # A pending PushSecret spec could still overwrite what OpenBao holds.
   eso_resource_is_reconciled \
     pushsecret flux-system seed-ghcr "${converged_probe_file}" || return 1
   for namespace in "${FANOUT_NAMESPACES[@]}"; do
+    converged_check="consumer-${namespace}"
     # A materialised Secret proves nothing about a consumer whose current spec
     # has not reconciled, or whose last sync failed: its next sync may differ.
     eso_resource_is_reconciled \
@@ -6897,6 +6972,7 @@ ghcr_chain_is_converged_without_writes() {
       "${namespace}" ghcr-auth .dockerconfigjson || return 1
   done
 
+  converged_check=seed-probe
   # OpenBao itself holds the credential right now. The seed probe must be
   # fresh (a broken probe falls through at once) and must have refreshed AFTER
   # this run began: straight after a raft restore, a refresh from just before
@@ -6921,6 +6997,7 @@ ghcr_chain_is_converged_without_writes() {
   secret_matches_sops_credential \
     flux-system "${GHCR_SEED_PROBE_NAME}" .dockerconfigjson || return 1
 
+  converged_check=admission-policy
   # Admission already enforces the candidate policy through exactly one path:
   # applying the candidate merge patch would change nothing, the retired
   # policy is gone, and the webhooks match the exclusive steady state. The
@@ -6945,6 +7022,7 @@ ghcr_chain_is_converged_without_writes() {
     and (($candidate[0].spec | type) == "object")
     and ((.spec * $candidate[0].spec) == .spec)
   ' "${converged_policy_file}" >/dev/null 2>&1 || return 1
+  converged_check=admission-webhooks
   # A failed read is not absence: check the status before the output.
   local retired_policy
   retired_policy="$(kubectl \
@@ -6970,6 +7048,7 @@ ghcr_chain_is_converged_without_writes() {
   image_verification_webhook_intercepts_pods \
     "${image_verification_validating_webhooks_file}" || return 1
 
+  converged_check=node-inventory
   # Two consecutive clean node inventories, exactly as the full convergence
   # loop requires before cutover: every node carries current runtime proof for
   # this revision and image, and no drain, recovery or scale-down fence remains.
@@ -7001,6 +7080,7 @@ ghcr_chain_is_converged_without_writes() {
     [[ ! -s "${converged_targets_file}" ]] || return 1
   done
 
+  converged_check=lease-unchanged
   # No transaction claimed the Lease while these reads ran.
   [[ "$(converged_lease_version)" == "${lease_version}" ]]
 }
@@ -7010,6 +7090,10 @@ if [[ "${allow_incomplete_fanout}" != "true" ]] &&
   record_runtime_proof "${pull_revision}" "${KSAIL_OPERATOR_IMAGE}" || exit 1
   echo "✅ Verified every consumer, the OpenBao seed, admission and every Talos node already hold the Git/SOPS GHCR credential; no fence or write was needed."
   exit 0
+fi
+# Fixed check names only: never a credential, hostname or read result.
+if [[ "${allow_incomplete_fanout}" != "true" ]]; then
+  echo "ℹ️ GHCR no-write path ended at check=${converged_check}; running the full fenced transaction."
 fi
 
 acquire_sync_lease "${pull_revision}"
@@ -7191,6 +7275,7 @@ stage_fanout_before_talos \
   "${pull_revision}" \
   "${KSAIL_OPERATOR_IMAGE}" \
   "${talos_stage_result_file}" \
+  "${KUBE_CONTEXT}" \
   "${prepublish_fanout_namespaces[@]}"
 resume_flux_policy_handoff
 resume_flux_policy_parent

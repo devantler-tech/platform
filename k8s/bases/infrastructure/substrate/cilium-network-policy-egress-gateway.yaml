@@ -1,0 +1,45 @@
+# The egress gateway is every agent's only way out. Substrate applies each
+# actor's own egress policy (the destinations its kagent EgressPolicies and
+# model grant) at layer 7, so this rule does not repeat that allow-list: it
+# lets the gateway reach the internet over HTTP(S), the kagent controller
+# (agents' task store calls), the in-cluster credential services, and the
+# Agentic Engineer lane's store and read-only cluster view.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-egress-gateway
+  namespace: ate-system
+spec:
+  endpointSelector:
+    matchLabels:
+      app: atenet-egress
+  egress:
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kagent
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kagent-credentials
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: agentic-engineer
+            app.kubernetes.io/name: lane-store
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: agentic-engineer
+            app.kubernetes.io/name: cluster-reader
+      toPorts:
+        - ports:
+            - port: "8001"
+              protocol: TCP

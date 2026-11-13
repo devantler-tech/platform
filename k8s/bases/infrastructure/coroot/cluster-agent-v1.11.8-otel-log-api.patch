@@ -1,0 +1,64 @@
+diff --git a/common/logemitter.go b/common/logemitter.go
+index 8e8d973..d077134 100644
+--- a/common/logemitter.go
++++ b/common/logemitter.go
+@@ -5,6 +5,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/coroot/logparser"
++	"go.opentelemetry.io/otel/attribute"
+ 	"go.opentelemetry.io/otel/log"
+ 	sdk "go.opentelemetry.io/otel/sdk/log"
+ 	semconv "go.opentelemetry.io/otel/semconv/v1.32.0"
+@@ -40,15 +41,15 @@ func (e *LogEmitter) Callback() logparser.OnMsgCallbackF {
+ 		record.SetTimestamp(ts)
+ 		record.SetSeverityText(level.String())
+ 		record.SetSeverity(LogSeverity(level))
+-		record.SetBody(log.StringValue(msg))
++		record.SetBody(attribute.StringValue(msg))
+ 		if patternHash != "" {
+-			record.AddAttributes(log.String("pattern.hash", patternHash))
++			record.AddAttributes(attribute.String("pattern.hash", patternHash))
+ 		}
+ 		if e.source != "" {
+-			record.AddAttributes(log.String(LogSourceAttribute, e.source))
++			record.AddAttributes(attribute.String(LogSourceAttribute, e.source))
+ 		}
+ 		for k, v := range attributes {
+-			record.AddAttributes(log.String(k, v))
++			record.AddAttributes(attribute.String(k, v))
+ 		}
+ 		e.logger.Emit(context.TODO(), record)
+ 	}
+diff --git a/schema/emitter/emitter.go b/schema/emitter/emitter.go
+index 5991ceb..198d974 100644
+--- a/schema/emitter/emitter.go
++++ b/schema/emitter/emitter.go
+@@ -6,6 +6,7 @@ import (
+ 
+ 	"github.com/coroot/coroot-cluster-agent/common"
+ 	"github.com/coroot/coroot-cluster-agent/schema"
++	"go.opentelemetry.io/otel/attribute"
+ 	"go.opentelemetry.io/otel/log"
+ )
+ 
+@@ -26,13 +27,13 @@ func (e *ChangeEmitter) Emit(change schema.Change, dbSystem, targetAddr string)
+ 	record.SetTimestamp(time.Now())
+ 	record.SetSeverity(log.SeverityInfo)
+ 	record.SetSeverityText("Info")
+-	record.SetBody(log.StringValue(change.Diff))
++	record.SetBody(attribute.StringValue(change.Diff))
+ 	record.AddAttributes(
+-		log.String("db.system", dbSystem),
+-		log.String("db.target", targetAddr),
+-		log.String("db.name", change.Database),
+-		log.String("db_change.object", change.Object),
+-		log.String("db_change.type", change.Type),
++		attribute.String("db.system", dbSystem),
++		attribute.String("db.target", targetAddr),
++		attribute.String("db.name", change.Database),
++		attribute.String("db_change.object", change.Object),
++		attribute.String("db_change.type", change.Type),
+ 	)
+ 	e.logger.Emit(context.TODO(), record)
+ }

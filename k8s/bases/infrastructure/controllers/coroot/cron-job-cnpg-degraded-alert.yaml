@@ -125,7 +125,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: check
-              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              image: docker.io/badouralix/curl-jq@sha256:7f3c18b2a7d72e8f6f89d5395f171d37a83d6015b6de718e5f4c5396305981b7
               imagePullPolicy: IfNotPresent
               env:
                 - name: GRACE_SECONDS
@@ -207,9 +207,10 @@ spec:
                     | ($c.spec.instances // 0) as $d
                     | (([($c.spec.plugins // [])[] | select(.enabled != false and .isWALArchiver == true)] | length > 0)
                        or ($c.spec.backup.barmanObjectStore? != null)) as $archiveConfigured
-                    | (if $ready.lastTransitionTime == null
+                    | ($ready.lastTransitionTime // $c.metadata.creationTimestamp) as $replicaSince
+                    | (if $replicaSince == null
                        then false
-                       else (($now - ($ready.lastTransitionTime | fromdate)) >= $grace)
+                       else (($now - ($replicaSince | fromdate)) >= $grace)
                        end) as $replicaPastGrace
                     | ($archive.lastTransitionTime // $c.metadata.creationTimestamp) as $archiveSince
                     | (if $archiveSince == null
@@ -218,7 +219,7 @@ spec:
                        end) as $archivePastGrace
                     | [
                         if (($r < $d or (($ready.status // "Unknown") != "True")) and $replicaPastGrace)
-                        then "• `\($c.metadata.namespace)/\($c.metadata.name)` — \($r)/\($d) instances ready, Ready=\($ready.status // "Unknown") since \($ready.lastTransitionTime)"
+                        then "• `\($c.metadata.namespace)/\($c.metadata.name)` — \($r)/\($d) instances ready, Ready=\($ready.status // "Unknown") since \($replicaSince)"
                         else empty
                         end,
                         if ($archiveConfigured and (($archive.status // "Unknown") != "True") and $archivePastGrace)

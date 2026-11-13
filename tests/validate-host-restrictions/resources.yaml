@@ -198,6 +198,35 @@ spec:
       hostPath:
         path: /fixture
 ---
+# Substrate mounts its node state directory into atelet and the gVisor workers.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: substrate-worker
+  namespace: agentic-engineer
+spec:
+  containers:
+    - name: worker
+      image: registry.k8s.io/pause:3.10
+  volumes:
+    - name: ate-base
+      hostPath:
+        path: /var/lib/ate
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: atelet
+  namespace: ate-system
+spec:
+  containers:
+    - name: atelet
+      image: registry.k8s.io/pause:3.10
+  volumes:
+    - name: ate-base
+      hostPath:
+        path: /var/lib/ate
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

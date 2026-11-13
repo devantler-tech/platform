@@ -163,7 +163,7 @@ WebApp, external DNS and SOPS disabled. Fetching that source does not deploy the
 portal or prove any image/identity/private-input readiness.
 
 | Verifier | Artifact | What it accepts |
-|---|---|---|
+| --- | --- | --- |
 | **Flux** — a registered tenant's `OCIRepository` | manifest | Its recorded legacy signer, current pin and release candidate, plus any exact maintained revisions explicitly approved for that consumer. Other commits are refused. |
 | **Admission** — the `verify-app-images` Kyverno policy | image | Legacy `actions` publishers with a full commit identity, or the explicitly reviewed maintained `.github` publisher revision, from the GitHub OIDC issuer. Other maintained commits, tags and branches are refused. |
 | **Node pull** — the Talos image-verification rule | image | The same legacy compatibility and exact maintained revision as admission. |
@@ -359,11 +359,19 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   The shared platform Gateway intentionally accepts routes from all namespaces, so the
   admission policy is the boundary that prevents a tenant artifact from claiming another
   platform hostname.
-- **A tenant with no rule of its own is denied by default.** Adding the allow-list entry is
+- **A tenant uses only its own first-party images.** In a tenant namespace, every image under
+  `ghcr.io/devantler-tech/` and every Flux OCI source URL there must sit under
+  `ghcr.io/devantler-tech/<namespace>/…`, so name the tenant namespace after its repository.
+  The nodes authenticate every first-party pull, so a per-tenant pull credential cannot keep
+  one tenant from running another tenant's private image; the admission policy
+  [`restrict-tenant-image-repositories.yaml`](../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-image-repositories.yaml)
+  is that boundary. Third-party images are unaffected. It reports in Audit mode first and
+  moves to Deny once no current tenant workload is reported (#6080).
+- **A tenant with no allow-list of its own is denied by default.** Adding the allow-list entry is
   therefore part of onboarding, not an optional hardening step: until a tenant namespace has
-  a rule naming its approved hostnames, its HTTPRoutes are refused at admission with a
+  an allow-list naming its approved hostnames, its HTTPRoutes are refused at admission with a
   message saying exactly that. The alternative — enumerating only some tenants — is
-  fail-open, and a tenant once ran that way, able to claim any hostname because no rule
+  fail-open, and a tenant once ran that way, able to claim any hostname because no policy
   matched its namespace.
 - **`HTTPRoute` is the only route kind a tenant can use.** The hostname allow-list above
   matches `HTTPRoute`, so every other Gateway API route kind is closed off rather than left
@@ -375,7 +383,11 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   alongside the canonical Kyverno policy fixtures, so neither half can widen silently.
 - The platform's `homepage` app discovers `gethomepage.dev/*` annotations on the tenant's
   HTTPRoute cluster-wide, so the tenant authors them in its own artifact — they are tenant
-  self-presentation, not platform config.
+  self-presentation, not platform config. Homepage links the card to the route's first
+  hostname plus its first rule's first path, so a route whose first rule matches a sub-path
+  (an `/api` or `/mcp` bypass, say) must set `gethomepage.dev/href`; admission denies it
+  otherwise
+  ([`require-homepage-href-for-non-root-routes.yaml`](../k8s/bases/infrastructure/cluster-policies/best-practices/require-homepage-href-for-non-root-routes.yaml)).
 
 Use an existing tenant's `deploy/httproute.yaml` (e.g. `ascoachingogvaner`, which owns its
 hostnames *and* its dashboard annotations) as the reference.

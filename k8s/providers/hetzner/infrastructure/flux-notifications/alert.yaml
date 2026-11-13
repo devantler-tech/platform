@@ -26,6 +26,15 @@
 # scripts/refresh-flux-ghcr-auth.sh). Prod looked green the entire time and no
 # alert fired.
 #
+# OCIRepository is watched for the same reason one step earlier (#5287). Every
+# tenant pulls its release through a cosign-verified OCIRepository. When a
+# release is signed by a publisher the platform does not accept, the source
+# refuses it and keeps its last verified artifact, so the tenant's Kustomization
+# goes on applying the previous release and stays Ready. Only the source's own
+# error event says the tenant stopped updating. A kro Tenant's OCIRepository is
+# generated in the namespace its spec.name gives, so that namespace is listed
+# too (business-site).
+#
 # ── WHY THE NAMESPACES ARE ENUMERATED ──────────────────────────────────────────
 # There is NO namespace wildcard. notification-controller defaults an omitted
 # eventSources[].namespace to the ALERT's own namespace and then matches on
@@ -49,7 +58,8 @@
 #
 # Enumeration drifts, and a silently-uncovered namespace is the very bug this
 # alert exists to prevent — so scripts/validate-alert-coverage.sh fails CI if a
-# HelmRelease *or a Kustomization* appears in a namespace not listed below.
+# HelmRelease, a Kustomization *or an OCIRepository* appears in a namespace not
+# listed below.
 #
 # notification-controller dedupes + rate-limits, so a persistently-failing
 # resource pages once, not every reconcile.
@@ -98,6 +108,9 @@ spec:
       namespace: arc-systems
     - kind: HelmRelease
       name: "*"
+      namespace: ate-system
+    - kind: HelmRelease
+      name: "*"
       namespace: cert-manager
     - kind: HelmRelease
       name: "*"
@@ -126,6 +139,9 @@ spec:
     - kind: HelmRelease
       name: "*"
       namespace: homepage
+    - kind: HelmRelease
+      name: "*"
+      namespace: kagent
     - kind: HelmRelease
       name: "*"
       namespace: keda
@@ -177,5 +193,53 @@ spec:
     - kind: HelmRelease
       name: "*"
       namespace: whoami
+    - kind: OCIRepository
+      name: "*"
+      namespace: arc-ksail-analysis
+    - kind: OCIRepository
+      name: "*"
+      namespace: arc-systems
+    - kind: OCIRepository
+      name: "*"
+      namespace: ascoachingogvaner
+    - kind: OCIRepository
+      name: "*"
+      namespace: ate-system
+    - kind: OCIRepository
+      name: "*"
+      namespace: aws
+    - kind: OCIRepository
+      name: "*"
+      namespace: business-site
+    - kind: OCIRepository
+      name: "*"
+      namespace: cert-manager
+    - kind: OCIRepository
+      name: "*"
+      namespace: data-product-controller
+    - kind: OCIRepository
+      name: "*"
+      namespace: flux-system
+    - kind: OCIRepository
+      name: "*"
+      namespace: github-config
+    - kind: OCIRepository
+      name: "*"
+      namespace: homepage
+    - kind: OCIRepository
+      name: "*"
+      namespace: kagent
+    - kind: OCIRepository
+      name: "*"
+      namespace: kro-system
+    - kind: OCIRepository
+      name: "*"
+      namespace: ksail-operator
+    - kind: OCIRepository
+      name: "*"
+      namespace: wedding-app
+    - kind: OCIRepository
+      name: "*"
+      namespace: world-at-ruin
   eventMetadata:
     summary: "Flux reconciliation error — prod platform"

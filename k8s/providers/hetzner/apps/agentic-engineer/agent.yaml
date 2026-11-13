@@ -1,0 +1,18 @@
+# The Agentic Engineer's kagent lane: the template above on the Claude Code
+# harness, with GitHub egress. kagent compiles it into a Substrate actor that
+# wakes for each message and suspends between runs.
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: agentic-engineer
+  namespace: agentic-engineer
+spec:
+  template:
+    ref:
+      name: agentic-engineer
+  harnessRef:
+    name: claude
+  egressPolicyRefs:
+    - name: github
+    - name: lane-store
+    - name: cluster-reader

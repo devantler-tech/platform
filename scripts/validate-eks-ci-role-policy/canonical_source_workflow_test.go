@@ -1,24 +1,29 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	publicationFixtures = "bash scripts/run-publication-generator-tests.sh --jobs 4"
+	publicationRouting  = "bash scripts/tests/test-run-publication-generator-tests.sh"
+)
+
 var canonicalCICommands = map[string]string{
-	"bash scripts/tests/test-canonical-source-bootstrap.sh":        "validate-publication-generator",
-	"bash scripts/tests/test-canonical-source-upgrade.sh":          "validate-publication-generator",
-	"bash scripts/tests/test-canonical-constructor-attribution.sh": "validate-publication-generator",
-	"bash scripts/tests/test-canonical-generator-output.sh":        "validate-publication-generator",
-	"bash scripts/tests/test-canonical-bootstrap-output.sh":        "validate-publication-generator",
-	"bash scripts/tests/test-canonical-publisher-regeneration.sh":  "validate-publication-generator",
-	"bash scripts/tests/test-tenant-source-discovery.sh":           "validate-repository-guards",
-	"./scripts/guard-consumer-discovery-conservation.sh":           "validate-repository-guards",
+	publicationFixtures: "validate-publication-generator",
+	publicationRouting:  "validate-publication-generator",
+	"bash scripts/tests/test-tenant-source-discovery.sh": "validate-independent-guards",
+	"./scripts/guard-consumer-discovery-conservation.sh": "validate-independent-guards",
 }
 
 var canonicalCIPaths = []string{
@@ -36,6 +41,8 @@ var canonicalCIPaths = []string{
 	"scripts/publish-workflow-bootstrap-publications.json",
 	"scripts/shared-publish-workflow-matchers.tsv",
 	"scripts/generate-publish-workflow-approved-revisions.sh",
+	"scripts/run-publication-generator-tests.sh",
+	"scripts/tests/test-run-publication-generator-tests.sh",
 	"scripts/tests/test-canonical-source-bootstrap.sh",
 	"scripts/tests/test-canonical-source-upgrade.sh",
 	"scripts/tests/test-canonical-constructor-attribution.sh",
@@ -52,6 +59,88 @@ var canonicalCIPaths = []string{
 func TestCanonicalSourceCIRegistration(t *testing.T) {
 	if err := canonicalSourceCIContract(canonicalCIWorkflow(t)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The workflow now delegates scheduling to the real bounded runner. Exercise
+// that boundary independently of its shell self-test: dropping a fixture or
+// masking any child failure must still fail the unconditional Go regressions.
+func TestCanonicalPublicationRunnerKeepsEveryFixtureAndFailure(t *testing.T) {
+	source, err := os.ReadFile("../run-publication-generator-tests.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures := []struct{ name, suite string }{
+		{"test-publish-workflow-approved-revisions.sh", "upgrade"},
+		{"test-tenant-publication-binding.sh", "upgrade"},
+		{"test-bootstrap-tenant-source.sh", "upgrade"},
+		{"test-canonical-source-bootstrap.sh", "bootstrap"},
+		{"test-canonical-source-upgrade.sh", "upgrade"},
+		{"test-canonical-constructor-attribution.sh", "bootstrap"},
+		{"test-canonical-generator-output.sh", "bootstrap"},
+		{"test-canonical-bootstrap-output.sh", "bootstrap"},
+		{"test-canonical-publisher-regeneration.sh", "bootstrap"},
+	}
+	root := t.TempDir()
+	tests := filepath.Join(root, "scripts", "tests")
+	if err := os.MkdirAll(tests, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runner := filepath.Join(root, "scripts", "run-publication-generator-tests.sh")
+	if err := os.WriteFile(runner, source, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for failure := -1; failure < len(fixtures); failure++ {
+		name := "all-pass"
+		if failure >= 0 {
+			name = fixtures[failure].name
+		}
+		t.Run(name, func(t *testing.T) {
+			for index, fixture := range fixtures {
+				status := 0
+				if index == failure {
+					status = 255
+				}
+				body := fmt.Sprintf("#!/usr/bin/env bash\nprintf 'fixture %s\\n'\nexit %d\n", fixture.name, status)
+				if err := os.WriteFile(filepath.Join(tests, fixture.name), []byte(body), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			for _, suite := range []string{"all", "bootstrap", "upgrade"} {
+				t.Setenv("PUBLICATION_SUITE", suite)
+				output, err := exec.CommandContext(ctx, "bash", runner, "--jobs", "4").CombinedOutput()
+				if ctx.Err() != nil {
+					t.Fatalf("runner exceeded the bounded fixture deadline: %v\n%s", ctx.Err(), output)
+				}
+				if failure >= 0 && (suite == "all" || fixtures[failure].suite == suite) {
+					if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
+						t.Fatalf("suite %s must propagate child failure, got %v\n%s", suite, err, output)
+					}
+				} else if err != nil {
+					t.Fatalf("suite %s failed without a selected child failure: %v\n%s", suite, err, output)
+				}
+				for _, fixture := range fixtures {
+					want := 0
+					if suite == "all" || fixture.suite == suite {
+						want = 1
+					}
+					if got := strings.Count(string(output), "fixture "+fixture.name+"\n"); got != want {
+						t.Fatalf("suite %s ran %s %d times, want %d\n%s", suite, fixture.name, got, want, output)
+					}
+				}
+			}
+		})
+	}
+	for _, suite := range []string{"", "unknown"} {
+		t.Setenv("PUBLICATION_SUITE", suite)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		output, err := exec.CommandContext(ctx, "bash", runner, "--jobs", "4").CombinedOutput()
+		cancel()
+		if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 || strings.Contains(string(output), "fixture ") {
+			t.Fatalf("invalid suite %q must fail before starting a fixture: %v\n%s", suite, err, output)
+		}
 	}
 }
 
@@ -207,20 +296,20 @@ func TestCanonicalSourceCIRejectsGateAndFilterBypasses(t *testing.T) {
 		},
 		"workflow shell override": func(w *workflow) {
 			w.Defaults.Run.Shell = "bash {0}"
-			j := w.Jobs["validate-repository-guards"]
+			j := w.Jobs["validate-independent-guards"]
 			j.Defaults.Run.Shell = ""
 			for i := range j.Steps {
 				j.Steps[i].Shell = ""
 			}
-			w.Jobs["validate-repository-guards"] = j
+			w.Jobs["validate-independent-guards"] = j
 		},
 		"job shell override": func(w *workflow) {
-			j := w.Jobs["validate-repository-guards"]
+			j := w.Jobs["validate-independent-guards"]
 			j.Defaults.Run.Shell = "bash {0}"
 			for i := range j.Steps {
 				j.Steps[i].Shell = ""
 			}
-			w.Jobs["validate-repository-guards"] = j
+			w.Jobs["validate-independent-guards"] = j
 		},
 		"missing changes job": func(w *workflow) { delete(w.Jobs, "changes") },
 		"conditional changes": func(w *workflow) {
@@ -288,7 +377,7 @@ func TestCanonicalSourceCIRejectsGateAndFilterBypasses(t *testing.T) {
 	for _, scope := range []string{"job", "step"} {
 		wf = canonicalCIWorkflow(t)
 		wf.Defaults.Run.Shell = "bash {0}"
-		for _, name := range []string{"validate-repository-guards", "validate-publication-generator"} {
+		for _, name := range []string{"validate-repository-guards", "validate-independent-guards", "validate-publication-generator"} {
 			j = wf.Jobs[name]
 			j.Defaults.Run.Shell = "bash"
 			if scope == "step" {
@@ -311,7 +400,11 @@ func TestCanonicalSourceCIRejectsGateAndFilterBypasses(t *testing.T) {
 
 // TestCanonicalGeneratorCIRejectsLostRequiredJob requires generator success before deployment and CI.
 func TestCanonicalGeneratorCIRejectsLostRequiredJob(t *testing.T) {
-	for _, mutation := range []string{"missing", "conditional", "tolerated", "unsafe-shell", "deploy-prod", "ci-required-checks"} {
+	for _, mutation := range []string{
+		"missing", "conditional", "tolerated", "unsafe-shell",
+		"missing-suite", "duplicate-suite", "early-cancellation", "suite-binding",
+		"deploy-prod", "ci-required-checks",
+	} {
 		t.Run(mutation, func(t *testing.T) {
 			wf := canonicalCIWorkflow(t)
 			if err := canonicalSourceCIContract(wf); err != nil {
@@ -333,6 +426,22 @@ func TestCanonicalGeneratorCIRejectsLostRequiredJob(t *testing.T) {
 				j.Defaults.Run.Shell = "bash {0}"
 				wf.Jobs[name] = j
 				want = "canonical source CI must enforce exactly one"
+			case "missing-suite", "duplicate-suite", "early-cancellation":
+				switch mutation {
+				case "missing-suite":
+					j.Strategy.Matrix = map[string]any{"suite": []any{"bootstrap"}}
+				case "duplicate-suite":
+					j.Strategy.Matrix = map[string]any{"suite": []any{"bootstrap", "bootstrap"}}
+				case "early-cancellation":
+					j.Strategy.FailFast = true
+				}
+				wf.Jobs[name] = j
+				want = "publication generator must run both fixed suites independently"
+			case "suite-binding":
+				mutateCanonicalCommand(t, &wf, publicationFixtures, func(s *step) {
+					delete(s.Env, "PUBLICATION_SUITE")
+				})
+				want = "publication fixture runner must receive its matrix suite"
 			default:
 				consumer := wf.Jobs[mutation]
 				needs, valid := consumer.needsOf()
@@ -362,22 +471,38 @@ func TestCanonicalGeneratorCIRejectsLostRequiredJob(t *testing.T) {
 
 // canonicalSourceCIContract verifies source coverage and the required path to production authorization.
 func canonicalSourceCIContract(wf workflow) error {
-	for _, name := range []string{"validate-repository-guards", "validate-publication-generator"} {
+	for _, name := range []string{"validate-repository-guards", "validate-independent-guards", "validate-publication-generator"} {
 		guard, ok := wf.Jobs[name]
 		if !ok || guard.If != "" || errorIsTolerated(guard.ContinueOnError) {
 			return fmt.Errorf("canonical source contracts require unconditional %s", name)
 		}
+	}
+	generator := wf.Jobs["validate-publication-generator"]
+	matrix, _ := generator.Strategy.Matrix.(map[string]any)
+	suites, _ := matrix["suite"].([]any)
+	if generator.Strategy.FailFast != false || generator.Strategy.MaxParallel != 2 ||
+		len(matrix) != 1 || !slices.Equal(suites, []any{"bootstrap", "upgrade"}) {
+		return fmt.Errorf("publication generator must run both fixed suites independently")
 	}
 	for _, consumer := range []string{"deploy-prod", "ci-required-checks"} {
 		needs, valid := wf.Jobs[consumer].needsOf()
 		if !valid || !slices.Contains(needs, "validate-publication-generator") {
 			return fmt.Errorf("%s must require the publication generator", consumer)
 		}
+		if !slices.Contains(needs, "validate-independent-guards") {
+			return fmt.Errorf("%s must require the independent guards", consumer)
+		}
 	}
 	for command, owner := range canonicalCICommands {
 		guard := wf.Jobs[owner]
 		count := 0
 		for _, s := range guard.Steps {
+			if command == publicationRouting {
+				if s.If != "matrix.suite == 'bootstrap'" {
+					continue
+				}
+				s.If = ""
+			}
 			shell := s.Shell
 			if shell == "" {
 				shell = guard.Defaults.Run.Shell
@@ -386,7 +511,12 @@ func canonicalSourceCIContract(wf workflow) error {
 				shell = wf.Defaults.Run.Shell
 			}
 			if s.Uses == "" && s.enforces() && shellKeepsErrexit(shell) {
-				count += canonicalCommandCount(s.Run, command)
+				invocations := canonicalCommandCount(s.Run, command)
+				if command == publicationFixtures && invocations > 0 &&
+					s.Env["PUBLICATION_SUITE"] != "${{ matrix.suite }}" {
+					return fmt.Errorf("publication fixture runner must receive its matrix suite")
+				}
+				count += invocations
 			}
 		}
 		if count != 1 {
@@ -423,7 +553,7 @@ func canonicalSourceCIContract(wf workflow) error {
 			return fmt.Errorf("k8s selection omits canonical input %s", path)
 		}
 	}
-	return approvedSignerRoute(wf, "validate-repository-guards", "deploy-prod", "")
+	return approvedSignerRoute(wf, "validate-independent-guards", "deploy-prod", "")
 }
 
 // Every non-comment line in this fixed CI block must remain a simple command.

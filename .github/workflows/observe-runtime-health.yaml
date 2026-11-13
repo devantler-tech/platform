@@ -1,0 +1,92 @@
+---
+name: Observe Runtime Health Read Only
+
+# Observation only: no object, alert, exception or configuration is changed.
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: observe-runtime-health"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+    env:
+      RUNTIME_HEALTH_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Require the confirmed first-attempt main dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == devantler-tech/platform &&
+             "${GITHUB_EVENT_NAME}" == workflow_dispatch &&
+             "${GITHUB_REF}" == refs/heads/main &&
+             "${GITHUB_RUN_ATTEMPT}" == 1 &&
+             "${RUNTIME_HEALTH_CONFIRM}" == observe-runtime-health ]]
+
+      - name: Checkout the reviewed dispatch revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up the repository Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build the reviewed observer before restoring credentials
+        run: go build -o "$RUNNER_TEMP/observe-runtime-health" ./scripts/observe-runtime-health
+
+      - name: Install the repository-approved Kubernetes client
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/runtime-health-kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/runtime-health-tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/runtime-health-tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/runtime-health-tools" >> "$GITHUB_PATH"
+
+      - name: Read aggregate Coroot and runtime-rule facts
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          if [[ -z "$KUBE_CONFIG" || ${#KUBE_CONFIG} -gt 1048576 ]]; then
+            printf '%s\n' 'RUNTIME_HEALTH_OBSERVATION=UNVERIFIED'
+            exit 2
+          fi
+          observation_dir="$(mktemp -d /dev/shm/runtime-health.XXXXXX)"
+          trap 'rm -rf "$observation_dir"' EXIT
+          export KUBECONFIG="$observation_dir/kubeconfig"
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          unset KUBE_CONFIG
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+            printf '%s\n' 'RUNTIME_HEALTH_OBSERVATION=UNVERIFIED'
+            exit 2
+          fi
+          unset HCLOUD_TOKEN
+          "$RUNNER_TEMP/observe-runtime-health"

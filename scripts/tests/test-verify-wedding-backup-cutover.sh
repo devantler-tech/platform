@@ -4,7 +4,19 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+assert_api_boundary() {
+  [[ -f "$1" && -r "$1" && -s "$1" ]] || fail 'call evidence is missing or unreadable'
+  local observed_call
+  while IFS= read -r observed_call || [[ -n "$observed_call" ]]; do
+    case "$observed_call" in
+      *secrets* | *patch* | *delete* | *exec*) fail 'proof exceeded its API boundary' ;;
+    esac
+  done <"$1"
+}
 mkdir "$tmp/bin"
 cat >"$tmp/bin/kubectl" <<'SH'
 #!/usr/bin/env bash
@@ -24,7 +36,9 @@ esac
 SH
 chmod +x "$tmp/bin/kubectl"
 new_case() {
-  CASE="$tmp/$1"; export CASE; mkdir "$CASE"
+  CASE="$tmp/$1"
+  export CASE
+  mkdir "$CASE"
   cat >"$CASE/cluster.json" <<'JSON'
 {"apiVersion":"postgresql.cnpg.io/v1","kind":"Cluster","metadata":{"name":"wedding-db","namespace":"wedding-app","uid":"00000000-0000-0000-0000-000000000001","generation":7},"spec":{"instances":3,"plugins":[{"name":"barman-cloud.cloudnative-pg.io","enabled":true,"isWALArchiver":true,"parameters":{"barmanObjectName":"wedding-db-dedicated","serverName":"wedding-db-20260909"}}]},"status":{"readyInstances":3,"conditions":[{"type":"Ready","status":"True"},{"type":"ContinuousArchiving","status":"True"}]}}
 JSON
@@ -55,7 +69,24 @@ run_case
 [[ "$rc" == 0 ]] || fail "a completed dedicated backup must pass (exit $rc)"
 jq -e '.spec=={cluster:{name:"wedding-db"},method:"plugin",pluginConfiguration:{name:"barman-cloud.cloudnative-pg.io"},target:"primary"}' "$CASE/request.json" >/dev/null || fail 'wrong production backup request'
 jq -e '.backupCompleted==true and .clusterStable==true and .backupId=="20261001T060001" and .endWal=="000000300000000000000087"' "$CASE/out" >/dev/null || fail 'completion receipt is missing'
-if rg -q 'secrets|patch|delete|exec' "$CASE/calls"; then fail 'proof exceeded its API boundary'; fi
+assert_api_boundary "$CASE/calls"
+# CI must still inspect the call evidence when ripgrep is unavailable.
+mkdir "$tmp/no-rg"
+printf '#!/usr/bin/env bash\nexit 127\n' >"$tmp/no-rg/rg"
+chmod +x "$tmp/no-rg/rg"
+PATH="$tmp/no-rg:$PATH" assert_api_boundary "$CASE/calls"
+for forbidden_call in 'get secrets' 'patch cluster' 'delete backup' 'exec pod'; do
+  printf 'get cluster\n%s' "$forbidden_call" >"$tmp/boundary.calls"
+  if (PATH="$tmp/no-rg:$PATH" assert_api_boundary "$tmp/boundary.calls") >"$tmp/boundary.out" 2>&1; then
+    fail "forbidden audit '$forbidden_call' was accepted without rg"
+  fi
+done
+: >"$tmp/empty.calls"
+for invalid_evidence in "$tmp/missing.calls" "$tmp/empty.calls" "$tmp/bin"; do
+  if (assert_api_boundary "$invalid_evidence") >"$tmp/boundary.out" 2>&1; then
+    fail 'missing, empty or non-file call evidence was accepted'
+  fi
+done
 for mutation in shared-archive unhealthy missing-replica duplicate-plugin archiving-failed wrong-server deleting wrong-destination reused-credential; do
   new_case "$mutation"
   case "$mutation" in
@@ -69,9 +100,12 @@ for mutation in shared-archive unhealthy missing-replica duplicate-plugin archiv
     wrong-destination) filter='.spec.configuration.destinationPath="s3://platform-backups/cnpg/wedding-db"' ;;
     reused-credential) filter='.spec.configuration.s3Credentials.accessKeyId.name="wedding-db-backup-r2"' ;;
   esac
-  file=cluster; [[ "$mutation" != wrong-destination && "$mutation" != reused-credential ]] || file=store
-  jq "$filter" "$CASE/$file.json" >"$CASE/changed.json"; mv "$CASE/changed.json" "$CASE/$file.json"
-  run_case; refused_without_backup "$mutation"
+  file=cluster
+  [[ "$mutation" != wrong-destination && "$mutation" != reused-credential ]] || file=store
+  jq "$filter" "$CASE/$file.json" >"$CASE/changed.json"
+  mv "$CASE/changed.json" "$CASE/$file.json"
+  run_case
+  refused_without_backup "$mutation"
 done
 for field in GITHUB_REF GITHUB_EVENT_NAME GITHUB_RUN_ATTEMPT GITHUB_RUN_ID GITHUB_REPOSITORY WEDDING_BACKUP_CONFIRM; do
   new_case "wrong-$field"
@@ -88,11 +122,18 @@ for mutation in failed unknown-phase wrong-backup-identity stale-backup wrong-ba
     wrong-backup-identity) filter='.metadata.uid="00000000-0000-0000-0000-000000000099"' ;;
     stale-backup) filter='.status.startedAt="2026-09-30T06:00:02Z"' ;;
     wrong-backup-cluster) filter='.status.pluginMetadata.clusterUID="00000000-0000-0000-0000-000000000099"' ;;
-    different-database) file=cluster-after; filter='.metadata.uid="00000000-0000-0000-0000-000000000099"' ;;
-    shared-after-create) file=cluster-after; filter='.spec.plugins[0].parameters.barmanObjectName="wedding-db"' ;;
+    different-database)
+      file=cluster-after
+      filter='.metadata.uid="00000000-0000-0000-0000-000000000099"'
+      ;;
+    shared-after-create)
+      file=cluster-after
+      filter='.spec.plugins[0].parameters.barmanObjectName="wedding-db"'
+      ;;
   esac
-  jq "$filter" "$CASE/$file.json" >"$CASE/changed.json"; mv "$CASE/changed.json" "$CASE/$file.json"
+  jq "$filter" "$CASE/$file.json" >"$CASE/changed.json"
+  mv "$CASE/changed.json" "$CASE/$file.json"
   run_case
   [[ "$rc" != 0 ]] || fail "$mutation was reported as verified"
 done
-printf 'PASS: completed dedicated backup and 22 refusal controls\n'
+printf 'PASS: completed dedicated backup, 22 refusal controls and 7 API-evidence controls\n'

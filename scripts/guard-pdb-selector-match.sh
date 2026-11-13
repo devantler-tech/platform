@@ -27,7 +27,9 @@
 #      in order through `kubectl kustomize`, as Flux builds them. The budget must be satisfied in
 #      both renders. Charts are pulled and rendered by the Helm command
 #      `scripts/build-controller-helm.sh` builds, the renderer the post-renderer guard audits;
-#      `CONTROLLER_HELM` names one already built.
+#      `CONTROLLER_HELM` names one already built, and its build metadata must be the audited SDK's.
+#      The overlays are rendered and the charts pulled by `scripts/flux-render.lib.sh`, the library
+#      the post-renderer guard renders with.
 #   3. Flagger. A Canary is read from the manifests and from the install and the upgrade render
 #      of every chart rendered. Its target is not what serves: Flagger creates `<target>-primary`, whose pod
 #      template carries the target's labels with one rewritten to `<value>-primary`, and scales
@@ -52,9 +54,11 @@
 # ⚠️ CANNOT-CHECK IS NEVER CLEAN. A budget nothing rendered satisfies, in a namespace holding a
 # HelmRelease this guard cannot render the way Flux does, is exit 2: a chart source that needs
 # credentials or is not a HelmRepository or OCIRepository, a `valuesFrom` entry without a
-# `targetPath`, `valuesFiles`, `upgrade.preserveValues`, a `postRenderStrategy` other than `nohooks`
+# `targetPath`, `valuesFiles`, `upgrade.preserveValues`, an unsupported post-render strategy
 # (or none on a post-rendered release), a post-renderer that is not a kustomize `patches`/`images`
-# renderer or does not apply, or a chart that fails to pull or render. A chart pull is tried
+# renderer or does not apply, a chart that fails to pull or render, or a chart (or a packaged
+# dependency, or a template value) that reads `.Release.Revision`, which an offline render always
+# renders as 1. A chart pull is tried
 # PDB_GUARD_PULL_ATTEMPTS times (default 3), waiting
 # PDB_GUARD_PULL_BACKOFF seconds (default 2) and twice as long after each failure, before it counts
 # as failed. A release that cannot be rendered is no obstacle to a budget something else
@@ -91,10 +95,27 @@
 #   - A row for a budget that a rendered workload satisfies, that its cluster does not render, or
 #     for a cluster that is no overlay here, is itself a violation.
 #
-# Usage: guard-pdb-selector-match.sh [--kube-version <version>] <k8s-root>
+#
+# WHICH BUDGETS. Rendering a chart means pulling it from its registry, so with
+# `--base <git-revision>` only the budgets whose inputs changed since that revision have their
+# charts rendered. A budget's inputs are everything its verdict is read from: the budgets of its
+# namespace, the workloads and Canaries the manifests render there, every HelmRelease installed
+# into it (after substitution, with its chart source and selected ConfigMap values), the flagger
+# HelmRelease, the exception rows of those budgets with what their pins read and whether their
+# producers are rendered, and the Kubernetes version (`--base-kube-version` gives the base
+# revision's, and is required with `--kube-version`). A budget the manifests do not satisfy and
+# whose inputs are unchanged is reported `unchanged`, with no chart pulled; one the manifests
+# satisfy is judged as always. Every budget is judged in full, as without `--base`, when this
+# guard, the shared rendering library, the exception file, the renderer's sources or a file an
+# exception row is pinned to (the production cluster configuration among them) differ from the
+# base, or when the base tree cannot be rendered: no change to how budgets are judged is ever
+# taken on trust from the base.
+#
+# Usage: guard-pdb-selector-match.sh [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>
 #
 # Exit codes:
-#   0  every rendered PodDisruptionBudget selects a rendered workload, or carries a reviewed exception
+#   0  every rendered PodDisruptionBudget selects a rendered workload, carries a reviewed exception,
+#      or (with --base) is unchanged since the base
 #   1  at least one PodDisruptionBudget selects no rendered workload, or an exception row is stale,
 #      names a producer that does not hold, or was verified at a version that has since moved
 #   2  cannot check: bad usage, a missing root, tool or exceptions file, a render or parse failure,
@@ -108,13 +129,25 @@ die() {
   exit 2
 }
 
-usage="usage: $0 [--kube-version <version>] <k8s-root>"
+usage="usage: $0 [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>"
+base=''
 kube_version=''
+base_kube_version=''
 while [ "$#" -gt 0 ]; do
   case $1 in
+    --base)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "$usage"; fi
+      base="$2"
+      shift 2
+      ;;
     --kube-version)
       if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "$usage"; fi
       kube_version="$2"
+      shift 2
+      ;;
+    --base-kube-version)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "$usage"; fi
+      base_kube_version="$2"
       shift 2
       ;;
     --)
@@ -126,13 +159,25 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ "$#" -eq 1 ] || die "$usage"
+if [ -n "$base" ] && [ -n "$kube_version" ]; then
+  [ -n "$base_kube_version" ] || die "--base-kube-version is required when comparing an explicit Kubernetes version"
+fi
+if [ -n "$base_kube_version" ]; then
+  if [ -z "$base" ] || [ -z "$kube_version" ]; then
+    die "--base-kube-version requires --base and --kube-version"
+  fi
+fi
 root="${1%/}"
 [ -d "$root/clusters" ] || die "'$root/clusters' is not a directory"
 for tool in jq kubectl yq; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required but not installed"
 done
+if [ -n "$base" ]; then
+  command -v git >/dev/null 2>&1 || die "git is required for --base but not installed"
+fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || die "cannot resolve the script directory"
-root_real="$(cd "$root" && pwd -P)" || die "cannot resolve '$root'"
+# shellcheck source=scripts/flux-render.lib.sh
+source "$script_dir/flux-render.lib.sh"
 
 exceptions_file="${PDB_SELECTOR_EXCEPTIONS:-$script_dir/pdb-selector-exceptions.tsv}"
 [ -f "$exceptions_file" ] ||
@@ -141,51 +186,17 @@ exceptions_file="${PDB_SELECTOR_EXCEPTIONS:-$script_dir/pdb-selector-exceptions.
 scratch="$(mktemp -d)" || die "cannot create a scratch directory"
 trap 'rm -rf "$scratch"' EXIT
 
-# Charts are pulled anonymously, with no ambient Helm or Docker configuration: a source that
-# needs credentials is refused below, so none is ever read from the machine running the guard.
-mkdir -p "$scratch/helm/cache" "$scratch/helm/config" "$scratch/helm/data" "$scratch/docker" ||
-  die "cannot create the Helm scratch directories"
-printf '{}\n' >"$scratch/docker/config.json"
-printf '{}\n' >"$scratch/helm/registry.json"
-export HELM_CACHE_HOME="$scratch/helm/cache" HELM_CONFIG_HOME="$scratch/helm/config" \
-  HELM_DATA_HOME="$scratch/helm/data" HELM_REGISTRY_CONFIG="$scratch/helm/registry.json" \
-  DOCKER_CONFIG="$scratch/docker" HELM_PLUGINS="$scratch/helm/plugins"
-
+# Charts are pulled anonymously, with no ambient Helm or Docker configuration, by the controller
+# renderer, which also renders them. A failed pull is tried PDB_GUARD_PULL_ATTEMPTS times.
+flux_render_init "$scratch"
+flux_render_pull_policy "${PDB_GUARD_PULL_ATTEMPTS:-3}" "${PDB_GUARD_PULL_BACKOFF:-2}" \
+  PDB_GUARD_PULL_ATTEMPTS PDB_GUARD_PULL_BACKOFF
 controller_helm="${CONTROLLER_HELM:-}"
-controller_helm_checked=0
-ensure_renderer() {
-  [ "$controller_helm_checked" = 0 ] || return 0
-  if [ -z "$controller_helm" ]; then
-    controller_helm="$scratch/controller-helm"
-    "$script_dir/build-controller-helm.sh" "$controller_helm" >"$scratch/build.log" 2>&1 ||
-      die "cannot build the controller renderer: $(tail -c 500 "$scratch/build.log")"
-  fi
-  [ -x "$controller_helm" ] || die "the controller renderer '$controller_helm' is not executable"
-  "$controller_helm" version >/dev/null 2>&1 || die "the controller renderer '$controller_helm' does not run"
-  controller_helm_checked=1
-}
 
-tab="$(printf '\t')"
+tab="$flux_render_tab"
 
 field() { # <row> <n>
   printf '%s\n' "$1" | awk -F '\t' -v n="$2" '{ print $n }'
-}
-
-# Prints the path from one existing directory to another, both resolved physically.
-# Kustomize refuses an absolute resource path, so the wrapper names its targets this way.
-relpath() { # <from-dir> <to-dir>
-  local from to common up rest
-  from="$(cd "$1" && pwd -P)" || return 1
-  to="$(cd "$2" && pwd -P)" || return 1
-  common="$from"
-  up=""
-  while [ "${to#"$common"/}" = "$to" ] && [ "$to" != "$common" ]; do
-    common="${common%/*}"
-    up="../$up"
-  done
-  rest="${to#"$common"}"
-  rest="${rest#/}"
-  printf '%s%s' "$up" "${rest:-.}"
 }
 
 # A malformed row is exit 2: a row this guard cannot read is a disposition nobody can audit, and
@@ -233,65 +244,6 @@ while IFS= read -r row || [ -n "$row" ]; do
 done <"$exceptions_file"
 jq -cs '.' "$scratch/exceptions.jsonl" >"$scratch/exceptions.json" || die "cannot read the exception rows"
 
-# Resolves Flux postBuild substitution in YAML text as kustomize-controller does: a variable from
-# substitute/substituteFrom wins, then an inline default (`${name:=default}` or `${name:-default}`),
-# then `placeholder` for a value held only in a Secret. `$${name}` is Flux's escape for a literal.
-# shellcheck disable=SC2016 # awk program text, not shell expansions
-substitute() { # <variables.tsv> <yaml>
-  awk -F '\t' '
-    FILENAME == ARGV[1] { vars[$1] = substr($0, length($1) + 2); next }
-    {
-      line = $0
-      out = ""
-      while (match(line, /[$][{][A-Za-z_][A-Za-z0-9_]*(:?[-=][^}]*)?[}]/)) {
-        start = RSTART
-        len = RLENGTH
-        token = substr(line, start + 2, len - 3)
-        if (start > 1 && substr(line, start - 1, 1) == "$") {
-          out = out substr(line, 1, start - 2) "${" token "}"
-          line = substr(line, start + len)
-          continue
-        }
-        match(token, /^[A-Za-z_][A-Za-z0-9_]*/)
-        name = substr(token, 1, RLENGTH)
-        rest = substr(token, RLENGTH + 1)
-        has_default = rest != ""
-        sub(/^:?[-=]/, "", rest)
-        if ((name in vars) && (vars[name] != "" || !has_default)) value = vars[name]
-        else if (has_default) value = rest
-        else value = "placeholder"
-        out = out substr(line, 1, start - 1) value
-        line = substr(line, start + len)
-      }
-      print out line
-    }' "$1" "$2"
-}
-
-# The wrapper carries the Flux fields that change what the directory renders into.
-# shellcheck disable=SC2016 # `$s` is a yq variable, not a shell expansion
-wrapper='.spec as $s
-  | {"apiVersion": "kustomize.config.k8s.io/v1beta1", "kind": "Kustomization", "resources": [strenv(RESOURCE)]}
-  | with(select($s.images != null); .images = $s.images)
-  | with(select($s.patches != null); .patches = $s.patches)
-  | with(select($s.targetNamespace != null); .namespace = $s.targetNamespace)
-  | with(select($s.namePrefix != null); .namePrefix = $s.namePrefix)
-  | with(select($s.nameSuffix != null); .nameSuffix = $s.nameSuffix)'
-
-# Substitution preserves objects annotated `kustomize.toolkit.fluxcd.io/substitute: disabled`.
-substitute_disabled='(.metadata.annotations["kustomize.toolkit.fluxcd.io/substitute"] // "") == "disabled"'
-
-# The variables one Flux Kustomization substitutes: its substituteFrom ConfigMaps in order, later
-# ones winning, then its inline substitute map. Secrets are encrypted here and are not read.
-# shellcheck disable=SC2016 # `$flux`, `$ns` and `$n` are jq variables, not shell expansions
-variables='. as $all
-  | ($flux.metadata.namespace // "") as $ns
-  | [ ($flux.spec.postBuild.substituteFrom // [])[] | select(.kind == "ConfigMap") | .name as $n
-      | ([$all[] | select(.kind == "ConfigMap" and .metadata.name == $n and (.metadata.namespace // "") == $ns)][0].data // {}) ]
-  + [ $flux.spec.postBuild.substitute // {} ]
-  | add // {} | to_entries[]
-  | select((.value | type) == "string" and (.value | test("[\t\n]") | not))
-  | "\(.key)\t\(.value)"'
-
 # The workloads among rendered objects, each with its pod-template labels. A workload that names
 # no namespace takes the namespace its source installs into.
 # shellcheck disable=SC2016 # jq variables, not shell expansions
@@ -304,26 +256,12 @@ workloads='[ .[] | select(.kind as $k | ["Deployment", "StatefulSet", "DaemonSet
 # One HelmRelease, with the chart source it names and the ConfigMap values it merges, looked up
 # among everything the same cluster renders.
 # shellcheck disable=SC2016 # jq variables, not shell expansions
-release_record='. as $all
+release_record="$flux_render_release_inputs"'
+  . as $all
   | [ .[] | select(.kind == "HelmRelease" and ((.apiVersion // "") | test("^helm[.]toolkit[.]fluxcd[.]io/"))
       and (.metadata.namespace // "") == $ns and .metadata.name == $name) ]
   | if length != 1 then error("expected exactly one HelmRelease \($ns)/\($name), found \(length)") else .[0] end
-  | . as $r
-  | (if $r.spec.chartRef != null then
-       {kind: $r.spec.chartRef.kind, name: $r.spec.chartRef.name, namespace: ($r.spec.chartRef.namespace // $ns)}
-     elif $r.spec.chart.spec.sourceRef != null then
-       {kind: $r.spec.chart.spec.sourceRef.kind, name: $r.spec.chart.spec.sourceRef.name,
-        namespace: ($r.spec.chart.spec.sourceRef.namespace // $ns)}
-     else null end) as $ref
-  | {release: $r, sourceRef: $ref,
-     valuesRefs: [($r.spec.valuesFrom // [])[] | . as $v
-       | ([$all[] | select(.kind == $v.kind and .metadata.name == $v.name
-           and (.metadata.namespace // "") == $ns)][0] // null) as $obj
-       | {ref: $v, present: ($obj != null), value: (if $v.kind == "Secret" then "placeholder"
-           else ($obj.data[$v.valuesKey // "values.yaml"] // null) end)}],
-     source: (if $ref == null then null else
-       ([$all[] | select(.kind == $ref.kind and .metadata.name == $ref.name
-         and (.metadata.namespace // "") == $ref.namespace)][0] // null) end)}'
+  | release_inputs($all)'
 
 # The Canaries among rendered objects that sit beside a budget: only those change a verdict. One a
 # chart renders that names no namespace takes the namespace the chart installs into.
@@ -474,65 +412,12 @@ verdict='
             end
         end ]'
 
-# Pulls a chart once per reference and prints the path of the archive. A registry that is briefly
-# unreachable would otherwise turn every pull request into a cannot-check, so a failed pull is
-# tried again, a bounded number of times and waiting longer each time. Returns 1, with the reason
-# in <reason-file>, when the chart cannot be pulled; a later release naming the same chart reuses
-# that result without pulling again.
-pull_attempts="${PDB_GUARD_PULL_ATTEMPTS:-3}"
-pull_backoff="${PDB_GUARD_PULL_BACKOFF:-2}"
-case $pull_attempts in '' | *[!0-9]* | 0) die "PDB_GUARD_PULL_ATTEMPTS must be a whole number of at least 1, got '$pull_attempts'" ;; esac
-case $pull_backoff in '' | *[!0-9]*) die "PDB_GUARD_PULL_BACKOFF must be a whole number of seconds, got '$pull_backoff'" ;; esac
-: >"$scratch/charts.tsv"
-pull_chart() { # <reason-file> <ref> <repo-url or ""> <version or "">
-  local reason_file="$1" ref="$2" repo="$3" version="$4" key dir archives attempt delay
-  key="$ref|$repo|$version"
-  dir="$(awk -F '\t' -v k="$key" '$1 == k { print $2 }' "$scratch/charts.tsv")"
-  if [ -z "$dir" ]; then
-    dir="$scratch/charts/$(($(wc -l <"$scratch/charts.tsv") + 1))"
-    printf '%s\t%s\n' "$key" "$dir" >>"$scratch/charts.tsv"
-    attempt=1
-    delay="$pull_backoff"
-    while :; do
-      # Each attempt starts from an empty directory: a partial archive must not be counted.
-      rm -rf "$dir"
-      if ! mkdir -p "$dir"; then
-        printf %s "cannot create a chart directory" >"$reason_file"
-        return 1
-      fi
-      if [ -n "$repo" ] && [ -n "$version" ]; then
-        "$controller_helm" pull "$ref" --repo "$repo" --version "$version" --destination "$dir" >"$dir.log" 2>&1
-      elif [ -n "$repo" ]; then
-        "$controller_helm" pull "$ref" --repo "$repo" --destination "$dir" >"$dir.log" 2>&1
-      elif [ -n "$version" ]; then
-        "$controller_helm" pull "$ref" --version "$version" --destination "$dir" >"$dir.log" 2>&1
-      else
-        "$controller_helm" pull "$ref" --destination "$dir" >"$dir.log" 2>&1
-      fi || : # the archive count decides; a failed pull leaves none
-      archives="$(find "$dir" -maxdepth 1 -name '*.tgz' | wc -l | tr -d ' ')"
-      if [ "$archives" = 1 ] || [ "$attempt" -ge "$pull_attempts" ]; then break; fi
-      sleep "$delay"
-      delay=$((delay * 2))
-      attempt=$((attempt + 1))
-    done
-    printf '%s\n' "$attempt" >"$dir.attempts"
-  fi
-  archives="$(find "$dir" -maxdepth 1 -name '*.tgz' 2>/dev/null | wc -l | tr -d ' ')"
-  if [ "$archives" != 1 ]; then
-    printf 'cannot pull chart %s%s%s after %s attempt(s): %s' "$ref" "${repo:+ from $repo}" "${version:+ at $version}" \
-      "$(cat "$dir.attempts" 2>/dev/null || printf '?')" "$(tr '\n' ' ' <"$dir.log" | head -c 300)" >"$reason_file"
-    return 1
-  fi
-  find "$dir" -maxdepth 1 -name '*.tgz'
-}
-
 # Renders one HelmRelease's chart as an install and an upgrade and applies its post-renderers,
 # leaving <work>/install.yaml and <work>/upgrade.yaml. Returns 1, with the reason in
 # <work>/reason, when the release cannot be rendered the way Flux does.
 render_release() { # <resolved.json> <namespace> <name> <work>
   local resolved="$1" ns="$2" name="$3" work="$4" record pull error ref repo version tgz release namespace
-  local mode value_ref target value hash count index
-  local value_args=()
+  local mode hook_strategy label="HelmRelease $2/$3"
   mkdir -p "$work" || die "cannot create '$work'"
   record="$work/record.json"
   jq -c --arg ns "$ns" --arg name "$name" "$release_record" "$resolved" >"$record" 2>"$work/record.err" ||
@@ -546,14 +431,16 @@ render_release() { # <resolved.json> <namespace> <name> <work>
     cannot "a post-renderer is not a kustomize patches/images renderer"
     return 1
   fi
-  # Only regular manifests are post-rendered here. Flux 2.9 post-renders hooks too unless a
-  # post-rendered release sets nohooks, so any other strategy, or none, is not modelled.
-  if ! jq -e '(.release.spec.postRenderStrategy == "nohooks") or
+  # Combined evaluates hooks in the same stream, then excludes lifecycle hooks
+  # from the ordinary workloads a budget can protect. Missing strategies stay
+  # unknown when a post-renderer exists; separate streams are not modeled.
+  if ! jq -e '(.release.spec.postRenderStrategy | IN("nohooks", "combined")) or
       (.release.spec.postRenderStrategy == null and ((.release.spec.postRenderers // []) | length == 0))' \
     "$record" >/dev/null; then
-    cannot "spec.postRenderStrategy is not modelled (a post-rendered release must set nohooks)"
+    cannot "spec.postRenderStrategy is not modelled (a post-rendered release must set explicit nohooks or combined)"
     return 1
   fi
+  hook_strategy="$(jq -r '.release.spec.postRenderStrategy // "nohooks"' "$record")" || die 'cannot read the post-render strategy'
   if ! jq -e '.release.spec.upgrade.preserveValues != true' "$record" >/dev/null; then
     cannot "spec.upgrade.preserveValues needs historical release values"
     return 1
@@ -563,52 +450,9 @@ render_release() { # <resolved.json> <namespace> <name> <work>
     cannot "spec.chart.spec.valuesFiles is not rendered"
     return 1
   fi
+  flux_render_values "$record" "$work" "$work/reason" "$label" || return 1
 
-  # A targetPath reference overwrites inline values in Flux. Start with spec.values, then apply
-  # each targetPath in reference order. ConfigMaps use their selected data, parsed by Helm's own
-  # strvals parser (--set). A Secret's value is the placeholder; a whole values document cannot
-  # be stood in for.
-  if ! jq -e '(.release.spec.valuesFrom // []) | all(.[]; (.targetPath // "") | test("^[A-Za-z0-9_-]+([.][A-Za-z0-9_-]+)*$"))' \
-    "$record" >/dev/null; then
-    cannot "a spec.valuesFrom entry has no plain dotted targetPath, so the values it merges cannot be stood in for"
-    return 1
-  fi
-  jq '.release.spec.values // {}' "$record" >"$work/values.json" || die "HelmRelease $ns/$name: cannot assemble its values"
-  value_args=(--values "$work/values.json")
-  while IFS= read -r value_ref; do
-    if [ "$(jq '.value == null' <<<"$value_ref")" = true ]; then
-      [ "$(jq '.ref.optional == true and .present == false' <<<"$value_ref")" = true ] && continue
-      cannot "required valuesFrom $(jq -r '.ref.kind + "/" + .ref.name + ":" + (.ref.valuesKey // "values.yaml")' <<<"$value_ref") is not rendered"
-      return 1
-    fi
-    target="$(jq -r '.ref.targetPath' <<<"$value_ref")"
-    value="$(jq -r '.value' <<<"$value_ref")"
-    value_args+=(--set "$target=$value")
-  done < <(jq -c '.valuesRefs[]' "$record")
-
-  # The chart reference, as `helm pull` arguments, or the reason it cannot be pulled anonymously.
-  pull="$(jq -c '
-    def creds: (.spec.secretRef != null) or (.spec.certSecretRef != null) or ((.spec.provider // "generic") != "generic");
-    def fail($why): {error: $why};
-    .release.spec as $s | .source as $src
-    | if $src == null then fail("its chart source \(.sourceRef.kind // "?")/\(.sourceRef.namespace // "?")/\(.sourceRef.name // "?") is not rendered in this cluster")
-      elif ($src | tostring | test("[$][{]")) then fail("its chart source \($src.kind)/\($src.metadata.name) still carries a ${...} substitution")
-      elif ($src | creds) then fail("its chart source \($src.kind)/\($src.metadata.name) needs credentials, and charts are pulled anonymously here")
-      elif $src.kind == "HelmRepository" and $s.chart.spec.chart != null then
-        ($src.spec.url // "") as $url
-        | if ($src.spec.type == "oci") or ($url | startswith("oci://")) then
-            {ref: "\($url | sub("/+$"; ""))/\($s.chart.spec.chart)", repo: "", version: ($s.chart.spec.version // "")}
-          else {ref: $s.chart.spec.chart, repo: $url, version: ($s.chart.spec.version // "")} end
-      elif $src.kind == "OCIRepository" and $s.chartRef != null then
-        ($src.spec.url // "") as $url
-        | if ($url | startswith("oci://") | not) then fail("OCIRepository \($src.metadata.name) has no oci:// URL")
-          elif $src.spec.ref.digest != null then {ref: "\($url)@\($src.spec.ref.digest)", repo: "", version: ""}
-          elif $src.spec.ref.semverFilter != null then fail("OCIRepository \($src.metadata.name) filters semver tags, which helm pull cannot")
-          elif $src.spec.ref.semver != null then {ref: $url, repo: "", version: $src.spec.ref.semver}
-          elif $src.spec.ref.tag != null then {ref: $url, repo: "", version: $src.spec.ref.tag}
-          else fail("OCIRepository \($src.metadata.name) names no digest, semver or tag") end
-      else fail("its chart source kind \($src.kind) is not a HelmRepository or OCIRepository") end' "$record")" ||
-    die "HelmRelease $ns/$name: cannot resolve its chart"
+  pull="$(jq -c "$flux_render_chart_source" "$record")" || die "$label: cannot resolve its chart"
   error="$(jq -r '.error // ""' <<<"$pull")"
   if [ -n "$error" ]; then
     cannot "$error"
@@ -617,23 +461,12 @@ render_release() { # <resolved.json> <namespace> <name> <work>
   ref="$(jq -r '.ref' <<<"$pull")"
   repo="$(jq -r '.repo' <<<"$pull")"
   version="$(jq -r '.version' <<<"$pull")"
-  ensure_renderer
-  tgz="$(pull_chart "$work/reason" "$ref" "$repo" "$version")" || return 1
+  flux_render_ensure_renderer
+  tgz="$(flux_render_pull_chart "$work/reason" "$controller_helm" "$ref" "$repo" "$version")" || return 1
+  flux_render_refuse_revision "$record" "$tgz" "$work" "$ref${version:+@$version}" "$work/reason" || return 1
 
-  release="$(jq -r '.release.spec.releaseName // (if .release.spec.targetNamespace then
-      "\(.release.spec.targetNamespace)-\(.release.metadata.name)" else .release.metadata.name end)' "$record")"
-  if [ "$(jq '.release.spec.releaseName == null' "$record")" = true ] && [ "${#release}" -gt 53 ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      hash="$(printf '%s' "$release" | sha256sum)" || die "HelmRelease $ns/$name: cannot hash its release name"
-    elif command -v shasum >/dev/null 2>&1; then
-      hash="$(printf '%s' "$release" | shasum -a 256)" || die "HelmRelease $ns/$name: cannot hash its release name"
-    else
-      die "HelmRelease $ns/$name: sha256sum or shasum is required to shorten its release name"
-    fi
-    release="${release:0:40}-${hash:0:12}"
-  fi
+  release="$(flux_render_release_name "$record" "$label")" || exit 2
   namespace="$(jq -r '.release.spec.targetNamespace // .release.metadata.namespace' "$record")"
-  count="$(jq '(.release.spec.postRenderers // []) | length' "$record")" || die "HelmRelease $ns/$name: cannot count its post-renderers"
 
   for mode in install upgrade; do
     if [ "$mode" = upgrade ]; then
@@ -644,137 +477,45 @@ render_release() { # <resolved.json> <namespace> <name> <work>
     if [ -n "$kube_version" ]; then
       set -- "$@" --kube-version "$kube_version"
     fi
-    if ! "$controller_helm" template "$release" "$tgz" --namespace "$namespace" "${value_args[@]}" "$@" \
+    if ! HELM_GUARD_CAPTURE="$work/$mode.postrender-input.yaml" "$controller_helm" template "$release" "$tgz" --namespace "$namespace" "${flux_render_value_args[@]}" "$@" \
+      --post-renderer guard-input-capture \
       >"$work/$mode.rendered.yaml" 2>"$work/$mode.err"; then
       cannot "its chart does not render as an $mode: $(tr '\n' ' ' <"$work/$mode.err" | head -c 300)"
       return 1
     fi
-    # Hooks are not part of the release's manifest, and Flux does not post-render them under nohooks.
+    if [ ! -s "$work/$mode.postrender-input.yaml" ]; then
+      cannot "the SDK did not capture its $mode post-renderer input"
+      return 1
+    fi
     mkdir -p "$work/$mode" || die "cannot create '$work/$mode'"
-    yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$work/$mode.rendered.yaml" \
-      >"$work/$mode/resources.yaml" 2>"$work/$mode.err" ||
-      die "HelmRelease $ns/$name: cannot read its $mode render: $(head -c 500 "$work/$mode.err")"
-    index=0
-    while [ "$index" -lt "$count" ]; do
-      jq --argjson i "$index" '{apiVersion: "kustomize.config.k8s.io/v1beta1", kind: "Kustomization",
-          resources: ["resources.yaml"]} + (.release.spec.postRenderers[$i].kustomize | with_entries(select(.value != null)))' \
-        "$record" >"$work/$mode/kustomization.yaml" || die "HelmRelease $ns/$name: cannot build post-renderer $((index + 1))"
-      if ! kubectl kustomize "$work/$mode" >"$work/$mode.next.yaml" 2>"$work/$mode.err"; then
-        cannot "post-renderer $((index + 1)) of $count does not apply to its $mode render: $(tr '\n' ' ' <"$work/$mode.err" | head -c 300)"
-        return 1
-      fi
-      mv "$work/$mode.next.yaml" "$work/$mode/resources.yaml" || die "cannot stage the output of post-renderer $((index + 1))"
-      index=$((index + 1))
-    done
-    cp "$work/$mode/resources.yaml" "$work/$mode.yaml" || die "cannot keep the $mode render of HelmRelease $ns/$name"
+    if [ "$hook_strategy" = combined ]; then
+      yq 'select(tag == "!!map")' "$work/$mode.postrender-input.yaml" >"$work/$mode/resources.yaml" ||
+        die "HelmRelease $ns/$name: cannot collect its combined $mode render"
+    else
+      yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$work/$mode.postrender-input.yaml" \
+        >"$work/$mode/resources.yaml" 2>"$work/$mode.err" ||
+        die "HelmRelease $ns/$name: cannot read its $mode render: $(head -c 500 "$work/$mode.err")"
+    fi
+    if ! flux_render_apply_post_renderers "$record" "$work/$mode" "$label"; then
+      cannot "post-renderer $flux_render_failed_at of $flux_render_failed_of does not apply to its $mode render: $(tr '\n' ' ' <"$work/$mode/error" | head -c 300)"
+      return 1
+    fi
+    if [ "$hook_strategy" = combined ]; then
+      yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$work/$mode/resources.yaml" >"$work/$mode.yaml" ||
+        die "cannot retain the ordinary $mode workloads of HelmRelease $ns/$name"
+    else
+      cp "$work/$mode/resources.yaml" "$work/$mode.yaml" || die "cannot keep the $mode render of HelmRelease $ns/$name"
+    fi
   done
 }
 
-: >"$scratch/findings"
-: >"$scratch/unknown"
-: >"$scratch/used"
-: >"$scratch/clusters"
-clusters=0
-total_pdbs=0
-total_ok=0
-total_excepted=0
-total_rendered=0
-for overlay in "$root"/clusters/*/; do
-  overlay="${overlay%/}"
-  [ -d "$overlay" ] || continue # the pattern itself, when `clusters/` holds no directory
+# Renders one cluster overlay of <tree> and reads what its budgets are judged on from the
+# manifests: the budgets, the workloads, the Canaries beside a budget, every object and every
+# HelmRelease. Leaves <work>/pdb-count, and the rest only when the cluster renders a budget.
+read_cluster() { # <tree> <overlay> <work>
+  local tree="$1" overlay="$2" work="$3" cluster bad pdbs
   cluster="${overlay##*/}"
-  # clusters/base is the template the overlays share; its paths still carry placeholders.
-  [ "$cluster" != base ] || continue
-  # Every other directory is a cluster. One this guard skipped would have its budgets go unread
-  # while the run reports the rest as clean, so a directory with none of the three file names
-  # `kubectl kustomize` builds from is refused rather than passed over.
-  if [ ! -f "$overlay/kustomization.yaml" ] && [ ! -f "$overlay/kustomization.yml" ] && [ ! -f "$overlay/Kustomization" ]; then
-    die "'$overlay' holds no kustomization.yaml, kustomization.yml or Kustomization, so it cannot be rendered as a cluster overlay — refusing to skip it"
-  fi
-  clusters=$((clusters + 1))
-  printf '%s\n' "$cluster" >>"$scratch/clusters"
-  work="$scratch/$cluster"
-  mkdir -p "$work/flux" || die "cannot create a scratch directory for '$cluster'"
-
-  kubectl kustomize "$overlay" >"$work/root.yaml" 2>"$work/root.err" ||
-    die "cannot render cluster overlay '$overlay': $(head -c 500 "$work/root.err")"
-  # One file per Flux Kustomization, so each is rendered with its own fields.
-  # shellcheck disable=SC2016 # `$index` is a yq variable, not a shell expansion
-  (cd "$work/flux" &&
-    yq -N -s '"doc-" + $index' \
-      'select(.kind == "Kustomization" and ((.apiVersion // "") | test("^kustomize[.]toolkit[.]fluxcd[.]io/")))' \
-      "$work/root.yaml") 2>"$work/flux.err" ||
-    die "cannot read the Flux Kustomizations rendered by '$overlay': $(head -c 500 "$work/flux.err")"
-
-  layers=0
-  : >"$work/layers.tsv"
-  for doc in "$work/flux"/doc-*.yml; do
-    [ -f "$doc" ] || continue
-    path="$(yq '.spec.path // ""' "$doc")" || die "cannot read spec.path from a Flux Kustomization rendered by '$overlay'"
-    [ -n "$path" ] || die "a Flux Kustomization rendered by '$overlay' has no spec.path"
-    path="${path#./}"
-    case $path in
-      /* | .. | ../* | */.. | */../*) die "Flux path '$path' named by '$overlay' leaves '$root'" ;;
-    esac
-    [ -d "$root/$path" ] || die "Flux path '$path' named by '$overlay' does not exist under '$root'"
-    deprecated="$(yq '(.spec.patchesStrategicMerge != null) or (.spec.patchesJson6902 != null)' "$doc")" ||
-      die "cannot read the patch fields of the Flux Kustomization for '$path'"
-    [ "$deprecated" = false ] ||
-      die "the Flux Kustomization for '$path' uses patchesStrategicMerge or patchesJson6902, which this guard does not apply — use spec.patches"
-    layers=$((layers + 1))
-    rendered="$work/layer-$layers"
-    wrap="$rendered.wrap"
-    mkdir -p "$wrap" || die "cannot create a scratch directory for '$path'"
-    resource="$(relpath "$wrap" "$root/$path")" || die "cannot resolve Flux path '$path'"
-    RESOURCE="$resource" yq -N "$wrapper" "$doc" >"$wrap/kustomization.yaml" 2>"$rendered.wrap.err" ||
-      die "cannot build the Flux view of '$path': $(head -c 500 "$rendered.wrap.err")"
-    yq '.spec.components // [] | .[]' "$doc" >"$rendered.components" 2>"$rendered.components.err" ||
-      die "cannot read spec.components for '$path': $(head -c 500 "$rendered.components.err")"
-    while IFS= read -r component || [ -n "$component" ]; do
-      [ -n "$component" ] || continue
-      component_dir="$root/$path/$component"
-      [ -d "$component_dir" ] || die "component '$component' named for Flux path '$path' does not exist"
-      component_real="$(cd "$component_dir" && pwd -P)" || die "cannot resolve component '$component' for '$path'"
-      case $component_real in
-        "$root_real" | "$root_real"/*) ;;
-        *) die "component '$component' named for Flux path '$path' leaves '$root'" ;;
-      esac
-      COMPONENT="$(relpath "$wrap" "$component_dir")" yq -i '.components += [strenv(COMPONENT)]' "$wrap/kustomization.yaml" ||
-        die "cannot add component '$component' to the Flux view of '$path'"
-    done <"$rendered.components"
-    kubectl kustomize --load-restrictor LoadRestrictionsNone "$wrap" >"$rendered.yaml" 2>"$rendered.err" ||
-      die "cannot render '$root/$path' for cluster '$cluster': $(head -c 500 "$rendered.err")"
-    printf '%s\t%s\t%s\n' "$doc" "$rendered" "$path" >>"$work/layers.tsv"
-  done
-  [ "$layers" -gt 0 ] || die "cluster overlay '$overlay' names no Flux Kustomization"
-
-  # Everything the cluster renders: substitution ConfigMaps are found here.
-  # shellcheck disable=SC2046 # one word per rendered layer file, none with spaces
-  yq ea -o=json -I=0 '[.] | map(select(. != null))' $(cut -f2 "$work/layers.tsv" | sed 's/$/.yaml/') \
-    >"$work/all.json" 2>"$work/all.err" ||
-    die "cannot read what cluster '$cluster' renders: $(head -c 500 "$work/all.err")"
-  while IFS="$tab" read -r doc rendered path; do
-    flux_json="$(yq -o=json -I=0 '.' "$doc")" || die "cannot read the Flux Kustomization for '$path'"
-    jq -r --argjson flux "$flux_json" "$variables" "$work/all.json" >"$rendered.vars" 2>"$rendered.vars.err" ||
-      die "cannot read the substitution variables for '$path': $(head -c 500 "$rendered.vars.err")"
-    yq "select(($substitute_disabled) | not)" "$rendered.yaml" >"$rendered.input.yaml" ||
-      die "cannot read the objects rendered from '$path'"
-    yq "select($substitute_disabled)" "$rendered.yaml" >"$rendered.literal.yaml" ||
-      die "cannot read the literal objects rendered from '$path'"
-    if [ "$(jq -r '.spec.postBuild != null' <<<"$flux_json")" = true ]; then
-      substitute "$rendered.vars" "$rendered.input.yaml" >"$rendered.substituted.yaml" ||
-        die "cannot substitute the objects rendered from '$path'"
-    else
-      cp "$rendered.input.yaml" "$rendered.substituted.yaml" || die "cannot copy the objects rendered from '$path'"
-    fi
-    yq ea '.' "$rendered.substituted.yaml" "$rendered.literal.yaml" >"$rendered.resolved.yaml" ||
-      die "cannot collect the substituted objects rendered from '$path'"
-  done <"$work/layers.tsv"
-  # shellcheck disable=SC2046 # one word per layer file, none with spaces
-  yq ea -o=json -I=0 '[.] | map(select(. != null))' $(cut -f2 "$work/layers.tsv" | sed 's/$/.resolved.yaml/') \
-    >"$work/resolved.json" 2>"$work/resolved.err" ||
-    die "cannot collect the substituted cluster '$cluster': $(head -c 500 "$work/resolved.err")"
-
+  flux_render_cluster "$tree" "$overlay" "$work"
   # A budget this guard cannot place or read is cannot-check: it must name its namespace, and only
   # policy/v1 selector semantics (a missing selector selects nothing, an empty one everything) are
   # modelled.
@@ -787,8 +528,8 @@ for overlay in "$root"/clusters/*/; do
   [ -z "$bad" ] ||
     die "cluster '$cluster' renders '$bad', which is not policy/v1 or names no namespace — this guard cannot place it"
   pdbs="$(jq 'length' "$work/pdbs.json")" || die "cannot count the PodDisruptionBudgets cluster '$cluster' renders"
-  total_pdbs=$((total_pdbs + pdbs))
-  [ "$pdbs" -gt 0 ] || continue
+  printf '%s\n' "$pdbs" >"$work/pdb-count"
+  [ "$pdbs" -gt 0 ] || return 0
 
   jq -c --arg namespace '' --arg origin 'a rendered manifest' --arg mode any "$workloads" "$work/resolved.json" \
     >"$work/manifest-workloads.json" || die "cannot read the workloads cluster '$cluster' renders"
@@ -800,6 +541,183 @@ for overlay in "$root"/clusters/*/; do
       | {namespace: (.spec.targetNamespace // .metadata.namespace // ""), source: (.metadata.namespace // ""),
          name: .metadata.name, id: "\(.metadata.namespace // "")/\(.metadata.name)"} ]' \
     "$work/resolved.json" >"$work/releases.json" || die "cannot read the HelmReleases cluster '$cluster' renders"
+}
+
+# The exception rows of one cluster, each with what its pin reads today in <tree>, into
+# <work>/exceptions.json. A pin this guard cannot read is cannot-check: a row whose version nobody
+# can compare says nothing.
+read_pins() { # <tree> <work> <cluster>
+  local tree="$1" work="$2" cluster="$3" exception exception_key pin observed pin_file pin_path
+  : >"$work/exceptions.jsonl"
+  jq -c --arg cluster "$cluster" '.[] | select(.cluster == $cluster)' "$scratch/exceptions.json" >"$work/rows.jsonl" ||
+    die "cannot read the exception rows of cluster '$cluster'"
+  while IFS= read -r exception; do
+    [ -n "$exception" ] || continue
+    exception_key="$(jq -r '.key' <<<"$exception")" || die "cannot read an exception row of cluster '$cluster'"
+    pin="$(jq -r '.pin' <<<"$exception")" || die "cannot read the pin of the exception row for '$exception_key'"
+    case $pin in
+      HelmRelease/*)
+        observed="$(jq -r --arg pin "$pin" '[ .[] | select(.kind == "HelmRelease" and ((.apiVersion // "") | test("^helm[.]toolkit[.]fluxcd[.]io/"))
+              and "HelmRelease/\(.metadata.namespace // "")/\(.metadata.name)" == $pin) ]
+            | if length != 1 then error("cluster renders \(length) of it")
+              else (.[0].spec.chart.spec.version // "") | if type == "string" then . else tostring end end' \
+          "$work/resolved.json" 2>"$work/pin.err")" ||
+          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, whose chart version cannot be read: $(head -c 300 "$work/pin.err")"
+        [ -n "$observed" ] ||
+          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which sets no spec.chart.spec.version"
+        ;;
+      file:*)
+        pin_file="${pin#file:}"
+        pin_path="${pin_file##*:}"
+        pin_file="${pin_file%:*}"
+        [ -f "$tree/../$pin_file" ] ||
+          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to '$pin_file' beside '$tree', which does not exist"
+        # The path was validated as plain dotted keys when the row was read.
+        observed="$(yq -r "$pin_path | select(tag == \"!!str\" or tag == \"!!int\" or tag == \"!!float\")" "$tree/../$pin_file" 2>"$work/pin.err")" ||
+          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which cannot be read: $(head -c 300 "$work/pin.err")"
+        [ -n "$observed" ] ||
+          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which holds no version"
+        ;;
+      *) die "the exception row for '$exception_key' in cluster '$cluster' names a pin this guard cannot read: '$pin'" ;;
+    esac
+    case $observed in
+      *\$\{*) die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which still carries a \${...} substitution" ;;
+    esac
+    jq -c --arg observed "$observed" '. + {observed: $observed}' <<<"$exception" >>"$work/exceptions.jsonl" ||
+      die "cannot record the pin of the exception row for '$exception_key'"
+  done <"$work/rows.jsonl"
+  jq -cs '.' "$work/exceptions.jsonl" >"$work/exceptions.json" || die "cannot collect the exception rows of cluster '$cluster'"
+}
+
+# Everything a budget's verdict is read from, per namespace holding a budget: one line
+# `<namespace>\t<canonical JSON>` in <work>/inputs.tsv. Two revisions whose lines for a namespace
+# are equal decide its budgets the same way.
+# shellcheck disable=SC2016 # jq variables, not shell expansions
+budget_inputs="$flux_render_release_inputs"'
+  . as $all
+  | [ $pdbs[0][] | .namespace ] | unique[] as $ns
+  | { cluster: $cluster, kube: $kube, namespace: $ns,
+      budgets: ([ $pdbs[0][] | select(.namespace == $ns) ] | sort_by(.name)),
+      workloads: ([ $workloads[0][] | select(.namespace == $ns) ] | sort_by(.kind, .name)),
+      canaries: ([ $canaries[0][] | select(.namespace == $ns) ] | sort_by(.name)),
+      releases: ([ $all[] | select(.kind == "HelmRelease" and ((.apiVersion // "") | test("^helm[.]toolkit[.]fluxcd[.]io/"))
+          and (.spec.targetNamespace // .metadata.namespace // "") == $ns) | release_inputs($all) ]
+        | sort_by(.release.metadata.namespace, .release.metadata.name)),
+      flagger: ([ $all[] | select(.kind == "HelmRelease" and (.spec.chart.spec.chart // "") == "flagger") ]
+        | sort_by(.metadata.namespace, .metadata.name)),
+      exceptions: ([ $exceptions[0][] | select(.key | startswith($ns + "/")) | . as $x
+          | . + {producerRendered: (($objects[0] | index($x.producer)) != null)} ] | sort_by(.key)) }
+  | "\($ns)\t\(tojson)"'
+read_budget_inputs() { # <work> <cluster> <kube-version>
+  jq -r -S --arg cluster "$2" --arg kube "$3" --slurpfile pdbs "$1/pdbs.json" --slurpfile workloads "$1/manifest-workloads.json" \
+    --slurpfile canaries "$1/canaries.json" --slurpfile exceptions "$1/exceptions.json" --slurpfile objects "$1/objects.json" \
+    "$budget_inputs" "$1/resolved.json" >"$1/inputs.tsv" 2>"$1/inputs.err" ||
+    die "cannot read what the budgets of cluster '$2' are judged on: $(head -c 500 "$1/inputs.err")"
+}
+
+# --- The base revision -----------------------------------------------------------------------
+# With --base, the budgets' inputs at that revision, or the reason every budget is judged in full.
+base_usable=0
+if [ -n "$base" ]; then
+  git -C "$root" rev-parse --verify --quiet "${base}^{commit}" >/dev/null ||
+    die "base revision '$base' is not available; the checkout must fetch it"
+  toplevel="$(git -C "$root" rev-parse --show-toplevel)" || die "'$root' is not inside a git repository"
+  toplevel_real="$(cd "$toplevel" && pwd -P)" || die "cannot resolve '$toplevel'"
+  prefix="$(git -C "$root" rev-parse --show-prefix)" || die "'$root' is not inside a git repository"
+  prefix="${prefix%/}"
+  # Prints the path of <file> inside the repository, or nothing when it lies outside: a file
+  # outside is the same file for both revisions.
+  in_repository() { # <file>
+    local real
+    real="$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")" || return 1
+    case $real in "$toplevel_real"/*) printf '%s\n' "${real#"$toplevel_real"/}" ;; esac
+  }
+  # Succeeds when <path> differs from the base: absent there, changed, or untracked. A failed
+  # comparison counts as a change.
+  changed_since_base() { # <path inside the repository>
+    local diff others
+    git -C "$toplevel" cat-file -e "${base}:$1" 2>/dev/null || return 0
+    diff="$(git -C "$toplevel" diff --name-only "$base" -- "$1")" || return 0
+    others="$(git -C "$toplevel" ls-files --others --exclude-standard -- "$1")" || return 0
+    [ -n "$diff$others" ]
+  }
+  full_reason=''
+  # What decides how budgets are judged, rather than what they are: this guard, the library it
+  # renders with, its exception rows and the renderer's sources.
+  for judge in "$script_dir/guard-pdb-selector-match.sh" "$script_dir/flux-render.lib.sh" "$exceptions_file" \
+    "$script_dir/build-controller-helm.sh" "$script_dir/guard-controller-helm-profile.sh" \
+    "$script_dir/prepare-helm-render-input-capture.sh" "$script_dir/render-helm-chart"; do
+    judge_path="$(in_repository "$judge")" || die "cannot resolve '$judge'"
+    [ -n "$judge_path" ] || continue
+    if changed_since_base "$judge_path"; then
+      full_reason="$judge_path differs from $base"
+      break
+    fi
+  done
+  # The files beside the k8s root an exception row is pinned to, the production cluster
+  # configuration among them, travel with the base tree.
+  base_paths=("${prefix:-.}")
+  while IFS= read -r pin_file; do
+    [ -n "$pin_file" ] || continue
+    [ -f "$root/../$pin_file" ] || continue # the head run refuses the row
+    pin_repo_path="$(in_repository "$root/../$pin_file")" || die "cannot resolve '$pin_file'"
+    if [ -z "$pin_repo_path" ]; then
+      [ -n "$full_reason" ] || full_reason="an exception row is pinned to $pin_file, which is outside the repository"
+      continue
+    fi
+    base_paths+=("$pin_repo_path")
+  done < <(jq -r '.[] | .pin | select(startswith("file:")) | ltrimstr("file:") | sub(":[^:]*$"; "")' "$scratch/exceptions.json")
+  if [ -z "$full_reason" ]; then
+    mkdir -p "$scratch/base-tree" || die "cannot create the base tree directory"
+    if ! git -C "$toplevel" archive --format=tar "$base" -- "${base_paths[@]}" >"$scratch/base.tar" 2>"$scratch/base.err"; then
+      full_reason="$base holds no $(printf '%s ' "${base_paths[@]}")"
+    elif ! tar -x -C "$scratch/base-tree" -f "$scratch/base.tar"; then
+      die "cannot unpack the base tree at $base"
+    elif ! (
+      base_root="$scratch/base-tree${prefix:+/$prefix}"
+      [ -d "$base_root/clusters" ] || die "'$base_root/clusters' is not a directory"
+      for overlay in "$base_root"/clusters/*/; do
+        overlay="${overlay%/}"
+        flux_render_is_cluster "$overlay" || continue
+        work="$scratch/base/${overlay##*/}"
+        read_cluster "$base_root" "$overlay" "$work"
+        [ "$(cat "$work/pdb-count")" -gt 0 ] || continue
+        read_pins "$base_root" "$work" "${overlay##*/}"
+        read_budget_inputs "$work" "${overlay##*/}" "$base_kube_version"
+      done
+    ) 2>"$scratch/base.err"; then
+      full_reason="the tree at $base cannot be rendered ($(tr '\n' ' ' <"$scratch/base.err" | head -c 300))"
+    else
+      base_usable=1
+    fi
+  fi
+  if [ "$base_usable" = 0 ]; then
+    printf 'guard-pdb-selector-match: %s; judging every PodDisruptionBudget in full\n' "$full_reason"
+  fi
+fi
+
+# --- The tree --------------------------------------------------------------------------------
+: >"$scratch/findings"
+: >"$scratch/unknown"
+: >"$scratch/used"
+: >"$scratch/clusters"
+clusters=0
+total_pdbs=0
+total_ok=0
+total_excepted=0
+total_unchanged=0
+total_rendered=0
+for overlay in "$root"/clusters/*/; do
+  overlay="${overlay%/}"
+  flux_render_is_cluster "$overlay" || continue
+  cluster="${overlay##*/}"
+  clusters=$((clusters + 1))
+  printf '%s\n' "$cluster" >>"$scratch/clusters"
+  work="$scratch/$cluster"
+  read_cluster "$root" "$overlay" "$work"
+  pdbs="$(cat "$work/pdb-count")" || die "cannot count the PodDisruptionBudgets cluster '$cluster' renders"
+  total_pdbs=$((total_pdbs + pdbs))
+  [ "$pdbs" -gt 0 ] || continue
 
   # Flagger rewrites one of these labels on the primary it creates. The flag's default is modelled;
   # the chart passes -selector-labels only when its selectorLabels value is set.
@@ -825,47 +743,13 @@ for overlay in "$root"/clusters/*/; do
   }
   check_canaries
 
-  # The exception rows of this cluster, each with what its pin reads today. A pin this guard
-  # cannot read is cannot-check: a row whose version nobody can compare says nothing.
-  : >"$work/exceptions.jsonl"
-  jq -c --arg cluster "$cluster" '.[] | select(.cluster == $cluster)' "$scratch/exceptions.json" >"$work/rows.jsonl" ||
-    die "cannot read the exception rows of cluster '$cluster'"
-  while IFS= read -r exception; do
-    [ -n "$exception" ] || continue
-    exception_key="$(jq -r '.key' <<<"$exception")" || die "cannot read an exception row of cluster '$cluster'"
-    pin="$(jq -r '.pin' <<<"$exception")" || die "cannot read the pin of the exception row for '$exception_key'"
-    case $pin in
-      HelmRelease/*)
-        observed="$(jq -r --arg pin "$pin" '[ .[] | select(.kind == "HelmRelease" and ((.apiVersion // "") | test("^helm[.]toolkit[.]fluxcd[.]io/"))
-              and "HelmRelease/\(.metadata.namespace // "")/\(.metadata.name)" == $pin) ]
-            | if length != 1 then error("cluster renders \(length) of it")
-              else (.[0].spec.chart.spec.version // "") | if type == "string" then . else tostring end end' \
-          "$work/resolved.json" 2>"$work/pin.err")" ||
-          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, whose chart version cannot be read: $(head -c 300 "$work/pin.err")"
-        [ -n "$observed" ] ||
-          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which sets no spec.chart.spec.version"
-        ;;
-      file:*)
-        pin_file="${pin#file:}"
-        pin_path="${pin_file##*:}"
-        pin_file="${pin_file%:*}"
-        [ -f "$root/../$pin_file" ] ||
-          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to '$pin_file' beside '$root', which does not exist"
-        # The path was validated as plain dotted keys when the row was read.
-        observed="$(yq -r "$pin_path | select(tag == \"!!str\" or tag == \"!!int\" or tag == \"!!float\")" "$root/../$pin_file" 2>"$work/pin.err")" ||
-          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which cannot be read: $(head -c 300 "$work/pin.err")"
-        [ -n "$observed" ] ||
-          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which holds no version"
-        ;;
-      *) die "the exception row for '$exception_key' in cluster '$cluster' names a pin this guard cannot read: '$pin'" ;;
-    esac
-    case $observed in
-      *\$\{*) die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which still carries a \${...} substitution" ;;
-    esac
-    jq -c --arg observed "$observed" '. + {observed: $observed}' <<<"$exception" >>"$work/exceptions.jsonl" ||
-      die "cannot record the pin of the exception row for '$exception_key'"
-  done <"$work/rows.jsonl"
-  jq -cs '.' "$work/exceptions.jsonl" >"$work/exceptions.json" || die "cannot collect the exception rows of cluster '$cluster'"
+  read_pins "$root" "$work" "$cluster"
+  # A namespace whose budgets are judged on what they were at the base is not rendered again.
+  : >"$work/inputs.tsv"
+  if [ "$base_usable" = 1 ]; then
+    read_budget_inputs "$work" "$cluster" "$kube_version"
+  fi
+  : >"$work/unchanged"
 
   decide() { # <candidates.json> <releases.json> <exceptions.json> <out>
     jq -n --arg cluster "$cluster" --slurpfile pdbs "$work/pdbs.json" --slurpfile candidates "$1" \
@@ -892,6 +776,17 @@ for overlay in "$root"/clusters/*/; do
     [ -n "$namespace_needed" ] || continue
     jq -r --arg ns "$namespace_needed" '.[] | select(.namespace == $ns) | "\(.source)\t\(.name)"' "$work/releases.json" \
       >"$work/installed.tsv" || die "cannot list the HelmReleases installed into namespace '$namespace_needed' of cluster '$cluster'"
+    # Only a namespace with a chart to pull is worth skipping: one without is judged in full.
+    if [ "$base_usable" = 1 ] && [ -s "$work/installed.tsv" ] && [ -f "$scratch/base/$cluster/inputs.tsv" ]; then
+      head_inputs="$(awk -F '\t' -v ns="$namespace_needed" '$1 == ns' "$work/inputs.tsv")" ||
+        die "cannot read the inputs of namespace '$namespace_needed' in cluster '$cluster'"
+      base_inputs="$(awk -F '\t' -v ns="$namespace_needed" '$1 == ns' "$scratch/base/$cluster/inputs.tsv")" ||
+        die "cannot read the base inputs of namespace '$namespace_needed' in cluster '$cluster'"
+      if [ -n "$head_inputs" ] && [ "$head_inputs" = "$base_inputs" ]; then
+        printf '%s\n' "$namespace_needed" >>"$work/unchanged"
+        continue
+      fi
+    fi
     while IFS="$tab" read -r release_ns release_name; do
       [ -n "$release_name" ] || continue
       release_work="$work/releases/${release_ns}__${release_name}"
@@ -936,18 +831,32 @@ for overlay in "$root"/clusters/*/; do
   check_canaries
 
   decide "$work/candidates.json" "$work/attempted.json" "$work/exceptions.json" "$work/verdict.json"
-  # Every budget must come back with one of the four verdicts: one the decision dropped would
+  # A budget the manifests do not satisfy, in a namespace whose inputs are unchanged since the
+  # base, was judged at the base: it is reported unchanged, and keeps the exception row it uses.
+  if [ -s "$work/unchanged" ]; then
+    jq --rawfile unchanged "$work/unchanged" --arg base "$base" --arg cluster "$cluster" \
+      '($unchanged | split("\n") | map(select(. != ""))) as $skipped
+       | map(if .status != "ok" and ((.key | split("/")[0]) as $ns | $skipped | index($ns)) != null then
+           {status: "unchanged", key, row,
+            text: "\($cluster): PodDisruptionBudget \(.key) is unchanged since \($base): nothing it is judged on changed, so the charts of its namespace were not rendered"}
+         else . end)' "$work/verdict.json" >"$work/verdict.scoped.json" ||
+      die "cannot mark the unchanged PodDisruptionBudgets of cluster '$cluster'"
+    mv "$work/verdict.scoped.json" "$work/verdict.json" || die "cannot keep the verdicts of cluster '$cluster'"
+  fi
+  # Every budget must come back with one of the known verdicts: one the decision dropped would
   # otherwise read as clean.
-  counts="$(jq -r '[length] + [("ok", "excepted", "finding", "unknown") as $s | [ .[] | select(.status == $s) ] | length]
+  counts="$(jq -r '[length] + [("ok", "excepted", "finding", "unknown", "unchanged") as $s | [ .[] | select(.status == $s) ] | length]
       | map(tostring) | join(" ")' "$work/verdict.json")" || die "cannot count the verdicts of cluster '$cluster'"
-  read -r decided ok excepted detached undecided <<<"$counts"
-  if [ "$decided" != "$pdbs" ] || [ "$((ok + excepted + detached + undecided))" != "$pdbs" ]; then
-    die "cluster '$cluster' renders $pdbs PodDisruptionBudget(s) but $((ok + excepted + detached + undecided)) of $decided verdict(s) are known — refusing to report the rest as clean"
+  read -r decided ok excepted detached undecided unchanged <<<"$counts"
+  if [ "$decided" != "$pdbs" ] || [ "$((ok + excepted + detached + undecided + unchanged))" != "$pdbs" ]; then
+    die "cluster '$cluster' renders $pdbs PodDisruptionBudget(s) but $((ok + excepted + detached + undecided + unchanged)) of $decided verdict(s) are known — refusing to report the rest as clean"
   fi
   jq -r '.[] | select(.status == "ok") | "  ok        " + .text' "$work/verdict.json" ||
     die "cannot report the PodDisruptionBudgets of cluster '$cluster'"
   jq -r '.[] | select(.status == "excepted") | "  excepted  " + .text' "$work/verdict.json" ||
     die "cannot report the excepted PodDisruptionBudgets of cluster '$cluster'"
+  jq -r '.[] | select(.status == "unchanged") | "  unchanged " + .text' "$work/verdict.json" ||
+    die "cannot report the unchanged PodDisruptionBudgets of cluster '$cluster'"
   # A row is used when it was applied to a budget, whether it was accepted or refused: a refused
   # row is reported with its reason, not as stale.
   jq -r --arg cluster "$cluster" '.[] | select(.row == true) | "\($cluster)\t\(.key)"' "$work/verdict.json" >>"$scratch/used" ||
@@ -958,6 +867,7 @@ for overlay in "$root"/clusters/*/; do
     die "cannot record the undecided PodDisruptionBudgets of cluster '$cluster'"
   total_ok=$((total_ok + ok))
   total_excepted=$((total_excepted + excepted))
+  total_unchanged=$((total_unchanged + unchanged))
 done
 
 [ "$clusters" -gt 0 ] || die "no cluster overlay under '$root/clusters'"
@@ -978,6 +888,9 @@ while IFS="$tab" read -r row_cluster key || [ -n "$row_cluster" ]; do
 done <"$scratch/exception-keys"
 
 summary="$clusters cluster(s), $total_pdbs PodDisruptionBudget(s), $total_rendered HelmRelease chart(s) rendered"
+if [ "$base_usable" = 1 ]; then
+  summary="$summary, $total_unchanged unchanged since $base"
+fi
 status=0
 if [ -s "$scratch/findings" ]; then
   printf 'guard-pdb-selector-match: PodDisruptionBudgets that select no rendered workload, and exception rows that do not hold:\n' >&2

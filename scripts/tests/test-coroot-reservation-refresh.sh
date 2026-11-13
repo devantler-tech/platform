@@ -8,7 +8,10 @@ readonly scratch
 trap 'rm -rf "${scratch}"' EXIT
 
 for tool in kubectl yq; do
-  command -v "${tool}" >/dev/null || { printf '%s is required\n' "${tool}" >&2; exit 1; }
+  command -v "${tool}" >/dev/null || {
+    printf '%s is required\n' "${tool}" >&2
+    exit 1
+  }
 done
 
 # Inspect the delivered custom resource, not just the overlay's patch. The
@@ -17,7 +20,7 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure" >"${scratch
 yq -e '
   select(.kind == "Coroot" and .metadata.name == "coroot") |
   .spec.podAnnotations."platform.devantler.tech/vpa-recommendation-rollout" == "2026-10-11-coroot-reservation-refresh" and
-  .spec.podAnnotations."secret.reloader.stakater.com/reload" == "coroot-db-app" and
+  .spec.podAnnotations."secret.reloader.stakater.com/reload" == "coroot-db-app,coroot-mcp-agent" and
   .spec.replicas == 2 and
   .spec.resources.requests.memory == "1Gi" and
   .spec.resources.limits.memory == "6Gi" and

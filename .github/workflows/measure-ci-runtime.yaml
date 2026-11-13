@@ -1,0 +1,143 @@
+---
+name: Measure CI Runtime
+"on":
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/measure-ci-runtime.yaml]
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "measure current main" to run four bounded validation samples'
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: ci-runtime-measurements
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  measure:
+    name: Measure ${{ matrix.suite }} (${{ matrix.workers }} workers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - suite: go
+            workers: 4
+          - suite: go
+            workers: 8
+          - suite: publication
+            workers: 2
+          - suite: publication
+            workers: 4
+    env:
+      GOTOOLCHAIN: local
+      GOMAXPROCS: "4"
+      KUBECONFIG: /dev/null
+      BENCHMARK_SUITE: ${{ matrix.suite }}
+      BENCHMARK_WORKERS: ${{ matrix.workers }}
+    steps:
+      - name: Require an approved measurement invocation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              if [ "$GITHUB_REF" != refs/heads/main ] ||
+                 [ "$CONFIRMATION" != 'measure current main' ]; then
+                echo '::error::Run this experiment on main with the stated confirmation'
+                exit 1
+              fi
+              ;;
+            pull_request)
+              if [ "${GITHUB_BASE_REF:-}" != main ]; then
+                echo '::error::Benchmark workflow validation requires a main-bound PR'
+                exit 1
+              fi
+              ;;
+            *) echo '::error::Unsupported measurement event'; exit 1 ;;
+          esac
+          case "$BENCHMARK_SUITE:$BENCHMARK_WORKERS" in
+            go:4|go:8|publication:2|publication:4) ;;
+            *) echo '::error::Unknown fixed benchmark arm'; exit 1 ;;
+          esac
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Initialize the approved kubectl for native regressions
+        timeout-minutes: 5
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          echo /usr/local/bin >> "$GITHUB_PATH"
+          export PATH="/usr/local/bin:$PATH"
+          kubectl version --client
+
+      - name: ⎈ Install checksum-verified native Helm
+        if: matrix.suite == 'publication'
+        shell: bash
+        env:
+          HELM_VERSION: v4.3.1
+          HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
+        run: |
+          set -euo pipefail
+          native_dir="$(mktemp -d)"
+          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
+          tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
+          printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$native_dir/linux-amd64/helm" >> "$GITHUB_ENV"
+
+      - name: Record the measured environment
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(uname -m)" = x86_64
+          test "$(getconf _NPROCESSORS_ONLN)" -eq 4
+          test -n "${ImageOS:-}"
+          test -n "${ImageVersion:-}"
+          printf 'CI_BENCHMARK source=%s suite=%s workers=%s image=%s version=%s cpus=4\n' \
+            "$GITHUB_SHA" "$BENCHMARK_SUITE" "$BENCHMARK_WORKERS" "$ImageOS" "$ImageVersion"
+          go version
+          kubectl version --client
+          yq --version
+          if [ "$BENCHMARK_SUITE" = publication ]; then
+            "$KYVERNO_LOG_HELM_BIN" version --short
+          fi
+
+      - name: Measure complete Go regressions
+        if: matrix.suite == 'go'
+        run: |
+          /usr/bin/time -p go test -json -count=1 -parallel "$BENCHMARK_WORKERS" -timeout 20m ./...
+
+      - name: Measure complete publication fixtures
+        if: matrix.suite == 'publication'
+        run: |
+          /usr/bin/time -p bash scripts/run-publication-generator-tests.sh --jobs "$BENCHMARK_WORKERS"

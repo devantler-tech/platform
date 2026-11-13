@@ -149,7 +149,7 @@ readonly vulnerability_manifest_capacity=50000000
 coroot_node_agent_image="$(yq -er '.spec.nodeAgent.image.name' "${coroot}")" ||
   fail 'the Coroot node-agent image pin is missing'
 readonly coroot_node_agent_image
-[[ "${coroot_node_agent_image}" == 'ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-d72441cff6e32c8cabdf631a882a28af1e503e84@sha256:e71f4d608092ccd150ad33d5443e16d9fdccca659ebc1fd5b336c49d27fa5d63' ]] ||
+[[ "${coroot_node_agent_image}" == 'ghcr.io/devantler-tech/platform-coroot-node-agent:v1.38.1-alerts.1-adb150c0a8c590b13d548a272d09535809f52702@sha256:df15440e7005c4b5e3b3354a9c55ff54e6926177f69654d647181c4b3137d589' ]] ||
   fail 'the Coroot node-agent must use the exact signed alert-remediation build'
 
 coroot_provider="$(yq -er '.spec.nodeAgent.env[] | select(.name == "PROVIDER") | .value' "${coroot}")" ||

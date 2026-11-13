@@ -1188,6 +1188,9 @@ func fakeKubectlGetFluxControllerPods(namespace string) int {
 	return 0
 }
 
+// fakeKubectlPatchConsolidatedImageValidatingPolicy rejects bridge patches that
+// lose a dedicated publisher, its exact route, or the general route's exclusion.
+// It persists only a complete policy so later fake reads cannot mask a bad patch.
 func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile string) int {
 	if argumentAfter(args, "imagevalidatingpolicy.policies.kyverno.io") != "verify-app-images" ||
 		!containsArg(args, "--type=merge") || patchFile == "" {
@@ -1200,19 +1203,40 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 9 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 17 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
+	longhornPublishers := map[string]struct {
+		repository string
+		subject    string
+	}{
+		"publishlonghornretirement": {
+			repository: "ghcr.io/devantler-tech/platform-longhorn-instance-manager",
+			subject:    `^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v1-retirement\.yaml@refs/heads/main$`,
+		},
+		"publishlonghornv2": {
+			repository: "ghcr.io/devantler-tech/platform-longhorn-manager",
+			subject:    `^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$`,
+		},
+	}
+	longhornAttestors := make(map[string]bool, len(longhornPublishers))
 	storageAttestorValid := false
 	kubescapeNodeAgentAttestorValid := false
 	corootNodeAgentAttestorValid := false
+	checkpointAttestorValid := false
+	reportsAttestorValid := false
+	migrateAttestorValid := false
+	backgroundAttestorValid := false
 	analysisAttestorValid := false
 	warZoneAttestorValid := false
 	mailAttestorValid := false
+	customerIdentityAttestorValid := false
+	dexAttestorValid := false
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" {
+		longhornPublisher, isLonghornPublisher := longhornPublishers[name]
+		if !isLonghornPublisher && name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishcorootcheckpoint" && name != "publishkyvernoreports" && name != "publishkyvernomigrate" && name != "publishkyvernobackground" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" && name != "publishcustomeridentity" && name != "publishdexsecurity" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1224,6 +1248,10 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 		identity, _ := identities[0].(map[string]any)
 		issuerValid := identity["issuer"] == "https://token.actions.githubusercontent.com"
 		subject, _ := identity["subjectRegExp"].(string)
+		if isLonghornPublisher {
+			longhornAttestors[name] = issuerValid && subject == longhornPublisher.subject
+			continue
+		}
 		switch name {
 		case "publishkubescapestorage":
 			storageAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-storage-hotfix\\.yaml@refs/heads/main$"
@@ -1231,12 +1259,24 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			kubescapeNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-node-agent-hotfix\\.yaml@refs/heads/main$"
 		case "publishcorootnodeagent":
 			corootNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-node-agent-hotfix\\.yaml@refs/heads/main$"
+		case "publishcorootcheckpoint":
+			checkpointAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-checkpoint-hotfix\\.yaml@refs/heads/main$"
+		case "publishkyvernoreports":
+			reportsAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kyverno-reports-hotfix\\.yaml@refs/heads/main$"
+		case "publishkyvernomigrate":
+			migrateAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kyverno-migration-runtime\\.yaml@refs/heads/main$"
+		case "publishkyvernobackground":
+			backgroundAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kyverno-background-hotfix\\.yaml@refs/heads/main$"
 		case "publishksailanalysis":
 			analysisAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/ksail/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$"
 		case "publishwarzone":
 			warZoneAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/world-at-ruin/\\.github/workflows/server-cd\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
 		case "publishprivatemail":
 			mailAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-private-mail-bootstrap\\.yaml@refs/heads/main$"
+		case "publishcustomeridentity":
+			customerIdentityAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/business-site/\\.github/workflows/publish-identity\\.yaml@refs/heads/main$"
+		case "publishdexsecurity":
+			dexAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-dex-security-image\\.yaml@refs/heads/main$"
 		}
 	}
 	validations, _ := spec["validations"].([]any)
@@ -1246,16 +1286,54 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesKubescapeNodeAgent := false
 	genericExcludesCorootNodeAgent := false
 	dedicatedRoutesCorootNodeAgent := false
+	genericExcludesCheckpoint := false
+	dedicatedRoutesCheckpoint := false
+	genericExcludesReports := false
+	dedicatedRoutesReports := false
+	genericExcludesMigrate := false
+	dedicatedRoutesMigrate := false
+	genericExcludesBackground := false
+	dedicatedRoutesBackground := false
 	genericExcludesAnalysis := false
 	dedicatedRoutesAnalysis := false
 	genericExcludesWarZone := false
 	dedicatedRoutesWarZone := false
 	genericExcludesMail := false
 	dedicatedRoutesMail := false
+	genericExcludesCustomerIdentity := false
+	dedicatedRoutesCustomerIdentity := false
+	genericExcludesDex := false
+	dedicatedRoutesDex := false
+	genericExcludesLonghorn := make(map[string]bool, len(longhornPublishers))
+	dedicatedRoutesLonghorn := make(map[string]bool, len(longhornPublishers))
 	for _, rawValidation := range validations {
 		validation, _ := rawValidation.(map[string]any)
 		expression, _ := validation["expression"].(string)
+		for name, publisher := range longhornPublishers {
+			if strings.Contains(expression, "attestors.publishapp") {
+				genericExcludesLonghorn[name] = imageRouteContains(expression, publisher.repository, true)
+			}
+			if strings.Contains(expression, "attestors."+name) {
+				dedicatedRoutesLonghorn[name] = imageRouteContains(expression, publisher.repository, false)
+			}
+		}
 		if strings.Contains(expression, "attestors.publishapp") {
+			genericExcludesCustomerIdentity = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/business-site-identity'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/business-site-identity:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/business-site-identity@')")
+			genericExcludesDex = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-dex'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-dex:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-dex@')")
+			genericExcludesReports = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kyverno-reports'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports@')")
+			genericExcludesMigrate = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kyverno-migrate'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate@')")
+			genericExcludesBackground = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kyverno-background'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background@')")
+			genericExcludesCheckpoint = checkpointRouteContains(expression, true)
 			genericExcludesMail = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@')")
@@ -1290,6 +1368,24 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@')")
 		}
+		if strings.Contains(expression, "attestors.publishcorootcheckpoint") {
+			dedicatedRoutesCheckpoint = checkpointRouteContains(expression, false)
+		}
+		if strings.Contains(expression, "attestors.publishkyvernoreports") {
+			dedicatedRoutesReports = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-kyverno-reports'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports@')")
+		}
+		if strings.Contains(expression, "attestors.publishkyvernomigrate") {
+			dedicatedRoutesMigrate = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-kyverno-migrate'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate@')")
+		}
+		if strings.Contains(expression, "attestors.publishkyvernobackground") {
+			dedicatedRoutesBackground = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-kyverno-background'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background@')")
+		}
 		if strings.Contains(expression, "attestors.publishwarzone") {
 			dedicatedRoutesWarZone = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/world-at-ruin/zone'") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:')") &&
@@ -1305,9 +1401,30 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@')")
 		}
+		if strings.Contains(expression, "attestors.publishcustomeridentity") {
+			dedicatedRoutesCustomerIdentity = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/business-site-identity'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/business-site-identity:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/business-site-identity@')")
+		}
+		if strings.Contains(expression, "attestors.publishdexsecurity") {
+			dedicatedRoutesDex = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-dex'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-dex:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-dex@')")
+		}
+	}
+	for name := range longhornPublishers {
+		if !longhornAttestors[name] || !genericExcludesLonghorn[name] || !dedicatedRoutesLonghorn[name] {
+			return commandFailure(91, "consolidated image-validating policy patch omitted the exact %s publisher identity or repository routing", name)
+		}
 	}
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
+		!checkpointAttestorValid || !genericExcludesCheckpoint || !dedicatedRoutesCheckpoint ||
+		!reportsAttestorValid || !genericExcludesReports || !dedicatedRoutesReports ||
+		!migrateAttestorValid || !genericExcludesMigrate || !dedicatedRoutesMigrate ||
+		!backgroundAttestorValid || !genericExcludesBackground || !dedicatedRoutesBackground ||
 		!mailAttestorValid || !genericExcludesMail || !dedicatedRoutesMail ||
+		!customerIdentityAttestorValid || !genericExcludesCustomerIdentity || !dedicatedRoutesCustomerIdentity ||
+		!dexAttestorValid || !genericExcludesDex || !dedicatedRoutesDex ||
 		!analysisAttestorValid || !genericExcludesAnalysis || !dedicatedRoutesAnalysis ||
 		!warZoneAttestorValid || !genericExcludesWarZone || !dedicatedRoutesWarZone ||
 		!genericExcludesStorage || !genericExcludesKubescapeNodeAgent || !genericExcludesCorootNodeAgent ||
@@ -1327,6 +1444,21 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	appendEnvFile("OPERATION_LOG", "ivpol-policy-apply:verify-app-images\n")
 	fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-app-images serverside-applied")
 	return 0
+}
+
+func checkpointRouteContains(expression string, excluded bool) bool {
+	return imageRouteContains(expression, "ghcr.io/devantler-tech/platform-coroot", excluded) &&
+		imageRouteContains(expression, "ghcr.io/devantler-tech/platform-coroot-cluster-agent", excluded)
+}
+
+func imageRouteContains(expression, repository string, excluded bool) bool {
+	comparison, negation := "==", ""
+	if excluded {
+		comparison, negation = "!=", "!"
+	}
+	return strings.Contains(expression, "image "+comparison+" '"+repository+"'") &&
+		strings.Contains(expression, negation+"image.startsWith('"+repository+":')") &&
+		strings.Contains(expression, negation+"image.startsWith('"+repository+"@')")
 }
 
 func fakeKubectlDeleteRetiredImageValidatingPolicy(args []string) int {
@@ -3076,8 +3208,7 @@ func fakeKubectlCreateRuntimeProbe(namespace, manifestFile string) int {
 	container, _ := containers[0].(map[string]any)
 	securityContext, _ := container["securityContext"].(map[string]any)
 	image, _ := container["image"].(string)
-	if (image != fakeRuntimeProbeImage("devantler-tech/data-product-controller") &&
-		image != fakeRuntimeProbeImage("devantler-tech/wedding-app") &&
+	if (image != fakeRuntimeProbeImage("devantler-tech/wedding-app") &&
 		image != fakeRuntimeProbeImage("devantler-tech/ascoachingogvaner")) ||
 		container["imagePullPolicy"] != "Always" || securityContext["allowPrivilegeEscalation"] != false {
 		return commandFailure(91, "runtime probe does not prove a private package pull")
@@ -3430,6 +3561,14 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 	}
 	if containsSequence(args, "get", kind, name) {
 		markerName := kind + "-" + namespace + "-" + name
+		fault := os.Getenv("FAKE_FANOUT_FAULT")
+		faultSelected := resource == os.Getenv("FAKE_FANOUT_FAULT_RESOURCE")
+		annotated := markerExists(markerName + "-annotated")
+		if faultSelected && fault == "malformed-initial-read" && !annotated {
+			appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			fmt.Println("not-json")
+			return 0
+		}
 		ready := "True"
 		if resource == os.Getenv("FAKE_UNRECONCILED_FANOUT_RESOURCE") {
 			ready = "False"
@@ -3445,19 +3584,92 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 		if markerExists(markerName) {
 			resourceVersion = "3"
 		}
+		uid := kind + "-" + namespace + "-" + name + "-uid"
+		kindName := "ExternalSecret"
+		if kind == "pushsecret" {
+			kindName = "PushSecret"
+		}
+		spec := map[string]any{"refreshInterval": "1h"}
+		syncedVersion := "1-fixture"
+		periodicCount := 0
+		periodicFault := ""
+		if kind == "externalsecret" && wordListContains(os.Getenv("FAKE_PERIODIC_FANOUT_NAMESPACES"), namespace) {
+			periodicCount = parseInt(markerContent("periodic-reads-"+namespace), 0) + 1
+			setMarkerContent("periodic-reads-"+namespace, strconv.Itoa(periodicCount))
+			appendEnvFile("OPERATION_LOG", fmt.Sprintf("periodic-read:%s:%d\n", namespace, periodicCount))
+			if namespace == os.Getenv("FAKE_PERIODIC_FAULT_NAMESPACE") {
+				periodicFault = os.Getenv("FAKE_PERIODIC_FAULT")
+			}
+			spec["refreshInterval"] = "1m"
+			spec["refreshPolicy"] = "Periodic"
+			initial := markerContent("periodic-initial-refresh-" + namespace)
+			if initial == "" {
+				initial = time.Now().UTC().Add(-5 * time.Second).Format(time.RFC3339)
+				setMarkerContent("periodic-initial-refresh-"+namespace, initial)
+			}
+			refreshTime = initial
+			resourceVersion = strconv.Itoa(20 + periodicCount)
+			if periodicCount > 1 {
+				refreshTime = time.Now().UTC().Add(time.Duration(periodicCount) * time.Second).Format(time.RFC3339)
+				if periodicFault != "" {
+					appendEnvFile("OPERATION_LOG", "periodic-fault:"+namespace+":"+periodicFault+"\n")
+				}
+				switch periodicFault {
+				case "same-refresh":
+					refreshTime = initial
+				case "replaced-uid":
+					uid += "-replacement"
+				case "spec-drift":
+					spec["target"] = map[string]any{"name": "different-target"}
+				case "unready":
+					ready = "False"
+				case "stale-generation":
+					syncedVersion = "0-fixture"
+				case "future-refresh":
+					refreshTime = time.Now().UTC().Add(5 * time.Minute).Format(time.RFC3339)
+				}
+			}
+			if periodicFault == "wrong-policy" {
+				spec["refreshPolicy"] = "OnChange"
+				appendEnvFile("OPERATION_LOG", "periodic-fault:"+namespace+":"+periodicFault+"\n")
+			}
+		}
 		fmt.Println(encodeJSON(map[string]any{
-			"metadata": map[string]any{"resourceVersion": resourceVersion, "generation": 1},
+			"apiVersion": "external-secrets.io/v1",
+			"kind":       kindName,
+			"metadata":   map[string]any{"name": name, "namespace": namespace, "uid": uid, "resourceVersion": resourceVersion, "generation": 1},
+			"spec":       spec,
 			"status": map[string]any{
 				"refreshTime":           refreshTime,
 				"conditions":            []any{map[string]any{"type": "Ready", "status": ready}},
-				"syncedResourceVersion": "1-fixture",
+				"syncedResourceVersion": syncedVersion,
 			},
 		}))
+		if periodicCount > 1 && periodicFault == "read-failure" {
+			return commandFailure(92, "synthetic periodic read failed after plausible output")
+		}
+		if faultSelected && ((fault == "failed-initial-read" && !annotated) ||
+			(fault == "failed-completion-read" && annotated)) {
+			appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			return commandFailure(92, "synthetic forced-refresh read failed after plausible output")
+		}
 		return 0
 	}
 	if containsSequence(args, "annotate", kind, name) {
 		appendEnvFile("FANOUT_LOG", resource+"\n")
 		appendEnvFile("OPERATION_LOG", "fanout:"+resource+"\n")
+		if kind == "externalsecret" && wordListContains(os.Getenv("FAKE_PERIODIC_FANOUT_NAMESPACES"), namespace) {
+			return commandFailure(92, "synthetic tenant boundary rejects direct refresh update")
+		}
+		fault := os.Getenv("FAKE_FANOUT_FAULT")
+		faultSelected := resource == os.Getenv("FAKE_FANOUT_FAULT_RESOURCE")
+		if faultSelected && (fault == "refused-annotation" || fault == "refused-annotation-with-output") {
+			appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			if fault == "refused-annotation-with-output" {
+				fmt.Println(`{"metadata":{"resourceVersion":"2"}}`)
+			}
+			return commandFailure(92, "synthetic forced-refresh annotation refused")
+		}
 		markerName := kind + "-" + namespace + "-" + name
 		touchMarker(markerName + "-annotated")
 		if resource != os.Getenv("FAKE_SYNC_STALL_RESOURCE") {
@@ -3468,7 +3680,27 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 				setMarkerContent("vault-seed-value", markerContent("variables-secret-value"))
 			}
 		}
-		fmt.Println(`{"metadata":{"resourceVersion":"2"}}`)
+		acknowledgement := `{"metadata":{"resourceVersion":"2"}}`
+		if faultSelected {
+			switch fault {
+			case "empty-acknowledgement":
+				acknowledgement = ""
+			case "malformed-acknowledgement":
+				acknowledgement = "not-json"
+			case "missing-acknowledgement-version":
+				acknowledgement = `{"metadata":{}}`
+			case "empty-acknowledgement-version":
+				acknowledgement = `{"metadata":{"resourceVersion":""}}`
+			case "null-acknowledgement-version":
+				acknowledgement = `{"metadata":{"resourceVersion":null}}`
+			case "numeric-acknowledgement-version":
+				acknowledgement = `{"metadata":{"resourceVersion":2}}`
+			}
+			if acknowledgement != `{"metadata":{"resourceVersion":"2"}}` {
+				appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			}
+		}
+		fmt.Println(acknowledgement)
 		return 0
 	}
 	return commandFailure(91, "unexpected fanout resource invocation")
@@ -3502,6 +3734,9 @@ func fakeKubectlGetConsumerSecret(namespace string) int {
 	fmt.Println(encodeJSON(map[string]any{
 		"data": map[string]any{".dockerconfigjson": encoded},
 	}))
+	if namespace == os.Getenv("FAKE_CONSUMER_READ_FAIL_NAMESPACE") && variablesPatchCount > 0 {
+		return commandFailure(92, "synthetic consumer read failed after plausible output")
+	}
 	return 0
 }
 

@@ -4,6 +4,11 @@ kind: VerticalPodAutoscaler
 metadata:
   name: shared-deployment
   namespace: apps-ns
+  ownerReferences:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: shared
+      uid: 00000000-0000-4000-8000-000000000001
 spec:
   targetRef:
     apiVersion: apps/v1

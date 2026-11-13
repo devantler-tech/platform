@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 # A disposable GitHub-hosted kubelet/controller trial, never an ambient cluster.
+set +x
 set -euo pipefail
+umask 077
+# Only the verifier receives the job credential. Tool downloads and the later
+# disposable cluster trial run without it, including inherited export attributes.
+unset hosted_ci_read_token
+hosted_ci_read_token="${PREBUILT_CI_READ_TOKEN:-}"
+unset PREBUILT_CI_READ_TOKEN
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-fail() { echo "FAIL: WebApp hosted fixture: $1" >&2; exit 1; }
+fail() {
+  echo "FAIL: WebApp hosted fixture: $1" >&2
+  exit 1
+}
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
-   "$(uname -s)/$(uname -m)" == Linux/x86_64 ]] || fail 'requires an isolated GitHub-hosted Linux VM'
+  "$(uname -s)/$(uname -m)" == Linux/x86_64 ]] || fail 'requires an isolated GitHub-hosted Linux VM'
 : "${RUNNER_TEMP:?}"
 work="$(mktemp -d "$RUNNER_TEMP/webapp-runtime.XXXXXX")"
 fixture="webapp-${work##*.}"
@@ -13,7 +23,10 @@ export KUBECONFIG="$work/kubeconfig" GOWORK=off
 forward_pid=''
 created=false
 cleanup() {
-  if [[ -n "$forward_pid" ]]; then kill "$forward_pid" 2>/dev/null || true; wait "$forward_pid" 2>/dev/null || true; fi
+  if [[ -n "$forward_pid" ]]; then
+    kill "$forward_pid" 2>/dev/null || true
+    wait "$forward_pid" 2>/dev/null || true
+  fi
   if [[ "$created" == true ]]; then "$work/kind" delete cluster --name "$fixture" >/dev/null 2>&1 || true; fi
   rm -rf -- "$work"
 }
@@ -43,8 +56,8 @@ gateway="$(go -C "$root/scripts/tests/webapp-compiler" mod download -json sigs.k
 
 # Verify the original source-owned CI, image signature and complete provenance
 # with the maintained catalogue helper. Only this temporary manifest is mutated.
-download https://raw.githubusercontent.com/devantler-tech/.github/eec706368bdc0114c010afea778bf5efb17ced23/.github/scripts/prepare-prebuilt-webapp.sh \
-  "$work/verify-image.sh" dcf6fee210077e12f9e147b76eb78e5f4a9c161ace2df7ffeb49ac30a6c08961
+download https://raw.githubusercontent.com/devantler-tech/.github/d3c754ceb9f1588e9ed016a9d9a7bd59a5c845c8/.github/scripts/prepare-prebuilt-webapp.sh \
+  "$work/verify-image.sh" 4e0db6ad6c8a5620a2b676be0ca28dbe5e5cb855e15cc649368499f3ddcb4bb3
 mkdir "$work/deploy"
 jq -n '{apiVersion:"kro.run/v1alpha1",kind:"WebApp",metadata:{name:"runtime-fixture",namespace:"runtime-fixture"},spec:{name:"runtime-fixture",host:"runtime-fixture.invalid",image:"verified-before-use",replicas:1,port:8080,probePath:"/healthz",memoryRequest:"64Mi",memoryLimit:"256Mi",cpuLimit:"500m"}}' >"$work/deploy/webapp.yaml"
 (
@@ -54,12 +67,14 @@ jq -n '{apiVersion:"kro.run/v1alpha1",kind:"WebApp",metadata:{name:"runtime-fixt
     PREBUILT_IMAGE_DIGEST=sha256:5fd88737e82502d9bc63dbb1248cb3cf97f6afb93ed4ab1c0cfe93f7e341c06b \
     PREBUILT_PUBLIC_DIGEST=b362f95711b9b9fc285335bb19c1a206ee0856eb42a79e39874e653b4735e593 \
     PREBUILT_CI_RUN_ID=39603006665 PREBUILT_CI_RUN_ATTEMPT=1 GITHUB_OUTPUT="$work/verified" \
+    PREBUILT_CI_AUTH_MODE=job-token PREBUILT_CI_READ_TOKEN="$hosted_ci_read_token" \
     bash "$work/verify-image.sh" >"$work/verification.log" 2>&1
 ) || {
   # The verifier reads public evidence over the network; show why it refused.
   tail -n 40 "$work/verification.log" >&2
   fail 'source-owned public image verification failed'
 }
+unset hosted_ci_read_token
 yq -o=json '.' "$work/deploy/webapp.yaml" >"$work/omitted.json"
 jq '.spec += {args:["--public","/app/public","--listen","0.0.0.0:8080","--company-disclosure-projection","/run/webapp-inputs/disclosure"],runAsUser:65532,runAsGroup:65532,readOnlyRootFilesystem:true,secretProjections:[{secretName:"synthetic-disclosure",items:[{key:"disclosure",path:"disclosure"}]}]}' \
   "$work/omitted.json" >"$work/enabled.json"
@@ -68,15 +83,21 @@ created=true
 kind create cluster --name "$fixture" --kubeconfig "$KUBECONFIG" \
   --image kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed --wait 120s
 kubectl apply -f "$gateway/config/crd/standard/gateway.networking.k8s.io_httproutes.yaml" >/dev/null
-helm install kro oci://registry.k8s.io/kro/charts/kro@sha256:bafeda52939e319d231ad8d59d082d4f68f5bccad2d8b9ea0433bc872609e732 \
+helm install kro oci://registry.k8s.io/kro/charts/kro@sha256:56561368ed4c574520e8bd6a677a2e6c66333fb90e759ff4f2f068341fe9956c \
   --namespace kro-system --create-namespace --set fullnameOverride=kro --set rbac.mode=aggregation \
   --set config.allowCRDDeletion=false --set config.featureGates.CELOmitFunction=false \
   --set deployment.replicaCount=1 \
-  --set-string image.tag=v0.9.2@sha256:4adde767d11163f3064a3431ab6bb87c8dc70498fdaac3109d9b9df7ffa494e3 \
+  --set-string image.tag=v0.10.0@sha256:ec329ba111448553ca9f77f020c875a6348caa0382de79620414bb14a227395e \
   --wait --timeout 180s >"$work/helm.log"
 kubectl -n kro-system get deployment kro -o json | jq -e '
   [.spec.template.spec.containers[].image] ==
-  ["registry.k8s.io/kro/kro:v0.9.2@sha256:4adde767d11163f3064a3431ab6bb87c8dc70498fdaac3109d9b9df7ffa494e3"]' >/dev/null || fail 'installed controller image differs from the reviewed pin'
+  ["registry.k8s.io/kro/kro:v0.10.0@sha256:ec329ba111448553ca9f77f020c875a6348caa0382de79620414bb14a227395e"]' >/dev/null || fail 'installed controller image differs from the reviewed pin'
+# The chart digest above must resolve to the release production pins, not only
+# carry its tag text: the installed chart labels its own release.
+release="v$(yq -er '.spec.ref.tag' "$root/k8s/bases/infrastructure/controllers/kro/oci-repository.yaml")"
+kubectl -n kro-system get deployment kro -o json | jq -e --arg release "$release" '
+  .metadata.labels["helm.sh/chart"] == "kro-\($release)" and
+  .metadata.labels["app.kubernetes.io/version"] == $release' >/dev/null || fail 'installed chart differs from the controller pin'
 kubectl apply -f "$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml" >/dev/null
 kubectl apply -f "$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml" >/dev/null
 for _attempt in {1..60}; do
@@ -159,7 +180,9 @@ for path in /company/ /da/company/; do
 done
 code="$(curl -sS --max-time 10 -D "$work/headers" -o "$work/private" -w '%{http_code}' http://127.0.0.1:18080/portal/)"
 if [[ "$code" != 404 ]] || ! grep -iq '^Cache-Control: no-store' "$work/headers" || grep -iq '^Location:' "$work/headers"; then fail 'private access is not closed'; fi
-kill "$forward_pid"; wait "$forward_pid" 2>/dev/null || true; forward_pid=''
+kill "$forward_pid"
+wait "$forward_pid" 2>/dev/null || true
+forward_pid=''
 
 # Real derived Pods distinguish reader refusal from OOM or another startup error.
 for control in mode group missing; do
@@ -191,7 +214,10 @@ missing_uid="$(kubectl -n runtime-fixture get pod missing-key -o jsonpath='{.met
 mount_refused=false
 for _attempt in {1..60}; do
   if kubectl -n runtime-fixture get events --field-selector "involvedObject.uid=$missing_uid" -o json |
-    jq -e 'any(.items[]; .reason=="FailedMount" and (.message|contains("non-existent secret key")))' >/dev/null; then mount_refused=true; break; fi
+    jq -e 'any(.items[]; .reason=="FailedMount" and (.message|contains("non-existent secret key")))' >/dev/null; then
+    mount_refused=true
+    break
+  fi
   sleep 2
 done
 [[ "$mount_refused" == true ]] || fail 'missing selected key did not produce an observed kubelet mount refusal'

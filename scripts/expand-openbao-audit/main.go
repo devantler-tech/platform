@@ -1,3 +1,5 @@
+// Command expand-openbao-audit inspects, or performs, the approved bounded
+// expansion of the OpenBao audit volume, preserving its records.
 package main
 
 import (
@@ -19,7 +21,11 @@ import (
 
 type command func(context.Context, string, ...string) ([]byte, error)
 
-const target = "20Gi"
+const target = "40Gi"
+
+// previous is the only reviewed starting size: the 13 October 2026 recovery
+// moved every audit claim to it, and no other live size is expected.
+const previous = "20Gi"
 const responseLimit = 4 << 20
 
 type snapshotFailure uint8
@@ -203,9 +209,9 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 		if err != nil || !valid(c, "v1", "PersistentVolumeClaim", "openbao", name) || field(c, "status", "phase") != "Bound" || field(c, "spec", "storageClassName") != "hcloud" || field(c, "metadata", "labels", "app.kubernetes.io/name") != "openbao" {
 			return s, claimUnverified
 		}
-		req, cap := str(field(c, "spec", "resources", "requests", "storage")), str(field(c, "status", "capacity", "storage"))
+		req, capacity := str(field(c, "spec", "resources", "requests", "storage")), str(field(c, "status", "capacity", "storage"))
 		_, typedConditions := field(c, "status", "conditions").([]any)
-		if req != "1Gi" && req != "10Gi" && req != target || cap != "10Gi" && cap != target || field(c, "status", "conditions") != nil && !typedConditions {
+		if req != previous && req != target || capacity != previous && capacity != target || field(c, "status", "conditions") != nil && !typedConditions {
 			return s, claimCapacityUnreviewed
 		}
 		pvName := str(field(c, "spec", "volumeName"))
@@ -217,7 +223,7 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 			return s, bindingUnverified
 		}
 		pvCapacity := field(v, "spec", "capacity", "storage")
-		if pvCapacity != "10Gi" && pvCapacity != target {
+		if pvCapacity != previous && pvCapacity != target {
 			return s, volumeCapacityUnreviewed
 		}
 		pod, err := e.read(ctx, "--namespace=openbao", "get", "pod", podName, "--output=json")
@@ -280,14 +286,14 @@ func auditPod(p map[string]any, name, claim, owner string) bool {
 }
 func stableResource(r map[string]any, omitCapacity bool) map[string]any {
 	b, _ := json.Marshal(r)
-	copy, _ := decode(b)
-	spec := obj(copy["spec"])
+	clone, _ := decode(b)
+	spec := obj(clone["spec"])
 	if omitCapacity {
 		delete(spec, "capacity")
-	} else if requests := obj(field(copy, "spec", "resources", "requests")); requests != nil {
+	} else if requests := obj(field(clone, "spec", "resources", "requests")); requests != nil {
 		delete(requests, "storage")
 	}
-	return map[string]any{"uid": field(copy, "metadata", "uid"), "name": field(copy, "metadata", "name"), "namespace": field(copy, "metadata", "namespace"), "owners": field(copy, "metadata", "ownerReferences"), "labels": field(copy, "metadata", "labels"), "annotations": field(copy, "metadata", "annotations"), "finalizers": field(copy, "metadata", "finalizers"), "spec": spec}
+	return map[string]any{"uid": field(clone, "metadata", "uid"), "name": field(clone, "metadata", "name"), "namespace": field(clone, "metadata", "namespace"), "owners": field(clone, "metadata", "ownerReferences"), "labels": field(clone, "metadata", "labels"), "annotations": field(clone, "metadata", "annotations"), "finalizers": field(clone, "metadata", "finalizers"), "spec": spec}
 }
 func preserved(a, b snapshot) bool {
 	if !reflect.DeepEqual(stableResource(a.workload, false), stableResource(b.workload, false)) || !reflect.DeepEqual(a.class, b.class) {
@@ -345,7 +351,7 @@ func run(args []string, out io.Writer, execute command, cost func(context.Contex
 		return hold()
 	}
 	sha, rev, id, deploy := os.Getenv("GITHUB_SHA"), os.Getenv("AUDIT_CAPACITY_REVISION"), os.Getenv("GITHUB_RUN_ID"), os.Getenv("AUDIT_CAPACITY_DEPLOYMENT_RUN")
-	if len(args) != 1 || args[0] != "--execute" && args[0] != "--preflight" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_EVENT_NAME") != "workflow_dispatch" || os.Getenv("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/expand-openbao-audit.yaml@refs/heads/main" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("AUDIT_CAPACITY_CONFIRM") != "EXPAND OPENBAO AUDIT ONLY TO 20GI" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(rev) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(deploy) {
+	if len(args) != 1 || args[0] != "--execute" && args[0] != "--preflight" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_EVENT_NAME") != "workflow_dispatch" || os.Getenv("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/expand-openbao-audit.yaml@refs/heads/main" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("AUDIT_CAPACITY_CONFIRM") != "EXPAND OPENBAO AUDIT ONLY TO 40GI" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(rev) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(deploy) {
 		return hold()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
@@ -450,7 +456,7 @@ func run(args []string, out io.Writer, execute command, cost func(context.Contex
 			return hold()
 		}
 	}
-	result := "OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=20Gi preservationSamples=2\n"
+	result := "OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=40Gi preservationSamples=2\n"
 	if n, err := io.WriteString(out, result); err != nil || n != len(result) {
 		return 2
 	}

@@ -24,6 +24,10 @@ spec:
     # Explicit custom-property assignments owned by the github-config tenant
     # (devantler-tech/.github#773); organization schema remains a provider gap.
     - repositorycustomproperties.repo.github.m.upbound.io
+    # Protected Marketplace action releases are declared by the github-config
+    # tenant (devantler-tech/.github#779). Secret custody is a separate gate.
+    - environments.repo.github.m.upbound.io
+    - environmentdeploymentpolicies.repo.github.m.upbound.io
     # Org-level rulesets. Of the org's 20 org rules, the 10 provider-upjet-github
     # can express are adopted Observe-first in devantler-tech/.github
     # deploy/rulesets/ (+ a net-new tag-protection ruleset); the other 10

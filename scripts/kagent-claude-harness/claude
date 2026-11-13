@@ -1,0 +1,16 @@
+#!/bin/sh
+# kagent's Claude harness runs `claude` from PATH, with the plugin directories it
+# generated. It cannot yet load the agentic-engineering plugin whole: it reads
+# the plugin's root plugin.json, refuses it, and would keep only selected skills
+# and none of its agents (kagent-dev/kagent#3388; the fix is proposed in
+# kagent-dev/kagent#3570). Until a kagent release carries the fix, this wrapper
+# adds the whole plugin, which the image bakes in at a pinned commit
+# (devantler-tech/monorepo#4868). Only a prompt run (-p) gets it; any other call,
+# such as the harness's --version probe, passes through unchanged.
+set -eu
+for arg in "$@"; do
+  if [ "${arg}" = "-p" ]; then
+    exec /usr/local/libexec/claude-code/claude "$@" --plugin-dir /opt/agent-plugins/agentic-engineering
+  fi
+done
+exec /usr/local/libexec/claude-code/claude "$@"

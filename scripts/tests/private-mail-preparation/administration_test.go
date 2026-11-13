@@ -22,7 +22,7 @@ func TestAdministrationSeparatesInitializationAuthority(t *testing.T) {
 	}
 	init, server := mapping(t, inits[0]), mapping(t, containers[0])
 	image, ok := init["image"].(string)
-	if init["command"] != nil || init["args"] != nil {
+	if init["command"] != nil || !reflect.DeepEqual(init["args"], []any{"--proxy-client-ip=false"}) {
 		t.Fatal("initialization must retain the image's fail-closed bootstrap entrypoint")
 	}
 	if !reflect.DeepEqual(server["command"], []any{"/usr/local/bin/stalwart"}) || !reflect.DeepEqual(server["args"], []any{"--config", "/etc/stalwart/config.json"}) {

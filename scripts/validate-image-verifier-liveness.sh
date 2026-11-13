@@ -117,17 +117,17 @@ if [[ -z "${policy_checker}" ]]; then
   trap 'rm -rf "${helper_work}"' EXIT
   policy_checker="${helper_work}/validate-image-verification-policy"
   GOWORK=off GOFLAGS="" go -C "${root_dir}" build -mod=readonly -trimpath \
-    -o "${policy_checker}" ./scripts/validate-image-verification-policy >/dev/null 2>&1 || \
+    -o "${policy_checker}" ./scripts/validate-image-verification-policy >/dev/null 2>&1 ||
     fail_infra 'could not build the reviewed image-verification policy comparator'
 fi
 [[ -x "${policy_checker}" ]] || fail_infra 'image-verification policy comparator is unavailable'
-declared_rules_json="$("${policy_checker}" normalize "${policy_manifest}" 2>/dev/null)" || \
+declared_rules_json="$("${policy_checker}" normalize "${policy_manifest}" 2>/dev/null)" ||
   fail_infra 'could not parse the complete declared image-verification policy'
 readonly declared_rules_json
-declared_rule_count="$(printf '%s' "${declared_rules_json}" | jq -r 'length')" || \
+declared_rule_count="$(printf '%s' "${declared_rules_json}" | jq -r 'length')" ||
   fail_infra 'could not count the declared image-verification rules'
 readonly declared_rule_count
-declared_patterns_json="$(printf '%s' "${declared_rules_json}" | jq -c 'map(.imagePattern)')" || \
+declared_patterns_json="$(printf '%s' "${declared_rules_json}" | jq -c 'map(.imagePattern)')" ||
   fail_infra 'could not encode the declared image-verification rule set'
 readonly declared_patterns_json
 
@@ -318,9 +318,10 @@ readonly rules_owner='security.ImageVerificationConfigController'
 readonly trustroot_owner='security.TUFTrustedRootController'
 
 # Emits ONE resource type's rows on one node as a compact JSON array, or returns
-# non-zero. `talosctl get -o json` emits a STREAM of objects (not an array), and
-# emits nothing at all when the type has no instances, so `jq -s` is what turns
-# both shapes into something countable.
+# non-zero. Read YAML directly: talosctl's JSON conversion interprets the
+# zero-prefixed ID 0010 as octal 8, losing the original declaration order.
+# The reviewed helper preserves IDs as strings and refuses duplicate identities.
+# No instances is an empty stream and becomes an empty array.
 #
 # An empty result and a failed query are NOT the same thing, and this returns
 # them differently on purpose: "the node holds no rules" is a verdict, "the
@@ -330,16 +331,9 @@ readonly trustroot_owner='security.TUFTrustedRootController'
 # script was rewritten to remove rather than reintroduce one level down.
 get_resource_json() {
   local node="$1" type="$2" out status=0
-  out="$("${talosctl_bin}" -n "${node}" get "${type}" -o json 2>/dev/null)" || status=$?
+  out="$("${talosctl_bin}" -n "${node}" get "${type}" -o yaml 2>/dev/null)" || status=$?
   [[ "${status}" -eq 0 ]] || return "${status}"
-  # `jq -s` on empty input yields `[]`, which is the "none present" verdict.
-  printf '%s' "${out}" | jq -s -c --arg type "${type}" '[.[] | {
-    id: (.metadata.id // ""),
-    phase: (.metadata.phase // ""),
-    owner: (.metadata.owner // ""),
-    imagePattern: (.spec.imagePattern // ""),
-    spec: (if $type == "imageverificationrules.security.talos.dev" then .spec else null end)
-  }]' 2>/dev/null
+  printf '%s' "${out}" | "${policy_checker}" resources "${type}" 2>/dev/null
 }
 
 # Verdict for ONE node. Returns 0 when that node's verification mechanism is
@@ -394,7 +388,7 @@ check_node() {
   # Preserve the complete native spec, in first-match order, and fail closed
   # when it cannot be read or compared. Diagnostics never print raw signers.
   running_decisions="$(printf '%s' "${rules}" | jq -c --arg owner "${rules_owner}" \
-    '[sort_by(.id)[] | select(.phase == "running" and .owner == $owner) | .spec]')" || \
+    '[sort_by(.id)[] | select(.phase == "running" and .owner == $owner) | .spec]')" ||
     fail_infra "could not read complete image-verification decisions on ${node}"
   status=0
   printf '%s' "${running_decisions}" | "${policy_checker}" compare "${policy_manifest}" >/dev/null 2>&1 || status=$?

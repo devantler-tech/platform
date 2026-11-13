@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -157,8 +158,11 @@ func TestNativeCaptureAndPreflight(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	git("init", "--quiet", "--initial-branch=main", "--object-format=sha1", workspace)
-	git("-C", workspace, "-c", "user.name=Queue Fixture", "-c", "user.email=queue@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "queue")
+	for _, message := range []string{"main", "queue"} {
+		git("-C", workspace, "-c", "user.name=Queue Fixture", "-c", "user.email=queue@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", message)
+	}
 	head := git("-C", workspace, "rev-parse", "HEAD")
+	parent := git("-C", workspace, "rev-parse", "HEAD^")
 	eventPath, responsePath, logPath, output := filepath.Join(dir, "event.json"), filepath.Join(dir, "response.json"), filepath.Join(dir, "calls"), filepath.Join(dir, "output")
 	write := func(path, data string) {
 		t.Helper()
@@ -167,7 +171,10 @@ func TestNativeCaptureAndPreflight(t *testing.T) {
 		}
 	}
 	write(eventPath, strings.ReplaceAll(validEvent, groupSHA, head))
-	write(responsePath, strings.ReplaceAll(validResponse, groupSHA, head))
+	// The synthetic ref's suffix and event base are independent of the live
+	// target branch. Only the candidate's actual parent controls deployment.
+	reply := strings.NewReplacer(groupSHA, head, `"mergeQueueEntry":{`, `"mergeQueueEntry":{"position":1,`, `"nameWithOwner":`, `"main":{"target":{"oid":"`+parent+`"}},"nameWithOwner":`).Replace(validResponse)
+	write(responsePath, reply)
 	write(output, "")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$QUEUE_TEST_LOG\"\n[ \"$QUEUE_TEST_FAIL\" != 1 ] || exit 1\nif [ -n \"$QUEUE_TEST_FAIL_ONCE\" ] && [ ! -f \"$QUEUE_TEST_FAIL_ONCE\" ]; then printf 'failed\\n' > \"$QUEUE_TEST_FAIL_ONCE\"; exit 1; fi\ncat \"$QUEUE_TEST_RESPONSE\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o700); err != nil {
@@ -198,6 +205,21 @@ func TestNativeCaptureAndPreflight(t *testing.T) {
 	if err := verify("check", &stdout); err != nil {
 		t.Fatal(err)
 	}
+	if err := verify("wait", &stdout); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, from, to string }{
+		{"position two", `"position":1`, `"position":2`},
+		{"missing position", `"position":1,`, ""},
+		{"stale parent", `"main":{"target":{"oid":"` + parent + `"}}`, `"main":{"target":{"oid":"` + baseSHA + `"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			write(responsePath, strings.Replace(reply, tc.from, tc.to, 1))
+			if err := verify("check", &stdout); err == nil {
+				t.Fatal("out-of-order candidate passed the production check")
+			}
+		})
+	}
 	log, err := os.ReadFile(logPath)
 	if err != nil || !strings.Contains(string(log), "api --hostname github.com graphql") || !strings.Contains(string(log), "-F number=4891") || !strings.Contains(string(log), "-f ref="+headRef) {
 		t.Fatalf("wrong native read: %s, %v", log, err)
@@ -209,7 +231,7 @@ func TestNativeCaptureAndPreflight(t *testing.T) {
 		{"evicted", `"isInMergeQueue":true`, `"isInMergeQueue":false`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			write(responsePath, strings.ReplaceAll(strings.ReplaceAll(validResponse, groupSHA, head), tc.from, tc.to))
+			write(responsePath, strings.ReplaceAll(reply, tc.from, tc.to))
 			before, _ := os.ReadFile(logPath)
 			if err := verify("check", &stdout); err == nil {
 				t.Fatal("accepted changed receipt")
@@ -220,7 +242,7 @@ func TestNativeCaptureAndPreflight(t *testing.T) {
 			}
 		})
 	}
-	write(responsePath, strings.ReplaceAll(validResponse, groupSHA, head))
+	write(responsePath, reply)
 	t.Setenv("QUEUE_TEST_FAIL_ONCE", filepath.Join(dir, "one-transport-failure"))
 	beforeRetry, _ := os.ReadFile(logPath)
 	if err := verify("check", &stdout); err != nil {
@@ -290,12 +312,73 @@ func TestReceiptJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(r)
+	data, err := json.Marshal(r.receipt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var decoded receipt
-	if err := json.Unmarshal(data, &decoded); err != nil || decoded != r {
+	if err := json.Unmarshal(data, &decoded); err != nil || decoded != r.receipt {
 		t.Fatal("receipt is not lossless")
+	}
+}
+
+func TestWaitForTurnUsesSameCandidateAndCurrentParent(t *testing.T) {
+	for _, replaced := range []bool{false, true} {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		initial := receipt{Entry: "original"}
+		turns := []witness{
+			{receipt: initial, main: sourceSHA, position: 2},
+			{receipt: initial, main: sourceSHA, position: 1},
+			{receipt: initial, main: baseSHA, position: 1},
+		}
+		if replaced {
+			turns[2].Entry = "replacement"
+		}
+		var stdout bytes.Buffer
+		read := func() (witness, error) {
+			if len(turns) == 0 {
+				t.Fatal("queue was read after reaching a terminal result")
+			}
+			current := turns[0]
+			turns = turns[1:]
+			return current, nil
+		}
+		err := waitForTurn(ctx, read, initial, baseSHA, time.Millisecond, &stdout)
+		cancel()
+		if len(turns) != 0 || (err != nil) != replaced {
+			t.Fatalf("unexpected turn result (replaced=%t): %v, %d unread observations", replaced, err, len(turns))
+		}
+	}
+}
+
+func TestWaitForTurnRecoversOnlyFromTransportFailure(t *testing.T) {
+	initial := receipt{Entry: "original"}
+	// The production check never polls, even for a retryable transport error.
+	for _, tc := range []struct {
+		name     string
+		readErr  error
+		interval time.Duration
+		reads    int
+	}{
+		{"poll retries transport", errQueueTransport, time.Millisecond, 2},
+		{"poll refuses invalid witness", errors.New("queue entry was replaced"), time.Millisecond, 1},
+		{"production refuses transport", errQueueTransport, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			reads := 0
+			read := func() (witness, error) {
+				reads++
+				if reads == 1 {
+					return witness{}, tc.readErr
+				}
+				return witness{receipt: initial, main: baseSHA, position: 1}, nil
+			}
+			err := waitForTurn(ctx, read, initial, baseSHA, tc.interval, &bytes.Buffer{})
+			if reads != tc.reads || (err == nil) != (tc.reads == 2) {
+				t.Fatalf("read %d times, want %d, got %v", reads, tc.reads, err)
+			}
+		})
 	}
 }

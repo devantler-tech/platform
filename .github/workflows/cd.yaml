@@ -1,3 +1,4 @@
+---
 name: CD
 
 # Manual-only. Production deploys happen automatically in the CI merge queue
@@ -5,7 +6,7 @@ name: CD
 # direct-push-to-main case, which has no merge_group event to deploy. Run it
 # by hand from the Actions tab. (Dropped the 'v*' release-tag trigger — it
 # re-deployed what the merge queue had already shipped.)
-on:
+"on":
   workflow_dispatch:
     inputs:
       verify-wedding-backup-staging:
@@ -124,6 +125,14 @@ jobs:
           version: v0.74.0
           cache: true
 
+      - name: 📌 Install reviewed YAML parser for nested RGD templates
+        env:
+          GOBIN: ${{ runner.temp }}/rgd-validation-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+          PATH="$GOBIN:$PATH" yq --version
+
       - name: 🔬 Validate nested RGD workload templates
         run: |
           shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
@@ -149,7 +158,7 @@ jobs:
 
       - name: 🔐 Enforce approved publication signers
         env:
-          APPROVED_REVISIONS_ENFORCE: '1'
+          APPROVED_REVISIONS_ENFORCE: "1"
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       - name: ⚙️ Setup Go
@@ -166,7 +175,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -191,7 +200,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.212.4"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

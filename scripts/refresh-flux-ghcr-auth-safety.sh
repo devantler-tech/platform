@@ -434,10 +434,94 @@ selected_node_identity_is_current() {
   ' "${state_file}" >/dev/null
 }
 
+# Capture every short-period consumer AFTER the upstream seed sync and BEFORE
+# waiting on any one consumer. Their normal controller refreshes then overlap,
+# without a tenant-side annotation or a second serial refresh interval.
+prepare_periodic_fanout_baselines() {
+  local work_dir="$1" context_name="$2"
+  shift 2
+  local namespace source_file baseline_file interval started
+  started="$(date -u +%s)" || return 1
+  [[ "${started}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "${started}" >"${work_dir}/periodic-fanout-started" || return 1
+  for namespace in "$@"; do
+    source_file="${work_dir}/periodic-source-${namespace}.json"
+    baseline_file="${work_dir}/periodic-baseline-${namespace}.json"
+    rm -f "${baseline_file}" || return 1
+    kubectl --context "${context_name}" --namespace "${namespace}" \
+      get externalsecret ghcr-auth -o json >"${source_file}" || return 1
+    jq -se --arg namespace "${namespace}" '
+      length == 1 and (.[0] | type) == "object" and
+      .[0].apiVersion == "external-secrets.io/v1" and .[0].kind == "ExternalSecret" and
+      .[0].metadata.namespace == $namespace and .[0].metadata.name == "ghcr-auth" and
+      .[0].metadata.deletionTimestamp == null and
+      (.[0].metadata.uid | type) == "string" and (.[0].metadata.uid | length) > 0 and
+      (.[0].metadata.resourceVersion | type) == "string" and (.[0].metadata.resourceVersion | length) > 0 and
+      (.[0].metadata.generation | type) == "number" and .[0].metadata.generation > 0 and
+      (.[0].spec | type) == "object" and
+      ((.[0].spec.refreshInterval // "1h") | type) == "string"
+    ' "${source_file}" >/dev/null || return 1
+    interval="$(jq -r '.spec.refreshInterval // "1h"' "${source_file}")" || return 1
+    if [[ "${interval}" == "1m" ]]; then
+      jq -e '(.spec.refreshPolicy // "Periodic") == "Periodic"' \
+        "${source_file}" >/dev/null || return 1
+      cp "${source_file}" "${baseline_file}" || return 1
+    fi
+  done
+}
+
+# Observe a genuinely new periodic controller result for the captured object.
+# A resourceVersion change alone is not a refresh. Identity, ownership, spec,
+# generation, current Ready state and a post-seed refresh timestamp all bind it.
+# The caller separately verifies the materialized Secret against Git/SOPS.
+observe_periodic_fanout_refresh() {
+  local namespace="$1" work_dir="$2" context_name="$3"
+  local baseline_file current_file started attempt
+  baseline_file="${work_dir}/periodic-baseline-${namespace}.json"
+  current_file="${work_dir}/periodic-current-${namespace}.json"
+  started="$(cat "${work_dir}/periodic-fanout-started")" || return 1
+  [[ "${started}" =~ ^[0-9]+$ && -f "${baseline_file}" ]] || return 1
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    kubectl --context "${context_name}" --namespace "${namespace}" \
+      get externalsecret ghcr-auth -o json >"${current_file}" || return 1
+    jq -se --slurpfile baseline "${baseline_file}" '
+      length == 1 and (.[0] | type) == "object" and
+      .[0].apiVersion == $baseline[0].apiVersion and .[0].kind == $baseline[0].kind and
+      .[0].metadata.name == $baseline[0].metadata.name and
+      .[0].metadata.namespace == $baseline[0].metadata.namespace and
+      .[0].metadata.uid == $baseline[0].metadata.uid and
+      .[0].metadata.generation == $baseline[0].metadata.generation and
+      .[0].metadata.deletionTimestamp == null and
+      (.[0].metadata.resourceVersion | type) == "string" and
+      (.[0].metadata.resourceVersion | length) > 0 and
+      (.[0].metadata.ownerReferences // []) == ($baseline[0].metadata.ownerReferences // []) and
+      (.[0].metadata.labels // {}) == ($baseline[0].metadata.labels // {}) and
+      .[0].spec == $baseline[0].spec
+    ' "${current_file}" >/dev/null || return 1
+    if jq -e --slurpfile baseline "${baseline_file}" --argjson started "${started}" '
+      .metadata.resourceVersion != $baseline[0].metadata.resourceVersion and
+      (.status.refreshTime | type) == "string" and
+      .status.refreshTime != ($baseline[0].status.refreshTime // "") and
+      ((.status.refreshTime | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) as $refresh |
+        $refresh > $started and $refresh <= (now + 30)) and
+      ((.status.syncedResourceVersion // "") |
+        startswith(($baseline[0].metadata.generation | tostring) + "-")) and
+      any(.status.conditions[]?; .type == "Ready" and .status == "True")
+    ' "${current_file}" >/dev/null; then
+      return 0
+    fi
+    sleep "${SYNC_INTERVAL}"
+  done
+  echo "::error::Timed out waiting for a proved periodic GHCR credential refresh."
+  return 1
+}
+
 # Reapply and verify the complete live Kubernetes pull-consumer fanout. Flux and
 # External Secrets reconcile independently, so a long Talos roll can overlap an
 # hourly controller pass that restores the previous Git value.
 sync_and_verify_kubernetes_fanout() {
+  local context_name="$1"
+  shift
   local namespace
   local rc
 
@@ -449,11 +533,22 @@ sync_and_verify_kubernetes_fanout() {
     rc=$?
     return "${rc}"
   }
+  prepare_periodic_fanout_baselines "${work_dir}" "${context_name}" "$@" || {
+    rc=$?
+    return "${rc}"
+  }
   for namespace in "$@"; do
-    force_sync_resource externalsecret "${namespace}" ghcr-auth || {
-      rc=$?
-      return "${rc}"
-    }
+    if [[ -f "${work_dir}/periodic-baseline-${namespace}.json" ]]; then
+      observe_periodic_fanout_refresh "${namespace}" "${work_dir}" "${context_name}" || {
+        rc=$?
+        return "${rc}"
+      }
+    else
+      force_sync_resource externalsecret "${namespace}" ghcr-auth || {
+        rc=$?
+        return "${rc}"
+      }
+    fi
     verify_consumer_secret "${namespace}" || {
       rc=$?
       return "${rc}"
@@ -469,14 +564,15 @@ stage_fanout_before_talos() {
   local desired_revision="$1"
   local operator_image="$2"
   local talos_sync_result="$3"
+  local context_name="$4"
   local stage_attempt=0
   local stage_attempts="${TALOS_CONVERGENCE_ATTEMPTS:-3}"
   local rc
-  shift 3
+  shift 4
 
   while ((stage_attempt < stage_attempts)); do
     stage_attempt=$((stage_attempt + 1))
-    sync_and_verify_kubernetes_fanout "$@" || {
+    sync_and_verify_kubernetes_fanout "${context_name}" "$@" || {
       rc=$?
       return "${rc}"
     }

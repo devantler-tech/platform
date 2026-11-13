@@ -11,6 +11,7 @@ import (
 )
 
 const mailRepository = "ghcr.io/devantler-tech/platform-private-mail-bootstrap"
+const mailCandidateRepository = mailRepository + "-candidate"
 const mailPublisher = "https://github.com/devantler-tech/platform/.github/workflows/publish-private-mail-bootstrap.yaml@refs/heads/main"
 
 func mailField[T any](t *testing.T, value any, keys ...string) T {
@@ -35,11 +36,11 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 		t.Fatal("credential synchronizer must receive the seed/read policy")
 	}
 	_, policy := captureBaoWrite(t, "bao", "policy", "write", "vault-seed-write")
-	entries := regexp.MustCompile(`(?s)path\s+"(secret/(?:data|metadata)/apps/private-mail/[^\"]+)"\s*\{\s*capabilities\s*=\s*(\[[^\]]+\])\s*\}`).FindAllStringSubmatch(policy, -1)
+	entries := regexp.MustCompile(`(?s)path\s+"(secret/(?:data|metadata)/infrastructure/email/[^\"]+)"\s*\{\s*capabilities\s*=\s*(\[[^\]]+\])\s*\}`).FindAllStringSubmatch(policy, -1)
 	want := map[string]bool{}
 	for _, kind := range []string{"data", "metadata"} {
 		for _, account := range []string{"admin", "maintainer", "agent"} {
-			want["secret/"+kind+"/apps/private-mail/"+account] = true
+			want["secret/"+kind+"/infrastructure/email/"+account] = true
 		}
 	}
 	if len(entries) != len(want) {
@@ -59,13 +60,35 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 			t.Fatal("mail credential grant must seed and read without list or delete authority")
 		}
 	}
+	if strings.Contains(policy, "apps/private-mail/") {
+		t.Fatal("the synchronizer must no longer write retained legacy credentials")
+	}
+	for _, account := range []string{"admin", "maintainer", "agent"} {
+		directory := "k8s/bases/apps/private-mail-administration/"
+		if account == "admin" {
+			directory = "k8s/bases/apps/private-mail/"
+		}
+		read := readYAML(t, directory+"external-secret-"+account+".yaml")
+		seed := readYAML(t, directory+"push-secret-"+account+".yaml")
+		readData := mailField[[]any](t, read, "spec", "data")
+		seedData := mailField[[]any](t, seed, "spec", "data")
+		equal(t, len(readData), 1)
+		equal(t, len(seedData), 1)
+		equal(t, mailField[string](t, readData[0], "remoteRef", "key"), "infrastructure/email/"+account)
+		equal(t, mailField[string](t, seedData[0], "match", "remoteRef", "remoteKey"), "infrastructure/email/"+account)
+		equal(t, mailField[string](t, read, "spec", "target", "name"), "private-mail-"+account)
+		equal(t, mailField[string](t, seed, "spec", "selector", "secret", "name"), "private-mail-generated-"+account)
+		equal(t, mailField[string](t, seed, "spec", "updatePolicy"), "IfNotExists")
+		equal(t, mailField[string](t, seed, "spec", "deletionPolicy"), "None")
+	}
 }
 
 // Match the first node rule exactly as declared, including catch-all precedence.
 func TestPrivateMailImageUsesItsOwnExactNodeSigner(t *testing.T) {
 	rules := mailField[[]any](t, readYAML(t, "talos/cluster/verify-first-party-images.yaml"), "rules")
-	for _, repository := range []string{mailRepository, mailRepository + "-other", "ghcr.io/devantler-tech/wedding-app"} {
+	for _, repository := range []string{mailRepository, mailCandidateRepository, mailRepository + "-other", mailCandidateRepository + "-other", "ghcr.io/devantler-tech/wedding-app"} {
 		t.Run(repository, func(t *testing.T) {
+			isMail := repository == mailRepository || repository == mailCandidateRepository
 			for _, rule := range rules {
 				match, err := path.Match(mailField[string](t, rule, "image"), repository)
 				if err != nil {
@@ -79,8 +102,8 @@ func TestPrivateMailImageUsesItsOwnExactNodeSigner(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				equal(t, identity.MatchString(mailPublisher), repository == mailRepository)
-				if repository == mailRepository {
+				equal(t, identity.MatchString(mailPublisher), isMail)
+				if isMail {
 					for _, forbidden := range []string{
 						strings.Replace(mailPublisher, "refs/heads/main", "refs/pull/1/merge", 1),
 						strings.Replace(mailPublisher, "refs/heads/main", "refs/heads/other", 1),
@@ -102,11 +125,12 @@ func TestPrivateMailImageUsesItsOwnExactNodeSigner(t *testing.T) {
 
 func TestPrivateMailSignerCannotAuthorizeOtherImageRepositories(t *testing.T) {
 	evaluator := newImagePolicyEvaluator(t, readYAML(t, "k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"))
-	for _, repository := range []string{mailRepository, mailRepository + "-other", "ghcr.io/devantler-tech/wedding-app"} {
+	for _, repository := range []string{mailRepository, mailCandidateRepository, mailRepository + "-other", mailCandidateRepository + "-other", mailCandidateRepository + "/helper", "ghcr.io/devantler-tech/wedding-app"} {
+		isMail := repository == mailRepository || repository == mailCandidateRepository
 		image := repository + "@sha256:" + strings.Repeat("a", 64)
 		admitted, calls := evaluator.evaluate(t, map[string][]string{"containers": {image}, "initContainers": {}, "ephemeralContainers": {}}, map[string]certificateFixture{image: {issuer: githubIssuer, subject: mailPublisher}})
-		equal(t, admitted, repository == mailRepository)
-		if repository == mailRepository {
+		equal(t, admitted, isMail)
+		if isMail {
 			if !slices.Equal(calls, []string{image + "/publishprivatemail"}) {
 				t.Fatal("mail image must use only its dedicated attestor")
 			}

@@ -83,7 +83,28 @@ verify_bound_publication() (
 
 # Business-site's release caller uses a maintained publisher, not the legacy
 # identity encoded by schemaVersion 1 approval records. These helpers supply
-# manifest-publication evidence only; no approval generator consumes this receipt.
+# Publication evidence for reviewed binding preparation; this receipt grants no adoption.
+# A reviewed consumer may stage two exact canonical publishers. The complete
+# table is validated before any identity is emitted; this is not regex authority.
+business_manifest_publishers() (
+  local file="${1:-${CANONICAL_APPROVALS_FILE:-$(dirname "${BASH_SOURCE[0]}")/publish-workflow-canonical-approvals.tsv}}" rows
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  rows="$(awk -F '\t' '
+    NR==1 {if($0!="consumer\tworkflow\trepository\tcommit") exit 1; next}
+    {if(NR>512 || NF!=4 || length($0)>512 || $1!~/^[a-z0-9.][a-z0-9.-]*$/ ||
+       ($2!="publish-app" && $2!="publish-manifests") || $3!="devantler-tech/.github" ||
+       length($4)!=40 || $4~/[^0-9a-f]/) exit 1;
+     if($1=="business-site") {
+       if($2!="publish-app") exit 1;
+       print "devantler-tech/.github/.github/workflows/publish-app.yaml@" $4
+     }}
+    END {if(NR==0) exit 1}
+  ' "$file")" || return 1
+  printf '%s\n' "$rows" | jq -Rces '
+    split("\n") | map(select(length>0)) |
+    select(length<=2 and (unique|length)==length)'
+)
+
 business_manifest_tag_commit() {
   local tag="$1" body
   body="$(gh_retry api "repos/devantler-tech/business-site/git/ref/tags/$tag")" || return 1
@@ -105,8 +126,9 @@ business_manifest_release_record() {
 }
 
 business_manifest_run_record() {
-  local tag="$1" source_sha="$2"
-  jq -cers --arg tag "$tag" --arg source "$source_sha" '
+  local tag="$1" source_sha="$2" publishers
+  publishers="$(business_manifest_publishers)" || return 1
+  jq -cers --arg tag "$tag" --arg source "$source_sha" --argjson publishers "$publishers" '
     select(length==1) | .[0] |
     select(type=="object" and .repository.full_name=="devantler-tech/business-site" and
       .event=="release" and .path==".github/workflows/publish-runtime.yaml" and
@@ -114,8 +136,10 @@ business_manifest_run_record() {
       (.id | type=="number" and .>0 and .<=9007199254740991 and floor==.) and
       (.run_attempt | type=="number" and .>0 and .<=9007199254740991 and floor==.) and
       (.referenced_workflows | type=="array" and length==1) and
-      .referenced_workflows[0].sha=="467f07582436a26b62cf4aa756423512f85ba0c0" and
-      .referenced_workflows[0].path=="devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0") |
+      (.referenced_workflows[0] as $publisher |
+        ($publisher.sha|type=="string" and test("^[0-9a-f]{40}$")) and
+        $publisher.path==("devantler-tech/.github/.github/workflows/publish-app.yaml@"+$publisher.sha) and
+        ($publishers|index($publisher.path))!=null)) |
     {id,run_attempt,event,path,head_branch,head_sha,status,conclusion,repository:.repository.full_name,
       publisherIdentity:.referenced_workflows[0].path}' 2>/dev/null
 }
@@ -127,7 +151,11 @@ business_site_manifest_evidence() (
     case "$seen" in *":$option:"*) return 2 ;; esac
     seen="$seen$option:"
     case "$option" in
-      --verify-only) verify_only=1; shift; continue ;;
+      --verify-only)
+        verify_only=1
+        shift
+        continue
+        ;;
       --consumer | --tag | --source-sha | --digest) [ "$#" -ge 2 ] || return 2 ;;
       *) return 2 ;;
     esac
@@ -143,7 +171,9 @@ business_site_manifest_evidence() (
   [[ "$tag" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]] || return 2
   [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || return 2
   [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
-  local publisher='devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0'
+  local publisher publishers
+  publishers="$(business_manifest_publishers)" || return 1
+  printf '%s\n' "$publishers" | jq -e 'length>0' >/dev/null || return 1
   local artifact='ghcr.io/devantler-tech/business-site/manifests'
   local release runs selected record caller calls business_verification_dir current run_id run_attempt
   [ "$(business_manifest_tag_commit "$tag")" = "$source_sha" ] || return 1
@@ -164,6 +194,7 @@ business_site_manifest_evidence() (
       .event=="release" and .path==".github/workflows/publish-runtime.yaml" and
       .status=="completed" and .conclusion=="success")] | select(length==1) | .[0]' 2>/dev/null)" || return 1
   record="$(printf '%s\n' "$selected" | business_manifest_run_record "$tag" "$source_sha")" || return 1
+  publisher="$(printf '%s\n' "$record" | jq -er .publisherIdentity)" || return 1
   run_id="$(printf '%s\n' "$record" | jq -r .id)" || return 1
   run_attempt="$(printf '%s\n' "$record" | jq -r .run_attempt)" || return 1
   caller="$(gh_retry api --method GET repos/devantler-tech/business-site/contents/.github/workflows/publish-runtime.yaml \

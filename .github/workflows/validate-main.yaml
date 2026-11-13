@@ -1,3 +1,4 @@
+---
 name: Validate Main
 
 # ci.yaml runs the authorization gate on `pull_request` and `merge_group` only,
@@ -15,7 +16,7 @@ name: Validate Main
 # authorization surface, which a change anywhere in the overlays (or in the
 # validator itself) can move; a paths filter here would recreate a narrower
 # version of the same blind spot.
-on:
+"on":
   push:
     branches: [main]
   # Validate a trusted prospective revision with the original read-only jobs.
@@ -75,11 +76,17 @@ jobs:
           shellcheck scripts/tests/test-webapp-compiled-scan.sh
           bash scripts/tests/test-webapp-compiled-scan.sh
       - name: 🔏 Install reviewed public-image verification tools
+        env:
+          # Download through the authenticated asset API first (#5942).
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/setup-supply-chain-tools.sh
-      - name: 🧪 Exercise the real controller and restricted public application
+      - name: Validate the hosted runtime script
         run: |
           shellcheck scripts/tests/test-webapp-runtime-hosted.sh
-          bash scripts/tests/test-webapp-runtime-hosted.sh
+      - name: 🧪 Exercise the real controller and restricted public application
+        env:
+          PREBUILT_CI_READ_TOKEN: ${{ github.token }}
+        run: bash scripts/tests/test-webapp-runtime-hosted.sh
 
   validate-eks-authorization:
     name: 🔐 Validate Production Authorization
@@ -94,7 +101,7 @@ jobs:
 
       - name: 🔐 Enforce approved publication signers
         env:
-          APPROVED_REVISIONS_ENFORCE: '1'
+          APPROVED_REVISIONS_ENFORCE: "1"
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       - name: ⚙️ Setup Go
@@ -111,7 +118,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL \
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
@@ -127,7 +134,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.212.4"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -204,7 +211,6 @@ jobs:
           set -o pipefail
           ./scripts/report-publish-workflow-signing-revisions.sh | tee -a "$GITHUB_STEP_SUMMARY"
 
-
   # ci.yaml's validate-talos job runs the Kubernetes/Talos compatibility predicate on
   # `pull_request` and `merge_group`, but neither event fires for a direct push to main.
   # Such a push could otherwise reach the manually dispatched CD route unchecked.
@@ -259,6 +265,14 @@ jobs:
         with:
           version: v0.74.0
           cache: true
+
+      - name: 📌 Install reviewed YAML parser for nested RGD templates
+        env:
+          GOBIN: ${{ runner.temp }}/rgd-validation-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+          PATH="$GOBIN:$PATH" yq --version
 
       - name: 🔬 Validate nested RGD workload templates
         run: |
@@ -321,7 +335,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.212.4"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -385,7 +399,7 @@ jobs:
         if: >-
           !cancelled() &&
           steps.normalize-sarif.outputs.sarif == 'ready'
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: ${{ runner.temp }}/kubescape.sarif
           # MUST match ci.yaml's category: Code Scanning dedupes and closes per

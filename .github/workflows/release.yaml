@@ -1,5 +1,6 @@
+---
 name: Release
-on:
+"on":
   workflow_dispatch:
   push:
     branches:
@@ -9,7 +10,7 @@ permissions: {}
 
 jobs:
   release:
-    uses: devantler-tech/.github/.github/workflows/create-release.yaml@7c9e3dfd669dc9a6268a2e6940728b879966a2f2 # v13.3.4
+    uses: devantler-tech/.github/.github/workflows/create-release.yaml@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78 # v21.1.1
     with:
       disable-issue-side-effects: true
     permissions:

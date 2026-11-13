@@ -82,43 +82,84 @@ check() {
   fi
   printf 'ok: %s\n' "${name}"
 }
-queue() { rm -f "${scratch}"/read.*.json; cp "${scratch}/$1.json" "${scratch}/read.json"; shift
-  local n=1; for f in "$@"; do cp "${scratch}/${f}.json" "${scratch}/read.${n}.json"; n=$((n + 1)); done; }
+queue() {
+  rm -f "${scratch}"/read.*.json
+  cp "${scratch}/$1.json" "${scratch}/read.json"
+  shift
+  local n=1
+  for f in "$@"; do
+    cp "${scratch}/${f}.json" "${scratch}/read.${n}.json"
+    n=$((n + 1))
+  done
+}
 
 queue hardened
 check 'templates that already carry both fields are not written' pass normal 'No admission write needed'
-[[ ! -f "${scratch}/writes" && ! -f "${scratch}/rollouts" ]] || { echo 'FAIL: a hardened template was written' >&2; exit 1; }
+[[ ! -f "${scratch}/writes" && ! -f "${scratch}/rollouts" ]] || {
+  echo 'FAIL: a hardened template was written' >&2
+  exit 1
+}
 
 queue hardened unhardened hardened
 check 'every template lacking a field is written and rolled out' pass normal
-[[ "$(wc -l <"${scratch}/writes")" -eq 6 ]] || { echo 'FAIL: expected six writes' >&2; exit 1; }
+[[ "$(wc -l <"${scratch}/writes")" -eq 6 ]] || {
+  echo 'FAIL: expected six writes' >&2
+  exit 1
+}
 grep -qx 'daemonset/coroot-node-agent' "${scratch}/writes"
 grep -qx 'statefulset/coroot-clickhouse-shard-0 --timeout=15m' "${scratch}/rollouts"
-[[ "$(wc -l <"${scratch}/rollouts")" -eq 6 ]] || { echo 'FAIL: expected six rollouts' >&2; exit 1; }
+[[ "$(wc -l <"${scratch}/rollouts")" -eq 6 ]] || {
+  echo 'FAIL: expected six rollouts' >&2
+  exit 1
+}
 
 queue hardened one-lacking hardened
 check 'only the template lacking a field is written' pass normal
-[[ "$(cat "${scratch}/writes")" == 'statefulset/coroot-coroot' ]] || { echo 'FAIL: wrong write set' >&2; exit 1; }
-[[ "$(cat "${scratch}/rollouts")" == 'statefulset/coroot-coroot --timeout=15m' ]] || { echo 'FAIL: wrong rollout set' >&2; exit 1; }
+[[ "$(cat "${scratch}/writes")" == 'statefulset/coroot-coroot' ]] || {
+  echo 'FAIL: wrong write set' >&2
+  exit 1
+}
+[[ "$(cat "${scratch}/rollouts")" == 'statefulset/coroot-coroot --timeout=15m' ]] || {
+  echo 'FAIL: wrong rollout set' >&2
+  exit 1
+}
 
 queue hardened one-lacking agent-lacking hardened
 check 'a template that starts lacking a field during a retry is also rolled out' pass normal
 [[ "$(sort "${scratch}/rollouts" | paste -sd ' ' -)" == 'daemonset/coroot-node-agent --timeout=15m statefulset/coroot-coroot --timeout=15m' ]] ||
-  { echo 'FAIL: a template written during a retry was not rolled out' >&2; exit 1; }
+  {
+    echo 'FAIL: a template written during a retry was not rolled out' >&2
+    exit 1
+  }
 
 queue seven
 check 'a population other than the reviewed six fails before any write' fail normal 'differ from the reviewed six'
-[[ ! -f "${scratch}/writes" ]] || { echo 'FAIL: wrote to an unreviewed population' >&2; exit 1; }
+[[ ! -f "${scratch}/writes" ]] || {
+  echo 'FAIL: wrote to an unreviewed population' >&2
+  exit 1
+}
 
 queue hardened unhardened unhardened hardened
 check 'a write admitted before the label is visible is retried' pass normal
-[[ "$(wc -l <"${scratch}/writes")" -eq 12 ]] || { echo 'FAIL: expected two write rounds' >&2; exit 1; }
-[[ "$(wc -l <"${scratch}/rollouts")" -eq 6 ]] || { echo 'FAIL: expected six rollouts' >&2; exit 1; }
+[[ "$(wc -l <"${scratch}/writes")" -eq 12 ]] || {
+  echo 'FAIL: expected two write rounds' >&2
+  exit 1
+}
+[[ "$(wc -l <"${scratch}/rollouts")" -eq 6 ]] || {
+  echo 'FAIL: expected six rollouts' >&2
+  exit 1
+}
 
 queue unhardened
 check 'fields still missing after three writes fail before any rollout' fail normal 'admission did not add both fields'
-[[ "$(wc -l <"${scratch}/writes")" -eq 18 ]] || { echo 'FAIL: expected three bounded write rounds' >&2; exit 1; }
-[[ ! -f "${scratch}/rollouts" ]] || { echo 'FAIL: rolled out without admitted fields' >&2; exit 1; }
+[[ "$(wc -l <"${scratch}/writes")" -eq 18 ]] || {
+  echo 'FAIL: expected three bounded write rounds' >&2
+  exit 1
+}
+[[ ! -f "${scratch}/rollouts" ]] || {
+  echo 'FAIL: rolled out without admitted fields' >&2
+  exit 1
+}
 
 queue hardened unhardened hardened
 check 'an unfinished rollout fails' fail rollout-timeout 'did not finish within 15m'

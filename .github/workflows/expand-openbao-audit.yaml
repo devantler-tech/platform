@@ -1,6 +1,7 @@
+---
 name: Expand OpenBao Audit Capacity
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       mode:
@@ -10,7 +11,7 @@ on:
         default: preflight
         options: [preflight, expand]
       confirmation:
-        description: Type EXPAND OPENBAO AUDIT ONLY TO 20GI; records remain and capacity cannot shrink
+        description: Type EXPAND OPENBAO AUDIT ONLY TO 40GI; records remain and capacity cannot shrink
         required: true
         type: string
       deployed_revision:
@@ -58,7 +59,7 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_RUN_ATTEMPT" == 1 ]]
           [[ "$AUDIT_CAPACITY_MODE" == preflight || "$AUDIT_CAPACITY_MODE" == expand ]]
-          [[ "$AUDIT_CAPACITY_CONFIRM" == 'EXPAND OPENBAO AUDIT ONLY TO 20GI' ]]
+          [[ "$AUDIT_CAPACITY_CONFIRM" == 'EXPAND OPENBAO AUDIT ONLY TO 40GI' ]]
           [[ "$AUDIT_CAPACITY_REVISION" =~ ^latest@sha256:[0-9a-f]{64}$ ]]
           [[ "$AUDIT_CAPACITY_DEPLOYMENT_RUN" =~ ^[1-9][0-9]{0,19}$ ]]
 
@@ -79,7 +80,7 @@ jobs:
 
       - name: Require offline preservation and real patch transport controls
         env:
-          AUDIT_REQUIRE_NATIVE_CONTROL: '1'
+          AUDIT_REQUIRE_NATIVE_CONTROL: "1"
         run: go test -race -count=1 ./scripts/expand-openbao-audit
 
       - name: Restore the established protected production kubeconfig

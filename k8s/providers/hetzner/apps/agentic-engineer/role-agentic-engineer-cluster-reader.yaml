@@ -1,0 +1,10 @@
+# The live-health check also reads Flux's own controllers, and only in flux-system.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentic-engineer-cluster-reader
+  namespace: flux-system
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]

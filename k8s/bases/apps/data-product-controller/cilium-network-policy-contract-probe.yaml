@@ -9,6 +9,18 @@ spec:
       k8s:app.kubernetes.io/name: data-product-controller
       k8s:app.kubernetes.io/instance: data-product-controller
       k8s:app.kubernetes.io/component: contract-probe
+  ingress:
+    # Collect existing diagnostics without reaching the public probe target.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+            app.kubernetes.io/managed-by: coroot-operator
+            app.kubernetes.io/part-of: coroot
+            app.kubernetes.io/component: coroot-cluster-agent
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP
   egress:
     - toFQDNs:
         - matchName: harbour-data.${domain}

@@ -20,7 +20,7 @@ func fixture(t *testing.T, body string) string {
 
 func TestVersionPairings(t *testing.T) {
 	for _, tc := range []struct{ name, talos, kubernetes, diagnostic string }{
-		{"current production", "v1.13.11", "v1.36.4", ""},
+		{"current production", "v1.13.12", "v1.36.4", ""},
 		{"in-range patch bump", "v1.13.9", "v1.36.5", ""},
 		{"rejected PR 3534", "v1.13.9", "v1.37.0", "too new"},
 		{"too old", "v1.13.9", "v1.30.0", "too old"},
@@ -201,7 +201,7 @@ func TestHealDeployValidatesCheckedOutMain(t *testing.T) {
 	if deploy < 0 {
 		t.Fatal("heal route does not deploy production")
 	}
-	if !(checkoutMain < validator && validator < deploy) {
+	if checkoutMain >= validator || validator >= deploy {
 		t.Errorf("heal route must validate after checkout and before deploy: checkout=%d validator=%d deploy=%d", checkoutMain, validator, deploy)
 	}
 }

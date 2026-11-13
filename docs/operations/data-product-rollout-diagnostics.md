@@ -5,6 +5,17 @@ settle within its shared deadline. A failed receipt reports `complete: false` an
 keeps the original `failure` classification. Diagnostics do not extend the
 deadline, grant a retry, or relax an acceptance check.
 
+One failed resource read is read once more inside the shared deadline, because it
+says nothing about the rollout. An accepted receipt counts these in `readRetries`,
+as it counts dropped or timed-out public requests in `publicRetries`. A second
+failure of the same read refuses with `read_incomplete`.
+
+Each public request may use a tenth of the deadline, and at least five seconds,
+before it times out. So one stalled response cannot use the whole budget. A
+request that drops its connection, times out, or gets a 520 to 524 answer (the
+edge could not reach the cluster) is tried once more inside the shared deadline;
+any other public failure refuses at once.
+
 For snapshot failures, `phase` identifies `initial_readiness` or
 `rollout_stability`. `role` names a fixed resource role or check group, and
 `reason` distinguishes:
@@ -21,7 +32,10 @@ cause of an incident. `snapshot`, `workloads`, `backends`, `routes`, and
 `readiness` describe groups when no narrower completed result exists.
 
 Public-response failures use `phase: public_contract` and their fixed endpoint
-role and failure class. A public failure observed against a moving snapshot pair
+role and failure class. A public failure also reports `publicStartedAfterSeconds`,
+the seconds the verifier had used when that public pass began, and `attempt`, the
+snapshot pair it ran on. A large value means the readiness wait used the budget;
+a small one means the public requests did. A public failure observed against a moving snapshot pair
 is discarded. `changed` retains only the verifier's field names when a pair
 moved; no object values, resource identities, response bodies, addresses, or
 credentials appear in diagnostics.
@@ -31,10 +45,56 @@ through the authorized read-only evidence path before attempting another
 deployment. A healthy observation made later cannot establish the failed run's
 cause.
 
+The private contract probe exports completed results to Coroot. Its pod discovery
+annotations select the HTTP `/metrics` endpoint on port 8081. The collection rule
+selects the existing Coroot cluster-agent in `observability` and that port. Scraping
+reads the last completed observation and does not initiate another public probe.
+
+Use these PromQL queries to distinguish failure reasons and telemetry freshness:
+
+```promql
+sum by (result) (increase(contract_probe_requests_total[1h]))
+contract_probe_requests_total
+contract_probe_failures_total
+contract_probe_ready
+time() - contract_probe_last_observation_timestamp_seconds
+```
+
+Each result series first appears when that result first occurs. `increase()` can
+report zero for a failure that happened before its series was first scraped, so
+also read the raw per-pod counter. A non-zero raw value shows that the result
+occurred since that pod started, but cannot establish when it occurred.
+
+The result counter distinguishes unavailable or invalid responses, configuration
+failures, cancellation and concurrent requests. The separate failure counter
+records completed unavailable observations using fixed `stage`, `reason` and
+`http_status` labels. Stages distinguish request, rejected status and body reads;
+reasons classify typed DNS, timeout, TLS, connection and EOF failures. HTTP labels
+are bounded numeric statuses or `none`/`other`; raw errors, addresses, headers and
+bodies are never exported. These observations narrow the failure mechanism but
+do not establish its root cause. Cancelled work publishes no new failure event.
+Missing series are an observation gap, not zero failures; a healthy latest sample
+does not clear earlier failures or establish long-term reliability.
+
+The standalone probe, like the other workloads, uses signed KHoist 9.0.5, from source
+`1f616fea9d63bcb0fac4ea6b27e20dbb80f4b85a`. Its command, readiness behavior,
+network boundaries and request limits remain unchanged. The deployment verifier binds the
+probe Deployment, current ReplicaSet and Pods to its exact checked-out image and
+resolves that image's runtime manifests independently. Controller runtime digests
+cannot satisfy the probe check, or vice versa. Rollback reads the rollback
+checkout's probe declaration and resolves its immutable image again.
+
+The services CI suite starts the declared image as a non-root user with no
+networking, a read-only filesystem and bounded resources. A local read-only
+client verifies startup, a completed isolated DNS failure, and two passive metric
+scrapes. A skipped or missing image test fails its receipt. This checks the
+published executable; live endpoint recovery and Coroot collection remain
+production acceptance.
+
 The offline regression suite exercises the actual verifier with controlled
 resource and transport responses, including invalid observations and private
 canaries:
 
 ```bash
-bash scripts/tests/test-data-product-ui-rollout.sh
+bash scripts/tests/test-data-product-rollout.sh
 ```

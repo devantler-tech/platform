@@ -6,13 +6,25 @@ set -euo pipefail
 # using the named release's published checksums. A version-only Renovate bump
 # fails closed; a downloaded checksum never replaces a reviewed local pin.
 # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-COSIGN_VERSION="3.1.3"
+COSIGN_VERSION="3.1.4"
 # cosign_checksums.txt: cosign-linux-amd64
-COSIGN_SHA256="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
+COSIGN_SHA256="424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
 # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-SYFT_VERSION="1.54.1"
-# syft_1.54.1_checksums.txt: syft_1.54.1_linux_amd64.tar.gz
-SYFT_SHA256="c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47"
+SYFT_VERSION="1.57.0"
+# syft_1.57.0_checksums.txt: syft_1.57.0_linux_amd64.tar.gz
+SYFT_SHA256="9c077a7d43029b3b13e98a8db720661e700c4d58db6352153a06395ae4a2a704"
+# Not tracked by Renovate: this Trivy runs the paired scanner-exception checks,
+# so it must be the release MegaLinter runs in CI (CI_TRIVY_VERSION in
+# scripts/megalinter-scan-counts.sh; scripts/tests/test-setup-supply-chain-tools.sh
+# refuses a mismatch). Move it, with its SHA-256, when that constant moves.
+TRIVY_VERSION="0.76.1"
+# trivy_0.76.1_checksums.txt: trivy_0.76.1_Linux-64bit.tar.gz
+TRIVY_SHA256="c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0"
+
+if (($# > 1)) || [[ $# == 1 && $1 != trivy-boundary ]]; then
+  echo "Usage: $0 [trivy-boundary]" >&2
+  exit 2
+fi
 
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   echo '::error::Supply-chain tool pins support Linux x86_64 runners. Add reviewed release digests before using another platform.' >&2
@@ -32,18 +44,32 @@ verify_digest() {
 }
 
 # Release downloads retry curl's transient failures (timeouts, 408, 429 and 5xx) a few times,
-# because one momentary error from the release host would otherwise fail the job. Every byte
-# is still checked against the reviewed pin below, and a persistent failure still stops here.
-download() {
-  curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-    --retry 5 --retry-delay 3 "$1" --output "$2"
-}
+# because one momentary error from the release host would otherwise fail the job. With
+# GITHUB_TOKEN set they use the authenticated asset API first and fall back to the public
+# URL (#5942). Every byte is still checked against the reviewed pin below, and a
+# persistent failure still stops here.
+# shellcheck source=.github/scripts/release-asset-download.sh
+source "$(dirname "${BASH_SOURCE[0]}")/release-asset-download.sh"
 
-download "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+if [[ ${1:-} == trivy-boundary ]]; then
+  : "${RUNNER_TEMP:?RUNNER_TEMP must name the runner temporary directory}"
+  trivy_dir="${RUNNER_TEMP}/platform-validation-tools"
+  release_asset_download aquasecurity/trivy "v${TRIVY_VERSION}" "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+    "${download_dir}/trivy.tar.gz"
+  verify_digest trivy "${TRIVY_SHA256}" "${download_dir}/trivy.tar.gz"
+  tar -xzf "${download_dir}/trivy.tar.gz" -C "${download_dir}" trivy
+  mkdir -p "${trivy_dir}"
+  install -m 0755 "${download_dir}/trivy" "${trivy_dir}/trivy"
+  "${trivy_dir}/trivy" --version
+  printf '%s\n' "${trivy_dir}" >>"${GITHUB_PATH}"
+  exit 0
+fi
+
+release_asset_download sigstore/cosign "v${COSIGN_VERSION}" cosign-linux-amd64 \
   "${download_dir}/cosign"
 verify_digest cosign "${COSIGN_SHA256}" "${download_dir}/cosign"
 
-download "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+release_asset_download anchore/syft "v${SYFT_VERSION}" "syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
   "${download_dir}/syft.tar.gz"
 verify_digest syft "${SYFT_SHA256}" "${download_dir}/syft.tar.gz"
 

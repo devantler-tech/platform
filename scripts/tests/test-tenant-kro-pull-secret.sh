@@ -14,7 +14,7 @@ jq '.metadata.namespace="business-site" | .metadata.labels += {
   "kro.run/instance-group":"kro.run","kro.run/instance-version":"v1alpha1",
   "kro.run/instance-kind":"Tenant","kro.run/node-id":"ghcrAuth",
   "applyset.kubernetes.io/part-of":"fictional-tenant-applyset"}' "$work/template.json" >"$work/raw.json"
-# These are the structural defaults in the pinned ExternalSecrets 2.13.0 v1 CRD.
+# These are the structural defaults in the pinned ExternalSecrets 2.14.0 v1 CRD.
 jq '.spec.target.deletionPolicy="Retain" | .spec.target.template.mergePolicy="Replace"' "$work/raw.json" >"$work/defaulted.json"
 jq -nc --slurpfile raw "$work/raw.json" --slurpfile defaults "$work/defaulted.json" '
   def request($label;$object;$old;$actor;$operation;$expected):
@@ -81,7 +81,8 @@ done
 # Removing namespace observations must fail instead of silently excluding cases.
 jq -c 'del(.namespaces)' "$work/requests.jsonl" >"$work/no-namespaces.jsonl"
 if "$work/admission" "$policy" <"$work/no-namespaces.jsonl" >"$work/no-namespaces.log" 2>&1; then
-  echo 'missing namespace observation silently bypassed the policy' >&2; exit 1
+  echo 'missing namespace observation silently bypassed the policy' >&2
+  exit 1
 fi
 grep -Fq 'policy did not evaluate' "$work/no-namespaces.log"
 printf 'KRO pull-secret boundary: %s real admission controls passed.\n' "$expected"

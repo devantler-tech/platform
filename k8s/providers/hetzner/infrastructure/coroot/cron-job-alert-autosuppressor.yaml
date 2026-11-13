@@ -219,7 +219,7 @@ spec:
             - name: autosuppressor
               # curl + jq, digest-pinned (same image as custom-cloud-pricing).
               # observability is exempt from disallow-latest-tag.
-              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              image: docker.io/badouralix/curl-jq@sha256:7f3c18b2a7d72e8f6f89d5395f171d37a83d6015b6de718e5f4c5396305981b7
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
@@ -455,7 +455,7 @@ spec:
                         | (($a.application_id // "")==":::"
                            and $e.l.cluster=="platform"
                            and $e.l.kind=="Node"
-                           and ($e.l.name | test("^autoscale-[a-z0-9-]+$"))
+                           and ($e.l.name | type=="string" and test("^autoscale-[a-z0-9-]+$"))
                            and ((($e.l | keys | sort) == ["cluster","kind","name","namespace","reason","source"]
                                  and $e.l.namespace=="longhorn-system"
                                  and $e.l.reason=="Delete"

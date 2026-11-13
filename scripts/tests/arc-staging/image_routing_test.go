@@ -18,17 +18,42 @@ import (
 func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 	policy := readYAML(t, "k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml")
 	evaluator := newImagePolicyEvaluator(t, policy)
+	identityPublisher := "https://github.com/devantler-tech/business-site/.github/workflows/publish-identity.yaml@refs/heads/main"
+	retirementPublisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-longhorn-v1-retirement.yaml@refs/heads/main"
+	v2Publisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-longhorn-v2-only.yaml@refs/heads/main"
 	tests := []struct {
 		repository, attestor, subject string
 	}{
 		{analysisRepository, "publishksailanalysis", analysisPublisher},
 		{mailRepository, "publishprivatemail", mailPublisher},
+		{mailCandidateRepository, "publishprivatemail", mailPublisher},
+		{"ghcr.io/devantler-tech/business-site-identity", "publishcustomeridentity", identityPublisher},
+		{"ghcr.io/devantler-tech/business-site-identity-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/business-site-identity/helper", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{mailRepository + "-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{mailCandidateRepository + "-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{mailCandidateRepository + "/helper", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{analysisRepository + "-other", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/wedding-app", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{"ghcr.io/devantler-tech/platform-kubescape-storage", "publishkubescapestorage", "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-storage-hotfix.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-kubescape-node-agent", "publishkubescapenodeagent", "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-node-agent-hotfix.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-coroot-node-agent", "publishcorootnodeagent", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-node-agent-hotfix.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-longhorn-instance-manager", "publishlonghornretirement", retirementPublisher},
+		{"ghcr.io/devantler-tech/platform-longhorn-manager", "publishlonghornv2", v2Publisher},
+		{"ghcr.io/devantler-tech/platform-longhorn-instance-manager-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-longhorn-manager/other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-coroot", "publishcorootcheckpoint", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-coroot-cluster-agent", "publishcorootcheckpoint", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-coroot-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-coroot-cluster-agent-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-kyverno-reports", "publishkyvernoreports", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-reports-hotfix.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-kyverno-reports-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-kyverno-migrate", "publishkyvernomigrate", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-migration-runtime.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-kyverno-migrate-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-kyverno-background", "publishkyvernobackground", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-background-hotfix.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-kyverno-background-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-dex", "publishdexsecurity", "https://github.com/devantler-tech/platform/.github/workflows/publish-dex-security-image.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-dex-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{"ghcr.io/devantler-tech/world-at-ruin/zone", "publishwarzone", "https://github.com/devantler-tech/world-at-ruin/.github/workflows/server-cd.yaml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/provider-upjet-unifi", "publishprovider", "https://github.com/devantler-tech/provider-upjet-unifi/.github/workflows/publish-provider-package.yml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/ksail", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
@@ -48,6 +73,19 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 						{"unsigned", "", "", fixture.attestor == ""},
 						{"wrong issuer", fixture.subject, "https://other.example", fixture.attestor == ""},
 						{"cross workflow signer", crossSigner(fixture.subject), githubIssuer, fixture.attestor == ""},
+						{"customer identity signer", identityPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcustomeridentity"},
+						{"shared app signer", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40), githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
+						{"identity wrong workflow", strings.Replace(identityPublisher, "publish-identity.yaml", "publish-runtime.yaml", 1), githubIssuer, fixture.attestor == ""},
+						{"identity tag ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/tags/v4.20.0", 1), githubIssuer, fixture.attestor == ""},
+						{"identity pull request ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/pull/1/merge", 1), githubIssuer, fixture.attestor == ""},
+						{"identity lookalike branch", identityPublisher + "-other", githubIssuer, fixture.attestor == ""},
+						{"checkpoint signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcorootcheckpoint"},
+						{"Longhorn retirement signer", retirementPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishlonghornretirement"},
+						{"Longhorn V2-only signer", v2Publisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishlonghornv2"},
+						{"reports signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-reports-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernoreports"},
+						{"migrate signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-migration-runtime.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernomigrate"},
+						{"background signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-background-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernobackground"},
+						{"dex signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-dex-security-image.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishdexsecurity"},
 						{"wrong ref", strings.Split(fixture.subject, "@")[0] + "@refs/heads/other", githubIssuer, fixture.attestor == ""},
 						{"wrong repository", strings.Replace(fixture.subject, "devantler-tech/", "other-owner/", 1), githubIssuer, fixture.attestor == ""},
 					} {
@@ -199,4 +237,44 @@ func crossSigner(subject string) string {
 		return "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("a", 40)
 	}
 	return analysisPublisher
+}
+
+func TestCheckpointNodeSignerMatchesAdmissionBoundary(t *testing.T) {
+	policy := readYAML(t, "k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml")
+	var admissionIdentity map[string]any
+	for _, entry := range field(t, policy, "spec", "attestors").([]any) {
+		if field(t, entry, "name") == "publishcorootcheckpoint" {
+			identities := field(t, entry, "cosign", "keyless", "identities").([]any)
+			equal(t, len(identities), 1)
+			admissionIdentity = identities[0].(map[string]any)
+		}
+	}
+	if admissionIdentity == nil {
+		t.Fatal("checkpoint admission identity is missing")
+	}
+	rules := field(t, readYAML(t, "talos/cluster/verify-first-party-images.yaml"), "rules").([]any)
+	for _, repository := range []string{"ghcr.io/devantler-tech/platform-coroot", "ghcr.io/devantler-tech/platform-coroot-cluster-agent"} {
+		t.Run(repository, func(t *testing.T) {
+			found := 0
+			for _, entry := range rules {
+				if field(t, entry, "image") != repository {
+					continue
+				}
+				found++
+				identity := field(t, entry, "keyless").(map[string]any)
+				equal(t, identity["issuer"], githubIssuer)
+				equal(t, identity["issuer"], admissionIdentity["issuer"])
+				equal(t, identity["subjectRegex"], admissionIdentity["subjectRegExp"])
+				matcher, err := regexp.Compile(identity["subjectRegex"].(string))
+				if err != nil {
+					t.Fatal(err)
+				}
+				publisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@"
+				for _, subject := range []string{publisher + "refs/heads/main", publisher + "refs/heads/other", publisher + "refs/tags/v1.0.0", publisher + "refs/heads/main-other", publisher + "refs/heads/main/other", strings.Replace(publisher, "checkpoint", "node-agent", 1) + "refs/heads/main", ""} {
+					equal(t, matcher.MatchString(subject), subject == publisher+"refs/heads/main")
+				}
+			}
+			equal(t, found, 1)
+		})
+	}
 }

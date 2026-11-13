@@ -22,7 +22,7 @@ guard="$repo_root/scripts/guard-pdb-selector-match.sh"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
-for tool in jq kubectl yq; do
+for tool in git jq kubectl yq; do
   command -v "$tool" >/dev/null 2>&1 || {
     printf 'FAIL: %s is required\n' "$tool" >&2
     exit 1
@@ -1205,7 +1205,7 @@ assert_rc 'an unknown option' 2
 assert_contains 'names the option' "unknown option '--unknown'"
 run_guard "$TREE" "$scratch/no-exceptions.tsv" --kube-version ''
 assert_rc 'an empty --kube-version' 2
-assert_contains 'prints the usage' '[--kube-version <version>] <k8s-root>'
+assert_contains 'prints the usage' '[--kube-version <version> [--base-kube-version <version>]] <k8s-root>'
 
 echo "== Flagger: a Canary the chart itself renders =="
 new_tree
@@ -1406,10 +1406,59 @@ new_tree
 pdb demo web "$both"
 release demo web <<'EOT'
   postRenderStrategy: combined
+  values:
+    hook: true
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: web-hook
+            patch: |
+              - op: test
+                path: /metadata/name
+                value: web-hook
 EOT
 run_guard "$TREE"
-assert_rc 'a strategy other than nohooks is not modelled' 2
-assert_contains 'says postRenderStrategy is not modelled' 'HelmRelease demo/web cannot be rendered (spec.postRenderStrategy is not modelled (a post-rendered release must set nohooks))'
+assert_rc 'combined evaluates hooks before checking released workloads' 0
+yq -i '(select(.kind == "HelmRelease") | .spec.postRenderers[0].kustomize.patches[0].patch) = "- op: test\n  path: /metadata/name\n  value: wrong-hook\n"' "$TREE/k8s/apps/test/objects.yaml"
+run_guard "$TREE"
+assert_rc 'a failing hook patch cannot be skipped by the budget check' 2
+assert_contains 'the real hook patch was evaluated' 'testing value /metadata/name failed'
+
+new_tree
+pdb demo web '{matchLabels: {app: hook}}'
+release demo web <<'EOT'
+  postRenderStrategy: combined
+  values:
+    hook: true
+  postRenderers:
+    - kustomize:
+        images:
+          - name: example/web
+            newTag: patched
+EOT
+run_guard "$TREE"
+assert_rc 'combined hooks still never satisfy a released-workload budget' 1
+assert_not_contains 'the hook is excluded after post-rendering' 'web-hook'
+
+new_tree
+pdb demo web "$both"
+release demo web <<'EOT'
+  postRenderStrategy: nohooks
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: web
+            patch: |
+              - op: add
+                path: /metadata/annotations/guard-proof
+                value: evaluated
+EOT
+run_guard "$TREE"
+assert_rc 'ordinary patches see the transient annotation map Helm supplies' 0
 
 new_tree
 pdb demo web "$both"
@@ -1422,7 +1471,7 @@ release demo web <<'EOT'
 EOT
 run_guard "$TREE"
 assert_rc 'a post-rendered release without a strategy (Flux 2.9 defaults to combined) is not modelled' 2
-assert_contains 'says the omitted strategy is not modelled' 'HelmRelease demo/web cannot be rendered (spec.postRenderStrategy is not modelled (a post-rendered release must set nohooks))'
+assert_contains 'says the omitted strategy is not modelled' 'explicit nohooks or combined'
 
 new_tree
 pdb demo web "$both"
@@ -1673,6 +1722,178 @@ yq -i '.spec.path = "../outside"' "$TREE/k8s/clusters/test/flux.yaml"
 run_guard "$TREE"
 assert_rc 'a Flux path outside the root' 2
 assert_contains 'says the path leaves the root' "Flux path '../outside' named by"
+
+echo "== the rendering library's protections hold here too (#4465) =="
+# A chart whose render reads the release revision: offline it is always 1.
+mkdir -p "$scratch/charts/history/templates"
+printf '%s\n' 'apiVersion: v2' 'name: history' 'version: 1.0.0' >"$scratch/charts/history/Chart.yaml"
+cp "$chart/templates/workload.yaml" "$scratch/charts/history/templates/workload.yaml"
+cp "$chart/values.yaml" "$scratch/charts/history/values.yaml"
+printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: {{ .Release.Name }}-revision' \
+  'data:' '  revision: "{{ .Release.Revision }}"' >"$scratch/charts/history/templates/revision.yaml"
+new_tree
+pdb demo web '{matchLabels: {app.kubernetes.io/instance: web}}'
+release demo web history </dev/null
+run_guard "$TREE"
+assert_rc 'a budget only a revision-dependent chart could satisfy' 2
+assert_contains 'says the chart cannot be rendered offline' 'HelmRelease demo/web cannot be rendered (revision-dependent chart history@1.0.0 needs release history this guard cannot render)'
+
+# A renderer that runs, but is not the audited build.
+cat >"$scratch/bin/other-helm" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = version ]; then
+  printf '%s\n' 'version.BuildInfo{Version:"v4.3.1", GitCommit:"", GitTreeState:"clean", GoVersion:"go1.27.3", KubeClientVersion:"v1.37"}'
+  exit 0
+fi
+exec "$HELM_SHIM_REAL" "$@"
+EOF
+chmod +x "$scratch/bin/other-helm"
+new_tree
+pdb demo web "$both"
+release demo web </dev/null
+: >"$HELM_SHIM_LOG"
+if GUARD_OUT="$(PDB_SELECTOR_EXCEPTIONS="$scratch/no-exceptions.tsv" CONTROLLER_HELM="$scratch/bin/other-helm" \
+  "$guard" "$TREE/k8s" 2>&1)"; then GUARD_RC=0; else GUARD_RC=$?; fi
+assert_rc 'a renderer with unaudited build metadata' 2
+assert_contains 'is refused' 'the controller SDK renderer has unaudited capability metadata'
+
+echo "== with --base, only budgets whose inputs changed have their charts rendered =="
+# Commits the fixture tree (its k8s root, pins.yaml and, when present, exceptions.tsv) as the base.
+commit_tree() {
+  local paths=(k8s pins.yaml)
+  [ ! -f "$TREE/exceptions.tsv" ] || paths+=(exceptions.tsv)
+  if { [ -d "$TREE/.git" ] || git -C "$TREE" init -q; } && git -C "$TREE" add -- "${paths[@]}" &&
+    git -C "$TREE" -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false commit -q -m base; then
+    return 0
+  fi
+  printf 'FAIL: cannot commit the fixture tree\n' >&2
+  exit 1
+}
+# A budget only the chart of its namespace satisfies, committed as the base.
+chart_budget_tree() {
+  new_tree
+  pdb demo web "$both"
+  release demo web </dev/null
+  commit_tree
+}
+
+chart_budget_tree
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD
+assert_rc 'a budget unchanged since the base' 0
+assert_contains 'reports it unchanged' 'unchanged test: PodDisruptionBudget demo/web is unchanged since HEAD'
+assert_contains 'counts it' '0 HelmRelease chart(s) rendered, 1 unchanged since HEAD'
+assert_pulls 'an unchanged budget pulls no chart' 0
+
+printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: unrelated' '  namespace: other' | add
+workload Deployment other api '{app: api}' 1
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD
+assert_rc 'a change that touches no release and no budget' 0
+assert_contains 'leaves the budget unchanged' 'demo/web is unchanged since HEAD'
+assert_pulls 'a change that touches no release and no budget pulls no chart' 0
+
+run_guard "$TREE" "$scratch/no-exceptions.tsv"
+assert_rc 'the same tree without --base' 0
+assert_contains 'is judged in full' 'test: PodDisruptionBudget demo/web selects Deployment web (HelmRelease demo/web)'
+assert_pulls 'and pulls its chart' 1
+
+chart_budget_tree
+yq -i '(select(.kind == "PodDisruptionBudget") | .spec.selector) = {"matchLabels": {"app.kubernetes.io/instance": "web"}}' \
+  "$TREE/k8s/apps/test/objects.yaml"
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD
+assert_rc 'a changed budget is judged' 0
+assert_contains 'against its chart' 'test: PodDisruptionBudget demo/web selects Deployment web (HelmRelease demo/web)'
+assert_pulls 'a changed budget pulls its chart' 1
+
+chart_budget_tree
+yq -i '(select(.kind == "PodDisruptionBudget") | .spec.selector.matchLabels["app.kubernetes.io/instance"]) = "wbe"' \
+  "$TREE/k8s/apps/test/objects.yaml"
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD
+assert_rc 'a budget detached since the base is found' 1
+assert_contains 'names it' 'test: PodDisruptionBudget demo/web selects no workload rendered into namespace demo'
+
+chart_budget_tree
+yq -i '(select(.kind == "HelmRelease") | .spec.values) = {"name": "api"}' "$TREE/k8s/apps/test/objects.yaml"
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD
+assert_rc 'a release whose values detach the budget since the base' 1
+assert_pulls 'a changed release pulls its chart' 1
+
+chart_budget_tree
+yq -i '(select(.kind == "HelmRelease") | .spec.chart.spec.version) = "2.0.0"' "$TREE/k8s/apps/test/objects.yaml"
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD
+assert_rc 'a chart bump that renames the label since the base' 1
+assert_contains 'is found against the bumped chart' 'app.kubernetes.io/name=web-v2'
+
+chart_budget_tree
+yq -i '(select(.kind == "HelmRepository") | .spec.url) = "https://charts.example.invalid/moved"' "$TREE/k8s/apps/test/objects.yaml"
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD
+assert_rc 'a moved chart source' 0
+assert_pulls 'a moved chart source pulls the chart again' 1
+
+chart_budget_tree
+yq -i '(select(.kind == "ConfigMap" and .metadata.name == "variables") | .data.unused) = "x"' "$TREE/k8s/apps/test/objects.yaml"
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD
+assert_rc 'an unused substitution variable' 0
+assert_pulls 'changes nothing a budget is judged on' 0
+
+chart_budget_tree
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD --kube-version v1.36.0 --base-kube-version v1.35.0
+assert_rc 'a Kubernetes version changed since the base' 0
+assert_pulls 'renders the charts again' 1
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD --kube-version v1.36.0 --base-kube-version v1.36.0
+assert_rc 'the same Kubernetes version' 0
+assert_pulls 'renders nothing again' 0
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD --kube-version v1.36.0
+assert_rc 'an explicit Kubernetes version without the base one' 2
+assert_contains 'says the base version is required' '--base-kube-version is required'
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base-kube-version v1.36.0
+assert_rc 'a base Kubernetes version without a base' 2
+
+# The exception file decides how budgets are judged: a change to it judges every budget.
+new_tree
+pdb demo web "$both"
+release demo web </dev/null
+: >"$TREE/exceptions.tsv"
+commit_tree
+printf '%s\n' '# reviewed again' >>"$TREE/exceptions.tsv"
+run_guard "$TREE" "$TREE/exceptions.tsv" --base HEAD
+assert_rc 'a changed exception file' 0
+assert_contains 'says why every budget is judged' 'exceptions.tsv differs from HEAD; judging every PodDisruptionBudget in full'
+assert_pulls 'a changed exception file pulls the charts' 1
+
+# A pin moved since the base changes what an excepted budget is judged on.
+new_tree
+pdb demo web "$both"
+release demo web broken </dev/null
+cols test demo/web HelmRelease/demo/web file:pins.yaml:.node.version 1.0.0 - 'The chart is private.' >"$TREE/exceptions.tsv"
+commit_tree
+run_guard "$TREE" "$TREE/exceptions.tsv" --base HEAD
+assert_rc 'an excepted budget unchanged since the base' 0
+assert_contains 'is unchanged' 'demo/web is unchanged since HEAD'
+assert_not_contains 'and its row is not stale' 'stale exception'
+yq -i '.node.version = "2.0.0"' "$TREE/pins.yaml"
+run_guard "$TREE" "$TREE/exceptions.tsv" --base HEAD
+assert_rc 'a pin moved since the base' 1
+assert_contains 'is judged against the moved pin' 'file:pins.yaml:.node.version now reads 2.0.0'
+
+chart_budget_tree
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base 0000000000000000000000000000000000000000
+assert_rc 'a base revision that is not available' 2
+assert_contains 'says the checkout must fetch it' 'is not available; the checkout must fetch it'
+
+new_tree
+pdb demo web "$both"
+release demo web </dev/null
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD
+assert_rc 'a tree outside a repository' 2
+
+chart_budget_tree
+yq -i '.spec.path = "./apps/absent"' "$TREE/k8s/clusters/test/flux.yaml"
+commit_tree
+yq -i '.spec.path = "./apps/test"' "$TREE/k8s/clusters/test/flux.yaml"
+run_guard "$TREE" "$scratch/no-exceptions.tsv" --base HEAD
+assert_rc 'a base tree that cannot be rendered' 0
+assert_contains 'says why every budget is judged' 'cannot be rendered'
+assert_pulls 'judges every budget in full' 1
 
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1

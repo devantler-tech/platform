@@ -4,6 +4,7 @@ kind: DaemonSet
 metadata:
   name: shared
   namespace: apps-ns
+  uid: 00000000-0000-4000-8000-000000000003
 spec:
   selector:
     matchLabels:

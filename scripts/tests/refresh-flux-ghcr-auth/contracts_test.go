@@ -658,6 +658,49 @@ func TestRequiredPackageCoverageExactDeclaredKsailOperatorImageIsPreflighted(t *
 	}
 }
 
+// The data product workloads pull the package their HelmRelease names, so the
+// preflight must read that package rather than one the workloads stopped using
+// (#5688). That package is public, so it must not stand in for a runtime
+// credential probe, which only a private package can satisfy.
+func TestRequiredPackageCoverageReadsTheDataProductWorkloadPackage(t *testing.T) {
+	helper := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	release := readRepositoryFile(t, "k8s/bases/apps/data-product-controller/helm-release.yaml")
+
+	var repository string
+	for line := range strings.SplitSeq(release, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(trimmed, "repository: ghcr.io/"); ok {
+			if repository != "" {
+				t.Fatalf("data product release names more than one image repository: %s and %s", repository, value)
+			}
+			repository = value
+		}
+	}
+	if repository == "" {
+		t.Fatal("data product release names no ghcr.io image repository")
+	}
+
+	requiredStart := strings.Index(helper, "readonly -a REQUIRED_PULL_TARGETS=(")
+	probeStart := strings.Index(helper, "readonly -a RUNTIME_CREDENTIAL_PROBE_REPOSITORIES=(")
+	if requiredStart < 0 || probeStart < 0 {
+		t.Fatal("helper declares no required pull targets or runtime probe repositories")
+	}
+	block := func(start int) string {
+		end := strings.Index(helper[start:], "\n)\n")
+		if end < 0 {
+			t.Fatal("unterminated helper array")
+		}
+		return helper[start : start+end]
+	}
+	required, probes := block(requiredStart), block(probeStart)
+
+	requireContains(t, required, `"`+repository+`:latest"`)
+	requireNotContains(t, required, "devantler-tech/data-product-controller:")
+	for _, public := range []string{repository, "devantler-tech/data-product-controller"} {
+		requireNotContains(t, probes, `"`+public+`"`)
+	}
+}
+
 func TestRuntimeCredentialProbesUseAuthenticatedManifestDigests(t *testing.T) {
 	helper := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
 
@@ -699,6 +742,37 @@ func TestTalosRegistryAuthUsesSupportedTalosDocument(t *testing.T) {
 	requireNotContains(t, registryAuth, "\n---\n")
 }
 
+// TestImageVerificationPolicyHasNoFoldedBlockWithIndentedLines keeps the deployed
+// policy equal to the candidate the no-write path compares it with. kustomize
+// doubles the line break before a more-indented line of a folded block and yq does
+// not, so such a block makes that comparison fail on every deploy (#5650).
+func TestImageVerificationPolicyHasNoFoldedBlockWithIndentedLines(t *testing.T) {
+	policy := readRepositoryFile(
+		t,
+		"k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml",
+	)
+	indentOf := func(line string) int { return len(line) - len(strings.TrimLeft(line, " ")) }
+	folded, parentIndent, blockIndent := false, 0, 0
+	for number, line := range strings.Split(policy, "\n") {
+		if folded && strings.TrimSpace(line) != "" {
+			switch indent := indentOf(line); {
+			case indent <= parentIndent:
+				folded = false
+			case blockIndent == 0:
+				blockIndent = indent
+			case indent > blockIndent:
+				t.Errorf("line %d: more-indented line in a folded block; use a literal block", number+1)
+			}
+		}
+		if trimmed := strings.TrimRight(line, " "); strings.HasSuffix(trimmed, ": >-") ||
+			strings.HasSuffix(trimmed, ": >") {
+			folded, parentIndent, blockIndent = true, indentOf(line), 0
+		}
+	}
+}
+
+// TestImageVerificationUsesOneSlowFailClosedPolicy binds each dedicated publisher
+// to its exact repository while retaining the shared policy's fail-closed limits.
 func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 	policyPath := "k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
 	policy := readRepositoryFile(t, policyPath)
@@ -719,6 +793,10 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 		"name: publishkubescapestorage",
 		"name: publishkubescapenodeagent",
 		"name: publishcorootnodeagent",
+		"name: publishcorootcheckpoint",
+		"name: publishkyvernoreports",
+		"name: publishkyvernomigrate",
+		"name: publishkyvernobackground",
 		"name: publishksailanalysis",
 		"name: publishprovider",
 		"name: ksailcd",
@@ -736,10 +814,49 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 		"image != 'ghcr.io/devantler-tech/platform-coroot-node-agent'",
 		"image == 'ghcr.io/devantler-tech/platform-coroot-node-agent'",
 		"verifyImageSignatures(image, [attestors.publishcorootnodeagent])",
+		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-checkpoint-hotfix\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/platform-coroot'",
+		"image == 'ghcr.io/devantler-tech/platform-coroot'",
+		"image != 'ghcr.io/devantler-tech/platform-coroot-cluster-agent'",
+		"image == 'ghcr.io/devantler-tech/platform-coroot-cluster-agent'",
+		"verifyImageSignatures(image, [attestors.publishcorootcheckpoint])",
+		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kyverno-reports-hotfix\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/platform-kyverno-reports'",
+		"image == 'ghcr.io/devantler-tech/platform-kyverno-reports'",
+		"image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports:')",
+		"image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports@')",
+		"verifyImageSignatures(image, [attestors.publishkyvernoreports])",
+		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kyverno-migration-runtime\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/platform-kyverno-migrate'",
+		"image == 'ghcr.io/devantler-tech/platform-kyverno-migrate'",
+		"image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate:')",
+		"image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate@')",
+		"verifyImageSignatures(image, [attestors.publishkyvernomigrate])",
+		"image != 'ghcr.io/devantler-tech/platform-kyverno-background'",
+		"image == 'ghcr.io/devantler-tech/platform-kyverno-background'",
+		"image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background:')",
+		"image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background@')",
+		"verifyImageSignatures(image, [attestors.publishkyvernobackground])",
 		"^https://github\\.com/devantler-tech/ksail/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$",
 		"image != 'ghcr.io/devantler-tech/ksail-analysis-runner'",
 		"image == 'ghcr.io/devantler-tech/ksail-analysis-runner'",
 		"verifyImageSignatures(image, [attestors.publishksailanalysis])",
+		"^https://github\\.com/devantler-tech/business-site/\\.github/workflows/publish-identity\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/business-site-identity'",
+		"!image.startsWith('ghcr.io/devantler-tech/business-site-identity:')",
+		"!image.startsWith('ghcr.io/devantler-tech/business-site-identity@')",
+		"image == 'ghcr.io/devantler-tech/business-site-identity'",
+		"image.startsWith('ghcr.io/devantler-tech/business-site-identity:')",
+		"image.startsWith('ghcr.io/devantler-tech/business-site-identity@')",
+		"verifyImageSignatures(image, [attestors.publishcustomeridentity])",
+		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-dex-security-image\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/platform-dex'",
+		"!image.startsWith('ghcr.io/devantler-tech/platform-dex:')",
+		"!image.startsWith('ghcr.io/devantler-tech/platform-dex@')",
+		"image == 'ghcr.io/devantler-tech/platform-dex'",
+		"image.startsWith('ghcr.io/devantler-tech/platform-dex:')",
+		"image.startsWith('ghcr.io/devantler-tech/platform-dex@')",
+		"verifyImageSignatures(image, [attestors.publishdexsecurity])",
 		"image.startsWith('ghcr.io/devantler-tech/ksail')",
 	} {
 		requireContains(t, policy, expected)

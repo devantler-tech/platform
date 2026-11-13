@@ -1,0 +1,86 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kagent
+  namespace: kagent
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  timeout: 10m
+  # A HelmRepository chart, not a chartRef: see helm-repository.yaml.
+  chart:
+    spec:
+      chart: kagent
+      # kagent 1.0.0, its first general-availability release; its two charts
+      # share a version.
+      version: 1.0.0
+      sourceRef:
+        kind: HelmRepository
+        name: kagent
+  dependsOn:
+    - name: kagent-crds
+    # The controller fetches Substrate's actor JWT keys at startup.
+    - name: substrate
+      namespace: ate-system
+  values:
+    # No default model, MCP tool server or provider Secret: each agent
+    # namespace declares the ModelConfig it uses.
+    providers: null
+    kagent-tools:
+      enabled: false
+    rbac:
+      # Watch and manage only the control plane and the agent namespaces,
+      # through Roles instead of cluster-wide ClusterRoles.
+      namespaces:
+        - kagent
+        - agentic-engineer
+    database:
+      postgres:
+        ownerConnectionStringSecretRef:
+          name: kagent-db-owner
+          key: ownerConnectionString
+        readWriteConnectionStringSecretRef:
+          name: kagent-db-readwrite
+          key: readWriteConnectionString
+    controller:
+      # The controller calls the Substrate API and router over mTLS with its
+      # Pod Certificate; Substrate trusts its SPIFFE ID
+      # (bootstrapOwners and ingressAllowedSPIFFEIDs in the Substrate release).
+      substrateClientCertificate:
+        enabled: true
+    config:
+      server:
+        # The Agentic Engineer's schedule Job manages its kagent scheduled run
+        # with grpcurl, which reads the API from gRPC reflection
+        # (apps/agentic-engineer/job-schedule.yaml). kagent serves reflection
+        # without authentication, and only this namespace, Substrate's egress
+        # gateway and that Job reach the port (cilium-network-policy.yaml).
+        grpcReflection: true
+      runtimeDefaults:
+        # Every agent runtime needs CPU and memory limits. Claude Code working
+        # a Git checkout needs more than the 1 CPU / 1 GiB default.
+        cpu: "2"
+        memory: 4Gi
+    # The platform's pod-security policy checks runAsNonRoot on every
+    # container, not only on the pod.
+    securityContext:
+      runAsNonRoot: true
+  # Post-render only the release manifest; the guard models only that stream.
+  postRenderStrategy: nohooks
+  postRenderers:
+    - kustomize:
+        patches:
+          # One daily agent run is the only user: a short gap while a node
+          # drains only delays the next call.
+          - target:
+              kind: Deployment
+              name: kagent-controller|kagent-ui
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: any
+                labels:
+                  platform.devantler.tech/replica-floor: exempt

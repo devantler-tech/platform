@@ -101,7 +101,7 @@ readonly K8S_DIR="${OCI_VERIFY_K8S_DIR:-$REPO_ROOT/k8s}"
 
 # 9 on 2026-10-16, counted per rendered root: providers/hetzner/apps carries the aws,
 # github-config, wedding-app and ascoachingogvaner manifests consumers, the
-# world-at-ruin zone manifests, the data-product-controller chart and its
+# world-at-ruin zone manifests, the KHoist chart and its
 # documentation manifests source (7),
 # providers/hetzner/infrastructure carries the tenant RGD template (1) and
 # providers/hetzner/infrastructure/controllers carries the ksail-operator chart (1).
@@ -112,9 +112,9 @@ readonly EXPECTED_MIN="${OCI_VERIFY_EXPECTED_MIN:-$EXPECTED_MIN_IN_SCOPE}"
 
 # <url><TAB><reason>, one per line; `#` lines are comments. The reason names what retires
 # the entry. Empty: every devantler-tech artifact in the tree is signed and verified. The
-# data-product-controller chart is staged off (platform#3476), so no rendered root applies
+# KHoist chart is staged off (platform#3476), so no rendered root applies
 # it; its OCIRepository already verifies the chart's own tag-run signing identity
-# (devantler-tech/data-product-controller#27), so re-enabling it needs no row here.
+# (devantler-tech/khoist#27), so re-enabling it needs no row here.
 DEFAULT_EXEMPTIONS="$(
   cat <<'EOF'
 # oci://ghcr.io/devantler-tech/<artifact>	<why it cannot verify yet, and the issue that retires this row>
@@ -279,9 +279,14 @@ while IFS= read -r root; do
   fi
   while IFS=$'\t' read -r url name has_verify provider ids_type ids_count incomplete issuer subject ref_type ref_key_count ref_semver; do
     [ -n "$url" ] || continue
-    url="$(decode "$url")"; name="$(decode "$name")"; provider="$(decode "$provider")"
-    ids_type="$(decode "$ids_type")"; issuer="$(decode "$issuer")"; subject="$(decode "$subject")"
-    ref_type="$(decode "$ref_type")"; ref_semver="$(decode "$ref_semver")"
+    url="$(decode "$url")"
+    name="$(decode "$name")"
+    provider="$(decode "$provider")"
+    ids_type="$(decode "$ids_type")"
+    issuer="$(decode "$issuer")"
+    subject="$(decode "$subject")"
+    ref_type="$(decode "$ref_type")"
+    ref_semver="$(decode "$ref_semver")"
     [ -n "$url$name" ] || continue
     url="$(normalise_url "$url")"
     # The second pattern is the literal characters `${` — a Flux substitution marker,
@@ -306,7 +311,9 @@ while IFS= read -r root; do
         fail "$label: invalid Tenant source constructor"
         continue
       fi
-      ref_type='!!map'; ref_key_count=1; ref_semver="$REQUIRED_TENANT_STREAM_SEMVER"
+      ref_type='!!map'
+      ref_key_count=1
+      ref_semver="$REQUIRED_TENANT_STREAM_SEMVER"
     fi
     case "$url" in
       "$WEDDING_STREAM_URL" | "$ASCOACHING_STREAM_URL" | "$TEMPLATED_TENANT_STREAM_URL")

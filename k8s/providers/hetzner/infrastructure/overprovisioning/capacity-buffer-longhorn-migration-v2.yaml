@@ -1,0 +1,16 @@
+# Demand for the third V2 replica target during permanent-worker rebuilds.
+# Retire this virtual buffer after the node has its owned storage pin.
+# longhorn-system because a CapacityBuffer's replicas are limited by its namespace's
+# ResourceQuota even though it creates no Pod: overprovisioning's generated quota
+# is fully used by the V1 buffer, which limited this one to zero and requested no
+# node (#5655). longhorn-system is exempt from add-ns-quota, and Kyverno refuses
+# changing that exemption list on the live generate rule.
+apiVersion: autoscaling.x-k8s.io/v1beta1
+kind: CapacityBuffer
+metadata:
+  name: longhorn-migration-v2
+  namespace: longhorn-system
+spec:
+  replicas: 1
+  podTemplateRef:
+    name: longhorn-migration-v2

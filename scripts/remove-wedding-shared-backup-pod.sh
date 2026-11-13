@@ -27,7 +27,7 @@ fi
 while IFS= read -r key; do
   printf '%s\n' "${key}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*/(base|wals)/[A-Za-z0-9._/-]+$' || fail 'an object key is outside the catalogue layout'
   case "/${key}/" in
-    *'//'*|*'/../'*|*'/./'*) fail 'an object key contains an unsafe path component' ;;
+    *'//'* | *'/../'* | *'/./'*) fail 'an object key contains an unsafe path component' ;;
   esac
   grep -qF "\"key\":\"${key}\"" "${work}/listing" || fail 'an object key was not in the current coverage listing'
   printf 'store/%s/%s/%s\n' "${BUCKET}" "${PREFIX}" "${key}" >>"${work}/removal-targets"

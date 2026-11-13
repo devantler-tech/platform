@@ -1,6 +1,7 @@
+---
 name: Validate Coroot Security Progress
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:
@@ -40,7 +41,7 @@ jobs:
       contents: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
@@ -52,8 +53,8 @@ jobs:
       - name: Exercise the collector and loopback metrics server
         shell: bash
         env:
-          COLLECTOR_IMAGE: docker.io/alpine/k8s:1.37.1@sha256:712dc5385d1c1a3f83b747fa9e40f64d433a97f72ff42f9755ff7dd1f62846e4
-          SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+          COLLECTOR_IMAGE: docker.io/alpine/k8s:1.37.2@sha256:dcb7185e112a453aa72f426754849a97357727ef8f40168fb208c8cf59952042
+          SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6
         run: |
           set -euo pipefail
           component=k8s/bases/infrastructure/coroot/components/security-progress
@@ -92,7 +93,7 @@ jobs:
       - name: Exercise the reconciler toolchain and Prometheus configuration
         shell: bash
         env:
-          RECONCILER_IMAGE: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+          RECONCILER_IMAGE: docker.io/badouralix/curl-jq@sha256:7f3c18b2a7d72e8f6f89d5395f171d37a83d6015b6de718e5f4c5396305981b7
           PROMETHEUS_IMAGE: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
         run: |
           set -euo pipefail
@@ -140,18 +141,19 @@ jobs:
 
   native-coroot:
     name: Exercise released Coroot dashboards and capture browser evidence
-    runs-on: ubuntu-latest
+    # Playwright 1.56.1 supports Noble; ubuntu-latest is moving to Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
     env:
-      COROOT_IMAGE: ghcr.io/coroot/coroot:1.28.1
+      COROOT_IMAGE: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.3-5ee96b6ee0e5cb7f1730218ae7c3ee2bcfbfb740@sha256:0f9ee31ae80446fad1f8c7f051645c3399c61aedba86ba570c6990a375ce4fe7
       PROMETHEUS_IMAGE: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
-      SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+      SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6
       PLAYWRIGHT_VERSION: 1.56.1
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
@@ -163,9 +165,10 @@ jobs:
       - name: Verify the native API contract matches the versioned Coroot image
         shell: bash
         run: |
-          # Updating either pin requires reviewing the v1.28.1 API and browser
-          # source contract in scripts/tests/coroot-security-native/README.md.
-          if [ "$COROOT_IMAGE" != ghcr.io/coroot/coroot:1.28.1 ] ||
+          # The checkpoint and alert repairs retain the reviewed v1.28.1 API/browser
+          # contract; this fixture exercises the exact proposed production image.
+          # Update the source audit and real startup-version assertion together.
+          if [ "$COROOT_IMAGE" != ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.3-5ee96b6ee0e5cb7f1730218ae7c3ee2bcfbfb740@sha256:0f9ee31ae80446fad1f8c7f051645c3399c61aedba86ba570c6990a375ce4fe7 ] ||
              [ "$(grep -Fxc "      name: $COROOT_IMAGE" k8s/bases/infrastructure/coroot/coroot.yaml)" != 1 ]; then
             echo 'Native Coroot contract/image differs from communityEdition.image.name; review compatibility before updating the fixture.' >&2
             exit 1

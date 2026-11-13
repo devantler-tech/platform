@@ -39,6 +39,32 @@ func TestPatchTargetsAcceptEveryGeneratedResource(t *testing.T) {
 	}
 }
 
+func TestPatchTargetsMatchGeneratedHelmReleaseCRD(t *testing.T) {
+	const patch = "      - target:\n          kind: CustomResourceDefinition\n          name: helmreleases.helm.toolkit.fluxcd.io\n        patch: crd\n"
+	base := strings.Replace(patchTargetsManifest, "  components:\n", "  components:\n    - helm-controller\n", 1) + patch
+	if err := validatePatchTargets([]byte(base)); err != nil {
+		t.Fatalf("generated HelmRelease CRD target was refused: %v", err)
+	}
+	for _, tc := range []struct {
+		name, manifest, want string
+	}{
+		{"absent controller", patchTargetsManifest + patch, "requires helm-controller"},
+		{"wrong CRD", strings.ReplaceAll(base, "helmreleases.helm.toolkit.fluxcd.io", "helmcharts.source.toolkit.fluxcd.io"), "generated HelmRelease CRD"},
+		{"wrong group", strings.ReplaceAll(base, "kind: CustomResourceDefinition", "group: apps\n          kind: CustomResourceDefinition"), "apiextensions.k8s.io"},
+		{"wrong version", strings.ReplaceAll(base, "kind: CustomResourceDefinition", "version: v1beta1\n          kind: CustomResourceDefinition"), "version \"v1beta1\""},
+		{"namespace", strings.ReplaceAll(base, "kind: CustomResourceDefinition", "namespace: flux-system\n          kind: CustomResourceDefinition"), "by name without"},
+		{"label selector", strings.ReplaceAll(base, "kind: CustomResourceDefinition", "labelSelector: app.kubernetes.io/part-of=flux\n          kind: CustomResourceDefinition"), "by name without"},
+		{"annotation selector", strings.ReplaceAll(base, "kind: CustomResourceDefinition", "annotationSelector: name=flux\n          kind: CustomResourceDefinition"), "by name without"},
+		{"duplicate", base + patch, "already targets"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validatePatchTargets([]byte(tc.manifest)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validatePatchTargets() = %v; want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestPatchTargetsAcceptTheOperatorDefaults(t *testing.T) {
 	cases := map[string]struct{ old, new string }{
 		// flux-operator deploys the four core controllers when components is omitted.

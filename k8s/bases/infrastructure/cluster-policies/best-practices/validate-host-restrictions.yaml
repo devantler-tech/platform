@@ -55,7 +55,8 @@ spec:
         !(variables.namespace in [
           'kube-system', 'kube-public', 'kube-node-lease', 'flux-system',
           'longhorn-system', 'local-path-storage', 'kubescape', 'kubevirt',
-          'cdi', 'observability', 'velero', 'chaos-mesh'])
+          'cdi', 'observability', 'velero', 'chaos-mesh',
+          'ate-system', 'agentic-engineer'])
     # The user-namespace rollout (#1807) is delivered by the add-user-namespaces
     # MUTATE rule in add-security-context.yaml, which injects hostUsers: false
     # through a +(hostUsers) conditional anchor. A conditional anchor only fills

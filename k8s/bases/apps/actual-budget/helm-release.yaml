@@ -68,7 +68,8 @@ spec:
               # ingress gate), so the real config is these env vars. SERVER_HOSTNAME
               # drives the redirect_uri https://budget.${domain}/openid/callback,
               # which must be registered on the Dex public-client (see the dex
-              # HelmRelease). CLIENT_SECRET is the ESO-synced Dex shared secret.
+              # HelmRelease). The server reads the ESO-synced client credential
+              # from the read-only mount below.
               # On the next pod start OpenID becomes the active login method
               # (sessions reset; ENFORCE=true removes the password option).
               - op: add
@@ -84,11 +85,8 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/env/-
                 value:
-                  name: ACTUAL_OPENID_CLIENT_SECRET
-                  valueFrom:
-                    secretKeyRef:
-                      name: actual-budget-oidc
-                      key: client-secret
+                  name: ACTUAL_OPENID_CLIENT_SECRET_FILE
+                  value: /var/run/actual-openid/client-secret
               - op: add
                 path: /spec/template/spec/containers/0/env/-
                 value:
@@ -121,7 +119,7 @@ spec:
     # better-sqlite3 so it is version-insensitive — keep it roughly in sync on bumps.
     extraContainers:
       - name: enablebanking-seed
-        image: docker.io/actualbudget/actual-server:26.10.0
+        image: docker.io/actualbudget/actual-server:26.11.0
         imagePullPolicy: IfNotPresent
         # `args` (not `command`) so the image's tini ENTRYPOINT is preserved —
         # proper PID-1 signal forwarding/zombie reaping, and no dependency on the
@@ -168,7 +166,18 @@ spec:
           - name: enablebanking-seed-script
             mountPath: /scripts
             readOnly: true
+    volumeMounts:
+      - name: openid-client-credential
+        mountPath: /var/run/actual-openid
+        readOnly: true
     volumes:
+      - name: openid-client-credential
+        secret:
+          secretName: actual-budget-oidc
+          defaultMode: 0440
+          items:
+            - key: client-secret
+              path: client-secret
       # optional: absent on local/CI where the OpenBao path is unset — the script
       # treats missing files (and the PLACEHOLDER sentinel) as "not configured".
       - name: enablebanking-secret

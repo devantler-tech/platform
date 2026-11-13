@@ -146,11 +146,11 @@ export CONSUMER_CARRIER_KINDS CONSUMER_LITERAL_KIND CONSUMER_LITERAL_API_VERSION
 # different key or value (`"update Policy"`) into a reviewed one.
 # These are data for yq strenv(), never expanded or parsed by the shell.
 # shellcheck disable=SC2089
-readonly REVIEWED_AUTO_VPA_DEPLOYMENT='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-deployment","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
+readonly REVIEWED_AUTO_VPA_DEPLOYMENT='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":dyn(string(object.metadata.name)+"-deployment"),"namespace":dyn(string(object.metadata.namespace)),"ownerReferences":dyn([{"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name),"uid":string([object.metadata.uid].filter(uid,type(uid)==string&&size(uid)>0)[0])}])}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
 # shellcheck disable=SC2089
-readonly REVIEWED_AUTO_VPA_DAEMONSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-daemonset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m"}),"maxAllowed":dyn({"cpu":"1"})}]})})}])'
+readonly REVIEWED_AUTO_VPA_DAEMONSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":dyn(string(object.metadata.name)+"-daemonset"),"namespace":dyn(string(object.metadata.namespace)),"ownerReferences":dyn([{"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name),"uid":string([object.metadata.uid].filter(uid,type(uid)==string&&size(uid)>0)[0])}])}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m"}),"maxAllowed":dyn({"cpu":"1"})}]})})}])'
 # shellcheck disable=SC2089
-readonly REVIEWED_AUTO_VPA_STATEFULSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-statefulset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"Initial"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
+readonly REVIEWED_AUTO_VPA_STATEFULSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":dyn(string(object.metadata.name)+"-statefulset"),"namespace":dyn(string(object.metadata.namespace)),"ownerReferences":dyn([{"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name),"uid":string([object.metadata.uid].filter(uid,type(uid)==string&&size(uid)>0)[0])}])}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"Initial"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
 # shellcheck disable=SC2090
 export REVIEWED_AUTO_VPA_DEPLOYMENT REVIEWED_AUTO_VPA_DAEMONSET REVIEWED_AUTO_VPA_STATEFULSET
 # The reviewed HelmRelease CRD-strategy MutatingPolicy (#5096,
@@ -350,7 +350,8 @@ validate_published_inputs() {
     fi
     case "$reference" in
       /* | *:* | git@* | *'?'* | *'#'*)
-        refuse "$label has an absolute or nonlocal reference outside the inspectable published k8s dependency closure, so its consumers are UNKNOWN" ;;
+        refuse "$label has an absolute or nonlocal reference outside the inspectable published k8s dependency closure, so its consumers are UNKNOWN"
+        ;;
     esac
     resolved="$(published_path "$dir/$reference" "$label dependency")" || exit 1
     case "$mode" in
@@ -359,7 +360,8 @@ validate_published_inputs() {
         [ -f "$resolved" ] || refuse "could not render $label, so its non-file published k8s dependency closure is UNKNOWN"
         # Builtin configs retain their Kustomization loader root, even when their
         # own config file lives in a subdirectory.
-        if [ "$mode" = loader ]; then validate_published_inputs "$resolved" "$dir" "$label loader"; fi ;;
+        if [ "$mode" = loader ]; then validate_published_inputs "$resolved" "$dir" "$label loader"; fi
+        ;;
       *) refuse "could not read the complete published k8s dependency closure of $label, so its consumers are UNKNOWN" ;;
     esac
   done <<<"$references"
@@ -481,11 +483,25 @@ refuse_source_overrides() {
     [ -z "$check" ] || [ "$check" = true ] ||
       refuse "production render $label holds a FluxInstance platform source override, so its consumers are UNKNOWN"
   done <<<"$checks"
-  # Controller Deployment patches cannot target the source. All other patch targets could
-  # select it; verification operations and ref changes that preserve latest are established
-  # as preserving its identity and artifact. A strategic patch or broader operation is UNKNOWN.
+  # A Deployment or the exact audited HelmRelease CRD cannot be the root source.
+  # Keep unknown CRDs in the refusal path, including any added beside the audited one.
+  local crd_predicate='true'
+  if ! yq -N -o=json 'select(.kind == "FluxInstance" and .metadata.name == "flux" and .metadata.namespace == "flux-system")
+      | select([.spec.kustomize.patches[] | select(.target.kind == "CustomResourceDefinition")] | length > 0)' \
+    "$file" >"$work/helm-profile.json" 2>"$work/yq.err"; then
+    refuse "could not read the FluxInstance CRD targets in $label, so its consumers are UNKNOWN"
+  fi
+  if [ -s "$work/helm-profile.json" ]; then
+    if ! jq -se 'length == 1' "$work/helm-profile.json" >/dev/null ||
+      ! bash "$GUARD_DIR/guard-controller-helm-profile.sh" "$work/helm-profile.json"; then
+      refuse "could not prove the FluxInstance HelmRelease CRD patch in $label, so its consumers are UNKNOWN"
+    fi
+    crd_predicate='.target.kind != "CustomResourceDefinition"'
+  fi
+  # Verification and ref operations that preserve latest may reach the source.
+  # A strategic patch or broader operation is UNKNOWN.
   if ! checks="$(yq -N -r 'select(.kind == "FluxInstance" and .metadata.name == "flux" and .metadata.namespace == "flux-system")
-      | .spec.kustomize.patches[] | select(.target.kind != "Deployment") | (.patch | from_yaml) | .[]
+      | .spec.kustomize.patches[] | select(.target.kind != "Deployment" and ('"$crd_predicate"')) | (.patch | from_yaml) | .[]
       | (.op == "test" or ((.op == "add" or .op == "replace" or .op == "remove")
           and (((.path // "") | test("^/spec/verify(/|$)"))
             or (.op == "remove" and (.path == "/spec/ref" or .path == "/spec/ref/tag"))
@@ -752,33 +768,43 @@ while IFS=$'\t' read -r file label; do
     [ -z "$count" ] || [ "$count" = 0 ] ||
       refuse "production render $label holds consumer generation or cloning that cannot be accounted for by a static build, so its consumers are UNKNOWN"
   done <<<"$generated"
-  # #5357: admit only the complete reviewed apiVersion/kind/spec surfaces for
-  # the two HelmRelease defaults after rendering. Canonical JSON includes every CEL expression,
+  # Admit only complete reviewed apiVersion/kind/spec surfaces: the two
+  # HelmRelease defaults (#5357, matching only Flux HelmReleases since #6135),
+  # the native Gateway peer policy, and the V1
+  # benchmark runtime policy (#5665). The Gateway policy changes peer fields
+  # on one fixed CiliumEnvoyConfig. The benchmark policy sets container UID
+  # and GID only on CREATE of an exact Longhorn Pod shape. Neither kind carries
+  # a publication consumer or constructor. The fingerprint includes every
+  # scope, variable and patch.
+  # A larger or changed policy cannot inherit approval from its name or paths.
+  # Canonical JSON includes every CEL expression,
   # selector, operation and evaluation field, without whitespace normalization
   # inside strings. An altered expression or added field cannot inherit an
   # approval from the policy's name or its mutation paths. These patches touch
-  # only fixed test/install/upgrade defaults, never chart values or consumers.
-  if ! yq -o=json -I=0 '.. | select(type == "!!map" and .kind == "MutatingPolicy")
+  # only fixed defaults, Gateway peer fields or a Pod security context.
+  if ! yq -o=json -I=0 '.. | select(type == "!!map" and (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"))
       | {"apiVersion": .apiVersion, "kind": .kind, "spec": .spec}' "$file" |
-    jq -cS . >"$work/helm-default-candidates.jsonl"; then
-    refuse "could not read complete Helm default policy surfaces in $label, so its consumers are UNKNOWN"
+    jq -cS . >"$work/reviewed-mutation-candidates.jsonl"; then
+    refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
-  reviewed_defaults='[]'
+  reviewed_cel_surfaces='[]'
   while IFS= read -r candidate; do
     if command -v sha256sum >/dev/null 2>&1; then
-      candidate_digest="$(printf '%s\n' "$candidate" | sha256sum)" || refuse 'could not fingerprint Helm default policy'
+      candidate_digest="$(printf '%s\n' "$candidate" | sha256sum)" || refuse 'could not fingerprint reviewed mutation policy'
     else
-      candidate_digest="$(printf '%s\n' "$candidate" | shasum -a 256)" || refuse 'could not fingerprint Helm default policy'
+      candidate_digest="$(printf '%s\n' "$candidate" | shasum -a 256)" || refuse 'could not fingerprint reviewed mutation policy'
     fi
     case "${candidate_digest%% *}" in
-      43b7eaf13a1b754ed0449239ce9e337de6881751fd009c738efb46e367524824 | \
-        691bf7d05ed9d87ae261f34d51e7cd062d345a6af8f6bb2dcf1ec1aeb3dade17)
-        reviewed_defaults="$(jq -ce --argjson candidate "$candidate" '. + [$candidate]' <<<"$reviewed_defaults")" ||
-          refuse 'could not record the complete reviewed Helm default policy'
+      e684b08469a755f0370d8c88c0b6bb262060b11a5d085ec6b2f51ccb2dd51be4 | \
+        314ee80814da53af4f075d48ebb2e10c4aea25986277d53b40ac2aa102892553 | \
+        92dc171d2b1e73eec7679ae3f74e806a3fc8472f7ed3445bfca1541c3d27941d | \
+        9773c0aa3daf4ad4e8939294f0802aa382cce33d5675f1f3e65e23f8791eb021)
+        reviewed_cel_surfaces="$(jq -ce --argjson candidate "$candidate" '. + [$candidate]' <<<"$reviewed_cel_surfaces")" ||
+          refuse 'could not record the complete reviewed mutation policy'
         ;;
     esac
-  done <"$work/helm-default-candidates.jsonl"
-  export REVIEWED_HELM_RELEASE_DEFAULTS="$reviewed_defaults"
+  done <"$work/reviewed-mutation-candidates.jsonl"
+  export REVIEWED_CEL_MUTATION_SURFACES="$reviewed_cel_surfaces"
 
   # CEL mutations are not evaluated by this static guard. Refuse their declared
   # presence rather than infer identity preservation from a pre-admission row.
@@ -906,7 +932,7 @@ while IFS=$'\t' read -r file label; do
             ("daemonsets=" + strenv(REVIEWED_AUTO_VPA_DAEMONSET)),
             ("statefulsets=" + strenv(REVIEWED_AUTO_VPA_STATEFULSET))]
           | any_c(. == $generation)))
-        or (strenv(REVIEWED_HELM_RELEASE_DEFAULTS) | from_json
+        or (strenv(REVIEWED_CEL_MUTATION_SURFACES) | from_json
           | any_c((. | sort_keys(..) | to_json(0)) == ($mutationSurface | sort_keys(..) | to_json(0)))))
         | not)] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"

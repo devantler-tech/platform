@@ -30,15 +30,15 @@ func setup(t *testing.T) *fixture {
 	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
 	t.Setenv("GITHUB_RUN_ID", "42")
 	t.Setenv("GITHUB_SHA", strings.Repeat("a", 40))
-	t.Setenv("AUDIT_CAPACITY_CONFIRM", "EXPAND OPENBAO AUDIT ONLY TO 20GI")
+	t.Setenv("AUDIT_CAPACITY_CONFIRM", "EXPAND OPENBAO AUDIT ONLY TO 40GI")
 	t.Setenv("AUDIT_CAPACITY_REVISION", "latest@sha256:"+strings.Repeat("b", 64))
 	t.Setenv("AUDIT_CAPACITY_DEPLOYMENT_RUN", "100")
 	f := &fixture{t: t, claims: map[string]map[string]any{}, volumes: map[string]map[string]any{}}
 	for i := 0; i < 3; i++ {
 		name := fmt.Sprintf("audit-openbao-%d", i)
 		pv := fmt.Sprintf("volume-%d", i)
-		f.claims[name] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": name, "namespace": "openbao", "uid": name + "-uid", "resourceVersion": "1", "labels": map[string]any{"app.kubernetes.io/name": "openbao"}}, "spec": map[string]any{"storageClassName": "hcloud", "volumeName": pv, "resources": map[string]any{"requests": map[string]any{"storage": "1Gi"}}}, "status": map[string]any{"phase": "Bound", "capacity": map[string]any{"storage": "10Gi"}}}
-		f.volumes[pv] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolume", "metadata": map[string]any{"name": pv, "uid": pv + "-uid", "resourceVersion": "1"}, "spec": map[string]any{"storageClassName": "hcloud", "capacity": map[string]any{"storage": "10Gi"}, "csi": map[string]any{"driver": "csi.hetzner.cloud", "volumeHandle": "PRIVATE_HANDLE" + pv}, "claimRef": map[string]any{"namespace": "openbao", "name": name, "uid": name + "-uid"}}, "status": map[string]any{"phase": "Bound"}}
+		f.claims[name] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": name, "namespace": "openbao", "uid": name + "-uid", "resourceVersion": "1", "labels": map[string]any{"app.kubernetes.io/name": "openbao"}}, "spec": map[string]any{"storageClassName": "hcloud", "volumeName": pv, "resources": map[string]any{"requests": map[string]any{"storage": "20Gi"}}}, "status": map[string]any{"phase": "Bound", "capacity": map[string]any{"storage": "20Gi"}}}
+		f.volumes[pv] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolume", "metadata": map[string]any{"name": pv, "uid": pv + "-uid", "resourceVersion": "1"}, "spec": map[string]any{"storageClassName": "hcloud", "capacity": map[string]any{"storage": "20Gi"}, "csi": map[string]any{"driver": "csi.hetzner.cloud", "volumeHandle": "PRIVATE_HANDLE" + pv}, "claimRef": map[string]any{"namespace": "openbao", "name": name, "uid": name + "-uid"}}, "status": map[string]any{"phase": "Bound"}}
 	}
 	return f
 }
@@ -148,7 +148,7 @@ func (f *fixture) execute(_ context.Context, p string, a ...string) ([]byte, err
 		if json.Unmarshal(b, &patch) != nil {
 			f.t.Fatal("bad patch")
 		}
-		want := []map[string]any{{"op": "test", "path": "/metadata/uid", "value": name + "-uid"}, {"op": "test", "path": "/metadata/resourceVersion", "value": "1"}, {"op": "replace", "path": "/spec/resources/requests/storage", "value": "20Gi"}}
+		want := []map[string]any{{"op": "test", "path": "/metadata/uid", "value": name + "-uid"}, {"op": "test", "path": "/metadata/resourceVersion", "value": "1"}, {"op": "replace", "path": "/spec/resources/requests/storage", "value": "40Gi"}}
 		if !reflect.DeepEqual(patch, want) {
 			f.t.Fatalf("unbounded or unconditioned patch: %v", patch)
 		}
@@ -157,9 +157,9 @@ func (f *fixture) execute(_ context.Context, p string, a ...string) ([]byte, err
 		}
 		f.patched = append(f.patched, name)
 		c := f.claims[name]
-		c["spec"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"] = "20Gi"
-		c["status"].(map[string]any)["capacity"].(map[string]any)["storage"] = "20Gi"
-		f.volumes[c["spec"].(map[string]any)["volumeName"].(string)]["spec"].(map[string]any)["capacity"].(map[string]any)["storage"] = "20Gi"
+		c["spec"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"] = "40Gi"
+		c["status"].(map[string]any)["capacity"].(map[string]any)["storage"] = "40Gi"
+		f.volumes[c["spec"].(map[string]any)["volumeName"].(string)]["spec"].(map[string]any)["capacity"].(map[string]any)["storage"] = "40Gi"
 		if f.mode == "ambiguous" {
 			return nil, fmt.Errorf("PRIVATE ambiguous result")
 		}
@@ -169,7 +169,7 @@ func (f *fixture) execute(_ context.Context, p string, a ...string) ([]byte, err
 }
 
 func (f *fixture) receiptBytes() []byte {
-	return jsonBytes(f.t, map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "openbao-audit-expansion-42", "namespace": "flux-system", "uid": "receipt-uid", "resourceVersion": "1"}, "immutable": true, "data": map[string]any{"source": os.Getenv("GITHUB_SHA"), "revision": os.Getenv("AUDIT_CAPACITY_REVISION"), "run": "42", "target": "20Gi", "scope": "audit-only"}})
+	return jsonBytes(f.t, map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "openbao-audit-expansion-42", "namespace": "flux-system", "uid": "receipt-uid", "resourceVersion": "1"}, "immutable": true, "data": map[string]any{"source": os.Getenv("GITHUB_SHA"), "revision": os.Getenv("AUDIT_CAPACITY_REVISION"), "run": "42", "target": "40Gi", "scope": "audit-only"}})
 }
 
 func TestAdditionalUncertainEvidenceStopsExpansion(t *testing.T) {
@@ -274,7 +274,7 @@ func TestExpandOnlyAuditClaimsPreservingData(t *testing.T) {
 	if code := run([]string{"--execute"}, &out, f.execute, func(context.Context) bool { return true }); code != 0 || len(f.patched) != 3 || !f.receipt {
 		t.Fatalf("expansion not proven: code=%d patches=%v %s", code, f.patched, &out)
 	}
-	if out.String() != "OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=20Gi preservationSamples=2\n" {
+	if out.String() != "OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=40Gi preservationSamples=2\n" {
 		t.Fatalf("invalid receipt: %s", &out)
 	}
 }

@@ -6,14 +6,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/tenant-publication-binding.lib.sh"
 canonical_tenant_bindings() (
   set -euo pipefail
   trap - EXIT
-  local binding_root="$1" file
+  local binding_root="$1" file publishers
   file="${CANONICAL_TENANT_BINDINGS_FILE:-$binding_root/scripts/canonical-tenant-source-bindings.json}"
   if [ ! -e "$file" ] && [ ! -L "$file" ] && [ -z "${CANONICAL_TENANT_BINDINGS_FILE:-}" ]; then
     printf '{"schemaVersion":1,"bindings":[]}\n'
     return 0
   fi
   [ -f "$file" ] && [ ! -L "$file" ] || return 1
-  jq -ces '
+  publishers="$(business_manifest_publishers "${CANONICAL_APPROVALS_FILE:-$binding_root/scripts/publish-workflow-canonical-approvals.tsv}")" || return 1
+  jq -ces --argjson publishers "$publishers" '
     def bounded: type=="string" and length>0 and length<=512 and (test("[[:cntrl:]]")|not);
     def sha: type=="string" and test("^[0-9a-f]{40}$");
     def digest: type=="string" and test("^sha256:[0-9a-f]{64}$");
@@ -32,7 +33,8 @@ canonical_tenant_bindings() (
       (.publication | type=="object" and keys==["callerWorkflow","event","gitTag","publisherIdentity","sourceSHA","verifiedOn","workflowRunAttempt","workflowRunId"] and
         .callerWorkflow==".github/workflows/publish-runtime.yaml" and .event=="release" and
         (.gitTag|type=="string" and test("^v[0-9]+[.][0-9]+[.][0-9]+$")) and (.sourceSHA|sha) and
-        .publisherIdentity=="devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0" and
+        (.publisherIdentity|type=="string") and
+        (.publisherIdentity as $publisher | ($publishers|index($publisher))!=null) and
         (.verifiedOn|type=="string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
         (.workflowRunId|positive) and (.workflowRunAttempt|positive));
     def upgrade_binding:
@@ -48,8 +50,7 @@ canonical_tenant_bindings() (
         ($candidate|del(.previousBinding,.previousObservation,.publication,.sourceIdentity,.kind))==
         ($old|del(.publication,.sourceIdentity,.kind)) and
         ($candidate.sourceIdentity|del(.digest))==($old.sourceIdentity|del(.digest)) and
-        $candidate.sourceIdentity.digest!=$old.sourceIdentity.digest and
-        $candidate.publication.publisherIdentity==$old.publication.publisherIdentity);
+        $candidate.sourceIdentity.digest!=$old.sourceIdentity.digest);
     select(length==1) | .[0] |
     select(type=="object" and keys==["bindings","schemaVersion"] and .schemaVersion==1) |
     select(.bindings|type=="array" and length<=1) |

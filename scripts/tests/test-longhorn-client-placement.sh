@@ -14,14 +14,16 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 for tool in kubectl helm yq jq; do
   command -v "${tool}" >/dev/null || fail "${tool} is required"
 done
-[[ "$(helm version --template '{{.Version}}')" == v4.2.4 ]] || fail 'the audited Helm v4.2.4 chart puller is required'
+[[ "$(helm version --template '{{.Version}}')" == v4.3.1 ]] || fail 'the audited Helm v4.3.1 chart puller is required'
 [[ -n "${CONTROLLER_HELM:-}" && -x "${CONTROLLER_HELM}" ]] || fail 'the audited controller SDK renderer is required'
-[[ "$("${CONTROLLER_HELM}" version --template '{{ printf "%#v" . }}')" == \
-  'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ]] ||
+[[ "$("${CONTROLLER_HELM}" version --template '{{ printf "%#v" . }}')" == 'version.BuildInfo{Version:"v4.3", GitCommit:"", GitTreeState:"", GoVersion:"go1.27.3", KubeClientVersion:"v1.37"}' ]] ||
   fail 'controller SDK renderer metadata does not match Flux 2.9.6'
 kube_version="$(yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")' "${root}/ksail.prod.yaml")"
 

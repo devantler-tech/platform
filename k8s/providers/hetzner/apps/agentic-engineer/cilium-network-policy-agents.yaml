@@ -1,0 +1,36 @@
+# Worker pods talk only to Substrate (its egress gateway carries the agent's
+# traffic; its router and API server reach the workers). The schedule Job and
+# the lane store are excluded: their paths are cilium-network-policy-schedule.yaml
+# and cilium-network-policy-lane-store.yaml.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-agentic-engineer
+  namespace: agentic-engineer
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values: [agentic-engineer-schedule]
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values: [lane-store]
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ate-system
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ate-system
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

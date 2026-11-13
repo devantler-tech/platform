@@ -1,3 +1,4 @@
+---
 name: Scan Go Vulnerabilities
 
 # Reports advisories the platform's Go modules actually reach (#4961). A pull request that changes
@@ -16,7 +17,7 @@ name: Scan Go Vulnerabilities
 # The scan itself is the organization's reviewed govulncheck action, the same scanner and
 # allowlist format the shared Go validation uses. Resolve a finding with
 # docs/go-vulnerability-scan.md.
-on:
+"on":
   pull_request:
     branches: [main]
     paths:
@@ -127,7 +128,7 @@ jobs:
         id: scan
         continue-on-error: true
         timeout-minutes: 30
-        uses: devantler-tech/.github/.github/actions/govulncheck@7c9e3dfd669dc9a6268a2e6940728b879966a2f2 # v13.3.4
+        uses: devantler-tech/.github/.github/actions/govulncheck@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78 # v21.1.1
         with:
           work-dir: ${{ matrix.directory }}
           go-version-file: ${{ matrix.directory }}/go.mod
@@ -147,3 +148,10 @@ jobs:
         run: >-
           bash scripts/judge-go-vulnerability-scan.sh --module "$MODULE" --expect "$EXPECT"
           --outcome "$OUTCOME" --verdict "$VERDICT" --report "$REPORT"
+
+      - name: 🛡️ Verify the pinned SMTP upstream advisory identity
+        if: matrix.directory == '.'
+        env:
+          SCANNER: ${{ runner.temp }}/govulncheck-bin/govulncheck
+          GOTOOLCHAIN: local
+        run: bash scripts/check-smtp-upstream-advisories.sh "$SCANNER"

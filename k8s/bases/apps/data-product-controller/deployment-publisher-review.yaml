@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-product-controller-publisher-review
+  namespace: data-product-controller
+  labels:
+    app.kubernetes.io/name: data-product-controller
+    app.kubernetes.io/instance: data-product-controller
+    app.kubernetes.io/component: publisher-review
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: data-product-controller
+      app.kubernetes.io/instance: data-product-controller
+      app.kubernetes.io/component: publisher-review
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: data-product-controller
+        app.kubernetes.io/instance: data-product-controller
+        app.kubernetes.io/component: publisher-review
+    spec:
+      serviceAccountName: data-product-controller-publisher-review
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-auth
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: data-product-controller
+              app.kubernetes.io/instance: data-product-controller
+              app.kubernetes.io/component: publisher-review
+      containers:
+        - name: publisher-review
+          image: ghcr.io/devantler-tech/khoist:9.0.5@sha256:e485a0e82df734e6fb5ec8b8f3ca923748b82b9cab81be86a0c69e3e116cdfbf
+          imagePullPolicy: IfNotPresent
+          command:
+            - /publisher-review
+          args:
+            - --http-behind-gateway
+            - --listen-address
+            - 0.0.0.0:8080
+          env:
+            - name: PUBLISHER_PREFLIGHT_ENABLED
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              scheme: HTTP
+            timeoutSeconds: 2
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              scheme: HTTP
+            timeoutSeconds: 2
+            periodSeconds: 10
+            failureThreshold: 3

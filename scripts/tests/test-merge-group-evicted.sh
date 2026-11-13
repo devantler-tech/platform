@@ -15,7 +15,10 @@ trap 'rm -rf "$scratch"' EXIT
 failures=0
 assertions=0
 
-[ -x "$script" ] || { printf 'FAIL: %s is not executable\n' "$script"; exit 1; }
+[ -x "$script" ] || {
+  printf 'FAIL: %s is not executable\n' "$script"
+  exit 1
+}
 
 sha="$(printf 'c%.0s' {1..40})"
 queue_ref="refs/heads/gh-readonly-queue/main/pr-3084-$sha"
@@ -51,6 +54,7 @@ run_case() {
     STUB_CALLS="$scratch/calls" STUB_RC="$stub_rc" EVICTED_POLL_SECONDS=0 EVICTED_MAX_POLLS=5 \
     EVICTED_REPOSITORY=devantler-tech/platform EVICTED_HEAD_REF="$ref" EVICTED_GROUP_CREATED_AT="$at" \
     GITHUB_OUTPUT="$scratch/output" "$script" 2>&1)"; then rc=0; else rc=$?; fi
+  printf "%s\n" "$out" >"$scratch/stdout"
   got_output="$(cat "$scratch/output")"
   reads="$(cat "$scratch/calls")"
 
@@ -76,6 +80,17 @@ logged() {
   fi
 }
 
+# <label> <fixed string the last run must have printed>
+said() {
+  assertions=$((assertions + 1))
+  if grep -Fq -- "$2" "$scratch/stdout"; then
+    printf '  ok   %s\n' "$1"
+  else
+    printf '  FAIL %s: output did not contain %s:\n%s\n' "$1" "$2" "$(cat "$scratch/stdout")"
+    failures=$((failures + 1))
+  fi
+}
+
 echo "merge-group-evicted:"
 run_case "already merged is not evicted" 0 "evicted=false" 1 "$queue_ref" "$created" 0 \
   "MERGED false none 0"
@@ -92,6 +107,8 @@ run_case "an entry enqueued at the group's creation is the original" 0 "evicted=
   "OPEN true $created 1" "MERGED false none 0"
 run_case "still queued past the bound writes nothing" 1 "" 5 "$queue_ref" "$created" 0 \
   "OPEN true $before 1"
+# Finding (#5014): the bound ends in two different states, and the failure must say which.
+said "still queued past the bound names its own entry" "own queue entry was still queued after 5 reads (last read: 1 entries queued)"
 
 # Finding: after a dequeue and re-enqueue, isInMergeQueue is true for the REPLACEMENT entry.
 # This group has left; the answer waits for the replacement's outcome.
@@ -108,6 +125,11 @@ run_case "left with other groups queued waits for the queue to drain" 0 "evicted
   "OPEN false none 2" "OPEN false none 1" "OPEN false none 0"
 run_case "left with a queue that never drains writes nothing" 1 "" 5 "$queue_ref" "$created" 0 \
   "OPEN false none 1"
+said "left with a queue that never drains names the drain wait" "left the merge queue (OPEN, no longer queued), but the queue had not drained after 5 reads (last read: 1 entries queued)"
+said "left with a queue that never drains says main was not restored" "main was not restored"
+run_case "re-enqueued with a queue that never drains writes nothing" 1 "" 5 "$queue_ref" "$created" 0 \
+  "OPEN true $after 3" "OPEN true $after 2"
+said "re-enqueued past the bound names the re-enqueue and last count" "left the merge queue (re-enqueued at $after, after this merge group was created at $created), but the queue had not drained after 5 reads (last read: 2 entries queued)"
 run_case "left with nothing queued is evicted" 0 "evicted=true" 1 "$queue_ref" "$created" 0 \
   "OPEN false none 0"
 run_case "closed with nothing queued is evicted" 0 "evicted=true" 1 "$queue_ref" "$created" 0 \

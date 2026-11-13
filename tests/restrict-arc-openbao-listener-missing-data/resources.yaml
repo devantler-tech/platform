@@ -1,0 +1,7 @@
+---
+# Synthetic admission input: missing-data.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arc-openbao-listener
+  namespace: openbao

@@ -17,7 +17,7 @@
 # ClusterIssuer via `spec.issuerRef.kind` — cert-manager's controller resolves
 # that reference under its own identity, not the tenant's. That half of the
 # boundary is enforced at admission by the
-# `restrict-tenant-issuer-refs` ClusterPolicy.
+# `restrict-tenant-issuer-refs` ValidatingPolicy.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

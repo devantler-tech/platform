@@ -24,6 +24,7 @@ resources:
   - aws/
   # Owner-only scripted zone trial; public packages need no registry credential fanout.
   - world-at-ruin/
+  - agentic-engineer/
   # Default-off disposable proof for user namespaces + Longhorn idmapped mounts
   # (platform#2599). Activate in a short-lived PR by uncommenting this resource,
   # capture the completed Job's logs, then remove it again so its generic
@@ -46,10 +47,6 @@ components:
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
-  # Stateful user-namespace pilot, active for verification (#3604). The runtime
-  # verdict is recorded on #3604; rollback removes this one reference, retaining
-  # data. Making the setting permanent is a separate change (#3605).
-  - actual-budget/components/user-namespaces
 # Strategic-merge patch files self-identify (apiVersion/kind/name/namespace), so
 # they need only a path — no redundant `target:` selector. JSON6902 patches have
 # no embedded identity and keep an explicit target.
@@ -95,8 +92,20 @@ patches:
   # User namespaces (hostUsers: false) — enabled for the proven prod apps. These
   # namespace-label patches opt proven-stateless workloads into the
   # add-security-context Kyverno rule. Local/CI stays out, and so do stateful
-  # workloads apart from the Actual Budget pilot component above; in mixed
+  # workloads apart from Actual Budget below; in mixed
   # namespaces (umami) the rule itself excludes the
   # CNPG database pods via their cnpg.io/cluster label.
   - path: whoami/patches/enable-user-namespaces.yaml
   - path: homepage/patches/enable-user-namespaces.yaml
+  # Actual Budget is the one stateful workload in its own user namespace. Its
+  # pilot passed (#3604) and is permanent since #3605: the namespace label pairs
+  # with the authored hostUsers: false on its pod. Rolling back removes both
+  # entries together and leaves the volume and its data untouched.
+  - path: actual-budget/patches/enable-user-namespaces.yaml
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: actual-budget
+      namespace: actual-budget
+    path: actual-budget/patches/disable-host-users.yaml

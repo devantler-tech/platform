@@ -24,14 +24,26 @@ func applicationAssetPath(digest string) string {
 //go:embed webui-pins.json
 var applicationReleaseJSON []byte
 
-func pinnedApplicationDigest() (string, error) {
+//go:embed webui-v1-pins.json
+var applicationV1ReleaseJSON []byte
+
+// pinnedApplicationDigestFor binds the selected server schema to its reviewed UI.
+func pinnedApplicationDigestFor(version string) (string, error) {
+	profile, err := schemaFor(version)
+	if err != nil {
+		return "", err
+	}
+	metadata := applicationReleaseJSON
+	if profile.v1 {
+		metadata = applicationV1ReleaseJSON
+	}
 	var release struct {
 		Version       string `json:"version"`
 		URL           string `json:"url"`
 		SHA256        string `json:"sha256"`
 		LicenseSHA256 string `json:"license_sha256"`
 	}
-	d := json.NewDecoder(bytes.NewReader(applicationReleaseJSON))
+	d := json.NewDecoder(bytes.NewReader(metadata))
 	d.DisallowUnknownFields()
 	if d.Decode(&release) != nil || d.Decode(new(any)) != io.EOF {
 		return "", errConfiguration
@@ -71,7 +83,11 @@ func verifyApplicationAsset(path, digest string) (result error) {
 
 // A green listener inventory does not cover applications sharing HTTP. Accept
 // only the pinned server's default interface or this image's verified copy.
-func validateApplications(methods [][]json.RawMessage) error {
+func validateApplicationsFor(methods [][]json.RawMessage, version string) error {
+	profile, err := schemaFor(version)
+	if err != nil {
+		return err
+	}
 	var query struct {
 		IDs      []string `json:"ids"`
 		Total    *int     `json:"total"`
@@ -81,7 +97,8 @@ func validateApplications(methods [][]json.RawMessage) error {
 		List []struct {
 			ID          string          `json:"id"`
 			Description string          `json:"description"`
-			Enabled     *bool           `json:"enabled"`
+			Enabled     json.RawMessage `json:"enabled"`
+			Enable      json.RawMessage `json:"enable"`
 			Resource    string          `json:"resourceUrl"`
 			Prefixes    map[string]bool `json:"urlPrefix"`
 			Unpack      json.RawMessage `json:"unpackDirectory"`
@@ -105,10 +122,20 @@ func validateApplications(methods [][]json.RawMessage) error {
 		return nil
 	}
 	app := get.List[0]
-	if app.ID == "" || app.ID != query.IDs[0] || app.Description != "Stalwart Web Interface" || app.Enabled == nil || !*app.Enabled || !reflect.DeepEqual(app.Prefixes, map[string]bool{"/admin": true, "/account": true}) || !bytes.Equal(bytes.TrimSpace(app.Unpack), []byte("null")) || !bytes.Equal(bytes.TrimSpace(app.OAuth), []byte("null")) {
+	chosen, foreign := app.Enabled, app.Enable
+	factoryResource := "https://github.com/stalwartlabs/webui/releases/download/v1.0.11/webui.zip"
+	if profile.v1 {
+		chosen, foreign = foreign, chosen
+		factoryResource = "https://github.com/stalwartlabs/webui/releases/download/v2/webui.zip"
+	}
+	enabled, err := nativeSchemaBool(chosen, foreign)
+	if err != nil {
 		return errConfiguration
 	}
-	if app.Resource != "https://github.com/stalwartlabs/webui/releases/download/v1.0.11/webui.zip" && app.Resource != "file://"+legacyApplicationAssetPath && !administrationAssetURI.MatchString(app.Resource) {
+	if app.ID == "" || app.ID != query.IDs[0] || app.Description != "Stalwart Web Interface" || !enabled || !reflect.DeepEqual(app.Prefixes, map[string]bool{"/admin": true, "/account": true}) || !bytes.Equal(bytes.TrimSpace(app.Unpack), []byte("null")) || !bytes.Equal(bytes.TrimSpace(app.OAuth), []byte("null")) {
+		return errConfiguration
+	}
+	if app.Resource != factoryResource && app.Resource != "file://"+legacyApplicationAssetPath && !administrationAssetURI.MatchString(app.Resource) {
 		return errConfiguration
 	}
 	return nil

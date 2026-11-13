@@ -7,7 +7,10 @@ test_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 test_source="${test_root}/scripts/report-publish-workflow-signing-revisions.sh"
 
 assert_equal() {
-  [[ "$1" == "$2" ]] || { printf 'Expected %q, got %q\n' "$1" "$2" >&2; exit 1; }
+  [[ "$1" == "$2" ]] || {
+    printf 'Expected %q, got %q\n' "$1" "$2" >&2
+    exit 1
+  }
 }
 
 if [[ "${1:-}" == --case ]]; then
@@ -15,15 +18,19 @@ if [[ "${1:-}" == --case ]]; then
   # shellcheck source=../report-publish-workflow-signing-revisions.sh
   source "$3"
   for resolver in pin_at_ref tag_was_published deployed_tag; do
-    declare -F "${resolver}" >/dev/null || { echo "Missing resolver: ${resolver}" >&2; exit 1; }
+    declare -F "${resolver}" >/dev/null || {
+      echo "Missing resolver: ${resolver}" >&2
+      exit 1
+    }
   done
   case "${test_case}" in
-    comment|same)
+    comment | same)
       assert_equal "${SIGNING_TEST_PIN}" "$(pin_at_ref fixture publish-app main)"
       ;;
-    different|malformed)
+    different | malformed)
       if pin_at_ref fixture publish-app main >"${SIGNING_TEST_FIXTURE}/answer"; then
-        echo 'Ambiguous or malformed workflow pins were accepted' >&2; exit 1
+        echo 'Ambiguous or malformed workflow pins were accepted' >&2
+        exit 1
       fi
       [[ ! -s "${SIGNING_TEST_FIXTURE}/answer" ]]
       ;;
@@ -34,16 +41,23 @@ if [[ "${1:-}" == --case ]]; then
       ;;
     unpublished)
       if deployed_tag fixture 1.2.3 >"${SIGNING_TEST_FIXTURE}/answer"; then
-        echo 'An unpublished exact tag resolved' >&2; exit 1
+        echo 'An unpublished exact tag resolved' >&2
+        exit 1
       fi
       [[ ! -s "${SIGNING_TEST_FIXTURE}/answer" ]]
       ;;
     healthy)
       assert_equal $'v1.2.3\tpinned\t'"${SIGNING_TEST_COMMIT}" "$(deployed_tag fixture 1.2.3)"
       ;;
-    *) echo 'Unknown fixture case' >&2; exit 1 ;;
+    *)
+      echo 'Unknown fixture case' >&2
+      exit 1
+      ;;
   esac
-  [[ ! -s "${SIGNING_TEST_FIXTURE}/unexpected" ]] || { cat "${SIGNING_TEST_FIXTURE}/unexpected" >&2; exit 1; }
+  [[ ! -s "${SIGNING_TEST_FIXTURE}/unexpected" ]] || {
+    cat "${SIGNING_TEST_FIXTURE}/unexpected" >&2
+    exit 1
+  }
   exit 0
 fi
 
@@ -104,7 +118,7 @@ make_fixture() {
     uses: devantler-tech/actions/.github/workflows/publish-app.yaml@1111111111111111111111111111111111111111' ;;
     same) extra="  other:
     uses: devantler-tech/actions/.github/workflows/publish-app.yaml@${SIGNING_TEST_PIN}" ;;
-    failed|unpublished) conclusion=failure ;;
+    failed | unpublished) conclusion=failure ;;
   esac
   printf 'name: CD\njobs:\n%s\n  publish:\n    uses: devantler-tech/actions/.github/workflows/publish-app.yaml@%s\n' \
     "${extra}" "${SIGNING_TEST_PIN}" >"${SIGNING_TEST_FIXTURE}/workflow"
@@ -147,21 +161,28 @@ for test_case in malformed comment different same failed unpublished healthy; do
       if (helper=="deployed" && mutation=="unpublished" && /\[ "\$exact_pub" -eq 0 \] \|\| return 1/) {
         sub(/\[ "\$exact_pub" -eq 0 \] \|\| return 1/, ":"); changed++
       }
-      if (helper=="deployed" && mutation=="healthy" && !changed && /if ! printf.*registry_tags.*registry_version/) {
-        sub(/if ! printf/, "if printf"); changed++
+      if (helper=="deployed" && mutation=="healthy" && !changed && /if ! grep -qxF.*registry_version.*registry_tags/) {
+        sub(/if ! grep/, "if grep"); changed++
       }
       print
       if (/^}/) helper=""
     }
     END { if (changed != (mutation=="failed" ? 2 : 1)) exit 1 }
   ' "${test_source}" >"${mutant}"
-  cmp -s "${test_source}" "${mutant}" && { echo 'Mutation did not change source' >&2; exit 1; }
+  cmp -s "${test_source}" "${mutant}" && {
+    echo 'Mutation did not change source' >&2
+    exit 1
+  }
   make_fixture "${test_case}" mutant
   if bash "${BASH_SOURCE[0]}" --case "${test_case}" "${mutant}" >"${test_work}/mutation-output" 2>&1; then
-    echo "Mutation survived: ${test_case}" >&2; exit 1
+    echo "Mutation survived: ${test_case}" >&2
+    exit 1
   fi
   # A malformed mutant or an unexpected request is not a killed regression.
   bash -n "${mutant}"
-  [[ ! -s "${SIGNING_TEST_FIXTURE}/unexpected" ]] || { cat "${SIGNING_TEST_FIXTURE}/unexpected" >&2; exit 1; }
+  [[ ! -s "${SIGNING_TEST_FIXTURE}/unexpected" ]] || {
+    cat "${SIGNING_TEST_FIXTURE}/unexpected" >&2
+    exit 1
+  }
   printf 'PASS: applied %s mutation is detected\n' "${test_case}"
 done

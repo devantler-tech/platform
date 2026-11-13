@@ -15,7 +15,7 @@ import (
 	kroapi "github.com/kubernetes-sigs/kro/api/v1alpha1"
 	"github.com/kubernetes-sigs/kro/pkg/features"
 	"github.com/kubernetes-sigs/kro/pkg/graph"
-	kroruntime "github.com/kubernetes-sigs/kro/pkg/runtime"
+	gecompiler "github.com/kubernetes-sigs/kro/pkg/graphengine/compiler"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +29,7 @@ import (
 
 const tenantDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 const tenantPublisher = "467f07582436a26b62cf4aa756423512f85ba0c0"
-const legacyTenantSubject = `^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0))$`
+const legacyTenantSubject = `^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(467f07582436a26b62cf4aa756423512f85ba0c0|af042c540ce8db4d64add98c34b5c57691e0e812))$`
 
 // TestCommittedTenant exercises the actual graph compiler and generated API.
 // Desired objects are expression evidence, not Flux or signature verification.
@@ -123,6 +123,11 @@ func TestCommittedTenant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The instance controller renders children with the graph-engine compiler.
+	engine, err := gecompiler.NewCompiler(config, httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
 	compiled, err := builder.NewResourceGraphDefinition(&definition, graph.Config{MaxCollectionDimensionSize: 5})
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +172,7 @@ func TestCommittedTenant(t *testing.T) {
 			if err := admit(input); err != nil {
 				t.Fatal(err)
 			}
-			objects, ignored := desiredTenant(t, compiled, input)
+			objects, ignored := desiredTenant(t, engine, &definition, input)
 			assertTenantChildren(t, objects, ignored, true, sops)
 			source := objects["ociRepository"]
 			ref, _, _ := unstructured.NestedMap(source.Object, "spec", "ref")
@@ -185,11 +190,11 @@ func TestCommittedTenant(t *testing.T) {
 			if err := admit(input); err != nil {
 				t.Fatalf("valid source-only input must be admitted: %v", err)
 			}
-			objects, ignored := desiredTenant(t, compiled, input)
+			objects, ignored := desiredTenant(t, engine, &definition, input)
 			assertTenantChildren(t, objects, ignored, false, sops)
 			if !sops {
 				t.Run("controller-ownership", func(t *testing.T) {
-					assertTenantNetworkFloor(t, ctx, config, root, objects)
+					assertTenantNetworkFloor(ctx, t, config, root, objects)
 				})
 			}
 			source := objects["ociRepository"]
@@ -208,7 +213,7 @@ func TestCommittedTenant(t *testing.T) {
 			if err := admit(input); err != nil {
 				t.Fatal(err)
 			}
-			objects, ignored := desiredTenant(t, compiled, input)
+			objects, ignored := desiredTenant(t, engine, &definition, input)
 			optional := []string{"externalDnsGateway", "externalDnsHttproutes", "externalDnsNamespaces", "limitRange", "resourceQuota", "webAppBinding"}
 			want := append([]string{"defaultDeny", "ghcrAuth", "ociRepository", "roleBinding", "serviceAccount", "tenantNamespace"}, optional...)
 			active, inactive := "kustomization", "kustomizationSops"
@@ -296,7 +301,7 @@ func TestCommittedTenant(t *testing.T) {
 		if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); err != nil {
 			t.Fatal(err)
 		}
-		objects, ignored := desiredTenant(t, compiled, input)
+		objects, ignored := desiredTenant(t, engine, &definition, input)
 		assertTenantChildren(t, objects, ignored, true, false)
 		ref, _, _ := unstructured.NestedMap(objects["ociRepository"].Object, "spec", "ref")
 		if !reflect.DeepEqual(ref, map[string]interface{}{"digest": tenantDigest}) {
@@ -371,7 +376,7 @@ func TestCommittedTenant(t *testing.T) {
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(input), input); err != nil {
 			t.Fatal(err)
 		}
-		objects, ignored := desiredTenant(t, compiled, input)
+		objects, ignored := desiredTenant(t, engine, &definition, input)
 		assertTenantChildren(t, objects, ignored, true, false)
 		if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false}, "spec", "source"); err != nil {
 			t.Fatal(err)
@@ -410,32 +415,11 @@ func completeTenant(compiled *graph.Graph) error {
 	return nil
 }
 
-func desiredTenant(t *testing.T, compiled *graph.Graph, input *unstructured.Unstructured) (map[string]*unstructured.Unstructured, []string) {
+// desiredTenant renders the Tenant's children through the controller's instance
+// runtime and reports the children its inclusion conditions leave out.
+func desiredTenant(t *testing.T, engine *gecompiler.Compiler, definition *kroapi.ResourceGraphDefinition, input *unstructured.Unstructured) (map[string]*unstructured.Unstructured, []string) {
 	t.Helper()
-	resolved, err := kroruntime.FromGraph(compiled, graph.Config{MaxCollectionDimensionSize: 5}, kroruntime.WithInstance(input))
-	if err != nil {
-		t.Fatal(err)
-	}
-	objects := map[string]*unstructured.Unstructured{}
-	var ignored []string
-	for _, node := range resolved.Nodes() {
-		ignore, err := node.IsIgnored()
-		if err != nil {
-			t.Fatalf("evaluate inclusion %s: %v", node.Spec.Meta.ID, err)
-		}
-		if ignore {
-			ignored = append(ignored, node.Spec.Meta.ID)
-			continue
-		}
-		desired, err := node.GetDesired()
-		if err != nil || len(desired) != 1 {
-			t.Fatalf("resolve actual Tenant child %s: count=%d error=%v", node.Spec.Meta.ID, len(desired), err)
-		}
-		objects[node.Spec.Meta.ID] = desired[0]
-		node.SetObserved(desired)
-	}
-	slices.Sort(ignored)
-	return objects, ignored
+	return resolveChildren(t, engine, definition, input)
 }
 
 func assertTenantChildren(t *testing.T, objects map[string]*unstructured.Unstructured, ignored []string, reconcile, sops bool) {

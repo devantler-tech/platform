@@ -148,6 +148,8 @@ spec:
             # when an entry outlives its route.
             - "https://${domain}/oauth2/callback"
             - "https://${domain}:443/oauth2/callback"
+            - "https://agents.${domain}/oauth2/callback"
+            - "https://agents.${domain}:443/oauth2/callback"
             - "https://analytics.${domain}/oauth2/callback"
             - "https://analytics.${domain}:443/oauth2/callback"
             - "https://budget.${domain}/oauth2/callback"
@@ -158,6 +160,8 @@ spec:
             - "https://hubble.${domain}:443/oauth2/callback"
             - "https://ksail.${domain}/oauth2/callback"
             - "https://ksail.${domain}:443/oauth2/callback"
+            - "https://longhorn.${domain}/oauth2/callback"
+            - "https://longhorn.${domain}:443/oauth2/callback"
             - "https://observability.${domain}/oauth2/callback"
             - "https://observability.${domain}:443/oauth2/callback"
             - "https://policy-reporter.${domain}/oauth2/callback"

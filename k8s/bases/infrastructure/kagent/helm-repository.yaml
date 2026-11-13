@@ -1,0 +1,18 @@
+# kagent's control-plane chart comes through an OCI HelmRepository, not an
+# OCIRepository chartRef like the other charts. With a chartRef, helm-controller
+# appends the artifact digest to the chart version as build metadata
+# (1.0.0+<digest>). This chart writes the chart version into its
+# app.kubernetes.io/version label and uses it as the default controller and UI
+# image tag, and a "+" is valid in neither, so the release failed to install on
+# prod (devantler-tech/platform#5903). A HelmRepository chart keeps the exact
+# version. The CRD chart does neither, so it stays on its OCIRepository.
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: kagent
+  namespace: kagent
+spec:
+  type: oci
+  interval: 10m
+  url: oci://ghcr.io/kagent-dev/kagent/helm

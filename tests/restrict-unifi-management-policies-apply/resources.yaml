@@ -70,3 +70,51 @@ metadata:
 spec:
   managementPolicies: []
   forProvider: {}
+---
+# Both empty and null lists keep the existing conservative default.
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: empty
+  namespace: unifi
+spec:
+  managementPolicies: []
+  forProvider: {}
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: null-list
+  namespace: unifi
+spec:
+  managementPolicies: null
+  forProvider: {}
+---
+# A supported kind/version remains protected when its served version changes.
+apiVersion: dns.unifi.m.crossplane.io/v1beta1
+kind: Record
+metadata:
+  name: beta-wildcard
+  namespace: unifi
+spec:
+  managementPolicies: ["*"]
+  forProvider: {}
+---
+# Group and kind are a pair, not a cross-product of the three allowed lists.
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  name: wrong-group
+  namespace: unifi
+spec:
+  managementPolicies: ["*"]
+  forProvider: {}
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: other-namespace
+  namespace: other
+spec:
+  managementPolicies: ["*"]
+  forProvider: {}

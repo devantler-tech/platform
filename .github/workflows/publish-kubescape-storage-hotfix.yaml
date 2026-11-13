@@ -1,6 +1,7 @@
+---
 name: Publish Kubescape Storage Hotfix
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:
@@ -8,6 +9,9 @@ on:
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch
       - scripts/tests/test-kubescape-storage-hotfix.sh
   push:
     branches: [main]
@@ -16,6 +20,9 @@ on:
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch
       - scripts/tests/test-kubescape-storage-hotfix.sh
   workflow_dispatch:
 
@@ -28,10 +35,15 @@ concurrency:
 env:
   KUBESCAPE_STORAGE_SOURCE_COMMIT: b35788b68337134fc2514574cde1ba7f1225fd43
   IMAGE: ghcr.io/devantler-tech/platform-kubescape-storage
-  IMAGE_TAG: v0.0.297-sqlite-contention.8-${{ github.sha }}
+  IMAGE_TAG: v0.0.297-sqlite-contention.11-${{ github.sha }}
   PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
   CLEANUP_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
   SUMMARY_REPAIR_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
+  NATIVE_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
+  SBOM_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
+  DEPENDENCY_SECURITY_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch
+  STORAGE_GO_VERSION: "1.26.11"
+  GOTOOLCHAIN: local
 
 jobs:
   verify:
@@ -41,7 +53,7 @@ jobs:
       contents: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
@@ -61,7 +73,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: upstream/go.mod
+          go-version: ${{ env.STORAGE_GO_VERSION }}
           cache: false
 
       - name: Apply and test compatibility patch
@@ -71,6 +83,9 @@ jobs:
           HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
           CLEANUP_PATCH: ${{ github.workspace }}/${{ env.CLEANUP_PATCH_PATH }}
           SUMMARY_REPAIR_PATCH: ${{ github.workspace }}/${{ env.SUMMARY_REPAIR_PATCH_PATH }}
+          NATIVE_CODEC_PATCH: ${{ github.workspace }}/${{ env.NATIVE_CODEC_PATCH_PATH }}
+          SBOM_CODEC_PATCH: ${{ github.workspace }}/${{ env.SBOM_CODEC_PATCH_PATH }}
+          DEPENDENCY_SECURITY_PATCH: ${{ github.workspace }}/${{ env.DEPENDENCY_SECURITY_PATCH_PATH }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
@@ -80,8 +95,51 @@ jobs:
           git apply "${CLEANUP_PATCH}"
           git apply --check "${SUMMARY_REPAIR_PATCH}"
           git apply "${SUMMARY_REPAIR_PATCH}"
+          # Bind the exact preimage and result of the generated zero-context patch.
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 3f044057cba5614fdbcca8104f27cdb086641d29
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717
+          git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          git apply --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 8e0b39495ccf9d24de543443fec7169b36cadc5a
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 24ef7781d710ce92453fed46ec92b0dd52830f89
+          test "$(git hash-object pkg/apis/softwarecomposition/syfttypes.go)" = 3c27c5a8d6b583a1b314619c56bf03d2958a13ca
+          test "$(git hash-object pkg/apis/softwarecomposition/v1beta1/syfttypes.go)" = f9dd4f9c908002352e5e63990c9fb44303804879
+          test "$(git hash-object pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go)" = 84836b7818ac5812f4ffc1b41fba528f0c50c820
+          git apply --check --unidiff-zero "${SBOM_CODEC_PATCH}"
+          git apply --unidiff-zero "${SBOM_CODEC_PATCH}"
+          test "$(git hash-object pkg/apis/softwarecomposition/syfttypes.go)" = 9543f961e697d8daa7ed54d1f42cb0b857f6f848
+          test "$(git hash-object pkg/apis/softwarecomposition/v1beta1/syfttypes.go)" = ea67fc8f1979614888f32ab632e03b509b31530f
+          test "$(git hash-object pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go)" = 2d85a42091d0512b6d3ccb23e9044b426abb25f2
+          test "$(git hash-object pkg/apis/softwarecomposition/packagemetadata/forward.go)" = 2414195cc561eeeb36770260d11d111472a9e2b8
+          test "$(git hash-object pkg/apis/softwarecomposition/metadata_forward_compatibility_test.go)" = 7280eebef1916127dc21642e3f6663b19ca44a46
+          test "$(git hash-object go.mod)" = 46719c0bae6a2f5ada53cb07c4f44380a142407e
+          test "$(git hash-object go.sum)" = 2fc66f0552bb939c9331ab0228ad8c63be8b8ec3
+          test "$(git hash-object build/Dockerfile)" = e57051966907363749904344c08679d79771c8a0
+          git apply --check --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"
+          git apply --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"
+          test "$(git hash-object go.mod)" = a2c6f7d0c07f3f3254d3ec51f804174397c430ea
+          test "$(git hash-object go.sum)" = ea04b6bd297b61ba4ffb84649a28da1692d49b85
+          test "$(git hash-object build/Dockerfile)" = cc7845cc268352216faf22bba941901095200760
           git diff --check
-          go test -race ./pkg/registry/file
+          go test -race ./pkg/apis/softwarecomposition/... ./pkg/registry/file
+
+      - name: Audit both storage executables
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          audit_dir="$(mktemp -d "${RUNNER_TEMP}/kubescape-storage-audit.XXXXXX")"
+          GOBIN="${audit_dir}" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "${audit_dir}/storage" .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "${audit_dir}/migration" ./cmd/migration/main.go
+          for binary in storage migration; do
+            if "${audit_dir}/govulncheck" -mode=binary "${audit_dir}/${binary}" >"${audit_dir}/${binary}.log" 2>&1; then
+              printf '%s binary audit: no matched affected functions\n' "${binary}"
+            else
+              audit_status=$?
+              printf '%s binary audit failed (exit %d); reproduce with the pinned source and toolchain before publication\n' "${binary}" "${audit_status}" >&2
+              exit "${audit_status}"
+            fi
+          done
 
       - name: Build compatibility image without publishing
         working-directory: upstream
@@ -105,7 +163,7 @@ jobs:
       id-token: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
@@ -129,6 +187,9 @@ jobs:
           HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
           CLEANUP_PATCH: ${{ github.workspace }}/${{ env.CLEANUP_PATCH_PATH }}
           SUMMARY_REPAIR_PATCH: ${{ github.workspace }}/${{ env.SUMMARY_REPAIR_PATCH_PATH }}
+          NATIVE_CODEC_PATCH: ${{ github.workspace }}/${{ env.NATIVE_CODEC_PATCH_PATH }}
+          SBOM_CODEC_PATCH: ${{ github.workspace }}/${{ env.SBOM_CODEC_PATCH_PATH }}
+          DEPENDENCY_SECURITY_PATCH: ${{ github.workspace }}/${{ env.DEPENDENCY_SECURITY_PATCH_PATH }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
@@ -138,6 +199,31 @@ jobs:
           git apply "${CLEANUP_PATCH}"
           git apply --check "${SUMMARY_REPAIR_PATCH}"
           git apply "${SUMMARY_REPAIR_PATCH}"
+          # Bind the exact preimage and result of the generated zero-context patch.
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 3f044057cba5614fdbcca8104f27cdb086641d29
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717
+          git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          git apply --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 8e0b39495ccf9d24de543443fec7169b36cadc5a
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 24ef7781d710ce92453fed46ec92b0dd52830f89
+          test "$(git hash-object pkg/apis/softwarecomposition/syfttypes.go)" = 3c27c5a8d6b583a1b314619c56bf03d2958a13ca
+          test "$(git hash-object pkg/apis/softwarecomposition/v1beta1/syfttypes.go)" = f9dd4f9c908002352e5e63990c9fb44303804879
+          test "$(git hash-object pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go)" = 84836b7818ac5812f4ffc1b41fba528f0c50c820
+          git apply --check --unidiff-zero "${SBOM_CODEC_PATCH}"
+          git apply --unidiff-zero "${SBOM_CODEC_PATCH}"
+          test "$(git hash-object pkg/apis/softwarecomposition/syfttypes.go)" = 9543f961e697d8daa7ed54d1f42cb0b857f6f848
+          test "$(git hash-object pkg/apis/softwarecomposition/v1beta1/syfttypes.go)" = ea67fc8f1979614888f32ab632e03b509b31530f
+          test "$(git hash-object pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go)" = 2d85a42091d0512b6d3ccb23e9044b426abb25f2
+          test "$(git hash-object pkg/apis/softwarecomposition/packagemetadata/forward.go)" = 2414195cc561eeeb36770260d11d111472a9e2b8
+          test "$(git hash-object pkg/apis/softwarecomposition/metadata_forward_compatibility_test.go)" = 7280eebef1916127dc21642e3f6663b19ca44a46
+          test "$(git hash-object go.mod)" = 46719c0bae6a2f5ada53cb07c4f44380a142407e
+          test "$(git hash-object go.sum)" = 2fc66f0552bb939c9331ab0228ad8c63be8b8ec3
+          test "$(git hash-object build/Dockerfile)" = e57051966907363749904344c08679d79771c8a0
+          git apply --check --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"
+          git apply --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"
+          test "$(git hash-object go.mod)" = a2c6f7d0c07f3f3254d3ec51f804174397c430ea
+          test "$(git hash-object go.sum)" = ea04b6bd297b61ba4ffb84649a28da1692d49b85
+          test "$(git hash-object build/Dockerfile)" = cc7845cc268352216faf22bba941901095200760
           git diff --check
 
       - name: Set up Buildx container driver
@@ -146,7 +232,7 @@ jobs:
           driver: docker-container
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -170,8 +256,8 @@ jobs:
             org.opencontainers.image.version=${{ env.IMAGE_TAG }}
             io.devantler.kubescape-storage.upstream-revision=${{ env.KUBESCAPE_STORAGE_SOURCE_COMMIT }}
 
-      - name: Set up Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Install checksum-verified supply-chain tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
 
       - name: Sign and verify published digest
         env:

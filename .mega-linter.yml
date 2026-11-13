@@ -1,3 +1,4 @@
+---
 # MegaLinter configuration for the platform repository.
 #
 # WHY THIS FILE EXISTS
@@ -16,7 +17,7 @@
 # WHAT IS SCOPED, AND WHAT IS DELIBERATELY NOT
 # Prose, spelling and link checkers are scoped off k8s/ and .agents/: they have no useful opinion
 # about Kubernetes manifests, and .agents/skills/** is machine-synced daily from
-# devantler-tech/agent-skills by .github/workflows/update-skills.yaml, so findings there cannot be
+# devantler-tech/agent-plugins by .github/workflows/update-skills.yaml, so findings there cannot be
 # fixed here — the next sync overwrites them.
 #
 # The SECURITY scanners are NOT scoped off k8s/, and that is deliberate. It is tempting to argue
@@ -46,7 +47,7 @@ EXCLUDED_DIRECTORIES:
 # be turned off from here — and then stages EVERYTHING (`file_pattern: .`) to push the fixes back.
 # Two things must therefore never be reachable by a fixer, or CI commits them:
 #   * megalinter-reports/ — also in .gitignore now, after it put 182 report files in a branch.
-#   * .agents/ — machine-synced daily from devantler-tech/agent-skills; any fix here is discarded
+#   * .agents/ — machine-synced daily from devantler-tech/agent-plugins; any fix here is discarded
 #     by the next sync, so rewriting those 87 files was pure churn.
 #   * *.enc.yaml — SOPS-encrypted. SOPS writes its own canonical 4-space layout and owns these
 #     files; prettier re-indented `k8s/bases/bootstrap/secret.enc.yaml` to 2 spaces, which the next
@@ -351,7 +352,27 @@ DISABLE_ERRORS_LINTERS:
 
 SPELL_CSPELL_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
 SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
-MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: \.agents/.*
+# approved-surface-history.md is frozen: history_frozen_test.go accepts only its recorded sha256,
+# so markdownlint's fixes would fail that test. New approvals go in approved-surface.txt instead.
+MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: (\.agents/.*|scripts/validate-eks-ci-role-policy/approved-surface-history\.md)
+
+# prettier rewrites JSON in place, and these four sets must keep their exact bytes:
+#   * schemas/ holds generated kubeconform schemas written by jq -S;
+#     scripts/generate-kubescape-rule-schema.sh --check compares their exact bytes.
+#   * tests/chart-rendered-rbac-policy/ baselines are written by jq (UPDATE_BASELINE=1) and compared
+#     with `diff -u`, so prettier's layout fails the test that owns them.
+#   * scripts/validate-feature-flags/schema/ holds upstream flagd schemas whose sha256 the README
+#     records; reformatting them breaks that provenance.
+#   * scripts/diagnose-email-startup/testdata/ holds compact JSON captured from a real Stalwart store.
+#     access_test.go builds its negative controls by replacing exact compact substrings such as
+#     `"total":1`, so prettier's `"total": 1` layout would fail those controls.
+JSON_PRETTIER_FILTER_REGEX_EXCLUDE: (schemas/.*\.json|tests/chart-rendered-rbac-policy/.*\.json|scripts/validate-feature-flags/schema/.*\.json|scripts/diagnose-email-startup/testdata/.*\.json)
+
+# The only HTML file here is a byte-exact copy of the released Hubble UI v0.13.6 entry point, which
+# check-hubble-ui-streaming's regression test reads and requires unaltered, minifier output included.
+# Restyling it would test a page upstream never shipped, so the HTML linters skip that one fixture.
+HTML_DJLINT_FILTER_REGEX_EXCLUDE: scripts/check-hubble-ui-streaming/testdata/frontend-v0\.13\.6-index\.html
+HTML_HTMLHINT_FILTER_REGEX_EXCLUDE: scripts/check-hubble-ui-streaming/testdata/frontend-v0\.13\.6-index\.html
 
 # The generic YAML tooling is scoped off the manifest tree, and kubeconform is what governs it
 # instead. That tree is owned by kustomize, Flux and ksail and holds vendored upstream operator
@@ -419,3 +440,10 @@ REPOSITORY_TRIVY_ARGUMENTS:
 # instead of disabling the linter. Measured: 1 error -> 0, audit performed.
 ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES:
   - GITHUB_TOKEN
+
+# grype scans the whole tree and refreshes its vulnerability database in the same run, so it sits
+# close to MegaLinter's 300-second default: 232s on 2026-11-09 11:40Z, then killed at 300s on two
+# consecutive runs that afternoon. A killed scan reports one error and fails the gate without
+# having examined anything. More time keeps the full scan; nothing is excluded or downgraded.
+# The key is `_TIMEOUT_SECONDS`: the `_TIMEOUT_SEC` name in the timeout message is not in the schema.
+REPOSITORY_GRYPE_TIMEOUT_SECONDS: 900

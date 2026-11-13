@@ -1,0 +1,55 @@
+# kagent's controller, UI and database. The controller serves its APIs on 8083
+# to agents (through Substrate's egress gateway) and to the Agentic Engineer's
+# schedule Job, and calls the Substrate API, router and IdP.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kagent
+  namespace: kagent
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kagent
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ate-system
+            app: atenet-egress
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: agentic-engineer
+            app: agentic-engineer-schedule
+      toPorts:
+        - ports:
+            - port: "8083"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: cnpg-system
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "5432"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kagent
+    # Substrate API, router and IdP. Substrate's own policies admit only
+    # namespaces labelled ate.dev/api-access.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ate-system
+    - toEntities:
+        - kube-apiserver
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

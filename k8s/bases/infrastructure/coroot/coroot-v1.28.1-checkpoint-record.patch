@@ -1,0 +1,981 @@
+diff --git a/auditor/postgres.go b/auditor/postgres.go
+index 673a8e9..c85443f 100644
+--- a/auditor/postgres.go
++++ b/auditor/postgres.go
+@@ -1434,7 +1434,7 @@ func pgCheckpoints(report *model.AuditReport, instance *model.Instance, instance
+ 			),
+ 		)
+ 		if last := pg.TimeSinceLastCheckpoint.Last(); !timeseries.IsNaN(last) && last > timeout.Last()*mult {
+-			if wal := pg.WalSinceLastCheckpoint.Last(); wal > pgWalSegmentSizeBytes {
++			if wal := pgCheckpointWalDistance(pg); wal > pgWalSegmentSizeBytes {
+ 				checkpointCheck.AddItem("%s", instance.Name)
+ 				if cause := pgCheckpointStallCause(instance, instances, primaryLsn); cause != "" {
+ 					checkpointCheck.AddDetail("%s: %s", instance.Name, cause)
+@@ -1445,6 +1445,20 @@ func pgCheckpoints(report *model.AuditReport, instance *model.Instance, instance
+ 	}
+ }
+ 
++// Archive-timeout switches during a checkpoint can leave its REDO pointer more
++// than one segment behind, even when PostgreSQL correctly skips idle checkpoints.
++// Measure subsequent WAL from the completed checkpoint/restartpoint record. Keep
++// the original check when the collector does not provide a current finite value.
++func pgCheckpointWalDistance(pg *model.Postgres) float32 {
++	observedAt, _ := pg.TimeSinceLastCheckpoint.LastNotNull()
++	recordAt, _ := pg.WalSinceLastCheckpointRecord.LastNotNull()
++	distance := pg.WalSinceLastCheckpointRecord.Last()
++	if recordAt == observedAt && distance >= 0 && !timeseries.IsInf(distance, 0) {
++		return distance
++	}
++	return pg.WalSinceLastCheckpoint.Last()
++}
++
+ func pgSettingBytes(s model.PgSetting) *timeseries.TimeSeries {
+ 	var mult float32
+ 	switch s.Unit {
+diff --git a/auditor/postgres_test.go b/auditor/postgres_test.go
+new file mode 100644
+index 0000000..b7e980a
+--- /dev/null
++++ b/auditor/postgres_test.go
+@@ -0,0 +1,70 @@
++package auditor
++
++import (
++	"math"
++	"testing"
++
++	"github.com/coroot/coroot/model"
++	"github.com/coroot/coroot/timeseries"
++)
++
++func TestPgCheckpointsExcludesArchivePadding(t *testing.T) {
++	const from = timeseries.Time(10000)
++	const step = timeseries.Duration(5)
++	const points = 21
++	constant := func(value float32) *timeseries.TimeSeries {
++		values := make([]float32, points)
++		for i := range values {
++			values[i] = value
++		}
++		return timeseries.NewWithData(from, step, values)
++	}
++	stale := timeseries.NewWithData(from, step, []float32{16777064})
++	future := timeseries.NewWithData(from.Add(105), step, []float32{16777064})
++	tests := []struct {
++		name         string
++		recordBytes  *timeseries.TimeSeries
++		attempts     float32
++		wantFindings int
++	}{
++		{name: "idle_primary_archive_padding", recordBytes: constant(16777064), attempts: 1, wantFindings: 0},
++		{name: "idle_standby_with_no_primary_checkpoint_attempts", recordBytes: constant(16777064), wantFindings: 0},
++		{name: "record_distance_at_existing_segment_boundary", recordBytes: constant(16777216), wantFindings: 0},
++		{name: "record_distance_above_existing_segment_boundary", recordBytes: constant(16777218), wantFindings: 1},
++		{name: "stalled_checkpointer", recordBytes: constant(75332296), wantFindings: 1},
++		{name: "failed_attempts_with_real_wal_debt", recordBytes: constant(75332296), attempts: 1, wantFindings: 1},
++		{name: "missing_record_metric", attempts: 1, wantFindings: 1},
++		{name: "missing_record_samples", recordBytes: constant(timeseries.NaN), attempts: 1, wantFindings: 1},
++		{name: "invalid_infinite_distance", recordBytes: constant(float32(math.Inf(1))), attempts: 1, wantFindings: 1},
++		{name: "negative_distance", recordBytes: constant(-1), attempts: 1, wantFindings: 1},
++		{name: "stale_record_distance", recordBytes: stale, attempts: 1, wantFindings: 1},
++		{name: "future_record_distance", recordBytes: future, attempts: 1, wantFindings: 1},
++	}
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			pg := model.NewPostgres()
++			pg.Settings["checkpoint_timeout"] = model.PgSetting{Samples: constant(30)}
++			ages := make([]float32, points)
++			for i := range ages {
++				ages[i] = float32(i * 5)
++			}
++			pg.TimeSinceLastCheckpoint = timeseries.NewWithData(from, step, ages)
++			// Native PG18 archive-timeout reproduction: the REDO pointer is
++			// over one segment behind while distance after the checkpoint
++			// record remains below a segment. Attempts alone can also advance
++			// on unsuccessful checkpoints and must not clear real WAL debt.
++			pg.WalSinceLastCheckpoint = constant(33150320)
++			pg.WalSinceLastCheckpointRecord = test.recordBytes
++			pg.Checkpoints = constant(0)
++			pg.CheckpointsScheduledByType["timed"] = constant(test.attempts)
++			instance := &model.Instance{Name: "fixture", Postgres: pg}
++			report := model.NewAuditReport(&model.Application{}, timeseries.NewContext(from, from.Add(100), step), nil, model.AuditReportPostgres, true)
++			check := report.CreateCheck(model.Checks.PostgresCheckpoint)
++			check.Threshold = 3
++			pgCheckpoints(report, instance, []*model.Instance{instance}, nil, check)
++			if got := check.Items().Len(); got != test.wantFindings {
++				t.Fatalf("checkpoint findings = %d, want %d", got, test.wantFindings)
++			}
++		})
++	}
++}
+diff --git a/clickhouse/space_manager.go b/clickhouse/space_manager.go
+index 17edc53..f1b4463 100644
+--- a/clickhouse/space_manager.go
++++ b/clickhouse/space_manager.go
+@@ -71,7 +71,24 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
+ 		return nil
+ 	}
+ 
+-	var cleanupNeeded []string
++	for _, disk := range disksToClean(diskInfo, sm.cfg.UsageThresholdPercent) {
++		if err := sm.cleanupOldestPartitionsFromDisk(ctx, client, disk); err != nil {
++			return fmt.Errorf("failed to cleanup partitions from disk %s: %w", disk.Name, err)
++		}
++	}
++	return nil
++}
++
++// diskUsage is a local disk over the cleanup threshold, with the usage that put it there.
++type diskUsage struct {
++	Name         string
++	UsagePercent float64
++}
++
++// disksToClean returns the local disks whose usage exceeds thresholdPercent, each with its
++// usage, so the cleanup decides with the same reading that selected the disk.
++func disksToClean(diskInfo []DiskInfo, thresholdPercent int) []diskUsage {
++	var res []diskUsage
+ 	for _, disk := range diskInfo {
+ 		if disk.Type != "Local" {
+ 			continue
+@@ -80,54 +97,103 @@ func (sm *SpaceManager) runCleanup(ctx context.Context, client *Client, addr str
+ 		usedSpace := disk.TotalSpace - disk.FreeSpace
+ 		usagePercent := float64(usedSpace) / float64(disk.TotalSpace) * 100
+ 
+-		klog.Infof("disk \"%s\" usage: %.2f%%, threshold: %d%%", disk.Name, usagePercent, sm.cfg.UsageThresholdPercent)
++		klog.Infof("disk \"%s\" usage: %.2f%%, threshold: %d%%", disk.Name, usagePercent, thresholdPercent)
+ 
+-		if int(usagePercent) > sm.cfg.UsageThresholdPercent {
++		if int(usagePercent) > thresholdPercent {
+ 			klog.Infof("disk %s usage (%.2f%%) exceeds threshold (%d%%), marking for cleanup",
+-				disk.Name, usagePercent, sm.cfg.UsageThresholdPercent)
+-			cleanupNeeded = append(cleanupNeeded, disk.Name)
++				disk.Name, usagePercent, thresholdPercent)
++			res = append(res, diskUsage{Name: disk.Name, UsagePercent: usagePercent})
+ 		}
+ 	}
++	return res
++}
+ 
+-	if len(cleanupNeeded) == 0 {
+-		return nil
++func (sm *SpaceManager) cleanupOldestPartitionsFromDisk(ctx context.Context, client *Client, disk diskUsage) error {
++	partitions, err := sm.getPartitionsFromDiskOnServer(ctx, client, disk.Name)
++	if err != nil {
++		return fmt.Errorf("failed to get partitions from disk %s: %w", disk.Name, err)
+ 	}
+ 
+-	for _, diskName := range cleanupNeeded {
+-		if err := sm.cleanupOldestPartitionsFromDisk(ctx, client, diskName); err != nil {
+-			return fmt.Errorf("failed to cleanup partitions from disk %s: %w", diskName, err)
++	for _, oldestPartition := range partitionsToDropFromDisk(partitions, disk, sm.cfg.UsageThresholdPercent, sm.cfg.MinPartitions) {
++		if err := sm.dropPartition(ctx, client, oldestPartition); err != nil {
++			klog.Errorf("failed to drop partition %s from table %s.%s on disk %s: %v",
++				oldestPartition.PartitionId, oldestPartition.Database, oldestPartition.Table, disk.Name, err)
++			continue
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+-func (sm *SpaceManager) cleanupOldestPartitionsFromDisk(ctx context.Context, client *Client, diskName string) error {
+-	partitions, err := sm.getPartitionsFromDiskOnServer(ctx, client, diskName)
+-	if err != nil {
+-		return fmt.Errorf("failed to get partitions from disk %s: %w", diskName, err)
++// partitionsToDropFromDisk applies the emergency ceiling to the disk's usage, then returns the
++// oldest partition of every table that holds more partitions than are kept at that usage.
++func partitionsToDropFromDisk(parts []PartitionInfo, disk diskUsage, thresholdPercent, minPartitions int) []PartitionInfo {
++	keep := partitionsToKeep(disk.UsagePercent, thresholdPercent, minPartitions)
++	if keep < minPartitions {
++		klog.Warningf("disk %s usage (%.2f%%) is at or above %d%%: freeing the oldest partition of every table, including a table's last one, to keep ClickHouse writable",
++			disk.Name, disk.UsagePercent, emergencyUsagePercent(thresholdPercent))
+ 	}
++	return partitionsToDrop(parts, keep)
++}
+ 
+-	tablePartitions := make(map[string][]PartitionInfo)
+-	for _, partition := range partitions {
+-		tableKey := partition.Database + "." + partition.Table
+-		tablePartitions[tableKey] = append(tablePartitions[tableKey], partition)
++// emergencyUsagePercent is the disk usage, halfway between the cleanup threshold and a full
++// disk, at which keeping the minimum number of partitions gives way to keeping ClickHouse
++// writable: 85% at the default 70% threshold.
++func emergencyUsagePercent(thresholdPercent int) int {
++	return (thresholdPercent + 100) / 2
++}
++
++// partitionsToKeep returns how many partitions each table keeps at the given disk usage:
++// the configured minimum, or none once usage reaches the emergency level. Below that level
++// a table's newest partitions, normally the current day's data, are never dropped, as
++// Coroot's documentation promises; above it, a disk that fills faster than old days are
++// released still frees space rather than refusing writes.
++//
++// Cleanup visits each replica of a replicated cluster in turn, and dropped parts keep their
++// disk space until ClickHouse removes them, so in an emergency a later replica can still read
++// the earlier usage and free the next day as well. Below the ceiling the minimum still holds,
++// so this needs the disk to cross the ceiling while an older day is still present.
++func partitionsToKeep(usagePercent float64, thresholdPercent, minPartitions int) int {
++	if usagePercent >= float64(emergencyUsagePercent(thresholdPercent)) {
++		return 0
+ 	}
++	return minPartitions
++}
+ 
+-	for tableKey, tablePartitionList := range tablePartitions {
+-		if len(tablePartitionList) <= sm.cfg.MinPartitions {
+-			klog.Infof("table %s has %d partitions, keeping minimum %d",
+-				tableKey, len(tablePartitionList), sm.cfg.MinPartitions)
++// partitionsToDrop returns the oldest partition of every table that holds more than
++// minPartitions distinct partitions.
++//
++// system.parts has one row per active data part, and a partition usually holds several
++// parts, so the rows are collapsed into distinct partitions before they are counted.
++// Counting parts let the cleanup drop a table's last remaining partition, normally the
++// current day's data. The rows arrive ordered by each part's min_time, so the first row
++// seen for a partition is its oldest part and the first partition of a table is its oldest.
++func partitionsToDrop(parts []PartitionInfo, minPartitions int) []PartitionInfo {
++	var tables []string
++	tablePartitions := make(map[string][]PartitionInfo)
++	seen := make(map[PartitionInfo]bool)
++	for _, part := range parts {
++		if seen[part] {
+ 			continue
+ 		}
++		seen[part] = true
++		tableKey := part.Database + "." + part.Table
++		if _, ok := tablePartitions[tableKey]; !ok {
++			tables = append(tables, tableKey)
++		}
++		tablePartitions[tableKey] = append(tablePartitions[tableKey], part)
++	}
+ 
+-		oldestPartition := tablePartitionList[0]
+-		if err := sm.dropPartition(ctx, client, oldestPartition); err != nil {
+-			klog.Errorf("failed to drop partition %s from table %s on disk %s: %v",
+-				oldestPartition.PartitionId, tableKey, diskName, err)
++	var res []PartitionInfo
++	for _, tableKey := range tables {
++		partitions := tablePartitions[tableKey]
++		if len(partitions) <= minPartitions {
++			klog.Infof("table %s has %d partitions, keeping minimum %d",
++				tableKey, len(partitions), minPartitions)
+ 			continue
+ 		}
++		res = append(res, partitions[0])
+ 	}
+-	return nil
++	return res
+ }
+ 
+ func (sm *SpaceManager) dropPartition(ctx context.Context, client *Client, part PartitionInfo) error {
+diff --git a/clickhouse/space_manager_integration_test.go b/clickhouse/space_manager_integration_test.go
+new file mode 100644
+index 0000000..6396535
+--- /dev/null
++++ b/clickhouse/space_manager_integration_test.go
+@@ -0,0 +1,101 @@
++//go:build clickhouse_integration
++
++package clickhouse
++
++import (
++	"context"
++	"os"
++	"testing"
++
++	"github.com/coroot/coroot/config"
++	"github.com/coroot/coroot/db"
++	"github.com/coroot/coroot/utils"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++const integrationDatabase = "space_manager_it"
++
++// TestSpaceManagerIntegrationKeepsTheNewestPartition runs the real cleanup path (the
++// system.parts query, the per-disk decision and ALTER TABLE ... DROP PARTITION) against a real
++// ClickHouse server named by CLICKHOUSE_ADDR, on a table partitioned exactly like Coroot's
++// telemetry tables, with merges stopped so that one day really holds several data parts.
++func TestSpaceManagerIntegrationKeepsTheNewestPartition(t *testing.T) {
++	addr := os.Getenv("CLICKHOUSE_ADDR")
++	require.NotEmpty(t, addr, "CLICKHOUSE_ADDR must name the ClickHouse server under test")
++	ctx := context.Background()
++
++	admin := integrationClient(t, addr, "default")
++	integrationExec(t, admin, "DROP DATABASE IF EXISTS "+integrationDatabase+" SYNC")
++	integrationExec(t, admin, "CREATE DATABASE "+integrationDatabase)
++	t.Cleanup(func() { _ = admin.conn.Exec(ctx, "DROP DATABASE IF EXISTS "+integrationDatabase+" SYNC") })
++
++	client := integrationClient(t, addr, integrationDatabase)
++	integrationExec(t, client, `
++CREATE TABLE otel_logs (
++	Timestamp DateTime64(9) CODEC(Delta, ZSTD(1)),
++	Body String CODEC(ZSTD(1))
++)
++ENGINE = MergeTree()
++PARTITION BY toDate(Timestamp)
++ORDER BY Timestamp`)
++	integrationExec(t, client, "SYSTEM STOP MERGES otel_logs")
++	for i := 0; i < 3; i++ {
++		integrationExec(t, client, "INSERT INTO otel_logs VALUES ('2026-01-02 12:00:00', 'newest day')")
++	}
++
++	sm := &SpaceManager{
++		client:    client,
++		cfg:       config.ClickHouseSpaceManager{Enabled: true, UsageThresholdPercent: 70, MinPartitions: 1},
++		databases: []string{integrationDatabase},
++	}
++
++	parts, err := sm.getPartitionsFromDiskOnServer(ctx, client, "default")
++	require.NoError(t, err)
++	require.Len(t, parts, 3, "system.parts must list one row per data part")
++	for _, p := range parts {
++		require.Equal(t, PartitionInfo{Database: integrationDatabase, Table: "otel_logs", PartitionId: "20260102"}, p,
++			"all three parts must belong to the one daily partition")
++	}
++
++	// Over the cleanup threshold, below the emergency ceiling: the only partition stays.
++	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 75}))
++	assert.Equal(t, uint64(3), integrationCount(t, client, "toDate(Timestamp) = '2026-01-02'"))
++
++	// With an older day present, only that day is dropped.
++	for i := 0; i < 2; i++ {
++		integrationExec(t, client, "INSERT INTO otel_logs VALUES ('2026-01-01 12:00:00', 'older day')")
++	}
++	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 75}))
++	assert.Equal(t, uint64(0), integrationCount(t, client, "toDate(Timestamp) = '2026-01-01'"))
++	assert.Equal(t, uint64(3), integrationCount(t, client, "toDate(Timestamp) = '2026-01-02'"))
++
++	// At the emergency ceiling the last partition is freed as well.
++	require.NoError(t, sm.cleanupOldestPartitionsFromDisk(ctx, client, diskUsage{Name: "default", UsagePercent: 90}))
++	assert.Equal(t, uint64(0), integrationCount(t, client, "1"))
++}
++
++func integrationClient(t *testing.T, addr, database string) *Client {
++	t.Helper()
++	client, err := NewClient(&db.IntegrationClickhouse{
++		Protocol: "native",
++		Addr:     addr,
++		Auth:     utils.BasicAuth{User: "default"},
++		Database: database,
++	}, nil)
++	require.NoError(t, err)
++	t.Cleanup(func() { _ = client.Close() })
++	return client
++}
++
++func integrationExec(t *testing.T, client *Client, query string) {
++	t.Helper()
++	require.NoError(t, client.conn.Exec(context.Background(), query))
++}
++
++func integrationCount(t *testing.T, client *Client, where string) uint64 {
++	t.Helper()
++	var n uint64
++	require.NoError(t, client.conn.QueryRow(context.Background(), "SELECT count() FROM otel_logs WHERE "+where).Scan(&n))
++	return n
++}
+diff --git a/clickhouse/space_manager_test.go b/clickhouse/space_manager_test.go
+new file mode 100644
+index 0000000..828767e
+--- /dev/null
++++ b/clickhouse/space_manager_test.go
+@@ -0,0 +1,124 @@
++package clickhouse
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++)
++
++func testPart(table, partitionId string) PartitionInfo {
++	return PartitionInfo{Database: "coroot", Table: table, PartitionId: partitionId}
++}
++
++func TestPartitionsToDropKeepsTheLastPartitionWhateverItsPartCount(t *testing.T) {
++	// system.parts returns one row per active data part, ordered by min_time. A single
++	// daily partition normally holds several parts; counting them as partitions let the
++	// cleanup drop the only remaining (current) day.
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261112"),
++		testPart("otel_logs", "20261112"),
++		testPart("otel_logs", "20261112"),
++		testPart("otel_traces", "20261112"),
++		testPart("otel_traces", "20261112"),
++	}
++	assert.Empty(t, partitionsToDrop(parts, 1))
++}
++
++func TestPartitionsToDropDropsOnlyTheOldestPartitionOfEachTable(t *testing.T) {
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261111"),
++		testPart("otel_traces", "20261111"),
++		testPart("otel_logs", "20261111"),
++		testPart("otel_logs", "20261112"),
++		testPart("otel_traces", "20261112"),
++		testPart("otel_logs", "20261112"),
++		testPart("profiling_samples", "20261112"),
++	}
++	assert.Equal(t,
++		[]PartitionInfo{testPart("otel_logs", "20261111"), testPart("otel_traces", "20261111")},
++		partitionsToDrop(parts, 1),
++	)
++}
++
++func TestPartitionsToDropHonoursAHigherMinimum(t *testing.T) {
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261110"),
++		testPart("otel_logs", "20261111"),
++		testPart("otel_logs", "20261111"),
++		testPart("otel_logs", "20261112"),
++		testPart("otel_traces", "20261111"),
++		testPart("otel_traces", "20261112"),
++		testPart("otel_traces", "20261112"),
++	}
++	assert.Equal(t, []PartitionInfo{testPart("otel_logs", "20261110")}, partitionsToDrop(parts, 2))
++}
++
++func TestPartitionsToKeepKeepsTheMinimumBelowTheEmergencyCeiling(t *testing.T) {
++	assert.Equal(t, 1, partitionsToKeep(71, 70, 1))
++	assert.Equal(t, 1, partitionsToKeep(84.99, 70, 1))
++	assert.Equal(t, 2, partitionsToKeep(84.99, 70, 2))
++}
++
++func TestPartitionsToKeepFreesTheLastPartitionAtTheEmergencyCeiling(t *testing.T) {
++	// Halfway between the cleanup threshold and a full disk: 85% at the default 70%.
++	assert.Equal(t, 0, partitionsToKeep(85, 70, 1))
++	assert.Equal(t, 0, partitionsToKeep(97, 70, 2))
++	assert.Equal(t, 1, partitionsToKeep(89.9, 80, 1))
++	assert.Equal(t, 0, partitionsToKeep(90, 80, 1))
++}
++
++func TestEmergencyCleanupDropsTheLastPartitionOfEachTable(t *testing.T) {
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261112"),
++		testPart("otel_logs", "20261112"),
++		testPart("otel_traces", "20261111"),
++		testPart("otel_traces", "20261112"),
++	}
++	assert.Equal(t,
++		[]PartitionInfo{testPart("otel_logs", "20261112"), testPart("otel_traces", "20261111")},
++		partitionsToDrop(parts, partitionsToKeep(90, 70, 1)),
++	)
++}
++
++func TestDisksToCleanCarriesTheUsageThatSelectedEachDisk(t *testing.T) {
++	disks := []DiskInfo{
++		{Name: "default", Type: "Local", TotalSpace: 1000, FreeSpace: 100},
++		{Name: "cold", Type: "Local", TotalSpace: 1000, FreeSpace: 400},
++		{Name: "s3", Type: "ObjectStorage", TotalSpace: 1000, FreeSpace: 0},
++	}
++	assert.Equal(t, []diskUsage{{Name: "default", UsagePercent: 90}}, disksToClean(disks, 70))
++	assert.Empty(t, disksToClean(disks, 90))
++}
++
++func TestCleanupDecisionKeepsTodayAboveTheThresholdAndFreesItAtTheCeiling(t *testing.T) {
++	parts := []PartitionInfo{
++		testPart("otel_logs", "20261112"),
++		testPart("otel_logs", "20261112"),
++	}
++	disk := func(free uint64) diskUsage {
++		return disksToClean([]DiskInfo{{Name: "default", Type: "Local", TotalSpace: 1000, FreeSpace: free}}, 70)[0]
++	}
++	assert.Empty(t, partitionsToDropFromDisk(parts, disk(200), 70, 1))
++	assert.Equal(t,
++		[]PartitionInfo{testPart("otel_logs", "20261112")},
++		partitionsToDropFromDisk(parts, disk(150), 70, 1),
++	)
++}
++
++func TestPartitionsToDropWithNoMinimumDropsEvenTheOnlyPartition(t *testing.T) {
++	parts := []PartitionInfo{testPart("otel_logs", "20261112"), testPart("otel_logs", "20261112")}
++	assert.Equal(t, []PartitionInfo{testPart("otel_logs", "20261112")}, partitionsToDrop(parts, 0))
++}
++
++func TestPartitionsToDropWithNoPartsDropsNothing(t *testing.T) {
++	assert.Empty(t, partitionsToDrop(nil, 1))
++	assert.Empty(t, partitionsToDrop(nil, 0))
++}
++
++func TestPartitionsToDropSeparatesDatabases(t *testing.T) {
++	parts := []PartitionInfo{
++		{Database: "a", Table: "otel_logs", PartitionId: "20261111"},
++		{Database: "b", Table: "otel_logs", PartitionId: "20261112"},
++	}
++	assert.Empty(t, partitionsToDrop(parts, 1))
++}
+diff --git a/constructor/postgres.go b/constructor/postgres.go
+index 741ec38..961b004 100644
+--- a/constructor/postgres.go
++++ b/constructor/postgres.go
+@@ -202,6 +202,8 @@ func postgres(instance *model.Instance, queryName string, m *model.MetricValues,
+ 		pg.TimeSinceLastCheckpoint = merge(pg.TimeSinceLastCheckpoint, values, timeseries.Any)
+ 	case "pg_wal_since_last_checkpoint_bytes":
+ 		pg.WalSinceLastCheckpoint = merge(pg.WalSinceLastCheckpoint, values, timeseries.Any)
++	case "pg_wal_since_last_checkpoint_record_bytes":
++		pg.WalSinceLastCheckpointRecord = merge(pg.WalSinceLastCheckpointRecord, values, timeseries.Any)
+ 	}
+ }
+ 
+diff --git a/constructor/queries.go b/constructor/queries.go
+index f24e98a..f32ddfd 100644
+--- a/constructor/queries.go
++++ b/constructor/queries.go
+@@ -471,6 +471,7 @@ var QUERIES = []Query{
+ 	qDB("pg_buffers_written_total", `rate(pg_buffers_written_total[$RANGE])`, "source"),
+ 	qDB("pg_time_since_last_checkpoint_seconds", `pg_time_since_last_checkpoint_seconds`),
+ 	qDB("pg_wal_since_last_checkpoint_bytes", `pg_wal_since_last_checkpoint_bytes`),
++	qDB("pg_wal_since_last_checkpoint_record_bytes", `pg_wal_since_last_checkpoint_record_bytes`),
+ 
+ 	qDB("mysql_up", `mysql_up`),
+ 	qDB("mysql_scrape_error", `mysql_scrape_error`, "error", "warning"),
+diff --git a/model/postgres.go b/model/postgres.go
+index 0a6938f..05ac049 100644
+--- a/model/postgres.go
++++ b/model/postgres.go
+@@ -103,12 +103,13 @@ type Postgres struct {
+ 	OldestXminAge      map[string]*timeseries.TimeSeries
+ 	TransactionSeconds map[QueryKey]*timeseries.TimeSeries
+ 
+-	CheckpointsScheduledByType map[string]*timeseries.TimeSeries
+-	Checkpoints                *timeseries.TimeSeries
+-	Restartpoints              *timeseries.TimeSeries
+-	TimeSinceLastCheckpoint    *timeseries.TimeSeries
+-	WalSinceLastCheckpoint     *timeseries.TimeSeries
+-	BuffersWrittenBySource     map[string]*timeseries.TimeSeries
++	CheckpointsScheduledByType   map[string]*timeseries.TimeSeries
++	Checkpoints                  *timeseries.TimeSeries
++	Restartpoints                *timeseries.TimeSeries
++	TimeSinceLastCheckpoint      *timeseries.TimeSeries
++	WalSinceLastCheckpoint       *timeseries.TimeSeries
++	WalSinceLastCheckpointRecord *timeseries.TimeSeries
++	BuffersWrittenBySource       map[string]*timeseries.TimeSeries
+ 
+ 	DatabaseSize    map[string]*timeseries.TimeSeries
+ 	TableSize       map[DbTableKey]*timeseries.TimeSeries
+diff --git a/watchers/alerts.go b/watchers/alerts.go
+index 6a2b363..f848e47 100644
+--- a/watchers/alerts.go
++++ b/watchers/alerts.go
+@@ -105,6 +105,9 @@ func (w *Alerts) Check(project *db.Project, world *model.World, from, to timeser
+ 					}
+ 					check, report := app.GetCheckWithReport(rule.Source.Check.CheckId)
+ 					if check == nil {
++						// A missing report is unobserved time too: restart any pending period.
++						delete(w.pendingAlerts, calcFingerprint(string(rule.Id), app.Id.String(), nil))
++						w.retireInapplicableCheckAlert(project, rule, app, now)
+ 						continue
+ 					}
+ 					alertsEvaluated++
+@@ -137,6 +140,11 @@ func (w *Alerts) Check(project *db.Project, world *model.World, from, to timeser
+ 
+ func (w *Alerts) evaluateCheckAlert(project *db.Project, rule *model.AlertingRule, app *model.Application, check *model.Check, report model.AuditReportName, now timeseries.Time) {
+ 	fingerprint := calcFingerprint(string(rule.Id), app.Id.String(), nil)
++	if check.Status == model.UNKNOWN {
++		// Missing observations establish neither recovery nor a continuous breach.
++		delete(w.pendingAlerts, fingerprint)
++		return
++	}
+ 
+ 	isFiring := check.Status > model.OK
+ 
+@@ -1032,3 +1040,68 @@ func renderTemplate(tmpl string, labels map[string]any) string {
+ 	}
+ 	return buf.String()
+ }
++
++// retireInapplicableCheckAlert resolves a check alert whose report no longer applies to the
++// application. Absence alone is not evidence: a check can also be missing because its telemetry
++// is. The alert is retired only when it records the report that produced it, that report is one
++// whose absence establishes non-applicability (see absenceMeansNotApplicable), a fresh audit no
++// longer creates it, and at least one current instance is observed running on a node whose agent
++// is reporting. Applications without observed instances, and collector outages, keep the alert.
++func (w *Alerts) retireInapplicableCheckAlert(project *db.Project, rule *model.AlertingRule, app *model.Application, now timeseries.Time) {
++	fingerprint := calcFingerprint(string(rule.Id), app.Id.String(), nil)
++	alert, err := w.db.GetActiveOrSuppressedAlertByFingerprint(project.Id, fingerprint)
++	if err != nil {
++		klog.Errorln("failed to get alert:", err)
++		return
++	}
++	if alert == nil || !reportNoLongerApplies(app, alert.Report) {
++		return
++	}
++	if alert.ResolvedAt == 0 {
++		alert.ResolvedAt = now
++		if err := w.db.ResolveAlert(project.Id, alert.Id, now); err != nil {
++			klog.Errorln("failed to resolve inapplicable alert:", err)
++			return
++		}
++		w.notifier.Enqueue(project, app, alert, rule, now)
++	}
++	// A retired alert must not stay suppressed: the fingerprint lookup would keep returning it,
++	// and a later failure of a returning report would be swallowed instead of opening an alert.
++	if alert.Suppressed {
++		if err := w.db.ClearSuppression(project.Id, fingerprint); err != nil {
++			klog.Errorln("failed to clear suppression:", err)
++		}
++	}
++}
++
++// absenceMeansNotApplicable lists the reports whose auditor keeps an UNKNOWN report while the
++// application type is still detected without instrumentation, so a missing report means the type
++// itself is gone. Reports built only from their own instrumentation (for example JVM) disappear
++// when that instrumentation does, and are deliberately absent from this list.
++var absenceMeansNotApplicable = map[model.AuditReportName]bool{
++	model.AuditReportPostgres:  true,
++	model.AuditReportMysql:     true,
++	model.AuditReportRedis:     true,
++	model.AuditReportMongodb:   true,
++	model.AuditReportMemcached: true,
++}
++
++func reportNoLongerApplies(app *model.Application, report model.AuditReportName) bool {
++	if !absenceMeansNotApplicable[report] {
++		return false
++	}
++	for _, r := range app.Reports {
++		if r.Name == report {
++			return false
++		}
++	}
++	for _, i := range app.Instances {
++		if i.IsObsolete() {
++			continue
++		}
++		if i.IsUp() && i.Node != nil && i.Node.IsUp() {
++			return true
++		}
++	}
++	return false
++}
+diff --git a/watchers/alerts_test.go b/watchers/alerts_test.go
+new file mode 100644
+index 0000000..84a6d3f
+--- /dev/null
++++ b/watchers/alerts_test.go
+@@ -0,0 +1,324 @@
++package watchers
++
++import (
++	"testing"
++
++	"github.com/coroot/coroot/auditor"
++	"github.com/coroot/coroot/db"
++	"github.com/coroot/coroot/model"
++	"github.com/coroot/coroot/timeseries"
++	"github.com/stretchr/testify/require"
++)
++
++func checkAlertFixture(t *testing.T) (*db.DB, *db.Project, *Alerts, *model.World, *model.Application, *model.AlertingRule) {
++	t.Helper()
++	database, err := db.NewSqlite(t.TempDir(), false)
++	require.NoError(t, err)
++	t.Cleanup(func() { require.NoError(t, database.DB().Close()) })
++	require.NoError(t, database.Migrate())
++	project := &db.Project{Id: "test-project", Name: "test-project"}
++	_, err = database.Exec("INSERT INTO project (id, name) VALUES ($1, $2)", project.Id, project.Name)
++	require.NoError(t, err)
++	rule := &model.AlertingRule{
++		Id:       "test-check",
++		Name:     "test check",
++		Enabled:  true,
++		Severity: model.WARNING,
++		Source: model.AlertSource{
++			Type:  model.AlertSourceTypeCheck,
++			Check: &model.CheckSource{CheckId: model.Checks.MemoryOOM.Id},
++		},
++		Selector: model.AppSelector{Type: model.AppSelectorTypeAll},
++	}
++	require.NoError(t, database.CreateAlertingRule(project.Id, rule))
++	now := timeseries.Now()
++	world := model.NewWorld(now.Add(-timeseries.Hour), now, timeseries.Minute, timeseries.Minute)
++	app := world.GetOrCreateApplication(model.NewApplicationId(string(project.Id), "default", model.ApplicationKindDeployment, "service"), false)
++	return database, project, NewAlerts(database, nil, nil, nil, nil), world, app, rule
++}
++
++func TestCheckAlertUnknownDoesNotRecover(t *testing.T) {
++	for _, tc := range []struct {
++		name       string
++		severity   model.Status
++		suppressed bool
++		keepFiring timeseries.Duration
++	}{
++		{name: "warning", severity: model.WARNING},
++		{name: "critical after keep firing expires", severity: model.CRITICAL, keepFiring: 10 * timeseries.Minute},
++		{name: "suppressed warning", severity: model.WARNING, suppressed: true},
++		{name: "suppressed critical", severity: model.CRITICAL, suppressed: true, keepFiring: 10 * timeseries.Minute},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			database, project, watcher, world, app, rule := checkAlertFixture(t)
++			rule.Severity = tc.severity
++			rule.KeepFiringFor = tc.keepFiring
++			require.NoError(t, database.UpdateAlertingRule(project.Id, rule))
++			app.Reports = []*model.AuditReport{{Name: model.AuditReportMemory, Checks: []*model.Check{{Id: rule.Source.Check.CheckId, Status: tc.severity, Message: "synthetic failure"}}}}
++			watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++			alerts, err := database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++			require.NoError(t, err)
++			require.Len(t, alerts, 1)
++			before := alerts[0]
++			if tc.suppressed {
++				require.NoError(t, database.SuppressAlerts(project.Id, []string{before.Id}, "test"))
++				before, err = database.GetAlert(project.Id, before.Id)
++				require.NoError(t, err)
++			}
++
++			// Exercise the real auditor's missing-container path, rather than
++			// treating a hand-built OK check as a stand-in for unavailable data.
++			app.Reports = nil
++			auditor.Audit(world, project, nil, nil)
++			check, report := app.GetCheckWithReport(rule.Source.Check.CheckId)
++			require.NotNil(t, check)
++			require.Equal(t, model.UNKNOWN, check.Status)
++			watcher.evaluateCheckAlert(project, rule, app, check, report, before.UpdatedAt.Add(timeseries.Hour))
++
++			after, err := database.GetAlert(project.Id, before.Id)
++			require.NoError(t, err)
++			require.Zero(t, after.ResolvedAt, "missing telemetry is not recovery")
++			require.Equal(t, tc.suppressed, after.Suppressed, "missing telemetry must not clear suppression")
++			require.Equal(t, before.UpdatedAt, after.UpdatedAt, "no successful or failing observation was made")
++		})
++	}
++}
++
++func TestCheckAlertUnknownRestartsPendingPeriod(t *testing.T) {
++	database, project, watcher, _, app, rule := checkAlertFixture(t)
++	rule.For = 10 * timeseries.Minute
++	check := &model.Check{Id: rule.Source.Check.CheckId, Status: model.WARNING, Message: "synthetic failure"}
++	now := timeseries.Now()
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportMemory, now)
++	check.Status = model.UNKNOWN
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportMemory, now.Add(5*timeseries.Minute))
++	check.Status = model.WARNING
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportMemory, now.Add(11*timeseries.Minute))
++	alerts, err := database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Empty(t, alerts, "unobserved time must not count toward a continuous breach")
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportMemory, now.Add(21*timeseries.Minute))
++	alerts, err = database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Len(t, alerts, 1)
++}
++
++func TestCheckAlertOKStillRecoversAfterKeepFiring(t *testing.T) {
++	database, project, watcher, _, app, rule := checkAlertFixture(t)
++	rule.KeepFiringFor = 10 * timeseries.Minute
++	check := &model.Check{Id: rule.Source.Check.CheckId, Status: model.WARNING, Message: "synthetic failure"}
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportMemory, timeseries.Now())
++	alerts, err := database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Len(t, alerts, 1)
++	before := alerts[0]
++	check.Status = model.OK
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportMemory, before.UpdatedAt.Add(timeseries.Minute))
++	after, err := database.GetAlert(project.Id, before.Id)
++	require.NoError(t, err)
++	require.Zero(t, after.ResolvedAt)
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportMemory, before.UpdatedAt.Add(11*timeseries.Minute))
++	after, err = database.GetAlert(project.Id, before.Id)
++	require.NoError(t, err)
++	require.NotZero(t, after.ResolvedAt)
++}
++
++func TestCheckAlertDisabledRuleStillRetiresUnknown(t *testing.T) {
++	database, project, watcher, world, app, rule := checkAlertFixture(t)
++	app.Reports = []*model.AuditReport{{Name: model.AuditReportMemory, Checks: []*model.Check{{Id: rule.Source.Check.CheckId, Status: model.WARNING, Message: "synthetic failure"}}}}
++	watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++	alerts, err := database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Len(t, alerts, 1)
++	app.Reports = nil
++	auditor.Audit(world, project, nil, nil)
++	rule.Enabled = false
++	require.NoError(t, database.UpdateAlertingRule(project.Id, rule))
++	watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++	after, err := database.GetAlert(project.Id, alerts[0].Id)
++	require.NoError(t, err)
++	require.NotZero(t, after.ResolvedAt)
++}
++
++func TestCheckAlertMissingReportIsNotRecovery(t *testing.T) {
++	database, project, watcher, world, app, rule := checkAlertFixture(t)
++	rule.Source.Check.CheckId = model.Checks.PostgresAvailability.Id
++	require.NoError(t, database.UpdateAlertingRule(project.Id, rule))
++	app.Reports = []*model.AuditReport{{Name: model.AuditReportPostgres, Checks: []*model.Check{{Id: rule.Source.Check.CheckId, Status: model.WARNING, Message: "synthetic failure"}}}}
++	watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++	alerts, err := database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Len(t, alerts, 1)
++	app.Reports = nil
++	auditor.Audit(world, project, nil, nil)
++	check, _ := app.GetCheckWithReport(rule.Source.Check.CheckId)
++	require.Nil(t, check)
++	watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++	after, err := database.GetAlert(project.Id, alerts[0].Id)
++	require.NoError(t, err)
++	require.Zero(t, after.ResolvedAt)
++}
++
++func TestCheckAlertMissingReportRestartsPendingPeriod(t *testing.T) {
++	database, project, watcher, world, app, rule := checkAlertFixture(t)
++	rule.Source.Check.CheckId = model.Checks.PostgresAvailability.Id
++	rule.For = 10 * timeseries.Minute
++	require.NoError(t, database.UpdateAlertingRule(project.Id, rule))
++	check := &model.Check{Id: rule.Source.Check.CheckId, Status: model.WARNING, Message: "synthetic failure"}
++	now := timeseries.Now()
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportPostgres, now)
++	fingerprint := calcFingerprint(string(rule.Id), app.Id.String(), nil)
++	require.Contains(t, watcher.pendingAlerts, fingerprint)
++	app.Reports = nil
++	auditor.Audit(world, project, nil, nil)
++	missing, _ := app.GetCheckWithReport(rule.Source.Check.CheckId)
++	require.Nil(t, missing)
++	watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++	require.NotContains(t, watcher.pendingAlerts, fingerprint, "a missing report must not keep the pending period running")
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportPostgres, now.Add(11*timeseries.Minute))
++	alerts, err := database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Empty(t, alerts, "the breach must satisfy the full For period again after a missing report")
++	watcher.evaluateCheckAlert(project, rule, app, check, model.AuditReportPostgres, now.Add(22*timeseries.Minute))
++	alerts, err = database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Len(t, alerts, 1)
++}
++
++// observedSeries is a synthetic series whose recent points are present, so TailIsEmpty is false.
++func observedSeries(world *model.World) *timeseries.TimeSeries {
++	points := int((world.Ctx.To - world.Ctx.From) / timeseries.Time(world.Ctx.Step))
++	data := make([]float32, points)
++	for i := range data {
++		data[i] = 1
++	}
++	return timeseries.NewWithData(world.Ctx.From, world.Ctx.Step, data)
++}
++
++// addInstance gives the application one instance whose container and node agent may each be observed.
++func addInstance(world *model.World, app *model.Application, containerObserved, agentObserved bool, types ...model.ApplicationType) {
++	node := model.NewNode("test-cluster", model.NewNodeId("machine-1", "uuid-1"))
++	if agentObserved {
++		series := observedSeries(world)
++		node.Name.Update(series, "node-1")
++		node.CpuUsagePercent = series
++	}
++	instance := app.GetOrCreateInstance("service-1", node)
++	container := instance.GetOrCreateContainer("container-1", "service")
++	if containerObserved {
++		container.MemoryRss = observedSeries(world)
++	}
++	for _, t := range types {
++		container.ApplicationTypes[t] = true
++	}
++}
++
++func firingCheckAlert(t *testing.T, checkId model.CheckId, report model.AuditReportName) (*db.DB, *db.Project, *Alerts, *model.World, *model.Application, *model.AlertingRule, *model.Alert) {
++	t.Helper()
++	database, project, watcher, world, app, rule := checkAlertFixture(t)
++	rule.Source.Check.CheckId = checkId
++	require.NoError(t, database.UpdateAlertingRule(project.Id, rule))
++	app.Reports = []*model.AuditReport{{Name: report, Checks: []*model.Check{{Id: checkId, Status: model.WARNING, Message: "synthetic failure"}}}}
++	watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++	alerts, err := database.GetLatestAlertsByRule(project.Id, string(rule.Id))
++	require.NoError(t, err)
++	require.Len(t, alerts, 1)
++	require.Equal(t, report, alerts[0].Report)
++	return database, project, watcher, world, app, rule, alerts[0]
++}
++
++func firingPostgresAlert(t *testing.T) (*db.DB, *db.Project, *Alerts, *model.World, *model.Application, *model.AlertingRule, *model.Alert) {
++	t.Helper()
++	return firingCheckAlert(t, model.Checks.PostgresAvailability.Id, model.AuditReportPostgres)
++}
++
++func TestCheckAlertRetiresWhenReportNoLongerApplies(t *testing.T) {
++	for _, suppressed := range []bool{false, true} {
++		t.Run(map[bool]string{false: "active", true: "suppressed"}[suppressed], func(t *testing.T) {
++			database, project, watcher, world, app, rule, alert := firingPostgresAlert(t)
++			if suppressed {
++				require.NoError(t, database.SuppressAlerts(project.Id, []string{alert.Id}, "test"))
++			}
++			// The application keeps running and stays observed, but is no longer a database.
++			addInstance(world, app, true, true)
++			app.Reports = nil
++			auditor.Audit(world, project, nil, nil)
++			for _, r := range app.Reports {
++				require.NotEqual(t, model.AuditReportPostgres, r.Name)
++			}
++			watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++			after, err := database.GetAlert(project.Id, alert.Id)
++			require.NoError(t, err)
++			require.NotZero(t, after.ResolvedAt, "an observed application without the report no longer has the condition")
++			require.False(t, after.Suppressed, "a retired alert must not stay suppressed")
++			resolvedAt := after.ResolvedAt
++
++			// Repeated evaluation leaves the retirement untouched.
++			watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++			after, err = database.GetAlert(project.Id, alert.Id)
++			require.NoError(t, err)
++			require.Equal(t, resolvedAt, after.ResolvedAt)
++
++			// A returning report that fails opens a new alert without an intervening OK.
++			app.Reports = []*model.AuditReport{{Name: model.AuditReportPostgres, Checks: []*model.Check{{Id: rule.Source.Check.CheckId, Status: model.WARNING, Message: "synthetic failure"}}}}
++			watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++			reopened, err := database.GetActiveOrSuppressedAlertByFingerprint(project.Id, alert.Fingerprint)
++			require.NoError(t, err)
++			require.NotNil(t, reopened)
++			require.NotEqual(t, alert.Id, reopened.Id)
++			require.Zero(t, reopened.ResolvedAt)
++		})
++	}
++}
++
++func TestCheckAlertMissingDataIsNotRetirement(t *testing.T) {
++	for _, tc := range []struct {
++		name              string
++		check             model.CheckId
++		report            model.AuditReportName
++		containerObserved bool
++		agentObserved     bool
++		types             []model.ApplicationType
++		forgetReport      bool
++	}{
++		{name: "no instances"},
++		{name: "collector outage on the node", containerObserved: true},
++		{name: "container not observed", agentObserved: true},
++		{name: "database without its instrumentation (UNKNOWN report)", containerObserved: true, agentObserved: true, types: []model.ApplicationType{model.ApplicationTypePostgres}},
++		{name: "alert without a recorded report", containerObserved: true, agentObserved: true, forgetReport: true},
++		{name: "JVM metrics missing from an observed application", check: model.Checks.JvmAvailability.Id, report: model.AuditReportJvm, containerObserved: true, agentObserved: true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			check, report := tc.check, tc.report
++			if check == "" {
++				check, report = model.Checks.PostgresAvailability.Id, model.AuditReportPostgres
++			}
++			database, project, watcher, world, app, _, alert := firingCheckAlert(t, check, report)
++			if tc.forgetReport {
++				_, err := database.Exec("UPDATE alert SET report = '' WHERE id = $1", alert.Id)
++				require.NoError(t, err)
++			}
++			if tc.containerObserved || tc.agentObserved {
++				addInstance(world, app, tc.containerObserved, tc.agentObserved, tc.types...)
++			}
++			app.Reports = nil
++			auditor.Audit(world, project, nil, nil)
++			missing, _ := app.GetCheckWithReport(check)
++			require.Nil(t, missing)
++			if len(tc.types) > 0 {
++				var kept *model.AuditReport
++				for _, r := range app.Reports {
++					if r.Name == report {
++						kept = r
++					}
++				}
++				require.NotNil(t, kept, "the auditor keeps the report for an uninstrumented database")
++				require.Equal(t, model.UNKNOWN, kept.Status)
++			}
++			watcher.Check(project, world, world.Ctx.From, world.Ctx.To, world.Ctx.Step)
++			after, err := database.GetAlert(project.Id, alert.Id)
++			require.NoError(t, err)
++			require.Zero(t, after.ResolvedAt, "missing data must keep the alert visible")
++		})
++	}
++}

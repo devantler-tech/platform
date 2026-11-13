@@ -1,0 +1,127 @@
+# See config-map-anthropic-proxy.yaml for why this proxy exists. One replica:
+# it serves one agent run a day, and a second replica would only spend a
+# second token exchange for every rotation.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anthropic-proxy
+  namespace: kagent-credentials
+  labels:
+    app.kubernetes.io/name: anthropic-proxy
+    platform.devantler.tech/replica-floor: exempt
+  annotations:
+    # The env-sourced Secret holds only Anthropic organization, workspace, service-account and
+    # federation-rule IDs: identifiers that select the federation, not credentials. The token itself
+    # is a projected service-account token read from a file and never enters the environment.
+    checkov.io/skip1: "CKV_K8S_35=anthropic-federation holds public identifiers, not credentials; the token is a projected file"
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: anthropic-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: anthropic-proxy
+    spec:
+      serviceAccountName: anthropic-federation
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # A native sidecar: Envoy starts only once the first token is written.
+        - name: token-refresher
+          image: docker.io/badouralix/curl-jq:latest@sha256:7f3c18b2a7d72e8f6f89d5395f171d37a83d6015b6de718e5f4c5396305981b7
+          imagePullPolicy: IfNotPresent
+          restartPolicy: Always
+          command: ["/bin/sh", "/etc/anthropic-proxy/refresh.sh"]
+          envFrom:
+            - secretRef:
+                name: anthropic-federation
+          startupProbe:
+            exec:
+              command: ["test", "-s", "/sds/anthropic.yaml"]
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/anthropic-proxy
+              readOnly: true
+            - name: identity
+              mountPath: /var/run/secrets/anthropic.com
+              readOnly: true
+            - name: sds
+              mountPath: /sds
+      containers:
+        - name: envoy
+          image: docker.io/envoyproxy/envoy:distroless-v1.40.2@sha256:09ca6f2140a61ad8df11779a4a30d52b48433d444466328494f9188c9c35eded
+          args: ["--config-path", "/etc/anthropic-proxy/envoy.yaml", "--log-level", "warn"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/anthropic-proxy
+              readOnly: true
+            - name: sds
+              mountPath: /sds
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: anthropic-proxy
+        - name: sds
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: identity
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: https://api.anthropic.com
+                  # Anthropic accepts identity tokens of at most an hour, and
+                  # a minted token lives at most twice the identity token's
+                  # remaining life, capped by the rule's one hour.
+                  expirationSeconds: 1800

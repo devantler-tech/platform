@@ -1,3 +1,4 @@
+---
 # Use the platform-provided hostname (the Hetzner server name) instead of
 # Talos's auto-generated stable hostname.
 #

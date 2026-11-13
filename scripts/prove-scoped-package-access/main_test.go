@@ -79,7 +79,7 @@ func TestProofRequiresBothDirectionsAndIndependentControls(t *testing.T) {
 			var redirected, crossed bool
 			const manifest = `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":2},"layers":[]}`
 			digest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(manifest)))
-			sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				redirected = true
 				w.WriteHeader(http.StatusOK)
 			}))
@@ -235,7 +235,7 @@ func TestProofRequiresBothDirectionsAndIndependentControls(t *testing.T) {
 			var pulls []string
 			p := proof{apiURL: server.URL, registryURL: server.URL, client: restrictedClient(), output: &output,
 				baseline: credential{"baseline-user", "baseline-secret"}, scoped: credential{"x-access-token", "scoped-secret"},
-				pull: func(ctx context.Context, auth credential, image string) error {
+				pull: func(_ context.Context, auth credential, image string) error {
 					if !strings.HasSuffix(image, "@"+digest) {
 						t.Errorf("pull is not bound to measured digest: %s", image)
 					}

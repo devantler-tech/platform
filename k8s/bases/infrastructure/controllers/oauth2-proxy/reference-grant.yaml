@@ -8,6 +8,9 @@ spec:
   from:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
+      namespace: longhorn-system
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
       namespace: data-product-controller
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
@@ -15,6 +18,12 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: homepage
+    # The kagent UI HTTPRoute (kagent) backends to the oauth2-proxy Service for
+    # SSO. Prod-only (kagent ships only via the hetzner overlay); inert on
+    # local/CI where the kagent namespace has no HTTPRoute.
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: kagent
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: ksail-operator

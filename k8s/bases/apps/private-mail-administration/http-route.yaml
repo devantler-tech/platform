@@ -6,9 +6,9 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: Stalwart
-    gethomepage.dev/description: Private mail administration.
-    gethomepage.dev/group: Personal
-    gethomepage.dev/icon: mdi-email-lock
+    gethomepage.dev/description: Company email administration with Stalwart.
+    gethomepage.dev/group: Email
+    gethomepage.dev/icon: stalwart.svg
     gethomepage.dev/href: https://mail.${domain}/admin
     gethomepage.dev/pod-selector: app=private-mail
 spec:

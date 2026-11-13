@@ -91,7 +91,7 @@ func policyMatches(want, actual any, key string) bool {
 		return receivingAliasesMatch(want, actual)
 	}
 	switch key {
-	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix":
+	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events", "roleIds", "defaultUserRoleIds", "defaultAdminRoleIds", "redirectUris", "requireScopes":
 		return reflect.DeepEqual(want, actual)
 	}
 	if wm, ok := want.(map[string]any); ok {
@@ -205,6 +205,7 @@ func (m management) objects(ctx context.Context, object string, properties []str
 	return objects, nil
 }
 
+// resolved maps creation references in values and map keys to native IDs.
 func resolved(v any, ids map[string]string) any {
 	switch x := v.(type) {
 	case string:
@@ -214,11 +215,28 @@ func resolved(v any, ids map[string]string) any {
 	case map[string]any:
 		r := make(map[string]any, len(x))
 		for k, v := range x {
+			if strings.HasPrefix(k, "#") {
+				if id, ok := ids[strings.TrimPrefix(k, "#")]; ok {
+					k = id
+				}
+			}
 			r[k] = resolved(v, ids)
 		}
 		return r
 	}
 	return v
+}
+
+// publicPolicyFields excludes secret collections and targeted secret patch paths.
+func publicPolicyFields(value map[string]any) map[string]any {
+	fields := make(map[string]any, len(value))
+	for key, item := range value {
+		root := strings.SplitN(key, "/", 2)[0]
+		if root != "credentials" && root != "privateKey" {
+			fields[key] = item
+		}
+	}
+	return fields
 }
 
 func (m management) verify(ctx context.Context, plan []byte) error {
@@ -228,17 +246,15 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 	}
 	ids := map[string]string{}
 	for _, op := range ops {
-		if op.Type == "upsert" {
+		if op.Type == "upsert" || op.Type == "create" {
 			properties := map[string]bool{"id": true}
 			for _, value := range op.Value {
 				fields, ok := value.(map[string]any)
 				if !ok {
 					return errConfiguration
 				}
-				for key := range fields {
-					if key != "credentials" && key != "privateKey" {
-						properties[key] = true
-					}
+				for key := range publicPolicyFields(fields) {
+					properties[key] = true
 				}
 			}
 			keys := make([]string, 0, len(properties))
@@ -251,16 +267,17 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 				return err
 			}
 			for ref, raw := range op.Value {
-				fields := resolved(raw, ids).(map[string]any)
-				delete(fields, "credentials")
-				delete(fields, "privateKey")
+				fields := publicPolicyFields(resolved(raw, ids).(map[string]any))
 				var match map[string]any
 				for _, actual := range objects {
 					identity := fields["name"] != nil && reflect.DeepEqual(fields["name"], actual["name"]) && (fields["domainId"] == nil || fields["domainId"] == actual["domainId"])
+					if op.Object == "Tracer" && fields["@type"] == "Stdout" {
+						identity = actual["@type"] == "Stdout"
+					}
 					if op.Object == "Certificate" {
 						identity = policyMatches(fields["certificate"], actual["certificate"], "")
 					}
-					if op.Object == "Application" {
+					if op.Object == "Application" || op.Object == "Role" {
 						identity = fields["description"] != nil && reflect.DeepEqual(fields["description"], actual["description"])
 					}
 					if identity {
@@ -280,14 +297,15 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 				ids[ref] = id
 			}
 		} else {
+			fields := publicPolicyFields(op.Value)
 			properties := []string{"id"}
-			for key := range op.Value {
+			for key := range fields {
 				properties = append(properties, key)
 			}
 			sort.Strings(properties)
 			if op.ID == "" {
 				objects, err := m.objects(ctx, op.Object, properties, true)
-				if err != nil || len(objects) != 1 || !policyMatches(resolved(op.Value, ids), objects[0], "") {
+				if err != nil || len(objects) != 1 || !policyMatches(resolved(fields, ids), objects[0], "") {
 					return errConfiguration
 				}
 			} else {
@@ -301,7 +319,7 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 				}
 				list, ok := result["list"].([]any)
 				missing, mok := result["notFound"].([]any)
-				if !ok || !mok || len(missing) != 0 || len(list) != 1 || !policyMatches(resolved(op.Value, ids), list[0], "") {
+				if !ok || !mok || len(missing) != 0 || len(list) != 1 || !policyMatches(resolved(fields, ids), list[0], "") {
 					return errConfiguration
 				}
 				actual, ok := list[0].(map[string]any)

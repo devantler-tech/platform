@@ -134,7 +134,8 @@ Metadata agreement alone establishes storage coherence, not scan freshness, a pa
 result, or complete coverage. Keep the remaining missing and stale results tracked in #4263. The
 detector stays read-only; it performs none of these repairs.
 
-The revision 8 compatibility-image publisher adds a bounded, non-destructive repair. Before
+The revision 9 compatibility image adds native flattened-metadata decoding to the bounded,
+non-destructive repair introduced in revision 8; the versioned metadata wrapper remains supported. Before
 the API server and background writers start, it reads only vulnerability-summary metadata
 and the corresponding payloads. It accepts the same UID, name, namespace and creation time,
 an intact regular payload file, and a payload exactly one version ahead with a non-decreasing
@@ -143,6 +144,11 @@ Missing or corrupt payloads, links, replacement objects, invalid versions and co
 changes are refused and reported. Payload bytes and scan times are retained. The same check runs
 under the summary's write lock before later scanner updates, so a failed metadata write can be
 recovered on retry without accepting a stale client's update.
+
+The revision 10 publisher compares retained creation times at the second-level precision used by
+Kubernetes metadata JSON. Gob retains fractional seconds, so comparing its timestamp directly
+with a JSON metadata row can falsely report an identity change. The comparison keeps the payload
+intact and retains the name, namespace, UID, version-direction and scan-time guards.
 
 Publication does not deploy this image. Before a separate immutable image-pin change, verify
 its signed digest, a recovery path for the retained store and the repeated split observations.
