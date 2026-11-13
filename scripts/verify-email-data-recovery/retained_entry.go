@@ -13,8 +13,9 @@ import (
 	"github.com/devantler-tech/platform/internal/namespaceinventory"
 )
 
-// Disposal preserves all source messages and the backup. It gives the fixed
-// original and fresh copies separate receipts without rewriting either run.
+// Disposal preserves all source messages and every backup. It gives the fixed
+// original and fresh copies separate receipts without rewriting either run, and
+// binds each to the fixed protection backup in place of its expired own one.
 func runRetainedDisposal(ctx context.Context, env func(string) string, k kubernetes, output io.Writer) int {
 	fresh := env("EMAIL_RETAINED_COPY_CONFIRM") == namespaceinventory.FreshEmailDisposalConfirm
 	receipt := "EMAIL_RETAINED_DISPOSAL"
@@ -63,7 +64,7 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 	if err != nil {
 		return fail()
 	}
-	d := &recoveryDriver{i: target, k: k, refs: map[string]ownedReference{}}
+	d := &recoveryDriver{i: target, k: k, refs: map[string]ownedReference{}, protection: protectionPoint{disposalProtectionBackup, readerUID, claimUID}}
 	stage = "source"
 	if d.source, err = d.readSource(ctx); err != nil {
 		return fail()
@@ -80,7 +81,11 @@ func runRetainedDisposal(ctx context.Context, env func(string) string, k kuberne
 		if stage = verifyFreshDisposalGraph(ctx, d, witness, time.Now().Add(cleanupLimit)); stage != "" {
 			return fail()
 		}
-	} else if d.observeRestoredStorage(ctx) != nil || d.retainedSnapshot(ctx, "") != nil {
+	} else if d.observeRestoredStorage(ctx) != nil {
+		return fail()
+	}
+	stage = "protection"
+	if d.verifyProtection(ctx, time.Now().Add(cleanupLimit)) != nil {
 		return fail()
 	}
 	stage = "complete-inventory"

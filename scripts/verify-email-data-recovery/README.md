@@ -10,8 +10,17 @@ private `EMAIL_FRESH_RECOVERY_WITNESS` setting instead. These are object identit
 not service credentials. Missing or replaced identities refuse disposal. No
 identity value or mailbox content belongs in a public workflow input or receipt.
 
+Both copies outlived the 24-hour backups they were restored from, and Velero
+has collected those backups. On 2026-11-13 the maintainer approved disposing of
+both copies under the fixed daily backup `velero-daily-full-20261112021735`,
+retained until 2026-11-26. Disposal therefore requires that backup to remain
+valid past the cleanup budget and to hold one completed, fully transferred
+volume backup of the serving mailbox claim and of the copy's witnessed reader
+and claim. Its overall PartiallyFailed phase, caused by unrelated namespaces,
+is accepted; the two volume backups decide. The backup name is fixed in code.
+
 Before deleting anything, it verifies the reviewed workload, encrypted clone,
-completed snapshot/transfer, backup retention, absence of transfer helpers, and a
+completed transfer, that protection, absence of transfer helpers, and a
 complete metadata inventory across all served namespaced APIs. It requires one
 exact diagnostic with matching account, mailbox, message, blob and content on
 both source and retained copy, then repeats both reads. Source mailbox writes are
@@ -20,7 +29,12 @@ For the fresh mode, it repeats graph and mailbox verification after the final
 non-destructive preflight and before authorizing the first removal; a mismatch
 preserves the entire copy and cannot emit a verified-diagnostic receipt.
 Only UID-fenced test resources are removed; the key remains until both storage
-backends are absent. Changed, foreign or uncertain evidence retains the copy.
+backends are absent. When the original copy's volume still carries the
+`Retain` policy set by `Protect Retained Email Volume`, disposal returns it to
+the StorageClass's `Delete` policy immediately before removing its claim, with
+atomic UID, name, resource-version and policy tests; an uncertain patch stops
+cleanup without a retry. Disposal never removes or changes any backup.
+Changed, foreign or uncertain evidence retains the copy.
 
 This reports retained-copy readback and disposal only. The original trial's
 random identity was not durably journaled, so its fresh-trial PASS cannot be
@@ -95,8 +109,8 @@ the configured original reader and claim UIDs and compares the diagnostic
 message with the reviewed serving workload. Its read-only JMAP client checks
 both copies twice. A missing or expired original backup does not prevent this
 comparison. `EMAIL_RETAINED_PARITY=VERIFIED` reports present message parity.
-The original trial stays unverified and disposal still requires its own backup
-and ownership checks.
+The original trial stays unverified, and disposal still requires the fixed
+protection backup and ownership checks.
 
 The separately confirmed `Prepare Retained Email Reader Inputs` workflow
 prepares custody for the original retained reader. It runs only on the first
@@ -121,9 +135,10 @@ retained inputs. Its receipt explicitly says `restart=NOT_AUTHORIZED` and
 restart witness, the separate protected pause/resume operations and native
 detachment proof remain required. This workflow never stops the reader,
 allocates storage, changes the source mailbox or grants disposal authority.
-The expired-backup disposal gate remains unchanged. If custody is refused,
-investigate the retained identities and destination before another confirmed
-first attempt; never replace a conflicting record or regenerate a missing key.
+Disposal is bound to the fixed protection backup described above. If custody
+is refused, investigate the retained identities and destination before another
+confirmed first attempt; never replace a conflicting record or regenerate a
+missing key.
 
 `Protect Retained Email Volume` is a separate, default-off main-only operation
 with confirmation `protect-retained-email-volume`. It requires independent
@@ -137,8 +152,7 @@ with atomic UID, name, resource-version and complete-spec tests. It then
 rechecks the original graph and serving source. An already-retained PV is
 verified without a write; an uncertain patch is never retried or rolled back.
 No credential export or reader lifecycle authority is available in this
-command. Protection does not unlock either expired-backup disposal path,
-establish key recovery or authorize a later reader pause.
+command. It does not establish key recovery or authorize a later reader pause.
 
 With confirmation `verify-fresh-retained-email-parity`, the workflow checks
 the separately retained fresh restore. The protected witness binds the
@@ -150,9 +164,10 @@ parity and leaves disposal to a separately reviewed operation.
 
 After the fresh parity check passes, the confirmed
 `dispose-fresh-retained-email-copy` mode repeats the graph, inventory and
-message checks before disposal. It requires the witnessed backup to remain
-valid through the cleanup budget. It releases the fresh reader and scratch
-while retaining the source messages and backup, and reports its own result.
+message checks before disposal. It requires the fixed protection backup to
+remain valid through the cleanup budget. It releases the fresh reader and
+scratch while retaining the source messages and every backup, and reports its
+own result.
 
 The pass receipt covers message recovery, encrypted disposable storage, source
 retention and disposal of the restored copy. It does not establish an independent

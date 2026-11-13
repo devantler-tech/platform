@@ -47,6 +47,9 @@ func (d *recoveryDriver) cleanupRestoreAfterVerification(ctx context.Context, ve
 	if err != nil {
 		return err
 	}
+	if err = d.restoreDeleteReclaim(ctx); err != nil {
+		return err
+	}
 	if err = d.remove(ctx, claim); err != nil {
 		return err
 	}
@@ -119,6 +122,17 @@ func (d *recoveryDriver) cleanupRestoreAfterVerification(ctx context.Context, ve
 			return e
 		}
 	}
+	// A protected disposal never owned a backup. Its protection point must
+	// outlast the removal it protected; the backup itself is never touched.
+	if d.protection.backup != "" {
+		if len(d.refs) != 0 {
+			return errors.New("cleanup-residue")
+		}
+		if d.verifyProtection(ctx, time.Now()) != nil {
+			return errors.New("backup-retention")
+		}
+		return d.sourceRetained(ctx)
+	}
 	// This fresh recovery point deliberately remains under Velero's 24-hour TTL.
 	// Only the disposable restored storage is removed by this invocation.
 	backup, err := d.ref("Backup", d.i.namespace+"-backup", "velero")
@@ -158,6 +172,12 @@ func (d *recoveryDriver) cleanupPreflight(ctx context.Context) error {
 		{kind: "DataDownload", name: d.i.namespace + "-download", namespace: "velero"},
 		{kind: "Backup", name: d.i.namespace + "-backup", namespace: "velero"},
 	} {
+		if descriptor.kind == "Backup" && d.protection.backup != "" {
+			if d.verifyProtection(ctx, time.Now().Add(15*time.Minute)) != nil {
+				return errors.New("cleanup-backup-retention")
+			}
+			continue
+		}
 		ref, err := d.ref(descriptor.kind, descriptor.name, descriptor.namespace)
 		if err != nil {
 			return err

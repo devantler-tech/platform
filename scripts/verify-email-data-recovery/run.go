@@ -293,7 +293,7 @@ func (d *recoveryDriver) observeRestoredStorage(ctx context.Context) error {
 	if err != nil || !found {
 		return errors.New("restored-volume")
 	}
-	if err = proveRestoredStorage(pvc, pv, volume, d.i, claim.uid, d.source.pv); err != nil {
+	if err = proveRestoredStorage(pvc, pv, volume, d.i, claim.uid, d.source.pv, d.protection.backup != ""); err != nil {
 		return err
 	}
 	pvUID, volumeUID := text(child(pv, "metadata"), "uid"), text(child(volume, "metadata"), "uid")

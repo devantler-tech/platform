@@ -83,22 +83,35 @@ func (w *freshRecoveryWitness) reads() [][]string {
 	}
 }
 
+// observeFreshRecoveryGraph binds the fresh copy to its witness. Outside a
+// protected disposal it also requires the copy's own backup to remain valid
+// until observedAt; a protected disposal requires the fixed protection backup
+// to remain valid until then instead.
 func observeFreshRecoveryGraph(ctx context.Context, d *recoveryDriver, w *freshRecoveryWitness, observedAt time.Time) string {
+	protected := d.protection.backup != ""
 	backupRef := ownedReference{"Backup", d.i.namespace + "-backup", "velero", w.Backup.UID}
 	downloadRef := ownedReference{"DataDownload", d.i.namespace + "-download", "velero", w.Download.UID}
-	for _, ref := range []ownedReference{backupRef, downloadRef} {
+	refs := []ownedReference{downloadRef}
+	if !protected {
+		refs = append(refs, backupRef)
+	}
+	for _, ref := range refs {
 		if tracked, present := d.refs[ref.key()]; present && tracked != ref {
 			return "fresh-witness"
 		}
 		d.refs[ref.key()] = ref
 	}
-	backup, err := d.owned(ctx, backupRef)
-	expires, parseErr := time.Parse(time.RFC3339, w.Backup.Expires)
-	meta, status := child(backup, "metadata"), child(backup, "status")
-	if err != nil || parseErr != nil || !observedAt.Before(expires) || meta["deletionTimestamp"] != nil ||
-		text(meta, "creationTimestamp") != w.Backup.Created || text(status, "expiration") != w.Backup.Expires ||
-		!retainedBackupSpec(child(backupManifest(d.i), "spec"), child(backup, "spec")) {
-		return "fresh-backup"
+	if !protected {
+		backup, err := d.owned(ctx, backupRef)
+		expires, parseErr := time.Parse(time.RFC3339, w.Backup.Expires)
+		meta, status := child(backup, "metadata"), child(backup, "status")
+		if err != nil || parseErr != nil || !observedAt.Before(expires) || meta["deletionTimestamp"] != nil ||
+			text(meta, "creationTimestamp") != w.Backup.Created || text(status, "expiration") != w.Backup.Expires ||
+			!retainedBackupSpec(child(backupManifest(d.i), "spec"), child(backup, "spec")) {
+			return "fresh-backup"
+		}
+	} else if d.verifyProtection(ctx, observedAt) != nil {
+		return "fresh-protection"
 	}
 	download, err := d.owned(ctx, downloadRef)
 	spec, status := child(download, "spec"), child(download, "status")
@@ -114,8 +127,10 @@ func observeFreshRecoveryGraph(ctx context.Context, d *recoveryDriver, w *freshR
 	}
 	progress := child(status, "progress")
 	total, ok := progress["totalBytes"].(float64)
+	// The snapshot proof reads the copy's own backup, so only an unprotected
+	// observation can repeat it.
 	if !ok || total <= 0 || progress["bytesDone"] != total || d.source.claimUID == "" ||
-		d.retainedSnapshot(ctx, d.source.claimUID) != nil {
+		(!protected && d.retainedSnapshot(ctx, d.source.claimUID) != nil) {
 		return "fresh-transfer"
 	}
 	claimRef, err := d.ref("PersistentVolumeClaim", "data", d.i.namespace)

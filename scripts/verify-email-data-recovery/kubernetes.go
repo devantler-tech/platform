@@ -82,6 +82,8 @@ type recoveryDriver struct {
 	namespacePolicies          map[string]namespacePolicy
 	completeNamespaceInventory func(context.Context) error
 	retainedGraph              map[string]object
+	// protection is set only for disposal of a retained copy; see verifyProtection.
+	protection protectionPoint
 }
 
 func (d *recoveryDriver) lookup(ctx context.Context, kind, name, ns string) (object, bool, error) {
