@@ -150,6 +150,13 @@ spec:
                    legacy layout), as the durable-memory guide says for this lane.
                    Follow the consumer contract and fail closed on missing deployment
                    facts. Do not duplicate the role here.
+                   The plugin is loaded with --plugin-dir from
+                   /opt/agent-plugins/agentic-engineering, so there is no plugin
+                   registry, and the clone's libraries/agent-plugins stays empty: pass
+                   `--installed /opt/agent-plugins/agentic-engineering` to
+                   plugin-definition-currency.sh, and run the plugin's bundled scripts,
+                   such as count-unresolved-review-threads.sh, from its scripts/ folder
+                   there. Tell every subagent you dispatch the same.
                 4. Before you stop, however the run ended, refresh the lease with
                    `dav LOCK memory/ -H 'Timeout: Infinite' -H 'If: (<t>)'`, no body,
                    where `<t>` is your Lock-Token value. You still hold the lease only
