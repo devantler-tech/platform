@@ -163,9 +163,9 @@ The 633 deploys came from 631 pull requests, and the replay could match 629 of t
 commit. The first list keeps every workflow file and the Go module files as production inputs, so
 on its own it does not let a starved lane keep up with the busiest days. The last row is an upper
 bound: the 243 pull requests that touched no manifest, less the 26 that touched a file the deploy
-action references directly. It still counts the 75 changes to a workflow file and the 33 to Go module files or shared
-Go packages, and some of those do change what a deploy does, so the real figure is lower. Reaching
-it needs the later narrowing steps.
+action references directly. It still counts the 75 changes to a workflow file and the 33 to Go
+module files or shared Go packages, and some of those do change what a deploy does, so the real
+figure is lower. Reaching it needs the later narrowing steps.
 
 Removing the observer's lock from the hand-off is the other half. Without the 10.1 minutes the
 next deploy spent behind the lock, the cycle on 2026-11-13 is 29.7 minutes: about 48 deploys a
@@ -173,9 +173,10 @@ day.
 
 ### Half of the evictions were not the change's fault
 
-A failed or timed-out check evicted a queued change 98 times, against 795 merges. In 49 of those
-evictions, across 37 pull requests, the same commit later merged unchanged. Of 66 failed deploys, the recovery deploy of `main` also failed in 35. Failed deploys and
-recoveries held the production lock for 36 of 198 hours, 18%.
+Of 984 queue entries, 98 ended in an eviction by a failed or timed-out check. In 49 of those
+evictions, across 37 pull requests, the same commit later merged unchanged. Of 66 failed deploys,
+the recovery deploy of `main` also failed in 35. Failed deploys and recoveries held the production
+lock for 36 of 198 hours, 18%.
 [#4979](https://github.com/devantler-tech/platform/issues/4979) owns this.
 
 ## Decision
@@ -183,18 +184,22 @@ recoveries held the production lock for 36 of 198 hours, 18%.
 1. **The proof stays as it is.** One production deploy per production-changing change, in queue
    order, group size 1, every queued change passing its own checks, and a recovery deploy after any
    failure. No change merges with less proof than today for the risk it carries.
-2. **A change that alters no production input does not deploy** ([#5077](https://github.com/devantler-tech/platform/issues/5077)). The production
-   inputs are declared in one list. The merge-queue deploy runs from a working tree that contains
-   only that list, so a file outside it cannot influence that deploy. A script or file the deploy
-   runs but the list misses fails the deploy. A step that only scans a directory, or that skips its
-   work when a file is absent, would do less without failing, so each step is audited for both when
-   the list is introduced. Recovery, manual and rebuild deploys keep the whole checkout. A queued
-   change deploys when anything on the list differs from its base, and also
-   whenever the comparison cannot be made. The first delivery keeps every workflow file and the Go
-   module files on the list. The post-merge observer must judge whether production is behind
-   `main` by the same list. Today it uses the `k8s` filter (`scripts/resolve-prod-convergence`);
-   left as it is, it would read production as behind after every change that did not deploy and
-   redeploy `main`, and the saving would be gone. The two change in the same delivery.
+2. **A change that alters no production input does not deploy**
+   ([#5077](https://github.com/devantler-tech/platform/issues/5077)). The production inputs are
+   declared in one list. A deploy runs from a working tree that contains only that list, so a file
+   outside it cannot influence the deploy. A script or file the deploy runs but the list misses
+   fails the deploy. A step that only scans a directory, or that skips its work when a file is
+   absent, would do less without failing, so each step is audited for both when the list is
+   introduced. The first delivery restricts the merge-queue deploy only, and no change skips its
+   deploy yet. Before one may, the recovery, manual and rebuild deploys run from the same list too.
+   Otherwise a file outside the list could still reach production through one of them, without the
+   proof its own change would have carried. From then on a queued change deploys when anything on
+   the list differs from its base, and also whenever the comparison cannot be made. Every workflow
+   file and the Go module files stay on the list at first. The post-merge observer must judge
+   whether production is behind `main` by the same list. Today it uses the `k8s` filter
+   (`scripts/resolve-prod-convergence`); left as it is, it would read production as behind after
+   every change that did not deploy and redeploy `main`, and the saving would be gone. These change
+   in the same delivery.
 3. **Pull-request checks do less runner work where that costs no proof**: run the Go validation
    once ([#6204](https://github.com/devantler-tech/platform/issues/6204)), push a change once per
    round ([monorepo#5009](https://github.com/devantler-tech/monorepo/issues/5009)), and reduce the
@@ -218,10 +223,12 @@ recoveries held the production lock for 36 of 198 hours, 18%.
   on its own commit, whatever the group size. Sharing one deploy means a run must wait for, and
   trust, another run's result, and a failed deploy no longer says which change broke production.
   Of 984 queue entries, 98 ended in an eviction by a failed or timed-out check, and every failure
-  of a shared deploy would evict or re-test each change in its group. Revisit if the lane is busy for more than 70% of a week
-  after step 2.
+  of a shared deploy would evict or re-test each change in its group. Revisit if, after step 2,
+  the lane report ([#6206](https://github.com/devantler-tech/platform/issues/6206)) shows a deploy
+  or recovery holding the production lock for more than 70% of a week.
 - **Building more queued changes at once.** On 2026-11-13, 9 of 14 deploys had finished
-  validating before their turn came; the other 5 were late by 5.4 minutes at the median. A third
+  validating before their turn came; the other 5 were late by 5.4 minutes at the median. (The 7
+  pairs counted earlier are fewer: they also need the deploy ahead to have succeeded.) A third
   candidate would remove that wait. It would also add about 23 jobs to a full pool, and a candidate
   that starts earlier waits longer for its turn, against that job's 90-minute limit. Revisit after
   step 2: a change that does not deploy takes a build slot without taking the lane.
@@ -245,8 +252,8 @@ recoveries held the production lock for 36 of 198 hours, 18%.
 - **Making the deploy itself faster.** One sampled deploy of unchanged manifests took 10.7
   minutes: about two in the Flux reconcile, two in the Talos update, one and a half in the
   credential bridge and under a minute each in the API stability wait, the gateway check and the
-  Coroot check. Those are about 8.5 minutes; the rest is about thirty short steps. A real change needs all of them.
-  For a change with nothing to deploy, the fix is not to deploy.
+  Coroot check. Those are about 8.5 minutes; the rest is about thirty short steps. A real change
+  needs all of them. For a change with nothing to deploy, the fix is not to deploy.
 
 ## Consequences
 
@@ -254,11 +261,12 @@ recoveries held the production lock for 36 of 198 hours, 18%.
   deploy, that revision is older than the tip of `main` while the content is the same. This is
   already true for the two in ten merges that do not match the `k8s` filter. The convergence report
   has to read that state as converged, which is why it judges by the same list (decision 2).
-- A change that adds a new file for the deploy to read must add it to the list, or its own queue
-  run fails. That is the intended failure: it lands on the change that introduced the dependency.
-- The merge-queue deploy no longer sees the whole repository. A deploy step that scans a directory
-  outside the list, or skips its work when a file is absent, would silently do less, so each step
-  is audited for both when the list is introduced.
+- A change that adds a new file for the deploy to read must add it to the list. When the deploy
+  runs or opens that file, a missing entry fails the change's own queue run. That is the intended
+  failure: it lands on the change that introduced the dependency.
+- A deploy from the list no longer sees the whole repository. A deploy step that scans a directory
+  outside the list, or skips its work when a file is absent, would silently do less and fail
+  nothing, so each step is audited for both when the list is introduced.
 - A change that does not deploy still occupies one of the two build slots. If that leaves the lane
   idle while the next production change validates, raise build concurrency then, with numbers.
 - Runner starvation remains possible. Steps 2 and 3 make the lane keep up through it and make it
