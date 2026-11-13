@@ -108,8 +108,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/report-prod-convergence.sh
 
-      # BEHIND is redeployed by validate-main.yaml on the push that caused it; this only
-      # handles the DIVERGED case that no push will ever answer.
+      # BEHIND is redeployed by validate-main.yaml's observer, which follows every push to
+      # main (scripts/await-idle-merge-queue.sh says when it waits first). This only handles
+      # the DIVERGED case that no push will ever answer.
       - name: 🔁 Redeploy main when prod is stranded
         if: steps.gate.outputs.stranded == 'true' && steps.report.outputs.verdict == 'DIVERGED'
         env:

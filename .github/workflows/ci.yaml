@@ -1132,6 +1132,8 @@ jobs:
           bash scripts/tests/test-report-prod-convergence.sh
           shellcheck scripts/redeploy-main-when-behind.sh scripts/tests/test-redeploy-main-when-behind.sh
           bash scripts/tests/test-redeploy-main-when-behind.sh
+          shellcheck scripts/await-idle-merge-queue.sh scripts/tests/test-await-idle-merge-queue.sh
+          bash scripts/tests/test-await-idle-merge-queue.sh
           shellcheck scripts/prod-stranded-gate.sh scripts/tests/test-prod-stranded-gate.sh
           bash scripts/tests/test-prod-stranded-gate.sh
           shellcheck scripts/tests/test-restore-stranded-prod-workflow.sh
