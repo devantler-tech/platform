@@ -57,9 +57,11 @@ The image is signed by the reviewed v19.0.5 `publish-app` revision (`af042c54…
 - dependency bumps, including OpenTelemetry 1.47.0;
 - test and CI fixes.
 
-The CRD changes only its `controller-gen` version annotation, and its schema is unchanged. So the decision above, the CRD upgrade path and the rollback below still apply. A rollback now restores 9.0.5's image and chart. Its v8.0.0 signer stays accepted until v8.0.0 is retired.
+The CRD changes only its `controller-gen` version annotation, and its schema is unchanged. So the decision above and the CRD upgrade path still apply.
 
-## Rollback
+To roll back this amendment, revert its change. That restores the 9.0.5 image, chart and probe pins. The data-product-controller approvals and the documentation source keep accepting v8.0.0 until it is retired (Platform #6228), so the 9.0.5 artifacts still verify. Do not apply the rollback of the 9.0.5 adoption below for this transition: it returns to 2.9.1, `ui-kit` and the previous verifier.
+
+## Rollback of the 9.0.5 adoption
 
 Restore the 2.9.1 image, chart source and signing identity, the `ui-kit` resources and
 the previous verifier in one revert. Flux re-applies the 2.9.1 CRD through
