@@ -19,7 +19,7 @@ FROM docker.io/alpine/k8s:1.37.2@sha256:dcb7185e112a453aa72f426754849a97357727ef
 # head of agent-plugins' main (.github/renovate.json), which only reviewed pull
 # requests reach.
 FROM ghcr.io/kagent-dev/kagent/claude-harness:1.0.0@sha256:54629b4e47ad08ab931ae815492d2533f4a3dd6ce007eda06863675afb4f99d2 AS plugin
-ARG AGENT_PLUGINS_COMMIT=73bb7e471bf80b00436f11c0385f5422fa40fdbc
+ARG AGENT_PLUGINS_COMMIT=51dbe39c231a6f570b9dfcd71f2f89885e65d53d
 # The base image's unprivileged user fetches into /tmp, which it can write.
 RUN git init -q /tmp/src && \
     git -C /tmp/src fetch -q --depth 1 https://github.com/devantler-tech/agent-plugins.git "${AGENT_PLUGINS_COMMIT}" && \
