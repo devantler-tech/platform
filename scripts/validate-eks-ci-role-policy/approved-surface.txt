@@ -128,6 +128,8 @@ iam.aws.m.upbound.io/v1beta1|Policy|aws|eks-ci-smoke-boundary 019210611429956763
 
 iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci c40205b3f48d193e8be1a39abda738865b954c90733039a49854f0bac5844306
 
+iam.aws.m.upbound.io/v1beta1|Role|aws|ses-account-setup 7faa58457f4a17a3c14368d3a956bb07da4f40bb2689c61149ee31eae9693b6b
+
 kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 72f3f972cecdf3ca2e315deb4224bd28c1df1244fc7973a88eb7f4fc03ac1d05
 
 kro.run/v1alpha1|Tenant|flux-system|business-site 5854dbac8e7f4ff52f5d858ee7e673e82cd758f0c770c3203b9409c8dc15aba2

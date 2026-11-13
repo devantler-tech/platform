@@ -11,6 +11,7 @@ resources:
   - provider-config.yaml
   - policy-eks-ci-smoke-boundary.yaml
   - role-eks-ci.yaml
+  - role-ses-account-setup.yaml
   - external-secret.yaml
   - oci-repository.yaml
   - flux-kustomization.yaml
