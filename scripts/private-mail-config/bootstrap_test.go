@@ -46,7 +46,7 @@ func bootstrapInputs(t *testing.T) string {
 	}
 	for name, value := range map[string]string{
 		"settings.json":          `{"domain":"example.test","hostname":"mail.example.test","maintainer":"maintainer","agent":"agents","administrator":"operator"}`,
-		"administrator-password": strings.Repeat("A", 40), "maintainer-password": strings.Repeat("B", 40), "agent-password": strings.Repeat("C", 40),
+		"administrator-password": strings.Repeat("A", 40), "maintainer-password": strings.Repeat("B", 40), "agent-password": strings.Repeat("C", 40), "relay-username": "AKIAEXAMPLE000000000", "relay-password": strings.Repeat("D", 44),
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0600); err != nil {
 			t.Fatal(err)

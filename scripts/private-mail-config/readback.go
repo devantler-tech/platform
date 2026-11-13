@@ -232,7 +232,7 @@ func publicPolicyFields(value map[string]any) map[string]any {
 	fields := make(map[string]any, len(value))
 	for key, item := range value {
 		root := strings.SplitN(key, "/", 2)[0]
-		if root != "credentials" && root != "privateKey" {
+		if root != "credentials" && root != "privateKey" && root != "authSecret" {
 			fields[key] = item
 		}
 	}

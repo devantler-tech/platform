@@ -79,6 +79,36 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 						t.Fatal("legacy identity policy changed")
 					}
 					found["http"] = true
+				case "MtaRoute":
+					host, foreign := "address", "host"
+					if version != "0.16.27" {
+						host, foreign = "host", "address"
+					}
+					r := op.Value["ses"].(map[string]any)
+					secret := r["authSecret"].(map[string]any)
+					if op.Type != "upsert" || len(op.Value) != 1 || len(r) != 9 || r["@type"] != "Relay" || r["name"] != "ses" ||
+						r[host] != "email-smtp.eu-central-1.amazonaws.com" || r[foreign] != nil || r["port"] != float64(587) ||
+						r["protocol"] != "smtp" || r["implicitTls"] != false || r["allowInvalidCerts"] != false ||
+						r["authUsername"] != "AKIAEXAMPLE000000000" || len(secret) != 2 || secret["@type"] != "Value" || secret["secret"] != strings.Repeat("D", 44) {
+						t.Fatal("relay route schema, endpoint or credential changed")
+					}
+					found["route"] = true
+				case "MtaTlsStrategy":
+					s := op.Value["ses-tls"].(map[string]any)
+					if op.Type != "upsert" || len(op.Value) != 1 || len(s) != 5 || s["name"] != "ses-tls" || s["startTls"] != "require" ||
+						s["allowInvalidCerts"] != false || s["dane"] != "disable" || s["mtaSts"] != "disable" {
+						t.Fatal("relay TLS is no longer required and verified")
+					}
+					found["tls"] = true
+				case "MtaOutboundStrategy":
+					route, _ := json.Marshal(op.Value["route"])
+					tls, _ := json.Marshal(op.Value["tls"])
+					if op.Type != "update" || len(op.Value) != 2 ||
+						string(route) != `{"else":"'ses'","match":{"0":{"if":"is_local_domain(rcpt_domain)","then":"'local'"}}}` ||
+						string(tls) != `{"else":"'ses-tls'","match":{}}` {
+						t.Fatal("remote delivery can bypass the relay or its TLS strategy")
+					}
+					found["outbound"] = true
 				case "Account":
 					if op.Type != "create" {
 						continue
@@ -99,7 +129,7 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 					found["account"] = true
 				}
 			}
-			if len(found) != 5 {
+			if len(found) != 8 {
 				t.Fatal("runtime schema families not covered")
 			}
 		})

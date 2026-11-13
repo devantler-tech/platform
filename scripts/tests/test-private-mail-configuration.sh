@@ -89,6 +89,10 @@ printf '%s' '{"domain":"example.test","hostname":"mail.example.test","maintainer
 for account in administrator maintainer agent; do
   openssl rand -hex 32 | tr -d '\n' >"$scratch/inputs/$account-password"
 done
+# A disposable relay login in the SES credential's shape. The fixture network
+# has no egress, so nothing reaches the relay; the stored route is still proved.
+printf 'AKIA%s' "$(openssl rand -hex 8 | tr 'a-f' 'A-F')" >"$scratch/inputs/relay-username"
+openssl rand -base64 33 | tr -d '\n' >"$scratch/inputs/relay-password"
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj '/CN=mail.example.test' \
   -addext 'subjectAltName=DNS:mail.example.test' -keyout "$scratch/etc/tls/tls.key" \
   -out "$scratch/etc/tls/tls.crt" >"$scratch/certificate.log" 2>&1
@@ -505,6 +509,33 @@ printf 'user = "agents@example.test:%s"\n' "$agent_password" >"$scratch/agent.cu
 printf 'user = "maintainer@example.test:%s"\n' "$human_password" >"$scratch/human.curl"
 printf 'user = "operator@example.test:%s"\n' "$administrator_password" >"$scratch/administrator.curl"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl "http://$name:8080/jmap/session" >"$scratch/administrator-session.json"
+# Read the outbound relay back from the serving process, independently of the
+# initializer's own verification. Every remote recipient must take the one SES
+# route with required, verified STARTTLS. The secret is never requested.
+jq -cn '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[
+  ["x:MtaRoute/query",{limit:16,calculateTotal:true},"routes-query"],
+  ["x:MtaRoute/get",{"#ids":{resultOf:"routes-query",name:"x:MtaRoute/query",path:"/ids"},properties:["@type","name","address","port","protocol","implicitTls","allowInvalidCerts","authUsername"]},"routes"],
+  ["x:MtaTlsStrategy/query",{limit:16,calculateTotal:true},"tls-query"],
+  ["x:MtaTlsStrategy/get",{"#ids":{resultOf:"tls-query",name:"x:MtaTlsStrategy/query",path:"/ids"},properties:["name","startTls","allowInvalidCerts","dane","mtaSts"]},"tls"],
+  ["x:MtaOutboundStrategy/get",{ids:["singleton"],properties:["route","tls"]},"outbound"]]}' >"$scratch/relay-request.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/relay-request.json "http://$name:8080/jmap" >"$scratch/relay-readback.json"
+jq -e --rawfile user "$scratch/inputs/relay-username" --arg local "'local'" --arg ses "'ses'" --arg tls "'ses-tls'" '
+  (.methodResponses[1][1].list|map(select(.name=="ses"))) as $route |
+  (.methodResponses[3][1].list|map(select(.name=="ses-tls"))) as $strategy |
+  .methodResponses[4][1].list as $outbound |
+  ($route|length)==1 and $route[0]["@type"]=="Relay" and $route[0].address=="email-smtp.eu-central-1.amazonaws.com" and
+  $route[0].port==587 and $route[0].protocol=="smtp" and $route[0].implicitTls==false and
+  $route[0].allowInvalidCerts==false and $route[0].authUsername==$user and
+  ($strategy|length)==1 and $strategy[0].startTls=="require" and $strategy[0].allowInvalidCerts==false and
+  $strategy[0].dane=="disable" and $strategy[0].mtaSts=="disable" and
+  ($outbound|length)==1 and $outbound[0].tls=={"match":{},"else":$tls} and
+  $outbound[0].route=={"match":{"0":{"if":"is_local_domain(rcpt_domain)","then":$local}},"else":$ses}
+' "$scratch/relay-readback.json" >/dev/null || {
+  echo 'FAIL: remote mail is not routed through the verified SES relay' >&2
+  exit 1
+}
+echo 'PASS: remote mail is routed through the SES relay with required, verified TLS'
 # A native client credential is independently owned. Neither replay nor a full
 # initializer re-entry may remove it or clear primary authentication restrictions.
 jq -cn '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[["x:AppPassword/set",{create:{app:{description:"Native client retention proof",expiresAt:"2031-01-01T00:00:00Z"}}},"app"]]}' >"$scratch/client-create.json"
