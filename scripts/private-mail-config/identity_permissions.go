@@ -253,6 +253,33 @@ sysSpamTrainingSampleQuery
 sysSpamTrainingSampleUpdate
 `
 
+// The voucher collector signs in over JMAP, lists and creates mailboxes, finds
+// and reads mail, and moves or flags it. Stalwart checks the create, update and
+// destroy parts of Mailbox/set and Email/set separately, so these grants allow
+// no deletion and no mailbox rename. Attachment download needs only sign-in and
+// ownership of the message, not a named permission. Every other name stays
+// absent: sending, submission, IMAP, POP3, Sieve, DAV, Email creation or import,
+// uploads and account or server administration. Receiving is withheld too:
+// without emailReceive, local delivery refuses the account's own address until
+// a reviewed change decides how invoice mail may reach this mailbox.
+const bookkeepingPermissionNames = `
+authenticate
+jmapEmailGet
+jmapEmailQuery
+jmapEmailUpdate
+jmapMailboxCreate
+jmapMailboxGet
+`
+
+// Each plan owns its map; no mutable permission set is shared across replays.
+func bookkeepingPermissions() map[string]bool {
+	permissions := map[string]bool{}
+	for _, name := range strings.Fields(bookkeepingPermissionNames) {
+		permissions[name] = true
+	}
+	return permissions
+}
+
 // Each plan owns its map; no mutable permission set is shared across replays.
 func normalMailboxPermissions() map[string]bool {
 	permissions := make(map[string]bool, 244)

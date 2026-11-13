@@ -82,6 +82,7 @@ func TestAdministrationSeparatesInitializationAuthority(t *testing.T) {
 	if !reflect.DeepEqual(paths, map[string]string{
 		"settings.json": "private-mail-settings", "administrator-password": "private-mail-admin",
 		"maintainer-password": "private-mail-maintainer", "agent-password": "private-mail-agent",
+		"bookkeeping-password": "private-mail-bookkeeping",
 	}) {
 		t.Fatal("initialization must consume the durable read-back credentials, never a replaceable generator cache")
 	}

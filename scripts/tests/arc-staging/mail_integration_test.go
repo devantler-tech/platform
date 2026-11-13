@@ -37,9 +37,11 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 	}
 	_, policy := captureBaoWrite(t, "bao", "policy", "write", "vault-seed-write")
 	entries := regexp.MustCompile(`(?s)path\s+"(secret/(?:data|metadata)/infrastructure/email/[^\"]+)"\s*\{\s*capabilities\s*=\s*(\[[^\]]+\])\s*\}`).FindAllStringSubmatch(policy, -1)
+	// The three retained accounts and the voucher-collection mailbox (platform#6160).
+	accounts := []string{"admin", "maintainer", "agent", "bookkeeping"}
 	want := map[string]bool{}
 	for _, kind := range []string{"data", "metadata"} {
-		for _, account := range []string{"admin", "maintainer", "agent"} {
+		for _, account := range accounts {
 			want["secret/"+kind+"/infrastructure/email/"+account] = true
 		}
 	}
@@ -48,7 +50,7 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 	}
 	for _, entry := range entries {
 		if !want[entry[1]] {
-			t.Fatal("mail credential authorization is duplicated or broader than its three entries")
+			t.Fatal("mail credential authorization is duplicated or broader than its declared entries")
 		}
 		delete(want, entry[1])
 		var capabilities []string
@@ -63,7 +65,7 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 	if strings.Contains(policy, "apps/private-mail/") {
 		t.Fatal("the synchronizer must no longer write retained legacy credentials")
 	}
-	for _, account := range []string{"admin", "maintainer", "agent"} {
+	for _, account := range accounts {
 		directory := "k8s/bases/apps/private-mail-administration/"
 		if account == "admin" {
 			directory = "k8s/bases/apps/private-mail/"

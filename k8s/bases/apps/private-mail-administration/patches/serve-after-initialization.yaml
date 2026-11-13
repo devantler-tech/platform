@@ -189,6 +189,11 @@ spec:
                   items:
                     - key: password
                       path: agent-password
+              - secret:
+                  name: private-mail-bookkeeping
+                  items:
+                    - key: password
+                      path: bookkeeping-password
         - name: tls
           secret:
             secretName: private-mail-tls

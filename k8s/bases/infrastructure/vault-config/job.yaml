@@ -1070,7 +1070,8 @@ spec:
               path "secret/data/apps/actual-budget/*" {
                 capabilities = ["create", "update", "read"]
               }
-              # Company Email preparation preserves three durable credentials.
+              # Company Email preparation preserves three durable credentials and
+              # seeds the voucher-collection mailbox credential once.
               # Exact-key read/seed only; no mailbox data or wildcard grant.
               path "secret/data/infrastructure/email/admin" {
                 capabilities = ["create", "update", "read"]
@@ -1079,6 +1080,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/infrastructure/email/agent" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/infrastructure/email/bookkeeping" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/apps/actual-budget/*" {
@@ -1133,6 +1137,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/infrastructure/email/agent" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/email/bookkeeping" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/actual-budget/*" {

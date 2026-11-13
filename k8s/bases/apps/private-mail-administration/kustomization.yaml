@@ -11,6 +11,12 @@ resources:
   - external-secret-generated-agent.yaml
   - push-secret-agent.yaml
   - external-secret-agent.yaml
+  # Voucher-collection mailbox credential; the account itself is created only
+  # once the encrypted settings choose its name.
+  - password-bookkeeping.yaml
+  - external-secret-generated-bookkeeping.yaml
+  - push-secret-bookkeeping.yaml
+  - external-secret-bookkeeping.yaml
   - certificate.yaml
   - http-route.yaml
 patches:

@@ -5,6 +5,16 @@ import (
 	"strings"
 )
 
+// managedAccountNames lists every account local part the plan owns. The
+// voucher-collection mailbox is owned only once its private setting is chosen.
+func managedAccountNames(v settings) []string {
+	names := []string{v.Maintainer, v.Agent, v.Administrator}
+	if v.Bookkeeping != "" {
+		names = append(names, v.Bookkeeping)
+	}
+	return names
+}
+
 // managedAccountIDs binds password updates to the complete non-secret census.
 // A missing account is created explicitly; an upsert must never race into a replacement.
 func managedAccountIDs(raw []byte, v inputs) (map[string]string, error) {
@@ -48,7 +58,10 @@ func managedAccountIDs(raw []byte, v inputs) (map[string]string, error) {
 	if err != nil {
 		return nil, errConfiguration
 	}
-	wanted := map[string]bool{v.Administrator: true, v.Maintainer: true, v.Agent: true}
+	wanted := map[string]bool{}
+	for _, name := range managedAccountNames(v.settings) {
+		wanted[name] = true
+	}
 	ids := map[string]string{}
 	for _, account := range accounts {
 		name, nameOK := account["name"].(string)

@@ -102,6 +102,8 @@ func loadInputs(dir string) (inputs, error) {
 			target = &v.Agent
 		case "administrator":
 			target = &v.Administrator
+		case "bookkeeping":
+			target = &v.Bookkeeping
 		default:
 			return fail()
 		}
@@ -114,20 +116,30 @@ func loadInputs(dir string) (inputs, error) {
 	if err != nil || end != json.Delim('}') || d.Decode(new(any)) != io.EOF {
 		return fail()
 	}
-	for _, target := range []struct {
+	// An explicit empty name is not the same as omitting the optional account.
+	if seen["runtimeVersion"] && v.RuntimeVersion == "" || seen["bookkeeping"] && v.Bookkeeping == "" {
+		return fail()
+	}
+	credentials := []struct {
 		name  string
 		value *string
 	}{
 		{"administrator-password", &v.administratorPassword}, {"maintainer-password", &v.maintainerPassword}, {"agent-password", &v.agentPassword},
-	} {
+	}
+	// The mounted voucher-collection credential is read only for a chosen
+	// account; once chosen, a missing or invalid credential blocks startup.
+	if v.Bookkeeping != "" {
+		credentials = append(credentials, struct {
+			name  string
+			value *string
+		}{"bookkeeping-password", &v.bookkeepingPassword})
+	}
+	for _, target := range credentials {
 		b, err = privateInput(dir, target.name, 128)
 		if err != nil {
 			return fail()
 		}
 		*target.value = string(b)
-	}
-	if seen["runtimeVersion"] && v.RuntimeVersion == "" {
-		return fail()
 	}
 	if _, err = render(v); err != nil {
 		return fail()

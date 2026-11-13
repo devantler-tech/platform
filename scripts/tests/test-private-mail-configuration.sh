@@ -24,7 +24,7 @@ assert_diagnostic_log_privacy() {
     echo 'FAIL: excluded message or authentication events appeared in server logs' >&2
     return 1
   fi
-  if grep -Fq -e 'Native policy proof' -e 'mail-policy@example.test' -e 'Preserved native mail fixture.' -e 'Human submission proof' -e 'Receiving continuity' -e 'Native client retention proof' -e 'private-canary' "$log"; then
+  if grep -Fq -e 'Native policy proof' -e 'mail-policy@example.test' -e 'Preserved native mail fixture.' -e 'Human submission proof' -e 'Receiving continuity' -e 'Native client retention proof' -e 'private-canary' -e 'Voucher collection' -e 'voucher-fixture' "$log"; then
     echo 'FAIL: private fixture message content appeared in server logs' >&2
     return 1
   fi
@@ -85,8 +85,8 @@ mkdir -p "$scratch/inputs" "$scratch/data" "$scratch/tmp" "$scratch/etc/tls" "$s
 chmod 700 "$scratch/data" "$scratch/tmp"
 chmod 755 "$scratch/etc" "$scratch/etc/tls"
 printf '%s' '{"@type":"RocksDb","path":"/var/lib/stalwart/data","bufferSize":33554432,"cacheSize":33554432}' >"$scratch/etc/config.json"
-printf '%s' '{"domain":"example.test","hostname":"mail.example.test","maintainer":"maintainer","agent":"agents","administrator":"operator","maintainerAliases":["former-a","former-b"]}' >"$scratch/inputs/settings.json"
-for account in administrator maintainer agent; do
+printf '%s' '{"domain":"example.test","hostname":"mail.example.test","maintainer":"maintainer","agent":"agents","administrator":"operator","maintainerAliases":["former-a","former-b"],"bookkeeping":"vouchers"}' >"$scratch/inputs/settings.json"
+for account in administrator maintainer agent bookkeeping; do
   openssl rand -hex 32 | tr -d '\n' >"$scratch/inputs/$account-password"
 done
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj '/CN=mail.example.test' \
@@ -265,6 +265,168 @@ verify_receiving_aliases() {
         then .[0]|{id,messageId,mailboxIds} else error("alias message is not uniquely retained") end' "$scratch/receiving-result.json" >"$scratch/$alias-receiving-metadata.json"
   done
 }
+# The voucher-collection account reads and files mail over JMAP only and has
+# no receiving right of its own. The fixture widens it outside the plan just
+# long enough to receive one invoice, and initializer re-entry must remove that.
+jmap_as_bookkeeping() {
+  protocol_curl --fail --silent --show-error --max-time 10 --config /proof/bookkeeping.curl \
+    --header 'Content-Type: application/json' --data-binary "@/proof/$1" "http://$name:8080/jmap"
+}
+bookkeeping_account() {
+  protocol_curl --fail --silent --show-error --max-time 10 --config /proof/bookkeeping.curl \
+    "http://$name:8080/jmap/session" >"$scratch/bookkeeping-session.json"
+  jq -er '.primaryAccounts."urn:ietf:params:jmap:mail"' "$scratch/bookkeeping-session.json"
+}
+# Count stored copies of one fixture by Message-ID. Delivery reports for the
+# remote fixture recipient may also arrive, so the mailbox total is not used.
+bookkeeping_message_count() {
+  local account
+  account=$(bookkeeping_account)
+  jq -cn --arg account "$account" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[["Email/query",{accountId:$account,limit:16,calculateTotal:true},"count"],["Email/get",{accountId:$account,"#ids":{resultOf:"count",name:"Email/query",path:"/ids"},properties:["id","messageId"]},"count-metadata"]]}' >"$scratch/voucher-count.json"
+  jmap_as_bookkeeping voucher-count.json >"$scratch/voucher-count-result.json"
+  jq -er --arg message "$1" '.methodResponses as $r
+    | if ($r|length)==2 and $r[0][0]=="Email/query" and $r[1][0]=="Email/get" and $r[0][1].total<=16 and $r[0][1].total==($r[0][1].ids|length) and $r[1][1].notFound==[]
+      then [$r[1][1].list[]|select(.messageId==[$message])]|length else error("voucher mailbox census is incomplete") end' "$scratch/voucher-count-result.json"
+}
+deliver_voucher_fixture() {
+  local attempt
+  printf '%s\n' '%PDF-1.4' 'voucher-fixture-attachment' '%%EOF' >"$scratch/voucher-fixture.pdf"
+  {
+    printf 'From: supplier@remote.example.test\r\nTo: vouchers@example.test\r\nSubject: Voucher collection proof\r\nMessage-ID: <voucher-collection@example.test>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="voucher-boundary"\r\n\r\n'
+    printf -- '--voucher-boundary\r\nContent-Type: text/plain; charset=us-ascii\r\n\r\nVoucher collection fixture.\r\n'
+    printf -- '--voucher-boundary\r\nContent-Type: application/pdf; name="voucher-fixture.pdf"\r\nContent-Disposition: attachment; filename="voucher-fixture.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\n'
+    base64 <"$scratch/voucher-fixture.pdf" | awk '{printf "%s\r\n", $0}'
+    printf -- '--voucher-boundary--\r\n'
+  } >"$scratch/voucher.eml"
+  protocol_curl --fail --silent --show-error --max-time 15 --cacert /proof/etc/tls/tls.crt \
+    --connect-to "mail.example.test:1025:$name:1025" --ssl-reqd --url smtp://mail.example.test:1025 \
+    --mail-from supplier@remote.example.test --mail-rcpt vouchers@example.test \
+    --upload-file /proof/voucher.eml >"$scratch/voucher-delivery.out" 2>"$scratch/voucher-delivery.err"
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    if [ "$(bookkeeping_message_count voucher-collection@example.test)" = 1 ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo 'FAIL: the temporarily receiving voucher mailbox did not store its fixture' >&2
+  return 1
+}
+bookkeeping_imap_status() {
+  local status=0
+  protocol_curl --silent --max-time 10 --config /proof/bookkeeping.curl --cacert /proof/etc/tls/tls.crt \
+    --connect-to "mail.example.test:1993:$name:1993" 'imaps://mail.example.test:1993/' \
+    >"$scratch/voucher-imap.out" 2>"$scratch/voucher-imap.err" || status=$?
+  echo "$status"
+}
+bookkeeping_submission_status() {
+  local status=0
+  # A remote fixture recipient keeps a successful control out of every local mailbox.
+  protocol_curl --silent --show-error --max-time 15 --config /proof/bookkeeping.curl \
+    --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1587:$name:1587" \
+    --ssl-reqd --url smtp://mail.example.test:1587 --mail-from vouchers@example.test \
+    --mail-rcpt someone@remote.example.test --upload-file /proof/voucher.eml \
+    >"$scratch/voucher-submit.out" 2>"$scratch/voucher-submit.err" || status=$?
+  echo "$status"
+}
+verify_voucher_collection() {
+  local account human email blob sent request attempt status
+  account=$(bookkeeping_account)
+  jq -cn --arg account "$account" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[
+    ["Mailbox/get",{accountId:$account,ids:null,properties:["id","name","parentId","role"]},"mailboxes"],
+    ["Email/query",{accountId:$account,limit:16,calculateTotal:true},"received"],
+    ["Email/get",{accountId:$account,"#ids":{resultOf:"received",name:"Email/query",path:"/ids"},properties:["id","messageId","mailboxIds","keywords","attachments"]},"received-metadata"]]}' >"$scratch/voucher-read.json"
+  jmap_as_bookkeeping voucher-read.json >"$scratch/voucher-read-result.json"
+  jq -e '.methodResponses as $r | ($r|length)==3 and $r[0][0]=="Mailbox/get" and ($r[0][1].list|length)>0
+    and $r[1][0]=="Email/query" and $r[1][1].total<=16 and $r[1][1].total==($r[1][1].ids|length)
+    and $r[2][0]=="Email/get" and $r[2][1].notFound==[] and ($r[2][1].list|length)==$r[1][1].total' "$scratch/voucher-read-result.json" >/dev/null
+  jq -e '[.methodResponses[2][1].list[]|select(.messageId==["voucher-collection@example.test"])]|if length==1 then .[0] else error("the voucher fixture is missing or duplicated") end' \
+    "$scratch/voucher-read-result.json" >"$scratch/voucher-message.json"
+  email=$(jq -er '.id' "$scratch/voucher-message.json")
+  blob=$(jq -er '[.attachments[]|select(.name=="voucher-fixture.pdf")]|if length==1 then .[0].blobId else error("voucher attachment is missing or ambiguous") end' "$scratch/voucher-message.json")
+  protocol_curl --fail --silent --show-error --max-time 10 --config /proof/bookkeeping.curl \
+    "http://$name:8080/jmap/download/$account/$blob/voucher-fixture.pdf?accept=application/pdf" >"$scratch/voucher-download.pdf"
+  cmp "$scratch/voucher-fixture.pdf" "$scratch/voucher-download.pdf"
+  jq -cn --arg account "$account" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[["Mailbox/set",{accountId:$account,create:{sent:{name:"Sent to Numina",parentId:null}}},"file-mailbox"]]}' >"$scratch/voucher-mailbox.json"
+  jmap_as_bookkeeping voucher-mailbox.json >"$scratch/voucher-mailbox-result.json"
+  sent=$(jq -er '.methodResponses[0]|if .[0]=="Mailbox/set" and (.[1].created.sent.id|type)=="string" then .[1].created.sent.id else error("top-level mailbox creation was refused") end' "$scratch/voucher-mailbox-result.json")
+  jq -cn --arg account "$account" --arg email "$email" --arg sent "$sent" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[
+    ["Email/set",{accountId:$account,update:{($email):{mailboxIds:{($sent):true},"keywords/$seen":true}}},"file"],
+    ["Email/get",{accountId:$account,ids:[$email],properties:["mailboxIds","keywords"]},"filed"]]}' >"$scratch/voucher-file.json"
+  jmap_as_bookkeeping voucher-file.json >"$scratch/voucher-file-result.json"
+  jq -e --arg email "$email" --arg sent "$sent" '.methodResponses as $r | $r[0][0]=="Email/set" and ($r[0][1].updated|has($email))
+    and $r[1][0]=="Email/get" and $r[1][1].list[0].mailboxIds=={($sent):true} and $r[1][1].list[0].keywords["$seen"]==true' "$scratch/voucher-file-result.json" >/dev/null
+  # Each refused right is requested alone, so one refusal cannot mask another.
+  jq -cn --arg account "$account" --arg email "$email" --arg sent "$sent" '(
+    ["Mailbox/set",{accountId:$account,update:{($sent):{name:"Renamed"}}},"rename"],
+    ["Mailbox/set",{accountId:$account,destroy:[$sent]},"remove-mailbox"],
+    ["Email/set",{accountId:$account,destroy:[$email]},"remove-email"],
+    ["Email/set",{accountId:$account,create:{draft:{mailboxIds:{($sent):true},subject:"private-canary"}}},"compose"],
+    ["Email/import",{accountId:$account,emails:{}},"import"],
+    ["EmailSubmission/set",{accountId:$account,create:{send:{emailId:$email,identityId:"none"}}},"submit"]
+  ) | {using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"],methodCalls:[.]}' >"$scratch/voucher-denied.ndjson"
+  [ "$(wc -l <"$scratch/voucher-denied.ndjson")" -eq 6 ]
+  while IFS= read -r request <&3; do
+    printf '%s' "$request" >"$scratch/voucher-denied.json"
+    jmap_as_bookkeeping voucher-denied.json >"$scratch/voucher-denied-result.json"
+    jq -e '.methodResponses|length==1 and .[0][0]=="error" and .[0][1].type=="forbidden"' "$scratch/voucher-denied-result.json" >/dev/null || {
+      echo 'FAIL: the voucher mailbox was granted a refused JMAP right' >&2
+      return 1
+    }
+  done 3<"$scratch/voucher-denied.ndjson"
+  jq -cn --arg account "$account" --arg email "$email" --arg sent "$sent" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[
+    ["Email/get",{accountId:$account,ids:[$email],properties:["id","mailboxIds"]},"kept"],
+    ["Mailbox/get",{accountId:$account,ids:[$sent],properties:["id","name","parentId"]},"kept-mailbox"]]}' >"$scratch/voucher-kept.json"
+  jmap_as_bookkeeping voucher-kept.json >"$scratch/voucher-kept-result.json"
+  jq -e --arg email "$email" --arg sent "$sent" '.methodResponses as $r | $r[0][1].notFound==[] and $r[0][1].list[0].id==$email
+    and $r[1][1].notFound==[] and $r[1][1].list[0].name=="Sent to Numina" and $r[1][1].list[0].parentId==null' "$scratch/voucher-kept-result.json" >/dev/null
+  status=$(protocol_curl --silent --max-time 10 --config /proof/bookkeeping.curl --data-binary @/proof/voucher.eml \
+    --output /dev/null --write-out '%{http_code}' "http://$name:8080/jmap/upload/$account/")
+  [ "$status" = 403 ]
+  # The same probes succeeded while the account was widened; re-entry made them fail.
+  [ "$(bookkeeping_imap_status)" = 67 ] || {
+    echo 'FAIL: the voucher mailbox signed in over IMAP' >&2
+    return 1
+  }
+  status=$(bookkeeping_submission_status)
+  if [ "$status" != 67 ] || ! grep -q '550' "$scratch/voucher-submit.err"; then
+    echo 'FAIL: the voucher mailbox authenticated for submission' >&2
+    return 1
+  fi
+  if protocol_curl --silent --show-error --max-time 10 --url "smtp://$name:1025" --mail-from supplier@remote.example.test \
+    --mail-rcpt widened@example.test --upload-file /proof/voucher.eml >"$scratch/voucher-alias.out" 2>"$scratch/voucher-alias.err"; then
+    echo 'FAIL: the voucher mailbox kept an address added outside the plan' >&2
+    return 1
+  fi
+  grep -q '550' "$scratch/voucher-alias.err"
+  # The account's own address accepts no mail. One message also names the
+  # maintainer: the server delivers both recipients together, so the maintainer's
+  # copy proves the voucher recipient was processed, and refused, too.
+  printf 'From: supplier@remote.example.test\r\nTo: vouchers@example.test, maintainer@example.test\r\nSubject: Voucher collection refusal\r\nMessage-ID: <voucher-refused@example.test>\r\n\r\nVoucher collection must not store this.\r\n' >"$scratch/voucher-refused.eml"
+  protocol_curl --silent --show-error --max-time 15 --cacert /proof/etc/tls/tls.crt \
+    --connect-to "mail.example.test:1025:$name:1025" --ssl-reqd --url smtp://mail.example.test:1025 \
+    --mail-from supplier@remote.example.test --mail-rcpt vouchers@example.test --mail-rcpt maintainer@example.test \
+    --mail-rcpt-allowfails --upload-file /proof/voucher-refused.eml >"$scratch/voucher-refused.out" 2>"$scratch/voucher-refused.err" || true
+  protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl "http://$name:8080/jmap/session" >"$scratch/voucher-human-session.json"
+  human=$(jq -er '.primaryAccounts."urn:ietf:params:jmap:mail"' "$scratch/voucher-human-session.json")
+  jq -cn --arg account "$human" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[["Email/query",{accountId:$account,limit:16,calculateTotal:true},"companion"],["Email/get",{accountId:$account,"#ids":{resultOf:"companion",name:"Email/query",path:"/ids"},properties:["messageId"]},"companion-metadata"]]}' >"$scratch/voucher-companion.json"
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --header 'Content-Type: application/json' \
+      --data-binary @/proof/voucher-companion.json "http://$name:8080/jmap" >"$scratch/voucher-companion-result.json"
+    if jq -e '[.methodResponses[1][1].list[]|select(.messageId==["voucher-refused@example.test"])]|length==1' "$scratch/voucher-companion-result.json" >/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  [ "$attempt" -lt 30 ] || {
+    echo 'FAIL: the deliverable companion recipient never received its copy' >&2
+    return 1
+  }
+  [ "$(bookkeeping_message_count voucher-refused@example.test)" = 0 ] || {
+    echo 'FAIL: the voucher mailbox stored mail without a receiving right' >&2
+    return 1
+  }
+  echo 'PASS: voucher mailbox reads, downloads and files mail; re-entry removed receiving, sending, IMAP, deletion and an added address'
+}
 prepare_plan() {
   local output=$1
   inventory
@@ -344,6 +506,7 @@ jq -e 'length==2 and ([.[].address]|sort)==["192.0.2.30","192.0.2.31"] and ([.[]
 inventory
 domain_id=$(jq -er '.methodResponses[6][1].list|map(select(.name=="example.test"))|if length==1 then .[0].id else error("ambiguous fixture domain") end' "$scratch/inputs/listener-inventory.json")
 maintainer_id=$(jq -er '.methodResponses[10][1].list|map(select(.name=="maintainer"))|if length==1 then .[0].id else error("ambiguous retained account") end' "$scratch/inputs/listener-inventory.json")
+bookkeeping_id=$(jq -er '.methodResponses[10][1].list|map(select(.name=="vouchers"))|if length==1 and (.[0].aliases|length)==0 then .[0].id else error("voucher-collection account is missing, ambiguous or receiving") end' "$scratch/inputs/listener-inventory.json")
 jq -cn --arg domain "$domain_id" '{aliases:{"0":{name:"former-a",domainId:$domain,enabled:true,description:null},"1":{name:"former-b",domainId:$domain,enabled:true,description:null}}}' >"$scratch/approved-aliases.json"
 printf '%s' '{"aliases":{}}' >"$scratch/clear-owned-aliases.json"
 for collision in user-primary group-primary user-alias disabled-user-alias list-primary list-alias; do
@@ -502,6 +665,7 @@ agent_password=$(cat "$scratch/inputs/agent-password")
 human_password=$(cat "$scratch/inputs/maintainer-password")
 administrator_password=$(cat "$scratch/inputs/administrator-password")
 printf 'user = "agents@example.test:%s"\n' "$agent_password" >"$scratch/agent.curl"
+printf 'user = "vouchers@example.test:%s"\n' "$(cat "$scratch/inputs/bookkeeping-password")" >"$scratch/bookkeeping.curl"
 printf 'user = "maintainer@example.test:%s"\n' "$human_password" >"$scratch/human.curl"
 printf 'user = "operator@example.test:%s"\n' "$administrator_password" >"$scratch/administrator.curl"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl "http://$name:8080/jmap/session" >"$scratch/administrator-session.json"
@@ -725,6 +889,17 @@ jq -cn --arg id "$maintainer_id" '{"@type":"update",object:"Account",id:$id,valu
 start_server preparation
 native_cli apply --file /proof/primary-expiry.ndjson --json >"$scratch/primary-expiry-result.jsonl" 2>"$scratch/primary-expiry.err"
 jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/primary-expiry-result.jsonl" >/dev/null
+# Widen the voucher mailbox outside the plan: receiving, sending, IMAP sign-in,
+# deletion and an added address. The re-entry below must remove all of them.
+jq -cn --arg id "$bookkeeping_id" --arg domain "$domain_id" '{"@type":"update",object:"Account",id:$id,value:{
+  permissions:{"@type":"Replace",disabledPermissions:{},enabledPermissions:{authenticate:true,emailReceive:true,emailSend:true,
+    imapAuthenticate:true,imapList:true,jmapEmailDestroy:true,jmapMailboxDestroy:true,
+    jmapEmailGet:true,jmapEmailQuery:true,jmapEmailUpdate:true,jmapMailboxCreate:true,jmapMailboxGet:true}},
+  aliases:{"0":{name:"widened",domainId:$domain,enabled:true,description:null}}}}' >"$scratch/bookkeeping-wider.ndjson"
+native_cli apply --file /proof/bookkeeping-wider.ndjson --json >"$scratch/bookkeeping-wider-result.jsonl" 2>"$scratch/bookkeeping-wider.err"
+jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/bookkeeping-wider-result.jsonl" >/dev/null
+inventory
+jq -e --arg id "$bookkeeping_id" '.methodResponses[10][1].list|map(select(.id==$id))|length==1 and (.[0].aliases|length)==1' "$scratch/inputs/listener-inventory.json" >/dev/null
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 # Expiration keeps the primary credential usable for password recovery, but
@@ -736,6 +911,17 @@ start_server serving
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
   --header 'Content-Type: application/json' --data-binary @/proof/expiry-query.json "http://$name:8080/jmap" >"$scratch/expiry-before-bootstrap.json"
 jq -e '.methodResponses[0][0]=="error" and .methodResponses[0][1].type=="forbidden"' "$scratch/expiry-before-bootstrap.json" >/dev/null
+# While widened, the voucher mailbox receives its fixture invoice, and the IMAP
+# and submission probes succeed. The same probes must fail after re-entry.
+deliver_voucher_fixture
+[ "$(bookkeeping_imap_status)" = 0 ] || {
+  echo 'FAIL: the widened voucher mailbox control could not sign in over IMAP' >&2
+  exit 1
+}
+[ "$(bookkeeping_submission_status)" = 0 ] || {
+  echo 'FAIL: the widened voucher mailbox control could not authenticate for submission' >&2
+  exit 1
+}
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 run_bootstrap
@@ -752,6 +938,7 @@ protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.c
   --header 'Content-Type: application/json' --data-binary @/proof/expiry-query.json "http://$name:8080/jmap" >"$scratch/expiry-restored.json"
 jq -e '.methodResponses[0][0]=="Email/query"' "$scratch/expiry-restored.json" >/dev/null
 echo 'PASS: native client credential and primary expiration survive complete initializer re-entry'
+verify_voucher_collection
 protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/admin/login" >"$scratch/refreshed-interface.html"
 if grep -q 'previous-ui-cache-canary' "$scratch/refreshed-interface.html"; then
   echo 'FAIL: bootstrap reused the previous cached administration bundle' >&2

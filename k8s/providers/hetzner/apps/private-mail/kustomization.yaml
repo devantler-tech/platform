@@ -5,7 +5,9 @@ resources:
   - secret-settings.enc.yaml
 patches:
   # Production has retained credential custody. Never infer a fresh installation
-  # from missing records while an older backup is being restored.
+  # from missing records while an older backup is being restored. The
+  # voucher-collection credential keeps its create-only seed on purpose: only
+  # readers of the same OpenBao record use it, so a reseed locks nobody out.
   - path: patches/disable-admin-credential-seeding.yaml
   - path: patches/disable-maintainer-credential-seeding.yaml
   - path: patches/disable-agent-credential-seeding.yaml

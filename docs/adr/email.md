@@ -64,7 +64,8 @@ value read back from OpenBao. Deleting a generator cache cannot rotate an
 existing account password. Missing settings, credentials or certificate files
 block startup. Production settings remain encrypted outside the shared bundle.
 The credential synchronizer receives exact-key seed and read permissions for
-all three durable credentials, with no mail-path wildcard, list or delete grant.
+all three durable credentials and the voucher-collection credential, with no
+mail-path wildcard, list or delete grant.
 Admission and node image verification route only the exact bootstrap image
 repository to its dedicated main-only publisher; other images keep their own
 signer requirements.
@@ -113,6 +114,15 @@ is verified. Readers and non-overwriting seed writers use the same three
 `infrastructure/email/` records. Their Kubernetes Secret names and generator
 caches remain unchanged. The synchronizer has no write grant for the retained
 legacy records, and no list, delete or wildcard Email grant.
+
+The voucher-collection credential at `infrastructure/email/bookkeeping` is not
+one of the three retained records and was never under `apps/private-mail/`. It
+follows the same generator, push-if-absent and read-back pattern, and production
+keeps its create-only seed. Nothing outside OpenBao holds this password: the
+initializer and any later collector read the current record, so a reseed after
+a partial restore rotates every consumer together on the next initializer run
+and locks no person out. The copy, recovery and storage proofs above cover only
+the three retained records.
 
 The independent recovery workflow compares the canonical records using its fixed
 `collect-email` and `verify-email` modes. Its legacy modes remain available to
@@ -182,9 +192,13 @@ mode 0600 and must live in memory-backed storage when used with real inputs.
 The command emits fixed verdicts, never the plan or its inputs.
 
 The input directory contains `settings.json`, `administrator-password`,
-`maintainer-password`, `agent-password` and `listener-inventory.json`. Settings
-contain only `domain`, `hostname`, `maintainer`, `agent` and `administrator`;
-account names are distinct local parts. Passwords are separate generated
+`maintainer-password`, `agent-password`, `bookkeeping-password` and
+`listener-inventory.json`. Settings contain `domain`, `hostname`, `maintainer`,
+`agent` and `administrator`, and optionally `maintainerAliases`, `bookkeeping`
+and the transport choices; account names are distinct local parts. The
+voucher-collection account exists only when `bookkeeping` names it, and its
+password file is then required; without that setting the plan is unchanged and
+the mounted password is not read. Passwords are separate generated
 40–128 character alphanumeric values, with no trailing newline. Unknown or
 duplicate settings, invalid names, broad file permissions and an existing output
 are refused. Exact production addresses stay in private operator configuration.
@@ -253,11 +267,35 @@ denied because its native path does not honor the JMAP mutation permission list.
 This supports IMAP/SMTP mail apps; full human JMAP attachment upload is not part
 of this configuration.
 
+The voucher-collection account (platform#6160) serves the bookkeeping job's
+supplier-invoice collector. It signs in over JMAP with HTTP Basic and holds only
+`authenticate`, `jmapMailboxGet`, `jmapMailboxCreate`, `jmapEmailQuery`,
+`jmapEmailGet` and `jmapEmailUpdate`, as an exact replacement set with no
+receiving alias. The pinned server checks the create, update and destroy parts
+of `Mailbox/set` and `Email/set` separately, so it can create a mailbox and move
+or flag mail, but cannot rename or delete a mailbox, or create, import or delete
+mail. Attachment download needs only sign-in and ownership of the message. It
+cannot send, submit, sign in over IMAP, POP3 or Sieve, upload or administer. The
+server cannot restrict which mailbox a move targets or where a new mailbox is
+placed; keeping to top-level filing folders is the collector's own rule.
+
+The account has no receiving right yet. Without `emailReceive` the pinned
+server's local delivery refuses its own address, so it stores no mail. How
+invoice mail reaches it, for example a copy rule on the maintainer's account,
+is a separate reviewed decision. Readback and every replay restore the exact
+permission and alias sets, so a grant or address added outside the plan does not
+survive initialization.
+
 The native fixture `scripts/tests/test-private-mail-configuration.sh` starts its
 own pinned server in explicit recovery, applies and reapplies the real plan,
 exercises wider-policy and unexpected-listener negatives, and tests allowed
 delivery, denied recipients/relay/writes/upload and human IMAP/TLS. It repeats
 configuration after real fixture mail exists and reads that message again.
+It widens the voucher-collection account outside the plan, receives one invoice
+with a PDF attachment into it and confirms that IMAP sign-in and submission then
+succeed. After initializer re-entry it reads, downloads and files that invoice,
+and proves that deletion, renaming, composing, import, submission, upload, IMAP,
+SMTP authentication, the added address and its own address are all refused.
 These are disposable `.test` accounts, not proof of public mail delivery.
 
 The explicit `bootstrap` subcommand owns an exclusive recovery child and the

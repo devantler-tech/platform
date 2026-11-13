@@ -12,6 +12,9 @@ import (
 
 var errConfiguration = errors.New("email configuration is incomplete or invalid")
 
+// settings are the private, non-secret account names and transport choices.
+// Bookkeeping names the optional voucher-collection mailbox account. Omitting
+// it leaves the plan unchanged, so that account is managed only once chosen.
 type settings struct {
 	RuntimeVersion       string   `json:"runtimeVersion,omitempty"`
 	Domain               string   `json:"domain"`
@@ -20,13 +23,14 @@ type settings struct {
 	Agent                string   `json:"agent"`
 	Administrator        string   `json:"administrator"`
 	MaintainerAliases    []string `json:"maintainerAliases,omitempty"`
+	Bookkeeping          string   `json:"bookkeeping,omitempty"`
 	UseForwardedClientIP bool     `json:"useForwardedClientIP,omitempty"`
 	UseProxyClientIP     bool     `json:"useProxyClientIP,omitempty"`
 }
 type inputs struct {
 	settings
-	administratorPassword, maintainerPassword, agentPassword string
-	accountIDs                                               map[string]string
+	administratorPassword, maintainerPassword, agentPassword, bookkeepingPassword string
+	accountIDs                                                                    map[string]string
 }
 
 var domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
@@ -45,8 +49,13 @@ func render(v inputs) ([]byte, error) {
 	if !domainPattern.MatchString(v.Domain) || strings.HasSuffix(v.Domain, ".invalid") || len(v.Domain) > 200 || !domainPattern.MatchString(v.Hostname) || !strings.HasSuffix(v.Hostname, "."+v.Domain) || len(v.Hostname) > 253 {
 		return nil, errConfiguration
 	}
+	// A bookkeeping password without its account, or the reverse, is never
+	// a partial configuration to repair: refuse it before any plan exists.
+	if (v.Bookkeeping == "") != (v.bookkeepingPassword == "") {
+		return nil, errConfiguration
+	}
 	seen := map[string]bool{}
-	for _, name := range []string{v.Maintainer, v.Agent, v.Administrator} {
+	for _, name := range managedAccountNames(v.settings) {
 		if !localPattern.MatchString(name) || strings.Contains(name, "..") || strings.HasSuffix(name, ".") || seen[name] {
 			return nil, errConfiguration
 		}
@@ -62,7 +71,11 @@ func render(v inputs) ([]byte, error) {
 		seen[name] = true
 	}
 	seen = map[string]bool{}
-	for _, password := range []string{v.administratorPassword, v.maintainerPassword, v.agentPassword} {
+	passwords := []string{v.administratorPassword, v.maintainerPassword, v.agentPassword}
+	if v.Bookkeeping != "" {
+		passwords = append(passwords, v.bookkeepingPassword)
+	}
+	for _, password := range passwords {
 		if !passwordPattern.MatchString(password) || seen[password] {
 			return nil, errConfiguration
 		}
@@ -91,16 +104,26 @@ func render(v inputs) ([]byte, error) {
 		maintainer["aliases"] = receivingAliasesFor(v.MaintainerAliases, "#domain", profile.aliasEnabled)
 	}
 	agents := account(v.Agent, v.agentPassword, "User")
-	newAccounts := map[string]any{}
-	var accountUpdates []map[string]any
-	for _, item := range []struct {
+	type managedAccount struct {
 		ref, name, password string
 		value               map[string]any
-	}{
+	}
+	managed := []managedAccount{
 		{"administrator", v.Administrator, v.administratorPassword, administrator},
 		{"maintainer", v.Maintainer, v.maintainerPassword, maintainer},
 		{"agents", v.Agent, v.agentPassword, agents},
-	} {
+	}
+	if v.Bookkeeping != "" {
+		bookkeeping := account(v.Bookkeeping, v.bookkeepingPassword, "User")
+		// The whole permission and alias collections are replaced on every
+		// replay, so a wider grant or an added receiving alias cannot survive.
+		bookkeeping["permissions"] = map[string]any{"@type": "Replace", "enabledPermissions": bookkeepingPermissions(), "disabledPermissions": map[string]bool{}}
+		bookkeeping["aliases"] = map[string]any{}
+		managed = append(managed, managedAccount{"bookkeeping", v.Bookkeeping, v.bookkeepingPassword, bookkeeping})
+	}
+	newAccounts := map[string]any{}
+	var accountUpdates []map[string]any
+	for _, item := range managed {
 		if id := v.accountIDs[item.name]; id != "" {
 			delete(item.value, "credentials")
 			item.value["credentials/0/secret"] = item.password

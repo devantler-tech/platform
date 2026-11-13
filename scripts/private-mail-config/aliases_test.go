@@ -26,9 +26,12 @@ func aliasInputs(t *testing.T, settings string, inventory map[string]any) (strin
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The deployment always mounts the voucher-collection credential. Settings
+	// that do not choose that account must leave the mounted value unused.
 	for name, value := range map[string]string{
 		"settings.json": settings, "listener-inventory.json": string(raw),
 		"administrator-password": strings.Repeat("A", 40), "maintainer-password": strings.Repeat("B", 40), "agent-password": strings.Repeat("C", 40),
+		"bookkeeping-password": strings.Repeat("D", 40),
 	} {
 		if err := os.WriteFile(filepath.Join(input, name), []byte(value), 0600); err != nil {
 			t.Fatal(err)
