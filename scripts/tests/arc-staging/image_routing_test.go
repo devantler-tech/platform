@@ -26,10 +26,13 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 	}{
 		{analysisRepository, "publishksailanalysis", analysisPublisher},
 		{mailRepository, "publishprivatemail", mailPublisher},
+		{mailCandidateRepository, "publishprivatemail", mailPublisher},
 		{"ghcr.io/devantler-tech/business-site-identity", "publishcustomeridentity", identityPublisher},
 		{"ghcr.io/devantler-tech/business-site-identity-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{"ghcr.io/devantler-tech/business-site-identity/helper", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{mailRepository + "-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{mailCandidateRepository + "-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{mailCandidateRepository + "/helper", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{analysisRepository + "-other", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/wedding-app", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{"ghcr.io/devantler-tech/platform-kubescape-storage", "publishkubescapestorage", "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-storage-hotfix.yaml@refs/heads/main"},

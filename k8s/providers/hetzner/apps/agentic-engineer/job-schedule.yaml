@@ -74,8 +74,9 @@ spec:
             - name: TIME_ZONE
               value: Europe/Copenhagen
             # Paused until every sub-issue of devantler-tech/monorepo#4866 is
-            # done (ADR 0014, point 6). The canary runs once, started from the
-            # kagent UI; the PR that swaps in the full run message unpauses it.
+            # done (ADR 0014, point 6). The full run is first tried once, started
+            # from the kagent UI with "run now", which works while paused; the
+            # PR that unpauses it follows that run and the maintainer's go-ahead.
             - name: PAUSED
               value: "true"
             # A run has no time limit: cutting one off mid-task wastes what it
@@ -86,20 +87,95 @@ spec:
             # reaches.
             - name: EXECUTION_TIMEOUT
               value: 315360000s
-            # The current message is the canary (devantler-tech/monorepo#4869):
-            # it proves the model, GitHub and Git paths and changes nothing.
-            # The full engineering run replaces it once the canary has passed.
+            # The full run: the same thin pointer the host lanes' scheduler
+            # entries use, plus the lane store, because each run starts in a
+            # fresh sandbox (devantler-tech/monorepo#4869). The role itself
+            # comes from the agentic-engineering plugin in the harness image,
+            # never from this prompt.
             - name: PROMPT
               value: |
-                Canary run. Change nothing: create no branch, commit, issue, comment or
-                pull request.
-                1. Name the model you are running as.
-                2. Run `git -c http.extraHeader='Authorization: Basic kagent-credential-injected' ls-remote https://github.com/devantler-tech/monorepo.git HEAD`
-                   and report the commit it prints.
-                3. Shallow-clone that repository the same way and report the first line of
-                   its AGENTS.md.
-                4. Report which of the commands gh, curl, jq and yq exist in your sandbox.
-                Reply with a short report of each step and anything that failed.
+                Scheduled run of the devantler-tech Agentic Engineer on its kagent lane:
+                instance `kagent-cluster`, writer namespace `kagent/*`, one run a day.
+
+                The lane store is a WebDAV server. Its gateway treats a connection as
+                HTTP only when the connection's first request uses a standard method,
+                so a PROPFIND, MKCOL, LOCK or UNLOCK sent first gets an empty reply.
+                Send each of those through this helper, which opens its connection
+                with an OPTIONS and then prints the reply's status, headers and body:
+
+                    S=http://lane-store.agentic-engineer.svc.cluster.local:8080
+                    A='Authorization: Basic kagent-credential-injected'
+                    dav() { m=$1 p=$2; shift 2; curl -sS -o /dev/null -X OPTIONS -H "$A" "$S/" --next -sS -D - -X "$m" -H "$A" "$@" "$S/$p"; }
+
+                Send a GET or PUT with curl directly, with the same header. Read every
+                status with `-sS -D -`, never -f, which hides it.
+
+                1. Take the lane store's single-writer lease: an exclusive WebDAV lock
+                   on memory/ that also fences every write under it, so that overlapping
+                   runs never overwrite each other's memory (devantler-tech/monorepo#4910).
+                   a. Run `dav PROPFIND memory/ -H 'Depth: 0'`. A 404 means a first run:
+                      create memory/ with `dav MKCOL memory/`. Any reply but 207 or that
+                      404 stops the run.
+                   b. Take the lease with `dav LOCK memory/ -H 'Timeout: Infinite'`,
+                      plus `-H 'Content-Type: application/xml'` and `--data-binary`
+                      with this body, OWNER replaced by `agentic-engineer`, your UTC
+                      start time and a random 16-hex-digit nonce, which is your owner:
+                      `<?xml version="1.0"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype><D:owner>OWNER</D:owner></D:lockinfo>`
+                      A 200 means you hold the lease: keep the reply's Lock-Token value,
+                      angle brackets included. A 423 means another run holds it, or a
+                      run that crashed left it behind: stop, upload nothing and report
+                      it. Never remove a lease you did not take. Any other reply also
+                      stops the run before it touches memory.
+                   c. The store numbers its tokens up from the second it started, and an
+                      UNLOCK checks only the token, so a restarted store could hand your
+                      token to another run whose lease your UNLOCK would then release.
+                      Your token is safe once its number is at least 60 below a reply's
+                      Date header in Unix seconds: no restart can reissue it then, since
+                      the cluster keeps its nodes' clocks within a minute of each other.
+                      Until it is safe, never UNLOCK it. If the LOCK reply shows it is not yet
+                      safe, the store started moments ago: wait out the difference plus
+                      a second, if that is under 10 minutes, then refresh the lease as in
+                      step 4 and check again. If it is still not safe, or the refresh
+                      fails or names another owner, upload nothing, leave the lease
+                      alone and report it.
+                2. Restore your native memory from the lane store: list memory/ with
+                   `dav PROPFIND memory/ -H 'Depth: 1'`, list each folder it shows the
+                   same way, and download every file into ~/lane-memory/ with a GET;
+                   ~/lane-memory/ stays empty on a first run. A listing or download you
+                   cannot complete stops the run: release the lease with the UNLOCK of
+                   step 4, upload nothing and report it.
+                3. Shallow-clone devantler-tech/monorepo, read its AGENTS.md, load the
+                   agentic-engineering plugin and invoke its agentic-engineer entrypoint
+                   as this scheduled run. ~/lane-memory/ is your native memory (the
+                   legacy layout), as the durable-memory guide says for this lane.
+                   Follow the consumer contract and fail closed on missing deployment
+                   facts. Do not duplicate the role here.
+                4. Before you stop, however the run ended, refresh the lease with
+                   `dav LOCK memory/ -H 'Timeout: Infinite' -H 'If: (<t>)'`, no body,
+                   where `<t>` is your Lock-Token value. You still hold the lease only
+                   if the reply is 200 and its owner is yours. On any other reply,
+                   upload nothing, leave the lease alone and report it. Otherwise upload
+                   ~/lane-memory/ back to memory/ one file at a time, with that same If
+                   header on every PUT and on the `dav MKCOL` of any folder inside
+                   memory/: the store refuses a write under memory/ that lacks the
+                   lease's token, and a second write with one token while the first is
+                   still running. A 412 or 423 means you lost the lease: stop uploading,
+                   leave the lease alone and report it. Then upload this session's
+                   transcript (the newest Claude Code session JSONL under your Claude
+                   config directory) and your run report, with no If header, to
+                   runs/<UTC date>/transcript.jsonl and runs/<UTC date>/report.md. If an
+                   earlier run that day already wrote them, never replace them: write
+                   yours beside them as transcript-<UTC time HHMMSS>.jsonl and
+                   report-<UTC time HHMMSS>.md. Create a missing folder with `dav MKCOL`
+                   before writing into it, and check that every upload succeeded. Last,
+                   when every write under memory/ succeeded, release the lease with
+                   `dav UNLOCK memory/ -H 'Lock-Token: <t>'`.
+
+                This run may open, update and review devantler-tech pull requests and
+                issues, per AGENTS.md. It never merges. Only when genuinely blocked on a
+                decision only the maintainer can make, and only after trying to resolve
+                it yourself, open one public-safe `maintainer-ask` issue, following
+                AGENTS.md#Maintainer channels.
             # Retries of one Job share its uid, so a create whose reply was lost
             # returns the schedule it made instead of making a second one.
             - name: REQUEST_ID

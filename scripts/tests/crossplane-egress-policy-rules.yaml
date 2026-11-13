@@ -671,7 +671,8 @@ rules:
   # same three expressions are pinned in
   # scripts/guard-consumer-discovery-conservation.sh; a catalog change is
   # refused by both until it is reviewed here.
-  # #5357 adds only the two closed Helm-default specs. Their fixed patches
+  # #5357 adds only the two closed Helm-default specs, which match only Flux
+  # HelmReleases since #6135. Their fixed patches
   # may vary token whitespace, never quoted literal whitespace or escapes.
   # Added variables, selectors or evaluation fields remain unreviewed.
   - name: reject-cel-policy-producers
@@ -714,12 +715,11 @@ rules:
            'matchConstraints': {
              'objectSelector': {'matchLabels': {approved.label: 'enabled'}},
              'resourceRules': [{
-               'apiGroups': ['*'], 'apiVersions': ['*'],
-               'operations': ['CREATE', 'UPDATE'], 'resources': ['*']
+               'apiGroups': ['helm.toolkit.fluxcd.io'], 'apiVersions': ['*'],
+               'operations': ['CREATE', 'UPDATE'], 'resources': ['helmreleases']
              }]
            },
            'matchConditions': [
-             {'name': 'helm-release-kind', 'expression': "object.kind == 'HelmRelease'"},
              {'name': approved.conditionName, 'expression': approved.conditionExpression}
            ],
            'mutations': [{

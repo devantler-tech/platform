@@ -565,6 +565,54 @@ and `openreports/reports-api` modules; no `siderolabs` or YAML module moves, so
 the Talos machinery and its YAML encoders are unchanged. This audit changes no
 cluster configuration or vulnerability exception.
 
+**7.206.81**, commit `57b705c5379faf718d7ac8971f89154df8597474`, is audited
+against 7.206.77. The configuration manager, Talos generator, cluster API and
+charts are byte-identical, so the normalized extension/argument trigger,
+both-role fold and explicit schematic-ID boundary are unchanged. `go.mod` and
+`go.sum` move only the Google Container client, AWS EKS client, AWS Smithy,
+Copilot SDK and `klauspost/compress` modules. The first four are absent from
+the Talos configuration manager, generator and cluster API dependency closure;
+`compress` remains reachable through its Zstandard packages. Talos machinery
+stays at v1.14.0-alpha.2 and the YAML encoders are unchanged. The real offline
+render regression checks both roles, schematic-ID precedence and invalid-patch
+refusal. Other release changes update Argo CD, release-tag retention and KSail's
+own CI; none changes the mirrored fold. This audit changes no cluster
+configuration or vulnerability exception.
+
+**7.208.0**, commit `42888c3563d15113f842ef2c849eeb443d68d5ed`, is audited
+against 7.207.1, whose inputs equal the 7.206.81 set. The configuration manager,
+Talos generator, cluster API, charts and `go.sum` are byte-identical, so the
+normalized extension/argument trigger, both-role fold and explicit schematic-ID
+boundary are unchanged. The only `go.mod` change (KSail #8189) moves the
+existing `fluxcd/pkg/apis/kustomize` v1.19.2 requirement from the indirect block
+to the direct one; no module version changes, so the Talos machinery and its
+YAML encoders are unchanged. The release's other change generates Flux CEL
+health checks for HelmReleases in KSail's workload generator, which the
+mirrored fold does not use. This audit changes no cluster configuration or
+vulnerability exception.
+
+**7.211.0**, commit `ad13d562d14268e1e0dc7b986f88e25153f01ca4`, is audited
+against 7.208.0. The configuration manager, Talos generator, `go.mod` and
+`go.sum` are byte-identical, so the normalized extension/argument trigger,
+both-role fold, explicit schematic-ID boundary and Talos machinery are
+unchanged. The cluster API and chart changes add two observed-state status
+fields, `status.observedDistribution` and `status.observedProvider`, with their
+CRD print columns and a chart upgrade note, and keep the status out of
+spec-default pruning so the operator's status round-trips. `options.go`, which
+defines `spec.cluster.talos.extensions` and `schematicId`, is unchanged, so both
+fields keep their names, types and defaults. This audit changes no cluster
+configuration or vulnerability exception.
+
+**7.212.0**, commit `308077e2888966260c55e0fdd086347cfcb4ccc3`, is audited
+against 7.211.0. The configuration manager, Talos generator and cluster API
+are byte-identical, preserving the normalized extension/argument trigger,
+both-role fold and explicit schematic-ID boundary. The chart adds only
+`list nodes` to the operator role for the nested Kind network collision guard;
+the Talos schema is unchanged. The module changes update AWS, gRPC and
+Kubernetes dependencies and their transitive requirements; Talos machinery and
+its YAML encoders retain their versions. The real offline render controls
+exercise both roles, explicit schematic IDs and invalid patches.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

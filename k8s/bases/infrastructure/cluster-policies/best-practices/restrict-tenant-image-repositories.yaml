@@ -1,0 +1,114 @@
+# Confines each tenant namespace to its OWN first-party image repositories
+# (platform#6080, part of #2889; mechanism chosen in the #4479 spike).
+#
+# Why: the nodes authenticate every pull from the first-party registry with the
+# platform's own credential (Talos RegistryAuthConfig applies to "all image pulls
+# for this registry endpoint, by Talos or any Kubernetes workloads"). A per-tenant
+# pull credential therefore cannot stop one tenant from running another tenant's
+# private image. The boundary has to be enforced at admission instead.
+#
+# Rule: in a tenant namespace, every first-party reference — an image under
+# ghcr.io/devantler-tech/, or a Flux OCI source URL under it — must live under
+# ghcr.io/devantler-tech/<namespace>/… (or be ghcr.io/devantler-tech/<namespace>
+# itself). Tenant namespaces are named after their repository, and the live
+# tenants (ascoachingogvaner, business-site, github-config, wedding-app,
+# world-at-ruin) all pull only from their own repository on 2026-11-12. A tenant
+# whose namespace does not match its repository name is denied every
+# first-party reference rather than inheriting another tenant's.
+# Third-party images (any other registry or organisation) are unaffected.
+#
+# Covered objects: Pods (containers, initContainers, ephemeralContainers — the
+# pods/ephemeralcontainers subresource too, so `kubectl debug` cannot smuggle
+# one in — and image volumes, whose OCI reference the kubelet pulls with the
+# same node credential) and the Flux sources a tenant can create (OCIRepository and
+# HelmRepository, whose OCI form points at the registry).
+#
+# Matching is done on the lower-cased reference, so a case variant, an explicit
+# registry port, a trailing-dot host or a URL scheme does not slip past, and a
+# look-alike repository (wedding-app-evil) does not match wedding-app because
+# the namespace must be followed by '/', ':', '@' or the end of the reference.
+#
+# Scope: only ksail- or kro-managed tenant namespaces, the same selector the
+# other tenant boundaries use, so platform and system namespaces are unaffected.
+#
+# Rollout: Audit first (the acceptance criteria on #6080). Background evaluation
+# is enabled so the policy reports any existing tenant workload that would be
+# denied; switch validationActions (and tests/policy-failure-actions.json) to
+# Deny once the reports show none. An empty report only counts while the policy
+# status is ready: reporting needs the reports controller to read every matched
+# resource, including pods/ephemeralcontainers (granted by
+# controllers/kyverno/cluster-role-reports-controller-read-pod-ephemeral-containers.yaml).
+#
+# Kyverno (v1.19.2) checks those permissions only when the policy object
+# changes: its policy-status controller reconciles on add/update events whose
+# resourceVersion differs, so a later RBAC grant is never noticed and the policy
+# keeps reporting ready=false. After changing the reports controller's grants
+# for this policy, change the reports-rbac-revision annotation below to the PR
+# number, so Flux updates the policy and Kyverno re-runs the check (#6080).
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-tenant-image-repositories
+  annotations:
+    platform.devantler.tech/reports-rbac-revision: "6132"
+    policies.kyverno.io/title: Restrict Tenant Image Repositories
+    policies.kyverno.io/category: Multi-Tenancy, Supply Chain
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod, OCIRepository, HelmRepository
+    policies.kyverno.io/minversion: 1.17.0
+    policies.kyverno.io/description: >-
+      Allows a tenant namespace to reference only its own first-party image
+      repositories (ghcr.io/devantler-tech/<namespace>/...) from Pods and from
+      Flux OCIRepository and HelmRepository sources. The nodes authenticate
+      every first-party pull, so this admission rule is what keeps one tenant
+      from running another tenant's private images. Third-party images and
+      non-tenant namespaces are unaffected.
+spec:
+  failurePolicy: Fail
+  validationActions:
+    - Audit
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - key: app.kubernetes.io/managed-by
+          operator: In
+          values: [ksail, kro]
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods", "pods/ephemeralcontainers"]
+      - apiGroups: ["source.toolkit.fluxcd.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ocirepositories", "helmrepositories"]
+  variables:
+    - name: refs
+      expression: >-
+        object.kind == 'Pod'
+        ? object.spec.?containers.orValue([]).map(c, c.image)
+          + object.spec.?initContainers.orValue([]).map(c, c.image)
+          + object.spec.?ephemeralContainers.orValue([]).map(c, c.image)
+          + object.spec.?volumes.orValue([]).filter(v, has(v.image)).map(v, v.image.?reference.orValue(''))
+        : [object.spec.?url.orValue('')]
+    - name: firstParty
+      expression: "'^([a-z]+://)?ghcr\\\\.io\\\\.?(:[0-9]+)?/devantler-tech/'"
+    - name: own
+      expression: >-
+        '^([a-z]+://)?ghcr\\.io\\.?(:[0-9]+)?/devantler-tech/'
+        + object.metadata.namespace + '([/:@]|$)'
+    - name: foreign
+      expression: >-
+        variables.refs.filter(r,
+          r.lowerAscii().matches(variables.firstParty)
+          && !r.lowerAscii().matches(variables.own))
+  validations:
+    - expression: "size(variables.foreign) == 0"
+      messageExpression: >-
+        'Tenant namespace ' + object.metadata.namespace + ' may only use its own
+        first-party repositories (ghcr.io/devantler-tech/' +
+        object.metadata.namespace + '/...); found: ' +
+        variables.foreign.join(', ')

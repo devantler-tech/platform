@@ -170,6 +170,14 @@ jobs:
         with:
           version: "v0.74.0"
 
+      - name: 📌 Install reviewed YAML parser for nested RGD templates
+        env:
+          GOBIN: ${{ runner.temp }}/rgd-validation-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+          PATH="$GOBIN:$PATH" yq --version
+
       - name: 🛡️ Validate nested RGD templates
         run: |
           shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
@@ -180,7 +188,7 @@ jobs:
         # deploy-prod action; renovate keeps the pin current in all places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.77"
+          KSAIL_VERSION: "7.212.4"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh

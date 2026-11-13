@@ -22,7 +22,7 @@ type postgresState struct {
 
 // Only fixed SQL is passed to PostgreSQL. This reveals physical recovery
 // coordinates, never application rows or credentials.
-const postgresStateSQL = `SELECT json_build_object('system_id',(pg_control_system()).system_identifier::text,'timeline',(pg_control_checkpoint()).timeline_id::text,'flush_lsn',CASE WHEN pg_is_in_recovery() THEN NULL ELSE pg_current_wal_flush_lsn()::text END,'replay_lsn',pg_last_wal_replay_lsn()::text,'in_recovery',pg_is_in_recovery(),'postmaster_start',pg_postmaster_start_time()::text);`
+const postgresStateSQL = `SELECT pg_catalog.json_build_object('system_id',(pg_catalog.pg_control_system()).system_identifier::text,'timeline',(pg_catalog.pg_control_checkpoint()).timeline_id::text,'flush_lsn',CASE WHEN pg_catalog.pg_is_in_recovery() THEN NULL ELSE pg_catalog.pg_current_wal_flush_lsn()::text END,'replay_lsn',pg_catalog.pg_last_wal_replay_lsn()::text,'in_recovery',pg_catalog.pg_is_in_recovery(),'postmaster_start',pg_catalog.pg_postmaster_start_time()::text);`
 
 var postgresLSN = regexp.MustCompile(`^[0-9A-F]{1,8}/[0-9A-F]{1,8}$`)
 var postgresImageDigest = regexp.MustCompile(`(^|@)sha256:[0-9a-f]{64}$`)
@@ -136,7 +136,9 @@ func (c client) observePostgres(ctx context.Context, cluster, pod object) (postg
 	}
 	// Clear libpq service, host-address, options and executable overrides. The
 	// fixed local socket belongs to this Pod, not an environment-selected peer.
-	raw, err := c.kubectl(ctx, nil, "exec", name, "--namespace="+ns, "--container=postgres", "--pod-running-timeout=20s", "--", "/usr/bin/env", "-i", "PATH=/usr/lib/postgresql/18/bin:/usr/local/bin:/usr/bin:/bin", "PGCONNECT_TIMEOUT=10", "psql", "--host=/controller/run", "--port=5432", "--no-psqlrc", "--no-password", "--username=postgres", "--dbname=postgres", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align", "--quiet", "--command="+postgresStateSQL)
+	// Override persisted role/database lookup and write defaults as well. Types
+	// and operators resolve through the catalog alongside the qualified functions.
+	raw, err := c.kubectl(ctx, nil, "exec", name, "--namespace="+ns, "--container=postgres", "--pod-running-timeout=20s", "--", "/usr/bin/env", "-i", "PATH=/usr/lib/postgresql/18/bin:/usr/local/bin:/usr/bin:/bin", "PGCONNECT_TIMEOUT=10", "PGOPTIONS=-c search_path=pg_catalog -c default_transaction_read_only=on", "psql", "--host=/controller/run", "--port=5432", "--no-psqlrc", "--no-password", "--username=postgres", "--dbname=postgres", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align", "--quiet", "--command="+postgresStateSQL)
 	if err != nil {
 		return postgresState{}, err
 	}

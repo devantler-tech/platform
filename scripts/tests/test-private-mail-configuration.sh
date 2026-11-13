@@ -126,7 +126,14 @@ docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
 docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
   --security-opt no-new-privileges:true --entrypoint /usr/local/bin/caddy \
   "$name-bootstrap-image" version >"$scratch/client-proxy-version.txt"
-grep -Eq '^v2\.11\.7([[:space:]]|$)' "$scratch/client-proxy-version.txt"
+# The Dockerfile's caddy stage is the pin Renovate moves. Read the expected version
+# from it, so a version bump is proved here instead of being hardcoded twice.
+proxy_version="$(sed -nE 's/^FROM caddy:([0-9]+\.[0-9]+\.[0-9]+)@sha256:[0-9a-f]{64} AS client-proxy$/\1/p' "$root/scripts/private-mail-config/Dockerfile")"
+[ -n "$proxy_version" ] || {
+  echo 'FAIL: Dockerfile has no pinned caddy client-proxy stage' >&2
+  exit 1
+}
+grep -Eq "^v${proxy_version//./\\.}([[:space:]]|$)" "$scratch/client-proxy-version.txt"
 
 run_bootstrap() {
   local bootstrap_status=0 bootstrap_stage

@@ -15,10 +15,11 @@ record_count=3
 case "$mode" in
   verify | fixture | verify-email | fixture-email) ;;
   verify-email-storage | fixture-email-storage) record_count=4 ;;
+  verify-email-retained-inputs | fixture-email-retained-inputs) record_count=1 ;;
   *) fail ;;
 esac
 fixture_mode=false
-case "$mode" in fixture | fixture-email | fixture-email-storage) fixture_mode=true ;; esac
+case "$mode" in fixture | fixture-email | fixture-email-storage | fixture-email-retained-inputs) fixture_mode=true ;; esac
 [[ $proof_dir == /* && -d $proof_dir && ! -L $proof_dir && $binary == /* && -f $binary && ! -L $binary && -x $binary ]] || fail
 [[ $(cd "$proof_dir" && pwd -P) == "$proof_dir" && $(stat -c %a "$proof_dir") == 700 && $(stat -c %u "$proof_dir") == "$(id -u)" ]] || fail
 image=$("$binary" image) || fail

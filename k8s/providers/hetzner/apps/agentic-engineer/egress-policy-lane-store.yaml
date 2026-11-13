@@ -1,0 +1,23 @@
+# The lane store for the agent (deployment-lane-store.yaml). The gateway
+# replaces the Authorization header with the store credential, so the agent
+# sends only `Authorization: Basic kagent-credential-injected`.
+#
+# The gateway takes a plaintext connection for HTTP only when its first
+# request uses one of nine standard methods; any other first method is
+# dropped as opaque TCP. So the agent sends a WebDAV method (PROPFIND, MKCOL,
+# LOCK, UNLOCK) only on a connection an OPTIONS opened, through the run
+# message's `dav` helper (scripts/tests/test-agentic-engineer-lane-store-gateway.sh).
+apiVersion: api.kagent.dev/v1alpha3
+kind: EgressPolicy
+metadata:
+  name: lane-store
+  namespace: agentic-engineer
+spec:
+  destinations:
+    - origin: http://lane-store.agentic-engineer.svc.cluster.local:8080
+      authentication:
+        header: Authorization
+        prefix: "Basic "
+        secretKeyRef:
+          name: lane-store
+          key: basic

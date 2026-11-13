@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -38,6 +39,25 @@ func TestAccountCensusRefusesAmbiguousIdentityAndNames(t *testing.T) {
 	servers[9].ID = servers[0].ID
 	if _, err := classifyAccountCensus(servers, nodes); err == nil {
 		t.Fatal("duplicate provider identity qualified")
+	}
+}
+
+func TestAccountCensusNamesFailedGateWithoutPublishingIdentities(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		change     func(*server, *node)
+	}{
+		{"join", "node and provider identities do not join", func(s *server, _ *node) { s.Name = "private-provider-identity" }},
+		{"hardware", "node hardware or location does not match the provider", func(s *server, _ *node) { s.ServerType.Name = "private-hardware-identity" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			servers, nodes := roster(t, true)
+			tc.change(&servers[0], &nodes[0])
+			result, err := classifyAccountCensus(servers, nodes)
+			if !errors.Is(err, errCensusHeld) || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "private-") || result != (accountCensus{}) {
+				t.Fatalf("failed gate must remain held with a public-safe reason: result=%+v error=%v", result, err)
+			}
+		})
 	}
 }
 

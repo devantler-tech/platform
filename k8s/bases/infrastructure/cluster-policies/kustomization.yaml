@@ -27,6 +27,7 @@ resources:
   - best-practices/restrict-explicit-dns-records.yaml
   - best-practices/restrict-homepage-service-groups.yaml
   - best-practices/restrict-tenant-issuer-refs.yaml
+  - best-practices/restrict-tenant-image-repositories.yaml
   - best-practices/restrict-tenant-network-policies.yaml
   - best-practices/restrict-tenant-route-hostnames.yaml
   - best-practices/restrict-tenant-secret-stores.yaml
