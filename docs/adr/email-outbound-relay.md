@@ -34,9 +34,12 @@ are unchanged.
 - **Ownership.** The identity and MAIL FROM domain grant no permission, so the
   `aws` tenant owns them. The SMTP user, its policy and its key stay
   platform-owned, like the EKS CI role, so the public tenant cannot widen them.
-- **DNS.** The three DKIM records, the MAIL FROM MX and SPF records, and DMARC
-  go through the DNS owner. SPF keeps the existing provider while mail is still
-  sent through it.
+- **DNS.** The platform's external-dns publishes the three DKIM CNAMEs and
+  the MAIL FROM domain's MX and SPF records as DNS-only `DNSEndpoint`
+  resources. They are new names, so each keeps one owner; external-dns also
+  manages MX and TXT records for this. SPF is checked on the MAIL FROM domain,
+  so the mailbox domain's own SPF record, which still lists the existing
+  provider, is unchanged. The existing DMARC record keeps its current owner.
 - **Production access** is requested through a reviewed main-only workflow.
   Until SES grants it, its sandbox delivers only to verified recipients.
 - **Swappable.** Changing relay means changing Stalwart's relay route and its
@@ -47,7 +50,8 @@ are unchanged.
 1. Install the SES provider and activate the kinds (#6184).
 2. Declare the identity and MAIL FROM domain (devantler-tech/aws#78).
 3. Create the send-only SMTP identity and store its credential in OpenBao.
-4. Publish the DNS records once the identity's DKIM tokens exist.
+4. Publish the DNS records through external-dns once the identity's DKIM
+   tokens exist.
 5. Request production access.
 6. Add Stalwart's relay route. Its network policy now denies all egress, and a
    deny overrides any allow, so this step replaces the deny with egress to DNS
