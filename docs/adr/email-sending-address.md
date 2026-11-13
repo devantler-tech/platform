@@ -29,9 +29,11 @@ direct delivery; what is missing is a stable sending address.
 - **The gateway is one static worker**, selected by a single node label.
   Hetzner accepts the Floating IP as a source only from the server it is
   assigned to, so it is assigned to that worker. Cilium requires the address
-  on a network device, so every worker carries it on a dummy interface. This
-  leaves the main interface, and the node addresses that Cilium and the kubelet
-  select, unchanged.
+  on a network device, so every worker carries it on a dummy interface rather
+  than on its main interface. The node address the kubelet reports and the
+  address Cilium masquerades other traffic to must stay the server's own; the
+  implementing revision proves both, and pins the kubelet's node address if
+  needed.
 - **No high availability.** If the gateway node is lost, Cilium drops the
   matching traffic instead of sending it from another address, and Email's
   queue retries the messages. Moving the gateway means labelling another static
@@ -50,7 +52,8 @@ direct delivery; what is missing is a stable sending address.
    the agents and operator. Existing egress must be unchanged afterwards.
 4. Add the dummy-interface address to workers, label the gateway and apply the
    Email policy. First confirm that KSail's pinned Talos configuration library
-   accepts the dummy-interface document.
+   accepts the dummy-interface document. Afterwards, confirm that every node's
+   reported address and other pods' egress source are unchanged.
 5. From the Email server's own network identity, repeat the no-message SMTP
    check. Confirm that the external server sees the Floating IP as the source.
 6. Publish the host's address record and the SPF, DKIM and DMARC records
@@ -71,10 +74,10 @@ direct delivery; what is missing is a stable sending address.
 ## Consequences
 
 Cilium applies an egress-gateway policy to a new pod after a short delay.
-Until then, that pod's traffic can leave with its node's address and fail SPF.
-Activation therefore checks the observed source after the Email server
-restarts, before outbound delivery is relied on. A gateway outage delays
-outbound mail; it never sends from an unauthorized address. Inbound mail
+Until then, that pod's traffic can leave with its node's address, so a message
+sent in that window can fail SPF. Activation measures that window after an
+Email server restart, and the outcome decides whether outbound delivery needs
+a start-up delay. A gateway outage only delays outbound mail. Inbound mail
 continues to use the existing load balancer and is unaffected by this
 decision.
 
