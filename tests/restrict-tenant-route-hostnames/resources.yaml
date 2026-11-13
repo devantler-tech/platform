@@ -253,8 +253,8 @@ spec:
         - name: ascoachingogvaner
           port: 80
 ---
-# business-site — the KRO-rendered route from its tenant-owned WebApp. Only the
-# public staging hostname is approved.
+# business-site — the KRO-rendered route from its tenant-owned WebApp, on the
+# public staging hostname.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -268,15 +268,58 @@ spec:
         - name: business-site
           port: 80
 ---
-# The production hostname stays on GitHub Pages until a separate cutover.
+# The package-owned public route: the apex and www (platform#6177).
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: production-hostname
+  name: approved-public-hostnames
   namespace: business-site
 spec:
   hostnames:
     - devantler.tech
+    - www.devantler.tech
+  rules:
+    - backendRefs:
+        - name: business-site
+          port: 80
+---
+# The package-owned portal route (platform#6177).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: approved-portal-hostname
+  namespace: business-site
+spec:
+  hostnames:
+    - portal.devantler.tech
+  rules:
+    - backendRefs:
+        - name: business-site
+          port: 80
+---
+# Another devantler.tech name is not on the list.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: unlisted-devantler-subdomain
+  namespace: business-site
+spec:
+  hostnames:
+    - api.devantler.tech
+  rules:
+    - backendRefs:
+        - name: business-site
+          port: 80
+---
+# A wildcard covering the approved names is not itself an approved name.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: devantler-wildcard
+  namespace: business-site
+spec:
+  hostnames:
+    - "*.devantler.tech"
   rules:
     - backendRefs:
         - name: business-site
