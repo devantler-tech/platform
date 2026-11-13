@@ -92,7 +92,10 @@ done
 # A disposable relay login in the SES credential's shape. The fixture network
 # has no egress, so nothing reaches the relay; the stored route is still proved.
 printf 'AKIA%s' "$(openssl rand -hex 8 | tr 'a-f' 'A-F')" >"$scratch/inputs/relay-username"
-{ printf '\004'; openssl rand 32; } | openssl base64 -A | tr -d '\n' >"$scratch/inputs/relay-password"
+{
+  printf '\004'
+  openssl rand 32
+} | openssl base64 -A | tr -d '\n' >"$scratch/inputs/relay-password"
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj '/CN=mail.example.test' \
   -addext 'subjectAltName=DNS:mail.example.test' -keyout "$scratch/etc/tls/tls.key" \
   -out "$scratch/etc/tls/tls.crt" >"$scratch/certificate.log" 2>&1
