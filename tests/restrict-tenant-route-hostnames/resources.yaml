@@ -252,3 +252,69 @@ spec:
     - backendRefs:
         - name: ascoachingogvaner
           port: 80
+---
+# business-site — the KRO-rendered route from its tenant-owned WebApp. Only the
+# public staging hostname is approved.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: approved-staging-hostname
+  namespace: business-site
+spec:
+  hostnames:
+    - business-site.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: business-site
+          port: 80
+---
+# The production hostname stays on GitHub Pages until a separate cutover.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: production-hostname
+  namespace: business-site
+spec:
+  hostnames:
+    - devantler.tech
+  rules:
+    - backendRefs:
+        - name: business-site
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: steals-wedding-hostname
+  namespace: business-site
+spec:
+  hostnames:
+    - wedding.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: business-site
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: no-hostnames
+  namespace: business-site
+spec:
+  rules:
+    - backendRefs:
+        - name: business-site
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wildcard-covering-approved
+  namespace: business-site
+spec:
+  hostnames:
+    - "*.platform.devantler.tech"
+  rules:
+    - backendRefs:
+        - name: business-site
+          port: 80

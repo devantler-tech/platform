@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Exercise the real raw discovery path with one fully qualified source-only binding.
+# Exercise the real raw discovery path with one fully qualified binding: the
+# source-only bootstrap shape and the enabled public staging shape.
 set -euo pipefail
 test_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 work="$(mktemp -d)"
@@ -94,6 +95,24 @@ for mutation in '.spec.source.reconcileApplication=true' '.spec.webApp=true' '.s
   yq "$mutation" "$work/good-tenant.yaml" >"$tree/$source_path"
   if discover >"$work/rows" 2>"$work/error"; then
     echo "changed source-only instance admitted: $mutation" >&2
+    exit 1
+  fi
+  test ! -s "$work/rows"
+  controls=$((controls + 1))
+done
+# The enabled public staging shape turns both switches on together and projects
+# the same reviewed source; each switch alone was refused above.
+yq '.spec.webApp=true | .spec.source.reconcileApplication=true' "$work/good-tenant.yaml" >"$tree/$source_path"
+if ! discover >"$work/rows" 2>"$work/error"; then
+  echo 'enabled staging Tenant was omitted or refused by actual discovery' >&2
+  cat "$work/error" >&2
+  exit 1
+fi
+test "$(wc -l <"$work/rows" | tr -d ' ')" = 1
+for mutation in '.spec.webApp="true"' '.spec.externalDns=true' '.spec.sops=true'; do
+  yq ".spec.webApp=true | .spec.source.reconcileApplication=true | $mutation" "$work/good-tenant.yaml" >"$tree/$source_path"
+  if discover >"$work/rows" 2>"$work/error"; then
+    echo "changed enabled instance admitted: $mutation" >&2
     exit 1
   fi
   test ! -s "$work/rows"

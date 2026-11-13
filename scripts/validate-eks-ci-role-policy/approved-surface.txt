@@ -130,7 +130,7 @@ iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci c40205b3f48d193e8be1a39abda738865b9
 
 kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 72f3f972cecdf3ca2e315deb4224bd28c1df1244fc7973a88eb7f4fc03ac1d05
 
-kro.run/v1alpha1|Tenant|flux-system|business-site 5854dbac8e7f4ff52f5d858ee7e673e82cd758f0c770c3203b9409c8dc15aba2
+kro.run/v1alpha1|Tenant|flux-system|business-site 47380ca8c8781c2de6b17226e44ac7cef030e13a89c8b41dae9ddf459304b3a4
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|ascoachingogvaner|ascoachingogvaner ac00ca29c04de8d2c30a045d583570536a97fc305a1b06c4300da018ecdfb864
 

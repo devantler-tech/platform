@@ -41,7 +41,7 @@ expect_summary() {
 #    used to be refused now admits. The unmanaged namespace control is an explicit
 #    match-condition skip; a namespaceSelector previously omitted its result.
 apply "${tests}/resources.yaml" "${tests}/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 18, fail: 80, warn: 0, error: 0, skip: 1" \
+expect_summary "pass: 19, fail: 80, warn: 0, error: 0, skip: 1" \
   "tenant CiliumNetworkPolicy boundary"
 
 # 2. Carve-out: kyverno's background controller owns the generated floor. These
@@ -57,10 +57,11 @@ expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 3" \
 #    Besides the reserved name, allow-dns reaches CoreDNS by naming kube-system
 #    through the namespace label and allow-cnpg-operator names cnpg-system, the
 #    cross-namespace selector a tenant is refused (#3399, #3655). default-deny's
-#    one empty rule per direction names no source or destination, which is refused
-#    because a sourceless rule WITH toPorts allows every peer on that port. Without
-#    toPorts, as here, Cilium allows nothing (#3501), so the refusal is conservative,
-#    not a hole. The generated floor is exempt only through its applying identity.
+#    empty ingress rule names no source, which is refused because a sourceless rule
+#    WITH toPorts allows every peer on that port. Without toPorts, as here, Cilium
+#    allows nothing (#3501), so the refusal is conservative, not a hole; its empty
+#    egress rule is admitted for the same reason. The generated floor is exempt
+#    only through its applying identity.
 apply "${tests}/kyverno-author/resources.yaml" \
   "${tests}/kyverno-author/values.yaml" "${tests}/user-info.yaml"
 expect_summary "pass: 0, fail: 3, warn: 0, error: 0, skip: 0" \

@@ -83,7 +83,7 @@ kubectl() {
           jq '.bindings[0].publication.workflowRunAttempt=2' "$binding_file" >"$upgrade_test_work/raced.json"
           mv "$upgrade_test_work/raced.json" "$binding_file"
           ;;
-        tenant) yq -i '.spec.webApp=true' "$tree/$tenant_path" ;;
+        tenant) yq -i '.spec.externalDns=true' "$tree/$tenant_path" ;;
         constructor) yq -i '.spec.schema.group="unapproved.example"' "$tree/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" ;;
         output)
           mkdir "$upgrade_test_work/candidate"
@@ -144,7 +144,9 @@ jq -e --arg digest "$next_digest" --argjson old "$old_record" '
  .previousBinding==$old and .previousObservation.generation==2 and
  (.previousObservation.uidSha256|test("^[0-9a-f]{64}$"))' "$candidate_record" >/dev/null
 test "$(yq '.spec.source.digest' "$upgrade_test_work/candidate/$tenant_path")" = "$next_digest"
-test "$(yq '.spec.webApp or .spec.externalDns or .spec.sops or .spec.source.reconcileApplication' "$upgrade_test_work/candidate/$tenant_path")" = false
+# A digest upgrade keeps every reviewed switch exactly as it was.
+switches='[.spec.webApp, .spec.externalDns, .spec.sops, .spec.source.reconcileApplication]'
+test "$(yq -o=json -I=0 "$switches" "$upgrade_test_work/candidate/$tenant_path")" = "$(yq -o=json -I=0 "$switches" "$upgrade_test_work/original-tenant.yaml")"
 if prepare >"$upgrade_test_work/result" 2>&1; then
   echo 'existing candidate directory overwritten' >&2
   exit 1

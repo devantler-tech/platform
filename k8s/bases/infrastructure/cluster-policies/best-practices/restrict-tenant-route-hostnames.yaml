@@ -12,13 +12,15 @@
 # hostname on the listener.
 #
 # Coverage: every namespace bound to the tenant-edit ClusterRole gets a validation.
-# Two namespaces reconcile tenant-controlled manifests as a tenant
-# ServiceAccount today — wedding-app and ascoachingogvaner — and each has its own
-# allow-list below, because tenant hostnames are not derivable from the namespace
-# name (wedding-app serves wedding.*, ascoachingogvaner serves an apex customer
+# Three namespaces reconcile tenant-controlled routes today — wedding-app,
+# ascoachingogvaner and business-site — and each has its own allow-list below,
+# because tenant hostnames are not derivable from the namespace name
+# (wedding-app serves wedding.*, ascoachingogvaner serves an apex customer
 # domain). Each list is that tenant's own declared set from its
 # deploy/httproute.yaml, covering the production hostname and the *.platform.lan
-# name used on local/dev clusters where the tenant declares one.
+# name used on local/dev clusters where the tenant declares one. business-site
+# declares its host in deploy/webapp.yaml and has one public staging name only;
+# its production hostname stays on GitHub Pages until a separate cutover.
 #
 # Fail-closed for anything NOT listed: the final validation denies every HTTPRoute in a
 # ksail tenant namespace that has no allow-list above, so a newly onboarded
@@ -112,11 +114,21 @@ spec:
         ascoachingogvaner.dk, www.ascoachingogvaner.dk or
         ascoachingogvaner.platform.lan. Omitting hostnames claims every hostname
         on the shared platform Gateway listener.
+    # The KRO controller renders this route from the tenant-owned WebApp, so
+    # the allow-list applies to it exactly as to a tenant-applied route.
+    - expression: >-
+        object.metadata.namespace != 'business-site' ||
+        (size(variables.hostnames) > 0 &&
+        variables.hostnames.all(h, h in ['business-site.platform.devantler.tech']))
+      message: >-
+        business-site HTTPRoutes must set spec.hostnames and may only use
+        business-site.platform.devantler.tech. Omitting hostnames claims every
+        hostname on the shared platform Gateway listener.
     # Catch-all: any ksail tenant namespace without an allow-list above. This is
     # what makes onboarding fail loudly instead of silently unrestricted, the
     # exact gap that once left this policy covering only wedding-app while other
     # tenants shared the same wildcard Gateway.
-    - expression: "object.metadata.namespace in ['wedding-app', 'ascoachingogvaner']"
+    - expression: "object.metadata.namespace in ['wedding-app', 'ascoachingogvaner', 'business-site']"
       message: >-
         This tenant namespace has no approved hostnames. Add an allow-list
         validation for it to the restrict-tenant-route-hostnames ValidatingPolicy
