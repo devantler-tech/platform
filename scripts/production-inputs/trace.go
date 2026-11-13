@@ -33,6 +33,14 @@ var literalPath = regexp.MustCompile(`(?:\./)?((?:\.github|scripts|internal|thir
 // tried against the naming file's directory and the repository root.
 var siblingPath = regexp.MustCompile(`(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|[)"])/((?:\.\./)*[A-Za-z0-9_][A-Za-z0-9_./-]*[A-Za-z0-9_-])`)
 
+// A module a JavaScript file imports by a relative path, as in
+// `import {x} from './lib.mjs'`. It is resolved against the importing file.
+var moduleImport = regexp.MustCompile(`(?:\bfrom|\bimport|\brequire)\s*\(?\s*['"](\.{1,2}/[A-Za-z0-9_./-]*[A-Za-z0-9_-])['"]`)
+
+// A directory named up to a template, as in "schemas/{{.Group}}/x.json": anything below
+// it can be read.
+var templatedPath = regexp.MustCompile(`(?:\./)?((?:\.github|scripts|internal|third_party|k8s|talos|tests|schemas)(?:/[A-Za-z0-9_.-]+)*)/\{\{`)
+
 // tree is the tracked content the trace walks.
 type tree struct {
 	repository string
@@ -78,6 +86,11 @@ func followed(file string) bool {
 	switch path.Ext(file) {
 	case ".sh", ".bash", ".go", ".jq", ".mjs", ".js":
 		return true
+	case ".yaml", ".yml":
+		// A tool's configuration at the repository root names files that tool reads.
+		if !strings.Contains(file, "/") {
+			return true
+		}
 	}
 	return strings.HasPrefix(file, ".github/actions/") && path.Base(file) == "action.yml"
 }
@@ -208,6 +221,22 @@ func trace(repository string) ([]string, error) {
 		for _, match := range literalPath.FindAllStringSubmatch(current.text, -1) {
 			if err := reach(match[1]); err != nil {
 				return nil, err
+			}
+		}
+		for _, match := range templatedPath.FindAllStringSubmatch(current.text, -1) {
+			if err := reach(match[1]); err != nil {
+				return nil, err
+			}
+		}
+		if extension := path.Ext(current.file); extension == ".mjs" || extension == ".js" {
+			for _, match := range moduleImport.FindAllStringSubmatch(current.text, -1) {
+				candidate := path.Join(path.Dir(current.file), match[1])
+				if strings.HasPrefix(candidate, "..") {
+					continue
+				}
+				if err := reach(candidate); err != nil {
+					return nil, err
+				}
 			}
 		}
 		for root, named := range walked.rootFiles {

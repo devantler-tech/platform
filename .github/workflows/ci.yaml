@@ -231,13 +231,13 @@ jobs:
           answer=production=true
           checked_out="$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
           if [ -n "$QUEUE_HEAD_SHA" ] && [ "$checked_out" = "$QUEUE_HEAD_SHA" ] &&
-            git diff --quiet --end-of-options "$QUEUE_BASE_SHA" "$QUEUE_HEAD_SHA" -- scripts/production-inputs go.mod go.sum 2>/dev/null; then
+            git diff --quiet --end-of-options "$QUEUE_BASE_SHA" "$QUEUE_HEAD_SHA" -- scripts/production-inputs go.mod go.sum .github/workflows/ci.yaml 2>/dev/null; then
             reported="$(go run ./scripts/production-inputs changed --base "$QUEUE_BASE_SHA" --head "$QUEUE_HEAD_SHA" || true)"
             if [ "$reported" = production=false ]; then
               answer=production=false
             fi
           else
-            echo '- Production inputs: production=true (the classifier or its Go module files changed, or the queue commits could not be confirmed).' >>"${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+            echo '- Production inputs: production=true (the classifier, its Go module files or this workflow changed, or the queue commits could not be confirmed).' >>"${GITHUB_STEP_SUMMARY:-/dev/null}" || true
           fi
           echo "$answer"
           echo "$answer" >>"$GITHUB_OUTPUT"

@@ -7,8 +7,9 @@
 # alters production only when it changes a listed path.
 #
 # Add a path in the same change that makes the deploy read it. The tests beside
-# this file fail when a script or program the deploy can reach is missing, and
-# the deploy itself fails on a missing file that the tests cannot see.
+# this file fail when the list misses a script, sourced library, Go package or
+# imported module the deploy can reach, or a file a root configuration names. A
+# missing file they cannot see fails the first deploy that reads it.
 # Decision: docs/adr/delivery-lane-throughput.md.
 
 # What production is built from. .gitignore is listed because a packaging tool
@@ -22,6 +23,10 @@ ksail.prod.yaml
 # KSail loads ksail.yaml from the working directory on every command, including
 # the ones the deploy runs with no --config.
 ksail.yaml
+
+# What both KSail configurations name for validation: the schemas here, and the
+# admission rules further down.
+schemas/
 
 # The deploy job, the actions it calls and their setup scripts. Every workflow
 # is listed: the deploy job is defined in one, and the signer check reads them.
@@ -77,6 +82,7 @@ scripts/run-ksail-prod-with-pull-auth.sh
 scripts/tenant-publication-binding.lib.sh
 scripts/tenant-source-constructors.lib.sh
 scripts/tenant-source-discovery.lib.sh
+scripts/tests/production-authorization-rules.yaml
 scripts/tests/test-flux-force-safety.sh
 scripts/tests/test-pvc-prune-safety.sh
 scripts/use-prod-stable-api-endpoint.sh
@@ -90,4 +96,6 @@ scripts/verify-talos-schematic-readback.sh
 scripts/verify-wedding-backup-staging.mjs
 scripts/wait-for-platform-flux-revision.sh
 scripts/wait-for-prod-api-stability.sh
+scripts/wedding-backup-io.mjs
+scripts/wedding-backup-projection.mjs
 scripts/write-publish-workflow-matchers.sh

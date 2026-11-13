@@ -28,13 +28,13 @@ const (
 	classifierStep = `answer=production=true
 checked_out="$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
 if [ -n "$QUEUE_HEAD_SHA" ] && [ "$checked_out" = "$QUEUE_HEAD_SHA" ] &&
-  git diff --quiet --end-of-options "$QUEUE_BASE_SHA" "$QUEUE_HEAD_SHA" -- scripts/production-inputs go.mod go.sum 2>/dev/null; then
+  git diff --quiet --end-of-options "$QUEUE_BASE_SHA" "$QUEUE_HEAD_SHA" -- scripts/production-inputs go.mod go.sum .github/workflows/ci.yaml 2>/dev/null; then
   reported="$(go run ./scripts/production-inputs changed --base "$QUEUE_BASE_SHA" --head "$QUEUE_HEAD_SHA" || true)"
   if [ "$reported" = production=false ]; then
     answer=production=false
   fi
 else
-  echo '- Production inputs: production=true (the classifier or its Go module files changed, or the queue commits could not be confirmed).' >>"${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+  echo '- Production inputs: production=true (the classifier, its Go module files or this workflow changed, or the queue commits could not be confirmed).' >>"${GITHUB_STEP_SUMMARY:-/dev/null}" || true
 fi
 echo "$answer"
 echo "$answer" >>"$GITHUB_OUTPUT"`
@@ -220,7 +220,7 @@ func TestWorkflowsRunOnlyTheQueueDeployFromProductionInputs(t *testing.T) {
 		"the manual deploy restricts too": {ci, replace(manual, "          recover-orphaned-fence: \"true\"\n",
 			"          recover-orphaned-fence: \"true\"\n          production-inputs-only: \"true\"\n"), rebuild, deploy},
 		"the classifier starts from false": {replace(ci, "          answer=production=true\n", "          answer=production=false\n"), manual, rebuild, deploy},
-		"the classifier may judge its own change": {replace(ci, " -- scripts/production-inputs go.mod go.sum 2>/dev/null; then\n",
+		"the classifier may judge its own change": {replace(ci, " -- scripts/production-inputs go.mod go.sum .github/workflows/ci.yaml 2>/dev/null; then\n",
 			" -- go.mod go.sum 2>/dev/null; then\n"), manual, rebuild, deploy},
 		"the checked-out commit is not confirmed": {replace(ci, "          if [ -n \"$QUEUE_HEAD_SHA\" ] && [ \"$checked_out\" = \"$QUEUE_HEAD_SHA\" ] &&\n",
 			"          if [ -n \"$QUEUE_HEAD_SHA\" ] &&\n"), manual, rebuild, deploy},
@@ -331,6 +331,11 @@ func TestTheListCoversEverythingTheDeployCanReach(t *testing.T) {
 		"scripts/maintain-longhorn-clients/main.go",
 		"internal/longhornmigration/pools.go",
 		"scripts/publish-workflow-approved-revisions.tsv",
+		// A module another module imports, and what the cluster configuration names.
+		"scripts/wedding-backup-io.mjs",
+		"scripts/wedding-backup-projection.mjs",
+		"scripts/tests/production-authorization-rules.yaml",
+		"schemas/kubescape.io/rules_v1.json",
 		"ksail.prod.yaml",
 		"go.mod",
 		listPath,

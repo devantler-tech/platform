@@ -419,6 +419,16 @@ func TestRestrictRefusesAListItCannotHonour(t *testing.T) {
 			t.Fatal("a missing list must be refused")
 		}
 	})
+	// Git leaves a file with local changes in place when it narrows the working tree,
+	// and still reports success.
+	t.Run("an unlisted file with local changes", func(t *testing.T) {
+		fixture, _ := baseline(t)
+		fixture.write("scripts/lint.sh", "echo changed locally\n")
+		err := restrict(fixture.dir, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "scripts/lint.sh is not a production input") {
+			t.Fatalf("want the file that stayed behind named, got %v", err)
+		}
+	})
 	t.Run("a listed file deleted from the working tree", func(t *testing.T) {
 		fixture, _ := baseline(t)
 		fixture.remove("ksail.prod.yaml")
