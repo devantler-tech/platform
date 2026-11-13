@@ -1,23 +1,41 @@
 name: Replace OpenBao Server
 
-# Read-only first slice of the single-server replacement procedure (#4970,
-# #5836): it judges whether replacing the named server is safe right now and
-# changes nothing. Only `preflight` exists until the replacement step lands.
+# The single-server OpenBao replacement procedure (#4970). `preflight` judges
+# whether replacing the named server is safe right now and changes nothing.
+# `replace` takes the same judgement, replaces that one server's pod only if
+# it passed, waits until the judges prove every server healthy again, and then
+# proves External Secrets can read from OpenBao. Runbook:
+# docs/operations/openbao-server-replacement.md.
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Judge whether the named server can be replaced now, without changing anything
+        description: preflight judges and changes nothing; replace also replaces the named server's pod
         required: true
         type: choice
         default: preflight
-        options: [preflight]
+        options: [preflight, replace]
       server:
-        description: The one server a later replacement would take out
+        description: The one server to judge for replacement, and to replace in replace mode
         required: true
         type: choice
         options: [openbao-0, openbao-1, openbao-2]
+      previous_version:
+        description: During a release upgrade, the release being replaced (e.g. 2.6.3); empty when every server should already run the reviewed release
+        required: false
+        type: string
+        default: ""
+      replaced:
+        description: During a release upgrade, the comma-separated servers already replaced onto the reviewed release
+        required: false
+        type: string
+        default: ""
+      confirm:
+        description: Replace mode only — type REPLACE followed by the server name, e.g. "REPLACE openbao-2"
+        required: false
+        type: string
+        default: ""
 
 permissions: {}
 
@@ -28,11 +46,11 @@ concurrency:
 
 jobs:
   preflight:
-    name: Judge OpenBao health and quorum before a replacement
+    name: Judge OpenBao health and quorum, and replace one server when asked
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     # Keep prod secrets, reviewers, wait timers and branch policy without
-    # recording a deployment: this run deploys nothing.
+    # recording a deployment: this run deploys no artifact.
     environment:
       name: prod
       deployment: false
@@ -42,14 +60,30 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPLACEMENT_MODE: ${{ inputs.mode }}
       REPLACEMENT_SERVER: ${{ inputs.server }}
+      PREVIOUS_VERSION: ${{ inputs.previous_version }}
+      ALREADY_REPLACED: ${{ inputs.replaced }}
+      REPLACEMENT_CONFIRM: ${{ inputs.confirm }}
     steps:
-      - name: Require a first main dispatch before credentials
+      - name: Require a first main dispatch and well-formed inputs before credentials
         shell: bash
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_RUN_ATTEMPT" == 1 ]]
-          [[ "$REPLACEMENT_MODE" == preflight ]]
+          [[ "$REPLACEMENT_MODE" == preflight || "$REPLACEMENT_MODE" == replace ]]
           [[ "$REPLACEMENT_SERVER" =~ ^openbao-[0-9]$ ]]
+          if [[ "$REPLACEMENT_MODE" == replace ]]; then
+            [[ "$REPLACEMENT_CONFIRM" == "REPLACE $REPLACEMENT_SERVER" ]]
+          else
+            [[ -z "$REPLACEMENT_CONFIRM" ]]
+          fi
+          if [[ -n "$PREVIOUS_VERSION" ]]; then
+            [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          fi
+          if [[ -n "$ALREADY_REPLACED" ]]; then
+            [[ -n "$PREVIOUS_VERSION" ]]
+            [[ "$ALREADY_REPLACED" =~ ^openbao-[0-9](,openbao-[0-9])*$ ]]
+            [[ ",$ALREADY_REPLACED," != *",$REPLACEMENT_SERVER,"* ]]
+          fi
 
       - name: Checkout the exact reviewed dispatch commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,8 +100,8 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Require the collector and both judges to pass offline
-        run: go test -race -count=1 ./scripts/capture-openbao-replacement ./scripts/judge-openbao-health ./scripts/judge-openbao-quorum ./internal/strictjson
+      - name: Require the collector, both judges and the replacement step to pass offline
+        run: go test -race -count=1 ./scripts/capture-openbao-replacement ./scripts/judge-openbao-health ./scripts/judge-openbao-quorum ./scripts/replace-openbao-pod ./internal/strictjson
 
       # The judges' expectations come from the reviewed render, never from what
       # the cluster reports: the prod replica count and the chart's release.
@@ -79,6 +113,9 @@ jobs:
           [[ "$replicas" =~ ^[3-9]$ ]]
           servers="$(seq -f 'openbao-%g' 0 $((replicas - 1)) | paste -sd, -)"
           [[ ",$servers," == *",$REPLACEMENT_SERVER,"* ]]
+          for done_server in ${ALREADY_REPLACED//,/ }; do
+            [[ ",$servers," == *",$done_server,"* ]]
+          done
           release=k8s/bases/infrastructure/controllers/openbao/helm-release.yaml
           repository=k8s/bases/infrastructure/controllers/openbao/helm-repository.yaml
           chart="$(yq -er '.spec.chart.spec.version' "$release")"
@@ -87,20 +124,22 @@ jobs:
           version="$(helm show chart openbao --repo "$url" --version "$chart" | yq -er '.appVersion')"
           version="${version#v}"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$version" != "$PREVIOUS_VERSION" ]]
           {
             echo "OPENBAO_SERVERS=$servers"
+            echo "OPENBAO_CHART=$chart"
             echo "OPENBAO_VERSION=$version"
           } >> "$GITHUB_ENV"
           echo "Expecting $replicas servers on release $version"
 
       # Built before the capture so compile time cannot age the evidence the
       # judges measure against --max-age.
-      - name: Build the collector and judges
+      - name: Build the collector, judges and replacement step
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin"
-          for tool in capture-openbao-replacement judge-openbao-health judge-openbao-quorum; do
+          for tool in capture-openbao-replacement judge-openbao-health judge-openbao-quorum replace-openbao-pod; do
             go build -o "$RUNNER_TEMP/bin/$tool" "./scripts/$tool"
           done
 
@@ -130,24 +169,59 @@ jobs:
           set -euo pipefail
           private="$(mktemp -d)"
           trap 'rm -rf "$private"' EXIT
-          bin="$RUNNER_TEMP/bin"
-          "$bin/capture-openbao-replacement" --expect-servers "$OPENBAO_SERVERS" --out "$private"
+          source scripts/judge-openbao-replacement.lib.sh
           status=0
-          health=0
-          "$bin/judge-openbao-health" --input "$private/health.json" \
-            --expect-servers "$OPENBAO_SERVERS" --expect-version "$OPENBAO_VERSION" --max-age 5m || health=$?
-          quorum=0
-          "$bin/judge-openbao-quorum" --input "$private/quorum.json" \
-            --expect-servers "$OPENBAO_SERVERS" --replace "$REPLACEMENT_SERVER" --max-age 5m || quorum=$?
-          # UNKNOWN (2) outranks HOLD (1), which outranks PROVEN (0).
-          for code in "$health" "$quorum"; do
-            if (( code > status )); then status=$code; fi
-          done
-          case "$status" in
-            0) verdict=PROVEN ;;
-            1) verdict=HOLD ;;
-            *) verdict=UNKNOWN ;;
-          esac
+          judge_openbao_replacement "$private" "$ALREADY_REPLACED" || status=$?
+          verdict="$(openbao_verdict "$status")"
           echo "OPENBAO_REPLACEMENT_PREFLIGHT=$verdict server=$REPLACEMENT_SERVER"
           echo "OpenBao replacement preflight for \`$REPLACEMENT_SERVER\`: **$verdict**" >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
+
+      # The only step that changes production. It replaces the pod only while
+      # it still has the UID the PROVEN capture of this step saw, then waits for
+      # a fresh PROVEN verdict on every server, with the replaced server
+      # required on the reviewed release during an upgrade, before it asks
+      # External Secrets to prove secrets are delivered again.
+      - name: Replace the named server and prove the service recovered
+        if: inputs.mode == 'replace'
+        shell: bash
+        run: |
+          set -euo pipefail
+          private="$(mktemp -d)"
+          trap 'rm -rf "$private"' EXIT
+          source scripts/judge-openbao-replacement.lib.sh
+          bin="$RUNNER_TEMP/bin"
+          status=0
+          judge_openbao_replacement "$private" "$ALREADY_REPLACED" || status=$?
+          if (( status != 0 )); then
+            echo "OPENBAO_REPLACEMENT=NOT_STARTED server=$REPLACEMENT_SERVER verdict=$(openbao_verdict "$status")"
+            exit "$status"
+          fi
+          judged_uid="$(openbao_pod_uid "$private" "$REPLACEMENT_SERVER")"
+          "$bin/replace-openbao-pod" delete --server "$REPLACEMENT_SERVER" --expect-uid "$judged_uid" \
+            --expect-chart "$OPENBAO_CHART" --expect-release "$OPENBAO_VERSION" --timeout 10m
+
+          after="$REPLACEMENT_SERVER"
+          if [[ -n "$ALREADY_REPLACED" ]]; then after="$ALREADY_REPLACED,$REPLACEMENT_SERVER"; fi
+          deadline=$((SECONDS + 15 * 60))
+          status=2
+          while (( SECONDS < deadline )); do
+            sleep 20
+            status=0
+            judge_openbao_replacement "$private" "$after" || status=$?
+            # Only a capture of the successor counts: a verdict about the old
+            # pod, or one whose pod cannot be read, says nothing about it.
+            uid_now=""
+            if (( status == 0 )); then uid_now="$(openbao_pod_uid "$private" "$REPLACEMENT_SERVER")" || uid_now=""; fi
+            if (( status == 0 )) && [[ -z "$uid_now" || "$uid_now" == "$judged_uid" ]]; then status=2; fi
+            if (( status == 0 )); then break; fi
+          done
+          if (( status != 0 )); then
+            echo "OPENBAO_REPLACEMENT=NOT_RECOVERED server=$REPLACEMENT_SERVER verdict=$(openbao_verdict "$status")"
+            echo "OpenBao replacement of \`$REPLACEMENT_SERVER\`: **not recovered** — follow the recovery path in docs/operations/openbao-server-replacement.md" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          "$bin/replace-openbao-pod" deliver --timeout 5m
+          echo "OPENBAO_REPLACEMENT=REPLACED server=$REPLACEMENT_SERVER"
+          echo "OpenBao replacement of \`$REPLACEMENT_SERVER\`: **replaced**, every server PROVEN and secret delivery confirmed" >> "$GITHUB_STEP_SUMMARY"
