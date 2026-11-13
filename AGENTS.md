@@ -607,7 +607,7 @@ Repository maintenance follows the **Agentic Engineer** contract in the [devantl
 gh api graphql -f query='{repository(owner:"devantler-tech",name:"platform"){pullRequest(number:<n>){timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT],last:10){nodes{... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}'
 ```
 
-`failed_checks` means a required check failed, so diagnose the `merge_group` run as above. `checks_timed_out` means no result arrived within the queue's check-response timeout. That timeout is 90 minutes and is managed in `devantler-tech/.github` (`deploy/repository-rulesets/require-merge-queue-on-platform.yaml`). For a timeout, look for what kept the run waiting, such as the `prod-deploy` concurrency lock or a runner queue, rather than a deploy fault. `manual` means someone removed the PR from the queue, and `merged` is a normal merge.
+`failed_checks` means a required check failed, so diagnose the `merge_group` run as above. `checks_timed_out` means no result arrived within the queue's check-response timeout. That timeout is 120 minutes and is managed in `devantler-tech/.github` (`deploy/repository-rulesets/require-merge-queue-on-platform.yaml`). For a timeout, look for what kept the run waiting, such as the `prod-deploy` concurrency lock or a runner queue, rather than a deploy fault. The [delivery-lane decision](docs/adr/delivery-lane-throughput.md) records how the queue spends its time and what a runner queue does to it. `manual` means someone removed the PR from the queue, and `merged` is a normal merge.
 
 **Green checks with `mergeStateStatus: BLOCKED` do not identify the blocker.** Rule out unresolved
 threads, approvals and other branch rules first. A missing current-head run of an effective required
