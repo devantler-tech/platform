@@ -31,10 +31,10 @@ spec:
               type: RuntimeDefault
           containers:
             - name: package-runtime
-              # IAM is global, but the provider validates credentials through
-              # STS before each reconciliation. Pin that call to the planned
-              # EKS region so the runtime and its exact-host egress policy stay
-              # aligned instead of falling back to us-east-1.
+              # The provider validates credentials through STS before each
+              # reconciliation. Pin that call to the account's region, where
+              # the SES resources also live, so the runtime and its exact-host
+              # egress policy stay aligned instead of falling back to us-east-1.
               env:
                 - name: AWS_REGION
                   value: eu-central-1
@@ -43,12 +43,10 @@ spec:
               # Kubescape C-0017 (immutable container filesystem) + the hardening
               # set Kyverno injects at admission (Kubescape scans this stored spec,
               # not the live pod). The upjet runtime writes Terraform workspaces to
-              # /tmp/<uuid>; this provider has no managed resources today so a
-              # read-only root does not break it yet, but the writable /tmp emptyDir
-              # is added defensively (same code path as provider-upjet-unifi, which
-              # is actively failing on a read-only /tmp) so a future managed resource
-              # cannot silently fail to reconcile. runAsUser/runAsGroup left to
-              # Crossplane's package-manager default (2000).
+              # /tmp/<uuid>, so a writable /tmp emptyDir keeps the read-only root
+              # from breaking reconciliation of the SES resources.
+              # runAsUser/runAsGroup left to Crossplane's package-manager default
+              # (2000).
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
