@@ -26,7 +26,7 @@ judge_openbao_replacement() {
   rm -f "$private/health.json" "$private/quorum.json"
   "$bin/capture-openbao-replacement" --expect-servers "$OPENBAO_SERVERS" --out "$private" || return 2
   "$bin/judge-openbao-health" --input "$private/health.json" \
-    --expect-servers "$OPENBAO_SERVERS" --expect-version "$OPENBAO_VERSION" "${rolling[@]}" --max-age 5m || health=$?
+    --expect-servers "$OPENBAO_SERVERS" --expect-version "$OPENBAO_VERSION" ${rolling[@]+"${rolling[@]}"} --max-age 5m || health=$?
   "$bin/judge-openbao-quorum" --input "$private/quorum.json" \
     --expect-servers "$OPENBAO_SERVERS" --replace "$REPLACEMENT_SERVER" --max-age 5m || quorum=$?
   for code in "$health" "$quorum"; do

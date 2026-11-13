@@ -3,16 +3,17 @@
 // Replace OpenBao Server workflow runs it only after both judges returned
 // PROVEN for the named server.
 //
-//	replace-openbao-pod delete --server openbao-2 --expect-uid <uid> --timeout 10m
+//	replace-openbao-pod delete --server openbao-2 --expect-uid <uid> --expect-release 2.7.2 --timeout 10m
 //	replace-openbao-pod deliver --timeout 5m
 //
 // delete removes the named server's pod only while it still has the UID the
 // judged capture saw: the API server enforces that precondition, so a pod that
 // was replaced after the capture is never deleted on another pod's evidence.
 // The StatefulSet updates OnDelete, so deleting the pod is what starts the
-// server on the reviewed release. The command then waits until a successor
-// with a different UID exists. Whether the successor is healthy is the judges'
-// call, not this command's.
+// server from the live template; delete first proves that template runs the
+// reviewed release, and that every claim the pod mounts is Bound. It then waits
+// until a successor with a different UID mounts the same claims, unchanged.
+// Whether the successor is healthy is the judges' call, not this command's.
 //
 // deliver asks External Secrets to re-read one canary secret from OpenBao and
 // waits until that ExternalSecret reports a new, successful sync, which proves
@@ -20,9 +21,10 @@
 //
 // It prints one closed status line and never a UID, secret or response body.
 //
-// Exit codes: 0 REPLACED or CONFIRMED, 1 REFUSED (the pod changed since the
-// capture, so nothing was deleted), 2 UNVERIFIED (a read failed, the wait ran out, or the arguments
-// are invalid).
+// Exit codes: 0 REPLACED or CONFIRMED, 1 REFUSED (nothing was deleted: the pod
+// changed since the capture, the live template is not on the reviewed release,
+// or its storage is not Bound), 2 UNVERIFIED (a read failed, the wait ran out,
+// or the arguments are invalid).
 package main
 
 import (
@@ -47,6 +49,8 @@ const (
 	// canary is an OpenBao-backed ExternalSecret in the openbao namespace that
 	// nothing reads at startup, so a forced re-sync of it changes no workload.
 	canary = "vault-snapshot-r2"
+	// statefulSet is the OpenBao StatefulSet, and the name of its server container.
+	statefulSet = "openbao"
 	// pollInterval spaces the reads of a wait; the wait itself is bounded by
 	// --timeout.
 	pollInterval = 5 * time.Second
@@ -55,8 +59,18 @@ const (
 var (
 	serverName = regexp.MustCompile(`^openbao-[0-9]{1,2}$`)
 	// podUID is the shape the API server gives every object UID.
-	podUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	podUID  = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	version = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 )
+
+type podInfo struct {
+	uid    string
+	claims []string
+}
+
+type claimInfo struct {
+	uid, phase string
+}
 
 // syncState is the part of the canary ExternalSecret the delivery check reads.
 type syncState struct {
@@ -67,8 +81,14 @@ type syncState struct {
 // cluster is everything the command asks of production, so the regressions
 // can stand in for kubectl.
 type cluster interface {
-	// uid returns the pod's UID, or "" when the pod does not exist.
-	uid(ctx context.Context, name string) (string, error)
+	// pod returns the pod's UID and the claims it mounts; a zero podInfo when
+	// the pod does not exist.
+	pod(ctx context.Context, name string) (podInfo, error)
+	// claim returns a PersistentVolumeClaim's UID and phase.
+	claim(ctx context.Context, name string) (claimInfo, error)
+	// templateRelease returns the release the StatefulSet's live pod template
+	// runs, from its openbao container image tag.
+	templateRelease(ctx context.Context) (string, error)
 	// deleteIfUID deletes the pod only while it still has uid.
 	deleteIfUID(ctx context.Context, name, uid string) error
 	canaryState(ctx context.Context) (syncState, error)
@@ -103,16 +123,44 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Duration) error, server, expect string) (int, string) {
+// release normalises an image tag or a chart appVersion to a bare version.
+func release(tag string) string { return strings.TrimPrefix(tag, "v") }
+
+func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Duration) error, server, expect, want string) (int, string) {
 	line := func(verdict, detail string) string {
 		return fmt.Sprintf("OPENBAO_POD_REPLACEMENT=%s server=%s%s", verdict, server, detail)
 	}
-	current, err := k.uid(ctx, server)
+	current, err := k.pod(ctx, server)
 	if err != nil {
 		return 2, line("UNVERIFIED", " stage=pod-identity")
 	}
-	if current != expect {
+	if current.uid != expect {
 		return 1, line("REFUSED", " reason=pod-changed-since-capture")
+	}
+	// The pod restarts from the live template, which reaches the reviewed
+	// release only once its chart update has deployed.
+	tag, err := k.templateRelease(ctx)
+	if err != nil {
+		return 2, line("UNVERIFIED", " stage=deployment-binding")
+	}
+	if release(tag) != want {
+		return 1, line("REFUSED", " reason=template-not-on-reviewed-release")
+	}
+	// Deleting the pod keeps its claims; record them so the successor can be
+	// shown to mount the same ones.
+	if len(current.claims) == 0 {
+		return 1, line("REFUSED", " reason=no-retained-storage")
+	}
+	retained := make(map[string]string, len(current.claims))
+	for _, name := range current.claims {
+		c, err := k.claim(ctx, name)
+		if err != nil {
+			return 2, line("UNVERIFIED", " stage=storage")
+		}
+		if c.uid == "" || c.phase != "Bound" {
+			return 1, line("REFUSED", " reason=storage-not-bound")
+		}
+		retained[name] = c.uid
 	}
 	switch err := k.deleteIfUID(ctx, server, expect); {
 	case errors.Is(err, errPreconditionFailed):
@@ -120,14 +168,30 @@ func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Du
 	case err != nil:
 		return 2, line("UNVERIFIED", " stage=delete")
 	}
+	// A read can fail while the pod is being replaced; keep waiting and let
+	// the deadline decide.
 	err = wait(ctx, sleep, func() (bool, error) {
-		next, err := k.uid(ctx, server)
-		// A read can fail while the pod is being replaced; keep waiting and
-		// let the deadline decide.
-		return err == nil && next != "" && next != expect, nil
+		next, err := k.pod(ctx, server)
+		return err == nil && next.uid != "" && next.uid != expect, nil
 	})
 	if err != nil {
 		return 2, line("UNVERIFIED", " stage=successor")
+	}
+	err = wait(ctx, sleep, func() (bool, error) {
+		next, err := k.pod(ctx, server)
+		if err != nil || next.uid == expect || len(next.claims) != len(retained) {
+			return false, nil
+		}
+		for _, name := range next.claims {
+			c, err := k.claim(ctx, name)
+			if err != nil || retained[name] == "" || c.uid != retained[name] || c.phase != "Bound" {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	if err != nil {
+		return 2, line("UNVERIFIED", " stage=storage-retained")
 	}
 	return 0, line("REPLACED", "")
 }
@@ -200,15 +264,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, k cluster
 	case "delete":
 		server := set.String("server", "", "the one server whose pod to replace")
 		expect := set.String("expect-uid", "", "the pod UID the judged capture saw")
+		want := set.String("expect-release", "", "the release the reviewed chart pins")
 		if err := parse(set, args[1:]); err != nil {
 			return invalid(err)
 		}
-		if !serverName.MatchString(*server) || !podUID.MatchString(*expect) || *timeout <= 0 || *timeout > 30*time.Minute {
-			return invalid(errors.New("--server, --expect-uid and a --timeout of at most 30m are required"))
+		if !serverName.MatchString(*server) || !podUID.MatchString(*expect) || !version.MatchString(*want) || *timeout <= 0 || *timeout > 30*time.Minute {
+			return invalid(errors.New("--server, --expect-uid, --expect-release and a --timeout of at most 30m are required"))
 		}
 		ctx, cancel := context.WithTimeout(ctx, *timeout)
 		defer cancel()
-		code, line = replace(ctx, k, sleep, *server, *expect)
+		code, line = replace(ctx, k, sleep, *server, *expect, *want)
 	case "deliver":
 		if err := parse(set, args[1:]); err != nil {
 			return invalid(err)
@@ -246,9 +311,106 @@ func (k kubectl) output(ctx context.Context, stdin []byte, rest ...string) ([]by
 	return out.Bytes(), errOut.Bytes(), err
 }
 
-func (k kubectl) uid(ctx context.Context, name string) (string, error) {
-	b, _, err := k.output(ctx, nil, "get", "pod", name, "--ignore-not-found", "--output=jsonpath={.metadata.uid}")
-	return strings.TrimSpace(string(b)), err
+func (k kubectl) pod(ctx context.Context, name string) (podInfo, error) {
+	b, _, err := k.output(ctx, nil, "get", "pod", name, "--ignore-not-found", "--output=json")
+	if err != nil || len(bytes.TrimSpace(b)) == 0 {
+		return podInfo{}, err
+	}
+	return parsePod(b)
+}
+
+func parsePod(b []byte) (podInfo, error) {
+	var p struct {
+		Metadata struct {
+			UID string `json:"uid"`
+		} `json:"metadata"`
+		Spec struct {
+			Volumes []struct {
+				PersistentVolumeClaim *struct {
+					ClaimName string `json:"claimName"`
+				} `json:"persistentVolumeClaim"`
+			} `json:"volumes"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(b, &p); err != nil {
+		return podInfo{}, err
+	}
+	if p.Metadata.UID == "" {
+		return podInfo{}, errors.New("pod without a UID")
+	}
+	info := podInfo{uid: p.Metadata.UID}
+	for _, v := range p.Spec.Volumes {
+		if v.PersistentVolumeClaim != nil {
+			if v.PersistentVolumeClaim.ClaimName == "" {
+				return podInfo{}, errors.New("claim volume without a claim name")
+			}
+			info.claims = append(info.claims, v.PersistentVolumeClaim.ClaimName)
+		}
+	}
+	return info, nil
+}
+
+func (k kubectl) claim(ctx context.Context, name string) (claimInfo, error) {
+	b, _, err := k.output(ctx, nil, "get", "persistentvolumeclaim", name, "--output=json")
+	if err != nil {
+		return claimInfo{}, err
+	}
+	var c struct {
+		Metadata struct {
+			UID string `json:"uid"`
+		} `json:"metadata"`
+		Status struct {
+			Phase string `json:"phase"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		return claimInfo{}, err
+	}
+	return claimInfo{uid: c.Metadata.UID, phase: c.Status.Phase}, nil
+}
+
+func (k kubectl) templateRelease(ctx context.Context) (string, error) {
+	b, _, err := k.output(ctx, nil, "get", "statefulset", statefulSet, "--output=json")
+	if err != nil {
+		return "", err
+	}
+	return parseTemplateRelease(b)
+}
+
+// parseTemplateRelease reads the tag of the one container named openbao. An
+// image pinned only by digest, or without a tag, is not evidence of a release.
+func parseTemplateRelease(b []byte) (string, error) {
+	var s struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Name  string `json:"name"`
+						Image string `json:"image"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return "", err
+	}
+	image := ""
+	for _, c := range s.Spec.Template.Spec.Containers {
+		if c.Name == statefulSet {
+			if image != "" {
+				return "", errors.New("more than one openbao container")
+			}
+			image = c.Image
+		}
+	}
+	image, _, _ = strings.Cut(image, "@")
+	slash := strings.LastIndex(image, "/")
+	colon := strings.LastIndex(image, ":")
+	if colon <= slash || colon == len(image)-1 {
+		return "", errors.New("openbao image has no tag")
+	}
+	return image[colon+1:], nil
 }
 
 // deleteIfUID sends the delete with a UID precondition. kubectl has no flag

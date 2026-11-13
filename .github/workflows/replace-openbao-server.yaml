@@ -197,7 +197,7 @@ jobs:
             exit "$status"
           fi
           judged_uid="$(openbao_pod_uid "$private" "$REPLACEMENT_SERVER")"
-          "$bin/replace-openbao-pod" delete --server "$REPLACEMENT_SERVER" --expect-uid "$judged_uid" --timeout 10m
+          "$bin/replace-openbao-pod" delete --server "$REPLACEMENT_SERVER" --expect-uid "$judged_uid" --expect-release "$OPENBAO_VERSION" --timeout 10m
 
           after="$REPLACEMENT_SERVER"
           if [[ -n "$ALREADY_REPLACED" ]]; then after="$ALREADY_REPLACED,$REPLACEMENT_SERVER"; fi

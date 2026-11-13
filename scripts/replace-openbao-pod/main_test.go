@@ -17,30 +17,62 @@ const (
 	newUID = "99999999-8888-4777-8666-555555555555"
 )
 
-// fake stands in for kubectl. uids is the sequence of UIDs successive reads
-// return; the last one repeats.
+// fake stands in for kubectl. uids is the sequence of pod UIDs successive
+// reads return; the last one repeats. Every pod mounts mounts; claims holds
+// each claim before the delete and claimsAfter, when set, after it.
 type fake struct {
-	uids       []string
-	uidErr     error
-	deleted    []string
-	deleteErr  error
-	states     []syncState
-	stateErr   error
-	syncErr    error
-	syncMarker string
-	reads      int
+	uids        []string
+	uidErr      error
+	mounts      []string
+	claims      map[string]claimInfo
+	claimsAfter map[string]claimInfo
+	claimErr    error
+	release     string
+	releaseErr  error
+	deleted     []string
+	deleteErr   error
+	states      []syncState
+	stateErr    error
+	syncErr     error
+	syncMarker  string
+	reads       int
 }
 
-func (f *fake) uid(context.Context, string) (string, error) {
+// healthy is a fake whose pod passes every pre-delete check.
+func healthy(uids ...string) *fake {
+	return &fake{
+		uids:    uids,
+		mounts:  []string{"data-openbao-2", "audit-openbao-2"},
+		claims:  map[string]claimInfo{"data-openbao-2": {"c-data", "Bound"}, "audit-openbao-2": {"c-audit", "Bound"}},
+		release: "v2.7.2",
+	}
+}
+
+func (f *fake) pod(context.Context, string) (podInfo, error) {
 	if f.uidErr != nil {
-		return "", f.uidErr
+		return podInfo{}, f.uidErr
 	}
 	u := f.uids[0]
 	if len(f.uids) > 1 {
 		f.uids = f.uids[1:]
 	}
-	return u, nil
+	if u == "" {
+		return podInfo{}, nil
+	}
+	return podInfo{uid: u, claims: f.mounts}, nil
 }
+
+func (f *fake) claim(_ context.Context, name string) (claimInfo, error) {
+	if f.claimErr != nil {
+		return claimInfo{}, f.claimErr
+	}
+	if f.deleted != nil && f.claimsAfter != nil {
+		return f.claimsAfter[name], nil
+	}
+	return f.claims[name], nil
+}
+
+func (f *fake) templateRelease(context.Context) (string, error) { return f.release, f.releaseErr }
 
 func (f *fake) deleteIfUID(_ context.Context, name, uid string) error {
 	if f.deleteErr != nil {
@@ -90,7 +122,15 @@ func runWith(t *testing.T, f *fake, sleep func(context.Context, time.Duration) e
 }
 
 func TestDelete(t *testing.T) {
-	deleteArgs := []string{"delete", "--server", "openbao-2", "--expect-uid", oldUID, "--timeout", "10m"}
+	deleteArgs := []string{"delete", "--server", "openbao-2", "--expect-uid", oldUID, "--expect-release", "2.7.2", "--timeout", "10m"}
+	with := func(f *fake, change func(*fake)) *fake { change(f); return f }
+	deleted := []string{"openbao-2@" + oldUID}
+	refused := func(reason string) string {
+		return "OPENBAO_POD_REPLACEMENT=REFUSED server=openbao-2 reason=" + reason
+	}
+	unverified := func(stage string) string {
+		return "OPENBAO_POD_REPLACEMENT=UNVERIFIED server=openbao-2 stage=" + stage
+	}
 	cases := []struct {
 		name    string
 		f       *fake
@@ -99,20 +139,28 @@ func TestDelete(t *testing.T) {
 		line    string
 		deleted []string
 	}{
-		{"replaced once a successor appears", &fake{uids: []string{oldUID, oldUID, "", newUID}}, noSleep, 0,
-			"OPENBAO_POD_REPLACEMENT=REPLACED server=openbao-2", []string{"openbao-2@" + oldUID}},
-		{"refuses a pod replaced since the capture", &fake{uids: []string{newUID}}, noSleep, 1,
-			"OPENBAO_POD_REPLACEMENT=REFUSED server=openbao-2 reason=pod-changed-since-capture", nil},
-		{"refuses a pod that is gone", &fake{uids: []string{""}}, noSleep, 1,
-			"OPENBAO_POD_REPLACEMENT=REFUSED server=openbao-2 reason=pod-changed-since-capture", nil},
-		{"refuses when the API server's precondition fails", &fake{uids: []string{oldUID}, deleteErr: errPreconditionFailed}, noSleep, 1,
-			"OPENBAO_POD_REPLACEMENT=REFUSED server=openbao-2 reason=pod-changed-since-capture", nil},
-		{"an unreadable pod is unverified", &fake{uidErr: errors.New("forbidden")}, noSleep, 2,
-			"OPENBAO_POD_REPLACEMENT=UNVERIFIED server=openbao-2 stage=pod-identity", nil},
-		{"a failed delete is unverified", &fake{uids: []string{oldUID}, deleteErr: errors.New("timeout")}, noSleep, 2,
-			"OPENBAO_POD_REPLACEMENT=UNVERIFIED server=openbao-2 stage=delete", nil},
-		{"no successor before the deadline is unverified", &fake{uids: []string{oldUID, oldUID, ""}}, limitedSleep(3), 2,
-			"OPENBAO_POD_REPLACEMENT=UNVERIFIED server=openbao-2 stage=successor", []string{"openbao-2@" + oldUID}},
+		{"replaced once a successor mounts the same storage", healthy(oldUID, oldUID, "", newUID), noSleep, 0,
+			"OPENBAO_POD_REPLACEMENT=REPLACED server=openbao-2", deleted},
+		{"an unprefixed tag is the same release", with(healthy(oldUID, newUID), func(f *fake) { f.release = "2.7.2" }), noSleep, 0,
+			"OPENBAO_POD_REPLACEMENT=REPLACED server=openbao-2", deleted},
+		{"refuses a pod replaced since the capture", healthy(newUID), noSleep, 1, refused("pod-changed-since-capture"), nil},
+		{"refuses a pod that is gone", healthy(""), noSleep, 1, refused("pod-changed-since-capture"), nil},
+		{"refuses when the API server's precondition fails", with(healthy(oldUID), func(f *fake) { f.deleteErr = errPreconditionFailed }), noSleep, 1,
+			refused("pod-changed-since-capture"), nil},
+		{"refuses a template still on the old release", with(healthy(oldUID), func(f *fake) { f.release = "v2.6.3" }), noSleep, 1,
+			refused("template-not-on-reviewed-release"), nil},
+		{"refuses a pod with no claims", with(healthy(oldUID), func(f *fake) { f.mounts = nil }), noSleep, 1, refused("no-retained-storage"), nil},
+		{"refuses a claim that is not Bound", with(healthy(oldUID), func(f *fake) { f.claims["audit-openbao-2"] = claimInfo{"c-audit", "Lost"} }), noSleep, 1,
+			refused("storage-not-bound"), nil},
+		{"refuses a missing claim", with(healthy(oldUID), func(f *fake) { delete(f.claims, "data-openbao-2") }), noSleep, 1, refused("storage-not-bound"), nil},
+		{"an unreadable pod is unverified", with(healthy(oldUID), func(f *fake) { f.uidErr = errors.New("forbidden") }), noSleep, 2, unverified("pod-identity"), nil},
+		{"an unreadable template is unverified", with(healthy(oldUID), func(f *fake) { f.releaseErr = errors.New("forbidden") }), noSleep, 2, unverified("deployment-binding"), nil},
+		{"an unreadable claim is unverified", with(healthy(oldUID), func(f *fake) { f.claimErr = errors.New("forbidden") }), noSleep, 2, unverified("storage"), nil},
+		{"a failed delete is unverified", with(healthy(oldUID), func(f *fake) { f.deleteErr = errors.New("timeout") }), noSleep, 2, unverified("delete"), nil},
+		{"no successor before the deadline is unverified", healthy(oldUID, oldUID, ""), limitedSleep(3), 2, unverified("successor"), deleted},
+		{"a successor on a new claim is unverified", with(healthy(oldUID, newUID), func(f *fake) {
+			f.claimsAfter = map[string]claimInfo{"data-openbao-2": {"c-new", "Bound"}, "audit-openbao-2": {"c-audit", "Bound"}}
+		}), limitedSleep(3), 2, unverified("storage-retained"), deleted},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -166,6 +214,7 @@ func TestInvalidArgumentsChangeNothing(t *testing.T) {
 		{"delete", "--server", "vault-0", "--expect-uid", oldUID, "--timeout", "10m"},
 		{"delete", "--server", "openbao-2", "--expect-uid", "uid-2", "--timeout", "10m"},
 		{"delete", "--server", "openbao-2", "--expect-uid", oldUID},
+		{"delete", "--server", "openbao-2", "--expect-uid", oldUID, "--expect-release", "v2.7.2", "--timeout", "10m"},
 		{"delete", "--server", "openbao-2", "--expect-uid", oldUID, "--timeout", "2h"},
 		{"delete", "--server", "openbao-2", "--server", "openbao-1", "--expect-uid", oldUID, "--timeout", "10m"},
 		{"delete", "--server", "openbao-2", "--expect-uid", oldUID, "--timeout", "10m", "extra"},
@@ -208,7 +257,7 @@ func TestKubectlVerbs(t *testing.T) {
 	for _, c := range calls {
 		seen[c[1]]++
 	}
-	if !reflect.DeepEqual(seen, map[string]int{"get": 2, "delete": 1, "annotate": 1}) {
+	if !reflect.DeepEqual(seen, map[string]int{"get": 4, "delete": 1, "annotate": 1}) {
 		t.Fatalf("kubectl verbs changed: %v", seen)
 	}
 	src := string(b)
@@ -237,6 +286,42 @@ func TestPreconditionRefusal(t *testing.T) {
 	for _, stderr := range []string{`Error from server (NotFound): pods "openbao-2" not found`, `Unable to connect to the server: i/o timeout`, ``} {
 		if preconditionRefused([]byte(stderr)) {
 			t.Fatalf("taken for a refusal: %s", stderr)
+		}
+	}
+}
+
+func TestParsePodAndTemplate(t *testing.T) {
+	p, err := parsePod([]byte(`{"metadata":{"uid":"` + oldUID + `"},"spec":{"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"data-openbao-2"}},{"name":"unseal-keys","secret":{"secretName":"openbao-unseal"}},{"name":"audit","persistentVolumeClaim":{"claimName":"audit-openbao-2"}}]}}`))
+	if err != nil || p.uid != oldUID || !reflect.DeepEqual(p.claims, []string{"data-openbao-2", "audit-openbao-2"}) {
+		t.Fatalf("got %+v %v", p, err)
+	}
+	for _, bad := range []string{`not json`, `{"metadata":{}}`, `{"metadata":{"uid":"x"},"spec":{"volumes":[{"persistentVolumeClaim":{}}]}}`} {
+		if _, err := parsePod([]byte(bad)); err == nil {
+			t.Fatalf("accepted %s", bad)
+		}
+	}
+	sts := func(images ...string) []byte {
+		var cs []string
+		for i, image := range images {
+			name := "openbao"
+			if i > 0 && image == "sidecar:1" {
+				name = "sidecar"
+			}
+			cs = append(cs, `{"name":"`+name+`","image":"`+image+`"}`)
+		}
+		return []byte(`{"spec":{"template":{"spec":{"containers":[` + strings.Join(cs, ",") + `]}}}}`)
+	}
+	for image, want := range map[string]string{
+		"quay.io/openbao/openbao:2.7.2":                   "2.7.2",
+		"registry:5000/openbao/openbao:v2.7.2@sha256:abc": "v2.7.2",
+	} {
+		if got, err := parseTemplateRelease(sts(image, "sidecar:1")); err != nil || got != want {
+			t.Fatalf("%s: got %q %v", image, got, err)
+		}
+	}
+	for _, bad := range [][]byte{sts("registry:5000/openbao/openbao"), sts("openbao/openbao@sha256:abc"), sts("openbao:"), sts(), sts("a:1", "b:2"), []byte(`nope`)} {
+		if got, err := parseTemplateRelease(bad); err == nil {
+			t.Fatalf("accepted %s as %q", bad, got)
 		}
 	}
 }
