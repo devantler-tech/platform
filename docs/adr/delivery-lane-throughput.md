@@ -44,7 +44,9 @@ validates while the first deploys.
 All 930 `merge_group` runs of `ci.yaml` created from 2026-10-17 to 2026-11-13, the 800 pull
 requests behind them, and every workflow job in nine organisation repositories from 2026-11-12
 00:00 UTC to 2026-11-13 11:00 UTC. Job start and end times come from GitHub's own check-run
-records. A job's wait for a runner is its start time minus the end of the last job it depends on.
+records. A job's wait is its start time minus the end of the last job it depends on. For a job
+that takes the `prod-deploy` lock, that wait is split into the time another job held the lock and
+the time after it.
 
 ### Where a queued change spends its time
 
@@ -71,19 +73,33 @@ and 286 minutes on 2026-11-13.
 
 ### The binding constraint is runners, not the queue
 
-Between two production deploys the queue starts two jobs: the required check of the change that
-just deployed, and the deploy job of the next change. Each needs a fresh runner.
+Between two production deploys three jobs each need a fresh runner, one after the other:
 
-| | Runner wait, required check | Runner wait, deploy job | One deploy to the next |
-| --- | ---: | ---: | ---: |
-| 2026-11-05 to 2026-11-12 | 0.1 min | 0.1 min | 14.3 min (28 hand-offs) |
-| 2026-11-13 | 8.1 min | 13.7 min | 39.8 min (7 hand-offs) |
+1. The required check of the change that just deployed. It holds no lock and needs no approval, so
+   its wait is runner time only.
+2. `Observe Production Convergence` in `validate-main.yaml`. It starts on every push to `main`,
+   takes the `prod-deploy` lock and keeps it while it waits for a runner. Its work takes 0.6
+   minutes.
+3. The deploy job of the next change. It waits for that lock, and then for a runner of its own.
 
-The runner waits are medians over every run whose deploy job ran; the last column is the median
-over consecutive deploys where the next change had already finished validating.
+| | 2026-11-12 | 2026-11-13 |
+| --- | ---: | ---: |
+| Required check, wait for a runner | 0.1 min | 8.1 min |
+| Observer, wait for a runner while holding the lock | 0.1 min | 10.6 min |
+| Next deploy job, total wait | 0.1 min | 13.7 min |
+| of which behind the observer's lock | 0 min | 9.2 min |
+| of which for its own runner | 0.1 min | 6.7 min |
+| Deploys queued behind the observer | 17 of 38 | 13 of 14 |
+| One deploy to the next | 14.3 min (5 to 12 November) | 39.8 min |
+
+Every figure is a median, so the two parts of the deploy wait do not add up to its total. The
+last row is the median over consecutive deploys where the next change had already finished
+validating: 28 such hand-offs from 2026-11-05 to 2026-11-12, and 7 on 2026-11-13. The `prod`
+environment has a branch rule only, with no reviewers and no wait timer, so no part of these waits
+is an approval.
 
 The deploy itself did not change: 12.6 minutes at the median on 2026-11-13. In one run of 118
-minutes, jobs on the critical path waited 68 minutes for a runner and the deploy took 14.
+minutes, jobs on the critical path waited 68 minutes before they started, and the deploy took 14.
 
 The organisation's plan allows 60 standard hosted jobs at once. From 2026-11-12 17:00 UTC to
 2026-11-13 10:40 UTC the organisation averaged 57.7 running jobs and ran 55 or more for three
@@ -126,8 +142,20 @@ checks all run. A static trace from the deploy action reaches 56 of about 820 no
 files.
 
 The arithmetic on a starved day: at 39.8 minutes per deploy the lane handles 36 deploys a day,
-while a busy day brings 36 to 45, so the queue only grows. Without the deploys that change nothing
-in production a busy day brings 22 to 27, and the queue drains.
+while a busy day brings 36 to 45, so the queue only grows.
+
+| What stops deploying | Share of deploys | Deploys on a busy day |
+| --- | ---: | ---: |
+| Nothing (today) | 0% | 36 to 45 |
+| The first list in #5077, replayed over the 629 merged commits | 12% (74) | 32 to 40 |
+| Every deploy of unchanged manifests that leaves the deploy itself alone | 34% (218) | 24 to 30 |
+
+The first list keeps every workflow file and the Go module files as production inputs, so on its
+own it does not let a starved lane keep up with the busiest days. The last row is the ceiling: the
+244 deploys of unchanged manifests, less the 26 whose change touched a file the deploy action
+references directly, which keep their deploy. Reaching it needs the later narrowing steps.
+Removing the observer's lock from the hand-off is the other half: at about 30 minutes per deploy
+the same lane handles about 47 a day.
 
 ### Half of the evictions were not the change's fault
 
@@ -153,10 +181,12 @@ recoveries held the production lock for 36 of 198 hours, 18%.
    work per pull request in the two repositories that fill the allowance (ksail#7579, .github#475).
 4. **The lane is measured** ([#6206](https://github.com/devantler-tech/platform/issues/6206)), with
    two targets: under 45 minutes at the median from queueing to merging on a day with up to 60
-   merges, and under 5 minutes at the 90th percentile for a runner on the two jobs between deploys.
-5. **The wait between two deploys is shortened only after step 2**
-   ([#6205](https://github.com/devantler-tech/platform/issues/6205)), because it changes the most
-   carefully guarded part of the workflow for a smaller gain.
+   merges, and under 5 minutes at the 90th percentile from one deploy ending to the next starting.
+5. **The wait between two deploys is shortened**
+   ([#6205](https://github.com/devantler-tech/platform/issues/6205)). First the observer stops
+   holding the production lock while a deploy is waiting, which changes no merge proof. The
+   deploy and required-check jobs are changed only after step 2, because they are the most
+   carefully guarded part of the workflow.
 
 ## Alternatives considered
 
@@ -208,6 +238,11 @@ recoveries held the production lock for 36 of 198 hours, 18%.
   `started_at`, the moment a runner picked the job up.
 - Time in queue: the last `AddedToMergeQueueEvent` before `mergedAt`, to `mergedAt`.
 - Backlogged: the next pull request was already queued when the previous one merged.
+- Lock time: the observer holds `prod-deploy` from the creation of its push run until its job
+  completes. A deploy job's lock time is the part of its wait that falls inside such an interval.
+  Of the 66 jobs across the workflows that take this lock, others ran inside 3 of the 52 deploy
+  waits on those two days: one recovery deploy and two short dispatched reads. Their time is not
+  separated out and counts as runner wait here.
 - False eviction: the pull request merged later, and neither its last commit nor a force-push is
   newer than the eviction. The event's `beforeCommit` is not the pull request's head and must not
   be used for this.
