@@ -266,15 +266,31 @@ func TestDecideDeploysWhenEitherListCannotBeUsed(t *testing.T) {
 		})
 	}
 
+	// The head's list covers nothing that changed, not even itself, so only the
+	// missing base list can make this a production change. Reading a missing
+	// list as an empty one would answer false.
 	t.Run("no list at the base", func(t *testing.T) {
 		fixture := newRepo(t)
 		fixture.write("docs/guide.md", "guide\n")
+		fixture.write("k8s/app.yaml", "kind: Deployment\n")
 		base := fixture.commit("before the list existed")
 		fixture.write("docs/guide.md", "changed\n")
-		fixture.write("scripts/production-inputs/notes.md", "x\n")
-		head := fixture.commit("docs")
-		if result := decide(fixture.dir, base, head); !result.production {
-			t.Fatalf("answered %t (%s), want production", result.production, result.reason)
+		fixture.write(listPath, "k8s/\n")
+		head := fixture.commit("docs and a first list")
+		result := decide(fixture.dir, base, head)
+		if !result.production || !strings.Contains(result.reason, "base") || !strings.Contains(result.reason, "has no "+listPath) {
+			t.Fatalf("answered %t (%s), want production because the base has no list", result.production, result.reason)
+		}
+	})
+
+	t.Run("no list at the head", func(t *testing.T) {
+		fixture, base := baseline(t)
+		fixture.remove(listPath)
+		fixture.write("docs/k8s/guide.md", "changed\n")
+		head := fixture.commit("drop the list")
+		result := decide(fixture.dir, base, head)
+		if !result.production || !strings.Contains(result.reason, "head") || !strings.Contains(result.reason, "has no "+listPath) {
+			t.Fatalf("answered %t (%s), want production because the head has no list", result.production, result.reason)
 		}
 	})
 }
@@ -296,16 +312,24 @@ func TestChangedReportsToTheWorkflow(t *testing.T) {
 		if code := run([]string{"changed", "--base", base, "--head", head}, &stdout); code != 0 {
 			t.Fatalf("changed exited %d", code)
 		}
-		if strings.TrimSpace(stdout.String()) != want {
-			t.Fatalf("printed %q, want %q", stdout.String(), want)
+		// The workflow step compares the whole of standard output with one line.
+		if stdout.String() != want+"\n" {
+			t.Fatalf("printed %q, want exactly %q", stdout.String(), want+"\n")
 		}
-		written, err := os.ReadFile(output)
-		if err != nil || strings.TrimSpace(string(written)) != want {
-			t.Fatalf("GITHUB_OUTPUT holds %q (%v), want %q", written, err, want)
+		// Only that step writes the job output, once.
+		if _, err := os.Stat(output); !os.IsNotExist(err) {
+			t.Fatalf("the command wrote the job output itself (%v)", err)
 		}
 		if text, err := os.ReadFile(summary); err != nil || !strings.Contains(string(text), want) {
 			t.Fatalf("the job summary does not state %q: %q (%v)", want, text, err)
 		}
+	}
+
+	// A summary that cannot be written prints no answer, so the step stays true.
+	t.Setenv("GITHUB_STEP_SUMMARY", filepath.Join(t.TempDir(), "missing", "summary"))
+	var unwritable bytes.Buffer
+	if code := run([]string{"changed", "--base", base, "--head", docs}, &unwritable); code == 0 || unwritable.Len() != 0 {
+		t.Fatalf("an unwritable summary exited %d and printed %q, want a failure and no answer", code, unwritable.String())
 	}
 
 	t.Setenv("GITHUB_OUTPUT", "")
@@ -402,6 +426,48 @@ func TestRestrictRefusesAListItCannotHonour(t *testing.T) {
 		err := restrict(fixture.dir, &bytes.Buffer{})
 		if err == nil || !strings.Contains(err.Error(), "ksail.prod.yaml") {
 			t.Fatalf("want the missing production input named, got %v", err)
+		}
+	})
+}
+
+// A link under a listed path would let a file outside the list stand in for
+// one inside it: the list would call a change to the target "not production"
+// while a deploy from the whole checkout reads it through the link.
+func TestRestrictRefusesLinksUnderListedPaths(t *testing.T) {
+	t.Run("a symbolic link", func(t *testing.T) {
+		fixture, _ := baseline(t)
+		if err := os.Symlink("../../docs/k8s/guide.md", filepath.Join(fixture.dir, "k8s", "apps", "guide.yaml")); err != nil {
+			t.Skipf("this filesystem cannot hold a symbolic link: %v", err)
+		}
+		fixture.commit("link a manifest to a document")
+		err := restrict(fixture.dir, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "k8s/apps/guide.yaml") {
+			t.Fatalf("want the link named, got %v", err)
+		}
+		if !fixture.exists("docs/k8s/guide.md") {
+			t.Fatal("a refused tree must be left alone")
+		}
+	})
+	t.Run("a submodule", func(t *testing.T) {
+		fixture, base := baseline(t)
+		fixture.git("update-index", "--add", "--cacheinfo", "160000,"+base+",k8s/vendored")
+		fixture.git("commit", "--quiet", "-m", "pin a submodule under the manifests")
+		err := restrict(fixture.dir, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "k8s/vendored") {
+			t.Fatalf("want the submodule named, got %v", err)
+		}
+	})
+	t.Run("a link outside the list is removed like any other file", func(t *testing.T) {
+		fixture, _ := baseline(t)
+		if err := os.Symlink("guide.md", filepath.Join(fixture.dir, "docs", "k8s", "latest.md")); err != nil {
+			t.Skipf("this filesystem cannot hold a symbolic link: %v", err)
+		}
+		fixture.commit("link one document to another")
+		if err := restrict(fixture.dir, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		if fixture.exists("docs/k8s/latest.md") {
+			t.Fatal("an unlisted link survived the restriction")
 		}
 	})
 }

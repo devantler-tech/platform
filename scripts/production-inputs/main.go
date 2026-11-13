@@ -14,15 +14,19 @@
 //	go run ./scripts/production-inputs restrict
 //	go run ./scripts/production-inputs reachable
 //
-// changed prints "production=true" or "production=false" and appends the same
-// line to $GITHUB_OUTPUT. It answers true whenever it cannot decide: an
-// unreadable commit, a list it cannot parse at either revision, or a failed
-// comparison. A path counts when the list at the base or at the head covers
-// it, so a change cannot take a file off the list and alter it in one step.
+// changed prints one line, "production=true" or "production=false", and adds
+// the reason to $GITHUB_STEP_SUMMARY. It answers true whenever it cannot
+// decide: an unreadable commit, a list it cannot parse at either revision, or
+// a failed comparison. A path counts when the list at the base or at the head
+// covers it, so a change cannot take a file off the list and alter it in one
+// step. The workflow step that calls it writes the job output itself and
+// treats anything but an explicit "production=false" as true.
 //
 // restrict removes every tracked file the list does not cover from the working
 // tree with git sparse-checkout, then verifies the result file by file. It
-// refuses a list entry that matches nothing.
+// refuses a list entry that matches nothing, and a symbolic link or a
+// submodule under a listed path: either would let a path outside the list
+// stand in for one inside it.
 //
 // reachable prints the tracked files a static trace reaches from the deploy
 // action, and exits 1 when the list does not cover one of them. The trace is a
@@ -150,6 +154,9 @@ func splitNUL(output []byte) []string {
 
 // listAt reads and parses the list as one commit holds it.
 func listAt(repository, commit string) (inputs, error) {
+	if _, err := git(repository, "cat-file", "-e", commit+":"+listPath); err != nil {
+		return inputs{}, fmt.Errorf("commit %s has no %s", commit, listPath)
+	}
 	text, err := git(repository, "show", commit+":"+listPath)
 	if err != nil {
 		return inputs{}, err
@@ -206,12 +213,11 @@ func decide(repository, base, head string) decision {
 	return decision{reason: fmt.Sprintf("none of the %d changed files is a production input", len(changed)), paths: changed}
 }
 
-// report writes the decision for people and for the workflow.
+// report explains the decision in the job summary, then prints the answer as
+// the only line on standard output. The answer comes last, so a failure to
+// write the explanation prints nothing and the caller falls back to true.
 func report(result decision, stdout io.Writer) error {
 	answer := fmt.Sprintf("production=%t", result.production)
-	if _, err := fmt.Fprintln(stdout, answer); err != nil {
-		return err
-	}
 	summary := fmt.Sprintf("- Production inputs: `%s` (%s).", answer, result.reason)
 	for index, file := range result.paths {
 		if index == 10 {
@@ -221,16 +227,12 @@ func report(result decision, stdout io.Writer) error {
 		summary += "\n  - `" + file + "`"
 	}
 	fmt.Fprintln(os.Stderr, summary)
-	for variable, text := range map[string]string{"GITHUB_OUTPUT": answer, "GITHUB_STEP_SUMMARY": summary} {
-		target := os.Getenv(variable)
-		if target == "" {
-			continue
-		}
+	if target := os.Getenv("GITHUB_STEP_SUMMARY"); target != "" {
 		file, err := os.OpenFile(target, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
 		if err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintln(file, text); err != nil {
+		if _, err := fmt.Fprintln(file, summary); err != nil {
 			_ = file.Close()
 			return err
 		}
@@ -238,7 +240,8 @@ func report(result decision, stdout io.Writer) error {
 			return err
 		}
 	}
-	return nil
+	_, err := fmt.Fprintln(stdout, answer)
+	return err
 }
 
 // tracked returns every file the checked-out commit tracks.
@@ -248,6 +251,27 @@ func tracked(repository string) ([]string, error) {
 		return nil, err
 	}
 	return splitNUL(output), nil
+}
+
+// links returns the tracked symbolic links and submodules the list covers.
+func links(repository string, list inputs) ([]string, error) {
+	output, err := git(repository, "ls-files", "--stage", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var found []string
+	for _, record := range splitNUL(output) {
+		// "<mode> <object> <stage>\t<path>"
+		fields, file, ok := strings.Cut(record, "\t")
+		if !ok {
+			return nil, fmt.Errorf("unexpected index record %q", record)
+		}
+		mode, _, _ := strings.Cut(fields, " ")
+		if (mode == "120000" || mode == "160000") && list.covers(file) {
+			found = append(found, file)
+		}
+	}
+	return found, nil
 }
 
 // staleEntries returns the list entries that match no tracked file.
@@ -284,6 +308,13 @@ func restrict(repository string, stdout io.Writer) error {
 	}
 	if stale := staleEntries(list, files); len(stale) > 0 {
 		return fmt.Errorf("%s lists paths the repository does not track: %s", listPath, strings.Join(stale, ", "))
+	}
+	linked, err := links(repository, list)
+	if err != nil {
+		return err
+	}
+	if len(linked) > 0 {
+		return fmt.Errorf("a production input may not be a symbolic link or a submodule: %s", strings.Join(linked, ", "))
 	}
 
 	// An anchored pattern per entry: "/k8s/" keeps that directory and nothing

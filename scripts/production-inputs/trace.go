@@ -37,7 +37,9 @@ var siblingPath = regexp.MustCompile(`(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|[)"])/((
 type tree struct {
 	repository string
 	files      map[string]bool
-	rootFiles  []string
+	// rootFiles matches each top-level file's name where it stands alone, as
+	// "go.mod" does in a command but not inside "scripts/x/go.mod".
+	rootFiles map[string]*regexp.Regexp
 }
 
 func newTree(repository string) (*tree, error) {
@@ -45,11 +47,11 @@ func newTree(repository string) (*tree, error) {
 	if err != nil {
 		return nil, err
 	}
-	walked := &tree{repository: repository, files: map[string]bool{}}
+	walked := &tree{repository: repository, files: map[string]bool{}, rootFiles: map[string]*regexp.Regexp{}}
 	for _, file := range files {
 		walked.files[file] = true
 		if !strings.Contains(file, "/") {
-			walked.rootFiles = append(walked.rootFiles, file)
+			walked.rootFiles[file] = regexp.MustCompile(`(^|[^A-Za-z0-9_./-])` + regexp.QuoteMeta(file) + `($|[^A-Za-z0-9_/-])`)
 		}
 	}
 	return walked, nil
@@ -100,7 +102,8 @@ func code(file, text string) string {
 func (walked *tree) goPackages(directory string) ([]string, error) {
 	command := exec.Command("go", "list", "-deps", "-f", "{{if not .Standard}}{{.Dir}}{{end}}", "./"+directory)
 	command.Dir = walked.repository
-	command.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOWORK=off")
+	// Read-only: listing packages must never rewrite go.mod or go.sum.
+	command.Env = append(os.Environ(), "GOFLAGS=-mod=readonly", "GOWORK=off")
 	output, err := command.Output()
 	if err != nil {
 		var exit *exec.ExitError
@@ -207,8 +210,8 @@ func trace(repository string) ([]string, error) {
 				return nil, err
 			}
 		}
-		for _, root := range walked.rootFiles {
-			if regexp.MustCompile(`(^|[^A-Za-z0-9_./-])` + regexp.QuoteMeta(root) + `($|[^A-Za-z0-9_/-])`).MatchString(current.text) {
+		for root, named := range walked.rootFiles {
+			if named.MatchString(current.text) {
 				if err := reach(root); err != nil {
 					return nil, err
 				}

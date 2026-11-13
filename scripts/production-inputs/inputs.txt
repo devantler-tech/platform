@@ -19,6 +19,10 @@ ksail.prod.yaml
 .sops.yaml
 .gitignore
 
+# KSail loads ksail.yaml from the working directory on every command, including
+# the ones the deploy runs with no --config.
+ksail.yaml
+
 # The deploy job, the actions it calls and their setup scripts. Every workflow
 # is listed: the deploy job is defined in one, and the signer check reads them.
 .github/workflows/
