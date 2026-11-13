@@ -613,6 +613,23 @@ Kubernetes dependencies and their transitive requirements; Talos machinery and
 its YAML encoders retain their versions. The real offline render controls
 exercise both roles, explicit schematic IDs and invalid patches.
 
+**7.212.5**, commit `7f6ff621579de15956dc5c6a128fd0bce4b79091`, is audited
+against 7.212.0. The configuration manager, Talos generator, cluster API and
+chart are byte-identical, so the fold's trigger, both-role output and explicit
+schematic-ID boundary are unchanged. The only module change moves the AWS EKS
+SDK from v1.105.0 to v1.105.1 and its two checksum lines; Talos machinery and
+its YAML encoders keep their versions. This audit changes no cluster
+configuration or vulnerability exception.
+
+**7.212.6**, commit `23e4258f9c2cb13b5b376a3e21b31cb422e2436c`, is audited
+against 7.212.5. Only `go.mod` and `go.sum` change; the configuration manager,
+Talos generator, cluster API and chart are byte-identical, so the fold's
+trigger, both-role output and explicit schematic-ID boundary are unchanged. The
+module change moves the COSI runtime from v1.16.3 to v1.16.4 and refreshes
+indirect OpenAPI, OpenTelemetry, gRPC gateway, genproto and `golang.org/x`
+modules. Talos machinery and its YAML encoders keep their versions. This audit
+changes no cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

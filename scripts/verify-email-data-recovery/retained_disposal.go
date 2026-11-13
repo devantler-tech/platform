@@ -13,7 +13,12 @@ func (d *recoveryDriver) adoptRetainedGraph(ctx context.Context, readerUID, clai
 	if readerUID == "" || claimUID == "" || readerUID == claimUID || len(d.refs) != 0 || d.image == "" {
 		return fail()
 	}
-	graph := append(recoveryResources(d.i, "", ""), recoveryReader(d.i, d.image), backupManifest(d.i), downloadManifest(d.i, ""))
+	graph := append(recoveryResources(d.i, "", ""), recoveryReader(d.i, d.image), downloadManifest(d.i, ""))
+	// A protected disposal is bound to the fixed protection backup instead:
+	// Velero has already collected the copy's own 24-hour recovery point.
+	if d.protection.backup == "" {
+		graph = append(graph, backupManifest(d.i))
+	}
 	d.retainedGraph = map[string]object{}
 	seen := map[string]bool{}
 	for _, want := range graph {

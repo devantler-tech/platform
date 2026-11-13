@@ -78,6 +78,8 @@
 #      workflow on stable release tags only.
 #   8. the serving and staged mail bootstrap images are signed by this
 #      repository's dedicated publish-private-mail-bootstrap.yaml workflow on main.
+#      The automated company sender image is signed by the dedicated
+#      publish-mail-submission.yaml workflow on main.
 #   9. the app images (wedding-app, ascoachingogvaner, …) are signed by the
 #      shared publish-app.yaml workflow: legacy full-commit compatibility or an
 #      explicitly reviewed maintained revision, matching the app admission rule.
@@ -238,6 +240,11 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
+  # The automated company sender has its own exact main-only publisher (#5400).
+  - image: ghcr.io/devantler-tech/platform-mail-submission
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-mail-submission\.yaml@refs/heads/main$
   # First-party APP images retain legacy full-commit verification and accept the
   # two reviewed maintained publisher revisions (v8.0.0 #5213, v19.0.5 #5404).
   # Mutable refs, tags and other maintained commits are refused, as in the app

@@ -31,16 +31,16 @@ func TestRestoredStorageMustBeSeparateEncryptedAndBoundToCreatedClaim(t *testing
 	pvc := object{"metadata": object{"uid": "target-claim-uid"}, "spec": object{"storageClassName": i.namespace, "volumeName": "pvc-target-volume"}, "status": object{"phase": "Bound"}}
 	pv := object{"metadata": object{"name": "pvc-target-volume", "uid": "target-volume-uid"}, "spec": object{"claimRef": object{"namespace": i.namespace, "name": "data", "uid": "target-claim-uid"}, "persistentVolumeReclaimPolicy": "Delete", "csi": object{"driver": "driver.longhorn.io", "volumeHandle": "pvc-target-volume"}}}
 	volume := object{"metadata": object{"name": "pvc-target-volume", "uid": "target-longhorn-uid"}, "spec": object{"encrypted": true, "numberOfReplicas": float64(3), "dataEngine": "v1"}}
-	if err := proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume"); err != nil {
+	if err := proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume", false); err != nil {
 		t.Fatal("isolated encrypted restored volume was refused")
 	}
 	child(volume, "spec")["encrypted"] = false
-	if proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume") == nil {
+	if proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume", false) == nil {
 		t.Fatal("plaintext restored storage was accepted")
 	}
 	child(volume, "spec")["encrypted"] = true
 	child(pv, "spec")["claimRef"] = object{"namespace": "private-mail", "name": "private-mail-data", "uid": "source-claim-uid"}
-	if proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume") == nil {
+	if proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume", false) == nil {
 		t.Fatal("serving volume was accepted as isolated storage")
 	}
 }
