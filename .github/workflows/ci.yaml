@@ -189,6 +189,10 @@ jobs:
       bridge_validation: ${{ steps.filter.outputs.bridge_validation }}
       talos: ${{ steps.filter.outputs.talos }}
       queue_receipt: ${{ steps.queue-receipt.outputs.receipt }}
+      # Whether a queued change alters anything a production deploy can read; empty
+      # on pull requests. Reported only: the deploy below still follows the k8s
+      # filter (#5077).
+      production: ${{ steps.production-inputs.outputs.production }}
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -208,6 +212,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: go run ./scripts/verify-merge-group-queued capture
+
+      # Compare the queued change with the commit the queue built it on. The
+      # answer is true unless the classifier says exactly "production=false" for
+      # the commit that is checked out: a missing or unexpected commit, a failed
+      # build and unexpected output all leave it true. git alone decides that a
+      # change to the classifier, its list or its tests, or to the Go module
+      # files it is built with, is a production change, so a broken classifier
+      # cannot wave itself through. Pull requests are not classified: nothing
+      # there deploys, and the Go build would only slow them.
+      - name: 🧮 Classify production inputs
+        id: production-inputs
+        if: github.event_name == 'merge_group'
+        env:
+          QUEUE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          QUEUE_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          answer=production=true
+          checked_out="$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
+          if [ -n "$QUEUE_HEAD_SHA" ] && [ "$checked_out" = "$QUEUE_HEAD_SHA" ] &&
+            git diff --quiet --end-of-options "$QUEUE_BASE_SHA" "$QUEUE_HEAD_SHA" -- scripts/production-inputs go.mod go.sum .github/workflows/ci.yaml 2>/dev/null; then
+            reported="$(go run ./scripts/production-inputs changed --base "$QUEUE_BASE_SHA" --head "$QUEUE_HEAD_SHA" || true)"
+            if [ "$reported" = production=false ]; then
+              answer=production=false
+            fi
+          else
+            echo '- Production inputs: production=true (the classifier, its Go module files or this workflow changed, or the queue commits could not be confirmed).' >>"${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+          fi
+          echo "$answer"
+          echo "$answer" >>"$GITHUB_OUTPUT"
 
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -819,6 +852,9 @@ jobs:
               - 'scripts/tests/validate-alert-coverage/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/verify-merge-group-queued/**'
+              # The production input list, its classifier and its tests decide what a
+              # deploy may read (#5077), so a change to any of them takes the deploy.
+              - 'scripts/production-inputs/**'
               - 'scripts/validate-merge-group-heal/**'
               - 'scripts/refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/ghcr-auth-lib.sh'
@@ -4608,6 +4644,9 @@ jobs:
           # other fence is held, the heartbeat has stopped, and the holder's run
           # attempt is proven terminal via the API (#3343).
           recover-orphaned-fence: "true"
+          # Run from the declared production inputs alone, so a file outside
+          # scripts/production-inputs/inputs.txt cannot influence this deploy.
+          production-inputs-only: "true"
 
       - name: 🧾 Record whether production was left untouched
         # Must stay the last step, straight after the composite: it vouches only
