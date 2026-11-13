@@ -20,7 +20,9 @@ shares the `prod-deploy` lock with deployments.
 2. **Replace** (`replace` mode only). It first checks that the pod will restart from the reviewed
    deployment: the `openbao` HelmRelease is Ready at its current generation on the reviewed chart, and
    the StatefulSet's live template runs the reviewed release. It also checks that the server mounts
-   exactly its two claims, `data-<server>` and `audit-<server>`, and that both are Bound. It then deletes the pod, but only while it still has the UID the judged
+   exactly its two claims, `data-<server>` and `audit-<server>`, and that both are Bound. These checks
+   bind the restart to the reviewed chart and release, not yet to every value: run `replace` only once
+   the deploy of current `main` has finished (#6219 adds that proof). It then deletes the pod, but only while it still has the UID the judged
    capture saw; the API server enforces that, so a pod that changed in the meantime is never deleted.
    It waits up to ten minutes for a successor that mounts the same claims, unchanged.
 3. **Recover.** It captures and judges again every 20 seconds, for up to fifteen minutes, until both
