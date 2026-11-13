@@ -50,8 +50,8 @@ spec:
         ]
     # Company Email's Amazon SES records (platform#5481), DNS-only and owned by
     # one platform-applied DNSEndpoint in the aws namespace: the MAIL FROM
-    # domain's MX and SPF records. The mailbox domain's own SPF and DMARC
-    # records are not managed here.
+    # domain's MX and SPF records and the identity's three Easy DKIM CNAMEs.
+    # The mailbox domain's own SPF and DMARC records are not managed here.
     - name: companyMailEndpoints
       expression: >-
         [
@@ -67,6 +67,27 @@ spec:
             "recordType": dyn("TXT"),
             "recordTTL": dyn(300),
             "targets": dyn(["v=spf1 include:amazonses.com ~all"]),
+            "providerSpecific": dyn([{"name": "cloudflare/proxied", "value": "false"}])
+          },
+          {
+            "dnsName": dyn("svxhyimgvhbtlrpbuivbx6ievcg5iwiw._domainkey.devantler.tech"),
+            "recordType": dyn("CNAME"),
+            "recordTTL": dyn(300),
+            "targets": dyn(["svxhyimgvhbtlrpbuivbx6ievcg5iwiw.dkim.amazonses.com"]),
+            "providerSpecific": dyn([{"name": "cloudflare/proxied", "value": "false"}])
+          },
+          {
+            "dnsName": dyn("frps4kqaz6dyvptmesuiwlaendicjq5v._domainkey.devantler.tech"),
+            "recordType": dyn("CNAME"),
+            "recordTTL": dyn(300),
+            "targets": dyn(["frps4kqaz6dyvptmesuiwlaendicjq5v.dkim.amazonses.com"]),
+            "providerSpecific": dyn([{"name": "cloudflare/proxied", "value": "false"}])
+          },
+          {
+            "dnsName": dyn("caa46ibjaox7qooavcfri6ha3xbxxjld._domainkey.devantler.tech"),
+            "recordType": dyn("CNAME"),
+            "recordTTL": dyn(300),
+            "targets": dyn(["caa46ibjaox7qooavcfri6ha3xbxxjld.dkim.amazonses.com"]),
             "providerSpecific": dyn([{"name": "cloudflare/proxied", "value": "false"}])
           }
         ]
