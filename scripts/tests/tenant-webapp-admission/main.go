@@ -35,22 +35,41 @@ type fixture struct {
 	Object        *unstructured.Unstructured   `json:"object"`
 	OldObject     *unstructured.Unstructured   `json:"oldObject"`
 	Actor         string                       `json:"actor"`
+	Groups        []string                     `json:"groups"`
 	Operation     admissionv1.Operation        `json:"operation"`
 	Subresource   string                       `json:"subresource"`
 	Expected      string                       `json:"expected"`
 	Parents       []*unstructured.Unstructured `json:"parents"`
+	Lookups       []*unstructured.Unstructured `json:"lookups"`
 	Namespaces    []*corev1.Namespace          `json:"namespaces"`
 	LookupFailure string                       `json:"lookupFailure"`
 }
 
-type fixtureContext struct {
-	libs.Context
-	forbidden bool
+// lookupKinds are the resources a fixture may serve to the policy's
+// resource.Get through "lookups". Anything else is refused, so a typo cannot
+// turn into a silently empty lookup.
+var lookupKinds = map[schema.GroupVersionKind]schema.GroupVersionResource{
+	{Version: "v1", Kind: "Namespace"}: {Version: "v1", Resource: "namespaces"},
 }
 
+type fixtureContext struct {
+	libs.Context
+	failure string
+}
+
+// GetResource answers resource lookups from the fixture. "forbidden" and
+// "servererror" make every lookup fail the way a refused or broken API server
+// read does; a resource the fixture does not supply is "not found".
 func (c fixtureContext) GetResource(apiVersion, resource, namespace, name string) (*unstructured.Unstructured, error) {
-	if c.forbidden {
-		return nil, apierrors.NewForbidden(schema.GroupResource{Group: "kro.run", Resource: "webapps"}, name, errors.New("fictional read refusal"))
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return nil, err
+	}
+	switch c.failure {
+	case "forbidden":
+		return nil, apierrors.NewForbidden(gv.WithResource(resource).GroupResource(), name, errors.New("fictional read refusal"))
+	case "servererror":
+		return nil, apierrors.NewInternalError(errors.New("fictional server failure"))
 	}
 	return c.Context.GetResource(apiVersion, resource, namespace, name)
 }
@@ -111,7 +130,8 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 	if !ok || f.Label == "" || f.Actor == "" || (f.Expected != "pass" && f.Expected != "fail" && f.Expected != "error" && f.Expected != "skip") {
 		return fmt.Errorf("incomplete fixture")
 	}
-	if (f.LookupFailure != "" && f.LookupFailure != "forbidden") || (f.Expected == "error" && policy.GetFailurePolicy(false) != registrationv1.Fail) {
+	if (f.LookupFailure != "" && f.LookupFailure != "forbidden" && f.LookupFailure != "servererror") ||
+		(f.LookupFailure != "" && len(f.Lookups) > 0) || (f.Expected == "error" && policy.GetFailurePolicy(false) != registrationv1.Fail) {
 		return fmt.Errorf("invalid lookup control or policy does not fail closed")
 	}
 	if (f.Operation != admissionv1.Create && f.Operation != admissionv1.Update && f.Operation != admissionv1.Delete) ||
@@ -124,7 +144,8 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 	if target == nil {
 		target = f.OldObject
 	}
-	resources := map[string]string{"CiliumNetworkPolicy": "ciliumnetworkpolicies", "WebApp": "webapps", "Deployment": "deployments", "Service": "services", "HTTPRoute": "httproutes", "ExternalSecret": "externalsecrets", "SecretStore": "secretstores", "PushSecret": "pushsecrets", "ConfigMap": "configmaps", "Team": "teams", "TeamRepository": "teamrepositories", "TeamMembership": "teammemberships"}
+	resources := map[string]string{"CiliumNetworkPolicy": "ciliumnetworkpolicies", "WebApp": "webapps", "Deployment": "deployments", "Service": "services", "HTTPRoute": "httproutes", "ExternalSecret": "externalsecrets", "SecretStore": "secretstores", "PushSecret": "pushsecrets", "ConfigMap": "configmaps", "Team": "teams", "TeamRepository": "teamrepositories", "TeamMembership": "teammemberships",
+		"HelmRelease": "helmreleases", "AutoscalingRunnerSet": "autoscalingrunnersets", "AutoscalingListener": "autoscalinglisteners", "Pod": "pods", "Secret": "secrets", "Namespace": "namespaces"}
 	gvk := target.GroupVersionKind()
 	resource, ok := resources[gvk.Kind]
 	if !ok || gvk.Version == "" {
@@ -150,10 +171,22 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 			return err
 		}
 	}
+	for _, lookup := range f.Lookups {
+		if lookup == nil || lookup.GetName() == "" {
+			return fmt.Errorf("invalid fictional lookup resource")
+		}
+		gvr, ok := lookupKinds[lookup.GroupVersionKind()]
+		if !ok {
+			return fmt.Errorf("unsupported fictional lookup kind %s", lookup.GroupVersionKind())
+		}
+		if err := contextProvider.AddResource(gvr, lookup); err != nil {
+			return err
+		}
+	}
 	// Resource-library functions capture this context at compilation time in
 	// Kyverno 1.19.1. Compile after loading each independent fixture, as the CLI
 	// does; passing only request.Context would silently use an empty lookup.
-	libraryContext := fixtureContext{Context: contextProvider, forbidden: f.LookupFailure == "forbidden"}
+	libraryContext := fixtureContext{Context: contextProvider, failure: f.LookupFailure}
 	libs.LibraryContext = libraryContext
 	provider, err := vpolengine.NewProvider(compiler.NewCompiler(), []policiesv1beta1.ValidatingPolicyLike{policy}, nil)
 	if err != nil {
@@ -169,7 +202,7 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 	eng := vpolengine.NewEngine(provider, func(name string) *corev1.Namespace { return namespaces[name] }, matching.NewMatcher())
 	req := celengine.Request(libraryContext, gvk, schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: resource},
 		f.Subresource, target.GetName(), target.GetNamespace(), f.Operation,
-		authenticationv1.UserInfo{Username: f.Actor}, object, oldObject, false, nil)
+		authenticationv1.UserInfo{Username: f.Actor, Groups: f.Groups}, object, oldObject, false, nil)
 	response, err := eng.Handle(context.Background(), req, nil)
 	if err != nil {
 		return err
