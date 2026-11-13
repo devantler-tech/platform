@@ -1,0 +1,89 @@
+# Production inputs: every path a production deploy can read.
+#
+# One repository path per line. A directory ends in "/". No patterns.
+#
+# The merge-queue deploy runs from a working tree that holds only these paths,
+# so a file that is not listed cannot influence a deploy. A queued change
+# alters production only when it changes a listed path.
+#
+# Add a path in the same change that makes the deploy read it. The tests beside
+# this file fail when a script or program the deploy can reach is missing, and
+# the deploy itself fails on a missing file that the tests cannot see.
+# Decision: docs/adr/delivery-lane-throughput.md.
+
+# What production is built from. .gitignore is listed because a packaging tool
+# may apply it to the manifests it publishes.
+k8s/
+talos/
+ksail.prod.yaml
+.sops.yaml
+.gitignore
+
+# The deploy job, the actions it calls and their setup scripts. Every workflow
+# is listed: the deploy job is defined in one, and the signer check reads them.
+.github/workflows/
+.github/actions/
+.github/scripts/
+
+# The Go toolchain pin, the module graph and the shared package the programs
+# below import.
+go.mod
+go.sum
+internal/longhornmigration/
+
+# Programs the deploy runs.
+scripts/gateway-receiver-binding/
+scripts/guard-arc-recovery/
+scripts/maintain-longhorn-clients/
+scripts/production-inputs/
+scripts/recover-private-mail-probes/
+scripts/retire-arc-pool/
+scripts/validate-flux-force-safety/
+scripts/validate-matcher-efficacy/
+scripts/verify-merge-group-queued/
+
+# Scripts the deploy runs, the libraries they source and the data they read.
+scripts/admit-coroot-baseline-context.sh
+scripts/canonical-tenant-source-bindings.json
+scripts/canonical-tenant-source.lib.sh
+scripts/check-flux-prune-failures.sh
+scripts/cosign-failure-lib.sh
+scripts/frozen-legacy-publisher-release.tsv
+scripts/generate-publish-workflow-approved-revisions.sh
+scripts/ghcr-auth-lib.sh
+scripts/guard-cilium-homogeneous-device-rollout.sh
+scripts/guard-coroot-baseline-context.sh
+scripts/guard-github-bootstrap-isolation.sh
+scripts/guard-longhorn-ui-baseline-context.sh
+scripts/guard-publish-workflow-approved-revisions.sh
+scripts/publish-workflow-approved-revisions.identities.tsv
+scripts/publish-workflow-approved-revisions.lib.sh
+scripts/publish-workflow-approved-revisions.tsv
+scripts/publish-workflow-bootstrap-publications.json
+scripts/publish-workflow-canonical-approvals.tsv
+scripts/reassert-flux-root-verify.sh
+scripts/reconcile-flux-workloads.sh
+scripts/refresh-flux-ghcr-auth-safety.sh
+scripts/refresh-flux-ghcr-auth.sh
+scripts/register-talos-factory-schematic.sh
+scripts/report-cilium-rollout-gate-suppression.sh
+scripts/report-publish-workflow-signing-revisions.sh
+scripts/retire-arc-pool.sh
+scripts/run-ksail-prod-with-pull-auth.sh
+scripts/tenant-publication-binding.lib.sh
+scripts/tenant-source-constructors.lib.sh
+scripts/tenant-source-discovery.lib.sh
+scripts/tests/test-flux-force-safety.sh
+scripts/tests/test-pvc-prune-safety.sh
+scripts/use-prod-stable-api-endpoint.sh
+scripts/verify-data-product-rollout.sh
+scripts/verify-gateway-routes-applied.sh
+scripts/verify-kubelet-config-readback.sh
+scripts/verify-matcher-accepts-digest.sh
+scripts/verify-prod-recovery-source.sh
+scripts/verify-published-evidence.sh
+scripts/verify-talos-schematic-readback.sh
+scripts/verify-wedding-backup-staging.mjs
+scripts/wait-for-platform-flux-revision.sh
+scripts/wait-for-prod-api-stability.sh
+scripts/write-publish-workflow-matchers.sh

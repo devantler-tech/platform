@@ -50,6 +50,16 @@ inputs:
       rather than releasing.
     required: false
     default: "false"
+  production-inputs-only:
+    description: >-
+      Remove every tracked file that scripts/production-inputs/inputs.txt does
+      not list from the working tree before any tool is installed or production
+      is read. The merge-queue deploy sets it, so a file outside that list
+      cannot influence a deploy and a dependency the list misses fails here or
+      at the step that needs it. Default-off: recovery, manual and rebuild
+      deploys keep the whole checkout. Needs Go on the runner.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -74,6 +84,16 @@ runs:
         if [[ -n "${RECOVERY_SOURCE_SHA}" ]]; then
           bash scripts/verify-prod-recovery-source.sh "${RECOVERY_SOURCE_SHA}"
         fi
+
+    # Everything below runs from the declared production inputs alone. The two
+    # gates above keep their pinned places. The signer gate gives the same
+    # answer in a working tree that holds only the inputs, which the command's
+    # tests prove; the recovery gate does nothing in a merge-queue deploy, the
+    # only caller that sets this input.
+    - name: 🧹 Keep only the declared production inputs
+      if: inputs.production-inputs-only == 'true'
+      shell: bash
+      run: go run ./scripts/production-inputs restrict
 
     - name: ⚙️ Setup KSail
       # Install the KSail CLI from the release tarball and verify the
