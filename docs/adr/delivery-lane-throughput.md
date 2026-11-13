@@ -87,9 +87,10 @@ Between two production deploys three jobs each need a fresh runner, one after th
 | Required check, wait for a runner | 0.1 min | 8.1 min |
 | Observer, wait for a runner while holding the lock | 0.1 min | 10.6 min |
 | Next deploy job, total wait | 0.1 min | 13.7 min |
-| of which behind the observer's lock | 0 min | 9.2 min |
-| of which for its own runner | 0.1 min | 6.7 min |
+| of which while another job held the lock | 0 min | 9.2 min |
+| of which with the lock free, waiting for its own runner | 0.1 min | 6.7 min |
 | Deploys queued behind the observer | 17 of 38 | 13 of 14 |
+| Deploys queued behind another lock holder | 1 of 38 | 2 of 14 |
 | One deploy to the next | 14.3 min (5 to 12 November) | 39.8 min |
 
 Every figure is a median, so the two parts of the deploy wait do not add up to its total. The
@@ -238,11 +239,13 @@ recoveries held the production lock for 36 of 198 hours, 18%.
   `started_at`, the moment a runner picked the job up.
 - Time in queue: the last `AddedToMergeQueueEvent` before `mergedAt`, to `mergedAt`.
 - Backlogged: the next pull request was already queued when the previous one merged.
-- Lock time: the observer holds `prod-deploy` from the creation of its push run until its job
-  completes. A deploy job's lock time is the part of its wait that falls inside such an interval.
-  Of the 66 jobs across the workflows that take this lock, others ran inside 3 of the 52 deploy
-  waits on those two days: one recovery deploy and two short dispatched reads. Their time is not
-  separated out and counts as runner wait here.
+- Lock time: the part of a deploy job's wait during which another job held `prod-deploy`, taken
+  over the union of every such job's interval. 66 jobs across the workflows take this lock. The
+  observer holds it from the creation of its push run until its job completes. Any other holder
+  is counted from the moment its job started, because its own time in the queue is not in these
+  records; for the three deploy waits that overlapped one (a recovery deploy and two short
+  dispatched reads), the lock-free part is therefore an upper bound. Counting them moved neither
+  median.
 - False eviction: the pull request merged later, and neither its last commit nor a force-push is
   newer than the eviction. The event's `beforeCommit` is not the pull request's head and must not
   be used for this.
