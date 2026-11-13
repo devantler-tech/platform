@@ -10,34 +10,28 @@
 # that deploy then waited for the observer's runner as well as its own: 9 of 14 minutes at
 # the median on 2026-11-13.
 #
-# Production falls behind main in two ways, and each belongs to one push:
+# Only the push of a change that deployed is held back. Its own deploy has just brought
+# production up to date, so its observation is the one that can wait:
 #
-#   - A push that did not come through the merge queue was never deployed.
-#   - A queued change deployed, and before it merged a recovery deploy put an older main
-#     back. Production is behind from the moment that change merges.
-#
-# A queued change that merged without deploying (documentation, say) published nothing, so
-# its push is neither. The answer therefore depends on which push this is:
-#
-#   not from the queue    Observe at once, as before this script existed.
-#   merged, not deployed  Observe when nothing is queued, which costs no deploy anything.
-#                         Otherwise stand down: this push left production as it was.
-#   merged and deployed   Wait here, outside the lock, while a change is queued: that
-#                         change's deploy brings production up to date, and if its deploy
+#   this push's change    Observe at once, exactly as before this script existed. That is a
+#   did not deploy        push past the merge queue, which nothing deployed, and a queued
+#                         change that merged without deploying, whose observation is also
+#                         what retries an earlier one that failed.
+#   this push's change    Wait here, outside the lock, while a change is queued: that
+#   deployed              change's deploy brings production up to date, and if its deploy
 #                         fails, its heal restores main. The wait ends when
 #                           - the tip is a later change that deployed: stand down. That
-#                             deploy carried this push to production, and that change's own
-#                             run watches from there.
+#                             deploy came after this push merged and carried it to
+#                             production, and that change's own run watches from there.
 #                           - nothing is queued: observe.
 #                           - an hour has passed: observe.
 #
-# The hour is this run's own and no later merge restarts it, so a queue kept busy by changes
-# that do not deploy cannot postpone the observation for longer. No answer relies on another
-# run finishing its work: a run stands down only for a deploy that has already succeeded, or
-# because its own push published nothing.
+# The hour is this run's own and no later merge restarts it, so a busy queue cannot postpone
+# the observation for longer. No answer relies on another run finishing its work: a run
+# stands down only for a deploy that has already succeeded.
 #
-# It answers `observe=true` whenever it cannot tell: an unreadable queue, run list or check
-# run, or a read that does not finish. That is the behaviour before this script existed: the
+# It answers `observe=true` whenever it cannot tell: an unreadable queue or check run, or a
+# read that does not finish. That is the behaviour before this script existed: the
 # observer takes the lock and the lock decides the order.
 #
 # Writes `observe=true` or `observe=false` to $GITHUB_OUTPUT.
@@ -53,9 +47,8 @@ branch="${IDLE_BRANCH:?IDLE_BRANCH is required}"
 subject="${IDLE_SHA:?IDLE_SHA is required}"
 output="${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 
-# The workflow a queued change runs, and the name GitHub records its deploy job under.
-# scripts/tests/test-await-idle-merge-queue.sh fails when the workflow names either otherwise.
-queue_workflow='ci.yaml'
+# The name GitHub records the merge queue's deploy job under.
+# scripts/tests/test-await-idle-merge-queue.sh fails when the workflow names it otherwise.
 deploy_job='🚀 Deploy to Prod'
 
 # Fixed here, not read from the environment: the workflow's job timeout is sized for them.
@@ -114,7 +107,8 @@ read_queue() {
 }
 
 # <commit>: sets `deploys` to how many successful deploys the commit's queue run made (0 or
-# 1). Only the latest attempt of the job counts. A change deploys before it merges, so one
+# 1). Only the latest attempt of the job counts, and only the merge queue runs that job, so a
+# commit that was pushed past the queue has none. A change deploys before it merges, so one
 # read of a commit on the branch is final.
 read_deploys() {
   deploys="$(bounded gh api --method GET "repos/${repository}/commits/$1/check-runs" \
@@ -124,27 +118,9 @@ read_deploys() {
   [[ "$deploys" =~ ^[0-9]+$ ]] || unknown "the deploy of ${1:0:12}"
 }
 
-# <commit>: sets `queue_runs` to how many merge-queue runs the commit has. A commit that was
-# pushed past the queue has none, whatever its pull request's own runs left on it.
-read_queue_runs() {
-  queue_runs="$(bounded gh api --method GET "repos/${repository}/actions/workflows/${queue_workflow}/runs" \
-    -f head_sha="$1" -f event=merge_group -f per_page=1 \
-    --jq 'if (.total_count | type) == "number" then .total_count else error("no run count") end')" ||
-    unknown "the merge-queue run of ${1:0:12}"
-  [[ "$queue_runs" =~ ^[0-9]+$ ]] || unknown "the merge-queue run of ${1:0:12}"
-}
-
 read_deploys "$subject"
 if [ "$deploys" -eq 0 ]; then
-  read_queue_runs "$subject"
-  if [ "$queue_runs" -eq 0 ]; then
-    answer true notice "${subject:0:12} did not come through the merge queue, so nothing deployed it"
-  fi
-  read_queue
-  if [ "$queued" -eq 0 ]; then
-    answer true notice "no change is waiting in the merge queue"
-  fi
-  answer false notice "${subject:0:12} merged without deploying, so it left production as it was, and ${queued} change(s) are queued"
+  answer true notice "the change behind ${subject:0:12} did not deploy before it reached ${branch}, so it is observed at once, as before"
 fi
 
 polls=0

@@ -92,12 +92,12 @@ func premergeMainProblems(w workflow) []string {
 			add("%s must retain its writer permission and whole-job push/main fence", name)
 		}
 	}
-	// The wait reads the queue, the deploy job's check runs and the list of queue runs,
-	// and nothing else, on the same fence. The observer depends on it alone: a wait that
-	// failed or was skipped must not let it run.
+	// The wait reads the queue and the deploy job's check runs and nothing else, on the
+	// same fence. The observer depends on it alone: a wait that failed or was skipped must
+	// not let it run.
 	wait, exists := w.Jobs[idleQueueWait]
 	waitPermissions, ok := explicitPermissions(wait.Permissions)
-	if !exists || !ok || len(waitPermissions) != 3 || waitPermissions["contents"] != "read" || waitPermissions["checks"] != "read" || waitPermissions["actions"] != "read" ||
+	if !exists || !ok || len(waitPermissions) != 2 || waitPermissions["contents"] != "read" || waitPermissions["checks"] != "read" ||
 		normalizeCondition(wait.If) != mainPushOnly || errorIsTolerated(wait.ContinueOnError) {
 		add("%s must stay a read-only job fenced to push/main that reports its failures", idleQueueWait)
 	}
