@@ -102,8 +102,10 @@ func TestIgnoredLookupInputsAreDetected(t *testing.T) {
 	failure := lookupControlFixture("server failure must not allow", "pass")
 	failure.LookupFailure = "servererror"
 	for _, f := range []fixture{retired, administrator, failure} {
-		if err := evaluate(f, policies); err == nil {
-			t.Errorf("%s: the driver accepted an expectation its input contradicts", f.Label)
+		// Only a mismatch proves the input reached the policy: a refused
+		// fixture also returns an error, without evaluating anything.
+		if err := evaluate(f, policies); err == nil || !strings.HasPrefix(err.Error(), "expected ") {
+			t.Errorf("%s: want a contradicted expectation, got %v", f.Label, err)
 		}
 	}
 }
