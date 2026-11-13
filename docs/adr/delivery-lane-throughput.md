@@ -1,7 +1,8 @@
 # ADR: Keep one production proof per production change, and stop the delivery lane waiting
 
-- **Status:** Accepted on 2026-11-13. Step 1 is in progress under
-  [#5077](https://github.com/devantler-tech/platform/issues/5077); nothing here is deployed yet.
+- **Status:** Accepted on 2026-11-13. Decision step 2 is in progress under
+  [#5077](https://github.com/devantler-tech/platform/issues/5077) and the first part of step 5 under
+  [#6205](https://github.com/devantler-tech/platform/issues/6205); nothing here is deployed yet.
 - **Decision:** Every change that alters a production input is still deployed to production and
   verified, alone and in queue order, before it merges. A change that alters no production input no
   longer takes the production lane. The organisation's pull-request checks are trimmed where that
@@ -91,11 +92,13 @@ Between two production deploys three jobs each need a fresh runner, one after th
 | of which with the lock free, waiting for its own runner | 0.1 min | 6.7 min |
 | Deploys queued behind the observer | 17 of 38 | 13 of 14 |
 | Deploys queued behind another lock holder | 1 of 38 | 2 of 14 |
-| One deploy to the next | 14.3 min (5 to 12 November) | 39.8 min |
+| Hand-off: one deploy ending to the next starting | 1.5 min (5 to 12 November) | 29.5 min |
+| Cycle: one deploy ending to the next ending | 14.3 min (5 to 12 November) | 39.8 min |
 
 Every figure is a median, so the two parts of the deploy wait do not add up to its total. The
-last row is the median over consecutive deploys where the next change had already finished
-validating: 28 such hand-offs from 2026-11-05 to 2026-11-12, and 7 on 2026-11-13. The `prod`
+last two rows are medians over consecutive deploys where the next change had already finished
+validating when the deploy ahead of it ended: 28 such pairs from 2026-11-05 to 2026-11-12, and 7 on
+2026-11-13. In those 7, the next deploy spent 10.1 minutes behind the lock. The `prod`
 environment has a branch rule only, with no reviewers and no wait timer, so no part of these waits
 is an approval.
 
@@ -104,7 +107,7 @@ minutes, jobs on the critical path waited 68 minutes before they started, and th
 
 The organisation's plan allows 60 standard hosted jobs at once. From 2026-11-12 17:00 UTC to
 2026-11-13 10:40 UTC the organisation averaged 57.7 running jobs and ran 55 or more for three
-quarters of that time.
+quarters of that time. Job time by repository over those 17.7 hours:
 
 | Repository | Share of job time | Largest part |
 | --- | ---: | --- |
@@ -112,7 +115,8 @@ quarters of that time.
 | `platform` | 32% | Pull-request CI: 195 runner hours. Queue runs: 52 |
 | Seven others | 14% | |
 
-Three smaller facts from the same window:
+Two smaller facts from all 35 hours of job records (from 2026-11-12 00:00 UTC), and one from
+history:
 
 - About 20% of pull-request runner time in `ksail` and `platform` went to runs that the next push
   cancelled.
@@ -142,21 +146,27 @@ revision with the same content, and the Talos update, the credential bridge and 
 checks all run. A static trace from the deploy action reaches 56 of about 820 non-test script
 files.
 
-The arithmetic on a starved day: at 39.8 minutes per deploy the lane handles 36 deploys a day,
-while a busy day brings 36 to 45, so the queue only grows.
+The arithmetic on a starved day: at 39.8 minutes per cycle the lane handles 36 deploys a day.
+The busiest measured days brought 45 to 56 merges, and eight in ten merges deploy: 36 to 45
+deploys. On such a day the queue does not drain.
 
 | What stops deploying | Share of deploys | Deploys on a busy day |
 | --- | ---: | ---: |
 | Nothing (today) | 0% | 36 to 45 |
-| The first list in #5077, replayed over the 629 merged commits | 12% (74) | 32 to 40 |
-| Every deploy of unchanged manifests that leaves the deploy itself alone | 34% (218) | 24 to 30 |
+| The first list in #5077, replayed over 629 of the 633 deploys | 12% (74) | 32 to 40 |
+| At most: every deploy of unchanged manifests whose change left the deploy action's own files alone | under 34% (218) | 24 to 30 at best |
 
-The first list keeps every workflow file and the Go module files as production inputs, so on its
-own it does not let a starved lane keep up with the busiest days. The last row is the ceiling: the
-244 deploys of unchanged manifests, less the 26 whose change touched a file the deploy action
-references directly, which keep their deploy. Reaching it needs the later narrowing steps.
-Removing the observer's lock from the hand-off is the other half: at about 30 minutes per deploy
-the same lane handles about 47 a day.
+The replay could match 629 of the 633 deploys to a merged commit. The first list keeps every
+workflow file and the Go module files as production inputs, so on its own it does not let a
+starved lane keep up with the busiest days. The last row is an upper bound: the 244 deploys of
+unchanged manifests, less the 26 whose change touched a file the deploy action references
+directly. It still counts the 75 changes to a workflow file and the 33 to Go module files or shared
+Go packages, and some of those do change what a deploy does, so the real figure is lower. Reaching
+it needs the later narrowing steps.
+
+Removing the observer's lock from the hand-off is the other half. Without the 10.1 minutes the
+next deploy spent behind the lock, the cycle on 2026-11-13 is 29.7 minutes: about 48 deploys a
+day.
 
 ### Half of the evictions were not the change's fault
 
@@ -175,14 +185,18 @@ recoveries held the production lock for 36 of 198 hours, 18%.
    file outside it cannot influence a deploy, and a dependency the list misses fails that deploy
    loudly. A queued change deploys when anything on the list differs from its base, and also
    whenever the comparison cannot be made. The first delivery keeps every workflow file and the Go
-   module files on the list.
+   module files on the list. The post-merge observer must judge whether production is behind
+   `main` by the same list. Today it uses the `k8s` filter (`scripts/resolve-prod-convergence`);
+   left as it is, it would read production as behind after every change that did not deploy and
+   redeploy `main`, and the saving would be gone. The two change in the same delivery.
 3. **Pull-request checks do less runner work where that costs no proof**: run the Go validation
    once ([#6204](https://github.com/devantler-tech/platform/issues/6204)), push a change once per
    round ([monorepo#5009](https://github.com/devantler-tech/monorepo/issues/5009)), and reduce the
    work per pull request in the two repositories that fill the allowance (ksail#7579, .github#475).
 4. **The lane is measured** ([#6206](https://github.com/devantler-tech/platform/issues/6206)), with
    two targets: under 45 minutes at the median from queueing to merging on a day with up to 60
-   merges, and under 5 minutes at the 90th percentile from one deploy ending to the next starting.
+   merges (the busiest measured day had 56), and under 5 minutes at the 90th percentile for the
+   hand-off from one deploy ending to the next starting.
 5. **The wait between two deploys is shortened**
    ([#6205](https://github.com/devantler-tech/platform/issues/6205)). First the observer stops
    holding the production lock while a deploy is waiting, which changes no merge proof. The
@@ -194,16 +208,22 @@ recoveries held the production lock for 36 of 198 hours, 18%.
 - **One deploy for several queued changes.** GitHub's queue runs one CI run per queued change, each
   on its own commit, whatever the group size. Sharing one deploy means a run must wait for, and
   trust, another run's result, and a failed deploy no longer says which change broke production.
-  With 11% of queued changes evicted today, a group of three would fail about three times in ten.
-  Revisit if the lane is busy for more than 70% of a week after step 2.
-- **Building more queued changes at once.** Validation already finishes inside the deploy ahead,
-  on the starved day too. A third candidate would add about 21 jobs to a full pool. Revisit after
+  There were 98 evictions for 893 queue entries, and every failure of a shared deploy would evict
+  or re-test each change in its group. Revisit if the lane is busy for more than 70% of a week
+  after step 2.
+- **Building more queued changes at once.** On 2026-11-13, 9 of 14 deploys had finished
+  validating before their turn came; the other 5 were late by 5.4 minutes at the median. A third
+  candidate would remove that wait. It would also add about 21 jobs to a full pool, and a candidate
+  that starts earlier waits longer for its turn, against that job's 90-minute limit. Revisit after
   step 2: a change that does not deploy takes a build slot without taking the lane.
 - **Proving a change on a separate cluster.** There is no production-like cluster, and the local
   cluster is a manual test-bed by design. A deploy there is weaker proof than today's.
 - **Capping how many runners `ksail` system tests may take.** Replaying the measured window with a
   cap of 16 jobs leaves the organisation at 55 or more running jobs for 62% of the time, against
-  75% without it. The same work still has to run, so the wait moves and does not shrink.
+  75% without it, and holds back up to 3.4 system-test runs of `ksail` work. A cap of 12 gives 53%,
+  with a `ksail` backlog that grows through the window. The relief is small and the wait moves to
+  `ksail`'s pull requests, so a cap is not part of this decision; it stays an option under
+  ksail#7579.
 - **Self-hosted runners for the deploy.** The organisation pool is prepared but inactive and allows
   one job at a time ([arc-runners.md](../operations/arc-runners.md)). A deploy that restarts
   cluster nodes should not run on that cluster. The required check runs no repository code and
@@ -214,14 +234,16 @@ recoveries held the production lock for 36 of 198 hours, 18%.
   record makes no purchase and does not depend on one.
 - **Making the deploy itself faster.** A deploy of unchanged manifests spends about two minutes in
   the Flux reconcile, two in the Talos update, one and a half in the credential bridge and under a
-  minute each in the API stability wait, the gateway check and the Coroot check. A real change
-  needs all of them. For a change with nothing to deploy, the fix is not to deploy.
+  minute each in the API stability wait, the gateway check and the Coroot check. Those are about
+  8.5 of its 10.6 minutes; the rest is about thirty short steps. A real change needs all of them.
+  For a change with nothing to deploy, the fix is not to deploy.
 
 ## Consequences
 
 - Production runs the revision of the last change that deployed. After a change that does not
   deploy, that revision is older than the tip of `main` while the content is the same. This is
-  already true for the two in ten merges that do not match the `k8s` filter.
+  already true for the two in ten merges that do not match the `k8s` filter. The convergence report
+  has to read that state as converged, which is why it judges by the same list (decision 2).
 - A change that adds a new file for the deploy to read must add it to the list, or its own queue
   run fails. That is the intended failure: it lands on the change that introduced the dependency.
 - The deploy job no longer sees the whole repository. A deploy step that scans a directory outside
