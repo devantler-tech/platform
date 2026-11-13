@@ -22,15 +22,17 @@ account permits direct delivery. What is missing is a stable sending address.
   of Email's outbound mail. Its reverse DNS names a dedicated sending host,
   that host's address record points back to it, and Email greets receiving
   servers with that name. The mail host name that clients and inbound mail use
-  stays on the load balancer. SPF authorizes this address, Email signs with
-  DKIM, and DMARC aligns on the mailbox domain.
+  stays on the load balancer. SPF adds this address and keeps the existing
+  provider for as long as mail is still sent through it. Email signs with DKIM,
+  and DMARC aligns on the mailbox domain.
 - **A Cilium egress-gateway policy** routes only the Email server's
   internet-bound traffic through one gateway node, with the Floating IP as the
   source. Other workloads keep their current egress. The policy covers IPv4
   destinations only, so a gateway without IPv6 stays selectable.
 - **The gateway is one static worker**, selected by a single node label.
-  Hetzner accepts the Floating IP as a source only from the server it is
-  assigned to, so it is assigned to that worker. Cilium requires the address
+  Hetzner routes the Floating IP only to the server it is assigned to, so
+  replies to outbound connections reach only that server. The address is
+  therefore assigned to the gateway worker. Cilium requires the address
   on a network device, so every worker carries it on a dummy interface rather
   than on its main interface. The node address the kubelet reports and the
   address Cilium masquerades other traffic to must stay the server's own; the
