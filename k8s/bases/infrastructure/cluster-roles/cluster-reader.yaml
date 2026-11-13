@@ -117,6 +117,7 @@ rules:
       - resource.k8s.io
       - route.unifi.m.crossplane.io
       - scheduling.k8s.io
+      - sesv2.aws.m.upbound.io
       - snapshot.kubevirt.io
       - snapshot.storage.k8s.io
       - source.toolkit.fluxcd.io

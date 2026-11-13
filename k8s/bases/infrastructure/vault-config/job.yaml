@@ -1081,6 +1081,11 @@ spec:
               path "secret/data/infrastructure/email/agent" {
                 capabilities = ["create", "update", "read"]
               }
+              # The SES relay's SMTP credential, pushed from the AccessKey's
+              # connection Secret (platform#5481). Exact key only.
+              path "secret/data/infrastructure/email/ses-smtp" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/apps/actual-budget/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -1133,6 +1138,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/infrastructure/email/agent" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/email/ses-smtp" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/actual-budget/*" {
