@@ -29,8 +29,8 @@ shares the `prod-deploy` lock with deployments.
    judges return `PROVEN` for a capture of the successor. During an upgrade the replaced server must
    now run the new release.
 4. **Deliver.** It asks External Secrets to re-read the `openbao/vault-snapshot-r2` canary from
-   OpenBao and waits for a new, successful sync. Nothing reads that secret at startup, so the re-read
-   changes no workload.
+   OpenBao and waits for a new, successful sync. The re-read writes the same values the backup jobs
+   already use, so it changes no workload.
 
 The log carries only verdict lines: never a token, pod UID, address or response body. The run passes
 only when all four steps do.

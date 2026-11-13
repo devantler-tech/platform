@@ -50,7 +50,8 @@ const (
 	namespace   = "openbao"
 	kubeContext = "admin@prod"
 	// canary is an OpenBao-backed ExternalSecret in the openbao namespace that
-	// nothing reads at startup, so a forced re-sync of it changes no workload.
+	// only the backup jobs mount; a forced re-sync writes the same values, so it
+	// changes no workload.
 	canary = "vault-snapshot-r2"
 	// statefulSet is the OpenBao StatefulSet, and the name of its server container.
 	statefulSet = "openbao"
