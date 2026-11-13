@@ -543,7 +543,8 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read # checkout the wait script and read the merge queue
-      checks: read # read whether a later change deployed, and whether a later push waits
+      checks: read # read whether this change, or a later one, deployed
+      actions: read # read whether this push came through the merge queue
     outputs:
       observe: ${{ steps.idle.outputs.observe }}
     steps:

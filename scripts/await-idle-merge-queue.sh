@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Decides, without the production lock, when the post-merge production observer runs, so the
-# observer never holds that lock in front of a waiting deploy (#6205).
+# observer does not hold that lock in front of a waiting deploy (#6205).
 #
 # The observer reads whether production runs what main says, and redeploys main when it is
 # behind. It takes the prod-deploy lock so that it reads only after a deploy or heal already
@@ -10,26 +10,35 @@
 # that deploy then waited for the observer's runner as well as its own: 9 of 14 minutes at
 # the median on 2026-11-13.
 #
-# While a change is queued the observation can wait: that change's deploy brings production
-# up to date, and if its deploy fails, its heal restores main. So this script waits here,
-# outside the lock, until one of these is true:
+# Production falls behind main in two ways, and each belongs to one push:
 #
-#   observe     Nothing is queued and this push is still the tip of the branch.
-#   stand down  The tip is a later change that deployed before it merged. Production is at
-#               or past this push, so nothing this run set out to find is left.
-#   stand down  Nothing is queued, the tip is a later push, and that push has a wait of its
-#               own that is running or has succeeded. That run observes, so only one does.
-#   observe     Nothing is queued and the later push has no such wait (its workflow was
-#               skipped or is broken): nothing else would observe.
-#   observe     An hour has passed.
+#   - A push that did not come through the merge queue was never deployed.
+#   - A queued change deployed, and before it merged a recovery deploy put an older main
+#     back. Production is behind from the moment that change merges.
 #
-# A later change that merged without deploying (documentation, say) changed nothing in
-# production, so it does not end this wait. The hour is this run's own and no later merge
-# restarts it: a queue kept busy by such changes cannot postpone the observation for longer.
+# A queued change that merged without deploying (documentation, say) published nothing, so
+# its push is neither. The answer therefore depends on which push this is:
 #
-# It answers `observe=true` whenever it cannot tell: an unreadable queue or check run, or a
-# read that does not finish. That is the behaviour before this script existed: the observer
-# takes the lock and the lock decides the order.
+#   not from the queue    Observe at once, as before this script existed.
+#   merged, not deployed  Observe when nothing is queued, which costs no deploy anything.
+#                         Otherwise stand down: this push left production as it was.
+#   merged and deployed   Wait here, outside the lock, while a change is queued: that
+#                         change's deploy brings production up to date, and if its deploy
+#                         fails, its heal restores main. The wait ends when
+#                           - the tip is a later change that deployed: stand down. That
+#                             deploy carried this push to production, and that change's own
+#                             run watches from there.
+#                           - nothing is queued: observe.
+#                           - an hour has passed: observe.
+#
+# The hour is this run's own and no later merge restarts it, so a queue kept busy by changes
+# that do not deploy cannot postpone the observation for longer. No answer relies on another
+# run finishing its work: a run stands down only for a deploy that has already succeeded, or
+# because its own push published nothing.
+#
+# It answers `observe=true` whenever it cannot tell: an unreadable queue, run list or check
+# run, or a read that does not finish. That is the behaviour before this script existed: the
+# observer takes the lock and the lock decides the order.
 #
 # Writes `observe=true` or `observe=false` to $GITHUB_OUTPUT.
 #
@@ -44,16 +53,15 @@ branch="${IDLE_BRANCH:?IDLE_BRANCH is required}"
 subject="${IDLE_SHA:?IDLE_SHA is required}"
 output="${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 
-# The names GitHub records the queue's deploy job and this wait's own job under.
-# scripts/tests/test-await-idle-merge-queue.sh fails when a workflow names either otherwise.
+# The workflow a queued change runs, and the name GitHub records its deploy job under.
+# scripts/tests/test-await-idle-merge-queue.sh fails when the workflow names either otherwise.
+queue_workflow='ci.yaml'
 deploy_job='🚀 Deploy to Prod'
-wait_job='🚦 Wait for an idle merge queue'
 
 # Fixed here, not read from the environment: the workflow's job timeout is sized for them.
 poll_seconds=30   # pause between two reads of the queue
 read_seconds=60   # one read may take this long before it counts as failed
 wait_seconds=3600 # this run observes after this long, whatever the queue holds
-successor_reads=4 # reads a later push gets to list its own wait before it counts as absent
 
 fail() {
   printf '::error title=Merge-queue wait misconfigured::%s\n' "$1"
@@ -79,69 +87,81 @@ answer() {
   exit 0
 }
 
+# <what could not be read>
+unknown() {
+  answer true warning "$1 could not be read, so the observer takes the lock as before"
+}
+
 # Every read is bounded. One that hung would hold this job until its timeout, and the
 # observer would then not run at all.
-#
-# "<tip commit> <queued changes>". A branch whose queue cannot be found prints no count,
-# which is not a state: nothing is known about what is queued.
-queue_state() {
-  timeout "$read_seconds" gh api graphql -f query="$query" -f owner="$owner" -f name="$name" \
+bounded() {
+  timeout -k 5 "$read_seconds" "$@"
+}
+
+# Sets `tip` and `queued`: the branch's tip commit and how many changes are queued. A branch
+# whose queue cannot be found has no count, which is not a state: nothing is known about what
+# is queued.
+read_queue() {
+  local state
+  state="$(bounded gh api graphql -f query="$query" -f owner="$owner" -f name="$name" \
     -f branch="$branch" -f ref="refs/heads/${branch}" \
-    --jq '.data.repository | "\(.ref.target.oid // "none") \(.mergeQueue.entries.totalCount // "none")"'
-}
-
-# <commit> <job name> <condition on one check run>: how many of the commit's check runs of
-# that name meet the condition, counting only the latest attempt of each.
-count_check_runs() {
-  timeout "$read_seconds" gh api --method GET "repos/${repository}/commits/$1/check-runs" \
-    -f check_name="$2" -f filter=latest \
-    --jq ".check_runs | if type == \"array\" then [.[] | select($3)] | length else error(\"no list of check runs\") end"
-}
-
-polls=0
-judged="" # the later tip whose deploy has been read
-absent=0  # reads, with nothing queued, that found no wait on that tip
-while :; do
-  polls=$((polls + 1))
-  if ! state="$(queue_state)"; then
-    answer true warning "the merge queue could not be read, so the observer takes the lock as before"
-  fi
+    --jq '.data.repository | "\(.ref.target.oid // "none") \(.mergeQueue.entries.totalCount // "none")"')" ||
+    unknown "the merge queue"
   read -r tip queued <<<"$state"
   if [[ ! "$tip" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$queued" =~ ^[0-9]+$ ]]; then
     answer true warning "the merge queue answered '${state}', which is not a state; the observer takes the lock as before"
   fi
+}
 
-  if [ "$tip" != "$subject" ]; then
-    moved="${branch} has moved on from ${subject:0:12} to ${tip:0:12}"
-    if [ "$tip" != "$judged" ]; then
-      judged="$tip"
-      absent=0
-      # A change's deploy finishes before the change merges, so one read per tip settles it.
-      if ! deployed="$(count_check_runs "$tip" "$deploy_job" '.status == "completed" and .conclusion == "success"')" ||
-        [[ ! "$deployed" =~ ^[0-9]+$ ]]; then
-        answer true warning "the deploy of ${tip:0:12} could not be read, so the observer takes the lock as before"
-      fi
-      if [ "$deployed" -gt 0 ]; then
-        answer false notice "${moved}, which deployed before it merged; production is at or past this push"
-      fi
+# <commit>: sets `deploys` to how many successful deploys the commit's queue run made (0 or
+# 1). Only the latest attempt of the job counts. A change deploys before it merges, so one
+# read of a commit on the branch is final.
+read_deploys() {
+  deploys="$(bounded gh api --method GET "repos/${repository}/commits/$1/check-runs" \
+    -f check_name="$deploy_job" -f filter=latest \
+    --jq '.check_runs | if type == "array" then [.[] | select(.status == "completed" and .conclusion == "success")] | length else error("no list of check runs") end')" ||
+    unknown "the deploy of ${1:0:12}"
+  [[ "$deploys" =~ ^[0-9]+$ ]] || unknown "the deploy of ${1:0:12}"
+}
+
+# <commit>: sets `queue_runs` to how many merge-queue runs the commit has. A commit that was
+# pushed past the queue has none, whatever its pull request's own runs left on it.
+read_queue_runs() {
+  queue_runs="$(bounded gh api --method GET "repos/${repository}/actions/workflows/${queue_workflow}/runs" \
+    -f head_sha="$1" -f event=merge_group -f per_page=1 \
+    --jq 'if (.total_count | type) == "number" then .total_count else error("no run count") end')" ||
+    unknown "the merge-queue run of ${1:0:12}"
+  [[ "$queue_runs" =~ ^[0-9]+$ ]] || unknown "the merge-queue run of ${1:0:12}"
+}
+
+read_deploys "$subject"
+if [ "$deploys" -eq 0 ]; then
+  read_queue_runs "$subject"
+  if [ "$queue_runs" -eq 0 ]; then
+    answer true notice "${subject:0:12} did not come through the merge queue, so nothing deployed it"
+  fi
+  read_queue
+  if [ "$queued" -eq 0 ]; then
+    answer true notice "no change is waiting in the merge queue"
+  fi
+  answer false notice "${subject:0:12} merged without deploying, so it left production as it was, and ${queued} change(s) are queued"
+fi
+
+polls=0
+judged="" # the later tip whose deploy has been read
+while :; do
+  polls=$((polls + 1))
+  read_queue
+  if [ "$tip" != "$subject" ] && [ "$tip" != "$judged" ]; then
+    judged="$tip"
+    read_deploys "$tip"
+    if [ "$deploys" -gt 0 ]; then
+      answer false notice "${branch} has moved on from ${subject:0:12} to ${tip:0:12}, which deployed before it merged; its own run watches from there"
     fi
-    if [ "$queued" -eq 0 ]; then
-      if ! successor="$(count_check_runs "$tip" "$wait_job" '.status != "completed" or .conclusion == "success"')" ||
-        [[ ! "$successor" =~ ^[0-9]+$ ]]; then
-        answer true warning "the wait of the newer push ${tip:0:12} could not be read, so the observer takes the lock as before"
-      fi
-      if [ "$successor" -gt 0 ]; then
-        answer false notice "no change is queued and ${moved}; that push observes production"
-      fi
-      absent=$((absent + 1))
-      if [ "$absent" -ge "$successor_reads" ]; then
-        answer true notice "no change is queued and the newer push ${tip:0:12} has no wait of its own after ${absent} reads; observing"
-      fi
-    fi
-  elif [ "$queued" -eq 0 ]; then
+  fi
+  if [ "$queued" -eq 0 ]; then
     answer true notice "no change is waiting in the merge queue after ${polls} read(s)"
   fi
-
   if [ "$SECONDS" -ge "$wait_seconds" ]; then
     answer true warning "an hour passed with ${queued} change(s) still queued; observing anyway"
   fi
