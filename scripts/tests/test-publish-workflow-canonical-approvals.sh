@@ -596,8 +596,8 @@ while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
   if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
-    # The product documentation consumer has no approval for the v19.0.5 row (#5404).
-    if [[ "$profile" == product-docs && "$identity" == *@af042c540ce8db4d64add98c34b5c57691e0e812 ]]; then expected=reject; fi
+    # The product documentation consumer is data-product-controller, which approves
+    # v19.0.5 since its publisher moved there (#6227), so it accepts the same rows.
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
     if [ "$result" = "$expected" ]; then
