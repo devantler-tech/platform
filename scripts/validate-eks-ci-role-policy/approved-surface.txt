@@ -124,11 +124,19 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|vertical-pod-autoscaler|vertical-pod-autos
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|whoami|whoami 22eb185e9f69bbddf8dc27bd2a852b07b3bbaf791d25ada894eeb8e954f99bed
 
+iam.aws.m.upbound.io/v1beta1|AccessKey|aws|email-smtp 22ff8010a4298f2b19a2829a65c383f27fd737b2aed7b096f22814ad73a2f240
+
 iam.aws.m.upbound.io/v1beta1|Policy|aws|eks-ci-smoke-boundary 019210611429956763cab81a883bc6cf1faf53caf89b5e9274e8ec69cad01b66
+
+iam.aws.m.upbound.io/v1beta1|Policy|aws|email-smtp-send 38284030cdef086fa0a51443feba839b2f6fcf27bf1cc177fa2fa15d314ceb30
 
 iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci c40205b3f48d193e8be1a39abda738865b954c90733039a49854f0bac5844306
 
 iam.aws.m.upbound.io/v1beta1|Role|aws|ses-account-setup 7faa58457f4a17a3c14368d3a956bb07da4f40bb2689c61149ee31eae9693b6b
+
+iam.aws.m.upbound.io/v1beta1|UserPolicyAttachment|aws|email-smtp-send 06c8f5c0aa8f7b593878b9869c5af7375a1ef2f429182cb904e76e0dae966e1c
+
+iam.aws.m.upbound.io/v1beta1|User|aws|email-smtp 19ce46105be088b444658d4d594f6059308f079440336af06af912d60aeb5704
 
 kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 72f3f972cecdf3ca2e315deb4224bd28c1df1244fc7973a88eb7f4fc03ac1d05
 
