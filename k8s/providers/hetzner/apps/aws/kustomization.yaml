@@ -17,6 +17,7 @@ resources:
   - access-key-email-smtp.yaml
   - push-secret-email-smtp.yaml
   - role-ses-account-setup.yaml
+  - dns-endpoint.yaml
   - external-secret.yaml
   - oci-repository.yaml
   - flux-kustomization.yaml
