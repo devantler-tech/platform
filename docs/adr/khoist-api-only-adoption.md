@@ -43,6 +43,22 @@ receipt with requirements that its two named products do not declare `spec.ui` a
 no serving workload carries the retired settings. Products elsewhere are counted, not
 refused. It also requires the in-place chart rename.
 
+## Amendment: KHoist 9.0.12 (2026-11-13)
+
+The platform moves to KHoist 9.0.12:
+
+- **Image:** `ghcr.io/devantler-tech/khoist@sha256:fb97d7bef59c9898373f65acb90a001313806c1112bef295b464c3d161563056`.
+- **Chart:** `oci://ghcr.io/devantler-tech/charts/khoist@sha256:806cbdd4513f8ef9593f5426f5c609669651b2a4fee5970af2b3bc0519be0341`.
+
+The image is signed by the reviewed v19.0.5 `publish-app` revision (`af042c54…`), not by v8.0.0. That frees v8.0.0's slot in the generic image rules for a publisher whose signature bundle every node can read (Platform #6226, #6227). The chart keeps KHoist's own `publish-chart` signer.
+
+9.0.6 to 9.0.12 contain:
+- a Go 1.27.4 security rebuild;
+- dependency bumps, including OpenTelemetry 1.47.0;
+- test and CI fixes.
+
+The CRD changes only its `controller-gen` version annotation, and its schema is unchanged. So the decision above, the CRD upgrade path and the rollback below still apply. A rollback now restores 9.0.5's image and chart. Its v8.0.0 signer stays accepted until v8.0.0 is retired.
+
 ## Rollback
 
 Restore the 2.9.1 image, chart source and signing identity, the `ui-kit` resources and

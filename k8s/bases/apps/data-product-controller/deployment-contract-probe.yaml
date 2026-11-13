@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: contract-probe
-          image: ghcr.io/devantler-tech/khoist:9.0.5@sha256:e485a0e82df734e6fb5ec8b8f3ca923748b82b9cab81be86a0c69e3e116cdfbf
+          image: ghcr.io/devantler-tech/khoist:9.0.12@sha256:fb97d7bef59c9898373f65acb90a001313806c1112bef295b464c3d161563056
           imagePullPolicy: IfNotPresent
           command:
             - /contract-probe
