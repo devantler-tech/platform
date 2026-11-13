@@ -129,10 +129,41 @@ Public output contains `MAIL_PROBE_PATHS` (`ALL_LOCAL_TARGETS_HTTP_200`,
 `NO_ACTIVE_STORED_BLOCKS` or `OTHER_ACTIVE_STORED_BLOCKS`),
 `MAIL_CILIUM_ACCESS_STATE` (`STORED_CILIUM_BLOCK_MATCH`,
 `STORED_CILIUM_ALLOW_OVERRIDE`, `NO_ACTIVE_STORED_BLOCKS` or
-`OTHER_ACTIVE_STORED_BLOCKS`) and
+`OTHER_ACTIVE_STORED_BLOCKS`), `MAIL_CLIENT_IDENTITY` and
+`MAIL_CLIENT_DISTINCT_PUBLIC_BLOCKS` (described below) and
 `MAIL_KUBERNETES_READY` (`TRUE` or `FALSE`). A guard or collection failure emits
 only `MAIL_PROBE_STATE=INCONCLUSIVE` and exits three. An observed problem exits
-one; a ready sample with successful targets and no active stored blocks exits zero.
+one. Without the client adapter, a ready sample with successful targets and no
+active stored blocks exits zero. With the adapter, per-client blocks are the
+intended behaviour, so a ready sample with successful targets exits zero when
+`MAIL_CLIENT_IDENTITY` is `DISTINCT_PUBLIC_CLIENTS`.
+
+`MAIL_CLIENT_IDENTITY` reads which addresses the server itself blocked while the
+current Pod, with the bound [client adapter](operations/email-proxy-identity.md),
+was serving. Through the adapter, each external connection carries one client
+address, so the server's automatic blocks name the clients it judged. The
+blocks created since the Pod's creation timestamp are classified, whatever their
+expiry or a matching allow rule:
+
+- `DISTINCT_PUBLIC_CLIENTS`: at least two distinct public addresses, and nothing
+  else. One shared address cannot produce two, so the server told real clients
+  apart.
+- `NON_CLIENT_ADDRESS_BLOCKED`: at least one block names a private, loopback,
+  link-local or shared (100.64.0.0/10) address, the bound node, Pod or Cilium
+  address, or a range wider than one address. A shared intermediary being
+  judged is what the adapter replaced.
+- `INSUFFICIENT_EVIDENCE`: fewer than two distinct public addresses and nothing
+  else. Real traffic has not produced the evidence yet.
+- `NOT_APPLICABLE`: no adapter is bound.
+
+`MAIL_CLIENT_DISTINCT_PUBLIC_BLOCKS` is the count of those distinct public
+addresses. Addresses are never printed. A block created before the Pod, such as
+the retained shared-address block, is outside the window; it is still reported by
+the Cilium fields and is neither removed nor exempted. A stored creation time is
+administrator editable, so this is evidence from the server's own decisions, not
+an attestation of each connection. Forged forwarding metadata and direct
+untrusted peers are refused before the server by the Gateway and adapter; their
+proofs are the native controls and the Gateway denied-peer probe.
 
 The host address is a candidate from bound Pod status; the Cilium local address
 is a separate routing candidate. Both are classified against the same complete

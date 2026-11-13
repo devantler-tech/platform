@@ -24,6 +24,7 @@ type inputExecutor func(context.Context, []byte, ...string) ([]byte, error)
 type accessResult struct {
 	Paths, Access, CiliumAccess string
 	Block                       blockDetails
+	Identity                    clientIdentity
 	Ready                       bool
 	Ingress                     *ingressAccessResult
 }
@@ -604,6 +605,14 @@ func collectAccessWithIngress(ctx context.Context, run executor, send inputExecu
 	if e != nil {
 		return fail()
 	}
+	// Only the bound adapter gives each external connection its own client address.
+	result.Identity = clientIdentity{Verdict: "NOT_APPLICABLE"}
+	if before.ProxyConfig != "" {
+		result.Identity, e = decodeClientIdentity(raw, createdBefore, observedAt, addresses.Host, addresses.Pod, ciliumBefore.Address)
+		if e != nil {
+			return fail()
+		}
+	}
 	switch result.CiliumAccess {
 	case "STORED_HOST_BLOCK_MATCH":
 		result.CiliumAccess = "STORED_CILIUM_BLOCK_MATCH"
@@ -693,16 +702,34 @@ func runAccessEntry(ctx context.Context, env func(string) string, run executor, 
 	if e != nil {
 		return unknown()
 	}
+	line, code := accessReport(result)
+	if n, e := io.WriteString(out, line); e != nil || n != len(line) {
+		return 3
+	}
+	return code
+}
+
+// accessReport prints fixed classifications and decides acceptance.
+//
+// Without the client adapter, any active block can be a shared-address block,
+// so acceptance needs none. With it, per-client blocks are the intended
+// behaviour: acceptance needs evidence that the server judged distinct public
+// clients and blocked nothing else in the current Pod. A block retained from
+// before the Pod is reported but not removed or exempted.
+func accessReport(result accessResult) (string, int) {
 	ready := "FALSE"
 	if result.Ready {
 		ready = "TRUE"
 	}
-	line := fmt.Sprintf("MAIL_PROBE_PATHS=%s\nMAIL_ACCESS_STATE=%s\nMAIL_CILIUM_ACCESS_STATE=%s\nMAIL_CILIUM_BLOCK_REASON=%s\nMAIL_CILIUM_BLOCK_SCOPE=%s\nMAIL_CILIUM_BLOCK_EXPIRY=%s\nMAIL_CILIUM_BLOCK_CREATION=%s\nMAIL_KUBERNETES_READY=%s\n", result.Paths, result.Access, result.CiliumAccess, result.Block.Reason, result.Block.Scope, result.Block.Expiry, result.Block.Creation, ready)
-	if n, e := io.WriteString(out, line); e != nil || n != len(line) {
-		return 3
+	line := fmt.Sprintf("MAIL_PROBE_PATHS=%s\nMAIL_ACCESS_STATE=%s\nMAIL_CILIUM_ACCESS_STATE=%s\nMAIL_CILIUM_BLOCK_REASON=%s\nMAIL_CILIUM_BLOCK_SCOPE=%s\nMAIL_CILIUM_BLOCK_EXPIRY=%s\nMAIL_CILIUM_BLOCK_CREATION=%s\nMAIL_CLIENT_IDENTITY=%s\nMAIL_CLIENT_DISTINCT_PUBLIC_BLOCKS=%d\nMAIL_KUBERNETES_READY=%s\n", result.Paths, result.Access, result.CiliumAccess, result.Block.Reason, result.Block.Scope, result.Block.Expiry, result.Block.Creation, result.Identity.Verdict, result.Identity.Public, ready)
+	accepted := result.Ready && result.Paths == "ALL_LOCAL_TARGETS_HTTP_200"
+	if result.Identity.Verdict == "NOT_APPLICABLE" {
+		accepted = accepted && result.Access == "NO_ACTIVE_STORED_BLOCKS"
+	} else {
+		accepted = accepted && result.Identity.Verdict == "DISTINCT_PUBLIC_CLIENTS"
 	}
-	if result.Ready && result.Paths == "ALL_LOCAL_TARGETS_HTTP_200" && result.Access == "NO_ACTIVE_STORED_BLOCKS" {
-		return 0
+	if accepted {
+		return line, 0
 	}
-	return 1
+	return line, 1
 }
