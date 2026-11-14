@@ -365,8 +365,8 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   The nodes authenticate every first-party pull, so a per-tenant pull credential cannot keep
   one tenant from running another tenant's private image; the admission policy
   [`restrict-tenant-image-repositories.yaml`](../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-image-repositories.yaml)
-  is that boundary. Third-party images are unaffected. It reports in Audit mode first and
-  moves to Deny once no current tenant workload is reported (#6080).
+  is that boundary and refuses any other first-party reference at admission. Third-party
+  images are unaffected.
 - **A tenant with no allow-list of its own is denied by default.** Adding the allow-list entry is
   therefore part of onboarding, not an optional hardening step: until a tenant namespace has
   an allow-list naming its approved hostnames, its HTTPRoutes are refused at admission with a

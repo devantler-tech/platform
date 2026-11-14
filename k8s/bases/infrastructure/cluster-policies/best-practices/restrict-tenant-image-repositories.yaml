@@ -31,10 +31,9 @@
 # Scope: only ksail- or kro-managed tenant namespaces, the same selector the
 # other tenant boundaries use, so platform and system namespaces are unaffected.
 #
-# Rollout: Audit first (the acceptance criteria on #6080). Background evaluation
-# is enabled so the policy reports any existing tenant workload that would be
-# denied; switch validationActions (and tests/policy-failure-actions.json) to
-# Deny once the reports show none. An empty report only counts while the policy
+# Enforcement: admission refuses a non-conforming reference (Deny). Background
+# evaluation stays enabled, so the policy reports also flag any existing object
+# that admission would now refuse. An empty report only counts while the policy
 # status is ready: reporting needs the reports controller to read every matched
 # resource, including pods/ephemeralcontainers (granted by
 # controllers/kyverno/cluster-role-reports-controller-read-pod-ephemeral-containers.yaml).
@@ -66,7 +65,7 @@ metadata:
 spec:
   failurePolicy: Fail
   validationActions:
-    - Audit
+    - Deny
   evaluation:
     background:
       enabled: true
