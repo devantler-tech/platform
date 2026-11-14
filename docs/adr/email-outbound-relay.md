@@ -69,7 +69,11 @@ are unchanged.
       missing or empty. Missing or malformed relay inputs stop the bootstrap,
       so serving stays stopped.
    2. Production adopts that image, supplies both inputs from the OpenBao key,
-      and replaces the egress deny.
+      and replaces the egress deny. The image was built from `main` after the
+      #5387 sign-in and recovery preparation, which production had not run.
+      Under the 0.16.27 schema that production selects, its plan equals the
+      previous image's plus the three relay operations, so those preparations
+      change nothing until a 1.x schema is selected.
 7. Send real mail to external mailboxes. Check that SPF, DKIM and DMARC pass,
    and that replies thread against the sender's Sent copy despite SES's
    Message-ID rewrite. If threading fails, report it before switching relay.
