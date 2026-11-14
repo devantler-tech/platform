@@ -50,10 +50,10 @@ name: Probe Cilium ExternalAuth Cross-Node
         required: true
         type: string
       requests:
-        description: "Request pairs to send (1-100; pairs x 5s timeout must not exceed 250; at least 10 must land in each node group)"
+        description: "Request pairs to send (1-120; pairs x 5s timeout must not exceed 600; at least 10 must land in each node group)"
         required: false
         type: string
-        default: "50"
+        default: "120"
 
 permissions: {}
 
@@ -72,7 +72,7 @@ jobs:
     # their curl timeout, every kubectl call at its 30s request timeout, and both cleanup deletes —
     # fits inside this with setup slack, so the step always prints a verdict and cleans up before
     # Actions cancels it (pinned by the test).
-    timeout-minutes: 45
+    timeout-minutes: 55
     # KUBE_CONFIG is a `prod` ENVIRONMENT secret; without this it resolves to the empty string.
     environment: prod
     permissions:
