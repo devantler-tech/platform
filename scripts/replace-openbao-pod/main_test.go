@@ -16,6 +16,9 @@ import (
 const (
 	oldUID = "11111111-2222-4333-8444-555555555555"
 	newUID = "99999999-8888-4777-8666-555555555555"
+	// appliedDigest is the manifests digest the workflow proved, and otherDigest another one.
+	appliedDigest = "sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	otherDigest   = "sha256:" + "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 )
 
 // fake stands in for kubectl. uids is the sequence of pod UIDs successive
@@ -32,6 +35,8 @@ type fake struct {
 	releaseErr  error
 	helm        helmState
 	helmErr     error
+	layer       layerState
+	layerErr    error
 	deleted     []string
 	deleteErr   error
 	states      []syncState
@@ -49,6 +54,7 @@ func healthy(uids ...string) *fake {
 		claims:  map[string]claimInfo{"data-openbao-2": {"c-data", "Bound"}, "audit-openbao-2": {"c-audit", "Bound"}},
 		release: "v2.7.2",
 		helm:    helmState{chart: "0.30.7", readyAtGeneration: true},
+		layer:   layerState{digest: appliedDigest, readyAtGeneration: true},
 	}
 }
 
@@ -79,6 +85,8 @@ func (f *fake) claim(_ context.Context, name string) (claimInfo, error) {
 func (f *fake) templateRelease(context.Context) (string, error) { return f.release, f.releaseErr }
 
 func (f *fake) releaseState(context.Context) (helmState, error) { return f.helm, f.helmErr }
+
+func (f *fake) appliedLayer(context.Context) (layerState, error) { return f.layer, f.layerErr }
 
 func (f *fake) deleteIfUID(_ context.Context, name, uid string) error {
 	if f.deleteErr != nil {
@@ -128,7 +136,7 @@ func runWith(t *testing.T, f *fake, sleep func(context.Context, time.Duration) e
 }
 
 func TestDelete(t *testing.T) {
-	deleteArgs := []string{"delete", "--server", "openbao-2", "--expect-uid", oldUID, "--expect-chart", "0.30.7", "--expect-release", "2.7.2", "--timeout", "10m"}
+	deleteArgs := []string{"delete", "--server", "openbao-2", "--expect-uid", oldUID, "--expect-chart", "0.30.7", "--expect-release", "2.7.2", "--expect-applied", appliedDigest, "--timeout", "10m"}
 	with := func(f *fake, change func(*fake)) *fake { change(f); return f }
 	deleted := []string{"openbao-2@" + oldUID}
 	refused := func(reason string) string {
@@ -161,6 +169,11 @@ func TestDelete(t *testing.T) {
 		{"refuses a release on another chart", with(healthy(oldUID), func(f *fake) { f.helm.chart = "0.30.6" }), noSleep, 1, refused("template-not-on-reviewed-release"), nil},
 		{"refuses a release not Ready at its generation", with(healthy(oldUID), func(f *fake) { f.helm.readyAtGeneration = false }), noSleep, 1, refused("template-not-on-reviewed-release"), nil},
 		{"an unreadable release is unverified", with(healthy(oldUID), func(f *fake) { f.helmErr = errors.New("forbidden") }), noSleep, 2, unverified("deployment-binding"), nil},
+		{"refuses a layer that applied another revision since the proof", with(healthy(oldUID), func(f *fake) { f.layer.digest = otherDigest }), noSleep, 1,
+			refused("platform-revision-changed"), nil},
+		{"refuses a layer not Ready at its generation", with(healthy(oldUID), func(f *fake) { f.layer.readyAtGeneration = false }), noSleep, 1,
+			refused("platform-revision-changed"), nil},
+		{"an unreadable layer is unverified", with(healthy(oldUID), func(f *fake) { f.layerErr = errors.New("forbidden") }), noSleep, 2, unverified("platform-revision"), nil},
 		{"refuses a claim that is not Bound", with(healthy(oldUID), func(f *fake) { f.claims["audit-openbao-2"] = claimInfo{"c-audit", "Lost"} }), noSleep, 1,
 			refused("storage-not-bound"), nil},
 		{"refuses a missing claim", with(healthy(oldUID), func(f *fake) { delete(f.claims, "data-openbao-2") }), noSleep, 1, refused("storage-not-bound"), nil},
@@ -268,7 +281,7 @@ func TestKubectlVerbs(t *testing.T) {
 	for _, c := range calls {
 		seen[c[1]]++
 	}
-	if !reflect.DeepEqual(seen, map[string]int{"get": 5, "delete": 1, "annotate": 1}) {
+	if !reflect.DeepEqual(seen, map[string]int{"get": 6, "delete": 1, "annotate": 1}) {
 		t.Fatalf("kubectl verbs changed: %v", seen)
 	}
 	src := string(b)
@@ -360,6 +373,66 @@ func TestParseHelmRelease(t *testing.T) {
 	for _, bad := range []string{`nope`, `{"metadata":{"generation":1},"status":{}}`, `{"metadata":{"generation":1},"status":{"lastAttemptedRevision":"0.30.7"}}`,
 		`{"metadata":{"generation":1},"status":{"lastAttemptedRevision":"0.30.7","conditions":[{"type":"Ready","status":"True"},{"type":"Ready","status":"True"}]}}`} {
 		if _, err := parseHelmRelease([]byte(bad)); err == nil {
+			t.Fatalf("accepted %s", bad)
+		}
+	}
+}
+
+func TestApplied(t *testing.T) {
+	cases := []struct {
+		name string
+		f    *fake
+		code int
+		line string
+	}{
+		{"reports the digest of a layer Ready at its generation", healthy(oldUID), 0, "OPENBAO_PLATFORM_REVISION=APPLIED digest=" + appliedDigest},
+		{"refuses a layer not Ready at its generation", &fake{layer: layerState{digest: appliedDigest}}, 1, "OPENBAO_PLATFORM_REVISION=REFUSED reason=layer-not-ready"},
+		{"an unreadable layer is unverified", &fake{layerErr: errors.New("forbidden")}, 2, "OPENBAO_PLATFORM_REVISION=UNVERIFIED stage=layer-read"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			code, line, _ := runWith(t, c.f, noSleep, "applied")
+			if code != c.code || line != c.line || c.f.deleted != nil {
+				t.Fatalf("got %d %q deleted=%v", code, line, c.f.deleted)
+			}
+		})
+	}
+	for _, args := range [][]string{{"applied", "--timeout", "1m"}, {"applied", "extra"}} {
+		if code, line, _ := runWith(t, healthy(oldUID), noSleep, args...); code != 2 || line != "" {
+			t.Fatalf("%v: got %d %q", args, code, line)
+		}
+	}
+}
+
+func TestParseLayer(t *testing.T) {
+	ks := func(gen, observed, condGen int64, status, revision string) []byte {
+		return []byte(fmt.Sprintf(`{"metadata":{"generation":%d},"status":{"observedGeneration":%d,"lastAppliedRevision":%q,"conditions":[{"type":"Ready","status":%q,"observedGeneration":%d}]}}`, gen, observed, revision, status, condGen))
+	}
+	rev := "latest@" + appliedDigest
+	for _, c := range []struct {
+		doc   []byte
+		ready bool
+	}{
+		{ks(4, 4, 4, "True", rev), true},
+		{ks(4, 4, 4, "True", appliedDigest), true},
+		{ks(5, 4, 4, "True", rev), false},
+		{ks(5, 5, 4, "True", rev), false},
+		{ks(4, 4, 4, "False", rev), false},
+	} {
+		s, err := parseLayer(c.doc)
+		if err != nil || s.digest != appliedDigest || s.readyAtGeneration != c.ready {
+			t.Fatalf("%s: got %+v %v", c.doc, s, err)
+		}
+	}
+	for _, bad := range [][]byte{
+		[]byte(`nope`),
+		ks(0, 0, 0, "True", rev),
+		ks(4, 4, 4, "True", ""),
+		ks(4, 4, 4, "True", "main@sha1:0123456789abcdef0123456789abcdef01234567"),
+		ks(4, 4, 4, "True", "latest@sha256:abc"),
+		[]byte(`{"metadata":{"generation":1},"status":{"lastAppliedRevision":"` + rev + `","conditions":[{"type":"Ready","status":"True"},{"type":"Ready","status":"True"}]}}`),
+	} {
+		if _, err := parseLayer(bad); err == nil {
 			t.Fatalf("accepted %s", bad)
 		}
 	}
