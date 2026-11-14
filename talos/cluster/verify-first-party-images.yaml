@@ -81,8 +81,9 @@
 #      The automated company sender image is signed by the dedicated
 #      publish-mail-submission.yaml workflow on main.
 #   9. the app images (wedding-app, ascoachingogvaner, …) are signed by the
-#      shared publish-app.yaml workflow: legacy full-commit compatibility or an
-#      explicitly reviewed maintained revision, matching the app admission rule.
+#      shared publish-app.yaml workflow at an explicitly reviewed maintained
+#      revision, matching the app admission rule. The deleted legacy publisher
+#      repository is no longer accepted at any commit (#6264).
 # The two checkpoint compatibility images use the main-only
 # publish-coroot-checkpoint-hotfix.yaml workflow, separately from the node agent.
 # Talos evaluates rules in order, first match wins, so the specific rules
@@ -245,11 +246,11 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-mail-submission\.yaml@refs/heads/main$
-  # First-party APP images retain legacy full-commit verification and accept the
-  # two reviewed maintained publisher revisions (v19.0.5 #5404, v21.3.4 #6228).
-  # Mutable refs, tags and other maintained commits are refused, as in the app
-  # admission policy.
+  # First-party APP images accept only the two reviewed maintained publisher
+  # revisions (v19.0.5 #5404, v21.3.4 #6228). The deleted legacy publisher
+  # repository is refused at every commit (#6264). Mutable refs, tags and other
+  # maintained commits are refused, as in the app admission policy.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35))$
+      subjectRegex: ^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)$

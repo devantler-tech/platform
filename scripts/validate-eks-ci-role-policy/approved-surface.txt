@@ -138,7 +138,7 @@ iam.aws.m.upbound.io/v1beta1|UserPolicyAttachment|aws|email-smtp-send 06c8f5c0aa
 
 iam.aws.m.upbound.io/v1beta1|User|aws|email-smtp 19ce46105be088b444658d4d594f6059308f079440336af06af912d60aeb5704
 
-kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 7ee5e204a2505c0fa4f9b67db66239f5fd6d52d7d52d747d450bc66976c2f49a
+kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 387506d9d05e1b17191d74e4fb3b45ea3292a09484a082272443fc12e0d51745
 
 kro.run/v1alpha1|Tenant|flux-system|business-site 5bb6db3e87d10fb4970c3671a2e76f61f6b2726b124c09439d8dec5665721a3f
 
