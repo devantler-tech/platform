@@ -758,6 +758,12 @@ PROFILES
 # Column 1 names the profiles that accept the identity (`-` for none). The generic Tenant
 # source binds it to the tenant name, which the constructor reader prints as `<tenant>`, so
 # no identity matches it here; the compiled graph is exercised in webapp-compiler/tenant_test.go.
+#
+# The image rules accept any first-party repository except `.github`, which hosts reusable
+# workflows other repositories call; a repository named `actions` would be a first-party
+# repository like any other, so its release tag passes them. No consumer source accepts it.
+# The deleted publisher's commit-pinned identity stays refused by the image rules; only the
+# consumers whose generated approvals name that exact legacy commit keep it.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
   if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
@@ -781,6 +787,10 @@ admission,node-pull	https://github.com/devantler-tech/data-product-controller/.g
 admission,node-pull	https://github.com/devantler-tech/wedding-app-x/.github/workflows/release.yaml@refs/tags/v1.2.3
 -	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v21.3.4
 -	https://github.com/devantler-tech/.github/.github/workflows/release.yaml@refs/tags/v21.3.4
+-	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3
+admission,node-pull	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3
+admission,node-pull	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0
+coaching,wedding,product-docs	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
 -	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/heads/main
 -	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2
 -	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/latest

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,6 +27,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 )
 
 const tenantDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -315,6 +317,58 @@ func TestCommittedTenant(t *testing.T) {
 			}
 		})
 	}
+	// Every committed Tenant, as written and with an unpinned source, accepts only its
+	// own repository's release workflow (#6265). A repository named `actions` is no
+	// tenant's own, `.github` tags are never accepted, and a pinned source keeps its
+	// single exact publisher revision.
+	t.Run("own-release-for-every-committed-tenant", func(t *testing.T) {
+		tenants := committedTenants(t, root)
+		if len(tenants) < 2 {
+			t.Fatalf("found %d committed Tenant instances; the repository holds at least two", len(tenants))
+		}
+		names := make([]string, 0, len(tenants))
+		for _, committed := range tenants {
+			name, _, _ := unstructured.NestedString(committed.Object, "spec", "name")
+			names = append(names, name)
+		}
+		for _, committed := range tenants {
+			name, _, _ := unstructured.NestedString(committed.Object, "spec", "name")
+			revision, _, _ := unstructured.NestedString(committed.Object, "spec", "source", "publisherRevision")
+			for _, mode := range []string{"as-committed", "unpinned"} {
+				t.Run(name+"/"+mode, func(t *testing.T) {
+					input := committed.DeepCopy()
+					input.SetNamespace("default")
+					input.SetName(name + "-" + mode)
+					if mode == "unpinned" {
+						unstructured.RemoveNestedField(input.Object, "spec", "source")
+					}
+					if err := admit(input); err != nil {
+						t.Fatal(err)
+					}
+					objects, _ := desiredTenant(t, engine, &definition, input)
+					matcher := compiledSubject(t, objects["ociRepository"])
+					want := map[string]bool{
+						"https://github.com/devantler-tech/" + name + "/.github/workflows/release.yaml@refs/tags/v1.2.3":          mode == "unpinned" || revision == "",
+						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":           false,
+						"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0":     false,
+						"https://github.com/devantler-tech/actions/.github/workflows/release.yaml@refs/tags/v1.2.3":               false,
+						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("e", 40): false,
+						"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":           false,
+					}
+					for _, other := range names {
+						if other != name {
+							want["https://github.com/devantler-tech/"+other+"/.github/workflows/release.yaml@refs/tags/v1.2.3"] = false
+						}
+					}
+					for identity, accepted := range want {
+						if got := matcher.MatchString(identity); got != accepted {
+							t.Fatalf("committed tenant %s (%s) accepts %s = %t, want %t", name, mode, identity, got, accepted)
+						}
+					}
+				})
+			}
+		}
+	})
 	t.Run("source-only-can-activate", func(t *testing.T) {
 		input := instance("activation-fixture", map[string]interface{}{
 			"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false},
@@ -536,6 +590,39 @@ func assertDefaultSubjectRefusesDeletedPublisher(t *testing.T, source *unstructu
 	}
 }
 
+// committedTenants returns every Tenant instance committed under k8s/, read from
+// each YAML document's own apiVersion and kind.
+func committedTenants(t *testing.T, root string) []*unstructured.Unstructured {
+	t.Helper()
+	separator := regexp.MustCompile(`(?m)^---[ \t]*$`)
+	var tenants []*unstructured.Unstructured
+	err := filepath.WalkDir(filepath.Join(root, "k8s"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || (!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml")) {
+			return err
+		}
+		data, err := os.ReadFile(path) //nolint:gosec // Repository-owned manifests.
+		if err != nil {
+			return err
+		}
+		for _, document := range separator.Split(string(data), -1) {
+			// A document may be a list, such as a patch file; only a mapping can be a Tenant.
+			var parsed interface{}
+			if err := yaml.Unmarshal([]byte(document), &parsed); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			object, ok := parsed.(map[string]interface{})
+			if ok && object["apiVersion"] == "kro.run/v1alpha1" && object["kind"] == "Tenant" {
+				tenants = append(tenants, &unstructured.Unstructured{Object: object})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tenants
+}
+
 // compiledSubject returns the one compiled source subject as the regex Flux
 // applies to the signing certificate's identity.
 func compiledSubject(t *testing.T, source *unstructured.Unstructured) *regexp.Regexp {
@@ -591,6 +678,12 @@ func assertDefaultSubjectTrustsOnlyOwnRelease(t *testing.T, source *unstructured
 		own + "/release.yaml@refs/tags/v1.2.3":                                                                                           false,
 		own + "/.github/workflows/release.json@refs/tags/v1.2.3":                                                                         false,
 		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v21.3.4":                                 false,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                                  false,
+		// A repository named `actions` is not this tenant's own: its release tags and
+		// the deleted publisher's commits are refused here, whatever the image rules do.
+		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                         false,
+		"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0":                   false,
+		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328": false,
 	} {
 		if got := matcher.MatchString(identity); got != want {
 			t.Fatalf("compiled default subject accepts %s = %t, want %t", identity, got, want)

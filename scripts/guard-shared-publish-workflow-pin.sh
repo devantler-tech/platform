@@ -94,13 +94,24 @@
 #
 # The tail after <repo> is compared literally against OWN_RELEASE_TAIL, so the workflow
 # stays one file in .github/workflows/ and the tag stays the strict OCI-semver grammar.
-# <repo> is fixed per verifier: the first-party repository segment in the image verifiers,
-# the constructor's `<tenant>` marker in the generic Tenant source, and one literal,
-# escaped repository name in a consumer's matcher (which repository is the
-# approved-revisions guard's question). The two repositories that host the shared
-# publishers are refused there: a reusable workflow carries its host's identity whoever
-# calls it, so a tag of either would bring back the tag alternative #3022 removed. The
-# shared-publisher alternatives keep every rule above unchanged.
+# <repo> is fixed per verifier, and what each accepts is exactly this:
+#
+# - A consumer's matcher names one literal, escaped repository, which must be that
+#   consumer's own (the approved-revisions guard's question). `actions` and `.github`, the
+#   two repositories that host or hosted the shared publishers, are refused there.
+# - The generic Tenant source names the constructor's `<tenant>` marker: the tenant's own
+#   repository, bound by the exact constructor.
+# - The image verifiers name the first-party segment FIRST_PARTY_RELEASE_REPOSITORY, which
+#   accepts any first-party repository's release workflow on a release tag EXCEPT
+#   `.github`: it hosts reusable workflows other repositories call, and a reusable workflow
+#   carries its host's identity whoever calls it. Every other name matches, `actions`
+#   included, because a repository created under that name would be a first-party
+#   repository like any other. The image verifiers bind a signature to the organisation;
+#   the per-tenant binding is the tenant's signed manifest source, which pins its images.
+#
+# The shared-publisher alternatives keep every rule above unchanged: their refs stay
+# commit-pinned, so the deleted publisher's commit identities stay refused by the generic
+# verifiers, and a consumer keeps only the exact legacy commits its approvals name.
 
 set -euo pipefail
 
@@ -152,8 +163,9 @@ readonly GENERIC_TENANT_FILE='./k8s/bases/infrastructure/resource-graph-definiti
 # repository segment, compared literally. The semver grammar is the ksail cd.yaml one.
 readonly OWN_RELEASE_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 # The repository segment each verifier may name. The image verifiers accept any
-# first-party repository that starts with a letter or digit (never `.github`); the
-# generic Tenant source names the constructor's tenant marker.
+# first-party repository that starts with a letter or digit: every name except one with a
+# leading dot such as `.github`, so `actions` matches too. The generic Tenant source names
+# the constructor's tenant marker.
 readonly FIRST_PARTY_RELEASE_REPOSITORY='[A-Za-z0-9][A-Za-z0-9_.-]*'
 readonly TENANT_RELEASE_REPOSITORY='<tenant>'
 
@@ -475,9 +487,10 @@ judge_canonical_ref() {
 # strip_consumer_own_release <location> <subject> — print a consumer's subject without its
 # trailing own-release alternative (#6265), having refused it unless it names ONE literal
 # repository: letters, digits, `_` and `-`, any `.` escaped, starting with a letter or
-# digit, and neither repository that hosts the shared publishers. A class, a group or an
-# alternation there would trust more than one repository. The leading-character rule
-# already refuses `\.github`; `actions` is refused by name.
+# digit, and neither repository that hosts or hosted the shared publishers: no consumer
+# is named after either. A class, a group or an alternation there would trust more than
+# one repository. The leading-character rule already refuses `\.github`; `actions` is
+# refused by name.
 strip_consumer_own_release() {
   local location="$1" subject="$2" head repository
   head="${subject%"$OWN_RELEASE_TAIL"')$'}"
@@ -489,7 +502,7 @@ strip_consumer_own_release() {
   fi
   case "$repository" in
     actions)
-      printf '%s: the own-release alternative names %s, a repository that hosts the shared publishers; a tag of a reusable workflow there carries its identity whoever calls it (subject: %s)\n' \
+      printf '%s: the own-release alternative names %s, a repository that hosted the shared publishers; no consumer source is named after it (subject: %s)\n' \
         "$location" "$repository" "$subject" >&2
       return 1
       ;;
@@ -931,9 +944,10 @@ EOF
     fi
 
     # THE GENERIC VERIFIERS ARE CANONICAL-ONLY (#6264), and judged by that parse alone, so
-    # the legacy family cannot return to them in any spelling this guard selects. The image
-    # verifiers may group it with a first-party repository's own release workflow (#6265);
-    # a plain subject in the Tenant graph has no tenant name to bind one to.
+    # the legacy family's commit form cannot return to them in any spelling this guard
+    # selects. The image verifiers may group it with any first-party repository's own
+    # release workflow on a release tag (#6265), a name of `actions` included; a plain
+    # subject in the Tenant graph has no tenant name to bind one to.
     if is_canonical_only_file "${location%:*}"; then
       if [ "${location%:*}" = "$GENERIC_TENANT_FILE" ]; then
         judge_canonical_subject "$location" "$subject" || status=1
@@ -1007,7 +1021,7 @@ $matches
 EOF
 
   if [ "$status" -eq 0 ]; then
-    printf 'guard: %d shared-publish-workflow subject(s) all pin a fixed revision.\n' "$found"
+    printf 'guard: %d shared-publish-workflow subject(s): every shared-publisher alternative pins a fixed revision; release tags are accepted only through the fixed own-release alternatives.\n' "$found"
   fi
 
   return "$status"

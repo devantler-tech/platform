@@ -78,9 +78,14 @@ spec:
           #    The workflow file sits directly in .github/workflows/, and the
           #    tag is the same strict OCI-semver grammar as the ksail cd.yaml
           #    identity below (pre-releases included, nothing after it).
+          #    Every other first-party name matches, `actions` included: a
+          #    repository created under that name would be a first-party
+          #    repository like any other. The deleted publisher's commit-pinned
+          #    identities stay refused (alternative 1 pins commits).
           # This verifier binds a signature to the first-party organisation,
           # not to one product: the per-tenant manifest source binds each
-          # product to its own repository.
+          # product to its own repository, and its signed manifests pin the
+          # image digests.
           # Keep this to exactly ONE identity
           # entry: the IVPOL engine verifies cosign v3 bundles through
           # sigstore-go, which rejects more than one identity per verification

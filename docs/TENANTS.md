@@ -263,7 +263,11 @@ inside the same single anchored subject, until the consumers have moved and
   registered consumer's matcher names its current repository, written by
   `scripts/write-publish-workflow-matchers.sh` (the KHoist documentation source names `khoist`);
 - the image rules accept any first-party repository whose name starts with a letter or digit, as
-  one path segment. They bind a signature to the organisation, not to one product.
+  one path segment, so every first-party repository except `.github`. A repository named
+  `actions` would be a first-party repository like any other, so its release tag passes them;
+  the deleted publisher's commit-pinned identities stay refused there. These rules bind a
+  signature to the organisation, not to one product: the per-tenant binding is the tenant's
+  signed manifest source, which accepts only its own repository and pins its image digests.
 
 The `.github` repository is excluded at every layer, including the `github-config` source: it
 hosts the shared reusable publishers, and a tag of a reusable workflow carries that repository's

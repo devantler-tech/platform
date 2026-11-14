@@ -161,9 +161,17 @@ go test ./scripts/tests/arc-staging/         # admission routing
 The independent shared-publisher pin guard accepts the same strict two-family
 form for both workflows. In the three generic verifiers it accepts only the
 canonical-only form, optionally grouped with that verifier's fixed own-release
-alternative, so the deleted legacy publisher cannot return there. In a consumer
-matcher the own-release repository must be one literal name other than the two
-shared-publisher hosts; which name is the approved-revisions guard's question.
+alternative, so the deleted legacy publisher's commit-pinned identities stay
+refused there; a registered consumer keeps only the exact legacy commits its
+generated approvals name. Each per-tenant source accepts only its own
+repository's release workflow: in a consumer matcher it must be one literal name
+other than `actions` and `.github`, and which name is the approved-revisions
+guard's question. The image and Talos rules accept any first-party repository's
+release workflow on a release tag except `.github`, which hosts reusable
+workflows other repositories call. A repository named `actions` would be a
+first-party repository like any other, so its release tag passes them; the
+per-tenant binding is the tenant's signed manifest source, which pins its image
+digests.
 Authorization fingerprinting projects only the generated legacy signer revisions;
 the maintained repository, workflow, exact canonical commit or pair and the
 own-release alternative remain fingerprinted, so an approval change still

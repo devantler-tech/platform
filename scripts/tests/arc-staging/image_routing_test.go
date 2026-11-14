@@ -14,8 +14,11 @@ import (
 )
 
 // appPublisher is a reviewed maintained publish-app revision the publishapp
-// attestor accepts. deletedPublishers are identities of the deleted legacy
-// publisher repository, which no attestor accepts at any commit (#6264).
+// attestor accepts. deletedPublishers are the deleted legacy publisher's
+// commit-pinned identities, which no attestor accepts at any commit (#6264). A
+// release tag under that repository name is a different identity: the
+// publishapp attestor accepts any first-party repository's release workflow on
+// a release tag except `.github` (#6265), see ownReleaseSigners.
 const appPublisher = "https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"
 
 var deletedPublishers = []string{
@@ -27,7 +30,10 @@ var deletedPublishers = []string{
 // The publishapp attestor accepts a valid one for every ordinary first-party
 // image: one repository segment that starts with a letter or digit, one workflow
 // file directly in .github/workflows/, and a strict semver release tag. Every
-// other attestor refuses them all.
+// other attestor refuses them all. A repository named `actions` would be a
+// first-party repository like any other, so its release tags are accepted;
+// `.github` hosts reusable workflows other repositories call, so its tags are
+// refused.
 var ownReleaseSigners = []struct {
 	subject string
 	valid   bool
@@ -42,6 +48,11 @@ var ownReleaseSigners = []struct {
 	{"https://github.com/devantler-tech/wedding-app/.github/workflows/nested/release.yaml@refs/tags/v1.2.3", false},
 	{"https://github.com/devantler-tech/wedding-app/sub/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
 	{"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v21.3.4", false},
+	{"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/.github/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3", true},
+	{"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0", true},
+	{"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328", false},
 	{"https://github.com/other-owner/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
 }
 

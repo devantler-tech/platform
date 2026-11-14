@@ -259,6 +259,9 @@ rules:
   #    digit, so `.github`, which hosts the shared reusable publishers, is
   #    excluded; a workflow file directly in .github/workflows/; and the same
   #    strict OCI-semver tag grammar as the ksail rule above.
+  #    Every other first-party name matches, `actions` included, as a
+  #    first-party repository like any other; the deleted publisher's
+  #    commit-pinned identities stay refused.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com

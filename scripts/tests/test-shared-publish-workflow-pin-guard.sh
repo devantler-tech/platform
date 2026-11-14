@@ -860,7 +860,7 @@ assert_line_rejected "a consumer own release with an unescaped dot" "$(own_line 
 assert_line_rejected "a consumer own release naming the .github repository" "$(own_line '\.github')" \
   family-own-dotgithub 'does not name one literal repository'
 assert_line_rejected "a consumer own release naming the deleted legacy publisher repository" "$(own_line actions)" \
-  family-own-actions 'hosts the shared publishers'
+  family-own-actions 'hosted the shared publishers'
 assert_line_rejected "a consumer own release naming two repositories" "$(own_line 'wedding-app|ascoachingogvaner')" \
   family-own-two 'does not pin one concrete 40-hex commit'
 assert_line_rejected "a consumer own release on a branch" "$(own_line wedding-app "${OWN_BRANCH_TAIL}")" \
@@ -950,15 +950,15 @@ else
   fail "the real repository does not satisfy the narrowed guard"
 fi
 
-# Belt and braces: assert directly that no shared-publish subject still carries a
-# tag alternative, independently of the guard's own parsing. If the guard's
-# pattern ever stops matching these lines, the check above passes vacuously while
-# this one still sees the file contents.
+# Belt and braces: assert directly that no shared-publisher alternative still carries a
+# tag ref, independently of the guard's own parsing. If the guard's pattern ever stops
+# matching these lines, the check above passes vacuously while this one still sees the
+# file contents.
 #
-# A product's own release alternative (#6265) is a tag by design, and it names the
-# product's own workflow file, never a shared one: its tail is the exact OWN_TAIL text,
-# which no shared-publisher ref can equal. Only that exact text is removed from a line
-# before the same pattern judges what is left.
+# A product's own release alternative (#6265) is a tag by design: its tail is the exact
+# OWN_TAIL text, which no shared-publisher ref can equal. Only that exact text is removed
+# from a line before the same pattern judges what is left. The own-release alternatives
+# themselves are probed against the shipped files below.
 readonly SHARED_TAG_RE='workflows/publish-(app|manifests)\\?\.yaml@[^'\''"]*refs/tags'
 : >"${work_dir}/leftover"
 while IFS= read -r hit; do
@@ -968,9 +968,35 @@ while IFS= read -r hit; do
 done < <(grep -rnE "${SHARED_TAG_RE}" --include='*.yaml' "${root_dir}" 2>/dev/null || true)
 if [ -s "${work_dir}/leftover" ]; then
   printf '%s\n' "$(cat "${work_dir}/leftover")" >&2
-  fail "a shared-publish-workflow subject still accepts a tag ref"
+  fail "a shared-publisher alternative accepts a tag ref"
 fi
-ok "no shared-publish-workflow subject accepts a tag ref"
+ok "no shared-publisher alternative accepts a tag ref; tags reach only the fixed own-release alternatives"
+
+# What the shipped image rules accept at a tag (#6265). Their own-release alternative
+# accepts any first-party repository's release workflow on a release tag except `.github`,
+# which hosts reusable workflows other repositories call. A repository named `actions`
+# would be a first-party repository like any other, so its release tag is accepted; the
+# deleted publisher's commit-pinned identities stay refused.
+while IFS=$'\t' read -r label file selector; do
+  shipped="$(yq -er "${selector}" "${root_dir}/${file}")" || fail "${label}: could not read the shipped subject"
+  while IFS=$'\t' read -r expected identity; do
+    result=reject
+    if printf '%s\n' "${identity}" | grep -Eq -- "${shipped}"; then result=accept; fi
+    [ "${result}" = "${expected}" ] || fail "shipped ${label} rule: expected ${expected} for ${identity}, got ${result}"
+    ok "shipped ${label} rule: ${expected} ${identity}"
+  done <<'IDENTITIES'
+accept	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3
+accept	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0
+accept	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@b3783a5148b844b3f1f4011cdc84871ad66348c1
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3
+reject	https://github.com/devantler-tech/.github/.github/workflows/release.yaml@refs/tags/v1.2.3
+IDENTITIES
+done <<'RULES'
+admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
+node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
+RULES
 # The removal above is exact: a shared-publisher tag written beside a product's own
 # release alternative is still found.
 probe="\\.github/\\.github/workflows/publish-app\\.yaml@(${CONCRETE_SHA}|refs/tags/v1)|wedding-app${OWN_TAIL})\$"
