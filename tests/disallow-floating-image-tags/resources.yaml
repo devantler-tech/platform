@@ -224,10 +224,10 @@ metadata:
   namespace: default
 spec:
   selector:
-    matchLabels: {app: floating}
+    matchLabels: { app: floating }
   template:
     metadata:
-      labels: {app: floating}
+      labels: { app: floating }
     spec:
       containers:
         - name: app
@@ -240,10 +240,10 @@ metadata:
   namespace: default
 spec:
   selector:
-    matchLabels: {app: pinned}
+    matchLabels: { app: pinned }
   template:
     metadata:
-      labels: {app: pinned}
+      labels: { app: pinned }
     spec:
       containers:
         - name: app
