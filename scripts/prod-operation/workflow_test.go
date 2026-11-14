@@ -323,12 +323,12 @@ func TestKubectlDownloadPassesOnlyOneURLToCurl(t *testing.T) {
 	}
 	command := exec.Command("/bin/bash", "--noprofile", "--norc", "-c", "set -euo pipefail\nkubectl_path=\"${RUNNER_TEMP}/prod-operation-kubectl\"\n"+statement+"\nprintf DOWNLOAD_ADMITTED")
 	command.Env = []string{"PROD_OPERATION_DOWNLOAD_CHILD=1", "PATH=" + bin, "RUNNER_TEMP=" + bin, "KUBECTL_VERSION=v1.36.2"}
-	if dir, ok := os.LookupEnv("GOCOVERDIR"); ok {
-		command.Env = append(command.Env, "GOCOVERDIR="+dir)
-	}
-	output, err := command.CombinedOutput()
-	if err != nil || !bytes.Equal(output, []byte("DOWNLOAD_ADMITTED")) {
-		t.Fatalf("download command rejected: %v %q", err, output)
+	// Coverage runs make the instrumented child warn on stderr, so only stdout
+	// is compared exactly; stderr is reported on failure.
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Run(); err != nil || !bytes.Equal(stdout.Bytes(), []byte("DOWNLOAD_ADMITTED")) {
+		t.Fatalf("download command rejected: %v %q %q", err, stdout.String(), stderr.String())
 	}
 }
 
