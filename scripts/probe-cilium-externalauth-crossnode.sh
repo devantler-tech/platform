@@ -38,7 +38,11 @@
 # accepts routes only from its own namespace, so a route in `whoami` cannot attach there
 # (`NotAllowedByListeners`); the `https` listener accepts every namespace and has no hostname, so it
 # serves the made-up hostnames with its default certificate. The clients skip certificate checks
-# (`curl -k`): no `.invalid` name has a certificate, and TLS is not what the probe measures. Each client
+# (`curl -k`): no `.invalid` name has a certificate, and TLS is not what the probe measures. Every
+# client request also opens with a PROXY protocol header (`curl --haproxy-protocol`): production
+# turns on PROXY protocol for every Gateway API listener (the Hetzner Cilium patch
+# `accept-proxy-protocol.yaml`), so the gateway proxy resets any connection that starts without one —
+# which is what traffic from inside the cluster does unless the client sends it. Each client
 # alternates two routes with the SAME backend: a plain control route and the ExternalAuth route. If
 # the control route does not answer every time, the path or policy is broken and the run is
 # INCONCLUSIVE rather than blamed on ext_authz.
@@ -532,14 +536,17 @@ spec:
         - -c
         - |
           set -u
+          # Every request goes through send(), so each one skips certificate checks and opens with
+          # the PROXY protocol header the gateway listeners require.
+          send() { curl -k --haproxy-protocol --max-time "\$TIMEOUT" "\$@"; }
           ask() {
-            curl -sk -o /dev/null --max-time "\$TIMEOUT" -H "Host: \$1" -w '%{http_code} %{size_download} %{redirect_url}' "\$GATEWAY_URL" 2>/dev/null
+            send -s -o /dev/null -H "Host: \$1" -w '%{http_code} %{size_download} %{redirect_url}' "\$GATEWAY_URL" 2>/dev/null
           }
           # The control route's whoami backend echoes the connection's source address, which is the
           # ingress IP of the node whose Envoy handled the request. Prints "<code> <size> <ip-or->"
           # and returns curl's exit status, which warm-up reports when it fails.
           ask_control() {
-            out=\$(curl -sk --max-time "\$TIMEOUT" -H "Host: \$1" -w '\\nPROBE-STATUS %{http_code} %{size_download}' "\$GATEWAY_URL" 2>/dev/null)
+            out=\$(send -s -H "Host: \$1" -w '\\nPROBE-STATUS %{http_code} %{size_download}' "\$GATEWAY_URL" 2>/dev/null)
             rc=\$?
             status=\$(printf '%s\\n' "\$out" | sed -n 's/^PROBE-STATUS //p' | tail -n 1)
             ip=\$(printf '%s\\n' "\$out" | sed -n 's/^RemoteAddr: *\\[\\{0,1\\}\\([0-9A-Fa-f.:]*\\)\\]\\{0,1\\}:[0-9]*\$/\\1/p' | head -n 1)
@@ -575,7 +582,7 @@ spec:
             # (reset, refused, timeout, TLS). Only a word from this fixed list is printed: the
             # raw text can name internal addresses, and the log is public. A failed warm-up skips
             # every round, so this request stays inside the pod deadline.
-            err=\$(curl -sSk -o /dev/null --max-time "\$TIMEOUT" -H "Host: \$CONTROL_HOST" "\$GATEWAY_URL" 2>&1 >/dev/null)
+            err=\$(send -sS -o /dev/null -H "Host: \$CONTROL_HOST" "\$GATEWAY_URL" 2>&1 >/dev/null)
             case "\$err" in
               '') why=none ;;
               *'reset by peer'*) why=connection-reset ;;
