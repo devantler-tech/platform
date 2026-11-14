@@ -23,6 +23,7 @@ name: Prepare Longhorn V2 Migration
             prepare-worker,
             prepare-unused-temporary-worker,
             prepare-retained-temporary-worker,
+            enable-capacity,
             refresh-clients,
             benchmark-v1,
             benchmark-v2,
@@ -52,6 +53,11 @@ name: Prepare Longhorn V2 Migration
             temporary-v1-2,
             temporary-v2-1,
           ]
+      pool:
+        description: Migration pool for enable-capacity only
+        required: false
+        type: choice
+        options: [v1, v2]
       database:
         description: Fixed database for a read-only migration observation; leave node empty
         required: false
@@ -102,6 +108,7 @@ jobs:
       LONGHORN_V2_NODE: ${{ inputs.node }}
       LONGHORN_V2_DATABASE: ${{ inputs.database }}
       LONGHORN_V2_OPERATION: ${{ inputs.operation }}
+      LONGHORN_V2_POOL: ${{ inputs.pool }}
       LONGHORN_V2_CONFIRM: ${{ inputs.confirm }}
     steps:
       - name: Require confirmed first attempt on main
@@ -150,6 +157,9 @@ jobs:
               ;;
             inventory-storage-root)
               [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-root-${LONGHORN_V2_NODE}" ]]
+              ;;
+            enable-capacity)
+              [[ "${LONGHORN_V2_POOL}" =~ ^v[12]$ && "${LONGHORN_V2_CONFIRM}" == "enable-longhorn-migration-capacity-${LONGHORN_V2_POOL}" ]]
               ;;
             inventory-storage-layout)
               [[ "${LONGHORN_V2_NODE}" =~ ^temporary-(v1-[12]|v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-layout-${LONGHORN_V2_NODE}" ]]
