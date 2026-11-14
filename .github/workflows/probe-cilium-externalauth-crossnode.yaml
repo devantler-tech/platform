@@ -5,17 +5,19 @@ name: Probe Cilium ExternalAuth Cross-Node
 # subrequest to oauth2-proxy arrive when it has to cross nodes? The ipcache diagnostic
 # (diagnose-cilium-ext-authz-ipcache.yaml) cannot decide that while node encryption is off.
 #
-# HOW. scripts/probe-cilium-externalauth-crossnode.sh pins one short-lived client pod to a node
-# running no oauth2-proxy replica (every ExternalAuth call crosses nodes) and one to a node running
-# a replica (same-node control). Each client alternates a plain control route and the ExternalAuth
-# route, in-cluster over HTTPS on the gateway's `https` listener (certificate checks skipped) on
-# hostnames under `externalauth-probe.invalid`, so no Cloudflare or public DNS is in the path. The script header carries the full reasoning and the verdicts.
+# HOW. scripts/probe-cilium-externalauth-crossnode.sh sends pairs of requests from this runner
+# through the gateway's Hetzner load balancer, as public traffic arrives: the gateway listeners accept
+# TLS only from the load balancer, so a client inside the cluster cannot reach them. Each pair is one
+# curl invocation on one connection — a plain control route, then the ExternalAuth route — on the
+# `https` listener (certificate checks skipped) with hostnames under `externalauth-probe.invalid`, so
+# no Cloudflare or public DNS is in the path. The control route's backend echoes which node's Envoy
+# held the connection, which sorts each pair into same-node (that node runs an oauth2-proxy replica)
+# or cross-node (it runs none). The script header carries the full reasoning and the verdicts.
 #
 # IT WRITES TO PRODUCTION while it runs — unlike the read-only ipcache diagnostic. It creates two
-# HTTPRoutes, one CiliumNetworkPolicy and two pods in `whoami`, and one ReferenceGrant in
-# `oauth2-proxy`, all labelled with this run's id, and deletes them on exit. No existing object is
-# modified. A run refuses to start over objects an earlier run left behind. Approval to run this
-# test on production is recorded on #3784 (2026-09-13).
+# HTTPRoutes in `whoami` and one ReferenceGrant in `oauth2-proxy`, all labelled with this run's id,
+# and deletes them on exit. No existing object is modified. A run refuses to start over objects an
+# earlier run left behind. Approval to run this test on production is recorded on #3784 (2026-09-13).
 #
 # ACCESS USED — the same established production mechanism as the ipcache diagnostic and
 # .github/actions/deploy-prod/action.yml:
@@ -31,7 +33,8 @@ name: Probe Cilium ExternalAuth Cross-Node
 #
 # DORMANT, TWICE OVER. No `schedule:` or `pull_request:` trigger, and an exact confirmation phrase.
 #
-# PUBLIC LOG. The script prints only counts and the verdict — no address, node name or URL. The
+# PUBLIC LOG. The script prints only counts and the verdict — no address, node name or URL, and it
+# registers the load balancer address with `::add-mask::` as soon as it reads it. The
 # endpoint helper prints no address either; its standard output is discarded so this log carries
 # the probe's lines only.
 #
@@ -47,10 +50,10 @@ name: Probe Cilium ExternalAuth Cross-Node
         required: true
         type: string
       requests:
-        description: "Requests per client and route (1-100; requests x 5s timeout must not exceed 250)"
+        description: "Request pairs to send (1-100; pairs x 5s timeout must not exceed 250; at least 10 must land in each node group)"
         required: false
         type: string
-        default: "40"
+        default: "50"
 
 permissions: {}
 
@@ -65,10 +68,10 @@ jobs:
   probe-cilium-externalauth-crossnode:
     name: 🧪 Probe Cilium ExternalAuth Cross-Node
     runs-on: ubuntu-latest
-    # The script's worst case — the wall-clock route wait, the shared pod deadline and grace, every
-    # other kubectl call at its 30s request timeout, and both cleanup deletes — fits inside this with
-    # setup slack, so the step always prints a verdict and cleans up before Actions cancels it
-    # (pinned by the test).
+    # The script's worst case — the wall-clock route wait, the warm-up, every pair and the guard at
+    # their curl timeout, every kubectl call at its 30s request timeout, and both cleanup deletes —
+    # fits inside this with setup slack, so the step always prints a verdict and cleans up before
+    # Actions cancels it (pinned by the test).
     timeout-minutes: 45
     # KUBE_CONFIG is a `prod` ENVIRONMENT secret; without this it resolves to the empty string.
     environment: prod
