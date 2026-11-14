@@ -450,15 +450,15 @@ refute_text 'value too great for base' 'the timeout reached arithmetic as octal'
 pass 'a leading-zero timeout is rejected before arithmetic'
 
 reset_fixtures
-run_probe --context admin@prod --run-id "${run_id}" --requests 100 --timeout 5
+run_probe --context admin@prod --run-id "${run_id}" --requests 100 --timeout 7
 require_rc 1 'a budget over the cap must be a usage error'
-require_text 'must not exceed 250 seconds' 'the budget refusal did not name the cap'
+require_text 'must not exceed 600 seconds' 'the budget refusal did not name the cap'
 [[ ! -s "${fixtures}/calls.log" ]] || fail 'a usage error still called kubectl'
 reset_fixtures
-run_probe --context admin@prod --run-id "${run_id}" --requests 50 --timeout 5
-# The fixture holds 20 pairs, so pairs 21-50 find no gateway: the boundary run reached the requests.
-require_inconclusive 'the budget boundary itself (250) must be accepted and reach the cluster' 'plain control route did not answer every time'
-pass 'the requests x timeout budget is capped at exactly 250 seconds'
+run_probe --context admin@prod --run-id "${run_id}" --requests 120 --timeout 5
+# The fixture holds 20 pairs, so pairs 21-120 find no gateway: the boundary run reached the requests.
+require_inconclusive 'the budget boundary itself (600) must be accepted and reach the cluster' 'plain control route did not answer every time'
+pass 'the requests x timeout budget is capped at exactly 600 seconds'
 
 reset_fixtures
 run_probe --context admin@prod --run-id 0123
@@ -979,24 +979,24 @@ require_text 'RUN_ID: ${{ github.run_id }}' 'the run id must come from github.ru
 refute_text 'run: ./scripts/probe-cilium-externalauth-crossnode.sh --context admin@prod --run-id "${{' 'inputs must not be interpolated into run:'
 job_minutes="$(sed -n 's/^    timeout-minutes: \([0-9][0-9]*\)$/\1/p' "${workflow}")"
 [[ -n "${job_minutes}" ]] || fail 'the job must set timeout-minutes'
-# Worst case the script allows (timeout 10, requests x timeout = 250, warm-up 12):
+# Worst case the script allows (timeout 10, requests x timeout = 600, warm-up 12):
 #   route wait (120s wall clock) + one in-flight 30s request past its deadline
 #   + warm-up: 12 pairs of two requests at the timeout, a 1s pause each, and one diagnosis request
-#   + the pairs: 2 requests each at the timeout, so 2 x 250
+#   + the pairs: 2 requests each at the timeout, so 2 x 600
 #   + the guard request
 #   + ~25 other bounded kubectl calls (topology before and after, load balancer, leftovers, applies,
 #     cleanup) at 30s
 #   + 10 minutes of job setup and slack.
-worst_seconds=$((120 + 35 + (12 * (2 * 10 + 1) + 10) + 2 * 250 + 10 + 25 * 30 + 600))
+worst_seconds=$((120 + 35 + (12 * (2 * 10 + 1) + 10) + 2 * 600 + 10 + 25 * 30 + 600))
 grep -Fq 'readonly route_wait_seconds="${PROBE_ROUTE_WAIT_SECONDS:-120}"' "${script}" || fail 'the route wait bound the timeout was sized for changed'
 grep -Fq "readonly request_timeout='30s'" "${script}" || fail 'the request timeout the job timeout was sized for changed'
 grep -Fq 'readonly warmup_pause_seconds="${PROBE_WARMUP_PAUSE_SECONDS:-1}"' "${script}" || fail 'the warm-up pause the timeout was sized for changed'
 ((job_minutes * 60 >= worst_seconds)) ||
   fail "timeout-minutes (${job_minutes}) is shorter than the script's worst case (${worst_seconds}s)"
-grep -Fq 'readonly max_request_seconds=250' "${script}" || fail 'the budget cap the timeout was sized for changed'
+grep -Fq 'readonly max_request_seconds=600' "${script}" || fail 'the budget cap the timeout was sized for changed'
 grep -Fq 'readonly warmup_attempts=12' "${script}" || fail 'the warm-up bound the timeout was sized for changed'
 default_requests="$(awk '/^      requests:$/{f=1} f && /^        default: /{gsub(/[^0-9]/, ""); print; exit}' "${workflow}")"
-if [[ -z "${default_requests}" ]] || ((default_requests * 5 > 250)); then
+if [[ -z "${default_requests}" ]] || ((default_requests * 5 > 600)); then
   fail 'the default request count must fit the budget at the workflow'"'"'s 5s timeout'
 fi
 pass 'the workflow is dispatch-only, guarded, serialised, least-privilege and sized for the worst case'

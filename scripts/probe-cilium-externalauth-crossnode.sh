@@ -103,7 +103,7 @@ readonly guard_host='unrouted.externalauth-probe.invalid'
 # Each pair sends 2 requests, each bounded by the timeout, so the measurement takes at most
 # 2 * requests * timeout. The cap keeps the whole run, including warm-up, inside the workflow's job
 # timeout (pinned by the test).
-readonly max_request_seconds=250
+readonly max_request_seconds=600
 readonly min_conclusive_requests=10
 readonly warmup_attempts=12
 # Wall-clock bound on waiting for route acceptance, so slow API calls cannot stretch it (the test
@@ -161,8 +161,8 @@ if [[ ! "${run_id}" =~ ^[1-9][0-9]{0,19}$ ]]; then
   exit 1
 fi
 # Plain decimal with no leading zero BEFORE any arithmetic: bash reads `08` as invalid octal.
-if [[ ! "${requests}" =~ ^[1-9][0-9]{0,2}$ ]] || ((requests > 100)); then
-  printf 'Refusing to run: --requests must be a whole number from 1 to 100.\n' >&2
+if [[ ! "${requests}" =~ ^[1-9][0-9]{0,2}$ ]] || ((requests > 120)); then
+  printf 'Refusing to run: --requests must be a whole number from 1 to 120.\n' >&2
   usage
   exit 1
 fi
