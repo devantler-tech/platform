@@ -807,6 +807,65 @@ generic_case reject "a canonical-only generic rule on a branch" "${GENERIC_KYVER
 generic_case reject "a canonical-only generic rule with a second identity appended" "${GENERIC_TALOS}" \
   "      subjectRegex: ${APP_CANONICAL_ONLY}${CONCRETE_SHA}\$|${APP_LEGACY_ONLY}${CONCRETE_SHA_2}\$" talos-appended "\"@\" separators"
 
+# A PRODUCT'S OWN RELEASE WORKFLOW ON A RELEASE TAG (#6265). One further alternative, written
+# last in the same group, with a tail compared literally and a repository segment fixed per
+# verifier: the first-party segment in the image verifiers, the constructor's marker in the
+# Tenant source (exercised through the real graph by test-tenant-source-constructors.sh), and
+# one literal repository in a consumer's matcher.
+readonly OWN_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+readonly OWN_BRANCH_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/heads/main'
+readonly OWN_ANY_PATH_TAIL='/\.github/workflows/.+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+readonly FIRST_PARTY='[A-Za-z0-9][A-Za-z0-9_.-]*'
+readonly APP_CANONICAL_GROUP='^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@'
+
+generic_case accept "an admission rule grouping two reviewed commits with a first-party release" "${GENERIC_KYVERNO}" \
+  "      subjectRegExp: ${APP_CANONICAL_GROUP}(${CONCRETE_SHA}|${CONCRETE_SHA_2})|${FIRST_PARTY}${OWN_TAIL})\$" kyverno-own
+generic_case accept "a node-pull rule grouping one reviewed commit with a first-party release" "${GENERIC_TALOS}" \
+  "      subjectRegex: ${APP_CANONICAL_GROUP}${CONCRETE_SHA}|${FIRST_PARTY}${OWN_TAIL})\$" talos-own
+generic_case reject "a first-party release segment that admits the .github repository" "${GENERIC_KYVERNO}" \
+  "      subjectRegExp: ${APP_CANONICAL_GROUP}${CONCRETE_SHA}|[A-Za-z0-9_.-]+${OWN_TAIL})\$" kyverno-own-dotgithub "${NOT_GENERIC}"
+generic_case reject "a first-party release segment that admits a slash" "${GENERIC_TALOS}" \
+  "      subjectRegex: ${APP_CANONICAL_GROUP}${CONCRETE_SHA}|[A-Za-z0-9][A-Za-z0-9_./-]*${OWN_TAIL})\$" talos-own-slash "${NOT_GENERIC}"
+generic_case reject "a first-party release on a branch" "${GENERIC_TALOS}" \
+  "      subjectRegex: ${APP_CANONICAL_GROUP}${CONCRETE_SHA}|${FIRST_PARTY}${OWN_BRANCH_TAIL})\$" talos-own-branch "${NOT_GENERIC}"
+generic_case reject "a first-party release from any workflow path" "${GENERIC_KYVERNO}" \
+  "      subjectRegExp: ${APP_CANONICAL_GROUP}${CONCRETE_SHA}|${FIRST_PARTY}${OWN_ANY_PATH_TAIL})\$" kyverno-own-path "${NOT_GENERIC}"
+generic_case reject "a first-party release whose tag may carry a suffix" "${GENERIC_KYVERNO}" \
+  "      subjectRegExp: ${APP_CANONICAL_GROUP}${CONCRETE_SHA}|${FIRST_PARTY}${OWN_TAIL}.*)\$" kyverno-own-suffix "${NOT_GENERIC}"
+generic_case reject "the Tenant marker in an image verifier" "${GENERIC_TALOS}" \
+  "      subjectRegex: ${APP_CANONICAL_GROUP}${CONCRETE_SHA}|<tenant>${OWN_TAIL})\$" talos-own-marker "${NOT_GENERIC}"
+generic_case reject "a first-party release in the Tenant graph's plain subject" "${GENERIC_TENANT}" \
+  "        subject: ${Q}${APP_CANONICAL_GROUP}${CONCRETE_SHA}|${FIRST_PARTY}${OWN_TAIL})\$${Q}" tenant-own-plain "${NOT_GENERIC}"
+# Written first, the shared publisher is no longer where the guard selects it, so the floor
+# refuses the file outright.
+generic_case reject "a first-party release written before the shared publisher" "${GENERIC_KYVERNO}" \
+  "      subjectRegExp: ^https://github\\.com/devantler-tech/(${FIRST_PARTY}${OWN_TAIL}|\\.github/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA})\$" kyverno-own-first 'holds 0 shared-publish-workflow matcher'
+generic_case reject "a grouped generic rule that admits every maintained commit" "${GENERIC_TALOS}" \
+  "      subjectRegex: ${APP_CANONICAL_GROUP}${SHA_PATTERN}|${FIRST_PARTY}${OWN_TAIL})\$" talos-own-pattern 'does not pin one concrete 40-hex commit'
+generic_case reject "a first-party release alternative written twice" "${GENERIC_KYVERNO}" \
+  "      subjectRegExp: ${APP_CANONICAL_GROUP}${CONCRETE_SHA}|${FIRST_PARTY}${OWN_TAIL}|${FIRST_PARTY}${OWN_TAIL})\$" kyverno-own-twice "\"@\" separators"
+
+# own_line <repository-text> [tail] — an application two-family subject followed by that
+# consumer's own release alternative.
+own_line() {
+  printf '        subject: %s%sactions/\\.github/workflows/publish-app\\.yaml@%s|\\.github/\\.github/workflows/publish-app\\.yaml@%s|%s%s)$%s' \
+    "${Q}" "${FAMILY_OPEN}" "${CONCRETE_SHA}" "${CONCRETE_SHA_2}" "$1" "${2:-${OWN_TAIL}}" "${Q}"
+}
+assert_line_accepted "a consumer matcher naming its own repository's release workflow" "$(own_line wedding-app)" family-own
+assert_line_accepted "a consumer matcher whose own repository has an escaped dot" "$(own_line 'wedding\.app')" family-own-dot
+assert_line_rejected "a consumer own release naming a class of repositories" "$(own_line '[a-z-]+')" \
+  family-own-class 'does not name one literal repository'
+assert_line_rejected "a consumer own release with an unescaped dot" "$(own_line 'wedding.app')" \
+  family-own-bare-dot 'does not name one literal repository'
+assert_line_rejected "a consumer own release naming the .github repository" "$(own_line '\.github')" \
+  family-own-dotgithub 'does not name one literal repository'
+assert_line_rejected "a consumer own release naming the deleted legacy publisher repository" "$(own_line actions)" \
+  family-own-actions 'hosts the shared publishers'
+assert_line_rejected "a consumer own release naming two repositories" "$(own_line 'wedding-app|ascoachingogvaner')" \
+  family-own-two 'does not pin one concrete 40-hex commit'
+assert_line_rejected "a consumer own release on a branch" "$(own_line wedding-app "${OWN_BRANCH_TAIL}")" \
+  family-own-branch 'where exactly two are expected'
+
 # Discovery is independent of the subject pattern, and it has to see the canonical family
 # too: a canonical reference under a key the guard does not validate is reported, not
 # skipped, exactly as a legacy one is.
@@ -895,12 +954,29 @@ fi
 # tag alternative, independently of the guard's own parsing. If the guard's
 # pattern ever stops matching these lines, the check above passes vacuously while
 # this one still sees the file contents.
-if grep -rnE 'workflows/publish-(app|manifests)\\?\.yaml@[^'\''"]*refs/tags' \
-  --include='*.yaml' "${root_dir}" >"${work_dir}/leftover" 2>/dev/null; then
+#
+# A product's own release alternative (#6265) is a tag by design, and it names the
+# product's own workflow file, never a shared one: its tail is the exact OWN_TAIL text,
+# which no shared-publisher ref can equal. Only that exact text is removed from a line
+# before the same pattern judges what is left.
+readonly SHARED_TAG_RE='workflows/publish-(app|manifests)\\?\.yaml@[^'\''"]*refs/tags'
+: >"${work_dir}/leftover"
+while IFS= read -r hit; do
+  if [[ "${hit//"${OWN_TAIL}"/}" =~ ${SHARED_TAG_RE} ]]; then
+    printf '%s\n' "${hit}" >>"${work_dir}/leftover"
+  fi
+done < <(grep -rnE "${SHARED_TAG_RE}" --include='*.yaml' "${root_dir}" 2>/dev/null || true)
+if [ -s "${work_dir}/leftover" ]; then
   printf '%s\n' "$(cat "${work_dir}/leftover")" >&2
   fail "a shared-publish-workflow subject still accepts a tag ref"
 fi
 ok "no shared-publish-workflow subject accepts a tag ref"
+# The removal above is exact: a shared-publisher tag written beside a product's own
+# release alternative is still found.
+probe="\\.github/\\.github/workflows/publish-app\\.yaml@(${CONCRETE_SHA}|refs/tags/v1)|wedding-app${OWN_TAIL})\$"
+[[ "${probe//"${OWN_TAIL}"/}" =~ ${SHARED_TAG_RE} ]] ||
+  fail "removing the own-release tail hid a shared-publisher tag ref"
+ok "a shared-publisher tag ref beside an own-release alternative is still found"
 
 # --- Wiring: the guard is actually reached, in all three workflows -----------
 #

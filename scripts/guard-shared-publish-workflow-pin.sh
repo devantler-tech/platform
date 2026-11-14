@@ -83,6 +83,24 @@
 # form is refused, so neither the legacy family nor a pattern ref can return there. The
 # per-consumer matchers keep their generated forms above until the approval machinery
 # that writes them is retired.
+#
+# A PRODUCT'S OWN RELEASE WORKFLOW ON A RELEASE TAG (#6265, ADR 0017)
+# Products move from the shared publisher to a composite action in their own release
+# workflow, so the signer becomes their own repository at a release tag. A generic
+# subject or a per-consumer two-family subject may carry that as ONE further alternative,
+# written last inside the same group:
+#
+#   ^https://github\.com/devantler-tech/(<the form above, ungrouped>|<repo>/\.github/workflows/[^/]+\.ya?ml@refs/tags/v<semver>)$
+#
+# The tail after <repo> is compared literally against OWN_RELEASE_TAIL, so the workflow
+# stays one file in .github/workflows/ and the tag stays the strict OCI-semver grammar.
+# <repo> is fixed per verifier: the first-party repository segment in the image verifiers,
+# the constructor's `<tenant>` marker in the generic Tenant source, and one literal,
+# escaped repository name in a consumer's matcher (which repository is the
+# approved-revisions guard's question). The two repositories that host the shared
+# publishers are refused there: a reusable workflow carries its host's identity whoever
+# calls it, so a tag of either would bring back the tag alternative #3022 removed. The
+# shared-publisher alternatives keep every rule above unchanged.
 
 set -euo pipefail
 
@@ -126,6 +144,18 @@ readonly CANONICAL_ONLY_FILES=(
   './k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
   './talos/cluster/verify-first-party-images.yaml'
 )
+# The generic Tenant source's plain-subject path is in that list, but has no tenant name
+# to bind an own-release repository to, so it accepts none (#6265).
+readonly GENERIC_TENANT_FILE='./k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
+
+# A product's own release workflow on a release tag (#6265): everything after the
+# repository segment, compared literally. The semver grammar is the ksail cd.yaml one.
+readonly OWN_RELEASE_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+# The repository segment each verifier may name. The image verifiers accept any
+# first-party repository that starts with a letter or digit (never `.github`); the
+# generic Tenant source names the constructor's tenant marker.
+readonly FIRST_PARTY_RELEASE_REPOSITORY='[A-Za-z0-9][A-Za-z0-9_.-]*'
+readonly TENANT_RELEASE_REPOSITORY='<tenant>'
 
 # THE FLOOR NAMES WHAT MUST BE FOUND (#4558).
 # An empty result from a filtered read is a claim about the FILTER. If a refactor moves
@@ -350,6 +380,14 @@ judge_family_subject() {
       ;;
   esac
 
+  # A consumer's own release workflow, written last (#6265). It is judged and removed here,
+  # and the two-family subject that remains is held to every rule below unchanged.
+  case "$subject" in
+    *"$OWN_RELEASE_TAIL"')$')
+      subject="$(strip_consumer_own_release "$location" "$subject")" || return 1
+      ;;
+  esac
+
   at_count="$(printf '%s' "$subject" | tr -cd '@' | wc -c | tr -d ' ')"
   if [ "$at_count" -ne 2 ]; then
     printf '%s: two-family subject carries %s "@" separators where exactly two are expected, one per publisher family (subject: %s)\n' \
@@ -434,16 +472,54 @@ judge_canonical_ref() {
   esac
 }
 
-# judge_canonical_subject <location> <subject> — the strict parse of a generic verifier's
-# canonical-only subject (#6264): exactly the canonical prefix, one supported workflow, one
-# `@`, a canonical ref, and the closing anchor. Compared literally, like every other form.
+# strip_consumer_own_release <location> <subject> — print a consumer's subject without its
+# trailing own-release alternative (#6265), having refused it unless it names ONE literal
+# repository: letters, digits, `_` and `-`, any `.` escaped, starting with a letter or
+# digit, and neither repository that hosts the shared publishers. A class, a group or an
+# alternation there would trust more than one repository. The leading-character rule
+# already refuses `\.github`; `actions` is refused by name.
+strip_consumer_own_release() {
+  local location="$1" subject="$2" head repository
+  head="${subject%"$OWN_RELEASE_TAIL"')$'}"
+  repository="${head##*|}"
+  if [ "$repository" = "$head" ] || ! printf '%s' "$repository" | grep -qxE '[A-Za-z0-9]([A-Za-z0-9_-]|\\\.)*'; then
+    printf '%s: the own-release alternative does not name one literal repository (subject: %s)\n' \
+      "$location" "$subject" >&2
+    return 1
+  fi
+  case "$repository" in
+    actions)
+      printf '%s: the own-release alternative names %s, a repository that hosts the shared publishers; a tag of a reusable workflow there carries its identity whoever calls it (subject: %s)\n' \
+        "$location" "$repository" "$subject" >&2
+      return 1
+      ;;
+  esac
+  printf '%s' "${head%"|$repository"}"')$'
+}
+
+# judge_canonical_subject <location> <subject> [own-release-repository] — the strict parse
+# of a generic verifier's canonical-only subject (#6264): exactly the canonical prefix, one
+# supported workflow, one `@`, a canonical ref, and the closing anchor. Compared literally,
+# like every other form. With an own-release repository segment (#6265), the same subject
+# may instead be grouped with exactly that verifier's own-release alternative, written last;
+# the group is removed and the canonical part judged as before.
 judge_canonical_subject() {
-  local location="$1" subject="$2" rest workflow at_count
+  local location="$1" subject="$2" own_repository="${3:-}" rest workflow at_count grouped own
+  if [ -n "$own_repository" ]; then
+    own="|$own_repository$OWN_RELEASE_TAIL)\$"
+    case "$subject" in
+      "$FAMILY_PREFIX$CANONICAL_FAMILY"*"$own")
+        grouped="${subject#"$FAMILY_PREFIX"}"
+        grouped="${grouped%"$own"}"
+        subject="${FAMILY_PREFIX%(}$grouped\$"
+        ;;
+    esac
+  fi
   case "$subject" in
     "$CANONICAL_SUBJECT_PREFIX"*'$') ;;
     *)
-      printf '%s: a generic verifier must name only the maintained publisher, exactly %s(app|manifests)\\.yaml@<commit>$; the deleted legacy publisher repository and any other arrangement are refused (subject: %s)\n' \
-        "$location" "$CANONICAL_SUBJECT_PREFIX" "$subject" >&2
+      printf '%s: a generic verifier must name only the maintained publisher, exactly %s(app|manifests)\\.yaml@<commit>$, or that grouped with this verifier'\''s own-release alternative %s%s; the deleted legacy publisher repository and any other arrangement are refused (subject: %s)\n' \
+        "$location" "$CANONICAL_SUBJECT_PREFIX" "${own_repository:-<none here>}" "$OWN_RELEASE_TAIL" "$subject" >&2
       return 1
       ;;
   esac
@@ -848,15 +924,22 @@ EOF
         status=1
         continue
       fi
-      # The generic Tenant source is a generic verifier: canonical-only (#6264).
-      judge_canonical_subject "$location" "$subject" || status=1
+      # The generic Tenant source is a generic verifier: canonical-only (#6264), grouped
+      # with the tenant's own release workflow under the constructor's marker (#6265).
+      judge_canonical_subject "$location" "$subject" "$TENANT_RELEASE_REPOSITORY" || status=1
       continue
     fi
 
     # THE GENERIC VERIFIERS ARE CANONICAL-ONLY (#6264), and judged by that parse alone, so
-    # the legacy family cannot return to them in any spelling this guard selects.
+    # the legacy family cannot return to them in any spelling this guard selects. The image
+    # verifiers may group it with a first-party repository's own release workflow (#6265);
+    # a plain subject in the Tenant graph has no tenant name to bind one to.
     if is_canonical_only_file "${location%:*}"; then
-      judge_canonical_subject "$location" "$subject" || status=1
+      if [ "${location%:*}" = "$GENERIC_TENANT_FILE" ]; then
+        judge_canonical_subject "$location" "$subject" || status=1
+      else
+        judge_canonical_subject "$location" "$subject" "$FIRST_PARTY_RELEASE_REPOSITORY" || status=1
+      fi
       continue
     fi
 

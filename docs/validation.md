@@ -140,12 +140,34 @@ controls exercise those paths and the three registered application matchers with
 accepted and rejected identities. A passing offline predicate check is not
 deployed-policy or publication evidence.
 
+Each of those paths, and every registered consumer except `.github`, also accepts a
+product's own release workflow on a release tag (#6265), as one further
+alternative written last inside the same anchored subject. The image rules accept
+any first-party repository starting with a letter or digit; a `Tenant` source
+accepts only `devantler-tech/<spec.name>`, regex-escaped; a consumer accepts only
+its current repository, which the writer renders from a fixed per-consumer rule,
+never from an observation. The workflow file sits directly in `.github/workflows/`
+and the tag follows the strict semver grammar of the KSail `cd.yaml` rule. The
+offline controls exercise own, lookalike and other repositories, branches,
+non-release and suffixed tags and nested paths at every layer:
+
+```bash
+bash scripts/tests/test-publish-workflow-canonical-approvals.sh
+bash scripts/tests/test-tenant-source-constructors.sh
+bash scripts/tests/test-webapp-compiler.sh   # compiled Tenant subject
+go test ./scripts/tests/arc-staging/         # admission routing
+```
+
 The independent shared-publisher pin guard accepts the same strict two-family
 form for both workflows. In the three generic verifiers it accepts only the
-canonical-only form, so the deleted legacy publisher cannot return there.
+canonical-only form, optionally grouped with that verifier's fixed own-release
+alternative, so the deleted legacy publisher cannot return there. In a consumer
+matcher the own-release repository must be one literal name other than the two
+shared-publisher hosts; which name is the approved-revisions guard's question.
 Authorization fingerprinting projects only the generated legacy signer revisions;
-the maintained repository, workflow and exact canonical commit or pair remain
-fingerprinted, so an approval change still requires review.
+the maintained repository, workflow, exact canonical commit or pair and the
+own-release alternative remain fingerprinted, so an approval change still
+requires review.
 
 To move a consumer's canonical publisher to a newer commit, review the workflow
 at that commit, add it as a second row for the consumer in

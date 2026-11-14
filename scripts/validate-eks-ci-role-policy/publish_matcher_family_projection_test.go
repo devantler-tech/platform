@@ -176,3 +176,56 @@ func TestProjectPublishSubjectRefusesWhatItCannotPlace(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectPublishSubjectKeepsTheOwnReleaseAlternative proves that a consumer's own
+// release workflow alternative (#6265) stays in the approval fingerprint as written: adding,
+// removing or retargeting it moves the fingerprint, while the generated legacy set inside the
+// same matcher still rotates freely. A malformed alternative is not projected at all.
+func TestProjectPublishSubjectKeepsTheOwnReleaseAlternative(t *testing.T) {
+	a, b, k := strings.Repeat("1", 40), strings.Repeat("2", 40), strings.Repeat("6", 40)
+	const host = `^https://github\.com/devantler-tech/`
+	legacy := `actions/\.github/workflows/publish-app\.yaml@`
+	canonical := `|\.github/\.github/workflows/publish-app\.yaml@`
+	subject := func(ref, own string) string { return host + "(" + legacy + ref + canonical + k + own + ")$" }
+	own := func(repository string) string { return "|" + repository + ownReleaseTail }
+
+	project := func(t *testing.T, input string) string {
+		t.Helper()
+		projected, ok := projectPublishSubject(input, "publish-app")
+		if !ok {
+			t.Fatalf("the rendered own-release subject was not recognised: %s", input)
+		}
+		return projected
+	}
+	baseline := project(t, subject(a, own("wedding-app")))
+	if !strings.HasSuffix(baseline, own("wedding-app")+")$") {
+		t.Fatalf("the own-release alternative was not kept as written: %s", baseline)
+	}
+	if project(t, subject("("+a+"|"+b+")", own("wedding-app"))) != baseline {
+		t.Error("the legacy signer set inside an own-release matcher moved the approval fingerprint")
+	}
+	for name, input := range map[string]string{
+		"without the own release": subject(a, ""),
+		"another repository":      subject(a, own("ascoachingogvaner")),
+		"an escaped dotted name":  subject(a, own(`wedding\.app`)),
+		"a different canonical":   strings.Replace(subject(a, own("wedding-app")), k, b, 1),
+	} {
+		if project(t, input) == baseline {
+			t.Errorf("%s did not move the approval fingerprint", name)
+		}
+	}
+	for name, input := range map[string]string{
+		"repository class":            subject(a, own("[a-z-]+")),
+		"repository wildcard":         subject(a, own(".*")),
+		"repository alternation":      subject(a, "|wedding-app|ascoachingogvaner"+ownReleaseTail),
+		"unescaped dotted repository": subject(a, own("wedding.app")),
+		"leading-dot repository":      subject(a, own(`\.github`)),
+		"empty repository":            subject(a, own("")),
+		"branch ref":                  subject(a, "|wedding-app/\\.github/workflows/[^/]+\\.ya?ml@refs/heads/main"),
+		"own release without a group": host + legacy + a + own("wedding-app") + "$",
+	} {
+		if projected, ok := projectPublishSubject(input, "publish-app"); ok {
+			t.Errorf("%s was projected to %q", name, projected)
+		}
+	}
+}

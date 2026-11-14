@@ -30,7 +30,7 @@ import (
 
 const tenantDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 const tenantPublisher = "a76d5df9371cf712a8f60307fde060825a34cf35"
-const defaultTenantSubject = `^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)$`
+const defaultTenantSubject = `^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)|tenant\-fixture/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$`
 
 // TestCommittedTenant exercises the actual graph compiler and generated API.
 // Desired objects are expression evidence, not Flux or signature verification.
@@ -182,6 +182,7 @@ func TestCommittedTenant(t *testing.T) {
 			}
 			assertTenantIdentity(t, source, defaultTenantSubject)
 			assertDefaultSubjectRefusesDeletedPublisher(t, source)
+			assertDefaultSubjectTrustsOnlyOwnRelease(t, source, "tenant-fixture")
 			writeTenantFixture(t, fmt.Sprintf("default-%t", sops), objects)
 		})
 		t.Run(fmt.Sprintf("pinned-source-only-sops-%t", sops), func(t *testing.T) {
@@ -205,6 +206,30 @@ func TestCommittedTenant(t *testing.T) {
 				t.Fatalf("pinned source must have exactly the selected digest: %v", ref)
 			}
 			assertTenantIdentity(t, source, `^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@a76d5df9371cf712a8f60307fde060825a34cf35$`)
+		})
+		// The own-release alternative is built from the tenant name, regex-escaped. A
+		// name carrying `.` must not become a wildcard: compile one directly (the
+		// Namespace would refuse it, but the subject is checked on its own here).
+		t.Run(fmt.Sprintf("own-release-escapes-tenant-name-sops-%t", sops), func(t *testing.T) {
+			input := instance("escaped-fixture", map[string]interface{}{"sops": sops})
+			if err := unstructured.SetNestedField(input.Object, "tenant.fixture", "spec", "name"); err != nil {
+				t.Fatal(err)
+			}
+			// Admission supplies the schema defaults the graph reads.
+			if err := admit(input); err != nil {
+				t.Fatal(err)
+			}
+			objects, _ := desiredTenant(t, engine, &definition, input)
+			matcher := compiledSubject(t, objects["ociRepository"])
+			for identity, want := range map[string]bool{
+				"https://github.com/devantler-tech/tenant.fixture/.github/workflows/release.yaml@refs/tags/v1.2.3": true,
+				"https://github.com/devantler-tech/tenantXfixture/.github/workflows/release.yaml@refs/tags/v1.2.3": false,
+				"https://github.com/devantler-tech/tenant-fixture/.github/workflows/release.yaml@refs/tags/v1.2.3": false,
+			} {
+				if got := matcher.MatchString(identity); got != want {
+					t.Fatalf("compiled subject for a dotted tenant name accepts %s = %t, want %t", identity, got, want)
+				}
+			}
 		})
 		t.Run(fmt.Sprintf("all-opt-ins-sops-%t", sops), func(t *testing.T) {
 			input := instance("opt-in-fixture", map[string]interface{}{
@@ -504,6 +529,68 @@ func assertDefaultSubjectRefusesDeletedPublisher(t *testing.T, source *unstructu
 		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328": false,
 		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40):               false,
 		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812": false,
+	} {
+		if got := matcher.MatchString(identity); got != want {
+			t.Fatalf("compiled default subject accepts %s = %t, want %t", identity, got, want)
+		}
+	}
+}
+
+// compiledSubject returns the one compiled source subject as the regex Flux
+// applies to the signing certificate's identity.
+func compiledSubject(t *testing.T, source *unstructured.Unstructured) *regexp.Regexp {
+	t.Helper()
+	identities, _, _ := unstructured.NestedSlice(source.Object, "spec", "verify", "matchOIDCIdentity")
+	if len(identities) != 1 {
+		t.Fatalf("source must carry exactly one identity, got %d", len(identities))
+	}
+	subject, _ := identities[0].(map[string]interface{})["subject"].(string)
+	matcher, err := regexp.Compile(subject)
+	if err != nil {
+		t.Fatalf("compiled subject is not a regex: %v", err)
+	}
+	return matcher
+}
+
+// assertDefaultSubjectTrustsOnlyOwnRelease evaluates the compiled default
+// subject against release identities (#6265): the tenant's own repository's
+// release workflow on a release tag verifies, pre-releases included, and the
+// shared publisher keeps its reviewed revisions. A lookalike or another
+// tenant's repository, a branch, a non-release or suffixed tag, a workflow
+// outside .github/workflows/ and a tag of the shared publisher all fail.
+func assertDefaultSubjectTrustsOnlyOwnRelease(t *testing.T, source *unstructured.Unstructured, tenant string) {
+	t.Helper()
+	matcher := compiledSubject(t, source)
+	own := "https://github.com/devantler-tech/" + tenant
+	for identity, want := range map[string]bool{
+		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                                                                         true,
+		own + "/.github/workflows/cd.yml@refs/tags/v1.2.3-rc.1":                                                                          true,
+		own + "/.github/workflows/release.yaml@refs/tags/v0.0.0-alpha.0.beta-2":                                                          true,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35":          true,
+		own + "-x/.github/workflows/release.yaml@refs/tags/v1.2.3":                                                                       false,
+		"https://github.com/devantler-tech/x" + tenant + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                              false,
+		"https://github.com/devantler-tech/" + strings.ReplaceAll(tenant, "-", "X") + "/.github/workflows/release.yaml@refs/tags/v1.2.3": false,
+		"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3":                                  false,
+		"https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/release.yaml@refs/tags/v1.2.3":                            false,
+		"https://github.com/another-org/" + tenant + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                                  false,
+		own + "/.github/workflows/release.yaml@refs/heads/main":                                                                          false,
+		own + "/.github/workflows/release.yaml@refs/pull/1/merge":                                                                        false,
+		own + "/.github/workflows/release.yaml@" + strings.Repeat("a", 40):                                                               false,
+		own + "/.github/workflows/release.yaml@refs/tags/v1.2":                                                                           false,
+		own + "/.github/workflows/release.yaml@refs/tags/1.2.3":                                                                          false,
+		own + "/.github/workflows/release.yaml@refs/tags/latest":                                                                         false,
+		own + "/.github/workflows/release.yaml@refs/tags/v01.2.3":                                                                        false,
+		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3+build.1":                                                                 false,
+		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3-":                                                                        false,
+		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3/../evil":                                                                 false,
+		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3-rc.1/x":                                                                  false,
+		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3x":                                                                        false,
+		own + "/.github/workflows/nested/release.yaml@refs/tags/v1.2.3":                                                                  false,
+		own + "/.github/workflows/../actions/release.yaml@refs/tags/v1.2.3":                                                              false,
+		own + "/.github/actions/release.yaml@refs/tags/v1.2.3":                                                                           false,
+		own + "/release.yaml@refs/tags/v1.2.3":                                                                                           false,
+		own + "/.github/workflows/release.json@refs/tags/v1.2.3":                                                                         false,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v21.3.4":                                 false,
 	} {
 		if got := matcher.MatchString(identity); got != want {
 			t.Fatalf("compiled default subject accepts %s = %t, want %t", identity, got, want)

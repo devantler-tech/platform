@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // publishMatcherSurfaceDocument recognizes only strict subsets of the shared
 // 40-hex signer pattern already covered by the authorization approval. The
@@ -109,13 +112,37 @@ const (
 	publishSubjectHost     = `^https://github\.com/devantler-tech/`
 	legacyPublishFamily    = `actions/\.github/workflows/`
 	canonicalPublishFamily = `\.github/\.github/workflows/`
+	// ownReleaseTail follows the repository of a consumer's own release workflow
+	// alternative (#6265): one workflow file on a strict OCI-semver release tag.
+	ownReleaseTail = `/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?`
 )
+
+// ownReleaseRepository is one literal repository name: letters, digits, `_` and
+// `-`, every `.` escaped, starting with a letter or digit.
+var ownReleaseRepository = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9_-]|\\\.)*$`)
+
+// cutOwnRelease removes a trailing own-release alternative from the inside of a
+// two-family group and returns it with its leading `|`, kept as written. A group
+// without one is returned unchanged with an empty alternative; a malformed one
+// is not recognized.
+func cutOwnRelease(inner string) (string, string, bool) {
+	head, ok := strings.CutSuffix(inner, ownReleaseTail)
+	if !ok {
+		return inner, "", true
+	}
+	separator := strings.LastIndex(head, "|")
+	if separator < 0 || !ownReleaseRepository.MatchString(head[separator+1:]) {
+		return "", "", false
+	}
+	return head[:separator], head[separator:] + ownReleaseTail, true
+}
 
 // projectPublishSubject replaces the generated legacy signer set with the shared pattern
 // and leaves everything else exactly as written. A legacy-only subject projects to the
-// approved pattern subject. A two-family subject keeps its group, its repository family
-// and its canonical commit or commits, so adding, removing or moving a canonical approval
-// always moves the fingerprint, while the daily legacy regeneration inside it does not.
+// approved pattern subject. A two-family subject keeps its group, its repository family,
+// its canonical commit or commits and its own-release alternative (#6265), so adding,
+// removing or moving a canonical approval or the own-release repository always moves the
+// fingerprint, while the daily legacy regeneration inside it does not.
 func projectPublishSubject(subject, workflow string) (string, bool) {
 	legacy := legacyPublishFamily + workflow + `\.yaml@`
 	if rest, ok := strings.CutPrefix(subject, publishSubjectHost+legacy); ok {
@@ -136,10 +163,14 @@ func projectPublishSubject(subject, workflow string) (string, bool) {
 	if !ok {
 		return "", false
 	}
+	inner, own, ok := cutOwnRelease(inner)
+	if !ok {
+		return "", false
+	}
 	canonical := `|` + canonicalPublishFamily + workflow + `\.yaml@`
 	ref, commit, ok := strings.Cut(inner, canonical)
 	if !ok || !isExactCanonicalCommitSet(commit) || !isExactPublishRevisionSet(ref, maxPublishRevisions()) {
 		return "", false
 	}
-	return publishSubjectHost + "(" + legacy + `[0-9a-f]{40}` + canonical + commit + ")$", true
+	return publishSubjectHost + "(" + legacy + `[0-9a-f]{40}` + canonical + commit + own + ")$", true
 }
