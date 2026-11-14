@@ -52,12 +52,26 @@ func planV1ReservationRepair(s inventory) (v1ReservationRepair, error) {
 	available, freeOK := v1CapacityBytes(status["storageAvailable"])
 	scheduled, scheduledOK := v1CapacityBytes(status["storageScheduled"])
 	if !maxOK || !freeOK || !scheduledOK || maximum == 0 || available > maximum || scheduled > maximum ||
-		oldReserve != maximum*30/100 || !v1DiskLedgerMatches(s.replicas, v1RepairWorker, status, maximum, scheduled) {
+		!v1DiskLedgerMatches(s.replicas, v1RepairWorker, status, maximum, scheduled) {
 		return v1ReservationRepair{}, refused
 	}
 
 	const gib = int64(1 << 30)
 	expected := map[string]int64{"substrate-db-2": 5 * gib, "rustfs-data": 10 * gib}
+	namespace, count, encrypted := "ate-system", 2, false
+	for _, volume := range s.volumes {
+		if text(volume, "status", "robustness") == "degraded" &&
+			text(volume, "status", "kubernetesStatus", "namespace") == "private-mail" &&
+			text(volume, "status", "kubernetesStatus", "pvcName") == "email-data-encrypted" {
+			// This declared two-GiB claim follows the original repair. Admit it
+			// only at an exhausted logical budget, never as a general expansion.
+			expected = map[string]int64{"email-data-encrypted": 2 * gib}
+			namespace, count, encrypted = "private-mail", 1, true
+		}
+	}
+	if encrypted && oldReserve != maximum-scheduled || !encrypted && oldReserve != maximum*30/100 {
+		return v1ReservationRepair{}, refused
+	}
 	volumes := map[string]string{}
 	var demand int64
 	for _, volume := range s.volumes {
@@ -70,7 +84,8 @@ func planV1ReservationRepair(s inventory) (v1ReservationRepair, error) {
 		name := text(volume, "metadata", "name")
 		claim := text(volume, "status", "kubernetesStatus", "pvcName")
 		size, valid := v1VolumeBytes(text(volume, "spec", "size"))
-		if !valid || expected[claim] != size || text(volume, "status", "kubernetesStatus", "namespace") != "ate-system" || !v1InsufficientCapacity(volume) {
+		if !valid || expected[claim] != size || text(volume, "status", "kubernetesStatus", "namespace") != namespace ||
+			encrypted && value(volume, "spec", "encrypted") != true || !v1InsufficientCapacity(volume) {
 			return v1ReservationRepair{}, refused
 		}
 		// verifyHealthyCopies has already required exactly one active engine.
@@ -94,7 +109,7 @@ func planV1ReservationRepair(s inventory) (v1ReservationRepair, error) {
 	// Admit precisely the missing logical allocations. Keep the existing
 	// physical free-space floor plus four GiB even if each copy fills its claim.
 	reserve := maximum - scheduled - demand
-	if len(expected) != 0 || len(volumes) != 2 || reserve < peerA || reserve >= oldReserve || available-demand <= maximum/4+4*gib {
+	if len(expected) != 0 || len(volumes) != count || reserve < peerA || reserve >= oldReserve || available-demand <= maximum/4+4*gib {
 		return v1ReservationRepair{}, refused
 	}
 	return v1ReservationRepair{node: node, disk: disk, diskUUID: text(status, "diskUUID"), reserve: reserve, volumes: volumes}, nil
@@ -264,6 +279,6 @@ func repairV1Reservation(ctx context.Context, c client, source string) error {
 	if err != nil {
 		return errors.New("reservation changed but three-copy recovery remains unverified")
 	}
-	fmt.Println("LONGHORN_V1_REPLICA_REPAIR=RECOVERED volumes=2 writes=1")
+	fmt.Printf("LONGHORN_V1_REPLICA_REPAIR=RECOVERED volumes=%d writes=1\n", len(plan.volumes))
 	return nil
 }

@@ -20,11 +20,21 @@ replacement, promotion, storage retirement or application cutover.
 
 `repair-v1-reservation` selects the fixed original worker and requires
 `repair-longhorn-v1-reservation` on a first-attempt main dispatch. It admits the
-two identified missing V1 copies only when both surviving copies, the complete
-disk allocation ledger and the physical free-space floor agree. The only write
+original pair of missing V1 copies, or the declared encrypted two-GiB Email
+claim at an exhausted logical budget. Each case requires both surviving copies,
+the complete disk allocation ledger and the physical free-space floor to agree.
+The two cases cannot be combined or used for another claim. The only write
 adjusts the filesystem disk reservation by the required logical capacity.
 Success requires all volumes to regain three healthy copies with the original
 affected volume and disk identities.
+
+For a read-only operator evaluation of the current allocation decision, run
+`LONGHORN_V1_REPAIR_NATIVE_READ=1 LONGHORN_V1_REPAIR_NATIVE_SOURCE=<current-main-sha>
+go test -v -count=1 -run '^TestV1ReservationNativeReadOnlyPlan$' ./scripts/migrate-longhorn-v2`
+with the existing read-only production context. Two complete native inventories
+must independently qualify the same original identities and reservation, bracketed
+by current-main and scheduling-policy checks. This reads no Secrets or host APIs,
+makes no write, and does not prove replica recovery or authorize a dispatch.
 
 `reserve-v1-scratch` selects the same worker and requires
 `reserve-longhorn-v1-scratch` on a first-attempt main dispatch. Run it after

@@ -138,23 +138,37 @@ func TestV1ReservationRepairWritesOnceAndRequiresNativeRecovery(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		wantError string
+		encrypted bool
 	}{
 		{name: "already healthy"},
 		{name: "recovered"},
 		{name: "uncertain patch", wantError: "reservation write could not be confirmed"},
 		{name: "changed volume identity", wantError: "reservation changed but three-copy recovery remains unverified"},
 		{name: "changed reservation", wantError: "reservation changed but three-copy recovery remains unverified"},
+		{name: "already healthy", encrypted: true},
+		{name: "recovered", encrypted: true},
+		{name: "uncertain patch", encrypted: true, wantError: "reservation write could not be confirmed"},
+		{name: "changed volume identity", encrypted: true, wantError: "reservation changed but three-copy recovery remains unverified"},
+		{name: "changed reservation", encrypted: true, wantError: "reservation changed but three-copy recovery remains unverified"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		label := tc.name
+		if tc.encrypted {
+			label = "encrypted " + label
+		}
+		t.Run(label, func(t *testing.T) {
 			f, p := newPreparationAPI(t, "draining")
-			f.s = v1ReservationFixture(tc.name == "already healthy")
+			fixture, volumeIndex, expectedReserve := v1ReservationFixture, 1, 33*v1FixtureGiB
+			if tc.encrypted {
+				fixture, volumeIndex, expectedReserve = v1EncryptedReservationFixture, 3, 31*v1FixtureGiB
+			}
+			f.s = fixture(tc.name == "already healthy")
 			f.node, f.storage = f.s.nodes[0], f.s.storageNodes[0]
-			current := v1ReservationFixture(true)
+			current := fixture(true)
 			if tc.name == "changed volume identity" {
-				valueObject(current.volumes[1], "metadata")["uid"] = "replaced-volume"
+				valueObject(current.volumes[volumeIndex], "metadata")["uid"] = "replaced-volume"
 			}
 			if tc.name == "changed reservation" {
-				valueObject(current.storageNodes[0], "spec", "disks", "default-disk-fixture")["storageReserved"] = float64(32 * v1FixtureGiB)
+				valueObject(current.storageNodes[0], "spec", "disks", "default-disk-fixture")["storageReserved"] = float64(expectedReserve - v1FixtureGiB)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -169,7 +183,7 @@ func TestV1ReservationRepairWritesOnceAndRequiresNativeRecovery(t *testing.T) {
 					want := []object{
 						{"op": "test", "path": "/metadata/uid", "value": text(f.storage, "metadata", "uid")},
 						{"op": "test", "path": "/metadata/resourceVersion", "value": text(f.storage, "metadata", "resourceVersion")},
-						{"op": "replace", "path": "/spec/disks/default-disk-fixture/storageReserved", "value": float64(33 * v1FixtureGiB)},
+						{"op": "replace", "path": "/spec/disks/default-disk-fixture/storageReserved", "value": float64(expectedReserve)},
 					}
 					if !reflect.DeepEqual(args[2:5], []string{"patch", "nodes.longhorn.io", v1RepairWorker}) || json.Unmarshal(input, &changes) != nil || !reflect.DeepEqual(changes, want) {
 						t.Fatal("repair did not write the single conditional reservation patch")
@@ -218,5 +232,94 @@ func TestV1ReservationRepairRequiresItsOwnFixedDispatch(t *testing.T) {
 	env["GITHUB_RUN_ATTEMPT"] = "2"
 	if authorizeV1ReservationRepair(getenv, "prod-worker-1") == nil {
 		t.Fatal("repair accepted a workflow rerun")
+	}
+}
+
+// The declared encrypted claim is created after the original repair. Its two
+// peer copies consume their own allocations; the original disk is exactly full
+// in the logical scheduler ledger, despite retaining the physical safety margin.
+func v1EncryptedReservationFixture(recovered bool) inventory {
+	s := v1ReservationFixture(true)
+	v := resource("encrypted-mail")
+	v["spec"] = object{"dataEngine": "v1", "encrypted": true, "numberOfReplicas": float64(3), "size": fmt.Sprint(2 * v1FixtureGiB)}
+	health := "degraded"
+	if recovered {
+		health = "healthy"
+		value(s.storageNodes[0], "spec", "disks", "default-disk-fixture").(object)["storageReserved"] = float64(31 * v1FixtureGiB)
+	}
+	v["status"] = object{"state": "attached", "robustness": health,
+		"kubernetesStatus": object{"namespace": "private-mail", "pvcName": "email-data-encrypted"},
+		"conditions":       []any{object{"type": "Scheduled", "status": "False", "reason": "ReplicaSchedulingFailure", "message": "insufficient storage"}}}
+	s.volumes = append(s.volumes, v)
+	e := resource("encrypted-mail-engine")
+	e["spec"] = object{"volumeName": "encrypted-mail", "dataEngine": "v1", "active": true}
+	modes := object{}
+	e["status"] = object{"currentState": "running", "replicaModeMap": modes}
+	s.engines = append(s.engines, e)
+	for i, node := range s.nodes {
+		if i == 0 && !recovered {
+			continue
+		}
+		name := fmt.Sprintf("encrypted-mail-%d", i+1)
+		nodeName := text(node, "metadata", "name")
+		r := resource(name)
+		r["spec"] = object{"volumeName": "encrypted-mail", "engineName": "encrypted-mail-engine", "dataEngine": "v1", "active": true,
+			"nodeID": nodeName, "diskID": "disk-" + nodeName, "diskPath": "/var/lib/longhorn", "volumeSize": fmt.Sprint(2 * v1FixtureGiB), "healthyAt": "2026-11-14T19:00:00Z"}
+		r["status"] = object{"currentState": "running"}
+		s.replicas = append(s.replicas, r)
+		modes[name] = "RW"
+		diskName := "default-disk"
+		if i == 0 {
+			diskName = "default-disk-fixture"
+		}
+		status := value(s.storageNodes[i], "status", "diskStatus", diskName).(object)
+		status["storageScheduled"] = status["storageScheduled"].(float64) + float64(2*v1FixtureGiB)
+		status["scheduledReplica"].(object)[name] = float64(2 * v1FixtureGiB)
+	}
+	return s
+}
+
+func TestV1ReservationRepairQualifiesDeclaredEncryptedClaim(t *testing.T) {
+	s := v1EncryptedReservationFixture(false)
+	plan, err := planV1ReservationRepair(s)
+	if err != nil || plan.reserve != 31*v1FixtureGiB || len(plan.volumes) != 1 || plan.volumes["encrypted-mail"] != text(s.volumes[3], "metadata", "uid") {
+		t.Fatalf("the declared two-GiB repair was refused or widened: %+v %v", plan, err)
+	}
+	if err = verifyRedundancy(v1EncryptedReservationFixture(true)); err != nil {
+		t.Fatal("the recovered fixture must independently establish three healthy copies")
+	}
+}
+
+func TestV1ReservationRepairKeepsEncryptedClaimScopeClosed(t *testing.T) {
+	for name, change := range map[string]func(*inventory){
+		"wrong namespace": func(s *inventory) { valueObject(s.volumes[3], "status", "kubernetesStatus")["namespace"] = "unrelated" },
+		"wrong claim": func(s *inventory) {
+			valueObject(s.volumes[3], "status", "kubernetesStatus")["pvcName"] = "another-claim"
+		},
+		"not encrypted": func(s *inventory) { valueObject(s.volumes[3], "spec")["encrypted"] = false },
+		"larger claim":  func(s *inventory) { valueObject(s.volumes[3], "spec")["size"] = fmt.Sprint(3 * v1FixtureGiB) },
+		"physical floor": func(s *inventory) {
+			valueObject(s.storageNodes[0], "status", "diskStatus", "default-disk-fixture")["storageAvailable"] = float64(43 * v1FixtureGiB)
+		},
+		"unexhausted budget": func(s *inventory) {
+			valueObject(s.storageNodes[0], "spec", "disks", "default-disk-fixture")["storageReserved"] = float64(32 * v1FixtureGiB)
+		},
+		"another degraded claim": func(s *inventory) { valueObject(s.volumes[1], "status")["robustness"] = "degraded" },
+		"different cause":        func(s *inventory) { valueObject(s.volumes[3], "status")["conditions"] = []any{} },
+		"lost peer":              func(s *inventory) { s.replicas = s.replicas[:len(s.replicas)-1] },
+		"maintenance": func(s *inventory) {
+			valueObject(s.nodes[0], "metadata")["annotations"] = object{fenceAnnotation: "other-run"}
+		},
+		"changed allocation ledger": func(s *inventory) {
+			valueObject(s.storageNodes[0], "status", "diskStatus", "default-disk-fixture")["storageScheduled"] = float64(118 * v1FixtureGiB)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := v1EncryptedReservationFixture(false)
+			change(&s)
+			if _, err := planV1ReservationRepair(s); err == nil {
+				t.Fatal("a different or unproven encrypted-claim repair was accepted")
+			}
+		})
 	}
 }
