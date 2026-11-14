@@ -20,6 +20,7 @@ results:
   - policy: enforce-flux-best-practices
     resources:
       - tenant/ks-compliant
+      - flux-system/platform-health
     kind: Kustomization
     result: pass
   - policy: enforce-flux-best-practices
@@ -34,6 +35,8 @@ results:
       - tenant/ks-empty-interval
       - unifi/unifi
       - github-config/github-config
+      - flux-system/other-health
+      - tenant/platform-health
     kind: Kustomization
     result: fail
   - policy: enforce-flux-best-practices
