@@ -35,6 +35,9 @@ spec:
   dependsOn:
     - name: apps
   prune: true
+  # Must stay false: with `wait: true` Flux ignores spec.healthChecks. The
+  # enforce-flux-best-practices policy allows it for this identity only.
+  wait: false
   # Platform Flux layers never force-recreate (persistence safety).
   force: false
   healthChecks:
