@@ -3,18 +3,25 @@
 // Replace OpenBao Server workflow runs it only after both judges returned
 // PROVEN for the named server.
 //
+//	replace-openbao-pod applied
 //	replace-openbao-pod delete --server openbao-2 --expect-uid <uid> --expect-chart 0.30.7 \
-//	  --expect-release 2.7.2 --timeout 10m
+//	  --expect-release 2.7.2 --expect-applied sha256:<digest> --timeout 10m
 //	replace-openbao-pod deliver --timeout 5m
+//
+// applied prints the platform manifests digest the Flux layer delivering
+// OpenBao last applied, once that layer is Ready at its current generation.
+// The workflow proves that digest was published from its own checkout before
+// it replaces anything (#6219).
 //
 // delete removes the named server's pod only while it still has the UID the
 // judged capture saw: the API server enforces that precondition, so a pod that
 // was replaced after the capture is never deleted on another pod's evidence.
 // The StatefulSet updates OnDelete, so deleting the pod is what starts the
-// server from the live template; delete first proves that template runs the
-// reviewed release, and that every claim the pod mounts is Bound. It then waits
-// until a successor with a different UID mounts the same claims, unchanged.
-// Whether the successor is healthy is the judges' call, not this command's.
+// server from the live template; delete first proves that the Flux layer still
+// has the proven digest applied, that the template runs the reviewed release,
+// and that every claim the pod mounts is Bound. It then waits until a
+// successor with a different UID mounts the same claims, unchanged. Whether
+// the successor is healthy is the judges' call, not this command's.
 //
 // deliver asks External Secrets to re-read one canary secret from OpenBao and
 // waits until that ExternalSecret reports a new, successful sync, which proves
@@ -22,10 +29,11 @@
 //
 // It prints one closed status line and never a UID, secret or response body.
 //
-// Exit codes: 0 REPLACED or CONFIRMED, 1 REFUSED (nothing was deleted: the pod
-// changed since the capture, the live template is not on the reviewed release,
-// or its storage is not Bound), 2 UNVERIFIED (a read failed, the wait ran out,
-// or the arguments are invalid).
+// Exit codes: 0 APPLIED, REPLACED or CONFIRMED, 1 REFUSED (nothing was deleted:
+// the Flux layer is not Ready or no longer has the proven digest applied, the
+// pod changed since the capture, the live template is not on the reviewed
+// release, or its storage is not Bound), 2 UNVERIFIED (a read failed, the wait
+// ran out, or the arguments are invalid).
 package main
 
 import (
@@ -55,6 +63,10 @@ const (
 	canary = "vault-snapshot-r2"
 	// statefulSet is the OpenBao StatefulSet, and the name of its server container.
 	statefulSet = "openbao"
+	// fluxNamespace and fluxLayer name the Flux Kustomization that applies the
+	// openbao HelmRelease from the platform manifests artifact.
+	fluxNamespace = "flux-system"
+	fluxLayer     = "infrastructure-controllers"
 	// pollInterval spaces the reads of a wait; the wait itself is bounded by
 	// --timeout.
 	pollInterval = 5 * time.Second
@@ -65,6 +77,7 @@ var (
 	// podUID is the shape the API server gives every object UID.
 	podUID  = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	version = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	digest  = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
 type podInfo struct {
@@ -79,6 +92,13 @@ type claimInfo struct {
 // helmState is the part of the openbao HelmRelease the binding check reads.
 type helmState struct {
 	chart             string // the chart version Flux last attempted
+	readyAtGeneration bool   // Ready=True for the current generation
+}
+
+// layerState is the part of the Flux layer delivering OpenBao the revision
+// check reads.
+type layerState struct {
+	digest            string // the manifests digest last applied
 	readyAtGeneration bool   // Ready=True for the current generation
 }
 
@@ -98,6 +118,8 @@ type cluster interface {
 	claim(ctx context.Context, name string) (claimInfo, error)
 	// releaseState returns what Flux last applied for the openbao HelmRelease.
 	releaseState(ctx context.Context) (helmState, error)
+	// appliedLayer returns what the Flux layer delivering OpenBao last applied.
+	appliedLayer(ctx context.Context) (layerState, error)
 	// templateRelease returns the release the StatefulSet's live pod template
 	// runs, from its openbao container image tag.
 	templateRelease(ctx context.Context) (string, error)
@@ -140,7 +162,7 @@ func release(tag string) string { return strings.TrimPrefix(tag, "v") }
 
 // reviewed is what the reviewed render pins: the chart version and the release
 // it ships.
-type reviewed struct{ chart, release string }
+type reviewed struct{ chart, release, applied string }
 
 // retainedClaims are the claims a server must mount from the StatefulSet's
 // claim templates: its Raft data and its audit log. Nothing else counts.
@@ -165,6 +187,22 @@ func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Du
 	}
 	if current.uid != expect {
 		return 1, line("REFUSED", " reason=pod-changed-since-capture")
+	}
+	// The workflow proved want.applied was published from its own checkout.
+	// The Flux layer must still have exactly that digest applied, Ready at its
+	// current generation, or the release below may come from another revision.
+	layerHolds := func() (int, string, bool) {
+		layer, err := k.appliedLayer(ctx)
+		if err != nil {
+			return 2, line("UNVERIFIED", " stage=platform-revision"), false
+		}
+		if layer.digest != want.applied || !layer.readyAtGeneration {
+			return 1, line("REFUSED", " reason=platform-revision-changed"), false
+		}
+		return 0, "", true
+	}
+	if code, msg, ok := layerHolds(); !ok {
+		return code, msg
 	}
 	// The pod restarts from the live template. Only a release Flux applied
 	// from the reviewed chart, at its current generation and without failure,
@@ -197,6 +235,12 @@ func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Du
 			return 1, line("REFUSED", " reason=storage-not-bound")
 		}
 		retained[name] = c.uid
+	}
+	// Check the layer again as late as possible: a values-only apply during
+	// the reads above keeps the chart, tag and claims but changes the
+	// template. The check and the delete are not atomic; this narrows the gap.
+	if code, msg, ok := layerHolds(); !ok {
+		return code, msg
 	}
 	switch err := k.deleteIfUID(ctx, server, expect); {
 	case errors.Is(err, errPreconditionFailed):
@@ -256,6 +300,20 @@ func deliver(ctx context.Context, k cluster, sleep func(context.Context, time.Du
 	return 0, "OPENBAO_SECRET_DELIVERY=CONFIRMED"
 }
 
+// applied reports the manifests digest the Flux layer delivering OpenBao has
+// applied. Only a layer Ready at its current generation reports one: a layer
+// still reconciling or failing may be on either revision.
+func applied(ctx context.Context, k cluster) (int, string) {
+	layer, err := k.appliedLayer(ctx)
+	if err != nil {
+		return 2, "OPENBAO_PLATFORM_REVISION=UNVERIFIED stage=layer-read"
+	}
+	if !layer.readyAtGeneration {
+		return 1, "OPENBAO_PLATFORM_REVISION=REFUSED reason=layer-not-ready"
+	}
+	return 0, "OPENBAO_PLATFORM_REVISION=APPLIED digest=" + layer.digest
+}
+
 // onceValue refuses a second Set, so a flag given twice is an error rather
 // than a quiet swap of the target.
 type onceValue struct {
@@ -290,27 +348,36 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, k cluster
 		return 2
 	}
 	if len(args) == 0 {
-		return invalid(errors.New("usage: replace-openbao-pod delete|deliver [flags]"))
+		return invalid(errors.New("usage: replace-openbao-pod applied|delete|deliver [flags]"))
 	}
 	set := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	timeout := set.Duration("timeout", 0, "longest wait for the change to take effect")
 	var code int
 	var line string
+	if args[0] == "applied" {
+		if err := parse(set, args[1:]); err != nil {
+			return invalid(err)
+		}
+		code, line = applied(ctx, k)
+		_, _ = fmt.Fprintln(stdout, line)
+		return code
+	}
+	timeout := set.Duration("timeout", 0, "longest wait for the change to take effect")
 	switch args[0] {
 	case "delete":
 		server := set.String("server", "", "the one server whose pod to replace")
 		expect := set.String("expect-uid", "", "the pod UID the judged capture saw")
 		want := set.String("expect-release", "", "the release the reviewed chart pins")
 		chart := set.String("expect-chart", "", "the reviewed chart version")
+		layer := set.String("expect-applied", "", "the manifests digest proven to come from this checkout")
 		if err := parse(set, args[1:]); err != nil {
 			return invalid(err)
 		}
-		if !serverName.MatchString(*server) || !podUID.MatchString(*expect) || !version.MatchString(*want) || !version.MatchString(*chart) || *timeout <= 0 || *timeout > 30*time.Minute {
-			return invalid(errors.New("--server, --expect-uid, --expect-release, --expect-chart and a --timeout of at most 30m are required"))
+		if !serverName.MatchString(*server) || !podUID.MatchString(*expect) || !version.MatchString(*want) || !version.MatchString(*chart) || !digest.MatchString(*layer) || *timeout <= 0 || *timeout > 30*time.Minute {
+			return invalid(errors.New("--server, --expect-uid, --expect-release, --expect-chart, --expect-applied and a --timeout of at most 30m are required"))
 		}
 		ctx, cancel := context.WithTimeout(ctx, *timeout)
 		defer cancel()
-		code, line = replace(ctx, k, sleep, *server, *expect, reviewed{chart: *chart, release: *want})
+		code, line = replace(ctx, k, sleep, *server, *expect, reviewed{chart: *chart, release: *want, applied: *layer})
 	case "deliver":
 		if err := parse(set, args[1:]); err != nil {
 			return invalid(err)
@@ -329,10 +396,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, k cluster
 }
 
 // kubectl is the production cluster, reached with the protected kubeconfig.
-type kubectl struct{}
+// Its zero value works in the openbao namespace.
+type kubectl struct{ namespace string }
 
-func (kubectl) args(rest ...string) []string {
-	return append([]string{"--context=" + kubeContext, "--request-timeout=20s", "--namespace=" + namespace}, rest...)
+func (k kubectl) args(rest ...string) []string {
+	ns := k.namespace
+	if ns == "" {
+		ns = namespace
+	}
+	return append([]string{"--context=" + kubeContext, "--request-timeout=20s", "--namespace=" + ns}, rest...)
 }
 
 // output runs kubectl and returns stdout, plus stderr only for the caller to
@@ -555,6 +627,56 @@ func (k kubectl) releaseState(ctx context.Context) (helmState, error) {
 		return helmState{}, err
 	}
 	return parseHelmRelease(b)
+}
+
+func (k kubectl) appliedLayer(ctx context.Context) (layerState, error) {
+	k = kubectl{namespace: fluxNamespace}
+	b, _, err := k.output(ctx, nil, "get", "kustomizations.kustomize.toolkit.fluxcd.io", fluxLayer, "--output=json")
+	if err != nil {
+		return layerState{}, err
+	}
+	return parseLayer(b)
+}
+
+// parseLayer reads the manifests digest a Flux Kustomization last applied and
+// whether it is Ready for its current generation. Its revision is
+// "<tag>@sha256:<hex>"; anything without exactly that digest is an error.
+func parseLayer(b []byte) (layerState, error) {
+	var ks struct {
+		Metadata struct {
+			Generation int64 `json:"generation"`
+		} `json:"metadata"`
+		Status struct {
+			ObservedGeneration  int64  `json:"observedGeneration"`
+			LastAppliedRevision string `json:"lastAppliedRevision"`
+			Conditions          []struct {
+				Type               string `json:"type"`
+				Status             string `json:"status"`
+				ObservedGeneration int64  `json:"observedGeneration"`
+			} `json:"conditions"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(b, &ks); err != nil {
+		return layerState{}, err
+	}
+	rev := ks.Status.LastAppliedRevision
+	d := rev[strings.LastIndex(rev, "@")+1:]
+	if ks.Metadata.Generation == 0 || !digest.MatchString(d) {
+		return layerState{}, errors.New("flux layer without a generation or an applied digest")
+	}
+	s := layerState{digest: d}
+	ready := 0
+	for _, c := range ks.Status.Conditions {
+		if c.Type == "Ready" {
+			ready++
+			s.readyAtGeneration = c.Status == "True" && c.ObservedGeneration == ks.Metadata.Generation
+		}
+	}
+	if ready != 1 {
+		return layerState{}, errors.New("not exactly one Ready condition")
+	}
+	s.readyAtGeneration = s.readyAtGeneration && ks.Status.ObservedGeneration == ks.Metadata.Generation
+	return s, nil
 }
 
 // parseHelmRelease reads the chart version Flux last attempted and whether the

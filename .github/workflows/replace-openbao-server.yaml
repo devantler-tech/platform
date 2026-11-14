@@ -56,6 +56,7 @@ jobs:
       deployment: false
     permissions:
       contents: read # checkout reviewed main and verify it is still current
+      packages: read # read the private manifests artifact's attestations from GHCR
     env:
       GH_TOKEN: ${{ github.token }}
       REPLACEMENT_MODE: ${{ inputs.mode }}
@@ -90,6 +91,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+          # Full history: the revision proof judges the applied artifact's
+          # attested commit against this checkout's ancestry.
+          fetch-depth: 0
 
       - name: Require the validated checkout to remain current main
         run: ./scripts/verify-prod-recovery-source.sh "$GITHUB_SHA"
@@ -139,7 +143,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin"
-          for tool in capture-openbao-replacement judge-openbao-health judge-openbao-quorum replace-openbao-pod; do
+          for tool in capture-openbao-replacement judge-openbao-health judge-openbao-quorum replace-openbao-pod resolve-prod-convergence; do
             go build -o "$RUNNER_TEMP/bin/$tool" "./scripts/$tool"
           done
 
@@ -159,6 +163,45 @@ jobs:
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      - name: Log in to GHCR (read-only)
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      # A replaced server restarts from the live template, so production must
+      # already run this checkout's configuration (#6219). The Flux layer that
+      # applies the openbao HelmRelease must be Ready on a manifests digest whose
+      # signed provenance names this checkout's commit, or an ancestor with no
+      # deploy-input change since. delete re-reads the layer and refuses unless
+      # it still has exactly this digest applied.
+      - name: Prove production applied this checkout's platform revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          line="$("$RUNNER_TEMP/bin/replace-openbao-pod" applied)" || status=$?
+          echo "$line"
+          (( status == 0 )) || exit "$status"
+          applied="${line##*digest=}"
+          [[ "$applied" =~ ^sha256:[0-9a-f]{64}$ ]]
+          status=0
+          verdict="$("$RUNNER_TEMP/bin/resolve-prod-convergence" --digest "$applied" --main-ref "$GITHUB_SHA")" || status=$?
+          echo "Applied platform revision against this checkout: $verdict"
+          case "$status" in
+            0) ;;
+            1)
+              echo "OPENBAO_PLATFORM_REVISION=REFUSED reason=not-this-checkout"
+              echo "OpenBao replacement: production has not applied this checkout's platform revision; deploy current \`main\` first" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+              ;;
+            *)
+              echo "OPENBAO_PLATFORM_REVISION=UNVERIFIED stage=provenance"
+              exit 2
+              ;;
+          esac
+          echo "OPENBAO_APPLIED_DIGEST=$applied" >> "$GITHUB_ENV"
 
       # Reads pods and the two OpenBao endpoints only. The captures stay in a
       # private directory; only the collector's closed status line and the
@@ -199,7 +242,8 @@ jobs:
           fi
           judged_uid="$(openbao_pod_uid "$private" "$REPLACEMENT_SERVER")"
           "$bin/replace-openbao-pod" delete --server "$REPLACEMENT_SERVER" --expect-uid "$judged_uid" \
-            --expect-chart "$OPENBAO_CHART" --expect-release "$OPENBAO_VERSION" --timeout 10m
+            --expect-chart "$OPENBAO_CHART" --expect-release "$OPENBAO_VERSION" \
+            --expect-applied "$OPENBAO_APPLIED_DIGEST" --timeout 10m
 
           after="$REPLACEMENT_SERVER"
           if [[ -n "$ALREADY_REPLACED" ]]; then after="$ALREADY_REPLACED,$REPLACEMENT_SERVER"; fi

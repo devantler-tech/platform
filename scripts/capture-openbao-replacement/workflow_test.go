@@ -55,11 +55,11 @@ func TestProcedureStaysManualProtectedAndGated(t *testing.T) {
 		t.Fatal("unexpected execution lane")
 	}
 	j := obj(jobs["preflight"])
-	if !reflect.DeepEqual(j["environment"], map[string]any{"name": "prod", "deployment": false}) || !reflect.DeepEqual(j["permissions"], map[string]any{"contents": "read"}) {
+	if !reflect.DeepEqual(j["environment"], map[string]any{"name": "prod", "deployment": false}) || !reflect.DeepEqual(j["permissions"], map[string]any{"contents": "read", "packages": "read"}) {
 		t.Fatal("protection or GitHub authority changed")
 	}
 	mutating := regexp.MustCompile(`\b(kubectl|bao|vault)\b[^\n]*\b(delete|patch|apply|scale|rollout|edit|replace|annotate|label|drain|cordon|write)\b`)
-	source, tested, restored, judged, replaced, confirmed := false, false, false, false, false, false
+	source, tested, restored, judged, replaced, confirmed, proven := false, false, false, false, false, false, false
 	for _, v := range array(j["steps"]) {
 		s := obj(v)
 		body := str(s["run"])
@@ -84,9 +84,23 @@ func TestProcedureStaysManualProtectedAndGated(t *testing.T) {
 			}
 			restored = true
 		}
+		// Production must run this checkout's revision before anything is judged
+		// or replaced (#6219): the applied digest's provenance is resolved
+		// against the checkout, and only a CONVERGED verdict exports the digest.
+		if strings.Contains(body, `replace-openbao-pod" applied`) {
+			resolve := strings.Index(body, `resolve-prod-convergence" --digest "$applied" --main-ref "$GITHUB_SHA"`)
+			export := strings.Index(body, `echo "OPENBAO_APPLIED_DIGEST=$applied" >> "$GITHUB_ENV"`)
+			if !restored || judged || s["if"] != nil || resolve < 0 || export < resolve || !strings.Contains(body, `0) ;;`) {
+				t.Fatal("the platform revision proof is skipped, misordered or not bound to this checkout")
+			}
+			proven = true
+		}
 		if strings.Contains(body, `"$bin/replace-openbao-pod"`) {
-			if s["if"] != "inputs.mode == 'replace'" || !judged {
+			if s["if"] != "inputs.mode == 'replace'" || !judged || !proven {
 				t.Fatal("the replacement can run outside replace mode or before the preflight")
+			}
+			if !strings.Contains(body, `--expect-applied "$OPENBAO_APPLIED_DIGEST"`) {
+				t.Fatal("the replacement is not bound to the proven platform revision")
 			}
 			gate := strings.Index(body, `judge_openbao_replacement "$private" "$ALREADY_REPLACED" || status=$?`)
 			stop := strings.Index(body, `exit "$status"`)
@@ -105,7 +119,7 @@ func TestProcedureStaysManualProtectedAndGated(t *testing.T) {
 			judged = true
 		}
 	}
-	if !source || !tested || !restored || !judged || !replaced || !confirmed {
+	if !source || !tested || !restored || !judged || !replaced || !confirmed || !proven {
 		t.Fatal("missing protected controls")
 	}
 	lib, err := os.ReadFile(filepath.Join("..", "judge-openbao-replacement.lib.sh"))
