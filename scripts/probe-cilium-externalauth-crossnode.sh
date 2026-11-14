@@ -32,9 +32,13 @@
 # endpoint is therefore never chosen for either client, and whoami's placement is fingerprinted
 # before and after the run like the oauth2-proxy endpoints.
 #
-# WHY A FAILURE IS ATTRIBUTABLE. Requests stay inside the cluster, over plain HTTP on the gateway's
-# `http` listener, to hostnames under `externalauth-probe.invalid`. Nothing in the path is
-# Cloudflare, public DNS or TLS, and external-dns publishes nothing outside the zone. Each client
+# WHY A FAILURE IS ATTRIBUTABLE. Requests stay inside the cluster, over HTTPS on the gateway's
+# `https` listener, to hostnames under `externalauth-probe.invalid`. Nothing in the path is
+# Cloudflare or public DNS, and external-dns publishes nothing outside the zone. The `http` listener
+# accepts routes only from its own namespace, so a route in `whoami` cannot attach there
+# (`NotAllowedByListeners`); the `https` listener accepts every namespace and has no hostname, so it
+# serves the made-up hostnames with its default certificate. The clients skip certificate checks
+# (`curl -k`): no `.invalid` name has a certificate, and TLS is not what the probe measures. Each client
 # alternates two routes with the SAME backend: a plain control route and the ExternalAuth route. If
 # the control route does not answer every time, the path or policy is broken and the run is
 # INCONCLUSIVE rather than blamed on ext_authz.
@@ -58,9 +62,9 @@
 #                   same-node requests were lost — the #2284 pattern, not an intermittent blip.
 #   INCONCLUSIVE    anything else, including intermittent loss below that bar.
 #
-# GUARD. The ExternalAuth route shares the `http` listener with the platform's HTTP→HTTPS redirect.
-# Each client finishes with one request to an unrouted hostname, which must still get that redirect
-# (301); anything else means the probe changed another route's behaviour, and the run is
+# GUARD. The ExternalAuth route shares the `https` listener with every public HTTPS route.
+# Each client finishes with one request to an unrouted hostname, which must still get the listener's
+# no-route answer (404); anything else means the probe changed another route's behaviour, and the run is
 # INCONCLUSIVE. This detects the exposure; it cannot prevent it for the run's duration.
 #
 # WHAT IT WRITES — stated plainly, because unlike the ipcache read this changes production while it
@@ -93,7 +97,7 @@ readonly probe_label='platform.devantler.tech/externalauth-probe'
 readonly control_host='control.externalauth-probe.invalid'
 readonly authz_host='authz.externalauth-probe.invalid'
 readonly guard_host='unrouted.externalauth-probe.invalid'
-readonly gateway_url='http://cilium-gateway-platform.kube-system.svc.cluster.local/'
+readonly gateway_url='https://cilium-gateway-platform.kube-system.svc.cluster.local/'
 # The same pinned image the coroot heartbeat CronJob runs; it is not first-party, so no Talos image
 # verification rule matches it.
 readonly client_image='docker.io/curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777'
@@ -440,7 +444,7 @@ spec:
   parentRefs:
     - name: platform
       namespace: kube-system
-      sectionName: http
+      sectionName: https
   hostnames:
     - ${host}
   rules:
@@ -529,12 +533,12 @@ spec:
         - |
           set -u
           ask() {
-            curl -s -o /dev/null --max-time "\$TIMEOUT" -H "Host: \$1" -w '%{http_code} %{size_download} %{redirect_url}' "\$GATEWAY_URL" 2>/dev/null
+            curl -sk -o /dev/null --max-time "\$TIMEOUT" -H "Host: \$1" -w '%{http_code} %{size_download} %{redirect_url}' "\$GATEWAY_URL" 2>/dev/null
           }
           # The control route's whoami backend echoes the connection's source address, which is the
           # ingress IP of the node whose Envoy handled the request. Prints "<code> <size> <ip-or->".
           ask_control() {
-            out=\$(curl -s --max-time "\$TIMEOUT" -H "Host: \$1" -w '\\nPROBE-STATUS %{http_code} %{size_download}' "\$GATEWAY_URL" 2>/dev/null)
+            out=\$(curl -sk --max-time "\$TIMEOUT" -H "Host: \$1" -w '\\nPROBE-STATUS %{http_code} %{size_download}' "\$GATEWAY_URL" 2>/dev/null)
             status=\$(printf '%s\\n' "\$out" | sed -n 's/^PROBE-STATUS //p' | tail -n 1)
             ip=\$(printf '%s\\n' "\$out" | sed -n 's/^RemoteAddr: *\\[\\{0,1\\}\\([0-9A-Fa-f.:]*\\)\\]\\{0,1\\}:[0-9]*\$/\\1/p' | head -n 1)
             printf '%s %s' "\${status:-000 0}" "\${ip:--}"
@@ -543,7 +547,7 @@ spec:
           # created only after the ExternalAuth route was accepted, and Envoy applies the gateway's
           # configuration in order, so that 200 proves the ExternalAuth route is programmed here too.
           # As a second check the ExternalAuth route must not answer like an unprogrammed hostname
-          # (404, or the listener's 301 redirect). A timeout there is NOT unprogrammed — it is what
+          # (404, or a 301 from a stale redirect). A timeout there is NOT unprogrammed — it is what
           # a black-holed check looks like — so it ends the warm-up and is measured below.
           warm=0
           n=0
@@ -627,13 +631,13 @@ spec:
             namespace: kube-system
       toPorts:
         - ports:
-            - port: "80"
+            - port: "443"
               protocol: TCP
     - toEntities:
         - ingress
       toPorts:
         - ports:
-            - port: "80"
+            - port: "443"
               protocol: TCP
 YAML
   route_manifest "${authz_route}" "${authz_host}" "${authz_filters}"
@@ -851,8 +855,8 @@ summary "| cross-node | ${cross_ok} | ${cross_bad} | ${cross_delivered} | ${cros
 summary "| same-node | ${same_ok} | ${same_bad} | ${same_delivered} | ${same_lost} | ${same_other} |"
 summary ""
 
-if [[ "${cross_guard}" != '301' || "${same_guard}" != '301' ]]; then
-  inconclusive "the http listener's redirect answered ${cross_guard}/${same_guard} instead of 301 during the run, so the probe route affected other traffic"
+if [[ "${cross_guard}" != '404' || "${same_guard}" != '404' ]]; then
+  inconclusive "the https listener answered the unrouted hostname with ${cross_guard}/${same_guard} instead of 404 during the run, so the probe route affected other traffic"
 fi
 if ((cross_bad + same_bad > 0)); then
   inconclusive 'the plain control route did not answer every time, so failures cannot be attributed to ExternalAuth'

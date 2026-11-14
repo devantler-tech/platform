@@ -140,7 +140,7 @@ chmod +x "${fake_bin}/kubectl"
 
 readonly requests=10
 readonly dex_redirect='https://dex.platform.example.test/auth?client_id=public-client'
-readonly guard_ok='301 0 https://unrouted.externalauth-probe.invalid/'
+readonly guard_ok='404 0 '
 # Ingress IPs of the nodes the two pods are pinned to (see ciliumnodes.json).
 readonly cross_ingress_ip='10.0.10.5'
 readonly same_ingress_ip='10.0.10.3'
@@ -365,7 +365,12 @@ grep -Fq -- '- authz.externalauth-probe.invalid' <<<"${applied}" || fail 'the Ex
 if grep -Fq -- '- unrouted.externalauth-probe.invalid' <<<"${applied}"; then
   fail 'the guard hostname must stay unrouted'
 fi
-[[ "$(grep -c 'sectionName: http$' <<<"${applied}")" -eq 2 ]] || fail 'both probe routes must attach to the plain http listener'
+[[ "$(grep -c 'sectionName: https$' <<<"${applied}")" -eq 2 ]] || fail 'both probe routes must attach to the https listener (the http listener admits only its own namespace)'
+[[ "$(grep -c 'port: "443"' <<<"${applied}")" -eq 2 ]] || fail 'the probe policy must allow the https listener port on both egress rules'
+if grep -Fq 'port: "80"' <<<"${applied}"; then
+  fail 'the probe policy must not open the plain http port'
+fi
+grep -Fq 'https://cilium-gateway-platform.kube-system.svc.cluster.local/' <<<"${applied}" || fail 'the clients must call the gateway over https'
 [[ "$(grep -c "${label}: \"12345\"" <<<"${applied}")" -ge 6 ]] || fail 'every created object and the policy selector must carry the run label'
 grep -Fq 'hostUsers: false' <<<"${applied}" || fail 'the probe pods must run in a user namespace (whoami requires it)'
 grep -Fq 'automountServiceAccountToken: false' <<<"${applied}" || fail 'the probe pods must not mount a token'
@@ -477,8 +482,8 @@ pass 'a single control-route failure makes cross-node loss unattributable'
 reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' "302 0 ${dex_redirect}" 0 '' '302 0 https://dex.platform.example.test/auth'
 run_default
-require_inconclusive 'the redirect route answering anything but 301 means the probe affected other traffic' 'instead of 301'
-pass 'the unrouted-hostname guard must still get the listener redirect'
+require_inconclusive 'the unrouted hostname answering anything but 404 means the probe affected other traffic' 'instead of 404'
+pass 'the unrouted-hostname guard must still get the listener no-route 404'
 
 reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' '200 45 '
@@ -838,6 +843,7 @@ awk '
   body && /^      securityContext:/ { exit }
   body { sub(/^          /, ""); print }
 ' "${fixtures}/applied.yaml" >"${pod_loop}"
+[[ "$(grep -c 'curl -sk ' "${pod_loop}")" -eq 2 ]] || fail 'both client requests must skip certificate checks, since no .invalid hostname has a certificate'
 grep -Fq 'PROBE-DONE' "${pod_loop}" || fail 'could not extract the rendered pod loop'
 if grep -Fq '\$' "${pod_loop}"; then
   fail 'the rendered pod loop still contains an escaped \$'
@@ -848,16 +854,16 @@ mkdir -p "${fake_curl_bin}"
 cat >"${fake_curl_bin}/curl" <<'CURL'
 #!/usr/bin/env bash
 # Answers by Host header, per CURL_MODE:
-#   delivered  control 200, authz 302 to Dex, unrouted 301
-#   blackhole  control 200, authz times out (000), unrouted 301
-#   unrouted   control 200, authz 404 (route not programmed yet), unrouted 301
+#   delivered  control 200, authz 302 to Dex, unrouted 404
+#   blackhole  control 200, authz times out (000), unrouted 404
+#   unrouted   control 200, authz 404 (route not programmed yet), unrouted 404
 host=''
 while [[ "$#" -gt 0 ]]; do
   if [[ "$1" == '-H' ]]; then host="${2#Host: }"; shift 2; else shift; fi
 done
 case "${host}" in
   control.*) printf 'Hostname: whoami\nRemoteAddr: 10.0.10.5:43210\n\nPROBE-STATUS 200 45' ;;
-  unrouted.*) printf '301 0 https://%s/' "${host}" ;;
+  unrouted.*) printf '404 0 ' ;;
   authz.*)
     case "${CURL_MODE}" in
       delivered) printf '302 0 https://dex.platform.example.test/auth' ;;
@@ -873,7 +879,7 @@ run_loop() {
   set +e
   output="$(PATH="${fake_curl_bin}:${PATH}" CURL_MODE="$1" REQUESTS=3 TIMEOUT=1 WARMUP_ATTEMPTS=2 \
     CONTROL_HOST=control.externalauth-probe.invalid AUTHZ_HOST=authz.externalauth-probe.invalid \
-    GUARD_HOST=unrouted.externalauth-probe.invalid GATEWAY_URL=http://gateway.invalid/ \
+    GUARD_HOST=unrouted.externalauth-probe.invalid GATEWAY_URL=https://gateway.invalid/ \
     sh "${pod_loop}" 2>&1)"
   rc=$?
   set -e
@@ -885,7 +891,7 @@ require_text 'PROBE-WARMUP ok' 'a delivering route must warm up'
 [[ "$(grep -c '^PROBE control 200 45 10\.0\.10\.5$' <<<"${output}")" -eq 3 ]] ||
   fail 'the loop must print each control answer with the source address whoami echoed'
 [[ "$(grep -c '^PROBE authz 302 0 https://dex\.' <<<"${output}")" -eq 3 ]] || fail 'the loop must print one delivered answer per round'
-require_text 'PROBE guard 301 0 https://unrouted.externalauth-probe.invalid/' 'the loop must print the guard answer'
+require_text 'PROBE guard 404 0 ' 'the loop must print the guard answer'
 require_text 'PROBE-DONE 3' 'the loop must report its round count'
 run_loop blackhole
 require_text 'PROBE-WARMUP ok' 'a COMPLETE black-hole must still warm up, so it is measured rather than reported as a broken path'
