@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"syscall"
 	"time"
 )
@@ -81,8 +83,14 @@ func checkCommand(args []string, log io.Writer) int {
 		if ctx.Err() != nil {
 			return unknown("timed out")
 		}
-		// Readback does not separate a mismatch from an unreadable setting.
-		_, _ = fmt.Fprintln(log, "Email configuration drift: a served setting differs from the declared configuration or could not be read; the next start restores it.")
+		// Readback does not separate a mismatch from an unreadable setting. The
+		// object name is not private; its values are never printed.
+		object := "a setting"
+		var named objectError
+		if errors.As(err, &named) && objectNamePattern.MatchString(named.object) {
+			object = named.object
+		}
+		_, _ = fmt.Fprintf(log, "Email configuration drift in %s: it differs from the declared configuration or could not be read; the next start restores it.\n", object)
 		return checkDrift
 	}
 	if _, err := fmt.Fprintln(log, "Email configuration matches the declared configuration."); err != nil {
@@ -90,6 +98,17 @@ func checkCommand(args []string, log io.Writer) int {
 	}
 	return checkMatches
 }
+
+// objectError names the registry object whose readback failed.
+type objectError struct {
+	object string
+	err    error
+}
+
+func (e objectError) Error() string { return e.object + ": " + e.err.Error() }
+func (e objectError) Unwrap() error { return e.err }
+
+var objectNamePattern = regexp.MustCompile(`^[A-Z][A-Za-z]{1,63}$`)
 
 // validCheckEndpoint accepts only a plain http://host:port origin. The check
 // runs inside the cluster against the management listener.

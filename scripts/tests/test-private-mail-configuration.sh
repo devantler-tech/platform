@@ -542,11 +542,15 @@ echo 'PASS: remote mail is routed through the SES relay with required, verified 
 # The scheduled drift check reads the serving configuration back as the managed
 # administrator and never writes. A setting changed by hand must fail it.
 run_check() {
+  local check_status=0
   docker run --rm --network "$network" --read-only --user "$fixture_user" --cpus 1 --memory 128m \
     --cap-drop ALL --security-opt no-new-privileges:true \
     --mount "type=bind,source=$scratch/inputs,target=/etc/private-mail,readonly" \
     --entrypoint /usr/local/bin/private-mail-bootstrap "$name-bootstrap-image" \
-    check --url "http://$name:8080" >"$scratch/check.log" 2>&1
+    check --url "http://$name:8080" >"$scratch/check.log" 2>&1 || check_status=$?
+  # The check prints one fixed line that names at most a registry object.
+  grep -E '^Email configuration (matches|drift in [A-Za-z ]+:|check could not run: [a-z ]+$)' "$scratch/check.log" | head -1 | cut -c1-160 >&2 || true
+  return "$check_status"
 }
 set_pyzor() {
   printf '{"@type":"update","object":"SpamPyzor","value":{"enable":%s}}\n' "$1" >"$scratch/drift.ndjson"

@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +26,30 @@ func TestCheckEndpointIsAPlainClusterOrigin(t *testing.T) {
 		if validCheckEndpoint(raw) {
 			t.Fatalf("endpoint %q accepted", raw)
 		}
+	}
+}
+
+// TestReadbackNamesTheDriftedObject names the object, never its values, so a
+// failed check says where to look.
+func TestReadbackNamesTheDriftedObject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var call struct {
+			Methods [][]json.RawMessage `json:"methodCalls"`
+		}
+		var method, tag string
+		if json.NewDecoder(r.Body).Decode(&call) != nil || len(call.Methods) != 1 || json.Unmarshal(call.Methods[0][0], &method) != nil || json.Unmarshal(call.Methods[0][2], &tag) != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		result := map[string]any{"list": []any{map[string]any{"id": "singleton", "enable": true}}, "notFound": []any{}}
+		_ = json.NewEncoder(w).Encode(map[string]any{"methodResponses": []any{[]any{method, result, tag}}})
+	}))
+	defer server.Close()
+	m := management{client: server.Client(), url: server.URL, password: "synthetic-test-only"}
+	err := m.verify(context.Background(), []byte(`{"@type":"update","object":"SpamPyzor","value":{"enable":false}}`+"\n"))
+	var named objectError
+	if !errors.As(err, &named) || named.object != "SpamPyzor" || !errors.Is(err, errConfiguration) || strings.Contains(err.Error(), "false") {
+		t.Fatalf("drift is not named by object alone: %v", err)
 	}
 }
 
