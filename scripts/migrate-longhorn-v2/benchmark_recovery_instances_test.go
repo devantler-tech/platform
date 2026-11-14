@@ -8,10 +8,11 @@ import (
 func retirementInstanceFixture(t *testing.T) (benchmarkRecord, map[string][]object) {
 	t.Helper()
 	record := retirementFenceFixture(t)
-	groups := map[string][]object{}
+	groups := map[string][]object{"snapshots": {}}
 	for _, kind := range []string{"engines", "replicas", "enginefrontends", "volumeattachments"} {
 		child := resource("scratch-" + kind)
 		child["metadata"].(object)["namespace"] = "longhorn-system"
+		child["metadata"].(object)["labels"] = object{"longhornvolume": "scratch-backend"}
 		child["metadata"].(object)["ownerReferences"] = []any{object{"apiVersion": "longhorn.io/v1beta2", "kind": "Volume", "name": "scratch-backend", "uid": record.Resources["LonghornVolume"].UID}}
 		child["spec"] = object{"volumeName": "scratch-backend", "dataEngine": "v1", "desireState": "stopped", "nodeID": "prod-worker-1"}
 		child["status"] = object{"ownerID": "prod-worker-1", "instanceManagerName": "scratch-im", "currentState": "stopped", "starting": false, "started": false}
@@ -19,6 +20,7 @@ func retirementInstanceFixture(t *testing.T) (benchmarkRecord, map[string][]obje
 			child["spec"].(object)["engineName"] = "scratch-engines"
 		}
 		if kind == "volumeattachments" {
+			child["metadata"].(object)["name"] = "scratch-backend"
 			child["spec"] = object{"volume": "scratch-backend", "attachmentTickets": object{}}
 			child["status"] = object{"attachmentTicketStatuses": object{}}
 		}
@@ -50,7 +52,7 @@ func TestRetirementInstancesRequireOriginalVolumeOwnerAndStoppedState(t *testing
 	if err != nil || len(children) != 4 {
 		t.Fatalf("native stopped owner chain refused: %v", err)
 	}
-	for _, fault := range []string{"missing inventory", "missing owner", "foreign owner UID", "foreign owner kind", "foreign owner name", "controller-owner mismatch", "spec owner mismatch", "wrong engine", "unknown engine link", "starting", "started", "empty current state", "running desire", "unknown owner process", "linked clone", "pending attachment", "stale attachment status", "duplicate UID"} {
+	for _, fault := range []string{"missing inventory", "missing owner", "foreign owner UID", "foreign owner kind", "foreign owner name", "controller-owner mismatch", "spec owner mismatch", "selector label mismatch", "foreign reserved attachment", "native snapshot dependency", "wrong engine", "unknown engine link", "starting", "started", "empty current state", "running desire", "unknown owner process", "linked clone", "pending attachment", "stale attachment status", "duplicate UID"} {
 		t.Run(fault, func(t *testing.T) {
 			r, g := retirementInstanceFixture(t)
 			engine := g["engines"][0]
@@ -72,6 +74,18 @@ func TestRetirementInstancesRequireOriginalVolumeOwnerAndStoppedState(t *testing
 				owner["controller"] = true
 			case "spec owner mismatch":
 				engine["spec"].(object)["volumeName"] = "foreign"
+			case "selector label mismatch":
+				engine["metadata"].(object)["labels"] = object{"longhornvolume": "foreign"}
+			case "foreign reserved attachment":
+				attachment["metadata"].(object)["labels"] = object{"longhornvolume": "foreign"}
+				delete(attachment["metadata"].(object), "ownerReferences")
+				attachment["spec"].(object)["volume"] = "foreign"
+			case "native snapshot dependency":
+				snapshot := resource("foreign-snapshot")
+				snapshot["metadata"].(object)["namespace"] = "longhorn-system"
+				snapshot["metadata"].(object)["labels"] = object{"longhornvolume": r.Resources["LonghornVolume"].Name}
+				snapshot["spec"] = object{"volume": "foreign"}
+				g["snapshots"] = []object{snapshot}
 			case "wrong engine":
 				replica["spec"].(object)["dataEngine"] = "v2"
 			case "unknown engine link":

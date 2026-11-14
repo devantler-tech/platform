@@ -243,10 +243,11 @@ rebuilds, volume health and the recorded configuration are observed. Scratch obj
 from backups. Compare receipts knowing that, and avoid dispatching around the 02:17 UTC backup,
 whose load on the same disks is not measured. V2's necessary CPU reservation is reported alongside the V1 context;
 the comparison does not assume the engines have identical CPU costs.
-A completed receipt requires healthy storage and
-explicit cleanup of only the owned scratch Pod, claim, retained PV, backend,
-class and namespace. An incomplete run, including one that reaches the Pod's 25 minute
-deadline, holds with its journal and resources preserved for explicit recovery.
+A completed receipt requires healthy storage and explicit cleanup of the recorded
+scratch Pod, network policy, claim, retained PV, backend and class. Both phases use
+the GitOps-managed `longhorn-benchmark` namespace. The workflow records its UID and
+leaves the namespace in place. An incomplete run, including one that reaches the
+Pod's 25 minute deadline, holds with its journal and resources preserved for explicit recovery.
 
 Run `benchmark-v2` only after every volume uses V2 and every replica is back on
 the same three permanent workers. It requires the baseline's hardware, OS,
@@ -259,6 +260,13 @@ carry a UID precondition. Talos reads must report the same hardware UUID as the 
 Kubernetes worker before host configuration can be trusted or a host command can run.
 
 ## Benchmark retirement safeguards
+
+The V1 benchmark requires the exact reviewed retirement image, including its
+release tag and immutable digest. The default setting and each selected manager
+declaration must agree with that image; a matching tag shape, older publication
+or digest-only declaration does not qualify. Containerd may report the approved
+running image by repository and digest without its tag. Publication and admission
+rules alone do not prove that this runtime has been adopted.
 
 Recovery builds per-run admission policies from all seven original resource UID receipts. One
 protects the retained PV's original claim and backend handle; one keeps the original backend

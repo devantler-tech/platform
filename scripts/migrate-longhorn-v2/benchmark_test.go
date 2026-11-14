@@ -103,3 +103,25 @@ func TestScratchResourcesStayOutOfBackupsAndGeneratedNames(t *testing.T) {
 		}
 	}
 }
+func TestCurrentBenchmarkUsesReviewedWorkspaceWithoutNamespaceCreate(t *testing.T) {
+	const run = "1234"
+	for _, phase := range []string{"v1", "v2"} {
+		assets, err := benchmarkResources(phase, run, benchmarkNamespace)
+		if err != nil || len(assets) != 4 {
+			t.Fatalf("expected four scratch assets in the dedicated workspace: %v", err)
+		}
+		for _, asset := range assets {
+			switch text(asset, "kind") {
+			case "StorageClass":
+				if text(asset, "parameters", "nodeSelector") != benchmarkTag(phase, run) ||
+					text(asset, "metadata", "namespace") != "" {
+					t.Fatal("the storage class must select only this run's temporary node tag")
+				}
+			default:
+				if text(asset, "kind") == "Namespace" || text(asset, "metadata", "namespace") != benchmarkNamespace {
+					t.Fatal("benchmark asset escaped the dedicated workspace")
+				}
+			}
+		}
+	}
+}

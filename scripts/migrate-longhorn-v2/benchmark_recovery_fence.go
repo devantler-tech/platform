@@ -13,7 +13,7 @@ import (
 // attachment/instance/dependency fences must be resolved before that is added.
 // The backend policy is for the stage after natural Kubernetes-status clearance.
 func verifyRetirementReceipts(record benchmarkRecord) error {
-	if (record.Phase != "v1" && record.Phase != "v2") || !regexp.MustCompile(`^[1-9][0-9]{0,18}$`).MatchString(record.Run) || record.Namespace != "longhorn-benchmark-"+record.Phase+"-"+record.Run || record.NamespaceUID == "" || record.PendingCreate != "" || record.Cleaned || len(record.Resources) != 7 || validateBenchmarkResources(record) != nil {
+	if (record.Phase != "v1" && record.Phase != "v2") || !benchmarkRunPattern.MatchString(record.Run) || !benchmarkNamespaceMatches(record) || record.NamespaceUID == "" || record.PendingCreate != "" || record.Cleaned || len(record.Resources) != 7 || validateBenchmarkResources(record) != nil {
 		return errors.New("complete original benchmark receipts are required for retirement fences")
 	}
 	seen := map[string]bool{}
@@ -85,7 +85,7 @@ func benchmarkRetirementFences(record benchmarkRecord) ([]object, error) {
 					"resourceRules": []any{object{"apiGroups": []any{group}, "apiVersions": []any{version}, "resources": resources, "operations": []any{"CREATE", "UPDATE"}, "scope": scope}},
 				},
 				"matchConditions": []any{object{"name": "references-original-benchmark", "expression": match}},
-				"validations":     []any{object{"expression": invariant, "reason": "Forbidden", "message": "Benchmark backend references are fenced for retirement"}},
+				"validations":     []any{object{"expression": invariant, "reason": "Forbidden", "message": benchmarkReferenceFenceMessage}},
 			},
 		}
 	}

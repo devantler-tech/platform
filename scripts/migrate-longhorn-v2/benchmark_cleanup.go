@@ -74,8 +74,34 @@ func verifyScratchBinding(pv, volume, claim, class object) error {
 	return nil
 }
 
-func cleanupBenchmark(ctx context.Context, c client, source, namespace string, created map[string]object, pv, volume object) error {
-	claim, class := created["PersistentVolumeClaim"], created["StorageClass"]
+func observeBenchmarkWorkspace(ctx context.Context, c client, expectedUID string) (object, error) {
+	namespace, err := c.get(ctx, "namespace", "", benchmarkNamespace, false)
+	uid := text(namespace, "metadata", "uid")
+	if err != nil || text(namespace, "apiVersion") != "v1" || text(namespace, "kind") != "Namespace" ||
+		text(namespace, "metadata", "name") != benchmarkNamespace || uid == "" || expectedUID != "" && uid != expectedUID ||
+		text(namespace, "status", "phase") != "Active" || value(namespace, "metadata", "deletionTimestamp") != nil ||
+		text(namespace, "metadata", "labels", "pod-security.kubernetes.io/enforce") != "restricted" ||
+		text(namespace, "metadata", "labels", "pod-security.kubernetes.io/enforce-version") != "latest" ||
+		text(namespace, "metadata", "labels", "velero.io/exclude-from-backup") != "true" ||
+		text(namespace, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune") != "disabled" {
+		return nil, errors.New("the reviewed GitOps benchmark namespace is missing, replaced or unverified")
+	}
+	return namespace, nil
+}
+
+func cleanupBenchmark(ctx context.Context, c client, record *benchmarkRecord, created map[string]object, claim, pv, volume object) error {
+	source, namespace := record.Source, record.Namespace
+	if record.Version != 3 || namespace != benchmarkNamespace || record.NamespaceUID == "" {
+		return errors.New("scratch cleanup requires the dedicated benchmark namespace receipt")
+	}
+	if _, err := observeBenchmarkWorkspace(ctx, c, record.NamespaceUID); err != nil {
+		return err
+	}
+	class := created["StorageClass"]
+	if benchmarkIdentity(claim) != benchmarkIdentity(created["PersistentVolumeClaim"]) ||
+		text(claim, "status", "phase") != "Bound" || text(claim, "spec", "volumeName") != text(pv, "metadata", "name") {
+		return errors.New("the bound benchmark claim differs from its original creation receipt")
+	}
 	if err := verifyScratchBinding(pv, volume, claim, class); err != nil {
 		return err
 	}
@@ -113,8 +139,8 @@ func cleanupBenchmark(ctx context.Context, c client, source, namespace string, c
 			return err
 		}
 		for _, a := range attachments {
-			if text(a, "spec", "source", "persistentVolumeName") == text(pv, "metadata", "name") && value(a, "status", "attached") == true {
-				return errors.New("scratch PV still has an attached consumer")
+			if text(a, "spec", "source", "persistentVolumeName") == text(pv, "metadata", "name") {
+				return errors.New("scratch PV still has an attachment or pending consumer")
 			}
 		}
 		engines, err := c.list(ctx, "engines.longhorn.io", "longhorn-system")
@@ -130,11 +156,20 @@ func cleanupBenchmark(ctx context.Context, c client, source, namespace string, c
 	}); err != nil {
 		return err
 	}
-	if err := removeScratch(ctx, c, source, "persistentvolume", "", "/api/v1/persistentvolumes/"+text(pv, "metadata", "name"), pv); err != nil {
-		return err
-	}
-	if err := removeScratch(ctx, c, source, "volumes.longhorn.io", "longhorn-system", "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/"+text(volume, "metadata", "name"), volume); err != nil {
-		return err
+	if record.Phase == "v1" {
+		if err := retireBenchmarkV1PV(ctx, c, record, volume, claim, class); err != nil {
+			return err
+		}
+		if err := retireBenchmarkV1Backend(ctx, c, record); err != nil {
+			return err
+		}
+	} else {
+		if err := removeScratch(ctx, c, source, "persistentvolume", "", "/api/v1/persistentvolumes/"+text(pv, "metadata", "name"), pv); err != nil {
+			return err
+		}
+		if err := removeScratch(ctx, c, source, "volumes.longhorn.io", "longhorn-system", "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/"+text(volume, "metadata", "name"), volume); err != nil {
+			return err
+		}
 	}
 	if err := waitReady(ctx, func(ctx context.Context) error {
 		replicas, err := c.list(ctx, "replicas.longhorn.io", "longhorn-system")
@@ -159,8 +194,69 @@ func cleanupBenchmark(ctx context.Context, c client, source, namespace string, c
 			return errors.New("scratch class or namespace has another claim")
 		}
 	}
+	pvs, err := c.list(ctx, "persistentvolumes", "")
+	if err != nil {
+		return err
+	}
+	for _, remaining := range pvs {
+		if text(remaining, "spec", "storageClassName") == text(class, "metadata", "name") {
+			return errors.New("scratch class still has a persistent volume")
+		}
+	}
 	if err = removeScratch(ctx, c, source, "storageclass", "", "/apis/storage.k8s.io/v1/storageclasses/"+text(class, "metadata", "name"), class); err != nil {
 		return err
 	}
-	return removeScratch(ctx, c, source, "namespace", "", "/api/v1/namespaces/"+namespace, created["Namespace"])
+	if err = removeScratch(ctx, c, source, "networkpolicy", namespace, "/apis/networking.k8s.io/v1/namespaces/"+namespace+"/networkpolicies/fio-default-deny", created["NetworkPolicy"]); err != nil {
+		return err
+	}
+	if record.Phase == "v1" {
+		if err := removeCompletedBenchmarkFences(ctx, c, *record); err != nil {
+			return err
+		}
+	}
+	_, err = observeBenchmarkWorkspace(ctx, c, record.NamespaceUID)
+	return err
+}
+
+func retireBenchmarkV1PV(ctx context.Context, c client, record *benchmarkRecord, volume, claim, class object) error {
+	policies, err := benchmarkRetirementFences(*record)
+	if err != nil {
+		return err
+	}
+	identity := record.Resources["PersistentVolume"]
+	pv, err := c.get(ctx, "persistentvolume", "", identity.Name, false)
+	if err != nil || benchmarkIdentity(pv) != identity || text(pv, "status", "phase") != "Released" ||
+		value(pv, "metadata", "deletionTimestamp") != nil || verifyRecoveredBenchmarkStorage(*record, claim, class, pv, volume) != nil {
+		return errors.New("original retained benchmark PV is not released and verified")
+	}
+	if err := installBenchmarkReferenceFence(ctx, c, record, policies[0]); err != nil {
+		return err
+	}
+	if err := proveBenchmarkReferenceFenceOnServingAPIs(ctx, c, *record, pv); err != nil {
+		return err
+	}
+	attachments, err := c.list(ctx, "volumeattachments.storage.k8s.io", "")
+	if err != nil {
+		return err
+	}
+	for _, attachment := range attachments {
+		if text(attachment, "spec", "source", "persistentVolumeName") == identity.Name {
+			return errors.New("benchmark PV still has a Kubernetes attachment request")
+		}
+	}
+	// Keep the resource version that passed both native dry-runs. A newer
+	// object must pass those same gates before it can be deleted.
+	if err := c.deleteObserved(ctx, record.Source, "/api/v1/persistentvolumes/"+identity.Name, pv); err != nil {
+		return err
+	}
+	return waitReady(ctx, func(ctx context.Context) error {
+		current, err := c.get(ctx, "persistentvolume", "", identity.Name, true)
+		if err != nil {
+			return err
+		}
+		if current != nil {
+			return errors.New("original retained benchmark PV is still present")
+		}
+		return nil
+	})
 }
