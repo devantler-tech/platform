@@ -9,8 +9,10 @@ import (
 	"testing"
 )
 
-// TestConsoleDiagnosticsExcludeMailAndAuthenticationEvents requires a bounded diagnostic tracer.
-func TestConsoleDiagnosticsExcludeMailAndAuthenticationEvents(t *testing.T) {
+// TestConsoleDiagnosticsExcludeMailAndSuccessfulSignIns requires a bounded
+// diagnostic tracer: startup, failed sign-ins and bans, never mail activity or
+// successful sign-ins.
+func TestConsoleDiagnosticsExcludeMailAndSuccessfulSignIns(t *testing.T) {
 	plan, err := render(fixture())
 	if err != nil {
 		t.Fatal(err)
@@ -42,10 +44,19 @@ func TestConsoleDiagnosticsExcludeMailAndAuthenticationEvents(t *testing.T) {
 			if !ok || len(events) == 0 || events["server.startup"] != true || events["server.startup-error"] != true || events["store.rocksdb-error"] != true {
 				t.Fatal("startup diagnostics are incomplete")
 			}
+			security := []string{"auth.failed", "auth.too-many-attempts", "security.authentication-ban", "security.abuse-ban", "security.scan-ban", "security.loiter-ban", "security.ip-blocked"}
+			for _, event := range security {
+				if events[event] != true {
+					t.Fatalf("security event %s is not logged", event)
+				}
+			}
 			allowed := map[string]bool{"server.startup": true, "server.shutdown": true, "server.startup-error": true, "server.thread-error": true, "network.listen-start": true, "network.listen-stop": true, "network.listen-error": true, "network.bind-error": true, "resource.error": true, "resource.not-found": true, "resource.bad-parameters": true, "resource.application-unpacked": true, "store.rocksdb-error": true}
+			for _, event := range security {
+				allowed[event] = true
+			}
 			for event, enabled := range events {
 				if !allowed[event] || enabled != true {
-					t.Fatal("mail or authentication event reached console diagnostics")
+					t.Fatal("mail or successful sign-in event reached console diagnostics")
 				}
 			}
 		}

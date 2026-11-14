@@ -98,6 +98,14 @@ func render(v inputs) ([]byte, error) {
 	agent := v.Agent + "@" + v.Domain
 	recipient := v.Maintainer + "@" + v.Domain
 	expression := func(value string) map[string]any { return map[string]any{"match": map[string]any{}, "else": value} }
+	inbound := func(value, otherwise string) map[string]any {
+		return map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": value}}, "else": otherwise}
+	}
+	// Durations are milliseconds.
+	const day = int64(24 * 60 * 60 * 1000)
+	throttle := func(description string, key map[string]bool, match map[string]any, count, period int64) map[string]any {
+		return map[string]any{"description": description, "enable": true, "key": key, "match": match, "rate": map[string]any{"count": count, "period": period}}
+	}
 	account := func(name, password, role string) map[string]any {
 		return map[string]any{"@type": "User", "name": name, "domainId": "#domain", "credentials": map[string]any{"0": map[string]any{"@type": "Password", "secret": password}}, "roles": map[string]any{"@type": role}}
 	}
@@ -167,11 +175,18 @@ func render(v inputs) ([]byte, error) {
 				"network.listen-start": true, "network.listen-stop": true, "network.listen-error": true, "network.bind-error": true,
 				"resource.error": true, "resource.not-found": true, "resource.bad-parameters": true, "resource.application-unpacked": true,
 				"store.rocksdb-error": true,
+				// Failed sign-ins and bans only; successful sign-ins and mail stay out.
+				"auth.failed": true, "auth.too-many-attempts": true,
+				"security.authentication-ban": true, "security.abuse-ban": true, "security.scan-ban": true,
+				"security.loiter-ban": true, "security.ip-blocked": true,
 			},
 		}}),
+		// The server logs a failed sign-in at debug level; the console tracer is info.
+		upsert("EventTracingLevel", []string{"event"}, map[string]any{"auth-failed": map[string]any{"event": "auth.failed", "level": "info"}}),
 		// Declare the existing local authentication state explicitly. A main
 		// recovery must clear a later external directory rather than retain it.
-		update("Authentication", map[string]any{"directoryId": nil}),
+		// Generated passwords are 40 or more random characters; this binds later resets.
+		update("Authentication", map[string]any{"directoryId": nil, "passwordMinLength": 20, "passwordMinStrength": "four"}),
 		upsert("Domain", []string{"name"}, map[string]any{"domain": map[string]any{"name": v.Domain, profile.domainEnabled: true, "allowRelaying": false, "catchAllAddress": nil, "subAddressing": map[string]any{"@type": "Disabled"}, "dkimManagement": map[string]any{"@type": "Automatic"}, "dnsManagement": map[string]any{"@type": "Manual"}}}),
 	}
 	if len(newAccounts) != 0 {
@@ -221,11 +236,39 @@ func render(v inputs) ([]byte, error) {
 			"urlPrefix":       map[string]bool{"/admin": true, "/account": true},
 			"unpackDirectory": nil, "oauthClientId": nil,
 		}}),
-		update("MtaStageData", map[string]any{"addAuthResultsHeader": expression("true"), "script": expression("false")}),
+		// Upstream keys these on local port 25; the inbound listener is 1025.
+		update("MtaStageData", map[string]any{
+			"addAuthResultsHeader": inbound("true", "false"), "addReceivedHeader": inbound("true", "false"),
+			"addReturnPathHeader": inbound("true", "false"), "script": expression("false"),
+		}),
+		update("MtaStageEhlo", map[string]any{"rejectNonFqdn": inbound("true", "false")}),
+		update("MtaExtensions", map[string]any{"vrfy": expression("false"), "expn": expression("false")}),
+		// Verification takes bare constants: a quoted value is ignored and the
+		// server falls back to relaxed on every listener. SPF and reverse-IP
+		// checks wait for the real client address on the inbound listener.
 		update("SenderAuth", map[string]any{
-			"dkimVerify":  map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": "'relaxed'"}}, "else": "false"},
-			"dmarcVerify": map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": "'relaxed'"}}, "else": "false"},
-			"dkimStrict":  true,
+			"dkimVerify": inbound("relaxed", "disable"), "dmarcVerify": inbound("relaxed", "disable"),
+			"arcVerify": inbound("relaxed", "disable"), "dkimStrict": true,
+		}),
+		// Bans expire after a day; upstream bans never expire.
+		update("Security", map[string]any{"authBanPeriod": day, "abuseBanPeriod": day, "loiterBanPeriod": day, "scanBanPeriod": day}),
+		// Without egress these lookups only time out; Pyzor would also send
+		// message digests to a third party.
+		update("SpamPyzor", map[string]any{"enable": false}),
+		update("Asn", map[string]any{"@type": "Disabled"}),
+		update("SpamClassifier", map[string]any{"holdSamplesFor": 30 * day}),
+		// Failure reports carry message content to whoever a sender's domain names.
+		update("DmarcReportSettings", map[string]any{"failureSendFrequency": expression("false")}),
+		update("DkimReportSettings", map[string]any{"sendFrequency": expression("false")}),
+		update("SpfReportSettings", map[string]any{"sendFrequency": expression("false")}),
+		update("DataRetention", map[string]any{"expungeTrashAfter": 30 * day}),
+		// The server seeds the first two only into an empty collection, so all
+		// three are declared to keep a fresh store equal to production.
+		upsert("MtaInboundThrottle", []string{"description"}, map[string]any{
+			"sender-ip":        throttle("Sender IP throttle", map[string]bool{"remoteIp": true}, expression("true"), 5, 1000),
+			"sender-recipient": throttle("Sender address to recipient throttle", map[string]bool{"senderDomain": true, "rcpt": true}, expression("true"), 25, 60*60*1000),
+			"submission-account": throttle("Submission per account", map[string]bool{"authenticatedAs": true},
+				map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'submission'", "then": "true"}}, "else": "false"}, 100, 60*60*1000),
 		}),
 		// Every remote delivery leaves through the SES relay on 587 with required,
 		// verified STARTTLS. Name both explicitly: the server falls back to direct
