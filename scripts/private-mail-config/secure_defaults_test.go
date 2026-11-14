@@ -45,7 +45,6 @@ func TestSecureDefaultsAreDeclared(t *testing.T) {
 	ops := planObjects(t)
 	day := float64(24 * 60 * 60 * 1000)
 	for object, want := range map[string]map[string]any{
-		"Authentication": {"passwordMinLength": float64(20), "passwordMinStrength": "four"},
 		"SenderAuth": {
 			"dkimVerify": inboundOnly("relaxed", "disable"), "dmarcVerify": inboundOnly("relaxed", "disable"),
 			"arcVerify": inboundOnly("relaxed", "disable"), "dkimStrict": true,
@@ -94,6 +93,17 @@ func TestVerificationValuesAreBareConstants(t *testing.T) {
 				t.Fatalf("%s uses %v, not a bare verification constant", field, value)
 			}
 		}
+	}
+}
+
+// TestAuthenticationUpdateKeepsOnlyDefaultValues keeps the native role defaults.
+// On a fresh store the server installs them at first normal start only while the
+// Authentication settings have no stored row, and an update storing a
+// non-default value creates one, leaving the administrator without permissions.
+func TestAuthenticationUpdateKeepsOnlyDefaultValues(t *testing.T) {
+	op := planObjects(t)["Authentication"]
+	if op.Type != "update" || !reflect.DeepEqual(op.Value, map[string]any{"directoryId": nil}) {
+		t.Fatalf("Authentication update stores more than its default values: %v", op.Value)
 	}
 }
 

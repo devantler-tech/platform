@@ -38,9 +38,8 @@ func TestRebuildVerifiesTheLocalAuthenticationBaseline(t *testing.T) {
 	}{
 		{"administrator recovered", administrator, map[string]any{"id": "fixture-admin", "@type": "User", "name": "operator", "domainId": "fixture-domain", "roles": map[string]any{"@type": "Admin"}, "permissions": map[string]any{"@type": "Inherit"}}, true},
 		{"administrator still suspended", administrator, map[string]any{"id": "fixture-admin", "@type": "User", "name": "operator", "domainId": "fixture-domain", "roles": map[string]any{"@type": "Admin"}, "permissions": map[string]any{"@type": "Replace", "enabledPermissions": map[string]any{}, "disabledPermissions": map[string]any{}}}, false},
-		{"local directory recovered", authentication, map[string]any{"id": "singleton", "directoryId": nil, "passwordMinLength": float64(20), "passwordMinStrength": "four"}, true},
-		{"external directory retained", authentication, map[string]any{"id": "singleton", "directoryId": "future-provider", "passwordMinLength": float64(20), "passwordMinStrength": "four"}, false},
-		{"weaker password policy retained", authentication, map[string]any{"id": "singleton", "directoryId": nil, "passwordMinLength": float64(8), "passwordMinStrength": "three"}, false},
+		{"local directory recovered", authentication, map[string]any{"id": "singleton", "directoryId": nil}, true},
+		{"external directory retained", authentication, map[string]any{"id": "singleton", "directoryId": "future-provider"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.op.Object == "" {

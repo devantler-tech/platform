@@ -183,8 +183,7 @@ func render(v inputs) ([]byte, error) {
 		}}),
 		// Declare the existing local authentication state explicitly. A main
 		// recovery must clear a later external directory rather than retain it.
-		// Generated passwords are 40 or more random characters; this binds later resets.
-		update("Authentication", map[string]any{"directoryId": nil, "passwordMinLength": 20, "passwordMinStrength": "four"}),
+		update("Authentication", map[string]any{"directoryId": nil}),
 		upsert("Domain", []string{"name"}, map[string]any{"domain": map[string]any{"name": v.Domain, profile.domainEnabled: true, "allowRelaying": false, "catchAllAddress": nil, "subAddressing": map[string]any{"@type": "Disabled"}, "dkimManagement": map[string]any{"@type": "Automatic"}, "dnsManagement": map[string]any{"@type": "Manual"}}}),
 	}
 	if len(newAccounts) != 0 {

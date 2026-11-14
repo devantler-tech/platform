@@ -14,7 +14,6 @@ was checked against the Stalwart v0.16.27 source.
 | Inbound checks | Non-FQDN HELO rejection; Received and Return-Path headers | on `smtp-inbound` only | The same port-25 keying left them off. |
 | Inbound checks | Authentication-Results header | on `smtp-inbound` only | Outbound mail no longer carries this server's verdicts. |
 | SMTP | VRFY and EXPN | off | Address enumeration. |
-| Passwords | Minimum length and strength | 20 characters, strength four | Generated passwords are 40 or more random characters; this binds later resets. |
 | Bans | Period for authentication, abuse, loiter and scan bans | one day | Upstream bans never expire. Web clients reach the server with their own address (#5448). |
 | Logging | Bans and blocked addresses | logged | They name only an address. Sign-in and mail activity stay out of the console log (#5416). |
 | Spam | Pyzor and ASN lookups | off | Egress allows only DNS and the relay, so they only time out. Pyzor would also send message digests to a third party. |
@@ -46,6 +45,13 @@ unpinned upstream URL that egress blocks, and without rules every score is zero.
 Vendoring a pinned rules file restores scoring and the sender-domain blocklist.
 
 ## Not declared
+
+- **Password policy.** The upstream minimum is 8 characters at strength three.
+  Generated passwords are 40 or more random characters, so the policy binds only
+  a reset made by hand. On a fresh store the server installs its native role
+  defaults at first start only while the Authentication settings have no stored
+  row. Storing a stricter policy during setup creates that row and leaves the
+  administrator without permissions, so the setup stores only default values there.
 
 - **Web sign-in provider.** Anonymous client registration is on and registered
   clients are not required. Declaring the provider during setup on a fresh store
