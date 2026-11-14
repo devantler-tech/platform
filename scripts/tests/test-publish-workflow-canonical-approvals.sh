@@ -86,6 +86,9 @@ family_subject() { # <workflow> <legacy-ref> <canonical-ref>
   printf '^https://github\\.com/devantler-tech/(actions/\\.github/workflows/%s\\.yaml@%s|\\.github/\\.github/workflows/%s\\.yaml@%s)$' \
     "$1" "$2" "$1" "$3"
 }
+canonical_subject() { # <workflow> <canonical-ref> — the generic verifiers' form (#6264)
+  printf '^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/%s\\.yaml@%s$' "$1" "$2"
+}
 
 # write_consumer <root> <repo> <subject> — one OCIRepository carrying exactly that subject.
 write_consumer() {
@@ -109,8 +112,8 @@ spec:
 EOF
 }
 
-# build_tree <name> — every consumer on its legacy generated set, the generics on the pattern
-# form, the approved set, and a canonical record that approves nothing.
+# build_tree <name> — every consumer on its legacy generated set, the generics on the
+# canonical-only form (#6264), the approved set, and a canonical record that approves nothing.
 build_tree() {
   local root="$WORK/$1" repo workflow generic
   rm -rf "$root"
@@ -123,7 +126,7 @@ build_tree() {
   done <<<"$consumers"
   for generic in "${GENERICS[@]}"; do
     mkdir -p "$root/$(dirname "$generic")"
-    printf 'rules:\n  - subjectRegex: %s\n' "$(legacy_subject publish-app "$PATTERN")" >"$root/$generic"
+    printf 'rules:\n  - subjectRegex: %s\n' "$(canonical_subject publish-app "$SHA_K")" >"$root/$generic"
   done
   write_record "$root"
   printf '%s\n' "$root"
@@ -603,6 +606,10 @@ while IFS=$'\t' read -r profile file selector; do
     # Only the generic rules admit v21.3.4 (#6228); no consumer approves it yet,
     # so each consumer-specific source must still refuse it.
     if [[ "$identity" == *@a76d5df9371cf712a8f60307fde060825a34cf35 && "$profile" != admission && "$profile" != node-pull && "$profile" != generic-tenant ]]; then expected=reject; fi
+    # The generic rules no longer accept the deleted legacy publisher repository at
+    # any commit (#6264). The consumer-specific sources keep their exact generated
+    # legacy commit until the approval machinery that writes them is retired.
+    if [[ "$identity" == https://github.com/devantler-tech/actions/* && ("$profile" == admission || "$profile" == node-pull || "$profile" == generic-tenant) ]]; then expected=reject; fi
     if [ "$result" = "$expected" ]; then
       pass "committed $profile: $expected $identity"
     else
@@ -661,6 +668,37 @@ reject	https://github.com/another-org/.github/.github/workflows/publish-app.yaml
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@v8.0.0
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f075
+IDENTITIES
+done <<'PROFILES'
+admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
+node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
+generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
+PROFILES
+
+# The legacy publisher repository is deleted (#6264). The generic rules accept only
+# the two reviewed maintained revisions and refuse that repository at every commit:
+# an arbitrary one, the commit its final release was cut from, commits that other
+# consumers approved for it, and a maintained commit written under its name.
+while IFS=$'\t' read -r profile file selector; do
+  subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
+  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
+  while IFS=$'\t' read -r expected identity; do
+    result=reject
+    if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
+    if [ "$result" = "$expected" ]; then
+      pass "deleted publisher retired $profile: $expected $identity"
+    else
+      fail "deleted publisher retired $profile: expected $expected for $identity, got $result"
+    fi
+  done <<'IDENTITIES'
+accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
+accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@0123456789abcdef0123456789abcdef01234567
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@b089a1b041cb86af22cdc57de58a4d7d258dcc32
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
 IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp

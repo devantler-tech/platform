@@ -753,6 +753,60 @@ assert_line_rejected "two families naming different workflows" \
   "        subject: ${Q}${FAMILY_OPEN}actions/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})\$${Q}" \
   family-mixed-workflows 'name different workflows'
 
+# THE GENERIC VERIFIERS ARE CANONICAL-ONLY (#6264). The legacy publisher repository is
+# deleted, so in the three generic files the guard accepts only the canonical-only form and
+# refuses the legacy family in every spelling it selects: the former pattern rule, an exact
+# legacy commit, and the former two-family subject. Outside those files the canonical-only
+# form stays refused (family-canonical-only above).
+readonly APP_CANONICAL_ONLY="^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@"
+readonly APP_LEGACY_ONLY="^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@"
+
+# generic_case <accept|reject> <label> <generic-path> <subject-line> <slug> [stderr-pattern]
+# The ordinary tree plus ONE generic verifier at its production path, named in the floor.
+generic_case() {
+  local expect="$1" label="$2" path="$3" line="$4" dir="${work_dir}/generic-$5" pattern="${6:-}"
+  build_tree "${dir}" "${SHA_PATTERN}"
+  mkdir -p "${dir}/$(dirname "${path}")"
+  printf 'rules:\n  - keyless:\n%s\n' "${line}" >"${dir}/${path}"
+  printf '1\t%s\n' "${path}" >>"${dir}/scripts/shared-publish-workflow-matchers.tsv"
+  if [ "${expect}" = accept ]; then
+    run_tree "${dir}" || fail "guard rejected ${label}: $(head -1 "${dir}/stderr")"
+    ok "accepts ${label}"
+    return
+  fi
+  if run_tree "${dir}"; then
+    fail "guard ACCEPTED ${label} in a generic verifier"
+  fi
+  grep -q -- "${pattern}" "${dir}/stderr" ||
+    fail "guard rejected ${label} but not for the expected reason: $(head -1 "${dir}/stderr")"
+  ok "rejects ${label}"
+}
+
+readonly GENERIC_TALOS='talos/cluster/verify-first-party-images.yaml'
+readonly GENERIC_KYVERNO='k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
+readonly GENERIC_TENANT='k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
+readonly NOT_GENERIC='only the maintained publisher'
+
+generic_case accept "a canonical-only node-pull rule naming two reviewed commits" "${GENERIC_TALOS}" \
+  "      subjectRegex: ${APP_CANONICAL_ONLY}(${CONCRETE_SHA}|${CONCRETE_SHA_2})\$" talos-pair
+generic_case accept "a canonical-only admission rule naming one reviewed commit" "${GENERIC_KYVERNO}" \
+  "      subjectRegExp: ${APP_CANONICAL_ONLY}${CONCRETE_SHA}\$" kyverno-single
+generic_case reject "the deleted publisher at ANY commit in the node-pull rule" "${GENERIC_TALOS}" \
+  "      subjectRegex: ${APP_LEGACY_ONLY}${SHA_PATTERN}\$" talos-legacy-pattern "${NOT_GENERIC}"
+generic_case reject "the deleted publisher at one exact commit in the node-pull rule" "${GENERIC_TALOS}" \
+  "      subjectRegex: ${APP_LEGACY_ONLY}${CONCRETE_SHA}\$" talos-legacy-exact "${NOT_GENERIC}"
+generic_case reject "the former two-family admission rule with the deleted publisher at any commit" "${GENERIC_KYVERNO}" \
+  "      subjectRegExp: ^https://github\\.com/devantler-tech/(actions/\\.github/workflows/publish-app\\.yaml@${SHA_PATTERN}|\\.github/\\.github/workflows/publish-app\\.yaml@(${CONCRETE_SHA}|${CONCRETE_SHA_2}))\$" \
+  kyverno-two-family "${NOT_GENERIC}"
+generic_case reject "a plain subject naming the deleted publisher in the tenant graph" "${GENERIC_TENANT}" \
+  "        subject: ${Q}${APP_LEGACY_ONLY}${CONCRETE_SHA}\$${Q}" tenant-legacy "${NOT_GENERIC}"
+generic_case reject "a canonical-only generic rule that admits every maintained commit" "${GENERIC_TALOS}" \
+  "      subjectRegex: ${APP_CANONICAL_ONLY}${SHA_PATTERN}\$" talos-canonical-pattern 'does not pin one concrete 40-hex commit'
+generic_case reject "a canonical-only generic rule on a branch" "${GENERIC_KYVERNO}" \
+  "      subjectRegExp: ${APP_CANONICAL_ONLY}refs/heads/main\$" kyverno-canonical-branch 'does not pin one concrete 40-hex commit'
+generic_case reject "a canonical-only generic rule with a second identity appended" "${GENERIC_TALOS}" \
+  "      subjectRegex: ${APP_CANONICAL_ONLY}${CONCRETE_SHA}\$|${APP_LEGACY_ONLY}${CONCRETE_SHA_2}\$" talos-appended "\"@\" separators"
+
 # Discovery is independent of the subject pattern, and it has to see the canonical family
 # too: a canonical reference under a key the guard does not validate is reported, not
 # skipped, exactly as a legacy one is.
