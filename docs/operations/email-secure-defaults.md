@@ -23,6 +23,15 @@ was checked against the Stalwart v0.16.27 source.
 | Retention | Trash and Junk expunge | 30 days | Pins the upstream default. |
 | Throttles | Sender IP, sender-to-recipient, and submission per account | 5 per second, 25 per hour, 100 per hour | The server seeds the first two only into an empty collection, so all three are declared. |
 
+## Drift check
+
+`private-mail-bootstrap check --url http://<host>:8080` reads the serving
+configuration back as the managed administrator and compares it with the
+declared plan, without writing. It exits 0 when they match, 1 on drift (a
+setting changed by hand, an unexpected listener or account, or a setting it
+could not read) and 2 when it could not run. A scheduled Job runs it so a change
+made in the web interface is reported before the next start reverts it.
+
 ## Before public SMTP and IMAP
 
 These need the real client address on the public SMTP and IMAP listeners first.

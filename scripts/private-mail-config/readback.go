@@ -111,8 +111,9 @@ func policyMatches(want, actual any, key string) bool {
 }
 
 type management struct {
-	client        *http.Client
-	url, password string
+	client *http.Client
+	// user defaults to the recovery administrator the bootstrap starts.
+	url, user, password string
 }
 
 func (m management) request(ctx context.Context, path string, body []byte) ([]byte, error) {
@@ -124,7 +125,11 @@ func (m management) request(ctx context.Context, path string, body []byte) ([]by
 	if err != nil {
 		return nil, errConfiguration
 	}
-	req.SetBasicAuth("bootstrap", m.password)
+	user := m.user
+	if user == "" {
+		user = "bootstrap"
+	}
+	req.SetBasicAuth(user, m.password)
 	req.Header.Set("Content-Type", "application/json")
 	response, err := m.client.Do(req)
 	if err != nil {
