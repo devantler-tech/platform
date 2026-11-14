@@ -1,0 +1,7 @@
+---
+# Deliberately empty. The `platform-health` Flux Kustomization
+# (k8s/clusters/prod/flux-kustomization-platform-health.yaml) applies nothing:
+# it exists only to health-check objects other layers own.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
