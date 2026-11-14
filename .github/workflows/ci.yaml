@@ -368,6 +368,9 @@ jobs:
               - 'scripts/tests/test-arc-controller-availability.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
               - 'scripts/tests/test-validate-kyverno-fixture-evaluation.sh'
+              # The CI-identity admission policy also runs offline against the render.
+              - 'scripts/guard-ci-identity-bindings.sh'
+              - 'scripts/tests/test-guard-ci-identity-bindings.sh'
               - 'scripts/tests/test-helm-release-mutation-scope.sh'
               - 'scripts/tests/test-policy-ci-job.sh'
               # Every kyverno fixture, so a change to one alone still runs kyverno test
@@ -2107,6 +2110,9 @@ jobs:
           shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/validate-kyverno-fixture-evaluation.sh tests
+          # platform#6270: the CI-identity binding policy over every rendered prod layer.
+          shellcheck scripts/guard-ci-identity-bindings.sh scripts/tests/test-guard-ci-identity-bindings.sh
+          bash scripts/tests/test-guard-ci-identity-bindings.sh
           shellcheck scripts/tests/test-helm-release-mutation-scope.sh
           bash scripts/tests/test-helm-release-mutation-scope.sh
 

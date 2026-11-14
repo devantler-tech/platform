@@ -15,6 +15,7 @@ resources:
   - best-practices/auto-vpa-deployment.yaml
   - best-practices/auto-vpa-statefulset.yaml
   - best-practices/audit-privileged-rbac.yaml
+  - best-practices/restrict-ci-identity-bindings.yaml
   - best-practices/disable-default-sa-automount.yaml
   - best-practices/disallow-latest-tag.yaml
   - best-practices/propagate-reloader-to-flagger-primary.yaml

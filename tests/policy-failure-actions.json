@@ -5,6 +5,7 @@
   "require-baseline-workers-for-hcloud-volumes": "Enforce",
   "report-hcloud-claim-lookup-failure": "Audit",
   "audit-privileged-rbac": "Enforce",
+  "restrict-ci-identity-bindings": "Enforce",
   "disallow-latest-tag": "Audit",
   "restrict-homepage-service-groups": "Enforce",
   "require-homepage-href-for-non-root-routes": "Enforce",

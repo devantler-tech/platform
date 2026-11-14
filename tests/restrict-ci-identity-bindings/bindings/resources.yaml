@@ -1,0 +1,132 @@
+# The approved binding, exactly as k8s/providers/hetzner/apps/aws/role-binding.yaml declares it.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-managed-resources
+  namespace: aws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aws-managed-resources
+subjects:
+  - kind: ServiceAccount
+    name: aws
+    namespace: aws
+# Widening: a ServiceAccount subject that omits its namespace still means aws/aws here.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-managed-resources-implicit-ns
+  namespace: aws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aws-managed-resources
+subjects:
+  - kind: ServiceAccount
+    name: aws
+# Unrelated bindings are out of scope: another service account in aws, and an aws SA elsewhere.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: other-sa
+  namespace: aws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: edit
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: aws
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: same-name-other-namespace-sa
+  namespace: tooling
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: aws
+    namespace: tooling
+# Widening: the approved name bound to a stronger role.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-managed-resources-admin
+  namespace: aws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: aws
+    namespace: aws
+# Widening: a second binding for the CI identity in its namespace.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: extra-grant
+  namespace: aws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aws-managed-resources
+subjects:
+  - kind: ServiceAccount
+    name: aws
+    namespace: aws
+# Widening: a binding in another namespace.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-reach-elsewhere
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: edit
+subjects:
+  - kind: ServiceAccount
+    name: aws
+    namespace: aws
+# Widening: the namespace service-account group.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-group
+  namespace: aws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: system:serviceaccounts:aws
+# Widening: the approved binding also granting another subject.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aws-cluster-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: aws
+    namespace: aws

@@ -1,0 +1,32 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-ci-identity-bindings-bindings
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-ci-identity-bindings.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: restrict-ci-identity-bindings
+    resources:
+      - aws/aws-managed-resources
+      - aws/other-sa
+      - tooling/same-name-other-namespace-sa
+    kind: RoleBinding
+    result: pass
+  - policy: restrict-ci-identity-bindings
+    resources:
+      - aws/aws-managed-resources-admin
+      - aws/aws-managed-resources-implicit-ns
+      - aws/extra-grant
+      - kube-system/aws-reach-elsewhere
+      - aws/aws-group
+    kind: RoleBinding
+    result: fail
+  - policy: restrict-ci-identity-bindings
+    resources:
+      - aws-cluster-view
+    kind: ClusterRoleBinding
+    result: fail
