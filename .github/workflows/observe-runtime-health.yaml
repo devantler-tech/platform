@@ -4,6 +4,8 @@ name: Observe Runtime Health Read Only
 # Observation only: no object, alert, exception or configuration is changed.
 # Guards, credential handling and cleanup live in prod-operation.yaml.
 "on":
+  # checkov:skip=CKV_GHA_7:Not a build. The typed confirmation is the interlock
+  # prod-operation.yaml checks; it selects nothing but the fixed operation.
   workflow_dispatch:
     inputs:
       confirm:
@@ -17,7 +19,8 @@ jobs:
   observe:
     permissions:
       contents: read
-    uses: ./.github/workflows/prod-operation.yaml
+    # The self-repository form ($/) fails the pinned actionlint 1.7.12.
+    uses: ./.github/workflows/prod-operation.yaml # zizmor: ignore[self-repository]
     with:
       operation: observe-runtime-health
       confirm: ${{ inputs.confirm }}
