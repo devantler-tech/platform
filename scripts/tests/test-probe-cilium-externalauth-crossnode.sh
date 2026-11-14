@@ -667,6 +667,18 @@ run_probe_with "${reconnect_mutant}" --context admin@prod --run-id "${run_id}" -
 refute_text 'unattributed 1' 'a probe without the local-port check still left the failed reconnect unattributed, so the fixture does not test it'
 pass 'a failed reconnect is left out of both groups, and only the local-port check keeps it out'
 
+# curl can retry a reset reused connection on a new one, so a lost cross-node request can arrive as an
+# unattributed pair. FIXED must not ignore it; a delivered unattributed pair does not block FIXED.
+reset_fixtures
+printf '200 %s 000 0 1\n' "${ip_w3}" >>"${fixtures}/pairs.txt"
+run_probe --context admin@prod --run-id "${run_id}" --requests 21 --timeout 1
+require_inconclusive 'an undelivered unattributed pair must block FIXED' '1 unattributed pair(s) did not deliver their ExternalAuth request'
+reset_fixtures
+printf '200 %s 302 0 1 %s\n' "${ip_w3}" "${dex_redirect}" >>"${fixtures}/pairs.txt"
+run_probe --context admin@prod --run-id "${run_id}" --requests 21 --timeout 1
+require_text 'VERDICT: FIXED' 'a delivered unattributed pair must not block FIXED'
+pass 'FIXED is refused while an unattributed pair lost its ExternalAuth request'
+
 reset_fixtures
 gen_pairs "${blackholed}" "${delivered}" 0 '' 5 "${blackholed}"
 printf '200 - %s\n' "${blackholed}" >>"${fixtures}/pairs.txt"

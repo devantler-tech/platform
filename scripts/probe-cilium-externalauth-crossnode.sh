@@ -635,7 +635,7 @@ guard_code="$(curl -sk -o /dev/null --max-time "${timeout}" -H "Host: ${guard_ho
 # ---------------------------------------------------------------------------
 # 5. Classify the pairs.
 # ---------------------------------------------------------------------------
-# Prints: control_ok control_bad unattributed
+# Prints: control_ok control_bad unattributed unattributed_undelivered
 #         cross_n cross_delivered cross_lost cross_other same_n same_delivered same_lost same_other
 #         same_remote other_codes
 # A pair is attributed to a node only when its echoed source is exactly that node's ingress IP and the
@@ -654,13 +654,16 @@ classify() {
       if ($2 != "200") { bad++; next }
       ok++
       ip = $3; code = $4; size = $5; conns = $6; loc = $7
-      if (!(ip in node_of) || conns != "same") { unattributed++; next }
+      ok_answer = (((code == "302" || code == "303") && index(loc, "https://dex.") == 1) || code == "401")
+      # An unattributed pair joins neither group, but one whose ExternalAuth request was not delivered
+      # (curl may silently retry a reset reused connection on a new one) is a failure FIXED cannot
+      # ignore, since it might have been a cross-node request.
+      if (!(ip in node_of) || conns != "same") { unattributed++; if (!ok_answer) undelivered++; next }
       node = node_of[ip]
       g = (node in local_eps) ? "same" : "cross"
       n_[g]++
       if (g == "same") remote += total - local_eps[node]
-      if ((code == "302" || code == "303") && index(loc, "https://dex.") == 1) delivered[g]++
-      else if (code == "401") delivered[g]++
+      if (ok_answer) delivered[g]++
       else if (code == "000" || code == "" || code == "502" || code == "503" || code == "504" || (code == "403" && size == "0")) lost[g]++
       else {
         other[g]++
@@ -669,7 +672,7 @@ classify() {
       }
     }
     END {
-      printf "%d %d %d %d %d %d %d %d %d %d %d %d %s\n", ok, bad, unattributed,
+      printf "%d %d %d %d %d %d %d %d %d %d %d %d %d %s\n", ok, bad, unattributed, undelivered,
         n_["cross"], delivered["cross"], lost["cross"], other["cross"],
         n_["same"], delivered["same"], lost["same"], other["same"], remote, (codes == "" ? "-" : codes)
     }
@@ -678,7 +681,7 @@ classify() {
 
 [[ "$(grep -c '^PAIR ' <<<"${pairs}" || true)" -eq "${requests}" ]] || inconclusive 'not every pair produced an answer'
 counts="$(classify)" || inconclusive 'the pairs could not be classified'
-read -r control_ok control_bad unattributed cross_n cross_delivered cross_lost cross_other \
+read -r control_ok control_bad unattributed unattributed_undelivered cross_n cross_delivered cross_lost cross_other \
   same_n same_delivered same_lost same_other same_remote other_codes <<<"${counts}"
 [[ -n "${other_codes:-}" ]] || inconclusive 'the pairs could not be classified'
 
@@ -738,6 +741,9 @@ fi
 if ((cross_lost == 0)); then
   if ((same_lost > 0)); then
     inconclusive 'cross-node pairs were all delivered but same-node pairs were lost, which is not the #2284 pattern'
+  fi
+  if ((unattributed_undelivered > 0)); then
+    inconclusive "${unattributed_undelivered} unattributed pair(s) did not deliver their ExternalAuth request and may have been cross-node, so FIXED cannot be concluded"
   fi
   conclude 'FIXED' "every cross-node ExternalAuth request (${cross_delivered}) was delivered"
 fi
