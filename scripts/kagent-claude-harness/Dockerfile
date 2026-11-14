@@ -26,7 +26,7 @@ FROM docker.io/library/golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7
 # head of agent-plugins' main (.github/renovate.json), which only reviewed pull
 # requests reach.
 FROM ghcr.io/kagent-dev/kagent/claude-harness:1.0.0@sha256:54629b4e47ad08ab931ae815492d2533f4a3dd6ce007eda06863675afb4f99d2 AS plugin
-ARG AGENT_PLUGINS_COMMIT=a5a0d7758874f61a51664f0816cd449873e2dbd5
+ARG AGENT_PLUGINS_COMMIT=0b56ea9d232d761d939dd841e057ac3dd34d56d8
 # The base image's unprivileged user fetches into /tmp, which it can write.
 RUN git init -q /tmp/src && \
     git -C /tmp/src fetch -q --depth 1 https://github.com/devantler-tech/agent-plugins.git "${AGENT_PLUGINS_COMMIT}" && \
