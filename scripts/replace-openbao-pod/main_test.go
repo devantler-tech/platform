@@ -37,13 +37,17 @@ type fake struct {
 	helmErr     error
 	layer       layerState
 	layerErr    error
-	deleted     []string
-	deleteErr   error
-	states      []syncState
-	stateErr    error
-	syncErr     error
-	syncMarker  string
-	reads       int
+	// layerAfterClaims, when set, is what the layer reports once a claim
+	// has been read: Flux applying another revision mid-check.
+	layerAfterClaims *layerState
+	claimsRead       int
+	deleted          []string
+	deleteErr        error
+	states           []syncState
+	stateErr         error
+	syncErr          error
+	syncMarker       string
+	reads            int
 }
 
 // healthy is a fake whose pod passes every pre-delete check.
@@ -73,6 +77,7 @@ func (f *fake) pod(context.Context, string) (podInfo, error) {
 }
 
 func (f *fake) claim(_ context.Context, name string) (claimInfo, error) {
+	f.claimsRead++
 	if f.claimErr != nil {
 		return claimInfo{}, f.claimErr
 	}
@@ -86,7 +91,12 @@ func (f *fake) templateRelease(context.Context) (string, error) { return f.relea
 
 func (f *fake) releaseState(context.Context) (helmState, error) { return f.helm, f.helmErr }
 
-func (f *fake) appliedLayer(context.Context) (layerState, error) { return f.layer, f.layerErr }
+func (f *fake) appliedLayer(context.Context) (layerState, error) {
+	if f.claimsRead > 0 && f.layerAfterClaims != nil {
+		return *f.layerAfterClaims, f.layerErr
+	}
+	return f.layer, f.layerErr
+}
 
 func (f *fake) deleteIfUID(_ context.Context, name, uid string) error {
 	if f.deleteErr != nil {
@@ -173,6 +183,9 @@ func TestDelete(t *testing.T) {
 			refused("platform-revision-changed"), nil},
 		{"refuses a layer not Ready at its generation", with(healthy(oldUID), func(f *fake) { f.layer.readyAtGeneration = false }), noSleep, 1,
 			refused("platform-revision-changed"), nil},
+		{"refuses a layer that applied another revision during the claim reads", with(healthy(oldUID), func(f *fake) {
+			f.layerAfterClaims = &layerState{digest: otherDigest, readyAtGeneration: true}
+		}), limitedSleep(3), 1, refused("platform-revision-changed"), nil},
 		{"an unreadable layer is unverified", with(healthy(oldUID), func(f *fake) { f.layerErr = errors.New("forbidden") }), noSleep, 2, unverified("platform-revision"), nil},
 		{"refuses a claim that is not Bound", with(healthy(oldUID), func(f *fake) { f.claims["audit-openbao-2"] = claimInfo{"c-audit", "Lost"} }), noSleep, 1,
 			refused("storage-not-bound"), nil},

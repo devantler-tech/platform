@@ -191,12 +191,18 @@ func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Du
 	// The workflow proved want.applied was published from its own checkout.
 	// The Flux layer must still have exactly that digest applied, Ready at its
 	// current generation, or the release below may come from another revision.
-	layer, err := k.appliedLayer(ctx)
-	if err != nil {
-		return 2, line("UNVERIFIED", " stage=platform-revision")
+	layerHolds := func() (int, string, bool) {
+		layer, err := k.appliedLayer(ctx)
+		if err != nil {
+			return 2, line("UNVERIFIED", " stage=platform-revision"), false
+		}
+		if layer.digest != want.applied || !layer.readyAtGeneration {
+			return 1, line("REFUSED", " reason=platform-revision-changed"), false
+		}
+		return 0, "", true
 	}
-	if layer.digest != want.applied || !layer.readyAtGeneration {
-		return 1, line("REFUSED", " reason=platform-revision-changed")
+	if code, msg, ok := layerHolds(); !ok {
+		return code, msg
 	}
 	// The pod restarts from the live template. Only a release Flux applied
 	// from the reviewed chart, at its current generation and without failure,
@@ -229,6 +235,12 @@ func replace(ctx context.Context, k cluster, sleep func(context.Context, time.Du
 			return 1, line("REFUSED", " reason=storage-not-bound")
 		}
 		retained[name] = c.uid
+	}
+	// Check the layer again as late as possible: a values-only apply during
+	// the reads above keeps the chart, tag and claims but changes the
+	// template. The check and the delete are not atomic; this narrows the gap.
+	if code, msg, ok := layerHolds(); !ok {
+		return code, msg
 	}
 	switch err := k.deleteIfUID(ctx, server, expect); {
 	case errors.Is(err, errPreconditionFailed):
