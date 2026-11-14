@@ -1,0 +1,65 @@
+---
+# Port of scripts/guard-floating-image-tags.sh to admission (platform#6271).
+#
+# Every container image must carry a SHA-256 digest or name a version-shaped
+# tag: digits separated by dots, optionally led by `v` and followed by a `-` or
+# `+` suffix (`1.27.0`, `v2.0.0-rc.1`, `17.2-alpine`). Every other tag is a
+# moving reference (`main`, `latest`, `stable`, ...), and an image with no tag
+# is `latest`. This is an allow-list of shapes, not a deny-list of names.
+#
+# Unlike the script, this sees what production really runs, including Pods from
+# chart-rendered workloads (the script cannot see those). The script stays until
+# this policy enforces and is proven offline on the same bad inputs.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: disallow-floating-image-tags
+  annotations:
+    policies.kyverno.io/title: Disallow Floating Image Tags
+    policies.kyverno.io/category: Best Practices, Supply Chain
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.17.0
+    policies.kyverno.io/description: >-
+      Requires every container image to carry a sha256 digest or a
+      version-shaped tag, so an upstream push cannot change what production
+      runs without a reviewed change (platform#3515, platform#3755).
+spec:
+  # Audit first: a Deny that refuses a replacement DaemonSet Pod mid-rollout
+  # could strand a node. Promote to Deny once policy reports stay clean and
+  # `ksail workload validate` evaluates this policy across every layer
+  # (devantler-tech/ksail#8395).
+  validationActions:
+    - Audit
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  variables:
+    - name: images
+      expression: >-
+        object.spec.containers.map(c, c.image) +
+        object.spec.?initContainers.orValue([]).map(c, c.image) +
+        object.spec.?ephemeralContainers.orValue([]).map(c, c.image)
+  validations:
+    # A digest must be a full SHA-256. Otherwise the tag lives in the last path
+    # segment (a registry port such as host:5000/app is not a tag) and must be
+    # version-shaped; a missing tag is `latest`.
+    - expression: >-
+        variables.images.all(i,
+        i.contains('@')
+          ? i.matches('@sha256:[0-9a-f]{64}$')
+          : (i.substring(i.lastIndexOf('/') + 1).contains(':') &&
+             i.substring(i.lastIndexOf('/') + 1).split(':')[1].matches('^v?[0-9]+([.][0-9]+)*([-+][0-9A-Za-z][0-9A-Za-z.+_-]*)?$')))
+      messageExpression: >-
+        'A container image must carry a sha256 digest or a version-shaped tag; floating: ' +
+        variables.images.filter(i,
+          !(i.contains('@')
+            ? i.matches('@sha256:[0-9a-f]{64}$')
+            : (i.substring(i.lastIndexOf('/') + 1).contains(':') &&
+               i.substring(i.lastIndexOf('/') + 1).split(':')[1].matches('^v?[0-9]+([.][0-9]+)*([-+][0-9A-Za-z][0-9A-Za-z.+_-]*)?$')))).join(', ')

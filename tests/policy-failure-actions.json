@@ -6,6 +6,7 @@
   "report-hcloud-claim-lookup-failure": "Audit",
   "audit-privileged-rbac": "Enforce",
   "disallow-latest-tag": "Audit",
+  "disallow-floating-image-tags": "Audit",
   "restrict-homepage-service-groups": "Enforce",
   "require-homepage-href-for-non-root-routes": "Enforce",
   "restrict-tenant-image-repositories": "Enforce",
