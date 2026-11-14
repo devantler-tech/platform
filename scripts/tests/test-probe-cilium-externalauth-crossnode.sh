@@ -853,7 +853,9 @@ awk '
 [[ "$(grep -c 'curl -sk ' "${pod_loop}")" -eq 2 ]] || fail 'both client requests must skip certificate checks, since no .invalid hostname has a certificate'
 # Production's gateway listeners require PROXY protocol, so a request without the header is reset
 # during the TLS handshake (#2284, run 43579569667). Every curl in the loop must send it.
-[[ "$(grep -c 'curl -s' "${pod_loop}")" -eq 3 ]] || fail 'the pod loop must make exactly three curl requests'
+# Count every curl call, whatever its options, so a new request cannot slip past the header check.
+readonly curl_calls="$(grep -oE '(^|[[:space:](])curl[[:space:]]+-' "${pod_loop}" | wc -l | tr -d ' ')"
+[[ "${curl_calls}" -eq 3 ]] || fail "the pod loop must make exactly three curl requests, found ${curl_calls}"
 [[ "$(grep -c 'curl -sS\{0,1\}k --haproxy-protocol ' "${pod_loop}")" -eq 3 ]] || fail 'every client request must send a PROXY protocol header, since the gateway listeners require one'
 grep -Fq 'PROBE-DONE' "${pod_loop}" || fail 'could not extract the rendered pod loop'
 if grep -Fq '\$' "${pod_loop}"; then
