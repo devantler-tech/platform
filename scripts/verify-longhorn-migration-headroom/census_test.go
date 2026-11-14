@@ -89,7 +89,7 @@ func TestAccountCensusRequiresExactProtectedDispatch(t *testing.T) {
 		"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
 		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/observe-longhorn-migration-headroom.yaml@refs/heads/main",
 		"GITHUB_RUN_ATTEMPT":  "1", "RUNNER_ENVIRONMENT": "github-hosted",
-		"LONGHORN_HEADROOM_CONFIRM": "observe-longhorn-provider-account",
+		"PROD_OPERATION": "observe-longhorn-provider-account",
 	}
 	get := func(key string) string { return env[key] }
 	if !authorizeAccountCensus(get) {
