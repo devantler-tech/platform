@@ -23,8 +23,9 @@ metadata:
     policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
       Refuses any RoleBinding or ClusterRoleBinding that grants to the aws/aws
-      service account (the EKS CI cluster identity) or to the
-      system:serviceaccounts:aws group, except the approved
+      service account (the EKS CI cluster identity), named as that service
+      account, as its username (User system:serviceaccount:aws:aws) or through
+      the system:serviceaccounts:aws group, except the approved
       aws/aws-managed-resources RoleBinding to the Role of the same name with
       that service account as its only subject.
 spec:
@@ -43,12 +44,15 @@ spec:
   variables:
     - name: bindingNamespace
       expression: "object.metadata.?namespace.orValue('')"
-    # A ServiceAccount subject without a namespace means the binding's own.
+    # A ServiceAccount subject without a namespace, or with an empty one, means
+    # the binding's own. The identity is also reachable as the User named by its
+    # authenticated username.
     - name: grantsCiIdentity
       expression: >-
         object.?subjects.orValue([]).exists(s,
         (s.kind == 'ServiceAccount' && s.name == 'aws' &&
-        s.?namespace.orValue(variables.bindingNamespace) == 'aws') ||
+        (s.?namespace.orValue('') == '' ? variables.bindingNamespace : s.namespace) == 'aws') ||
+        (s.kind == 'User' && s.name == 'system:serviceaccount:aws:aws') ||
         (s.kind == 'Group' && s.name == 'system:serviceaccounts:aws'))
     - name: isApprovedBinding
       expression: >-

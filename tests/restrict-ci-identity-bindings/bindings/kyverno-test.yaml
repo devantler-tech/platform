@@ -20,6 +20,7 @@ results:
     resources:
       - aws/aws-managed-resources-admin
       - aws/aws-managed-resources-implicit-ns
+      - aws/empty-namespace-subject
       - aws/extra-grant
       - kube-system/aws-reach-elsewhere
       - aws/aws-group
@@ -28,5 +29,6 @@ results:
   - policy: restrict-ci-identity-bindings
     resources:
       - aws-cluster-view
+      - aws-username-admin
     kind: ClusterRoleBinding
     result: fail
