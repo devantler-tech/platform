@@ -8,8 +8,8 @@ name: Probe Cilium ExternalAuth Cross-Node
 # HOW. scripts/probe-cilium-externalauth-crossnode.sh pins one short-lived client pod to a node
 # running no oauth2-proxy replica (every ExternalAuth call crosses nodes) and one to a node running
 # a replica (same-node control). Each client alternates a plain control route and the ExternalAuth
-# route, in-cluster over plain HTTP on hostnames under `externalauth-probe.invalid`, so no Cloudflare,
-# public DNS or TLS is in the path. The script header carries the full reasoning and the verdicts.
+# route, in-cluster over HTTPS on the gateway's `https` listener (certificate checks skipped) on
+# hostnames under `externalauth-probe.invalid`, so no Cloudflare or public DNS is in the path. The script header carries the full reasoning and the verdicts.
 #
 # IT WRITES TO PRODUCTION while it runs — unlike the read-only ipcache diagnostic. It creates two
 # HTTPRoutes, one CiliumNetworkPolicy and two pods in `whoami`, and one ReferenceGrant in
