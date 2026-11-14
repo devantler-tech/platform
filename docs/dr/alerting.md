@@ -119,7 +119,7 @@ stays quiet by design, exactly as the old Alertmanager did.
   cluster without Crossplane, and is independent of any Flux health gate.
 - **Flux evaluates the same two predicates natively (platform#6269).** The
   production-only leaf Kustomization
-  `clusters/prod/flux-kustomization-platform-health.yaml` applies nothing and
+  `clusters/prod/flux-kustomization-platform-health.yaml` applies one inert ConfigMap and
   health-checks every Provider and CNPG Cluster by name with
   `healthCheckExprs` matching the two CronJobs above; its 15-minute `timeout`
   plays the role of their grace, and a failure reaches Slack through the

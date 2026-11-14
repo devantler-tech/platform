@@ -1,7 +1,10 @@
 ---
-# Deliberately empty. The `platform-health` Flux Kustomization
-# (k8s/clusters/prod/flux-kustomization-platform-health.yaml) applies nothing:
-# it exists only to health-check objects other layers own.
+# Applied by the production-only `platform-health` Flux Kustomization
+# (k8s/clusters/prod/flux-kustomization-platform-health.yaml), which exists to
+# health-check objects other layers own. Every production Flux layer must
+# render at least one document (guard-consumer-discovery-conservation), so the
+# layer carries one inert ConfigMap that records what it checks.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+resources:
+  - config-map.yaml

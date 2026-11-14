@@ -1,7 +1,7 @@
 ---
 # Leaf health signal for Crossplane Providers and CloudNativePG Clusters
-# (platform#6269). It applies nothing (its path is an empty kustomization) and
-# only evaluates the health of objects the infrastructure, apps and tenant
+# (platform#6269). Its path applies only one inert ConfigMap; the Kustomization
+# exists to evaluate the health of objects the infrastructure, apps and tenant
 # layers own. A failed check makes THIS Kustomization NotReady, which emits a
 # Flux error event that the platform-reconciliation Alert delivers.
 #
