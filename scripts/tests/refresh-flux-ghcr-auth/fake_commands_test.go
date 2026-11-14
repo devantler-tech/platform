@@ -54,17 +54,17 @@ func fakeKSail(args []string) int {
 		return commandFailure(92, "parse KSail config: %v", err)
 	}
 	registry := parsedConfig.Spec.Cluster.LocalRegistry.Registry
-	expectedRegistry := `devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests`
+	expectedRegistry := `ghcr.io/devantler-tech/platform/manifests`
 	if registry != expectedRegistry {
-		return commandFailure(92, "protected registry template changed")
+		return commandFailure(92, "credential-free registry changed")
 	}
 	registryOverride := os.Getenv("KSAIL_SPEC_CLUSTER_LOCALREGISTRY_REGISTRY")
 	if containsSequence(args, "workload", "push") {
-		if registryOverride != "" {
-			return commandFailure(92, "publish unexpectedly overrides registry")
+		if registryOverride != `devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests` {
+			return commandFailure(92, "publish registry override missing")
 		}
-	} else if registryOverride != `${GHCR_USERNAME}:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests` {
-		return commandFailure(92, "lifecycle registry override missing")
+	} else if registryOverride != "" {
+		return commandFailure(92, "lifecycle command overrides the credential-free registry")
 	}
 	if os.Getenv("GHCR_TOKEN") == "" || os.Getenv("GHCR_USERNAME") == "" || os.Getenv("GHCR_PULL_REVISION") == "" {
 		return commandFailure(92, "missing lifecycle environment")

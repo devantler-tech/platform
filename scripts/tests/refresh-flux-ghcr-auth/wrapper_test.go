@@ -70,8 +70,9 @@ func TestKSailLifecycleWrapperUsesOnlySOPSPullToken(t *testing.T) {
 				t.Errorf("KSail command = %q, want %q", got, wantCommand)
 			}
 			requireWrapperFileEquals(t, f.ksailConfigPathCapture, "ksail.prod.yaml")
-			requireWrapperFileEquals(t, f.ksailRegistryCapture, "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests")
-			requireWrapperFileEquals(t, f.ksailRegistryOverrideCapture, "${GHCR_USERNAME}:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests")
+			requireWrapperFileEquals(t, f.ksailRegistryCapture, "ghcr.io/devantler-tech/platform/manifests")
+			// The root source is public: lifecycle commands never credential it.
+			requireWrapperFileEquals(t, f.ksailRegistryOverrideCapture, "")
 			if revision := mustRead(f.ksailRevisionCapture); !sha256HexPattern.MatchString(revision) {
 				t.Errorf("KSail pull revision = %q, want 64 lowercase hex characters", revision)
 			}
@@ -99,8 +100,9 @@ func TestKSailPublishWrapperPreservesActionsWriteToken(t *testing.T) {
 	requireWrapperFileEquals(t, f.ksailTokenCapture, "fixture-actions-write-token")
 	requireWrapperFileEquals(t, f.ksailUsernameCapture, "fixture-publisher")
 	requireWrapperFileEquals(t, f.ksailConfigPathCapture, "ksail.prod.yaml")
-	requireWrapperFileEquals(t, f.ksailRegistryCapture, "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests")
-	requireWrapperFileEquals(t, f.ksailRegistryOverrideCapture, "")
+	requireWrapperFileEquals(t, f.ksailRegistryCapture, "ghcr.io/devantler-tech/platform/manifests")
+	// Only push credentials the registry, with the Actions write token.
+	requireWrapperFileEquals(t, f.ksailRegistryOverrideCapture, "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests")
 	wantCommand := []string{"--config", "ksail.prod.yaml", "workload", "push", stagingRef}
 	if got := strings.Fields(strings.TrimSpace(mustRead(f.ksailCommandCapture))); !slicesEqual(got, wantCommand) {
 		t.Errorf("KSail command = %q, want %q", got, wantCommand)
@@ -142,11 +144,13 @@ func TestKSailPublishWrapperRejectsImplicitOrUnscopedDestinations(t *testing.T) 
 	}
 }
 
-func TestProductionConfigKeepsProtectedRegistryTemplate(t *testing.T) {
+func TestProductionConfigGivesTheRootSourceNoCredential(t *testing.T) {
 	t.Parallel()
 	config := readRepositoryFile(t, "ksail.prod.yaml")
-	requireContains(t, config, `registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"`)
-	requireNotContains(t, config, "${GHCR_USERNAME}:${GHCR_TOKEN}@ghcr.io")
+	// A credential here makes KSail set FluxInstance spec.sync.pullSecret, and a
+	// stale one breaks the fetch of the public root package (platform#6272).
+	requireContains(t, config, `registry: "ghcr.io/devantler-tech/platform/manifests"`)
+	requireNotContains(t, config, "${GHCR_TOKEN}@ghcr.io")
 }
 
 func TestLifecyclePreservesUsernameFromSOPSDockerConfig(t *testing.T) {

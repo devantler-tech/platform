@@ -113,6 +113,8 @@ func fakeKubectlImplementation(args []string) int {
 	}
 
 	switch {
+	case containsSequence(args, "get", "secret", "ksail-registry-credentials") && containsSequence(args, "-o", "name"):
+		return fakeKubectlDiscoverRootSecret(args)
 	case containsSequence(args, "get", "secret", "ksail-registry-credentials") && containsSequence(args, "-o", "json"):
 		return fakeKubectlGetRootSecret()
 	case containsArg(args, "api-resources"):
@@ -3364,6 +3366,18 @@ func fakeKubectlDeleteRuntimeProbe(args []string) int {
 	}
 	removeMarker("runtime-probe-" + probeName)
 	fmt.Printf("pod %q deleted\n", probeName)
+	return 0
+}
+
+// fakeKubectlDiscoverRootSecret models the legacy root pull Secret lookup. A
+// cluster KSail created with a credential-free localRegistry has none.
+func fakeKubectlDiscoverRootSecret(args []string) int {
+	if !containsArg(args, "--ignore-not-found") {
+		return commandFailure(91, "root Secret discovery must tolerate its absence")
+	}
+	if os.Getenv("FAKE_ROOT_SECRET_ABSENT") != "true" {
+		fmt.Println("secret/ksail-registry-credentials")
+	}
 	return 0
 }
 

@@ -309,6 +309,18 @@ runs:
         --record-runtime-proof
         "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
+    - name: 🔓 Detach the root source from its pull secret
+      id: detach_flux_root_pull_secret
+      # The root manifests package is public (#6272), and a stale credential
+      # breaks even a public pull, so the root source must hold none. KSail
+      # wrote spec.sync.pullSecret at bootstrap and Flux cannot remove it, so
+      # remove it here, before the mutable tag can move, and only after an
+      # anonymous pull of the synced artifact is proved. It waits for the source
+      # to fetch anonymously. A detached cluster takes no write; spec.verify is
+      # never touched.
+      shell: bash
+      run: ./scripts/detach-flux-root-pull-secret.sh
+
     - name: 💾 Detach volumes for the reviewed Longhorn client migration
       id: longhorn_client_prepare
       # The pinned migration is a no-op after positive live completion proof.

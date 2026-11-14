@@ -362,13 +362,20 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 - `WG_SERVER_PRIVATE_KEY` — WireGuard private key for the control-plane `wg0` listener, expanded into `talos/control-planes/wireguard.yaml` when KSail renders machine config.
 - `DR_GH_ADMIN_TOKEN` — optional, DR only: lets `dr-rebuild.yaml` refresh the `KUBE_CONFIG` / `TALOS_CONFIG` environment secrets after a rebuild.
 
-The authoritative **production pull** credential for Flux, tenants, Kyverno,
+The **root Flux source needs no credential**: `ghcr.io/devantler-tech/platform/manifests`
+is public (#6272), so `ksail.prod.yaml`'s `localRegistry` carries none, KSail sets no
+FluxInstance `spec.sync.pullSecret`, and both production entrypoints run
+`scripts/detach-flux-root-pull-secret.sh` before the mutable tag moves. It proves an
+anonymous pull of the synced artifact, removes a `pullSecret` left over from bootstrap,
+and waits for the source to fetch anonymously; a detached cluster takes no write. Only
+`workload push` gets a credentialed registry, with the Actions write token.
+
+The authoritative **production pull** credential for tenants, Kyverno,
 and Talos hosts is
 `stringData.ghcr_dockerconfigjson` in
-`k8s/bases/bootstrap/secret.enc.yaml`. The deploy bridge refreshes
-`flux-system/ksail-registry-credentials` from that value before Flux must fetch
-the artifact and reasserts it after `cluster update` in case KSail rewrites its
-managed Secret. Before publish on existing clusters, the bridge updates `variables-base`,
+`k8s/bases/bootstrap/secret.enc.yaml`. The bridge still writes the legacy
+`flux-system/ksail-registry-credentials` Secret where it exists, but Flux no
+longer reads it; that write goes with the rest of the bridge. Before publish on existing clusters, the bridge updates `variables-base`,
 force-syncs `seed-ghcr` into OpenBao, force-syncs the tenant/Kyverno
 ExternalSecrets, and verifies their materialised `ghcr-auth` payloads before
 switching root Flux auth. Only explicit DR bootstrap mode may repair root auth
@@ -376,8 +383,8 @@ after staging `variables-base` while the fan-out is incomplete; DR must run the
 full verifier after Flux converges. A direct credential commit to `main` still
 needs a manual `CD` workflow dispatch because direct pushes bypass the merge-queue
 deploy.
-The lifecycle wrapper injects the same username/token into KSail's local
-registry and Talos patches. A non-secret hash of the committed SOPS ciphertext
+The lifecycle wrapper injects the same username/token into the Talos
+patches only. A non-secret hash of the committed SOPS ciphertext
 is the desired machine-template revision; the bridge stores a separate verified
 revision on each existing node only after an exact image pull succeeds.
 
