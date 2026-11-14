@@ -14,6 +14,16 @@ patches:
   # Serve from the encrypted claim after a verified one-time copy of the
   # original store, which stays mounted read-only as the rollback.
   - path: patches/serve-from-encrypted-storage.yaml
+  # The server now consumes the encrypted claim, so deployment must wait for it
+  # to bind instead of treating it as prepared storage.
+  - target:
+      version: v1
+      kind: PersistentVolumeClaim
+      name: email-data-encrypted
+      namespace: private-mail
+    patch: |-
+      - op: remove
+        path: /metadata/labels/platform.devantler.tech~1storage-stage
   - target:
       group: apps
       version: v1

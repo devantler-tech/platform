@@ -103,6 +103,9 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 	if mapping(t, encrypted["spec"])["storageClassName"] != "email-encrypted" || mapping(t, mapping(t, encrypted["metadata"])["annotations"])["kustomize.toolkit.fluxcd.io/prune"] != "disabled" {
 		t.Fatal("the serving claim must use the encrypted class and survive a failed deployment")
 	}
+	if labels, _ := mapping(t, encrypted["metadata"])["labels"].(map[string]any); labels["platform.devantler.tech/storage-stage"] != nil {
+		t.Fatal("the serving claim must leave the prepared-storage health exception and wait for binding")
+	}
 	if mapping(t, object(t, production, "StorageClass", "email-encrypted")["parameters"])["encrypted"] != "true" {
 		t.Fatal("the serving class must encrypt at rest")
 	}
