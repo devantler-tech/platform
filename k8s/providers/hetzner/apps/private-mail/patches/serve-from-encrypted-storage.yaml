@@ -1,0 +1,19 @@
+# The mail store is served from the encrypted claim (#5387). The original,
+# unencrypted claim stays declared and is mounted read-only only by the copy
+# step, so it is never written again and remains the rollback.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: private-mail
+  namespace: private-mail
+spec:
+  template:
+    spec:
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: email-data-encrypted
+        - name: legacy-data
+          persistentVolumeClaim:
+            claimName: private-mail-data
+            readOnly: true

@@ -69,10 +69,11 @@ func TestMaintainedProxyIsActiveInProduction(t *testing.T) {
 	objects := render(t, "k8s/providers/hetzner/apps")
 	pod := mapping(t, mapping(t, mapping(t, object(t, objects, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
 	initializers := sequence(t, pod["initContainers"])
-	if len(initializers) != 1 {
+	// Production copies its store onto encrypted storage before the managed setup.
+	if len(initializers) != 2 || mapping(t, initializers[1])["name"] != "configure" {
 		t.Fatal("active transport must retain the managed initializer")
 	}
-	args := sequence(t, mapping(t, initializers[0])["args"])
+	args := sequence(t, mapping(t, initializers[1])["args"])
 	if len(args) != 1 || args[0] != "--proxy-client-ip=true" {
 		t.Fatal("activation must explicitly override a retained encrypted transport setting")
 	}

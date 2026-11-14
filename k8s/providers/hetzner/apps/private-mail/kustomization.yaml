@@ -2,8 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../../bases/apps/private-mail-proxy-identity
-  # The encrypted store's key, class and empty claim. The server keeps serving
-  # from the original claim until the key is proven here (#5387).
+  # The mail store is encrypted at rest; its key comes from OpenBao (#5387).
   - ../../../../bases/apps/email-encrypted-storage
   - secret-settings.enc.yaml
 patches:
@@ -12,3 +11,28 @@ patches:
   - path: patches/disable-admin-credential-seeding.yaml
   - path: patches/disable-maintainer-credential-seeding.yaml
   - path: patches/disable-agent-credential-seeding.yaml
+  # Serve from the encrypted claim after a verified one-time copy of the
+  # original store, which stays mounted read-only as the rollback.
+  - path: patches/serve-from-encrypted-storage.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+    path: patches/migrate-to-encrypted-storage.yaml
+# The copy step uses the same signed setup image as the server. A parent image
+# transformer does not pin a container added here.
+replacements:
+  - source:
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+      fieldPath: spec.template.spec.containers.[name=private-mail].image
+    targets:
+      - select:
+          kind: StatefulSet
+          name: private-mail
+          namespace: private-mail
+        fieldPaths:
+          - spec.template.spec.initContainers.[name=migrate-storage].image
