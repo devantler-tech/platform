@@ -34,6 +34,8 @@ func runtimeInventoryQueries() []runtimeInventoryQuery {
 		{"/apis/apps/v1/namespaces/longhorn-system/deployments", "apps/v1", "Deployment", "longhorn-system"},
 		{lh + "settings/default-instance-manager-image", "longhorn.io/v1beta2", "Setting", "longhorn-system"},
 		{lh + "settings/guaranteed-instance-manager-cpu", "longhorn.io/v1beta2", "Setting", "longhorn-system"},
+		{"/api/v1/namespaces/longhorn-system/limitranges", "v1", "LimitRange", "longhorn-system"},
+		{"/api/v1/namespaces/longhorn-system/resourcequotas", "v1", "ResourceQuota", "longhorn-system"},
 	}
 }
 
@@ -70,6 +72,8 @@ func runtimeInventoryReadCommand(ctx context.Context, input []byte, program stri
 type runtimeInventoryReceipt struct {
 	Nodes, KubernetesNodes, Pods, InstanceManagers, V1Volumes, V2Volumes int
 	Default, EpochSHA                                                    string
+	DeclaredOverlap                                                      string
+	OverlapNodes                                                         int
 }
 
 func observeRuntimeInventory(ctx context.Context, c client, source string) (result runtimeInventoryReceipt, err error) {
@@ -131,7 +135,7 @@ func readRuntimeInventory(ctx context.Context, c client) (runtimeInventoryReceip
 			}
 			var ok bool
 			items, ok = root["items"].([]any)
-			if !ok || len(items) == 0 && q.kind != "Orphan" {
+			if !ok || len(items) == 0 && q.kind != "Orphan" && q.kind != "ResourceQuota" {
 				return runtimeInventoryReceipt{}, refused
 			}
 		}
@@ -188,6 +192,7 @@ func readRuntimeInventory(ctx context.Context, c client) (runtimeInventoryReceip
 		return runtimeInventoryReceipt{}, refused
 	}
 	result.EpochSHA = fmt.Sprintf("%x", sha256.Sum256(encoded))
+	result.OverlapNodes, result.DeclaredOverlap = runtimeDeclaredOverlap(records, result.Default)
 	return result, nil
 }
 
@@ -203,6 +208,7 @@ func runtimeInventoryProjection(q runtimeInventoryQuery, o object) object {
 	switch q.kind {
 	case "Pod":
 		projection["spec"] = runtimePodProjection(value(o, "spec"))
+		projection["allocationUnqualified"] = podAllocationUnqualified(o)
 	case "Deployment", "DaemonSet":
 		projection["spec"] = object{"replicas": value(o, "spec", "replicas"), "selector": value(o, "spec", "selector"), "strategy": value(o, "spec", "strategy"), "updateStrategy": value(o, "spec", "updateStrategy"), "template": runtimePodProjection(value(o, "spec", "template", "spec"))}
 	default:

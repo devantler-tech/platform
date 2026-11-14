@@ -1,5 +1,24 @@
 # Prepare Longhorn V2 workers
 
+`inventory-v1-runtime` is a protected, target-free read-only inventory. Its exact
+confirmation is `inventory-v1-runtime`, with empty `node` and `database`.
+It observes the complete runtime inventory twice between current-main checks.
+`declaredOverlap=FIT` means the observed CPU and memory requests fit one
+additional V1 manager per storage node. CPU uses a conservative sum of init
+requests and the actual per-node override or rounded global V1 percentage.
+Memory uses the scheduler's peak init/sidecar accounting and observed namespace
+default request. Complete LimitRange and ResourceQuota lists participate in the
+same epoch. Unqualified defaults, quota or resource quantities leave the
+calculation `UNVERIFIED`; an insufficient conservative budget reports `HOLD`.
+Effective memory requests use exact Kubernetes quantities and whole-byte Pod
+rounding. Allocated/enacted in-place resize or node-resource-claim status remains
+unqualified, so its presence also leaves the calculation `UNVERIFIED` rather
+than treating the Pod spec as the allocation. The shared host-memory admission
+uses the same refusal.
+These are declared request budgets. Resident-memory measurements, reservations,
+admission, serving health and rollout remain separate checks. The receipt keeps
+`adoption=UNVERIFIED headroom=UNVERIFIED` and authorizes no storage operation.
+
 `observe-database` is a protected, read-only PostgreSQL observation for
 platform#5842. Select one of the five fixed databases with `database`, leave
 `node` empty, and confirm with `observe-longhorn-v2-database-<database>`.

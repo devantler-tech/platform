@@ -62,7 +62,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		fmt.Printf("LONGHORN_RUNTIME_INVENTORY=OBSERVED kubernetesNodes=%d storageNodes=%d pods=%d instanceManagers=%d v1Volumes=%d v2Volumes=%d default=%s epochSHA256=%s adoption=UNVERIFIED headroom=UNVERIFIED writes=0\n", receipt.KubernetesNodes, receipt.Nodes, receipt.Pods, receipt.InstanceManagers, receipt.V1Volumes, receipt.V2Volumes, receipt.Default, receipt.EpochSHA)
+		fmt.Printf("LONGHORN_RUNTIME_INVENTORY=OBSERVED kubernetesNodes=%d storageNodes=%d pods=%d instanceManagers=%d v1Volumes=%d v2Volumes=%d default=%s epochSHA256=%s declaredOverlap=%s overlapNodes=%d adoption=UNVERIFIED headroom=UNVERIFIED writes=0\n", receipt.KubernetesNodes, receipt.Nodes, receipt.Pods, receipt.InstanceManagers, receipt.V1Volumes, receipt.V2Volumes, receipt.Default, receipt.EpochSHA, receipt.DeclaredOverlap, receipt.OverlapNodes)
 		return
 	}
 	if operation == "inventory-provider-volume-footprint" {

@@ -35,5 +35,5 @@ func TestRuntimeInventoryNativeReadOnlyAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal("native read-only runtime inventory did not qualify:", err)
 	}
-	t.Logf("LONGHORN_RUNTIME_NATIVE_READ=OBSERVED nodes=%d storageNodes=%d instanceManagers=%d v1Volumes=%d v2Volumes=%d default=%s adoption=UNVERIFIED headroom=UNVERIFIED writes=0", got.KubernetesNodes, got.Nodes, got.InstanceManagers, got.V1Volumes, got.V2Volumes, got.Default)
+	t.Logf("LONGHORN_RUNTIME_NATIVE_READ=OBSERVED nodes=%d storageNodes=%d instanceManagers=%d v1Volumes=%d v2Volumes=%d default=%s declaredOverlap=%s overlapNodes=%d adoption=UNVERIFIED headroom=UNVERIFIED writes=0", got.KubernetesNodes, got.Nodes, got.InstanceManagers, got.V1Volumes, got.V2Volumes, got.Default, got.DeclaredOverlap, got.OverlapNodes)
 }

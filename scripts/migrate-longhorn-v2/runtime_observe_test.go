@@ -22,6 +22,8 @@ var runtimeFixturePaths = []string{
 	"/apis/apps/v1/namespaces/longhorn-system/deployments",
 	"/apis/longhorn.io/v1beta2/namespaces/longhorn-system/settings/default-instance-manager-image",
 	"/apis/longhorn.io/v1beta2/namespaces/longhorn-system/settings/guaranteed-instance-manager-cpu",
+	"/api/v1/namespaces/longhorn-system/limitranges",
+	"/api/v1/namespaces/longhorn-system/resourcequotas",
 }
 
 func TestRuntimeObservationAdmitsOnlyFixedReads(t *testing.T) {
@@ -100,6 +102,10 @@ func runtimeObservationFixture(t *testing.T, fault string) (client, map[string]i
 			api, kind = "apps/v1", "Deployment"
 		case 10, 11:
 			kind = "Setting"
+		case 12:
+			api, kind = "v1", "LimitRange"
+		case 13:
+			api, kind = "v1", "ResourceQuota"
 		}
 		name := strings.ToLower(kind) + "-fixture"
 		item := object{"metadata": object{"name": name, "namespace": namespace, "uid": fmt.Sprintf("%08d-1111-4111-8111-111111111111", index+1), "resourceVersion": "10"}, "spec": object{"dataEngine": "v1"}, "status": object{"currentState": "running"}}
@@ -119,6 +125,15 @@ func runtimeObservationFixture(t *testing.T, fault string) (client, map[string]i
 				item["value"] = `{"v1":"6","v2":"6"}`
 			}
 		}
+		if index == 12 {
+			item["spec"] = object{"limits": []any{object{"type": "Container", "default": object{"cpu": "2"}, "defaultRequest": object{"cpu": "15m", "memory": "128Mi"}}}}
+		}
+		if strings.HasPrefix(fault, "overlap") {
+			if index == 2 {
+				value(item, "metadata").(object)["name"] = "worker-fixture"
+			}
+			runtimeOverlapFixtureFault(index, item, fault)
+		}
 		if fault == "epoch changed" && index == 1 && reads[path] > 1 {
 			value(item, "status", "containerStatuses").([]any)[0].(object)["containerID"] = "containerd://" + strings.Repeat("b", 64)
 		}
@@ -136,6 +151,16 @@ func runtimeObservationFixture(t *testing.T, fault string) (client, map[string]i
 			return json.Marshal(item)
 		}
 		body := object{"apiVersion": api, "kind": kind + "List", "metadata": object{"resourceVersion": "20"}, "items": []any{item}}
+		if index == 1 && fault == "overlap fractional bytes" {
+			body["items"] = []any{item, object{
+				"metadata": object{"name": "fractional-second", "namespace": "longhorn-system", "uid": "99999999-2222-4222-8222-222222222222", "resourceVersion": "10"},
+				"spec":     object{"nodeName": "worker-fixture", "containers": []any{object{"name": "other", "resources": object{"requests": object{"cpu": "0", "memory": "100m"}}}}},
+				"status":   object{"phase": "Running"},
+			}}
+		}
+		if index == 13 && fault != "overlap quota" {
+			body["items"] = []any{}
+		}
 		if fault == "partial inventory" {
 			value(body, "metadata").(object)["continue"] = "unread"
 		}
@@ -148,6 +173,22 @@ func runtimeObservationFixture(t *testing.T, fault string) (client, map[string]i
 		return json.Marshal(body)
 	}}
 	return c, reads
+}
+
+func TestRuntimeInventoryReportsDeclaredOverlapWithoutAdoptionClearance(t *testing.T) {
+	c, _ := runtimeObservationFixture(t, "overlap")
+	got, err := observeRuntimeInventory(t.Context(), c, strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt map[string]any
+	if json.Unmarshal(raw, &receipt) != nil || receipt["DeclaredOverlap"] != "FIT" || receipt["OverlapNodes"] != float64(1) {
+		t.Fatal("the complete inventory did not report the declared replacement-pod capacity")
+	}
 }
 
 func TestRuntimeObservationBracketsEveryInventoryAndRemainsReadOnly(t *testing.T) {
