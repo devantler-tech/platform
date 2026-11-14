@@ -9,7 +9,7 @@ was checked against the Stalwart v0.16.27 source.
 ## Declared
 
 | Area | Setting | Value | Why |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Inbound checks | DKIM, DMARC and ARC verification | relaxed on `smtp-inbound`, off elsewhere | Upstream keys these on local port 25, and the inbound listener is 1025. The server ignores a quoted value and falls back to relaxed on every listener, so the values are bare constants. |
 | Inbound checks | Non-FQDN HELO rejection; Received and Return-Path headers | on `smtp-inbound` only | The same port-25 keying left them off. |
 | Inbound checks | Authentication-Results header | on `smtp-inbound` only | Outbound mail no longer carries this server's verdicts. |
