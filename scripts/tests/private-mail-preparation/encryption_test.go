@@ -122,6 +122,7 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 			server = stringField(t, container, "image")
 		}
 	}
+	copySteps, sourceMounts := 0, 0
 	for index, group := range []string{"initContainers", "containers"} {
 		for position, item := range sequence(t, pod[group]) {
 			container := mapping(t, item)
@@ -134,10 +135,17 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 				if index != 0 || position != 0 || name != "migrate-storage" || mount["readOnly"] != true {
 					t.Fatal("only the first initializer, the copy step, may mount the original claim, and only read-only")
 				}
+				sourceMounts++
 			}
-			if name == "migrate-storage" && (index != 0 || position != 0 || container["image"] != server) {
-				t.Fatal("the copy must run first, before setup, with the server's signed image")
+			if name == "migrate-storage" {
+				copySteps++
+				if index != 0 || position != 0 || container["image"] != server {
+					t.Fatal("the copy must run first, before setup, with the server's signed image")
+				}
 			}
 		}
+	}
+	if copySteps != 1 || sourceMounts != 1 {
+		t.Fatal("exactly one copy step must mount the original claim exactly once")
 	}
 }

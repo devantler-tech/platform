@@ -68,10 +68,25 @@ the Pod with the original untouched, and an unmarked copy is cleared and redone
 on the next start. Later starts find the marker and skip the copy. The setup then
 reads the accounts and settings back from the copied store before serving.
 
-To roll back, revert the cutover: the Pod serves the original claim again. Mail
-received after the cutover exists only on the encrypted volume. The original
-volume stays declared, prune-protected and mounted read-only, so it cannot be
-deleted while in use; switching its volume to `Retain` is part of #4441.
+To roll back, revert the cutover: the Pod serves the original claim again. Mail,
+calendar and contact changes made after the cutover exist only on the encrypted
+volume. The original volume stays declared, prune-protected and mounted read-only
+while the cutover is in place, so it cannot be deleted while in use; switching
+its volume to `Retain` is part of #4441.
+
+After a rollback, the two stores diverge: each holds changes the other lacks.
+Reapplying the cutover as it is would serve the encrypted store again, because
+its completion marker skips the copy, and would hide every change made on the
+original during the rollback. Clearing the marker alone would instead discard the
+changes made on the encrypted store. Reconcile before reapplying:
+
+1. While the original serves, move the changes that exist only on the encrypted
+   store into it, through a mail, calendar and contacts client connected to both
+   stores, or through Stalwart's import. Mount the encrypted claim only in an
+   isolated, non-serving Pod to read them.
+2. Take a fresh backup of the original.
+3. Empty the encrypted claim, marker included, in a separately reviewed change,
+   so the next cutover copies the reconciled original again.
 
 The existing `private-mail` namespace remains retained by its established storage
 bundle. The replacement class is not the cluster default. Both the replacement

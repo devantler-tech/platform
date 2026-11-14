@@ -9,6 +9,7 @@ metadata:
 spec:
   template:
     spec:
+      automountServiceAccountToken: false
       volumes:
         - name: data
           persistentVolumeClaim:
