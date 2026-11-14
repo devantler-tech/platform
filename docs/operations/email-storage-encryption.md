@@ -1,9 +1,15 @@
 # Email storage encryption preparation
 
-The optional `email-encrypted-storage` bundle declares a new retained Longhorn
-volume and its operational-key binding. Production does not select this bundle,
-and the existing mailbox claim is unchanged. This prepares part of #5387; it
-does not establish encrypted production storage or a completed migration.
+The `email-encrypted-storage` bundle declares a new retained Longhorn volume and
+its operational-key binding. Production deploys the bundle so the key is proven
+before any stop: the `email-storage` SecretStore must be valid and the
+`email-storage-key` ExternalSecret synced. No workload selects the new claim, and
+the existing mailbox claim is unchanged. This prepares part of #5387; it does not
+establish encrypted production storage or a completed migration.
+
+The first cutover attempt switched the server and brought up the key in one
+deployment. The key never arrived, so the server could not start until its pod
+was replaced on the original claim. The key now comes up on its own first.
 
 Longhorn uses dm-crypt/LUKS beneath the mounted filesystem. The Email process and
 ordinary mail clients continue to read ordinary messages. This protects stored
@@ -14,7 +20,9 @@ Application-level backups require their own encryption and recovery proof.
 The operational passphrase resolves from the declared Email record in OpenBao
 through a namespaced store and a dedicated role. That role is bound only to the
 existing Email service identity and reads only this key record, with no account
-credential access, writes, metadata enumeration or default policy. The shared
+credential access, writes, metadata enumeration or default policy. Without the
+default policy, the role's policy itself grants the token lookup that External
+Secrets uses to validate the store, and the token's own revocation. The shared
 External Secrets role gains no permission.
 The bundle never generates a replacement when that record is missing. External
 Secrets materializes the CSI-required Kubernetes Secret, retained independently
