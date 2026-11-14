@@ -571,7 +571,23 @@ spec:
             sleep 1
           done
           if [ "\$warm" -ne 1 ]; then
-            printf 'PROBE-WARMUP failed control=%s/%s authz=%s/%s\\n' "\${c:-none}" "\$c_rc" "\${a:-none}" "\$a_rc"
+            # One more control request, with curl's error text, says how the connection failed
+            # (reset, refused, timeout, TLS). Only a word from this fixed list is printed: the
+            # raw text can name internal addresses, and the log is public. A failed warm-up skips
+            # every round, so this request stays inside the pod deadline.
+            err=\$(curl -sSk -o /dev/null --max-time "\$TIMEOUT" -H "Host: \$CONTROL_HOST" "\$GATEWAY_URL" 2>&1 >/dev/null)
+            case "\$err" in
+              '') why=none ;;
+              *'reset by peer'*) why=connection-reset ;;
+              *'Connection refused'*) why=connection-refused ;;
+              *'timed out'*|*'Timeout was reached'*) why=timeout ;;
+              *SSL_ERROR_SYSCALL*) why=tls-syscall ;;
+              *'nexpected eof'*|*'nexpected EOF'*) why=tls-unexpected-eof ;;
+              *alert*) why=tls-alert ;;
+              *'resolve host'*) why=dns ;;
+              *) why=other ;;
+            esac
+            printf 'PROBE-WARMUP failed control=%s/%s authz=%s/%s curl=%s\\n' "\${c:-none}" "\$c_rc" "\${a:-none}" "\$a_rc" "\$why"
             exit 0
           fi
           printf 'PROBE-WARMUP ok\\n'
@@ -782,7 +798,7 @@ done
 classify() {
   local log="$1" want_ip="$2"
   awk -v want="${requests}" -v want_ip="${want_ip}" '
-    $1 == "PROBE-WARMUP" { warm = $2; warm_detail = $3 " " $4 }
+    $1 == "PROBE-WARMUP" { warm = $2; warm_detail = $3 " " $4 (NF > 4 ? " " $5 : "") }
     $1 == "PROBE-DONE" { done = $2 }
     $1 == "PROBE" && $2 == "control" {
       nc++
@@ -822,7 +838,7 @@ for role in cross same; do
   log="$(kc -n "${probe_namespace}" logs "${name}")" || inconclusive 'could not read a probe pod log'
   counts="$(classify "${log}" "${role_ingress}")" || inconclusive 'a probe pod log could not be classified'
   case "${counts}" in
-    'ERR warmup'*) inconclusive "the ${role} probe pod could not reach both routes during warm-up (last answers, as http code/curl exit: ${counts#ERR warmup }), so the path or policy is broken" ;;
+    'ERR warmup'*) inconclusive "the ${role} probe pod could not reach both routes during warm-up (last answers, as http code/curl exit, then how one more request failed: ${counts#ERR warmup }), so the path or policy is broken" ;;
     'ERR incomplete') inconclusive 'a probe pod log did not contain every expected answer' ;;
     '') inconclusive 'a probe pod log could not be classified' ;;
   esac
