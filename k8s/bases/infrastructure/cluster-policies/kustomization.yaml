@@ -17,6 +17,7 @@ resources:
   - best-practices/audit-privileged-rbac.yaml
   - best-practices/disable-default-sa-automount.yaml
   - best-practices/disallow-latest-tag.yaml
+  - best-practices/disallow-floating-image-tags.yaml
   - best-practices/propagate-reloader-to-flagger-primary.yaml
   - best-practices/require-homepage-href-for-non-root-routes.yaml
   - best-practices/restrict-github-team-external-identity.yaml
