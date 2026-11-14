@@ -69,6 +69,9 @@ func TestEncryptedReplacementKeepsKeysOutsideTheWorkload(t *testing.T) {
 	if metadata["namespace"] != "private-mail" || mapping(t, metadata["annotations"])["kustomize.toolkit.fluxcd.io/prune"] != "disabled" {
 		t.Fatal("replacement data must stay in the retained Email namespace")
 	}
+	if labels, _ := metadata["labels"].(map[string]any); labels["platform.devantler.tech/storage-stage"] != "prepared" {
+		t.Fatal("an unconsumed replacement claim must carry the prepared-storage health marker")
+	}
 	spec := mapping(t, pvc["spec"])
 	if spec["storageClassName"] != "email-encrypted" || !reflect.DeepEqual(spec["accessModes"], []any{"ReadWriteOnce"}) || mapping(t, mapping(t, spec["resources"])["requests"])["storage"] != "2Gi" {
 		t.Fatal("replacement must explicitly request the encrypted class with existing capacity and access mode")
