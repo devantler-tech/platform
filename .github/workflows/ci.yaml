@@ -165,7 +165,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
-    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@f33622708f9f25a32acb46cc419007e18a3223b3 # v21.3.1
+    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@986a62443103435b889dc9651ca5af3af539389d # v21.4.0
     with:
       apply-signed-fixes: false
       # Same measured eight-slot bound as the helper regression job above;
@@ -3968,7 +3968,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@f33622708f9f25a32acb46cc419007e18a3223b3 # v21.3.1
+        uses: devantler-tech/.github/actions/validate-naming@986a62443103435b889dc9651ca5af3af539389d # v21.4.0
 
       - name: Confirm naming validation completed
         env:
@@ -5071,7 +5071,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@02183e4b176d3bdbedda8519a1f63ee324b8412c # v21.0.2
+        uses: devantler-tech/.github/actions/aggregate-job-checks@986a62443103435b889dc9651ca5af3af539389d # v21.4.0
         with:
           check-workflow-startup: "true"
           job-results: >-
