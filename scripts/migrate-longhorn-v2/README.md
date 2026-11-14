@@ -109,19 +109,78 @@ may adopt it only after the previous run has ended. This operation enables no V2
 storage and removes no iSCSI support.
 
 The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
-platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCSI.
+platform#5582. Application cutover, recovery probes, V1 retirement and iSCSI
+removal have separate acceptance gates.
 
 This tool lands in stages (platform#5655). It includes `refresh-clients`, `prepare-worker`,
 `prepare-unused-temporary-worker`, read-only replica inventories and the benchmarks.
 `refresh-clients` holds until the fixed migration workers are Ready and the host
-huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
-capacity follows in its own change.
+huge-page settings are loaded. Host recovery and a cleaned V1 baseline precede
+temporary-disk preparation. The V2 activation change must follow those completed
+operations, rather than their source PRs alone.
+
+## Temporary V2 activation
+
+The activation manifests retain V1 and the existing default StorageClass, enable
+V2, and add the opt-in `longhorn-v2` Retain class. Eight-CPU workers reserve two
+cores for polling SPDK reactors with mask `0x3`, CPU isolation, and 2048 MiB of
+huge pages. The CPU-only LimitRange rises to four cores so management and network
+work have headroom above those reactors; it adds no memory limit. The reviewed
+Longhorn 1.13.0 instance-manager image and the admitted client resources and
+arguments must match before registration. Enabling the setting proves neither
+raw-disk readiness nor application recovery.
+
+After all three temporary workers have completed their independently confirmed
+raw-layout preparation, select `register-temporary-v2-storage` and confirm
+`register-longhorn-v2-temporary-storage`. This operation always selects all three
+fixed temporary pool members. It requires intact original V1 replicas, healthy
+database quorums, the cleaned baseline, reviewed storage capacity, no competing
+maintenance, and ready V2 clients on all six workers before its first write.
+Every selected worker must present its own 144 GiB encrypted raw partition. The
+complete volume inventory must fit on each disk with the working reserves and
+free-space margin available.
+
+The journal `longhorn-v2-temporary-activation` binds each temporary selection to
+the node, provider, hardware, boot, encrypted EPHEMERAL and raw GPT partition
+identities. Complete native reads bracket the partition observations. Each rebuilt
+worker also binds its completed preparation journal UID and the successful
+first-attempt main workflow that produced it. A prepared-looking disk without that
+record, a replaced journal or a failed preparation workflow cannot authorize
+registration. The third worker needs a completed preservation receipt and a new
+encrypted staging partition with a GPT identity distinct from its original raw
+partition. Each conditional Longhorn Node update registers the selected worker's
+reviewed mapper and adds the journal UID as its ownership annotation. Matching
+unowned disks are refused.
+An uncertain response stops the run. A new first-attempt main dispatch may resume
+an owned partial registration only after the previous workflow is terminal, and
+it revalidates all three native bindings and every remaining prerequisite.
+Completion requires three independent ready raw disks and all qualified clients;
+it grants no application cutover or original-disk reset authority.
+
+The two rebuilt workers retain their original `migration-pool=v1` allocation
+label. The shared publication and replica-exclusion checks recognize their raw
+disks and the third worker's distinct staging mapper only with the completed
+activation journal, its matching ownership UID, and the unchanged Kubernetes,
+provider, hardware and Longhorn node identities.
+An ordinary later reboot or OS upgrade does not revoke this registration.
+
+The journal retains the original boot and OS observations for audit. Later
+registration recovery and acceptance compare its durable worker, partition and
+preparation identities, while each native read still requires an unchanged live
+boot bracket. A normal reboot does not adopt replacement hardware or storage.
+
+Filesystem and CSI recovery probes follow separately under platform#5809.
+They must verify restored bytes, persistence after reattachment and owned scratch
+cleanup before any application cutover. This activation operation has no data
+movement or probe entrypoint. All original application volumes and historical
+recovery states remain protected.
 
 For the unused temporary-worker route (platform#5787), finish the client refresh and the
 cleaned V1 baseline first. Select `prepare-unused-temporary-worker`, `temporary-v1-1` or
 `temporary-v1-2`, and the matching confirmation `prepare-unused-longhorn-v2-temporary-v1-1`
 or `prepare-unused-longhorn-v2-temporary-v1-2`. Each selection is resolved from the complete,
-reviewed two-member V1 pool and one-member V2 pool. The fresh V2 pool has no reset operation.
+reviewed two-member V1 pool and one-member V2 pool. This preparation operation
+admits only the two V1-born workers.
 
 This operation wipes **only the selected temporary worker's EPHEMERAL partition** and reboots
 it. Its separate journal binds the original node UID, provider and hardware identities, boot,

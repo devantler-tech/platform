@@ -71,7 +71,7 @@ func (e engine) replicaExclusion(ctx context.Context) error {
 		if !strings.HasPrefix(name, "autoscale-") {
 			continue
 		}
-		eligible, proofErr := e.migrationStorageEligible(byName[name], n)
+		eligible, proofErr := e.migrationStorageEligible(ctx, byName[name], n)
 		if proofErr != nil {
 			return proofErr
 		}

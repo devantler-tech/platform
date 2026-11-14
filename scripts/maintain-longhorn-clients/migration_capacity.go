@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"os"
 
 	"github.com/devantler-tech/platform/internal/longhornmigration"
 )
 
-func (e engine) migrationStorageEligible(node, storage object) (bool, error) {
+// migrationStorageEligible reads the shared activation receipt only for an
+// enabled migration pool, retaining ordinary-node exclusion and read failures.
+func (e engine) migrationStorageEligible(ctx context.Context, node, storage object) (bool, error) {
 	if str(storage, "metadata", "labels", longhornmigration.EnabledLabel) == "" {
 		return false, nil
 	}
@@ -18,5 +21,12 @@ func (e engine) migrationStorageEligible(node, storage object) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return longhornmigration.Eligible(data, node, storage)
+	var activation object
+	if longhornmigration.RequiresActivationRecord(node, storage) {
+		activation, err = e.c.read(ctx, "configmap", "longhorn-system", longhornmigration.ActivationJournal)
+		if err != nil {
+			return false, err
+		}
+	}
+	return longhornmigration.Eligible(data, node, storage, activation)
 }
