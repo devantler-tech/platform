@@ -850,18 +850,25 @@ awk '
   body && /^      securityContext:/ { exit }
   body { sub(/^          /, ""); print }
 ' "${fixtures}/applied.yaml" >"${pod_loop}"
-# Every request check reads the loop without its comment lines: they name curl in prose, and a
-# commented-out request must not satisfy a check.
+# Every request must skip certificate checks (no .invalid hostname has one) and send a PROXY
+# protocol header: production's gateway listeners require it, and reset a connection without one
+# during the TLS handshake (#2284, run 43579569667). The loop makes all requests through send(), so
+# the check is an allow-list rather than a parse of curl calls: outside full-line comments, the
+# only lines that may mention curl at all are send()'s definition and the warm-up report's label.
+# Any other mention, whether a new request, a path such as /usr/bin/curl or an inline comment,
+# fails the test.
 readonly pod_code="${work_dir}/pod-loop-code.sh"
 grep -v '^[[:space:]]*#' "${pod_loop}" >"${pod_code}"
-[[ "$(grep -c 'curl -sk ' "${pod_code}")" -eq 2 ]] || fail 'both client requests must skip certificate checks, since no .invalid hostname has a certificate'
-# Production's gateway listeners require PROXY protocol, so a request without the header is reset
-# during the TLS handshake (#2284, run 43579569667). Every curl in the loop must send it.
-# Count every curl call, whatever follows it, so a new request cannot slip past the header check.
-curl_calls="$(grep -oE '(^|[[:space:](;|&])curl([[:space:]]|$)' "${pod_code}" | wc -l | tr -d ' ')"
-readonly curl_calls
-[[ "${curl_calls}" -eq 3 ]] || fail "the pod loop must make exactly three curl requests, found ${curl_calls}"
-[[ "$(grep -c 'curl -sS\{0,1\}k --haproxy-protocol ' "${pod_code}")" -eq 3 ]] || fail 'every client request must send a PROXY protocol header, since the gateway listeners require one'
+readonly allowed_curl_lines="${work_dir}/pod-loop-allowed-curl.txt"
+cat >"${allowed_curl_lines}" <<'ALLOWED'
+send() { curl -k --haproxy-protocol --max-time "$TIMEOUT" "$@"; }
+  printf 'PROBE-WARMUP failed control=%s/%s authz=%s/%s curl=%s\n' "${c:-none}" "$c_rc" "${a:-none}" "$a_rc" "$why"
+ALLOWED
+if ! diff <(grep 'curl' "${pod_code}" | sed 's/^[[:space:]]*//') \
+  <(sed 's/^[[:space:]]*//' "${allowed_curl_lines}") >/dev/null; then
+  fail 'every client request must go through send(), which skips certificate checks and sends the PROXY protocol header; no other line may call curl'
+fi
+[[ "$(grep -cE '(^|[^[:alnum:]_])send -' "${pod_code}")" -eq 3 ]] || fail 'the pod loop must make its three requests through send()'
 grep -Fq 'PROBE-DONE' "${pod_loop}" || fail 'could not extract the rendered pod loop'
 if grep -Fq '\$' "${pod_loop}"; then
   fail 'the rendered pod loop still contains an escaped \$'
