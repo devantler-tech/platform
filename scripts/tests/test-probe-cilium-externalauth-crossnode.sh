@@ -142,7 +142,10 @@ chmod +x "${fake_bin}/kubectl"
 # its Host header, expanding the transfer's own `-w` format the way curl does, so the script's real
 # parsing is exercised. A pair's answers come from the next line of pairs.txt:
 #   <control code> <echoed source or -> <authz code> <authz size> <authz connects> [<location>]
-# (an exhausted file answers 000 everywhere, as an unreachable gateway would). A control request
+# (an exhausted file answers 000 everywhere, as an unreachable gateway would). The control request
+# reports local port 50000 (0 when it got no answer). <authz connects> 0 reuses that connection (port
+# 50000); r is a failed reconnect (0 connects, port 0, as curl reports one); any other count opened a
+# new connection (port 50001). A control request
 # sent alone with -S is the warm-up diagnosis: it prints curl-error (which names an address) to
 # stderr and exits 35. It flags any request that is not to the load balancer URL, skips no
 # certificate check, has no timeout, sends its own PROXY header, or sends the ExternalAuth request
@@ -158,6 +161,7 @@ expand() {
   f="${f//%\{size_download\}/$3}"
   f="${f//%\{num_connects\}/$4}"
   f="${f//%\{redirect_url\}/$5}"
+  f="${f//%\{local_port\}/${6:-0}}"
   printf '%b' "${f}"
 }
 next_pair() {
@@ -190,7 +194,7 @@ run_transfer() {
         printf 'Hostname: whoami\n'
         [[ "${ip}" != '-' ]] && printf 'RemoteAddr: %s:43210\n' "${ip}"
       fi
-      expand "${fmt}" "${c}" 45 1 ''
+      if [[ "${c}" == '000' ]]; then expand "${fmt}" "${c}" 45 0 '' 0; else expand "${fmt}" "${c}" 45 1 '' 50000; fi
       ;;
     authz.externalauth-probe.invalid)
       if [[ -z "${pair}" ]]; then
@@ -198,7 +202,11 @@ run_transfer() {
         pair='000 - 000 0 0'
       fi
       read -r _ _ a size conns loc <<<"${pair}"
-      expand "${fmt}" "${a}" "${size}" "${conns}" "${loc:-}"
+      case "${conns}" in
+        0) expand "${fmt}" "${a}" "${size}" 0 "${loc:-}" 50000 ;;
+        r) expand "${fmt}" "${a}" "${size}" 0 "${loc:-}" 0 ;;
+        *) expand "${fmt}" "${a}" "${size}" "${conns}" "${loc:-}" 50001 ;;
+      esac
       ;;
     unrouted.externalauth-probe.invalid)
       expand "${fmt}" "$(cat "${FIXTURES}/guard" 2>/dev/null || printf '404')" 0 1 ''
@@ -641,6 +649,23 @@ set_pair 12 "200 10.244.23.77 ${delivered}"
 run_default
 require_inconclusive 'a pair whose echoed source is no node'"'"'s ingress IP cannot be attributed' 'unattributed 1'
 pass 'a pair on a new connection, or with no or an unknown echoed source, is left out of both groups'
+
+# A failed reconnect reports 0 connects like a reused connection; only the local port tells them apart.
+# The failed reconnect never reached the attributed Envoy, so it is unattributed, never a cross-node loss.
+reset_fixtures
+set_pair 2 "200 ${ip_w3} 000 0 r"
+run_default
+require_inconclusive 'a failed reconnect (0 connects, no local port) cannot be attributed' 'too few pairs were attributed to each group (cross 9, same 10, unattributed 1'
+reconnect_mutant="${work_dir}/mutant-no-port-check.sh"
+port_check=' && "${authz_port:-}" == "${control_port}"'
+grep -Fq -- "${port_check}" "${script}" || fail 'the port-check mutation no longer matches the script'
+awk -v from="${port_check}" '{ i = index($0, from); if (i) $0 = substr($0, 1, i - 1) substr($0, i + length(from)); print }' \
+  "${script}" >"${reconnect_mutant}"
+reset_fixtures
+set_pair 2 "200 ${ip_w3} 000 0 r"
+run_probe_with "${reconnect_mutant}" --context admin@prod --run-id "${run_id}" --requests "${requests}" --timeout 1
+refute_text 'unattributed 1' 'a probe without the local-port check still left the failed reconnect unattributed, so the fixture does not test it'
+pass 'a failed reconnect is left out of both groups, and only the local-port check keeps it out'
 
 reset_fixtures
 gen_pairs "${blackholed}" "${delivered}" 0 '' 5 "${blackholed}"

@@ -21,7 +21,7 @@
 # backends from its own node's ingress IP (CiliumNode spec.ingress.ipv4), so the echo names the node
 # whose Envoy holds that connection — and therefore also answered the ExternalAuth request. A pair is
 # attributed only when the echo is exactly one node's ingress IP and curl reports the second request
-# reused the connection (`%{num_connects}` = 0); any other pair is counted as unattributed and left
+# reused the connection (it opened none and reports the control request's local port); any other pair is counted as unattributed and left
 # out of both groups. A pair attributed to a node hosting an oauth2-proxy endpoint is SAME-NODE (Envoy
 # does not prefer local endpoints, so it is a mix — enough to prove ext_authz works at all); one
 # attributed to a node hosting none is CROSS-NODE, so its ExternalAuth call must cross nodes.
@@ -564,19 +564,29 @@ wait_routes "${authz_route}" "${control_route}" ||
 # ---------------------------------------------------------------------------
 # One pair: the control route, then the ExternalAuth route, in ONE curl invocation so the second
 # request reuses the first one's connection and reaches the same Envoy. curl's stderr is discarded:
-# its error text can name an address, and the log is public. Prints
-# "PAIR <control code> <echoed source or -> <authz code> <authz size> <authz connects> [<location>]".
+# its error text can name an address, and the log is public. Both transfers report their local port:
+# the ExternalAuth request used the control request's connection only when it opened no connection
+# AND reports the same non-zero local port. `%{num_connects}` alone cannot say so, because curl counts
+# only connections that succeeded: a failed reconnect also reports 0 and must stay unattributed, while
+# a timeout on the reused connection keeps its port and still counts as a loss. Prints
+# "PAIR <control code> <echoed source or -> <authz code> <authz size> <same|other connection> [<location>]".
 send_pair() {
-  local out control_code ip authz
+  local out control control_code control_port ip authz authz_code authz_size authz_connects authz_port authz_location conn
   out="$(curl -sk --max-time "${timeout}" -H "Host: ${control_host}" \
-    -w '\nPROBE-CONTROL %{http_code}\n' "${gateway_url}" \
+    -w '\nPROBE-CONTROL %{http_code} %{local_port}\n' "${gateway_url}" \
     --next -sk -o /dev/null --max-time "${timeout}" -H "Host: ${authz_host}" \
-    -w 'PROBE-AUTHZ %{http_code} %{size_download} %{num_connects} %{redirect_url}\n' "${gateway_url}" 2>/dev/null || true)"
-  control_code="$(sed -n 's/^PROBE-CONTROL //p' <<<"${out}" | tail -n 1)"
+    -w 'PROBE-AUTHZ %{http_code} %{size_download} %{num_connects} %{local_port} %{redirect_url}\n' "${gateway_url}" 2>/dev/null || true)"
+  control="$(sed -n 's/^PROBE-CONTROL //p' <<<"${out}" | tail -n 1)"
+  read -r control_code control_port _ <<<"${control}"
   # whoami echoes the connection's source as "RemoteAddr: <ip>:<port>".
   ip="$(sed -n 's/^RemoteAddr: *\[\{0,1\}\([0-9A-Fa-f.:]*\)\]\{0,1\}:[0-9]*$/\1/p' <<<"${out}" | head -n 1)"
   authz="$(sed -n 's/^PROBE-AUTHZ //p' <<<"${out}" | tail -n 1)"
-  printf 'PAIR %s %s %s\n' "${control_code:-000}" "${ip:--}" "${authz:-000 0 -}"
+  read -r authz_code authz_size authz_connects authz_port authz_location <<<"${authz}"
+  conn=other
+  if [[ "${authz_connects:-}" == '0' && "${control_port:-}" =~ ^[1-9][0-9]*$ && "${authz_port:-}" == "${control_port}" ]]; then
+    conn=same
+  fi
+  printf 'PAIR %s %s %s %s %s %s\n' "${control_code:-000}" "${ip:--}" "${authz_code:-000}" "${authz_size:-0}" "${conn}" "${authz_location:-}"
 }
 
 # Warm-up: some Envoy must serve the control route (200) while the ExternalAuth route does not answer
@@ -629,7 +639,7 @@ guard_code="$(curl -sk -o /dev/null --max-time "${timeout}" -H "Host: ${guard_ho
 #         cross_n cross_delivered cross_lost cross_other same_n same_delivered same_lost same_other
 #         same_remote other_codes
 # A pair is attributed to a node only when its echoed source is exactly that node's ingress IP and the
-# ExternalAuth request reused the connection (0 new connects). same_remote sums, over the same-node
+# ExternalAuth request reused the connection (same local port, 0 new connects). same_remote sums, over the same-node
 # pairs, the number of oauth2-proxy endpoints NOT on the pair's node (the separation check below).
 classify() {
   awk -v ingress="$(awk '$1 == "ING" { printf "%s=%s;", $3, $2 }' <<<"${ingress_lines}")" \
@@ -644,7 +654,7 @@ classify() {
       if ($2 != "200") { bad++; next }
       ok++
       ip = $3; code = $4; size = $5; conns = $6; loc = $7
-      if (!(ip in node_of) || conns != "0") { unattributed++; next }
+      if (!(ip in node_of) || conns != "same") { unattributed++; next }
       node = node_of[ip]
       g = (node in local_eps) ? "same" : "cross"
       n_[g]++
