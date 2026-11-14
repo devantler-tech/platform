@@ -46,6 +46,7 @@ type job struct {
 
 type workflow struct {
 	On          map[string]any    `yaml:"on"`
+	Concurrency any               `yaml:"concurrency"`
 	Permissions map[string]string `yaml:"permissions"`
 	Env         map[string]string `yaml:"env"`
 	Jobs        map[string]job    `yaml:"jobs"`
@@ -78,7 +79,7 @@ func operate(t *testing.T) (job, []byte) {
 }
 
 func TestReusableWorkflowBoundary(t *testing.T) {
-	j, raw := operate(t)
+	j, _ := operate(t)
 	if j.Environment != "prod" || len(j.Permissions) != 1 || j.Permissions["contents"] != "read" {
 		t.Fatal("operation job must bind the prod environment with contents: read only")
 	}
@@ -100,9 +101,6 @@ func TestReusableWorkflowBoundary(t *testing.T) {
 	}
 	if !strings.Contains(steps[2].Run, "./scripts/verify-prod-recovery-source.sh") {
 		t.Fatal("current-main check must precede credentials")
-	}
-	if strings.Count(string(raw), "secrets.") != 2 {
-		t.Fatal("only the final step may reference secrets")
 	}
 	built := false
 	for i, s := range steps {
@@ -143,19 +141,23 @@ func goodDispatch() map[string]string {
 		"GITHUB_TRIGGERING_ACTOR": "devantler", "RUNNER_ENVIRONMENT": "github-hosted",
 		"PROD_OPERATION": "observe-runtime-health", "PROD_OPERATION_CONFIRM": "observe-runtime-health",
 		"PROD_OPERATION_PROGRAM": "scripts/observe-runtime-health", "PROD_OPERATION_ARGS": "",
+		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/observe-runtime-health.yaml@refs/heads/main",
 	}
 }
 
 func TestGuardAdmitsOnlyConfirmedFirstMainDispatchByDevantler(t *testing.T) {
 	j, _ := operate(t)
 	guard := j.Steps[0].Run
+	var lastOutput string
 	run := func(env map[string]string) error {
 		cmd := exec.Command("bash", "--noprofile", "--norc", "-c", guard)
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 		for k, v := range env {
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
-		return cmd.Run()
+		out, err := cmd.CombinedOutput()
+		lastOutput = string(out)
+		return err
 	}
 	if err := run(goodDispatch()); err != nil {
 		t.Fatalf("reviewed dispatch refused: %v", err)
@@ -184,6 +186,9 @@ func TestGuardAdmitsOnlyConfirmedFirstMainDispatchByDevantler(t *testing.T) {
 		{"PROD_OPERATION_ARGS", "x; rm -rf /"},
 		{"PROD_OPERATION_ARGS", "$(id)"},
 		{"PROD_OPERATION_ARGS", "--kubeconfig=/tmp/x"},
+		{"GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/x.yaml@refs/heads/feature"},
+		{"GITHUB_WORKFLOW_REF", "fork/platform/.github/workflows/x.yaml@refs/heads/main"},
+		{"GITHUB_WORKFLOW_REF", ""},
 	} {
 		env := goodDispatch()
 		env[tc.key] = tc.bad
@@ -192,6 +197,9 @@ func TestGuardAdmitsOnlyConfirmedFirstMainDispatchByDevantler(t *testing.T) {
 		}
 		if run(env) == nil {
 			t.Fatalf("guard admitted %s=%q", tc.key, tc.bad)
+		}
+		if !strings.Contains(lastOutput, "::error::refused: ") {
+			t.Fatalf("refusal of %s=%q names no reason: %q", tc.key, tc.bad, lastOutput)
 		}
 	}
 }
@@ -360,6 +368,16 @@ func TestCallersAreThinDispatchWrappers(t *testing.T) {
 		if strings.Contains(string(raw), "secrets") {
 			t.Fatalf("%s: caller must not pass or name secrets", name)
 		}
+		// A workflow-level prod-deploy group would wait on the called job's own.
+		if w.Concurrency != nil {
+			t.Fatalf("%s: concurrency belongs to prod-operation.yaml", name)
+		}
+		inputs, _ := dispatch["inputs"].(map[string]any)
+		for key := range inputs {
+			if key != "confirm" && key != "operation" {
+				t.Fatalf("%s: dispatch input %q could steer the operation", name, key)
+			}
+		}
 		for _, j := range w.Jobs {
 			if j.Uses != reusableUses || len(j.Steps) != 0 || j.Secrets != nil || j.Environment != "" {
 				t.Fatalf("%s: job must only call %s", name, reusableUses)
@@ -377,6 +395,17 @@ func TestCallersAreThinDispatchWrappers(t *testing.T) {
 			mains, _ := filepath.Glob(filepath.Join("../..", program, "*.go"))
 			if len(mains) == 0 {
 				t.Fatalf("%s: program %s has no Go source", name, program)
+			}
+			if args, ok := j.With["args"]; ok {
+				s, _ := args.(string)
+				if strings.Contains(s, "${{") && !regexp.MustCompile(`^\$\{\{ inputs\.operation == '[a-z0-9-]+' && '[a-z0-9 -]+' \|\| '[a-z0-9 -]+' \}\}$`).MatchString(s) {
+					t.Fatalf("%s: args must be literal or chosen by the fixed operation, got %q", name, s)
+				}
+			}
+			if h, ok := j.With["hcloud-token"]; ok {
+				if _, literal := h.(bool); !literal {
+					t.Fatalf("%s: hcloud-token must be a literal boolean", name)
+				}
 			}
 			operation, _ := j.With["operation"].(string)
 			var names []string

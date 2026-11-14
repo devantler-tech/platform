@@ -15,7 +15,8 @@ name: Production Operation
 # - the typed confirmation equals the operation name.
 # The prod environment additionally admits only protected branches, and the
 # reviewed revision must still be the tip of main before the credential is
-# restored.
+# restored. An operation queued behind a deploy of a newer main therefore
+# stops STALE without touching production: dispatch it again.
 "on":
   workflow_call:
     inputs:
@@ -74,17 +75,25 @@ jobs:
           name_pattern='^[a-z0-9]+(-[a-z0-9]+)*$'
           program_pattern='^scripts/[a-z0-9]+(-[a-z0-9]+)*$'
           args_pattern='^[a-z0-9 -]*$'
-          [[ "${GITHUB_REPOSITORY}" == devantler-tech/platform &&
-             "${GITHUB_EVENT_NAME}" == workflow_dispatch &&
-             "${GITHUB_REF}" == refs/heads/main &&
-             "${GITHUB_RUN_ATTEMPT}" == 1 &&
-             "${GITHUB_ACTOR}" == devantler &&
-             "${GITHUB_TRIGGERING_ACTOR}" == devantler &&
-             "${RUNNER_ENVIRONMENT}" == github-hosted &&
-             "${PROD_OPERATION}" =~ ${name_pattern} &&
-             "${PROD_OPERATION_CONFIRM}" == "${PROD_OPERATION}" &&
-             "${PROD_OPERATION_PROGRAM}" =~ ${program_pattern} &&
-             "${PROD_OPERATION_ARGS}" =~ ${args_pattern} ]]
+          caller_pattern='^devantler-tech/platform/\.github/workflows/[a-z0-9]+(-[a-z0-9]+)*\.ya?ml@refs/heads/main$'
+          refused=0
+          # Every condition is checked and named, so a refusal says why.
+          refuse() {
+            printf '::error::refused: %s\n' "$1"
+            refused=1
+          }
+          [[ "${GITHUB_REPOSITORY}" == devantler-tech/platform ]] || refuse 'not this repository'
+          [[ "${GITHUB_EVENT_NAME}" == workflow_dispatch ]] || refuse 'not a workflow_dispatch'
+          [[ "${GITHUB_REF}" == refs/heads/main ]] || refuse 'not dispatched from main'
+          [[ "${GITHUB_WORKFLOW_REF:-}" =~ ${caller_pattern} ]] || refuse 'caller is not a workflow on main in this repository'
+          [[ "${GITHUB_RUN_ATTEMPT}" == 1 ]] || refuse 'a re-run never reuses an earlier approval'
+          [[ "${GITHUB_ACTOR}" == devantler && "${GITHUB_TRIGGERING_ACTOR}" == devantler ]] || refuse 'not dispatched by devantler'
+          [[ "${RUNNER_ENVIRONMENT}" == github-hosted ]] || refuse 'not a GitHub-hosted runner'
+          [[ "${PROD_OPERATION}" =~ ${name_pattern} ]] || refuse 'operation is not a plain name'
+          [[ "${PROD_OPERATION_CONFIRM}" == "${PROD_OPERATION}" ]] || refuse 'the typed confirmation does not equal the operation name'
+          [[ "${PROD_OPERATION_PROGRAM}" =~ ${program_pattern} ]] || refuse 'program is not a scripts/ directory'
+          [[ "${PROD_OPERATION_ARGS}" =~ ${args_pattern} ]] || refuse 'arguments are not plain words'
+          exit "${refused}"
 
       - name: Checkout the reviewed dispatch revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
