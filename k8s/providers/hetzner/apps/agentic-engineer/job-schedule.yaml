@@ -157,6 +157,12 @@ spec:
                    plugin-definition-currency.sh, and run the plugin's bundled scripts,
                    such as count-unresolved-review-threads.sh, from its scripts/ folder
                    there. Tell every subagent you dispatch the same.
+                   This run is a single non-interactive turn. Once you end your turn,
+                   the run ends within minutes, and anything still running in the
+                   background is lost. So run every subagent in the foreground
+                   (`run_in_background: false`) and wait for its result, never end
+                   your turn to wait for a notification, and never end it before step
+                   4 is done.
                 4. Before you stop, however the run ended, refresh the lease with
                    `dav LOCK memory/ -H 'Timeout: Infinite' -H 'If: (<t>)'`, no body,
                    where `<t>` is your Lock-Token value. You still hold the lease only
