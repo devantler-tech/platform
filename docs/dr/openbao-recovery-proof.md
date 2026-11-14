@@ -148,7 +148,7 @@ server and refuse an altered storage passphrase, corrupt snapshot, wrong unseal
 key or wrong custody scope.
 
 Only the actual independent result
-`OPENBAO_BACKUP_RESTORE=PASS records=4 version=2.6.3` clears this key's recovery
+`OPENBAO_BACKUP_RESTORE=PASS records=4 version=2.7.2` clears this key's recovery
 prerequisite. A prepared key, a recent snapshot missing the key, a skipped native
 test or an offline fixture is insufficient. Encrypted-volume canary, data
 migration, restoration and activation remain separate reviewed operations; keep

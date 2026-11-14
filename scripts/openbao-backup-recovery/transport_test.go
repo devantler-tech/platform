@@ -95,7 +95,7 @@ run)
     if [[ $1 == --label ]]; then printf '%s' "${2#*=}" > "$FIXTURE_DIR/nonce"; fi
     shift
   done
-  if [[ $FIXTURE_CASE == valid-result-unreadable-cleanup ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3'; exit 0; fi
+  if [[ $FIXTURE_CASE == valid-result-unreadable-cleanup ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2'; exit 0; fi
   if [[ $FIXTURE_CASE == private-output ]]; then printf '%s\n' 'PRIVATE_SYNTHETIC_PAYLOAD'; exit 0; fi
   printf '%s\n' 'PRIVATE_SYNTHETIC_ERROR' >&2
   exit 1;;

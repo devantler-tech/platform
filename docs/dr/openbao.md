@@ -228,7 +228,7 @@ storage, credentials and backup objects are never changed by this verification.
 Private inputs and diagnostic logs stay in temporary RAM storage; the workflow
 publishes only a fixed verdict and removes its owned runtime resources.
 
-Only `OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3` establishes this
+Only `OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2` establishes this
 three-record proof. A missing, stale, truncated, changed or mismatched backup
 refuses success. This proof must be expanded before retiring additional records;
 it does not by itself authorize credential migration or legacy-copy removal.

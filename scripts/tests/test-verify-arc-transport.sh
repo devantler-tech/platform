@@ -90,12 +90,12 @@ target=${!#}
 if [[ "$target" == http://127.0.0.1:38200/* ]]; then
   [[ "$*" == *"--noproxy *"* && "$*" == *"--proto =http"* ]] || exit 99
   if [[ "${PROOF_CASE:-}" == http_health_error ]]; then printf 'private-error-sentinel\n' >&2; exit 43; fi
-  if [[ "${PROOF_CASE:-}" == split_health ]]; then printf '{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"other"}'; exit; fi
+  if [[ "${PROOF_CASE:-}" == split_health ]]; then printf '{"initialized":true,"sealed":false,"version":"2.7.2","cluster_id":"other"}'; exit; fi
 elif [[ "$target" == https://* ]]; then
   if [[ "${PROOF_CASE:-}" == tls_error ]]; then printf 'private-error-sentinel\n' >&2; exit 60; fi
 else exit 99; fi
-if [[ "${PROOF_CASE:-}" == sealed ]]; then printf '{"initialized":true,"sealed":true,"version":"2.6.3","cluster_id":"fixture"}'; exit; fi
-printf '{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"fixture"}'
+if [[ "${PROOF_CASE:-}" == sealed ]]; then printf '{"initialized":true,"sealed":true,"version":"2.7.2","cluster_id":"fixture"}'; exit; fi
+printf '{"initialized":true,"sealed":false,"version":"2.7.2","cluster_id":"fixture"}'
 MOCK
 cat >"$scratch/bin/sed" <<'MOCK'
 #!/usr/bin/env bash

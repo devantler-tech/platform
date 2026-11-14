@@ -210,7 +210,7 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 				case "-email-retained-inputs":
 					count = 1
 				}
-				if err != nil || strings.TrimSpace(out) != fmt.Sprintf("OPENBAO_BACKUP_RESTORE=PASS records=%d version=2.6.3", count) {
+				if err != nil || strings.TrimSpace(out) != fmt.Sprintf("OPENBAO_BACKUP_RESTORE=PASS records=%d version=2.7.2", count) {
 					t.Fatalf("actual snapshot restoration not proven: %v %s", err, out)
 				}
 			} else {
