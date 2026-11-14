@@ -28,8 +28,8 @@ import (
 )
 
 const tenantDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-const tenantPublisher = "467f07582436a26b62cf4aa756423512f85ba0c0"
-const legacyTenantSubject = `^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(467f07582436a26b62cf4aa756423512f85ba0c0|af042c540ce8db4d64add98c34b5c57691e0e812))$`
+const tenantPublisher = "a76d5df9371cf712a8f60307fde060825a34cf35"
+const legacyTenantSubject = `^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35))$`
 
 // TestCommittedTenant exercises the actual graph compiler and generated API.
 // Desired objects are expression evidence, not Flux or signature verification.
@@ -202,7 +202,7 @@ func TestCommittedTenant(t *testing.T) {
 			if !reflect.DeepEqual(ref, map[string]interface{}{"digest": tenantDigest}) {
 				t.Fatalf("pinned source must have exactly the selected digest: %v", ref)
 			}
-			assertTenantIdentity(t, source, `^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@467f07582436a26b62cf4aa756423512f85ba0c0$`)
+			assertTenantIdentity(t, source, `^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@a76d5df9371cf712a8f60307fde060825a34cf35$`)
 		})
 		t.Run(fmt.Sprintf("all-opt-ins-sops-%t", sops), func(t *testing.T) {
 			input := instance("opt-in-fixture", map[string]interface{}{
