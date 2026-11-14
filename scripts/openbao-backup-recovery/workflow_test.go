@@ -76,7 +76,7 @@ func TestProductionRecoveryRefusesBranchBeforeCheckoutOrCredentials(t *testing.T
 	if len(run.Env) != 2 || run.Env["KUBE_CONFIG"] != "${{ secrets.KUBE_CONFIG }}" || run.Env["HCLOUD_TOKEN"] != "${{ secrets.HCLOUD_TOKEN }}" || strings.Contains(run.Run, "upload-artifact") {
 		t.Fatal("recovery reader credential boundary changed")
 	}
-	for _, required := range []string{"/dev/shm", "OPENBAO_RECOVERY_DIR", "service/openbao-active 38200:8200", "run-openbao-backup-sandbox.sh verify", "OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3"} {
+	for _, required := range []string{"/dev/shm", "OPENBAO_RECOVERY_DIR", "service/openbao-active 38200:8200", "run-openbao-backup-sandbox.sh verify", "OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2"} {
 		if !strings.Contains(run.Run, required) {
 			t.Fatal("missing private isolated recovery boundary")
 		}

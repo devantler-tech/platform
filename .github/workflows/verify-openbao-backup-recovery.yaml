@@ -142,5 +142,5 @@ jobs:
           fi
           stage=proof-format
           result=$(cat "$proof_dir/verification-result")
-          [[ "$result" == 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3' ]] || fail
+          [[ "$result" == 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2' ]] || fail
           printf '%s\n' "$result"

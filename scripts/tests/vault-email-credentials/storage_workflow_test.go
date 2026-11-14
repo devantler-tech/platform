@@ -91,7 +91,7 @@ set -eu
 [[ $FIXTURE_CASE != restore-failed ]] || exit 7
 if [[ $FIXTURE_CASE == restore-format ]]; then printf '%s\n' PRIVATE_SYNTHETIC_PAYLOAD; else
  touch "$FIXTURE_DIR/restored"
- printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3'
+ printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2'
 fi
 `,
 			}

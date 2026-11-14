@@ -100,7 +100,7 @@ image=$("$binary" image) || fail
 if ! docker pull "$image" >"$native_dir/pull.log" 2>&1; then fail; fi
 stage=isolated-restore
 if ! bash scripts/run-openbao-backup-sandbox.sh verify-email-retained-inputs "$proof_dir" "$binary" >"$native_dir/restore-result" 2>"$native_dir/restore.log"; then fail; fi
-[[ $(cat "$native_dir/restore-result") == 'OPENBAO_BACKUP_RESTORE=PASS records=1 version=2.6.3' ]] || fail
+[[ $(cat "$native_dir/restore-result") == 'OPENBAO_BACKUP_RESTORE=PASS records=1 version=2.7.2' ]] || fail
 stage=post-restore-source
 if ! ./scripts/verify-prod-recovery-source.sh "$GITHUB_SHA" >/dev/null 2>"$native_dir/source.log"; then fail; fi
 stage=post-restore-parity

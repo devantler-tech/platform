@@ -80,7 +80,7 @@ for name in root-token unseal-key expected.json snapshot.snap; do [[ -s $2/$name
 if [[ $FIXTURE_CASE == restore-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=unseal' >&2; exit 91; fi
 if [[ $FIXTURE_CASE == restore-runtime-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=runtime' >&2; exit 91; fi
 if [[ $FIXTURE_CASE == private-restore-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=PRIVATE_SYNTHETIC_PAYLOAD' >&2; exit 91; fi
-if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_PAYLOAD; else printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3'; fi
+if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_PAYLOAD; else printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2'; fi
 `,
 			}
 			for name, text := range files {
@@ -104,7 +104,7 @@ if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_P
 			if strings.Contains(string(out), "PRIVATE_SYNTHETIC") || strings.Contains(string(out), "SYNTHETIC_KUBECONFIG") || strings.Contains(string(out), "SYNTHETIC_PROVIDER") {
 				t.Fatal("workflow exposed private fixture content")
 			}
-			if tc == "matching" && strings.TrimSpace(string(out)) != "OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3" {
+			if tc == "matching" && strings.TrimSpace(string(out)) != "OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2" {
 				t.Fatal("workflow accepted an unverified result")
 			}
 			if tc == "collection-stage" && !strings.Contains(string(out), "OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=snapshot-download") {
