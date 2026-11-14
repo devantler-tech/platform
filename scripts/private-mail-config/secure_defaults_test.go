@@ -97,15 +97,6 @@ func TestVerificationValuesAreBareConstants(t *testing.T) {
 	}
 }
 
-// TestSecurityEventsAreLoggedAtInfo raises the failed sign-in event to the
-// console tracer's level; the server emits it at debug.
-func TestSecurityEventsAreLoggedAtInfo(t *testing.T) {
-	op := planObjects(t)["EventTracingLevel"]
-	if op.Type != "upsert" || len(op.Value) != 1 || !reflect.DeepEqual(op.Value["auth-failed"], map[string]any{"event": "auth.failed", "level": "info"}) {
-		t.Fatal("failed sign-ins are not raised to the console level")
-	}
-}
-
 // TestInboundThrottlesAreDeclared declares the two server-seeded throttles with
 // the submission limit, because the server seeds only an empty collection.
 func TestInboundThrottlesAreDeclared(t *testing.T) {
@@ -122,74 +113,43 @@ func TestInboundThrottlesAreDeclared(t *testing.T) {
 	}
 }
 
-// TestCollectionReadbackMatchesByIdentity finds throttles by description and
-// tracing levels by event, and refuses a widened throttle key.
-func TestCollectionReadbackMatchesByIdentity(t *testing.T) {
-	ops := planObjects(t)
-	throttles := []any{}
-	for id, raw := range ops["MtaInboundThrottle"].Value {
-		item := map[string]any{"id": id + "-id"}
-		for k, v := range raw.(map[string]any) {
-			item[k] = v
-		}
-		throttles = append(throttles, item)
-	}
-	level := map[string]any{"id": "level-id", "event": "auth.failed", "level": "info"}
+// TestThrottleReadbackMatchesByDescription finds each throttle by its
+// description and refuses a widened throttle key.
+func TestThrottleReadbackMatchesByDescription(t *testing.T) {
+	op := planObjects(t)["MtaInboundThrottle"]
 	for _, tc := range []struct {
-		name   string
-		mutate func(throttles []any, level map[string]any)
-		valid  bool
+		name  string
+		key   map[string]any
+		valid bool
 	}{
-		{"stored as declared", func([]any, map[string]any) {}, true},
-		{"widened throttle key", func(throttles []any, _ map[string]any) {
-			for _, raw := range throttles {
-				item := raw.(map[string]any)
-				if item["description"] == "Submission per account" {
-					item["key"] = map[string]any{"authenticatedAs": true, "remoteIp": true}
-				}
-			}
-		}, false},
-		{"lowered event level", func(_ []any, level map[string]any) { level["level"] = "debug" }, false},
+		{"stored as declared", map[string]any{"authenticatedAs": true}, true},
+		{"widened throttle key", map[string]any{"authenticatedAs": true, "remoteIp": true}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stored := make([]any, len(throttles))
-			for i, raw := range throttles {
-				item := map[string]any{}
+			stored := []any{}
+			for ref, raw := range op.Value {
+				item := map[string]any{"id": ref + "-id"}
 				for k, v := range raw.(map[string]any) {
 					item[k] = v
 				}
-				stored[i] = item
+				if item["description"] == "Submission per account" {
+					item["key"] = tc.key
+				}
+				stored = append(stored, item)
 			}
-			storedLevel := map[string]any{}
-			for k, v := range level {
-				storedLevel[k] = v
-			}
-			tc.mutate(stored, storedLevel)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var call struct {
 					Methods [][]json.RawMessage `json:"methodCalls"`
 				}
-				if json.NewDecoder(r.Body).Decode(&call) != nil || len(call.Methods) != 1 {
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
 				var method, tag string
-				_ = json.Unmarshal(call.Methods[0][0], &method)
-				_ = json.Unmarshal(call.Methods[0][2], &tag)
-				var list []any
-				switch {
-				case strings.HasPrefix(method, "x:MtaInboundThrottle/"):
-					list = stored
-				case strings.HasPrefix(method, "x:EventTracingLevel/"):
-					list = []any{storedLevel}
-				default:
+				if json.NewDecoder(r.Body).Decode(&call) != nil || len(call.Methods) != 1 || json.Unmarshal(call.Methods[0][0], &method) != nil || json.Unmarshal(call.Methods[0][2], &tag) != nil || !strings.HasPrefix(method, "x:MtaInboundThrottle/") {
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
-				var result any = map[string]any{"list": list, "notFound": []any{}}
+				var result any = map[string]any{"list": stored, "notFound": []any{}}
 				if strings.HasSuffix(method, "/query") {
 					ids := []any{}
-					for _, item := range list {
+					for _, item := range stored {
 						ids = append(ids, item.(map[string]any)["id"])
 					}
 					result = map[string]any{"ids": ids, "total": len(ids), "position": 0}
@@ -197,17 +157,13 @@ func TestCollectionReadbackMatchesByIdentity(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"methodResponses": []any{[]any{method, result, tag}}})
 			}))
 			defer server.Close()
-			var plan []byte
-			for _, object := range []string{"MtaInboundThrottle", "EventTracingLevel"} {
-				raw, err := json.Marshal(ops[object])
-				if err != nil {
-					t.Fatal(err)
-				}
-				plan = append(append(plan, raw...), '\n')
+			raw, err := json.Marshal(op)
+			if err != nil {
+				t.Fatal(err)
 			}
 			m := management{client: server.Client(), url: server.URL, password: "synthetic-test-only"}
-			if (m.verify(context.Background(), plan) == nil) != tc.valid {
-				t.Fatal("collection readback accepted drift or rejected the declared state")
+			if (m.verify(context.Background(), append(raw, '\n')) == nil) != tc.valid {
+				t.Fatal("throttle readback accepted a widened key or rejected the declared state")
 			}
 		})
 	}

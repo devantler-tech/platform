@@ -280,9 +280,6 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 					if op.Object == "Application" || op.Object == "Role" || op.Object == "MtaInboundThrottle" {
 						identity = fields["description"] != nil && reflect.DeepEqual(fields["description"], actual["description"])
 					}
-					if op.Object == "EventTracingLevel" {
-						identity = fields["event"] != nil && reflect.DeepEqual(fields["event"], actual["event"])
-					}
 					if identity {
 						if match != nil {
 							return errConfiguration

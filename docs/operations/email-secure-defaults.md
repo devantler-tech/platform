@@ -16,7 +16,7 @@ was checked against the Stalwart v0.16.27 source.
 | SMTP | VRFY and EXPN | off | Address enumeration. |
 | Passwords | Minimum length and strength | 20 characters, strength four | Generated passwords are 40 or more random characters; this binds later resets. |
 | Bans | Period for authentication, abuse, loiter and scan bans | one day | Upstream bans never expire. Web clients reach the server with their own address (#5448). |
-| Logging | Failed sign-ins, too many attempts, bans and blocked addresses | logged at info | Successful sign-ins and mail activity stay out of the console log. |
+| Logging | Bans and blocked addresses | logged | They name only an address. Sign-in and mail activity stay out of the console log (#5416). |
 | Spam | Pyzor and ASN lookups | off | Egress allows only DNS and the relay, so they only time out. Pyzor would also send message digests to a third party. |
 | Spam | Classifier training samples | kept 30 days | Samples are private message data. |
 | Reports | DMARC, DKIM and SPF failure reports | off | They carry message content to whoever a sender's domain names. Aggregate DMARC and TLS reports stay on. |

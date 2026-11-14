@@ -175,14 +175,12 @@ func render(v inputs) ([]byte, error) {
 				"network.listen-start": true, "network.listen-stop": true, "network.listen-error": true, "network.bind-error": true,
 				"resource.error": true, "resource.not-found": true, "resource.bad-parameters": true, "resource.application-unpacked": true,
 				"store.rocksdb-error": true,
-				// Failed sign-ins and bans only; successful sign-ins and mail stay out.
-				"auth.failed": true, "auth.too-many-attempts": true,
+				// Bans and blocked addresses name only an address. Sign-in and mail
+				// activity stay out of the console log.
 				"security.authentication-ban": true, "security.abuse-ban": true, "security.scan-ban": true,
 				"security.loiter-ban": true, "security.ip-blocked": true,
 			},
 		}}),
-		// The server logs a failed sign-in at debug level; the console tracer is info.
-		upsert("EventTracingLevel", []string{"event"}, map[string]any{"auth-failed": map[string]any{"event": "auth.failed", "level": "info"}}),
 		// Declare the existing local authentication state explicitly. A main
 		// recovery must clear a later external directory rather than retain it.
 		// Generated passwords are 40 or more random characters; this binds later resets.
