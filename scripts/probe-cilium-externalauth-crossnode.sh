@@ -536,12 +536,15 @@ spec:
             curl -sk -o /dev/null --max-time "\$TIMEOUT" -H "Host: \$1" -w '%{http_code} %{size_download} %{redirect_url}' "\$GATEWAY_URL" 2>/dev/null
           }
           # The control route's whoami backend echoes the connection's source address, which is the
-          # ingress IP of the node whose Envoy handled the request. Prints "<code> <size> <ip-or->".
+          # ingress IP of the node whose Envoy handled the request. Prints "<code> <size> <ip-or->"
+          # and returns curl's exit status, which warm-up reports when it fails.
           ask_control() {
             out=\$(curl -sk --max-time "\$TIMEOUT" -H "Host: \$1" -w '\\nPROBE-STATUS %{http_code} %{size_download}' "\$GATEWAY_URL" 2>/dev/null)
+            rc=\$?
             status=\$(printf '%s\\n' "\$out" | sed -n 's/^PROBE-STATUS //p' | tail -n 1)
             ip=\$(printf '%s\\n' "\$out" | sed -n 's/^RemoteAddr: *\\[\\{0,1\\}\\([0-9A-Fa-f.:]*\\)\\]\\{0,1\\}:[0-9]*\$/\\1/p' | head -n 1)
             printf '%s %s' "\${status:-000 0}" "\${ip:--}"
+            return "\$rc"
           }
           # Warm-up: this node's Envoy must serve the control route (200). The control route was
           # created only after the ExternalAuth route was accepted, and Envoy applies the gateway's
@@ -549,12 +552,18 @@ spec:
           # As a second check the ExternalAuth route must not answer like an unprogrammed hostname
           # (404, or a 301 from a stale redirect). A timeout there is NOT unprogrammed — it is what
           # a black-holed check looks like — so it ends the warm-up and is measured below.
+          # A failed warm-up prints the last answer from each route as <http code>/<curl exit>, so
+          # an INCONCLUSIVE run says whether the client hit DNS, TLS, a timeout or an HTTP status.
           warm=0
           n=0
           while [ "\$n" -lt "\$WARMUP_ATTEMPTS" ]; do
             n=\$((n + 1))
-            c=\$(ask_control "\$CONTROL_HOST" | cut -d' ' -f1)
-            a=\$(ask "\$AUTHZ_HOST" | cut -d' ' -f1)
+            c_out=\$(ask_control "\$CONTROL_HOST")
+            c_rc=\$?
+            c=\${c_out%% *}
+            a_out=\$(ask "\$AUTHZ_HOST")
+            a_rc=\$?
+            a=\${a_out%% *}
             if [ "\$c" = 200 ] && [ -n "\$a" ] && [ "\$a" != 404 ] && [ "\$a" != 301 ]; then
               warm=1
               break
@@ -562,7 +571,7 @@ spec:
             sleep 1
           done
           if [ "\$warm" -ne 1 ]; then
-            printf 'PROBE-WARMUP failed\\n'
+            printf 'PROBE-WARMUP failed control=%s/%s authz=%s/%s\\n' "\${c:-none}" "\$c_rc" "\${a:-none}" "\$a_rc"
             exit 0
           fi
           printf 'PROBE-WARMUP ok\\n'
@@ -773,7 +782,7 @@ done
 classify() {
   local log="$1" want_ip="$2"
   awk -v want="${requests}" -v want_ip="${want_ip}" '
-    $1 == "PROBE-WARMUP" { warm = $2 }
+    $1 == "PROBE-WARMUP" { warm = $2; warm_detail = $3 " " $4 }
     $1 == "PROBE-DONE" { done = $2 }
     $1 == "PROBE" && $2 == "control" {
       nc++
@@ -794,7 +803,7 @@ classify() {
       }
     }
     END {
-      if (warm != "ok") { print "ERR warmup"; exit }
+      if (warm != "ok") { print "ERR warmup " warm_detail; exit }
       if (done != want || nc != want || na != want || ng != 1) { print "ERR incomplete"; exit }
       printf "%d %d %d %d %d %s %s %d\n", ok, bad, delivered, lost, other, guard, (codes == "" ? "-" : codes), onnode
     }
@@ -813,7 +822,7 @@ for role in cross same; do
   log="$(kc -n "${probe_namespace}" logs "${name}")" || inconclusive 'could not read a probe pod log'
   counts="$(classify "${log}" "${role_ingress}")" || inconclusive 'a probe pod log could not be classified'
   case "${counts}" in
-    'ERR warmup') inconclusive 'a probe pod could not reach both routes during warm-up, so the path or policy is broken' ;;
+    'ERR warmup'*) inconclusive "the ${role} probe pod could not reach both routes during warm-up (last answers, as http code/curl exit: ${counts#ERR warmup }), so the path or policy is broken" ;;
     'ERR incomplete') inconclusive 'a probe pod log did not contain every expected answer' ;;
     '') inconclusive 'a probe pod log could not be classified' ;;
   esac

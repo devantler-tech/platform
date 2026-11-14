@@ -519,6 +519,13 @@ require_cleaned_up
 pass 'a failed warm-up is INCONCLUSIVE'
 
 reset_fixtures
+printf 'PROBE-WARMUP failed control=000/35 authz=000/28\n' >"${fixtures}/log-cross.txt"
+run_default
+require_inconclusive 'a failed warm-up must say what each route last answered' 'the cross probe pod could not reach both routes during warm-up (last answers, as http code/curl exit: control=000/35 authz=000/28)'
+require_cleaned_up
+pass 'a failed warm-up names its role and each route''s last http code and curl exit'
+
+reset_fixtures
 awk 'BEGIN{d=0} /^PROBE authz / && !d {d=1; next} {print}' "${fixtures}/log-cross.txt" >"${fixtures}/log-cross.tmp"
 mv "${fixtures}/log-cross.tmp" "${fixtures}/log-cross.txt"
 [[ "$(grep -c '^PROBE authz ' "${fixtures}/log-cross.txt")" -eq 9 ]] || fail 'fixture did not drop exactly one answer'
@@ -898,6 +905,7 @@ require_text 'PROBE-WARMUP ok' 'a COMPLETE black-hole must still warm up, so it 
 [[ "$(grep -c '^PROBE authz 000 0 $' <<<"${output}")" -eq 3 ]] || fail 'every black-holed request must print 000'
 run_loop unrouted
 require_text 'PROBE-WARMUP failed' 'an unprogrammed ExternalAuth route (404) must fail the warm-up'
+require_text 'PROBE-WARMUP failed control=200/0 authz=404/0' 'a failed warm-up must report each route''s last http code and curl exit'
 refute_text 'PROBE authz' 'nothing may be counted before the routes are programmed'
 pass 'the rendered in-pod loop runs as a pod would: delivered, complete black-hole, unprogrammed route'
 
