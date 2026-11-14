@@ -37,3 +37,15 @@ results:
       - default/floating-ephemeral
     kind: Pod
     result: fail
+  # Autogen: the policy matches only `pods`, so Kyverno generates the same
+  # check for controllers; a floating Deployment fails before any Pod exists.
+  - policy: disallow-floating-image-tags
+    resources:
+      - default/pinned-deployment
+    kind: Deployment
+    result: pass
+  - policy: disallow-floating-image-tags
+    resources:
+      - default/floating-deployment
+    kind: Deployment
+    result: fail

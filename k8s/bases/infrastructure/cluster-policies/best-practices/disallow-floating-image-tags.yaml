@@ -34,14 +34,17 @@ spec:
   evaluation:
     background:
       enabled: true
-  # UPDATE and the ephemeralcontainers subresource cover in-place image
-  # changes and `kubectl debug` containers, not only Pod creation.
+  # UPDATE covers in-place image changes. Only `pods` is matched so Kyverno
+  # keeps generating the same check for Deployments and other controllers
+  # (matching pods/ephemeralcontainers here would turn that autogen off).
+  # Containers added by `kubectl debug` are reported by the background scan of
+  # the stored Pod; give that subresource its own policy before any Deny.
   matchConstraints:
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
-        resources: ["pods", "pods/ephemeralcontainers"]
+        resources: ["pods"]
   variables:
     - name: images
       expression: >-

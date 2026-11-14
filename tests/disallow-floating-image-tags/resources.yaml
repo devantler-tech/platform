@@ -215,3 +215,36 @@ spec:
   containers:
     - name: app
       image: repo:1.2:latest
+---
+# Autogen: the same check runs on the Pod template of a controller.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: floating-deployment
+  namespace: default
+spec:
+  selector:
+    matchLabels: {app: floating}
+  template:
+    metadata:
+      labels: {app: floating}
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/vendor/approver:main
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pinned-deployment
+  namespace: default
+spec:
+  selector:
+    matchLabels: {app: pinned}
+  template:
+    metadata:
+      labels: {app: pinned}
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27.0
