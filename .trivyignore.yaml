@@ -773,16 +773,19 @@ misconfigurations:
       The fragments name only the image repository; the kustomization's images transformer and
       replacement pin every rendered container to the signed bootstrap image digest.
 
-  # KSV-0118 "default security context" on the add-client-proxy fragment. The fragment adds one
-  # container and carries that container's full securityContext; the pod securityContext
-  # (runAsNonRoot, 2000:2000, fsGroup and RuntimeDefault seccomp) comes from the
-  # serve-after-initialization pod spec this overlay builds on.
+  # KSV-0118 "default security context" on the add-client-proxy and serve-from-encrypted-storage
+  # fragments. The first adds one container and carries that container's full securityContext;
+  # the second changes only the volumes. The pod securityContext (runAsNonRoot, 2000:2000,
+  # fsGroup and RuntimeDefault seccomp) comes from the serve-after-initialization pod spec both
+  # overlays build on.
   - id: KSV-0118
     paths:
       - k8s/bases/apps/private-mail-proxy-identity/patches/add-client-proxy.yaml
+      - k8s/providers/hetzner/apps/private-mail/patches/serve-from-encrypted-storage.yaml
     statement: >-
-      This patch adds a hardened container to a StatefulSet whose pod securityContext is set by
-      serve-after-initialization; the rendered pod does not use the default security context.
+      These patches add a hardened container or change volumes on a StatefulSet whose pod
+      securityContext is set by serve-after-initialization; the rendered pod does not use the
+      default security context.
 
   # KSV-0036 reads automountServiceAccountToken from the WORKLOAD's own spec — a Deployment, Job or
   # CronJob spec, which has no such field — and otherwise fires on any container that mounts the

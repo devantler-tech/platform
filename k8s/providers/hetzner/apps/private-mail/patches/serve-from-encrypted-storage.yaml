@@ -6,6 +6,11 @@ kind: StatefulSet
 metadata:
   name: private-mail
   namespace: private-mail
+  # Numbered after the base and bundle dispositions so the merged object keeps every reason.
+  annotations:
+    checkov.io/skip14: "CKV_K8S_29=this fragment only changes the volumes; the pod securityContext comes from serve-after-initialization, which this overlay builds on"
+    checkov.io/skip15: "CKV_K8S_31=this fragment only changes the volumes; the pod's RuntimeDefault seccomp profile comes from serve-after-initialization"
+    checkov.io/skip16: "CKV_K8S_40=this fragment adds no container; every container runs at the pod's UID 2000, the stalwart identity the digest-pinned image defines"
 spec:
   template:
     spec:
