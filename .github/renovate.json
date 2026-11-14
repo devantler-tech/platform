@@ -337,11 +337,12 @@
       "automerge": false
     },
     {
-      "description": "provider-aws-iam depends on provider-family-aws, which ships the ProviderConfig CRD every family member uses, and the two must be pinned to the same release (see provider-aws-iam.yaml), so they move in one PR. Grouping does not force equal versions; scripts/tests/test-crossplane-aws-family-version-parity.sh fails a PR that pins them apart.",
+      "description": "provider-aws-iam and provider-aws-sesv2 depend on provider-family-aws, which ships the ProviderConfig CRD every family member uses, and all of them must be pinned to the same release (see provider-aws-iam.yaml), so they move in one PR. Grouping does not force equal versions; scripts/tests/test-crossplane-aws-family-version-parity.sh fails a PR that pins them apart.",
       "matchManagers": ["crossplane"],
       "matchPackageNames": [
         "xpkg.upbound.io/upbound/provider-family-aws",
-        "xpkg.upbound.io/upbound/provider-aws-iam"
+        "xpkg.upbound.io/upbound/provider-aws-iam",
+        "xpkg.upbound.io/upbound/provider-aws-sesv2"
       ],
       "groupName": "crossplane aws providers"
     },

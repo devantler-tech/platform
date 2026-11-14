@@ -57,7 +57,19 @@ are unchanged.
 6. Add Stalwart's relay route. Its network policy now denies all egress, and a
    deny overrides any allow, so this step replaces the deny with egress to DNS
    and to the SES SMTP endpoint on port 587 only. That ends the server's
-   preparation-only network contract.
+   preparation-only network contract. It takes two revisions, because
+   production runs only the signed bootstrap image published from `main`:
+   1. The bootstrap configures the route, from two private inputs, the SMTP
+      username and password. Every remote recipient goes to one relay route
+      with STARTTLS required and the certificate checked. The route and the
+      TLS strategy are named explicitly: the server falls back to direct MX
+      delivery for an unknown route name, and to optional TLS for an unknown
+      strategy. The password is stored as a value rather than a file path,
+      because the server silently drops authentication when a secret file is
+      missing or empty. Missing or malformed relay inputs stop the bootstrap,
+      so serving stays stopped.
+   2. Production adopts that image, supplies both inputs from the OpenBao key,
+      and replaces the egress deny.
 7. Send real mail to external mailboxes. Check that SPF, DKIM and DMARC pass,
    and that replies thread against the sender's Sent copy despite SES's
    Message-ID rewrite. If threading fails, report it before switching relay.

@@ -119,6 +119,7 @@ func loadInputs(dir string) (inputs, error) {
 		value *string
 	}{
 		{"administrator-password", &v.administratorPassword}, {"maintainer-password", &v.maintainerPassword}, {"agent-password", &v.agentPassword},
+		{"relay-username", &v.relayUsername}, {"relay-password", &v.relayPassword},
 	} {
 		b, err = privateInput(dir, target.name, 128)
 		if err != nil {

@@ -6,6 +6,13 @@
 # (aws#4 security hardening: roles the CI principal creates must carry a
 # boundary, so it cannot mint-and-pass an unbounded role). Broad
 # Policy/RolePolicyAttachment use stays deliberately off.
+#
+# Company Email's outbound relay (platform#5481) adds the SES v2 domain
+# identity and its MAIL FROM domain, plus the IAM user, policy attachment and
+# access key of its send-only SMTP identity. The tenant may write only the two
+# SES kinds; the IAM user kinds stay platform-owned, as the EKS CI role does.
+# They are activated here, a revision before anything uses them, so no later
+# apply waits on a CRD that does not exist yet.
 ---
 apiVersion: apiextensions.crossplane.io/v1alpha1
 kind: ManagedResourceActivationPolicy
@@ -16,3 +23,8 @@ spec:
     - openidconnectproviders.iam.aws.m.upbound.io
     - policies.iam.aws.m.upbound.io
     - roles.iam.aws.m.upbound.io
+    - users.iam.aws.m.upbound.io
+    - userpolicyattachments.iam.aws.m.upbound.io
+    - accesskeys.iam.aws.m.upbound.io
+    - emailidentities.sesv2.aws.m.upbound.io
+    - emailidentitymailfromattributes.sesv2.aws.m.upbound.io

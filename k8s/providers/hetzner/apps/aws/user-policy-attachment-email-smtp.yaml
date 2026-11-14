@@ -1,0 +1,22 @@
+# Attaches the send-only policy to company Email's SMTP identity.
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: UserPolicyAttachment
+metadata:
+  name: email-smtp-send
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    userRef:
+      name: email-smtp
+    policyArnRef:
+      name: email-smtp-send
+  providerConfigRef:
+    kind: ProviderConfig
+    name: default

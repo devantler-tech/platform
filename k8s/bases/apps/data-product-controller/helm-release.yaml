@@ -23,8 +23,8 @@ spec:
   values:
     image:
       repository: ghcr.io/devantler-tech/khoist
-      tag: 9.0.5
-      digest: sha256:e485a0e82df734e6fb5ec8b8f3ca923748b82b9cab81be86a0c69e3e116cdfbf
+      tag: 9.0.12
+      digest: sha256:fb97d7bef59c9898373f65acb90a001313806c1112bef295b464c3d161563056
       pullPolicy: IfNotPresent
     engineProviders:
       enabled: false

@@ -17,7 +17,7 @@
 # The parameterized WebApp identities are additionally scanned after actual KRO resolution by
 # test-webapp-compiled-scan.sh: omitted defaults still report writable root and UID/GID <= 10000.
 # Disappearing low-ID rows below are not clearance for those compatibility defaults.
-1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	RGD-CONTENT	SHA256	f48b056756b6d49c9b3f741fd597b70ae7c195cadf1ba523a3fec63c1c336d8d
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	RGD-CONTENT	SHA256	2213ff0892ec1dd0de31d1c6e50e521f278cb4e14ea26147838c798efdc1dd6a
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0039	LOW	CAUSE-SHA256:a2265d1d299462f16ecc9cc286f8738f334c1445a15972a688edb5646313a834
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0040	LOW	CAUSE-SHA256:a2265d1d299462f16ecc9cc286f8738f334c1445a15972a688edb5646313a834
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ghcrAuth.yaml	KSV-0039	LOW	CAUSE-SHA256:e1fef7853bbf32b4c139e0408fcc76c7fc96caeb81acfc4c06b9fb6711394a9f
@@ -28,8 +28,8 @@
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomizationSops.yaml	KSV-0040	LOW	CAUSE-SHA256:f57025bd576270d935acc50c9f3187e678cd82bcba5c4fa06ef6359cc1054e6e
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/limitRange.yaml	KSV-0039	LOW	CAUSE-SHA256:b50be454e00e16ae8e1f91bf66112525d43b47f3b543ca3d92eb330bf58cd459
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/limitRange.yaml	KSV-0040	LOW	CAUSE-SHA256:b50be454e00e16ae8e1f91bf66112525d43b47f3b543ca3d92eb330bf58cd459
-1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0039	LOW	CAUSE-SHA256:d0291f81ea1b1d2fae4be089eb5a93be7cbdd85f4723de1cfd6310d625220a3d
-1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0040	LOW	CAUSE-SHA256:d0291f81ea1b1d2fae4be089eb5a93be7cbdd85f4723de1cfd6310d625220a3d
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0039	LOW	CAUSE-SHA256:e1ca37a077da2aeab727bd189634b33db51aba143aa8bd5eea9e13a38b08b534
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0040	LOW	CAUSE-SHA256:e1ca37a077da2aeab727bd189634b33db51aba143aa8bd5eea9e13a38b08b534
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/resourceQuota.yaml	KSV-0039	LOW	CAUSE-SHA256:6c734e7055af24d7df7253ea2132440b043ba4d16d969ea187f684ae1722b82c
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	RGD-CONTENT	SHA256	d72726a713827e5fb8091793ea3411f3bfb4dd5136488c11ba6e5ae9dd23a9a1
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0013	MEDIUM	CAUSE-SHA256:c801aedba500c27744aa5111215741ee7a4703a4968fb26c3e42a1fd33423767
@@ -42,4 +42,4 @@
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/service.yaml	KSV-0040	LOW	CAUSE-SHA256:79c2597bf128e3ca530288250548c211e5e43a66a10d3c88748c6db4ac565920
 1	k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml	INSTANCE-CONTENT	SHA256	7e65481a62deb24c89dca2e5f83969e308e7604e770d97edb15e86ecc948f22c
 1	k8s/providers/docker/apps/web-app-wedding-app.yaml	INSTANCE-CONTENT	SHA256	3d42027c7e549014cad1e717876a6eb72e0a6641f3bf181f7a0e1a70d94306d6
-1	k8s/providers/hetzner/apps/business-site/tenant.yaml	INSTANCE-CONTENT	SHA256	b9c7d9964a40b82db85da1784fbd8b0baf6f5e36f7de2c41f0a3c323e2c2fb46
+1	k8s/providers/hetzner/apps/business-site/tenant.yaml	INSTANCE-CONTENT	SHA256	45e49b40ac735f378aa448cec939641197ccf6af7bf3bf3ab3afb8d06c50f7f6

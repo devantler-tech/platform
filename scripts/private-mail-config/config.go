@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -26,12 +27,30 @@ type settings struct {
 type inputs struct {
 	settings
 	administratorPassword, maintainerPassword, agentPassword string
-	accountIDs                                               map[string]string
+	// The send-only SES SMTP login: an IAM access key ID and the SES SMTP
+	// password derived from its secret (docs/adr/email-outbound-relay.md).
+	relayUsername, relayPassword string
+	accountIDs                   map[string]string
 }
 
 var domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 var localPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,31}$`)
 var passwordPattern = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
+var relayUsernamePattern = regexp.MustCompile(`^AKIA[A-Z0-9]{16}$`)
+
+// validRelayPassword accepts only an SES SMTP password: version byte 4 and a
+// 32-byte signature, Base64 encoded. A raw IAM secret key, or a truncated or
+// wrapped value, would fail authentication only when mail is sent. The decoder
+// skips line breaks, so the exact encoded length is checked first.
+func validRelayPassword(password string) bool {
+	decoded, err := base64.StdEncoding.Strict().DecodeString(password)
+	return len(password) == 44 && err == nil && len(decoded) == 33 && decoded[0] == 0x04
+}
+
+// The outbound relay is fixed by the reviewed decision, not by private input.
+// SES derives the SMTP password per region, so the host and the credential's
+// region must change together.
+const relayHost = "email-smtp.eu-central-1.amazonaws.com"
 
 // render builds staged settings and account changes from validated private inputs.
 func render(v inputs) ([]byte, error) {
@@ -67,6 +86,9 @@ func render(v inputs) ([]byte, error) {
 			return nil, errConfiguration
 		}
 		seen[password] = true
+	}
+	if !relayUsernamePattern.MatchString(v.relayUsername) || !validRelayPassword(v.relayPassword) {
+		return nil, errConfiguration
 	}
 	// Expression values contain only the validated conservative address alphabet.
 	applicationDigest, err := pinnedApplicationDigestFor(v.RuntimeVersion)
@@ -204,6 +226,26 @@ func render(v inputs) ([]byte, error) {
 			"dkimVerify":  map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": "'relaxed'"}}, "else": "false"},
 			"dmarcVerify": map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": "'relaxed'"}}, "else": "false"},
 			"dkimStrict":  true,
+		}),
+		// Every remote delivery leaves through the SES relay on 587 with required,
+		// verified STARTTLS. Name both explicitly: the server falls back to direct
+		// MX delivery for an unknown route and to opportunistic TLS for an unknown
+		// TLS strategy, and its default TLS expression drops certificate checks
+		// after a TLS error. DANE and MTA-STS describe recipient domains, not this
+		// fixed next hop.
+		upsert("MtaTlsStrategy", []string{"name"}, map[string]any{"ses-tls": map[string]any{
+			"name": "ses-tls", "startTls": "require", "allowInvalidCerts": false, "dane": "disable", "mtaSts": "disable",
+		}}),
+		upsert("MtaRoute", []string{"name"}, map[string]any{"ses": map[string]any{
+			"@type": "Relay", "name": "ses", profile.relayHostField: relayHost, "port": 587, "protocol": "smtp",
+			"implicitTls": false, "allowInvalidCerts": false, "authUsername": v.relayUsername,
+			// A stored value, never a file path: the server silently drops AUTH
+			// when a secret file is missing or empty.
+			"authSecret": map[string]any{"@type": "Value", "secret": v.relayPassword},
+		}}),
+		update("MtaOutboundStrategy", map[string]any{
+			"route": map[string]any{"match": map[string]any{"0": map[string]any{"if": "is_local_domain(rcpt_domain)", "then": "'local'"}}, "else": "'ses'"},
+			"tls":   expression("'ses-tls'"),
 		}),
 		update("Imap", map[string]any{"allowPlainTextAuth": false}),
 	}...)
