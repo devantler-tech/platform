@@ -57,7 +57,6 @@ func TestSecureDefaultsAreDeclared(t *testing.T) {
 		"MtaExtensions":       {"vrfy": map[string]any{"match": map[string]any{}, "else": "false"}, "expn": map[string]any{"match": map[string]any{}, "else": "false"}},
 		"Security":            {"authBanPeriod": day, "abuseBanPeriod": day, "loiterBanPeriod": day, "scanBanPeriod": day},
 		"SpamPyzor":           {"enable": false},
-		"Asn":                 {"@type": "Disabled"},
 		"SpamClassifier":      {"holdSamplesFor": 30 * day},
 		"DmarcReportSettings": {"failureSendFrequency": map[string]any{"match": map[string]any{}, "else": "false"}},
 		"DkimReportSettings":  {"sendFrequency": map[string]any{"match": map[string]any{}, "else": "false"}},
@@ -104,6 +103,20 @@ func TestAuthenticationUpdateKeepsOnlyDefaultValues(t *testing.T) {
 	op := planObjects(t)["Authentication"]
 	if op.Type != "update" || !reflect.DeepEqual(op.Value, map[string]any{"directoryId": nil}) {
 		t.Fatalf("Authentication update stores more than its default values: %v", op.Value)
+	}
+}
+
+// TestSeededObjectsAreDeclaredOnlyAsReviewed limits the plan to the reviewed
+// forms of the objects the server seeds at first normal start. The setup runs
+// before that start: a default-only update stores nothing and is overwritten by
+// the seed (Asn), and a stored row stops the seed (Authentication role defaults,
+// OidcProvider signing keys).
+func TestSeededObjectsAreDeclaredOnlyAsReviewed(t *testing.T) {
+	reviewed := map[string]bool{"Application": true, "Authentication": true, "MtaInboundThrottle": true, "MtaRoute": true, "MtaTlsStrategy": true, "NetworkListener": true, "SystemSettings": true, "Tracer": true}
+	for _, seeded := range []string{"Application", "Asn", "Authentication", "Jmap", "MetricsStore", "MtaConnectionStrategy", "MtaDeliverySchedule", "MtaInboundThrottle", "MtaQueueQuota", "MtaRoute", "MtaTlsStrategy", "MtaVirtualQueue", "NetworkListener", "OidcProvider", "Role", "SpamRule", "SystemSettings", "Tracer", "TracingStore"} {
+		if _, declared := planObjects(t)[seeded]; declared && !reviewed[seeded] {
+			t.Fatalf("%s is seeded at first normal start and is not a reviewed declaration", seeded)
+		}
 	}
 }
 

@@ -16,7 +16,7 @@ was checked against the Stalwart v0.16.27 source.
 | SMTP | VRFY and EXPN | off | Address enumeration. |
 | Bans | Period for authentication, abuse, loiter and scan bans | one day | Upstream bans never expire. Web clients reach the server with their own address (#5448). |
 | Logging | Bans and blocked addresses | logged | They name only an address. Sign-in and mail activity stay out of the console log (#5416). |
-| Spam | Pyzor and ASN lookups | off | Egress allows only DNS and the relay, so they only time out. Pyzor would also send message digests to a third party. |
+| Spam | Pyzor lookups | off | Egress allows only DNS and the relay, so they only time out, and they would also send message digests to a third party. |
 | Spam | Classifier training samples | kept 30 days | Samples are private message data. |
 | Reports | DMARC, DKIM and SPF failure reports | off | They carry message content to whoever a sender's domain names. Aggregate DMARC and TLS reports stay on. |
 | Retention | Trash and Junk expunge | 30 days | Pins the upstream default. |
@@ -45,6 +45,10 @@ unpinned upstream URL that egress blocks, and without rules every score is zero.
 Vendoring a pinned rules file restores scoring and the sender-domain blocklist.
 
 ## Not declared
+
+- **ASN lookups.** Disabled is the default value, so declaring it stores nothing,
+  and at first normal start the server seeds a download source that egress then
+  blocks. The drift check found this on the serving fixture.
 
 - **Password policy.** The upstream minimum is 8 characters at strength three.
   Generated passwords are 40 or more random characters, so the policy binds only

@@ -249,10 +249,9 @@ func render(v inputs) ([]byte, error) {
 		}),
 		// Bans expire after a day; upstream bans never expire.
 		update("Security", map[string]any{"authBanPeriod": day, "abuseBanPeriod": day, "loiterBanPeriod": day, "scanBanPeriod": day}),
-		// Without egress these lookups only time out; Pyzor would also send
+		// Without egress Pyzor lookups only time out, and they would also send
 		// message digests to a third party.
 		update("SpamPyzor", map[string]any{"enable": false}),
-		update("Asn", map[string]any{"@type": "Disabled"}),
 		update("SpamClassifier", map[string]any{"holdSamplesFor": 30 * day}),
 		// Failure reports carry message content to whoever a sender's domain names.
 		update("DmarcReportSettings", map[string]any{"failureSendFrequency": expression("false")}),
