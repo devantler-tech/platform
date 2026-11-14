@@ -4,37 +4,29 @@
 # The aws/aws service account reconciles the AWS tenant, which owns the EKS CI
 # cluster and its IAM role. Its Kubernetes reach is exactly one RoleBinding:
 # aws/aws-managed-resources -> Role aws-managed-resources. This policy refuses
-# every other RoleBinding or ClusterRoleBinding that grants to that service
-# account, or to its namespace's service-account group, and pins the approved
-# binding's role and subjects. It holds at runtime whatever path writes the
-# binding (Flux, KRO, a generating policy, a human), and the same policy runs
-# offline in CI against the rendered production overlays.
+# every other RoleBinding or ClusterRoleBinding that grants to that identity,
+# named as the service account (a missing or empty subject namespace means the
+# binding's own), as its username (User system:serviceaccount:aws:aws) or
+# through the system:serviceaccounts:aws group, and pins the approved binding's
+# role and its single subject.
 #
-# Widening the identity is a reviewed change to the approved list below.
-apiVersion: policies.kyverno.io/v1
-kind: ValidatingPolicy
+# It is a native ValidatingAdmissionPolicy, enforced by the API server itself:
+# unlike a Kyverno policy it has no namespace exclusions (kube-system and the
+# kyverno namespace included) and does not depend on Kyverno being up. The same
+# policy runs offline in CI with `kyverno apply` over the rendered production
+# layers (scripts/guard-ci-identity-bindings.sh).
+#
+# Not covered here, by design: the cluster-wide groups system:serviceaccounts
+# and system:authenticated (the API server's own default bindings use them),
+# and the rules of the approved Role, which the EKS CI role ledger pins
+# (scripts/validate-eks-ci-role-policy). Widening the identity is a reviewed
+# change to this file.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
 metadata:
   name: restrict-ci-identity-bindings
-  annotations:
-    policies.kyverno.io/title: Restrict CI Identity Bindings
-    policies.kyverno.io/category: Security, RBAC
-    policies.kyverno.io/severity: high
-    policies.kyverno.io/subject: RoleBinding, ClusterRoleBinding
-    policies.kyverno.io/minversion: 1.17.0
-    policies.kyverno.io/description: >-
-      Refuses any RoleBinding or ClusterRoleBinding that grants to the aws/aws
-      service account (the EKS CI cluster identity), named as that service
-      account, as its username (User system:serviceaccount:aws:aws) or through
-      the system:serviceaccounts:aws group, except the approved
-      aws/aws-managed-resources RoleBinding to the Role of the same name with
-      that service account as its only subject.
 spec:
   failurePolicy: Fail
-  validationActions:
-    - Deny
-  evaluation:
-    background:
-      enabled: true
   matchConstraints:
     resourceRules:
       - apiGroups: ["rbac.authorization.k8s.io"]
@@ -44,9 +36,6 @@ spec:
   variables:
     - name: bindingNamespace
       expression: "object.metadata.?namespace.orValue('')"
-    # A ServiceAccount subject without a namespace, or with an empty one, means
-    # the binding's own. The identity is also reachable as the User named by its
-    # authenticated username.
     - name: grantsCiIdentity
       expression: >-
         object.?subjects.orValue([]).exists(s,
@@ -72,4 +61,4 @@ spec:
         Only the aws/aws-managed-resources RoleBinding to the Role
         aws-managed-resources may grant to the EKS CI identity (aws/aws), and
         only to that service account. Widening it is a reviewed change to
-        restrict-ci-identity-bindings.yaml.
+        validating-admission-policy-ci-identity-bindings.yaml.

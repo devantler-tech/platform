@@ -66,6 +66,27 @@ YAML
 printf '  - zz-widen.yaml\n' >>"${work}/root/${aws_dir}/kustomization.yaml"
 expect_refused "a ClusterRoleBinding to aws/aws" policy
 
+# A RoleBinding in kube-system naming the identity by its username.
+fresh_copy
+cat >"${work}/root/${aws_dir}/zz-widen.yaml" <<'YAML'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-username-edit
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: edit
+subjects:
+  - kind: User
+    apiGroup: rbac.authorization.k8s.io
+    name: system:serviceaccount:aws:aws
+YAML
+printf '  - zz-widen.yaml\n' >>"${work}/root/${aws_dir}/kustomization.yaml"
+expect_refused "a kube-system RoleBinding to the identity's username" policy
+
 # The approved binding re-pointed at a stronger role.
 fresh_copy
 sed -i.bak 's/^  kind: Role$/  kind: ClusterRole/; s/^  name: aws-managed-resources$/  name: aws-managed-resources/' \
@@ -78,4 +99,4 @@ grep -v 'role-binding.yaml' "${work}/root/${aws_dir}/kustomization.yaml" >"${wor
 cp "${work}/k.yaml" "${work}/root/${aws_dir}/kustomization.yaml"
 expect_refused "a render without the approved binding" missing
 
-echo "ok — the CI identity guard passes production and refuses three widening shapes"
+echo "ok — the CI identity guard passes production and refuses four widening shapes"

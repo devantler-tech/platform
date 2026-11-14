@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
-# Run the restrict-ci-identity-bindings admission policy offline against every
+# Run the restrict-ci-identity-bindings native admission policy offline against every
 # rendered production layer (platform#6270), so a binding that would widen the
 # EKS CI identity fails CI before the admission controller refuses it.
 #
 # GUARD_REPO_ROOT (default: the current directory) holds the overlays; the
 # policy is always read from this repository's checkout.
+#
+# Only kustomize renders are checked here: bindings that HelmRelease charts,
+# KRO or generating policies create exist only in the cluster, where the API
+# server enforces the same policy at admission.
 
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="${GUARD_REPO_ROOT:-.}"
-policy="${script_dir}/../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-ci-identity-bindings.yaml"
+policy_dir="${script_dir}/../k8s/providers/hetzner/infrastructure/ci-identity"
+policy="${policy_dir}/validating-admission-policy-ci-identity-bindings.yaml"
+binding="${policy_dir}/validating-admission-policy-binding-ci-identity-bindings.yaml"
 overlays=(
   k8s/providers/hetzner/apps
   k8s/providers/hetzner/infrastructure
@@ -36,7 +42,12 @@ if [[ "${approved}" != aws-managed-resources ]]; then
   exit 1
 fi
 
-if ! kyverno apply "${policy}" --resource "${rendered}" >"${work}/apply.log" 2>&1; then
+# Only RBAC bindings are evaluated: the native policy matches nothing else, and
+# kyverno cannot map the custom kinds elsewhere in the render.
+bindings="${work}/bindings.yaml"
+yq 'select(.kind == "RoleBinding" or .kind == "ClusterRoleBinding")' "${rendered}" >"${bindings}"
+
+if ! kyverno apply "${policy}" "${binding}" --resource "${bindings}" >"${work}/apply.log" 2>&1; then
   cat "${work}/apply.log" >&2
   printf '::error::a rendered binding grants to the EKS CI identity outside the approved RoleBinding\n' >&2
   exit 1
