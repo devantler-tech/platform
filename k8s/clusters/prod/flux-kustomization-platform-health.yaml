@@ -6,14 +6,16 @@
 # Flux error event that the platform-reconciliation Alert delivers.
 #
 # It must never gate a deploy:
-# - Nothing may `dependsOn` it, so a degraded Provider or database never blocks
+# - It depends on `apps` (so a rebuild does not page before the objects exist),
+#   but nothing may `dependsOn` it, so a degraded Provider or database never blocks
 #   the infrastructure → apps chain.
 # - `ksail workload reconcile` (the deploy's convergence wait) skips it through
 #   the reconcile-exclude annotation, so a degraded database pages instead of
 #   evicting the merge queue.
 #
-# The timeout plays the role of the CronJobs' 900 s grace: an object that is
-# not healthy within 15 minutes fails the check. Health checks name objects
+# The timeout approximates the CronJobs' 900 s grace: an object that is not
+# healthy within 15 minutes of a check starting fails it (the CronJobs key on
+# the condition's lastTransitionTime instead). Health checks name objects
 # explicitly, so a new Provider or CNPG Cluster must be added here.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -23,12 +25,15 @@ metadata:
   annotations:
     ksail.devantler.tech/reconcile-exclude: "true"
 spec:
-  interval: 30m
+  interval: 10m
+  retryInterval: 5m
   timeout: 15m
   path: providers/__PROVIDER__/health
   sourceRef:
     kind: OCIRepository
     name: flux-system
+  dependsOn:
+    - name: apps
   prune: true
   # Platform Flux layers never force-recreate (persistence safety).
   force: false

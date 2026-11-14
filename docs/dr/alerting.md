@@ -123,7 +123,7 @@ stays quiet by design, exactly as the old Alertmanager did.
   health-checks every Provider and CNPG Cluster by name with
   `healthCheckExprs` matching the two CronJobs above; its 15-minute `timeout`
   plays the role of their grace, and a failure reaches Slack through the
-  `platform-reconciliation` Alert. Nothing depends on it, and the deploy's
+  `platform-reconciliation` Alert. It depends on `apps`, nothing depends on it, and the deploy's
   `ksail workload reconcile` skips it (`ksail.devantler.tech/reconcile-exclude`),
   so it never gates the merge queue. It runs alongside the CronJobs for a week
   before they are retired; a new Provider or database must be added to its list.

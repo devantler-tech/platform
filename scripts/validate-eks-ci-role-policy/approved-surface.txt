@@ -158,7 +158,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 0404e22d
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers d3cb230f3213d7a231fda9e1a700bf77e07440a0786061389357cf744e136a62
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|platform-health 1a9a5621ba21d938ee22c173a6d2baa669931bb84fc95459e91b2dcabbbe7b8d
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|platform-health 44cfc8262dd90e6f2d462fc630db07945e00750223a7d8d536171e71a6de1eb7
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config dc10cfc1ffeb139e69a5ac205f9bce35628dec215fe892e1871145f333d363b2
 
