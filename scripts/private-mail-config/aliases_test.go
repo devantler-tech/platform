@@ -28,7 +28,7 @@ func aliasInputs(t *testing.T, settings string, inventory map[string]any) (strin
 	}
 	for name, value := range map[string]string{
 		"settings.json": settings, "listener-inventory.json": string(raw),
-		"administrator-password": strings.Repeat("A", 40), "maintainer-password": strings.Repeat("B", 40), "agent-password": strings.Repeat("C", 40),
+		"administrator-password": strings.Repeat("A", 40), "maintainer-password": strings.Repeat("B", 40), "agent-password": strings.Repeat("C", 40), "relay-username": "AKIAEXAMPLE000000000", "relay-password": testRelayPassword,
 	} {
 		if err := os.WriteFile(filepath.Join(input, name), []byte(value), 0600); err != nil {
 			t.Fatal(err)

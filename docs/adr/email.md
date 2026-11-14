@@ -141,9 +141,9 @@ listeners:
   a side effect of moving this mailbox.
 - Verified maintainer-owned recipients and a server-enforced restriction for the
   agents' account, covering SMTP and any permitted JMAP submission path.
-- An observed outbound path. Hetzner's default port restriction is a provider
-  fact, not proof of the account's current state. Prefer direct delivery when
-  available; a provider unblock or an external relay needs its own resolved step.
+- An observed outbound path. The maintainer chose a hosted relay, Amazon SES,
+  over direct delivery; [the relay decision](email-outbound-relay.md) records
+  its steps.
 - Idempotent configuration through the official CLI, a permanent administrator,
   and removal of the preparation recovery variables before normal operation.
 - Replies tied to an unguessable message token and the server's evaluated DMARC
