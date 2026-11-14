@@ -74,19 +74,21 @@ volume. The original volume stays declared, prune-protected and mounted read-onl
 while the cutover is in place, so it cannot be deleted while in use; switching
 its volume to `Retain` is part of #4441.
 
-After a rollback, the two stores diverge: each holds changes the other lacks.
-Reapplying the cutover as it is would serve the encrypted store again, because
-its completion marker skips the copy, and would hide every change made on the
-original during the rollback. Clearing the marker alone would instead discard the
-changes made on the encrypted store. Reconcile before reapplying:
+A rollback right after a refused copy or a failed start loses nothing: the
+encrypted store has served no changes. A rollback after it has served is
+different. No supported tool here merges two Stalwart stores, so the original
+is the source of truth after any rollback. Every change the encrypted store
+served before the rollback is not preserved: new, edited and deleted messages,
+calendar entries and contacts. Weigh that loss before rolling back from a store
+that has served.
 
-1. While the original serves, move the changes that exist only on the encrypted
-   store into it, through a mail, calendar and contacts client connected to both
-   stores, or through Stalwart's import. Mount the encrypted claim only in an
-   isolated, non-serving Pod to read them.
-2. Take a fresh backup of the original.
-3. Empty the encrypted claim, marker included, in a separately reviewed change,
-   so the next cutover copies the reconciled original again.
+After a rollback, the two stores diverge. Never reapply the cutover as it is:
+its completion marker skips the copy, so the encrypted store would serve again
+and hide every change made on the original during the rollback. Reapplying needs
+its own reviewed change that takes a fresh backup of the original and then
+empties the encrypted claim, marker included, so the next cutover copies the
+original again. That review decides explicitly that the encrypted store's
+changes are discarded, or adds a separately verified way to carry them over.
 
 The existing `private-mail` namespace remains retained by its established storage
 bundle. The replacement class is not the cluster default. Both the replacement
