@@ -6,46 +6,39 @@
 # (diagnose-cilium-ext-authz-ipcache.sh) cannot settle it while node encryption is off, so this
 # script sends real requests through a test-only route and observes whether they arrive.
 #
-# WHY THE PATH IS KNOWN, NOT GUESSED. Cilium runs one Envoy per node, and pod socket load balancing
-# is off, so a pod's connection to the gateway Service is handled by the Envoy on the POD'S OWN node.
-# That Envoy makes the ExternalAuth call to an oauth2-proxy endpoint. So:
-#   * a client pinned to a node hosting NO oauth2-proxy endpoint forces every call to cross nodes;
-#   * a client pinned to a node hosting one is the same-node control (Envoy does not prefer local
-#     endpoints, so it is a mix — enough to prove ext_authz works at all).
-# Placement is read from the oauth2-proxy Service's EndpointSlices — what Envoy actually targets,
-# addresses included — before and after the run, together with the node set; any change is
-# INCONCLUSIVE. The Cilium and cilium-envoy DaemonSets must also be fully rolled out and unchanged
-# across the run: after a failed deploy releases the lock, old and new datapath pods can run side by
-# side, and a verdict taken across them would describe no single deployed revision.
+# THE PATH. Requests enter through the gateway's Hetzner load balancer, as public traffic does. The
+# gateway listeners accept TLS only from the load balancer's private address (the `gateway-receiver`
+# physical-peer fence sets `directSourcePrefixRanges` on every TLS filter chain), so a client inside
+# the cluster can never complete a handshake; that is the fence working, not a fault. The load
+# balancer adds the PROXY protocol header the listeners require, so the client sends none. The client
+# connects to the load balancer's public IPv4 address with no server name, which the listener's
+# catch-all TLS chain serves, and selects the route with the HTTP `Host` header.
 #
-# WHICH ENVOY ANSWERED IS OBSERVED, NOT ASSUMED. The control route's backend (whoami) echoes the
-# connection's source address, and Cilium's Envoy connects to backends from its own node's ingress
-# IP (CiliumNode spec.ingress.ipv4). Every control answer must carry the ingress IP of the client's
-# own node, or the run is INCONCLUSIVE — so if that path assumption ever stops holding, the probe
-# reports nothing rather than a wrong verdict. The ExternalAuth requests alternate with the control
-# requests over the same Service from the same pod.
+# WHICH ENVOY ANSWERED IS OBSERVED, NOT ASSUMED. Cilium runs one Envoy per node, and the load
+# balancer chooses the node. Each measurement is a PAIR of requests that one curl invocation sends on
+# ONE connection (`--next`): first the plain control route, then the ExternalAuth route. The control
+# route's backend (whoami) echoes the connection's source address, and Cilium's Envoy connects to
+# backends from its own node's ingress IP (CiliumNode spec.ingress.ipv4), so the echo names the node
+# whose Envoy holds that connection — and therefore also answered the ExternalAuth request. A pair is
+# attributed only when the echo is exactly one node's ingress IP and curl reports the second request
+# reused the connection (it opened none and reports the control request's local port); any other pair is counted as unattributed and left
+# out of both groups. A pair attributed to a node hosting an oauth2-proxy endpoint is SAME-NODE (Envoy
+# does not prefer local endpoints, so it is a mix — enough to prove ext_authz works at all); one
+# attributed to a node hosting none is CROSS-NODE, so its ExternalAuth call must cross nodes.
+# Placement is read from the oauth2-proxy and whoami EndpointSlices — what Envoy actually targets,
+# addresses included — before and after the run, together with the node set and the ingress IPs; any
+# change is INCONCLUSIVE. The Cilium and cilium-envoy DaemonSets must also be fully rolled out and
+# unchanged across the run: after a failed deploy releases the lock, old and new datapath pods can run
+# side by side, and a verdict taken across them would describe no single deployed revision.
 #
-# NEITHER CLIENT RUNS ON A NODE HOSTING THE CONTROL BACKEND. That attribution holds only when the
-# Envoy reaches whoami on ANOTHER node: the first production run pinned the cross-node client to the
-# node whoami itself runs on, and none of its 40 control answers carried that node's ingress IP
-# while the other client's all did, so the run could only read INCONCLUSIVE. A node hosting a whoami
-# endpoint is therefore never chosen for either client, and whoami's placement is fingerprinted
-# before and after the run like the oauth2-proxy endpoints.
-#
-# WHY A FAILURE IS ATTRIBUTABLE. Requests stay inside the cluster, over HTTPS on the gateway's
-# `https` listener, to hostnames under `externalauth-probe.invalid`. Nothing in the path is
-# Cloudflare or public DNS, and external-dns publishes nothing outside the zone. The `http` listener
-# accepts routes only from its own namespace, so a route in `whoami` cannot attach there
-# (`NotAllowedByListeners`); the `https` listener accepts every namespace and has no hostname, so it
-# serves the made-up hostnames with its default certificate. The clients skip certificate checks
-# (`curl -k`): no `.invalid` name has a certificate, and TLS is not what the probe measures. Every
-# client request also opens with a PROXY protocol header (`curl --haproxy-protocol`): production
-# turns on PROXY protocol for every Gateway API listener (the Hetzner Cilium patch
-# `accept-proxy-protocol.yaml`), so the gateway proxy resets any connection that starts without one —
-# which is what traffic from inside the cluster does unless the client sends it. Each client
-# alternates two routes with the SAME backend: a plain control route and the ExternalAuth route. If
-# the control route does not answer every time, the path or policy is broken and the run is
-# INCONCLUSIVE rather than blamed on ext_authz.
+# WHY A FAILURE IS ATTRIBUTABLE. The routes use hostnames under `externalauth-probe.invalid`, which no
+# DNS serves; external-dns publishes nothing outside its zone. The `http` listener accepts routes only
+# from its own namespace, so a route in `whoami` cannot attach there (`NotAllowedByListeners`); the
+# `https` listener accepts every namespace and has no hostname, so it serves the made-up hostnames
+# with its default certificate. The client skips certificate checks (`curl -k`): no `.invalid` name
+# has a certificate, and TLS is not what the probe measures. The two routes of a pair have the SAME
+# backend, so if the control route does not answer every time, the path or policy is broken and the
+# run is INCONCLUSIVE rather than blamed on ext_authz.
 #
 #   delivered  a 302/303 whose Location is the Dex login (only oauth2-proxy produces it), or a 401
 #   lost       no response within the timeout, a 502/503/504, or an EMPTY 403 (Envoy's ext_authz
@@ -54,35 +47,39 @@
 #              not programmed; another 5xx came from a backend that DID answer) — any occurrence
 #              makes the run INCONCLUSIVE, and the distinct status codes are printed
 #
-# Warm-up waits until the control route answers 200 and the ExternalAuth route answers anything but
-# the unprogrammed-route shapes (404, 301). A timeout counts as programmed there, so a COMPLETE
-# black-hole still reaches the measurement instead of reading as a broken path.
+# Warm-up sends pairs until the control route answers 200 and the ExternalAuth route answers anything
+# but the unprogrammed-route shapes (404, 301). A timeout counts as programmed there, so a COMPLETE
+# black-hole still reaches the measurement instead of reading as a broken path. Every measured pair
+# repeats that proof for its own Envoy: its control answer must be 200, and the control route is
+# created only after the ExternalAuth route was accepted (see the creation order below).
 #
-# THE VERDICT (at least 10 requests per client; fewer is a smoke run and always INCONCLUSIVE)
-#   FIXED           control routes answered every time, the same-node client was delivered at least
-#                   once, and EVERY cross-node request was delivered.
-#   FAULT-PERSISTS  control routes answered every time, the same-node client was delivered at least
-#                   once, at least 90% of cross-node requests were lost, and more cross-node than
-#                   same-node requests were lost — the #2284 pattern, not an intermittent blip.
+# THE VERDICT (at least 10 pairs requested and at least 10 attributed pairs in EACH group; fewer is
+# always INCONCLUSIVE)
+#   FIXED           control routes answered every time, a same-node pair was delivered at least once,
+#                   and EVERY cross-node pair was delivered.
+#   FAULT-PERSISTS  control routes answered every time, a same-node pair was delivered at least once,
+#                   at least 90% of cross-node pairs were lost, and the same-node loss rate sits near
+#                   the remote-endpoint share and well below the cross-node rate — the #2284 pattern,
+#                   not an intermittent blip.
 #   INCONCLUSIVE    anything else, including intermittent loss below that bar.
 #
-# GUARD. The ExternalAuth route shares the `https` listener with every public HTTPS route.
-# Each client finishes with one request to an unrouted hostname, which must still get the listener's
-# no-route answer (404); anything else means the probe changed another route's behaviour, and the run is
+# GUARD. The ExternalAuth route shares the `https` listener with every public HTTPS route. The run
+# finishes with one request to an unrouted hostname, which must still get the listener's no-route
+# answer (404); anything else means the probe changed another route's behaviour, and the run is
 # INCONCLUSIVE. This detects the exposure; it cannot prevent it for the run's duration.
 #
 # WHAT IT WRITES — stated plainly, because unlike the ipcache read this changes production while it
 # runs. Everything carries the label `platform.devantler.tech/externalauth-probe=<run-id>`:
-#   * in `whoami`: two HTTPRoutes (control, ExternalAuth), one CiliumNetworkPolicy letting the two
-#     probe pods reach the gateway Service, and two pods;
+#   * in `whoami`: two HTTPRoutes (control, ExternalAuth);
 #   * in `oauth2-proxy`: one ReferenceGrant letting the ExternalAuth route name the oauth2-proxy
 #     Service.
 # No existing object is modified. EXIT, INT and TERM all delete everything carrying the run's label.
 # If a previous run left labelled objects behind, this run refuses before creating anything.
 #
 # WHAT IT PRINTS. The workflow log of a public repository is public, so no address, node name, UID
-# or redirect URL is printed — only counts, status codes and the verdict. kubectl's stderr is
-# discarded for the same reason.
+# or redirect URL is printed — only counts, status codes and the verdict. kubectl's and curl's stderr
+# are discarded for the same reason. Under GitHub Actions the load balancer address is registered
+# with `::add-mask::` as soon as it is read, before any request uses it.
 #
 # EXIT CODES
 #   0  a conclusive verdict (FIXED or FAULT-PERSISTS)
@@ -97,17 +94,15 @@ readonly probe_namespace='whoami'
 readonly oauth2_namespace='oauth2-proxy'
 readonly oauth2_service='oauth2-proxy'
 readonly backend_service='whoami'
+readonly gateway_namespace='kube-system'
+readonly gateway_service='cilium-gateway-platform'
 readonly probe_label='platform.devantler.tech/externalauth-probe'
 readonly control_host='control.externalauth-probe.invalid'
 readonly authz_host='authz.externalauth-probe.invalid'
 readonly guard_host='unrouted.externalauth-probe.invalid'
-readonly gateway_url='https://cilium-gateway-platform.kube-system.svc.cluster.local/'
-# The same pinned image the coroot heartbeat CronJob runs; it is not first-party, so no Talos image
-# verification rule matches it.
-readonly client_image='docker.io/curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777'
-# Each pod sends 2 requests per round (control + ExternalAuth), each bounded by the timeout, so its
-# request phase is at most 2 * requests * timeout. The cap keeps the whole run, including warm-up
-# and scheduling, inside the workflow's job timeout (pinned by the test).
+# Each pair sends 2 requests, each bounded by the timeout, so the measurement takes at most
+# 2 * requests * timeout. The cap keeps the whole run, including warm-up, inside the workflow's job
+# timeout (pinned by the test).
 readonly max_request_seconds=250
 readonly min_conclusive_requests=10
 readonly warmup_attempts=12
@@ -115,6 +110,7 @@ readonly warmup_attempts=12
 # shortens it; production keeps the default).
 readonly route_wait_seconds="${PROBE_ROUTE_WAIT_SECONDS:-120}"
 readonly poll_seconds="${PROBE_POLL_SECONDS:-5}"
+readonly warmup_pause_seconds="${PROBE_WARMUP_PAUSE_SECONDS:-1}"
 
 usage() {
   printf 'Usage: %s --context <kube-context> --run-id <digits> [--requests N] [--timeout SECONDS]\n' "$(basename "$0")" >&2
@@ -181,16 +177,8 @@ if ((requests * timeout > max_request_seconds)); then
   exit 1
 fi
 
-# Worst case per pod: every warm-up attempt makes two timed-out requests and sleeps a second, then
-# every round times out twice, then the guard request; plus scheduling and image pull.
-readonly pod_deadline_seconds=$(((2 * requests + 2 * warmup_attempts + 1) * timeout + warmup_attempts + 60))
-# One deadline for waiting on BOTH pods, measured in wall-clock seconds.
-readonly pod_wait_seconds=$((pod_deadline_seconds + 180))
-readonly cross_pod="externalauth-probe-cross-${run_id}"
-readonly same_pod="externalauth-probe-same-${run_id}"
 readonly control_route="externalauth-probe-control-${run_id}"
 readonly authz_route="externalauth-probe-authz-${run_id}"
-readonly probe_policy="externalauth-probe-client-${run_id}"
 readonly probe_grant="externalauth-probe-${run_id}"
 
 summary() {
@@ -224,10 +212,6 @@ kc() {
   kubectl --context "${context}" --request-timeout="${request_timeout}" "$@" 2>/dev/null
 }
 
-is_k8s_name() {
-  [[ "$1" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]
-}
-
 # Placement from a Service's EndpointSlices ($1 namespace, $2 Service): every endpoint must be
 # ready, not terminating, and carry a node and a target UID. Emits "FP <fingerprint>" then one
 # "NODE <name>" per endpoint.
@@ -249,21 +233,14 @@ read_endpoints() {
   ' <<<"${json}"
 }
 
-# A node can run a probe pod when it is Ready and carries no NoSchedule/NoExecute taint. Emits
-# "FP <fingerprint>" then "SCHED <name> <hostname-label>" per schedulable node, sorted by name.
+# The node set. Emits "FP <fingerprint>" (name and UID of every node), or "ERR none" / "ERR identity".
 read_nodes() {
   local json
   json="$(kc get nodes -o json)" || return 1
   jq -r '
-    def ready: ([.status.conditions[]? | select(.type == "Ready") | .status] == ["True"]);
-    def schedulable: (.spec.unschedulable != true)
-      and ([.spec.taints[]? | select(.effect == "NoSchedule" or .effect == "NoExecute")] | length == 0);
     if ([.items[]?] | length) == 0 then "ERR none"
     elif any(.items[]?; (.metadata.name // "") == "" or (.metadata.uid // "") == "") then "ERR identity"
-    else "FP " + ([.items[] | .metadata.name + "|" + .metadata.uid] | sort | join(";")),
-      ([.items[] | select(ready and schedulable)
-        | {name: .metadata.name, host: (.metadata.labels["kubernetes.io/hostname"] // "")}]
-       | sort_by(.name) | .[] | "SCHED " + .name + " " + .host)
+    else "FP " + ([.items[] | .metadata.name + "|" + .metadata.uid] | sort | join(";"))
     end
   ' <<<"${json}"
 }
@@ -309,9 +286,26 @@ read_ingress_ips() {
   ' <<<"${json}"
 }
 
+# The gateway load balancer: its Service must declare that the load balancer sends the PROXY header,
+# and publish exactly one public IPv4 address. Emits "LB <ipv4>", or "ERR proxy" / "ERR address".
+read_gateway_address() {
+  local json
+  json="$(kc -n "${gateway_namespace}" get service "${gateway_service}" -o json)" || return 1
+  jq -r '
+    def ipv4: test("^[0-9]{1,3}(\\.[0-9]{1,3}){3}$");
+    def private: test("^(0\\.|10\\.|127\\.|169\\.254\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.)");
+    (.metadata.annotations["load-balancer.hetzner.cloud/uses-proxyprotocol"] // "") as $proxy
+    | [.status.loadBalancer.ingress[]? | .ip // empty | select(ipv4) | select(private | not)] as $public
+    | if $proxy != "true" then "ERR proxy"
+      elif ($public | length) != 1 then "ERR address"
+      else "LB " + $public[0]
+      end
+  ' <<<"${json}"
+}
+
 # ---------------------------------------------------------------------------
-# 1. Topology before: settled oauth2-proxy and control backend endpoints, and the nodes a probe
-#    pod may run on.
+# 1. Topology before: settled oauth2-proxy and control backend endpoints, nodes, datapath, ingress
+#    IPs, and the load balancer the requests enter through.
 # ---------------------------------------------------------------------------
 endpoint_lines="$(read_endpoints "${oauth2_namespace}" "${oauth2_service}")" || inconclusive 'could not read the oauth2-proxy endpoints'
 case "${endpoint_lines}" in
@@ -319,7 +313,7 @@ case "${endpoint_lines}" in
   'ERR unsettled') inconclusive 'an oauth2-proxy endpoint is not settled (rollout in flight)' ;;
 esac
 endpoint_fp_before="$(sed -n 's/^FP //p' <<<"${endpoint_lines}")"
-endpoint_nodes="$(sed -n 's/^NODE //p' <<<"${endpoint_lines}" | sort -u)"
+endpoint_node_list="$(sed -n 's/^NODE //p' <<<"${endpoint_lines}")"
 
 backend_lines="$(read_endpoints "${probe_namespace}" "${backend_service}")" || inconclusive 'could not read the control backend endpoints'
 case "${backend_lines}" in
@@ -327,7 +321,6 @@ case "${backend_lines}" in
   'ERR unsettled') inconclusive 'a control backend endpoint is not settled (rollout in flight)' ;;
 esac
 backend_fp_before="$(sed -n 's/^FP //p' <<<"${backend_lines}")"
-backend_nodes="$(sed -n 's/^NODE //p' <<<"${backend_lines}" | sort -u)"
 
 node_lines="$(read_nodes)" || inconclusive 'could not read the nodes'
 case "${node_lines}" in
@@ -341,40 +334,6 @@ case "${datapath_lines}" in
   'ERR rolling') inconclusive 'a Cilium or cilium-envoy rollout is incomplete, so nodes may run different datapath revisions' ;;
 esac
 datapath_fp_before="$(sed -n 's/^FP //p' <<<"${datapath_lines}")"
-if [[ -z "${endpoint_fp_before}" || -z "${backend_fp_before}" || -z "${backend_nodes}" || -z "${node_fp_before}" || -z "${datapath_fp_before}" ]]; then
-  inconclusive 'the topology reads did not parse'
-fi
-
-cross_node=''
-cross_host=''
-same_node=''
-same_host=''
-while read -r node host; do
-  [[ -z "${node}" ]] && continue
-  is_k8s_name "${node}" || inconclusive 'a node reported a malformed name'
-  # The pod is pinned by this label, so it must be present and well-formed, or the pod would sit
-  # Pending until the deadline.
-  if [[ -z "${host:-}" ]] || ! is_k8s_name "${host}"; then
-    continue
-  fi
-  # A client beside the control backend cannot be attributed to its own node's Envoy (see the
-  # header), so such a node hosts neither client.
-  if grep -Fxq -- "${node}" <<<"${backend_nodes}"; then
-    continue
-  fi
-  if grep -Fxq -- "${node}" <<<"${endpoint_nodes}"; then
-    if [[ -z "${same_node}" ]]; then
-      same_node="${node}"
-      same_host="${host}"
-    fi
-  elif [[ -z "${cross_node}" ]]; then
-    cross_node="${node}"
-    cross_host="${host}"
-  fi
-done < <(sed -n 's/^SCHED //p' <<<"${node_lines}")
-
-[[ -n "${cross_node}" ]] || inconclusive 'no schedulable node without an oauth2-proxy endpoint exists apart from the nodes hosting the control backend, so no cross-node path can be forced'
-[[ -n "${same_node}" ]] || inconclusive 'no schedulable node hosts an oauth2-proxy endpoint apart from the nodes hosting the control backend, so there is no same-node control'
 
 ingress_lines="$(read_ingress_ips)" || inconclusive 'could not read the per-node Cilium ingress IPs'
 case "${ingress_lines}" in
@@ -382,15 +341,31 @@ case "${ingress_lines}" in
   'ERR duplicate') inconclusive 'two nodes report the same Cilium ingress IP' ;;
 esac
 ingress_fp_before="$(sed -n 's/^FP //p' <<<"${ingress_lines}")"
-cross_ingress="$(awk -v n="${cross_node}" '$1 == "ING" && $2 == n { print $3 }' <<<"${ingress_lines}")"
-same_ingress="$(awk -v n="${same_node}" '$1 == "ING" && $2 == n { print $3 }' <<<"${ingress_lines}")"
 readonly ipv4_re='^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
-if [[ -z "${ingress_fp_before}" || ! "${cross_ingress}" =~ ${ipv4_re} || ! "${same_ingress}" =~ ${ipv4_re} ]]; then
-  inconclusive 'the chosen nodes have no well-formed Cilium ingress IP'
+while read -r _ _ ip; do
+  [[ -z "${ip:-}" ]] && continue
+  [[ "${ip}" =~ ${ipv4_re} ]] || inconclusive 'a node has no well-formed Cilium ingress IP'
+done < <(grep '^ING ' <<<"${ingress_lines}" || true)
+
+if [[ -z "${endpoint_fp_before}" || -z "${endpoint_node_list}" || -z "${backend_fp_before}" || -z "${node_fp_before}" || -z "${datapath_fp_before}" || -z "${ingress_fp_before}" ]]; then
+  inconclusive 'the topology reads did not parse'
 fi
 
-printf 'oauth2-proxy endpoints on %s node(s); schedulable nodes: %s\n' \
-  "$(grep -c . <<<"${endpoint_nodes}" || true)" "$(grep -c '^SCHED ' <<<"${node_lines}" || true)"
+gateway_lines="$(read_gateway_address)" || inconclusive 'could not read the gateway load balancer Service'
+case "${gateway_lines}" in
+  'ERR proxy') inconclusive 'the gateway load balancer does not declare that it sends the PROXY header the listeners require' ;;
+  'ERR address') inconclusive 'the gateway load balancer does not publish exactly one public IPv4 address' ;;
+esac
+gateway_address="$(sed -n 's/^LB //p' <<<"${gateway_lines}")"
+[[ "${gateway_address}" =~ ${ipv4_re} ]] || inconclusive 'the gateway load balancer address did not parse'
+# Masked before anything can print it; only the runner sees this line.
+if [[ "${GITHUB_ACTIONS:-}" == 'true' ]]; then
+  printf '::add-mask::%s\n' "${gateway_address}"
+fi
+readonly gateway_url="https://${gateway_address}/"
+
+printf 'oauth2-proxy endpoints on %s node(s); nodes with an ingress IP: %s\n' \
+  "$(sort -u <<<"${endpoint_node_list}" | grep -c . || true)" "$(grep -c '^ING ' <<<"${ingress_lines}" || true)"
 
 # ---------------------------------------------------------------------------
 # 2. Refuse to run over leftovers. A labelled object from an earlier run means its cleanup failed;
@@ -418,7 +393,7 @@ cleanup() {
   # Wait for the objects to be gone, bounded below the 30s request timeout so the watch is not cut
   # off first: a delete that returns while finalizers still hold an object would report success and
   # leave the next run refusing to start. A timeout counts as a cleanup failure.
-  kc -n "${probe_namespace}" delete pods,httproutes,ciliumnetworkpolicies -l "${probe_label}=${run_id}" --ignore-not-found --wait=true --timeout=25s >/dev/null || failed=1
+  kc -n "${probe_namespace}" delete httproutes -l "${probe_label}=${run_id}" --ignore-not-found --wait=true --timeout=25s >/dev/null || failed=1
   kc -n "${oauth2_namespace}" delete referencegrants -l "${probe_label}=${run_id}" --ignore-not-found --wait=true --timeout=25s >/dev/null || failed=1
   if [[ "${failed}" -ne 0 ]]; then
     printf 'CLEANUP: FAILED — delete objects labelled %s=%s by hand\n' "${probe_label}" "${run_id}"
@@ -484,147 +459,6 @@ readonly authz_filters='      filters:
                 - x-auth-request-email
                 - x-auth-request-groups'
 
-pod_manifest() {
-  local name="$1" host="$2" role="$3"
-  cat <<YAML
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${name}
-  namespace: ${probe_namespace}
-  labels:
-    ${probe_label}: "${run_id}"
-    platform.devantler.tech/externalauth-probe-role: ${role}
-spec:
-  restartPolicy: Never
-  activeDeadlineSeconds: ${pod_deadline_seconds}
-  # The client only runs curl, so a short grace period keeps cleanup's bounded delete wait sufficient
-  # even when a pod is still running at exit.
-  terminationGracePeriodSeconds: 5
-  automountServiceAccountToken: false
-  enableServiceLinks: false
-  hostUsers: false
-  nodeSelector:
-    kubernetes.io/hostname: ${host}
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 65532
-    runAsGroup: 65532
-    seccompProfile:
-      type: RuntimeDefault
-  containers:
-    - name: probe
-      image: ${client_image}
-      env:
-        - name: REQUESTS
-          value: "${requests}"
-        - name: TIMEOUT
-          value: "${timeout}"
-        - name: WARMUP_ATTEMPTS
-          value: "${warmup_attempts}"
-        - name: CONTROL_HOST
-          value: ${control_host}
-        - name: AUTHZ_HOST
-          value: ${authz_host}
-        - name: GUARD_HOST
-          value: ${guard_host}
-        - name: GATEWAY_URL
-          value: ${gateway_url}
-      command:
-        - /bin/sh
-        - -c
-        - |
-          set -u
-          # Every request goes through send(), so each one skips certificate checks and opens with
-          # the PROXY protocol header the gateway listeners require.
-          send() { curl -k --haproxy-protocol --max-time "\$TIMEOUT" "\$@"; }
-          ask() {
-            send -s -o /dev/null -H "Host: \$1" -w '%{http_code} %{size_download} %{redirect_url}' "\$GATEWAY_URL" 2>/dev/null
-          }
-          # The control route's whoami backend echoes the connection's source address, which is the
-          # ingress IP of the node whose Envoy handled the request. Prints "<code> <size> <ip-or->"
-          # and returns curl's exit status, which warm-up reports when it fails.
-          ask_control() {
-            out=\$(send -s -H "Host: \$1" -w '\\nPROBE-STATUS %{http_code} %{size_download}' "\$GATEWAY_URL" 2>/dev/null)
-            rc=\$?
-            status=\$(printf '%s\\n' "\$out" | sed -n 's/^PROBE-STATUS //p' | tail -n 1)
-            ip=\$(printf '%s\\n' "\$out" | sed -n 's/^RemoteAddr: *\\[\\{0,1\\}\\([0-9A-Fa-f.:]*\\)\\]\\{0,1\\}:[0-9]*\$/\\1/p' | head -n 1)
-            printf '%s %s' "\${status:-000 0}" "\${ip:--}"
-            return "\$rc"
-          }
-          # Warm-up: this node's Envoy must serve the control route (200). The control route was
-          # created only after the ExternalAuth route was accepted, and Envoy applies the gateway's
-          # configuration in order, so that 200 proves the ExternalAuth route is programmed here too.
-          # As a second check the ExternalAuth route must not answer like an unprogrammed hostname
-          # (404, or a 301 from a stale redirect). A timeout there is NOT unprogrammed — it is what
-          # a black-holed check looks like — so it ends the warm-up and is measured below.
-          # A failed warm-up prints the last answer from each route as <http code>/<curl exit>, so
-          # an INCONCLUSIVE run says whether the client hit DNS, TLS, a timeout or an HTTP status.
-          warm=0
-          n=0
-          while [ "\$n" -lt "\$WARMUP_ATTEMPTS" ]; do
-            n=\$((n + 1))
-            c_out=\$(ask_control "\$CONTROL_HOST")
-            c_rc=\$?
-            c=\${c_out%% *}
-            a_out=\$(ask "\$AUTHZ_HOST")
-            a_rc=\$?
-            a=\${a_out%% *}
-            if [ "\$c" = 200 ] && [ -n "\$a" ] && [ "\$a" != 404 ] && [ "\$a" != 301 ]; then
-              warm=1
-              break
-            fi
-            sleep 1
-          done
-          if [ "\$warm" -ne 1 ]; then
-            # One more control request, with curl's error text, says how the connection failed
-            # (reset, refused, timeout, TLS). Only a word from this fixed list is printed: the
-            # raw text can name internal addresses, and the log is public. A failed warm-up skips
-            # every round, so this request stays inside the pod deadline.
-            err=\$(send -sS -o /dev/null -H "Host: \$CONTROL_HOST" "\$GATEWAY_URL" 2>&1 >/dev/null)
-            case "\$err" in
-              '') why=none ;;
-              *'reset by peer'*) why=connection-reset ;;
-              *'Connection refused'*) why=connection-refused ;;
-              *'timed out'*|*'Timeout was reached'*) why=timeout ;;
-              *SSL_ERROR_SYSCALL*) why=tls-syscall ;;
-              *'nexpected eof'*|*'nexpected EOF'*) why=tls-unexpected-eof ;;
-              *alert*) why=tls-alert ;;
-              *'resolve host'*) why=dns ;;
-              *) why=other ;;
-            esac
-            printf 'PROBE-WARMUP failed control=%s/%s authz=%s/%s curl=%s\\n' "\${c:-none}" "\$c_rc" "\${a:-none}" "\$a_rc" "\$why"
-            exit 0
-          fi
-          printf 'PROBE-WARMUP ok\\n'
-          i=0
-          while [ "\$i" -lt "\$REQUESTS" ]; do
-            i=\$((i + 1))
-            printf 'PROBE control %s\\n' "\$(ask_control "\$CONTROL_HOST" || true)"
-            printf 'PROBE authz %s\\n' "\$(ask "\$AUTHZ_HOST" || true)"
-          done
-          printf 'PROBE guard %s\\n' "\$(ask "\$GUARD_HOST" || true)"
-          printf 'PROBE-DONE %s\\n' "\$i"
-      securityContext:
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
-        runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
-        capabilities:
-          drop:
-            - ALL
-      resources:
-        requests:
-          cpu: 10m
-          memory: 16Mi
-        limits:
-          cpu: 100m
-          memory: 64Mi
-YAML
-}
-
 manifest="$(
   cat <<YAML
 ---
@@ -644,33 +478,6 @@ spec:
     - group: ""
       kind: Service
       name: ${oauth2_service}
----
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
-metadata:
-  name: ${probe_policy}
-  namespace: ${probe_namespace}
-  labels:
-    ${probe_label}: "${run_id}"
-spec:
-  endpointSelector:
-    matchLabels:
-      ${probe_label}: "${run_id}"
-  egress:
-    - toServices:
-        - k8sService:
-            serviceName: cilium-gateway-platform
-            namespace: kube-system
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
-    - toEntities:
-        - ingress
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
 YAML
   route_manifest "${authz_route}" "${authz_host}" "${authz_filters}"
 )"
@@ -735,14 +542,14 @@ wait_routes() {
 
 readonly route_deadline=$((SECONDS + route_wait_seconds))
 
-# ORDER MATTERS, because it is what makes the pods' warm-up sound. Both routes are compiled into the
-# gateway's single CiliumEnvoyConfig, and each Envoy applies its versions in order. The ExternalAuth
-# route is created FIRST and the control route only once the ExternalAuth route is accepted, so any
-# Envoy that already serves the control route (200) has also applied the ExternalAuth route. A
-# failure on the ExternalAuth route after warm-up is therefore a measurement, never an Envoy whose
-# configuration is still converging.
+# ORDER MATTERS, because it is what makes every control answer a proof of programming. Both routes are
+# compiled into the gateway's single CiliumEnvoyConfig, and each Envoy applies its versions in order.
+# The ExternalAuth route is created FIRST and the control route only once the ExternalAuth route is
+# accepted, so any Envoy that already serves the control route (200) has also applied the ExternalAuth
+# route. A failure on the ExternalAuth route of a pair whose control answered is therefore a
+# measurement, never an Envoy whose configuration is still converging.
 if ! kc apply -f - <<<"${manifest}" >/dev/null; then
-  inconclusive 'could not create the ExternalAuth probe route, grant and policy'
+  inconclusive 'could not create the ExternalAuth probe route and grant'
 fi
 wait_routes "${authz_route}" ||
   inconclusive "the ExternalAuth probe route was not accepted with resolved references in time ($(route_blockers "${authz_route}"))"
@@ -752,105 +559,131 @@ fi
 wait_routes "${authz_route}" "${control_route}" ||
   inconclusive "the control probe route was not accepted with resolved references in time ($(route_blockers "${authz_route}" "${control_route}"))"
 
-pods_manifest="$(
-  pod_manifest "${cross_pod}" "${cross_host}" cross
-  pod_manifest "${same_pod}" "${same_host}" same
-)"
-if ! kc apply -f - <<<"${pods_manifest}" >/dev/null; then
-  inconclusive 'could not create the probe pods'
-fi
-
 # ---------------------------------------------------------------------------
-# 4. Wait for BOTH clients under one wall-clock deadline, and check each ran where it was pinned.
+# 4. Send the pairs through the load balancer.
 # ---------------------------------------------------------------------------
-# Prints "done", "pending", "elsewhere" or "failed" for one pod.
-pod_state() {
-  local name="$1" node="$2" json phase actual
-  json="$(kc -n "${probe_namespace}" get pod "${name}" -o json)" || {
-    printf 'pending'
-    return 0
-  }
-  phase="$(jq -r '.status.phase // ""' <<<"${json}" 2>/dev/null || true)"
-  actual="$(jq -r '.spec.nodeName // ""' <<<"${json}" 2>/dev/null || true)"
-  case "${phase}" in
-    Succeeded)
-      if [[ "${actual}" == "${node}" ]]; then printf 'done'; else printf 'elsewhere'; fi
-      ;;
-    Failed) printf 'failed' ;;
-    *) printf 'pending' ;;
-  esac
+# One pair: the control route, then the ExternalAuth route, in ONE curl invocation so the second
+# request reuses the first one's connection and reaches the same Envoy. curl's stderr is discarded:
+# its error text can name an address, and the log is public. Both transfers report their local port:
+# the ExternalAuth request used the control request's connection only when it opened no connection
+# AND reports the same non-zero local port. `%{num_connects}` alone cannot say so, because curl counts
+# only connections that succeeded: a failed reconnect also reports 0 and must stay unattributed, while
+# a timeout on the reused connection keeps its port and still counts as a loss. Prints
+# "PAIR <control code> <echoed source or -> <authz code> <authz size> <same|other connection> [<location>]".
+send_pair() {
+  local out control control_code control_port ip authz authz_code authz_size authz_connects authz_port authz_location conn
+  out="$(curl -sk --max-time "${timeout}" -H "Host: ${control_host}" \
+    -w '\nPROBE-CONTROL %{http_code} %{local_port}\n' "${gateway_url}" \
+    --next -sk -o /dev/null --max-time "${timeout}" -H "Host: ${authz_host}" \
+    -w 'PROBE-AUTHZ %{http_code} %{size_download} %{num_connects} %{local_port} %{redirect_url}\n' "${gateway_url}" 2>/dev/null || true)"
+  control="$(sed -n 's/^PROBE-CONTROL //p' <<<"${out}" | tail -n 1)"
+  read -r control_code control_port _ <<<"${control}"
+  # whoami echoes the connection's source as "RemoteAddr: <ip>:<port>".
+  ip="$(sed -n 's/^RemoteAddr: *\[\{0,1\}\([0-9A-Fa-f.:]*\)\]\{0,1\}:[0-9]*$/\1/p' <<<"${out}" | head -n 1)"
+  authz="$(sed -n 's/^PROBE-AUTHZ //p' <<<"${out}" | tail -n 1)"
+  read -r authz_code authz_size authz_connects authz_port authz_location <<<"${authz}"
+  conn=other
+  if [[ "${authz_connects:-}" == '0' && "${control_port:-}" =~ ^[1-9][0-9]*$ && "${authz_port:-}" == "${control_port}" ]]; then
+    conn=same
+  fi
+  printf 'PAIR %s %s %s %s %s %s\n' "${control_code:-000}" "${ip:--}" "${authz_code:-000}" "${authz_size:-0}" "${conn}" "${authz_location:-}"
 }
 
-readonly wait_deadline=$((SECONDS + pod_wait_seconds))
-while :; do
-  cross_state="$(pod_state "${cross_pod}" "${cross_node}")"
-  same_state="$(pod_state "${same_pod}" "${same_node}")"
-  case "${cross_state} ${same_state}" in
-    *elsewhere*) inconclusive 'a probe pod ran on a node other than the one it was pinned to' ;;
-    *failed*) inconclusive 'a probe pod did not complete (refused, or past its deadline)' ;;
-    'done done') break ;;
-  esac
-  if ((SECONDS >= wait_deadline)); then
-    inconclusive 'a probe pod did not complete in time (not scheduled, or still running)'
+# Warm-up: some Envoy must serve the control route (200) while the ExternalAuth route does not answer
+# like an unprogrammed hostname (404, or a 301 from a stale redirect). A timeout there is NOT
+# unprogrammed — it is what a black-holed check looks like — so it ends the warm-up and is measured.
+warm=0
+attempt=0
+while ((attempt < warmup_attempts)); do
+  attempt=$((attempt + 1))
+  read -r _ warm_control _ warm_authz _ <<<"$(send_pair)"
+  if [[ "${warm_control}" == '200' && -n "${warm_authz}" && "${warm_authz}" != '404' && "${warm_authz}" != '301' ]]; then
+    warm=1
+    break
   fi
-  sleep "${poll_seconds}"
+  sleep "${warmup_pause_seconds}"
 done
+if [[ "${warm}" -ne 1 ]]; then
+  # One more control request, with curl's error text, says how the connection failed (reset, refused,
+  # timeout, TLS). Only a word from this fixed list is printed: the raw text can name an address.
+  err="$(curl -sS -k -o /dev/null --max-time "${timeout}" -H "Host: ${control_host}" "${gateway_url}" 2>&1 >/dev/null || true)"
+  case "${err}" in
+    '') why=none ;;
+    *'reset by peer'*) why=connection-reset ;;
+    *'Connection refused'*) why=connection-refused ;;
+    *'timed out'* | *'Timeout was reached'*) why=timeout ;;
+    *SSL_ERROR_SYSCALL*) why=tls-syscall ;;
+    *'nexpected eof'* | *'nexpected EOF'*) why=tls-unexpected-eof ;;
+    *alert*) why=tls-alert ;;
+    *'resolve host'*) why=dns ;;
+    *) why=other ;;
+  esac
+  [[ "${warm_control:-}" =~ ^[0-9]{3}$ ]] || warm_control=none
+  [[ "${warm_authz:-}" =~ ^[0-9]{3}$ ]] || warm_authz=none
+  inconclusive "the load balancer path could not reach both routes during warm-up (last answers control=${warm_control} authz=${warm_authz}, then one more request failed with curl=${why}), so the path or policy is broken"
+fi
+
+pairs=''
+i=0
+while ((i < requests)); do
+  i=$((i + 1))
+  pairs="${pairs}$(send_pair)"$'\n'
+done
+guard_code="$(curl -sk -o /dev/null --max-time "${timeout}" -H "Host: ${guard_host}" -w '%{http_code}' "${gateway_url}" 2>/dev/null || true)"
+[[ "${guard_code}" =~ ^[0-9]{3}$ ]] || guard_code='none'
 
 # ---------------------------------------------------------------------------
-# 5. Classify each client's answers.
+# 5. Classify the pairs.
 # ---------------------------------------------------------------------------
-# Prints: control_ok control_bad delivered lost other guard_code other_codes control_on_node
-# ($2 is the ingress IP of the node the pod was pinned to; a control answer counts as on-node only
-# when whoami saw exactly that source address.)
+# Prints: control_ok control_bad unattributed unattributed_undelivered
+#         cross_n cross_delivered cross_lost cross_other same_n same_delivered same_lost same_other
+#         same_remote other_codes
+# A pair is attributed to a node only when its echoed source is exactly that node's ingress IP and the
+# ExternalAuth request reused the connection (same local port, 0 new connects). same_remote sums, over the same-node
+# pairs, the number of oauth2-proxy endpoints NOT on the pair's node (the separation check below).
 classify() {
-  local log="$1" want_ip="$2"
-  awk -v want="${requests}" -v want_ip="${want_ip}" '
-    $1 == "PROBE-WARMUP" { warm = $2; warm_detail = $3 " " $4 (NF > 4 ? " " $5 : "") }
-    $1 == "PROBE-DONE" { done = $2 }
-    $1 == "PROBE" && $2 == "control" {
-      nc++
-      if ($3 == "200") ok++; else bad++
-      if (want_ip != "" && $5 == want_ip) onnode++
+  awk -v ingress="$(awk '$1 == "ING" { printf "%s=%s;", $3, $2 }' <<<"${ingress_lines}")" \
+    -v endpoints="$(tr '\n' ';' <<<"${endpoint_node_list}")" '
+    BEGIN {
+      n = split(ingress, pairs_, ";")
+      for (k = 1; k <= n; k++) if (pairs_[k] != "") { split(pairs_[k], kv, "="); node_of[kv[1]] = kv[2] }
+      n = split(endpoints, eps, ";")
+      for (k = 1; k <= n; k++) if (eps[k] != "") { local_eps[eps[k]]++; total++ }
     }
-    $1 == "PROBE" && $2 == "guard" { guard = ($3 == "" ? "none" : $3); ng++ }
-    $1 == "PROBE" && $2 == "authz" {
-      na++
-      code = $3; size = $4; loc = $5
-      if ((code == "302" || code == "303") && index(loc, "https://dex.") == 1) delivered++
-      else if (code == "401") delivered++
-      else if (code == "000" || code == "" || code == "502" || code == "503" || code == "504" || (code == "403" && size == "0")) lost++
+    $1 == "PAIR" {
+      if ($2 != "200") { bad++; next }
+      ok++
+      ip = $3; code = $4; size = $5; conns = $6; loc = $7
+      ok_answer = (((code == "302" || code == "303") && index(loc, "https://dex.") == 1) || code == "401")
+      # An unattributed pair joins neither group, but one whose ExternalAuth request was not delivered
+      # (curl may silently retry a reset reused connection on a new one) is a failure FIXED cannot
+      # ignore, since it might have been a cross-node request.
+      if (!(ip in node_of) || conns != "same") { unattributed++; if (!ok_answer) undelivered++; next }
+      node = node_of[ip]
+      g = (node in local_eps) ? "same" : "cross"
+      n_[g]++
+      if (g == "same") remote += total - local_eps[node]
+      if (ok_answer) delivered[g]++
+      else if (code == "000" || code == "" || code == "502" || code == "503" || code == "504" || (code == "403" && size == "0")) lost[g]++
       else {
-        other++
+        other[g]++
         c = (code == "" ? "none" : code)
         if (!(c in seen)) { seen[c] = 1; codes = (codes == "" ? c : codes "," c) }
       }
     }
     END {
-      if (warm != "ok") { print "ERR warmup " warm_detail; exit }
-      if (done != want || nc != want || na != want || ng != 1) { print "ERR incomplete"; exit }
-      printf "%d %d %d %d %d %s %s %d\n", ok, bad, delivered, lost, other, guard, (codes == "" ? "-" : codes), onnode
+      printf "%d %d %d %d %d %d %d %d %d %d %d %d %d %s\n", ok, bad, unattributed, undelivered,
+        n_["cross"], delivered["cross"], lost["cross"], other["cross"],
+        n_["same"], delivered["same"], lost["same"], other["same"], remote, (codes == "" ? "-" : codes)
     }
-  ' <<<"${log}"
+  ' <<<"${pairs}"
 }
 
-results=''
-for role in cross same; do
-  if [[ "${role}" == 'cross' ]]; then
-    name="${cross_pod}"
-    role_ingress="${cross_ingress}"
-  else
-    name="${same_pod}"
-    role_ingress="${same_ingress}"
-  fi
-  log="$(kc -n "${probe_namespace}" logs "${name}")" || inconclusive 'could not read a probe pod log'
-  counts="$(classify "${log}" "${role_ingress}")" || inconclusive 'a probe pod log could not be classified'
-  case "${counts}" in
-    'ERR warmup'*) inconclusive "the ${role} probe pod could not reach both routes during warm-up (last answers, as http code/curl exit, then how one more request failed: ${counts#ERR warmup }), so the path or policy is broken" ;;
-    'ERR incomplete') inconclusive 'a probe pod log did not contain every expected answer' ;;
-    '') inconclusive 'a probe pod log could not be classified' ;;
-  esac
-  results="${results}${role} ${counts}"$'\n'
-done
+[[ "$(grep -c '^PAIR ' <<<"${pairs}" || true)" -eq "${requests}" ]] || inconclusive 'not every pair produced an answer'
+counts="$(classify)" || inconclusive 'the pairs could not be classified'
+read -r control_ok control_bad unattributed unattributed_undelivered cross_n cross_delivered cross_lost cross_other \
+  same_n same_delivered same_lost same_other same_remote other_codes <<<"${counts}"
+[[ -n "${other_codes:-}" ]] || inconclusive 'the pairs could not be classified'
 
 # ---------------------------------------------------------------------------
 # 6. Topology after: the placement the verdict relies on must not have changed.
@@ -874,61 +707,62 @@ ingress_lines_after="$(read_ingress_ips)" || inconclusive 'could not re-read the
 # ---------------------------------------------------------------------------
 # 7. Verdict.
 # ---------------------------------------------------------------------------
-read -r _ cross_ok cross_bad cross_delivered cross_lost cross_other cross_guard cross_codes cross_onnode <<<"$(grep '^cross ' <<<"${results}")"
-read -r _ same_ok same_bad same_delivered same_lost same_other same_guard same_codes same_onnode <<<"$(grep '^same ' <<<"${results}")"
-
-printf 'cross-node client: control %s ok / %s failed; ExternalAuth %s delivered / %s lost / %s other\n' \
-  "${cross_ok}" "${cross_bad}" "${cross_delivered}" "${cross_lost}" "${cross_other}"
-printf 'same-node client:  control %s ok / %s failed; ExternalAuth %s delivered / %s lost / %s other\n' \
-  "${same_ok}" "${same_bad}" "${same_delivered}" "${same_lost}" "${same_other}"
-summary "| client | control ok | control failed | delivered | lost | other |"
-summary "| --- | --- | --- | --- | --- | --- |"
-summary "| cross-node | ${cross_ok} | ${cross_bad} | ${cross_delivered} | ${cross_lost} | ${cross_other} |"
-summary "| same-node | ${same_ok} | ${same_bad} | ${same_delivered} | ${same_lost} | ${same_other} |"
+printf 'pairs: %s sent, control %s ok / %s failed, %s unattributed\n' "${requests}" "${control_ok}" "${control_bad}" "${unattributed}"
+printf 'cross-node pairs: %s — ExternalAuth %s delivered / %s lost / %s other\n' \
+  "${cross_n}" "${cross_delivered}" "${cross_lost}" "${cross_other}"
+printf 'same-node pairs:  %s — ExternalAuth %s delivered / %s lost / %s other\n' \
+  "${same_n}" "${same_delivered}" "${same_lost}" "${same_other}"
+summary "| group | pairs | delivered | lost | other |"
+summary "| --- | --- | --- | --- | --- |"
+summary "| cross-node | ${cross_n} | ${cross_delivered} | ${cross_lost} | ${cross_other} |"
+summary "| same-node | ${same_n} | ${same_delivered} | ${same_lost} | ${same_other} |"
+summary ""
+summary "Control route: ${control_ok} ok, ${control_bad} failed; ${unattributed} pair(s) unattributed."
 summary ""
 
-if [[ "${cross_guard}" != '404' || "${same_guard}" != '404' ]]; then
-  inconclusive "the https listener answered the unrouted hostname with ${cross_guard}/${same_guard} instead of 404 during the run, so the probe route affected other traffic"
+if [[ "${guard_code}" != '404' ]]; then
+  inconclusive "the https listener answered the unrouted hostname with ${guard_code} instead of 404 during the run, so the probe route affected other traffic"
 fi
-if ((cross_bad + same_bad > 0)); then
+if ((control_bad > 0)); then
   inconclusive 'the plain control route did not answer every time, so failures cannot be attributed to ExternalAuth'
 fi
-if ((cross_onnode != requests || same_onnode != requests)); then
-  inconclusive "not every control request was answered by the Envoy on the client's own node (cross ${cross_onnode}/${requests}, same ${same_onnode}/${requests}), so the path each client exercised is unproven"
-fi
 if ((cross_other + same_other > 0)); then
-  inconclusive "the ExternalAuth route returned answers that are neither delivered nor lost (status codes: cross ${cross_codes}, same ${same_codes})"
+  inconclusive "the ExternalAuth route returned answers that are neither delivered nor lost (status codes: ${other_codes})"
 fi
 if ((requests < min_conclusive_requests)); then
-  inconclusive "a run of fewer than ${min_conclusive_requests} requests per client is a smoke run and never conclusive"
+  inconclusive "a run of fewer than ${min_conclusive_requests} pairs is a smoke run and never conclusive"
+fi
+if ((cross_n < min_conclusive_requests || same_n < min_conclusive_requests)); then
+  inconclusive "too few pairs were attributed to each group (cross ${cross_n}, same ${same_n}, unattributed ${unattributed}; at least ${min_conclusive_requests} each), so send more pairs"
 fi
 if ((same_delivered == 0)); then
-  inconclusive 'no ExternalAuth request was delivered even from a node with a local endpoint, so the route or backend is broken'
+  inconclusive 'no ExternalAuth request was delivered even on a node with a local endpoint, so the route or backend is broken'
 fi
 if ((cross_lost == 0)); then
   if ((same_lost > 0)); then
-    inconclusive 'cross-node requests were all delivered but same-node requests were lost, which is not the #2284 pattern'
+    inconclusive 'cross-node pairs were all delivered but same-node pairs were lost, which is not the #2284 pattern'
+  fi
+  if ((unattributed_undelivered > 0)); then
+    inconclusive "${unattributed_undelivered} unattributed pair(s) did not deliver their ExternalAuth request and may have been cross-node, so FIXED cannot be concluded"
   fi
   conclude 'FIXED' "every cross-node ExternalAuth request (${cross_delivered}) was delivered"
 fi
-# Separation. The same-node client shares its node with some endpoints, so under the #2284 fault only
-# its calls to REMOTE endpoints are lost: its expected loss is the remote share of the endpoints.
-# Node-independent loss hits both clients alike, so FAULT-PERSISTS also needs the same-node loss to
-# stay within 15 points of that expectation ON EITHER SIDE (far below it means this node's calls to
-# remote endpoints are being delivered, which contradicts a cross-node black-hole) and at least 15
-# points below the cross-node loss.
-endpoint_node_list="$(sed -n 's/^NODE //p' <<<"${endpoint_lines}")"
+# Separation. A same-node pair's Envoy shares its node with some endpoints, so under the #2284 fault
+# only its calls to REMOTE endpoints are lost: the expected same-node loss rate is the average remote
+# share of the endpoints over those pairs, same_remote / (same_n * total_endpoints). Node-independent
+# loss hits both groups alike, so FAULT-PERSISTS also needs the same-node loss rate to stay within 15
+# points of that expectation ON EITHER SIDE (far below it means remote calls are being delivered,
+# which contradicts a cross-node black-hole) and at least 15 points below the cross-node loss rate.
 total_endpoints="$(grep -c . <<<"${endpoint_node_list}" || true)"
-local_endpoints="$(grep -Fxc -- "${same_node}" <<<"${endpoint_node_list}" || true)"
-remote_endpoints=$((total_endpoints - local_endpoints))
 separated=0
+deviation=$(((same_lost * total_endpoints - same_remote) * 100))
+((deviation < 0)) && deviation=$((-deviation))
 if ((total_endpoints > 0)) &&
-  ((same_lost * 100 * total_endpoints <= requests * (100 * remote_endpoints + 15 * total_endpoints))) &&
-  ((same_lost * 100 * total_endpoints >= requests * (100 * remote_endpoints - 15 * total_endpoints))) &&
-  (((cross_lost - same_lost) * 100 >= requests * 15)); then
+  ((deviation <= 15 * same_n * total_endpoints)) &&
+  (((cross_lost * same_n - same_lost * cross_n) * 100 >= 15 * cross_n * same_n)); then
   separated=1
 fi
-if ((cross_lost * 10 >= requests * 9 && separated == 1)); then
-  conclude 'FAULT-PERSISTS' "${cross_lost} of ${requests} cross-node ExternalAuth requests were lost (same-node: ${same_lost}) while the control route answered every time"
+if ((cross_lost * 10 >= cross_n * 9 && separated == 1)); then
+  conclude 'FAULT-PERSISTS' "${cross_lost} of ${cross_n} cross-node ExternalAuth requests were lost (same-node: ${same_lost} of ${same_n}) while the control route answered every time"
 fi
-inconclusive "${cross_lost} of ${requests} cross-node and ${same_lost} same-node requests were lost, which does not match the #2284 pattern (near-total cross-node loss, with same-node loss close to the remote-endpoint share)"
+inconclusive "${cross_lost} of ${cross_n} cross-node and ${same_lost} of ${same_n} same-node requests were lost, which does not match the #2284 pattern (near-total cross-node loss, with same-node loss close to the remote-endpoint share)"
