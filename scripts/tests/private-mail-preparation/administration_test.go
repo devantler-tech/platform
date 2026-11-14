@@ -82,6 +82,7 @@ func TestAdministrationSeparatesInitializationAuthority(t *testing.T) {
 	if !reflect.DeepEqual(paths, map[string]string{
 		"settings.json": "private-mail-settings", "administrator-password": "private-mail-admin",
 		"maintainer-password": "private-mail-maintainer", "agent-password": "private-mail-agent",
+		"relay-username": "private-mail-relay", "relay-password": "private-mail-relay",
 	}) {
 		t.Fatal("initialization must consume the durable read-back credentials, never a replaceable generator cache")
 	}
@@ -168,9 +169,40 @@ func TestAdministrationExposesOnlyNormalManagement(t *testing.T) {
 	if !reflect.DeepEqual(denied, map[string]bool{"18080": true, "1025": true, "1587": true, "1993": true}) {
 		t.Fatal("recovery and all prepared mail listeners must remain inaccessible")
 	}
-	egressDeny := sequence(t, policy["egressDeny"])
-	if len(egressDeny) != 1 || !reflect.DeepEqual(mapping(t, egressDeny[0])["toEntities"], []any{"all"}) || !reflect.DeepEqual(policy["egress"], []any{}) {
-		t.Fatal("administration must not activate outbound mail or remote lookups")
+	// Outbound mail leaves only through the SES relay. The grants must be exactly
+	// DNS, inspected so the name rule is enforced, and the relay on 587: a wider
+	// rule would let the server deliver directly or reach anything else.
+	if _, present := policy["egressDeny"]; present {
+		t.Fatal("the preparation egress deny would override the relay grant")
+	}
+	relay := "email-smtp.eu-central-1.amazonaws.com"
+	wantEgress := []any{
+		map[string]any{
+			"toFQDNs": []any{map[string]any{"matchName": relay}},
+			"toPorts": []any{map[string]any{"ports": []any{map[string]any{"port": "587", "protocol": "TCP"}}}},
+		},
+		map[string]any{
+			"toEndpoints": []any{map[string]any{"matchLabels": map[string]any{"k8s:io.kubernetes.pod.namespace": "kube-system", "k8s-app": "kube-dns"}}},
+			"toPorts": []any{map[string]any{
+				"ports": []any{map[string]any{"port": "53", "protocol": "UDP"}, map[string]any{"port": "53", "protocol": "TCP"}},
+				"rules": map[string]any{"dns": []any{map[string]any{"matchName": relay}, map[string]any{"matchPattern": "*.cluster.local"}}},
+			}},
+		},
+	}
+	if !reflect.DeepEqual(policy["egress"], wantEgress) {
+		t.Fatal("administration egress must be exactly DNS and the SES relay on 587")
+	}
+	relaySecret := mapping(t, object(t, objects, "ExternalSecret", "private-mail-relay")["spec"])
+	var relayKeys []string
+	for _, item := range sequence(t, relaySecret["data"]) {
+		ref := mapping(t, mapping(t, item)["remoteRef"])
+		if ref["key"] != "infrastructure/email/ses-smtp" {
+			t.Fatal("the relay login must come from its one OpenBao key")
+		}
+		relayKeys = append(relayKeys, stringField(t, mapping(t, item), "secretKey")+"="+stringField(t, ref, "property"))
+	}
+	if !reflect.DeepEqual(relayKeys, []string{"username=username", "password=password"}) || mapping(t, relaySecret["target"])["name"] != "private-mail-relay" {
+		t.Fatal("the relay ExternalSecret must project exactly the SES login")
 	}
 	route := object(t, objects, "HTTPRoute", "private-mail")
 	meta := mapping(t, route["metadata"])

@@ -189,6 +189,13 @@ spec:
                   items:
                     - key: password
                       path: agent-password
+              - secret:
+                  name: private-mail-relay
+                  items:
+                    - key: username
+                      path: relay-username
+                    - key: password
+                      path: relay-password
         - name: tls
           secret:
             secretName: private-mail-tls

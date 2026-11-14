@@ -71,8 +71,9 @@ signer requirements.
 
 The administration Service and HTTPS route select only normal management port
 8080. The network policy admits only gateway ingress there, explicitly denies
-recovery and prepared mail ports from every source, and retains all-egress
-denial. The route registers an Email Homepage entry in the Email section at its
+recovery and prepared mail ports from every source, and permits egress only to
+DNS and to the Amazon SES relay on port 587 ([the relay decision](email-outbound-relay.md));
+the preparation base alone keeps its all-egress denial. The route registers an Email Homepage entry in the Email section at its
 authenticated administration path. Inclusion prepares browser evaluation; it does not prove
 the Homepage entry, authentication or any production behavior until observed.
 Public mail, DNS migration, credential custody, history import and restoration
@@ -182,10 +183,13 @@ mode 0600 and must live in memory-backed storage when used with real inputs.
 The command emits fixed verdicts, never the plan or its inputs.
 
 The input directory contains `settings.json`, `administrator-password`,
-`maintainer-password`, `agent-password` and `listener-inventory.json`. Settings
+`maintainer-password`, `agent-password`, `relay-username`, `relay-password` and
+`listener-inventory.json`. Settings
 contain only `domain`, `hostname`, `maintainer`, `agent` and `administrator`;
 account names are distinct local parts. Passwords are separate generated
-40–128 character alphanumeric values, with no trailing newline. Unknown or
+40–128 character alphanumeric values, with no trailing newline. The relay login
+is the send-only SES SMTP username, an access key ID, and its SES SMTP password,
+read from OpenBao `infrastructure/email/ses-smtp`. Unknown or
 duplicate settings, invalid names, broad file permissions and an existing output
 are refused. Exact production addresses stay in private operator configuration.
 

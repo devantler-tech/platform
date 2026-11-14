@@ -14,7 +14,7 @@ import (
 // proxyFixture admits the declared public adapter, without company data or credentials.
 func proxyFixture(t *testing.T) ([]byte, []byte) {
 	t.Helper()
-	image := "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:3c83be721743e85c455eaacb82d6db0ad442496c9d8c2d54b509430489ec9f82"
+	image := "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:5794c1f16cd13441360a4c508bb72ec1aaa977132c3c7094700ef470fbe5ca93"
 	p := changePod(t, fixturePod(t), func(p map[string]any) {
 		spec := p["spec"].(map[string]any)
 		containers := spec["containers"].([]any)
