@@ -32,6 +32,7 @@ results:
       - default/untagged-registry-port
       - default/short-digest
       - default/sha512
+      - default/double-colon
       - default/floating-init
       - default/floating-ephemeral
     kind: Pod

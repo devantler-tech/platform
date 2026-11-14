@@ -205,3 +205,13 @@ spec:
   ephemeralContainers:
     - name: debug
       image: busybox:latest
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: double-colon
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: repo:1.2:latest

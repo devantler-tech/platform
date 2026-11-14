@@ -34,32 +34,35 @@ spec:
   evaluation:
     background:
       enabled: true
+  # UPDATE and the ephemeralcontainers subresource cover in-place image
+  # changes and `kubectl debug` containers, not only Pod creation.
   matchConstraints:
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]
-        operations: ["CREATE"]
-        resources: ["pods"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods", "pods/ephemeralcontainers"]
   variables:
     - name: images
       expression: >-
         object.spec.containers.map(c, c.image) +
         object.spec.?initContainers.orValue([]).map(c, c.image) +
         object.spec.?ephemeralContainers.orValue([]).map(c, c.image)
-  validations:
-    # A digest must be a full SHA-256. Otherwise the tag lives in the last path
-    # segment (a registry port such as host:5000/app is not a tag) and must be
-    # version-shaped; a missing tag is `latest`.
-    - expression: >-
-        variables.images.all(i,
-        i.contains('@')
+    # A digest must be a full SHA-256. Otherwise the tag is everything after
+    # the first colon of the last path segment (a registry port such as
+    # host:5000/app is not a tag) and must be version-shaped; a missing tag is
+    # `latest`. Mirrors classify() in scripts/guard-floating-image-tags.sh.
+    - name: floating
+      expression: >-
+        variables.images.filter(i,
+        !(i.contains('@')
           ? i.matches('@sha256:[0-9a-f]{64}$')
           : (i.substring(i.lastIndexOf('/') + 1).contains(':') &&
-             i.substring(i.lastIndexOf('/') + 1).split(':')[1].matches('^v?[0-9]+([.][0-9]+)*([-+][0-9A-Za-z][0-9A-Za-z.+_-]*)?$')))
+             i.substring(i.lastIndexOf('/') + 1)
+              .substring(i.substring(i.lastIndexOf('/') + 1).indexOf(':') + 1)
+              .matches('^v?[0-9]+([.][0-9]+)*([-+][0-9A-Za-z][0-9A-Za-z.+_-]*)?$'))))
+  validations:
+    - expression: "size(variables.floating) == 0"
       messageExpression: >-
         'A container image must carry a sha256 digest or a version-shaped tag; floating: ' +
-        variables.images.filter(i,
-          !(i.contains('@')
-            ? i.matches('@sha256:[0-9a-f]{64}$')
-            : (i.substring(i.lastIndexOf('/') + 1).contains(':') &&
-               i.substring(i.lastIndexOf('/') + 1).split(':')[1].matches('^v?[0-9]+([.][0-9]+)*([-+][0-9A-Za-z][0-9A-Za-z.+_-]*)?$')))).join(', ')
+        variables.floating.join(', ')
