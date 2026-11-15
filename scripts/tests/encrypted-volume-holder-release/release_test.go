@@ -49,6 +49,8 @@ type apiFixture struct {
 	// "<before|after>/<command><path with / as _>". Nil makes every Talos read fail.
 	talos    map[string]string
 	talosDir string
+	// evidenceTimeout, when set, replaces the step's evidence bound in seconds.
+	evidenceTimeout int
 }
 
 func (a *apiFixture) add(path, version, kind, name, namespace, uid string, body object) object {
@@ -234,7 +236,7 @@ func (a *apiFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func runRelease(t *testing.T, api *apiFixture, input, mainSHA string) (string, error) {
 	t.Helper()
-	for _, tool := range []string{"kubectl", "jq", "bash", "grep"} {
+	for _, tool := range []string{"kubectl", "jq", "bash", "grep", "timeout"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Fatalf("native workflow dependency %s is required: %v", tool, err)
 		}
@@ -261,6 +263,9 @@ func runRelease(t *testing.T, api *apiFixture, input, mainSHA string) (string, e
 	// Shorter waits only; every check and the order of operations are the step's own.
 	script = strings.Replace(script, "replacement_timeout=600\n", "replacement_timeout=6\n", 1)
 	script = strings.Replace(script, "detach_timeout=600\n", "detach_timeout=3\n", 1)
+	if api.evidenceTimeout != 0 {
+		script = strings.Replace(script, "evidence_timeout=120\n", fmt.Sprintf("evidence_timeout=%d\n", api.evidenceTimeout), 1)
+	}
 	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/usr/bin/env bash\n[[ \"$*\" == 'ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main' ]] || exit 9\nprintf '%s\\trefs/heads/main\\n' "+mainSHA+"\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -453,12 +458,17 @@ func writeTalos(t *testing.T, api *apiFixture, bin string) {
 	stub := `#!/usr/bin/env bash
 d="$(dirname "$0")/talos-data"
 [[ -f "$d/fail" ]] && exit 1
+[[ -f "$d/slow" ]] && sleep 5
 [[ "$1" == --talosconfig && "$(cat "$2")" == fixture-talosconfig && "$3" == -n && "$4" == 10.0.0.2 ]] || exit 9
 shift 4
 phase=before
 [[ -f "$d/replaced" ]] && phase=after
 case "$1" in
-  processes) f="$d/$phase/processes" ;;
+  processes)
+    # A later listing in the same phase answers from processes-again, if given.
+    f="$d/$phase/processes"
+    [[ -f "$d/$phase/processes-again" && -f "$d/$phase/.listed" ]] && f="$d/$phase/processes-again"
+    : >"$d/$phase/.listed" ;;
   list) [[ "$2" == -l ]] || exit 9; f="$d/$phase/list$(printf '%s' "$3" | tr / _)" ;;
   read) f="$d/$phase/read$(printf '%s' "$2" | tr / _)" ;;
   *) exit 9 ;;
@@ -515,6 +525,7 @@ func nodeAtHold() map[string]string {
 		"before/read_proc_1_mountinfo":   "36 35 253:3 / " + privateMount + " rw,relatime shared:7 - ext4 /dev/mapper/" + volume + " rw\n24 1 8:1 / / rw shared:1 - ext4 /dev/sda1 rw\n",
 		"before/read_proc_100_mountinfo": "236 235 253:3 / /host" + privateMount + " rw,relatime master:7 - ext4 /dev/mapper/" + volume + " rw\n",
 		"before/read_proc_200_mountinfo": "40 39 8:1 / / rw - ext4 /dev/sda1 rw\n",
+		"before/read_proc_300_mountinfo": "50 49 8:1 / / rw - ext4 /dev/sda1 rw\n",
 		"after/processes":                processTable([2]string{"1", "/sbin/init"}, [2]string{"101", "/usr/bin/node-agent"}, [2]string{"200", "postgres -D /var/lib/postgresql/data"}),
 		"after/list_proc_101_fd":         links("54 -> mnt:[11]", "55 -> net:[21]", "56 -> mnt:[15]"),
 		"after/list_proc_1_ns":           links("mnt -> mnt:[10]", "net -> net:[20]"),
@@ -607,5 +618,75 @@ func TestEvidenceRefusesToGuessWhatItCannotRead(t *testing.T) {
 				t.Fatalf("want before-evidence UNAVAILABLE at %s:\n%s", c.stage, output)
 			}
 		})
+	}
+}
+
+// A failed read counts as absent only once a second listing shows its process
+// has exited; a failed read of a process that still runs is no evidence.
+func TestFailedProcessReadsAreNotMistakenForAbsence(t *testing.T) {
+	stillRunning := processTable([2]string{"1", "/sbin/init"}, [2]string{"100", "/usr/bin/node-agent"}, [2]string{"200", "postgres -D /var/lib/postgresql/data"}, [2]string{"300", "/velero node-agent server"})
+	exited := processTable([2]string{"1", "/sbin/init"}, [2]string{"100", "/usr/bin/node-agent"}, [2]string{"200", "postgres -D /var/lib/postgresql/data"})
+	recorded := "EVIDENCE=RECORDED phase=before agent_pid=100 held_mnt=3 dead_mnt=1 held_net=2 dead_net=1 device=253:3 namespaces_with_device=2 agent_namespace_has_device=yes"
+	cases := map[string]struct {
+		edit func(map[string]string)
+		want string
+	}{
+		"namespaces of a running process": {func(n map[string]string) {
+			delete(n, "before/list_proc_200_ns")
+			n["before/processes-again"] = stillRunning
+		}, "EVIDENCE=UNAVAILABLE phase=before stage=namespaces"},
+		"mounts of a running process": {func(n map[string]string) {
+			delete(n, "before/read_proc_300_mountinfo")
+			n["before/processes-again"] = stillRunning
+		}, "EVIDENCE=UNAVAILABLE phase=before stage=mounts"},
+		"namespaces of a process that exited": {func(n map[string]string) {
+			delete(n, "before/list_proc_300_ns")
+			n["before/processes-again"] = exited
+		}, recorded},
+		"mounts of a process that exited": {func(n map[string]string) {
+			delete(n, "before/read_proc_300_mountinfo")
+			n["before/processes-again"] = exited
+		}, recorded},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := newAPI()
+			a.talos = nodeAtHold()
+			c.edit(a.talos)
+			output, err := runRelease(t, a, volume, sha)
+			if err != nil || !strings.Contains(output, "=COMPLETE") || len(a.deleted) != 1 {
+				t.Fatalf("release must complete: err=%v deleted=%v output=%s", err, a.deleted, output)
+			}
+			if !strings.Contains(output, c.want) {
+				t.Fatalf("missing %q in:\n%s", c.want, output)
+			}
+			if strings.Contains(c.want, "UNAVAILABLE") && strings.Contains(output, "phase=before process=") {
+				t.Fatalf("partial evidence was printed:\n%s", output)
+			}
+		})
+	}
+}
+
+// The bound ends every read it started: a slow node reports UNAVAILABLE at
+// the deadline and the release goes on at once.
+func TestEvidenceBoundEndsSlowReads(t *testing.T) {
+	a := newAPI()
+	a.talos = nodeAtHold()
+	a.talos["slow"] = ""
+	a.evidenceTimeout = 1
+	started := time.Now()
+	output, err := runRelease(t, a, volume, sha)
+	elapsed := time.Since(started)
+	if err != nil || !strings.Contains(output, "=COMPLETE") || len(a.deleted) != 1 {
+		t.Fatalf("release must complete: err=%v deleted=%v output=%s", err, a.deleted, output)
+	}
+	for _, want := range []string{"EVIDENCE=UNAVAILABLE phase=before stage=deadline", "EVIDENCE=UNAVAILABLE phase=after stage=deadline"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("missing %q in:\n%s", want, output)
+		}
+	}
+	// Each slow read takes five seconds; two one-second bounds must not wait for them.
+	if elapsed > 8*time.Second {
+		t.Fatalf("the evidence bound did not end its reads: the release took %s", elapsed)
 	}
 }
