@@ -83,19 +83,19 @@ jobs:
           detach_timeout=600
 
           # Reviewed identities, read on 2026-11-15 after run 43683087211.
-          pod=node-agent-tbvw8
-          pod_uid=e8199e91-6ffe-4390-a269-12b7f8e13a20
-          node=prod-worker-1
-          daemon_set_uid=c90590f8-03c0-44d0-a06e-02dcf91439a9
-          generation=40
-          revision=797d57f68c
-          claim_namespace=email-data-recovery-42818236850
-          claim_uid=fa4442ce-698b-46b2-a442-ba3ff2e48065
-          volume=pvc-898b45a4-11cb-4075-9c25-6a3a6bbd9e57
-          volume_uid=01b86e2f-b35b-49bd-bcf9-ddc3c714cfaf
-          attachment=csi-b501cc5616bf0a961429f49e20f13940dc79989d4555eaeb836eef45dab94fa5
-          attachment_uid=c284cfa0-5f90-4130-93dd-f6f8d039e380
-          backend_uid=7fb51fcd-1ae0-49f1-9611-c06088ac506b
+          pod="node-agent-tbvw8"
+          pod_uid="e8199e91-6ffe-4390-a269-12b7f8e13a20"
+          node="prod-worker-1"
+          daemon_set_uid="c90590f8-03c0-44d0-a06e-02dcf91439a9"
+          generation="40"
+          revision="797d57f68c"
+          claim_namespace="email-data-recovery-42818236850"
+          claim_uid="fa4442ce-698b-46b2-a442-ba3ff2e48065"
+          volume="pvc-898b45a4-11cb-4075-9c25-6a3a6bbd9e57"
+          volume_uid="01b86e2f-b35b-49bd-bcf9-ddc3c714cfaf"
+          attachment="csi-b501cc5616bf0a961429f49e20f13940dc79989d4555eaeb836eef45dab94fa5"
+          attachment_uid="c284cfa0-5f90-4130-93dd-f6f8d039e380"
+          backend_uid="7fb51fcd-1ae0-49f1-9611-c06088ac506b"
 
           # Only a successful NotFound read proves absence: kubectl prints
           # nothing for it, and any other failure refuses.
