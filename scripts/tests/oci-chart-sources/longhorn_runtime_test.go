@@ -2,6 +2,7 @@ package ocichartsources
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -67,7 +68,11 @@ func TestLonghornRuntimeCommandIdentities(t *testing.T) {
 				})
 			}
 			rendered := filepath.Join(work, "rendered.yaml")
-			for _, renderer := range spec["postRenderers"].([]any) {
+			renderers, ok := spec["postRenderers"].([]any)
+			if !ok || len(renderers) == 0 {
+				t.Fatal("the runtime release has no post-renderers")
+			}
+			for _, renderer := range renderers {
 				var stream bytes.Buffer
 				encoder := yaml.NewEncoder(&stream)
 				for _, doc := range manifests {
@@ -79,7 +84,11 @@ func TestLonghornRuntimeCommandIdentities(t *testing.T) {
 					t.Fatal(err)
 				}
 				writeRuntimeYAML(t, rendered, stream.Bytes())
-				kustomize := object(renderer.(map[string]any), "kustomize")
+				typedRenderer, ok := renderer.(map[string]any)
+				if !ok {
+					t.Fatal("the runtime release contains an invalid post-renderer")
+				}
+				kustomize := object(typedRenderer, "kustomize")
 				kustomize["apiVersion"], kustomize["kind"] = "kustomize.config.k8s.io/v1beta1", "Kustomization"
 				kustomize["resources"] = []string{"rendered.yaml"}
 				writeRuntimeYAML(t, filepath.Join(work, "kustomization.yaml"), kustomize)
@@ -88,7 +97,15 @@ func TestLonghornRuntimeCommandIdentities(t *testing.T) {
 			for _, doc := range manifests {
 				name := object(doc, "metadata")["name"]
 				pod := object(object(object(doc, "spec"), "template"), "spec")
-				context := object(pod["containers"].([]any)[0].(map[string]any), "securityContext")
+				containers, ok := pod["containers"].([]any)
+				if !ok || len(containers) == 0 {
+					t.Fatalf("%s has no rendered containers", name)
+				}
+				container, ok := containers[0].(map[string]any)
+				if !ok {
+					t.Fatalf("%s has an invalid rendered container", name)
+				}
+				context := object(container, "securityContext")
 				wantUID, wantGID := 0, 0
 				switch name {
 				case "longhorn-global-manager":
@@ -132,7 +149,7 @@ func buildRuntimeYAML(t *testing.T, directory string) []map[string]any {
 	decoder := yaml.NewDecoder(bytes.NewReader(output))
 	for {
 		var doc map[string]any
-		if err := decoder.Decode(&doc); err == io.EOF {
+		if err := decoder.Decode(&doc); errors.Is(err, io.EOF) {
 			return documents
 		} else if err != nil {
 			t.Fatal(err)
