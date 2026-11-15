@@ -1,0 +1,20 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: longhorn-platform
+  namespace: longhorn-system
+spec:
+  interval: 10m
+  url: oci://ghcr.io/devantler-tech/platform-charts/longhorn
+  # 1.13.0-platform.8, published from 11d8704a46f048bac0a3d68b890e17eca924ec5c.
+  ref:
+    digest: sha256:142fd45f593206d455f494c1bce4248f03cee1b5a1767872aafcc318b01a2414
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$'
