@@ -47,7 +47,7 @@ var (
 // The recipient is a public key, so anyone can encrypt a block to it. Only a
 // first-party main dispatch by devantler of a workflow that calls
 // prod-operation.yaml is read, and only its called job's log.
-const callerUses = "uses: ./.github/workflows/prod-operation.yaml"
+var callerUses = regexp.MustCompile(`(?m)^\s*uses:\s*\./\.github/workflows/prod-operation\.yaml\s*(#.*)?$`)
 
 func verifyRun(ctx context.Context, run runner, runID string) error {
 	meta, err := run(ctx, nil, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%s", repository, runID), "--jq",
@@ -65,7 +65,7 @@ func verifyRun(ctx context.Context, run runner, runID string) error {
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(string(caller), callerUses) {
+	if !callerUses.MatchString(string(caller)) {
 		return fmt.Errorf("run %s is not a caller of prod-operation.yaml", runID)
 	}
 	return nil
@@ -202,7 +202,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if err := read(ctx, os.Args[1], identityFile(os.Getenv), execRunner, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "read-prod-operation-output:", err)
+		fmt.Fprintln(os.Stderr, "read-prod-operation-output:", printable(err.Error()))
 		os.Exit(1)
 	}
 }

@@ -195,6 +195,8 @@ jobs:
           read -r -a operation_args <<<"${PROD_OPERATION_ARGS}"
           # The program cannot write to the public step summary or step outputs,
           # and at most 4 MiB of what it prints is kept (a cut is recorded).
+          # This guards against accidents, not a hostile program: it runs as the
+          # runner user, so only reviewed programs under scripts/ may run here.
           output_cap=4194304
           set +e
           env -u GITHUB_STEP_SUMMARY -u GITHUB_OUTPUT -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_STATE \

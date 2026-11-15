@@ -101,17 +101,19 @@ func TestReadRefusesForgedOrBrokenRuns(t *testing.T) {
 		return strings.Join(parts, "\t")
 	}
 	for name, mutate := range map[string]func(*fake){
-		"another workflow path": func(f *fake) { f.meta = field(0, "../../evil.yaml") },
-		"another branch":        func(f *fake) { f.meta = field(1, "feature") },
-		"a pull request run":    func(f *fake) { f.meta = field(2, "pull_request") },
-		"another actor":         func(f *fake) { f.meta = field(3, "someone") },
-		"another trigger":       func(f *fake) { f.meta = field(4, "someone") },
-		"a fork":                func(f *fake) { f.meta = field(5, "fork/platform") },
-		"not a prod caller":     func(f *fake) { f.caller = "jobs: {}\n" },
-		"no encrypted block":    func(f *fake) { f.log = "PROD_OPERATION=UNVERIFIED\n" },
-		"non-numeric exit":      func(f *fake) { f.log = strings.Replace(sampleLog, "EXIT=3", "EXIT=\x1b[31m0", 1) },
-		"decryption refused":    func(f *fake) { f.decryptErr = errors.New("no identity matched") },
-		"unterminated block":    func(f *fake) { f.log = strings.Split(sampleLog, "----- END")[0] },
+		"another workflow path":         func(f *fake) { f.meta = field(0, "../../evil.yaml") },
+		"another branch":                func(f *fake) { f.meta = field(1, "feature") },
+		"a pull request run":            func(f *fake) { f.meta = field(2, "pull_request") },
+		"another actor":                 func(f *fake) { f.meta = field(3, "someone") },
+		"another trigger":               func(f *fake) { f.meta = field(4, "someone") },
+		"a fork":                        func(f *fake) { f.meta = field(5, "fork/platform") },
+		"not a prod caller":             func(f *fake) { f.caller = "jobs: {}\n" },
+		"caller line only in a comment": func(f *fake) { f.caller = "jobs: {}\n# uses: ./.github/workflows/prod-operation.yaml\n" },
+		"another reusable file":         func(f *fake) { f.caller = "    uses: ./.github/workflows/prod-operation.yaml.bak\n" },
+		"no encrypted block":            func(f *fake) { f.log = "PROD_OPERATION=UNVERIFIED\n" },
+		"non-numeric exit":              func(f *fake) { f.log = strings.Replace(sampleLog, "EXIT=3", "EXIT=\x1b[31m0", 1) },
+		"decryption refused":            func(f *fake) { f.decryptErr = errors.New("no identity matched") },
+		"unterminated block":            func(f *fake) { f.log = strings.Split(sampleLog, "----- END")[0] },
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFake()
