@@ -628,7 +628,10 @@ spec:
                   # client Secret, which carries no record, cannot trigger it again.
                   if [[ -n ${ADMIN_RECOVERY_NONCE:-} ]]; then
                     [[ $ADMIN_RECOVERY_NONCE =~ ^[a-z0-9-]{8,64}$ ]] || fail "ADMIN_RECOVERY_NONCE must be 8 to 64 characters of a-z, 0-9 and -"
-                    if [[ $(secret_json | jq -r --arg a "$recovery_annotation" '.metadata.annotations[$a] // ""') == "$ADMIN_RECOVERY_NONCE" ]]; then
+                    # A separate assignment, so a failed read stops the run instead of reading
+                    # as "not recorded" and removing what he has enrolled since.
+                    recorded_nonce=$(secret_json | jq -r --arg a "$recovery_annotation" '.metadata.annotations[$a] // ""')
+                    if [[ $recorded_nonce == "$ADMIN_RECOVERY_NONCE" ]]; then
                       log "recovery $ADMIN_RECOVERY_NONCE: done earlier, nothing to do"
                     else
                       user_request=$(jq -nc --arg u "$admin_id" '{userId: $u}')
