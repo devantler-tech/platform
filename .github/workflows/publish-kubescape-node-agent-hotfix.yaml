@@ -7,12 +7,16 @@ name: Publish Kubescape Node Agent Hotfix
     paths:
       - .github/workflows/publish-kubescape-node-agent-hotfix.yaml
       - k8s/bases/infrastructure/controllers/kubescape/node-agent-v0.3.219-alert-classification.patch
+      - k8s/bases/infrastructure/controllers/kubescape/inspektor-gadget-06b0d12-namespace-descriptors.patch
+      - scripts/apply-kubescape-gadget-patch.sh
       - scripts/tests/test-kubescape-node-agent-hotfix.sh
   push:
     branches: [main]
     paths:
       - .github/workflows/publish-kubescape-node-agent-hotfix.yaml
       - k8s/bases/infrastructure/controllers/kubescape/node-agent-v0.3.219-alert-classification.patch
+      - k8s/bases/infrastructure/controllers/kubescape/inspektor-gadget-06b0d12-namespace-descriptors.patch
+      - scripts/apply-kubescape-gadget-patch.sh
       - scripts/tests/test-kubescape-node-agent-hotfix.sh
   workflow_dispatch:
 
@@ -26,8 +30,14 @@ env:
   KUBESCAPE_NODE_AGENT_SOURCE_COMMIT: 4956ea26aabadb9daff42c4717842dd7bda26aa3
   UPSTREAM_IMAGE: quay.io/kubescape/node-agent:v0.3.219@sha256:2044ed750f5e20a7c5150479963e2b33108c304a40d526c0de7ed412495467c6
   IMAGE: ghcr.io/devantler-tech/platform-kubescape-node-agent
-  IMAGE_TAG: v0.3.219-alerts.1-${{ github.sha }}
+  IMAGE_TAG: v0.3.219-alerts.1-nsfd.1-${{ github.sha }}
   PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/node-agent-v0.3.219-alert-classification.patch
+  # node-agent replaces inspektor-gadget with this exact Kubescape fork; the
+  # reviewed patch fixes its namespace-descriptor ownership (#6327).
+  GADGET_FORK_MODULE: github.com/kubescape/inspektor-gadget
+  GADGET_FORK_VERSION: v0.0.0-20260826074832-06b0d12baca0
+  GADGET_FORK_SUM: h1:kJzq1CnGP4kqAdyVWrb9TGlRpniwsIsVVMfo61OuzCQ=
+  GADGET_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/inspektor-gadget-06b0d12-namespace-descriptors.patch
 
 jobs:
   verify:
@@ -59,6 +69,21 @@ jobs:
         with:
           go-version-file: upstream/go.mod
           cache: false
+
+      - name: Patch the pinned inspektor-gadget fork
+        working-directory: upstream
+        env:
+          GADGET_PATCH: ${{ github.workspace }}/${{ env.GADGET_PATCH_PATH }}
+        run: bash "${GITHUB_WORKSPACE}/scripts/apply-kubescape-gadget-patch.sh" . "${GADGET_PATCH}"
+
+      - name: Test the patched namespace-descriptor ownership
+        working-directory: upstream/third_party/inspektor-gadget
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          set -euo pipefail
+          go test -race -count=1 ./pkg/container-collection/ \
+            -run 'Test(DistinctDuplicateReleasesItsDescriptors|SameObjectReAddKeepsItsDescriptors|ConcurrentDistinctCandidatesLeaveOnlyTheWinnerOpen|ConcurrentSameObjectAddsLeaveOneValidPair)$' -v
 
       - name: Apply and test compatibility patch
         working-directory: upstream
@@ -132,6 +157,18 @@ jobs:
           git apply --check "${HOTFIX_PATCH}"
           git apply "${HOTFIX_PATCH}"
           git diff --check
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: upstream/go.mod
+          cache: false
+
+      - name: Patch the pinned inspektor-gadget fork
+        working-directory: upstream
+        env:
+          GADGET_PATCH: ${{ github.workspace }}/${{ env.GADGET_PATCH_PATH }}
+        run: bash "${GITHUB_WORKSPACE}/scripts/apply-kubescape-gadget-patch.sh" . "${GADGET_PATCH}"
 
       - name: Extract the pinned upstream tracer bundle
         working-directory: upstream
