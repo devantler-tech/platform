@@ -5,8 +5,8 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture="${root}/tests/longhorn-elastic-eviction-guard"
 component="${root}/k8s/bases/components/longhorn-elastic-eviction-guard"
-policy="${component}/cluster-policy.yaml"
-mutation_policy="${component}/uid-mutation-policy.yaml"
+policy="${component}/cluster-policies/cluster-policy-validation.yaml"
+mutation_policy="${component}/cluster-policies/cluster-policy-uid-mutation.yaml"
 work="$(mktemp -d "${root}/tests/.longhorn-elastic-eviction.XXXXXX")"
 completed=0
 cleanup() {
