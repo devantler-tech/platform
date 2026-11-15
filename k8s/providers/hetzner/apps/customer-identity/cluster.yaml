@@ -39,11 +39,13 @@ spec:
       coroot.com/postgres-scrape-credentials-secret-username-key: username
       coroot.com/postgres-scrape-credentials-secret-password-key: password
       coroot.com/postgres-scrape-param-sslmode: require
-  # Same quorum replication as the platform's other databases. While the
-  # standby is up, every commit waits for it, so a promoted standby holds every
-  # committed transaction. With dataDurability: preferred, writes continue
-  # when the standby is down, and commits made then exist only on the primary
-  # until the standby or the WAL archive receives them. This is not RPO=0.
+  # Same quorum replication as the platform's other databases. While
+  # synchronous replication is active, every commit waits for the standby, so
+  # a promoted standby holds every committed transaction. With
+  # dataDurability: preferred, CNPG counts only healthy standbys, so writes
+  # continue when the standby is unavailable (down or unhealthy), and commits
+  # made then exist only on the primary until the standby or the WAL archive
+  # receives them. This is not RPO=0.
   postgresql:
     synchronous:
       method: any
