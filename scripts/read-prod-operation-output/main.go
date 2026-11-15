@@ -39,7 +39,48 @@ const (
 var (
 	runIDPattern     = regexp.MustCompile(`^[0-9]{1,20}$`)
 	timestampPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z `)
+	exitPattern      = regexp.MustCompile(`^[0-9]{1,3}$`)
+	callerPattern    = regexp.MustCompile(`^\.github/workflows/[a-z0-9]+(-[a-z0-9]+)*\.ya?ml$`)
+	shaPattern       = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
+
+// The recipient is a public key, so anyone can encrypt a block to it. Only a
+// first-party main dispatch by devantler of a workflow that calls
+// prod-operation.yaml is read, and only its called job's log.
+const callerUses = "uses: ./.github/workflows/prod-operation.yaml"
+
+func verifyRun(ctx context.Context, run runner, runID string) error {
+	meta, err := run(ctx, nil, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%s", repository, runID), "--jq",
+		`[.path, .head_branch, .event, .actor.login, .triggering_actor.login, .head_repository.full_name, .head_sha] | join("\t")`)
+	if err != nil {
+		return err
+	}
+	f := strings.Split(strings.TrimSpace(string(meta)), "\t")
+	if len(f) != 7 || !callerPattern.MatchString(f[0]) || f[1] != "main" || f[2] != "workflow_dispatch" ||
+		f[3] != "devantler" || f[4] != "devantler" || f[5] != repository || !shaPattern.MatchString(f[6]) {
+		return fmt.Errorf("run %s is not a main workflow_dispatch by devantler in %s", runID, repository)
+	}
+	caller, err := run(ctx, nil, "gh", "api", "-H", "Accept: application/vnd.github.raw",
+		fmt.Sprintf("repos/%s/contents/%s?ref=%s", repository, f[0], f[6]))
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(caller), callerUses) {
+		return fmt.Errorf("run %s is not a caller of prod-operation.yaml", runID)
+	}
+	return nil
+}
+
+// printable drops control characters other than newline and tab, so neither the
+// log nor the decrypted output can drive the terminal.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || (r >= 0x20 && r != 0x7f && (r < 0x80 || r >= 0xa0)) {
+			return r
+		}
+		return -1
+	}, s)
+}
 
 // block is one operation's published result in a job log.
 type block struct {
@@ -105,7 +146,13 @@ func read(ctx context.Context, runID string, identity string, run runner, out io
 	if !runIDPattern.MatchString(runID) {
 		return fmt.Errorf("run id %q is not a number", runID)
 	}
-	jobs, err := run(ctx, nil, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%s/jobs", repository, runID), "--jq", ".jobs[].id")
+	if err := verifyRun(ctx, run, runID); err != nil {
+		return err
+	}
+	// Only the called prod-operation job ("<caller job> / <operation>") runs the
+	// program; any other job's blocks are ignored.
+	jobs, err := run(ctx, nil, "gh", "api", fmt.Sprintf("repos/%s/actions/runs/%s/jobs", repository, runID), "--jq",
+		`.jobs[] | select(.name | contains(" / ")) | .id`)
 	if err != nil {
 		return err
 	}
@@ -114,7 +161,9 @@ func read(ctx context.Context, runID string, identity string, run runner, out io
 		if !runIDPattern.MatchString(job) {
 			return fmt.Errorf("unexpected job id %q", job)
 		}
-		log, err := run(ctx, nil, "gh", "api", fmt.Sprintf("repos/%s/actions/jobs/%s/logs", repository, job))
+		// Logs carry the runner's colour codes; they are only parsed here, and what
+		// is printed passes through printable.
+		log, err := run(ctx, nil, "gh", "api", "--allow-escape-sequences", fmt.Sprintf("repos/%s/actions/jobs/%s/logs", repository, job))
 		if err != nil {
 			return err
 		}
@@ -123,6 +172,9 @@ func read(ctx context.Context, runID string, identity string, run runner, out io
 			return fmt.Errorf("job %s: %w", job, err)
 		}
 		for _, b := range blocks {
+			if !exitPattern.MatchString(b.exit) {
+				return fmt.Errorf("job %s: block without a numeric exit status", job)
+			}
 			plain, err := run(ctx, strings.NewReader(b.ciphertext), "age", "--decrypt", "--identity", identity)
 			if err != nil {
 				return fmt.Errorf("job %s: %w", job, err)
@@ -130,7 +182,7 @@ func read(ctx context.Context, runID string, identity string, run runner, out io
 			if _, err := fmt.Fprintf(out, "== job %s, exit %s\n", job, b.exit); err != nil {
 				return err
 			}
-			if _, err := out.Write(plain); err != nil {
+			if _, err := io.WriteString(out, printable(string(plain))); err != nil {
 				return err
 			}
 			found++

@@ -75,7 +75,8 @@ jobs:
       PROD_OPERATION_ARGS: ${{ inputs.args }}
       # The operation's output is published only encrypted to this age key, because
       # this repository's Actions logs are public. It is the maintainer-held SOPS
-      # recipient (.sops.yaml); read a run with scripts/read-prod-operation-output.sh.
+      # recipient (.sops.yaml); read a run with
+      # `go run ./scripts/read-prod-operation-output <run-id>`.
       PROD_OPERATION_RECIPIENT: age1rk6fs67kly3h4zux5za429z3grjtvs8vcunav4sa28pxk738najsk8wgs6
     steps:
       - name: Require the confirmed first-attempt main dispatch by devantler
@@ -192,9 +193,18 @@ jobs:
           fi
           unset KEEP_HCLOUD_TOKEN
           read -r -a operation_args <<<"${PROD_OPERATION_ARGS}"
-          status=0
-          "${RUNNER_TEMP}/prod-operation" ${operation_args[@]+"${operation_args[@]}"} \
-            >"${credential_dir}/output" 2>&1 || status=$?
+          # The program cannot write to the public step summary or step outputs,
+          # and at most 4 MiB of what it prints is kept (a cut is recorded).
+          output_cap=4194304
+          set +e
+          env -u GITHUB_STEP_SUMMARY -u GITHUB_OUTPUT -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_STATE \
+            "${RUNNER_TEMP}/prod-operation" ${operation_args[@]+"${operation_args[@]}"} 2>&1 |
+            head -c "${output_cap}" >"${credential_dir}/output"
+          status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$(wc -c <"${credential_dir}/output")" -ge "${output_cap}" ]]; then
+            printf '\n[output truncated at 4 MiB]\n' >>"${credential_dir}/output"
+          fi
           printf 'PROD_OPERATION_EXIT=%s\n' "${status}"
           if ! age --encrypt --armor --recipient "${PROD_OPERATION_RECIPIENT}" \
             <"${credential_dir}/output" >"${credential_dir}/output.age"; then

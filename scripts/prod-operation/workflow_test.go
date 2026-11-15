@@ -225,7 +225,7 @@ func runCredentialStep(t *testing.T, helperExit, programExit int, keep, args, ag
 	fixtures := map[string]string{
 		"scripts/use-prod-stable-api-endpoint.sh": "#!/bin/bash\nprintf '%s\\n' '::add-mask::192.0.2.1' >&2\nprintf '%s\\n' 'helper stdout must stay private'\nexit \"$OP_TEST_HELPER_EXIT\"\n",
 		"tools/mktemp":         fmt.Sprintf("#!/bin/bash\nexec %q -d \"$OP_TEST_TMPDIR/prod-operation.XXXXXX\"\n", mktemp),
-		"tools/prod-operation": "#!/bin/bash\n[[ -z ${KUBE_CONFIG+x} && -z ${KEEP_HCLOUD_TOKEN+x} && -s $KUBECONFIG ]] || exit 99\nprintf 'token=%s\\n' \"${HCLOUD_TOKEN:-unset}\"\nprintf 'argc=%s' \"$#\"; [[ $# -eq 0 ]] || printf ' %s' \"$@\"; printf '\\n'\nprintf '%s\\n' 'program stderr detail' >&2\nexit \"$OP_TEST_PROGRAM_EXIT\"\n",
+		"tools/prod-operation": "#!/bin/bash\n[[ -z ${KUBE_CONFIG+x} && -z ${KEEP_HCLOUD_TOKEN+x} && -s $KUBECONFIG ]] || exit 99\n[[ -z ${GITHUB_STEP_SUMMARY+x} && -z ${GITHUB_OUTPUT+x} && -z ${GITHUB_ENV+x} && -z ${GITHUB_PATH+x} ]] || exit 98\n[[ -z ${OP_TEST_PROGRAM_BYTES:-} ]] || { head -c \"$OP_TEST_PROGRAM_BYTES\" /dev/zero | tr '\\0' x; exit 0; }\nprintf 'token=%s\\n' \"${HCLOUD_TOKEN:-unset}\"\nprintf 'argc=%s' \"$#\"; [[ $# -eq 0 ]] || printf ' %s' \"$@\"; printf '\\n'\nprintf '%s\\n' 'program stderr detail' >&2\nexit \"$OP_TEST_PROGRAM_EXIT\"\n",
 	}
 	if ageBin == "" {
 		// A stand-in that records its arguments and wraps stdin in base64, so the
@@ -247,6 +247,12 @@ func runCredentialStep(t *testing.T, helperExit, programExit int, keep, args, ag
 		fmt.Sprintf("OP_TEST_HELPER_EXIT=%d", helperExit), fmt.Sprintf("OP_TEST_PROGRAM_EXIT=%d", programExit),
 		"KUBE_CONFIG=synthetic-config", "HCLOUD_TOKEN=synthetic-token", "KEEP_HCLOUD_TOKEN=" + keep,
 		"PROD_OPERATION_ARGS=" + args, "PROD_OPERATION_RECIPIENT=" + recipient,
+		// The runner sets these; the program must not see them.
+		"GITHUB_STEP_SUMMARY=" + filepath.Join(root, "summary"), "GITHUB_OUTPUT=" + filepath.Join(root, "output"),
+		"GITHUB_ENV=" + filepath.Join(root, "env"), "GITHUB_PATH=" + filepath.Join(root, "path"),
+	}
+	if v := os.Getenv("OP_TEST_PROGRAM_BYTES"); v != "" {
+		cmd.Env = append(cmd.Env, "OP_TEST_PROGRAM_BYTES="+v)
 	}
 	if os.Getenv("OP_TEST_AGE_FAIL") == "1" {
 		cmd.Env = append(cmd.Env, "OP_TEST_AGE_FAIL=1")
@@ -322,6 +328,17 @@ func TestCredentialStepPublishesOnlyEncryptedOutput(t *testing.T) {
 		out, _, runErr := runCredentialStep(t, 1, 0, "false", "", "", "age1recipient")
 		if exitCode(runErr) != 2 || !strings.Contains(out, "PROD_OPERATION=UNVERIFIED\n") || strings.Contains(out, "PROD_OPERATION_EXIT=") {
 			t.Fatalf("failed helper did not stop with an unverified verdict: %v, %q", runErr, out)
+		}
+	})
+	t.Run("output beyond 4 MiB is cut and the cut recorded", func(t *testing.T) {
+		t.Setenv("OP_TEST_PROGRAM_BYTES", "4194314")
+		out, _, runErr := runCredentialStep(t, 0, 0, "false", "", "", "age1recipient")
+		if runErr != nil {
+			t.Fatalf("operation failed: %v", runErr)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(strings.TrimSpace(ciphertext(t, out)), "FAKE-AGE:"))
+		if err != nil || len(decoded) != 4194304+len("\n[output truncated at 4 MiB]\n") || !strings.HasSuffix(string(decoded), "\n[output truncated at 4 MiB]\n") || decoded[0] != 'x' {
+			t.Fatalf("truncated payload has %d bytes (err %v)", len(decoded), err)
 		}
 	})
 	t.Run("encryption failure publishes nothing", func(t *testing.T) {
