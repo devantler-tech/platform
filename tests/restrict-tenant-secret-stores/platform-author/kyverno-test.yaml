@@ -20,7 +20,7 @@ results:
     result: skip
   - policy: restrict-tenant-secret-stores
     resources:
-      - tenant-ns/ghcr-auth
+      - tenant-ns/platform-backup-credential
     kind: ExternalSecret
     result: skip
   - policy: restrict-tenant-secret-stores

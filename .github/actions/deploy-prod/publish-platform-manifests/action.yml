@@ -74,7 +74,7 @@ runs:
         GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
         STAGING_OCI_REF: ${{ steps.staging_reference.outputs.oci_ref }}
-      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push "${STAGING_OCI_REF}"
+      run: ./scripts/run-ksail-prod.sh workload push "${STAGING_OCI_REF}"
 
     - name: 🔐 Configure GHCR auth
       shell: bash

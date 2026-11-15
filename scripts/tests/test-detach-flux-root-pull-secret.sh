@@ -222,7 +222,7 @@ for entrypoint in "${deploy_action}" "${dr_workflow}"; do
   [[ -n "${detach}" ]] || fail "${entrypoint##*/} does not run the detach step"
   ((detach < publish)) || fail "${entrypoint##*/} detaches after the mutable tag can move"
 done
-create="$(step_index "${dr_workflow}" 'run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster create')"
+create="$(step_index "${dr_workflow}" 'run: ./scripts/run-ksail-prod.sh cluster create')"
 detach="$(step_index "${dr_workflow}" './scripts/detach-flux-root-pull-secret.sh')"
 ((create < detach)) || fail 'DR detaches before the cluster exists'
 registry="$(yq -er '.spec.cluster.localRegistry.registry' "${ksail_prod}")"

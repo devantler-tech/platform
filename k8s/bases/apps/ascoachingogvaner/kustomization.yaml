@@ -20,7 +20,6 @@ resources:
   - role-binding-external-dns.yaml
   - role-binding-external-dns-kube-system.yaml
   - cluster-role-binding.yaml
-  - external-secret.yaml
   - namespace.yaml
   - network-policy.yaml
   - role-binding-ascoachingogvaner.yaml

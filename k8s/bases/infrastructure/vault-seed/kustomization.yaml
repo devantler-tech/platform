@@ -29,8 +29,6 @@ resources:
   - push-secret-seed-r2-credentials.yaml
   - push-secret-seed-wedding-db-backup-r2.yaml
   - push-secret-seed-github-app.yaml
-  - push-secret-seed-ghcr.yaml
-  - external-secret-ghcr-seed-probe.yaml
   - push-secret-seed-dex-client-secret.yaml
   - push-secret-seed-oauth2-proxy-cookie-secret.yaml
   - push-secret-seed-velero-repo-credentials.yaml

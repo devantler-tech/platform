@@ -2,7 +2,7 @@
 # small typed `Tenant` declaration into the full platform-side control-plane
 # skeleton every tenant otherwise hand-copies (namespace, Flux-impersonated SA +
 # RoleBinding, cosign-verified OCIRepository, impersonating Kustomization,
-# ghcr-auth ExternalSecret, default-deny NetworkPolicy), with optional
+# default-deny NetworkPolicy), with optional
 # external-dns RBAC and SOPS decryption behind `includeWhen` toggles.
 #
 # STATIC SECURITY GATE (#3055): scripts/scan-rgd-templates.sh extracts every
@@ -94,7 +94,7 @@ spec:
         defaultRequestMemory: string | default="128Mi"
     spec:
       # Tenant name — used verbatim as the namespace, ServiceAccount,
-      # OCIRepository/Kustomization name, and ghcr-auth target. Required.
+      # OCIRepository/Kustomization name. Required.
       name: string
       # The tenant runs its own external-dns instance (e.g. ascoachingogvaner's
       # simply.com zone) and needs the privileged cross-namespace reads granted
@@ -144,8 +144,6 @@ spec:
           labels:
             app.kubernetes.io/managed-by: kro
         automountServiceAccountToken: false
-        imagePullSecrets:
-          - name: ghcr-auth
     - id: roleBinding
       template:
         apiVersion: rbac.authorization.k8s.io/v1
@@ -185,39 +183,6 @@ spec:
           - kind: ServiceAccount
             name: ${serviceAccount.metadata.name}
             namespace: ${tenantNamespace.metadata.name}
-    # GHCR image-pull secret, sourced from OpenBao (not a SOPS Secret) via the
-    # shared cluster-scoped `openbao` ClusterSecretStore reading the platform
-    # path infrastructure/ghcr/auth. Reconciled platform-side (flux-system), so
-    # the `restrict-tenant-secret-stores` Kyverno policy carve-out applies.
-    # Produces the `ghcr-auth` dockerconfigjson the OCIRepository (secretRef) and
-    # ServiceAccount (imagePullSecrets) consume.
-    - id: ghcrAuth
-      template:
-        apiVersion: external-secrets.io/v1
-        kind: ExternalSecret
-        metadata:
-          name: ghcr-auth
-          namespace: ${tenantNamespace.metadata.name}
-          labels:
-            app.kubernetes.io/managed-by: kro
-        spec:
-          refreshInterval: 1h
-          secretStoreRef:
-            name: openbao
-            kind: ClusterSecretStore
-          target:
-            name: ghcr-auth
-            creationPolicy: Owner
-            template:
-              engineVersion: v2
-              type: kubernetes.io/dockerconfigjson
-              data:
-                .dockerconfigjson: "{{ .dockerconfigjson }}"
-          data:
-            - secretKey: dockerconfigjson # checkov:skip=CKV_SECRET_6:names the key in the synced Secret; the value lives in OpenBao
-              remoteRef:
-                key: infrastructure/ghcr/auth
-                property: dockerconfigjson
     # Default-deny NetworkPolicy mirroring the runtime Kyverno-generated
     # CiliumNetworkPolicy, so the static Kubescape scan sees the namespace as
     # network-restricted (C-0054). Behaviourally redundant with the runtime
@@ -299,8 +264,6 @@ spec:
           interval: 1m
           ref: '${schema.spec.source.digest == "" ? {"semver": ">=1.0.0"} : {"digest": schema.spec.source.digest}}'
           url: oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests
-          secretRef:
-            name: ghcr-auth
           verify:
             provider: cosign
             matchOIDCIdentity:

@@ -83,10 +83,6 @@ spec:
                 path: /spec/template/spec/containers/0/securityContext/runAsNonRoot
                 value: true
               - op: add
-                path: /spec/template/spec/imagePullSecrets
-                value:
-                  - name: ghcr-auth
-              - op: add
                 path: /spec/template/spec/topologySpreadConstraints
                 value:
                   - maxSkew: 1
@@ -104,10 +100,6 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/securityContext/runAsNonRoot
                 value: true
-              - op: add
-                path: /spec/template/spec/imagePullSecrets
-                value:
-                  - name: ghcr-auth
               - op: add
                 path: /spec/template/spec/topologySpreadConstraints
                 value:

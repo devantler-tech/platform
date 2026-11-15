@@ -112,30 +112,21 @@ and workloads consume the values **from OpenBao via `ExternalSecret`s**.
   reach infra or another tenant's path, and the platform does **not** seed tenant
   app values.
 
-### The GHCR image-pull secret (`ghcr-auth`)
+### Public packages: no image-pull secret
 
-A **platform-managed** credential, not a tenant secret. Every registration dir whose
-artifact or images are private ships an `ExternalSecret` for it (`external-secret-ghcr-auth.yaml`, or just
-`external-secret.yaml` when it is the directory's only one) that sources the shared org pull
-credential from OpenBao (`infrastructure/ghcr/auth`) via the cluster-scoped `openbao`
-**ClusterSecretStore** and materialises the `ghcr-auth` dockerconfigjson the
-`OCIRepository` and ServiceAccount consume. It is reconciled by flux-system (not
-your tenant SA) — which is why it may use the ClusterSecretStore where your own
-resources may not (the Kyverno policy carves out flux-system-applied resources).
-The initial typed business-site registration instead has KRO create this child.
-Its admission exception is confined to the authenticated controller, the fixed
-business-site destination, the existing pull-credential reference and the exact
-Docker configuration template. Other writers cannot add, remove or change its
-reserved ownership labels, and controller updates must preserve the complete
-ownership tuple. The instance UID is controller-supplied attribution, not an
-independently verified parent identity. This exception neither opens arbitrary
-secret paths nor grants tenant application access. KRO's bind permission names
-the constructor's four exact roles, including `tenant-edit`, rather than the
-unrelated built-in `edit` role.
-The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
-`secret.enc.yaml` (the same org token both clusters use); the
-`seed-ghcr` PushSecret pushes it to `infrastructure/ghcr/auth` via the `openbao`
-ClusterSecretStore.
+A tenant's container image and its `<tenant>/manifests` package are **public**
+(#6272), so the platform ships no pull secret: the `OCIRepository` has no
+`secretRef`, the ServiceAccount has no `imagePullSecrets`, and Talos verifies
+image signatures on the nodes anonymously. Keep a new tenant's packages public
+(GitHub package settings). A private package would need a deliberate design for
+node-level signature reads first; do not add a shared pull credential.
+
+Platform-authored resources in a registration dir are reconciled by flux-system
+(not your tenant SA), which is why they may use the ClusterSecretStore where
+your own resources may not (the Kyverno policy carves out flux-system-applied
+resources). KRO-rendered Tenant children get no such exception. KRO's bind
+permission names the constructor's four exact roles, including `tenant-edit`,
+rather than the unrelated built-in `edit` role.
 
 - The release and template-sync workflows mint a **GitHub App token** from the
   org-level `APP_CLIENT_ID` variable and `APP_PRIVATE_KEY` secret — already available to
@@ -251,8 +242,8 @@ needs authority outside those bounds requires a reviewed platform change.
 > **Piloting: the `Tenant` archetype (#1932).** The manual multi-file copy below
 > is being replaced by one typed declaration — a KRO `Tenant` CR expanded by the
 > [tenant ResourceGraphDefinition](../k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml)
-> into this whole skeleton (namespace, SA + RoleBinding, ghcr-auth
-> ExternalSecret, default-deny NetworkPolicy, cosign-verified OCIRepository,
+> into this whole skeleton (namespace, SA + RoleBinding, default-deny
+> NetworkPolicy, cosign-verified OCIRepository,
 > impersonating Kustomization, optional external-dns RBAC / SOPS decryption).
 > It is piloting **local-first** as an opt-in on the Docker provider
 > (`k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml`); prod tenants keep
@@ -268,9 +259,8 @@ grants below) and rename — with:
 | --- | --- |
 | `kustomization.yaml` | Kustomize entrypoint listing the resources in this directory |
 | `namespace.yaml` | Namespace, `pod-security.kubernetes.io/enforce: restricted` |
-| `service-account.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
+| `service-account.yaml` | SA with `automountServiceAccountToken: false` (no `imagePullSecrets`: tenant packages are public) |
 | `role-binding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
-| `external-secret-ghcr-auth.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret (just `external-secret.yaml` when it is the tenant's only one) |
 | `role-binding-external-dns*.yaml` + `cluster-role-binding.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — bind the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
 | `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`) |
 

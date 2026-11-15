@@ -51,8 +51,6 @@ spec:
         ref.startsWith('ghcr.io/devantler-tech/') &&
         !ref.startsWith('ghcr.io/devantler-tech/ksail')
     - glob: ghcr.io/devantler-tech/ksail*
-  credentials:
-    secrets: [ghcr-auth]
   validationConfigurations:
     required: true
     verifyDigest: false

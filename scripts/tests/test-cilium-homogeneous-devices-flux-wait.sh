@@ -29,7 +29,7 @@ line_of() {
 deploy_reconcile_line="$(line_of "${deploy_action}" 'run: ./scripts/reconcile-flux-workloads.sh')"
 deploy_wait_line="$(line_of "${deploy_action}" "run: ./scripts/wait-for-platform-flux-revision.sh \"\${PLATFORM_MANIFEST_DIGEST}\"")" ||
   fail 'normal deploy must pass the published digest to the Flux wait through the environment'
-deploy_cluster_update_line="$(line_of "${deploy_action}" 'run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update')"
+deploy_cluster_update_line="$(line_of "${deploy_action}" 'run: ./scripts/run-ksail-prod.sh cluster update')"
 readonly deploy_reconcile_line deploy_wait_line deploy_cluster_update_line
 ((deploy_reconcile_line < deploy_wait_line && deploy_wait_line < deploy_cluster_update_line)) ||
   fail 'normal deploys must observe the exact applied Flux revision before cluster update'
@@ -55,7 +55,7 @@ readonly dr_guard_count
 dr_guard_before_line="$(printf '%s\n' "${dr_guard_lines}" | sed -n '1p')"
 dr_guard_after_line="$(printf '%s\n' "${dr_guard_lines}" | sed -n '2p')"
 dr_push_line="$(line_of "${dr_workflow}" 'id: publish_platform_manifest')"
-dr_reconcile_line="$(line_of "${dr_workflow}" 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile')"
+dr_reconcile_line="$(line_of "${dr_workflow}" 'run: ./scripts/run-ksail-prod.sh workload reconcile')"
 dr_wait_line="$(line_of "${dr_workflow}" "run: ./scripts/wait-for-platform-flux-revision.sh \"\${PLATFORM_MANIFEST_DIGEST}\"")" ||
   fail 'DR must pass the published digest to the Flux wait through the environment'
 dr_ready_line="$(grep -nFx '        id: wait_flux' "${dr_workflow}" | cut -d: -f1)"
@@ -77,14 +77,14 @@ fi
 # shellcheck disable=SC2016
 manual_digest_line="$(line_of "${dr_runbook}" 'PLATFORM_MANIFEST_DIGEST="$(docker buildx imagetools inspect')" ||
   fail 'manual DR must resolve the previously evidenced platform digest'
-manual_reconcile_line="$(line_of "${dr_runbook}" './scripts/run-ksail-prod-with-pull-auth.sh workload reconcile')"
+manual_reconcile_line="$(line_of "${dr_runbook}" './scripts/run-ksail-prod.sh workload reconcile')"
 # shellcheck disable=SC2016
 manual_wait_line="$(line_of "${dr_runbook}" './scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"')" ||
   fail 'manual DR must wait for the exact published platform revision'
 manual_guard_after_line="$(line_of "${dr_runbook}" './scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy')"
 readonly manual_digest_line manual_reconcile_line manual_wait_line manual_guard_after_line
 
-if grep -Fq './scripts/run-ksail-prod-with-pull-auth.sh workload push' "${dr_runbook}"; then
+if grep -Fq './scripts/run-ksail-prod.sh workload push' "${dr_runbook}"; then
   fail 'the Actions-unavailable DR fallback must reuse evidenced latest instead of publishing without attestations'
 fi
 ((manual_digest_line < manual_reconcile_line)) ||

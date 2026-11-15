@@ -30,9 +30,7 @@ spec:
     substituteFrom:
       # Per-Flux docs, later entries override earlier ones, so the base
       # (defaults) come first and the per-cluster overrides come last.
-      # The variables-base SECRET is deliberately absent: its only remaining
-      # key (ghcr_dockerconfigjson) is seed-only — no manifest substitutes
-      # from it.
+      # Only ConfigMaps: there is no variables-base Secret to substitute from.
       - kind: ConfigMap
         name: variables-base
       - kind: ConfigMap

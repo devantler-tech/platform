@@ -9,14 +9,13 @@
 // touched, which a pinned outcome step reports (#4937); it must
 // hold the shared prod-deploy lock; that lock must not be preemptible, or the
 // heal is cancelled by the next deploy midway through; it must check out
-// main, or it restores the wrong revision; it must opt in to orphaned-fence
-// recovery, or it cannot clear the GHCR Lease a dead deploy left held; and it
-// must then check for objects the failed deploy left outside every Flux
+// main, or it restores the wrong revision; it must re-deploy through the
+// shared deploy composite; and it must then check for objects the failed deploy left outside every Flux
 // inventory, or its success does not mean prod matches main (#3502).
 //
 // Each is a line or a step of workflow YAML, and none of them fails loudly when
 // it is wrong — the damage shows up later, during an incident, when the heal
-// either does not run or restores the wrong thing. Pinning all six here turns
+// either does not run or restores the wrong thing. Pinning all of them here turns
 // that into a CI failure on the pull request that breaks one.
 package main
 
@@ -38,11 +37,6 @@ const expectedHealCondition = "always() && " +
 	"needs.deploy-prod.result == 'cancelled' || " +
 	"(needs.deploy-prod.result == 'success' && " +
 	"needs.merge-group-queue-membership.outputs.evicted == 'true'))"
-
-// The deploy-prod composite recovers an orphaned GHCR fence only when a call
-// site opts in — the input is default-off. This exact line is what makes that
-// step reachable, so it is pinned rather than left to a reviewer to notice.
-const recoveryOptIn = `          recover-orphaned-fence: "true"`
 
 // The shared composite both prod-deploy paths call.
 const deployCompositePath = "./.github/actions/deploy-prod"
@@ -138,17 +132,13 @@ func validateWorkflowContract(workflow string) error {
 		return err
 	}
 
-	// Both jobs reach the same composite, and the opt-in is checked against the
-	// STEP rather than the job: a line accepted anywhere in the job would still
-	// pass after an edit moved it onto an unrelated step, leaving the composite
-	// on its default "false". The validator would then vouch for precisely the
-	// state it exists to catch. The heal job is the last line of defence; the
-	// deploy job reaching the composite is what stops the wedge arising at all.
+	// Both jobs must reach the same shared composite: the heal is only a heal
+	// if it re-deploys main through the path the failed deploy took.
 	for _, target := range []struct{ key, label string }{
 		{"deploy-prod", "deploy"},
 		{"heal-prod-on-failure", "heal"},
 	} {
-		if err := validateDeployRecovery(workflow, target.key, target.label); err != nil {
+		if err := validateReachesDeploy(workflow, target.key, target.label); err != nil {
 			return err
 		}
 	}
@@ -212,19 +202,15 @@ func validateOrphanCheck(healJob string) error {
 	return nil
 }
 
-// CD reaches the same default-off recovery input, but has no merge-group heal
-// or membership jobs. Check only its deploy step with the same contract as CI.
-func validateDeployRecovery(workflow, jobKey, label string) error {
+// CD reaches the same composite, but has no merge-group heal or membership
+// jobs. Check only that its deploy job reaches it, with the same contract as CI.
+func validateReachesDeploy(workflow, jobKey, label string) error {
 	job, ok := extractJob(workflow, jobKey)
 	if !ok {
 		return fmt.Errorf("missing %s job", jobKey)
 	}
-	step, ok := extractDeployStep(job)
-	if !ok {
+	if _, ok := extractDeployStep(job); !ok {
 		return fmt.Errorf("%s job does not reach the shared deploy composite", label)
-	}
-	if !containsExactLine(step, recoveryOptIn) {
-		return fmt.Errorf("%s job is missing orphaned-fence recovery", label)
 	}
 	return nil
 }
@@ -459,47 +445,18 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	return run(args[0], stdout, stderr)
 }
 
-// runDeployOnly validates the CD workflow's recovery input without requiring CI-only jobs.
+// runDeployOnly validates the CD workflow's deploy job without requiring CI-only jobs.
 func runDeployOnly(workflowPath string, stdout, stderr io.Writer) int {
 	workflow, err := os.ReadFile(workflowPath) //nolint:gosec // Explicit validator input.
 	if err == nil {
-		err = validateDeployRecovery(string(workflow), "deploy-prod", "deploy")
-	}
-	if err == nil {
-		err = validateCDRecoveryInput(workflow)
+		err = validateReachesDeploy(string(workflow), "deploy-prod", "deploy")
 	}
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "deploy recovery contract (%s): %v\n", workflowPath, err)
+		_, _ = fmt.Fprintf(stderr, "deploy workflow contract (%s): %v\n", workflowPath, err)
 		return 1
 	}
-	_, _ = fmt.Fprintf(stdout, "Deploy recovery workflow contract passed (%s).\n", workflowPath)
+	_, _ = fmt.Fprintf(stdout, "Deploy workflow contract passed (%s).\n", workflowPath)
 	return 0
-}
-
-// A lookalike environment variable does not opt the action in. The pinned
-// input must be in the deploy step's with mapping, not elsewhere in that step.
-func validateCDRecoveryInput(workflow []byte) error {
-	var parsed struct {
-		Jobs map[string]struct {
-			Steps []struct {
-				Uses string         `yaml:"uses"`
-				With map[string]any `yaml:"with"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal(workflow, &parsed); err != nil {
-		return fmt.Errorf("invalid CD workflow: %w", err)
-	}
-	for _, step := range parsed.Jobs["deploy-prod"].Steps {
-		if step.Uses != deployCompositePath {
-			continue
-		}
-		if value, ok := step.With["recover-orphaned-fence"].(string); ok && value == "true" {
-			return nil
-		}
-		break
-	}
-	return errors.New("deploy job is missing orphaned-fence recovery in the composite inputs")
 }
 
 // main selects the CI or CD validation mode and preserves its exit status.

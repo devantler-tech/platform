@@ -126,13 +126,13 @@ posture is:
 
    Replacing a workstation therefore recovers the root credential and then
    steps back down to the reader identity. Both halves are required, because
-   `./scripts/run-ksail-prod-with-pull-auth.sh cluster update` and
+   `./scripts/run-ksail-prod.sh cluster update` and
    `talosctl config merge <talosconfig>` each write a **root** context to
    `~/.talos/config`:
 
    1. Recover the root material into a short-lived mode-`0600` file outside
       `~/.talos`, either from a custody store or by re-running
-      `./scripts/run-ksail-prod-with-pull-auth.sh cluster update` (which
+      `./scripts/run-ksail-prod.sh cluster update` (which
       regenerates it from the cluster's running PKI) and moving the result
       out of `~/.talos/config`.
    2. Restore that file to both custody stores if it changed.

@@ -159,7 +159,7 @@ jq -e '[.[] | select(.kind=="Deployment" and .metadata.name=="data-product-contr
   ($probe|length)==1 and $probe[0].spec.replicas==2 and ($probe[0].metadata.labels|has("platform.devantler.tech/replica-floor")|not) and
   $probe[0].spec.template.metadata.annotations=={"coroot.com/scrape-metrics":"true","coroot.com/metrics-port":"8081","coroot.com/metrics-path":"/metrics","coroot.com/metrics-scheme":"http"} and
   ($probe[0].spec.template.spec | .serviceAccountName=="data-product-controller-contract-probe" and .automountServiceAccountToken==false and
-    (.volumes//[])==[] and (.initContainers//[])==[] and .imagePullSecrets==[{name:"ghcr-auth"}] and
+    (.volumes//[])==[] and (.initContainers//[])==[] and (.imagePullSecrets//[])==[] and
     (.containers|length)==1 and (.containers[0] | .name=="contract-probe" and .command==["/contract-probe"] and (.args//[])==[] and
       .env==[{name:"CONTRACT_PROBE_URL",value:"https://harbour-data.${domain}/openapi.json"},{name:"CONTRACT_READINESS_ENABLED",value:"true"}] and
       .readinessProbe.httpGet.path=="/readyz" and .livenessProbe.httpGet.path=="/healthz" and
@@ -197,20 +197,8 @@ yq -r '.jobs."heal-prod-on-failure".steps[] |
   "${root_dir}/.github/workflows/ci.yaml" >"${scratch}/recovery-step.sh"
 [[ -s "${scratch}/recovery-step.sh" ]] || fail 'recovery trial validation step is missing'
 legacy="${scratch}/legacy-main"
-mkdir -p "${legacy}/k8s/bases/apps/wedding-app" "${legacy}/k8s/bases/apps/data-product-controller" "${legacy}/scripts"
-cp "${root_dir}/scripts/guard-ghcr-fanout-component-gate.sh" "${legacy}/scripts/"
+mkdir -p "${legacy}/k8s/bases/apps"
 printf 'resources:\n  - wedding-app/\n' >"${legacy}/k8s/bases/apps/kustomization.yaml"
-printf 'kind: ExternalSecret\nmetadata:\n  name: ghcr-auth\n' \
-  >"${legacy}/k8s/bases/apps/wedding-app/external-secret.yaml"
-cp "${legacy}/k8s/bases/apps/wedding-app/external-secret.yaml" \
-  "${legacy}/k8s/bases/apps/data-product-controller/external-secret.yaml"
-# The fan-out guard counts only what an app's own kustomization deploys, as a
-# real app directory always has one.
-for app in wedding-app data-product-controller; do
-  printf 'resources:\n  - external-secret.yaml\n' >"${legacy}/k8s/bases/apps/${app}/kustomization.yaml"
-done
-printf 'readonly -a FANOUT_NAMESPACES=(\n  "wedding-app"\n  "kyverno"\n)\n' \
-  >"${legacy}/scripts/refresh-flux-ghcr-auth.sh"
 if ! (cd "${legacy}" && bash -euo pipefail "${scratch}/recovery-step.sh") \
   >"${scratch}/legacy-recovery.log" 2>&1; then
   cat "${scratch}/legacy-recovery.log" >&2

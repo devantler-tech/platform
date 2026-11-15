@@ -32,7 +32,7 @@ jobs:
       - id: production-deploy
         uses: ./.github/actions/deploy-prod
         with:
-          recover-orphaned-fence: "true"
+          sops-age-key: placeholder
 ` + productionOutcomeStep + `
   merge-group-queue-membership:
     needs: [changes, deploy-prod]
@@ -72,7 +72,7 @@ jobs:
           ref: main
 ` + recoveryBaselineStep + `      - uses: ./.github/actions/deploy-prod
         with:
-          recover-orphaned-fence: "true"
+          sops-age-key: placeholder
 ` + orphanCheckStep + `
   required-checks:
     runs-on: ubuntu-latest
@@ -181,7 +181,7 @@ func TestRecoveryBaselineContract(t *testing.T) {
 		{"capture environment override", "        id: recovery-baseline\n", "        id: recovery-baseline\n        env:\n          GIT_DIR: ${{ runner.temp }}/candidate.git\n", "recorded recovery checkout step"},
 		{"unvalidated commit", "          [[ \"${recovery_sha}\" =~ ^[0-9a-f]{40}$ ]]\n", "", "recorded recovery checkout step"},
 		{"capture before checkout", "          ref: main\n" + recoveryBaselineStep, recoveryBaselineStep + "          ref: main\n", "recorded recovery checkout step"},
-		{"capture after deploy", recoveryBaselineStep + "      - uses: ./.github/actions/deploy-prod\n        with:\n          recover-orphaned-fence: \"true\"\n", "      - uses: ./.github/actions/deploy-prod\n        with:\n          recover-orphaned-fence: \"true\"\n" + recoveryBaselineStep, "must follow checkout and precede deployment"},
+		{"capture after deploy", recoveryBaselineStep + "      - uses: ./.github/actions/deploy-prod\n        with:\n          sops-age-key: placeholder\n", "      - uses: ./.github/actions/deploy-prod\n        with:\n          sops-age-key: placeholder\n" + recoveryBaselineStep, "must follow checkout and precede deployment"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -425,67 +425,19 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			wantError:   "must cover exactly failed, cancelled, and evicted-after-success deploys",
 		},
 		{
-			// The opt-in is what makes the composite's recovery step reachable at
-			// all, so dropping it silently restores the wedge this pin exists to
-			// prevent -- the heal cannot clear a Lease a dead deploy left held.
-			name: "heal job drops orphaned-fence recovery",
-			old: `          ref: main
-` + recoveryBaselineStep + `      - uses: ./.github/actions/deploy-prod
-        with:
-          recover-orphaned-fence: "true"`,
-			replacement: `          ref: main
-` + recoveryBaselineStep + `      - uses: ./.github/actions/deploy-prod
-        with:
-          sops-age-key: placeholder`,
-			wantError: "heal job is missing orphaned-fence recovery",
-		},
-		{
-			// A job that no longer calls the composite at all is a different break
-			// from one that calls it without the opt-in, so they get separate cases.
 			name: "deploy job does not reach the deploy composite",
 			old: `      - id: production-deploy
         uses: ./.github/actions/deploy-prod
         with:
-          recover-orphaned-fence: "true"`,
+          sops-age-key: placeholder`,
 			replacement: "      - id: production-deploy\n        run: echo nothing",
 			wantError:   "deploy job does not reach the shared deploy composite",
-		},
-		{
-			name: "deploy job drops orphaned-fence recovery",
-			old: `      - id: production-deploy
-        uses: ./.github/actions/deploy-prod
-        with:
-          recover-orphaned-fence: "true"`,
-			replacement: `      - id: production-deploy
-        uses: ./.github/actions/deploy-prod
-        with:
-          sops-age-key: placeholder`,
-			wantError: "deploy job is missing orphaned-fence recovery",
 		},
 		{
 			name:        "missing deploy job",
 			old:         "  deploy-prod:",
 			replacement: "  deploy-prod-disabled:",
 			wantError:   "missing deploy-prod job",
-		},
-		{
-			// The opt-in must be bound to the step that reaches the composite.
-			// Relocating it to a neighbouring step leaves every line the validator
-			// used to look for present in the job, while the composite itself still
-			// runs on its default "false" -- the exact state this pin exists to catch.
-			name: "heal job relocates the opt-in off the deploy step",
-			old: `      - uses: actions/checkout@example
-        with:
-          ref: main
-` + recoveryBaselineStep + `      - uses: ./.github/actions/deploy-prod
-        with:
-          recover-orphaned-fence: "true"`,
-			replacement: `      - uses: actions/checkout@example
-        with:
-          ref: main
-          recover-orphaned-fence: "true"
-` + recoveryBaselineStep + `      - uses: ./.github/actions/deploy-prod`,
-			wantError: "heal job is missing orphaned-fence recovery",
 		},
 		{
 			// Re-deploying main cannot remove what a failed revision applied with
@@ -502,11 +454,11 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			name: "orphaned-object check runs before the re-deploy",
 			old: `      - uses: ./.github/actions/deploy-prod
         with:
-          recover-orphaned-fence: "true"
+          sops-age-key: placeholder
 ` + orphanCheckStep,
 			replacement: orphanCheckStep + `      - uses: ./.github/actions/deploy-prod
         with:
-          recover-orphaned-fence: "true"
+          sops-age-key: placeholder
 `,
 			wantError: "orphaned-object check must run after the heal re-deploys main",
 		},

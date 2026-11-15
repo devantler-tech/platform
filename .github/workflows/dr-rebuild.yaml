@@ -207,11 +207,6 @@ jobs:
           shellcheck scripts/tests/test-isolated-chart-namespace-rules.sh
           bash scripts/tests/test-isolated-chart-namespace-rules.sh
 
-      - name: ⚙️ Setup talosctl
-        # The GHCR bridge verifies RegistryAuthConfig on each stale node.
-        run: |
-          .github/scripts/setup-talosctl.sh
-
       - name: 🔐 Create SOPS Age key
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
@@ -220,11 +215,6 @@ jobs:
           umask 077
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
-
-      - name: 🔎 Preflight Flux GHCR pull credential
-        # Validate every package served by the shared Git/SOPS credential
-        # before creating infrastructure or publishing a mutable latest tag.
-        run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
 
       - name: 🧭 Verify the validated recovery still matches main
         id: verify_recovery_source
@@ -239,7 +229,7 @@ jobs:
         # talosconfig (~/.talos/config) on this runner — every later step uses
         # those, so this workflow does NOT depend on the (now stale)
         # KUBE_CONFIG / TALOS_CONFIG environment secrets.
-        run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster create
+        run: ./scripts/run-ksail-prod.sh cluster create
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
           # ksail env-expands ${WG_SERVER_PRIVATE_KEY} in the talos patches at
@@ -262,15 +252,6 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
 
-      - name: 🔑 Stage Flux and consumer GHCR pull credential
-        id: stage_flux_ghcr_auth
-        # cluster create already uses the Git/SOPS pull token. Reassert it on
-        # every current Talos node and make Git/SOPS authoritative before the
-        # mutable tag is published. A
-        # partial bootstrap may have variables-base but no ESO resources yet;
-        # the bridge safely repairs root auth so Flux can create them.
-        run: ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
-
       - name: 🧪 Check the Longhorn UI baseline canary
         id: longhorn_ui_baseline
         # A fresh installation still requires stored-template proof after Flux
@@ -285,15 +266,9 @@ jobs:
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
 
-      - name: 🔎 Verify Flux GHCR pull credential after publish
-        id: verify_flux_ghcr_auth_after_push
-        # Prove the newly-published artifact is readable before reconciliation;
-        # every available consumer was already staged before push.
-        run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
-
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
-        run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
+        run: ./scripts/run-ksail-prod.sh workload reconcile
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
@@ -339,13 +314,6 @@ jobs:
         env:
           CILIUM_ROLLOUT_REVISION_READY: ${{ steps.wait_flux_revision.outcome == 'success' }}
         run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
-
-      - name: 🔑 Verify completed GHCR credential fan-out
-        id: verify_flux_ghcr_fanout
-        # Bootstrap mode may repair only root auth when ESO is not installed
-        # yet. After Flux converges, require the complete PushSecret /
-        # ExternalSecret transaction and exact consumer payload verification.
-        run: ./scripts/refresh-flux-ghcr-auth.sh
 
       - name: 💾 Velero resource restore (newest Completed backup)
         if: ${{ inputs.restore }}
@@ -619,16 +587,6 @@ jobs:
           kubectl annotate pushsecrets --all -A "force-sync=${NOW}" --overwrite || true
           echo "::endgroup::"
           echo "✅ OpenBao restored from the raft snapshot mirror."
-
-      - name: 🔑 Reassert GHCR credential after OpenBao restore
-        id: reassert_flux_ghcr_after_restore
-        if: ${{ !cancelled() && inputs.restore && steps.verify_flux_ghcr_fanout.outcome == 'success' }}
-        # The raft snapshot may contain an older infrastructure/ghcr/auth value.
-        # !cancelled() is intentional: even a failed restore can already have
-        # rematerialised that stale value, so attempt the fail-closed repair.
-        # Re-stage Git/SOPS in PushSecret-first order, wait for every consumer,
-        # compare the materialized payloads, and only then reassert root auth.
-        run: ./scripts/refresh-flux-ghcr-auth.sh
 
       - name: 🔑 Refresh CI deploy credentials (KUBE_CONFIG / TALOS_CONFIG)
         env:

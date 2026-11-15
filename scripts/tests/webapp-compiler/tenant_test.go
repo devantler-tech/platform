@@ -215,7 +215,7 @@ func TestCommittedTenant(t *testing.T) {
 			}
 			objects, ignored := desiredTenant(t, engine, &definition, input)
 			optional := []string{"externalDnsGateway", "externalDnsHttproutes", "externalDnsNamespaces", "limitRange", "resourceQuota", "webAppBinding"}
-			want := append([]string{"defaultDeny", "ghcrAuth", "ociRepository", "roleBinding", "serviceAccount", "tenantNamespace"}, optional...)
+			want := append([]string{"defaultDeny", "ociRepository", "roleBinding", "serviceAccount", "tenantNamespace"}, optional...)
 			active, inactive := "kustomization", "kustomizationSops"
 			if sops {
 				active, inactive = inactive, active
@@ -408,7 +408,7 @@ func completeTenant(compiled *graph.Graph) error {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	want := []string{"defaultDeny", "externalDnsGateway", "externalDnsHttproutes", "externalDnsNamespaces", "ghcrAuth", "kustomization", "kustomizationSops", "limitRange", "ociRepository", "resourceQuota", "roleBinding", "serviceAccount", "tenantNamespace", "webAppBinding"}
+	want := []string{"defaultDeny", "externalDnsGateway", "externalDnsHttproutes", "externalDnsNamespaces", "kustomization", "kustomizationSops", "limitRange", "ociRepository", "resourceQuota", "roleBinding", "serviceAccount", "tenantNamespace", "webAppBinding"}
 	if !slices.Equal(ids, want) {
 		return fmt.Errorf("incomplete Tenant graph: %v", ids)
 	}
@@ -425,7 +425,7 @@ func desiredTenant(t *testing.T, engine *gecompiler.Compiler, definition *kroapi
 func assertTenantChildren(t *testing.T, objects map[string]*unstructured.Unstructured, ignored []string, reconcile, sops bool) {
 	t.Helper()
 	assertTenantControllerMetadata(t, objects)
-	want := []string{"defaultDeny", "ghcrAuth", "ociRepository", "roleBinding", "serviceAccount", "tenantNamespace"}
+	want := []string{"defaultDeny", "ociRepository", "roleBinding", "serviceAccount", "tenantNamespace"}
 	wantIgnored := []string{"externalDnsGateway", "externalDnsHttproutes", "externalDnsNamespaces", "limitRange", "resourceQuota", "webAppBinding"}
 	if reconcile {
 		if sops {

@@ -42,7 +42,7 @@ patches:
   # The shared external-secrets base ships the velero-r2-credentials
   # ExternalSecret in the `velero` namespace, which only exists once Velero is
   # opted in. Prune it here so the core `infrastructure` Kustomization applies
-  # cleanly (the kyverno ghcr-auth ExternalSecret in the same base is kept).
+  # cleanly.
   # When enabling Velero above, drop this delete-patch so the credential returns.
   - target:
       kind: ExternalSecret

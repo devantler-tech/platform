@@ -28,8 +28,6 @@ spec:
     spec:
       serviceAccountName: data-product-controller-contract-probe
       automountServiceAccountToken: false
-      imagePullSecrets:
-        - name: ghcr-auth
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

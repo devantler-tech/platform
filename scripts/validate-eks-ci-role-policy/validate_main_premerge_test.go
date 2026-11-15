@@ -32,7 +32,6 @@ var premergeReaders = []string{
 	"validate-eks-authorization", "validate-shared-publish-pin",
 	"validate-talos-kubernetes-compatibility", "validate-rgd-templates",
 	"validate-rgd-template-wiring", "validate-scanner-versions",
-	"validate-ghcr-fanout-component-gate",
 }
 
 func explicitPermissions(value any) (map[string]string, bool) {

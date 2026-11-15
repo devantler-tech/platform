@@ -138,9 +138,9 @@ func TestFluxBridgeBoundaryRejectsBypasses(t *testing.T) {
 	}
 }
 
-// TestFluxBridgeIndependent keeps the selected shell controls independent. The
-// unconditional full Go job already covers the expensive bridge package; running
-// it here as well consumes a second runner without adding coverage.
+// TestFluxBridgeIndependent keeps the selected deploy-path shell controls
+// independent of the unconditional full Go job: running Go tests here as well
+// consumes a second runner without adding coverage.
 func TestFluxBridgeIndependent(t *testing.T) {
 	jobs := readFluxBridgeJobs(t)
 	if err := fluxBridgeBoundary(jobs); err != nil {
@@ -156,7 +156,6 @@ func TestFluxBridgeIndependent(t *testing.T) {
 	for _, command := range []string{
 		"bash scripts/tests/test-use-prod-stable-api-endpoint.sh",
 		"bash scripts/tests/test-wait-for-prod-api-stability.sh",
-		"bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh",
 	} {
 		invocations := 0
 		for name, job := range jobs {
@@ -175,23 +174,6 @@ func TestFluxBridgeIndependent(t *testing.T) {
 		if invocations != 1 {
 			t.Fatalf("bridge shell control invocations = %d, want exactly one: %s", invocations, command)
 		}
-	}
-	// Ask Go for the real full-suite package set. A new nested module could
-	// otherwise silently move these tests outside the root ./... invocation.
-	list := exec.Command("go", "list", "./...")
-	list.Dir = "../.."
-	output, err := list.Output()
-	if err != nil {
-		t.Fatalf("discover complete Go suite: %v", err)
-	}
-	covered := false
-	for _, name := range strings.Fields(string(output)) {
-		if strings.HasSuffix(name, "/scripts/tests/refresh-flux-ghcr-auth") {
-			covered = true
-		}
-	}
-	if !covered {
-		t.Fatal("the required complete Go suite does not cover the bridge regression package")
 	}
 }
 

@@ -62,7 +62,6 @@ scripts/cosign-failure-lib.sh
 scripts/detach-flux-root-pull-secret.sh
 scripts/frozen-legacy-publisher-release.tsv
 scripts/generate-publish-workflow-approved-revisions.sh
-scripts/ghcr-auth-lib.sh
 scripts/guard-cilium-homogeneous-device-rollout.sh
 scripts/guard-coroot-baseline-context.sh
 scripts/guard-github-bootstrap-isolation.sh
@@ -75,13 +74,11 @@ scripts/publish-workflow-bootstrap-publications.json
 scripts/publish-workflow-canonical-approvals.tsv
 scripts/reassert-flux-root-verify.sh
 scripts/reconcile-flux-workloads.sh
-scripts/refresh-flux-ghcr-auth-safety.sh
-scripts/refresh-flux-ghcr-auth.sh
 scripts/register-talos-factory-schematic.sh
 scripts/report-cilium-rollout-gate-suppression.sh
 scripts/report-publish-workflow-signing-revisions.sh
 scripts/retire-arc-pool.sh
-scripts/run-ksail-prod-with-pull-auth.sh
+scripts/run-ksail-prod.sh
 scripts/tenant-publication-binding.lib.sh
 scripts/tenant-source-constructors.lib.sh
 scripts/tenant-source-discovery.lib.sh

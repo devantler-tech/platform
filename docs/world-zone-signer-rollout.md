@@ -3,9 +3,9 @@
 The zone image has its own publisher: `server-cd.yaml` in `world-at-ruin`, on stable
 `vMAJOR.MINOR.PATCH` release tags. Admission and Talos accept that identity only for
 `ghcr.io/devantler-tech/world-at-ruin/zone`. Other application images retain their
-existing shared publisher identity. The pull-credential bridge verifies access to
-both the zone image and its separately signed manifest package before any cluster
-write.
+existing shared publisher identity. Both the zone image and its separately signed
+manifest package must stay publicly readable: nothing in production holds a pull
+credential (#6272).
 
 Deliver this support before enabling the tenant. The ordinary production deploy
 publishes and waits for the new Flux revision before `cluster update` synchronizes
