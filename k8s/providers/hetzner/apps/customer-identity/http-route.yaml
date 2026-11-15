@@ -1,0 +1,28 @@
+# accounts.devantler.tech: ZITADEL's sign-in, invitation, recovery and MFA pages
+# and its console. A customer-facing name on the company domain, because
+# customers see it whenever they sign in; once the instance exists it is
+# ZITADEL's fixed external domain. The listener and certificate are
+# infrastructure/patches/add-devantler-tech-listeners.yaml and certificate.yaml;
+# external-dns creates the record from this route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: zitadel
+  namespace: customer-identity
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https-accounts-devantler-tech
+  hostnames:
+    - accounts.devantler.tech
+  rules:
+    - filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: zitadel
+          port: 8080

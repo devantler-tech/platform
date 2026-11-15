@@ -1,0 +1,26 @@
+# Customer sign-in for the business-site portal (business-site#302): ZITADEL
+# with its own CNPG database. Production-only, like the business-site tenant
+# it serves. The portal stays switched off until #302's checks pass.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - password-db-zitadel.yaml
+  - external-secret-db-zitadel.yaml
+  # Coroot's Postgres integration for customer-identity-db.
+  - password-db-coroot-monitor.yaml
+  - external-secret-db-coroot-monitor.yaml
+  - cilium-network-policy-coroot.yaml
+  - external-secret-db-backup.yaml
+  - object-store.yaml
+  - cluster.yaml
+  - scheduled-backup.yaml
+  - external-secret-masterkey.yaml
+  - password-first-admin.yaml
+  - external-secret-first-admin.yaml
+  - helm-repository.yaml
+  - helm-release.yaml
+  - cilium-network-policy.yaml
+  - certificate.yaml
+  - reference-grant.yaml
+  - http-route.yaml

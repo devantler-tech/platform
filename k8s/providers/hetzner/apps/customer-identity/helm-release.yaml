@@ -1,0 +1,220 @@
+# Self-hosted ZITADEL for invited business-site customers (business-site#302,
+# ADR 0021). The official upstream image, unmodified and pinned by digest
+# (business-site ADR 0031): upstream does not sign it, so admission treats it
+# as a third-party image.
+#
+# Shape:
+# - Login V1, embedded in the API server (ADR 0021). The chart's separate
+#   Login V2 service and its API credential stay off.
+# - No superuser: CNPG creates the database and its owner (cluster.yaml), and
+#   `zitadel init zitadel` and `zitadel setup` run as that owner.
+# - No machine administrator: the chart's default machine user and the
+#   kubectl containers and secret-writing Role that export its key are
+#   dropped. The only bootstrap identity is one human administrator (the
+#   maintainer), with a generated one-time password that must be changed at
+#   the first sign-in, where the login policy also forces MFA.
+# - TLS ends at the platform Gateway, as for every platform app; the Gateway
+#   reaches ZITADEL over h2c inside the WireGuard-encrypted cluster network.
+#
+# The instance policies come from the business-site preparer
+# (`go run ./cmd/customer-identity-config --prepare`, server/CUSTOMER-IDENTITY.md):
+# no self-registration or public organisation creation, no external or
+# passwordless login, MFA always, 14-character passwords, short-lived tokens.
+# ZITADEL applies DefaultInstance and FirstInstance only when it creates the
+# instance; later changes go through the console or its API.
+#
+# Mail: ZITADEL keeps its SMTP provider in its database, so it is added once in
+# the console when the business site's SES sender exists (platform#5400):
+# email-smtp.eu-central-1.amazonaws.com:587 with STARTTLS, the credential in
+# OpenBao apps/business-site/smtp, sender no-reply@devantler.tech. Egress to
+# that host is already open (cilium-network-policy.yaml).
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: zitadel
+  namespace: customer-identity
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  timeout: 10m
+  chart:
+    spec:
+      chart: zitadel
+      version: 10.5.0
+      sourceRef:
+        kind: HelmRepository
+        name: zitadel
+  values:
+    replicaCount: 2
+    image:
+      repository: ghcr.io/zitadel/zitadel
+      tag: v4.20.3@sha256:1b30fea7ed88826dc0a98dacee4e2f2c8b05201fd26f5e4cb5386615b29f7638
+    login:
+      enabled: false
+    # Only the `zitadel` phase of `zitadel init` (its schemas and tables),
+    # which runs as the database owner. The database, role and grant phases
+    # need a superuser and are CNPG's job here (cluster.yaml).
+    initJob:
+      command: zitadel
+      activeDeadlineSeconds: 600
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: "1"
+          memory: 256Mi
+    # Its post-delete hook only removes the machine-key Secrets this release
+    # never creates.
+    cleanupJob:
+      enabled: false
+    setupJob:
+      activeDeadlineSeconds: 600
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 192Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi
+    pdb:
+      enabled: true
+      maxUnavailable: 1
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      runAsGroup: 65532
+      fsGroup: 65532
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      runAsGroup: 65532
+      readOnlyRootFilesystem: true
+      privileged: false
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+    # Only the CA certificate: the CNPG CA Secret also holds the CA's private
+    # key, which the chart's dbSslCaCrtSecret option would mount as well.
+    extraVolumes:
+      - name: db-ca
+        secret:
+          secretName: customer-identity-db-ca
+          defaultMode: 0440
+          items:
+            - key: ca.crt
+              path: ca.crt
+    extraVolumeMounts:
+      - name: db-ca
+        mountPath: /db-ca
+        readOnly: true
+    # Rendered into the setup job and the server alike.
+    env:
+      - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: customer-identity-db-zitadel
+            key: password
+      - name: ZITADEL_DATABASE_POSTGRES_USER_SSL_ROOTCERT
+        value: /db-ca/ca.crt
+      - name: ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: zitadel-first-admin
+            key: password
+    zitadel:
+      masterkeySecretName: zitadel-masterkey
+      configmapConfig:
+        ExternalDomain: accounts.devantler.tech
+        ExternalPort: 443
+        ExternalSecure: true
+        TLS:
+          Enabled: false
+        Database:
+          Postgres:
+            Host: customer-identity-db-rw.customer-identity.svc
+            Port: 5432
+            Database: zitadel
+            MaxOpenConns: 10
+            MaxIdleConns: 5
+            User:
+              Username: zitadel
+              SSL:
+                Mode: verify-full
+        FirstInstance:
+          InstanceName: Devantler Tech
+          DefaultLanguage: en
+          Org:
+            Name: Devantler Tech
+            # Drops the chart's default machine administrator (see above).
+            Machine: null
+            Human:
+              UserName: ned
+              FirstName: Nikolai
+              LastName: Damm
+              # The maintainer's own published company address. Marked
+              # verified so the first sign-in does not wait for mail, which
+              # cannot be sent until the SMTP provider is added. Customers are
+              # never pre-verified (ADR 0021).
+              Email:
+                Address: ned@devantler.tech
+                Verified: true
+              PreferredLanguage: en
+              PasswordChangeRequired: true
+        DefaultInstance:
+          Features:
+            LoginV2:
+              Required: false
+          LockoutPolicy:
+            MaxOTPAttempts: 5
+            MaxPasswordAttempts: 5
+            ShouldShowLockoutFailure: false
+          LoginPolicy:
+            AllowDomainDiscovery: false
+            AllowExternalIDP: false
+            AllowRegister: false
+            AllowUsernamePassword: true
+            DefaultRedirectURI: https://portal.devantler.tech/portal
+            DisableLoginWithPhone: true
+            ExternalLoginCheckLifetime: 15m
+            ForceMFA: true
+            ForceMFALocalOnly: false
+            HidePasswordReset: false
+            IgnoreUnknownUsernames: true
+            MfaInitSkipLifetime: 0s
+            MultiFactorCheckLifetime: 15m
+            PasswordCheckLifetime: 15m
+            PasswordlessType: 0
+            SecondFactorCheckLifetime: 15m
+          OIDCSettings:
+            AccessTokenLifetime: 5m
+            IdTokenLifetime: 5m
+            RefreshTokenExpiration: 8h
+            RefreshTokenIdleExpiration: 15m
+          PasswordComplexityPolicy:
+            MinLength: 14
+          Restrictions:
+            DisallowPublicOrgRegistration: true
+          # The Devantler Tech look (near-black with #39ff14). The logo, font
+          # and watermark are set in the console (Branding).
+          LabelPolicy:
+            PrimaryColor: "#1f7a0f"
+            BackgroundColor: "#fafafa"
+            FontColor: "#111111"
+            PrimaryColorDark: "#39ff14"
+            BackgroundColorDark: "#0b0b0b"
+            FontColorDark: "#ededed"
+            HideLoginNameSuffix: true
