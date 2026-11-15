@@ -2941,7 +2941,7 @@ jobs:
         # the node-agent pod generation to its external ConfigMap. Otherwise a
         # correct resource fix can remain unloaded forever on stable workers.
         run: |
-          shellcheck scripts/tests/test-velero-data-mover-resources.sh
+          shellcheck -x scripts/tests/test-velero-data-mover-resources.sh
           bash scripts/tests/test-velero-data-mover-resources.sh
 
       - name: 💾 Validate the released Velero cancellation fix
