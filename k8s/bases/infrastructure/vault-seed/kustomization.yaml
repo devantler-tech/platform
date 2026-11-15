@@ -32,6 +32,9 @@ resources:
   - password-customer-identity-portal-client.yaml
   - external-secret-generated-customer-identity-portal-client.yaml
   - push-secret-push-customer-identity-portal-client.yaml
+  - password-business-site-portal-db.yaml
+  - external-secret-generated-business-site-portal-db.yaml
+  - push-secret-push-business-site-portal-db.yaml
   - push-secret-seed-r2-credentials.yaml
   - push-secret-seed-wedding-db-backup-r2.yaml
   - push-secret-seed-github-app.yaml

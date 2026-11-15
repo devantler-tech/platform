@@ -6,3 +6,17 @@ resources:
   - cilium-network-policy-dns-visibility.yaml
   - certificate.yaml
   - reference-grant.yaml
+  # The portal's database (business-site#302), platform-applied: CA and server
+  # certificate, logins, the cluster, its backups, its CA in OpenBao and its
+  # network boundary.
+  - issuer-portal-db.yaml
+  - certificate-portal-db.yaml
+  - external-secret-portal-db-logins.yaml
+  - password-portal-db-coroot-monitor.yaml
+  - external-secret-portal-db-backup.yaml
+  - object-store-portal-db.yaml
+  - cluster-portal-db.yaml
+  - push-secret-portal-db-ca.yaml
+  - cilium-network-policy-portal-db.yaml
+  # The WebApp's one projected Secret: disclosure and the portal's inputs.
+  - external-secret-runtime.yaml
