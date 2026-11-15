@@ -126,10 +126,11 @@ func TestMailStorageHealthAcrossActivation(t *testing.T) {
 	}
 }
 
-// No workload selects the prepared encrypted claim yet, so on a new cluster it
+// No workload selects the prepared encrypted claim, so on a new cluster it
 // stays Pending under WFFC. That must not hold application readiness, while any
-// sign that binding has started still waits for Bound (#5387).
-func TestEncryptedMailStorageHealthBeforeServing(t *testing.T) {
+// sign that binding has started still waits for Bound. Production serves from
+// it, so there it must bind (#5387).
+func TestEncryptedMailStorageHealthAcrossServing(t *testing.T) {
 	health := appsClaimHealth(t)
 	tests := []struct {
 		name, phase, path string
@@ -138,7 +139,8 @@ func TestEncryptedMailStorageHealthBeforeServing(t *testing.T) {
 		wantFailed        bool
 	}{
 		{name: "prepared encrypted storage", phase: "Pending", want: true},
-		{name: "production prepared storage", phase: "Pending", path: "k8s/providers/hetzner/apps", want: true},
+		{name: "production serving must bind", phase: "Pending", path: "k8s/providers/hetzner/apps"},
+		{name: "production serving bound", phase: "Bound", path: "k8s/providers/hetzner/apps", want: true},
 		{name: "retained bound storage", phase: "Bound", want: true},
 		{name: "lost storage", phase: "Lost", wantFailed: true},
 		{name: "status not observed"},
