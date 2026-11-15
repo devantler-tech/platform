@@ -50,7 +50,9 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 					found["domain"] = true
 				case "NetworkListener":
 					l := op.Value["imap"].(map[string]any)
-					if l[listenerFlag] != true || l["useTls"] != true || len(l) != 5 {
+					// Without a mail load balancer address the listener trusts no PROXY source, explicitly.
+					trust, ok := l["overrideProxyTrustedNetworks"].(map[string]any)
+					if l[listenerFlag] != true || l["useTls"] != true || !ok || len(trust) != 0 || len(l) != 6 {
 						t.Fatal("implicit TLS schema changed")
 					}
 					found["listener"] = true

@@ -31,6 +31,9 @@ type inputs struct {
 	// password derived from its secret (docs/adr/email-outbound-relay.md).
 	relayUsername, relayPassword string
 	accountIDs                   map[string]string
+	// mailProxySource is the mail load balancer's private IPv4 address, given
+	// only by the deployment's --mail-proxy-source flag, never by private input.
+	mailProxySource string
 }
 
 var domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
@@ -59,6 +62,9 @@ func render(v inputs) ([]byte, error) {
 		return nil, errConfiguration
 	}
 	if v.UseForwardedClientIP && v.UseProxyClientIP {
+		return nil, errConfiguration
+	}
+	if v.mailProxySource != "" && !validMailProxySource(v.mailProxySource) {
 		return nil, errConfiguration
 	}
 	if !domainPattern.MatchString(v.Domain) || strings.HasSuffix(v.Domain, ".invalid") || len(v.Domain) > 200 || !domainPattern.MatchString(v.Hostname) || !strings.HasSuffix(v.Hostname, "."+v.Domain) || len(v.Hostname) > 253 {
@@ -158,6 +164,18 @@ func render(v inputs) ([]byte, error) {
 	// Only this dedicated local listener consumes a transport identity. Do not
 	// exempt a shared intermediary through global proxy or allowed-IP settings.
 	clientProxy["overrideProxyTrustedNetworks"] = proxyTrust
+	// The public mail listeners take a client address only from the mail
+	// server's own load balancer, never from the shared gateway or a peer. The
+	// trust is always written, so removing the address also removes the trust.
+	mailProxyTrust := map[string]bool{}
+	if v.mailProxySource != "" {
+		mailProxyTrust[v.mailProxySource] = true
+	}
+	mailListener := func(name, protocol, bind string, implicit bool) map[string]any {
+		value := listener(name, protocol, bind, true, implicit)
+		value["overrideProxyTrustedNetworks"] = mailProxyTrust
+		return value
+	}
 	upsert := func(object string, match []string, value any) map[string]any {
 		return map[string]any{"@type": "upsert", "object": object, "matchOn": match, "value": value}
 	}
@@ -204,9 +222,9 @@ func render(v inputs) ([]byte, error) {
 		upsert("NetworkListener", []string{"name"}, map[string]any{
 			"client-proxy": clientProxy,
 			"management":   listener("management", "http", "0.0.0.0:8080", false, false),
-			"inbound":      listener("smtp-inbound", "smtp", "0.0.0.0:1025", true, false),
-			"submission":   listener("submission", "smtp", "0.0.0.0:1587", true, false),
-			"imap":         listener("imaps", "imap", "0.0.0.0:1993", true, true),
+			"inbound":      mailListener("smtp-inbound", "smtp", "0.0.0.0:1025", false),
+			"submission":   mailListener("submission", "smtp", "0.0.0.0:1587", false),
+			"imap":         mailListener("imaps", "imap", "0.0.0.0:1993", true),
 		}),
 		update("MtaStageAuth", map[string]any{
 			"saslMechanisms": map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'submission' && is_tls", "then": "[plain, login]"}}, "else": "false"},
