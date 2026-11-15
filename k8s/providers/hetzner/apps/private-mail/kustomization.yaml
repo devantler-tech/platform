@@ -2,6 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../../bases/apps/private-mail-proxy-identity
+  # The encrypted store's key, class and empty claim. The server keeps serving
+  # from the original claim until the key is proven here (#5387).
+  - ../../../../bases/apps/email-encrypted-storage
   - secret-settings.enc.yaml
 patches:
   # Production has retained credential custody. Never infer a fresh installation

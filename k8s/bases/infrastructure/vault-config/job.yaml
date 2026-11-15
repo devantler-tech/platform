@@ -991,10 +991,18 @@ spec:
               POLICY
 
               # Dedicated node-storage key reader; neither account credentials
-              # nor metadata enumeration or writes belong to this identity.
+              # nor metadata enumeration or writes belong to this identity. Its
+              # role adds no default policy, so the two token paths External
+              # Secrets uses to validate the store and end the session are here.
               bao policy write infra-email-storage-readonly - <<'POLICY'
               path "secret/data/infrastructure/email/storage" {
                 capabilities = ["read"]
+              }
+              path "auth/token/lookup-self" {
+                capabilities = ["read"]
+              }
+              path "auth/token/revoke-self" {
+                capabilities = ["update"]
               }
               POLICY
 

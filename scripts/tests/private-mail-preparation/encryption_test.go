@@ -69,6 +69,9 @@ func TestEncryptedReplacementKeepsKeysOutsideTheWorkload(t *testing.T) {
 	if metadata["namespace"] != "private-mail" || mapping(t, metadata["annotations"])["kustomize.toolkit.fluxcd.io/prune"] != "disabled" {
 		t.Fatal("replacement data must stay in the retained Email namespace")
 	}
+	if labels, _ := metadata["labels"].(map[string]any); labels["platform.devantler.tech/storage-stage"] != "prepared" {
+		t.Fatal("an unconsumed replacement claim must carry the prepared-storage health marker")
+	}
 	spec := mapping(t, pvc["spec"])
 	if spec["storageClassName"] != "email-encrypted" || !reflect.DeepEqual(spec["accessModes"], []any{"ReadWriteOnce"}) || mapping(t, mapping(t, spec["resources"])["requests"])["storage"] != "2Gi" {
 		t.Fatal("replacement must explicitly request the encrypted class with existing capacity and access mode")
@@ -76,14 +79,17 @@ func TestEncryptedReplacementKeepsKeysOutsideTheWorkload(t *testing.T) {
 }
 
 // TestEncryptedPreparationCannotSwitchTheExistingMailbox protects the incident
-// boundary: preparation cannot rebind or replace the retained production claim.
+// boundary: production prepares the key, class and empty claim, but the server
+// keeps serving from the retained claim. Proving the key before any stop keeps
+// a key failure from leaving the server unable to start (#5387).
 func TestEncryptedPreparationCannotSwitchTheExistingMailbox(t *testing.T) {
-	for _, path := range []string{"k8s/providers/hetzner/apps", "k8s/bases/apps", "k8s/providers/docker/apps"} {
+	prepared := []string{"email-storage", "email-storage-key", "email-encrypted", "email-data-encrypted"}
+	for _, path := range []string{"k8s/bases/apps", "k8s/providers/docker/apps"} {
 		for _, o := range render(t, path) {
 			metadata := mapping(t, o["metadata"])
-			for _, name := range []string{"email-storage", "email-storage-key", "email-encrypted", "email-data-encrypted"} {
+			for _, name := range prepared {
 				if metadata["name"] == name {
-					t.Fatalf("encrypted storage must remain unselected until recovery and migration proof: %s", path)
+					t.Fatalf("only production holds the storage key, so only production prepares encrypted storage: %s", path)
 				}
 			}
 		}
@@ -93,5 +99,20 @@ func TestEncryptedPreparationCannotSwitchTheExistingMailbox(t *testing.T) {
 	pvc := object(t, production, "PersistentVolumeClaim", "private-mail-data")
 	if mapping(t, pvc["spec"])["storageClassName"] == "email-encrypted" {
 		t.Fatal("existing unencrypted claim cannot be encrypted by changing its class")
+	}
+	for kind, name := range map[string]string{"SecretStore": "email-storage", "ExternalSecret": "email-storage-key", "StorageClass": "email-encrypted", "PersistentVolumeClaim": "email-data-encrypted"} {
+		object(t, production, kind, name)
+	}
+	for _, o := range production {
+		spec, _ := o["spec"].(map[string]any)
+		template, _ := spec["template"].(map[string]any)
+		podSpec, _ := template["spec"].(map[string]any)
+		volumes, _ := podSpec["volumes"].([]any)
+		for _, item := range volumes {
+			claim, _ := mapping(t, item)["persistentVolumeClaim"].(map[string]any)
+			if claim != nil && claim["claimName"] == "email-data-encrypted" {
+				t.Fatal("no workload may select the encrypted claim before its key is proven in production")
+			}
+		}
 	}
 }

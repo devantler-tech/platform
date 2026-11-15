@@ -3,6 +3,10 @@ kind: PersistentVolumeClaim
 metadata:
   name: email-data-encrypted
   namespace: private-mail
+  # No workload selects this claim yet, so WFFC keeps it Pending on a new
+  # cluster. The overlay that serves from it removes this marker.
+  labels:
+    platform.devantler.tech/storage-stage: prepared
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
