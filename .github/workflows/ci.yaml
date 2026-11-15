@@ -226,6 +226,8 @@ jobs:
               # The k8s-gated database monitoring gate, so a change to the
               # test alone still runs it.
               - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
+              - 'scripts/tests/test-longhorn-elastic-eviction-guard.sh'
+              - 'tests/longhorn-elastic-eviction-guard/**'
               - 'scripts/tests/private-mail-preparation/**'
               - 'scripts/tests/ingress-client-address/**'
               - 'scripts/tests/vault-email-credentials/**'
@@ -247,6 +249,7 @@ jobs:
               - 'scripts/validate-embedded-json.sh'
               - 'scripts/validate-policy-actions/**'
               - 'tests/policy-failure-actions.json'
+              - 'tests/production-policy-failure-actions.json'
               - '.github/scripts/setup-ksail.sh'
               - '.github/scripts/kyverno-version.sh'
               - 'scripts/tests/test-webapp-container-security.sh'
@@ -1051,7 +1054,7 @@ jobs:
           policy_render="$(mktemp -d)"
           trap 'rm -rf "$policy_render"' EXIT
           kubectl kustomize k8s/providers/hetzner/infrastructure > "$policy_render/production.yaml"
-          go run ./scripts/validate-policy-actions "$policy_render"
+          go run ./scripts/validate-policy-actions "$policy_render" tests/production-policy-failure-actions.json
 
       - name: 🩹 Validate merge-group heal contract
         run: |
@@ -2159,6 +2162,8 @@ jobs:
           bash scripts/tests/test-longhorn-csi-plugin-baseline-context.sh
           shellcheck scripts/tests/test-longhorn-engine-image-baseline-context.sh
           bash scripts/tests/test-longhorn-engine-image-baseline-context.sh
+          shellcheck scripts/tests/test-longhorn-elastic-eviction-guard.sh
+          bash scripts/tests/test-longhorn-elastic-eviction-guard.sh
           shellcheck scripts/guard-longhorn-ui-baseline-context.sh scripts/tests/test-guard-longhorn-ui-baseline-context.sh scripts/tests/test-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-guard-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-longhorn-ui-baseline-context.sh
