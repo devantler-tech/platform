@@ -22,11 +22,11 @@ admission, serving health and rollout remain separate checks. The receipt keeps
 `adoption=UNVERIFIED headroom=UNVERIFIED` and authorizes no storage operation.
 
 `observe-database` is a protected, read-only PostgreSQL observation for
-platform#5842. Select one of the five fixed databases with `database`, leave
+platform#5842. Select one of the seven fixed databases with `database`, leave
 `node` empty, and confirm with `observe-longhorn-v2-database-<database>`.
 It requires all reviewed healthy, owned instances with stable primary and archive
 state. Fixed SQL reads physical database identity, timeline and WAL positions;
-the primary's captured flush position must be replayed by both standbys. The
+the primary's captured flush position must be replayed by every standby. The
 client uses the Pod's fixed local socket with a cleared connection environment
 and fixed executable search path, rather than inheriting libpq overrides.
 It qualifies PostgreSQL built-ins explicitly and fixes catalog lookup and
@@ -89,7 +89,7 @@ requires two intact peer copies before scheduling and full redundancy afterward.
 For a confirmed allocation shortfall, `reboot-host-for-hugepages` selects exactly one
 permanent worker with `reboot-longhorn-v2-host-<worker>`. It requires the loaded
 reservation, unused native huge pages, disabled V2, the complete fixed migration roster, all V1
-volumes fully redundant, and all three database clusters healthy. It records the
+volumes fully redundant, and all seven database clusters healthy. It records the
 original node, hardware, boot, encrypted EPHEMERAL partition, storage disks and
 database identities before an owned cordon and an eviction-based application drain.
 The live `block-if-contains-last-replica` policy and target V1 instance-manager
@@ -107,11 +107,13 @@ reboot intent. The single reboot request has no reset or disk-wipe selector.
 An unfinished or unreadable peer journal, another worker's cordon, or lost proof
 of a peer's recorded recovery prevents starting the next worker.
 
-New journals bind all five production PostgreSQL clusters and their full declared
-replica counts. The two-instance kagent and Substrate databases must both recover
-before the reboot, alongside Coroot, Umami and Wedding. Existing journals preserve
-their original identities. A legacy journal that has yet to request a reboot must
-bind the current database roster before moving the worker.
+New version-3 journals bind all seven production PostgreSQL clusters and their
+full declared replica counts, including the two-instance identity and portal
+databases. Every cluster must recover before a reboot. Version-1 and version-2
+journals remain readable with their original three-owner and five-owner scopes.
+A record that has yet to request a reboot must freshly bind the current roster
+before moving the worker, preserving each original identity. Post-request
+recovery retains the original receipt's scope.
 
 Recovery never repeats an uncertain reboot. It requires a changed boot with the
 same node, hardware, OS, encrypted partition, registered disks and database system
