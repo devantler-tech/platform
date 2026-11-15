@@ -60,11 +60,11 @@ case "${args}" in
 *"annotate fluxinstance flux --overwrite reconcile.fluxcd.io/requestedAt="*)
   if [[ "${OPERATOR_RENDERS:-1}" == "1" ]]; then
     secret="$(jq -r '.spec.sync.pullSecret // ""' "${STATE_DIR}/fi.json")"
-    jq --arg s "${secret}" '
+    jq --arg s "${secret}" --arg ready "${SOURCE_READY:-True}" '
       (.spec.secretRef.name // "") as $old
       | (if $s == "" then del(.spec.secretRef) else .spec.secretRef = {name: $s} end)
       | (if $old != $s then .metadata.generation += 1 else . end)
-      | .status.conditions = [{type: "Ready", status: "True", observedGeneration: .metadata.generation}]' \
+      | .status.conditions = [{type: "Ready", status: $ready, observedGeneration: .metadata.generation}]' \
       "${STATE_DIR}/src.json" >"${STATE_DIR}/src.next"
     mv "${STATE_DIR}/src.next" "${STATE_DIR}/src.json"
     jq '.status.conditions = [{type: "Ready", status: "True", observedGeneration: .metadata.generation}]' \
@@ -204,6 +204,15 @@ require_no_write 'unreadable source'
 run_case stuck "$(fi_with ksail-registry-credentials)" "$(src_with ksail-registry-credentials)" OPERATOR_RENDERS=0
 require_status 1 'operator never renders'
 grep -q 'DETACH INCOMPLETE' "${case_dir}/summary" || fail 'operator never renders: summary missing'
+
+# 7b. A source that stays not Ready after the re-render (a bad live verify
+#     matcher, repaired only by reassert-flux-root-verify.sh after publish)
+#     must not hold the deploy here: detachment succeeds once the render is done.
+run_case unverifiable "$(fi_with ksail-registry-credentials)" "$(src_with ksail-registry-credentials)" SOURCE_READY=False
+require_status 0 'source not Ready after re-render'
+[[ "$(src_field '.spec.secretRef // "absent"')" == '"absent"' ]] || fail 'source not Ready: source still names a secret'
+[[ "$(src_field '.spec.verify')" == "$(jq -c . <<<"${verify}")" ]] || fail 'source not Ready: spec.verify changed'
+grep -q '^DETACHED' <<<"${output}" || fail "source not Ready: summary does not say DETACHED: ${output}"
 
 # 8. A source the operator has not re-rendered yet is converged without a patch.
 run_case lagging "$(fi_with '')" "$(src_with ksail-registry-credentials)"

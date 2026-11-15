@@ -823,7 +823,9 @@ is public (#6272). `ksail.prod.yaml` gives KSail no `localRegistry` credential,
 so KSail sets no FluxInstance `spec.sync.pullSecret`, and both production
 entrypoints run `scripts/detach-flux-root-pull-secret.sh` before `latest` can
 move: it proves an anonymous pull of the synced artifact, removes a leftover
-`pullSecret`, and waits for the source to fetch anonymously. If that step fails
+`pullSecret`, and waits for the source to be re-rendered without it. It does not
+wait for the source to be Ready, because a bad verify matcher is repaired only
+after publish by `scripts/reassert-flux-root-verify.sh`. If that step fails
 with "not anonymously readable", the package visibility changed: make it public
 again rather than restoring a root pull secret.
 
