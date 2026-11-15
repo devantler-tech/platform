@@ -159,6 +159,19 @@ yq -i '.namespaceSelector[0].name = "other-ns" | .namespaceSelector[0].labels."k
 yq -i '.metadata.name = "absent-deployment"' "${root}/tests/auto-vpa-generating-policy-deployment/generated-vpa.yaml"
 expect_fail "GeneratingPolicy expecting an object it never generates" "${root}" 1 "kyverno test"
 
+# platform#6270: a native ValidatingAdmissionPolicy is one rule named after the policy.
+# A row naming any other rule must still fail check 1, and a row naming a resource the
+# fixture does not load must still fail check 3.
+root="$(copy vap-rule restrict-ci-identity-bindings-shared-subject)"
+yq -i '.results[0].rule = "no-such-rule"' \
+  "${root}/tests/restrict-ci-identity-bindings-shared-subject/kyverno-test.yaml"
+expect_fail "ValidatingAdmissionPolicy row naming a rule it does not define" "${root}" 1 \
+  "names rule no-such-rule of policy restrict-ci-identity-bindings"
+root="$(copy vap-missing restrict-ci-identity-bindings-shared-subject)"
+yq -i '.results[0].resources[0] = "aws/absent-binding"' \
+  "${root}/tests/restrict-ci-identity-bindings-shared-subject/kyverno-test.yaml"
+expect_fail "ValidatingAdmissionPolicy row naming a resource it does not load" "${root}" 1 "aws/absent-binding"
+
 # A generate row names only the object it generates, so the triggers of one entry that all
 # generate the same fixed-name object share its name, and kyverno drops a misspelled one
 # without a row or a failure.

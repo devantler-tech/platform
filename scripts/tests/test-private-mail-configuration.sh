@@ -539,6 +539,42 @@ jq -e --rawfile user "$scratch/inputs/relay-username" --arg local "'local'" --ar
   exit 1
 }
 echo 'PASS: remote mail is routed through the SES relay with required, verified TLS'
+# The scheduled drift check reads the serving configuration back as the managed
+# administrator and never writes. A setting changed by hand must fail it.
+run_check() {
+  local check_status=0
+  docker run --rm --network "$network" --read-only --user "$fixture_user" --cpus 1 --memory 128m \
+    --cap-drop ALL --security-opt no-new-privileges:true \
+    --mount "type=bind,source=$scratch/inputs,target=/etc/private-mail,readonly" \
+    --entrypoint /usr/local/bin/private-mail-bootstrap "$name-bootstrap-image" \
+    check --url "http://$name:8080" >"$scratch/check.log" 2>&1 || check_status=$?
+  # The check prints one fixed line that names at most a registry object.
+  grep -E '^Email configuration (matches|drift in [A-Za-z ]+:|check could not run: [a-z ]+$)' "$scratch/check.log" | head -1 | cut -c1-160 >&2 || true
+  return "$check_status"
+}
+set_pyzor() {
+  printf '{"@type":"update","object":"SpamPyzor","value":{"enable":%s}}\n' "$1" >"$scratch/drift.ndjson"
+  administration_cli apply --file /proof/drift.ndjson --json >"$scratch/drift-apply.jsonl" 2>"$scratch/drift-apply.err"
+  jq -se 'length > 0 and ([.[]|select(.status=="error")]|length==0)' "$scratch/drift-apply.jsonl" >/dev/null
+}
+run_check || {
+  echo 'FAIL: the drift check refused the declared serving configuration' >&2
+  exit 1
+}
+grep -Fqx 'Email configuration matches the declared configuration.' "$scratch/check.log"
+set_pyzor true
+check_status=0
+run_check || check_status=$?
+if [ "$check_status" != 1 ] || ! grep -Fq 'Email configuration drift' "$scratch/check.log"; then
+  echo 'FAIL: the drift check did not report a setting changed by hand' >&2
+  exit 1
+fi
+set_pyzor false
+run_check || {
+  echo 'FAIL: the drift check still reported drift after the setting was restored' >&2
+  exit 1
+}
+echo 'PASS: the drift check reports a hand-changed setting and accepts the declared one'
 # A native client credential is independently owned. Neither replay nor a full
 # initializer re-entry may remove it or clear primary authentication restrictions.
 jq -cn '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[["x:AppPassword/set",{create:{app:{description:"Native client retention proof",expiresAt:"2031-01-01T00:00:00Z"}}},"app"]]}' >"$scratch/client-create.json"

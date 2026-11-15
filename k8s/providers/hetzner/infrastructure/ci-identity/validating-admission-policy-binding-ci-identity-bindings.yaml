@@ -1,0 +1,8 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: restrict-ci-identity-bindings
+spec:
+  policyName: restrict-ci-identity-bindings
+  validationActions: [Deny]

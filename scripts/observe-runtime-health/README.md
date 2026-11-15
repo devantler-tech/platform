@@ -1,10 +1,10 @@
 # Read-only runtime health observation
 
 After this code is reviewed and merged, dispatch `observe-runtime-health.yaml`
-once from `main`, with confirmation `observe-runtime-health`. It follows the
-existing production diagnostic workflow: no more than `contents: read`, no
-application or policy mutation, and ephemeral credentials restored only after
-the observer is built. The program independently refuses a different repository,
+once from `main`, with confirmation `observe-runtime-health`. It runs through
+the shared `prod-operation.yaml` reusable workflow: no more than `contents:
+read`, no application or policy mutation, and ephemeral credentials restored
+only after the observer is built. The program independently refuses a different repository,
 event, ref, retry, confirmation or unbound source revision.
 
 The observer reads the fixed Coroot service and the project named `platform`,

@@ -45,8 +45,8 @@ no secrets. It checks the following:
 - The local overlay is unaffected, and removing both patches and adding them
   back reproduces the committed render exactly.
 
-[`scripts/read-actual-budget-userns-maps.sh`](../../../../scripts/read-actual-budget-userns-maps.sh)
-reads the live id maps of both containers. It is read-only.
+The one-off live id-map read (platform#3604) was retired in platform#6268;
+recover it from Git history if the maps need re-reading.
 
 ## Roll back without touching storage
 

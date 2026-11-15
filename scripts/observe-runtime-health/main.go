@@ -368,7 +368,7 @@ func observe(ctx context.Context, read readFunc, now time.Time) (snapshot, error
 func allowedEnvironment(get func(string) string) bool {
 	return get("GITHUB_REPOSITORY") == "devantler-tech/platform" && get("GITHUB_EVENT_NAME") == "workflow_dispatch" &&
 		get("GITHUB_REF") == "refs/heads/main" && get("GITHUB_RUN_ATTEMPT") == "1" &&
-		get("RUNTIME_HEALTH_CONFIRM") == "observe-runtime-health" && commitPattern.MatchString(get("GITHUB_SHA"))
+		get("PROD_OPERATION") == "observe-runtime-health" && commitPattern.MatchString(get("GITHUB_SHA"))
 }
 
 type boundedOutput struct{ buffer bytes.Buffer }

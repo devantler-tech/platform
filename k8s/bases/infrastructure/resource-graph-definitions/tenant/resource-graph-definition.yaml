@@ -30,10 +30,11 @@
 #     externalDns: true
 #
 # The OCIRepository URL (oci://ghcr.io/devantler-tech/<name>/manifests) and the
-# cosign OIDC subject (the shared publish-app reusable workflow) are platform
-# invariants — every tenant publishes through the same pipeline — so they are
-# templated/fixed here rather than re-declared per tenant. Add an override field
-# only if a future tenant diverges from the convention.
+# cosign OIDC subject (the shared publish-app reusable workflow, or the tenant's
+# own repository's release workflow on a release tag) are platform invariants —
+# derived from the tenant name — so they are templated/fixed here rather than
+# re-declared per tenant. Add an override field only if a future tenant diverges
+# from the convention.
 #
 # Lands in the `infrastructure` layer (which `dependsOn` infrastructure-controllers
 # where the KRO controller installs the RGD CRD) — a CR of an RGD-defined kind
@@ -305,17 +306,35 @@ spec:
             provider: cosign
             matchOIDCIdentity:
               # Keyless-signed by the shared publish-app workflow this tenant's
-              # cd.yaml calls. The legacy location retains its full-commit
-              # compatibility rule; the maintained location requires the exact
-              # reviewed revisions (v19.0.5 #5404, v21.3.4 #6228).
-              # Tags and branches are refused at either location. Every
-              # tenant's caller must also pass its independent
+              # cd.yaml calls, or by the tenant's OWN release workflow.
+              # Without a pinned publisher revision the subject is one
+              # anchored group of two alternatives:
+              # 1. the maintained shared publisher at the exact reviewed
+              #    revisions (v19.0.5 #5404, v21.3.4 #6228); the deleted legacy
+              #    publisher repository is refused at every commit (#6264), and
+              #    tags and branches of the shared publisher are refused. Kept
+              #    until the consumers move (#6266).
+              # 2. a workflow directly in .github/workflows/ of the tenant's own
+              #    repository, devantler-tech/<spec.name>, on a strict
+              #    OCI-semver release tag, pre-releases included (ADR 0017,
+              #    #6265). The repository is the tenant name because the
+              #    artifact URL above is oci://ghcr.io/devantler-tech/<name>/…:
+              #    a tenant publishes from the repository its package is named
+              #    after. The name is regex-escaped (`.` and `-`). It is also
+              #    the tenant's Namespace and this object's name, so the API
+              #    server bounds it to a DNS label and no other regex
+              #    metacharacter can reach the subject. Another repository,
+              #    a branch or a non-release tag does not match.
+              # A pinned publisher revision (digest-addressed bootstrap) keeps
+              # its single exact identity: its admission record names that
+              # revision, so its subject is unchanged here.
+              # Every tenant's caller must also pass its independent
               # approval check. cosign's keyless attestation verification
               # rejects MULTIPLE identity entries outright ("unsupported: multiple
               # identities are not supported at this time"), so any future
               # alternation must stay inside one subject regex.
               - issuer: '^https://token\.actions\.githubusercontent\.com$'
-                subject: '${schema.spec.source.publisherRevision == "" ? "^https://github\\.com/devantler-tech/(actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}|\\.github/\\.github/workflows/publish-app\\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35))$" : "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@" + schema.spec.source.publisherRevision + "$"}'
+                subject: '${schema.spec.source.publisherRevision == "" ? "^https://github\\.com/devantler-tech/(\\.github/\\.github/workflows/publish-app\\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)|" + schema.spec.name.replace(".", "\\.").replace("-", "\\-") + "/\\.github/workflows/[^/]+\\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$" : "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@" + schema.spec.source.publisherRevision + "$"}'
     # --- Flux Kustomization (one of two variants by `sops`) ---------------
     # The impersonating Kustomization that reconciles the tenant's own artifact
     # under its namespaced SA (bound to the `tenant-edit` role). Two variants because the SOPS `decryption`
