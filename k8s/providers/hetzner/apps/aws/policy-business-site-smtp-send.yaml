@@ -1,0 +1,41 @@
+# The only permission of the business site's SMTP identity: send raw mail
+# through the company mail domain's SES identity in eu-central-1, from its one
+# sender address. It cannot use any other sender, read, configure or verify
+# anything in SES.
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: business-site-smtp-send
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    description: >-
+      Lets the business site's SMTP identity send mail through the company mail
+      domain's SES identity, from its one sender address only.
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Sid": "SendBusinessSiteMail",
+            "Effect": "Allow",
+            "Action": "ses:SendRawEmail",
+            "Resource": "arn:aws:ses:eu-central-1:939001610192:identity/devantler.tech",
+            "Condition": {
+              "StringEquals": {
+                "ses:FromAddress": "no-reply@devantler.tech"
+              }
+            }
+          }
+        ]
+      }
+  providerConfigRef:
+    kind: ProviderConfig
+    name: default
