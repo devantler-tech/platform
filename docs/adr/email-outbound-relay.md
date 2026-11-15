@@ -97,8 +97,14 @@ sign-in, recovery or public submission work, and it cannot reach any mailbox.
   `email-smtp.eu-central-1.amazonaws.com` on port 587 with STARTTLS and SMTP
   authentication, sending from `no-reply@devantler.tech`. The tenant owns its
   own egress to that endpoint.
-- **Revocation.** Replace the access key; the PushSecret then writes the new
-  credential. Removing the attachment stops sending at once.
+- **Rotation.** Declare a new access key; the PushSecret then writes the new
+  credential. Remove the old key afterwards, with Delete added to its
+  policies first.
+- **Revocation.** No policy includes Delete, so removing a manifest leaves the
+  AWS object in place and the credential still sends. To stop sending, first
+  add Delete to the attachment's management policies and let it reconcile,
+  then remove the attachment and check in AWS that the user has no policy
+  attached.
 
 While the account is in the SES sandbox, this sender too reaches only verified
 recipients.
