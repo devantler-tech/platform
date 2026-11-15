@@ -19,9 +19,10 @@
 # - The signer (init container) alone mounts the private key of ZITADEL's
 #   `zitadel-setup` system API user (certificate-setup-key.yaml). It writes a
 #   10-minute token to a memory volume and exits.
-# - The setup container alone gets a Kubernetes token, which may only read and
-#   update the client Secret (role.yaml). It reads the SMTP login (zitadel-smtp)
-#   and the one-time password (zitadel-first-admin) through its environment.
+# - The setup container alone gets a Kubernetes token, projected to
+#   /run/kube-api, which may only read and update the client Secret (role.yaml).
+#   It reads the SMTP login (zitadel-smtp) and the one-time password
+#   (zitadel-first-admin) as mounted files, never as environment variables.
 # - Neither prints a secret.
 #
 # The maintainer's own first sign-in (choosing his password, enrolling MFA) is
@@ -139,31 +140,22 @@ spec:
                   value: accounts.devantler.tech
                 - name: TOKEN_FILE
                   value: /run/setup-token/token
-                - name: SMTP_USER
-                  valueFrom:
-                    secretKeyRef:
-                      name: zitadel-smtp
-                      key: username
-                - name: SMTP_PASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: zitadel-smtp
-                      key: password
                 - name: ADMIN_EMAIL
                   value: ned@devantler.tech
-                - name: ADMIN_PASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: zitadel-first-admin
-                      key: password
               volumeMounts:
                 - name: setup-token
                   mountPath: /run/setup-token
                   readOnly: true
                 - name: tmp
                   mountPath: /tmp
-                - name: kube-api-access
-                  mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+                - name: smtp
+                  mountPath: /run/smtp
+                  readOnly: true
+                - name: first-admin
+                  mountPath: /run/first-admin
+                  readOnly: true
+                - name: kube-api
+                  mountPath: /run/kube-api
                   readOnly: true
               resources:
                 requests:
@@ -185,8 +177,11 @@ spec:
                   set -euo pipefail
                   umask 077
 
-                  : "${ZITADEL_URL:?}" "${ZITADEL_HOST:?}" "${TOKEN_FILE:?}" "${SMTP_USER:?}" "${SMTP_PASSWORD:?}"
-                  : "${ADMIN_EMAIL:?}" "${ADMIN_PASSWORD:?}"
+                  : "${ZITADEL_URL:?}" "${ZITADEL_HOST:?}" "${TOKEN_FILE:?}" "${ADMIN_EMAIL:?}"
+                  # Secrets arrive as files, never as environment variables.
+                  smtp_dir=${SMTP_DIR:-/run/smtp}
+                  admin_password_file=${ADMIN_PASSWORD_FILE:-/run/first-admin/password}
+                  kube_api_dir=${KUBE_API_DIR:-/run/kube-api}
                   namespace=customer-identity
                   client_secret_name=customer-dex-zitadel-client
                   # Fingerprints of what this script last applied, kept as annotations on the
@@ -229,8 +224,38 @@ spec:
 
                   work=$(mktemp -d)
                   trap 'rm -rf "$work"' EXIT
+                  read_secret() { [[ -s $1 ]] || fail "missing $2"; printf '%s' "$(<"$1")"; }
                   [[ -s $TOKEN_FILE ]] || fail "no signed token at $TOKEN_FILE"
                   printf 'Authorization: Bearer %s\n' "$(<"$TOKEN_FILE")" > "$work/auth"
+                  smtp_user=$(read_secret "$smtp_dir/username" "SMTP username")
+                  smtp_password=$(read_secret "$smtp_dir/password" "SMTP password")
+                  admin_password=$(read_secret "$admin_password_file" "administrator one-time password")
+
+                  # The Kubernetes token is projected outside the default path, so kubectl gets
+                  # a kubeconfig that reads it from there.
+                  if [[ -z ${KUBECONFIG:-} ]]; then
+                    cat > "$work/kubeconfig" <<EOF
+                  apiVersion: v1
+                  kind: Config
+                  clusters:
+                    - name: in-cluster
+                      cluster:
+                        server: https://kubernetes.default.svc
+                        certificate-authority: $kube_api_dir/ca.crt
+                  users:
+                    - name: customer-identity-setup
+                      user:
+                        tokenFile: $kube_api_dir/token
+                  contexts:
+                    - name: setup
+                      context:
+                        cluster: in-cluster
+                        user: customer-identity-setup
+                        namespace: $namespace
+                  current-context: setup
+                  EOF
+                    export KUBECONFIG=$work/kubeconfig
+                  fi
 
                   # api METHOD PATH [BODY]: prints the response body on a 2xx answer. Any other
                   # answer fails the run with ZITADEL's error code and message only.
@@ -339,7 +364,7 @@ spec:
                   esac
 
                   # --- SMTP --------------------------------------------------------------------
-                  fingerprint=$(printf '%s\n%s' "$SMTP_USER" "$SMTP_PASSWORD" | sha256sum | cut -d' ' -f1)
+                  fingerprint=$(printf '%s\n%s' "$smtp_user" "$smtp_password" | sha256sum | cut -d' ' -f1)
                   providers=$(api POST /admin/v1/smtp/_search)
                   provider=$(jq -c --arg h "$smtp_host" --arg s "$smtp_sender" \
                     '[.result // [] | .[] | select(.host == $h and .senderAddress == $s)]' <<<"$providers")
@@ -347,12 +372,12 @@ spec:
                   provider=$(jq -c '.[0]' <<<"$provider")
                   smtp_id=$(jq -er '.id' <<<"$provider")
                   recorded=$(secret_json | jq -r --arg a "$fingerprint_annotation" '.metadata.annotations[$a] // ""')
-                  if [[ $recorded != "$fingerprint" || $(jq -r '.user' <<<"$provider") != "$SMTP_USER" ||
+                  if [[ $recorded != "$fingerprint" || $(jq -r '.user' <<<"$provider") != "$smtp_user" ||
                     $(jq -r '.tls // false' <<<"$provider") != true || $(jq -r '.senderName // ""' <<<"$provider") != "$smtp_sender_name" ]]; then
                     api PUT "/admin/v1/smtp/$smtp_id" "$(jq -nc --arg s "$smtp_sender" --arg n "$smtp_sender_name" \
-                      --arg h "$smtp_host" --arg u "$SMTP_USER" --arg d "$smtp_description" \
+                      --arg h "$smtp_host" --arg u "$smtp_user" --arg d "$smtp_description" \
                       '{senderAddress: $s, senderName: $n, tls: true, host: $h, user: $u, description: $d}')" >/dev/null
-                    api PUT "/admin/v1/smtp/$smtp_id/password" "$(jq -nc '{password: env.SMTP_PASSWORD}')" >/dev/null
+                    api PUT "/admin/v1/smtp/$smtp_id/password" "$(SMTP_PASSWORD=$smtp_password jq -nc '{password: env.SMTP_PASSWORD}')" >/dev/null
                     patch_secret "$(jq -nc --arg a "$fingerprint_annotation" --arg f "$fingerprint" '{metadata: {annotations: {($a): $f}}}')"
                     changes+=("updated SMTP login")
                   fi
@@ -373,9 +398,9 @@ spec:
                   admin_state=own
                   if [[ $(jq -r '.result[0].human.passwordChangeRequired // false' <<<"$admins") == true ]]; then
                     admin_state=one-time
-                    admin_fingerprint=$(printf '%s' "$ADMIN_PASSWORD" | sha256sum | cut -d' ' -f1)
+                    admin_fingerprint=$(printf '%s' "$admin_password" | sha256sum | cut -d' ' -f1)
                     if [[ $(secret_json | jq -r --arg a "$admin_annotation" '.metadata.annotations[$a] // ""') != "$admin_fingerprint" ]]; then
-                      connect zitadel.user.v2.UserService/SetPassword "$(jq -nc --arg u "$admin_id" \
+                      connect zitadel.user.v2.UserService/SetPassword "$(ADMIN_PASSWORD=$admin_password jq -nc --arg u "$admin_id" \
                         '{userId: $u, newPassword: {password: env.ADMIN_PASSWORD, changeRequired: true}}')" >/dev/null
                       patch_secret "$(jq -nc --arg a "$admin_annotation" --arg f "$admin_fingerprint" '{metadata: {annotations: {($a): $f}}}')"
                       changes+=("set the administrator's one-time password")
@@ -406,7 +431,7 @@ spec:
               emptyDir:
                 medium: Memory
                 sizeLimit: 16Mi
-            - name: kube-api-access
+            - name: kube-api
               projected:
                 defaultMode: 0440
                 sources:
@@ -423,3 +448,19 @@ spec:
                         - path: namespace
                           fieldRef:
                             fieldPath: metadata.namespace
+            - name: smtp
+              secret:
+                secretName: zitadel-smtp
+                defaultMode: 0440
+                items:
+                  - key: username
+                    path: username
+                  - key: password
+                    path: password
+            - name: first-admin
+              secret:
+                secretName: zitadel-first-admin
+                defaultMode: 0440
+                items:
+                  - key: password
+                    path: password
