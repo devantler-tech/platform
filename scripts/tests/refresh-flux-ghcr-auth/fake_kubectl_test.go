@@ -3375,6 +3375,9 @@ func fakeKubectlDiscoverRootSecret(args []string) int {
 	if !containsArg(args, "--ignore-not-found") {
 		return commandFailure(91, "root Secret discovery must tolerate its absence")
 	}
+	if os.Getenv("FAKE_ROOT_SECRET_DISCOVERY_FAILS") == "true" {
+		return commandFailure(1, "root Secret discovery failed")
+	}
 	if os.Getenv("FAKE_ROOT_SECRET_ABSENT") != "true" {
 		fmt.Println("secret/ksail-registry-credentials")
 	}

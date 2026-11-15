@@ -56,6 +56,52 @@ func TestConvergedReassertKeepsFullVerificationWithoutWriting(t *testing.T) {
 	requireNotContains(t, result.stdout+result.stderr, "fixture-secret-token")
 }
 
+func TestConvergedReassertWithoutLegacyRootSecretDoesNotWrite(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	current := map[string]string{
+		"FAKE_TALOS_NODES_CURRENT": "true",
+		"FAKE_ROOT_SECRET_ABSENT":  "true",
+	}
+	requireSuccessResult(t, f.runHelper(validConfig(), nil, current))
+	restarts := persistedClusterMarker(t, f, "flux-controller-restart-count")
+	leaseVersion := persistedClusterMarker(t, f, "sync-lease-resource-version")
+
+	result := f.runHelperPreservingClusterState(validConfig(), nil, current)
+	requireSuccessResult(t, result)
+	requireContains(t, result.stdout, "no fence or write was needed")
+	if got := persistedClusterMarker(t, f, "flux-controller-restart-count"); got != restarts {
+		t.Errorf("absent legacy root Secret caused a controller restart: %s -> %s", restarts, got)
+	}
+	if got := persistedClusterMarker(t, f, "sync-lease-resource-version"); got != leaseVersion {
+		t.Errorf("absent legacy root Secret acquired the Lease: %s -> %s", leaseVersion, got)
+	}
+	for _, log := range []string{f.operationLog, f.fanoutLog, f.talosLog} {
+		if pathExists(log) {
+			t.Errorf("converged cluster with no legacy root Secret wrote %s", filepath.Base(log))
+		}
+	}
+	requireNotContains(t, result.stdout+result.stderr, "fixture-secret-token")
+}
+
+func TestUnreadableLegacyRootSecretCannotTakeNoWritePath(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	requireSuccessResult(t, f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT": "true",
+	}))
+
+	result := f.runHelperPreservingClusterState(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":         "true",
+		"FAKE_ROOT_SECRET_DISCOVERY_FAILS": "true",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout, "GHCR no-write path ended at check=root-auth;")
+	requireNotContains(t, result.stdout, "no fence or write was needed")
+	requireContains(t, result.stdout, "Could not determine whether the legacy root pull Secret exists.")
+	requireNotContains(t, result.stdout+result.stderr, "fixture-secret-token")
+}
+
 func TestPartiallyAppliedNodeConfigStillAcquiresFullFence(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
