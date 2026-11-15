@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -78,17 +77,17 @@ func (h hostMemoryReboot) recover(ctx context.Context, r hostRebootRecord) error
 		}
 	}
 	host, err := h.recoveredHost(recovery, r)
-	if err != nil || h.recoveryPeers(recovery, r) != nil {
-		return errHostMemory
+	if err != nil {
+		return hostRecoveryFailure("prove-host", err)
+	}
+	if err = h.recoveryPeers(recovery, r); err != nil {
+		return hostRecoveryFailure("prove-peers", err)
 	}
 	if value(host, "spec", "unschedulable") == true {
 		if r.Phase != "returning" || text(host, "metadata", "annotations", fenceAnnotation) != h.name() {
 			return errHostMemory
 		}
-		if _, err = h.owned(recovery, r); err != nil {
-			return err
-		}
-		if err = h.c.patch(recovery, "node", "", host, object{"op": "add", "path": "/spec/unschedulable", "value": false}); err != nil {
+		if err = h.changeRecoveredNode(recovery, r, host, false); err != nil {
 			return err
 		}
 	}
@@ -107,19 +106,16 @@ func (h hostMemoryReboot) recover(ctx context.Context, r hostRebootRecord) error
 		}
 		return h.peersClear(ctx, s.nodes)
 	}); err != nil {
-		return err
+		return hostRecoveryFailure("wait-full-recovery", err)
 	}
 	if text(host, "metadata", "annotations", fenceAnnotation) == h.name() {
-		if _, err = h.owned(recovery, r); err != nil {
-			return err
-		}
-		if err = h.c.patch(recovery, "node", "", host, object{"op": "remove", "path": "/metadata/annotations/" + strings.ReplaceAll(fenceAnnotation, "/", "~1")}); err != nil {
+		if err = h.changeRecoveredNode(recovery, r, host, true); err != nil {
 			return err
 		}
 	}
 	released, err := h.recoveredHost(recovery, r)
 	if err != nil || value(released, "spec", "unschedulable") == true || text(released, "metadata", "annotations", fenceAnnotation) != "" {
-		return errHostMemory
+		return hostRecoveryFailure("verify-fence-release", errHostMemory)
 	}
 	if r.Phase == "recovered" {
 		return nil
