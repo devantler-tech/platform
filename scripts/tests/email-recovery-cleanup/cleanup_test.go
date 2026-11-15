@@ -70,13 +70,21 @@ func (a *apiFixture) add(path, version, kind, name, namespace, uid string, body 
 func (a *apiFixture) addCopy(id identity, state string) {
 	name := "email-data-recovery-" + id.copy
 	namespace, claim, volume, backend, class, attachment := paths(id)
-	backendState := "detached"
-	if state != "detached" {
-		backendState = "attached"
+	// Longhorn marks the claim reference retired once the claim is gone, and
+	// clears the volume reference once the volume is gone.
+	kubernetesStatus := object{"namespace": name, "pvcName": "data", "pvName": id.volume, "lastPVCRefAt": ""}
+	backendState := "attached"
+	switch state {
+	case "detached":
+		backendState = "detached"
+		kubernetesStatus["pvName"] = ""
+		kubernetesStatus["lastPVCRefAt"] = "2026-11-15T04:26:56Z"
+	case "attached":
+		kubernetesStatus["lastPVCRefAt"] = "2026-11-15T04:26:56Z"
 	}
 	a.add(backend, "longhorn.io/v1beta2", "Volume", id.volume, "longhorn-system", id.backendUID, object{
 		"spec":   object{"encrypted": true},
-		"status": object{"state": backendState, "kubernetesStatus": object{"namespace": name, "pvcName": "data", "pvName": id.volume}},
+		"status": object{"state": backendState, "kubernetesStatus": kubernetesStatus},
 	})
 	a.add(class, "storage.k8s.io/v1", "StorageClass", name, "", id.classUID, object{"provisioner": "driver.longhorn.io"})
 	if state == "detached" {
@@ -223,6 +231,16 @@ func (a *apiFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				delete(a.objects, attachment)
 				if volume, ok := a.objects[backend]; ok {
 					volume["status"].(object)["state"] = "detached"
+					volume["status"].(object)["kubernetesStatus"].(object)["lastPVCRefAt"] = "2026-11-15T06:00:00Z"
+				}
+			}
+		}
+	}
+	if data["kind"] == "PersistentVolume" {
+		for _, id := range []identity{first, second} {
+			if _, _, volume, backend, _, _ := paths(id); volume == path {
+				if backendVolume, ok := a.objects[backend]; ok {
+					backendVolume["status"].(object)["kubernetesStatus"].(object)["pvName"] = ""
 				}
 			}
 		}
@@ -359,6 +377,34 @@ func TestForeignBackendBindingRefusesBeforeAnyDeletion(t *testing.T) {
 	_, _, _, backend, _, _ := paths(first)
 	a.objects[backend]["status"].(object)["kubernetesStatus"].(object)["namespace"] = "private-mail"
 	refusedBeforeDeleting(t, a, "backend-binding")
+}
+
+func TestBackendReferencesMustMatchTheVolumeState(t *testing.T) {
+	for _, tt := range []struct {
+		name, key string
+		value     any
+	}{
+		{"names the deleted volume", "pvName", first.volume},
+		{"claim reference not retired", "lastPVCRefAt", ""},
+		{"claim reference of another claim", "pvcName", "other"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newAPI()
+			_, _, _, backend, _, _ := paths(first)
+			a.objects[backend]["status"].(object)["kubernetesStatus"].(object)[tt.key] = tt.value
+			refusedBeforeDeleting(t, a, "backend-binding")
+		})
+	}
+}
+
+func TestFullyClearedBackendReferencesAreRemoved(t *testing.T) {
+	a := newAPI()
+	_, _, _, backend, _, _ := paths(first)
+	a.objects[backend]["status"].(object)["kubernetesStatus"] = object{"namespace": "", "pvcName": "", "pvName": "", "lastPVCRefAt": ""}
+	output, err := runCleanup(t, a)
+	if err != nil || !strings.Contains(output, "=COMPLETE serving=UNCHANGED") || a.deletes != 6 {
+		t.Fatalf("a naturally cleared backend was refused: err=%v deletes=%d output=%s", err, a.deletes, output)
+	}
 }
 
 func TestChangedServingIdentityPreventsCompletion(t *testing.T) {

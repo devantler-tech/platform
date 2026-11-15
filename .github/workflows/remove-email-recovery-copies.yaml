@@ -145,7 +145,20 @@ jobs:
             fi
             if present "$private_dir/$copy/backend.json" "$backend_uid" backend; then
               has_backend=1
-              jq -e --arg name "$name" --arg volume "$volume" '.status.kubernetesStatus.namespace == $name and .status.kubernetesStatus.pvcName == "data" and .status.kubernetesStatus.pvName == $volume' "$private_dir/$copy/backend.json" >/dev/null || fail "$copy" backend-binding
+              # While the volume exists the backend names it and its claim.
+              # Once Longhorn sees the volume gone it clears pvName, and a claim
+              # reference it keeps must be this copy's, marked retired.
+              jq -e --arg name "$name" --arg volume "$volume" --argjson bound "$has_volume" '
+                .status.kubernetesStatus as $ks
+                | ($ks | type == "object")
+                and (if $bound == 1 then
+                  $ks.namespace == $name and $ks.pvcName == "data" and $ks.pvName == $volume
+                else
+                  (($ks.pvName // "") == "")
+                  and ((($ks.pvcName // "") == "" and ($ks.namespace // "") == "")
+                    or ($ks.namespace == $name and $ks.pvcName == "data"
+                      and (($ks.lastPVCRefAt // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"))))
+                end)' "$private_dir/$copy/backend.json" >/dev/null || fail "$copy" backend-binding
             fi
             if present "$private_dir/$copy/class.json" "$class_uid" class; then
               has_class=1
