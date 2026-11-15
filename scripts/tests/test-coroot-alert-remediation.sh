@@ -56,8 +56,8 @@ readonly ssa_count
 node_agent_tag="$(yq -er '.spec.values.nodeAgent.image.tag' "${kubescape_release}")" ||
   fail 'the Kubescape node-agent image tag is missing'
 readonly node_agent_tag
-[[ "${node_agent_tag}" == 'v0.3.219-alerts.1-f6cbf54c4e76f511442d49c43c3f1880831b469c@sha256:5d12b81ad92b75b3aae06166d0936ae441b79ba5f29eb9b7e0d666bd72a7cf0b' ]] ||
-  fail 'Kubescape node-agent must use the exact signed alert-remediation build'
+[[ "${node_agent_tag}" == 'v0.3.219-alerts.1-nsfd.1-2b5f60ee291c6292649a4f3dba31bcacba5aa6b6@sha256:b296541856c36514a3faeb58e43f4a26460b869c12953e6ddb95d2086db6bd59' ]] ||
+  fail 'Kubescape node-agent must use the exact signed alert-remediation and namespace-descriptor build'
 
 node_agent_repository="$(yq -er '.spec.values.nodeAgent.image.repository' "${kubescape_release}")" ||
   fail 'the Kubescape node-agent image repository is missing'

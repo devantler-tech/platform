@@ -185,11 +185,13 @@ spec:
         # Exact signed compatibility build from the v0.3.219 source supported by
         # chart 1.40.4. It retains the upstream crash fixes and classifies races
         # with containers that have already exited as expected lifecycle noise,
-        # while preserving errors for containers that are still live. Re-evaluate
-        # this pin with each chart bump rather than letting the operand move
-        # independently of its CRDs.
+        # while preserving errors for containers that are still live. It also
+        # builds against a patched inspektor-gadget fork whose container
+        # collection owns each container's namespace descriptors exactly once
+        # (#6327). Re-evaluate this pin with each chart bump rather than letting
+        # the operand move independently of its CRDs.
         repository: ghcr.io/devantler-tech/platform-kubescape-node-agent
-        tag: "v0.3.219-alerts.1-f6cbf54c4e76f511442d49c43c3f1880831b469c@sha256:5d12b81ad92b75b3aae06166d0936ae441b79ba5f29eb9b7e0d666bd72a7cf0b"
+        tag: "v0.3.219-alerts.1-nsfd.1-2b5f60ee291c6292649a4f3dba31bcacba5aa6b6@sha256:b296541856c36514a3faeb58e43f4a26460b869c12953e6ddb95d2086db6bd59"
       config:
         hostSensor:
           enabled: true
