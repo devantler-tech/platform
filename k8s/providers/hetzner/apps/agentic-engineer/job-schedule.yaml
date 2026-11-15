@@ -73,12 +73,14 @@ spec:
               value: "15 5 * * *"
             - name: TIME_ZONE
               value: Europe/Copenhagen
-            # Paused until every sub-issue of devantler-tech/monorepo#4866 is
-            # done (ADR 0014, point 6). The full run is first tried once, started
-            # from the kagent UI with "run now", which works while paused; the
-            # PR that unpauses it follows that run and the maintainer's go-ahead.
+            # Running since 2026-11-15: after seven manual runs, the last two
+            # complete on their own, the maintainer turned the daily run on for a trial of
+            # about half a month, before every sub-issue of
+            # devantler-tech/monorepo#4866 is done (ADR 0014, amendment of
+            # 2026-11-15). Set it back to "true" to pause the lane; "run now" in
+            # the kagent UI works either way.
             - name: PAUSED
-              value: "true"
+              value: "false"
             # A run has no time limit: cutting one off mid-task wastes what it
             # has already spent, so the Anthropic workspace's monthly limit is
             # the lane's only spend cap (maintainer decision, 2026-11-09).
