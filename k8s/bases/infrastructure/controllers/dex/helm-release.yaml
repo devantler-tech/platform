@@ -88,6 +88,22 @@ spec:
       hostnames:
         - dex.${domain}
       rules:
+        # The theme (config-map.yaml) is served at stable URLs, and Cloudflare kept
+        # the previous stylesheet and icon for four hours after a theme change.
+        # private, no-store keeps any shared or browser cache from holding them,
+        # as the Homepage route does for its custom stylesheet.
+        - matches:
+            - path:
+                type: PathPrefix
+                value: /theme/
+          filters:
+            - type: ResponseHeaderModifier
+              responseHeaderModifier:
+                set:
+                  - name: Strict-Transport-Security
+                    value: max-age=63072000; includeSubDomains; preload
+                  - name: Cache-Control
+                    value: private, no-store
         - matches:
             - path:
                 type: PathPrefix

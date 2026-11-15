@@ -74,8 +74,8 @@ data:
     .theme-navbar {
       background-color: var(--dt-bg);
       border-bottom: 1px solid var(--dt-card-border);
-      height: 64px;
-      padding: 0 16px;
+      height: 80px;
+      padding: 0 24px;
     }
 
     .theme-navbar__logo-wrap {
@@ -85,10 +85,24 @@ data:
       height: 100%;
     }
 
-    /* The wordmark already spells the name, so the header shows no second title. */
+    /* The wordmark is the header: it already spells the name, so no title
+       follows it. 48px tall (about 255px wide) on wider screens, smaller on
+       phones; the SVG stays sharp at any size. */
     .theme-navbar__logo {
-      height: 30px;
+      height: 48px;
+      max-width: 100%;
       width: auto;
+    }
+
+    @media (max-width: 480px) {
+      .theme-navbar {
+        height: 64px;
+        padding: 0 16px;
+      }
+
+      .theme-navbar__logo {
+        height: 36px;
+      }
     }
 
     /* Dex renders the logo without alt text, so the name stays available to

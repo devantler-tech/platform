@@ -64,7 +64,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|customer-dex 55a9ceabb55
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|zitadel eeb9881018664637cdefc9c5c0afd6953aa958e5dbfbc9cd8c5d521501e52431
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 6b11d3e9722c62691ecd9977961a2b1c9bd4e0f60fa78da9fb93bb7ec89378a9
+helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 85b271be55e3e61d1d38af7ac41013afaa69d85eb29839fa7d95648461db2d18
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns 107eaf8ad3d74abff5c6b1c6d7ca1b49ac75829fe425672f81cdc1e799457511
 
