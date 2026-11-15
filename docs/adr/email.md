@@ -173,6 +173,28 @@ stops and collects its recovery child before permitting normal serving.
 Production exposes only normal administration after this clean recovery exit.
 Public mail transport and migration remain separate activation requirements.
 
+### Amendment, 15 November 2026: listeners before migration
+
+The maintainer approved the inbound plan on #5481, including the mail server's
+own Hetzner load balancer (LB11) as its one new recurring cost. That plan opens
+the SMTP, submission and IMAPS listeners before the mailbox history moves from
+iCloud: the history copy, mail-app setup and the external-network checks all
+need a reachable destination first.
+
+This amends the activation list above in one respect only. The listeners may
+open before the migration. The domain's MX records still move only after the
+destination, the imported history and the rollback are verified, and only with
+the maintainer's approval at that time. Until MX moves, no external sender
+delivers here. Open relaying, unauthenticated submission and a sender that does
+not match the signed-in account stay refused from the first opening, and the
+agents' account stays limited to the maintainer.
+
+The listeners take the client address from PROXY protocol sent by the mail
+load balancer itself. The shared Gateway cannot carry it: its TCP passthrough
+opens a new connection from Envoy. Each mail listener trusts PROXY headers from
+the load balancer's one pinned private address only
+([PROXY identity](../operations/email-proxy-identity.md#mail-listeners-behind-their-own-load-balancer)).
+
 ## Prepared account configuration
 
 The default-off command `go run ./scripts/private-mail-config` prepares a native

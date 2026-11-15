@@ -5,6 +5,8 @@ resources:
   # The mail store is encrypted at rest; its key comes from OpenBao (#5387).
   - ../../../../bases/apps/email-encrypted-storage
   - secret-settings.enc.yaml
+  # The mail server's own load balancer for SMTP, submission and IMAPS (#5481).
+  - service.yaml
 patches:
   # Production has retained credential custody. Never infer a fresh installation
   # from missing records while an older backup is being restored.
