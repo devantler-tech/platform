@@ -194,18 +194,21 @@ jobs:
           unset KEEP_HCLOUD_TOKEN
           read -r -a operation_args <<<"${PROD_OPERATION_ARGS}"
           # The program cannot write to the public step summary or step outputs,
-          # and at most 4 MiB of what it prints is kept (a cut is recorded).
+          # and at most 4 MiB of what it prints is kept. The rest is read and only
+          # counted, so a program that prints more is never killed mid-operation
+          # by a closed pipe; a cut is recorded inside the ciphertext.
           # This guards against accidents, not a hostile program: it runs as the
           # runner user, so only reviewed programs under scripts/ may run here.
           output_cap=4194304
           set +e
           env -u GITHUB_STEP_SUMMARY -u GITHUB_OUTPUT -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_STATE \
             "${RUNNER_TEMP}/prod-operation" ${operation_args[@]+"${operation_args[@]}"} 2>&1 |
-            head -c "${output_cap}" >"${credential_dir}/output"
+            { head -c "${output_cap}" >"${credential_dir}/output"; wc -c >"${credential_dir}/overflow"; }
           status=${PIPESTATUS[0]}
           set -e
-          if [[ "$(wc -c <"${credential_dir}/output")" -ge "${output_cap}" ]]; then
-            printf '\n[output truncated at 4 MiB]\n' >>"${credential_dir}/output"
+          overflow="$(tr -d '[:space:]' <"${credential_dir}/overflow")"
+          if [[ "${overflow}" != 0 ]]; then
+            printf '\n[output truncated at 4 MiB; %s more bytes not kept]\n' "${overflow}" >>"${credential_dir}/output"
           fi
           printf 'PROD_OPERATION_EXIT=%s\n' "${status}"
           if ! age --encrypt --armor --recipient "${PROD_OPERATION_RECIPIENT}" \
