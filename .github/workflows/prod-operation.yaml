@@ -73,6 +73,10 @@ jobs:
       PROD_OPERATION_CONFIRM: ${{ inputs.confirm }}
       PROD_OPERATION_PROGRAM: ${{ inputs.program }}
       PROD_OPERATION_ARGS: ${{ inputs.args }}
+      # The operation's output is published only encrypted to this age key, because
+      # this repository's Actions logs are public. It is the maintainer-held SOPS
+      # recipient (.sops.yaml); read a run with scripts/read-prod-operation-output.sh.
+      PROD_OPERATION_RECIPIENT: age1rk6fs67kly3h4zux5za429z3grjtvs8vcunav4sa28pxk738najsk8wgs6
     steps:
       - name: Require the confirmed first-attempt main dispatch by devantler
         shell: bash
@@ -137,13 +141,29 @@ jobs:
           install -m 0755 "${kubectl_path}" "${RUNNER_TEMP}/prod-operation-tools/kubectl"
           printf '%s\n' "${RUNNER_TEMP}/prod-operation-tools" >> "${GITHUB_PATH}"
 
+      - name: Install the repository-approved age encryption tool
+        shell: bash
+        env:
+          AGE_VERSION: v1.3.2
+          AGE_SHA256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
+        run: |
+          set -euo pipefail
+          age_archive="${RUNNER_TEMP}/prod-operation-age.tar.gz"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+            "https://github.com/FiloSottile/age/releases/download/${AGE_VERSION}/age-${AGE_VERSION}-linux-amd64.tar.gz" -o "${age_archive}"
+          printf '%s  %s\n' "${AGE_SHA256}" "${age_archive}" | sha256sum --check
+          tar -xzf "${age_archive}" -C "${RUNNER_TEMP}" age/age
+          install -m 0755 "${RUNNER_TEMP}/age/age" "${RUNNER_TEMP}/prod-operation-tools/age"
+
       # The prod environment holds KUBE_CONFIG and HCLOUD_TOKEN. A called workflow
       # sees an environment secret only when its caller passes it on (callers name
       # both); otherwise it is an empty string, which the empty
       # check below refuses as UNVERIFIED before anything runs.
       # The only step that sees a credential. The kubeconfig lives in memory and
       # is removed on exit; HCLOUD_TOKEN is dropped before the program runs
-      # unless the caller declared a provider read.
+      # unless the caller declared a provider read. The program's stdout and stderr
+      # are captured in memory and published only as age ciphertext, so the public
+      # log shows the exit status and nothing the program printed.
       - name: Run the operation with the production credential
         shell: bash
         env:
@@ -172,4 +192,16 @@ jobs:
           fi
           unset KEEP_HCLOUD_TOKEN
           read -r -a operation_args <<<"${PROD_OPERATION_ARGS}"
-          "${RUNNER_TEMP}/prod-operation" ${operation_args[@]+"${operation_args[@]}"}
+          status=0
+          "${RUNNER_TEMP}/prod-operation" ${operation_args[@]+"${operation_args[@]}"} \
+            >"${credential_dir}/output" 2>&1 || status=$?
+          printf 'PROD_OPERATION_EXIT=%s\n' "${status}"
+          if ! age --encrypt --armor --recipient "${PROD_OPERATION_RECIPIENT}" \
+            <"${credential_dir}/output" >"${credential_dir}/output.age"; then
+            printf '%s\n' 'PROD_OPERATION=UNVERIFIED'
+            exit 2
+          fi
+          printf '%s\n' '----- BEGIN PROD OPERATION OUTPUT -----'
+          cat "${credential_dir}/output.age"
+          printf '%s\n' '----- END PROD OPERATION OUTPUT -----'
+          exit "${status}"
