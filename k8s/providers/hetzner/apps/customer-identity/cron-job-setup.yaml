@@ -308,9 +308,6 @@ spec:
                   smtp_password=$(read_secret "$smtp_dir/password" "SMTP password")
                   admin_password=$(read_secret "$admin_password_file" "administrator one-time password")
                   platform_dex_secret=$(read_secret "$platform_dex_secret_file" "platform Dex client secret")
-                  for asset in logo-light.png logo-dark.png icon.png; do
-                    [[ -s $branding_dir/$asset ]] || fail "missing branding file $asset"
-                  done
 
                   # The Kubernetes token is projected outside the default path, so kubectl gets
                   # a kubeconfig that reads it from there.
@@ -821,9 +818,15 @@ spec:
                   # of an uploaded asset, so the Secret records the files' fingerprint together with
                   # the asset URLs ZITADEL gave them: a changed file, or an upload made elsewhere
                   # (which gets a new URL), makes the next run upload the files again.
+                  # Every value is read into a variable before it is compared: a read that fails
+                  # inside [[ ]] would escape set -e and look like a difference.
+                  for asset in logo-light.png logo-dark.png icon.png; do
+                    [[ -s $branding_dir/$asset ]] || fail "missing branding file $asset"
+                  done
                   for label_org in "$org_id" "$customers_org_id"; do
-                    if [[ $(api_org=$label_org api GET /management/v1/policies/label | jq -r '.policy.isDefault // false') != true ||
-                      $(api_org=$label_org api GET /management/v1/policies/label/_preview | jq -r '.policy.isDefault // false') != true ]]; then
+                    org_active=$(api_org=$label_org api GET /management/v1/policies/label | jq -r '.policy.isDefault // false')
+                    org_preview=$(api_org=$label_org api GET /management/v1/policies/label/_preview | jq -r '.policy.isDefault // false')
+                    if [[ $org_active != true || $org_preview != true ]]; then
                       api_org=$label_org api DELETE /management/v1/policies/label >/dev/null
                       changes+=("reset the label policy of $(org_label "$label_org") to the instance's")
                     fi
@@ -836,13 +839,17 @@ spec:
                   }
                   label_preview=$(api GET /admin/v1/policies/label/_preview | jq -c '.policy | del(.details)')
                   label_active=$(api GET /admin/v1/policies/label | jq -c '.policy | del(.details)')
-                  if [[ $(jq -cS "$normalise_label" <<<"$label_preview") != "$(jq -cS . <<<"$desired_label")" ]]; then
+                  desired_settings=$(jq -cS . <<<"$desired_label")
+                  preview_settings=$(jq -cS "$normalise_label" <<<"$label_preview")
+                  if [[ $preview_settings != "$desired_settings" ]]; then
                     api PUT /admin/v1/policies/label "$desired_label" >/dev/null
                     changes+=("set the label policy colours and settings")
                   fi
                   recorded=$(secret_json | jq -r --arg a "$branding_annotation" '.metadata.annotations[$a] // ""')
                   uploaded=
-                  if [[ $recorded != "$(assets_record <<<"$label_active")" || $recorded != "$(assets_record <<<"$label_preview")" ]]; then
+                  active_record=$(assets_record <<<"$label_active")
+                  preview_record=$(assets_record <<<"$label_preview")
+                  if [[ $recorded != "$active_record" || $recorded != "$preview_record" ]]; then
                     upload_asset instance/policy/label/logo "$branding_dir/logo-light.png"
                     upload_asset instance/policy/label/logo/dark "$branding_dir/logo-dark.png"
                     upload_asset instance/policy/label/icon "$branding_dir/icon.png"
@@ -850,22 +857,25 @@ spec:
                     uploaded=1
                     changes+=("uploaded the label policy logos and icon")
                   fi
-                  if [[ -n $(jq -r '.fontUrl // ""' <<<"$label_preview") ]]; then
+                  preview_font=$(jq -r '.fontUrl // ""' <<<"$label_preview")
+                  if [[ -n $preview_font ]]; then
                     api DELETE /admin/v1/policies/label/font >/dev/null
                     changes+=("removed the label policy font")
                   fi
-                  if [[ $(api GET /admin/v1/policies/label/_preview | jq -c '.policy | del(.details)') != "$label_active" ]]; then
+                  label_preview=$(api GET /admin/v1/policies/label/_preview | jq -c '.policy | del(.details)')
+                  if [[ $label_preview != "$label_active" ]]; then
                     api POST /admin/v1/policies/label/_activate >/dev/null
                     changes+=("activated the label policy")
                     label_active=$(api GET /admin/v1/policies/label | jq -c '.policy | del(.details)')
                   fi
-                  [[ $(jq -cS "$normalise_label" <<<"$label_active") == "$(jq -cS . <<<"$desired_label")" ]] ||
+                  active_settings=$(jq -cS "$normalise_label" <<<"$label_active")
+                  [[ $active_settings == "$desired_settings" ]] ||
                     fail "the active label policy does not have the declared colours and settings"
                   jq -e '([.logoUrl, .logoUrlDark, .iconUrl, .iconUrlDark] | all(. != null and . != "")) and (.fontUrl // "") == ""' \
                     <<<"$label_active" >/dev/null || fail "the active label policy lacks a logo or icon, or has a font"
                   if [[ -n $uploaded ]]; then
-                    patch_secret "$(jq -nc --arg a "$branding_annotation" --arg f "$(assets_record <<<"$label_active")" \
-                      '{metadata: {annotations: {($a): $f}}}')"
+                    new_record=$(assets_record <<<"$label_active")
+                    patch_secret "$(jq -nc --arg a "$branding_annotation" --arg f "$new_record" '{metadata: {annotations: {($a): $f}}}')"
                   fi
 
                   summary="project=$project_id client=$client_id application=$app_id smtp=$smtp_id administrator=$admin_state idp=$admin_idp_id customers=$customers_org_id customer_github=$customer_github"
