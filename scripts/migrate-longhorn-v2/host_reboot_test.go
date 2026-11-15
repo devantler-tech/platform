@@ -28,7 +28,7 @@ type hostRebootFixture struct {
 	evictUnfilteredRuntime     bool
 }
 
-// hostRebootAPI supplies a healthy V1 replica graph and five healthy database
+// hostRebootAPI supplies a healthy V1 replica graph and seven healthy database
 // clusters around a worker that needs its huge-page reservation restored.
 func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
 	t.Helper()
@@ -77,6 +77,7 @@ func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
 	}{
 		{"observability", "coroot-db", 3}, {"umami", "umami-db", 3}, {"wedding-app", "wedding-db", 3},
 		{"ate-system", "substrate-db", 2}, {"kagent", "kagent-db", 2},
+		{"customer-identity", "customer-identity-db", 2}, {"business-site", "business-site-portal-db", 2},
 	} {
 		db := resource(selected.name)
 		db["metadata"].(object)["namespace"] = selected.namespace
@@ -102,11 +103,11 @@ func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
 }
 
 // TestHostRebootRecordsEveryDeclaredDatabase checks that a fresh journal binds
-// all five clusters and refuses a recovering or replaced two-instance cluster.
+// all seven clusters and refuses a recovering or replaced two-instance cluster.
 func TestHostRebootRecordsEveryDeclaredDatabase(t *testing.T) {
 	f, h := hostRebootAPI(t)
 	r, err := h.initialize(context.Background())
-	if err != nil || r.Version != 2 || len(r.Databases) != 5 {
+	if err != nil || r.Version != 3 || len(r.Databases) != 7 {
 		t.Fatalf("current database roster was not bound: version=%d databases=%d err=%v", r.Version, len(r.Databases), err)
 	}
 	f.databases[4]["status"].(object)["readyInstances"] = float64(1)
@@ -131,6 +132,8 @@ func TestLegacyPreRebootJournalBindsNewDatabasesBeforeMovingTheWorker(t *testing
 	r.Version = 1
 	delete(r.Databases, "ate-system/substrate-db")
 	delete(r.Databases, "kagent/kagent-db")
+	delete(r.Databases, "customer-identity/customer-identity-db")
+	delete(r.Databases, "business-site/business-site-portal-db")
 	encoded, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +141,7 @@ func TestLegacyPreRebootJournalBindsNewDatabasesBeforeMovingTheWorker(t *testing
 	valueObject(f.base.cm, "data")["record"] = string(encoded)
 	f.afterDrain = func() {
 		var current hostRebootRecord
-		if json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &current) != nil || current.Version != 2 || len(current.Databases) != 5 {
+		if json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &current) != nil || current.Version != 3 || len(current.Databases) != 7 {
 			t.Fatal("the worker drained before the journal bound the current database roster")
 		}
 	}
