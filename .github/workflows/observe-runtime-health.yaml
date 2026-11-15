@@ -21,6 +21,10 @@ jobs:
       contents: read
     # The self-repository form ($/) fails the pinned actionlint 1.7.12.
     uses: ./.github/workflows/prod-operation.yaml # zizmor: ignore[self-repository]
+    # The prod environment secrets reach the called job only when named here.
+    secrets:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
     with:
       operation: observe-runtime-health
       confirm: ${{ inputs.confirm }}

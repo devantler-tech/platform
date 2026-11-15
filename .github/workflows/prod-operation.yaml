@@ -46,6 +46,12 @@ name: Production Operation
         required: false
         type: number
         default: 15
+    # Held by the prod environment; each caller passes them on by name.
+    secrets:
+      KUBE_CONFIG:
+        required: false
+      HCLOUD_TOKEN:
+        required: false
 
 permissions: {}
 
@@ -131,6 +137,10 @@ jobs:
           install -m 0755 "${kubectl_path}" "${RUNNER_TEMP}/prod-operation-tools/kubectl"
           printf '%s\n' "${RUNNER_TEMP}/prod-operation-tools" >> "${GITHUB_PATH}"
 
+      # The prod environment holds KUBE_CONFIG and HCLOUD_TOKEN. A called workflow
+      # sees an environment secret only when its caller passes it on (callers name
+      # both); otherwise it is an empty string, which the empty
+      # check below refuses as UNVERIFIED before anything runs.
       # The only step that sees a credential. The kubeconfig lives in memory and
       # is removed on exit; HCLOUD_TOKEN is dropped before the program runs
       # unless the caller declared a provider read.
