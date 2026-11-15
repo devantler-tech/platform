@@ -11,17 +11,24 @@ import (
 
 const retainProviderSourceOperation = "retain-provider-source"
 
+func providerMigrationNamespace(namespace string) bool {
+	switch namespace {
+	case "observability", "openbao", "kube-system", "customer-identity", "business-site":
+		return true
+	default:
+		return false
+	}
+}
+
 func parseProviderRetentionTarget(approval string) (retentionTarget, error) {
 	target, err := parseRetentionTarget(approval, "retain-hetzner-source")
 	if err != nil {
 		return retentionTarget{}, err
 	}
-	switch target.namespace {
-	case "observability", "openbao", "kube-system":
-		return target, nil
-	default:
+	if !providerMigrationNamespace(target.namespace) {
 		return retentionTarget{}, errors.New("the approved claim is outside the provider migration namespaces")
 	}
+	return target, nil
 }
 
 func authorizeProviderSourceRetention(getenv func(string) string) error {

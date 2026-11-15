@@ -425,6 +425,12 @@ digest without a trailing newline over
 `csi.hetzner.cloud:namespace/claim:claim-uid:pv-name:pv-uid:volume-handle:pv-capacity-bytes`.
 Supply `retain-hetzner-source:<namespace>/<claim>:<digest>` as confirmation.
 
+The fixed migration namespaces are `kube-system`, `observability`, `openbao`,
+`customer-identity` and `business-site`. The provider footprint reader uses the
+same namespace set, including the identity and portal databases. Each retention
+request still binds one original claim, PV and provider handle; a digest from a
+different namespace cannot authorize it.
+
 The workflow verifies the original binding and provider handle, changes
 only that PV's reclaim policy, and reads the same binding back. Keep the
 retained provider volume until the workload has passed its V2 recovery and
