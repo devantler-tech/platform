@@ -1,5 +1,6 @@
 # Off-cluster backups for business-site-portal-db: WAL archiving plus the
-# daily base backup below, 30 days of point-in-time recovery.
+# daily base backup (scheduled-backup-portal-db.yaml), 30 days of point-in-time
+# recovery.
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
@@ -24,19 +25,3 @@ spec:
       compression: gzip
     data:
       compression: gzip
----
-apiVersion: postgresql.cnpg.io/v1
-kind: ScheduledBackup
-metadata:
-  name: business-site-portal-db-daily
-  namespace: business-site
-spec:
-  # 6-field CNPG cron: 03:45 UTC daily.
-  schedule: "0 45 3 * * *"
-  immediate: true
-  backupOwnerReference: self
-  method: plugin
-  pluginConfiguration:
-    name: barman-cloud.cloudnative-pg.io
-  cluster:
-    name: business-site-portal-db

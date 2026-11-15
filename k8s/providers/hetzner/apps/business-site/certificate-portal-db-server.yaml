@@ -1,30 +1,5 @@
-# Ten-year CA and its server certificate for business-site-portal-db
-# (cluster-portal-db.yaml). The server Secret also carries the CA's ca.crt,
-# which is what clients trust: the portal (through OpenBao, see
-# push-secret-portal-db-ca.yaml) and the migration job.
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: business-site-portal-db-ca
-  namespace: business-site
-spec:
-  isCA: true
-  commonName: business-site-portal-db-ca
-  secretName: business-site-portal-db-ca
-  duration: 87600h
-  renewBefore: 8760h
-  privateKey:
-    algorithm: ECDSA
-    size: 256
-    rotationPolicy: Never
-  usages:
-    - cert sign
-    - crl sign
-  issuerRef:
-    name: business-site-portal-db-selfsigned
-    kind: Issuer
-    group: cert-manager.io
----
+# The database's server certificate, issued under the ten-year CA
+# (certificate-portal-db-ca.yaml). It renews; the CA does not.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

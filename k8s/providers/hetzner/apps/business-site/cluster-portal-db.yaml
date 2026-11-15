@@ -7,7 +7,7 @@
 # runtime, with only the table privileges the migration job grants it. The
 # portal refuses to start if the runtime login could change the schema.
 #
-# Server TLS uses the long-lived CA in certificate-portal-db.yaml instead of
+# Server TLS uses the long-lived CA in certificate-portal-db-ca.yaml instead of
 # CNPG's own rotating one, because the portal pins the CA at startup.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
