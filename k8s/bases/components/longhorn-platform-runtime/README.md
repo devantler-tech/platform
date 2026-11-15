@@ -25,6 +25,11 @@ provisioning settings. Verify the immutable chart's SourceVerified condition,
 the manager image and rollout, serving volume identities and health, and the
 existing authenticated read-only UI. The manager rolls one Pod at a time.
 
+The image defaults to non-root. The host-facing manager DaemonSet and pre-upgrade
+Job explicitly run as root in every stage, including V1-capable adoption.
+`postRenderStrategy: combined` includes the hook in those scoped patches.
+The global manager and UI retain their existing non-root security contexts.
+
 This does not change the instance-manager image. The temporary V1 retirement
 runtime has its own lifecycle under #6073 and must be removed and verified
 before V2 activation unless another compatible route is separately qualified.

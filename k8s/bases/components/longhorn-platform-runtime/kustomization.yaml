@@ -21,6 +21,8 @@ patches:
         chartRef:
           kind: OCIRepository
           name: longhorn-platform
+        # Include the pre-upgrade hook in the scoped identity patches below.
+        postRenderStrategy: combined
         values:
           dataEngineMode: v1-capable
           image:
@@ -34,3 +36,55 @@ patches:
               type: RollingUpdate
               rollingUpdate:
                 maxUnavailable: 1
+  # The signed image defaults to non-root. These two commands access host
+  # namespaces in V1-capable mode too. Append instead of replacing the existing
+  # UI/global-manager security contexts from the base HelmRelease.
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: longhorn
+      namespace: longhorn-system
+    patch: |-
+      - op: add
+        path: /spec/postRenderers/0/kustomize/patches/-
+        value:
+          target:
+            group: apps
+            version: v1
+            kind: DaemonSet
+            name: longhorn-manager
+          patch: |
+            apiVersion: apps/v1
+            kind: DaemonSet
+            metadata:
+              name: longhorn-manager
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: longhorn-manager
+                      securityContext:
+                        runAsUser: 0
+                        runAsGroup: 0
+      - op: add
+        path: /spec/postRenderers/0/kustomize/patches/-
+        value:
+          target:
+            group: batch
+            version: v1
+            kind: Job
+            name: longhorn-pre-upgrade
+          patch: |
+            apiVersion: batch/v1
+            kind: Job
+            metadata:
+              name: longhorn-pre-upgrade
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: longhorn-pre-upgrade
+                      securityContext:
+                        runAsUser: 0
+                        runAsGroup: 0
