@@ -1,0 +1,115 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+globalValues:
+  request.operation: CREATE
+  request.namespace: longhorn-system
+  request.name: instance-manager-example
+policies:
+  - name: protect-elastic-longhorn-eviction
+    rules:
+      - name: require-empty-owned-instance-manager
+        values:
+          targetPod: &targetPod
+            apiVersion: v1
+            kind: Pod
+            metadata:
+              name: instance-manager-example
+              namespace: longhorn-system
+              uid: pod-uid
+              resourceVersion: "11"
+              ownerReferences:
+                - apiVersion: longhorn.io/v1beta2
+                  kind: InstanceManager
+                  name: instance-manager-example
+                  uid: manager-uid
+                  controller: true
+            spec:
+              nodeName: autoscale-cx53-0123456789abcdef
+          targetNode: &targetNode
+            apiVersion: v1
+            kind: Node
+            metadata:
+              name: autoscale-cx53-0123456789abcdef
+              uid: node-uid
+              resourceVersion: "12"
+              labels:
+                ksail.io/autoscaled: "true"
+            spec:
+              taints:
+                - key: storage.platform.devantler.tech/elastic-retirement
+                  value: node-uid
+                  effect: NoSchedule
+            status:
+              conditions:
+                - type: Ready
+                  status: "True"
+          storageNode: &storageNode
+            apiVersion: longhorn.io/v1beta2
+            kind: Node
+            metadata:
+              name: autoscale-cx53-0123456789abcdef
+              namespace: longhorn-system
+              uid: storage-uid
+              resourceVersion: "13"
+            spec:
+              allowScheduling: false
+              evictionRequested: true
+          instanceManager:
+            apiVersion: longhorn.io/v1beta2
+            kind: InstanceManager
+            metadata:
+              name: instance-manager-example
+              namespace: longhorn-system
+              uid: manager-uid
+              resourceVersion: "14"
+            spec:
+              nodeID: autoscale-cx53-0123456789abcdef
+              dataEngine: v2
+              type: aio
+            status:
+              currentState: running
+              instanceEngines: {}
+              instanceEngineFrontends: {}
+              instanceReplicas: {}
+              instanceShards: {}
+              instanceShardGroups: {}
+              backingImages: {}
+          replicas:
+            complete: true
+            resident: []
+          engines:
+            complete: true
+            resident: []
+          frontends:
+            complete: true
+            resident: []
+          shards:
+            complete: true
+            resident: []
+          shardgroups:
+            complete: true
+            resident: []
+          orphans:
+            complete: true
+            resident: []
+      - name: bind-elastic-instance-manager-uid
+        values:
+          targetPod: *targetPod
+          targetNode: *targetNode
+          storageNode: *storageNode
+subresources:
+  - parentResource:
+      group: ""
+      version: v1
+      kind: Pod
+      name: pods
+      namespaced: true
+    subresource:
+      group: policy
+      version: v1
+      kind: Eviction
+      name: pods/eviction
+      namespaced: true

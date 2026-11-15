@@ -1,0 +1,21 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kyverno-elastic-longhorn-reader
+  namespace: longhorn-system
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get]
+  - apiGroups: [longhorn.io]
+    resources:
+      - nodes
+      - instancemanagers
+      - replicas
+      - engines
+      - enginefrontends
+      - shards
+      - shardgroups
+      - orphans
+    verbs: [get, list]

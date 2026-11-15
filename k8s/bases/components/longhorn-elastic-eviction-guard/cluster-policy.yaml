@@ -1,0 +1,144 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: protect-elastic-longhorn-eviction
+  annotations:
+    policies.kyverno.io/title: Preserve Elastic Longhorn Instances During Evacuation
+    policies.kyverno.io/category: Storage
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod/eviction
+    policies.kyverno.io/description: >-
+      Holds an elastic worker's instance-manager eviction until its original
+      identities are bound, placement is fenced, and native data and process
+      inventories are empty. This additional admission gate does not authorize
+      cloud deletion or establish the remaining replica count.
+spec:
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    - name: require-empty-owned-instance-manager
+      match:
+        any:
+          - resources:
+              kinds: [Pod/eviction]
+              namespaces: [longhorn-system]
+              names: ["instance-manager-*"]
+              operations: [CREATE]
+      context:
+        # Eviction objects carry neither the Pod's labels nor its owner UID.
+        # Resolve the actual target; input metadata cannot impersonate an IM.
+        - name: targetPod
+          apiCall:
+            urlPath: /api/v1/namespaces/{{request.namespace}}/pods/{{request.name}}
+        - name: targetNode
+          apiCall:
+            urlPath: /api/v1/nodes/{{ targetPod.spec.nodeName }}
+        - name: storageNode
+          apiCall:
+            urlPath: /apis/longhorn.io/v1beta2/namespaces/longhorn-system/nodes/{{ targetPod.spec.nodeName }}
+        - name: instanceManager
+          apiCall:
+            urlPath: /apis/longhorn.io/v1beta2/namespaces/longhorn-system/instancemanagers/{{ request.name }}
+        # Do not ask a label-filtered list to prove absence. Each complete,
+        # native collection must account for both placement and IM references.
+        - name: replicas
+          apiCall:
+            urlPath: /apis/longhorn.io/v1beta2/namespaces/longhorn-system/replicas
+            jmesPath: >-
+              {complete: (apiVersion == 'longhorn.io/v1beta2' && kind == 'ReplicaList' && (metadata.continue || '') == '' && (metadata.resourceVersion || '') != '' && type(items) == 'array' && length(items[?type(metadata.uid) != 'string' || metadata.uid == '' || type(metadata.name) != 'string' || metadata.name == '' || (metadata.resourceVersion || '') == '' || metadata.namespace != 'longhorn-system']) == `0` && length(keys(object_from_lists(items[].metadata.uid, items[].metadata.uid))) == length(items) && length(keys(object_from_lists(items[].metadata.name, items[].metadata.name))) == length(items)), resident: items[?spec.nodeID == '{{ targetPod.spec.nodeName }}' || status.instanceManagerName == '{{ request.name }}']}
+        - name: engines
+          apiCall:
+            urlPath: /apis/longhorn.io/v1beta2/namespaces/longhorn-system/engines
+            jmesPath: >-
+              {complete: (apiVersion == 'longhorn.io/v1beta2' && kind == 'EngineList' && (metadata.continue || '') == '' && (metadata.resourceVersion || '') != '' && type(items) == 'array' && length(items[?type(metadata.uid) != 'string' || metadata.uid == '' || type(metadata.name) != 'string' || metadata.name == '' || (metadata.resourceVersion || '') == '' || metadata.namespace != 'longhorn-system']) == `0` && length(keys(object_from_lists(items[].metadata.uid, items[].metadata.uid))) == length(items) && length(keys(object_from_lists(items[].metadata.name, items[].metadata.name))) == length(items)), resident: items[?spec.nodeID == '{{ targetPod.spec.nodeName }}' || status.instanceManagerName == '{{ request.name }}']}
+        - name: frontends
+          apiCall:
+            urlPath: /apis/longhorn.io/v1beta2/namespaces/longhorn-system/enginefrontends
+            jmesPath: >-
+              {complete: (apiVersion == 'longhorn.io/v1beta2' && kind == 'EngineFrontendList' && (metadata.continue || '') == '' && (metadata.resourceVersion || '') != '' && type(items) == 'array' && length(items[?type(metadata.uid) != 'string' || metadata.uid == '' || type(metadata.name) != 'string' || metadata.name == '' || (metadata.resourceVersion || '') == '' || metadata.namespace != 'longhorn-system']) == `0` && length(keys(object_from_lists(items[].metadata.uid, items[].metadata.uid))) == length(items) && length(keys(object_from_lists(items[].metadata.name, items[].metadata.name))) == length(items)), resident: items[?spec.nodeID == '{{ targetPod.spec.nodeName }}' || status.instanceManagerName == '{{ request.name }}']}
+        - name: shards
+          apiCall:
+            urlPath: /apis/longhorn.io/v1beta2/namespaces/longhorn-system/shards
+            jmesPath: >-
+              {complete: (apiVersion == 'longhorn.io/v1beta2' && kind == 'ShardList' && (metadata.continue || '') == '' && (metadata.resourceVersion || '') != '' && type(items) == 'array' && length(items[?type(metadata.uid) != 'string' || metadata.uid == '' || type(metadata.name) != 'string' || metadata.name == '' || (metadata.resourceVersion || '') == '' || metadata.namespace != 'longhorn-system']) == `0` && length(keys(object_from_lists(items[].metadata.uid, items[].metadata.uid))) == length(items) && length(keys(object_from_lists(items[].metadata.name, items[].metadata.name))) == length(items)), resident: items[?spec.nodeID == '{{ targetPod.spec.nodeName }}' || status.instanceManagerName == '{{ request.name }}']}
+        - name: shardgroups
+          apiCall:
+            urlPath: /apis/longhorn.io/v1beta2/namespaces/longhorn-system/shardgroups
+            jmesPath: >-
+              {complete: (apiVersion == 'longhorn.io/v1beta2' && kind == 'ShardGroupList' && (metadata.continue || '') == '' && (metadata.resourceVersion || '') != '' && type(items) == 'array' && length(items[?type(metadata.uid) != 'string' || metadata.uid == '' || type(metadata.name) != 'string' || metadata.name == '' || (metadata.resourceVersion || '') == '' || metadata.namespace != 'longhorn-system']) == `0` && length(keys(object_from_lists(items[].metadata.uid, items[].metadata.uid))) == length(items) && length(keys(object_from_lists(items[].metadata.name, items[].metadata.name))) == length(items)), resident: items[?spec.nodeID == '{{ targetPod.spec.nodeName }}' || status.instanceManagerName == '{{ request.name }}']}
+        - name: orphans
+          apiCall:
+            urlPath: /apis/longhorn.io/v1beta2/namespaces/longhorn-system/orphans
+            jmesPath: >-
+              {complete: (apiVersion == 'longhorn.io/v1beta2' && kind == 'OrphanList' && (metadata.continue || '') == '' && (metadata.resourceVersion || '') != '' && type(items) == 'array' && length(items[?type(metadata.uid) != 'string' || metadata.uid == '' || type(metadata.name) != 'string' || metadata.name == '' || (metadata.resourceVersion || '') == '' || metadata.namespace != 'longhorn-system' || type(spec.nodeID) != 'string' || spec.nodeID == '']) == `0` && length(keys(object_from_lists(items[].metadata.uid, items[].metadata.uid))) == length(items) && length(keys(object_from_lists(items[].metadata.name, items[].metadata.name))) == length(items)), resident: items[?spec.nodeID == '{{ targetPod.spec.nodeName }}' || spec.parameters.InstanceManager == '{{ request.name }}']}
+      preconditions:
+        all:
+          - key: "{{ targetNode.metadata.labels.\"ksail.io/autoscaled\" || '' }}"
+            operator: Equals
+            value: "true"
+          # Fixed migration pools retain their separate reviewed lifecycle.
+          - key: "{{ regex_match('^autoscale-longhorn-v[12]-[0-9a-f]{16}$', targetNode.metadata.name) && (storageNode.metadata.labels.\"storage.platform.devantler.tech/migration-enabled\" || '') == 'true' }}"
+            operator: Equals
+            value: false
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: The elastic Longhorn instance manager is not proven empty and fenced for retirement.
+        deny:
+          conditions:
+            any:
+              - key: >-
+                  {{ targetPod.apiVersion == 'v1' && targetPod.kind == 'Pod' && targetPod.metadata.name == request.name && targetPod.metadata.namespace == request.namespace && (targetPod.metadata.uid || '') != '' && (targetPod.metadata.resourceVersion || '') != '' && targetPod.metadata.deletionTimestamp == `null` && length(targetPod.metadata.ownerReferences || `[]`) == `1` && targetPod.metadata.ownerReferences[0].apiVersion == 'longhorn.io/v1beta2' && targetPod.metadata.ownerReferences[0].kind == 'InstanceManager' && targetPod.metadata.ownerReferences[0].controller == `true` && targetPod.metadata.ownerReferences[0].name == instanceManager.metadata.name && targetPod.metadata.ownerReferences[0].uid == instanceManager.metadata.uid && (request.object.deleteOptions.preconditions.uid || '') != '' && request.object.deleteOptions.preconditions.uid == targetPod.metadata.uid && targetPod.spec.nodeName == targetNode.metadata.name && targetNode.apiVersion == 'v1' && targetNode.kind == 'Node' && (targetNode.metadata.uid || '') != '' && (targetNode.metadata.resourceVersion || '') != '' && targetNode.metadata.deletionTimestamp == `null` && length(targetNode.status.conditions[?type == 'Ready' && status == 'True'] || `[]`) == `1` && length(targetNode.spec.taints[?key == 'storage.platform.devantler.tech/elastic-retirement' && effect == 'NoSchedule' && value == '{{ targetNode.metadata.uid }}'] || `[]`) == `1` }}
+                operator: NotEquals
+                value: true
+              - key: >-
+                  {{ storageNode.apiVersion == 'longhorn.io/v1beta2' && storageNode.kind == 'Node' && storageNode.metadata.namespace == 'longhorn-system' && storageNode.metadata.name == targetNode.metadata.name && (storageNode.metadata.uid || '') != '' && (storageNode.metadata.resourceVersion || '') != '' && storageNode.metadata.deletionTimestamp == `null` && storageNode.spec.allowScheduling == `false` && storageNode.spec.evictionRequested == `true` && instanceManager.apiVersion == 'longhorn.io/v1beta2' && instanceManager.kind == 'InstanceManager' && instanceManager.metadata.name == request.name && instanceManager.metadata.namespace == 'longhorn-system' && (instanceManager.metadata.uid || '') != '' && (instanceManager.metadata.resourceVersion || '') != '' && instanceManager.metadata.deletionTimestamp == `null` && instanceManager.spec.nodeID == targetNode.metadata.name && instanceManager.spec.dataEngine == 'v2' && instanceManager.spec.type == 'aio' && instanceManager.status.currentState == 'running' }}
+                operator: NotEquals
+                value: true
+              - key: >-
+                  {{ length(keys(instanceManager.status.instanceEngines || `{}`)) == `0` && length(keys(instanceManager.status.instanceEngineFrontends || `{}`)) == `0` && length(keys(instanceManager.status.instanceReplicas || `{}`)) == `0` && length(keys(instanceManager.status.instanceShards || `{}`)) == `0` && length(keys(instanceManager.status.instanceShardGroups || `{}`)) == `0` && length(keys(instanceManager.status.backingImages || `{}`)) == `0` }}
+                operator: NotEquals
+                value: true
+              - key: >-
+                  {{ replicas.complete == `true` && engines.complete == `true` && frontends.complete == `true` && shards.complete == `true` && shardgroups.complete == `true` && orphans.complete == `true` && type(replicas.resident) == 'array' && type(engines.resident) == 'array' && type(frontends.resident) == 'array' && type(shards.resident) == 'array' && type(shardgroups.resident) == 'array' && type(orphans.resident) == 'array' && length(replicas.resident) == `0` && length(engines.resident) == `0` && length(frontends.resident) == `0` && length(shards.resident) == `0` && length(shardgroups.resident) == `0` && length(orphans.resident) == `0` }}
+                operator: NotEquals
+                value: true
+    # Kubernetes runs mutation before validating admission. Bind a CA request
+    # that omits UID to the fetched Pod; preserve an explicit UID so the
+    # validator can reject mismatches rather than silently retargeting it.
+    - name: bind-elastic-instance-manager-uid
+      match:
+        any:
+          - resources:
+              kinds: [Pod/eviction]
+              namespaces: [longhorn-system]
+              names: ["instance-manager-*"]
+              operations: [CREATE]
+      context:
+        - name: targetPod
+          apiCall:
+            urlPath: /api/v1/namespaces/{{request.namespace}}/pods/{{request.name}}
+        - name: targetNode
+          apiCall:
+            urlPath: /api/v1/nodes/{{ targetPod.spec.nodeName }}
+        - name: storageNode
+          apiCall:
+            urlPath: /apis/longhorn.io/v1beta2/namespaces/longhorn-system/nodes/{{ targetPod.spec.nodeName }}
+      preconditions:
+        all:
+          - key: "{{ request.object.deleteOptions.preconditions.uid || '' }}"
+            operator: Equals
+            value: ""
+          - key: "{{ targetNode.metadata.labels.\"ksail.io/autoscaled\" || '' }}"
+            operator: Equals
+            value: "true"
+          - key: "{{ regex_match('^autoscale-longhorn-v[12]-[0-9a-f]{16}$', targetNode.metadata.name) && (storageNode.metadata.labels.\"storage.platform.devantler.tech/migration-enabled\" || '') == 'true' }}"
+            operator: Equals
+            value: false
+      mutate:
+        patchStrategicMerge:
+          deleteOptions:
+            preconditions:
+              +(uid): "{{ targetPod.metadata.uid }}"

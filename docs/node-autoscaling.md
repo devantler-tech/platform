@@ -48,6 +48,37 @@ Cluster Autoscaler (dynamic workers, managed by KSail)
   autoscaler nodes access Longhorn PVCs via the CSI driver (network).
   The Hetzner Cluster Autoscaler [does not support volume attachment](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/hetzner/README.md).
 
+### Elastic V2 retirement components (inactive)
+
+`longhorn-elastic-eviction-guard` adds a Kyverno `Pod/eviction` gate for
+instance managers on ordinary elastic workers. Its separate
+`longhorn-elastic-eviction-reader` component supplies read access to worker
+metadata and Longhorn resources in `longhorn-system`. Neither component is
+included in the production or local overlays. Ordinary elastic disks remain
+excluded from replica placement.
+
+The guard binds an eviction that lacks a UID precondition to the fetched Pod
+UID, preserving an explicitly supplied UID. Validation requires that exact UID
+and resolves the actual Pod, its instance-manager owner, and its worker.
+Eviction requires a Ready worker with a UID-bound
+`storage.platform.devantler.tech/elastic-retirement:NoSchedule` taint, disabled
+Longhorn placement, and requested replica eviction. Engine, frontend, replica,
+shard, shard-group and backing-image process maps must be empty. Complete native
+resource collections must also contain no matching placement, instance-manager
+reference or orphan. Missing reads or inconsistent identities refuse eviction.
+Fixed migration pools keep their existing retirement procedure.
+
+This is an additional admission check. It neither changes a disruption budget
+nor permits a cloud server deletion. Activation requires the reader in the
+controllers layer before the policy in the infrastructure layer, together with
+a reviewed owner for provider deletion protection and the durable retirement
+fence. That owner must establish three healthy copies on distinct remaining
+hosts and workload availability before releasing deletion protection, and must
+restore protection before cancelling either placement fence. Safe client
+prepacking, raw-device qualification, recovery and a controlled V2 scale-down
+trial are separate prerequisites; adding this component alone does not enable
+elastic replica storage.
+
 ### How new nodes join
 
 1. Cluster Autoscaler detects Pending pods with unmet resource requests.
