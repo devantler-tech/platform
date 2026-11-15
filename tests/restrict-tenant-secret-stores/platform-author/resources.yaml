@@ -18,16 +18,16 @@ spec:
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: ghcr-auth
+  name: platform-backup-credential
   namespace: tenant-ns
 spec:
   secretStoreRef:
     kind: ClusterSecretStore
     name: openbao
   data:
-    - secretKey: auth
+    - secretKey: credential
       remoteRef:
-        key: infrastructure/ghcr/auth
+        key: infrastructure/backup/credential
 ---
 apiVersion: external-secrets.io/v1alpha1
 kind: PushSecret

@@ -297,39 +297,9 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
-  # The apps-base component gate and FANOUT_NAMESPACES must agree, or the
-  # post-reconcile reassertion in deploy-prod (--reuse-runtime-proof, no
-  # exemption) marks the fan-out incomplete and FAILS THE DEPLOY (#3476).
-  #
-  # This is the manual recovery path for a direct push to main, which is exactly
-  # the case ci.yaml cannot cover: it gates the guard on `pull_request`, and
-  # validate-main.yaml runs it asynchronously AFTER a push, so it gates nothing.
-  # Without this job a dispatched deploy reconciles an apps-base/fan-out
-  # disagreement to production and the guard's verdict arrives too late to stop
-  # it — the same way leaving validate-eks-authorization out would have made this
-  # route the way around that gate.
-  validate-ghcr-fanout-component-gate:
-    name: 🔗 Validate GHCR Fan-out Component Gate
-    needs: [validate-root-verify]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read # checkout repository
-    steps:
-      - name: 📑 Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
-        run: |
-          shellcheck scripts/guard-ghcr-fanout-component-gate.sh
-          shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
-          bash scripts/guard-ghcr-fanout-component-gate.sh
-          bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
-
   # A manual dispatch can deploy a direct main push without a merge-group
   # revision. Validate the root-source recovery path on that exact revision.
-  # The fan-out gate depends on this job, and deploy-prod depends on fan-out.
+  # deploy-prod depends on this job.
   validate-root-verify:
     name: 🛡️ Validate Root Source Repair
     runs-on: ubuntu-latest
@@ -351,7 +321,7 @@ jobs:
         validate-eks-authorization,
         validate-publication-contract,
         validate-talos-kubernetes-compatibility,
-        validate-ghcr-fanout-component-gate,
+        validate-root-verify,
       ]
     runs-on: ubuntu-latest
     environment: prod
@@ -360,7 +330,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
-      actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
+      actions: read # read a prior run attempt status, to prove an interrupted Longhorn maintenance holder is dead (deploy-prod maintain-longhorn-clients)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -383,9 +353,3 @@ jobs:
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
           wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
-          # Release a synchronization Lease that an already-dead deploy left
-          # held, so one crashed run cannot wedge every later deploy and its own
-          # heal. This relaxes no guard: the composite still refuses unless no
-          # other fence is held, the heartbeat has stopped, and the holder's run
-          # attempt is proven terminal via the API (#3343).
-          recover-orphaned-fence: "true"

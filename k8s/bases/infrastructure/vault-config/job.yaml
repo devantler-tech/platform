@@ -753,12 +753,11 @@ spec:
               }
               POLICY
 
-              # Read the shared GHCR image-pull credential. Consumed by the
-              # platform-authored `ghcr-auth` ExternalSecrets in the tenant
-              # namespaces via the `external-secrets` ClusterSecretStore role, so
-              # tenants get their pull secret from OpenBao instead of a per-tenant
-              # SOPS file. Platform-side, not a tenant secret: those ExternalSecrets
-              # are reconciled by flux-system, never by a tenant ServiceAccount.
+              # Read the retired GHCR image-pull credential. First-party packages are
+              # public and nothing renders a `ghcr-auth` ExternalSecret any more
+              # (platform#6272); this read stays only until the orphaned
+              # ascoachingogvaner one, which its prune-disabled skeleton keeps, is
+              # deleted. Remove the policy and its role entry with that cleanup.
               bao policy write infra-ghcr-readonly - <<'POLICY'
               path "secret/data/infrastructure/ghcr/*" {
                 capabilities = ["read"]
@@ -1065,9 +1064,6 @@ spec:
               path "secret/data/infrastructure/git/*" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/data/infrastructure/ghcr/*" {
-                capabilities = ["create", "update", "read"]
-              }
               path "secret/data/infrastructure/velero/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -1129,9 +1125,6 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/infrastructure/git/*" {
-                capabilities = ["create", "update", "read"]
-              }
-              path "secret/metadata/infrastructure/ghcr/*" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/infrastructure/velero/*" {

@@ -40,50 +40,24 @@ type regressionWorkflow struct {
 	} `yaml:"jobs"`
 }
 
-func completeGoPartitions(workflow regressionWorkflow) bool {
+func unpartitionedGoSuite(workflow regressionWorkflow) bool {
 	strategy := workflow.Jobs["validate-go-regressions"].Strategy
-	suites := append([]string(nil), strategy.Matrix["suite"]...)
-	slices.Sort(suites)
-	return strategy.FailFast != nil && !*strategy.FailFast && strategy.MaxParallel == 2 && len(strategy.Matrix) == 1 &&
-		slices.Equal(suites, []string{"bridge", "helpers"})
+	return strategy.FailFast == nil && strategy.MaxParallel == 0 && len(strategy.Matrix) == 0
 }
 
-func TestFullGoPartitionsRejectIncompleteRouting(t *testing.T) {
-	if !completeGoPartitions(readRegressionWorkflow(t)) {
-		t.Fatal("complete Go validation needs both fixed partitions without early cancellation")
-	}
-	for _, test := range []struct {
-		name     string
-		suites   []string
-		workers  int
-		failFast bool
-	}{
-		{"missing", []string{"bridge"}, 2, false},
-		{"duplicate", []string{"bridge", "bridge"}, 2, false},
-		{"unknown", []string{"bridge", "other"}, 2, false},
-		{"extra", []string{"bridge", "helpers", "all"}, 2, false},
-		{"unbounded", []string{"bridge", "helpers"}, 0, false},
-		{"overflow", []string{"bridge", "helpers"}, 3, false},
-		{"early cancellation", []string{"bridge", "helpers"}, 2, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			workflow := readRegressionWorkflow(t)
-			job := workflow.Jobs["validate-go-regressions"]
-			job.Strategy.Matrix = map[string][]string{"suite": test.suites}
-			job.Strategy.MaxParallel = test.workers
-			job.Strategy.FailFast = &test.failFast
-			workflow.Jobs["validate-go-regressions"] = job
-			if completeGoPartitions(workflow) {
-				t.Fatal("accepted an incomplete or unbounded partition matrix")
-			}
-		})
+// The complete suite is one job: a matrix would only reintroduce package
+// partitions that one leg could silently narrow (the bridge partition retired
+// with platform#6272).
+func TestFullGoSuiteIsUnpartitioned(t *testing.T) {
+	if !unpartitionedGoSuite(readRegressionWorkflow(t)) {
+		t.Fatal("the complete Go suite must run as one unpartitioned job")
 	}
 	workflow := readRegressionWorkflow(t)
 	job := workflow.Jobs["validate-go-regressions"]
-	job.Strategy.FailFast = nil
+	job.Strategy.Matrix = map[string][]string{"suite": {"helpers"}}
 	workflow.Jobs["validate-go-regressions"] = job
-	if completeGoPartitions(workflow) {
-		t.Fatal("omitting fail-fast restores GitHub's cancelling default")
+	if unpartitionedGoSuite(workflow) {
+		t.Fatal("accepted a partitioned matrix")
 	}
 }
 
@@ -115,19 +89,17 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 	if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
 		t.Fatal("the regression runner needs only read-only checkout permission")
 	}
-	if !completeGoPartitions(workflow) {
-		t.Fatal("complete Go coverage requires both fixed partitions")
+	if !unpartitionedGoSuite(workflow) {
+		t.Fatal("complete Go coverage requires one unpartitioned job")
 	}
 	// Keep the bounded test concurrency and explicit per-package timeout in
 	// the pinned command without allowing package filters or skipped results.
 	positions := make(map[string]int)
 	for command, condition := range map[string]string{
-		"shellcheck scripts/check-go-modules-tidy.sh scripts/tests/test-go-modules-tidy.sh": "matrix.suite == 'helpers'",
-		"bash scripts/tests/test-go-modules-tidy.sh":                                        "matrix.suite == 'helpers'",
-		"bash scripts/check-go-modules-tidy.sh":                                             "matrix.suite == 'helpers'",
-		"shellcheck scripts/run-go-regressions.sh scripts/tests/test-run-go-regressions.sh": "matrix.suite == 'helpers'",
-		"bash scripts/tests/test-run-go-regressions.sh":                                     "matrix.suite == 'helpers'",
-		"bash scripts/run-go-regressions.sh \"$PARTITION\"":                                 "",
+		"shellcheck scripts/check-go-modules-tidy.sh scripts/tests/test-go-modules-tidy.sh": "",
+		"bash scripts/tests/test-go-modules-tidy.sh":                                        "",
+		"bash scripts/check-go-modules-tidy.sh":                                             "",
+		"go test -parallel 8 -timeout 20m ./...":                                            "",
 	} {
 		found := false
 		for name, candidate := range workflow.Jobs {
@@ -137,9 +109,6 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 				}
 				if name != "validate-go-regressions" || step.If != condition || step.Continue != nil {
 					t.Fatalf("regression command %q must run with condition %q and propagate failures", command, condition)
-				}
-				if strings.Contains(command, "\"$PARTITION\"") && step.Env["PARTITION"] != "${{ matrix.suite }}" {
-					t.Fatal("the runner must bind its real matrix partition")
 				}
 				for _, directory := range []string{
 					workflow.Defaults.Run.WorkingDirectory,
@@ -162,8 +131,7 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 		}
 	}
 	if positions["bash scripts/tests/test-go-modules-tidy.sh"] >= positions["bash scripts/check-go-modules-tidy.sh"] ||
-		positions["bash scripts/check-go-modules-tidy.sh"] >= positions["bash scripts/run-go-regressions.sh \"$PARTITION\""] ||
-		positions["bash scripts/tests/test-run-go-regressions.sh"] >= positions["bash scripts/run-go-regressions.sh \"$PARTITION\""] {
+		positions["bash scripts/check-go-modules-tidy.sh"] >= positions["go test -parallel 8 -timeout 20m ./..."] {
 		t.Fatal("module refusal controls and all-module guard must pass before the full Go suite")
 	}
 	for _, name := range []string{"deploy-prod", "ci-required-checks"} {

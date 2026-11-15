@@ -22,8 +22,8 @@
 # Not hypothetical: on 2026-07-14 the ksail-operator HelmRelease failed its
 # upgrade and rolled back on every attempt for over a day (stuck four releases
 # behind, every ReplicaSet since v7.168.0 at 0 replicas, because the nodes'
-# containerd still held a revoked ghcr.io credential — see
-# scripts/refresh-flux-ghcr-auth.sh). Prod looked green the entire time and no
+# containerd still held a revoked ghcr.io credential; first-party packages are
+# now public and nodes hold no GHCR credential, platform#6272). Prod looked green the entire time and no
 # alert fired.
 #
 # OCIRepository is watched for the same reason one step earlier (#5287). Every

@@ -29,7 +29,6 @@ func run(args []string) error {
 	for _, path := range []string{
 		".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml",
 		".github/workflows/validate-main.yaml", ".github/workflows/dr-rebuild.yaml",
-		".github/workflows/validate-image-verifier-liveness.yaml", ".github/workflows/prove-scoped-package-access.yaml",
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {

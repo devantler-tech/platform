@@ -14,22 +14,16 @@ const validCDWorkflow = `jobs:
       - name: Deploy production
         uses: ./.github/actions/deploy-prod
         with:
-          recover-orphaned-fence: "true"
+          sops-age-key: placeholder
 `
 
-func TestCDDeployRecoveryContract(t *testing.T) {
+func TestCDDeployContract(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name, workflow string
 		wantCode       int
 	}{
 		{"CD without heal or membership jobs", validCDWorkflow, 0},
-		{"removed opt-in", strings.Replace(validCDWorkflow, recoveryOptIn+"\n", "", 1), 1},
-		{"false opt-in", strings.Replace(validCDWorkflow, `recover-orphaned-fence: "true"`, `recover-orphaned-fence: "false"`, 1), 1},
-		{"opt-in in step environment", strings.Replace(validCDWorkflow, "        with:", "        env:", 1), 1},
-		{"opt-in in scalar with", strings.Replace(validCDWorkflow, "        with:", "        with: |", 1), 1},
-		{"duplicate with mapping", validCDWorkflow + "        with:\n          unrelated: value\n", 1},
-		{"opt-in on another step", strings.Replace(validCDWorkflow, "        with:", "      - name: Unrelated\n        with:", 1), 1},
 		{"wrong composite", strings.Replace(validCDWorkflow, deployCompositePath, "./.github/actions/other", 1), 1},
 		{"missing deploy job", strings.Replace(validCDWorkflow, "  deploy-prod:", "  other:", 1), 1},
 	}
@@ -52,18 +46,18 @@ func TestCDDeployRecoveryContract(t *testing.T) {
 	}
 }
 
-func TestActualCDLineRemovalFails(t *testing.T) {
+func TestActualCDDeployRemovalFails(t *testing.T) {
 	workflow, err := os.ReadFile("../../.github/workflows/cd.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(workflow), recoveryOptIn) != 1 {
-		t.Fatal("expected one actual CD opt-in")
+	if strings.Count(string(workflow), "uses: "+deployCompositePath+"\n") != 1 {
+		t.Fatal("expected one actual CD deploy composite call")
 	}
 	for _, removed := range []bool{false, true} {
 		input := string(workflow)
 		if removed {
-			input = strings.Replace(input, recoveryOptIn+"\n", "", 1)
+			input = strings.Replace(input, "uses: "+deployCompositePath+"\n", "uses: ./.github/actions/other\n", 1)
 		}
 		path := filepath.Join(t.TempDir(), "cd.yaml")
 		if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
@@ -74,7 +68,7 @@ func TestActualCDLineRemovalFails(t *testing.T) {
 		if !removed && code != 0 {
 			t.Fatalf("actual CD rejected: %s", &errOut)
 		}
-		if removed && (code != 1 || !strings.Contains(errOut.String(), "cd.yaml") || !strings.Contains(errOut.String(), "missing orphaned-fence recovery")) {
+		if removed && (code != 1 || !strings.Contains(errOut.String(), "cd.yaml") || !strings.Contains(errOut.String(), "does not reach the shared deploy composite")) {
 			t.Fatalf("actual removal not caught: code=%d err=%s", code, &errOut)
 		}
 	}

@@ -60,7 +60,9 @@ rules:
       - tenant-external-dns-global
       - tenant-webapp-edit
     verbs: ["bind"]
-  # ghcr-auth pull secret.
+  # Retired ghcr-auth pull secret (platform#6272): no child renders it any
+  # more. The grant stays only so KRO can prune the ExternalSecret earlier
+  # revisions created; remove it once no Tenant namespace still holds one.
   - apiGroups: ["external-secrets.io"]
     resources: ["externalsecrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

@@ -253,7 +253,7 @@ Kustomization with the controller that installs its CRD (already handled by the 
 `Tenant`/`WebApp` archetypes cover *all* tenant and platform needs (each to be filed and prioritised as
 its own issue, behaviour-preservingly, render-diffed vs the current instances):
 
-- **Arbitrary per-tenant `ExternalSecret`s beyond `ghcr-auth`** — e.g. `wedding-app`'s object-store /
+- **Arbitrary per-tenant `ExternalSecret`s** — e.g. `wedding-app`'s object-store /
   db-backup secrets — via a typed `secrets` list on the `Tenant` schema, so no tenant hand-writes an
   ExternalSecret. Needs kro's `forEach` collections (one `ExternalSecret` per declared entry) plus a
   nested CEL `.map()` to build each one's `data:` list — kro has no offline CEL validator, so this

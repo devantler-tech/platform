@@ -269,9 +269,6 @@ for kind in ResourceQuota LimitRange ServiceAccount RoleBinding; do
   ablate_json check_retirement L1 "${work}/prod-trial.json" "map(if .kind == \"${kind}\" and .metadata.name != \"world-at-ruin-zone-trial-operator\" then del(.metadata.annotations.\"kustomize.toolkit.fluxcd.io/prune\") else . end)"
 done
 check_public_registry "${work}/prod-trial.json" || fail 'the applied prod layer must not supply a registry credential'
-if sed -n '/^readonly -a FANOUT_NAMESPACES=(/,/^)/p' "${root}/scripts/refresh-flux-ghcr-auth.sh" | grep -qF '"world-at-ruin"'; then
-  fail 'a public-package trial must not participate in registry credential fanout'
-fi
 [[ "$(yq -N -r 'select(.kind == "Namespace" and .metadata.name == "world-at-ruin") | .metadata.name' "${work}/prod.yaml")" == "world-at-ruin" ]] || fail 'the trial must be present in the prod app layer'
 [[ -z "$(yq -N -r 'select(.metadata.name == "world-at-ruin" or .metadata.namespace == "world-at-ruin") | .kind' "${work}/local.yaml")" ]] || fail 'the trial must remain prod-only'
 

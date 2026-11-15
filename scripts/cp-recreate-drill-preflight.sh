@@ -180,8 +180,8 @@ fi
 
 # backup
 # Kubernetes may serialise a time with fractional seconds, which fromdateiso8601
-# rejects; they are dropped first, as refresh-flux-ghcr-auth.sh does. Anything
-# else malformed still fails as an input error.
+# rejects; they are dropped first. Anything else malformed still fails as an
+# input error.
 # The newest backup is chosen by creation time, which every backup has from the
 # moment it starts. Choosing among finished backups only would pass over a newer
 # backup still in progress and approve the drill on an older one.

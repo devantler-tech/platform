@@ -252,7 +252,7 @@ spec:
     # The root manifests package is public (platform#6272), so Flux pulls it
     # anonymously: no credential here means KSail sets no FluxInstance
     # spec.sync.pullSecret and writes no root pull Secret. `workload push`
-    # gets the Actions write token from run-ksail-prod-with-pull-auth.sh.
+    # gets the Actions write token from run-ksail-prod.sh.
     localRegistry:
       registry: "ghcr.io/devantler-tech/platform/manifests"
   provider:

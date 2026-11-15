@@ -1,11 +1,9 @@
 # Confines each tenant namespace to its OWN first-party image repositories
 # (platform#6080, part of #2889; mechanism chosen in the #4479 spike).
 #
-# Why: the nodes authenticate every pull from the first-party registry with the
-# platform's own credential (Talos RegistryAuthConfig applies to "all image pulls
-# for this registry endpoint, by Talos or any Kubernetes workloads"). A per-tenant
-# pull credential therefore cannot stop one tenant from running another tenant's
-# private image. The boundary has to be enforced at admission instead.
+# Why: first-party packages are public and nodes pull them anonymously
+# (platform#6272), so registry access cannot stop one tenant from running
+# another tenant's image. The boundary has to be enforced at admission instead.
 #
 # Rule: in a tenant namespace, every first-party reference — an image under
 # ghcr.io/devantler-tech/, or a Flux OCI source URL under it — must live under

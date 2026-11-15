@@ -11,8 +11,6 @@ spec:
   ref:
     semver: ">=1.0.0"
   url: oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests
-  secretRef:
-    name: ghcr-auth
   verify:
     provider: cosign
     matchOIDCIdentity:

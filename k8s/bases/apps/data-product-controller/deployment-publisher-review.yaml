@@ -23,8 +23,6 @@ spec:
     spec:
       serviceAccountName: data-product-controller-publisher-review
       automountServiceAccountToken: false
-      imagePullSecrets:
-        - name: ghcr-auth
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

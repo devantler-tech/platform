@@ -237,7 +237,7 @@ grep -Fq 'source-controller=1' "${tmp_dir}/out.snapshot" ||
 #    tolerance actually reaches the merge-queue deploy rather than only existing.
 grep -Fq 'run: ./scripts/reconcile-flux-workloads.sh' "${deploy_action}" ||
   fail 'the deploy composite must trigger reconciliation through the wrapper'
-grep -Fq 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile' "${deploy_action}" &&
+grep -Fq 'run: ./scripts/run-ksail-prod.sh workload reconcile' "${deploy_action}" &&
   fail 'the deploy composite must not still call the bare reconcile, or the wrapper is bypassed'
 
 # 6b. ORDERING: the baseline must be captured BEFORE the mutable tag is

@@ -35,16 +35,12 @@
 #
 # Enumerated 2026-08-26 — of the four first-party images running on the
 # cluster, ksail and provider-upjet-unifi verify against the exact keyless
-# identity their rules require. wedding-app and ascoachingogvaner are PRIVATE
-# packages: an unauthenticated cosign verify returns DENIED, which is an ACCESS
-# result and NOT evidence that a signature is absent. Settling those two needs
-# an AUTHENTICATED read, and this repository already stages one: the
-# `🔑 Stage the GHCR pull credential` step in
-# .github/workflows/validate-image-verifier-liveness.yaml decrypts the cluster's
-# own Flux GHCR pull credential into DOCKER_CONFIG before it runs
-# scripts/inventory-first-party-image-signatures.sh, so no ADDITIONAL
-# `read:packages` token has to be minted. What is missing is a recorded RUN of
-# that authenticated inventory against the fleet — the newest run of that
+# identity their rules require. wedding-app and ascoachingogvaner were PRIVATE
+# packages then; they are public since platform#6272, so the anonymous
+# scripts/inventory-first-party-image-signatures.sh run by
+# .github/workflows/validate-image-verifier-liveness.yaml can settle them with no
+# token at all. What is missing is a recorded RUN of that inventory against the
+# fleet — the newest run of that
 # workflow (2026-08-11) executed only its unit-test job — so until one is on
 # record their signature state stays UNKNOWN, and they are the two images the
 # catch-all rule governs.

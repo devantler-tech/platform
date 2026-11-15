@@ -190,8 +190,8 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				"    needs:\n      [\n        validate-eks-authorization,\n"+
 					"        validate-publication-contract,\n"+
 					"        validate-talos-kubernetes-compatibility,\n"+
-					"        validate-ghcr-fanout-component-gate,\n      ]",
-				"    needs: [validate-eks-authorization, validate-talos-kubernetes-compatibility, validate-ghcr-fanout-component-gate]\n"+
+					"        validate-root-verify,\n      ]",
+				"    needs: [validate-eks-authorization, validate-talos-kubernetes-compatibility, validate-root-verify]\n"+
 					"    env:\n      NOTE: \"needs: [validate-publication-contract]\"",
 				1,
 			), a
@@ -202,8 +202,8 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 		"deploy carries a job-level condition that survives a failed gate": func(w, a string) (string, string) {
 			return strings.Replace(
 				w,
-				"        validate-ghcr-fanout-component-gate,\n      ]",
-				"        validate-ghcr-fanout-component-gate,\n      ]\n    if: always()",
+				"        validate-root-verify,\n      ]",
+				"        validate-root-verify,\n      ]\n    if: always()",
 				1,
 			), a
 		},
@@ -476,12 +476,12 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 		"a later step in the shared action overwrites latest": func(w, a string) (string, string) {
 			return w, strings.Replace(
 				a,
-				"    - name: 🔎 Verify Flux GHCR pull credential after publish\n",
+				"    - name: 🛡️ Reassert the root source verification\n",
 				"    - name: 😈 Republish latest outside the checked publisher\n"+
 					"      shell: bash\n"+
 					"      run: |\n"+
 					"        ksail workload push oci://ghcr.io/devantler-tech/platform/manifests:latest\n\n"+
-					"    - name: 🔎 Verify Flux GHCR pull credential after publish\n",
+					"    - name: 🛡️ Reassert the root source verification\n",
 				1,
 			)
 		},
@@ -494,10 +494,10 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 		"a second publisher step in the shared action": func(w, a string) (string, string) {
 			return w, strings.Replace(
 				a,
-				"    - name: 🔎 Verify Flux GHCR pull credential after publish\n",
+				"    - name: 🛡️ Reassert the root source verification\n",
 				"    - name: 😈 Second publisher, unchecked\n"+
 					"      uses: ./.github/actions/deploy-prod/publish-platform-manifests\n\n"+
-					"    - name: 🔎 Verify Flux GHCR pull credential after publish\n",
+					"    - name: 🛡️ Reassert the root source verification\n",
 				1,
 			)
 		},
@@ -1863,8 +1863,8 @@ func TestPublicationActionIgnoresNonExecutableText(t *testing.T) {
 		},
 		{
 			name:    "the staging-reference bridge on another step is not the push step's bridge",
-			old:     "        STAGING_OCI_REF: ${{ steps.staging_reference.outputs.oci_ref }}\n      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push",
-			new:     "        STAGING_OCI_REF_UNUSED: ${{ steps.staging_reference.outputs.oci_ref }}\n      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push",
+			old:     "        STAGING_OCI_REF: ${{ steps.staging_reference.outputs.oci_ref }}\n      run: ./scripts/run-ksail-prod.sh workload push",
+			new:     "        STAGING_OCI_REF_UNUSED: ${{ steps.staging_reference.outputs.oci_ref }}\n      run: ./scripts/run-ksail-prod.sh workload push",
 			wantErr: "environment bridge",
 		},
 	}

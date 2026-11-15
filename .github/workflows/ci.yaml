@@ -67,13 +67,8 @@ jobs:
   # Full suites produce no path outputs. Run them independently, but require
   # their success before production access and the final merge verdict.
   validate-go-regressions:
-    name: 🧪 Validate Complete Go Regressions (${{ matrix.suite }})
+    name: 🧪 Validate Complete Go Regressions
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        suite: [bridge, helpers]
     permissions:
       contents: read
     steps:
@@ -89,37 +84,23 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      # These checks cover the whole checkout. Run them once on the helpers leg.
       - name: 🔍 Lint module tidiness guards
-        if: matrix.suite == 'helpers'
         run: shellcheck scripts/check-go-modules-tidy.sh scripts/tests/test-go-modules-tidy.sh
 
       - name: 🧪 Exercise module tidiness refusals offline
-        if: matrix.suite == 'helpers'
         run: bash scripts/tests/test-go-modules-tidy.sh
 
       - name: 🧹 Verify every tracked Go module is tidy
-        if: matrix.suite == 'helpers'
         run: bash scripts/check-go-modules-tidy.sh
 
       - name: 🧪 Verify pinned SMTP protocol regressions
-        if: matrix.suite == 'helpers'
         working-directory: third_party/go-smtp
         run: go test -race -timeout 2m ./...
 
       - name: 🛡️ Verify SMTP advisory evidence refusals
-        if: matrix.suite == 'helpers'
         run: |
           shellcheck scripts/check-smtp-upstream-advisories.sh scripts/tests/test-smtp-upstream-advisories.sh
           bash scripts/tests/test-smtp-upstream-advisories.sh
-
-      - name: 🔍 Lint complete regression routing
-        if: matrix.suite == 'helpers'
-        run: shellcheck scripts/run-go-regressions.sh scripts/tests/test-run-go-regressions.sh
-
-      - name: 🧪 Exercise complete regression routing offline
-        if: matrix.suite == 'helpers'
-        run: bash scripts/tests/test-run-go-regressions.sh
 
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5
@@ -139,21 +120,14 @@ jobs:
           export PATH="/usr/local/bin:$PATH"
           kubectl version --client
 
-      # The per-package bound is deliberate, not Go's 10-minute default. The
-      # slowest package (scripts/tests/refresh-flux-ghcr-auth) took 295-478s in
-      # six hosted merge-group runs measured on 2026-10-25, up to 80% of that
-      # default, and a package that outruns its bound fails the merge group and
-      # evicts an unrelated PR (#4893). 20 minutes keeps the slowest measured run
-      # under half the bound. Resize it only from fresh hosted timings, never to
-      # hide a hung test.
-      # Both isolated partitions retain eight test workers and every deadline.
-      # Both discover the complete root inventory. One runs the full bridge
-      # package while the other runs every remaining package without a filter.
-      # The matrix result remains required before production and merge.
-      - name: 🧪 Validate the complete Go helper regression suite
-        env:
-          PARTITION: ${{ matrix.suite }}
-        run: bash scripts/run-go-regressions.sh "$PARTITION"
+      # The per-package bound is deliberate, not Go's 10-minute default: a
+      # package that outruns its bound fails the merge group and evicts an
+      # unrelated PR (#4893). The package that once needed it (the retired GHCR
+      # bridge, platform#6272) is gone; resize the bound only from fresh hosted
+      # timings, never to hide a hung test. The result remains required before
+      # production and merge.
+      - name: 🧪 Validate the complete Go regression suite
+        run: go test -parallel 8 -timeout 20m ./...
 
   # The organization's required Go workflow only applies while GitHub detects this
   # repository's language as Go, and Go and Shell are within a few kilobytes of each
@@ -823,11 +797,6 @@ jobs:
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-unverified-provider-digest-pin.sh'
               - 'scripts/tests/test-guard-unverified-provider-digest-pin.sh'
-              # Both halves, for the same reason as the guards above. This guard
-              # also reads scripts/refresh-flux-ghcr-auth.sh, already selected
-              # below, and k8s/bases/apps/kustomization.yaml, covered by 'k8s/**'.
-              - 'scripts/guard-ghcr-fanout-component-gate.sh'
-              - 'scripts/tests/test-guard-ghcr-fanout-component-gate.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'scripts/tests/isolated-chart-namespace-rules.yaml'
               - 'scripts/tests/test-isolated-chart-namespace-rules.sh'
@@ -836,15 +805,12 @@ jobs:
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
               - 'scripts/tests/validate-alert-coverage/**'
-              - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/verify-merge-group-queued/**'
               # The production input list, its classifier and its tests decide what a
               # deploy may read (#5077), so a change to any of them takes the deploy.
               - 'scripts/production-inputs/**'
               - 'scripts/validate-merge-group-heal/**'
-              - 'scripts/refresh-flux-ghcr-auth-safety.sh'
-              - 'scripts/ghcr-auth-lib.sh'
-              - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - 'scripts/run-ksail-prod.sh'
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'
@@ -856,14 +822,9 @@ jobs:
               # and that test only runs when this filter matches.
               - '.github/workflows/validate-main.yaml'
             bridge_validation:
-              - 'scripts/refresh-flux-ghcr-auth.sh'
-              - 'scripts/refresh-flux-ghcr-auth-safety.sh'
-              - 'scripts/ghcr-auth-lib.sh'
-              - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - 'scripts/run-ksail-prod.sh'
               - 'scripts/use-prod-stable-api-endpoint.sh'
               - 'scripts/tests/test-use-prod-stable-api-endpoint.sh'
-              - 'scripts/tests/test-refresh-flux-ghcr-auth-safety.sh'
-              - 'scripts/tests/refresh-flux-ghcr-auth/**'
               - 'scripts/verify-gateway-routes-applied.sh'
               - 'scripts/tests/test-verify-gateway-routes-applied.sh'
               - 'docs/dr/runbook.md'
@@ -1391,11 +1352,6 @@ jobs:
           shellcheck scripts/check-upbound-package-signatures.sh
           shellcheck scripts/tests/test-check-upbound-package-signatures.sh
           bash scripts/tests/test-check-upbound-package-signatures.sh
-
-      - name: 🔐 Validate the scoped package-access experiment
-        # Always run, including workflow-only changes. The real registry proof
-        # is manual and uses credentials only after this code reaches main.
-        run: go test ./scripts/prove-scoped-package-access
 
       - name: 🔐 Validate OCI chart source readiness contracts
         run: go test ./scripts/tests/oci-chart-sources
@@ -3220,27 +3176,6 @@ jobs:
         run: |
           bash scripts/tests/test-crossplane-aws-family-version-parity.sh
 
-      - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
-        if: needs.changes.outputs.k8s == 'true'
-        # An app that pulls private first-party images is declared twice: enabled
-        # in k8s/bases/apps/kustomization.yaml, and listed in FANOUT_NAMESPACES so
-        # the post-reconcile reassertion proves its pull credential arrived. Two
-        # hand-edited files, one switch, and nothing made them agree.
-        #
-        # The expensive direction is staging a component OFF and leaving it
-        # listed. The pre-publish invocation defers a missing new consumer
-        # (--record-runtime-proof), but the reassertion in deploy-prod runs with
-        # --reuse-runtime-proof and has no such exemption, so it marks the
-        # fan-out incomplete and FAILS EVERY OTHERWISE-SUCCESSFUL DEPLOY. Nothing
-        # else catches it: the manifests build, CI is green, and the failure only
-        # appears on the next production deploy. That is exactly what staging the
-        # data-product-controller off introduced (#3476).
-        run: |
-          shellcheck scripts/guard-ghcr-fanout-component-gate.sh
-          shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
-          bash scripts/guard-ghcr-fanout-component-gate.sh
-          bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
-
       - name: 📐 Validate LimitRange-premised suppressions actually have a LimitRange
         if: needs.changes.outputs.k8s == 'true'
         # Several skips here are dispositioned not as accepted risk but as "the check
@@ -3842,7 +3777,7 @@ jobs:
         run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
 
   validate-flux-bridge:
-    name: 🔐 Validate Flux Credential Bridge
+    name: 🔐 Validate Production Deploy Path Controls
     needs: [changes]
     if: >-
       github.event_name == 'pull_request' &&
@@ -3873,36 +3808,26 @@ jobs:
           printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
           PATH="$GOBIN:$PATH" yq --version
 
-      - name: 🔐 Validate Flux GHCR credential bridge
-        # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
-        # registry credential, cluster access, or network is used.
+      - name: 🔐 Validate production deploy path controls
+        # Pure local tests with fake commands: no SOPS key, registry
+        # credential, cluster access, or network is used. The job and filter
+        # keep their historical bridge names because validators pin them.
         run: |
           bash -n \
-            scripts/ghcr-auth-lib.sh \
-            scripts/refresh-flux-ghcr-auth-safety.sh \
-            scripts/refresh-flux-ghcr-auth.sh \
-            scripts/run-ksail-prod-with-pull-auth.sh \
+            scripts/run-ksail-prod.sh \
             scripts/use-prod-stable-api-endpoint.sh \
             scripts/wait-for-prod-api-stability.sh \
             scripts/tests/test-use-prod-stable-api-endpoint.sh \
-            scripts/tests/test-wait-for-prod-api-stability.sh \
-            scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
+            scripts/tests/test-wait-for-prod-api-stability.sh
           shellcheck \
-            scripts/ghcr-auth-lib.sh \
-            scripts/refresh-flux-ghcr-auth-safety.sh \
-            scripts/refresh-flux-ghcr-auth.sh \
-            scripts/run-ksail-prod-with-pull-auth.sh \
+            scripts/run-ksail-prod.sh \
             scripts/use-prod-stable-api-endpoint.sh \
             scripts/wait-for-prod-api-stability.sh \
             scripts/tests/test-use-prod-stable-api-endpoint.sh \
-            scripts/tests/test-wait-for-prod-api-stability.sh \
-            scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
+            scripts/tests/test-wait-for-prod-api-stability.sh
           bash scripts/tests/test-use-prod-stable-api-endpoint.sh
           bash scripts/tests/test-wait-for-prod-api-stability.sh
-          bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
-          # The unconditional validate-go-regressions job runs the complete
-          # refresh-flux-ghcr-auth package on this same checkout.
-          # Required CI rejects every non-success result from either job.
+          # Required CI rejects every non-success result from this job.
 
   naming:
     name: 🏷️ Validate Naming Conventions
@@ -4009,16 +3934,11 @@ jobs:
 
           # Placeholder key material for env-expanded patch values (ksail
           # expands these from environment secrets at deploy time — see
-          # talos/control-planes/wireguard.yaml and
-          # talos/cluster/authenticate-ghcr-pulls.yaml and
-          # talos/cluster/mark-ghcr-pull-revision.yaml).
+          # talos/control-planes/wireguard.yaml).
           # Real-format but throwaway, so validation exercises the expansion
           # path without any real secret on the PR event.
           WG_SERVER_PRIVATE_KEY="$(openssl rand -base64 32)"
-          GHCR_USERNAME="placeholder-ghcr-user"
-          GHCR_TOKEN="placeholder-ghcr-token"
-          GHCR_PULL_REVISION="$(printf '%s\n' 'ENC[ci-placeholder-ciphertext]' | shasum -a 256 | awk '{print $1}')"
-          export WG_SERVER_PRIVATE_KEY GHCR_USERNAME GHCR_TOKEN GHCR_PULL_REVISION
+          export WG_SERVER_PRIVATE_KEY
 
           validate_overlay() {
             local dir="$1" mode="$2" cluster_config="$3"
@@ -4167,36 +4087,6 @@ jobs:
         run: |
           shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
           bash scripts/tests/test-rgd-template-static-scan.sh
-
-  validate-ghcr-fanout-merge-group:
-    name: 🔗 Validate GHCR Fan-out Component Gate (merge group)
-    needs: [changes]
-    # Same reason as the RGD job above: the PR job proves the proposed head, but
-    # production deploys the speculative merge-group revision. This guard is what
-    # stands between an enabled-but-unlisted consumer and a post-reconcile
-    # reassertion that FAILS EVERY SUBSEQUENT DEPLOY, and the pull_request-only
-    # invocation cannot see a mismatch main inherited from a direct push. cd.yaml
-    # already gates its manual deploy on this guard (validate-ghcr-fanout-component-gate);
-    # the merge queue is the path that actually deploys, so it needs the same
-    # prerequisite rather than a weaker one.
-    if: >-
-      github.event_name == 'merge_group' &&
-      needs.changes.outputs.k8s == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read # checkout repository
-    steps:
-      - name: 📑 Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
-        run: |
-          shellcheck scripts/guard-ghcr-fanout-component-gate.sh
-          shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
-          bash scripts/guard-ghcr-fanout-component-gate.sh
-          bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
 
   validate-floating-image-tags:
     name: 🏷️ Validate Floating Image Tags
@@ -4542,7 +4432,6 @@ jobs:
         validate-talos,
         validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
-        validate-ghcr-fanout-merge-group,
         wait-for-production-turn,
       ]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
@@ -4562,7 +4451,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
-      actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
+      actions: read # read a prior run attempt status, to prove an interrupted Longhorn maintenance holder is dead (deploy-prod maintain-longhorn-clients)
       pull-requests: read # verify the same queue entry before production access
     # `true` only when the queue preflight refused this entry and the production
     # composite never ran; the heal below then has nothing to restore (#4937).
@@ -4602,12 +4491,6 @@ jobs:
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
           wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
-          # Release a synchronization Lease that an already-dead deploy left
-          # held, so one crashed run cannot wedge every later deploy and its own
-          # heal. This relaxes no guard: the composite still refuses unless no
-          # other fence is held, the heartbeat has stopped, and the holder's run
-          # attempt is proven terminal via the API (#3343).
-          recover-orphaned-fence: "true"
           # Run from the declared production inputs alone, so a file outside
           # scripts/production-inputs/inputs.txt cannot influence this deploy.
           production-inputs-only: "true"
@@ -4728,7 +4611,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
-      actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
+      actions: read # read a prior run attempt status, to prove an interrupted Longhorn maintenance holder is dead (deploy-prod maintain-longhorn-clients)
     steps:
       - name: 📑 Checkout main
         # Deploy the CURRENT tip of `main` (the last state that actually landed in
@@ -4833,8 +4716,7 @@ jobs:
 
       - name: 🧪 Validate the data product trial before recovery deploy
         # This job checks out main, which may predate the candidate's new test.
-        # Require it whenever that checkout activates the trial; otherwise
-        # prove the inactive app and credential fan-out gates still agree.
+        # Require it whenever that checkout activates the trial.
         run: |
           trial_active="$(yq -r '[.resources[] | select(. == "data-product-controller/")] | length' k8s/bases/apps/kustomization.yaml)"
           case "$trial_active" in
@@ -4843,8 +4725,7 @@ jobs:
               bash scripts/tests/test-data-product-controller-trial.sh
               ;;
             0)
-              bash scripts/guard-ghcr-fanout-component-gate.sh
-              echo 'Main has no active data product trial; its credential gate is consistent.'
+              echo 'Main has no active data product trial.'
               ;;
             *)
               echo 'Cannot establish the data product trial gate on main.' >&2
@@ -4866,12 +4747,6 @@ jobs:
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
           wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
-          # Release a synchronization Lease that an already-dead deploy left
-          # held, so one crashed run cannot wedge every later deploy and its own
-          # heal. This relaxes no guard: the composite still refuses unless no
-          # other fence is held, the heartbeat has stopped, and the holder's run
-          # attempt is proven terminal via the API (#3343).
-          recover-orphaned-fence: "true"
 
       - name: 🧹 Verify nothing the failed deploy applied outlived the heal
         # Re-deploying main restores what main declares. An object the failed
@@ -4933,7 +4808,6 @@ jobs:
         validate-talos,
         validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
-        validate-ghcr-fanout-merge-group,
         wait-for-production-turn,
         deploy-prod,
       ]
@@ -5064,7 +4938,6 @@ jobs:
             ${{ needs.validate-talos.result }}
             ${{ needs.validate-root-verify-merge-group.result }}
             ${{ needs.validate-rgd-templates-merge-group.result }}
-            ${{ needs.validate-ghcr-fanout-merge-group.result }}
             ${{ needs.wait-for-production-turn.result }}
             ${{ needs.deploy-prod.result }}
 

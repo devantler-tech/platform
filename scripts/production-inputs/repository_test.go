@@ -217,8 +217,8 @@ func TestWorkflowsRunOnlyTheQueueDeployFromProductionInputs(t *testing.T) {
 			}
 			return string(moved)
 		}()},
-		"the manual deploy restricts too": {ci, replace(manual, "          recover-orphaned-fence: \"true\"\n",
-			"          recover-orphaned-fence: \"true\"\n          production-inputs-only: \"true\"\n"), rebuild, deploy},
+		"the manual deploy restricts too": {ci, replace(manual, "          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}\n",
+			"          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}\n          production-inputs-only: \"true\"\n"), rebuild, deploy},
 		"the classifier starts from false": {replace(ci, "          answer=production=true\n", "          answer=production=false\n"), manual, rebuild, deploy},
 		"the classifier may judge its own change": {replace(ci, " -- scripts/production-inputs go.mod go.sum .github/workflows/ci.yaml 2>/dev/null; then\n",
 			" -- go.mod go.sum 2>/dev/null; then\n"), manual, rebuild, deploy},
@@ -323,9 +323,8 @@ func TestTheListCoversEverythingTheDeployCanReach(t *testing.T) {
 	for _, expected := range []string{
 		actionPath,
 		".github/actions/deploy-prod/publish-platform-manifests/action.yml",
-		"scripts/refresh-flux-ghcr-auth.sh",
-		"scripts/ghcr-auth-lib.sh",
-		"scripts/run-ksail-prod-with-pull-auth.sh",
+		"scripts/detach-flux-root-pull-secret.sh",
+		"scripts/run-ksail-prod.sh",
 		"scripts/tests/test-pvc-prune-safety.sh",
 		"scripts/verify-merge-group-queued/main.go",
 		"scripts/maintain-longhorn-clients/main.go",
