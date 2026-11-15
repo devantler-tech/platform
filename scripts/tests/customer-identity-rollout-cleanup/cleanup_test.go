@@ -157,7 +157,7 @@ func newAPI() *apiFixture {
 	a.add("HelmRelease", ns, "zitadel", releaseUID, object{"status": object{"history": []object{{"status": "uninstalling"}}}})
 	a.add("PersistentVolumeClaim", ns, "customer-identity-db-1", claimUID, object{"metadata": owner("Cluster", "customer-identity-db", clusterUID), "spec": object{"volumeName": volume}})
 	a.add("PersistentVolume", "", volume, pvUID, object{"spec": object{"storageClassName": "longhorn-wffc", "claimRef": object{"namespace": ns, "name": "customer-identity-db-1", "uid": claimUID}}})
-	a.add("Volume", "longhorn-system", volume, backendUID, object{"status": object{"state": "detached", "actualSize": 0, "lastBackup": "", "kubernetesStatus": object{"lastPodRefAt": ""}}})
+	a.add("Volume", "longhorn-system", volume, backendUID, object{"spec": object{"lastAttachedBy": ""}, "status": object{"state": "detached", "actualSize": 0, "lastBackup": "", "kubernetesStatus": object{"lastPodRefAt": ""}}})
 	// Derived and generated objects the live namespace holds.
 	a.add("Job", ns, "customer-identity-db-1-initdb", "uid-initdb", object{"metadata": owner("Cluster", "customer-identity-db", clusterUID)})
 	a.add("Pod", ns, "customer-identity-db-1-initdb-x", "uid-initdb-pod", object{"metadata": owner("Job", "customer-identity-db-1-initdb", "uid-initdb")})
@@ -412,6 +412,12 @@ func TestWrittenVolumeIsRefused(t *testing.T) {
 			refused(t, a, "volume-written")
 		})
 	}
+	// Longhorn 1.13 records the last attacher in spec, not status.
+	t.Run("last attacher", func(t *testing.T) {
+		a := newAPI()
+		a.objects[path(find("Volume"), "longhorn-system", volume)]["spec"] = object{"lastAttachedBy": "customer-identity-db-1"}
+		refused(t, a, "volume-written")
+	})
 }
 
 func TestDeployedServerIsRefused(t *testing.T) {

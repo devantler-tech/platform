@@ -147,7 +147,7 @@ jobs:
             jq -e --arg ns "$ns" --arg claim "$claim" --arg uid "$claim_uid" '.spec.claimRef.namespace == $ns and .spec.claimRef.name == $claim and .spec.claimRef.uid == $uid and .spec.storageClassName == "longhorn-wffc"' "$private_dir/pv.json" >/dev/null || fail volume-binding
           fi
           if read_target "$private_dir/backend.json" "$backend_uid" -n longhorn-system volumes.longhorn.io "$volume"; then
-            jq -e '(.status.actualSize // 0) == 0 and (.status.lastAttachedBy // "") == "" and (.status.kubernetesStatus.lastPodRefAt // "") == "" and (.status.lastBackup // "") == "" and .status.state == "detached"' "$private_dir/backend.json" >/dev/null || fail volume-written
+            jq -e '(.status.actualSize // 0) == 0 and (.spec.lastAttachedBy // "") == "" and (.status.lastAttachedBy // "") == "" and (.status.kubernetesStatus.lastPodRefAt // "") == "" and (.status.lastBackup // "") == "" and .status.state == "detached"' "$private_dir/backend.json" >/dev/null || fail volume-written
             items -n longhorn-system replicas.longhorn.io -l "longhornvolume=$volume" | jq -e '.items | length == 0' >/dev/null || fail volume-replicas
           fi
 
