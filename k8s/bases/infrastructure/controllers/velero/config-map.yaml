@@ -21,7 +21,8 @@
 # Velero requires request <= limit for any pair that is set.
 #
 # Only prod routes the longhorn source class through CSI snapshots. Its
-# intermediate backup PVC uses the prod-only single-replica staging class;
+# intermediate backup PVC keeps its source class by default. Set the bootstrap
+# variable to longhorn-backup only for an explicit staging validation rollout;
 # source volumes and restores retain their own durable storage classes.
 # Local uses file-system backup, so it never consults this mapping.
 apiVersion: v1
@@ -40,7 +41,7 @@ data:
       },
       "backupPVC": {
         "longhorn": {
-          "storageClass": "longhorn-backup"
+          "storageClass": "${velero_backup_pvc_storage_class:-longhorn}"
         }
       }
     }

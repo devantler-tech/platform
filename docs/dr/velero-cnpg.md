@@ -147,16 +147,22 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
   so no extra plugin beyond `velero-plugin-for-aws` for the R2 BSL).
 
 > **Transient disk during the backup window.** For each Longhorn PVC the data
-> mover provisions a short-lived PVC from the snapshot on `longhorn-backup`,
-> then a node-agent pod copies it to R2 and deletes the staging resources.
+> mover provisions a short-lived PVC from the snapshot, then a node-agent pod
+> copies it to R2 and deletes the staging resources. Production keeps the
+> source's `longhorn` class by default. Single-replica staging is opt-in:
+> an explicitly reviewed validation rollout sets
+> `velero_backup_pvc_storage_class: longhorn-backup` in the production
+> bootstrap ConfigMap; an unset setting also retains `longhorn`.
 > Velero's [backupPVC mapping](https://velero.io/docs/v1.18/data-movement-backup-pvc-configuration/)
-> selects this single-replica, immediate-binding class only for intermediate
+> then selects this single-replica, immediate-binding class only for intermediate
 > copies of the `longhorn` source class. Source volumes keep their existing
 > redundancy, and restore destinations keep their own storage classes. Staging
 > reserves one source-volume-sized replica instead of three, but still needs
 > schedulable disk space; it does not resolve exhausted source-volume capacity.
-> A staging-replica failure fails that upload, so verify a complete scheduled
-> backup and a representative restore before declaring the capacity fix proven.
+> A staging-replica failure fails that upload. Keep the default off until a
+> complete backup upload and a representative restore have been verified.
+> Record that evidence on #6320 before a separate reviewed activation changes
+> the default; return the setting to `longhorn` to disable staging.
 
 ## CloudNativePG
 

@@ -13,6 +13,9 @@ data:
   issuer_name: letsencrypt-prod
   # Per-env prefixes inside the shared R2 bucket.
   r2_prefix_velero: velero/prod
+  # Keep single-replica backup staging off until backup/restore validation.
+  # An explicit validation rollout selects longhorn-backup here.
+  velero_backup_pvc_storage_class: longhorn
   # --- Critical controllers (2 replicas for HA; the require-replica-floor minimum) ---
   # With VPA updateMode=InPlaceOrRecreate, single-replica services get 502s during
   # eviction. The replica-floor (#1898/#1900) wants 2 so a maxUnavailable: 1 PDB +
