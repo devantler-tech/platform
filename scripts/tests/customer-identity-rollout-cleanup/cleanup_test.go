@@ -28,7 +28,29 @@ const (
 	claimUID   = "48c25421-defa-4132-bfca-c5a6c6d95435"
 	pvUID      = "927373f3-c828-47d3-b536-16aab906e428"
 	backendUID = "63cc671a-856f-493e-b02a-d55183a18876"
+	initdbJob  = "customer-identity-db-1-initdb"
+	initdbUID  = "0673849e-cda0-402f-b817-8c2a8aabd4c4"
 )
+
+// initdbPodOwnedBy is CNPG's initdb pod as production holds it: the claim
+// mounted by the bootstrap-controller init container and the initdb container,
+// which has never started (its Secret was pruned).
+func initdbPodOwnedBy(kind, uid string) object {
+	return object{
+		"metadata": object{"labels": object{"cnpg.io/jobRole": "initdb"}, "ownerReferences": []object{{"kind": kind, "name": "owner", "uid": uid}}},
+		"spec": object{
+			"volumes":        []object{{"name": "pgdata", "persistentVolumeClaim": object{"claimName": "customer-identity-db-1"}}, {"name": "scratch-data", "emptyDir": object{}}},
+			"initContainers": []object{{"name": "bootstrap-controller"}},
+			"containers":     []object{{"name": "initdb"}},
+		},
+		"status": object{
+			"initContainerStatuses": []object{{"name": "bootstrap-controller", "restartCount": 0, "state": object{"terminated": object{"exitCode": 0}}}},
+			"containerStatuses":     []object{{"name": "initdb", "restartCount": 0, "started": false, "state": object{"waiting": object{"reason": "CreateContainerConfigError"}}, "lastState": object{}}},
+		},
+	}
+}
+
+func initdbPod() object { return initdbPodOwnedBy("Job", initdbUID) }
 
 type resource struct {
 	group, version, plural, kind string
@@ -157,10 +179,12 @@ func newAPI() *apiFixture {
 	a.add("HelmRelease", ns, "zitadel", releaseUID, object{"status": object{"history": []object{{"status": "uninstalling"}}}})
 	a.add("PersistentVolumeClaim", ns, "customer-identity-db-1", claimUID, object{"metadata": owner("Cluster", "customer-identity-db", clusterUID), "spec": object{"volumeName": volume}})
 	a.add("PersistentVolume", "", volume, pvUID, object{"spec": object{"storageClassName": "longhorn-wffc", "claimRef": object{"namespace": ns, "name": "customer-identity-db-1", "uid": claimUID}}})
-	a.add("Volume", "longhorn-system", volume, backendUID, object{"spec": object{"lastAttachedBy": ""}, "status": object{"state": "detached", "actualSize": 0, "lastBackup": "", "kubernetesStatus": object{"lastPodRefAt": ""}}})
+	// As in production on 2026-11-15 06:30 UTC: Longhorn attached and formatted
+	// the volume for CNPG's initdb pod, whose initdb container never started.
+	a.add("Volume", "longhorn-system", volume, backendUID, object{"spec": object{"lastAttachedBy": ""}, "status": object{"state": "attached", "actualSize": 153804800, "lastBackup": "", "kubernetesStatus": object{"lastPodRefAt": "", "workloadsStatus": []object{{"podName": "customer-identity-db-1-initdb-x", "workloadName": initdbJob, "workloadType": "Job"}}}}})
 	// Derived and generated objects the live namespace holds.
-	a.add("Job", ns, "customer-identity-db-1-initdb", "uid-initdb", object{"metadata": owner("Cluster", "customer-identity-db", clusterUID)})
-	a.add("Pod", ns, "customer-identity-db-1-initdb-x", "uid-initdb-pod", object{"metadata": owner("Job", "customer-identity-db-1-initdb", "uid-initdb")})
+	a.add("Job", ns, initdbJob, initdbUID, object{"metadata": owner("Cluster", "customer-identity-db", clusterUID), "status": object{"active": 1, "failed": 1}})
+	a.add("Pod", ns, "customer-identity-db-1-initdb-x", "uid-initdb-pod", initdbPod())
 	helm := object{"labels": object{"app.kubernetes.io/managed-by": "Helm", "helm.toolkit.fluxcd.io/name": "zitadel", "helm.toolkit.fluxcd.io/namespace": ns}}
 	a.add("Job", ns, "zitadel-init", "uid-zitadel-init", object{"metadata": helm})
 	a.add("ConfigMap", ns, "zitadel-config-yaml", "uid-zitadel-config", object{"metadata": helm})
@@ -400,24 +424,65 @@ func TestBackedUpDatabaseIsRefused(t *testing.T) {
 	refused(t, a, "database-backed-up")
 }
 
-func TestWrittenVolumeIsRefused(t *testing.T) {
-	for name, status := range map[string]object{
-		"written":  {"state": "detached", "actualSize": 4096},
-		"attached": {"state": "attached", "actualSize": 0},
-		"used":     {"state": "detached", "actualSize": 0, "kubernetesStatus": object{"lastPodRefAt": "2026-11-15T04:00:00Z"}},
+func TestVolumeUsedOutsideInitdbIsRefused(t *testing.T) {
+	backend := func(a *apiFixture) object { return a.objects[path(find("Volume"), "longhorn-system", volume)] }
+	for name, change := range map[string]func(a *apiFixture){
+		"other workload": func(a *apiFixture) {
+			backend(a)["status"].(object)["kubernetesStatus"].(object)["workloadsStatus"] = []object{{"podName": "customer-identity-db-1", "workloadName": "customer-identity-db", "workloadType": "Cluster"}}
+		},
+		"pod reference": func(a *apiFixture) {
+			backend(a)["status"].(object)["kubernetesStatus"].(object)["lastPodRefAt"] = "2026-11-15T04:00:00Z"
+		},
+		"backed up": func(a *apiFixture) { backend(a)["status"].(object)["lastBackup"] = "backup-1" },
+		// Longhorn 1.13 records the last attacher in spec, not status.
+		"last attacher": func(a *apiFixture) { backend(a)["spec"] = object{"lastAttachedBy": "customer-identity-db-1"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			a := newAPI()
-			a.objects[path(find("Volume"), "longhorn-system", volume)]["status"] = status
-			refused(t, a, "volume-written")
+			change(a)
+			refused(t, a, "volume-used")
 		})
 	}
-	// Longhorn 1.13 records the last attacher in spec, not status.
-	t.Run("last attacher", func(t *testing.T) {
-		a := newAPI()
-		a.objects[path(find("Volume"), "longhorn-system", volume)]["spec"] = object{"lastAttachedBy": "customer-identity-db-1"}
-		refused(t, a, "volume-written")
-	})
+}
+
+func TestStartedPostgresIsRefused(t *testing.T) {
+	pod := func(a *apiFixture) object { return a.objects[path(find("Pod"), ns, "customer-identity-db-1-initdb-x")] }
+	initdb := func(a *apiFixture) object {
+		return pod(a)["status"].(object)["containerStatuses"].([]object)[0]
+	}
+	for name, c := range map[string]struct {
+		change func(a *apiFixture)
+		stage  string
+	}{
+		"started":    {func(a *apiFixture) { initdb(a)["started"] = true }, "database-ran"},
+		"restarted":  {func(a *apiFixture) { initdb(a)["restartCount"] = 1 }, "database-ran"},
+		"running":    {func(a *apiFixture) { initdb(a)["state"] = object{"running": object{}} }, "database-ran"},
+		"terminated": {func(a *apiFixture) { initdb(a)["state"] = object{"terminated": object{"exitCode": 0}} }, "database-ran"},
+		"ran before": {func(a *apiFixture) { initdb(a)["lastState"] = object{"terminated": object{"exitCode": 1}} }, "database-ran"},
+		"extra container": {func(a *apiFixture) {
+			pod(a)["spec"].(object)["containers"] = []object{{"name": "initdb"}, {"name": "shell"}}
+		}, "database-ran"},
+		"extra init container": {func(a *apiFixture) {
+			pod(a)["spec"].(object)["initContainers"] = []object{{"name": "bootstrap-controller"}, {"name": "restore"}}
+		}, "database-ran"},
+		"other pod mounts the claim": {func(a *apiFixture) {
+			a.add("Pod", ns, "debug", "uid-debug", initdbPodOwnedBy("Cluster", clusterUID))
+		}, "database-ran"},
+		"instance pod": {func(a *apiFixture) {
+			o := initdbPodOwnedBy("Cluster", clusterUID)
+			o["metadata"].(object)["labels"] = object{"cnpg.io/podRole": "instance"}
+			a.add("Pod", ns, "customer-identity-db-1", "uid-instance", o)
+		}, "database-served"},
+		"initdb succeeded": {func(a *apiFixture) {
+			a.objects[path(find("Job"), ns, initdbJob)]["status"] = object{"succeeded": 1}
+		}, "initdb-completed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := newAPI()
+			c.change(a)
+			refused(t, a, c.stage)
+		})
+	}
 }
 
 func TestDeployedServerIsRefused(t *testing.T) {
