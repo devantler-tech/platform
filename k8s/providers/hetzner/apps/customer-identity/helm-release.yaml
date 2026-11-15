@@ -270,8 +270,9 @@ spec:
             TLS: true
             From: no-reply@devantler.tech
             FromName: Devantler Tech
-          # The Devantler Tech look (near-black with #39ff14). The logo, font
-          # and watermark are set in the console (Branding).
+          # Only the starting look of a new instance: the setup CronJob
+          # (cron-job-setup.yaml) owns the label policy, so its colours, logos,
+          # icon, font and watermark are declared there and applied on every run.
           LabelPolicy:
             PrimaryColor: "#1f7a0f"
             BackgroundColor: "#fafafa"
