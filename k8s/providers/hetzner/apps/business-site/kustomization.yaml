@@ -15,6 +15,7 @@ resources:
   - certificate-portal-db-server.yaml
   - certificate-portal-db-replication.yaml
   - external-secret-portal-db-migrator.yaml
+  - external-secret-portal-db-migration.yaml
   - external-secret-portal-db-web.yaml
   - password-portal-db-coroot-monitor.yaml
   - external-secret-portal-db-coroot-monitor.yaml
@@ -26,5 +27,6 @@ resources:
   - cilium-network-policy-portal-db.yaml
   - cilium-network-policy-portal-db-coroot.yaml
   - cilium-network-policy-portal-egress.yaml
+  - cilium-network-policy-portal-migration.yaml
   # The WebApp's one projected Secret: disclosure and the portal's inputs.
   - external-secret-runtime.yaml
