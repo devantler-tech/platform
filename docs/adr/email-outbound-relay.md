@@ -78,6 +78,37 @@ are unchanged.
    and that replies thread against the sender's Sent copy despite SES's
    Message-ID rewrite. If threading fails, report it before switching relay.
 
+## The business site's sender
+
+The business site sends its own automated mail, such as sign-in codes and
+invitations, straight through SES rather than through company Email
+(#5400). It needs no mailbox, so it does not wait on the Email server's
+sign-in, recovery or public submission work, and it cannot reach any mailbox.
+
+- **A second send-only credential.** A separate IAM user may only
+  `ses:SendRawEmail` on the same domain identity, with the sender equal to
+  `no-reply@devantler.tech`. Its access key, policy and attachment are
+  platform-owned like the relay's, and no policy includes Delete.
+- **Custody.** A platform PushSecret copies the key ID and the derived SMTP
+  password to `apps/business-site/smtp` in OpenBao, as `username` and
+  `password`. The business site reads that one key through its dedicated role,
+  which also reads its public disclosure and nothing else.
+- **Use.** The site's mail client connects to
+  `email-smtp.eu-central-1.amazonaws.com` on port 587 with STARTTLS and SMTP
+  authentication, sending from `no-reply@devantler.tech`. The tenant owns its
+  own egress to that endpoint.
+- **Rotation.** Declare a new access key; the PushSecret then writes the new
+  credential. Remove the old key afterwards, with Delete added to its
+  policies first.
+- **Revocation.** No policy includes Delete, so removing a manifest leaves the
+  AWS object in place and the credential still sends. To stop sending, first
+  add Delete to the attachment's management policies and let it reconcile,
+  then remove the attachment and check in AWS that the user has no policy
+  attached.
+
+While the account is in the SES sandbox, this sender too reaches only verified
+recipients.
+
 ## Alternatives
 
 - **Direct delivery:** needs a dedicated address, reverse DNS and egress
