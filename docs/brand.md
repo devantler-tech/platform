@@ -7,7 +7,7 @@ inverted version.
 ## Logo
 
 | File | Use it for |
-|---|---|
+| --- | --- |
 | [`devantler-tech-logo.svg`](images/brand/devantler-tech-logo.svg) | Anything square: favicons, app and touch icons, avatars. A near-black tile (`#0b0f0c`), a thin `#39ff14` ring and the green orb with "DT". |
 | [`devantler-tech-logo-transparent.svg`](images/brand/devantler-tech-logo-transparent.svg) | Page headers and sign-in screens, on light and dark backgrounds alike. The same mark without the tile, with a `#2fc413` ring. |
 
@@ -30,7 +30,7 @@ in the same change.
 ## Colours
 
 | Name | Value |
-|---|---|
+| --- | --- |
 | Accent (neon green) | `#39ff14` |
 | Accent, lighter | `#7aff6e` |
 | Accent, dark tint | `#0a2e14` |
