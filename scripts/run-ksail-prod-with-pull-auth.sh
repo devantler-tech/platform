@@ -27,26 +27,31 @@ source "${SCRIPT_DIR}/ghcr-auth-lib.sh"
 require_flux_ghcr_yaml_tool
 
 readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.yaml}"
-# Viper applies this nested config override before KSail expands the two child
-# environment variables. The template itself contains no credential.
+# ksail.prod.yaml's localRegistry carries no credential: the root manifests
+# package is public and Flux pulls it anonymously (platform#6272). Only
+# `workload push` writes to it, so only push gets a credentialed registry.
+# Viper applies this nested config override before KSail expands the child
+# environment variable. The template itself contains no credential.
 # shellcheck disable=SC2016
-readonly PULL_REGISTRY_TEMPLATE='${GHCR_USERNAME}:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests'
+readonly PUSH_REGISTRY_TEMPLATE='devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests'
 pull_revision="$(flux_ghcr_revision "${SECRET_FILE}")"
 readonly pull_revision
 
 # A shell variable is required to pass the token in the child environment.
 # It never enters argv or stdout, and the constrained command set prevents an
 # arbitrary process from inheriting it. The Actions GHCR_TOKEN remains in the
-# workload-push step; only lifecycle reads override it. The non-secret SOPS
-# ciphertext revision defeats KSail's deliberate credential redaction in
-# machine-config fingerprints, so autoscaler templates still refresh on
-# token-only rotations.
+# workload-push step; lifecycle commands get the Git/SOPS pull token for the
+# Talos RegistryAuthConfig patch (node-level pulls of private images), never
+# for the root source. The non-secret SOPS ciphertext revision defeats KSail's
+# deliberate credential redaction in machine-config fingerprints, so autoscaler
+# templates still refresh on token-only rotations.
 if [[ "$1 $2" == "workload push" ]]; then
   if [[ -z "${GHCR_TOKEN:-}" || -z "${GITHUB_ACTOR:-}" ]]; then
     echo "::error::The Actions GHCR publish token and actor are required for workload push."
     exit 1
   fi
-  GHCR_USERNAME="${GITHUB_ACTOR}" \
+  KSAIL_SPEC_CLUSTER_LOCALREGISTRY_REGISTRY="${PUSH_REGISTRY_TEMPLATE}" \
+    GHCR_USERNAME="${GITHUB_ACTOR}" \
     GHCR_PULL_REVISION="${pull_revision}" \
     ksail --config ksail.prod.yaml "$1" "$2" "$3"
 else
@@ -61,8 +66,7 @@ else
   write_flux_ghcr_credentials "${docker_config}" "${credentials_file}"
   pull_username="$(jq -er '.username' "${credentials_file}")"
   pull_token="$(jq -er '.password' "${credentials_file}")"
-  KSAIL_SPEC_CLUSTER_LOCALREGISTRY_REGISTRY="${PULL_REGISTRY_TEMPLATE}" \
-    GHCR_USERNAME="${pull_username}" \
+  GHCR_USERNAME="${pull_username}" \
     GHCR_TOKEN="${pull_token}" \
     GHCR_PULL_REVISION="${pull_revision}" \
     ksail --config ksail.prod.yaml "$1" "$2"

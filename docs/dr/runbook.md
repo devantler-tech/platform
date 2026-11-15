@@ -184,6 +184,11 @@ Flux reconciliation.
 > # 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
 > ./scripts/run-ksail-prod-with-pull-auth.sh cluster create
 >
+> # 3a. The root source pulls the public manifests package anonymously (#6272).
+> #     A fresh cluster already does; this proves the package is readable
+> #     and removes a pullSecret left by an older configuration.
+> ./scripts/detach-flux-root-pull-secret.sh
+>
 > # 4. Bootstrap Flux from the most recently evidenced latest artifact. The
 > #    Actions-unavailable fallback cannot mint the workflow OIDC evidence, so
 > #    it deliberately leaves latest untouched instead of publishing weaker
@@ -813,7 +818,18 @@ gh secret set TALOS_CONFIG --env prod --repo devantler-tech/platform < ~/.talos/
 
 ## Scenario 10 — production GHCR pull credential rotation or denial
 
-The authoritative Flux, tenant, Kyverno, and Talos-host pull credential is the
+The root Flux source needs no pull credential: the Platform manifests package
+is public (#6272). `ksail.prod.yaml` gives KSail no `localRegistry` credential,
+so KSail sets no FluxInstance `spec.sync.pullSecret`, and both production
+entrypoints run `scripts/detach-flux-root-pull-secret.sh` before `latest` can
+move: it proves an anonymous pull of the synced artifact, removes a leftover
+`pullSecret`, and waits for the source to be re-rendered without it. It does not
+wait for the source to be Ready, because a bad verify matcher is repaired only
+after publish by `scripts/reassert-flux-root-verify.sh`. If that step fails
+with "not anonymously readable", the package visibility changed: make it public
+again rather than restoring a root pull secret.
+
+The authoritative tenant, Kyverno, and Talos-host pull credential is the
 SOPS-encrypted
 `stringData.ghcr_dockerconfigjson` value in
 `k8s/bases/bootstrap/secret.enc.yaml`. It is deliberately separate from the
@@ -849,10 +865,11 @@ The production deploy closes the bootstrap loop in this order:
 3. Patch `variables-base`; force-sync
    `seed-ghcr` into OpenBao; force-sync the tenant/Kyverno ExternalSecrets;
    verify every materialised `ghcr-auth` payload matches Git/SOPS; and only then
-   patch `flux-system/ksail-registry-credentials`. A fresh or partial DR
+   write the legacy `flux-system/ksail-registry-credentials` Secret where it
+   still exists (Flux no longer reads it). A fresh or partial DR
    bootstrap may have no ESO CRDs/resources yet; explicit
-   `--allow-incomplete-fanout` mode stages `variables-base` and repairs root auth
-   so the first reconcile can create the chain. Normal mode fails closed on any
+   `--allow-incomplete-fanout` mode stages `variables-base` so the first
+   reconcile can create the chain. Normal mode fails closed on any
    missing fan-out resource.
 4. Push the artifact to a run-unique staging reference. Resolve its digest,
    cosign-sign it keyless, and attach its CycloneDX SBOM and SLSA provenance
@@ -901,10 +918,10 @@ done
 flux get sources oci -A --context admin@prod
 ```
 
-Do not replace this bridge with only a root ExternalSecret: Flux needs valid root
-auth to fetch the artifact that installs/updates External Secrets, while OpenBao
-receives this rotated value only through a downstream PushSecret. That circular
-dependency cannot recover a stale root credential by itself.
+The root Flux source no longer takes part in a rotation: it pulls the public
+manifests package anonymously (#6272), so a rotated or revoked token cannot stop
+Flux from fetching the artifact that delivers the rest of this chain. The bridge
+still carries the token to Talos nodes and the External Secrets fan-out.
 
 ---
 
@@ -932,7 +949,7 @@ scheduling fence left to release. It confirms absence through the Kubernetes
 API, including after a failed release patch. A denied or failed read, malformed
 response, replacement Node, or changed fence owner cannot authorize release.
 This cleanup result does not prove rollout convergence: losing a target still
-blocks the root cutover until the bridge's convergence checks pass.
+blocks the transaction from completing until the bridge's convergence checks pass.
 
 A held policy fence is the more serious of the two: the deploy fails loudly, but
 the suspended Kustomization silently stops GitOps reconciliation for that layer

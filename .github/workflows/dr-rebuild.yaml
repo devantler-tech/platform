@@ -247,6 +247,13 @@ jobs:
           # renders an empty key and Talos rejects the whole machine config.
           WG_SERVER_PRIVATE_KEY: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
+      - name: 🔓 Detach the root source from its pull secret
+        # ksail.prod.yaml gives the root source no credential (#6272), so a
+        # fresh cluster already pulls anonymously and this takes no write. It
+        # still proves the public package is readable before publishing, and
+        # repairs a cluster created from an older configuration.
+        run: ./scripts/detach-flux-root-pull-secret.sh
+
       - name: 🛡️ Suspend autoscaling for the Cilium rollout gate
         id: cilium_rollout_gate
         # A rebuilt cluster must preserve the same staged OnDelete safety

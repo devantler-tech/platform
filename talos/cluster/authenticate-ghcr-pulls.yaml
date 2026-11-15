@@ -19,8 +19,9 @@
 # no endpoint redirect. (ksail's --mirror-registry flag is the wrong tool here —
 # it rewrites the endpoint to a local pull-through container that doesn't exist
 # on Hetzner, and it's only ever processed at `cluster create`, never on
-# `cluster update`.) It is the same credential the cluster already holds for the
-# Flux manifests artifact (spec.cluster.localRegistry), so it adds no new trust.
+# `cluster update`.) It is the Git/SOPS pull credential the External Secrets
+# fan-out also serves to tenants and Kyverno, so it adds no new trust. The root
+# Flux source no longer uses it: that package is public (platform#6272).
 #
 # ${GHCR_TOKEN} is expanded by ksail when it loads this patch. Production
 # cluster lifecycle commands inject the validated Git/SOPS pull token through

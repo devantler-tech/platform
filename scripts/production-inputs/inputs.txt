@@ -59,6 +59,7 @@ scripts/canonical-tenant-source-bindings.json
 scripts/canonical-tenant-source.lib.sh
 scripts/check-flux-prune-failures.sh
 scripts/cosign-failure-lib.sh
+scripts/detach-flux-root-pull-secret.sh
 scripts/frozen-legacy-publisher-release.tsv
 scripts/generate-publish-workflow-approved-revisions.sh
 scripts/ghcr-auth-lib.sh

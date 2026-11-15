@@ -2692,6 +2692,40 @@ func TestDRWithoutFanoutDoesNotDrainNodes(t *testing.T) {
 	}
 }
 
+// A DR cluster created from the credential-free localRegistry has no root pull
+// Secret: the root source pulls the public package anonymously (platform#6272).
+// Both the bootstrap and the full transaction must succeed without one, and
+// must never create it.
+func TestClusterWithoutLegacyRootSecretNeedsNoRootPatch(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		args      []string
+		overrides map[string]string
+	}{
+		"dr-bootstrap": {
+			args:      []string{"--allow-incomplete-fanout"},
+			overrides: map[string]string{"FAKE_VARIABLES_BASE_ABSENT": "true", "FAKE_ROOT_SECRET_ABSENT": "true"},
+		},
+		"full-transaction": {
+			overrides: map[string]string{"FAKE_ROOT_SECRET_ABSENT": "true"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), test.args, test.overrides)
+			requireSuccessResult(t, result)
+			if pathExists(f.operationLog) {
+				requireNoLine(t, readLines(f.operationLog), "root-patch")
+			}
+			if pathExists(f.patchCapture) {
+				t.Error("wrote a root pull Secret the cluster does not have")
+			}
+			requireContains(t, result.stdout, "No legacy root pull Secret")
+		})
+	}
+}
+
 func TestInvalidNodeInventoryFailsClosed(t *testing.T) {
 	t.Parallel()
 	invalidInventories := []any{

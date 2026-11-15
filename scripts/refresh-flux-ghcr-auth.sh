@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Refresh the KSail-managed root Flux pull Secret from the Git/SOPS source.
+# Carry the Git/SOPS GHCR pull credential to Talos nodes and the External
+# Secrets fan-out (tenants, Kyverno).
 #
-# Flux cannot fetch the artifact containing a rotated credential while its
-# bootstrap Secret is stale. Keep this bridge outside Flux so a deployment can
-# repair that bootstrap edge before asking Flux to reconcile.
+# The root Flux source is no longer part of this: the manifests package is
+# public and detach-flux-root-pull-secret.sh removes its pull secret
+# (platform#6272). The legacy root Secret write that remains is inert and goes
+# with the rest of this bridge once node pull auth has a smaller home.
 
 set -euo pipefail
 set +x
@@ -6802,7 +6804,27 @@ patch_secret_data_with_cas() {
 }
 
 # Patch only the root Flux Secret payload, preserving KSail ownership metadata.
+#
+# Flux no longer reads this Secret: the root manifests package is public and
+# detach-flux-root-pull-secret.sh removes the FluxInstance pullSecret
+# (platform#6272). A cluster KSail created without a localRegistry credential
+# has no such Secret at all, and there is nothing to refresh. The remaining
+# write on older clusters is inert and goes with the rest of this bridge.
 patch_root_secret() {
+  local root_secret_name
+  if ! root_secret_name="$(kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get secret ksail-registry-credentials \
+    --ignore-not-found \
+    -o name)"; then
+    echo "::error::Could not determine whether the legacy root pull Secret exists."
+    return 1
+  fi
+  if [[ -z "${root_secret_name}" ]]; then
+    echo "ℹ️ No legacy root pull Secret: the root Flux source pulls the public manifests package anonymously."
+    return 0
+  fi
   patch_secret_data_with_cas \
     flux-system \
     ksail-registry-credentials \
@@ -6888,10 +6910,19 @@ secret_matches_sops_credential() {
     cmp -s "${expected_normalized}" "${converged_decoded_file}"
 }
 
-# Report whether the root Secret holds the Git/SOPS credential: exactly the Git/SOPS
-# docker config, or exactly the form KSail writes for that same credential. Any
-# other payload, in either format, is a mismatch. Read-only.
+# A confirmed-absent legacy root Secret needs no refresh. When it exists, require
+# exactly the Git/SOPS docker config or the form KSail writes for that credential.
+# Failed reads and every other payload remain a mismatch. Read-only.
 root_secret_matches_sops_credential() {
+  local root_secret_name
+  root_secret_name="$(kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get secret ksail-registry-credentials \
+    --ignore-not-found \
+    -o name)" || return 1
+  [[ -n "${root_secret_name}" ]] || return 0
+
   read_converged_secret_credential \
     flux-system ksail-registry-credentials .dockerconfigjson &&
     {
@@ -6906,7 +6937,7 @@ root_secret_matches_sops_credential() {
 # synchronization Lease, no Flux policy pause, no controller restart and no
 # Secret or External Secrets write.
 #
-# This is a fast path only. Every mismatch, missing object, residual fence,
+# This is a fast path only. Every mismatch, missing required object, residual fence,
 # unready or stale seed probe, unproved node, and failed or malformed read
 # returns non-zero, and the caller then runs today's full fenced transaction
 # unchanged. A failed read can therefore never select the no-write path.
@@ -6941,7 +6972,7 @@ ghcr_chain_is_converged_without_writes() {
     and ((.spec.suspend // false) == false)
   ' "${flux_policy_parent_state_file}" >/dev/null 2>&1 || return 1
 
-  # Root auth and the staged seed source already hold the SOPS credential.
+  # The optional legacy root auth and the staged seed source need no refresh.
   converged_check=root-auth
   root_secret_matches_sops_credential || return 1
   converged_check=variables-base

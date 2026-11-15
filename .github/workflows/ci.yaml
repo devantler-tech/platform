@@ -618,6 +618,10 @@ jobs:
               # or its test alone — still runs the check that covers it.
               - 'scripts/reassert-flux-root-verify.sh'
               - 'scripts/tests/test-reassert-flux-root-verify.sh'
+              # Both halves, so editing the root-source pull-secret detach alone —
+              # or its test alone — still runs the check that covers it.
+              - 'scripts/detach-flux-root-pull-secret.sh'
+              - 'scripts/tests/test-detach-flux-root-pull-secret.sh'
               # The values it checks live under k8s/**; this entry makes an edit to
               # the test alone run it too.
               - 'scripts/tests/test-kube-system-addon-cpu-limits.sh'
@@ -2787,6 +2791,14 @@ jobs:
         # healthy cluster, and fails closed on anything it cannot read.
         run: bash scripts/tests/test-reassert-flux-root-verify.sh
 
+      - name: 🔓 Validate the deploy detaches the root source from its pull secret
+        if: needs.changes.outputs.k8s == 'true'
+        # The root manifests package is public (#6272), and a stale credential
+        # breaks even a public pull. Pin that the deploy removes the FluxInstance
+        # pullSecret only after proving an anonymous pull, writes nothing on a
+        # detached cluster, and fails closed on anything it cannot read.
+        run: bash scripts/tests/test-detach-flux-root-pull-secret.sh
+
       - name: 🧢 Validate kube-system add-ons declare their CPU limit
         if: needs.changes.outputs.k8s == 'true'
         # The kube-system LimitRange only reaches pods admitted after it exists, so the
@@ -4096,6 +4108,9 @@ jobs:
 
       - name: 🛡️ Validate the root source repair before deployment
         run: bash scripts/tests/test-reassert-flux-root-verify.sh
+
+      - name: 🔓 Validate the root source pull-secret detach before deployment
+        run: bash scripts/tests/test-detach-flux-root-pull-secret.sh
 
   validate-rgd-templates-merge-group:
     name: 🔬 Validate Nested RGD Workload Templates (merge group)
