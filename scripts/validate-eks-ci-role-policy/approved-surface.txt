@@ -60,6 +60,8 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3
 
+helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|zitadel 9c0c9f431282b3053bbebee8798367240c186e545a5d55e7b4770ad8cdd44495
+
 helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex e2cbe6e6b5ace19ebded8d0e75f508277dd450c079ed51062d13649e148904b9
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns 107eaf8ad3d74abff5c6b1c6d7ca1b49ac75829fe425672f81cdc1e799457511
@@ -417,6 +419,8 @@ source.toolkit.fluxcd.io/v1|HelmRepository|cert-manager|simply-dns-webhook 3284e
 source.toolkit.fluxcd.io/v1|HelmRepository|cnpg-system|cloudnative-pg 2ca8952aaa7cb74110e7c6a4568406045bb00cd589ef16003025dc12eb791e61
 
 source.toolkit.fluxcd.io/v1|HelmRepository|crossplane-system|crossplane f47ce87b7611344b0d38ff450e6f789a60711bd657a2ff063253c5fcbd30e754
+
+source.toolkit.fluxcd.io/v1|HelmRepository|customer-identity|zitadel f156b723dae5eac81d6b84453a416739de755378d12a665970576b0ce199b219
 
 source.toolkit.fluxcd.io/v1|HelmRepository|dex|dex d251b34144fb4d376b47526e24b3520a1cc696159aa72f1a8c06fa67aadbda7f
 
