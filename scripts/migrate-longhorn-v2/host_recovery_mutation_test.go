@@ -95,24 +95,41 @@ func TestHostRecoveryFreshNodeStillRequiresItsCompleteIdentity(t *testing.T) {
 	}
 }
 
-func TestHostRecoveryDoesNotConfirmAnUncommittedWriteOrPublishCommandDetails(t *testing.T) {
-	for _, stage := range []string{"journal-returning", "uncordon", "remove-fence", "journal-recovered"} {
-		t.Run(stage, func(t *testing.T) {
-			f, h := hostRebootAPI(t)
-			writes := 0
-			h.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
-				if recoveryWriteAttemptMatches(f, input, program, args, stage) {
-					writes++
-					return nil, errors.New("synthetic private command detail")
+// Exercise every fixed write boundary with a failed response both before
+// and after server commitment; only the latter can pass exact readback.
+func TestHostRecoveryLostWriteResponsesKeepSingleWriteScope(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		for _, stage := range []string{"journal-returning", "uncordon", "remove-fence", "journal-recovered"} {
+			t.Run(fmt.Sprintf("%s/committed-%t", stage, committed), func(t *testing.T) {
+				f, h := hostRebootAPI(t)
+				writes := 0
+				lost := errors.New("synthetic private command detail")
+				h.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+					if !committed && recoveryWriteAttemptMatches(f, input, program, args, stage) {
+						writes++
+						return nil, lost
+					}
+					output, err := f.run(ctx, input, program, args...)
+					if committed && err == nil && hostRecoveryWriteMatches(f, input, program, args, stage) {
+						writes++
+						return nil, lost
+					}
+					return output, err
 				}
-				return f.run(ctx, input, program, args...)
-			}
-			err := h.run(t.Context())
-			_, record, readErr := h.read(t.Context())
-			if err == nil || writes != 1 || readErr != nil || record.Phase == "recovered" || strings.Contains(err.Error(), "private command detail") {
-				t.Fatal("an uncommitted write was accepted, retried, or exposed:", err, writes)
-			}
-		})
+				err := h.run(t.Context())
+				_, record, readErr := h.read(t.Context())
+				if writes != 1 || f.reboots != 1 || f.drains != 1 || readErr != nil {
+					t.Fatal("response loss changed the single-write/reboot scope:", err, writes)
+				}
+				if committed {
+					if err != nil || record.Phase != "recovered" || value(f.base.node, "spec", "unschedulable") == true || text(f.base.node, "metadata", "annotations", fenceAnnotation) != "" {
+						t.Fatal("exact committed-state readback did not finish recovery:", err)
+					}
+				} else if err == nil || record.Phase == "recovered" || strings.Contains(err.Error(), "private command detail") {
+					t.Fatal("an uncommitted write was accepted or exposed:", err)
+				}
+			})
+		}
 	}
 }
 
@@ -185,30 +202,6 @@ func TestHostRecoveryRejectsContradictoryOrUnreadableWriteReadback(t *testing.T)
 				}
 			})
 		}
-	}
-}
-
-func TestHostRecoveryConfirmsLostWriteResponsesWithoutAnotherWrite(t *testing.T) {
-	for _, stage := range []string{"journal-returning", "uncordon", "remove-fence", "journal-recovered"} {
-		t.Run(stage, func(t *testing.T) {
-			f, h := hostRebootAPI(t)
-			writes := 0
-			h.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
-				output, err := f.run(ctx, input, program, args...)
-				if err != nil || !hostRecoveryWriteMatches(f, input, program, args, stage) {
-					return output, err
-				}
-				writes++
-				return nil, errors.New("synthetic private command detail")
-			}
-			if err := h.run(t.Context()); err != nil || f.reboots != 1 || f.drains != 1 || writes != 1 {
-				t.Fatal("an acknowledged-by-readback write was replayed or held:", err, writes)
-			}
-			_, record, err := h.read(t.Context())
-			if err != nil || record.Phase != "recovered" || value(f.base.node, "spec", "unschedulable") == true || text(f.base.node, "metadata", "annotations", fenceAnnotation) != "" {
-				t.Fatal("recovery completed without its final scheduling and journal proofs:", err)
-			}
-		})
 	}
 }
 
