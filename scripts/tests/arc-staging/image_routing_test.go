@@ -14,13 +14,46 @@ import (
 )
 
 // appPublisher is a reviewed maintained publish-app revision the publishapp
-// attestor accepts. deletedPublishers are identities of the deleted legacy
-// publisher repository, which no attestor accepts at any commit (#6264).
+// attestor accepts. deletedPublishers are the deleted legacy publisher's
+// commit-pinned identities, which no attestor accepts at any commit (#6264). A
+// release tag under that repository name is a different identity: the
+// publishapp attestor accepts any first-party repository's release workflow on
+// a release tag except `.github` (#6265), see ownReleaseSigners.
 const appPublisher = "https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"
 
 var deletedPublishers = []string{
 	"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40),
 	"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328",
+}
+
+// ownReleaseSigners are first-party release-workflow identities (#6265, ADR 0017).
+// The publishapp attestor accepts a valid one for every ordinary first-party
+// image: one repository segment that starts with a letter or digit, one workflow
+// file directly in .github/workflows/, and a strict semver release tag. Every
+// other attestor refuses them all. A repository named `actions` would be a
+// first-party repository like any other, so its release tags are accepted;
+// `.github` hosts reusable workflows other repositories call, so its tags are
+// refused.
+var ownReleaseSigners = []struct {
+	subject string
+	valid   bool
+}{
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3", true},
+	{"https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/cd.yml@refs/tags/v1.2.3-rc.1", true},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/heads/main", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@" + strings.Repeat("c", 40), false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/latest", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3/../evil", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/nested/release.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/wedding-app/sub/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v21.3.4", false},
+	{"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/.github/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3", true},
+	{"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0", true},
+	{"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328", false},
+	{"https://github.com/other-owner/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
 }
 
 // Evaluate the committed CEL unchanged. Only the remote cryptographic lookup
@@ -90,7 +123,10 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 						{"customer identity signer", identityPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcustomeridentity"},
 						{"shared app signer", appPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
 						{"identity wrong workflow", strings.Replace(identityPublisher, "publish-identity.yaml", "publish-runtime.yaml", 1), githubIssuer, fixture.attestor == ""},
-						{"identity tag ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/tags/v4.20.0", 1), githubIssuer, fixture.attestor == ""},
+						// The business-site repository's workflow on a release tag is a
+						// first-party release identity (#6265), so it satisfies only the
+						// generic app attestor, never the dedicated identity attestor.
+						{"identity tag ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/tags/v4.20.0", 1), githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
 						{"identity pull request ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/pull/1/merge", 1), githubIssuer, fixture.attestor == ""},
 						{"identity lookalike branch", identityPublisher + "-other", githubIssuer, fixture.attestor == ""},
 						{"checkpoint signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcorootcheckpoint"},
@@ -128,6 +164,16 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 								image: {issuer: githubIssuer, subject: deleted},
 							})
 							equal(t, admitted, fixture.attestor == "")
+						})
+					}
+					for _, signer := range ownReleaseSigners {
+						t.Run("own release "+signer.subject, func(t *testing.T) {
+							images := map[string][]string{"containers": {}, "initContainers": {}, "ephemeralContainers": {}}
+							images[slot] = []string{image}
+							admitted, _ := evaluator.evaluate(t, images, map[string]certificateFixture{
+								image: {issuer: githubIssuer, subject: signer.subject},
+							})
+							equal(t, admitted, fixture.attestor == "" || (fixture.attestor == "publishapp" && signer.valid))
 						})
 					}
 				})

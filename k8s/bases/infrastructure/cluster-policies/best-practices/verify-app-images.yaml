@@ -61,11 +61,32 @@ spec:
     - name: publishapp
       cosign:
         keyless:
-          # Only the maintained publisher is accepted, and only at the
-          # explicitly reviewed revisions (v19.0.5 #5404, v21.3.4 #6228), not
-          # every commit in its repository. The deleted legacy publisher
-          # repository is no longer accepted at any commit (#6264). Mutable
-          # refs and tags are refused. Keep this to exactly ONE identity
+          # Two alternatives in ONE anchored group:
+          # 1. The maintained shared publisher, only at the explicitly reviewed
+          #    revisions (v19.0.5 #5404, v21.3.4 #6228), not every commit in
+          #    its repository. Mutable refs and tags of the shared publisher
+          #    are refused. The deleted legacy publisher repository is not
+          #    accepted at any commit (#6264). Kept until its consumers have
+          #    moved (#6266).
+          # 2. A first-party repository's OWN release workflow on a release
+          #    tag (ADR 0017, #6265): the products sign with a composite
+          #    action from their own workflow, so the Fulcio subject names
+          #    their repository. The repository is one path segment (no `/`)
+          #    that starts with a letter or digit, so the `.github` repository
+          #    is excluded: it hosts the shared reusable publishers, and a
+          #    reusable workflow carries its host's identity whoever calls it.
+          #    The workflow file sits directly in .github/workflows/, and the
+          #    tag is the same strict OCI-semver grammar as the ksail cd.yaml
+          #    identity below (pre-releases included, nothing after it).
+          #    Every other first-party name matches, `actions` included: a
+          #    repository created under that name would be a first-party
+          #    repository like any other. The deleted publisher's commit-pinned
+          #    identities stay refused (alternative 1 pins commits).
+          # This verifier binds a signature to the first-party organisation,
+          # not to one product: the per-tenant manifest source binds each
+          # product to its own repository, and its signed manifests pin the
+          # image digests.
+          # Keep this to exactly ONE identity
           # entry: the IVPOL engine verifies cosign v3 bundles through
           # sigstore-go, which rejects more than one identity per verification
           # ("unsupported: multiple identities are not supported at this
@@ -76,7 +97,7 @@ spec:
           # form as an alternation inside this one regex.
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)$
+              subjectRegExp: ^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)|[A-Za-z0-9][A-Za-z0-9_.-]*/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$
     # The Kubescape storage compatibility image is produced inside this
     # repository rather than through actions/publish-app.yaml: its publisher
     # checks out one immutable upstream storage commit, applies the reviewed
@@ -303,8 +324,9 @@ spec:
         .all(e, e > 0)
       message: >-
         first-party app image is not signed by the publish-app release
-        pipeline (keyless cosign, an explicitly approved maintained revision —
-        a release tag is not accepted)
+        pipeline at an explicitly approved maintained revision, nor by a
+        first-party repository's own release workflow on a release tag
+        (keyless cosign)
     - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,

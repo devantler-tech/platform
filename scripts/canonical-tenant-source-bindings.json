@@ -7,7 +7,7 @@
       "workflow": "publish-app",
       "kind": "published-binding",
       "sourcePath": "k8s/providers/hetzner/apps/business-site/tenant.yaml",
-      "constructorSpecSha256": "b45e796be605f38083ab6c45160fed3075be36e76b9480b3000c763e72b1569d",
+      "constructorSpecSha256": "faf51ec80f0300beecb4f6a9b147ed6784daacaef708a9a604438b4a966f3456",
       "tenantIdentity": {
         "apiVersion": "kro.run/v1alpha1",
         "kind": "Tenant",

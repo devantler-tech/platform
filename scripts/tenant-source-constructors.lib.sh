@@ -2,14 +2,20 @@
 # The only dynamic publisher/selector profile admitted by the generic Tenant.
 # This reads both exact constructors and their complete schema input domain;
 # it never evaluates arbitrary CEL or grants a consumer publisher approval.
+#
+# The default subject also accepts the tenant's own repository's release workflow on a
+# release tag (#6265). That alternative is built from the regex-escaped tenant name, so
+# the printed default subject names it with the literal `<tenant>`, which is no
+# repository name and matches no identity. The exact constructor below is what binds
+# that segment to the tenant; the publisher guard judges the rest.
 tenant_source_default_subject() (
   set -o pipefail
   local file="$1" observed="${2:-}" ref expected_subject default_subject source_type digest_type publisher_type lifecycle
   # shellcheck disable=SC2016 # Literal CEL, never shell expansion.
   ref='${schema.spec.source.digest == "" ? {"semver": ">=1.0.0"} : {"digest": schema.spec.source.digest}}'
   # shellcheck disable=SC2016 # Literal CEL, never shell expansion.
-  expected_subject='${schema.spec.source.publisherRevision == "" ? "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)$" : "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@" + schema.spec.source.publisherRevision + "$"}'
-  default_subject='^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)$'
+  expected_subject='${schema.spec.source.publisherRevision == "" ? "^https://github\\.com/devantler-tech/(\\.github/\\.github/workflows/publish-app\\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)|" + schema.spec.name.replace(".", "\\.").replace("-", "\\-") + "/\\.github/workflows/[^/]+\\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$" : "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@" + schema.spec.source.publisherRevision + "$"}'
+  default_subject='^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)|<tenant>/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$'
   source_type="TenantSource | default={} validation=\"((!has(self.digest) || self.digest == '') == (!has(self.publisherRevision) || self.publisherRevision == '')) && (!has(self.reconcileApplication) || self.reconcileApplication || (has(self.digest) && self.digest != ''))\" validation=\"!has(oldSelf.digest) || oldSelf.digest == '' || (has(self.digest) && self.digest != '')\""
   digest_type='string | default="" maxLength=71 pattern="^$|^sha256:[0-9a-f]{64}$"'
   publisher_type='string | default="" maxLength=40 pattern="^$|^[0-9a-f]{40}$"'
@@ -25,7 +31,7 @@ tenant_source_default_subject() (
       | ($graphs | length) == 1
       and ($graphs[0].spec.schema | .apiVersion == "v1alpha1" and .kind == "Tenant" and .scope == "Namespaced"
         and .types.TenantSource == {digest: $digest_type, publisherRevision: $publisher_type, reconcileApplication: $lifecycle}
-        and .spec.source == $source_type and (.spec | has("reconcileApplication") | not))
+        and .spec.source == $source_type and .spec.name == "string" and (.spec | has("reconcileApplication") | not))
       and ([$graphs[0].spec.resources[] | select(.id == "ociRepository")] | length) == 1
       and ([$graphs[0].spec.resources[] | select(.id == "ociRepository")][0].template |
         .apiVersion == "source.toolkit.fluxcd.io/v1" and .kind == "OCIRepository"

@@ -82,9 +82,21 @@ manifest_path() { printf 'k8s/bases/apps/%s/oci-repository.yaml\n' "$(package_fo
 legacy_subject() { # <workflow> <ref>
   printf '^https://github\\.com/devantler-tech/actions/\\.github/workflows/%s\\.yaml@%s$' "$1" "$2"
 }
-family_subject() { # <workflow> <legacy-ref> <canonical-ref>
-  printf '^https://github\\.com/devantler-tech/(actions/\\.github/workflows/%s\\.yaml@%s|\\.github/\\.github/workflows/%s\\.yaml@%s)$' \
-    "$1" "$2" "$1" "$3"
+# The consumer's own release workflow alternative (#6265), written independently of the
+# library under test: its current repository with dots escaped, on a strict semver tag.
+# The `.github` consumer, whose repository hosts the shared publishers, has none.
+readonly OWN_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+own_release_of() { # <consumer>
+  local repository="$1"
+  case "$1" in
+    .github) return 0 ;;
+    data-product-controller) repository=khoist ;;
+  esac
+  printf '|%s%s' "${repository//./\\.}" "$OWN_TAIL"
+}
+family_subject() { # <workflow> <legacy-ref> <canonical-ref> [consumer]
+  printf '^https://github\\.com/devantler-tech/(actions/\\.github/workflows/%s\\.yaml@%s|\\.github/\\.github/workflows/%s\\.yaml@%s%s)$' \
+    "$1" "$2" "$1" "$3" "$(if [ -n "${4:-}" ]; then own_release_of "$4"; fi)"
 }
 canonical_subject() { # <workflow> <canonical-ref> — the generic verifiers' form (#6264)
   printf '^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/%s\\.yaml@%s$' "$1" "$2"
@@ -239,7 +251,7 @@ expect_refusal 'the same canonical commit recorded twice is refused' "$root" "$m
 
 root="$(build_tree record-second-unrendered)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
 expect_refusal 'a second recorded commit the matcher does not carry is refused, naming both' "$root" "$manifest_consumer" "($SHA_K|$SHA_X)"
 
 root="$(build_tree record-app-consumer)"
@@ -283,7 +295,7 @@ expect_refusal 'a final row without a trailing newline is still read' "$root" "$
 # ── the guard, both families ──────────────────────────────────────────────────────────────
 root="$(build_tree family-agrees)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
 expect_pass 'a two-family matcher naming the recorded commit and the legacy set passes' "$root"
 
 # Application approvals use the same strict record and one anchored identity;
@@ -291,87 +303,87 @@ expect_pass 'a two-family matcher naming the recorded commit and the legacy set 
 app_row="$(printf '%s\tpublish-app\t%s\t%s' "$app_consumer" "$CANONICAL_REPOSITORY" "$SHA_K")"
 root="$(build_tree app-family-agrees)"
 write_record "$root" "$app_row"
-write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "$SHA_K")"
+write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "$SHA_K" "$app_consumer")"
 expect_pass 'an application accepts only its matching recorded publisher' "$root"
-write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "$SHA_X")"
+write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "$SHA_X" "$app_consumer")"
 expect_refusal 'an application refuses an unapproved canonical commit' "$root" "$app_consumer" "$SHA_X" "$SHA_K"
-write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "$PATTERN")"
+write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "$PATTERN" "$app_consumer")"
 expect_refusal 'an application refuses a wildcard canonical revision' "$root" 'not one 40-hex commit'
 
 root="$(build_tree app-family-moving)"
 write_record "$root" "$app_row" "$(printf '%s\tpublish-app\t%s\t%s' "$app_consumer" "$CANONICAL_REPOSITORY" "$SHA_X")"
-write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "($SHA_K|$SHA_X)")"
+write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "($SHA_K|$SHA_X)" "$app_consumer")"
 expect_pass 'an application may overlap exactly two reviewed canonical commits' "$root"
 write_record "$root" "$app_row" "$(printf '%s\tpublish-app\t%s\t%s' "$app_consumer" "$CANONICAL_REPOSITORY" "$SHA_X")" "$(printf '%s\tpublish-app\t%s\t%s' "$app_consumer" "$CANONICAL_REPOSITORY" "$SHA_A")"
 expect_refusal 'an application may not approve a third canonical commit' "$root" 'at most two canonical commits'
 
 root="$(build_tree family-both)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$other_manifest_consumer" "$SHA_X")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
-write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "($SHA_E|$SHA_B|$SHA_A)" "$SHA_X")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "($SHA_E|$SHA_B|$SHA_A)" "$SHA_X" "$other_manifest_consumer")"
 expect_pass 'each manifest consumer carries its own recorded commit, legacy set in any order' "$root"
 
 # While a publisher moves, the matcher carries both recorded commits, in the record's order.
 root="$(build_tree family-moving)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)" "$manifest_consumer")"
 expect_pass 'a two-family matcher naming both recorded commits in record order passes' "$root"
 
 root="$(build_tree family-moving-other-consumer)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$other_manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)")"
-write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)" "$manifest_consumer")"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$other_manifest_consumer")"
 expect_pass "one consumer's second commit leaves another consumer on its single commit" "$root"
 
 root="$(build_tree family-moving-reordered)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_X|$SHA_K)")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_X|$SHA_K)" "$manifest_consumer")"
 expect_refusal 'the two recorded commits in another order are not the rendered spelling' "$root" "$manifest_consumer" "($SHA_X|$SHA_K)" "($SHA_K|$SHA_X)"
 
 root="$(build_tree family-moving-unrecorded-second)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)" "$manifest_consumer")"
 expect_refusal 'a second canonical commit the record does not hold is refused, naming both' "$root" "$manifest_consumer" "($SHA_K|$SHA_X)" "@$SHA_K"
 
 root="$(build_tree family-moving-foreign-second)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_A)")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_A)" "$manifest_consumer")"
 expect_refusal 'a second canonical commit other than the recorded one is refused' "$root" "$manifest_consumer" "($SHA_K|$SHA_A)"
 
 root="$(build_tree family-unrecorded)"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
 expect_refusal 'a canonical family the record does not approve is refused' "$root" "$manifest_consumer" "$SHA_K" 'record none'
 
 root="$(build_tree family-other-commit)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_X")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_X" "$manifest_consumer")"
 expect_refusal 'a canonical commit other than the recorded one is refused, naming both' "$root" "$manifest_consumer" "$SHA_X" "$SHA_K"
 
 root="$(build_tree family-wrong-consumer)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
-write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$other_manifest_consumer")"
 expect_refusal "one consumer's approval does not cover another" "$root" "$other_manifest_consumer" 'record none'
 
 root="$(build_tree family-legacy-foreign)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "($SHA_A|$SHA_B|$SHA_X)" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "($SHA_A|$SHA_B|$SHA_X)" "$SHA_K" "$manifest_consumer")"
 expect_refusal 'the legacy set is still judged inside a two-family matcher' "$root" "$manifest_consumer" "$SHA_X" 'not the generated set'
 
 root="$(build_tree family-legacy-dropped)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "($SHA_A|$SHA_B)" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "($SHA_A|$SHA_B)" "$SHA_K" "$manifest_consumer")"
 expect_refusal 'adding the canonical family may not drop a legacy approval' "$root" "$manifest_consumer" 'not the generated set'
 
 root="$(build_tree family-legacy-pattern)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_K" "$manifest_consumer")"
 expect_refusal 'the pattern form stays refused under enforcement inside a two-family matcher' "$root" "$manifest_consumer" 'pattern form'
 
 for floating in "$PATTERN" '.+' 'refs/heads/main' "$SHA_K|$SHA_X" "($SHA_K)" "($SHA_K|$SHA_K)" "($SHA_K|$SHA_X|$SHA_A)" "($SHA_K|$PATTERN)" "($SHA_K|.*)" "($SHA_K|$SHA_X).*"; do
   root="$(build_tree family-floating)"
   write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-  write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$floating")"
+  write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$floating" "$manifest_consumer")"
   expect_refusal "a canonical ref of '$floating' is refused as not one commit" "$root" 'not one 40-hex commit'
 done
 
@@ -413,7 +425,7 @@ expect_refusal 'a canonical-only matcher drops every legacy approval and is refu
 
 root="$(build_tree family-unanchored)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-subject="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+subject="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
 write_consumer "$root" "$manifest_consumer" "${subject%\$}"
 expect_refusal 'an unanchored two-family matcher is refused' "$root" "does not end with ')\$'"
 
@@ -442,23 +454,58 @@ expect_refusal 'a canonical-only subject in a second document is refused' "$root
 
 root="$(build_tree family-empty-legacy)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests '' "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests '' "$SHA_K" "$manifest_consumer")"
 expect_refusal 'an empty legacy ref is refused by name' "$root" 'names no revision'
+
+# ── the consumer's own release workflow (#6265) ───────────────────────────────────────────
+root="$(build_tree own-release-missing)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+expect_refusal 'a two-family matcher without its own release workflow is refused' "$root" 'does not accept its own release workflow'
+
+root="$(build_tree own-release-other-repository)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" \
+  "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$other_manifest_consumer-x")"
+expect_refusal "a matcher accepting another repository's release workflow is refused" "$root" 'not exactly'
+
+root="$(build_tree own-release-any-repository)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" \
+  "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "[a-z-]+")"
+expect_refusal 'a matcher accepting any repository'"'"'s release workflow is refused' "$root" 'not exactly'
+
+root="$(build_tree own-release-twice)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" \
+  "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K$(own_release_of "$manifest_consumer")" "$manifest_consumer")"
+expect_refusal 'a matcher naming its own release workflow twice is refused' "$root" 'not exactly'
+
+root="$(build_tree own-release-publisher-host)"
+write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$other_manifest_consumer" \
+  "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
+expect_refusal 'the .github consumer accepts no own-release alternative' "$root" 'not exactly'
+
+root="$(build_tree own-release-publisher-host-none)"
+write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$other_manifest_consumer")"
+expect_pass 'the .github consumer keeps the plain two-family matcher' "$root"
 
 # ── switch OFF: the canonical family has no pattern form to fall back to ──────────────────
 ENFORCE=0
 root="$(build_tree off-recorded)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_K" "$manifest_consumer")"
 expect_pass 'switch off: the legacy pattern form beside the recorded commit passes' "$root"
 
 root="$(build_tree off-unrecorded)"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_K" "$manifest_consumer")"
 expect_refusal 'switch off: an unrecorded canonical family is still refused' "$root" "$SHA_K" 'record none'
 
 root="$(build_tree off-other-commit)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_X")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_X" "$manifest_consumer")"
 expect_refusal 'switch off: another canonical commit is still refused' "$root" "$SHA_X" "$SHA_K"
 
 root="$(build_tree off-missing)"
@@ -473,7 +520,7 @@ subject_in() { yq eval -r 'select(.kind == "OCIRepository") | .spec.verify.match
 root="$(build_tree writer-app)"
 write_record "$root" "$app_row"
 cp "$root/$(manifest_path "$manifest_consumer")" "$WORK/writer-app.other"
-want="$(family_subject publish-app "$LEGACY_SET" "$SHA_K")"
+want="$(family_subject publish-app "$LEGACY_SET" "$SHA_K" "$app_consumer")"
 if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$app_consumer")")" = "$want" ]; then
   pass 'writer: renders the approved application family without widening revisions'
 else
@@ -524,7 +571,7 @@ fi
 root="$(build_tree writer-adds)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
 cp "$root/$(manifest_path "$other_manifest_consumer")" "$WORK/writer-adds.other"
-want="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+want="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
 if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$manifest_consumer")")" = "$want" ]; then
   pass 'writer: renders the legacy set and the recorded commit as one two-family subject'
 else
@@ -557,7 +604,7 @@ fi
 # row once the move has landed renders the single commit that remains.
 root="$(build_tree writer-moving)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
-want="$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)")"
+want="$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)" "$manifest_consumer")"
 if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$manifest_consumer")")" = "$want" ]; then
   pass 'writer: renders two recorded commits as one grouped pair in record order'
 else
@@ -572,7 +619,7 @@ else
   printf '%s\n' "$out" >&2
 fi
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_X")"
-want="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_X")"
+want="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_X" "$manifest_consumer")"
 if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$manifest_consumer")")" = "$want" ]; then
   pass 'writer: dropping the first row renders the remaining commit alone'
 else
@@ -704,6 +751,65 @@ done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
 generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
+PROFILES
+
+# A product's own release workflow on a release tag (#6265, ADR 0017). The image rules accept
+# it for any first-party repository; each consumer source accepts only its own repository.
+# Column 1 names the profiles that accept the identity (`-` for none). The generic Tenant
+# source binds it to the tenant name, which the constructor reader prints as `<tenant>`, so
+# no identity matches it here; the compiled graph is exercised in webapp-compiler/tenant_test.go.
+#
+# The image rules accept any first-party repository except `.github`, which hosts reusable
+# workflows other repositories call; a repository named `actions` would be a first-party
+# repository like any other, so its release tag passes them. No consumer source accepts it.
+# The deleted publisher's commit-pinned identity stays refused by the image rules; only the
+# consumers whose generated approvals name that exact legacy commit keep it.
+while IFS=$'\t' read -r profile file selector; do
+  subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
+  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
+  while IFS=$'\t' read -r accepting identity; do
+    expected=reject
+    case ",$accepting," in *",$profile,"*) expected=accept ;; esac
+    result=reject
+    if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
+    if [ "$result" = "$expected" ]; then
+      pass "own release $profile: $expected $identity"
+    else
+      fail "own release $profile: expected $expected for $identity, got $result"
+    fi
+  done <<'IDENTITIES'
+admission,node-pull,wedding	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3
+admission,node-pull,wedding	https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yml@refs/tags/v1.2.3-rc.1
+admission,node-pull,coaching	https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/release.yaml@refs/tags/v0.1.0
+admission,node-pull,product-docs	https://github.com/devantler-tech/khoist/.github/workflows/release.yaml@refs/tags/v5.4.0
+admission,node-pull,aws	https://github.com/devantler-tech/aws/.github/workflows/cd.yaml@refs/tags/v1.1.4
+admission,node-pull	https://github.com/devantler-tech/data-product-controller/.github/workflows/release.yaml@refs/tags/v5.4.0
+admission,node-pull	https://github.com/devantler-tech/wedding-app-x/.github/workflows/release.yaml@refs/tags/v1.2.3
+-	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v21.3.4
+-	https://github.com/devantler-tech/.github/.github/workflows/release.yaml@refs/tags/v21.3.4
+-	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3
+admission,node-pull	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3
+admission,node-pull	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0
+coaching,wedding,product-docs	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
+-	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/heads/main
+-	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2
+-	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/latest
+-	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3/../evil
+-	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3+build
+-	https://github.com/devantler-tech/wedding-app/.github/workflows/nested/release.yaml@refs/tags/v1.2.3
+-	https://github.com/devantler-tech/wedding-app/release.yaml@refs/tags/v1.2.3
+-	https://github.com/devantler-tech/wedding-app/sub/.github/workflows/release.yaml@refs/tags/v1.2.3
+-	https://github.com/another-org/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3
+IDENTITIES
+done <<'PROFILES'
+admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
+node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
+generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
+coaching	k8s/bases/apps/ascoachingogvaner/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
+wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
+product-docs	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
+aws	k8s/providers/hetzner/apps/aws/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
+github-config	k8s/bases/apps/github-config/oci-repository.yaml	select(.kind == "OCIRepository").spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
 # The github-config v12 transition retains the independently verified v12.0.2
