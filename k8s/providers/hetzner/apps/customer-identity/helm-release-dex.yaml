@@ -169,6 +169,12 @@ spec:
             scopes:
               - profile
               - email
+              # Customers live in ZITADEL's "Customers" organization, which
+              # the setup CronJob creates. This scope signs them in under
+              # its login policy (password and MFA) and admits no one else.
+              # Without it they would get the default organization's
+              # policy, which sends its administrator straight to GitHub.
+              - urn:zitadel:iam:org:domain:primary:customers.accounts.devantler.tech
             getUserInfo: true
             insecureSkipEmailVerified: false
             insecureEnableGroups: false

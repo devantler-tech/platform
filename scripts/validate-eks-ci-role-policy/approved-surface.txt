@@ -60,11 +60,11 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|customer-dex 1733d0b05966c1c28a4c6a1c1caa221208958b04d36bdd6d2e1672ce0587c795
+helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|customer-dex 55a9ceabb55c712138a754c1666cf9e55b62b47357e3ac3cddea423a17531051
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|zitadel eeb9881018664637cdefc9c5c0afd6953aa958e5dbfbc9cd8c5d521501e52431
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex b43a3857ba3c7c8eb67ce302faca67e3d1da569f1168c413ec0b8e6fdc253004
+helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 6b11d3e9722c62691ecd9977961a2b1c9bd4e0f60fa78da9fb93bb7ec89378a9
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns 107eaf8ad3d74abff5c6b1c6d7ca1b49ac75829fe425672f81cdc1e799457511
 
