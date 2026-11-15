@@ -145,8 +145,11 @@ spec:
                    cannot complete stops the run: release the lease with the UNLOCK of
                    step 4, upload nothing and report it.
                 3. Shallow-clone devantler-tech/monorepo, read its AGENTS.md, load the
-                   agentic-engineering plugin and invoke its agentic-engineer entrypoint
-                   as this scheduled run. ~/lane-memory/ is your native memory (the
+                   agentic-engineering plugin, then read its agentic-engineer role,
+                   /opt/agent-plugins/agentic-engineering/agents/agentic-engineer.agent.md,
+                   and follow it as this scheduled run. That file is the entrypoint;
+                   the plugin's `start` skill is unrelated to this run, so do not
+                   invoke it. ~/lane-memory/ is your native memory (the
                    legacy layout), as the durable-memory guide says for this lane.
                    Follow the consumer contract and fail closed on missing deployment
                    facts. Do not duplicate the role here.
@@ -179,9 +182,15 @@ spec:
                    runs/<UTC date>/transcript.jsonl and runs/<UTC date>/report.md. If an
                    earlier run that day already wrote them, never replace them: write
                    yours beside them as transcript-<UTC time HHMMSS>.jsonl and
-                   report-<UTC time HHMMSS>.md. Create a missing folder with `dav MKCOL`
-                   before writing into it, and check that every upload succeeded. Last,
-                   when every write under memory/ succeeded, release the lease with
+                   report-<UTC time HHMMSS>.md. Then upload every subagent transcript,
+                   each JSONL file in the subagents/ folder inside the folder that
+                   shares your session's name, into a folder named after your uploaded
+                   transcript without .jsonl, such as runs/<UTC date>/transcript/ or
+                   runs/<UTC date>/transcript-<HHMMSS>/, keeping each file's name: the
+                   run's cost is measured from the session and all its subagents.
+                   Create a missing folder with `dav MKCOL` before writing into it, and
+                   check that every upload succeeded. Last, when every write under
+                   memory/ succeeded, release the lease with
                    `dav UNLOCK memory/ -H 'Lock-Token: <t>'`.
 
                 This run may open, update and review devantler-tech pull requests and
