@@ -123,7 +123,7 @@ jobs:
           if ! docker pull "$image" > "$private_dir/pull.log" 2>&1; then fail; fi
           stage=isolated-restore
           if ! bash scripts/run-openbao-backup-sandbox.sh verify-email "$proof_dir" "$binary" > "$private_dir/verification-result" 2>"$private_dir/verification.log"; then fail; fi
-          [[ $(cat "$private_dir/verification-result") == 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3' ]] || fail
+          [[ $(cat "$private_dir/verification-result") == 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2' ]] || fail
           stage='storage-key'
           kill -0 "$forward_pid" 2>/dev/null || fail
           if ! "$binary" seed-email-storage > "$private_dir/seed-result" 2>"$private_dir/seed.log"; then fail; fi

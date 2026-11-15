@@ -1,5 +1,5 @@
 FROM ghcr.io/stalwartlabs/cli:1.0.13@sha256:9a1e07307d6f890a193322c4b737fc0868405f0f8486a19922cbf362f43884fd AS cli
-FROM caddy:2.11.7@sha256:36c24ad91a7ff7bc4c87fe22bfa8df3c4b18da0773d73fc12ee2c52b98c0bb7e AS client-proxy
+FROM caddy:2.11.8@sha256:4fcafa98afd1c2e642e353e3c5cf9ddbe892fcee14bc990e7ba2c5b78e51f9cf AS client-proxy
 # This adapter only binds an unprivileged port. The upstream binary's effective
 # file capability prevents exec when the container drops every capability.
 RUN setcap -r /usr/bin/caddy && test -z "$(getcap /usr/bin/caddy)"
@@ -12,7 +12,7 @@ COPY --from=cli /usr/local/bin/stalwart-cli /usr/local/bin/stalwart-cli
 COPY --from=client-proxy --chmod=0755 /usr/bin/caddy /usr/local/bin/caddy
 # COPY cannot fetch a URL. ADD fetches this one file and BuildKit verifies its pinned digest.
 # checkov:skip=CKV_DOCKER_4:Remote fetch of one checksum-pinned file, which COPY cannot do.
-ADD --chmod=0444 --checksum=sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 https://raw.githubusercontent.com/caddyserver/caddy/v2.11.7/LICENSE /usr/local/share/licenses/caddy/LICENSE
+ADD --chmod=0444 --checksum=sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 https://raw.githubusercontent.com/caddyserver/caddy/v2.11.8/LICENSE /usr/local/share/licenses/caddy/LICENSE
 COPY --chmod=0755 private-mail-bootstrap /usr/local/bin/private-mail-bootstrap
 COPY --chmod=0444 webui.zip /usr/local/share/stalwart/webui.zip
 COPY --chmod=0444 webui.LICENSE /usr/local/share/licenses/stalwart-webui/LICENSE

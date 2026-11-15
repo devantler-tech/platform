@@ -1,0 +1,62 @@
+# ZITADEL and its database. Only the Gateway reaches ZITADEL (8080); only
+# ZITADEL, the other instance and the CNPG operator reach the database.
+# Egress: the namespace itself, the API server (CNPG instance manager), R2
+# for backups, and the business site's SES SMTP endpoint for ZITADEL's
+# invitation and recovery mail (platform#5400).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-customer-identity
+  namespace: customer-identity
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: customer-identity
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: cnpg-system
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "5432"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: customer-identity
+    - toEntities:
+        - kube-apiserver
+    - toFQDNs:
+        - matchPattern: "*.r2.cloudflarestorage.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: email-smtp.eu-central-1.amazonaws.com
+      toPorts:
+        - ports:
+            - port: "587"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

@@ -112,30 +112,21 @@ and workloads consume the values **from OpenBao via `ExternalSecret`s**.
   reach infra or another tenant's path, and the platform does **not** seed tenant
   app values.
 
-### The GHCR image-pull secret (`ghcr-auth`)
+### Public packages: no image-pull secret
 
-A **platform-managed** credential, not a tenant secret. Every registration dir whose
-artifact or images are private ships an `ExternalSecret` for it (`external-secret-ghcr-auth.yaml`, or just
-`external-secret.yaml` when it is the directory's only one) that sources the shared org pull
-credential from OpenBao (`infrastructure/ghcr/auth`) via the cluster-scoped `openbao`
-**ClusterSecretStore** and materialises the `ghcr-auth` dockerconfigjson the
-`OCIRepository` and ServiceAccount consume. It is reconciled by flux-system (not
-your tenant SA) — which is why it may use the ClusterSecretStore where your own
-resources may not (the Kyverno policy carves out flux-system-applied resources).
-The initial typed business-site registration instead has KRO create this child.
-Its admission exception is confined to the authenticated controller, the fixed
-business-site destination, the existing pull-credential reference and the exact
-Docker configuration template. Other writers cannot add, remove or change its
-reserved ownership labels, and controller updates must preserve the complete
-ownership tuple. The instance UID is controller-supplied attribution, not an
-independently verified parent identity. This exception neither opens arbitrary
-secret paths nor grants tenant application access. KRO's bind permission names
-the constructor's four exact roles, including `tenant-edit`, rather than the
-unrelated built-in `edit` role.
-The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
-`secret.enc.yaml` (the same org token both clusters use); the
-`seed-ghcr` PushSecret pushes it to `infrastructure/ghcr/auth` via the `openbao`
-ClusterSecretStore.
+A tenant's container image and its `<tenant>/manifests` package are **public**
+(#6272), so the platform ships no pull secret: the `OCIRepository` has no
+`secretRef`, the ServiceAccount has no `imagePullSecrets`, and Talos verifies
+image signatures on the nodes anonymously. Keep a new tenant's packages public
+(GitHub package settings). A private package would need a deliberate design for
+node-level signature reads first; do not add a shared pull credential.
+
+Platform-authored resources in a registration dir are reconciled by flux-system
+(not your tenant SA), which is why they may use the ClusterSecretStore where
+your own resources may not (the Kyverno policy carves out flux-system-applied
+resources). KRO-rendered Tenant children get no such exception. KRO's bind
+permission names the constructor's four exact roles, including `tenant-edit`,
+rather than the unrelated built-in `edit` role.
 
 - The release and template-sync workflows mint a **GitHub App token** from the
   org-level `APP_CLIENT_ID` variable and `APP_PRIVATE_KEY` secret — already available to
@@ -164,9 +155,10 @@ portal or prove any image/identity/private-input readiness.
 
 | Verifier | Artifact | What it accepts |
 | --- | --- | --- |
-| **Flux** — a registered tenant's `OCIRepository` | manifest | Its recorded legacy signer, current pin and release candidate, plus any exact maintained revisions explicitly approved for that consumer. Other commits are refused. |
-| **Admission** — the `verify-app-images` Kyverno policy | image | Legacy `actions` publishers with a full commit identity, or the explicitly reviewed maintained `.github` publisher revision, from the GitHub OIDC issuer. Other maintained commits, tags and branches are refused. |
-| **Node pull** — the Talos image-verification rule | image | The same legacy compatibility and exact maintained revision as admission. |
+| **Flux** — a registered tenant's `OCIRepository` | manifest | Its recorded legacy signer, current pin and release candidate, plus any exact maintained revisions explicitly approved for that consumer, plus that consumer's own repository's release workflow on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)). Other commits and other repositories are refused. |
+| **Flux** — a `Tenant` instance's `OCIRepository` (no pinned publisher) | manifest | The explicitly reviewed maintained revisions, or a workflow in `devantler-tech/<spec.name>/.github/workflows/` on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)). A pinned publisher revision keeps only that exact revision. |
+| **Admission** — the `verify-app-images` Kyverno policy | image | The explicitly reviewed maintained `.github` publisher revisions, or any first-party repository's own release workflow on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)), from the GitHub OIDC issuer. The deleted legacy `actions` publisher repository is refused at every commit ([#6264](https://github.com/devantler-tech/platform/issues/6264)). Other maintained commits, tags and branches of the shared publisher are refused. |
+| **Node pull** — the Talos image-verification rule | image | The same as admission. |
 
 Because the signatures are separate, a release can pass one layer and fail another: if only the
 manifest is signed, Flux applies the manifests and then admission denies the Pod, or the node
@@ -184,9 +176,9 @@ writer validates the pinned canonical Tenant unchanged. The legacy consumer floo
 `Regenerate Approved Publish Revisions` workflow), so a new tenant registered by hand (§5) is not
 covered until a reviewed platform change adds it there. Maintained revisions are curated separately
 in `scripts/publish-workflow-canonical-approvals.tsv`; recognizing a publisher's location does not
-approve it. The `Tenant` archetype pilot (below) retains the generic legacy full-commit rule and
-accepts the explicitly reviewed maintained revision. Its starter check also requires that this
-rule accept the starter's actual pinned caller.
+approve it. The `Tenant` archetype pilot (below) accepts only the explicitly reviewed maintained
+revisions; the deleted legacy publisher repository is no longer accepted. Its starter check also
+requires that this rule accept the starter's actual pinned caller.
 
 To generate the initial business-site admission candidate, use
 `scripts/bootstrap-tenant-source.sh --admit-canonical-source --tag <tag> --source-sha <sha> --digest <digest>`
@@ -237,11 +229,43 @@ the manifest, admission and node-pull acceptance before moving the caller. Re-ru
 check, merge its pin change, and verify the resulting publication. Releases on an already approved
 revision need no new platform approval.
 
-For the legacy location, admission and node-pull verification do not prove that a commit belongs
-to the actions repository's reviewed history; that compatibility risk is accepted in
-[#3746](https://github.com/devantler-tech/platform/issues/3746). Package write access,
+Admission, node-pull and the generic tenant source no longer accept the deleted legacy location at
+any commit ([#6264](https://github.com/devantler-tech/platform/issues/6264)), which retires the
+compatibility rule accepted in [#3746](https://github.com/devantler-tech/platform/issues/3746).
+Registered consumer sources keep only the exact legacy commits their generated approvals name
+until that machinery is retired. Package write access,
 namespace, RBAC, network policy and admission policy bound what a release can do. A tenant that
 needs authority outside those bounds requires a reviewed platform change.
+
+**A product's own release workflow ([#6265](https://github.com/devantler-tech/platform/issues/6265)).**
+Products are moving from the shared reusable publisher to a composite action called from their
+own release workflow (monorepo ADR 0017). The keyless signer then names the product's own
+repository at its release tag, for example
+`https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3`.
+Every verifier above accepts that identity beside the shared publisher's reviewed revisions,
+inside the same single anchored subject, until the consumers have moved and
+[#6266](https://github.com/devantler-tech/platform/issues/6266) removes the old ones:
+
+- the workflow file sits directly in `.github/workflows/` and the ref is a release tag in the
+  strict OCI-semver grammar of the KSail `cd.yaml` rule, pre-releases included; branches,
+  commits, other tags and anything after the version are refused;
+- a manifest source accepts only its own repository: a `Tenant` derives it from `spec.name`,
+  regex-escaped (the artifact URL is `oci://ghcr.io/devantler-tech/<name>/manifests`), and a
+  registered consumer's matcher names its current repository, written by
+  `scripts/write-publish-workflow-matchers.sh` (the KHoist documentation source names `khoist`);
+- the image rules accept any first-party repository whose name starts with a letter or digit, as
+  one path segment, so every first-party repository except `.github`. A repository named
+  `actions` would be a first-party repository like any other, so its release tag passes them;
+  the deleted publisher's commit-pinned identities stay refused there. These rules bind a
+  signature to the organisation, not to one product: the per-tenant binding is the tenant's
+  signed manifest source, which accepts only its own repository and pins its image digests.
+
+The `.github` repository is excluded at every layer, including the `github-config` source: it
+hosts the shared reusable publishers, and a tag of a reusable workflow carries that repository's
+identity whoever calls it, so another repository's release could verify as its own. Its own move
+needs a narrower rule. A `Tenant` pinned to an exact publisher revision keeps that single identity,
+because its admission record names it. These verifiers match only the issuer and the subject, so
+a product must not expose a signing workflow other repositories can call.
 
 > Tags come from `release.yaml` → semantic-release: merge Conventional-Commit
 > PRs to `main` and a `vX.Y.Z` tag (and thus a publish) follows automatically.
@@ -251,8 +275,8 @@ needs authority outside those bounds requires a reviewed platform change.
 > **Piloting: the `Tenant` archetype (#1932).** The manual multi-file copy below
 > is being replaced by one typed declaration — a KRO `Tenant` CR expanded by the
 > [tenant ResourceGraphDefinition](../k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml)
-> into this whole skeleton (namespace, SA + RoleBinding, ghcr-auth
-> ExternalSecret, default-deny NetworkPolicy, cosign-verified OCIRepository,
+> into this whole skeleton (namespace, SA + RoleBinding, default-deny
+> NetworkPolicy, cosign-verified OCIRepository,
 > impersonating Kustomization, optional external-dns RBAC / SOPS decryption).
 > It is piloting **local-first** as an opt-in on the Docker provider
 > (`k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml`); prod tenants keep
@@ -268,9 +292,8 @@ grants below) and rename — with:
 | --- | --- |
 | `kustomization.yaml` | Kustomize entrypoint listing the resources in this directory |
 | `namespace.yaml` | Namespace, `pod-security.kubernetes.io/enforce: restricted` |
-| `service-account.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
+| `service-account.yaml` | SA with `automountServiceAccountToken: false` (no `imagePullSecrets`: tenant packages are public) |
 | `role-binding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
-| `external-secret-ghcr-auth.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret (just `external-secret.yaml` when it is the tenant's only one) |
 | `role-binding-external-dns*.yaml` + `cluster-role-binding.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — bind the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
 | `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`) |
 
@@ -359,6 +382,14 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   The shared platform Gateway intentionally accepts routes from all namespaces, so the
   admission policy is the boundary that prevents a tenant artifact from claiming another
   platform hostname.
+- **A tenant uses only its own first-party images.** In a tenant namespace, every image under
+  `ghcr.io/devantler-tech/` and every Flux OCI source URL there must sit under
+  `ghcr.io/devantler-tech/<namespace>/…`, so name the tenant namespace after its repository.
+  The nodes authenticate every first-party pull, so a per-tenant pull credential cannot keep
+  one tenant from running another tenant's private image; the admission policy
+  [`restrict-tenant-image-repositories.yaml`](../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-image-repositories.yaml)
+  is that boundary and refuses any other first-party reference at admission. Third-party
+  images are unaffected.
 - **A tenant with no allow-list of its own is denied by default.** Adding the allow-list entry is
   therefore part of onboarding, not an optional hardening step: until a tenant namespace has
   an allow-list naming its approved hostnames, its HTTPRoutes are refused at admission with a

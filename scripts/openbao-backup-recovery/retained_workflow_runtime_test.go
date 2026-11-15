@@ -148,7 +148,7 @@ if kill -0 "$(cat "$FIXTURE_DIR/forward-pid")" 2>/dev/null; then exit 91; fi
 for name in root-token unseal-key snapshot.snap expected.json; do [[ -s $2/$name ]] || exit 91; done
 printf '%s' reached > "$FIXTURE_DIR/sandbox-started"
 if [[ $FIXTURE_CASE == restore ]]; then printf '%s' PRIVATE_SYNTHETIC_VALUE >&2; exit 91; fi
-if [[ $FIXTURE_CASE == wrong-count ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3'; else printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=1 version=2.6.3'; fi
+if [[ $FIXTURE_CASE == wrong-count ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2'; else printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=1 version=2.7.2'; fi
 `,
 			}
 			for name, body := range files {

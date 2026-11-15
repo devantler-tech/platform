@@ -12,21 +12,21 @@ func TestHealthRequiresActualUnsealedCanary(t *testing.T) {
 		body string
 		ok   bool
 	}{
-		{`{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"canary"}`, true},
-		{`{"initialized":false,"sealed":false,"version":"2.6.3","cluster_id":"canary"}`, false},
-		{`{"initialized":true,"sealed":true,"version":"2.6.3","cluster_id":"canary"}`, false},
+		{`{"initialized":true,"sealed":false,"version":"2.7.2","cluster_id":"canary"}`, true},
+		{`{"initialized":false,"sealed":false,"version":"2.7.2","cluster_id":"canary"}`, false},
+		{`{"initialized":true,"sealed":true,"version":"2.7.2","cluster_id":"canary"}`, false},
 		{`{"initialized":true,"sealed":false,"version":"2.5.4","cluster_id":"canary"}`, false},
-		{`{"initialized":true,"version":"2.6.3","cluster_id":"canary"}`, false},
-		{`{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":""}`, false},
-		{`{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"canary"} {}`, false},
-		{`{"initialized":true,"sealed":true,"sealed":false,"version":"2.6.3","cluster_id":"canary"}`, false},
-		{`{"initialized":true,"sealed":true,"\u0073ealed":false,"version":"2.6.3","cluster_id":"canary"}`, false},
-		{`{"initialized":true,"sealed":true,"Sealed":false,"version":"2.6.3","cluster_id":"canary"}`, false},
-		{`{"initialized":false,"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"canary"}`, false},
-		{`{"Initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"canary"}`, false},
-		{`{"initialized":true,"sealed":false,"version":"2.5.4","version":"2.6.3","cluster_id":"canary"}`, false},
-		{`{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"other","cluster_id":"canary"}`, false},
-		{`{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"canary","native":{"Label":"one","label":"two"}}`, true},
+		{`{"initialized":true,"version":"2.7.2","cluster_id":"canary"}`, false},
+		{`{"initialized":true,"sealed":false,"version":"2.7.2","cluster_id":""}`, false},
+		{`{"initialized":true,"sealed":false,"version":"2.7.2","cluster_id":"canary"} {}`, false},
+		{`{"initialized":true,"sealed":true,"sealed":false,"version":"2.7.2","cluster_id":"canary"}`, false},
+		{`{"initialized":true,"sealed":true,"\u0073ealed":false,"version":"2.7.2","cluster_id":"canary"}`, false},
+		{`{"initialized":true,"sealed":true,"Sealed":false,"version":"2.7.2","cluster_id":"canary"}`, false},
+		{`{"initialized":false,"initialized":true,"sealed":false,"version":"2.7.2","cluster_id":"canary"}`, false},
+		{`{"Initialized":true,"sealed":false,"version":"2.7.2","cluster_id":"canary"}`, false},
+		{`{"initialized":true,"sealed":false,"version":"2.5.4","version":"2.7.2","cluster_id":"canary"}`, false},
+		{`{"initialized":true,"sealed":false,"version":"2.7.2","cluster_id":"other","cluster_id":"canary"}`, false},
+		{`{"initialized":true,"sealed":false,"version":"2.7.2","cluster_id":"canary","native":{"Label":"one","label":"two"}}`, true},
 	} {
 		if err := verifyHealth(strings.NewReader(test.body)); (err == nil) != test.ok {
 			t.Errorf("health accepted=%v want=%v", err == nil, test.ok)

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -26,12 +27,30 @@ type settings struct {
 type inputs struct {
 	settings
 	administratorPassword, maintainerPassword, agentPassword string
-	accountIDs                                               map[string]string
+	// The send-only SES SMTP login: an IAM access key ID and the SES SMTP
+	// password derived from its secret (docs/adr/email-outbound-relay.md).
+	relayUsername, relayPassword string
+	accountIDs                   map[string]string
 }
 
 var domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 var localPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,31}$`)
 var passwordPattern = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
+var relayUsernamePattern = regexp.MustCompile(`^AKIA[A-Z0-9]{16}$`)
+
+// validRelayPassword accepts only an SES SMTP password: version byte 4 and a
+// 32-byte signature, Base64 encoded. A raw IAM secret key, or a truncated or
+// wrapped value, would fail authentication only when mail is sent. The decoder
+// skips line breaks, so the exact encoded length is checked first.
+func validRelayPassword(password string) bool {
+	decoded, err := base64.StdEncoding.Strict().DecodeString(password)
+	return len(password) == 44 && err == nil && len(decoded) == 33 && decoded[0] == 0x04
+}
+
+// The outbound relay is fixed by the reviewed decision, not by private input.
+// SES derives the SMTP password per region, so the host and the credential's
+// region must change together.
+const relayHost = "email-smtp.eu-central-1.amazonaws.com"
 
 // render builds staged settings and account changes from validated private inputs.
 func render(v inputs) ([]byte, error) {
@@ -68,6 +87,9 @@ func render(v inputs) ([]byte, error) {
 		}
 		seen[password] = true
 	}
+	if !relayUsernamePattern.MatchString(v.relayUsername) || !validRelayPassword(v.relayPassword) {
+		return nil, errConfiguration
+	}
 	// Expression values contain only the validated conservative address alphabet.
 	applicationDigest, err := pinnedApplicationDigestFor(v.RuntimeVersion)
 	if err != nil {
@@ -76,6 +98,14 @@ func render(v inputs) ([]byte, error) {
 	agent := v.Agent + "@" + v.Domain
 	recipient := v.Maintainer + "@" + v.Domain
 	expression := func(value string) map[string]any { return map[string]any{"match": map[string]any{}, "else": value} }
+	inbound := func(value, otherwise string) map[string]any {
+		return map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": value}}, "else": otherwise}
+	}
+	// Durations are milliseconds.
+	const day = int64(24 * 60 * 60 * 1000)
+	throttle := func(description string, key map[string]bool, match map[string]any, count, period int64) map[string]any {
+		return map[string]any{"description": description, "enable": true, "key": key, "match": match, "rate": map[string]any{"count": count, "period": period}}
+	}
 	account := func(name, password, role string) map[string]any {
 		return map[string]any{"@type": "User", "name": name, "domainId": "#domain", "credentials": map[string]any{"0": map[string]any{"@type": "Password", "secret": password}}, "roles": map[string]any{"@type": role}}
 	}
@@ -145,6 +175,10 @@ func render(v inputs) ([]byte, error) {
 				"network.listen-start": true, "network.listen-stop": true, "network.listen-error": true, "network.bind-error": true,
 				"resource.error": true, "resource.not-found": true, "resource.bad-parameters": true, "resource.application-unpacked": true,
 				"store.rocksdb-error": true,
+				// Bans and blocked addresses name only an address. Sign-in and mail
+				// activity stay out of the console log.
+				"security.authentication-ban": true, "security.abuse-ban": true, "security.scan-ban": true,
+				"security.loiter-ban": true, "security.ip-blocked": true,
 			},
 		}}),
 		// Declare the existing local authentication state explicitly. A main
@@ -199,11 +233,58 @@ func render(v inputs) ([]byte, error) {
 			"urlPrefix":       map[string]bool{"/admin": true, "/account": true},
 			"unpackDirectory": nil, "oauthClientId": nil,
 		}}),
-		update("MtaStageData", map[string]any{"addAuthResultsHeader": expression("true"), "script": expression("false")}),
+		// Upstream keys these on local port 25; the inbound listener is 1025.
+		update("MtaStageData", map[string]any{
+			"addAuthResultsHeader": inbound("true", "false"), "addReceivedHeader": inbound("true", "false"),
+			"addReturnPathHeader": inbound("true", "false"), "script": expression("false"),
+		}),
+		update("MtaStageEhlo", map[string]any{"rejectNonFqdn": inbound("true", "false")}),
+		update("MtaExtensions", map[string]any{"vrfy": expression("false"), "expn": expression("false")}),
+		// Verification takes bare constants: a quoted value is ignored and the
+		// server falls back to relaxed on every listener. SPF and reverse-IP
+		// checks wait for the real client address on the inbound listener.
 		update("SenderAuth", map[string]any{
-			"dkimVerify":  map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": "'relaxed'"}}, "else": "false"},
-			"dmarcVerify": map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": "'relaxed'"}}, "else": "false"},
-			"dkimStrict":  true,
+			"dkimVerify": inbound("relaxed", "disable"), "dmarcVerify": inbound("relaxed", "disable"),
+			"arcVerify": inbound("relaxed", "disable"), "dkimStrict": true,
+		}),
+		// Bans expire after a day; upstream bans never expire.
+		update("Security", map[string]any{"authBanPeriod": day, "abuseBanPeriod": day, "loiterBanPeriod": day, "scanBanPeriod": day}),
+		// Without egress Pyzor lookups only time out, and they would also send
+		// message digests to a third party.
+		update("SpamPyzor", map[string]any{"enable": false}),
+		update("SpamClassifier", map[string]any{"holdSamplesFor": 30 * day}),
+		// Failure reports carry message content to whoever a sender's domain names.
+		update("DmarcReportSettings", map[string]any{"failureSendFrequency": expression("false")}),
+		update("DkimReportSettings", map[string]any{"sendFrequency": expression("false")}),
+		update("SpfReportSettings", map[string]any{"sendFrequency": expression("false")}),
+		update("DataRetention", map[string]any{"expungeTrashAfter": 30 * day}),
+		// The server seeds the first two only into an empty collection, so all
+		// three are declared to keep a fresh store equal to production.
+		upsert("MtaInboundThrottle", []string{"description"}, map[string]any{
+			"sender-ip":        throttle("Sender IP throttle", map[string]bool{"remoteIp": true}, expression("true"), 5, 1000),
+			"sender-recipient": throttle("Sender address to recipient throttle", map[string]bool{"senderDomain": true, "rcpt": true}, expression("true"), 25, 60*60*1000),
+			"submission-account": throttle("Submission per account", map[string]bool{"authenticatedAs": true},
+				map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'submission'", "then": "true"}}, "else": "false"}, 100, 60*60*1000),
+		}),
+		// Every remote delivery leaves through the SES relay on 587 with required,
+		// verified STARTTLS. Name both explicitly: the server falls back to direct
+		// MX delivery for an unknown route and to opportunistic TLS for an unknown
+		// TLS strategy, and its default TLS expression drops certificate checks
+		// after a TLS error. DANE and MTA-STS describe recipient domains, not this
+		// fixed next hop.
+		upsert("MtaTlsStrategy", []string{"name"}, map[string]any{"ses-tls": map[string]any{
+			"name": "ses-tls", "startTls": "require", "allowInvalidCerts": false, "dane": "disable", "mtaSts": "disable",
+		}}),
+		upsert("MtaRoute", []string{"name"}, map[string]any{"ses": map[string]any{
+			"@type": "Relay", "name": "ses", profile.relayHostField: relayHost, "port": 587, "protocol": "smtp",
+			"implicitTls": false, "allowInvalidCerts": false, "authUsername": v.relayUsername,
+			// A stored value, never a file path: the server silently drops AUTH
+			// when a secret file is missing or empty.
+			"authSecret": map[string]any{"@type": "Value", "secret": v.relayPassword},
+		}}),
+		update("MtaOutboundStrategy", map[string]any{
+			"route": map[string]any{"match": map[string]any{"0": map[string]any{"if": "is_local_domain(rcpt_domain)", "then": "'local'"}}, "else": "'ses'"},
+			"tls":   expression("'ses-tls'"),
 		}),
 		update("Imap", map[string]any{"allowPlainTextAuth": false}),
 	}...)

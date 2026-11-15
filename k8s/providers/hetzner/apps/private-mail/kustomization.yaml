@@ -2,6 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../../bases/apps/private-mail-proxy-identity
+  # The mail store is encrypted at rest; its key comes from OpenBao (#5387).
+  - ../../../../bases/apps/email-encrypted-storage
   - secret-settings.enc.yaml
 patches:
   # Production has retained credential custody. Never infer a fresh installation
@@ -9,3 +11,38 @@ patches:
   - path: patches/disable-admin-credential-seeding.yaml
   - path: patches/disable-maintainer-credential-seeding.yaml
   - path: patches/disable-agent-credential-seeding.yaml
+  # Serve from the encrypted claim after a verified one-time copy of the
+  # original store, which stays mounted read-only as the rollback.
+  - path: patches/serve-from-encrypted-storage.yaml
+  # The server now consumes the encrypted claim, so deployment must wait for it
+  # to bind instead of treating it as prepared storage.
+  - target:
+      version: v1
+      kind: PersistentVolumeClaim
+      name: email-data-encrypted
+      namespace: private-mail
+    patch: |-
+      - op: remove
+        path: /metadata/labels/platform.devantler.tech~1storage-stage
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+    path: patches/migrate-to-encrypted-storage.yaml
+# The copy step uses the same signed setup image as the server. A parent image
+# transformer does not pin a container added here.
+replacements:
+  - source:
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+      fieldPath: spec.template.spec.containers.[name=private-mail].image
+    targets:
+      - select:
+          kind: StatefulSet
+          name: private-mail
+          namespace: private-mail
+        fieldPaths:
+          - spec.template.spec.initContainers.[name=migrate-storage].image

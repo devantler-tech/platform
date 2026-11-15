@@ -1,0 +1,12 @@
+Automated mail submission, built from the accompanying Platform source revision.
+The repository's existing terms apply to its own code and local modifications;
+this distribution introduces no new own-code license grant.
+
+Third-party notices in this directory:
+- GO-LICENSE and GO-PATENTS: the Go runtime and standard library.
+- SMTP-LICENSE: github.com/emersion/go-smtp, including the retained upstream
+  notice for the locally patched protocol implementation.
+- SASL-LICENSE: github.com/emersion/go-sasl (MIT).
+- TIME-LICENSE: golang.org/x/time (BSD).
+
+Private configuration, certificates, keys and messages are not distributed.

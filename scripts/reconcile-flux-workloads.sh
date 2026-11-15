@@ -31,7 +31,7 @@
 set -euo pipefail
 
 readonly kubectl_bin="${KUBECTL:-kubectl}"
-readonly reconcile_bin="${RECONCILE_BIN:-./scripts/run-ksail-prod-with-pull-auth.sh}"
+readonly reconcile_bin="${RECONCILE_BIN:-./scripts/run-ksail-prod.sh}"
 readonly rollout_timeout="${FLUX_CONTROL_PLANE_ROLLOUT_TIMEOUT:-10m}"
 # The snapshots run while this deploy may be restarting the API server's clients,
 # so an unbounded read is exactly the wrong default: kubectl's --request-timeout

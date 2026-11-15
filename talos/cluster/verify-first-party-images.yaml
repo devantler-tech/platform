@@ -35,16 +35,12 @@
 #
 # Enumerated 2026-08-26 — of the four first-party images running on the
 # cluster, ksail and provider-upjet-unifi verify against the exact keyless
-# identity their rules require. wedding-app and ascoachingogvaner are PRIVATE
-# packages: an unauthenticated cosign verify returns DENIED, which is an ACCESS
-# result and NOT evidence that a signature is absent. Settling those two needs
-# an AUTHENTICATED read, and this repository already stages one: the
-# `🔑 Stage the GHCR pull credential` step in
-# .github/workflows/validate-image-verifier-liveness.yaml decrypts the cluster's
-# own Flux GHCR pull credential into DOCKER_CONFIG before it runs
-# scripts/inventory-first-party-image-signatures.sh, so no ADDITIONAL
-# `read:packages` token has to be minted. What is missing is a recorded RUN of
-# that authenticated inventory against the fleet — the newest run of that
+# identity their rules require. wedding-app and ascoachingogvaner were PRIVATE
+# packages then; they are public since platform#6272, so the anonymous
+# scripts/inventory-first-party-image-signatures.sh run by
+# .github/workflows/validate-image-verifier-liveness.yaml can settle them with no
+# token at all. What is missing is a recorded RUN of that inventory against the
+# fleet — the newest run of that
 # workflow (2026-08-11) executed only its unit-test job — so until one is on
 # record their signature state stays UNKNOWN, and they are the two images the
 # catch-all rule governs.
@@ -78,9 +74,14 @@
 #      workflow on stable release tags only.
 #   8. the serving and staged mail bootstrap images are signed by this
 #      repository's dedicated publish-private-mail-bootstrap.yaml workflow on main.
+#      The automated company sender image is signed by the dedicated
+#      publish-mail-submission.yaml workflow on main.
 #   9. the app images (wedding-app, ascoachingogvaner, …) are signed by the
-#      shared publish-app.yaml workflow: legacy full-commit compatibility or an
-#      explicitly reviewed maintained revision, matching the app admission rule.
+#      shared publish-app.yaml workflow at an explicitly reviewed maintained
+#      revision, or by a first-party repository's own release workflow on a
+#      release tag (ADR 0017, #6265), matching the app admission rule. The
+#      deleted legacy publisher repository is no longer accepted at any
+#      commit (#6264).
 # The two checkpoint compatibility images use the main-only
 # publish-coroot-checkpoint-hotfix.yaml workflow, separately from the node agent.
 # Talos evaluates rules in order, first match wins, so the specific rules
@@ -238,11 +239,26 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
-  # First-party APP images retain legacy full-commit verification and accept the
-  # two reviewed maintained publisher revisions (v8.0.0 #5213, v19.0.5 #5404).
-  # Mutable refs, tags and other maintained commits are refused, as in the app
-  # admission policy.
+  # The automated company sender has its own exact main-only publisher (#5400).
+  - image: ghcr.io/devantler-tech/platform-mail-submission
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-mail-submission\.yaml@refs/heads/main$
+  # First-party APP images accept, in one anchored group, exactly what the app
+  # admission policy accepts:
+  # 1. the two reviewed maintained publisher revisions (v19.0.5 #5404,
+  #    v21.3.4 #6228). The deleted legacy publisher repository is refused at
+  #    every commit (#6264). Mutable refs, tags and other maintained commits of
+  #    the shared publisher are refused. Kept until its consumers move (#6266).
+  # 2. a first-party repository's own release workflow on a release tag
+  #    (ADR 0017, #6265). One repository path segment starting with a letter or
+  #    digit, so `.github`, which hosts the shared reusable publishers, is
+  #    excluded; a workflow file directly in .github/workflows/; and the same
+  #    strict OCI-semver tag grammar as the ksail rule above.
+  #    Every other first-party name matches, `actions` included, as a
+  #    first-party repository like any other; the deleted publisher's
+  #    commit-pinned identities stay refused.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(467f07582436a26b62cf4aa756423512f85ba0c0|af042c540ce8db4d64add98c34b5c57691e0e812))$
+      subjectRegex: ^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)|[A-Za-z0-9][A-Za-z0-9_.-]*/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$

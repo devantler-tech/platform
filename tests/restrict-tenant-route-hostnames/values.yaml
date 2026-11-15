@@ -17,3 +17,6 @@ namespaceSelector:
       app.kubernetes.io/managed-by: ksail
   - name: platform-ns
     labels: {}
+  - name: business-site
+    labels:
+      app.kubernetes.io/managed-by: kro

@@ -1,0 +1,302 @@
+--- a/pkg/container-collection/container-collection.go
++++ b/pkg/container-collection/container-collection.go
+@@ -38,6 +38,13 @@
+ type ContainerCollection struct {
+ 	mu sync.Mutex
+ 
++	// addMu serialises AddContainer, so each container ID is enriched and
++	// registered once. Enrichers open namespace descriptors that only the
++	// registered container owns; enriching a second candidate, or the
++	// registered object again, would leak or replace them. Always taken
++	// before mu, and released before publishing.
++	addMu sync.Mutex
++
+ 	// Keys:   containerID string
+ 	// Values: container   Container
+ 	containers sync.Map
+@@ -213,34 +220,36 @@
+ 
+ // AddContainer adds a container to the collection.
+ func (cc *ContainerCollection) AddContainer(container *Container) {
++	cc.addMu.Lock()
++	// A container ID that is already registered is neither enriched again nor
++	// closed: enriching would open namespace descriptors nothing closes, or
++	// replace the registered object's own, and closing the registered object
++	// would drop the descriptors it is still using (devantler-tech/platform#6327).
++	if existing, loaded := cc.containers.Load(container.Runtime.ContainerID); loaded {
++		cc.addMu.Unlock()
++		warnDiscardedOciConfig(container, existing.(*Container))
++		return
++	}
+ 	for _, enricher := range cc.containerEnrichers {
+ 		ok := enricher(container)
+ 		// Enrichers can decide to drop a container
+ 		if !ok {
+ 			container.close()
++			cc.addMu.Unlock()
+ 			return
+ 		}
+ 	}
+ 
+ 	existing, loaded := cc.containers.LoadOrStore(container.Runtime.ContainerID, container)
+ 	if loaded {
+-		// Another discovery source already added this container ID; this one
+-		// is discarded. Release the ns fds the WithTracerCollection enricher
+-		// may have opened on it above, or they leak for the container's
+-		// lifetime -- container.close() on the WINNING container (closed via
+-		// RemoveContainer) never touches this one.
+-		container.close()
+-		if container.OciConfig != "" && existing.(*Container).OciConfig == "" {
+-			// Surfaced at Warn rather than silently dropped: a discarded
+-			// duplicate that carried OCI config data the stored container
+-			// lacks is exactly the shape of bug that cost a full deployment
+-			// cycle to diagnose once already. This does not merge the data in
+-			// -- Container has no mutex and is read concurrently by every
+-			// subscriber, so mutating the stored object here would be a data
+-			// race - it only makes the discard observable.
+-			log.Warnf("container-collection: discarding a second add for container %s with non-empty OciConfig; the already-stored container has none",
+-				container.Runtime.ContainerID)
++		// Not reached while adds are serialised; kept so a discarded candidate
++		// still releases what enrichment opened. Never close the registered
++		// object itself.
++		if existing.(*Container) != container {
++			container.close()
+ 		}
++		cc.addMu.Unlock()
++		warnDiscardedOciConfig(container, existing.(*Container))
+ 		return
+ 	}
+ 	cc.mu.Lock()
+@@ -253,9 +262,28 @@
+ 	newContainerArr = append(newContainerArr, container)
+ 	cc.containersByNetNs.Store(container.Netns, newContainerArr)
+ 	cc.mu.Unlock()
++	cc.addMu.Unlock()
+ 
+ 	if cc.pubsub != nil {
+ 		cc.pubsub.Publish(EventTypeAddContainer, container)
++	}
++}
++
++// warnDiscardedOciConfig makes a discarded second add observable when it
++// carried OCI config data that the registered container lacks.
++func warnDiscardedOciConfig(container, existing *Container) {
++	if container != existing {
++		if container.OciConfig != "" && existing.OciConfig == "" {
++			// Surfaced at Warn rather than silently dropped: a discarded
++			// duplicate that carried OCI config data the stored container
++			// lacks is exactly the shape of bug that cost a full deployment
++			// cycle to diagnose once already. This does not merge the data in
++			// -- Container has no mutex and is read concurrently by every
++			// subscriber, so mutating the stored object here would be a data
++			// race - it only makes the discard observable.
++			log.Warnf("container-collection: discarding a second add for container %s with non-empty OciConfig; the already-stored container has none",
++				container.Runtime.ContainerID)
++		}
+ 	}
+ }
+ 
+--- a/pkg/container-collection/options.go
++++ b/pkg/container-collection/options.go
+@@ -979,29 +979,31 @@
+ 		}()
+ 
+ 		cc.containerEnrichers = append(cc.containerEnrichers, func(container *Container) bool {
+-			mntNsPath := filepath.Join(host.HostProcFs, fmt.Sprint(container.ContainerPid()), "ns", "mnt")
+-			mntNsFd, err := unix.Open(mntNsPath, unix.O_RDONLY|unix.O_CLOEXEC, 0)
+-			if err != nil {
+-				log.Warnf("WithTracerCollection: failed to open mntns reference for container %s: %s",
+-					container.Runtime.ContainerID, err)
+-				return false
+-			}
+-			if container.mntNsFd != 0 {
+-				log.Warnf("WithTracerCollection: mntns reference already set for container %s", container.Runtime.ContainerID)
+-			}
+-			container.mntNsFd = mntNsFd
+-
+-			netNsPath := filepath.Join(host.HostProcFs, fmt.Sprint(container.ContainerPid()), "ns", "net")
+-			netNsFd, err := unix.Open(netNsPath, unix.O_RDONLY|unix.O_CLOEXEC, 0)
+-			if err != nil {
+-				log.Warnf("WithTracerCollection: failed to open netns reference for container %s: %s",
+-					container.Runtime.ContainerID, err)
+-				return false
++			// A descriptor the container already holds is kept. Replacing it
++			// would leak the original, and an open namespace descriptor keeps
++			// that namespace, and every mount in it, alive after the container
++			// exits (devantler-tech/platform#6327).
++			if container.mntNsFd == 0 {
++				mntNsPath := filepath.Join(host.HostProcFs, fmt.Sprint(container.ContainerPid()), "ns", "mnt")
++				mntNsFd, err := unix.Open(mntNsPath, unix.O_RDONLY|unix.O_CLOEXEC, 0)
++				if err != nil {
++					log.Warnf("WithTracerCollection: failed to open mntns reference for container %s: %s",
++						container.Runtime.ContainerID, err)
++					return false
++				}
++				container.mntNsFd = mntNsFd
+ 			}
+-			if container.netNsFd != 0 {
+-				log.Warnf("WithTracerCollection: netns reference already set for container %s", container.Runtime.ContainerID)
++
++			if container.netNsFd == 0 {
++				netNsPath := filepath.Join(host.HostProcFs, fmt.Sprint(container.ContainerPid()), "ns", "net")
++				netNsFd, err := unix.Open(netNsPath, unix.O_RDONLY|unix.O_CLOEXEC, 0)
++				if err != nil {
++					log.Warnf("WithTracerCollection: failed to open netns reference for container %s: %s",
++						container.Runtime.ContainerID, err)
++					return false
++				}
++				container.netNsFd = netNsFd
+ 			}
+-			container.netNsFd = netNsFd
+ 			return true
+ 		})
+ 
+--- /dev/null
++++ b/pkg/container-collection/namespace_descriptor_test.go
+@@ -0,0 +1,146 @@
++package containercollection
++
++import (
++	"os"
++	"sync"
++	"testing"
++
++	"github.com/inspektor-gadget/inspektor-gadget/pkg/types"
++	"github.com/inspektor-gadget/inspektor-gadget/pkg/utils/host"
++	"golang.org/x/sys/unix"
++)
++
++// These tests open real namespace descriptors, of this test process's own
++// /proc/self/ns/{mnt,net}. They create no namespace or mount and need no
++// privilege. An open namespace descriptor keeps that namespace, and every
++// mount in it, alive, which is how a leaked one can keep an encrypted volume's
++// device busy after its container exits (devantler-tech/platform#6327).
++
++type noopTracer struct{}
++
++func (noopTracer) TracerMapsUpdater() FuncNotify { return func(PubSubEvent) {} }
++
++func openDescriptors(t *testing.T) int {
++	t.Helper()
++	entries, err := os.ReadDir("/proc/self/fd")
++	if err != nil {
++		t.Fatal(err)
++	}
++	return len(entries)
++}
++
++func isOpen(fd int) bool {
++	if fd <= 0 {
++		return false
++	}
++	_, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
++	return err == nil
++}
++
++func newCollection(t *testing.T) *ContainerCollection {
++	t.Helper()
++	original := host.HostProcFs
++	host.HostProcFs = "/proc"
++	t.Cleanup(func() { host.HostProcFs = original })
++	cc := &ContainerCollection{}
++	if err := cc.Initialize(WithTracerCollection(noopTracer{})); err != nil {
++		t.Fatal(err)
++	}
++	return cc
++}
++
++func candidate(id string) *Container {
++	return &Container{
++		Runtime: RuntimeMetadata{BasicRuntimeMetadata: types.BasicRuntimeMetadata{ContainerID: id, ContainerPID: uint32(os.Getpid())}},
++		Mntns:   1,
++		Netns:   2,
++	}
++}
++
++// After any sequence of adds for one ID, exactly the registered container's
++// two descriptors are open, and they are still valid.
++func assertOnlyRegisteredOpen(t *testing.T, cc *ContainerCollection, id string, baseline int) *Container {
++	t.Helper()
++	value, ok := cc.containers.Load(id)
++	if !ok {
++		t.Fatal("no container was registered")
++	}
++	registered := value.(*Container)
++	if !isOpen(registered.mntNsFd) || !isOpen(registered.netNsFd) {
++		t.Fatalf("the registered container lost its namespace descriptors: mnt=%d net=%d", registered.mntNsFd, registered.netNsFd)
++	}
++	if open := openDescriptors(t) - baseline; open != 2 {
++		t.Fatalf("%d namespace descriptors are open, want only the registered container's 2", open)
++	}
++	return registered
++}
++
++func TestDistinctDuplicateReleasesItsDescriptors(t *testing.T) {
++	cc := newCollection(t)
++	baseline := openDescriptors(t)
++	first := candidate("same-container")
++	cc.AddContainer(first)
++	mnt, net := first.mntNsFd, first.netNsFd
++	cc.AddContainer(candidate("same-container"))
++	registered := assertOnlyRegisteredOpen(t, cc, "same-container", baseline)
++	if registered != first || first.mntNsFd != mnt || first.netNsFd != net {
++		t.Fatal("a duplicate replaced the registered container or its descriptors")
++	}
++	first.close()
++}
++
++func TestSameObjectReAddKeepsItsDescriptors(t *testing.T) {
++	cc := newCollection(t)
++	baseline := openDescriptors(t)
++	first := candidate("same-container")
++	cc.AddContainer(first)
++	mnt, net := first.mntNsFd, first.netNsFd
++	cc.AddContainer(first)
++	assertOnlyRegisteredOpen(t, cc, "same-container", baseline)
++	if first.mntNsFd != mnt || first.netNsFd != net {
++		t.Fatalf("re-adding the registered object replaced its descriptors: before=%d,%d after=%d,%d", mnt, net, first.mntNsFd, first.netNsFd)
++	}
++	first.close()
++}
++
++func TestConcurrentDistinctCandidatesLeaveOnlyTheWinnerOpen(t *testing.T) {
++	cc := newCollection(t)
++	baseline := openDescriptors(t)
++	candidates := make([]*Container, 16)
++	var wg sync.WaitGroup
++	for i := range candidates {
++		candidates[i] = candidate("concurrent-container")
++		wg.Add(1)
++		go func(c *Container) {
++			defer wg.Done()
++			cc.AddContainer(c)
++		}(candidates[i])
++	}
++	wg.Wait()
++	registered := assertOnlyRegisteredOpen(t, cc, "concurrent-container", baseline)
++	for _, c := range candidates {
++		if c != registered && (c.mntNsFd != 0 || c.netNsFd != 0) {
++			t.Fatalf("a discarded candidate still records descriptors %d,%d", c.mntNsFd, c.netNsFd)
++		}
++	}
++	registered.close()
++}
++
++func TestConcurrentSameObjectAddsLeaveOneValidPair(t *testing.T) {
++	cc := newCollection(t)
++	baseline := openDescriptors(t)
++	shared := candidate("shared-container")
++	var wg sync.WaitGroup
++	for range 16 {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			cc.AddContainer(shared)
++		}()
++	}
++	wg.Wait()
++	if registered := assertOnlyRegisteredOpen(t, cc, "shared-container", baseline); registered != shared {
++		t.Fatal("the shared object was not the registered container")
++	}
++	shared.close()
++}

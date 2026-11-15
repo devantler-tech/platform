@@ -97,6 +97,30 @@ func TestRetainedEmailInventoryCoversAllServedKinds(t *testing.T) {
 	}
 }
 
+func TestFreshRetainedEmailInventoryHasItsOwnFixedNamespace(t *testing.T) {
+	const namespace = "email-data-recovery-42818236850"
+	result, err := observeFixtureInNamespace(t, "", namespace)
+	if err != nil || len(result.Bindings()) != 2 {
+		t.Fatalf("fixed fresh Email inventory failed: %v", err)
+	}
+	result, err = observeFixtureInNamespace(t, "namespace replaced", namespace)
+	if err == nil || len(result.Bindings()) != 0 {
+		t.Fatal("a replaced fresh namespace was accepted")
+	}
+	requests := 0
+	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return nil, errors.New("unexpected request")
+	})}
+	endpoint := &url.URL{Scheme: "https", Host: "reviewed.invalid"}
+	if namespacePattern.MatchString(namespace) {
+		t.Fatal("fresh recovery namespace overlaps the benchmark namespace grammar")
+	}
+	if result, err = Observe(context.Background(), client, endpoint, namespace, "uid"); err == nil || requests != 0 || len(result.Bindings()) != 0 {
+		t.Fatal("fresh namespace admitted by the benchmark API")
+	}
+}
+
 // One stored Event is served by core v1 and events.k8s.io under the same UID.
 // That alias is one object; any other identity difference stays a conflict.
 func TestEventAliasesAreOneObject(t *testing.T) {
@@ -315,6 +339,8 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 		result, err = CalibrateLonghornSystem(ctx, server.Client(), endpoint, "namespace-uid")
 	case "email-data-recovery-41561215415":
 		result, err = ObserveRetainedEmailRecovery(ctx, server.Client(), endpoint, "namespace-uid")
+	case "email-data-recovery-42818236850":
+		result, err = ObserveFreshRetainedEmailRecovery(ctx, server.Client(), endpoint, "namespace-uid")
 	default:
 		result, err = Observe(ctx, server.Client(), endpoint, testNamespace, "namespace-uid")
 	}

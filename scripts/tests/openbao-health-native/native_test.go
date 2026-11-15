@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	release = "2.6.3"
+	release = "2.7.2"
 	// waitLimit bounds every wait for a server state. Raft elections and
 	// retry_join attempts settle in seconds on loopback.
 	waitLimit = 90 * time.Second

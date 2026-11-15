@@ -14,7 +14,11 @@ const (
 )
 
 func retainedAuxiliaryFixture(kind, parentKind string) (*recoveryDriver, namespaceinventory.Binding, map[string]namespaceinventory.Binding, object) {
-	ns := retainedRecovery.namespace
+	return retainedAuxiliaryFixtureFor(retainedRecovery, kind, parentKind)
+}
+
+func retainedAuxiliaryFixtureFor(target invocation, kind, parentKind string) (*recoveryDriver, namespaceinventory.Binding, map[string]namespaceinventory.Binding, object) {
+	ns := target.namespace
 	binding := namespaceinventory.Binding{Name: "diagnostic-child", Namespace: ns, UID: "child-canary", Kind: kind, Resource: "policyreports.wgpolicyk8s.io"}
 	api := "wgpolicyk8s.io/v1alpha2"
 	if kind == "CiliumEndpoint" {
@@ -33,8 +37,73 @@ func retainedAuxiliaryFixture(kind, parentKind string) (*recoveryDriver, namespa
 		"ServiceAccount/" + ns + "/default": {Name: "default", Namespace: ns, UID: auxiliarySAUID, Kind: "ServiceAccount", Resource: "serviceaccounts"},
 	}
 	k := &cleanupAPI{objects: map[string]object{cleanupKey(binding.Resource, ns, binding.Name): actual}}
-	d := &recoveryDriver{i: retainedRecovery, k: k, refs: map[string]ownedReference{}}
+	d := &recoveryDriver{i: target, k: k, refs: map[string]ownedReference{}}
 	return d, binding, bindings, actual
+}
+
+func TestFreshRetainedAuxiliaryBindsTheSelectedFixedCopy(t *testing.T) {
+	for _, tc := range []struct{ kind, parentKind, want string }{
+		{"CiliumEndpoint", "Pod", "Pod/email-data-recovery-42818236850/reader"},
+		{"PolicyReport", "Pod", "Pod/email-data-recovery-42818236850/reader"},
+		{"PolicyReport", "ServiceAccount", "ServiceAccount/email-data-recovery-42818236850/default"},
+	} {
+		t.Run(tc.kind+"/"+tc.parentKind, func(t *testing.T) {
+			d, binding, bindings, _ := retainedAuxiliaryFixtureFor(freshRetainedRecovery, tc.kind, tc.parentKind)
+			parent, err := d.retainedAuxiliary(context.Background(), binding, bindings, auxiliaryReaderUID)
+			if err != nil || parent != tc.want {
+				t.Fatal("fresh child lost its exact selected-copy parent binding")
+			}
+			if tc.parentKind == "Pod" {
+				delete(bindings, tc.want)
+				parent, err = d.retainedAuxiliary(context.Background(), binding, bindings, auxiliaryReaderUID)
+				if err != nil || parent != tc.want {
+					t.Fatal("fresh child lost its independent reader witness during GC")
+				}
+			}
+			api, ok := d.k.(*cleanupAPI)
+			if !ok || len(d.refs) != 0 || len(api.objects) != 1 {
+				t.Fatal("fresh auxiliary observation adopted or mutated a resource")
+			}
+		})
+	}
+}
+
+func TestFreshRetainedAuxiliaryRefusesCrossCopyBindings(t *testing.T) {
+	for _, failure := range []string{"original invocation", "foreign invocation", "original binding namespace", "original object namespace", "original report scope", "original serviceaccount binding", "wrong owner UID", "replaced child UID"} {
+		t.Run(failure, func(t *testing.T) {
+			d, binding, bindings, actual := retainedAuxiliaryFixtureFor(freshRetainedRecovery, "PolicyReport", "ServiceAccount")
+			switch failure {
+			case "original invocation":
+				d.i = retainedRecovery
+			case "foreign invocation":
+				d.i.run = "99999999999"
+			case "original binding namespace":
+				binding.Namespace = retainedRecovery.namespace
+			case "original object namespace":
+				child(actual, "metadata")["namespace"] = retainedRecovery.namespace
+			case "original report scope":
+				child(actual, "scope")["namespace"] = retainedRecovery.namespace
+			case "original serviceaccount binding":
+				key := "ServiceAccount/email-data-recovery-42818236850/default"
+				parent := bindings[key]
+				delete(bindings, key)
+				parent.Namespace = retainedRecovery.namespace
+				bindings["ServiceAccount/"+retainedRecovery.namespace+"/default"] = parent
+			case "wrong owner UID":
+				items(child(actual, "metadata"), "ownerReferences")[0]["uid"] = "different-serviceaccount-owner"
+			case "replaced child UID":
+				child(actual, "metadata")["uid"] = "replacement-child"
+			}
+			parent, err := d.retainedAuxiliary(context.Background(), binding, bindings, auxiliaryReaderUID)
+			if err == nil || parent != "" {
+				t.Fatal("fresh child accepted a cross-copy or changed identity")
+			}
+			api, ok := d.k.(*cleanupAPI)
+			if !ok || len(d.refs) != 0 || len(api.objects) != 1 {
+				t.Fatal("refused fresh observation adopted or mutated a resource")
+			}
+		})
+	}
 }
 
 // Removing owner identity, canonical GVR or scope checks would authorize a

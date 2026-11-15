@@ -65,7 +65,7 @@ violation() {
     return
   }
   first="$(yq -r '.jobs.rebuild.steps | to_entries | map(select(.value.id == "verify_recovery_source")) | .[0].key // -1' "$dr")"
-  create="$(yq -r '.jobs.rebuild.steps | to_entries | map(select(.value.run == "./scripts/run-ksail-prod-with-pull-auth.sh cluster create")) | .[0].key // -1' "$dr")"
+  create="$(yq -r '.jobs.rebuild.steps | to_entries | map(select(.value.run == "./scripts/run-ksail-prod.sh cluster create")) | .[0].key // -1' "$dr")"
   [[ "$first" -ge 0 && "$create" -gt "$first" ]] || {
     echo rebuild-before-create
     return

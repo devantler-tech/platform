@@ -23,7 +23,7 @@ case "$mode" in fixture | fixture-email | fixture-email-storage | fixture-email-
 [[ $proof_dir == /* && -d $proof_dir && ! -L $proof_dir && $binary == /* && -f $binary && ! -L $binary && -x $binary ]] || fail
 [[ $(cd "$proof_dir" && pwd -P) == "$proof_dir" && $(stat -c %a "$proof_dir") == 700 && $(stat -c %u "$proof_dir") == "$(id -u)" ]] || fail
 image=$("$binary" image) || fail
-[[ $image =~ ^quay\.io/openbao/openbao:2\.6\.3@sha256:[a-f0-9]{64}$ ]] || fail
+[[ $image =~ ^quay\.io/openbao/openbao:2\.7\.2@sha256:[a-f0-9]{64}$ ]] || fail
 nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 [[ $nonce =~ ^[a-f0-9]{32}$ ]] || fail
 name="openbao-recovery-$nonce"
@@ -78,7 +78,7 @@ docker "${arguments[@]}" "$image" "$mode" >"$proof_dir/sandbox-result" 2>"$proof
 result=$(cat "$proof_dir/sandbox-result")
 if [[ $rc == 0 && $fixture_mode == true && $result == OPENBAO_BACKUP_FIXTURE=PASS ]]; then
   validated_result=$result
-elif [[ $rc == 0 && $fixture_mode == false && $result == "OPENBAO_BACKUP_RESTORE=PASS records=$record_count version=2.6.3" ]]; then
+elif [[ $rc == 0 && $fixture_mode == false && $result == "OPENBAO_BACKUP_RESTORE=PASS records=$record_count version=2.7.2" ]]; then
   validated_result=$result
 else
   # All container and API diagnostics remain private. Only a fixed helper

@@ -52,14 +52,13 @@ these simultaneously and you cannot recover.
 > public half.
 
 > **Manual production lifecycle prerequisite:** use
-> `scripts/run-ksail-prod-with-pull-auth.sh`, never a bare
+> `scripts/run-ksail-prod.sh`, never a bare
 > `ksail --config ksail.prod.yaml` create/update/push/reconcile command. The
-> wrapper injects the authoritative SOPS pull credential and its rotation
-> marker. Export `HCLOUD_TOKEN`, `WG_SERVER_PRIVATE_KEY`, and a usable SOPS Age
-> key for create/update; workload reconciliation also requires the SOPS key.
-> Install `yq v4` before invoking the wrapper or credential bridge; both fail
-> fast before decryption or mutation when the compatible YAML query tool is
-> unavailable. Publication additionally needs `GHCR_TOKEN` and `GITHUB_ACTOR`.
+> wrapper allows only those commands and gives only `workload push` a registry
+> credential: every first-party package is public (#6272). Export
+> `HCLOUD_TOKEN`, `WG_SERVER_PRIVATE_KEY`, and a usable SOPS Age key for
+> create/update; workload reconciliation also requires the SOPS key.
+> Publication additionally needs `GHCR_TOKEN`.
 
 ---
 
@@ -75,7 +74,7 @@ kubectl get pods -A --field-selector=status.phase!=Running
 kubectl get pdb -A    # all should show ALLOWED-DISRUPTIONS=1
 
 # Replace the failed node (re-runs Hetzner provisioning for missing members)
-./scripts/run-ksail-prod-with-pull-auth.sh cluster update
+./scripts/run-ksail-prod.sh cluster update
 ```
 
 If any workload is stuck in Pending because all replicas were on the dead
@@ -120,7 +119,7 @@ kubectl get pdb -A
 kubectl get deploy -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.spec.strategy.rollingUpdate.maxUnavailable}{"\n"}{end}'
 
 # Apply the upgrade (rolling static nodes; recycle autoscaler nodes on a version change)
-./scripts/run-ksail-prod-with-pull-auth.sh cluster update
+./scripts/run-ksail-prod.sh cluster update
 ```
 
 If anything reports `maxUnavailable` other than `0`, that workload was
@@ -172,35 +171,33 @@ Flux reconciliation.
 > # 1. Set credentials locally
 > export HCLOUD_TOKEN=<hetzner-cloud-api-token>
 > export WG_SERVER_PRIVATE_KEY=<wireguard-server-private-key>
-> export GHCR_TOKEN=<ghcr-pat-with-packages-read>
-> export GITHUB_ACTOR=devantler
 > export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
-> talosctl version --client  # must be installed; use the prod-pinned v1.13.7
 >
-> # 2. Prove the Git/SOPS pull credential can read every private package before
-> #    creating infrastructure or publishing a mutable latest tag
-> ./scripts/refresh-flux-ghcr-auth.sh --check-only
+> # 2. Every first-party package is public (#6272), so nothing below needs a
+> #    registry credential. Use an empty Docker config: a stale local ghcr.io
+> #    login would turn those anonymous reads into 403s.
+> export DOCKER_CONFIG="$(mktemp -d)"
+> trap 'rm -rf "${DOCKER_CONFIG}"' EXIT
 >
 > # 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
-> ./scripts/run-ksail-prod-with-pull-auth.sh cluster create
+> ./scripts/run-ksail-prod.sh cluster create
+>
+> # 3a. The root source pulls the public manifests package anonymously (#6272).
+> #     A fresh cluster already does; this proves the package is readable
+> #     and removes a pullSecret left by an older configuration.
+> ./scripts/detach-flux-root-pull-secret.sh
 >
 > # 4. Bootstrap Flux from the most recently evidenced latest artifact. The
 > #    Actions-unavailable fallback cannot mint the workflow OIDC evidence, so
 > #    it deliberately leaves latest untouched instead of publishing weaker
 > #    bytes. Use the one-button workflow for a new publication transaction.
-> ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
 > ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
-> export DOCKER_CONFIG="$(mktemp -d)"
-> trap 'rm -rf "${DOCKER_CONFIG}"' EXIT
-> printf '%s' "${GHCR_TOKEN}" |
->   docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
 > PLATFORM_MANIFEST_DIGEST="$(docker buildx imagetools inspect 'ghcr.io/devantler-tech/platform/manifests:latest' --format '{{.Manifest.Digest}}')"
 > [[ "${PLATFORM_MANIFEST_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
 >   printf 'Invalid platform manifest digest: %s\n' "${PLATFORM_MANIFEST_DIGEST:-<empty>}" >&2
 >   exit 1
 > }
-> ./scripts/refresh-flux-ghcr-auth.sh --check-only
-> ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
+> ./scripts/run-ksail-prod.sh workload reconcile
 > ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
 >
 > # 5. Wait for Flux to settle
@@ -208,7 +205,6 @@ Flux reconciliation.
 >   kubectl --context admin@prod -n flux-system wait "kustomization/${k}" \
 >     --for=condition=Ready --timeout=20m
 > done
-> ./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
 > CILIUM_ROLLOUT_REVISION_READY=true \
 >   ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 >
@@ -542,7 +538,7 @@ kubectl -n kube-system get cm cluster-autoscaler-status -o yaml
 
 Common causes:
 - Pool `maxSize` reached — increase `max` under the relevant pool in `ksail.prod.yaml`, then run
-  `./scripts/run-ksail-prod-with-pull-auth.sh cluster update`
+  `./scripts/run-ksail-prod.sh cluster update`
 - `HCLOUD_TOKEN` expired — rotate in SOPS secrets and GitHub environment secrets
 
 ### Orphaned autoscaler nodes after cluster delete
@@ -686,7 +682,7 @@ hcloud server list
 # If the server exists but node doesn't appear in kubectl:
 # The worker machine config may be invalid or stale.
 # Re-run cluster update to regenerate worker config and re-apply:
-./scripts/run-ksail-prod-with-pull-auth.sh cluster update
+./scripts/run-ksail-prod.sh cluster update
 ```
 
 ---
@@ -811,193 +807,42 @@ gh secret set TALOS_CONFIG --env prod --repo devantler-tech/platform < ~/.talos/
 > step in the deploy workflows is the local guard against that behaviour until
 > those land.
 
-## Scenario 10 — production GHCR pull credential rotation or denial
+## Scenario 10 — production GHCR pull denial
 
-The authoritative Flux, tenant, Kyverno, and Talos-host pull credential is the
-SOPS-encrypted
-`stringData.ghcr_dockerconfigjson` value in
-`k8s/bases/bootstrap/secret.enc.yaml`. It is deliberately separate from the
-GitHub `prod` environment's `GHCR_TOKEN`, which only pushes/signs artifacts.
-Production KSail lifecycle commands run through
-`scripts/run-ksail-prod-with-pull-auth.sh`, which derives username/token from
-Git/SOPS and supplies a non-secret SOPS-ciphertext revision to the Talos
-machine/autoscaler template.
+Nothing in production holds a GHCR pull credential (#6272). Every first-party
+package the cluster uses is public, so the root Flux source, tenant sources,
+Kyverno's signature reads, kubelet image pulls and Talos' node-level signature
+verification all read `ghcr.io` anonymously. The GitHub `prod` environment's
+`GHCR_TOKEN` only pushes and signs artifacts, and only `workload push` in
+`scripts/run-ksail-prod.sh` uses it.
 
-The production deploy closes the bootstrap loop in this order:
+Both production entrypoints run `scripts/detach-flux-root-pull-secret.sh`
+before `latest` can move: it proves an anonymous pull of the synced artifact,
+removes a leftover FluxInstance `spec.sync.pullSecret`, and waits until the
+root source is re-rendered without it. It does not wait for the source to be
+Ready: a bad verify matcher is repaired only after publish, by
+`scripts/reassert-flux-root-verify.sh`.
 
-1. Decrypt only `ghcr_dockerconfigjson` and perform real OCI manifest reads for
-   all eight private consumers: Platform manifests, both tenant manifest
-   artifacts, the data-product-controller image, both tenant application
-   images, and the KSail plus provider-upjet-unifi packages used by Kyverno
-   verification. During DR, a read-only `--check-only` pass happens before
-   infrastructure creation.
-2. Before changing mutable `latest`, list every Kubernetes Node (including
-   NotReady/autoscaled nodes). A changed **verified** credential revision takes
-   the fenced Talos `RegistryAuthConfig` path: apply without reboot, then drain
-   and reboot each node, workers before control planes. Containerd loads
-   registry credentials at startup; a successful Talos image-API pull reads
-   machine-config auth and does **not** prove that the running containerd
-   adopted the new credential. After reboot, remove the exact incoming KSail
-   image from the CRI cache, pull it
-   again for a registry round-trip, then record both proof markers. If that
-   credential proof is current and only the verified image differs, remove and
-   pull a proof copy in Talos containerd's `system` namespace without cordoning
-   or evicting the Kubernetes CRI image; publish the image marker only after a
-   successful registry pull. A distinct desired revision in the committed
-   Talos configuration refreshes future Cluster Autoscaler templates but never
-   counts as proof.
-3. Patch `variables-base`; force-sync
-   `seed-ghcr` into OpenBao; force-sync the tenant/Kyverno ExternalSecrets;
-   verify every materialised `ghcr-auth` payload matches Git/SOPS; and only then
-   patch `flux-system/ksail-registry-credentials`. A fresh or partial DR
-   bootstrap may have no ESO CRDs/resources yet; explicit
-   `--allow-incomplete-fanout` mode stages `variables-base` and repairs root auth
-   so the first reconcile can create the chain. Normal mode fails closed on any
-   missing fan-out resource.
-4. Push the artifact to a run-unique staging reference. Resolve its digest,
-   cosign-sign it keyless, and attach its CycloneDX SBOM and SLSA provenance
-   before promoting that exact digest to `latest`. Fulcio mints the certificate
-   from the workflow's OIDC identity (`dr-rebuild.yaml@refs/heads/main`), and
-   `GHCR_TOKEN` only pushes the artifact and its evidence. That identity must
-   stay listed in `ksail.prod.yaml`'s `matchOIDCIdentity`, or a recovery
-   publishes an artifact a verifying cluster refuses. Any failure before
-   promotion leaves the prior `latest` digest unchanged. Revalidate the
-   promoted artifact with `--check-only`, and only then explicitly reconcile
-   Flux. DR runs the full bridge again after every Flux Kustomization is Ready,
-   proving that bootstrap mode completed the entire fan-out, and once more
-   after an OpenBao raft restore so a snapshot cannot rematerialise an older
-   credential.
-5. Re-run the bridge after `cluster update`; it repairs any node left stale by
-   a partial lifecycle operation and re-verifies the root plus downstream
-   fan-out. Nodes carrying proof for both the current credential revision and
-   declared image skip Talos API calls, so an ordinary deploy does not depend
-   on every Talos endpoint.
+When a pull fails with 401 or 403:
 
-For a normal rotation, update the encrypted value through a PR and let the merge
-queue deploy it. If the encrypted file was pushed directly to `main`, manually
-dispatch the `CD` workflow: direct pushes do not run the production deploy.
+1. **A package went private.** An anonymous token request for it is refused:
 
-For an already-denied root source, run the same secret-safe bridge from a clean
-`main` checkout with the production Age key and `admin@prod` kube context, then
-reconcile the source:
+   ```bash
+   curl -fsS "https://ghcr.io/token?scope=repository:devantler-tech/<package>:pull"
+   ```
 
-```bash
-./scripts/refresh-flux-ghcr-auth.sh
-flux reconcile source oci flux-system -n flux-system --context admin@prod
-flux reconcile kustomization flux-system -n flux-system --context admin@prod
-```
-
-If tenant sources still show `DENIED` after an older/manual recovery path, force
-the existing fan-out after `variables-base` has converged:
-
-```bash
-stamp=$(date +%s)
-kubectl --context admin@prod -n flux-system annotate pushsecret seed-ghcr \
-  force-sync="$stamp" --overwrite
-for namespace in wedding-app ascoachingogvaner kyverno; do
-  kubectl --context admin@prod -n "$namespace" annotate externalsecret ghcr-auth \
-    force-sync="$stamp" --overwrite
-done
-flux get sources oci -A --context admin@prod
-```
-
-Do not replace this bridge with only a root ExternalSecret: Flux needs valid root
-auth to fetch the artifact that installs/updates External Secrets, while OpenBao
-receives this rotated value only through a downstream PushSecret. That circular
-dependency cannot recover a stale root credential by itself.
-
----
-
-## Scenario 11 — Recover an orphaned GHCR deploy fence
-
-A deploy fails to start with one of:
-
-> Another GHCR synchronization transaction holds the synchronization lease
->
-> Another transaction already owns the image-verification policy handoff
-
-`refresh-flux-ghcr-auth.sh` fences its transaction with a `Lease` and by suspending
-the `infrastructure` and `flux-system` Kustomizations. Those fences are released
-together at exit. A hard kill releases an arbitrary prefix and leaves the rest
-held. Protected deploy and heal jobs run `--recover-fences`: it releases policy
-fences and then the Lease only when every holder identifies a GitHub Actions run
-attempt that is confirmed terminal, the Lease heartbeat has stopped, no node
-fence is held, and every CAS-guarded patch still matches the reported state.
-Node fences remain a manual or full-bridge recovery because Talos machine-config
-writes expose no fencing token and need the bridge's revision and scheduling
-proofs.
-
-Full-bridge cleanup treats a successfully confirmed deleted Node as having no
-scheduling fence left to release. It confirms absence through the Kubernetes
-API, including after a failed release patch. A denied or failed read, malformed
-response, replacement Node, or changed fence owner cannot authorize release.
-This cleanup result does not prove rollout convergence: losing a target still
-blocks the root cutover until the bridge's convergence checks pass.
-
-A held policy fence is the more serious of the two: the deploy fails loudly, but
-the suspended Kustomization silently stops GitOps reconciliation for that layer
-until it is released.
-
-**1. List what is actually held.** Read-only; needs no credential and works while
-a deploy is refusing to start:
-
-```bash
-./scripts/refresh-flux-ghcr-auth.sh --fences
-```
-
-It prints each held fence, its holder, liveness evidence, and the exact
-CAS-guarded release command. `--fences` is an alternative mode and cannot be
-combined with `--check-only`, `--allow-incomplete-fanout`, or either
-`--*-runtime-proof` flag; it reports and exits, so accepting the combination
-would let an automation step pass having skipped the work it was configured to
-do.
-
-**2. Prove the holder is dead — never skip this.** A live deploy holds these
-fences legitimately.
-
-- If the Lease was renewed inside its duration, the holder is **live**. Stop.
-- The holder identity embeds the GitHub run: `…-gh<run-id>.<attempt>-…`. Confirm
-  it is terminal:
-
-  ```bash
-  gh run view <run-id> --repo devantler-tech/platform --attempt <attempt> --json status,conclusion
-  ```
-
-  Anything other than `status: completed` means it is still running. Stop.
-  `--attempt` is not optional: a rerun reuses the run id, so without it `gh`
-  reports the newest attempt and an orphan left by a finished attempt reads as
-  live — blocking a recovery that is valid.
-- An identity with no run reference predates that recording, or came from a local
-  run. Establish liveness another way before continuing.
-
-**3. Release.** For terminal GitHub-run policy fences plus the Lease, run
-`./scripts/refresh-flux-ghcr-auth.sh --recover-fences`; it proves all holders
-before its first mutation and releases child, parent, then Lease. For a local or
-legacy holder that the API cannot prove terminal, use the commands from
-`--fences` only after establishing the process is dead. Each command is
-CAS-guarded on the holder and the resource's current state, so it fails safely if
-anything changed since the report.
-
-A node fence may print `NOT releasable` and no command. That is a refusal, not a
-gap to work around by hand: the report only emits a release where it can prove
-the release is the same one the bridge would perform. It withholds one when the
-drain phase is anything but `claimed` (a Talos write may already be in flight,
-and an absent phase is never read as innocence), when another node under the
-same bootstrap owner is still quarantined (that quarantine is all-or-nothing),
-when the journal is `release-ready` (proving it covers the current credential
-revision needs the credential, which this mode deliberately never loads), or
-when the node's scheduling state has drifted from the intent its journal
-captured. In each case run the bridge — a normal `CD` dispatch — and let
-bootstrap recovery adjudicate the node. Never hand-clear a recovery journal: it
-is the only durable record of that state.
-
-**4. Confirm.** Re-run `--fences`; it should report no fence held. Then dispatch
-`CD` on `main`.
-
-Do not raise timeouts or add automatic expiry takeover to work around this — the
-absence of takeover is the property that makes the Talos write path safe.
-
----
+   Make the package public again in its GitHub package settings (also the fix
+   when the detach step reports "not anonymously readable"). A first-party
+   package that must stay private needs a deliberate design for node-level
+   signature reads first; do not reintroduce a shared pull credential.
+2. **A stale credential is still being presented.** GHCR answers a revoked
+   basic-auth credential with 403 even for a public package. Check the client:
+   a local `~/.docker/config.json` login (use an empty `DOCKER_CONFIG`), or a
+   Talos node whose containerd still holds the retired node credential.
+   containerd reads registry auth only at start, so a node keeps the retired
+   credential until it next reboots. Reboot such a node through the normal
+   rolling procedure (Scenario 2). Once every node has rebooted after #6272
+   deployed, no node can present it.
 
 ## Related documents
 

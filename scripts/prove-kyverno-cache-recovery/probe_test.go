@@ -28,8 +28,8 @@ func proofRunner(t *testing.T, mode string) (commandFunc, *probeCalls) {
 				return nil, nil
 			}
 			calls.unsigned++
-			if env["REGISTRY_USERNAME"] != "probe" || env["REGISTRY_PASSWORD"] != "private-test-token" {
-				t.Fatal("registry precheck used a different credential")
+			if env["REGISTRY_ANONYMOUS"] != "true" || env["REGISTRY_USERNAME"] != "" || env["REGISTRY_PASSWORD"] != "" {
+				t.Fatal("registry precheck did not read anonymously, as Kyverno does")
 			}
 			if mode == "registry unknown" {
 				return nil, errors.New("private verifier failure")
@@ -80,7 +80,7 @@ func proofMetadata(t *testing.T) runMetadata {
 func TestCompleteProofReportsOnlyObservedPublicOutcomes(t *testing.T) {
 	run, calls := proofRunner(t, "")
 	r, err := prove(context.Background(), run, proofMetadata(t), []byte(desiredPolicySpec))
-	if err != nil || r.Schema != 1 || r.SignedAdmitted != 2 || r.UnsignedDenied != 1 || !r.StableBindings || !r.ServerDryRun || r.NegativeCauseObservable || r.PerReplicaAttribution || r.ColdFirstRequestObserved || calls.reads != 22 || calls.unsigned != 2 || calls.signed != 2 || calls.denied != 1 {
+	if err != nil || r.Schema != 1 || r.SignedAdmitted != 2 || r.UnsignedDenied != 1 || !r.StableBindings || !r.ServerDryRun || r.NegativeCauseObservable || r.PerReplicaAttribution || r.ColdFirstRequestObserved || calls.reads != 20 || calls.unsigned != 2 || calls.signed != 2 || calls.denied != 1 {
 		t.Fatalf("complete proof failed: calls=%+v err=%v", calls, err)
 	}
 	raw, err := json.Marshal(r)

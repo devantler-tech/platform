@@ -1,5 +1,26 @@
 # Prepare Longhorn V2 workers
 
+`inventory-v1-runtime` is a protected, target-free read-only inventory. Its exact
+confirmation is `inventory-v1-runtime`, with empty `node` and `database`.
+It observes the complete runtime inventory twice between current-main checks.
+`declaredOverlap=FIT` means the observed CPU and memory requests fit one
+additional V1 manager per storage node. CPU uses a conservative sum of init
+requests and the actual per-node override or rounded global V1 percentage.
+Memory uses the scheduler's peak init/sidecar accounting and observed namespace
+default request. Complete LimitRange and ResourceQuota lists participate in the
+same epoch. Unqualified defaults, quota or resource quantities leave the
+calculation `UNVERIFIED`; an insufficient conservative budget reports `HOLD`.
+Effective memory requests use exact Kubernetes quantities and whole-byte Pod
+rounding. The budget also counts larger allocated or enacted Pod aggregate
+requests, adding overhead once, and binds those values into the inventory epoch.
+Container-level status must belong to its declared container and fit within its
+declared request. A larger container allocation, active resize, malformed status
+or node-resource claim leaves the calculation `UNVERIFIED`. The shared host-memory
+admission uses the same conservative memory budget.
+These are declared request budgets. Resident-memory measurements, reservations,
+admission, serving health and rollout remain separate checks. The receipt keeps
+`adoption=UNVERIFIED headroom=UNVERIFIED` and authorizes no storage operation.
+
 `observe-database` is a protected, read-only PostgreSQL observation for
 platform#5842. Select one of the five fixed databases with `database`, leave
 `node` empty, and confirm with `observe-longhorn-v2-database-<database>`.
@@ -8,6 +29,9 @@ state. Fixed SQL reads physical database identity, timeline and WAL positions;
 the primary's captured flush position must be replayed by both standbys. The
 client uses the Pod's fixed local socket with a cleared connection environment
 and fixed executable search path, rather than inheriting libpq overrides.
+It qualifies PostgreSQL built-ins explicitly and fixes catalog lookup and
+read-only transaction defaults for the connection. Persisted role or database
+settings cannot redirect this physical-state query through a shadow function.
 Complete namespace Pod inventories and process identities bracket the reads,
 including a final whole-cluster read after the last SQL command. The operation
 prints only a success summary, with no application rows, credentials or physical

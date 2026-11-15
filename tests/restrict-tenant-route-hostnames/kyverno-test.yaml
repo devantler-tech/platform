@@ -48,6 +48,23 @@ results:
       - ascoachingogvaner/approved-plus-wildcard
     kind: HTTPRoute
     result: fail
+  # --- business-site: the staging, public and portal hostnames ---
+  - policy: restrict-tenant-route-hostnames
+    resources:
+      - business-site/approved-staging-hostname
+      - business-site/approved-public-hostnames
+      - business-site/approved-portal-hostname
+    kind: HTTPRoute
+    result: pass
+  - policy: restrict-tenant-route-hostnames
+    resources:
+      - business-site/unlisted-devantler-subdomain
+      - business-site/devantler-wildcard
+      - business-site/steals-wedding-hostname
+      - business-site/no-hostnames
+      - business-site/wildcard-covering-approved
+    kind: HTTPRoute
+    result: fail
   # --- fail-closed catch-all ---
   - policy: restrict-tenant-route-hostnames
     resources:

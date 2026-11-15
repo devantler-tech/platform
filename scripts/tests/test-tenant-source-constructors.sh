@@ -80,6 +80,9 @@ foreign-source-url	(.spec.resources[] | select(.id == "ociRepository").template.
 foreign-namespace	(.spec.resources[] | select(.id == "ociRepository").template.metadata.namespace) = "other"
 tag-constructor	(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = "${schema.spec.source.digest}"
 wildcard-subject	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) += "|.*"
+unescaped-tenant-name	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) |= sub("[.]replace[(][^)]*[)]"; "")
+any-release-repository	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) |= sub("schema[.]spec[.]name"; "\"[a-z0-9-]+\"")
+retyped-tenant-name	.spec.schema.spec.name = "string | default=\"x\""
 second-identity	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity) += [{"issuer":".*","subject":".*"}]
 wrong-node-kind	(.spec.resources[] | select(.id == "ociRepository").template.kind) = "Other"
 CASES

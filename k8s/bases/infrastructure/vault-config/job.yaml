@@ -753,12 +753,11 @@ spec:
               }
               POLICY
 
-              # Read the shared GHCR image-pull credential. Consumed by the
-              # platform-authored `ghcr-auth` ExternalSecrets in the tenant
-              # namespaces via the `external-secrets` ClusterSecretStore role, so
-              # tenants get their pull secret from OpenBao instead of a per-tenant
-              # SOPS file. Platform-side, not a tenant secret: those ExternalSecrets
-              # are reconciled by flux-system, never by a tenant ServiceAccount.
+              # Read the retired GHCR image-pull credential. First-party packages are
+              # public and nothing renders a `ghcr-auth` ExternalSecret any more
+              # (platform#6272); this read stays only until the orphaned
+              # ascoachingogvaner one, which its prune-disabled skeleton keeps, is
+              # deleted. Remove the policy and its role entry with that cleanup.
               bao policy write infra-ghcr-readonly - <<'POLICY'
               path "secret/data/infrastructure/ghcr/*" {
                 capabilities = ["read"]
@@ -836,12 +835,25 @@ spec:
               }
               POLICY
 
-              # Public staging reads one owner-maintained entry. It has no
-              # value writer, metadata listing or shared infrastructure policy.
+              # The business site reads four exact entries: its owner-maintained
+              # public disclosure, its send-only SES SMTP credential, which a
+              # platform PushSecret writes (platform#5400), and the portal's
+              # owner-maintained Numina and Stripe billing keys (platform#6337).
+              # It has no value writer, metadata listing or shared
+              # infrastructure policy.
               bao policy write app-business-site-disclosure-readonly - <<'BUSINESS_SITE_POLICY'
               {
                 "path": {
                   "secret/data/apps/business-site/public-disclosure": {
+                    "capabilities": ["read"]
+                  },
+                  "secret/data/apps/business-site/smtp": {
+                    "capabilities": ["read"]
+                  },
+                  "secret/data/apps/business-site/numina": {
+                    "capabilities": ["read"]
+                  },
+                  "secret/data/apps/business-site/stripe": {
                     "capabilities": ["read"]
                   },
                   "auth/token/lookup-self": {
@@ -902,6 +914,16 @@ spec:
                 capabilities = ["read"]
               }
               path "secret/data/apps/kagent/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              # Customer sign-in (apps/customer-identity, business-site#302)
+              # reads ZITADEL's master key, and later the customer Dex's
+              # ZITADEL client, through the shared `external-secrets`
+              # ClusterSecretStore role.
+              bao policy write app-customer-identity-readonly - <<'POLICY'
+              path "secret/data/apps/customer-identity/*" {
                 capabilities = ["read"]
               }
               POLICY
@@ -991,10 +1013,18 @@ spec:
               POLICY
 
               # Dedicated node-storage key reader; neither account credentials
-              # nor metadata enumeration or writes belong to this identity.
+              # nor metadata enumeration or writes belong to this identity. Its
+              # role adds no default policy, so the two token paths External
+              # Secrets uses to validate the store and end the session are here.
               bao policy write infra-email-storage-readonly - <<'POLICY'
               path "secret/data/infrastructure/email/storage" {
                 capabilities = ["read"]
+              }
+              path "auth/token/lookup-self" {
+                capabilities = ["read"]
+              }
+              path "auth/token/revoke-self" {
+                capabilities = ["update"]
               }
               POLICY
 
@@ -1052,9 +1082,6 @@ spec:
               path "secret/data/infrastructure/git/*" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/data/infrastructure/ghcr/*" {
-                capabilities = ["create", "update", "read"]
-              }
               path "secret/data/infrastructure/velero/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -1065,6 +1092,16 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/apps/umami/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              # ZITADEL's master key, generated once by its create-only
+              # PushSecret (vault-seed), and the customer Dex's ZITADEL
+              # client, which the customer-identity setup CronJob issues and
+              # a PushSecret copies here. Exact keys only.
+              path "secret/data/apps/customer-identity/zitadel" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/customer-identity/dex-zitadel-client" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/apps/actual-budget/*" {
@@ -1079,6 +1116,16 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/infrastructure/email/agent" {
+                capabilities = ["create", "update", "read"]
+              }
+              # The SES relay's SMTP credential, pushed from the AccessKey's
+              # connection Secret (platform#5481). Exact key only.
+              path "secret/data/infrastructure/email/ses-smtp" {
+                capabilities = ["create", "update", "read"]
+              }
+              # The business site's SES SMTP credential, pushed the same way
+              # into its own prefix (platform#5400). Exact key only.
+              path "secret/data/apps/business-site/smtp" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/apps/actual-budget/*" {
@@ -1108,9 +1155,6 @@ spec:
               path "secret/metadata/infrastructure/git/*" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/metadata/infrastructure/ghcr/*" {
-                capabilities = ["create", "update", "read"]
-              }
               path "secret/metadata/infrastructure/velero/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -1123,6 +1167,12 @@ spec:
               path "secret/metadata/apps/umami/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/metadata/apps/customer-identity/zitadel" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/customer-identity/dex-zitadel-client" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/metadata/apps/actual-budget/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -1133,6 +1183,12 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/infrastructure/email/agent" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/email/ses-smtp" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/business-site/smtp" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/actual-budget/*" {
@@ -1155,7 +1211,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-kagent-readonly,app-actual-budget-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-kagent-readonly,app-customer-identity-readonly,app-actual-budget-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
@@ -1240,7 +1296,7 @@ spec:
 
               # The source-owned SecretStore uses only this namespaced identity.
               # Explicit JSON preserves array/boolean types; no default policy is
-              # added to the one-entry reader. The tenant owner supplies values.
+              # added to the exact-entry reader. The tenant owner supplies values.
               bao write auth/kubernetes/role/business-site - <<'BUSINESS_SITE_ROLE'
               {
                 "bound_service_account_names": ["business-site"],

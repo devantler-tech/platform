@@ -73,12 +73,14 @@ spec:
               value: "15 5 * * *"
             - name: TIME_ZONE
               value: Europe/Copenhagen
-            # Paused until every sub-issue of devantler-tech/monorepo#4866 is
-            # done (ADR 0014, point 6). The full run is first tried once, started
-            # from the kagent UI with "run now", which works while paused; the
-            # PR that unpauses it follows that run and the maintainer's go-ahead.
+            # Running since 2026-11-15: after seven manual runs, the last two
+            # complete on their own, the maintainer turned the daily run on for a trial of
+            # about half a month, before every sub-issue of
+            # devantler-tech/monorepo#4866 is done (ADR 0014, amendment of
+            # 2026-11-15). Set it back to "true" to pause the lane; "run now" in
+            # the kagent UI works either way.
             - name: PAUSED
-              value: "true"
+              value: "false"
             # A run has no time limit: cutting one off mid-task wastes what it
             # has already spent, so the Anthropic workspace's monthly limit is
             # the lane's only spend cap (maintainer decision, 2026-11-09).
@@ -145,11 +147,27 @@ spec:
                    cannot complete stops the run: release the lease with the UNLOCK of
                    step 4, upload nothing and report it.
                 3. Shallow-clone devantler-tech/monorepo, read its AGENTS.md, load the
-                   agentic-engineering plugin and invoke its agentic-engineer entrypoint
-                   as this scheduled run. ~/lane-memory/ is your native memory (the
+                   agentic-engineering plugin, then read its agentic-engineer role,
+                   /opt/agent-plugins/agentic-engineering/agents/agentic-engineer.agent.md,
+                   and follow it as this scheduled run. That file is the entrypoint;
+                   the plugin's `start` skill is unrelated to this run, so do not
+                   invoke it. ~/lane-memory/ is your native memory (the
                    legacy layout), as the durable-memory guide says for this lane.
                    Follow the consumer contract and fail closed on missing deployment
                    facts. Do not duplicate the role here.
+                   The plugin is loaded with --plugin-dir from
+                   /opt/agent-plugins/agentic-engineering, so there is no plugin
+                   registry, and the clone's libraries/agent-plugins stays empty: pass
+                   `--installed /opt/agent-plugins/agentic-engineering` to
+                   plugin-definition-currency.sh, and run the plugin's bundled scripts,
+                   such as count-unresolved-review-threads.sh, from its scripts/ folder
+                   there. Tell every subagent you dispatch the same.
+                   This run is a single non-interactive turn. Once you end your turn,
+                   the run ends within minutes, and anything still running in the
+                   background is lost. So run every subagent in the foreground
+                   (`run_in_background: false`) and wait for its result, never end
+                   your turn to wait for a notification, and never end it before step
+                   4 is done.
                 4. Before you stop, however the run ended, refresh the lease with
                    `dav LOCK memory/ -H 'Timeout: Infinite' -H 'If: (<t>)'`, no body,
                    where `<t>` is your Lock-Token value. You still hold the lease only
@@ -166,9 +184,15 @@ spec:
                    runs/<UTC date>/transcript.jsonl and runs/<UTC date>/report.md. If an
                    earlier run that day already wrote them, never replace them: write
                    yours beside them as transcript-<UTC time HHMMSS>.jsonl and
-                   report-<UTC time HHMMSS>.md. Create a missing folder with `dav MKCOL`
-                   before writing into it, and check that every upload succeeded. Last,
-                   when every write under memory/ succeeded, release the lease with
+                   report-<UTC time HHMMSS>.md. Then upload every subagent transcript,
+                   each JSONL file in the subagents/ folder inside the folder that
+                   shares your session's name, into a folder named after your uploaded
+                   transcript without .jsonl, such as runs/<UTC date>/transcript/ or
+                   runs/<UTC date>/transcript-<HHMMSS>/, keeping each file's name: the
+                   run's cost is measured from the session and all its subagents.
+                   Create a missing folder with `dav MKCOL` before writing into it, and
+                   check that every upload succeeded. Last, when every write under
+                   memory/ succeeded, release the lease with
                    `dav UNLOCK memory/ -H 'Lock-Token: <t>'`.
 
                 This run may open, update and review devantler-tech pull requests and

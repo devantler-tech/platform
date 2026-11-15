@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Resolve the chart the RBAC renderer must pull from the built Flux overlay.
-# Support the existing HelmRepository path and exact-tag OCI chartRef sources;
+# Support the existing HelmRepository path and pinned OCI chartRef sources;
 # refuse definitions whose chart artifact this renderer cannot model.
 set -euo pipefail
 
@@ -41,15 +41,26 @@ url="$(jq -r '.spec.url' <<<"$source")"
 
 if [ "$definition" = artifact ]; then
   [[ "$url" =~ ^oci://[^/[:space:]]+/.+/[a-z0-9][a-z0-9.-]*$ ]] || fail 'invalid OCI chart URL'
-  jq -e '
+  digest=""
+  if jq -e '
     (.spec.ref | keys) == ["tag"] and
     (.spec.ref.tag | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$"))
-  ' <<<"$source" >/dev/null || fail 'OCI chart source needs one exact version tag'
+  ' <<<"$source" >/dev/null; then
+    version="$(jq -r '.spec.ref.tag' <<<"$source")"
+  elif jq -e '
+    (.spec.ref | keys) == ["digest"] and
+    (.spec.ref.digest | type == "string" and test("^sha256:[a-f0-9]{64}$"))
+  ' <<<"$source" >/dev/null; then
+    version=""
+    digest="$(jq -r '.spec.ref.digest' <<<"$source")"
+  else
+    fail 'OCI chart source needs one exact version tag or SHA-256 digest'
+  fi
   jq -e '.spec.layerSelector == {
     "mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "operation": "copy"
   }' <<<"$source" >/dev/null || fail 'OCI chart source must copy the Helm chart layer'
   chart="${url##*/}"
-  version="$(jq -r '.spec.ref.tag' <<<"$source")"
+  [ -z "$digest" ] || url="$url@$digest"
 else
   chart="$(jq -r '.spec.chart.spec.chart' "$release_file")"
   version="$(jq -r '.spec.chart.spec.version' "$release_file")"

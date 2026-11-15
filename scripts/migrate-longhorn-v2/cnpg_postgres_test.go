@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -81,7 +82,7 @@ func TestCNPGPostgresReadRefusesReplacedOrRestartedExecutables(t *testing.T) {
 					}
 					return json.Marshal(current)
 				}
-				if args[2] != "exec" || !strings.Contains(strings.Join(args, " "), "--no-psqlrc --no-password") || args[len(args)-1] != "--command="+postgresStateSQL {
+				if args[2] != "exec" || !strings.Contains(strings.Join(args, " "), "--no-psqlrc --no-password") || !slices.Contains(args, "PGOPTIONS=-c search_path=pg_catalog -c default_transaction_read_only=on") || args[len(args)-1] != "--command="+postgresStateSQL {
 					t.Fatal("observation escaped its fixed read-only PostgreSQL command")
 				}
 				return []byte(`{"system_id":"1234567890123456789","timeline":"7","flush_lsn":"2/100","in_recovery":false}`), nil

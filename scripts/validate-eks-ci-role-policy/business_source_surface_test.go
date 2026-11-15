@@ -9,12 +9,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Approve only the exact source-only typed instance, never its future app or
-// capabilities. The full ordinary validator must reject each widened intent.
-func TestBusinessSourceOnlyAuthorization(t *testing.T) {
+// Approve only the exact public staging instance: its own application and
+// WebApp, with no DNS writer, SOPS or other source. The full ordinary
+// validator must reject every other intent, including a return to source-only.
+func TestBusinessStagingAuthorization(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
 	if err := validateAuthorization(role, boundary, rendered); err != nil {
-		t.Fatalf("reviewed source-only registration refused: %v", err)
+		t.Fatalf("reviewed staging registration refused: %v", err)
 	}
 	for _, tc := range []struct {
 		name   string
@@ -22,8 +23,8 @@ func TestBusinessSourceOnlyAuthorization(t *testing.T) {
 		mutate func(map[string]any)
 	}{
 		{name: "source removed", remove: true},
-		{name: "application reconciliation", mutate: func(spec map[string]any) { spec["source"].(map[string]any)["reconcileApplication"] = true }},
-		{name: "webapp capability", mutate: func(spec map[string]any) { spec["webApp"] = true }},
+		{name: "no application reconciliation", mutate: func(spec map[string]any) { spec["source"].(map[string]any)["reconcileApplication"] = false }},
+		{name: "no webapp capability", mutate: func(spec map[string]any) { spec["webApp"] = false }},
 		{name: "external DNS", mutate: func(spec map[string]any) { spec["externalDns"] = true }},
 		{name: "SOPS", mutate: func(spec map[string]any) { spec["sops"] = true }},
 		{name: "different publisher", mutate: func(spec map[string]any) {
@@ -58,15 +59,15 @@ func TestBusinessSourceOnlyAuthorization(t *testing.T) {
 				t.Fatal(err)
 			}
 			if selected != 1 {
-				t.Fatalf("selected %d source-only registrations, want one", selected)
+				t.Fatalf("selected %d staging registrations, want one", selected)
 			}
 			var mismatch *surfaceMismatchError
 			if err := validateAuthorization(role, boundary, changed.Bytes()); !errors.As(err, &mismatch) {
-				t.Fatalf("changed source-only authorization error = %v, want ledger mismatch", err)
+				t.Fatalf("changed staging authorization error = %v, want ledger mismatch", err)
 			}
 			for _, line := range mismatch.delta {
 				if !strings.Contains(line, "kro.run/v1alpha1|Tenant|flux-system|business-site ") {
-					t.Fatalf("source-only mutation changed an unrelated authorization: %s", line)
+					t.Fatalf("staging mutation changed an unrelated authorization: %s", line)
 				}
 			}
 		})

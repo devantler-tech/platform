@@ -111,10 +111,12 @@ canonical_tenant_projection() (
     select(.apiVersion==$record.tenantIdentity.apiVersion and .kind==$record.tenantIdentity.kind and
       .metadata.name==$record.tenantIdentity.name and .metadata.namespace==$record.tenantIdentity.namespace and
       (.spec|keys)==["externalDns","name","sops","source","webApp"] and .spec.name==$record.consumer and
-      .spec.webApp==false and .spec.externalDns==false and .spec.sops==false and
+      .spec.externalDns==false and .spec.sops==false and
       (.spec.source|keys)==["digest","publisherRevision","reconcileApplication"] and
       .spec.source.digest==$record.sourceIdentity.digest and .spec.source.publisherRevision==$pin and
-      .spec.source.reconcileApplication==false) |
+      # Source-only bootstrap, or the public staging application with its own
+      # WebApp. A half-enabled instance is neither reviewed shape.
+      (.spec.webApp|type)=="boolean" and .spec.webApp==.spec.source.reconcileApplication) |
     {apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",
       metadata:{namespace:$record.sourceIdentity.namespace,name:$record.sourceIdentity.name},
       spec:{url:$record.sourceIdentity.artifactURL,ref:{digest:$record.sourceIdentity.digest},

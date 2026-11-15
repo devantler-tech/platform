@@ -48,7 +48,7 @@ valid_policy() {
 }
 
 valid_role "${role}" || fail 'role must bind one exact identity and one read-only policy with a bounded lifetime'
-valid_policy "${policy}" || fail 'policy must read only the selected disclosure entry'
+valid_policy "${policy}" || fail 'policy must read only the selected disclosure, SMTP credential and billing key entries'
 
 for kind in role policy; do
   if [ "${kind}" = role ]; then value="${role}"; else value="${policy}"; fi
@@ -82,6 +82,13 @@ for change in \
   '.path["secret/data/apps/business-site/public-disclosure"].capabilities += ["update"]' \
   '.path = {"secret/data/apps/another-app/public-disclosure": {"capabilities": ["read"]}}' \
   '.path["secret/data/apps/business-site/other"] = {"capabilities": ["read"]}' \
+  '.path["secret/data/apps/business-site/smtp"].capabilities += ["update"]' \
+  '.path["secret/metadata/apps/business-site/smtp"] = {"capabilities": ["read", "list"]}' \
+  '.path["secret/data/apps/business-site/numina"].capabilities += ["update"]' \
+  '.path["secret/data/apps/business-site/stripe"].capabilities += ["create"]' \
+  '.path["secret/metadata/apps/business-site/stripe"] = {"capabilities": ["read", "list"]}' \
+  'del(.path["secret/data/apps/business-site/numina"])' \
+  'del(.path["secret/data/apps/business-site/stripe"])' \
   '.path["auth/token/*"] = {"capabilities": ["read", "update"]}' \
   '.path["auth/token/lookup-self"].capabilities += ["update"]' \
   'del(.path["auth/token/revoke-self"])'; do
@@ -94,4 +101,4 @@ grep -Fq "'scripts/tests/test-business-disclosure-reader.sh'" "${root_dir}/.gith
 grep -Fq 'bash scripts/tests/test-business-disclosure-reader.sh' "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must execute this contract'
 
-printf 'PASS: rendered business disclosure identity and 22 invalid-payload controls\n'
+printf 'PASS: rendered business disclosure identity and 29 invalid-payload controls\n'

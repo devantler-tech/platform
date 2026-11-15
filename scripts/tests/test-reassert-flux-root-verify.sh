@@ -301,7 +301,7 @@ expect_no_write declared_nested
 
 # 13. Wiring: the deploy runs it after publishing and before reconciling, on every deploy.
 #     No `if:`, so a green deploy cannot have skipped it without the step itself failing.
-awk '/- name: 🔎 Verify Flux GHCR pull credential after publish/ { published = 1; next }
+awk '/- name: 📦 Publish evidenced manifests to GHCR/ { published = 1; next }
   published && /- name: 🛡️ Reassert the root source verification/ { in_step = 1; seen = 1; next }
   /- name: 🔁 Trigger Flux reconciliation/ { if (!seen) bad = 1; exit }
   in_step && /- name:/ { in_step = 0 }
@@ -402,10 +402,8 @@ jq -e '
   and (($gate["continue-on-error"] // false) == false)
   and any($gate.steps[];
       (.run // "") | contains("bash scripts/tests/test-reassert-flux-root-verify.sh"))
-  and ((.["validate-ghcr-fanout-component-gate"].needs | if type == "array" then . else [.] end)
-      | index("validate-root-verify") != null)
   and ((.["deploy-prod"].needs | if type == "array" then . else [.] end)
-      | index("validate-ghcr-fanout-component-gate") != null)
+      | index("validate-root-verify") != null)
 ' <<<"${cd_jobs}" >/dev/null ||
   fail 'manual CD deploy must wait for the root-source repair test'
 

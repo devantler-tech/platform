@@ -27,8 +27,8 @@ import (
 // This is the actual server release and digest observed on all three servers,
 // rather than the older CLI-only image used by the snapshot client. A changed
 // running release must be explicitly rebound before a production proof runs.
-const serverVersion = "2.6.3"
-const serverImage = "quay.io/openbao/openbao:2.6.3@sha256:a60afafda36337abe833c4a63894bf1095098f29abea4091e7e555a33dd52889"
+const serverVersion = "2.7.2"
+const serverImage = "quay.io/openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f"
 const localAPI = "http://127.0.0.1:8200"
 
 type stageError string

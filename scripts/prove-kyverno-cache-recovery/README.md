@@ -4,16 +4,17 @@ Dispatch **Prove Kyverno Cache Recovery** from current `main`, using a new first
 attempt and confirmation `prove-kyverno-cache-recovery`. The workflow uses the
 existing protected production credential and shared deployment lock.
 
-The command reads fixed native Kubernetes resources and the one pull credential
-the image policy uses. It qualifies the reviewed policy, complete exception
-inventory, namespace and webhook scope, replica/disruption floors, ephemeral
-cache, process ownership and service endpoints. Complete private objects are
-compared before and after the trial; credentials and binding details are never
-serialized. Reads, commands, responses and the overall trial are bounded.
+The command reads fixed native Kubernetes resources. It qualifies the reviewed
+policy, complete exception inventory, namespace and webhook scope,
+replica/disruption floors, ephemeral cache, process ownership and service
+endpoints. Complete private objects are compared before and after the trial;
+binding details are never serialized. Reads, commands, responses and the overall
+trial are bounded.
 
-The unsigned image must be readable and unsigned using the actual Kyverno pull
-credential both before and after the requests. A signed ordinary-app control is
-admitted, the confirmed unsigned control is denied by the named image policy,
+The unsigned image must be readable and unsigned through an anonymous registry
+read, as Kyverno itself reads first-party packages (they are public since
+platform#6272), both before and after the requests. A signed ordinary-app
+control is admitted, the confirmed unsigned control is denied by the named image policy,
 and the signed control is admitted again. Every create request uses server-side
 dry-run: no probe Pods are stored. Kyverno may emit its normal policy events.
 

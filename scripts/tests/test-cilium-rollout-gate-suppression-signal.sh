@@ -44,7 +44,7 @@ ok
 # It must report AFTER the step it describes, or it would announce a
 # suppression before the deploy has actually reached that decision.
 report_line="$(line_of "${deploy_action}" './scripts/report-cilium-rollout-gate-suppression.sh')"
-cluster_update_line="$(line_of "${deploy_action}" 'run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update')"
+cluster_update_line="$(line_of "${deploy_action}" 'run: ./scripts/run-ksail-prod.sh cluster update')"
 readonly report_line cluster_update_line
 [[ -n "${report_line}" && -n "${cluster_update_line}" ]] ||
   fail 'could not locate both the reporter and the cluster update step'

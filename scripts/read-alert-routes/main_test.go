@@ -6,17 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func dispatch() map[string]string {
-	return map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_ACTOR": "devantler", "GITHUB_SHA": strings.Repeat("a", 40), "RUNNER_ENVIRONMENT": "github-hosted", "ALERT_ROUTES_CONFIRM": "read-alert-routes"}
+	return map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_ACTOR": "devantler", "GITHUB_SHA": strings.Repeat("a", 40), "RUNNER_ENVIRONMENT": "github-hosted", "PROD_OPERATION": "read-alert-routes"}
 }
 
 func responses() map[string]string {
@@ -74,7 +70,7 @@ func TestObservedConfigurationIsClosedAndPeersAgree(t *testing.T) {
 }
 
 func TestInvalidDispatchReadsNothing(t *testing.T) {
-	for key, bad := range map[string]string{"GITHUB_ACTIONS": "false", "GITHUB_REPOSITORY": "other/repo", "GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/proposal", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_ACTOR": "other", "GITHUB_SHA": "short", "RUNNER_ENVIRONMENT": "self-hosted", "ALERT_ROUTES_CONFIRM": "yes"} {
+	for key, bad := range map[string]string{"GITHUB_ACTIONS": "false", "GITHUB_REPOSITORY": "other/repo", "GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/proposal", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_ACTOR": "other", "GITHUB_SHA": "short", "RUNNER_ENVIRONMENT": "self-hosted", "PROD_OPERATION": "yes"} {
 		t.Run(key, func(t *testing.T) {
 			env := dispatch()
 			env[key] = bad
@@ -182,44 +178,6 @@ func TestIncompleteOrChangedEvidenceCannotReportObserved(t *testing.T) {
 				t.Fatalf("%d %q", code, out)
 			}
 		})
-	}
-}
-
-func TestWorkflowFirstStepRejectsUnreviewedInvocation(t *testing.T) {
-	_, here, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate test")
-	}
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(here), "../../.github/workflows/read-alert-routes.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var workflow struct {
-		Jobs map[string]struct{ Steps []struct{ Run string } }
-	}
-	if err := yaml.Unmarshal(raw, &workflow); err != nil {
-		t.Fatal(err)
-	}
-	steps := workflow.Jobs["observe"].Steps
-	if len(steps) == 0 || steps[0].Run == "" {
-		t.Fatal("missing pre-checkout guard")
-	}
-	run := func(env map[string]string) error {
-		command := exec.Command("bash", "-c", steps[0].Run)
-		for key, value := range env {
-			command.Env = append(command.Env, key+"="+value)
-		}
-		return command.Run()
-	}
-	if err := run(dispatch()); err != nil {
-		t.Fatalf("reviewed dispatch refused: %v", err)
-	}
-	for key, bad := range map[string]string{"GITHUB_REPOSITORY": "other/repo", "GITHUB_ACTOR": "other", "GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/unreviewed", "GITHUB_RUN_ATTEMPT": "2", "RUNNER_ENVIRONMENT": "self-hosted", "ALERT_ROUTES_CONFIRM": "yes"} {
-		env := dispatch()
-		env[key] = bad
-		if run(env) == nil {
-			t.Fatalf("first step admitted %s", key)
-		}
 	}
 }
 

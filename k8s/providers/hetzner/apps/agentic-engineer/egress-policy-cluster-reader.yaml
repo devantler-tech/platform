@@ -1,0 +1,10 @@
+# The cluster, read-only, for the agent (deployment-cluster-reader.yaml). The proxy holds the
+# identity, so the agent sends no credential; kubectl in the harness image points here.
+apiVersion: api.kagent.dev/v1alpha3
+kind: EgressPolicy
+metadata:
+  name: cluster-reader
+  namespace: agentic-engineer
+spec:
+  destinations:
+    - origin: http://cluster-reader.agentic-engineer.svc.cluster.local:8001

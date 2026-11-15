@@ -1,0 +1,90 @@
+---
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - oci-repository.yaml
+patches:
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: longhorn
+      namespace: longhorn-system
+    patch: |-
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: longhorn
+        namespace: longhorn-system
+      spec:
+        chart: null
+        chartRef:
+          kind: OCIRepository
+          name: longhorn-platform
+        # Include the pre-upgrade hook in the scoped identity patches below.
+        postRenderStrategy: combined
+        values:
+          dataEngineMode: v1-capable
+          image:
+            longhorn:
+              manager:
+                registry: ghcr.io
+                repository: devantler-tech/platform-longhorn-manager
+                tag: v1.13.0-platform.8@sha256:9fb91fe656c76f7e12a07413d8e4370ff5b2733291d388edb6882728b6424ce0
+          longhornManager:
+            updateStrategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxUnavailable: 1
+  # The signed image defaults to non-root. These two commands access host
+  # namespaces in V1-capable mode too. Append instead of replacing the existing
+  # UI/global-manager security contexts from the base HelmRelease.
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: longhorn
+      namespace: longhorn-system
+    patch: |-
+      - op: add
+        path: /spec/postRenderers/0/kustomize/patches/-
+        value:
+          target:
+            group: apps
+            version: v1
+            kind: DaemonSet
+            name: longhorn-manager
+          patch: |
+            apiVersion: apps/v1
+            kind: DaemonSet
+            metadata:
+              name: longhorn-manager
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: longhorn-manager
+                      securityContext:
+                        runAsUser: 0
+                        runAsGroup: 0
+      - op: add
+        path: /spec/postRenderers/0/kustomize/patches/-
+        value:
+          target:
+            group: batch
+            version: v1
+            kind: Job
+            name: longhorn-pre-upgrade
+          patch: |
+            apiVersion: batch/v1
+            kind: Job
+            metadata:
+              name: longhorn-pre-upgrade
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: longhorn-pre-upgrade
+                      securityContext:
+                        runAsUser: 0
+                        runAsGroup: 0

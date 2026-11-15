@@ -67,7 +67,7 @@ func verifyHealth(input io.Reader) error {
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) || bounded.N <= 0 {
 		return errors.New("incomplete health response")
 	}
-	if health.Initialized == nil || !*health.Initialized || health.Sealed == nil || *health.Sealed || health.Version != "2.6.3" || health.Cluster == "" {
+	if health.Initialized == nil || !*health.Initialized || health.Sealed == nil || *health.Sealed || health.Version != "2.7.2" || health.Cluster == "" {
 		return errors.New("canary is not initialized and unsealed at the pinned version")
 	}
 	return nil

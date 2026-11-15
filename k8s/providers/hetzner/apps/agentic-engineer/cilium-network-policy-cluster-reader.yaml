@@ -1,0 +1,32 @@
+# The read-only cluster view takes traffic only from Substrate's egress gateway, and reaches only the
+# Kubernetes API server.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-cluster-reader
+  namespace: agentic-engineer
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: cluster-reader
+  enableDefaultDeny:
+    ingress: true
+    egress: true
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ate-system
+            app: atenet-egress
+      toPorts:
+        - ports:
+            - port: "8001"
+              protocol: TCP
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP

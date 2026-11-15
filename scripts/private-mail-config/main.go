@@ -119,6 +119,7 @@ func loadInputs(dir string) (inputs, error) {
 		value *string
 	}{
 		{"administrator-password", &v.administratorPassword}, {"maintainer-password", &v.maintainerPassword}, {"agent-password", &v.agentPassword},
+		{"relay-username", &v.relayUsername}, {"relay-password", &v.relayPassword},
 	} {
 		b, err = privateInput(dir, target.name, 128)
 		if err != nil {
@@ -139,6 +140,9 @@ func loadInputs(dir string) (inputs, error) {
 func command(args []string, log io.Writer) int {
 	if len(args) > 0 && args[0] == "bootstrap" {
 		return bootstrapCommand(args[1:], log)
+	}
+	if len(args) > 0 && args[0] == "check" {
+		return checkCommand(args[1:], log)
 	}
 	f := flag.NewFlagSet("private-mail-config", flag.ContinueOnError)
 	f.SetOutput(io.Discard)

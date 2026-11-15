@@ -1,0 +1,28 @@
+# The SMTP credential of company Email's SES relay. The provider publishes the
+# key ID as `username` and the SES SMTP password derived for its own region
+# (eu-central-1) as `attribute.ses_smtp_password_v4`. The connection Secret
+# stays in this namespace; push-secret-email-smtp.yaml copies those two values
+# to OpenBao, and nobody reads them. The password is only available when the
+# key is created, so the OpenBao copy is the durable one. Rotate by declaring a
+# new key, then remove this one with Delete added to its policies.
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: AccessKey
+metadata:
+  name: email-smtp
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    userRef:
+      name: email-smtp
+  writeConnectionSecretToRef:
+    name: email-smtp-credentials
+  providerConfigRef:
+    kind: ProviderConfig
+    name: default

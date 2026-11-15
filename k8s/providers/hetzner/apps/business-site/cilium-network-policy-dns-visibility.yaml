@@ -1,0 +1,31 @@
+# Cilium enforces a toFQDNs rule only for names its DNS proxy has seen, and the
+# proxy sees a lookup only when an L7 `rules.dns` rule covers that traffic. The
+# generated `allow-dns` policy is L4-only, and restrict-tenant-network-policies
+# refuses a tenant selector naming kube-system, so the tenant cannot add this
+# rule itself. It opens nothing new: `allow-dns` already allows the same port
+# to the same peer, and matchPattern "*" leaves resolution unrestricted. The
+# tenant's own toFQDNs rules (api.numina.app, api.stripe.com) still decide
+# where traffic may go (platform#6337).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: business-site-dns-visibility
+  namespace: business-site
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: business-site
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

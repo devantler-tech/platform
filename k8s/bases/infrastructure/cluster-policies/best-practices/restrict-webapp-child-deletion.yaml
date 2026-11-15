@@ -1,4 +1,4 @@
-# KRO 0.9.4 deletes a WebApp's children by ApplySet membership: it lists every object
+# KRO 0.10.0 deletes a WebApp's children by ApplySet membership: it lists every object
 # that carries the parent's applyset.kubernetes.io/part-of label in the recorded scope
 # and deletes each with a UID precondition taken from that same list
 # (pkg/controller/instance/deletion.go, applyset/applyset.go). The precondition only
@@ -7,6 +7,8 @@
 # delete only a child whose labels bind it to the parent being deleted. Kept as defence
 # in depth: restrict-webapp-child-ownership already refuses adoption and hand edits of
 # the reserved labels, the two ways a foreign object could gain that membership.
+# KRO's alpha DeletionPolicy gate stays off: its orphan path strips the reserved labels,
+# which restrict-webapp-child-ownership denies, so enabling it needs its own review.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:

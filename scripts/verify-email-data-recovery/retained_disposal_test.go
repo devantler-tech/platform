@@ -96,6 +96,26 @@ func TestRetainedDisposalRefusesWrongDispatchAndLostOutputBeforeAccess(t *testin
 	}
 }
 
+func TestFreshDisposalRequiresFreshWitnessBeforeAccess(t *testing.T) {
+	for _, tc := range []struct{ name, witness, stage string }{
+		{"missing", "", "fresh-witness"},
+		{"old run", strings.Replace(freshFixtureWitness, "42818236850", "41561215415", 1), "fresh-witness"},
+		{"exact witness", freshFixtureWitness, "credentials"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := retainedDispatch()
+			env["EMAIL_RETAINED_COPY_CONFIRM"] = "dispose-fresh-retained-email-copy"
+			env["EMAIL_FRESH_RECOVERY_WITNESS"] = tc.witness
+			var out bytes.Buffer
+			k := &refusedAPI{}
+			if runRetainedDisposal(context.Background(), func(key string) string { return env[key] }, k, &out) != 2 ||
+				k.calls != 0 || !strings.Contains(out.String(), "EMAIL_FRESH_RETAINED_DISPOSAL=UNVERIFIED stage="+tc.stage+" cleanup=NOT_STARTED") {
+				t.Fatal("fresh disposal did not fail closed at the expected stage")
+			}
+		})
+	}
+}
+
 func TestRetainedBackupAcceptsObservedDefaultsAndRefusesExpandedScope(t *testing.T) {
 	want := child(backupManifest(retainedRecovery), "spec")
 	actual := object{}

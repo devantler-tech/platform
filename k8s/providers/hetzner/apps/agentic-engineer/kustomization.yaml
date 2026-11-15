@@ -26,11 +26,19 @@ resources:
   - service-lane-store-reader.yaml
   - role-lane-store-reader.yaml
   - role-binding-lane-store-reader.yaml
+  - service-account-cluster-reader.yaml
+  - cluster-role-agentic-engineer-cluster-reader.yaml
+  - cluster-role-binding-agentic-engineer-cluster-reader.yaml
+  - role-agentic-engineer-cluster-reader.yaml
+  - role-binding-agentic-engineer-cluster-reader.yaml
+  - deployment-cluster-reader.yaml
+  - service-cluster-reader.yaml
   - worker-pool.yaml
   - model-config.yaml
   - harness.yaml
   - egress-policy-github.yaml
   - egress-policy-lane-store.yaml
+  - egress-policy-cluster-reader.yaml
   - agent-template.yaml
   - agent.yaml
   - job-schedule.yaml
@@ -39,3 +47,4 @@ resources:
   - cilium-network-policy-schedule.yaml
   - cilium-network-policy-lane-store.yaml
   - cilium-network-policy-external-secrets.yaml
+  - cilium-network-policy-cluster-reader.yaml

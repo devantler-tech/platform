@@ -39,7 +39,7 @@ acceptances_file="${work_root}/risks.json"
 yq e -r '.data."risks.json"' "${acceptances_manifest}" >"${acceptances_file}"
 
 jq -e '
-  type == "array" and length == 37 and
+  type == "array" and length == 38 and
   all(.[] | select(has("application"));
     (.application | type == "string") and
     (.application | split(":") | length == 3) and
@@ -47,7 +47,7 @@ jq -e '
     (.type | IN("single-instance-app", "unreplicated-database")) and
     (.reason | startswith("platform#3812: "))
   ) and
-  ([.[] | select(has("application_pattern"))] | length == 5) and
+  ([.[] | select(has("application_pattern"))] | length == 6) and
   any(.[]; .application_pattern? == "^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}\\z" and
     .category == "Availability" and .type == "single-instance-app" and
     (.reason | startswith("platform#4117: "))) and
@@ -63,10 +63,13 @@ jq -e '
   any(.[]; .application_pattern? == "^crossplane-system:Deployment:upbound-provider-family-aws-[0-9a-f]{12}\\z" and
     .category == "Availability" and .type == "single-instance-app" and
     (.reason | startswith("platform#3812: "))) and
+  any(.[]; .application_pattern? == "^crossplane-system:Deployment:upbound-provider-aws-sesv2-[0-9a-f]{12}\\z" and
+    .category == "Availability" and .type == "single-instance-app" and
+    (.reason | startswith("platform#3812: "))) and
   ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | length) ==
     ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | unique | length)
 ' "${acceptances_file}" >/dev/null ||
-  fail 'the availability acceptance allowlist must contain exact entries and five narrow generated-name patterns'
+  fail 'the availability acceptance allowlist must contain exact entries and six narrow generated-name patterns'
 
 expected_applications=(
   'actual-budget:Deployment:actual-budget-actualbudget'

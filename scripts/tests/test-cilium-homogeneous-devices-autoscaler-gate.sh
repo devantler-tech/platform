@@ -36,7 +36,7 @@ push_line="$(grep -nF 'id: publish_platform_manifest' "${deploy_action}" | cut -
 # control-plane restart it caused itself (#3478).
 reconcile_line="$(grep -nF 'run: ./scripts/reconcile-flux-workloads.sh' "${deploy_action}" | cut -d: -f1)"
 revision_line="$(grep -nF 'id: wait_flux_revision' "${deploy_action}" | cut -d: -f1)"
-cluster_update_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update' "${deploy_action}" | cut -d: -f1)"
+cluster_update_line="$(grep -nF 'run: ./scripts/run-ksail-prod.sh cluster update' "${deploy_action}" | cut -d: -f1)"
 
 ((first_guard_call_line < push_line)) ||
   fail 'the first rollout guard must suspend autoscaling before publishing manifests'
@@ -78,7 +78,7 @@ manual_dr_guard_after_line="$(printf '%s\n' "${manual_dr_guard_calls}" | sed -n 
 # The literal is copied from the runbook and must not expand in this test shell.
 # shellcheck disable=SC2016
 manual_dr_push_line="$(grep -nF 'PLATFORM_MANIFEST_DIGEST="$(docker buildx imagetools inspect' "${dr_runbook}" | cut -d: -f1)"
-manual_dr_converged_line="$(grep -nF './scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out' "${dr_runbook}" | cut -d: -f1)"
+manual_dr_converged_line="$(grep -nF '>     --for=condition=Ready --timeout=20m' "${dr_runbook}" | cut -d: -f1)"
 readonly manual_dr_guard_before_line manual_dr_guard_after_line manual_dr_push_line manual_dr_converged_line
 
 ((manual_dr_guard_before_line < manual_dr_push_line)) ||

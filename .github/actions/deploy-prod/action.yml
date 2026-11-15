@@ -40,14 +40,14 @@ inputs:
       (secrets.WG_SERVER_PRIVATE_KEY); env-expanded by ksail into
       talos/control-planes/wireguard.yaml when rendering machine config.
     required: true
-  recover-orphaned-fence:
+  production-inputs-only:
     description: >-
-      Release the GHCR synchronization Lease before staging when its holder is a
-      GitHub run the API reports terminal, no other fence is held, and its
-      heartbeat has stopped. Default-off: a deploy that dies holding the Lease
-      blocks every later deploy AND its own heal path, and clearing that today
-      needs a human with cluster write access. Any unproven condition refuses
-      rather than releasing.
+      Remove every tracked file that scripts/production-inputs/inputs.txt does
+      not list from the working tree before any tool is installed or production
+      is read. The merge-queue deploy sets it, so a file outside that list
+      cannot influence a deploy and a dependency the list misses fails here or
+      at the step that needs it. Default-off: recovery, manual and rebuild
+      deploys keep the whole checkout. Needs Go on the runner.
     required: false
     default: "false"
 
@@ -75,6 +75,16 @@ runs:
           bash scripts/verify-prod-recovery-source.sh "${RECOVERY_SOURCE_SHA}"
         fi
 
+    # Everything below runs from the declared production inputs alone. The two
+    # gates above keep their pinned places. The signer gate gives the same
+    # answer in a working tree that holds only the inputs, which the command's
+    # tests prove; the recovery gate does nothing in a merge-queue deploy, the
+    # only caller that sets this input.
+    - name: 🧹 Keep only the declared production inputs
+      if: inputs.production-inputs-only == 'true'
+      shell: bash
+      run: go run ./scripts/production-inputs restrict
+
     - name: ⚙️ Setup KSail
       # Install the KSail CLI from the release tarball and verify the
       # downloaded asset against GitHub's published release checksum before
@@ -84,20 +94,10 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.211.3"
+        KSAIL_VERSION: "7.212.12"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
-
-    - name: ⚙️ Setup talosctl
-      # refresh-flux-ghcr-auth.sh uses the host API for a secret-safe,
-      # per-node RegistryAuthConfig patch and exact image-pull proof.
-      shell: bash
-      env:
-        # Download through the authenticated asset API first (#5942).
-        GITHUB_TOKEN: ${{ github.token }}
-      run: |
-        .github/scripts/setup-talosctl.sh
 
     - name: 🔐 Create SOPS Age key
       shell: bash
@@ -260,34 +260,18 @@ runs:
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
       run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
 
-    - name: 🧯 Recover an orphaned GHCR deploy fence
-      # Runs BEFORE staging, because staging is what fails when the Lease is
-      # orphaned — and both the deploy job and the heal job reach this composite,
-      # so one step covers the two paths that wedge together.
-      #
-      # GH_TOKEN is what makes the liveness proof possible: the holder identity
-      # embeds its run reference, and only the API can say whether that attempt
-      # is terminal. Without it the script refuses rather than guessing.
-      if: inputs.recover-orphaned-fence == 'true'
+    - name: 🔓 Detach the root source from its pull secret
+      id: detach_flux_root_pull_secret
+      # The root manifests package is public (#6272), and a stale credential
+      # breaks even a public pull, so the root source must hold none. KSail
+      # wrote spec.sync.pullSecret at bootstrap and Flux cannot remove it, so
+      # remove it here, before the mutable tag can move, and only after an
+      # anonymous pull of the synced artifact is proved. It waits for the source
+      # to be re-rendered without the secret, not for it to be Ready: a bad live
+      # verify matcher is repaired only by the reassert step after publish. A
+      # detached cluster takes no write; spec.verify is never touched.
       shell: bash
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: ./scripts/refresh-flux-ghcr-auth.sh --recover-fences
-
-    - name: 🔑 Stage Flux and consumer GHCR pull credential
-      id: stage_flux_ghcr_auth
-      # Validate all ten packages, synchronize and prove an uncached pull of
-      # the declared incoming image on every stale Talos node, then stage and
-      # verify the Kubernetes fan-out BEFORE publishing latest. Every pull
-      # consumer has one known-readable credential before the mutable tag can
-      # be observed. The non-secret exact-node proof survives only in this job
-      # so the post-update pass can distinguish annotation loss from real
-      # credential, image, or node drift.
-      shell: bash
-      run: >-
-        ./scripts/refresh-flux-ghcr-auth.sh
-        --record-runtime-proof
-        "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+      run: ./scripts/detach-flux-root-pull-secret.sh
 
     - name: 💾 Detach volumes for the reviewed Longhorn client migration
       id: longhorn_client_prepare
@@ -331,13 +315,6 @@ runs:
         recovery-source-sha: ${{ inputs.recovery-source-sha }}
         ghcr-token: ${{ inputs.ghcr-token }}
         hcloud-token: ${{ inputs.hcloud-token }}
-
-    - name: 🔎 Verify Flux GHCR pull credential after publish
-      id: verify_flux_ghcr_auth_after_push
-      # Revalidate the newly-published artifact before apps reconcile. The
-      # complete consumer fan-out was staged before the mutable tag moved.
-      shell: bash
-      run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
 
     - name: 🛡️ Reassert the root source verification
       id: reassert_flux_root_verify
@@ -529,7 +506,7 @@ runs:
         # load time; an unset var renders an empty key and Talos rejects the
         # whole machine config ('private key is invalid: wrong key "" length: 0').
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
-      run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
+      run: ./scripts/run-ksail-prod.sh cluster update
 
     - name: ⏳ Wait for the production Kubernetes API to stabilize
       id: wait_prod_api_stability
@@ -609,41 +586,6 @@ runs:
         # Flux proves this exact published revision Ready.
         CILIUM_ROLLOUT_REVISION_READY: ${{ steps.wait_flux_revision.outcome == 'success' }}
       run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
-
-    - name: 🔑 Reassert Flux and consumer GHCR pull credential
-      id: reassert_flux_ghcr_auth
-      # cluster update is already wrapped with Git/SOPS auth, but reassert the
-      # full transaction afterward in case KSail fails part-way. Reassert after
-      # its synchronous consumer fan-out when that update fails part-way, but
-      # only after the publish, signing, attestation, post-publish auth check,
-      # and Flux reconcile all succeeded. Never mutate auth as cleanup for a
-      # failed delivery.
-      # Runs on failure but NOT on cancellation. This step takes the
-      # `ghcr-auth-refresh` Lease, which has no automatic expiry takeover
-      # because Talos writes cannot be fenced — a non-empty holder needs
-      # explicit human recovery. Under `always()` a cancelled job still
-      # entered here, then the runner force-killed it when the
-      # post-cancellation grace expired, so the release never landed and every
-      # later deploy failed to acquire the Lease. A merge-queue eviction
-      # cancels this job routinely. The next deploy's staging step performs
-      # this same reassertion with a full time budget.
-      # `ksail cluster update` re-renders Talos node annotations. Reuse only
-      # the same job's credential+image+Node-UID proof to restore those markers
-      # without another uncached pull or rolling reboot. Any mismatch falls
-      # back to the full safety path.
-      if: >-
-        !cancelled() &&
-        steps.verify_flux_ghcr_auth_after_push.outcome == 'success' &&
-        steps.reconcile.outcome == 'success' &&
-        (
-          steps.cluster_update.outcome == 'skipped' ||
-          steps.wait_prod_api_stability.outcome == 'success'
-        )
-      shell: bash
-      run: >-
-        ./scripts/refresh-flux-ghcr-auth.sh
-        --reuse-runtime-proof
-        "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
     - name: 🚦 Verify the gateway applies every HTTPRoute
       # The Cilium operator can run for hours without its Gateway API

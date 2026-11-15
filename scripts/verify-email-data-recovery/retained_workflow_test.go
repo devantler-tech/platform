@@ -82,12 +82,22 @@ func checkRetainedWorkflow(t *testing.T, filename, jobName, confirm, flag, confi
 			}
 		})
 	}
+	if jobName == "dispose" {
+		cmd := exec.Command("/bin/bash", "--noprofile", "--norc", "-c", guard.Run+"\nprintf FRESH_DISPOSAL_ADMITTED\n")
+		env["CONFIRM"] = "dispose-fresh-retained-email-copy"
+		for key, value := range env {
+			cmd.Env = append(cmd.Env, key+"="+value)
+		}
+		if out, err := cmd.CombinedOutput(); err != nil || string(out) != "FRESH_DISPOSAL_ADMITTED" {
+			t.Fatal("fixed fresh disposal dispatch refused")
+		}
+	}
 	checkout := job.Steps[1]
 	if checkout.With["ref"] != "${{ github.sha }}" || checkout.With["persist-credentials"] != false || !strings.HasPrefix(checkout.Uses, "actions/checkout@") {
 		t.Fatal("checkout lost immutable credential-free binding")
 	}
 	for i, step := range job.Steps {
-		if i < 5 && (step.Env["KUBE_CONFIG"] != "" || step.Env["HCLOUD_TOKEN"] != "") {
+		if i < 5 && (step.Env["KUBE_CONFIG"] != "" || step.Env["HCLOUD_TOKEN"] != "" || step.Env["EMAIL_FRESH_RECOVERY_WITNESS"] != "") {
 			t.Fatal("credential restored before build")
 		}
 	}
@@ -100,6 +110,9 @@ func checkRetainedWorkflow(t *testing.T, filename, jobName, confirm, flag, confi
 	}
 	if final.Env["EMAIL_RETAINED_READER_UID"] != "${{ secrets.EMAIL_RETAINED_READER_UID }}" || final.Env["EMAIL_RETAINED_CLAIM_UID"] != "${{ secrets.EMAIL_RETAINED_CLAIM_UID }}" || !strings.Contains(final.Run, `./scripts/verify-prod-recovery-source.sh "$GITHUB_SHA"`) {
 		t.Fatal("disposal lost independent identities or current reviewed source guard")
+	}
+	if jobName == "dispose" && final.Env["EMAIL_FRESH_RECOVERY_WITNESS"] != "${{ inputs.confirm == 'dispose-fresh-retained-email-copy' && secrets.EMAIL_FRESH_RECOVERY_WITNESS || '' }}" {
+		t.Fatal("fresh witness was not isolated to its exact disposal confirmation")
 	}
 	for _, step := range job.Steps {
 		if strings.Contains(step.Uses, "upload-artifact") {

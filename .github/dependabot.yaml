@@ -10,3 +10,9 @@ updates:
       # devantler-tech actions/workflows are our own code — bump now, no cooldown.
       exclude:
         - "devantler-tech/*"
+    groups:
+      # One pull request for every devantler-tech action and workflow pin, instead of one per
+      # pin (platform#6267). Security updates are not grouped by this entry.
+      devantler-tech:
+        patterns:
+          - "devantler-tech/*"

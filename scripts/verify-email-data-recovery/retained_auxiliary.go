@@ -19,7 +19,7 @@ var (
 // reference was removed; this helper never adopts or deletes an auxiliary.
 func (d *recoveryDriver) retainedAuxiliary(ctx context.Context, binding namespaceinventory.Binding, bindings map[string]namespaceinventory.Binding, readerUID string) (string, error) {
 	fail := func() (string, error) { return "", errors.New("retained-auxiliary") }
-	if d == nil || d.k == nil || d.i != retainedRecovery || ctx.Err() != nil || binding.Namespace != retainedRecovery.namespace || len(binding.Name) > 253 || !retainedAuxiliaryName.MatchString(binding.Name) || !retainedAuxiliaryUID.MatchString(binding.UID) || !retainedAuxiliaryUID.MatchString(readerUID) {
+	if d == nil || d.k == nil || (d.i != retainedRecovery && d.i != freshRetainedRecovery) || ctx.Err() != nil || binding.Namespace != d.i.namespace || len(binding.Name) > 253 || !retainedAuxiliaryName.MatchString(binding.Name) || !retainedAuxiliaryUID.MatchString(binding.UID) || !retainedAuxiliaryUID.MatchString(readerUID) {
 		return fail()
 	}
 	api := ""
@@ -51,7 +51,7 @@ func (d *recoveryDriver) retainedAuxiliary(ctx context.Context, binding namespac
 			}
 		}
 	}
-	parent, ok := retainedAuxiliaryOwner(owner, binding.Kind, bindings, readerUID)
+	parent, ok := retainedAuxiliaryOwner(d.i, owner, binding.Kind, bindings, readerUID)
 	if !ok {
 		return fail()
 	}
@@ -64,8 +64,11 @@ func (d *recoveryDriver) retainedAuxiliary(ctx context.Context, binding namespac
 	return parent, nil
 }
 
-func retainedAuxiliaryOwner(owner object, childKind string, bindings map[string]namespaceinventory.Binding, readerUID string) (string, bool) {
-	ns := retainedRecovery.namespace
+func retainedAuxiliaryOwner(target invocation, owner object, childKind string, bindings map[string]namespaceinventory.Binding, readerUID string) (string, bool) {
+	if target != retainedRecovery && target != freshRetainedRecovery {
+		return "", false
+	}
+	ns := target.namespace
 	if text(owner, "kind") == "Pod" && text(owner, "name") == "reader" && text(owner, "uid") == readerUID {
 		// The independent reader witness remains usable while its frozen child
 		// awaits GC after Pod deletion. No current Pod is newly adopted here.

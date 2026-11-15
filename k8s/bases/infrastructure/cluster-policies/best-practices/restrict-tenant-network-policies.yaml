@@ -318,9 +318,13 @@ spec:
         variables.toEndpoints.all(selector, selector.?matchExpressions.orValue([]).all(item,
         !item.?key.orValue('').matches(variables.broadSelectorKey) ||
         item.?operator.orValue('') in ['In', 'Exists']))
+    # An egress rule that is exactly {} names no destination and no port, so
+    # Cilium allows nothing through it; it only switches the endpoint to egress
+    # default deny (#3501). A rule with only toPorts still allows every peer on
+    # those ports and stays refused below.
     - name: egressRulesNameDestinations
       expression: >-
-        variables.egress.all(rule,
+        variables.egress.all(rule, size(rule) == 0 ||
         ['toEndpoints', 'toCIDR', 'toCIDRSet', 'toEntities', 'toNodes', 'toGroups', 'toServices', 'toFQDNs']
         .exists(field, field in rule && rule[field] != null && size(rule[field]) > 0))
     - name: egressOmitsNodesAndGroups

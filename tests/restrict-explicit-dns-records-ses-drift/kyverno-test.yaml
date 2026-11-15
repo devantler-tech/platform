@@ -1,0 +1,16 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-explicit-dns-records-ses-drift
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-explicit-dns-records.yaml
+resources:
+  - resources.yaml
+variables: ../restrict-explicit-dns-records-create/values.yaml
+results:
+  - policy: restrict-explicit-dns-records
+    resources:
+      - aws/company-mail-ses
+    kind: DNSEndpoint
+    result: fail

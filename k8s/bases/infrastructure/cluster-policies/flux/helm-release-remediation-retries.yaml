@@ -22,17 +22,17 @@ spec:
     objectSelector:
       matchLabels:
         helm.toolkit.fluxcd.io/remediation: "enabled"
+    # Name Flux's HelmRelease resource itself, not every resource narrowed by
+    # a kind condition: Kyverno marks a policy ready for reporting only when
+    # its reports controller can read everything the match names (#6135).
     resourceRules:
-      # Preserve the legacy kind-only match; constrain kind explicitly below.
-      - apiGroups: ["*"]
+      - apiGroups: ["helm.toolkit.fluxcd.io"]
         apiVersions: ["*"]
         operations: ["CREATE", "UPDATE"]
-        resources: ["*"]
+        resources: ["helmreleases"]
   # Removing or disabling the incoming label stops mutation even when the
   # admission selector still matches the previous object's enabled label.
   matchConditions:
-    - name: helm-release-kind
-      expression: object.kind == 'HelmRelease'
     - name: remediation-enabled-on-incoming-object
       expression: >-
         has(object.metadata.labels) &&

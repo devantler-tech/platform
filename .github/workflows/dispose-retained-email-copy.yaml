@@ -4,7 +4,7 @@ name: Dispose Verified Retained Email Copy
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type exactly: dispose-retained-email-copy"
+        description: "Type dispose-retained-email-copy or dispose-fresh-retained-email-copy"
         required: true
         type: string
 
@@ -28,7 +28,7 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/dispose-retained-email-copy.yaml@refs/heads/main || "$GITHUB_ACTOR" != devantler || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted || "$CONFIRM" != dispose-retained-email-copy ]]; then
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/dispose-retained-email-copy.yaml@refs/heads/main || "$GITHUB_ACTOR" != devantler || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted || ( "$CONFIRM" != dispose-retained-email-copy && "$CONFIRM" != dispose-fresh-retained-email-copy ) ]]; then
             printf '%s\n' 'EMAIL_RETAINED_DISPOSAL=UNVERIFIED stage=dispatch' >&2
             exit 2
           fi
@@ -70,6 +70,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EMAIL_RETAINED_READER_UID: ${{ secrets.EMAIL_RETAINED_READER_UID }}
           EMAIL_RETAINED_CLAIM_UID: ${{ secrets.EMAIL_RETAINED_CLAIM_UID }}
+          EMAIL_FRESH_RECOVERY_WITNESS: ${{ inputs.confirm == 'dispose-fresh-retained-email-copy' && secrets.EMAIL_FRESH_RECOVERY_WITNESS || '' }}
           KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
           EMAIL_RETAINED_COPY_CONFIRM: ${{ inputs.confirm }}
@@ -78,7 +79,11 @@ jobs:
           set -euo pipefail
           umask 077
           stage=private-workspace
-          fail() { printf 'EMAIL_RETAINED_DISPOSAL=UNVERIFIED stage=%s\n' "$stage" >&2; exit 2; }
+          receipt=EMAIL_RETAINED_DISPOSAL
+          if [[ "$EMAIL_RETAINED_COPY_CONFIRM" == dispose-fresh-retained-email-copy ]]; then
+            receipt=EMAIL_FRESH_RETAINED_DISPOSAL
+          fi
+          fail() { printf '%s=UNVERIFIED stage=%s cleanup=NOT_STARTED\n' "$receipt" "$stage" >&2; exit 2; }
           [[ $(findmnt -n -o FSTYPE --target /dev/shm) == tmpfs ]] || fail
           private_dir="$(mktemp -d /dev/shm/email-retained-disposal.XXXXXXXX)"
           trap 'rm -rf "$private_dir"' EXIT

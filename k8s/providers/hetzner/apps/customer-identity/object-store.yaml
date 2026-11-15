@@ -1,0 +1,27 @@
+# Off-cluster backups for customer-identity-db: continuous WAL archiving plus the
+# daily base backup in scheduled-backup.yaml, so customer accounts can be
+# restored to any point in the last 30 days. Same R2 bucket and layout as umami-db.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: customer-identity-db
+  namespace: customer-identity
+spec:
+  retentionPolicy: 30d
+  configuration:
+    destinationPath: s3://${r2_bucket}/cnpg/customer-identity-db
+    endpointURL: ${r2_endpoint}
+    s3Credentials:
+      accessKeyId:
+        name: customer-identity-db-backup-r2
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: customer-identity-db-backup-r2
+        key: SECRET_ACCESS_KEY
+      region:
+        name: customer-identity-db-backup-r2
+        key: REGION
+    wal:
+      compression: gzip
+    data:
+      compression: gzip

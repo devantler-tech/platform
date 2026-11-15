@@ -74,7 +74,7 @@ func TestTruncatedCommandOutputCannotSupplyAnAdmissionResult(t *testing.T) {
 }
 
 func TestExecutorAllowsOnlyFixedReadsAndServerDryRun(t *testing.T) {
-	read := []string{"--context", "admin@prod", "--request-timeout=15s", "get", "--raw", "/api/v1/namespaces/kyverno/secrets/ghcr-auth"}
+	read := []string{"--context", "admin@prod", "--request-timeout=15s", "get", "--raw", publicReads[0].path}
 	if !commandAllowed("kubectl", read, nil, nil) {
 		t.Fatal("fixed authoritative read rejected")
 	}
@@ -89,7 +89,9 @@ func TestExecutorAllowsOnlyFixedReadsAndServerDryRun(t *testing.T) {
 	for _, args := range [][]string{
 		{"--context", "admin@prod", "create", "--namespace", "default", "-f", "-"},
 		{"--context", "admin@prod", "--request-timeout=15s", "get", "--raw", "/api/v1/secrets"},
-		{"--context", "foreign", "--request-timeout=15s", "get", "--raw", "/api/v1/namespaces/kyverno/secrets/ghcr-auth"},
+		{"--context", "foreign", "--request-timeout=15s", "get", "--raw", publicReads[0].path},
+		// The retired registry credential is no longer an approved read.
+		{"--context", "admin@prod", "--request-timeout=15s", "get", "--raw", "/api/v1/namespaces/kyverno/secrets/ghcr-auth"},
 	} {
 		if commandAllowed("kubectl", args, pod, nil) {
 			t.Fatal("out-of-scope command accepted")
@@ -100,10 +102,14 @@ func TestExecutorAllowsOnlyFixedReadsAndServerDryRun(t *testing.T) {
 	}
 }
 
-func TestRegistryPasswordNeverBecomesAnArgument(t *testing.T) {
-	env := map[string]string{"REGISTRY_USERNAME": "probe", "REGISTRY_PASSWORD": "private-test-token", "TMPDIR": "/dev/shm/kyverno-cache-recovery.abc123"}
+func TestRegistryPrecheckIsAnonymous(t *testing.T) {
+	env := map[string]string{"REGISTRY_ANONYMOUS": "true", "TMPDIR": "/dev/shm/kyverno-cache-recovery.abc123"}
 	if !commandAllowed("bash", []string{"./scripts/verify-image-unsigned.sh", "--image", unsignedImage}, nil, env) {
-		t.Fatal("fixed in-memory registry precheck rejected")
+		t.Fatal("fixed anonymous registry precheck rejected")
+	}
+	credentialed := map[string]string{"REGISTRY_USERNAME": "probe", "REGISTRY_PASSWORD": "private-test-token", "TMPDIR": "/dev/shm/kyverno-cache-recovery.abc123"}
+	if commandAllowed("bash", []string{"./scripts/verify-image-unsigned.sh", "--image", unsignedImage}, nil, credentialed) {
+		t.Fatal("credentialed registry precheck accepted")
 	}
 	if commandAllowed("bash", []string{"./scripts/verify-image-unsigned.sh", "--password", "private-test-token"}, nil, env) {
 		t.Fatal("registry password argument accepted")

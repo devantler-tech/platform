@@ -34,8 +34,8 @@ func TestNativeTLSAndCertificateReload(t *testing.T) {
 		t.Skip("native binary is supplied by the mandatory chart regression")
 	}
 	version, err := exec.Command(binary, "version").Output()
-	if err != nil || !strings.HasPrefix(string(version), "OpenBao v2.6.3 ") {
-		t.Fatal("expected the verified OpenBao 2.6.3 binary")
+	if err != nil || !strings.HasPrefix(string(version), "OpenBao v2.7.2 ") {
+		t.Fatal("expected the verified OpenBao 2.7.2 binary")
 	}
 	root := t.TempDir()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -93,7 +93,7 @@ func TestNativeTLSAndCertificateReload(t *testing.T) {
 		return port
 	}
 	plainPort, tlsPort, clusterPort, tlsClusterPort := freePort(), freePort(), freePort(), freePort()
-	base := fmt.Sprintf("disable_mlock = true\napi_addr = \"http://127.0.0.1:%d\"\ncluster_addr = \"https://127.0.0.1:%d\"\nlistener \"tcp\" {\n address = \"127.0.0.1:%d\"\n cluster_address = \"127.0.0.1:%d\"\n tls_disable = true\n}\nstorage \"file\" {\n path = %q\n}\n", plainPort, clusterPort, plainPort, clusterPort, filepath.Join(root, "data"))
+	base := fmt.Sprintf("disable_mlock = true\napi_addr = \"http://127.0.0.1:%d\"\ncluster_addr = \"https://127.0.0.1:%d\"\nlistener \"tcp\" {\n address = \"127.0.0.1:%d\"\n cluster_address = \"127.0.0.1:%d\"\n tls_disable = true\n}\nstorage \"raft\" {\n path = %q\n node_id = \"synthetic-transport\"\n}\n", plainPort, clusterPort, plainPort, clusterPort, filepath.Join(root, "data"))
 	if err := os.WriteFile(filepath.Join(root, "base.hcl"), []byte(base), 0600); err != nil {
 		t.Fatal(err)
 	}
