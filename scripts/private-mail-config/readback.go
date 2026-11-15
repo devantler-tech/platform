@@ -91,7 +91,7 @@ func policyMatches(want, actual any, key string) bool {
 		return receivingAliasesMatch(want, actual)
 	}
 	switch key {
-	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events", "roleIds", "defaultUserRoleIds", "defaultAdminRoleIds", "redirectUris", "requireScopes":
+	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events", "roleIds", "defaultUserRoleIds", "defaultAdminRoleIds", "redirectUris", "requireScopes", "key":
 		return reflect.DeepEqual(want, actual)
 	}
 	if wm, ok := want.(map[string]any); ok {
@@ -111,8 +111,9 @@ func policyMatches(want, actual any, key string) bool {
 }
 
 type management struct {
-	client        *http.Client
-	url, password string
+	client *http.Client
+	// user defaults to the recovery administrator the bootstrap starts.
+	url, user, password string
 }
 
 func (m management) request(ctx context.Context, path string, body []byte) ([]byte, error) {
@@ -124,7 +125,11 @@ func (m management) request(ctx context.Context, path string, body []byte) ([]by
 	if err != nil {
 		return nil, errConfiguration
 	}
-	req.SetBasicAuth("bootstrap", m.password)
+	user := m.user
+	if user == "" {
+		user = "bootstrap"
+	}
+	req.SetBasicAuth(user, m.password)
 	req.Header.Set("Content-Type", "application/json")
 	response, err := m.client.Do(req)
 	if err != nil {
@@ -246,86 +251,95 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 	}
 	ids := map[string]string{}
 	for _, op := range ops {
-		if op.Type == "upsert" || op.Type == "create" {
-			properties := map[string]bool{"id": true}
-			for _, value := range op.Value {
-				fields, ok := value.(map[string]any)
-				if !ok {
-					return errConfiguration
+		if err := m.verifyOperation(ctx, op, ids); err != nil {
+			// Name the object only; values and credentials stay out of the error.
+			return objectError{object: op.Object, err: err}
+		}
+	}
+	return nil
+}
+
+// verifyOperation reads one planned operation back and records created IDs.
+func (m management) verifyOperation(ctx context.Context, op operation, ids map[string]string) error {
+	if op.Type == "upsert" || op.Type == "create" {
+		properties := map[string]bool{"id": true}
+		for _, value := range op.Value {
+			fields, ok := value.(map[string]any)
+			if !ok {
+				return errConfiguration
+			}
+			for key := range publicPolicyFields(fields) {
+				properties[key] = true
+			}
+		}
+		keys := make([]string, 0, len(properties))
+		for key := range properties {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		objects, err := m.objects(ctx, op.Object, keys, false)
+		if err != nil {
+			return err
+		}
+		for ref, raw := range op.Value {
+			fields := publicPolicyFields(resolved(raw, ids).(map[string]any))
+			var match map[string]any
+			for _, actual := range objects {
+				identity := fields["name"] != nil && reflect.DeepEqual(fields["name"], actual["name"]) && (fields["domainId"] == nil || fields["domainId"] == actual["domainId"])
+				if op.Object == "Tracer" && fields["@type"] == "Stdout" {
+					identity = actual["@type"] == "Stdout"
 				}
-				for key := range publicPolicyFields(fields) {
-					properties[key] = true
+				if op.Object == "Certificate" {
+					identity = policyMatches(fields["certificate"], actual["certificate"], "")
+				}
+				if op.Object == "Application" || op.Object == "Role" || op.Object == "MtaInboundThrottle" {
+					identity = fields["description"] != nil && reflect.DeepEqual(fields["description"], actual["description"])
+				}
+				if identity {
+					if match != nil {
+						return errConfiguration
+					}
+					match = actual
 				}
 			}
-			keys := make([]string, 0, len(properties))
-			for key := range properties {
-				keys = append(keys, key)
+			if match == nil || !policyMatches(fields, match, "") {
+				return errConfiguration
 			}
-			sort.Strings(keys)
-			objects, err := m.objects(ctx, op.Object, keys, false)
+			id, ok := match["id"].(string)
+			if !ok || id == "" {
+				return errConfiguration
+			}
+			ids[ref] = id
+		}
+	} else {
+		fields := publicPolicyFields(op.Value)
+		properties := []string{"id"}
+		for key := range fields {
+			properties = append(properties, key)
+		}
+		sort.Strings(properties)
+		if op.ID == "" {
+			objects, err := m.objects(ctx, op.Object, properties, true)
+			if err != nil || len(objects) != 1 || !policyMatches(resolved(fields, ids), objects[0], "") {
+				return errConfiguration
+			}
+		} else {
+			id, ok := resolved(op.ID, ids).(string)
+			if !ok || id == "" {
+				return errConfiguration
+			}
+			result, err := m.call(ctx, op.Object, "get", map[string]any{"ids": []string{id}, "properties": properties})
 			if err != nil {
 				return err
 			}
-			for ref, raw := range op.Value {
-				fields := publicPolicyFields(resolved(raw, ids).(map[string]any))
-				var match map[string]any
-				for _, actual := range objects {
-					identity := fields["name"] != nil && reflect.DeepEqual(fields["name"], actual["name"]) && (fields["domainId"] == nil || fields["domainId"] == actual["domainId"])
-					if op.Object == "Tracer" && fields["@type"] == "Stdout" {
-						identity = actual["@type"] == "Stdout"
-					}
-					if op.Object == "Certificate" {
-						identity = policyMatches(fields["certificate"], actual["certificate"], "")
-					}
-					if op.Object == "Application" || op.Object == "Role" {
-						identity = fields["description"] != nil && reflect.DeepEqual(fields["description"], actual["description"])
-					}
-					if identity {
-						if match != nil {
-							return errConfiguration
-						}
-						match = actual
-					}
-				}
-				if match == nil || !policyMatches(fields, match, "") {
-					return errConfiguration
-				}
-				id, ok := match["id"].(string)
-				if !ok || id == "" {
-					return errConfiguration
-				}
-				ids[ref] = id
+			list, ok := result["list"].([]any)
+			missing, mok := result["notFound"].([]any)
+			if !ok || !mok || len(missing) != 0 || len(list) != 1 || !policyMatches(resolved(fields, ids), list[0], "") {
+				return errConfiguration
 			}
-		} else {
-			fields := publicPolicyFields(op.Value)
-			properties := []string{"id"}
-			for key := range fields {
-				properties = append(properties, key)
-			}
-			sort.Strings(properties)
-			if op.ID == "" {
-				objects, err := m.objects(ctx, op.Object, properties, true)
-				if err != nil || len(objects) != 1 || !policyMatches(resolved(fields, ids), objects[0], "") {
-					return errConfiguration
-				}
-			} else {
-				id, ok := resolved(op.ID, ids).(string)
-				if !ok || id == "" {
-					return errConfiguration
-				}
-				result, err := m.call(ctx, op.Object, "get", map[string]any{"ids": []string{id}, "properties": properties})
-				if err != nil {
-					return err
-				}
-				list, ok := result["list"].([]any)
-				missing, mok := result["notFound"].([]any)
-				if !ok || !mok || len(missing) != 0 || len(list) != 1 || !policyMatches(resolved(fields, ids), list[0], "") {
-					return errConfiguration
-				}
-				actual, ok := list[0].(map[string]any)
-				if !ok || actual["id"] != id {
-					return errConfiguration
-				}
+			actual, ok := list[0].(map[string]any)
+			if !ok || actual["id"] != id {
+				return errConfiguration
 			}
 		}
 	}
