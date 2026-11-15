@@ -23,7 +23,7 @@ patches:
                   - matchExpressions:
                       - key: storage.platform.devantler.tech/migration-pool
                         operator: In
-                        values: [v1, v2]
+                        values: [v2]
   - target:
       group: helm.toolkit.fluxcd.io
       version: v2
@@ -45,9 +45,12 @@ patches:
                   requiredDuringSchedulingIgnoredDuringExecution:
                     nodeSelectorTerms:
                       - matchExpressions:
-                          - key: storage.platform.devantler.tech/migration-pool
-                            operator: In
-                            values: [v1, v2]
+                          - key: node-role.kubernetes.io/control-plane
+                            operator: Exists
+              tolerations:
+                - key: node-role.kubernetes.io/control-plane
+                  operator: Exists
+                  effect: NoSchedule
   - target:
       group: helm.toolkit.fluxcd.io
       version: v2
@@ -68,6 +71,9 @@ patches:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: platform.devantler.tech/baseline-worker
-                          operator: In
-                          values: ["true"]
+                      - key: node-role.kubernetes.io/control-plane
+                        operator: Exists
+            tolerations:
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
+                effect: NoSchedule
