@@ -47,6 +47,11 @@ spec:
         name: zitadel
   values:
     replicaCount: 2
+    # ZITADEL reads its Secrets at startup. CNPG renews the database CA
+    # before it expires (every 90 days); restarting on that change keeps the
+    # verified database TLS working.
+    annotations:
+      reloader.stakater.com/auto: "true"
     image:
       repository: ghcr.io/zitadel/zitadel
       tag: v4.20.3@sha256:1b30fea7ed88826dc0a98dacee4e2f2c8b05201fd26f5e4cb5386615b29f7638
