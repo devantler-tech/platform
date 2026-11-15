@@ -157,3 +157,30 @@ func TestMailListenerInventoryAcceptsOnlyOnePrivateLoadBalancerTrust(t *testing.
 		})
 	}
 }
+
+// The readback must refuse a listener whose stored PROXY trust differs from the
+// plan in either direction: a stale trust the plan no longer grants, or an
+// extra trusted address beside the configured one.
+func TestReadbackComparesListenerProxyTrustExactly(t *testing.T) {
+	listener := func(trust map[string]any) map[string]any {
+		return map[string]any{"name": "imaps", "protocol": "imap", "overrideProxyTrustedNetworks": trust}
+	}
+	for _, tc := range []struct {
+		name         string
+		want, stored map[string]any
+		match        bool
+	}{
+		{"both empty", map[string]any{}, map[string]any{}, true},
+		{"same address", map[string]any{"10.0.0.250": true}, map[string]any{"10.0.0.250": true}, true},
+		{"stale trust without an address", map[string]any{}, map[string]any{"10.0.0.250": true}, false},
+		{"extra trusted address", map[string]any{"10.0.0.250": true}, map[string]any{"10.0.0.250": true, "10.0.0.251": true}, false},
+		{"other address", map[string]any{"10.0.0.250": true}, map[string]any{"10.0.0.251": true}, false},
+		{"loopback adapter extra peer", map[string]any{"127.0.0.1": true}, map[string]any{"127.0.0.1": true, "127.0.0.2": true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := policyMatches(listener(tc.want), listener(tc.stored), ""); got != tc.match {
+				t.Fatalf("readback match=%v want %v", got, tc.match)
+			}
+		})
+	}
+}

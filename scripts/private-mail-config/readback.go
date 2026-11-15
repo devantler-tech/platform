@@ -91,7 +91,9 @@ func policyMatches(want, actual any, key string) bool {
 		return receivingAliasesMatch(want, actual)
 	}
 	switch key {
-	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events", "roleIds", "defaultUserRoleIds", "defaultAdminRoleIds", "redirectUris", "requireScopes", "key":
+	// A listener's PROXY trust is compared exactly: an expected empty trust
+	// must not accept a trust that an earlier plan left in place.
+	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events", "roleIds", "defaultUserRoleIds", "defaultAdminRoleIds", "redirectUris", "requireScopes", "key", "overrideProxyTrustedNetworks":
 		return reflect.DeepEqual(want, actual)
 	}
 	if wm, ok := want.(map[string]any); ok {
