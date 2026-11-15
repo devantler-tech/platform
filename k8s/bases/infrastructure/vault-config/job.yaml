@@ -290,8 +290,31 @@ spec:
               addr() { echo "http://openbao-$1.openbao-internal:8200"; }
               pod_status() { BAO_ADDR="$(addr "$1")" bao status -format=json 2>/dev/null || true; }
 
+              first_member_reachable() {
+                FIRST_STATUS_EXIT=0
+                FIRST_STATUS=$(BAO_ADDR="$(addr 0)" BAO_CLIENT_TIMEOUT=5s BAO_MAX_RETRIES=0 \
+                  bao status -format=json 2>/dev/null) || FIRST_STATUS_EXIT=$?
+                # A sealed server returns 2 with valid status JSON. Other
+                # failures must never authorize initialization or recovery.
+                case "$FIRST_STATUS_EXIT" in
+                  0|2) ;;
+                  *) return 1 ;;
+                esac
+                printf '%s\n' "$FIRST_STATUS" | \
+                  grep -Eq '^[[:space:]]*"initialized":[[:space:]]*(true|false),?[[:space:]]*$'
+              }
+
+              # At most 60 five-second requests and 59 three-second backoffs
+              # (477 seconds), below infrastructure's 20-minute health window.
+              # Retries must remain disabled inside each bounded CLI request.
+              FIRST_MEMBER_ATTEMPTS=60
               echo "Waiting for openbao-0 to be reachable..."
-              until pod_status 0 | grep -q '"initialized"'; do
+              until first_member_reachable; do
+                FIRST_MEMBER_ATTEMPTS=$((FIRST_MEMBER_ATTEMPTS - 1))
+                if [ "$FIRST_MEMBER_ATTEMPTS" -le 0 ]; then
+                  echo "ERROR: openbao-0 did not return a usable status before the first-member wait expired."
+                  exit 1
+                fi
                 echo "  ...openbao-0 not reachable yet"
                 sleep 3
               done
