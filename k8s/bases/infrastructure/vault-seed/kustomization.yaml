@@ -29,6 +29,9 @@ resources:
   - password-customer-identity-zitadel-masterkey.yaml
   - external-secret-generated-customer-identity-zitadel-masterkey.yaml
   - push-secret-push-customer-identity-zitadel-masterkey.yaml
+  - password-customer-identity-portal-client.yaml
+  - external-secret-generated-customer-identity-portal-client.yaml
+  - push-secret-push-customer-identity-portal-client.yaml
   - push-secret-seed-r2-credentials.yaml
   - push-secret-seed-wedding-db-backup-r2.yaml
   - push-secret-seed-github-app.yaml

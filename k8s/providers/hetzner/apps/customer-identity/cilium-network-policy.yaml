@@ -1,7 +1,8 @@
-# ZITADEL and its database. Only the Gateway reaches ZITADEL (8080); only
-# ZITADEL, the other instance and the CNPG operator reach the database.
-# Egress: the namespace itself, the API server (CNPG instance manager), R2
-# for backups, and the business site's SES SMTP endpoint for ZITADEL's
+# ZITADEL, the customer Dex and their database. Only the Gateway reaches
+# ZITADEL (8080) and Dex (5556); only the namespace itself and the CNPG
+# operator reach the database. Egress: the namespace itself, the API server
+# (CNPG instance manager), R2 for backups, ZITADEL's public name for Dex's
+# connector, and the business site's SES SMTP endpoint for ZITADEL's
 # invitation and recovery mail (platform#5400).
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -16,6 +17,8 @@ spec:
       toPorts:
         - ports:
             - port: "8080"
+              protocol: TCP
+            - port: "5556"
               protocol: TCP
     - fromEndpoints:
         - matchLabels:
@@ -37,6 +40,12 @@ spec:
         - kube-apiserver
     - toFQDNs:
         - matchPattern: "*.r2.cloudflarestorage.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: accounts.devantler.tech
       toPorts:
         - ports:
             - port: "443"

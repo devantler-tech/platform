@@ -1,5 +1,6 @@
 # Customer sign-in for the business-site portal (business-site#302): ZITADEL
-# with its own CNPG database. Production-only, like the business-site tenant
+# and the portal's customer Dex, with one CNPG cluster holding a database
+# for each. Production-only, like the business-site tenant
 # it serves. The portal stays switched off until #302's checks pass.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -21,6 +22,14 @@ resources:
   - external-secret-first-admin.yaml
   - helm-repository.yaml
   - helm-release.yaml
+  # The portal's customer Dex.
+  - password-db-dex.yaml
+  - external-secret-db-dex.yaml
+  - database-dex.yaml
+  - external-secret-dex-portal-client.yaml
+  - helm-repository-dex.yaml
+  - helm-release-dex.yaml
+  - http-route-dex.yaml
   - cilium-network-policy.yaml
   - certificate.yaml
   - reference-grant.yaml
