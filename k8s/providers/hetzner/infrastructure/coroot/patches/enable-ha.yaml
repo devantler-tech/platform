@@ -164,7 +164,9 @@ spec:
         memory: 2Gi
     storage:
       className: hcloud
-      size: 15Gi
+      # The approved two-day window needs room for yesterday and today before
+      # the space manager reaches its 70% cleanup threshold (platform#6143).
+      size: 35Gi
     # hcloud storage above: required baseline-worker node affinity (see the
     # server `affinity` for why). Merges beside the base podAntiAffinity.
     affinity:
@@ -192,10 +194,10 @@ spec:
       storage:
         className: hcloud
         size: 2Gi
-  # Longer log/trace/profile retention now that storage is durable.
-  logsTTL: 7d
-  tracesTTL: 7d
-  profilesTTL: 7d
+  # Keep one complete previous day, as selected in monorepo#5034.
+  logsTTL: 2d
+  tracesTTL: 2d
+  profilesTTL: 2d
   # --- Slack alerting (fully declarative, prod-only) --------------------------
   # Coroot CE has no pre-fillable bot-token Slack integration, but its generic
   # *webhook* integration POSTs a templated body to any URL -- so we reuse the
