@@ -66,10 +66,23 @@
 # canonical ref must be ONE concrete 40-hex commit, or exactly TWO distinct ones written
 # `(first|second)` while a publisher moves from one reviewed commit to the next (#4713).
 # The pattern form is not accepted there, because the canonical family is approved one
-# reviewed commit at a time. A subject
+# reviewed commit at a time. Outside the generic verifiers below, a subject
 # naming only the canonical family, or the two in any other arrangement, is refused: an
 # arrangement nobody reviewed is not a spelling variant. Which commit is approved is still
 # the approved-revisions guard's question, not this one's.
+#
+# THE GENERIC VERIFIERS NAME ONLY THE MAINTAINED PUBLISHER (#6264)
+# The legacy publisher repository has been deleted, so the generic verifiers (app image
+# admission, the Talos node-pull catch-all and the generic Tenant source) no longer accept
+# it at any commit. Each holds exactly ONE canonical-only subject:
+#
+#   ^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-<w>\.yaml@<commit>$
+#
+# with <commit> one concrete 40-hex commit or two distinct ones written `(first|second)`,
+# the same rule as the canonical half of a two-family subject. In those files ANY other
+# form is refused, so neither the legacy family nor a pattern ref can return there. The
+# per-consumer matchers keep their generated forms above until the approval machinery
+# that writes them is retired.
 
 set -euo pipefail
 
@@ -101,8 +114,18 @@ readonly LEGACY_FAMILY='actions/\.github/workflows/publish-'
 # The exact opening of a single-family subject, up to the workflow name.
 readonly LEGACY_SUBJECT_PREFIX='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-'
 readonly CANONICAL_FAMILY='\.github/\.github/workflows/publish-'
-# Both registered workflows support exact canonical approvals. Generic subjects
-# remain legacy-only unless separately changed and authorized.
+# Both registered workflows support exact canonical approvals.
+# The exact opening of a canonical-only subject, up to the workflow name (#6264).
+readonly CANONICAL_SUBJECT_PREFIX='^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-'
+# The generic verifiers, as grep reports them from the repository root. Only these may, and
+# must, hold the canonical-only form. The generic Tenant source's CEL constructor is read
+# through its constructor reader first, which binds its exact subject; any plain subject
+# written there instead is held to the canonical-only form like the other two.
+readonly CANONICAL_ONLY_FILES=(
+  './k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
+  './k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
+  './talos/cluster/verify-first-party-images.yaml'
+)
 
 # THE FLOOR NAMES WHAT MUST BE FOUND (#4558).
 # An empty result from a filtered read is a claim about the FILTER. If a refactor moves
@@ -379,6 +402,16 @@ judge_family_subject() {
       ;;
   esac
 
+  judge_canonical_ref "$location" "$canonical_ref" "$subject" || return 1
+
+  legacy_ref="${legacy_part#*@}"
+  judge_ref "$location" "$legacy_ref"
+}
+
+# judge_canonical_ref <location> <ref> <subject> — the canonical family's ref rule, shared
+# by the two-family and the canonical-only parse.
+judge_canonical_ref() {
+  local location="$1" canonical_ref="$2" subject="$3"
   # ONE concrete commit, or exactly TWO written `(first|second)`, matched whole (#4713).
   # The pattern text `[0-9a-f]{40}` is deliberately not accepted here: it would admit every
   # commit of the canonical repository, and the canonical family is approved one reviewed
@@ -399,9 +432,48 @@ judge_family_subject() {
       fi
       ;;
   esac
+}
 
-  legacy_ref="${legacy_part#*@}"
-  judge_ref "$location" "$legacy_ref"
+# judge_canonical_subject <location> <subject> — the strict parse of a generic verifier's
+# canonical-only subject (#6264): exactly the canonical prefix, one supported workflow, one
+# `@`, a canonical ref, and the closing anchor. Compared literally, like every other form.
+judge_canonical_subject() {
+  local location="$1" subject="$2" rest workflow at_count
+  case "$subject" in
+    "$CANONICAL_SUBJECT_PREFIX"*'$') ;;
+    *)
+      printf '%s: a generic verifier must name only the maintained publisher, exactly %s(app|manifests)\\.yaml@<commit>$; the deleted legacy publisher repository and any other arrangement are refused (subject: %s)\n' \
+        "$location" "$CANONICAL_SUBJECT_PREFIX" "$subject" >&2
+      return 1
+      ;;
+  esac
+  at_count="$(printf '%s' "$subject" | tr -cd '@' | wc -c | tr -d ' ')"
+  if [ "$at_count" -ne 1 ]; then
+    printf '%s: canonical-only subject carries %s "@" separators, so it names more than one workflow identity (subject: %s)\n' \
+      "$location" "$at_count" "$subject" >&2
+    return 1
+  fi
+  rest="${subject#"$CANONICAL_SUBJECT_PREFIX"}"
+  rest="${rest%$}"
+  case "$rest" in
+    'app\.yaml@'*) workflow=app ;;
+    'manifests\.yaml@'*) workflow=manifests ;;
+    *)
+      printf '%s: the canonical-only subject names an unsupported publisher workflow (subject: %s)\n' \
+        "$location" "$subject" >&2
+      return 1
+      ;;
+  esac
+  judge_canonical_ref "$location" "${rest#"$workflow"'\.yaml@'}" "$subject"
+}
+
+# is_canonical_only_file <path> — success when the path is one of the generic verifiers.
+is_canonical_only_file() {
+  local candidate
+  for candidate in "${CANONICAL_ONLY_FILES[@]}"; do
+    [ "$1" = "$candidate" ] && return 0
+  done
+  return 1
 }
 
 # load_expected_matchers — print the floor as `<count><TAB><path>` lines. Returns non-zero,
@@ -776,7 +848,15 @@ EOF
         status=1
         continue
       fi
-      judge_family_subject "$location" "$subject" || status=1
+      # The generic Tenant source is a generic verifier: canonical-only (#6264).
+      judge_canonical_subject "$location" "$subject" || status=1
+      continue
+    fi
+
+    # THE GENERIC VERIFIERS ARE CANONICAL-ONLY (#6264), and judged by that parse alone, so
+    # the legacy family cannot return to them in any spelling this guard selects.
+    if is_canonical_only_file "${location%:*}"; then
+      judge_canonical_subject "$location" "$subject" || status=1
       continue
     fi
 

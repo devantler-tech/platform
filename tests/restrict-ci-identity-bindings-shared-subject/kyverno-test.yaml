@@ -1,0 +1,17 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-ci-identity-bindings-shared-subject
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/ci-identity/validating-admission-policy-ci-identity-bindings.yaml
+  - ../../k8s/providers/hetzner/infrastructure/ci-identity/validating-admission-policy-binding-ci-identity-bindings.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: restrict-ci-identity-bindings
+    rule: restrict-ci-identity-bindings
+    resources:
+      - aws/aws-managed-resources
+    kind: RoleBinding
+    result: fail

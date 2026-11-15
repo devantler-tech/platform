@@ -121,7 +121,7 @@ jobs:
 
       # Canonical source evidence verifies the immutable publication signature.
       - name: ⚙️ Setup cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: 🔑 Restore kubeconfig
         shell: bash
@@ -218,7 +218,7 @@ jobs:
         #
         # A failure still stops it: there is no `if: always()`, so a red generator or a
         # red guard means this step never runs, which the contract test pins.
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           # Exactly the set and matcher outputs. `add-paths` is the second fence behind
           # the refusal above: even a change that slipped past it cannot be committed.

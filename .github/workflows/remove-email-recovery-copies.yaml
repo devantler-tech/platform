@@ -1,0 +1,114 @@
+# One-off removal of the two retained Email recovery copies and their
+# StorageClasses, on the maintainer's decisions of 2026-11-13 ("Yes, delete
+# them", #6041) and 2026-11-14 (the copy-based cutover closed #5578). Remove
+# this workflow once a run has reported REMOVED for both copies.
+#
+# Each copy is identified only by its fixed name and verified before anything is
+# deleted: its namespace carries the recovery labels, its single claim is bound
+# to a volume of its own StorageClass, and no other volume uses that class. The
+# serving mail claims must stay bound to different volumes before and after.
+name: Remove Email Recovery Copies
+
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type remove-email-recovery-copies
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  remove:
+    name: Remove the retained Email recovery copies
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the confirmed first-attempt main dispatch
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/remove-email-recovery-copies.yaml@refs/heads/main || "$GITHUB_ACTOR" != devantler || "$GITHUB_RUN_ATTEMPT" != 1 || "$CONFIRM" != remove-email-recovery-copies ]]; then
+            echo 'EMAIL_RECOVERY_COPY_REMOVAL=REFUSED stage=dispatch' >&2
+            exit 2
+          fi
+
+      - name: Install the repository-approved Kubernetes client
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check --quiet
+          mkdir -p "$RUNNER_TEMP/tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
+
+      - name: Verify and remove both copies
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          private_dir="$(mktemp -d)"
+          trap 'rm -rf "$private_dir"' EXIT
+          printf '%s' "$KUBE_CONFIG" >"$private_dir/kubeconfig"
+          export KUBECONFIG="$private_dir/kubeconfig"
+          k() { kubectl --context admin@prod --request-timeout=30s "$@"; }
+          fail() { echo "EMAIL_RECOVERY_COPY_REMOVAL=REFUSED copy=$1 stage=$2" >&2; exit 2; }
+
+          serving_volume() { k -n private-mail get pvc "$1" -o jsonpath='{.status.phase}/{.spec.volumeName}'; }
+          serving_before="$(serving_volume private-mail-data) $(serving_volume email-data-encrypted 2>/dev/null || true)"
+          [[ "$serving_before" == Bound/pvc-* ]] || fail serving read
+
+          for copy in 41561215415 42818236850; do
+            name="email-data-recovery-$copy"
+            if ! k get namespace "$name" -o name >/dev/null 2>&1 && ! k get storageclass "$name" -o name >/dev/null 2>&1; then
+              echo "EMAIL_RECOVERY_COPY_REMOVAL=ALREADY_REMOVED copy=$copy"
+              continue
+            fi
+            labels="$(k get namespace "$name" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}/{.metadata.labels.email\.devantler\.tech/data-recovery}')" || fail "$copy" namespace
+            [[ "$labels" == "email-data-recovery/$copy" ]] || fail "$copy" namespace-labels
+            [[ "$(k -n "$name" get pvc -o name)" == persistentvolumeclaim/data ]] || fail "$copy" claims
+            volume="$(k -n "$name" get pvc data -o jsonpath='{.spec.volumeName}')"
+            [[ "$volume" == pvc-* && "$serving_before" != *"$volume"* ]] || fail "$copy" volume
+            [[ "$(k get pv "$volume" -o jsonpath='{.spec.storageClassName}/{.spec.claimRef.namespace}/{.spec.claimRef.name}')" == "$name/$name/data" ]] || fail "$copy" volume-binding
+            [[ "$(k get pv -o jsonpath="{range .items[?(@.spec.storageClassName==\"$name\")]}{.metadata.name}{\"\\n\"}{end}")" == "$volume" ]] || fail "$copy" class-users
+            [[ "$(k get storageclass "$name" -o jsonpath='{.provisioner}')" == driver.longhorn.io ]] || fail "$copy" class
+
+            k delete namespace "$name" --wait=true --timeout=5m >/dev/null || fail "$copy" delete-namespace
+            # A Retain volume is released, not deleted, with its claim.
+            if k get pv "$volume" -o name >/dev/null 2>&1; then
+              k delete pv "$volume" --wait=true --timeout=2m >/dev/null || fail "$copy" delete-volume
+            fi
+            if k -n longhorn-system get volumes.longhorn.io "$volume" -o name >/dev/null 2>&1; then
+              k -n longhorn-system delete volumes.longhorn.io "$volume" --wait=true --timeout=5m >/dev/null || fail "$copy" delete-longhorn-volume
+            fi
+            k delete storageclass "$name" --wait=true --timeout=1m >/dev/null || fail "$copy" delete-class
+
+            for check in "namespace $name" "pv $volume" "storageclass $name"; do
+              # shellcheck disable=SC2086 # each check is a kind and a name
+              ! k get $check -o name >/dev/null 2>&1 || fail "$copy" "verify-${check%% *}"
+            done
+            ! k -n longhorn-system get volumes.longhorn.io "$volume" -o name >/dev/null 2>&1 || fail "$copy" verify-longhorn-volume
+            echo "EMAIL_RECOVERY_COPY_REMOVAL=REMOVED copy=$copy"
+          done
+
+          serving_after="$(serving_volume private-mail-data) $(serving_volume email-data-encrypted 2>/dev/null || true)"
+          [[ "$serving_after" == "$serving_before" ]] || fail serving changed
+          echo "EMAIL_RECOVERY_COPY_REMOVAL=COMPLETE serving=UNCHANGED"

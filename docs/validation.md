@@ -133,16 +133,19 @@ preparation, deployment and actual publication verification. Do not hand-edit th
 generated matchers or infer an approval from a successful parser test.
 
 Application acceptance spans three generic verification paths: admission, Talos
-node pulls and the KRO tenant source. They retain legacy full-commit compatibility
-but accept only the explicitly reviewed maintained revision, not its repository's
-entire history. The committed-profile controls exercise those paths and the three
-registered application matchers with accepted and rejected identities. A passing
-offline predicate check is not deployed-policy or publication evidence.
+node pulls and the KRO tenant source. They accept only the explicitly reviewed
+maintained revisions, not that repository's entire history, and no longer accept
+the deleted legacy publisher repository at any commit (#6264). The committed-profile
+controls exercise those paths and the three registered application matchers with
+accepted and rejected identities. A passing offline predicate check is not
+deployed-policy or publication evidence.
 
 The independent shared-publisher pin guard accepts the same strict two-family
-form for both workflows. Authorization fingerprinting projects only the generated
-legacy signer revisions; the maintained repository, workflow and exact canonical
-commit or pair remain fingerprinted, so an approval change still requires review.
+form for both workflows. In the three generic verifiers it accepts only the
+canonical-only form, so the deleted legacy publisher cannot return there.
+Authorization fingerprinting projects only the generated legacy signer revisions;
+the maintained repository, workflow and exact canonical commit or pair remain
+fingerprinted, so an approval change still requires review.
 
 To move a consumer's canonical publisher to a newer commit, review the workflow
 at that commit, add it as a second row for the consumer in

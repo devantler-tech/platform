@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ import (
 
 const tenantDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 const tenantPublisher = "a76d5df9371cf712a8f60307fde060825a34cf35"
-const legacyTenantSubject = `^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35))$`
+const defaultTenantSubject = `^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)$`
 
 // TestCommittedTenant exercises the actual graph compiler and generated API.
 // Desired objects are expression evidence, not Flux or signature verification.
@@ -179,7 +180,8 @@ func TestCommittedTenant(t *testing.T) {
 			if !reflect.DeepEqual(ref, map[string]interface{}{"semver": ">=1.0.0"}) {
 				t.Fatalf("omitted source changed the existing selector: %v", ref)
 			}
-			assertTenantIdentity(t, source, legacyTenantSubject)
+			assertTenantIdentity(t, source, defaultTenantSubject)
+			assertDefaultSubjectRefusesDeletedPublisher(t, source)
 			writeTenantFixture(t, fmt.Sprintf("default-%t", sops), objects)
 		})
 		t.Run(fmt.Sprintf("pinned-source-only-sops-%t", sops), func(t *testing.T) {
@@ -478,6 +480,34 @@ func assertTenantIdentity(t *testing.T, source *unstructured.Unstructured, subje
 	}}}
 	if url != "oci://ghcr.io/devantler-tech/tenant-fixture/manifests" || !reflect.DeepEqual(verify, want) {
 		t.Fatalf("source escaped fixed URL or signer boundary: url=%s verify=%v", url, verify)
+	}
+}
+
+// assertDefaultSubjectRefusesDeletedPublisher evaluates the compiled default
+// subject as the regex cosign applies: the reviewed maintained revisions are
+// accepted and the deleted legacy publisher repository is refused at any
+// commit, including the one its final release was cut from (#6264).
+func assertDefaultSubjectRefusesDeletedPublisher(t *testing.T, source *unstructured.Unstructured) {
+	t.Helper()
+	identities, _, _ := unstructured.NestedSlice(source.Object, "spec", "verify", "matchOIDCIdentity")
+	if len(identities) != 1 {
+		t.Fatalf("default source must carry exactly one identity, got %d", len(identities))
+	}
+	subject, _ := identities[0].(map[string]interface{})["subject"].(string)
+	matcher, err := regexp.Compile(subject)
+	if err != nil {
+		t.Fatalf("compiled default subject is not a regex: %v", err)
+	}
+	for identity, want := range map[string]bool{
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812": true,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35": true,
+		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328": false,
+		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40):               false,
+		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812": false,
+	} {
+		if got := matcher.MatchString(identity); got != want {
+			t.Fatalf("compiled default subject accepts %s = %t, want %t", identity, got, want)
+		}
 	}
 }
 
