@@ -13,7 +13,12 @@
 # - the administrator's one-time password: until the maintainer's first
 #   sign-in replaces it, it stays equal to zitadel-first-admin, so the
 #   commissioning step works even after that Secret is regenerated. Once he has
-#   chosen his own password it is never touched again.
+#   chosen his own password it is never touched again;
+# - a one-shot sign-in recovery for that administrator, run only when
+#   ADMIN_RECOVERY_NONCE holds a value no run has recorded yet: it unlocks him,
+#   removes his second factors and passkeys, keeps his password and sends
+#   ZITADEL's own password-reset email. The login policy still forces MFA, so
+#   his next sign-in enrols a new factor. Remove the value once it has run.
 # A run that finds nothing to change writes nothing. A duplicate, a deactivated
 # client, a missing Secret, an API error or a refused write stops the run
 # before it changes anything further; the next run starts again.
@@ -145,6 +150,11 @@ spec:
                   value: /run/setup-token/token
                 - name: ADMIN_EMAIL
                   value: ned@devantler.tech
+                # The one-shot recovery trigger (see the top of this file). The
+                # run records it on the client Secret and never acts on it
+                # again; a follow-up change removes it.
+                - name: ADMIN_RECOVERY_NONCE
+                  value: admin-recovery-2026-11-15
               volumeMounts:
                 - name: setup-token
                   mountPath: /run/setup-token
@@ -191,6 +201,7 @@ spec:
                   # one Secret it may write, so a run with nothing new changes nothing.
                   fingerprint_annotation=platform.devantler.tech/smtp-credential-sha256
                   admin_annotation=platform.devantler.tech/first-admin-password-sha256
+                  recovery_annotation=platform.devantler.tech/admin-recovery-nonce
                   project_name="Customer sign-in"
                   app_name="Customer Dex"
                   dex_callback=https://login.devantler.tech/callback
@@ -448,6 +459,62 @@ spec:
                         '{userId: $u, newPassword: {password: env.ADMIN_PASSWORD, changeRequired: true}}')" >/dev/null
                       patch_secret "$(jq -nc --arg a "$admin_annotation" --arg f "$admin_fingerprint" '{metadata: {annotations: {($a): $f}}}')"
                       changes+=("set the administrator's one-time password")
+                    fi
+                  fi
+
+                  # --- One-shot sign-in recovery for the administrator ---------------------------
+                  # A reviewed change sets ADMIN_RECOVERY_NONCE to a new value when the maintainer
+                  # can no longer pass his second factor. The first run that sees the value
+                  # unlocks him, removes every second factor and passkey he has, keeps his
+                  # password, and has ZITADEL send its own password-reset email. The value is
+                  # recorded once the factors are gone, so no later run repeats the removal, even
+                  # after he has enrolled a new factor. The login policy still forces MFA, so his
+                  # next sign-in makes him enrol one. Nothing the reset creates is ever printed.
+                  if [[ -n ${ADMIN_RECOVERY_NONCE:-} ]]; then
+                    [[ $ADMIN_RECOVERY_NONCE =~ ^[a-z0-9-]{8,64}$ ]] || fail "ADMIN_RECOVERY_NONCE must be 8 to 64 characters of a-z, 0-9 and -"
+                    if [[ $(secret_json | jq -r --arg a "$recovery_annotation" '.metadata.annotations[$a] // ""') == "$ADMIN_RECOVERY_NONCE" ]]; then
+                      log "recovery $ADMIN_RECOVERY_NONCE: done earlier, nothing to do"
+                    else
+                      user_request=$(jq -nc --arg u "$admin_id" '{userId: $u}')
+                      list_factors() {
+                        connect zitadel.user.v2.UserService/ListAuthenticationFactors "$(jq -nc --arg u "$admin_id" \
+                          '{userId: $u, states: ["AUTH_FACTOR_STATE_READY", "AUTH_FACTOR_STATE_NOT_READY"]}')"
+                      }
+                      removed=() unlocked=no
+                      if [[ $(jq -r '.result[0].state' <<<"$admins") == USER_STATE_LOCKED ]]; then
+                        connect zitadel.user.v2.UserService/UnlockUser "$user_request" >/dev/null
+                        unlocked=yes
+                      fi
+                      factors=$(list_factors)
+                      while IFS= read -r factor; do
+                        case $(jq -r 'del(.state) | keys | join(",")' <<<"$factor") in
+                          u2f)
+                            connect zitadel.user.v2.UserService/RemoveU2F "$(jq -nc --arg u "$admin_id" --argjson f "$factor" \
+                              '{userId: $u, u2fId: $f.u2f.id}')" >/dev/null
+                            removed+=("security key")
+                            ;;
+                          otp) connect zitadel.user.v2.UserService/RemoveTOTP "$user_request" >/dev/null; removed+=("authenticator app") ;;
+                          otpSms) connect zitadel.user.v2.UserService/RemoveOTPSMS "$user_request" >/dev/null; removed+=("SMS code") ;;
+                          otpEmail) connect zitadel.user.v2.UserService/RemoveOTPEmail "$user_request" >/dev/null; removed+=("email code") ;;
+                          *) fail "the administrator has a second factor of an unknown type; remove it on purpose" ;;
+                        esac
+                      done < <(jq -c '.result // [] | .[]' <<<"$factors")
+                      passkeys=$(connect zitadel.user.v2.UserService/ListPasskeys "$user_request")
+                      while IFS= read -r passkey_id; do
+                        connect zitadel.user.v2.UserService/RemovePasskey "$(jq -nc --arg u "$admin_id" --arg p "$passkey_id" \
+                          '{userId: $u, passkeyId: $p}')" >/dev/null
+                        removed+=("passkey")
+                      done < <(jq -r '.result // [] | .[].id' <<<"$passkeys")
+                      [[ $(list_factors | jq '.result // [] | length') == 0 ]] || fail "second factors remain after the recovery"
+                      [[ $(connect zitadel.user.v2.UserService/ListPasskeys "$user_request" | jq '.result // [] | length') == 0 ]] ||
+                        fail "passkeys remain after the recovery"
+                      state=$(connect zitadel.user.v2.UserService/GetUserByID "$user_request" | jq -r '.user.state')
+                      [[ $state == USER_STATE_ACTIVE ]] || fail "the administrator is $state after the recovery"
+                      patch_secret "$(jq -nc --arg a "$recovery_annotation" --arg n "$ADMIN_RECOVERY_NONCE" '{metadata: {annotations: {($a): $n}}}')"
+                      connect zitadel.user.v2.UserService/PasswordReset "$(jq -nc --arg u "$admin_id" \
+                        '{userId: $u, sendLink: {notificationType: "NOTIFICATION_TYPE_Email"}}')" >/dev/null
+                      log "recovery $ADMIN_RECOVERY_NONCE: unlocked=$unlocked removed=$(IFS=,; echo "${removed[*]:-nothing}") password reset email sent"
+                      changes+=("recovered the administrator's sign-in")
                     fi
                   fi
 
