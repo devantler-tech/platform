@@ -20,6 +20,9 @@
 name: Release Encrypted Volume Holder
 
 "on":
+  # checkov:skip=CKV_GHA_7:Not a build. `confirm` is the typed interlock, and `volume` names
+  # the one encrypted volume to act on: it must match pvc-<uuid>, and every other identity is
+  # read live and verified. The run builds and publishes nothing.
   workflow_dispatch:
     inputs:
       volume:
