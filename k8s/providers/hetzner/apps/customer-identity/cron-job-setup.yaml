@@ -2,9 +2,12 @@
 # Every 15 minutes it reconciles, through ZITADEL's own APIs:
 # - the "Customer sign-in" project and its "Customer Dex" client, exactly as the
 #   business-site preparer's CreateApplication template declares it (code grant
-#   only, the exact Dex callback, Login V1). It restores drifted settings and,
-#   when the stored secret is missing or is the placeholder, issues a new one
-#   into secret-dex-zitadel-client.yaml;
+#   only, the exact Dex callback, Login V1). It restores drifted settings; the
+#   two lists the client does not use (additional origins, post-logout URIs)
+#   are set only at creation, because ZITADEL cannot clear a list by update.
+#   Every run proves the stored secret against ZITADEL's token endpoint, and
+#   when it is missing, the placeholder or refused (for example after a
+#   database restore), it issues a new one into secret-dex-zitadel-client.yaml;
 # - the SES SMTP login: when the business site's credential (OpenBao
 #   apps/business-site/smtp) changes, it updates ZITADEL's provider;
 # - the administrator's one-time password: until the maintainer's first
@@ -200,12 +203,17 @@ spec:
                   # The business-site preparer's CreateApplication template (server/internal/
                   # customeridentity/config.go): one confidential web client, code grant only,
                   # the exact Dex callback, Login V1.
-                  desired_oidc=$(jq -nc --arg cb "$dex_callback" '{
+                  create_oidc=$(jq -nc --arg cb "$dex_callback" '{
                     redirectUris: [$cb], responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
                     grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"], applicationType: "OIDC_APP_TYPE_WEB",
                     authMethodType: "OIDC_AUTH_METHOD_TYPE_BASIC", version: "OIDC_VERSION_1_0", developmentMode: false,
                     accessTokenRoleAssertion: false, idTokenRoleAssertion: false, idTokenUserinfoAssertion: false,
                     additionalOrigins: [], postLogoutRedirectUris: [], loginVersion: {loginV1: {}}}')
+                  # The settings kept equal to that template on every run. ZITADEL cannot clear a
+                  # list through an update (it reads an empty list as "unchanged"), so the two
+                  # lists the client does not use, additional origins and post-logout redirect
+                  # URIs, are set only at creation and not managed afterwards.
+                  desired_oidc=$(jq -c 'del(.additionalOrigins, .postLogoutRedirectUris)' <<<"$create_oidc")
                   # ZITADEL omits fields that hold their default value, so compare normalised.
                   normalise_oidc='{
                     redirectUris: (.redirectUris // []), responseTypes: (.responseTypes // ["OIDC_RESPONSE_TYPE_CODE"]),
@@ -216,7 +224,6 @@ spec:
                     accessTokenRoleAssertion: (.accessTokenRoleAssertion // false),
                     idTokenRoleAssertion: (.idTokenRoleAssertion // false),
                     idTokenUserinfoAssertion: (.idTokenUserinfoAssertion // false),
-                    additionalOrigins: (.additionalOrigins // []), postLogoutRedirectUris: (.postLogoutRedirectUris // []),
                     loginVersion: (.loginVersion // {loginV1: {}})}'
 
                   log() { printf 'setup: %s\n' "$*"; }
@@ -284,13 +291,38 @@ spec:
                     kubectl -n "$namespace" patch secret "$client_secret_name" --type merge --patch-file "$work/patch" >/dev/null ||
                       fail "cannot update Secret $client_secret_name"
                   }
+                  # client_authenticates ID SECRET: succeeds when ZITADEL accepts this client
+                  # secret. A token request with a code that cannot exist fails either at client
+                  # authentication (invalid_client: the secret is wrong, for example after a
+                  # database restore) or after it, at the code (the secret is right). Any other
+                  # answer stops the run.
+                  client_authenticates() {
+                    local status error
+                    CLIENT_SECRET=$2 jq -rn --arg id "$1" '"Authorization: Basic " + ("\($id | @uri):\(env.CLIENT_SECRET | @uri)" | @base64)' \
+                      > "$work/client-auth"
+                    status=$(curl -sS -m 20 -o "$work/token" -w '%{http_code}' -X POST -H "@$work/client-auth" \
+                      -H "Host: $ZITADEL_HOST" --data-urlencode grant_type=authorization_code \
+                      --data-urlencode code=customer-identity-setup-probe --data-urlencode "redirect_uri=$dex_callback" \
+                      "$ZITADEL_URL/oauth/v2/token") || fail "token endpoint: no answer from ZITADEL"
+                    error=$(jq -r '.error // ""' "$work/token" 2>/dev/null || true)
+                    case $error in
+                      invalid_client) return 1 ;;
+                      invalid_grant | invalid_request) return 0 ;;
+                      *) fail "token endpoint: unexpected answer (HTTP $status${error:+, $error})" ;;
+                    esac
+                  }
                   store_client() {
-                    local id=$1
+                    local id=$1 attempt
                     [[ -n $id && -n $CLIENT_SECRET ]] || fail "ZITADEL returned an empty client"
                     patch_secret "$(jq -nc --arg id "$id" \
                       '{data: {"client-id": ($id | @base64), "client-secret": (env.CLIENT_SECRET | @base64)}}')"
                     [[ $(secret_json | jq -r '.data["client-id"] // "" | @base64d') == "$id" ]] ||
                       fail "Secret $client_secret_name did not keep the new client"
+                    for attempt in 1 2 3 4 5; do
+                      client_authenticates "$id" "$CLIENT_SECRET" && return 0
+                      sleep 2
+                    done
+                    fail "ZITADEL does not accept the client secret it issued"
                   }
 
                   for attempt in $(seq 1 20); do
@@ -332,7 +364,7 @@ spec:
                   case $(jq length <<<"$matches") in
                     0)
                       connect zitadel.application.v2.ApplicationService/CreateApplication \
-                        "$(jq -nc --arg p "$project_id" --arg n "$app_name" --argjson c "$desired_oidc" \
+                        "$(jq -nc --arg p "$project_id" --arg n "$app_name" --argjson c "$create_oidc" \
                           '{projectId: $p, name: $n, oidcConfiguration: $c}')" > "$work/created"
                       app_id=$(jq -er '.applicationId' "$work/created")
                       client_id=$(jq -er '.oidcConfiguration.clientId' "$work/created")
@@ -345,19 +377,31 @@ spec:
                       client_id=$(jq -er '.oidcConfiguration.clientId' <<<"$app")
                       [[ $(jq -r '.state' <<<"$app") == APPLICATION_STATE_ACTIVE ]] ||
                         fail "client '$app_name' is not active; reactivate or remove it on purpose"
-                      if [[ $(jq -cS ".oidcConfiguration | $normalise_oidc" <<<"$app") != "$(jq -cS "$normalise_oidc" <<<"$desired_oidc")" ]]; then
+                      want=$(jq -cS "$normalise_oidc" <<<"$desired_oidc")
+                      if [[ $(jq -cS ".oidcConfiguration | $normalise_oidc" <<<"$app") != "$want" ]]; then
                         connect zitadel.application.v2.ApplicationService/UpdateApplication \
                           "$(jq -nc --arg p "$project_id" --arg a "$app_id" --argjson c "$desired_oidc" \
                             '{projectId: $p, applicationId: $a, oidcConfiguration: $c}')" >/dev/null
+                        [[ $(connect zitadel.application.v2.ApplicationService/ListApplications \
+                          "$(jq -nc --arg p "$project_id" '{pagination: {limit: 1000}, filters: [{projectIdFilter: {projectId: $p}}]}')" |
+                          jq -cS --arg a "$app_id" ".applications[] | select(.applicationId == \$a) | .oidcConfiguration | $normalise_oidc") == "$want" ]] ||
+                          fail "client '$app_name' still differs from its declared settings after the update"
                         changes+=("restored client settings")
                       fi
                       stored=$(secret_json)
-                      if [[ $(jq -r '.data["client-id"] // "" | @base64d' <<<"$stored") != "$client_id" ]] ||
-                        [[ $(jq -r '.data["client-secret"] // "" | @base64d' <<<"$stored") =~ ^($placeholder)?$ ]]; then
+                      stored_id=$(jq -r '.data["client-id"] // "" | @base64d' <<<"$stored")
+                      stored_secret=$(jq -r '.data["client-secret"] // "" | @base64d' <<<"$stored")
+                      reissue=
+                      if [[ $stored_id != "$client_id" || $stored_secret =~ ^($placeholder)?$ ]]; then
+                        reissue="none stored"
+                      elif ! client_authenticates "$client_id" "$stored_secret"; then
+                        reissue="stored one refused"
+                      fi
+                      if [[ -n $reissue ]]; then
                         connect zitadel.application.v2.ApplicationService/GenerateClientSecret \
                           "$(jq -nc --arg p "$project_id" --arg a "$app_id" '{projectId: $p, applicationId: $a}')" > "$work/generated"
                         CLIENT_SECRET=$(jq -er '.clientSecret' "$work/generated") store_client "$client_id"
-                        changes+=("issued client secret")
+                        changes+=("issued client secret ($reissue)")
                       fi
                       ;;
                     *) fail "more than one client named '$app_name'" ;;

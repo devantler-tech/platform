@@ -329,6 +329,10 @@ OpenBao is its custody of record: an existing value is never replaced, and
 
 - **Restore order:** restore OpenBao first ([openbao.md](openbao.md)), then `customer-identity-db`
   from its R2 backups. A fresh OpenBao would generate a new key that cannot read the restored database.
+- **After a database restore:** the restored database can hold an older secret for the customer
+  Dex's client than `customer-identity/customer-dex-zitadel-client`. Nothing has to be done by
+  hand: the setup CronJob proves the stored secret against ZITADEL on every run and issues a new one
+  within 15 minutes when ZITADEL refuses it.
 - **Rotation:** not supported by ZITADEL for an existing database. Treat the key as permanent.
 
 ## ZITADEL setup user key
