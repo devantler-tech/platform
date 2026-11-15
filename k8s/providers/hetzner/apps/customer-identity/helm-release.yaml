@@ -234,7 +234,7 @@ spec:
             AllowExternalIDP: false
             AllowRegister: false
             AllowUsernamePassword: true
-            DefaultRedirectURI: https://portal.devantler.tech/portal
+            DefaultRedirectURI: https://portal.devantler.tech/
             DisableLoginWithPhone: true
             ExternalLoginCheckLifetime: 15m
             ForceMFA: true

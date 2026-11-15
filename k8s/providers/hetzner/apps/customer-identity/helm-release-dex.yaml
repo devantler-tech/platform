@@ -178,5 +178,6 @@ spec:
         - id: business-portal
           name: Devantler Tech portal
           secretEnv: CUSTOMER_PORTAL_CLIENT_SECRET
+          # The portal is served at the root of its own host.
           redirectURIs:
-            - https://portal.devantler.tech/portal/callback
+            - https://portal.devantler.tech/callback
