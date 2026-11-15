@@ -20,7 +20,7 @@
 #   login covers that), and his account linked to his GitHub identity. A
 #   "Customers" organization keeps the instance's policy for customers, whom
 #   the customer Dex signs in there. Once the devantler-tech org's "Devantler
-#   Tech" GitHub OAuth App is in OpenBao (apps/customer-identity/github-oauth),
+#   Tech" GitHub App is in OpenBao (apps/customer-identity/github-oauth),
 #   customers may also sign in with GitHub: invite-only, linked to an existing
 #   customer by verified email or after one password-and-MFA sign-in;
 # - a one-shot sign-in recovery for that administrator, run only when
@@ -39,7 +39,7 @@
 #   /run/kube-api, which may only read and update the client Secret (role.yaml).
 #   It reads the SMTP login (zitadel-smtp), the one-time password
 #   (zitadel-first-admin), the platform Dex client secret (platform-dex-client)
-#   and the GitHub OAuth App (github-oauth, optional until it is stored) as
+#   and the GitHub App (github-oauth, optional until it is stored) as
 #   mounted files, never as environment variables.
 # - Neither prints a secret.
 #
@@ -229,7 +229,7 @@ spec:
                   admin_github_login=devantler
                   customers_org=Customers
                   customers_domain=customers.accounts.devantler.tech
-                  # Customers may also sign in with GitHub, through an OAuth App (see below).
+                  # Customers may also sign in with GitHub, through a GitHub App (see below).
                   github_oauth_dir=${GITHUB_OAUTH_DIR:-/run/github-oauth}
                   github_annotation=platform.devantler.tech/github-oauth-secret-sha256
                   project_name="Customer sign-in"
@@ -507,7 +507,7 @@ spec:
                   # his pre-linked account is the only one it can sign in. Customers belong to
                   # their own organization, which the customer Dex requests. They sign in with a
                   # password and MFA, and, once the devantler-tech org's "Devantler Tech" GitHub
-                  # OAuth App is stored in OpenBao, with GitHub too (see below).
+                  # App is stored in OpenBao, with GitHub too (see below).
                   customer_orgs=$(connect zitadel.org.v2.OrganizationService/ListOrganizations "$(jq -nc --arg n "$customers_org" \
                     '{queries: [{nameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')")
                   case $(jq '.result // [] | length' <<<"$customer_orgs") in
@@ -658,15 +658,20 @@ spec:
                     *) fail "the administrator has more than one link to '$idp_name'" ;;
                   esac
 
-                  # Customers: GitHub through the OAuth App, invite-only. The provider never
+                  # Customers: GitHub through the GitHub App, invite-only. The provider never
                   # creates an account. A GitHub login links to an existing customer when both
                   # emails are verified and equal, which ZITADEL checks within the requested
                   # organization, or after the customer signs in once with password and MFA.
                   # The password stays, and MFA is not forced for GitHub logins.
+                  # A GitHub App takes its permissions ("Email addresses: read") from its
+                  # settings and ignores OAuth scopes, but ZITADEL reads the primary verified
+                  # address from /user/emails only when user:email is in its own scope list.
+                  # The app must be public: GitHub lets only members of the owning organization
+                  # authorize a private one, and its customers are not members.
                   customer_github=off
                   if [[ -s $github_oauth_dir/client-id && -s $github_oauth_dir/client-secret ]]; then
-                    github_client_id=$(read_secret "$github_oauth_dir/client-id" "GitHub OAuth App client ID")
-                    github_client_secret=$(read_secret "$github_oauth_dir/client-secret" "GitHub OAuth App client secret")
+                    github_client_id=$(read_secret "$github_oauth_dir/client-id" "GitHub App client ID")
+                    github_client_secret=$(read_secret "$github_oauth_dir/client-secret" "GitHub App client secret")
                     customer_idp=$(jq -nc --arg c "$github_client_id" '{
                       clientId: $c, scopes: ["read:user", "user:email"],
                       providerOptions: {isLinkingAllowed: true, isCreationAllowed: false, isAutoCreation: false, isAutoUpdate: false,
@@ -676,7 +681,7 @@ spec:
                     ensure_login_policy "$customers_org_id" "$customer_policy" "$idp_id"
                     customer_github=on
                   else
-                    log "customer GitHub sign-in is off: no GitHub OAuth App in OpenBao apps/customer-identity/github-oauth yet"
+                    log "customer GitHub sign-in is off: no GitHub App in OpenBao apps/customer-identity/github-oauth yet"
                   fi
 
                   # --- One-shot sign-in recovery for the administrator ---------------------------
@@ -812,7 +817,7 @@ spec:
                 items:
                   - key: client-secret
                     path: client-secret
-            # Optional: until the maintainer stores the OAuth App, the run
+            # Optional: until the maintainer stores the GitHub App, the run
             # leaves customer GitHub sign-in off.
             - name: github-oauth
               secret:
