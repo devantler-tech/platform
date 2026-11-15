@@ -1,4 +1,4 @@
-# Public-only staging: the tenant reconciles its signed v3.3.0 package — the
+# Public-only staging: the tenant reconciles its signed v3.4.0 package — the
 # WebApp at business-site.platform.devantler.tech, its network policy, budget
 # and disclosure input — and gateway traffic reaches it now that the staging
 # hold is lifted. Portal identity and payments stay off, and devantler.tech
@@ -14,6 +14,6 @@ spec:
   sops: false
   webApp: true
   source:
-    digest: sha256:8a5e9decc3189ef7117fa9bfbb3bcb3ae25135a9e0b5bb550a8310cd8e4bc841
+    digest: sha256:9d444d107f572e46c66cd9895656c4339b948610299b2ec3ed8c6db44abd0516
     publisherRevision: a76d5df9371cf712a8f60307fde060825a34cf35
     reconcileApplication: true
