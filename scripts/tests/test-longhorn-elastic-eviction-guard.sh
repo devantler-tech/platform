@@ -6,6 +6,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture="${root}/tests/longhorn-elastic-eviction-guard"
 component="${root}/k8s/bases/components/longhorn-elastic-eviction-guard"
 policy="${component}/cluster-policy.yaml"
+mutation_policy="${component}/uid-mutation-policy.yaml"
 work="$(mktemp -d "${root}/tests/.longhorn-elastic-eviction.XXXXXX")"
 completed=0
 cleanup() {
@@ -28,20 +29,21 @@ yq -o=json '.' "${fixture}/values.yaml" >"${work}/base-values.json"
 yq -o=json '.' "${fixture}/kyverno-test.yaml" >"${work}/base-test.json"
 count=0
 run_case() {
-  local name="$1" result="$2" change="$3" resource_change="${4:-.}" mode="${5:-normal}" dir resource namespace selected_policy
+  local name="$1" result="$2" change="$3" resource_change="${4:-.}" mode="${5:-normal}" dir resource namespace selected_policies
   dir="${work}/${name}"
   mkdir "${dir}"
   yq -o=json '.' "${fixture}/eviction.yaml" | jq "${resource_change}" >"${dir}/eviction.yaml"
   resource="$(jq -r '.metadata.name' "${dir}/eviction.yaml")"
   namespace="$(jq -r '.metadata.namespace' "${dir}/eviction.yaml")"
   jq "${change}" "${work}/base-values.json" >"${dir}/values.json"
-  selected_policy="${policy}"
+  cp "${policy}" "${dir}/validator.yaml"
+  cp "${mutation_policy}" "${dir}/mutator.yaml"
+  selected_policies='["validator.yaml","mutator.yaml"]'
   if [[ "${mode}" == validation-only ]]; then
-    yq '.spec.rules |= map(select(.name != "bind-elastic-instance-manager-uid"))' "${policy}" >"${dir}/validator.yaml"
-    selected_policy="${dir}/validator.yaml"
+    selected_policies='["validator.yaml"]'
   fi
-  jq --arg policy "${selected_policy}" --arg result "${result}" --arg resource "${resource}" \
-    '.policies=[$policy] | .variables="values.json" | .results[0].result=$result | .results[0].resources=[$resource]' \
+  jq --argjson policies "${selected_policies}" --arg result "${result}" --arg resource "${resource}" \
+    '.policies=$policies | .variables="values.json" | .results[0].result=$result | .results[0].resources=[$resource]' \
     "${work}/base-test.json" >"${dir}/kyverno-test.yaml"
   jq --arg resource "${resource}" --arg namespace "${namespace}" \
     '.globalValues["request.name"]=$resource | .globalValues["request.namespace"]=$namespace' \
@@ -49,11 +51,11 @@ run_case() {
   mv "${dir}/scoped-values.json" "${dir}/values.json"
   if [[ "${mode}" == mutation ]]; then
     jq '.deleteOptions.preconditions.uid="pod-uid"' "${dir}/eviction.yaml" >"${dir}/patched-eviction.yaml"
-    jq --arg resource "${resource}" '.results += [{policy:"protect-elastic-longhorn-eviction",rule:"bind-elastic-instance-manager-uid",resources:[$resource],kind:"Eviction",result:"pass",patchedResources:"patched-eviction.yaml"}]' \
+    jq --arg resource "${resource}" '.results += [{policy:"bind-elastic-longhorn-eviction-uid",rule:"bind-elastic-instance-manager-uid",resources:[$resource],kind:"Eviction",result:"pass",patchedResources:"patched-eviction.yaml"}]' \
       "${dir}/kyverno-test.yaml" >"${dir}/mutation-test.yaml"
     mv "${dir}/mutation-test.yaml" "${dir}/kyverno-test.yaml"
   fi
-  if ! kyverno test "${dir}" --remove-color >"${dir}/result.log" 2>&1; then
+  if ! bash "${root}/scripts/validate-kyverno-fixture-evaluation.sh" "${dir}" >"${dir}/result.log" 2>&1; then
     cat "${dir}/result.log" >&2
     fail "native eviction admission: ${name}"
   fi
@@ -153,17 +155,20 @@ done
 kubectl kustomize "${root}/k8s/providers/hetzner/infrastructure" >"${work}/production.yaml"
 kubectl kustomize "${root}/k8s/providers/hetzner/infrastructure/controllers" >"${work}/controllers.yaml"
 yq ea -o=json '[.]' "${work}/production.yaml" "${work}/controllers.yaml" >"${work}/production.json"
-jq -e '[.[] | select(.metadata.name == "protect-elastic-longhorn-eviction" or .metadata.name == "kyverno-elastic-longhorn-reader" or .metadata.name == "kyverno:admission-controller:read-elastic-worker")] | length == 0' \
+jq -e '[.[] | select(.metadata.name == "protect-elastic-longhorn-eviction" or .metadata.name == "bind-elastic-longhorn-eviction-uid" or .metadata.name == "kyverno-elastic-longhorn-reader" or .metadata.name == "kyverno:admission-controller:read-elastic-worker")] | length == 0' \
   "${work}/production.json" >/dev/null || fail 'the inactive guard unexpectedly affects production'
 mkdir "${work}/enabled"
 jq -n '{apiVersion:"kustomize.config.k8s.io/v1beta1",kind:"Kustomization",components:["../../../k8s/bases/components/longhorn-elastic-eviction-guard","../../../k8s/bases/components/longhorn-elastic-eviction-reader"]}' >"${work}/enabled/kustomization.yaml"
 kubectl kustomize "${work}/enabled" >"${work}/enabled.yaml"
 yq ea -o=json '[.]' "${work}/enabled.yaml" >"${work}/enabled.json"
-jq -e 'length == 4 and
+jq -e 'length == 5 and
   ([.[]|select(.kind == "ClusterPolicy" and .metadata.name == "protect-elastic-longhorn-eviction")|
     .spec.background == false and .spec.webhookConfiguration.failurePolicy == "Fail" and
     .spec.rules[0].match.any[0].resources.kinds == ["Pod/eviction"] and
     .spec.rules[0].validate.failureAction == "Enforce"] == [true]) and
+  ([.[]|select(.kind == "ClusterPolicy" and .metadata.name == "bind-elastic-longhorn-eviction-uid")|
+    .spec.background == false and .spec.webhookConfiguration.failurePolicy == "Fail" and
+    .spec.rules[0].match.any[0].resources.kinds == ["Pod/eviction"]] == [true]) and
   ([.[]|select(.kind == "Role")|.metadata.namespace == "longhorn-system" and ([.rules[].verbs[]]|unique|sort) == ["get","list"]] == [true]) and
   ([.[]|select(.kind == "ClusterRole")|.metadata.labels["rbac.kyverno.io/aggregate-to-admission-controller"] == "true" and .rules == [{apiGroups:[""],resources:["nodes"],verbs:["get"]}]] == [true]) and
   ([.[]|select(.kind == "RoleBinding")|.metadata.namespace == "longhorn-system" and .subjects == [{kind:"ServiceAccount",name:"kyverno-admission-controller",namespace:"kyverno"}]] == [true])' \

@@ -9,10 +9,7 @@ metadata:
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Pod/eviction
     policies.kyverno.io/description: >-
-      Holds an elastic worker's instance-manager eviction until its original
-      identities are bound, placement is fenced, and native data and process
-      inventories are empty. This additional admission gate does not authorize
-      cloud deletion or establish the remaining replica count.
+      Holds an elastic worker's instance-manager eviction until its original identities are bound, placement is fenced, and native data and process inventories are empty. This additional admission gate does not authorize cloud deletion or establish the remaining replica count.
 spec:
   background: false
   webhookConfiguration:
@@ -105,40 +102,3 @@ spec:
                   {{ replicas.complete == `true` && engines.complete == `true` && frontends.complete == `true` && shards.complete == `true` && shardgroups.complete == `true` && orphans.complete == `true` && type(replicas.resident) == 'array' && type(engines.resident) == 'array' && type(frontends.resident) == 'array' && type(shards.resident) == 'array' && type(shardgroups.resident) == 'array' && type(orphans.resident) == 'array' && length(replicas.resident) == `0` && length(engines.resident) == `0` && length(frontends.resident) == `0` && length(shards.resident) == `0` && length(shardgroups.resident) == `0` && length(orphans.resident) == `0` }}
                 operator: NotEquals
                 value: true
-    # Kubernetes runs mutation before validating admission. Bind a CA request
-    # that omits UID to the fetched Pod; preserve an explicit UID so the
-    # validator can reject mismatches rather than silently retargeting it.
-    - name: bind-elastic-instance-manager-uid
-      match:
-        any:
-          - resources:
-              kinds: [Pod/eviction]
-              namespaces: [longhorn-system]
-              names: ["instance-manager-*"]
-              operations: [CREATE]
-      context:
-        - name: targetPod
-          apiCall:
-            urlPath: /api/v1/namespaces/{{request.namespace}}/pods/{{request.name}}
-        - name: targetNode
-          apiCall:
-            urlPath: /api/v1/nodes/{{ targetPod.spec.nodeName }}
-        - name: storageNode
-          apiCall:
-            urlPath: /apis/longhorn.io/v1beta2/namespaces/longhorn-system/nodes/{{ targetPod.spec.nodeName }}
-      preconditions:
-        all:
-          - key: "{{ request.object.deleteOptions.preconditions.uid || '' }}"
-            operator: Equals
-            value: ""
-          - key: "{{ targetNode.metadata.labels.\"ksail.io/autoscaled\" || '' }}"
-            operator: Equals
-            value: "true"
-          - key: "{{ regex_match('^autoscale-longhorn-v[12]-[0-9a-f]{16}$', targetNode.metadata.name) && (storageNode.metadata.labels.\"storage.platform.devantler.tech/migration-enabled\" || '') == 'true' }}"
-            operator: Equals
-            value: false
-      mutate:
-        patchStrategicMerge:
-          deleteOptions:
-            preconditions:
-              +(uid): "{{ targetPod.metadata.uid }}"

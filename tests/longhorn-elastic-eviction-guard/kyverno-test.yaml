@@ -5,6 +5,7 @@ metadata:
   name: longhorn-elastic-eviction-guard
 policies:
   - ../../k8s/bases/components/longhorn-elastic-eviction-guard/cluster-policy.yaml
+  - ../../k8s/bases/components/longhorn-elastic-eviction-guard/uid-mutation-policy.yaml
 resources:
   - eviction.yaml
 variables: values.yaml

@@ -95,6 +95,8 @@ policies:
           orphans:
             complete: true
             resident: []
+  - name: bind-elastic-longhorn-eviction-uid
+    rules:
       - name: bind-elastic-instance-manager-uid
         values:
           targetPod: *targetPod

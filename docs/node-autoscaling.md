@@ -57,6 +57,7 @@ metadata and Longhorn resources in `longhorn-system`. Neither component is
 included in the production or local overlays. Ordinary elastic disks remain
 excluded from replica placement.
 
+Separate mutation and validation policies follow the native admission stages.
 The guard binds an eviction that lacks a UID precondition to the fetched Pod
 UID, preserving an explicitly supplied UID. Validation requires that exact UID
 and resolves the actual Pod, its instance-manager owner, and its worker.
@@ -78,6 +79,10 @@ restore protection before cancelling either placement fence. Safe client
 prepacking, raw-device qualification, recovery and a controlled V2 scale-down
 trial are separate prerequisites; adding this component alone does not enable
 elastic replica storage.
+
+The source action baseline includes the inactive policy. The separate
+production action baseline requires every active rule and rejects unregistered
+additions; activating this component also requires updating that baseline.
 
 ### How new nodes join
 

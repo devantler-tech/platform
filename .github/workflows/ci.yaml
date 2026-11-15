@@ -249,6 +249,7 @@ jobs:
               - 'scripts/validate-embedded-json.sh'
               - 'scripts/validate-policy-actions/**'
               - 'tests/policy-failure-actions.json'
+              - 'tests/production-policy-failure-actions.json'
               - '.github/scripts/setup-ksail.sh'
               - '.github/scripts/kyverno-version.sh'
               - 'scripts/tests/test-webapp-container-security.sh'
@@ -1058,7 +1059,7 @@ jobs:
           policy_render="$(mktemp -d)"
           trap 'rm -rf "$policy_render"' EXIT
           kubectl kustomize k8s/providers/hetzner/infrastructure > "$policy_render/production.yaml"
-          go run ./scripts/validate-policy-actions "$policy_render"
+          go run ./scripts/validate-policy-actions "$policy_render" tests/production-policy-failure-actions.json
 
       - name: 🩹 Validate merge-group heal contract
         run: |
