@@ -253,7 +253,7 @@ spec:
       # config-map.yaml, so a future config edit cannot merge without carrying
       # an explicit rollout even if Reloader itself is unavailable.
       podLabels:
-        platform.devantler.tech/node-agent-config-generation: config-3abda55fcd229620
+        platform.devantler.tech/node-agent-config-generation: config-f933b0b1330a4d5e
       # C-0211 non-privilege fields for the node-agent DaemonSet's STORED
       # template (#3522). Kyverno's add-baseline-context-optin-* rules supply
       # these at admission, but Kubescape scores the stored spec, so the

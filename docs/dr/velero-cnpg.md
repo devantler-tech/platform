@@ -147,12 +147,16 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
   so no extra plugin beyond `velero-plugin-for-aws` for the R2 BSL).
 
 > **Transient disk during the backup window.** For each Longhorn PVC the data
-> mover provisions a short-lived PVC from the snapshot (on `longhorn`, so
-> ×`longhorn_replica_count`) and a node-agent pod copies it to R2, then deletes
-> both. On the space-constrained cx23 workers this transiently consumes up to
-> the source volume's size × replica count per PVC during the 02:17 run — fine
-> for the current set (umami 5Gi, actual-budget 10Gi) but worth
-> watching if larger Longhorn volumes are added.
+> mover provisions a short-lived PVC from the snapshot on `longhorn-backup`,
+> then a node-agent pod copies it to R2 and deletes the staging resources.
+> Velero's [backupPVC mapping](https://velero.io/docs/v1.18/data-movement-backup-pvc-configuration/)
+> selects this single-replica, immediate-binding class only for intermediate
+> copies of the `longhorn` source class. Source volumes keep their existing
+> redundancy, and restore destinations keep their own storage classes. Staging
+> reserves one source-volume-sized replica instead of three, but still needs
+> schedulable disk space; it does not resolve exhausted source-volume capacity.
+> A staging-replica failure fails that upload, so verify a complete scheduled
+> backup and a representative restore before declaring the capacity fix proven.
 
 ## CloudNativePG
 

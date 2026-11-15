@@ -114,6 +114,35 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure" >"${rendere
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers" >"${rendered_controllers}" ||
   fail 'the production infrastructure controllers overlay did not render'
 
+# Follow Velero's effective source-class mapping into the rendered StorageClass.
+# Missing composition or a fallback to the source class recreates full-size,
+# three-replica staging copies and can prevent any snapshot upload from starting.
+backup_storage_class="$(yq -N -er '
+  select(.kind == "ConfigMap" and .metadata.namespace == "velero" and .metadata.name == "node-agent-config") |
+  .data["node-agent-config.json"] | from_json | .backupPVC.longhorn.storageClass
+' "${rendered_controllers}")" || fail 'Longhorn snapshot uploads need an explicit staging storage class'
+export backup_storage_class
+readonly backup_storage_class
+
+[[ -n "${backup_storage_class}" && "${backup_storage_class}" != 'longhorn' && "${backup_storage_class}" != 'longhorn-wffc' ]] ||
+  fail 'snapshot uploads must not inherit the durable source storage class'
+
+backup_storage_contract="$(yq -N -er '
+  select(.kind == "StorageClass" and .metadata.name == strenv(backup_storage_class)) |
+  .provisioner + "|" + .parameters.numberOfReplicas + "|" + .volumeBindingMode + "|" + .reclaimPolicy + "|" +
+  (.metadata.annotations."storageclass.kubernetes.io/is-default-class" // "false")
+' "${rendered_controllers}")" || fail 'the mapped snapshot staging class must be deployed with the controllers'
+readonly backup_storage_contract
+
+[[ "${backup_storage_contract}" == 'driver.longhorn.io|1|Immediate|Delete|false' ]] ||
+  fail "snapshot staging needs one disposable Longhorn replica and immediate binding, never the default class; found ${backup_storage_contract}"
+
+source_replica_count="$(yq -N -er '
+  select(.kind == "StorageClass" and .metadata.name == "longhorn-wffc") | .parameters.numberOfReplicas
+' "${rendered_controllers}")" || fail 'the durable source storage class must still render'
+readonly source_replica_count
+[[ "${source_replica_count}" == '3' ]] || fail 'source-volume redundancy must remain at three replicas'
+
 hcloud_pvcs="$(
   yq -N -r '
     select(.kind == "PersistentVolumeClaim" and .spec.storageClassName == "hcloud") |
