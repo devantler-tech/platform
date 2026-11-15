@@ -7,7 +7,7 @@
       "workflow": "publish-app",
       "kind": "published-binding",
       "sourcePath": "k8s/providers/hetzner/apps/business-site/tenant.yaml",
-      "constructorSpecSha256": "488bd14c5f8554ef1a26ff359707b4f8962a156d55e2f000fd3b58eb515b5f4a",
+      "constructorSpecSha256": "7d77b5eab3b26ca19b36c9923b2a7124225da85a117637fe868e29338c48e0c1",
       "tenantIdentity": {
         "apiVersion": "kro.run/v1alpha1",
         "kind": "Tenant",
@@ -20,17 +20,17 @@
         "namespace": "business-site",
         "name": "business-site",
         "artifactURL": "oci://ghcr.io/devantler-tech/business-site/manifests",
-        "digest": "sha256:083a2dcf9c5ab6d517a4da0c4d4641b6316ad45c2dd0e00976ad8bdbca3b4c85"
+        "digest": "sha256:8a5e9decc3189ef7117fa9bfbb3bcb3ae25135a9e0b5bb550a8310cd8e4bc841"
       },
       "publication": {
-        "gitTag": "v3.2.3",
-        "sourceSHA": "420b844e7bf236c0a1b65e5574479d807a3ed43f",
+        "gitTag": "v3.3.0",
+        "sourceSHA": "303e366d26a1a58d87d7574541c065ccc560f14c",
         "publisherIdentity": "devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35",
         "callerWorkflow": ".github/workflows/publish-runtime.yaml",
         "event": "release",
-        "workflowRunId": 43542427805,
+        "workflowRunId": 43666570961,
         "workflowRunAttempt": 1,
-        "verifiedOn": "2026-11-14"
+        "verifiedOn": "2026-11-15"
       }
     }
   ]

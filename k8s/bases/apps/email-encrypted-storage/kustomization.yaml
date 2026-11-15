@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# Preparation only. The retained Email namespace must already exist. No workload
-# selects this claim until independent key recovery and migration are proven.
+# The retained Email namespace must already exist. Production selects this claim
+# for the mail store after a verified copy (docs/operations/email-storage-encryption.md).
 resources:
   - secret-store.yaml
   - external-secret.yaml

@@ -19,9 +19,15 @@
 #      write. A package that is still private leaves the cluster untouched.
 #   2. Remove spec.sync.pullSecret under the `ksail` field manager, guarded by
 #      a JSON-patch test of the exact live value.
-#   3. Ask flux-operator to reconcile, wait until the source carries no
-#      secretRef and is Ready at its new generation (an anonymous fetch), then
-#      ask the source to fetch again. spec.verify is never touched.
+#   3. Ask flux-operator to reconcile, wait until it has applied the patched
+#      generation and the source carries no secretRef, then ask the source to
+#      fetch again. spec.verify is never touched.
+#      This deliberately does NOT wait for the source to be Ready. A bad live
+#      cosign matcher keeps the source not Ready whatever its credential, and
+#      reassert-flux-root-verify.sh repairs that only after publication, which
+#      runs after this step. Waiting here would time the deploy out before the
+#      repair could run. Step 1 already proved the anonymous pull; the deploy's
+#      later steps prove the source fetches and verifies the published artifact.
 # KSail itself stops setting pullSecret once ksail.prod.yaml carries no
 # localRegistry credential, so a later KSail re-assert agrees with this.
 #
@@ -116,8 +122,8 @@ if [[ -n "${pull_secret}" ]]; then
 fi
 
 # converged -> true once flux-operator has reconciled the patched generation (or
-# nothing was patched), the source names no secret, and the source is Ready at
-# its current generation, which means it fetched without one.
+# nothing was patched) and the rendered source names no secret. Source readiness
+# is not required here; see step 3 in the header.
 converged() {
   local fi_json src_json
   fi_json="$(kubectl_prod get fluxinstance "${instance}" -o json)" || return 1
@@ -126,9 +132,7 @@ converged() {
     (($g == "") or any($instance.status.conditions[]?; .type == "Ready" and .status == "True"
       and (.observedGeneration // -1) >= ($g | tonumber)))
     and (($instance.spec.sync.pullSecret // "") == "")
-    and (($src.spec.secretRef.name // "") == "")
-    and any($src.status.conditions[]?; .type == "Ready" and .status == "True"
-      and (.observedGeneration // -1) >= ($src.metadata.generation // 0))'
+    and (($src.spec.secretRef.name // "") == "")'
 }
 
 requested_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -141,9 +145,9 @@ while :; do
   state="$(converged)" || die "could not re-read FluxInstance ${namespace}/${instance} or OCIRepository ${namespace}/${source_name}"
   [[ "${state}" == true ]] && break
   if ((SECONDS >= deadline)); then
-    printf 'detach-flux-root-pull-secret: OCIRepository %s/%s did not converge to an anonymous fetch within %ss\n' \
+    printf 'detach-flux-root-pull-secret: OCIRepository %s/%s was not re-rendered without its pull secret within %ss\n' \
       "${namespace}" "${source_name}" "${render_timeout}" >&2
-    summary 'DETACH INCOMPLETE — the FluxInstance names no pull secret, but the root source has not fetched anonymously yet.'
+    summary 'DETACH INCOMPLETE — the FluxInstance names no pull secret, but the root source has not been re-rendered without it yet.'
     exit 1
   fi
   sleep "${poll_interval}"
@@ -153,4 +157,4 @@ kubectl_prod annotate ocirepository "${source_name}" --overwrite \
   "reconcile.fluxcd.io/requestedAt=${requested_at}" >/dev/null ||
   die "could not request a fetch of OCIRepository ${namespace}/${source_name}"
 
-summary 'DETACHED — the root source now pulls the public package anonymously and was asked to fetch.'
+summary 'DETACHED — the root source names no pull secret and was asked to fetch the public package anonymously.'

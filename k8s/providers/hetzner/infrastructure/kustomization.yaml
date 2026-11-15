@@ -36,6 +36,8 @@ resources:
   # Coroot/Flagger. Establishes the namespaced github CRDs the github-config app
   # (bases/apps/github-config/) consumes. Prod-only (Crossplane is Hetzner-only).
   - crossplane/
+  # Native admission guard for the EKS CI identity (platform#6270).
+  - ci-identity/
   # external-dns lives in this `infrastructure` layer (not
   # `infrastructure/controllers/`) because its Cloudflare token is a user-fed
   # OpenBao secret materialised by an ExternalSecret, and the openbao

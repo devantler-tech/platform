@@ -25,6 +25,12 @@
 # as "(first|second)" in the record's order, and none where the record gives none; the legacy
 # set is judged as before.
 #
+# OWN RELEASE WORKFLOW (#6265)
+# A two-family matcher also accepts the consumer's own repository's release workflow on a
+# release tag, as one fixed alternative written last (OWN_RELEASE_TAIL in the shared
+# library). It must be exactly that consumer's, and present: the `.github` consumer, whose
+# repository hosts the shared publishers, has none.
+#
 # SCOPE — GENERIC SUBJECTS ARE EXCLUDED BY NAME
 # Three subjects name the shared workflows without belonging to one consumer: the Kyverno
 # app-image policy, the tenant ResourceGraphDefinition template, and the Talos first-party
@@ -53,9 +59,13 @@ source "$GUARD_DIR/publish-workflow-approved-revisions.lib.sh"
 for consumer in "${EXPECTED_CONSUMERS[@]}"; do
   record="$(lookup "$observed" "$consumer")"
   [ -n "$record" ] || refuse "no OCIRepository under $SCAN_ROOT is attributed to registered consumer $consumer; the scan, not the tree, is the likely cause"
-  IFS=$'\t' read -r file workflow ref canonical_ref <<<"$record"
+  IFS=$'\t' read -r file workflow ref canonical_ref own_state <<<"$record"
   IFS=$'\t' read -r set_workflow signer pin candidate <<<"$(lookup "$approved" "$consumer")"
   [ "$workflow" = "$set_workflow" ] || refuse "$consumer: $file names $workflow but the approved set names $set_workflow"
+  # A two-family matcher also names the consumer's own release workflow (#6265); the shared
+  # library has already refused one naming any other repository or written elsewhere.
+  [ "$own_state" != missing ] ||
+    refuse "$consumer: $file does not accept its own release workflow '|$(consumer_release_alternative "$consumer")'; run scripts/write-publish-workflow-matchers.sh"
 
   accepted="$(approved_ref "$signer" "$pin" "$candidate") (in any order)"
 

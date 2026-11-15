@@ -818,8 +818,10 @@ verification all read `ghcr.io` anonymously. The GitHub `prod` environment's
 
 Both production entrypoints run `scripts/detach-flux-root-pull-secret.sh`
 before `latest` can move: it proves an anonymous pull of the synced artifact,
-removes a leftover FluxInstance `spec.sync.pullSecret`, and waits for the root
-source to fetch anonymously.
+removes a leftover FluxInstance `spec.sync.pullSecret`, and waits until the
+root source is re-rendered without it. It does not wait for the source to be
+Ready: a bad verify matcher is repaired only after publish, by
+`scripts/reassert-flux-root-verify.sh`.
 
 When a pull fails with 401 or 403:
 

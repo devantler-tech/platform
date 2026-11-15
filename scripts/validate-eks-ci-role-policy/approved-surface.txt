@@ -24,9 +24,13 @@ admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||gateway-receiv
 
 admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||longhorn-benchmark-delete 33d9144f35086ed96a084f303f90c44c22cc5e19f47a16752a1b871c6de8b04e
 
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||restrict-ci-identity-bindings 7c9f4c58da730b15c911ed2ca77204c0dfe17fb563c38401d0cf207721686a45
+
 admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||gateway-receiver c22536e4b66d2287780a0126fe46bb8e9b409f932f8844cf1e55cd3b9cf707e2
 
 admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||longhorn-benchmark-delete c762dfaf739eba36be7b0dca44a3e308fc814ea4be9098ff5bc0c6d969452a78
+
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||restrict-ci-identity-bindings d9dffd5dbcf9692e4521e75a6ddd1fd92b7d5d0a1e178341eadc5e1147cb1dca
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget 6434448de53dd6fdb9dccec789d93c4dacd387d5f39d95b43842d3e2f1407122
 
@@ -36,7 +40,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|arc-systems|arc-controller bff72aa7aa7b49d
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate 646603f78f7124c4bdc214001cd5e0d0b544f6f8a3cc70a87a9bb2768726c101
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-atelet 22fc81ab268c902e95dcc4e8b0fab12a9a4f459f1491f3dc4d7e28dc345c5e5e
+helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-atelet 0565965eb03f0315d503b0c6b869535012da1fc77f81691955fa6128a449d032
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-crds 1e9dd6ce2680fd5b6e03f0811dbc7f8b67ff5a644eed691329a06ee469252024
 
@@ -96,7 +100,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 5781451a70a8dee38ed71
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager be4e40e80964e37494dde9c1df0662a58b9b8976d2a57b9efed9c65aebdb9611
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape e0f1f8cbfbf7717fabb66f37c998ecff877931ac627fedf38678a2b915433829
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 460752f08b0604c6b96a7338ae2a5881128043c41b6e6b5095e76edda9af513e
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 26000fada860269dd6bcbf187f8252861d6cc5dec1b8b357e824d012f1d7dfd5
 
@@ -124,7 +128,11 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|vertical-pod-autoscaler|vertical-pod-autos
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|whoami|whoami 22eb185e9f69bbddf8dc27bd2a852b07b3bbaf791d25ada894eeb8e954f99bed
 
+iam.aws.m.upbound.io/v1beta1|AccessKey|aws|business-site-smtp bd2f3c05c077842bef856173ff21446e9de19ba48143abe869a5ed146aa071e0
+
 iam.aws.m.upbound.io/v1beta1|AccessKey|aws|email-smtp 22ff8010a4298f2b19a2829a65c383f27fd737b2aed7b096f22814ad73a2f240
+
+iam.aws.m.upbound.io/v1beta1|Policy|aws|business-site-smtp-send c18118edf62d1b5536b9d5b72c4e5cbcff8a03b3e79dc65cf1a3c3160e548c8d
 
 iam.aws.m.upbound.io/v1beta1|Policy|aws|eks-ci-smoke-boundary 019210611429956763cab81a883bc6cf1faf53caf89b5e9274e8ec69cad01b66
 
@@ -134,13 +142,17 @@ iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci c40205b3f48d193e8be1a39abda738865b9
 
 iam.aws.m.upbound.io/v1beta1|Role|aws|ses-account-setup 7faa58457f4a17a3c14368d3a956bb07da4f40bb2689c61149ee31eae9693b6b
 
+iam.aws.m.upbound.io/v1beta1|UserPolicyAttachment|aws|business-site-smtp-send f1ac1f07ba8064b97981e45afa17f959b4c133d5648ebd6892e4756db41aa2b1
+
 iam.aws.m.upbound.io/v1beta1|UserPolicyAttachment|aws|email-smtp-send 06c8f5c0aa8f7b593878b9869c5af7375a1ef2f429182cb904e76e0dae966e1c
+
+iam.aws.m.upbound.io/v1beta1|User|aws|business-site-smtp 1717b61eedee267eff58840a625747e71514878135154c324f3cf63051fd4847
 
 iam.aws.m.upbound.io/v1beta1|User|aws|email-smtp 19ce46105be088b444658d4d594f6059308f079440336af06af912d60aeb5704
 
-kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 9f50e8d5a8330b43cf57e15b16a30e7a2ced60a50fd52393335b7c6e9d749dd1
+kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run ca8b01a51a943893bc0186bb542410a02e48e28c13eb994e8a3177608099479a
 
-kro.run/v1alpha1|Tenant|flux-system|business-site 5bb6db3e87d10fb4970c3671a2e76f61f6b2726b124c09439d8dec5665721a3f
+kro.run/v1alpha1|Tenant|flux-system|business-site 7a0592c25d831b2ea3aaa400c175cfb955140fcaea593fc37114479d3bc3624b
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|ascoachingogvaner|ascoachingogvaner ac00ca29c04de8d2c30a045d583570536a97fc305a1b06c4300da018ecdfb864
 
@@ -148,7 +160,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|aws|aws 88fe1a404c036bfe73b4eda38a3
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|data-product-controller|khoist-documentation b3952d56aa05acfe28c6d04c63287709d20ca44b069c95cf96da7ce3125ec9b9
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps 4a9903d1d6a37b57053b3ab3ad45c806fea09bb5f331961f91f9bb391797e4ad
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps ff202a09e4554fee8262ea71c2b1ec5e9a408a4fd882307d049e8bc51a431607
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|bootstrap df15a74c32342880c533cc49f41971742874791e306e3edd95603a98396a1612
 
@@ -157,6 +169,8 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|flux-instance cc7711a92
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 0404e22df806844ac03bdeb8cc51f2d7434c10754877c2d3c15cbc623b05b671
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers d3cb230f3213d7a231fda9e1a700bf77e07440a0786061389357cf744e136a62
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|platform-health d314a9b1c3213332ef39d152d9bc244c086fd30f8b36269c3a6f403588db02d5
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config dc10cfc1ffeb139e69a5ac205f9bce35628dec215fe892e1871145f333d363b2
 
@@ -470,7 +484,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|arc-ksail-analysis|ksail-analysis-runn
 
 source.toolkit.fluxcd.io/v1|OCIRepository|arc-systems|arc-controller 64fb325741489bbd5ece40cf2cbf6e4aef3e87e89efea97b7b0f2ec498671fa1
 
-source.toolkit.fluxcd.io/v1|OCIRepository|ascoachingogvaner|ascoachingogvaner 1805120ba01aca854ec4884bd16ff7a253fca70877371a5ddec936ebd01a5478
+source.toolkit.fluxcd.io/v1|OCIRepository|ascoachingogvaner|ascoachingogvaner 4e5990bdebbc8e73a000048ee9349aaec38461ee3fc900e629ff8bb2ace3e230
 
 source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate c18e72675027c27e703a9c81377d00bf511e0ce179fa1a58f2ae07a57456117d
 
@@ -480,11 +494,11 @@ source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate-crds 18e1e7791622
 
 source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate-podcert 17b63a848326ce8c760d1f416a622394a383011ba066abbbed921570ae08b007
 
-source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 8ad26301961658e0c50fc13246f1f44894a8f922daeb2713ec8b8724957071c4
+source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 2161f682057b52b2d43f21365fead2cbb7f7417125ba2d03f00eff09a2643f2b
 
 source.toolkit.fluxcd.io/v1|OCIRepository|cert-manager|origin-ca-issuer 026bb5454bce4d953d216d1c661137a3c3232576488eeff7a41ec4c76a642215
 
-source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documentation 2a45acdd6b224c5278e6da4031d6cd6a9c94c966889aaf4e11d89b82c667416e
+source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documentation f67fde249a920a091d16c13d66f84113642d3f73856880a85ff4418191125ead
 
 source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator fdc99e9413e88a5f8a99efa8b515dfbc340303dca5650d34137f1965d2788771
 
@@ -498,7 +512,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|kro-system|kro 76bcb723555afb69d2299ce
 
 source.toolkit.fluxcd.io/v1|OCIRepository|ksail-operator|ksail-operator 2c1b9612623604a381f454532cb10502dd96b56468ffacb5aeaf9d50c3327090
 
-source.toolkit.fluxcd.io/v1|OCIRepository|wedding-app|wedding-app df4c4428591c45cd62b480a22f9f65fab5f104f22934f7dea2f6971283ffb5ea
+source.toolkit.fluxcd.io/v1|OCIRepository|wedding-app|wedding-app e3a294dd74a4f9299d15b6b9140e8de9b12278a25e49e4220c88815a33feb13d
 
 source.toolkit.fluxcd.io/v1|OCIRepository|world-at-ruin|world-at-ruin e85c1133b6517811831886b22ea6686b98781494c3cd5c1b4d3a4e8ffd6e4714
 

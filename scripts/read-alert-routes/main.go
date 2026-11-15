@@ -48,7 +48,7 @@ func allowed(env func(string) string) bool {
 	return env("GITHUB_ACTIONS") == "true" && env("GITHUB_REPOSITORY") == "devantler-tech/platform" &&
 		env("GITHUB_EVENT_NAME") == "workflow_dispatch" && env("GITHUB_REF") == "refs/heads/main" &&
 		env("GITHUB_RUN_ATTEMPT") == "1" && env("GITHUB_ACTOR") == "devantler" &&
-		env("RUNNER_ENVIRONMENT") == "github-hosted" && env("ALERT_ROUTES_CONFIRM") == "read-alert-routes" &&
+		env("RUNNER_ENVIRONMENT") == "github-hosted" && env("PROD_OPERATION") == "read-alert-routes" &&
 		regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(env("GITHUB_SHA"))
 }
 

@@ -648,6 +648,14 @@ from v1.2.0 to v1.2.7 and its two checksum lines. Talos machinery and its YAML
 encoders keep their versions. This audit changes no cluster configuration or
 vulnerability exception.
 
+**7.212.12**, commit `8eb3950586369daa1639b682f2396977f8bec963`, is audited
+against 7.212.9. Only `go.mod` and `go.sum` change; the configuration manager,
+Talos generator, cluster API and chart are byte-identical, so the fold's
+trigger, both-role output and explicit schematic-ID boundary are unchanged. The
+only module change moves `github.com/cilium/cilium` from v1.20.3 to v1.20.4 and
+its two checksum lines. Talos machinery and its YAML encoders keep their
+versions. This audit changes no cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

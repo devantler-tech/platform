@@ -139,7 +139,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
-    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@f33622708f9f25a32acb46cc419007e18a3223b3 # v21.3.1
+    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@986a62443103435b889dc9651ca5af3af539389d # v21.4.0
     with:
       apply-signed-fixes: false
       # Same measured eight-slot bound as the helper regression job above;
@@ -342,6 +342,9 @@ jobs:
               - 'scripts/tests/test-arc-controller-availability.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
               - 'scripts/tests/test-validate-kyverno-fixture-evaluation.sh'
+              # The CI-identity admission policy also runs offline against the render.
+              - 'scripts/guard-ci-identity-bindings.sh'
+              - 'scripts/tests/test-guard-ci-identity-bindings.sh'
               - 'scripts/tests/test-helm-release-mutation-scope.sh'
               - 'scripts/tests/test-policy-ci-job.sh'
               # Every kyverno fixture, so a change to one alone still runs kyverno test
@@ -476,27 +479,6 @@ jobs:
               - 'scripts/tests/test-probe-gateway-denied-peer.sh'
               - 'scripts/tests/gateway-denied-peer-wire/**'
               - '.github/workflows/probe-gateway-denied-peer.yaml'
-              # The #3144 admission probe, its test and its workflow are one
-              # contract: the test pins that every write the probe sends is a
-              # server-side dry run and that no identity reaches the public log.
-              - 'scripts/probe-github-team-external-identity.sh'
-              - 'scripts/tests/test-probe-github-team-external-identity.sh'
-              - '.github/workflows/probe-github-team-external-identity.yaml'
-              # The #3604 user-namespace map read, its test and its workflow are one
-              # contract: the test pins that the script issues one `get` and four
-              # fixed `exec … cat` reads, and that no node-side id reaches the log.
-              - 'scripts/read-actual-budget-userns-maps.sh'
-              - 'scripts/tests/test-read-actual-budget-userns-maps.sh'
-              - '.github/workflows/read-actual-budget-userns-maps.yaml'
-              # The #3790 datapath throttling measurement, its test and its workflow
-              # are one contract: the test pins that the script stays read-only, its
-              # arithmetic, and that no node or pod name reaches the public log.
-              - 'scripts/measure-datapath-cpu-throttling.sh'
-              - 'scripts/tests/test-measure-datapath-cpu-throttling.sh'
-              - '.github/workflows/measure-datapath-cpu-throttling.yaml'
-              - 'scripts/read-cilium-api-limiter.sh'
-              - 'scripts/tests/test-read-cilium-api-limiter.sh'
-              - '.github/workflows/read-cilium-api-limiter.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -1768,7 +1750,7 @@ jobs:
           cache: false
 
       - name: 🔏 Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: 🔏 Test the cosign failure classifier
         # The check below words its failure by WHY cosign failed (#3545). This
@@ -1972,7 +1954,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.10"
+          KSAIL_VERSION: "7.212.12"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2067,6 +2049,9 @@ jobs:
           shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/validate-kyverno-fixture-evaluation.sh tests
+          # platform#6270: the CI-identity binding policy over every rendered prod layer.
+          shellcheck scripts/guard-ci-identity-bindings.sh scripts/tests/test-guard-ci-identity-bindings.sh
+          bash scripts/tests/test-guard-ci-identity-bindings.sh
           shellcheck scripts/tests/test-helm-release-mutation-scope.sh
           bash scripts/tests/test-helm-release-mutation-scope.sh
 
@@ -2650,42 +2635,6 @@ jobs:
         run: |
           shellcheck scripts/probe-gateway-denied-peer.sh scripts/tests/test-probe-gateway-denied-peer.sh
           bash scripts/tests/test-probe-gateway-denied-peer.sh
-
-      - name: 🔏 Validate GitHub Team external-identity probe
-        if: needs.changes.outputs.k8s == 'true'
-        # The probe needs prod and runs only on dispatch. Its test fakes kubectl
-        # from fixtures and pins what makes dispatching it acceptable: only `get`
-        # plus `patch`/`create` with `--dry-run=server`, a refusal counted only
-        # when it names the policy, and no identity in the public log.
-        run: |
-          shellcheck scripts/probe-github-team-external-identity.sh scripts/tests/test-probe-github-team-external-identity.sh
-          bash scripts/tests/test-probe-github-team-external-identity.sh
-
-      - name: 🪪 Validate Actual Budget user-namespace map read
-        if: needs.changes.outputs.k8s == 'true'
-        # The read needs prod and runs only on dispatch. Its test fakes kubectl
-        # from fixtures and pins what makes dispatching it acceptable: one `get`
-        # and four fixed `exec … cat` reads, an unreadable or unparsable map
-        # never reported as mapped, and no node-side id in the public log.
-        run: |
-          shellcheck scripts/read-actual-budget-userns-maps.sh scripts/tests/test-read-actual-budget-userns-maps.sh
-          bash scripts/tests/test-read-actual-budget-userns-maps.sh
-
-      - name: 📏 Validate datapath CPU throttling measurement
-        if: needs.changes.outputs.k8s == 'true'
-        # The measurement needs prod and runs only on dispatch. Its test fakes kubectl
-        # from fixtures and pins the ratio arithmetic, every INCONCLUSIVE path, that it
-        # issues reads only, that no node or pod name reaches the public log, and the
-        # workflow's guards.
-        run: |
-          shellcheck scripts/measure-datapath-cpu-throttling.sh scripts/tests/test-measure-datapath-cpu-throttling.sh
-          bash scripts/tests/test-measure-datapath-cpu-throttling.sh
-
-      - name: Validate finite Cilium API limiter reads
-        if: needs.changes.outputs.k8s == 'true'
-        run: |
-          shellcheck scripts/read-cilium-api-limiter.sh scripts/tests/test-read-cilium-api-limiter.sh
-          bash scripts/tests/test-read-cilium-api-limiter.sh
 
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'
@@ -3297,7 +3246,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.10"
+          KSAIL_VERSION: "7.212.12"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3731,7 +3680,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.10"
+          KSAIL_VERSION: "7.212.12"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3905,7 +3854,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@f33622708f9f25a32acb46cc419007e18a3223b3 # v21.3.1
+        uses: devantler-tech/.github/actions/validate-naming@986a62443103435b889dc9651ca5af3af539389d # v21.4.0
 
       - name: Confirm naming validation completed
         env:
@@ -4739,7 +4688,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.10"
+          KSAIL_VERSION: "7.212.12"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -4960,7 +4909,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@02183e4b176d3bdbedda8519a1f63ee324b8412c # v21.0.2
+        uses: devantler-tech/.github/actions/aggregate-job-checks@986a62443103435b889dc9651ca5af3af539389d # v21.4.0
         with:
           check-workflow-startup: "true"
           job-results: >-

@@ -1,0 +1,23 @@
+# The business site's send-only SMTP identity for Amazon SES (platform#5400).
+# It sends the site's automated mail, such as sign-in codes and invitations,
+# apart from company Email's own relay identity. Platform-owned like that
+# identity, so the public aws tenant cannot widen what it may do. Delete is
+# omitted so a prune cannot remove it; revoke by replacing its access key.
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: User
+metadata:
+  name: business-site-smtp
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    path: /business-site/
+  providerConfigRef:
+    kind: ProviderConfig
+    name: default

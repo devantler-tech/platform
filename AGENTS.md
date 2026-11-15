@@ -361,7 +361,8 @@ is public (#6272), so `ksail.prod.yaml`'s `localRegistry` carries none, KSail se
 FluxInstance `spec.sync.pullSecret`, and both production entrypoints run
 `scripts/detach-flux-root-pull-secret.sh` before the mutable tag moves. It proves an
 anonymous pull of the synced artifact, removes a `pullSecret` left over from bootstrap,
-and waits for the source to fetch anonymously; a detached cluster takes no write. Only
+and waits for the source to be re-rendered without it (not for the source to be Ready,
+since a bad verify matcher is repaired only after publish); a detached cluster takes no write. Only
 `workload push` gets a credentialed registry, with the Actions write token.
 
 **No production pull credential exists.** Every first-party package the cluster

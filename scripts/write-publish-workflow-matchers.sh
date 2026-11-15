@@ -32,7 +32,7 @@ for consumer in "${EXPECTED_CONSUMERS[@]}"; do
   fi
 
   desired_ref="$(approved_ref "$signer" "$pin" "$candidate")"
-  subject="$(approved_subject "$workflow" "$desired_ref" "$(lookup "$canonical" "$consumer")")"
+  subject="$(approved_subject "$workflow" "$desired_ref" "$(lookup "$canonical" "$consumer")" "$(consumer_release_alternative "$consumer")")"
   mkdir -p "$STAGED/$(dirname "$file")"
   # Select the actual OCIRepository document; unrelated documents remain unchanged.
   # shellcheck disable=SC2016

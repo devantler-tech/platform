@@ -835,12 +835,17 @@ spec:
               }
               POLICY
 
-              # Public staging reads one owner-maintained entry. It has no
-              # value writer, metadata listing or shared infrastructure policy.
+              # The business site reads two exact entries: its owner-maintained
+              # public disclosure, and its send-only SES SMTP credential, which a
+              # platform PushSecret writes (platform#5400). It has no value
+              # writer, metadata listing or shared infrastructure policy.
               bao policy write app-business-site-disclosure-readonly - <<'BUSINESS_SITE_POLICY'
               {
                 "path": {
                   "secret/data/apps/business-site/public-disclosure": {
+                    "capabilities": ["read"]
+                  },
+                  "secret/data/apps/business-site/smtp": {
                     "capabilities": ["read"]
                   },
                   "auth/token/lookup-self": {
@@ -990,10 +995,18 @@ spec:
               POLICY
 
               # Dedicated node-storage key reader; neither account credentials
-              # nor metadata enumeration or writes belong to this identity.
+              # nor metadata enumeration or writes belong to this identity. Its
+              # role adds no default policy, so the two token paths External
+              # Secrets uses to validate the store and end the session are here.
               bao policy write infra-email-storage-readonly - <<'POLICY'
               path "secret/data/infrastructure/email/storage" {
                 capabilities = ["read"]
+              }
+              path "auth/token/lookup-self" {
+                capabilities = ["read"]
+              }
+              path "auth/token/revoke-self" {
+                capabilities = ["update"]
               }
               POLICY
 
@@ -1082,6 +1095,11 @@ spec:
               path "secret/data/infrastructure/email/ses-smtp" {
                 capabilities = ["create", "update", "read"]
               }
+              # The business site's SES SMTP credential, pushed the same way
+              # into its own prefix (platform#5400). Exact key only.
+              path "secret/data/apps/business-site/smtp" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/apps/actual-budget/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -1134,6 +1152,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/infrastructure/email/ses-smtp" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/business-site/smtp" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/actual-budget/*" {
