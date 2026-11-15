@@ -19,10 +19,11 @@
 #   there that allows only it (no ZITADEL password or MFA; GitHub's two-step
 #   login covers that), and his account linked to his GitHub identity. A
 #   "Customers" organization keeps the instance's policy for customers, whom
-#   the customer Dex signs in there. Once the devantler-tech org's "Devantler
-#   Tech" GitHub App is in OpenBao (apps/customer-identity/github-oauth),
-#   customers may also sign in with GitHub: invite-only, linked to an existing
-#   customer by verified email or after one password-and-MFA sign-in;
+#   the customer Dex signs in there. With CUSTOMER_GITHUB_SIGNIN on (it lands
+#   off) and the devantler-tech org's "Devantler Tech" GitHub App in OpenBao
+#   (apps/customer-identity/github-oauth), customers may also sign in with
+#   GitHub: invite-only, linked to an existing customer by verified email or
+#   after one password-and-MFA sign-in;
 # - a one-shot sign-in recovery for that administrator, run only when
 #   ADMIN_RECOVERY_NONCE holds a value no run has recorded yet: it unlocks him
 #   and removes his second factors, recovery codes and passkeys. Remove the
@@ -157,6 +158,11 @@ spec:
                   value: accounts.devantler.tech
                 - name: TOKEN_FILE
                   value: /run/setup-token/token
+                # Customer GitHub sign-in's rollout switch (see the top of
+                # this file). It lands off; a reviewed change turns it on once
+                # the github-oauth ExternalSecret has synced.
+                - name: CUSTOMER_GITHUB_SIGNIN
+                  value: "off"
                 - name: ADMIN_EMAIL
                   value: ned@devantler.tech
                 # The one-shot recovery trigger (see the top of this file). The
@@ -668,21 +674,35 @@ spec:
                   # address from /user/emails only when user:email is in its own scope list.
                   # The app must be public: GitHub lets only members of the owning organization
                   # authorize a private one, and its customers are not members.
-                  customer_github=off
-                  if [[ -s $github_oauth_dir/client-id && -s $github_oauth_dir/client-secret ]]; then
-                    github_client_id=$(read_secret "$github_oauth_dir/client-id" "GitHub App client ID")
-                    github_client_secret=$(read_secret "$github_oauth_dir/client-secret" "GitHub App client secret")
-                    customer_idp=$(jq -nc --arg c "$github_client_id" '{
-                      clientId: $c, scopes: ["read:user", "user:email"],
-                      providerOptions: {isLinkingAllowed: true, isCreationAllowed: false, isAutoCreation: false, isAutoUpdate: false,
-                        autoLinking: "AUTO_LINKING_OPTION_EMAIL"}}')
-                    ensure_idp "$customers_org_id" github "$idp_name" "$customer_idp" "$github_client_secret" "$github_annotation"
-                    customer_policy=$(policy_from_instance '{}')
-                    ensure_login_policy "$customers_org_id" "$customer_policy" "$idp_id"
-                    customer_github=on
-                  else
-                    log "customer GitHub sign-in is off: no GitHub App in OpenBao apps/customer-identity/github-oauth yet"
-                  fi
+                  # CUSTOMER_GITHUB_SIGNIN is the rollout switch, off by default: a reviewed
+                  # change turns it on once the github-oauth ExternalSecret has synced. While it
+                  # is off, the run refuses a GitHub provider left in the Customers organization,
+                  # so turning it off again is a deliberate removal, not a silent leftover.
+                  customer_github=${CUSTOMER_GITHUB_SIGNIN:-off}
+                  case $customer_github in
+                    on)
+                      [[ -s $github_oauth_dir/client-id && -s $github_oauth_dir/client-secret ]] ||
+                        fail "CUSTOMER_GITHUB_SIGNIN is on, but no GitHub App credentials are mounted (OpenBao apps/customer-identity/github-oauth)"
+                      github_client_id=$(read_secret "$github_oauth_dir/client-id" "GitHub App client ID")
+                      github_client_secret=$(read_secret "$github_oauth_dir/client-secret" "GitHub App client secret")
+                      customer_idp=$(jq -nc --arg c "$github_client_id" '{
+                        clientId: $c, scopes: ["read:user", "user:email"],
+                        providerOptions: {isLinkingAllowed: true, isCreationAllowed: false, isAutoCreation: false, isAutoUpdate: false,
+                          autoLinking: "AUTO_LINKING_OPTION_EMAIL"}}')
+                      ensure_idp "$customers_org_id" github "$idp_name" "$customer_idp" "$github_client_secret" "$github_annotation"
+                      customer_policy=$(policy_from_instance '{}')
+                      ensure_login_policy "$customers_org_id" "$customer_policy" "$idp_id"
+                      ;;
+                    off)
+                      customer_idps=$(api_org=$customers_org_id api POST /management/v1/idps/templates/_search "$(jq -nc --arg n "$idp_name" \
+                        '{queries: [{idpNameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')" |
+                        jq --arg o "$customers_org_id" '[.result // [] | .[] | select(.details.resourceOwner == $o)] | length')
+                      [[ $customer_idps == 0 ]] ||
+                        fail "CUSTOMER_GITHUB_SIGNIN is off, but the $customers_org organization still has its '$idp_name' provider; remove it on purpose"
+                      log "customer GitHub sign-in is off (CUSTOMER_GITHUB_SIGNIN)"
+                      ;;
+                    *) fail "CUSTOMER_GITHUB_SIGNIN must be on or off" ;;
+                  esac
 
                   # --- One-shot sign-in recovery for the administrator ---------------------------
                   # A reviewed change sets ADMIN_RECOVERY_NONCE to a new value when the maintainer
