@@ -24,6 +24,8 @@ func expectedPayload(kind string) string {
 		return `{"path":{
 "secret/data/apps/business-site/public-disclosure":{"capabilities":["read"]},
 "secret/data/apps/business-site/smtp":{"capabilities":["read"]},
+"secret/data/apps/business-site/numina":{"capabilities":["read"]},
+"secret/data/apps/business-site/stripe":{"capabilities":["read"]},
 "auth/token/lookup-self":{"capabilities":["read"]},
 "auth/token/revoke-self":{"capabilities":["update"]}}}`
 	default:

@@ -3,5 +3,6 @@ kind: Kustomization
 resources:
   - tenant.yaml
   - cilium-network-policy-customer-identity-hold.yaml
+  - cilium-network-policy-dns-visibility.yaml
   - certificate.yaml
   - reference-grant.yaml

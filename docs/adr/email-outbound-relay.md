@@ -92,7 +92,8 @@ sign-in, recovery or public submission work, and it cannot reach any mailbox.
 - **Custody.** A platform PushSecret copies the key ID and the derived SMTP
   password to `apps/business-site/smtp` in OpenBao, as `username` and
   `password`. The business site reads that one key through its dedicated role,
-  which also reads its public disclosure and nothing else.
+  which otherwise reads only its public disclosure and its portal billing
+  keys (platform#6337).
 - **Use.** The site's mail client connects to
   `email-smtp.eu-central-1.amazonaws.com` on port 587 with STARTTLS and SMTP
   authentication, sending from `no-reply@devantler.tech`. The tenant owns its

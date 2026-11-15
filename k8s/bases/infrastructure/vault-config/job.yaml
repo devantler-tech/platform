@@ -835,10 +835,12 @@ spec:
               }
               POLICY
 
-              # The business site reads two exact entries: its owner-maintained
-              # public disclosure, and its send-only SES SMTP credential, which a
-              # platform PushSecret writes (platform#5400). It has no value
-              # writer, metadata listing or shared infrastructure policy.
+              # The business site reads four exact entries: its owner-maintained
+              # public disclosure, its send-only SES SMTP credential, which a
+              # platform PushSecret writes (platform#5400), and the portal's
+              # owner-maintained Numina and Stripe billing keys (platform#6337).
+              # It has no value writer, metadata listing or shared
+              # infrastructure policy.
               bao policy write app-business-site-disclosure-readonly - <<'BUSINESS_SITE_POLICY'
               {
                 "path": {
@@ -846,6 +848,12 @@ spec:
                     "capabilities": ["read"]
                   },
                   "secret/data/apps/business-site/smtp": {
+                    "capabilities": ["read"]
+                  },
+                  "secret/data/apps/business-site/numina": {
+                    "capabilities": ["read"]
+                  },
+                  "secret/data/apps/business-site/stripe": {
                     "capabilities": ["read"]
                   },
                   "auth/token/lookup-self": {
@@ -1288,7 +1296,7 @@ spec:
 
               # The source-owned SecretStore uses only this namespaced identity.
               # Explicit JSON preserves array/boolean types; no default policy is
-              # added to the one-entry reader. The tenant owner supplies values.
+              # added to the exact-entry reader. The tenant owner supplies values.
               bao write auth/kubernetes/role/business-site - <<'BUSINESS_SITE_ROLE'
               {
                 "bound_service_account_names": ["business-site"],
