@@ -19,7 +19,10 @@
 #   there that allows only it (no ZITADEL password or MFA; GitHub's two-step
 #   login covers that), and his account linked to his GitHub identity. A
 #   "Customers" organization keeps the instance's policy for customers, whom
-#   the customer Dex signs in there;
+#   the customer Dex signs in there. Once the devantler-tech org's "Devantler
+#   Tech" GitHub OAuth App is in OpenBao (apps/customer-identity/github-oauth),
+#   customers may also sign in with GitHub: invite-only, linked to an existing
+#   customer by verified email or after one password-and-MFA sign-in;
 # - a one-shot sign-in recovery for that administrator, run only when
 #   ADMIN_RECOVERY_NONCE holds a value no run has recorded yet: it unlocks him
 #   and removes his second factors, recovery codes and passkeys. Remove the
@@ -35,8 +38,9 @@
 # - The setup container alone gets a Kubernetes token, projected to
 #   /run/kube-api, which may only read and update the client Secret (role.yaml).
 #   It reads the SMTP login (zitadel-smtp), the one-time password
-#   (zitadel-first-admin) and the platform Dex client secret
-#   (platform-dex-client) as mounted files, never as environment variables.
+#   (zitadel-first-admin), the platform Dex client secret (platform-dex-client)
+#   and the GitHub OAuth App (github-oauth, optional until it is stored) as
+#   mounted files, never as environment variables.
 # - Neither prints a secret.
 #
 # The maintainer signs in himself, with GitHub; nothing here signs in as him.
@@ -175,6 +179,9 @@ spec:
                 - name: platform-dex
                   mountPath: /run/platform-dex
                   readOnly: true
+                - name: github-oauth
+                  mountPath: /run/github-oauth
+                  readOnly: true
                 - name: kube-api
                   mountPath: /run/kube-api
                   readOnly: true
@@ -222,6 +229,9 @@ spec:
                   admin_github_login=devantler
                   customers_org=Customers
                   customers_domain=customers.accounts.devantler.tech
+                  # Customers may also sign in with GitHub, through an OAuth App (see below).
+                  github_oauth_dir=${GITHUB_OAUTH_DIR:-/run/github-oauth}
+                  github_annotation=platform.devantler.tech/github-oauth-secret-sha256
                   project_name="Customer sign-in"
                   app_name="Customer Dex"
                   dex_callback=https://login.devantler.tech/callback
@@ -487,7 +497,7 @@ spec:
                     fi
                   fi
 
-                  # --- The administrator's GitHub sign-in -------------------------------------------
+                  # --- GitHub sign-in ------------------------------------------------------------------
                   # The maintainer signs in with GitHub, through the platform Dex, which admits
                   # only the devantler-tech maintainers team. ZITADEL knows that Dex as a generic
                   # OIDC identity provider owned by his organization, the instance's default one.
@@ -495,8 +505,9 @@ spec:
                   # him straight to GitHub and asks for no password or MFA of its own: GitHub's
                   # two-step login covers it. The provider neither creates nor links accounts, so
                   # his pre-linked account is the only one it can sign in. Customers belong to
-                  # their own organization, which keeps the instance's policy (password and MFA);
-                  # the customer Dex requests that organization.
+                  # their own organization, which the customer Dex requests. They sign in with a
+                  # password and MFA, and, once the devantler-tech org's "Devantler Tech" GitHub
+                  # OAuth App is stored in OpenBao, with GitHub too (see below).
                   customer_orgs=$(connect zitadel.org.v2.OrganizationService/ListOrganizations "$(jq -nc --arg n "$customers_org" \
                     '{queries: [{nameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')")
                   case $(jq '.result // [] | length' <<<"$customer_orgs") in
@@ -514,62 +525,64 @@ spec:
                     fail "the $customers_org organization's primary domain is not $customers_domain, which the customer Dex requests"
                   [[ $customers_org_id != "$org_id" ]] || fail "the $customers_org organization is the administrator's own"
 
-                  # The provider. ZITADEL never returns its client secret, so a fingerprint of
-                  # the one last applied decides whether to send it again.
-                  dex_fingerprint=$(printf '%s' "$platform_dex_secret" | sha256sum | cut -d' ' -f1)
-                  desired_idp=$(jq -nc --arg i "$platform_dex_issuer" --arg c "$platform_dex_client" '{
-                    issuer: $i, clientId: $c, scopes: ["openid", "profile", "email"], isIdTokenMapping: false, usePkce: true,
-                    providerOptions: {isLinkingAllowed: false, isCreationAllowed: false, isAutoCreation: false, isAutoUpdate: false,
-                      autoLinking: "AUTO_LINKING_OPTION_UNSPECIFIED"}}')
-                  normalise_idp='{issuer: (.config.oidc.issuer // ""), clientId: (.config.oidc.clientId // ""),
+                  # ensure_idp ORG KIND NAME DESIRED SECRET ANNOTATION: keeps exactly one active
+                  # identity provider of KIND (generic_oidc or github) named NAME in ORG, equal to
+                  # DESIRED, and sets idp_id. ZITADEL never returns a client secret, so a
+                  # fingerprint of SECRET kept under ANNOTATION decides whether to send it again.
+                  normalise_options='{isLinkingAllowed: (.config.options.isLinkingAllowed // false),
+                    isCreationAllowed: (.config.options.isCreationAllowed // false),
+                    isAutoCreation: (.config.options.isAutoCreation // false), isAutoUpdate: (.config.options.isAutoUpdate // false),
+                    autoLinking: (.config.options.autoLinking // "AUTO_LINKING_OPTION_UNSPECIFIED")}'
+                  normalise_generic_oidc="{issuer: (.config.oidc.issuer // \"\"), clientId: (.config.oidc.clientId // \"\"),
                     scopes: (.config.oidc.scopes // []), isIdTokenMapping: (.config.oidc.isIdTokenMapping // false),
-                    usePkce: (.config.oidc.usePkce // false),
-                    providerOptions: {isLinkingAllowed: (.config.options.isLinkingAllowed // false),
-                      isCreationAllowed: (.config.options.isCreationAllowed // false),
-                      isAutoCreation: (.config.options.isAutoCreation // false), isAutoUpdate: (.config.options.isAutoUpdate // false),
-                      autoLinking: (.config.options.autoLinking // "AUTO_LINKING_OPTION_UNSPECIFIED")}}'
-                  list_idps() {
-                    mgmt POST /management/v1/idps/templates/_search "$(jq -nc --arg n "$idp_name" \
-                      '{queries: [{idpNameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')" |
-                      jq -c --arg o "$org_id" '[.result // [] | .[] | select(.owner == "IDP_OWNER_TYPE_ORG" and .details.resourceOwner == $o)]'
+                    usePkce: (.config.oidc.usePkce // false), providerOptions: $normalise_options}"
+                  normalise_github="{clientId: (.config.github.clientId // \"\"), scopes: (.config.github.scopes // []),
+                    providerOptions: $normalise_options}"
+                  ensure_idp() {
+                    local org=$1 kind=$2 name=$3 desired=$4 secret=$5 annotation=$6 normalise found fingerprint request
+                    jq -e 'type == "object" and length > 0' <<<"$desired" >/dev/null 2>&1 || fail "empty declared settings for $(org_label "$org")"
+                    case $kind in
+                      generic_oidc) normalise=$normalise_generic_oidc ;;
+                      github) normalise=$normalise_github ;;
+                      *) fail "unknown identity provider kind $kind" ;;
+                    esac
+                    list_org_idps() {
+                      api_org=$org api POST /management/v1/idps/templates/_search "$(jq -nc --arg n "$name" \
+                        '{queries: [{idpNameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')" |
+                        jq -c --arg o "$org" '[.result // [] | .[] | select(.owner == "IDP_OWNER_TYPE_ORG" and .details.resourceOwner == $o)]'
+                    }
+                    fingerprint=$(printf '%s' "$secret" | sha256sum | cut -d' ' -f1)
+                    request=$(IDP_SECRET=$secret jq -c --arg n "$name" '. + {name: $n, clientSecret: env.IDP_SECRET}' <<<"$desired")
+                    found=$(list_org_idps)
+                    case $(jq length <<<"$found") in
+                      0)
+                        idp_id=$(api_org=$org api POST "/management/v1/idps/$kind" "$request" | jq -er '.id')
+                        changes+=("created the $name identity provider in $(org_label "$org")")
+                        ;;
+                      1)
+                        idp_id=$(jq -er '.[0].id' <<<"$found")
+                        [[ $(jq -r '.[0].state' <<<"$found") == IDP_STATE_ACTIVE ]] ||
+                          fail "identity provider '$name' in $(org_label "$org") is not active; reactivate or remove it on purpose"
+                        local recorded
+                        recorded=$(secret_json | jq -r --arg a "$annotation" '.metadata.annotations[$a] // ""')
+                        if [[ $(jq -cS ".[0] | $normalise" <<<"$found") == "$(jq -cS . <<<"$desired")" && $recorded == "$fingerprint" ]]; then
+                          return 0
+                        fi
+                        api_org=$org api PUT "/management/v1/idps/$kind/$idp_id" "$request" >/dev/null
+                        [[ $(list_org_idps | jq -cS ".[0] | $normalise") == "$(jq -cS . <<<"$desired")" ]] ||
+                          fail "identity provider '$name' in $(org_label "$org") still differs from its declared settings after the update"
+                        changes+=("updated the $name identity provider in $(org_label "$org")")
+                        ;;
+                      *) fail "more than one identity provider named '$name' in $(org_label "$org")" ;;
+                    esac
+                    patch_secret "$(jq -nc --arg a "$annotation" --arg f "$fingerprint" '{metadata: {annotations: {($a): $f}}}')"
                   }
-                  idps=$(list_idps)
-                  case $(jq length <<<"$idps") in
-                    0)
-                      idp_id=$(mgmt POST /management/v1/idps/generic_oidc "$(PLATFORM_DEX_SECRET=$platform_dex_secret jq -c --arg n "$idp_name" \
-                        '. + {name: $n, clientSecret: env.PLATFORM_DEX_SECRET}' <<<"$desired_idp")" | jq -er '.id')
-                      patch_secret "$(jq -nc --arg a "$dex_annotation" --arg f "$dex_fingerprint" '{metadata: {annotations: {($a): $f}}}')"
-                      changes+=("created the GitHub identity provider")
-                      ;;
-                    1)
-                      idp_id=$(jq -er '.[0].id' <<<"$idps")
-                      [[ $(jq -r '.[0].state' <<<"$idps") == IDP_STATE_ACTIVE ]] ||
-                        fail "identity provider '$idp_name' is not active; reactivate or remove it on purpose"
-                      recorded_dex=$(secret_json | jq -r --arg a "$dex_annotation" '.metadata.annotations[$a] // ""')
-                      if [[ $(jq -cS ".[0] | $normalise_idp" <<<"$idps") != "$(jq -cS . <<<"$desired_idp")" || $recorded_dex != "$dex_fingerprint" ]]; then
-                        mgmt PUT "/management/v1/idps/generic_oidc/$idp_id" "$(PLATFORM_DEX_SECRET=$platform_dex_secret jq -c --arg n "$idp_name" \
-                          '. + {name: $n, clientSecret: env.PLATFORM_DEX_SECRET}' <<<"$desired_idp")" >/dev/null
-                        [[ $(list_idps | jq -cS ".[0] | $normalise_idp") == "$(jq -cS . <<<"$desired_idp")" ]] ||
-                          fail "identity provider '$idp_name' still differs from its declared settings after the update"
-                        patch_secret "$(jq -nc --arg a "$dex_annotation" --arg f "$dex_fingerprint" '{metadata: {annotations: {($a): $f}}}')"
-                        changes+=("updated the GitHub identity provider")
-                      fi
-                      ;;
-                    *) fail "more than one identity provider named '$idp_name'" ;;
-                  esac
+                  org_label() { if [[ $1 == "$org_id" ]]; then echo "the administrator's organization"; else echo "the $customers_org organization"; fi; }
 
-                  # His organization's login policy: the instance's, but external sign-in only,
-                  # MFA forced for local sign-in alone, and no password reset.
+                  # ensure_login_policy ORG DESIRED IDP: keeps ORG's own login policy equal to
+                  # DESIRED and its identity providers equal to exactly IDP. With a second one
+                  # ZITADEL would show a choice instead of sending the administrator to GitHub.
                   instance_policy=$(api GET /admin/v1/policies/login | jq -c '.policy')
-                  desired_policy=$(jq -c '{
-                    allowUsernamePassword: false, allowRegister: false, allowExternalIdp: true, forceMfa: true, forceMfaLocalOnly: true,
-                    passwordlessType: "PASSWORDLESS_TYPE_NOT_ALLOWED", hidePasswordReset: true,
-                    ignoreUnknownUsernames: (.ignoreUnknownUsernames // false), defaultRedirectUri: (.defaultRedirectUri // ""),
-                    passwordCheckLifetime: .passwordCheckLifetime, externalLoginCheckLifetime: .externalLoginCheckLifetime,
-                    mfaInitSkipLifetime: .mfaInitSkipLifetime, secondFactorCheckLifetime: .secondFactorCheckLifetime,
-                    multiFactorCheckLifetime: .multiFactorCheckLifetime, allowDomainDiscovery: false,
-                    disableLoginWithEmail: (.disableLoginWithEmail // false), disableLoginWithPhone: (.disableLoginWithPhone // false)}' \
-                    <<<"$instance_policy")
                   normalise_policy='{allowUsernamePassword: (.allowUsernamePassword // false), allowRegister: (.allowRegister // false),
                     allowExternalIdp: (.allowExternalIdp // false), forceMfa: (.forceMfa // false),
                     forceMfaLocalOnly: (.forceMfaLocalOnly // false),
@@ -579,34 +592,62 @@ spec:
                     mfaInitSkipLifetime, secondFactorCheckLifetime, multiFactorCheckLifetime,
                     allowDomainDiscovery: (.allowDomainDiscovery // false), disableLoginWithEmail: (.disableLoginWithEmail // false),
                     disableLoginWithPhone: (.disableLoginWithPhone // false)}'
-                  org_policy=$(mgmt GET /management/v1/policies/login | jq -c '.policy')
-                  if [[ $(jq -r '.isDefault // false' <<<"$org_policy") == true ]]; then
-                    mgmt POST /management/v1/policies/login "$(jq -c --argjson p "$instance_policy" --arg i "$idp_id" \
-                      '. + {secondFactors: ($p.secondFactors // []), multiFactors: ($p.multiFactors // []),
-                        idps: [{idpId: $i, ownerType: "IDP_OWNER_TYPE_ORG"}]}' <<<"$desired_policy")" >/dev/null
-                    changes+=("set the administrator's organization to GitHub sign-in")
-                  elif [[ $(jq -cS "$normalise_policy" <<<"$org_policy") != "$(jq -cS . <<<"$desired_policy")" ]]; then
-                    mgmt PUT /management/v1/policies/login "$desired_policy" >/dev/null
-                    changes+=("restored the administrator's organization login policy")
-                  fi
-                  [[ $(mgmt GET /management/v1/policies/login | jq -cS ".policy | $normalise_policy") == "$(jq -cS . <<<"$desired_policy")" ]] ||
-                    fail "the administrator's organization login policy still differs from its declared settings"
-                  # Exactly this one provider: with a second one ZITADEL would show a choice
-                  # instead of sending him to GitHub.
-                  policy_idps=$(mgmt POST /management/v1/policies/login/idps/_search | jq -c '[.result // [] | .[].idpId]')
-                  if [[ $(jq -c . <<<"$policy_idps") == '[]' ]]; then
-                    mgmt POST /management/v1/policies/login/idps "$(jq -nc --arg i "$idp_id" '{idpId: $i, ownerType: "IDP_OWNER_TYPE_ORG"}')" >/dev/null
-                    changes+=("allowed the GitHub identity provider")
-                  elif [[ $policy_idps != "$(jq -nc --arg i "$idp_id" '[$i]')" ]]; then
-                    fail "the administrator's organization allows identity providers other than '$idp_name'; remove them on purpose"
-                  fi
+                  ensure_login_policy() {
+                    local org=$1 desired=$2 idp=$3 current policy_idps
+                    jq -e 'type == "object" and length > 0' <<<"$desired" >/dev/null 2>&1 || fail "empty declared settings for $(org_label "$org")"
+                    current=$(api_org=$org api GET /management/v1/policies/login | jq -c '.policy')
+                    if [[ $(jq -r '.isDefault // false' <<<"$current") == true ]]; then
+                      api_org=$org api POST /management/v1/policies/login "$(jq -c --argjson p "$instance_policy" --arg i "$idp" \
+                        '. + {secondFactors: ($p.secondFactors // []), multiFactors: ($p.multiFactors // []),
+                          idps: [{idpId: $i, ownerType: "IDP_OWNER_TYPE_ORG"}]}' <<<"$desired")" >/dev/null
+                      changes+=("set the login policy of $(org_label "$org")")
+                    elif [[ $(jq -cS "$normalise_policy" <<<"$current") != "$(jq -cS . <<<"$desired")" ]]; then
+                      api_org=$org api PUT /management/v1/policies/login "$desired" >/dev/null
+                      changes+=("restored the login policy of $(org_label "$org")")
+                    fi
+                    [[ $(api_org=$org api GET /management/v1/policies/login | jq -cS ".policy | $normalise_policy") == "$(jq -cS . <<<"$desired")" ]] ||
+                      fail "the login policy of $(org_label "$org") still differs from its declared settings"
+                    policy_idps=$(api_org=$org api POST /management/v1/policies/login/idps/_search | jq -c '[.result // [] | .[].idpId]')
+                    if [[ $policy_idps == '[]' ]]; then
+                      api_org=$org api POST /management/v1/policies/login/idps "$(jq -nc --arg i "$idp" '{idpId: $i, ownerType: "IDP_OWNER_TYPE_ORG"}')" >/dev/null
+                      changes+=("allowed the GitHub identity provider in $(org_label "$org")")
+                    elif [[ $policy_idps != "$(jq -nc --arg i "$idp" '[$i]')" ]]; then
+                      fail "$(org_label "$org") allows identity providers other than the declared one; remove them on purpose"
+                    fi
+                  }
+                  # The instance's policy with these fields set; MFA stays forced for local sign-in.
+                  policy_from_instance() {
+                    jq -c --argjson o "$1" '{
+                      allowUsernamePassword: (.allowUsernamePassword // false), allowRegister: false, allowExternalIdp: true,
+                      forceMfa: true, forceMfaLocalOnly: true,
+                      passwordlessType: (.passwordlessType // "PASSWORDLESS_TYPE_NOT_ALLOWED"),
+                      hidePasswordReset: (.hidePasswordReset // false),
+                      ignoreUnknownUsernames: (.ignoreUnknownUsernames // false), defaultRedirectUri: (.defaultRedirectUri // ""),
+                      passwordCheckLifetime: .passwordCheckLifetime, externalLoginCheckLifetime: .externalLoginCheckLifetime,
+                      mfaInitSkipLifetime: .mfaInitSkipLifetime, secondFactorCheckLifetime: .secondFactorCheckLifetime,
+                      multiFactorCheckLifetime: .multiFactorCheckLifetime, allowDomainDiscovery: false,
+                      disableLoginWithEmail: (.disableLoginWithEmail // false), disableLoginWithPhone: (.disableLoginWithPhone // false)} + $o' \
+                      <<<"$instance_policy"
+                  }
+
+                  # The administrator: the platform Dex, external sign-in only, no password reset.
+                  # Each declared value is its own assignment, so a jq error stops the run.
+                  admin_idp=$(jq -nc --arg i "$platform_dex_issuer" --arg c "$platform_dex_client" '{
+                    issuer: $i, clientId: $c, scopes: ["openid", "profile", "email"], isIdTokenMapping: false, usePkce: true,
+                    providerOptions: {isLinkingAllowed: false, isCreationAllowed: false, isAutoCreation: false, isAutoUpdate: false,
+                      autoLinking: "AUTO_LINKING_OPTION_UNSPECIFIED"}}')
+                  ensure_idp "$org_id" generic_oidc "$idp_name" "$admin_idp" "$platform_dex_secret" "$dex_annotation"
+                  admin_idp_id=$idp_id
+                  admin_policy=$(policy_from_instance \
+                    '{"allowUsernamePassword": false, "passwordlessType": "PASSWORDLESS_TYPE_NOT_ALLOWED", "hidePasswordReset": true}')
+                  ensure_login_policy "$org_id" "$admin_policy" "$admin_idp_id"
 
                   # His account, linked to his GitHub identity as Dex presents it.
                   links=$(connect zitadel.user.v2.UserService/ListIDPLinks "$(jq -nc --arg u "$admin_id" '{userId: $u}')" |
-                    jq -c --arg i "$idp_id" '[.result // [] | .[] | select(.idpId == $i)]')
+                    jq -c --arg i "$admin_idp_id" '[.result // [] | .[] | select(.idpId == $i)]')
                   case $(jq length <<<"$links") in
                     0)
-                      connect zitadel.user.v2.UserService/AddIDPLink "$(jq -nc --arg u "$admin_id" --arg i "$idp_id" \
+                      connect zitadel.user.v2.UserService/AddIDPLink "$(jq -nc --arg u "$admin_id" --arg i "$admin_idp_id" \
                         --arg s "$admin_dex_subject" --arg n "$admin_github_login" '{userId: $u, idpLink: {idpId: $i, userId: $s, userName: $n}}')" >/dev/null
                       changes+=("linked the administrator to GitHub")
                       ;;
@@ -616,6 +657,27 @@ spec:
                       ;;
                     *) fail "the administrator has more than one link to '$idp_name'" ;;
                   esac
+
+                  # Customers: GitHub through the OAuth App, invite-only. The provider never
+                  # creates an account. A GitHub login links to an existing customer when both
+                  # emails are verified and equal, which ZITADEL checks within the requested
+                  # organization, or after the customer signs in once with password and MFA.
+                  # The password stays, and MFA is not forced for GitHub logins.
+                  customer_github=off
+                  if [[ -s $github_oauth_dir/client-id && -s $github_oauth_dir/client-secret ]]; then
+                    github_client_id=$(read_secret "$github_oauth_dir/client-id" "GitHub OAuth App client ID")
+                    github_client_secret=$(read_secret "$github_oauth_dir/client-secret" "GitHub OAuth App client secret")
+                    customer_idp=$(jq -nc --arg c "$github_client_id" '{
+                      clientId: $c, scopes: ["read:user", "user:email"],
+                      providerOptions: {isLinkingAllowed: true, isCreationAllowed: false, isAutoCreation: false, isAutoUpdate: false,
+                        autoLinking: "AUTO_LINKING_OPTION_EMAIL"}}')
+                    ensure_idp "$customers_org_id" github "$idp_name" "$customer_idp" "$github_client_secret" "$github_annotation"
+                    customer_policy=$(policy_from_instance '{}')
+                    ensure_login_policy "$customers_org_id" "$customer_policy" "$idp_id"
+                    customer_github=on
+                  else
+                    log "customer GitHub sign-in is off: no GitHub OAuth App in OpenBao apps/customer-identity/github-oauth yet"
+                  fi
 
                   # --- One-shot sign-in recovery for the administrator ---------------------------
                   # A reviewed change sets ADMIN_RECOVERY_NONCE to a new value when the maintainer
@@ -686,7 +748,7 @@ spec:
                     fi
                   fi
 
-                  summary="project=$project_id client=$client_id application=$app_id smtp=$smtp_id administrator=$admin_state idp=$idp_id customers=$customers_org_id"
+                  summary="project=$project_id client=$client_id application=$app_id smtp=$smtp_id administrator=$admin_state idp=$admin_idp_id customers=$customers_org_id customer_github=$customer_github"
                   if ((${#changes[@]})); then
                     log "OK $summary changes: $(IFS=,; echo "${changes[*]}")"
                   else
@@ -748,5 +810,17 @@ spec:
                 secretName: platform-dex-client
                 defaultMode: 0440
                 items:
+                  - key: client-secret
+                    path: client-secret
+            # Optional: until the maintainer stores the OAuth App, the run
+            # leaves customer GitHub sign-in off.
+            - name: github-oauth
+              secret:
+                secretName: github-oauth
+                optional: true
+                defaultMode: 0440
+                items:
+                  - key: client-id
+                    path: client-id
                   - key: client-secret
                     path: client-secret
