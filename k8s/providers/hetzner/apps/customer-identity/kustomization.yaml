@@ -16,6 +16,7 @@ resources:
   - cluster.yaml
   - scheduled-backup.yaml
   - external-secret-masterkey.yaml
+  - external-secret-smtp.yaml
   - password-first-admin.yaml
   - external-secret-first-admin.yaml
   - helm-repository.yaml
