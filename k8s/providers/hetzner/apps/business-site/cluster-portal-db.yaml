@@ -34,9 +34,14 @@ spec:
   affinity:
     nodeSelector:
       platform.devantler.tech/baseline-worker: "true"
+  # Every certificate comes from the ten-year CA. The client CA and the
+  # replication certificate are set explicitly: left out, CNPG would generate
+  # its client CA in business-site-portal-db-ca, the ten-year CA's own Secret.
   certificates:
     serverTLSSecret: business-site-portal-db-server
     serverCASecret: business-site-portal-db-server
+    clientCASecret: business-site-portal-db-replication
+    replicationTLSSecret: business-site-portal-db-replication
   # Coroot's Postgres integration, as every platform database has.
   inheritedMetadata:
     annotations:

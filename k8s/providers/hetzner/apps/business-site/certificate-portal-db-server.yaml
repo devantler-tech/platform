@@ -7,6 +7,10 @@ metadata:
   namespace: business-site
 spec:
   secretName: business-site-portal-db-server
+  # Instances reload the certificate when cert-manager renews it.
+  secretTemplate:
+    labels:
+      cnpg.io/reload: ""
   duration: 2160h
   renewBefore: 720h
   privateKey:
