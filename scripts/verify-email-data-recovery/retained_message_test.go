@@ -146,7 +146,7 @@ func TestRetainedMessageReadsMatchingDiagnosticTwiceWithoutWrites(t *testing.T) 
 	r, s := &retainedMessageServer{}, &retainedMessageServer{}
 	reader := retainedFixtureClient(t, retainedMessageEndpoint(t, r))
 	source := retainedFixtureClient(t, retainedMessageEndpoint(t, s))
-	identity, err := verifyRetainedMessage(context.Background(), reader, source)
+	identity, err := verifyRetainedMessageInWindow(context.Background(), reader, source, nil)
 	if err != nil || identity != (messageIdentity{email: "diagnostic-email", blob: "diagnostic-blob", mailbox: "diagnostic-box", messageID: "email-recovery-" + retainedFixtureNonce + "@example.invalid", body: "Email recovery verification " + retainedFixtureNonce}) {
 		t.Fatal("matching retained diagnostic was not verified")
 	}
@@ -420,7 +420,7 @@ func TestRetainedMessageRefusesAmbiguousIncompleteOrChangedDiagnostics(t *testin
 				} else {
 					s.mutate = mutate
 				}
-				_, err := verifyRetainedMessage(context.Background(), retainedFixtureClient(t, retainedMessageEndpoint(t, r)), retainedFixtureClient(t, retainedMessageEndpoint(t, s)))
+				_, err := verifyRetainedMessageInWindow(context.Background(), retainedFixtureClient(t, retainedMessageEndpoint(t, r)), retainedFixtureClient(t, retainedMessageEndpoint(t, s)), nil)
 				if err == nil {
 					t.Fatal("ambiguous, incomplete or changed diagnostic was accepted")
 				}
@@ -449,7 +449,7 @@ func TestRetainedMessageRefusesOversizedAndProviderErrorBodiesPrivately(t *testi
 				return true
 			}}
 			s := &retainedMessageServer{}
-			_, err := verifyRetainedMessage(context.Background(), retainedFixtureClient(t, retainedMessageEndpoint(t, r)), retainedFixtureClient(t, retainedMessageEndpoint(t, s)))
+			_, err := verifyRetainedMessageInWindow(context.Background(), retainedFixtureClient(t, retainedMessageEndpoint(t, r)), retainedFixtureClient(t, retainedMessageEndpoint(t, s)), nil)
 			if err == nil || strings.Contains(err.Error(), "private-") {
 				t.Fatal("oversized or private provider response was accepted or exposed")
 			}

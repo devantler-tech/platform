@@ -278,8 +278,6 @@ jobs:
               - 'scripts/tests/vault-backup-recovery/**'
               - 'scripts/openbao-backup-recovery/**'
               - 'internal/emailreaderinputs/**'
-              - 'scripts/verify-retained-email-reader-inputs.sh'
-              - '.github/workflows/verify-retained-email-reader-inputs.yaml'
               - 'scripts/run-openbao-backup-sandbox.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
               - 'scripts/tests/test-ksail-operator-startup-order.sh'

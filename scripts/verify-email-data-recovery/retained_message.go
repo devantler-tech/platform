@@ -114,15 +114,11 @@ func newRetainedMailboxClientInWindow(endpoint, password string, window *retaine
 	return c, nil
 }
 
-// verifyRetainedMessage compares the retained and serving copies. Matching
+// verifyRetainedMessageInWindow compares the retained and serving copies. Matching
 // content is current readback evidence only because the old marker has no
 // durable binding to its original run.
 // Private client copies ensure even callers supplying ordinary mailbox clients
 // cannot accidentally grant this path a mutating HTTP capability.
-func verifyRetainedMessage(ctx context.Context, reader, source *mailboxClient) (messageIdentity, error) {
-	return verifyRetainedMessageInWindow(ctx, reader, source, nil)
-}
-
 func verifyRetainedMessageInWindow(ctx context.Context, reader, source *mailboxClient, window *retainedMessageWindow) (messageIdentity, error) {
 	// Report only stages chosen here or by readRetainedDiagnostic. Never
 	// propagate client errors or values from either mailbox to workflow logs.
