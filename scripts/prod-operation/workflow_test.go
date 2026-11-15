@@ -365,8 +365,10 @@ func TestCallersAreThinDispatchWrappers(t *testing.T) {
 		if len(w.On) != 1 || !ok || len(w.Permissions) != 0 || len(w.Env) != 0 || len(w.Jobs) != 1 {
 			t.Fatalf("%s: caller must be dispatch-only with empty top-level grants and one job", name)
 		}
-		if strings.Contains(string(raw), "secrets") {
-			t.Fatalf("%s: caller must not pass or name secrets", name)
+		// The prod environment secrets reach the called job only when the caller
+		// names them; a caller passes exactly these two through and expands no other.
+		if strings.Count(string(raw), "secrets.") != 2 {
+			t.Fatalf("%s: caller may expand only the two passed-through secrets", name)
 		}
 		// A workflow-level prod-deploy group would wait on the called job's own.
 		if w.Concurrency != nil {
@@ -379,8 +381,8 @@ func TestCallersAreThinDispatchWrappers(t *testing.T) {
 			}
 		}
 		for _, j := range w.Jobs {
-			if j.Uses != reusableUses || len(j.Steps) != 0 || j.Secrets != nil || j.Environment != "" {
-				t.Fatalf("%s: job must only call %s", name, reusableUses)
+			if j.Uses != reusableUses || len(j.Steps) != 0 || !reflect.DeepEqual(j.Secrets, map[string]any{"KUBE_CONFIG": "${{ secrets.KUBE_CONFIG }}", "HCLOUD_TOKEN": "${{ secrets.HCLOUD_TOKEN }}"}) || j.Environment != "" {
+				t.Fatalf("%s: job must only call %s passing only KUBE_CONFIG and HCLOUD_TOKEN", name, reusableUses)
 			}
 			if len(j.Permissions) != 1 || j.Permissions["contents"] != "read" {
 				t.Fatalf("%s: caller grants more than contents: read", name)
