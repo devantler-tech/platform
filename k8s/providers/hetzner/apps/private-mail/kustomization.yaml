@@ -31,6 +31,14 @@ patches:
       name: private-mail
       namespace: private-mail
     path: patches/migrate-to-encrypted-storage.yaml
+  # The public mail hostname, for submission and IMAPS clients (#5481).
+  - target:
+      group: cert-manager.io
+      version: v1
+      kind: Certificate
+      name: private-mail
+      namespace: private-mail
+    path: patches/certify-mail-hostname.yaml
 # The copy step uses the same signed setup image as the server. A parent image
 # transformer does not pin a container added here.
 replacements:
