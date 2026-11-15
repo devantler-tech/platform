@@ -290,6 +290,17 @@ func TestReleasesTheOneHolderAndObservesTheOrdinaryMove(t *testing.T) {
 	}
 }
 
+// A CSI plugin that has retried for long logs many matching failures; reading
+// them must not end in SIGPIPE and refuse the recovery.
+func TestLongStuckCloseLogIsRecognised(t *testing.T) {
+	a := newAPI()
+	a.pluginLog = strings.Repeat(stuckClose, 20000)
+	output, err := runRelease(t, a, volume, sha)
+	if err != nil || !strings.Contains(output, "=COMPLETE") {
+		t.Fatalf("a long log with the stuck close was refused: err=%v output=%s", err, output)
+	}
+}
+
 func TestDetachThatDoesNotFollowIsReportedNotRetried(t *testing.T) {
 	a := newAPI()
 	a.detaches = false

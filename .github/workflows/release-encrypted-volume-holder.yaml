@@ -132,7 +132,9 @@ jobs:
           k -n longhorn-system get pods -l app=longhorn-csi-plugin -o json >"$private_dir/plugins.json" || fail read
           plugin="$(jq -er --arg node "$node" '[.items[] | select(.spec.nodeName == $node) | .metadata.name] | if length == 1 then .[0] else error("plugins") end' "$private_dir/plugins.json")" || fail csi-plugin
           k -n longhorn-system logs "$plugin" -c longhorn-csi-plugin --since=15m >"$private_dir/plugin.log" || fail read
-          grep -F "cryptsetup luksClose $volume" "$private_dir/plugin.log" | grep -Fq "Device $volume is still in use" || fail no-stuck-close
+          # The second grep reads all input, so a long log cannot end the first
+          # with SIGPIPE under pipefail.
+          grep -F "cryptsetup luksClose $volume" "$private_dir/plugin.log" | grep -F "Device $volume is still in use" >/dev/null || fail no-stuck-close
 
           # The holder: the one node-agent pod on that node, at its
           # DaemonSet's current template, while the DaemonSet is fully available.
