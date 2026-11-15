@@ -14,21 +14,21 @@ metadata:
 data:
   settings.yaml: |
     title: Platform
-    # The Devantler Tech logo is served by Homepage itself from the
+    # The Devantler Tech icon is served by Homepage itself from the
     # homepage-brand ConfigMap (config-map-brand.yaml), never from another site.
     # `favicon` also drives the iOS Add-to-Home-Screen icon: Homepage emits
     # <link rel="apple-touch-icon" sizes="180x180" href={favicon}> and has no
-    # separate apple-touch-icon setting, so it is the 180x180 app icon, which
+    # separate apple-touch-icon setting, so it is the 180x180 icon, which
     # the browser also downsamples for the tab favicon.
-    favicon: /images/devantler-tech/logo-180.png
+    favicon: /images/devantler-tech/icon-180.png
     # PWA manifest icons for the installed app (Android / desktop install /
     # splash). Without this the manifest falls back to Homepage's own logo.
     pwa:
       icons:
-        - src: /images/devantler-tech/logo-192.png
+        - src: /images/devantler-tech/icon-192.png
           type: image/png
           sizes: 192x192
-        - src: /images/devantler-tech/logo-512.png
+        - src: /images/devantler-tech/icon-512.png
           type: image/png
           sizes: 512x512
     theme: dark
@@ -156,7 +156,7 @@ data:
     gateway: true
   widgets.yaml: |
     - logo:
-        icon: /images/devantler-tech/logo.svg
+        icon: /images/devantler-tech/icon.svg
     - kubernetes:
         cluster:
           show: true
@@ -547,8 +547,8 @@ data:
     }
 
     /* Top widgets bar: a hairline separator under the widgets. The logo is the
-       Devantler Tech mark without its square tile, so it sits directly on the
-       dark backdrop and needs no mask or halo. */
+       Devantler Tech icon, a rounded square of its own, so it needs no mask or
+       halo. */
     #information-widgets {
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       padding-bottom: 0.85rem;

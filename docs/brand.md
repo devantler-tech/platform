@@ -1,31 +1,30 @@
 # Devantler Tech brand
 
 The logo and colours the platform's self-hosted pages use. The maintainer approved this logo on
-2026-11-15 and asked for the same green style on light and dark backgrounds, so there is no
-inverted version.
+2026-11-15.
 
 ## Logo
 
 | File | Use it for |
 | --- | --- |
-| [`devantler-tech-logo.svg`](images/brand/devantler-tech-logo.svg) | Anything square: favicons, app and touch icons, avatars. A near-black tile (`#0b0f0c`), a thin `#39ff14` ring and the green orb with "DT". |
-| [`devantler-tech-logo-transparent.svg`](images/brand/devantler-tech-logo-transparent.svg) | Page headers and sign-in screens, on light and dark backgrounds alike. The same mark without the tile, with a `#2fc413` ring. |
+| `devantler-tech-icon.svg` | Anything square: favicons, app and touch icons, avatars and square logo slots. A rounded square shaded around the brand green `#39FF14` (`#5BFF3C` to `#2CE00E`) with a fine white edge highlight, and a custom near-black `#0A0D0B` "D" whose top-left corner is cut at 45°. |
+| `devantler-tech-logo-dark.svg` | Headers and sign-in pages on dark backgrounds. The icon's "D" starts the name, so it reads "[D]evantlerTech": "evantler" in `#F1F5F1`, "Tech" in `#39FF14`. |
+| `devantler-tech-logo-light.svg` | The same wordmark on light backgrounds: "evantler" in `#0A0D0B`, "Tech" in `#15803D`. |
 
-These two SVGs are the vector source. "DT" is set in Monaspace Krypton Bold (SIL Open Font
-License) and converted to outlines, so no font is needed to draw it. Export PNGs from the SVGs at
-the size a page needs, rather than scaling another PNG.
+The vector source is these three SVGs in devantler-tech/business-site `src/assets/brand/`. The
+letters are Inter (SIL Open Font License) converted to outlines, so no font is needed to draw them.
+Export PNGs from the SVGs at the size a page needs, rather than scaling another PNG.
 
-KSail publishes only YAML and JSON files, so a page in the cluster cannot load these files from
-here. Each one embeds the files it needs in its own ConfigMap:
+KSail publishes only YAML and JSON files, so a page in the cluster cannot load image files from a
+repository. Each page embeds the files it needs in its own ConfigMap:
 
 - Dex: [`dex-theme`](../k8s/bases/infrastructure/controllers/dex/config-map.yaml) holds
-  `favicon.png` (the square logo at 256 px) and `logo.svg` (the transparent logo).
-- Homepage: [`homepage-brand`](../k8s/bases/apps/homepage/config-map-brand.yaml) holds the square
-  logo at 180, 192 and 512 px and the transparent `logo.svg`.
+  `favicon.png` (the icon at 256 px) and `logo.svg` (the dark-background wordmark).
+- Homepage: [`homepage-brand`](../k8s/bases/apps/homepage/config-map-brand.yaml) holds the icon at
+  180, 192 and 512 px and as `icon.svg`.
 
-devantler.tech uses the same square logo at 256 px as its `favicon.png`
-(devantler-tech/business-site `public/favicon.png`). When the logo changes, update every copy above
-in the same change.
+devantler.tech uses the same icon at 256 px as its `favicon.png` and shows the wordmark that matches
+its theme in the header. When the logo changes, update every copy above in the same change.
 
 ## Colours
 
@@ -35,7 +34,7 @@ in the same change.
 | Accent, lighter | `#7aff6e` |
 | Accent, dark tint | `#0a2e14` |
 | Accent on light backgrounds | `#15803d` |
-| Logo tile | `#0b0f0c` |
+| Logo ink | `#0a0d0b` |
 | Page background on the platform's dark pages | `hsl(224, 10%, 10%)` |
 
 The shared brand kit with icon sets and colour tokens is tracked in
