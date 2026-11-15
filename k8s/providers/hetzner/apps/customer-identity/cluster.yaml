@@ -39,9 +39,11 @@ spec:
       coroot.com/postgres-scrape-credentials-secret-username-key: username
       coroot.com/postgres-scrape-credentials-secret-password-key: password
       coroot.com/postgres-scrape-param-sslmode: require
-  # Same quorum replication as the platform's other databases: a promoted
-  # standby always holds every committed transaction, and writes continue if
-  # the standby is down.
+  # Same quorum replication as the platform's other databases. While the
+  # standby is up, every commit waits for it, so a promoted standby holds every
+  # committed transaction. With dataDurability: preferred, writes continue
+  # when the standby is down, and commits made then exist only on the primary
+  # until the standby or the WAL archive receives them. This is not RPO=0.
   postgresql:
     synchronous:
       method: any
