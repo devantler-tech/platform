@@ -2,9 +2,10 @@
 # Dex is cilium-network-policy-portal-egress.yaml. Platform-applied and additive
 # to the tenant's own policies.
 #
-# Database pods: the portal's web pods, the migration job, the other instance,
-# the CNPG operator and Coroot's cluster-agent may connect; they reach the API
-# server (CNPG instance manager), R2 for backups and DNS.
+# Database pods: the portal's web pods, the migration job, the other instance
+# and the CNPG operator may connect; they reach the API server (CNPG instance
+# manager), R2 for backups and DNS. Coroot's cluster-agent has its own policy
+# (cilium-network-policy-portal-db-coroot.yaml).
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -40,16 +41,6 @@ spec:
         - ports:
             - port: "8000"
               protocol: TCP
-            - port: "5432"
-              protocol: TCP
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: observability
-            app.kubernetes.io/managed-by: coroot-operator
-            app.kubernetes.io/part-of: coroot
-            app.kubernetes.io/component: coroot-cluster-agent
-      toPorts:
-        - ports:
             - port: "5432"
               protocol: TCP
   egress:

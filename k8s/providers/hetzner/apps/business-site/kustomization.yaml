@@ -23,6 +23,7 @@ resources:
   - cluster-portal-db.yaml
   - push-secret-portal-db-ca.yaml
   - cilium-network-policy-portal-db.yaml
+  - cilium-network-policy-portal-db-coroot.yaml
   - cilium-network-policy-portal-egress.yaml
   # The WebApp's one projected Secret: disclosure and the portal's inputs.
   - external-secret-runtime.yaml
