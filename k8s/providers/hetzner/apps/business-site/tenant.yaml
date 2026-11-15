@@ -1,8 +1,8 @@
-# Public-only staging: the tenant reconciles its signed v3.5.0 package — the
-# WebApp at business-site.platform.devantler.tech, its network policy, budget
-# and disclosure input — and gateway traffic reaches it now that the staging
-# hold is lifted. Portal identity and payments stay off, and devantler.tech
-# keeps pointing at GitHub Pages until the DNS cutover.
+# The tenant reconciles its signed v3.8.0 package: the WebApp, its network
+# policy, budget and runtime inputs. It serves devantler.tech and www (moved off
+# GitHub Pages on 2026-11-15, #6177) and portal.devantler.tech, plus the
+# business-site.platform.devantler.tech staging name. Portal identity and
+# payments stay off.
 apiVersion: kro.run/v1alpha1
 kind: Tenant
 metadata:
@@ -14,6 +14,6 @@ spec:
   sops: false
   webApp: true
   source:
-    digest: sha256:a1fd1c70e07148d9eafbeee5c831005106106ce25b876c2da453460d4ff9f76a
+    digest: sha256:a888373d22cf8ec1393bed517cc066a78187520706aeca7d612132054164b175
     publisherRevision: a76d5df9371cf712a8f60307fde060825a34cf35
     reconcileApplication: true

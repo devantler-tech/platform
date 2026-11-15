@@ -2,7 +2,9 @@
 # ZITADEL (8080) and Dex (5556); only the namespace itself and the CNPG
 # operator reach the database. Egress: the namespace itself, the API server
 # (CNPG instance manager), R2 for backups, ZITADEL's public name for Dex's
-# connector, and the business site's SES SMTP endpoint for ZITADEL's
+# connector, the platform Dex, through which ZITADEL signs its administrator
+# in with GitHub, GitHub itself (github.com, api.github.com) for customers'
+# GitHub sign-in, and the business site's SES SMTP endpoint for ZITADEL's
 # invitation and recovery mail (platform#5400).
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -46,6 +48,19 @@ spec:
               protocol: TCP
     - toFQDNs:
         - matchName: accounts.devantler.tech
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: dex.platform.devantler.tech
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: github.com
+        - matchName: api.github.com
       toPorts:
         - ports:
             - port: "443"

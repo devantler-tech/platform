@@ -1,0 +1,32 @@
+# Platform-applied, additive to the tenant's own policies. The portal migration
+# job, which the business-site package ships beside its WebApp, reaches only
+# the portal database on 5432 and DNS. cilium-network-policy-portal-db.yaml
+# admits it on the database side; its inputs are
+# external-secret-portal-db-migration.yaml.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: business-site-portal-migration
+  namespace: business-site
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: business-site-portal-migration
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: business-site-portal-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

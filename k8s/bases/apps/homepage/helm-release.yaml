@@ -223,11 +223,22 @@ spec:
         value: /etc/homepage
       - name: LOG_TARGETS
         value: stdout
+    #
+    # The Devantler Tech logo files (config-map-brand.yaml) are mounted where
+    # Homepage serves local images: /app/public/images/<dir> is served at
+    # /images/<dir>/. Only that subfolder is mounted, as upstream advises against
+    # mounting the whole /app/public directory.
     volumes:
       - name: homepage-config
         configMap:
           name: homepage
+      - name: homepage-brand
+        configMap:
+          name: homepage-brand
     volumeMounts:
       - mountPath: /etc/homepage
         name: homepage-config
+        readOnly: true
+      - mountPath: /app/public/images/devantler-tech
+        name: homepage-brand
         readOnly: true

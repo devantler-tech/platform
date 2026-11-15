@@ -14,6 +14,13 @@
 # replacement, then waits for the ordinary detach. Nothing here deletes an
 # attachment, edits a finalizer, touches another pod or retries.
 #
+# Before the delete and after the detach wait, it also records read-only
+# evidence of what holds the device: the node-agent's namespace descriptors
+# that no live process is in any more, and the live mount namespaces that still
+# contain the device. It reads through the Talos API and prints counts and
+# process names only. Evidence that cannot be read is reported as UNAVAILABLE
+# and never changes what the release does.
+#
 # It does not take the production deploy lock: a deploy can be the thing
 # waiting on this volume, and would otherwise block its own recovery. Runs for
 # one volume never overlap.
@@ -63,6 +70,15 @@ jobs:
           latest="$(git ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main)" || refuse current-main
           [[ "$latest" == "$GITHUB_SHA"$'\trefs/heads/main' ]] || refuse current-main
 
+      - name: Check out the verified main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the repository-approved Talos client
+        shell: bash
+        run: bash .github/scripts/setup-talosctl.sh
+
       - name: Install the repository-approved Kubernetes client
         shell: bash
         env:
@@ -82,6 +98,7 @@ jobs:
         shell: bash
         env:
           KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
           VOLUME: ${{ inputs.volume }}
         run: |
           set -euo pipefail
@@ -174,6 +191,129 @@ jobs:
           pod_uid="$(jq -er '.[0].metadata.uid' <<<"$holder")"
           echo "ENCRYPTED_VOLUME_HOLDER_RELEASE=OBSERVED volume=$volume node=$node attachment=$attachment_uid holder=$pod/$pod_uid"
 
+          # Read-only evidence of what holds the device (#6327), recorded here
+          # and again after the detach wait. Two facts:
+          #  - which of the node-agent's open namespace descriptors no live
+          #    process is in any more;
+          #  - which live mount namespaces still contain the volume's device.
+          # It prints counts and process names only, never a path, so nothing
+          # stored on the volume reaches the log. A failed read of a process that
+          # is still running, an unexpected listing or the time bound reports
+          # UNAVAILABLE, so a guess is never printed as evidence. The whole
+          # collection runs under one timeout that ends every read it started.
+          # It never stops, retries or changes the release.
+          evidence_timeout=120
+          printf '%s' "${TALOS_CONFIG:-}" >"$private_dir/talosconfig"
+          node_ip=""
+          if k get node "$node" -o json >"$private_dir/node.json"; then
+            node_ip="$(jq -r '[.status.addresses[]? | select(.type == "InternalIP") | .address] | if length == 1 then .[0] else "" end' "$private_dir/node.json")" || node_ip=""
+          fi
+          export EVIDENCE_TALOSCONFIG="$private_dir/talosconfig" EVIDENCE_NODE="$node_ip" EVIDENCE_VOLUME="$volume" EVIDENCE_DIR="$private_dir"
+          # One read per process, run eight at a time: its namespaces, or for
+          # `mountinfo`, a count of its mount namespace's mounts of the device by
+          # propagation type (shared, slave, private). A failed read prints
+          # `FAILED <pid>`, so it is never mistaken for an empty answer.
+          cat >"$private_dir/evidence-of" <<'EVIDENCE_OF'
+          kind="$1" pid="$2"
+          [[ "$pid" =~ ^[0-9]+$ ]] || exit 0
+          if [[ "$kind" == namespaces ]]; then
+            if out="$(talosctl --talosconfig "$EVIDENCE_TALOSCONFIG" -n "$EVIDENCE_NODE" list -l "/proc/$pid/ns" 2>/dev/null)"; then
+              { grep -o -E '(mnt|net):\[[0-9]+\]' <<<"$out" || true; } | sed "s/^/$pid /"
+            else
+              echo "FAILED $pid"
+            fi
+          elif out="$(talosctl --talosconfig "$EVIDENCE_TALOSCONFIG" -n "$EVIDENCE_NODE" read "/proc/$pid/mountinfo" 2>/dev/null)"; then
+            awk -v pid="$pid" -v device="$EVIDENCE_DEVICE" '
+              $3 == device { n++; tags = $0; sub(/ - .*/, "", tags)
+                if (tags ~ / shared:/) shared++; else if (tags ~ / master:/) slave++; else private++ }
+              END { if (n) print pid, n, shared + 0, slave + 0, private + 0 }' <<<"$out"
+          else
+            echo "FAILED $pid"
+          fi
+          exit 0
+          EVIDENCE_OF
+          # The collection for one phase. It prints nothing until it is complete,
+          # so a run that the timeout ends leaves no partial evidence.
+          cat >"$private_dir/evidence" <<'EVIDENCE'
+          set -uo pipefail
+          phase="$1" dir="$EVIDENCE_DIR/evidence-$1" volume="$EVIDENCE_VOLUME"
+          unavailable() { echo "ENCRYPTED_VOLUME_HOLDER_EVIDENCE=UNAVAILABLE phase=$phase stage=$1"; exit 0; }
+          talos() { talosctl --talosconfig "$EVIDENCE_TALOSCONFIG" -n "$EVIDENCE_NODE" "$@" 2>>"$EVIDENCE_DIR/talos-errors"; }
+          # PID and full command, cut at the COMMAND column, because the LABEL
+          # column can contain spaces.
+          processes() {
+            talos processes >"$1.raw" || return 1
+            awk 'NR == 1 { c = index($0, "COMMAND") }
+              NR > 1 && c > 0 && $2 ~ /^[0-9]+$/ { cmd = substr($0, c); sub(/[ \t]+$/, "", cmd); print $2 "\t" cmd }' "$1.raw" >"$1" || return 1
+            [[ -s "$1" ]]
+          }
+          # A process whose read failed may only count as absent once a second
+          # process listing proves it has exited.
+          exited() {
+            [[ -s "$1" ]] || return 0
+            processes "$dir/processes-again" || return 1
+            ! cut -f1 "$dir/processes-again" | grep -q -x -F -f "$1"
+          }
+          [[ -n "$EVIDENCE_NODE" ]] || unavailable node-address
+          mkdir -p "$dir" || unavailable scratch
+          processes "$dir/processes" || unavailable processes
+          # Exactly one Kubescape node-agent process on the node.
+          agent="$(awk -F '\t' '$2 == "/usr/bin/node-agent" { print $1 }' "$dir/processes")"
+          [[ "$agent" =~ ^[0-9]+$ ]] || unavailable agent
+          talos list -l "/proc/$agent/fd" >"$dir/agent-descriptors" || unavailable agent-descriptors
+          { grep -o -E '(mnt|net):\[[0-9]+\]' "$dir/agent-descriptors" || true; } | sort -u >"$dir/held"
+          cut -f1 "$dir/processes" | xargs -P 8 -n 1 bash "$EVIDENCE_DIR/evidence-of" namespaces >"$dir/namespaces" || unavailable namespaces
+          { grep '^FAILED ' "$dir/namespaces" || true; } | cut -d' ' -f2 >"$dir/namespaces-failed"
+          exited "$dir/namespaces-failed" || unavailable namespaces
+          { grep -v '^FAILED ' "$dir/namespaces" || true; } >"$dir/live-by-pid"
+          awk '{ print $2 }' "$dir/live-by-pid" | sort -u >"$dir/live"
+          [[ -s "$dir/live" ]] || unavailable namespaces
+          comm -23 "$dir/held" "$dir/live" >"$dir/dead"
+          held_mnt="$(grep -c '^mnt:' "$dir/held" || true)"
+          held_net="$(grep -c '^net:' "$dir/held" || true)"
+          dead_mnt="$(grep -c '^mnt:' "$dir/dead" || true)"
+          dead_net="$(grep -c '^net:' "$dir/dead" || true)"
+          # The volume's device, while it still exists on the node. A listing
+          # that names the volume in an unexpected form is not proof that the
+          # device is gone.
+          talos list -l /dev/mapper >"$dir/mapper" || unavailable device
+          dm="$({ grep -E " $volume -> \.\./dm-[0-9]+$" "$dir/mapper" || true; } | grep -o -E 'dm-[0-9]+$' | head -n 1)"
+          if [[ -z "$dm" ]] && grep -q -F " $volume" "$dir/mapper"; then unavailable device; fi
+          devno=absent with_device=0 agent_has=no
+          : >"$dir/report"
+          if [[ -n "$dm" ]]; then
+            devno="$(talos read "/sys/block/$dm/dev" | tr -d '[:space:]')" || unavailable device
+            [[ "$devno" =~ ^[0-9]+:[0-9]+$ ]] || unavailable device
+            # One process per live mount namespace, the node-agent first, so its
+            # own namespace is read through its own process.
+            { awk -v agent="$agent" '$1 == agent' "$dir/live-by-pid"; awk -v agent="$agent" '$1 != agent' "$dir/live-by-pid"; } |
+              awk '$2 ~ /^mnt:/ && !seen[$2]++ { print $1 }' |
+              EVIDENCE_DEVICE="$devno" xargs -P 8 -n 1 bash "$EVIDENCE_DIR/evidence-of" mountinfo >"$dir/mounts" || unavailable mounts
+            { grep '^FAILED ' "$dir/mounts" || true; } | cut -d' ' -f2 >"$dir/mounts-failed"
+            exited "$dir/mounts-failed" || unavailable mounts
+            while read -r p n shared slave private; do
+              with_device=$((with_device + 1))
+              [[ "$p" == "$agent" ]] && agent_has=yes
+              cmd="$(awk -F '\t' -v pid="$p" '$1 == pid { print $2; exit }' "$dir/processes")"
+              name="${cmd%% *}"
+              name="$(printf '%s' "${name##*/}" | tr -cd 'A-Za-z0-9._-')"
+              echo "ENCRYPTED_VOLUME_HOLDER_EVIDENCE=NAMESPACE phase=$phase process=${name:-unknown} mounts=$n shared=$shared slave=$slave private=$private" >>"$dir/report"
+            done < <(grep -v '^FAILED ' "$dir/mounts" || true)
+          fi
+          cat "$dir/report"
+          echo "ENCRYPTED_VOLUME_HOLDER_EVIDENCE=RECORDED phase=$phase agent_pid=$agent held_mnt=$held_mnt dead_mnt=$dead_mnt held_net=$held_net dead_net=$dead_net device=$devno namespaces_with_device=$with_device agent_namespace_has_device=$agent_has"
+          EVIDENCE
+          evidence() {
+            local status=0
+            timeout --kill-after=5 "$evidence_timeout" bash "$private_dir/evidence" "$1" || status=$?
+            if (( status == 124 || status == 137 )); then
+              echo "ENCRYPTED_VOLUME_HOLDER_EVIDENCE=UNAVAILABLE phase=$1 stage=deadline"
+            elif (( status != 0 )); then
+              echo "ENCRYPTED_VOLUME_HOLDER_EVIDENCE=UNAVAILABLE phase=$1 stage=error"
+            fi
+          }
+          evidence before
+
           # Still current main immediately before the only mutation.
           latest="$(git ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main)" || fail current-main
           [[ "$latest" == "$GITHUB_SHA"$'\trefs/heads/main' ]] || fail current-main
@@ -211,6 +351,7 @@ jobs:
             if jq -e --arg uid "$attachment_uid" 'all(.[]; .metadata.uid != $uid)' <<<"$held" >/dev/null; then detached=1; break; fi
             sleep 10
           done
+          evidence after
           if (( ! detached )); then
             echo "ENCRYPTED_VOLUME_HOLDER_RELEASE=DETACH_NOT_OBSERVED volume=$volume node=$node" >&2
             exit 3
