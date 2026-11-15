@@ -3,10 +3,14 @@
 # them", #6041) and 2026-11-14 (the copy-based cutover closed #5578). Remove
 # this workflow once a run has reported REMOVED for both copies.
 #
-# Each copy is identified only by its fixed name and verified before anything is
-# deleted: its namespace carries the recovery labels, its single claim is bound
-# to a volume of its own StorageClass, and no other volume uses that class. The
-# serving mail claims must stay bound to different volumes before and after.
+# Run 43674222442 removed the first copy's namespace and stopped at its volume,
+# which stayed attached (#6041). The removal therefore resumes from any prefix
+# of its order: namespace, volume, Longhorn volume, StorageClass. Every object
+# is pinned by name and by the UID read after that run, and its source binding
+# is verified before anything is deleted; a different UID or an out-of-order
+# absence refuses. Volumes leave only through ordinary CSI detach: nothing here
+# deletes a VolumeAttachment or removes a finalizer. The serving mail claims
+# must stay bound to the same volumes before and after.
 name: Remove Email Recovery Copies
 
 "on":
@@ -28,7 +32,7 @@ jobs:
   remove:
     name: Remove the retained Email recovery copies
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     environment: prod
     permissions:
       contents: read
@@ -70,6 +74,7 @@ jobs:
           printf '%s' "$KUBE_CONFIG" >"$private_dir/kubeconfig"
           export KUBECONFIG="$private_dir/kubeconfig"
           k() { kubectl --context admin@prod --request-timeout=30s "$@" 2>>"$private_dir/client-errors"; }
+          copy=serving
           fail() { echo "EMAIL_RECOVERY_COPY_REMOVAL=REFUSED copy=$1 stage=$2" >&2; exit 2; }
 
           serving_volume() {
@@ -80,67 +85,127 @@ jobs:
           }
           serving_before="$(serving_volume private-mail-data)" || fail serving read
           serving_before+=" $(serving_volume email-data-encrypted)" || fail serving read
-          [[ "$serving_before" == Bound/pvc-* ]] || fail serving read
+          [[ "$serving_before" == Bound/pvc-*" "Bound/pvc-* ]] || fail serving read
 
-          read_required() {
+          # Reviewed identities, read after run 43674222442 (#6041): copy,
+          # namespace UID ("-" when it must already be absent), claim UID,
+          # volume, volume UID, Longhorn volume UID, StorageClass UID.
+          identities=(
+            "41561215415 - 97658b9b-8a22-4f02-8275-697bec198e46 pvc-ba88e988-bd96-4828-bf08-05054047af95 d04d4704-bb6c-436b-85a1-62ce3ec0899a 8d9c0f45-2337-4284-b67b-2f0a715151c6 80c442fe-9dcb-4bbb-99c0-919f39821c45"
+            "42818236850 d3c5fc1d-43ef-45e6-a581-58de881875a2 fa4442ce-698b-46b2-a442-ba3ff2e48065 pvc-898b45a4-11cb-4075-9c25-6a3a6bbd9e57 01b86e2f-b35b-49bd-bcf9-ddc3c714cfaf 7fb51fcd-1ae0-49f1-9611-c06088ac506b 4886f450-1d12-4bb0-8ee4-f3313edaddd0"
+          )
+          load() {
+            read -r copy namespace_uid claim_uid volume volume_uid backend_uid class_uid <<<"$1"
+            [[ "$namespace_uid" != - ]] || namespace_uid=""
+            name="email-data-recovery-$copy"
+            [[ "$volume" == pvc-* && "$serving_before" != *"$volume"* ]] || fail "$copy" volume
+          }
+
+          # Only a successful NotFound read proves absence: kubectl prints
+          # nothing for it, and any other failure refuses.
+          read_object() {
             local file="$1"
             shift
             k get "$@" --ignore-not-found -o json >"$file" || fail "$copy" read
-            jq -e '.metadata.uid | strings | select(length > 0)' "$file" >/dev/null || fail "$copy" missing-identity
+          }
+          # Present with the pinned UID, or absent; any other UID refuses.
+          present() {
+            local file="$1" uid="$2" stage="$3" actual
+            [[ -s "$file" ]] || return 1
+            actual="$(jq -er '.metadata.uid | strings | select(length > 0)' "$file")" || fail "$copy" "$stage-identity"
+            [[ -n "$uid" && "$actual" == "$uid" ]] || fail "$copy" "$stage-replaced"
+          }
+          attachments() {
+            k get volumeattachments -o json >"$private_dir/attachments.json" || fail "$copy" attachments
+            jq -er --arg volume "$volume" '[.items[] | select(.spec.source.persistentVolumeName == $volume)] | length' "$private_dir/attachments.json" || fail "$copy" attachments
+          }
+          class_users() {
+            k get pv -o json >"$private_dir/volumes.json" || fail "$copy" class-users
+            jq -e --arg name "$name" --arg volume "$volume" '[.items[] | select(.spec.storageClassName == $name) | .metadata.name] - [$volume] == []' "$private_dir/volumes.json" >/dev/null || fail "$copy" class-users
           }
 
-          # Validate both complete copies before the first delete, and retain the
-          # same objects' UIDs for every conditional request and absence check.
-          for copy in 41561215415 42818236850; do
-            name="email-data-recovery-$copy"
-            read_required "$private_dir/$copy-namespace.json" namespace "$name"
-            jq -e --arg copy "$copy" '.metadata.labels["app.kubernetes.io/part-of"] == "email-data-recovery" and .metadata.labels["email.devantler.tech/data-recovery"] == $copy' "$private_dir/$copy-namespace.json" >/dev/null || fail "$copy" namespace-labels
-            k -n "$name" get pvc -o json >"$private_dir/$copy-claims.json" || fail "$copy" claims
-            jq -e '.items | length == 1 and .[0].metadata.name == "data"' "$private_dir/$copy-claims.json" >/dev/null || fail "$copy" claims
-            volume="$(jq -er '.items[0].spec.volumeName | strings' "$private_dir/$copy-claims.json")" || fail "$copy" volume
-            [[ "$volume" == pvc-* && "$serving_before" != *"$volume"* ]] || fail "$copy" volume
-            read_required "$private_dir/$copy-pv.json" pv "$volume"
-            jq -e --arg name "$name" '.spec.storageClassName == $name and .spec.claimRef.namespace == $name and .spec.claimRef.name == "data"' "$private_dir/$copy-pv.json" >/dev/null || fail "$copy" volume-binding
-            k get pv -o json >"$private_dir/$copy-volumes.json" || fail "$copy" class-users
-            jq -e --arg name "$name" --arg volume "$volume" '[.items[] | select(.spec.storageClassName == $name) | .metadata.name] == [$volume]' "$private_dir/$copy-volumes.json" >/dev/null || fail "$copy" class-users
-            read_required "$private_dir/$copy-class.json" storageclass "$name"
-            jq -e '.provisioner == "driver.longhorn.io"' "$private_dir/$copy-class.json" >/dev/null || fail "$copy" class
-            read_required "$private_dir/$copy-backend.json" volumes.longhorn.io "$volume" -n longhorn-system
+          # Validate both copies before the first delete.
+          for entry in "${identities[@]}"; do
+            load "$entry"
+            mkdir "$private_dir/$copy"
+            read_object "$private_dir/$copy/namespace.json" namespace "$name"
+            read_object "$private_dir/$copy/volume.json" pv "$volume"
+            read_object "$private_dir/$copy/backend.json" volumes.longhorn.io "$volume" -n longhorn-system
+            read_object "$private_dir/$copy/class.json" storageclass "$name"
+            has_namespace=0 has_volume=0 has_backend=0 has_class=0
+            if present "$private_dir/$copy/namespace.json" "$namespace_uid" namespace; then
+              has_namespace=1
+              jq -e --arg copy "$copy" '.metadata.labels["app.kubernetes.io/part-of"] == "email-data-recovery" and .metadata.labels["email.devantler.tech/data-recovery"] == $copy' "$private_dir/$copy/namespace.json" >/dev/null || fail "$copy" namespace-labels
+              k -n "$name" get pvc -o json >"$private_dir/$copy/claims.json" || fail "$copy" claims
+              jq -e --arg uid "$claim_uid" --arg volume "$volume" '.items | length == 1 and .[0].metadata.name == "data" and .[0].metadata.uid == $uid and .[0].spec.volumeName == $volume' "$private_dir/$copy/claims.json" >/dev/null || fail "$copy" claims
+            fi
+            if present "$private_dir/$copy/volume.json" "$volume_uid" volume; then
+              has_volume=1
+              jq -e --arg name "$name" --arg uid "$claim_uid" '.spec.storageClassName == $name and .spec.claimRef.namespace == $name and .spec.claimRef.name == "data" and .spec.claimRef.uid == $uid' "$private_dir/$copy/volume.json" >/dev/null || fail "$copy" volume-binding
+            fi
+            if present "$private_dir/$copy/backend.json" "$backend_uid" backend; then
+              has_backend=1
+              jq -e --arg name "$name" --arg volume "$volume" '.status.kubernetesStatus.namespace == $name and .status.kubernetesStatus.pvcName == "data" and .status.kubernetesStatus.pvName == $volume' "$private_dir/$copy/backend.json" >/dev/null || fail "$copy" backend-binding
+            fi
+            if present "$private_dir/$copy/class.json" "$class_uid" class; then
+              has_class=1
+              jq -e '.provisioner == "driver.longhorn.io"' "$private_dir/$copy/class.json" >/dev/null || fail "$copy" class
+              class_users
+            fi
+            # Removal follows one order, so an object can be gone only after
+            # every object before it.
+            (( has_namespace <= has_volume && has_volume <= has_backend && has_backend <= has_class )) || fail "$copy" order
+            # A copy whose claim is gone must already have detached.
+            if (( ! has_namespace )); then
+              attached="$(attachments)"
+              (( attached == 0 )) || fail "$copy" detach-pending
+              if (( has_backend )); then
+                jq -e '.status.state == "detached"' "$private_dir/$copy/backend.json" >/dev/null || fail "$copy" backend-in-use
+              fi
+            fi
           done
 
-          remove_owned() {
-            local identity="$1" path="$2" timeout="$3" uid current deadline
-            shift 3
-            uid="$(jq -er '.metadata.uid' "$identity")" || fail "$copy" identity
-            current="$(k get "$@" --ignore-not-found -o json)" || fail "$copy" read-before-delete
-            # A controller may already have removed a captured Retain/backend
-            # object. Only a successful NotFound read proves that absence.
-            if [[ -z "$current" ]]; then return; fi
-            [[ "$(jq -er '.metadata.uid' <<<"$current")" == "$uid" ]] || fail "$copy" replaced
-            jq -n --arg uid "$uid" '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}' >"$private_dir/delete-options.json"
-            k delete --raw="$path" -f "$private_dir/delete-options.json" >"$private_dir/delete-result" || fail "$copy" conditional-delete
+          # Delete one pinned object and wait for a NotFound read. An object
+          # already being deleted is only waited on, never forced.
+          remove() {
+            local stage="$1" uid="$2" path="$3" timeout="$4" current deadline
+            shift 4
+            current="$(k get "$@" --ignore-not-found -o json)" || fail "$copy" "$stage-read"
+            if [[ -z "$current" ]]; then return 0; fi
+            [[ -n "$uid" && "$(jq -er '.metadata.uid' <<<"$current")" == "$uid" ]] || fail "$copy" "$stage-replaced"
+            if jq -e '.metadata.deletionTimestamp == null' <<<"$current" >/dev/null; then
+              jq -n --arg uid "$uid" '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}' >"$private_dir/delete-options.json"
+              k delete --raw="$path" -f "$private_dir/delete-options.json" >"$private_dir/delete-result" || fail "$copy" "$stage-delete"
+            fi
             deadline=$((SECONDS + timeout))
             while (( SECONDS < deadline )); do
-              current="$(k get "$@" --ignore-not-found -o json)" || fail "$copy" read-after-delete
-              if [[ -z "$current" ]]; then return; fi
-              [[ "$(jq -er '.metadata.uid' <<<"$current")" == "$uid" ]] || fail "$copy" replaced
+              current="$(k get "$@" --ignore-not-found -o json)" || fail "$copy" "$stage-read"
+              if [[ -z "$current" ]]; then return 0; fi
+              [[ "$(jq -er '.metadata.uid' <<<"$current")" == "$uid" ]] || fail "$copy" "$stage-replaced"
               sleep 2
             done
-            fail "$copy" deletion-timeout
+            fail "$copy" "$stage-timeout"
           }
-
           absent() {
             local current
             current="$(k get "$@" --ignore-not-found -o json)" || fail "$copy" verify-read
             [[ -z "$current" ]] || fail "$copy" verify-present
           }
-          for copy in 41561215415 42818236850; do
-            name="email-data-recovery-$copy"
-            volume="$(jq -er '.metadata.name' "$private_dir/$copy-pv.json")"
-            remove_owned "$private_dir/$copy-namespace.json" "/api/v1/namespaces/$name" 300 namespace "$name"
-            remove_owned "$private_dir/$copy-pv.json" "/api/v1/persistentvolumes/$volume" 120 pv "$volume"
-            remove_owned "$private_dir/$copy-backend.json" "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/$volume" 300 volumes.longhorn.io "$volume" -n longhorn-system
-            remove_owned "$private_dir/$copy-class.json" "/apis/storage.k8s.io/v1/storageclasses/$name" 60 storageclass "$name"
+
+          for entry in "${identities[@]}"; do
+            load "$entry"
+            remove namespace "$namespace_uid" "/api/v1/namespaces/$name" 300 namespace "$name"
+            # The volume goes once its CSI detach completes on its node.
+            remove volume "$volume_uid" "/api/v1/persistentvolumes/$volume" 600 pv "$volume"
+            attached="$(attachments)"
+            (( attached == 0 )) || fail "$copy" detach-pending
+            read_object "$private_dir/$copy/backend.json" volumes.longhorn.io "$volume" -n longhorn-system
+            if [[ -s "$private_dir/$copy/backend.json" ]]; then
+              jq -e '.status.state == "detached"' "$private_dir/$copy/backend.json" >/dev/null || fail "$copy" backend-in-use
+            fi
+            remove backend "$backend_uid" "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/$volume" 300 volumes.longhorn.io "$volume" -n longhorn-system
+            class_users
+            remove class "$class_uid" "/apis/storage.k8s.io/v1/storageclasses/$name" 60 storageclass "$name"
             absent namespace "$name"
             absent pv "$volume"
             absent volumes.longhorn.io "$volume" -n longhorn-system
@@ -148,6 +213,7 @@ jobs:
             echo "EMAIL_RECOVERY_COPY_REMOVAL=REMOVED copy=$copy"
           done
 
+          copy=serving
           serving_after="$(serving_volume private-mail-data)" || fail serving read
           serving_after+=" $(serving_volume email-data-encrypted)" || fail serving read
           [[ "$serving_after" == "$serving_before" ]] || fail serving changed
