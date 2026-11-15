@@ -98,11 +98,11 @@ for job in verify publish; do
     fail "the ${job} job must build against the patched fork"
   setup="$(yq -er ".jobs.${job}.steps | to_entries | map(select(.value.name == \"Set up Go\")) | .[0].key" "${workflow}")"
   patch_step="$(yq -er ".jobs.${job}.steps | to_entries | map(select(.value.name == \"Patch the pinned inspektor-gadget fork\")) | .[0].key" "${workflow}")"
-  (( setup < patch_step )) || fail "the ${job} job must set up Go before patching the fork"
+  ((setup < patch_step)) || fail "the ${job} job must set up Go before patching the fork"
 done
 build_step="$(yq -er '.jobs.publish.steps | to_entries | map(select(.value.name == "Build and push compatibility image")) | .[0].key' "${workflow}")"
 publish_patch="$(yq -er '.jobs.publish.steps | to_entries | map(select(.value.name == "Patch the pinned inspektor-gadget fork")) | .[0].key' "${workflow}")"
-(( publish_patch < build_step )) || fail 'the published image must be built after the fork is patched'
+((publish_patch < build_step)) || fail 'the published image must be built after the fork is patched'
 yq -er '.jobs.verify.steps[] | select(.name == "Test the patched namespace-descriptor ownership") | .run' "${workflow}" | grep -qF 'go test -race -count=1 ./pkg/container-collection/' ||
   fail 'the verify job must run the namespace-descriptor tests under the race detector'
 [[ "$(grep -c '^+++ b/' "${gadget_patch}")" == '3' ]] ||
