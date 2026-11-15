@@ -70,7 +70,9 @@ func (a *apiFixture) nodeAgent(path, name, uid, node string, ready bool) {
 		"status": object{"phase": "Running", "conditions": []object{{"type": "Ready", "status": status}}},
 	})
 	metadata := pod["metadata"].(object)
-	metadata["labels"] = object{"pod-template-generation": "40", "controller-revision-hash": "797d57f68c"}
+	// No legacy pod-template-generation label: the current template is
+	// identified only by the DaemonSet's highest ControllerRevision.
+	metadata["labels"] = object{"controller-revision-hash": "797d57f68c"}
 	metadata["ownerReferences"] = []object{{"apiVersion": "apps/v1", "kind": "DaemonSet", "name": "node-agent", "uid": daemonSetUID, "controller": true}}
 }
 
@@ -98,6 +100,11 @@ func newAPI() *apiFixture {
 		"status": object{"observedGeneration": 40, "desiredNumberScheduled": 6, "currentNumberScheduled": 6, "numberReady": 6, "updatedNumberScheduled": 6, "numberAvailable": 6, "numberMisscheduled": 0},
 	})
 	a.objects[daemonSet]["metadata"].(object)["generation"] = 40
+	for revision, hash := range map[int]string{42: "58649fd754", 43: "797d57f68c"} {
+		data := a.add("/apis/apps/v1/namespaces/kubescape/controllerrevisions/node-agent-"+hash, "apps/v1", "ControllerRevision", "node-agent-"+hash, "kubescape", "uid-revision-"+hash, object{"revision": revision})
+		data["metadata"].(object)["labels"] = object{"controller-revision-hash": hash}
+		data["metadata"].(object)["ownerReferences"] = []object{{"apiVersion": "apps/v1", "kind": "DaemonSet", "name": "node-agent", "uid": daemonSetUID, "controller": true}}
+	}
 	return a
 }
 
@@ -134,7 +141,7 @@ func (a *apiFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "/apis/longhorn.io/v1beta2":
 			resources = []object{{"name": "volumes", "singularName": "volume", "kind": "Volume", "namespaced": true}}
 		case "/apis/apps/v1":
-			resources = []object{{"name": "daemonsets", "singularName": "daemonset", "kind": "DaemonSet", "shortNames": []string{"ds"}, "namespaced": true}}
+			resources = []object{{"name": "daemonsets", "singularName": "daemonset", "kind": "DaemonSet", "shortNames": []string{"ds"}, "namespaced": true}, {"name": "controllerrevisions", "singularName": "controllerrevision", "kind": "ControllerRevision", "namespaced": true}}
 		}
 		if resources != nil {
 			for _, resource := range resources {
@@ -168,7 +175,7 @@ func (a *apiFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				keys = append(keys, key)
 			}
 		}
-		if len(keys) > 0 || strings.HasSuffix(path, "/volumeattachments") || strings.HasSuffix(path, "/pods") {
+		if len(keys) > 0 || strings.HasSuffix(path, "/volumeattachments") || strings.HasSuffix(path, "/pods") || strings.HasSuffix(path, "/controllerrevisions") {
 			sort.Strings(keys)
 			for _, key := range keys {
 				items = append(items, a.objects[key])
@@ -348,7 +355,17 @@ func TestPreconditionsRefuseBeforeAnyDeletion(t *testing.T) {
 		{"daemon set degraded", "daemon-set", func(a *apiFixture) { a.objects[daemonSet]["status"].(object)["numberReady"] = 5 }},
 		{"daemon set rolling", "daemon-set", func(a *apiFixture) { a.objects[daemonSet]["status"].(object)["observedGeneration"] = 39 }},
 		{"holder from an older template", "holder", func(a *apiFixture) {
-			a.objects[holderPath]["metadata"].(object)["labels"].(object)["pod-template-generation"] = "39"
+			a.objects[holderPath]["metadata"].(object)["labels"].(object)["controller-revision-hash"] = "58649fd754"
+		}},
+		{"no revisions", "revision", func(a *apiFixture) {
+			for key := range a.objects {
+				if strings.Contains(key, "/controllerrevisions/") {
+					delete(a.objects, key)
+				}
+			}
+		}},
+		{"current revision of another owner", "holder", func(a *apiFixture) {
+			a.objects["/apis/apps/v1/namespaces/kubescape/controllerrevisions/node-agent-797d57f68c"]["metadata"].(object)["ownerReferences"].([]object)[0]["uid"] = "uid-other-owner"
 		}},
 		{"holder terminating", "holder", func(a *apiFixture) { a.objects[holderPath]["metadata"].(object)["deletionTimestamp"] = "2026-11-15T09:00:00Z" }},
 		{"no holder on the node", "holder", func(a *apiFixture) { delete(a.objects, holderPath) }},

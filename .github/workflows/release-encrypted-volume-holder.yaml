@@ -152,18 +152,21 @@ jobs:
           }
           daemon_set_healthy || fail daemon-set
           daemon_set_uid="$(jq -er '.metadata.uid' "$private_dir/daemon-set.json")"
-          generation="$(jq -er '.metadata.generation | tostring' "$private_dir/daemon-set.json")"
+          # The current template is the DaemonSet's highest ControllerRevision;
+          # its hash is what every up-to-date pod carries.
+          k -n kubescape get controllerrevisions -o json >"$private_dir/revisions.json" || fail read
+          revision="$(jq -er --arg owner "$daemon_set_uid" '
+            [.items[] | select(any(.metadata.ownerReferences[]?; .controller == true and .uid == $owner))]
+            | if length == 0 then error("revisions") else (max_by(.revision) | .metadata.labels["controller-revision-hash"] | strings | select(length > 0)) end' "$private_dir/revisions.json")" || fail revision
           k -n kubescape get pods -o json >"$private_dir/agents.json" || fail read
           holder="$(jq -c --arg node "$node" --arg owner "$daemon_set_uid" '
             [.items[] | select(.spec.nodeName == $node and any(.metadata.ownerReferences[]?; .controller == true and .uid == $owner))]' "$private_dir/agents.json")" || fail read
-          jq -e --arg generation "$generation" '
+          jq -e --arg revision "$revision" '
             length == 1 and .[0].metadata.deletionTimestamp == null
-            and .[0].metadata.labels["pod-template-generation"] == $generation
-            and (.[0].metadata.labels["controller-revision-hash"] | type == "string" and length > 0)
+            and .[0].metadata.labels["controller-revision-hash"] == $revision
             and any(.[0].status.conditions[]?; .type == "Ready" and .status == "True")' <<<"$holder" >/dev/null || fail holder
           pod="$(jq -er '.[0].metadata.name' <<<"$holder")"
           pod_uid="$(jq -er '.[0].metadata.uid' <<<"$holder")"
-          revision="$(jq -er '.[0].metadata.labels["controller-revision-hash"]' <<<"$holder")"
           echo "ENCRYPTED_VOLUME_HOLDER_RELEASE=OBSERVED volume=$volume node=$node attachment=$attachment_uid holder=$pod/$pod_uid"
 
           # Still current main immediately before the only mutation.
@@ -179,11 +182,10 @@ jobs:
           deadline=$((SECONDS + replacement_timeout))
           while (( SECONDS < deadline )); do
             k -n kubescape get pods -o json >"$private_dir/agents.json" || fail replacement-read
-            replacement="$(jq -r --arg old "$pod_uid" --arg node "$node" --arg owner "$daemon_set_uid" --arg generation "$generation" --arg revision "$revision" '
+            replacement="$(jq -r --arg old "$pod_uid" --arg node "$node" --arg owner "$daemon_set_uid" --arg revision "$revision" '
               [.items[] | select(.spec.nodeName == $node and any(.metadata.ownerReferences[]?; .controller == true and .uid == $owner))] as $on_node
               | if ($on_node | map(select(.metadata.uid == $old)) | length) > 0 then ""
                 else [$on_node[] | select(.metadata.deletionTimestamp == null
-                    and .metadata.labels["pod-template-generation"] == $generation
                     and .metadata.labels["controller-revision-hash"] == $revision
                     and any(.status.conditions[]?; .type == "Ready" and .status == "True"))
                   | "\(.metadata.name)/\(.metadata.uid)"] | if length == 1 then .[0] else "" end
