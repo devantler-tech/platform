@@ -1,0 +1,48 @@
+# Platform-applied, additive to the tenant's own policies. The portal's web pods
+# and migration job: their database, and for the web
+# pods the customer Dex's public name (discovery, token exchange) and the mail
+# sender's SES SMTP endpoint (STARTTLS on 587) for the portal's emails.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: business-site-portal-egress
+  namespace: business-site
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [business-site, business-site-portal-migration]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: business-site-portal-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: login.devantler.tech
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: email-smtp.eu-central-1.amazonaws.com
+      toPorts:
+        - ports:
+            - port: "587"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

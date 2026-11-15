@@ -13,7 +13,17 @@
 # - the administrator's one-time password: until the maintainer's first
 #   sign-in replaces it, it stays equal to zitadel-first-admin, so the
 #   commissioning step works even after that Secret is regenerated. Once he has
-#   chosen his own password it is never touched again.
+#   chosen his own password it is never touched again;
+# - the administrator's GitHub sign-in: the platform Dex (dex.platform.devantler.tech)
+#   as a generic OIDC identity provider of his organization, a login policy
+#   there that allows only it (no ZITADEL password or MFA; GitHub's two-step
+#   login covers that), and his account linked to his GitHub identity. A
+#   "Customers" organization keeps the instance's policy for customers, whom
+#   the customer Dex signs in there;
+# - a one-shot sign-in recovery for that administrator, run only when
+#   ADMIN_RECOVERY_NONCE holds a value no run has recorded yet: it unlocks him
+#   and removes his second factors, recovery codes and passkeys. Remove the
+#   value once it has run.
 # A run that finds nothing to change writes nothing. A duplicate, a deactivated
 # client, a missing Secret, an API error or a refused write stops the run
 # before it changes anything further; the next run starts again.
@@ -24,12 +34,12 @@
 #   10-minute token to a memory volume and exits.
 # - The setup container alone gets a Kubernetes token, projected to
 #   /run/kube-api, which may only read and update the client Secret (role.yaml).
-#   It reads the SMTP login (zitadel-smtp) and the one-time password
-#   (zitadel-first-admin) as mounted files, never as environment variables.
+#   It reads the SMTP login (zitadel-smtp), the one-time password
+#   (zitadel-first-admin) and the platform Dex client secret
+#   (platform-dex-client) as mounted files, never as environment variables.
 # - Neither prints a secret.
 #
-# The maintainer's own first sign-in (choosing his password, enrolling MFA) is
-# not part of this.
+# The maintainer signs in himself, with GitHub; nothing here signs in as him.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -157,6 +167,9 @@ spec:
                 - name: first-admin
                   mountPath: /run/first-admin
                   readOnly: true
+                - name: platform-dex
+                  mountPath: /run/platform-dex
+                  readOnly: true
                 - name: kube-api
                   mountPath: /run/kube-api
                   readOnly: true
@@ -191,6 +204,19 @@ spec:
                   # one Secret it may write, so a run with nothing new changes nothing.
                   fingerprint_annotation=platform.devantler.tech/smtp-credential-sha256
                   admin_annotation=platform.devantler.tech/first-admin-password-sha256
+                  recovery_annotation=platform.devantler.tech/admin-recovery-nonce
+                  # The administrator signs in with GitHub through the platform Dex (see below).
+                  platform_dex_secret_file=${PLATFORM_DEX_SECRET_FILE:-/run/platform-dex/client-secret}
+                  dex_annotation=platform.devantler.tech/platform-dex-secret-sha256
+                  platform_dex_issuer=https://dex.platform.devantler.tech
+                  platform_dex_client=public-client
+                  idp_name=GitHub
+                  # Dex's subject for GitHub user devantler (id 26203420) through its "github"
+                  # connector: base64url of the protobuf {1: "26203420", 2: "github"}.
+                  admin_dex_subject=CggyNjIwMzQyMBIGZ2l0aHVi
+                  admin_github_login=devantler
+                  customers_org=Customers
+                  customers_domain=customers.accounts.devantler.tech
                   project_name="Customer sign-in"
                   app_name="Customer Dex"
                   dex_callback=https://login.devantler.tech/callback
@@ -237,6 +263,7 @@ spec:
                   smtp_user=$(read_secret "$smtp_dir/username" "SMTP username")
                   smtp_password=$(read_secret "$smtp_dir/password" "SMTP password")
                   admin_password=$(read_secret "$admin_password_file" "administrator one-time password")
+                  platform_dex_secret=$(read_secret "$platform_dex_secret_file" "platform Dex client secret")
 
                   # The Kubernetes token is projected outside the default path, so kubectl gets
                   # a kubeconfig that reads it from there.
@@ -270,9 +297,11 @@ spec:
                     local method=$1 path=$2 body=${3:-'{}'} status
                     local -a data=()
                     [[ $method == GET ]] || data=(--data-binary "$body")
+                    local -a org_header=()
+                    [[ -z ${api_org:-} ]] || org_header=(-H "x-zitadel-orgid: $api_org")
                     status=$(curl -sS -m 20 -o "$work/response" -w '%{http_code}' -X "$method" \
                       -H "@$work/auth" -H "Host: $ZITADEL_HOST" -H 'Content-Type: application/json' \
-                      -H 'Connect-Protocol-Version: 1' "${data[@]}" "$ZITADEL_URL$path") ||
+                      -H 'Connect-Protocol-Version: 1' "${org_header[@]}" "${data[@]}" "$ZITADEL_URL$path") ||
                       fail "$method $path: no answer from ZITADEL"
                     if [[ $status != 2?? ]]; then
                       fail "$method $path: HTTP $status $(jq -rc '[.code, .message] | map(tostring) | join(" ")' "$work/response" 2>/dev/null || echo 'unreadable error')"
@@ -280,6 +309,8 @@ spec:
                     cat "$work/response"
                   }
                   connect() { api POST "/$1" "${2-}"; }
+                  # mgmt METHOD PATH [BODY]: the management API, in the administrator's organization.
+                  mgmt() { api_org=$org_id api "$@"; }
 
                   # The client Secret is created empty by Flux and only ever patched here.
                   secret_json() {
@@ -451,7 +482,206 @@ spec:
                     fi
                   fi
 
-                  summary="project=$project_id client=$client_id application=$app_id smtp=$smtp_id administrator=$admin_state"
+                  # --- The administrator's GitHub sign-in -------------------------------------------
+                  # The maintainer signs in with GitHub, through the platform Dex, which admits
+                  # only the devantler-tech maintainers team. ZITADEL knows that Dex as a generic
+                  # OIDC identity provider owned by his organization, the instance's default one.
+                  # That organization's login policy allows only this provider, so ZITADEL sends
+                  # him straight to GitHub and asks for no password or MFA of its own: GitHub's
+                  # two-step login covers it. The provider neither creates nor links accounts, so
+                  # his pre-linked account is the only one it can sign in. Customers belong to
+                  # their own organization, which keeps the instance's policy (password and MFA);
+                  # the customer Dex requests that organization.
+                  customer_orgs=$(connect zitadel.org.v2.OrganizationService/ListOrganizations "$(jq -nc --arg n "$customers_org" \
+                    '{queries: [{nameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')")
+                  case $(jq '.result // [] | length' <<<"$customer_orgs") in
+                    0)
+                      connect zitadel.org.v2.OrganizationService/AddOrganization "$(jq -nc --arg n "$customers_org" '{name: $n}')" >/dev/null
+                      changes+=("created the $customers_org organization")
+                      customer_orgs=$(connect zitadel.org.v2.OrganizationService/ListOrganizations "$(jq -nc --arg n "$customers_org" \
+                        '{queries: [{nameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')")
+                      ;;
+                    1) ;;
+                    *) fail "more than one organization named '$customers_org'" ;;
+                  esac
+                  customers_org_id=$(jq -er '.result[0].id' <<<"$customer_orgs")
+                  [[ $(jq -r '.result[0].primaryDomain' <<<"$customer_orgs") == "$customers_domain" ]] ||
+                    fail "the $customers_org organization's primary domain is not $customers_domain, which the customer Dex requests"
+                  [[ $customers_org_id != "$org_id" ]] || fail "the $customers_org organization is the administrator's own"
+
+                  # The provider. ZITADEL never returns its client secret, so a fingerprint of
+                  # the one last applied decides whether to send it again.
+                  dex_fingerprint=$(printf '%s' "$platform_dex_secret" | sha256sum | cut -d' ' -f1)
+                  desired_idp=$(jq -nc --arg i "$platform_dex_issuer" --arg c "$platform_dex_client" '{
+                    issuer: $i, clientId: $c, scopes: ["openid", "profile", "email"], isIdTokenMapping: false, usePkce: true,
+                    providerOptions: {isLinkingAllowed: false, isCreationAllowed: false, isAutoCreation: false, isAutoUpdate: false,
+                      autoLinking: "AUTO_LINKING_OPTION_UNSPECIFIED"}}')
+                  normalise_idp='{issuer: (.config.oidc.issuer // ""), clientId: (.config.oidc.clientId // ""),
+                    scopes: (.config.oidc.scopes // []), isIdTokenMapping: (.config.oidc.isIdTokenMapping // false),
+                    usePkce: (.config.oidc.usePkce // false),
+                    providerOptions: {isLinkingAllowed: (.config.options.isLinkingAllowed // false),
+                      isCreationAllowed: (.config.options.isCreationAllowed // false),
+                      isAutoCreation: (.config.options.isAutoCreation // false), isAutoUpdate: (.config.options.isAutoUpdate // false),
+                      autoLinking: (.config.options.autoLinking // "AUTO_LINKING_OPTION_UNSPECIFIED")}}'
+                  list_idps() {
+                    mgmt POST /management/v1/idps/templates/_search "$(jq -nc --arg n "$idp_name" \
+                      '{queries: [{idpNameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')" |
+                      jq -c --arg o "$org_id" '[.result // [] | .[] | select(.owner == "IDP_OWNER_TYPE_ORG" and .details.resourceOwner == $o)]'
+                  }
+                  idps=$(list_idps)
+                  case $(jq length <<<"$idps") in
+                    0)
+                      idp_id=$(mgmt POST /management/v1/idps/generic_oidc "$(PLATFORM_DEX_SECRET=$platform_dex_secret jq -c --arg n "$idp_name" \
+                        '. + {name: $n, clientSecret: env.PLATFORM_DEX_SECRET}' <<<"$desired_idp")" | jq -er '.id')
+                      patch_secret "$(jq -nc --arg a "$dex_annotation" --arg f "$dex_fingerprint" '{metadata: {annotations: {($a): $f}}}')"
+                      changes+=("created the GitHub identity provider")
+                      ;;
+                    1)
+                      idp_id=$(jq -er '.[0].id' <<<"$idps")
+                      [[ $(jq -r '.[0].state' <<<"$idps") == IDP_STATE_ACTIVE ]] ||
+                        fail "identity provider '$idp_name' is not active; reactivate or remove it on purpose"
+                      recorded_dex=$(secret_json | jq -r --arg a "$dex_annotation" '.metadata.annotations[$a] // ""')
+                      if [[ $(jq -cS ".[0] | $normalise_idp" <<<"$idps") != "$(jq -cS . <<<"$desired_idp")" || $recorded_dex != "$dex_fingerprint" ]]; then
+                        mgmt PUT "/management/v1/idps/generic_oidc/$idp_id" "$(PLATFORM_DEX_SECRET=$platform_dex_secret jq -c --arg n "$idp_name" \
+                          '. + {name: $n, clientSecret: env.PLATFORM_DEX_SECRET}' <<<"$desired_idp")" >/dev/null
+                        [[ $(list_idps | jq -cS ".[0] | $normalise_idp") == "$(jq -cS . <<<"$desired_idp")" ]] ||
+                          fail "identity provider '$idp_name' still differs from its declared settings after the update"
+                        patch_secret "$(jq -nc --arg a "$dex_annotation" --arg f "$dex_fingerprint" '{metadata: {annotations: {($a): $f}}}')"
+                        changes+=("updated the GitHub identity provider")
+                      fi
+                      ;;
+                    *) fail "more than one identity provider named '$idp_name'" ;;
+                  esac
+
+                  # His organization's login policy: the instance's, but external sign-in only,
+                  # MFA forced for local sign-in alone, and no password reset.
+                  instance_policy=$(api GET /admin/v1/policies/login | jq -c '.policy')
+                  desired_policy=$(jq -c '{
+                    allowUsernamePassword: false, allowRegister: false, allowExternalIdp: true, forceMfa: true, forceMfaLocalOnly: true,
+                    passwordlessType: "PASSWORDLESS_TYPE_NOT_ALLOWED", hidePasswordReset: true,
+                    ignoreUnknownUsernames: (.ignoreUnknownUsernames // false), defaultRedirectUri: (.defaultRedirectUri // ""),
+                    passwordCheckLifetime: .passwordCheckLifetime, externalLoginCheckLifetime: .externalLoginCheckLifetime,
+                    mfaInitSkipLifetime: .mfaInitSkipLifetime, secondFactorCheckLifetime: .secondFactorCheckLifetime,
+                    multiFactorCheckLifetime: .multiFactorCheckLifetime, allowDomainDiscovery: false,
+                    disableLoginWithEmail: (.disableLoginWithEmail // false), disableLoginWithPhone: (.disableLoginWithPhone // false)}' \
+                    <<<"$instance_policy")
+                  normalise_policy='{allowUsernamePassword: (.allowUsernamePassword // false), allowRegister: (.allowRegister // false),
+                    allowExternalIdp: (.allowExternalIdp // false), forceMfa: (.forceMfa // false),
+                    forceMfaLocalOnly: (.forceMfaLocalOnly // false),
+                    passwordlessType: (.passwordlessType // "PASSWORDLESS_TYPE_NOT_ALLOWED"),
+                    hidePasswordReset: (.hidePasswordReset // false), ignoreUnknownUsernames: (.ignoreUnknownUsernames // false),
+                    defaultRedirectUri: (.defaultRedirectUri // ""), passwordCheckLifetime, externalLoginCheckLifetime,
+                    mfaInitSkipLifetime, secondFactorCheckLifetime, multiFactorCheckLifetime,
+                    allowDomainDiscovery: (.allowDomainDiscovery // false), disableLoginWithEmail: (.disableLoginWithEmail // false),
+                    disableLoginWithPhone: (.disableLoginWithPhone // false)}'
+                  org_policy=$(mgmt GET /management/v1/policies/login | jq -c '.policy')
+                  if [[ $(jq -r '.isDefault // false' <<<"$org_policy") == true ]]; then
+                    mgmt POST /management/v1/policies/login "$(jq -c --argjson p "$instance_policy" --arg i "$idp_id" \
+                      '. + {secondFactors: ($p.secondFactors // []), multiFactors: ($p.multiFactors // []),
+                        idps: [{idpId: $i, ownerType: "IDP_OWNER_TYPE_ORG"}]}' <<<"$desired_policy")" >/dev/null
+                    changes+=("set the administrator's organization to GitHub sign-in")
+                  elif [[ $(jq -cS "$normalise_policy" <<<"$org_policy") != "$(jq -cS . <<<"$desired_policy")" ]]; then
+                    mgmt PUT /management/v1/policies/login "$desired_policy" >/dev/null
+                    changes+=("restored the administrator's organization login policy")
+                  fi
+                  [[ $(mgmt GET /management/v1/policies/login | jq -cS ".policy | $normalise_policy") == "$(jq -cS . <<<"$desired_policy")" ]] ||
+                    fail "the administrator's organization login policy still differs from its declared settings"
+                  # Exactly this one provider: with a second one ZITADEL would show a choice
+                  # instead of sending him to GitHub.
+                  policy_idps=$(mgmt POST /management/v1/policies/login/idps/_search | jq -c '[.result // [] | .[].idpId]')
+                  if [[ $(jq -c . <<<"$policy_idps") == '[]' ]]; then
+                    mgmt POST /management/v1/policies/login/idps "$(jq -nc --arg i "$idp_id" '{idpId: $i, ownerType: "IDP_OWNER_TYPE_ORG"}')" >/dev/null
+                    changes+=("allowed the GitHub identity provider")
+                  elif [[ $policy_idps != "$(jq -nc --arg i "$idp_id" '[$i]')" ]]; then
+                    fail "the administrator's organization allows identity providers other than '$idp_name'; remove them on purpose"
+                  fi
+
+                  # His account, linked to his GitHub identity as Dex presents it.
+                  links=$(connect zitadel.user.v2.UserService/ListIDPLinks "$(jq -nc --arg u "$admin_id" '{userId: $u}')" |
+                    jq -c --arg i "$idp_id" '[.result // [] | .[] | select(.idpId == $i)]')
+                  case $(jq length <<<"$links") in
+                    0)
+                      connect zitadel.user.v2.UserService/AddIDPLink "$(jq -nc --arg u "$admin_id" --arg i "$idp_id" \
+                        --arg s "$admin_dex_subject" --arg n "$admin_github_login" '{userId: $u, idpLink: {idpId: $i, userId: $s, userName: $n}}')" >/dev/null
+                      changes+=("linked the administrator to GitHub")
+                      ;;
+                    1)
+                      [[ $(jq -r '.[0].userId' <<<"$links") == "$admin_dex_subject" ]] ||
+                        fail "the administrator is linked to a different GitHub identity; remove that link on purpose"
+                      ;;
+                    *) fail "the administrator has more than one link to '$idp_name'" ;;
+                  esac
+
+                  # --- One-shot sign-in recovery for the administrator ---------------------------
+                  # A reviewed change sets ADMIN_RECOVERY_NONCE to a new value when the maintainer
+                  # can no longer pass his second factor. The first run that sees the value
+                  # unlocks him and removes every second factor, recovery code and passkey he
+                  # has. The value is recorded once they are gone, so no later run repeats the
+                  # removal, even after he has enrolled something new. A run that fails before
+                  # that point is repeated by the next one, which is safe: every step is
+                  # idempotent. Remove the value from this file once it has run, so a rebuilt
+                  # client Secret, which carries no record, cannot trigger it again.
+                  if [[ -n ${ADMIN_RECOVERY_NONCE:-} ]]; then
+                    [[ $ADMIN_RECOVERY_NONCE =~ ^[a-z0-9-]{8,64}$ ]] || fail "ADMIN_RECOVERY_NONCE must be 8 to 64 characters of a-z, 0-9 and -"
+                    # A separate assignment, so a failed read stops the run instead of reading
+                    # as "not recorded" and removing what he has enrolled since.
+                    recorded_nonce=$(secret_json | jq -r --arg a "$recovery_annotation" '.metadata.annotations[$a] // ""')
+                    if [[ $recorded_nonce == "$ADMIN_RECOVERY_NONCE" ]]; then
+                      log "recovery $ADMIN_RECOVERY_NONCE: done earlier, nothing to do"
+                    else
+                      user_request=$(jq -nc --arg u "$admin_id" '{userId: $u}')
+                      list_factors() {
+                        connect zitadel.user.v2.UserService/ListAuthenticationFactors "$(jq -nc --arg u "$admin_id" \
+                          '{userId: $u, states: ["AUTH_FACTOR_STATE_READY", "AUTH_FACTOR_STATE_NOT_READY"]}')"
+                      }
+                      method_types() {
+                        connect zitadel.user.v2.UserService/ListAuthenticationMethodTypes "$user_request" | jq -c '.authMethodTypes // []'
+                      }
+                      removed=() unlocked=no
+                      if [[ $(jq -r '.result[0].state' <<<"$admins") == USER_STATE_LOCKED ]]; then
+                        connect zitadel.user.v2.UserService/UnlockUser "$user_request" >/dev/null
+                        unlocked=yes
+                      fi
+                      factors=$(list_factors)
+                      while IFS= read -r factor; do
+                        case $(jq -r 'del(.state) | keys | join(",")' <<<"$factor") in
+                          u2f)
+                            connect zitadel.user.v2.UserService/RemoveU2F "$(jq -nc --arg u "$admin_id" --argjson f "$factor" \
+                              '{userId: $u, u2fId: $f.u2f.id}')" >/dev/null
+                            removed+=("security key")
+                            ;;
+                          otp) connect zitadel.user.v2.UserService/RemoveTOTP "$user_request" >/dev/null; removed+=("authenticator app") ;;
+                          otpSms) connect zitadel.user.v2.UserService/RemoveOTPSMS "$user_request" >/dev/null; removed+=("SMS code") ;;
+                          otpEmail) connect zitadel.user.v2.UserService/RemoveOTPEmail "$user_request" >/dev/null; removed+=("email code") ;;
+                          *) fail "the administrator has a second factor of an unknown type; remove it on purpose" ;;
+                        esac
+                      done < <(jq -c '.result // [] | .[]' <<<"$factors")
+                      types=$(method_types)
+                      if jq -e 'index("AUTHENTICATION_METHOD_TYPE_RECOVERY_CODE")' <<<"$types" >/dev/null; then
+                        connect zitadel.user.v2.UserService/RemoveRecoveryCodes "$user_request" >/dev/null
+                        removed+=("recovery codes")
+                      fi
+                      passkeys=$(connect zitadel.user.v2.UserService/ListPasskeys "$user_request")
+                      while IFS= read -r passkey_id; do
+                        connect zitadel.user.v2.UserService/RemovePasskey "$(jq -nc --arg u "$admin_id" --arg p "$passkey_id" \
+                          '{userId: $u, passkeyId: $p}')" >/dev/null
+                        removed+=("passkey")
+                      done < <(jq -r '.result // [] | .[].id' <<<"$passkeys")
+                      # Pending factors appear only in the factor list; every ready method,
+                      # recovery codes included, appears in the method types.
+                      [[ $(list_factors | jq '.result // [] | length') == 0 ]] || fail "second factors remain after the recovery"
+                      types=$(method_types)
+                      left=$(jq -r 'map(select(. != "AUTHENTICATION_METHOD_TYPE_PASSWORD" and . != "AUTHENTICATION_METHOD_TYPE_IDP")) | join(",")' <<<"$types")
+                      [[ -z $left ]] || fail "sign-in methods remain after the recovery: $left"
+                      state=$(connect zitadel.user.v2.UserService/GetUserByID "$user_request" | jq -r '.user.state')
+                      [[ $state == USER_STATE_ACTIVE ]] || fail "the administrator is $state after the recovery"
+                      patch_secret "$(jq -nc --arg a "$recovery_annotation" --arg n "$ADMIN_RECOVERY_NONCE" '{metadata: {annotations: {($a): $n}}}')"
+                      log "recovery $ADMIN_RECOVERY_NONCE: unlocked=$unlocked removed=$(IFS=,; echo "${removed[*]:-nothing}")"
+                      changes+=("recovered the administrator's sign-in")
+                    fi
+                  fi
+
+                  summary="project=$project_id client=$client_id application=$app_id smtp=$smtp_id administrator=$admin_state idp=$idp_id customers=$customers_org_id"
                   if ((${#changes[@]})); then
                     log "OK $summary changes: $(IFS=,; echo "${changes[*]}")"
                   else
@@ -508,3 +738,10 @@ spec:
                 items:
                   - key: password
                     path: password
+            - name: platform-dex
+              secret:
+                secretName: platform-dex-client
+                defaultMode: 0440
+                items:
+                  - key: client-secret
+                    path: client-secret

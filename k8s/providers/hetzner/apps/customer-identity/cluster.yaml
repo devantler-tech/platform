@@ -83,6 +83,13 @@ spec:
         login: true
         passwordSecret:
           name: customer-identity-db-zitadel
+      # The customer Dex's login, owner of the customer_dex database only
+      # (database-dex.yaml).
+      - name: customer_dex
+        ensure: present
+        login: true
+        passwordSecret:
+          name: customer-identity-db-dex
       # Coroot's read-only monitoring login: pg_monitor only, no access to
       # ZITADEL's data.
       - name: coroot_monitor

@@ -1,0 +1,12 @@
+# Prod-only: ZITADEL (accounts.devantler.tech, apps/customer-identity) signs
+# its administrator in with GitHub through this Dex, which it uses as a generic
+# OIDC identity provider (business-site#302). Its Login V1 callback joins the
+# shared client's redirect URIs; the customer-identity setup CronJob reads that
+# client's secret from OpenBao (infrastructure/oidc/dex). The test stops the
+# build if the shared client is no longer the first entry.
+- op: test
+  path: /spec/values/config/staticClients/0/id
+  value: public-client
+- op: add
+  path: /spec/values/config/staticClients/0/redirectURIs/-
+  value: https://accounts.devantler.tech/ui/login/login/externalidp/callback

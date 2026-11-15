@@ -1,0 +1,30 @@
+# The streaming_replica client certificate for business-site-portal-db, issued
+# under the ten-year CA (certificate-portal-db-ca.yaml). The Cluster uses this
+# Secret both as its replication certificate and, through its ca.crt, as its
+# client CA (cluster-portal-db.yaml). Without it CNPG generates its own client
+# CA in a Secret named business-site-portal-db-ca, which is the ten-year CA's
+# own Secret, and refuses to start.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: business-site-portal-db-replication
+  namespace: business-site
+spec:
+  secretName: business-site-portal-db-replication
+  # Instances reload the certificate when cert-manager renews it.
+  secretTemplate:
+    labels:
+      cnpg.io/reload: ""
+  commonName: streaming_replica
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages:
+    - client auth
+  issuerRef:
+    name: business-site-portal-db-ca
+    kind: Issuer
+    group: cert-manager.io

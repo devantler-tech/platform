@@ -124,9 +124,10 @@ node-level signature reads first; do not add a shared pull credential.
 Platform-authored resources in a registration dir are reconciled by flux-system
 (not your tenant SA), which is why they may use the ClusterSecretStore where
 your own resources may not (the Kyverno policy carves out flux-system-applied
-resources). KRO-rendered Tenant children get no such exception. KRO's bind
-permission names the constructor's four exact roles, including `tenant-edit`,
-rather than the unrelated built-in `edit` role.
+resources, and the External Secrets controller's own spec-preserving updates of
+them, such as adding its cleanup finalizer). KRO-rendered Tenant children get no
+such exception. KRO's bind permission names the constructor's four exact roles,
+including `tenant-edit`, rather than the unrelated built-in `edit` role.
 
 - The release and template-sync workflows mint a **GitHub App token** from the
   org-level `APP_CLIENT_ID` variable and `APP_PRIVATE_KEY` secret — already available to

@@ -91,7 +91,7 @@ func TestCNPGObservationAcceptsOnlyStablePhysicalReplication(t *testing.T) {
 // TestCNPGObservationCoversTheCurrentTwoInstanceSources requires both members
 // and the same native physical replay evidence as the three-instance sources.
 func TestCNPGObservationCoversTheCurrentTwoInstanceSources(t *testing.T) {
-	for _, scope := range []struct{ namespace, name string }{{"ate-system", "substrate-db"}, {"kagent", "kagent-db"}} {
+	for _, scope := range []struct{ namespace, name string }{{"ate-system", "substrate-db"}, {"kagent", "kagent-db"}, {"customer-identity", "customer-identity-db"}, {"business-site", "business-site-portal-db"}} {
 		t.Run(scope.name, func(t *testing.T) {
 			before := cnpgObservationFixture(t)
 			before.Pods = before.Pods[:2]

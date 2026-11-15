@@ -104,3 +104,25 @@
       kinds:
         - group: gateway.networking.k8s.io
           kind: HTTPRoute
+# The portal's customer Dex (apps/customer-identity/http-route-dex.yaml), on the
+# same customer-identity certificate.
+- op: add
+  path: /spec/listeners/-
+  value:
+    name: https-login-devantler-tech
+    hostname: login.devantler.tech
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - kind: Secret
+          group: ""
+          namespace: customer-identity
+          name: customer-identity-tls
+    allowedRoutes:
+      namespaces:
+        from: All
+      kinds:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute

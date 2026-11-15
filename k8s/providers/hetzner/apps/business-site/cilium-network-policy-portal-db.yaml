@@ -1,0 +1,76 @@
+# The portal database's pods. The portal's own path to it and to its customer
+# Dex is cilium-network-policy-portal-egress.yaml. Platform-applied and additive
+# to the tenant's own policies.
+#
+# Database pods: the portal's web pods, the migration job, the other instance
+# and the CNPG operator may connect; they reach the API server (CNPG instance
+# manager), R2 for backups and DNS. Coroot's cluster-agent has its own policy
+# (cilium-network-policy-portal-db-coroot.yaml).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: business-site-portal-db
+  namespace: business-site
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: business-site-portal-db
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: business-site
+        - matchLabels:
+            app.kubernetes.io/name: business-site-portal-migration
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: business-site-portal-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: cnpg-system
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "5432"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: business-site-portal-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+    - toEntities:
+        - kube-apiserver
+    - toFQDNs:
+        - matchPattern: "*.r2.cloudflarestorage.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

@@ -1,0 +1,35 @@
+# The database's server certificate, issued under the ten-year CA
+# (certificate-portal-db-ca.yaml). It renews; the CA does not.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: business-site-portal-db-server
+  namespace: business-site
+spec:
+  secretName: business-site-portal-db-server
+  # Instances reload the certificate when cert-manager renews it.
+  secretTemplate:
+    labels:
+      cnpg.io/reload: ""
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages:
+    - server auth
+  dnsNames:
+    - business-site-portal-db-rw
+    - business-site-portal-db-rw.business-site
+    - business-site-portal-db-rw.business-site.svc
+    - business-site-portal-db-r
+    - business-site-portal-db-r.business-site
+    - business-site-portal-db-r.business-site.svc
+    - business-site-portal-db-ro
+    - business-site-portal-db-ro.business-site
+    - business-site-portal-db-ro.business-site.svc
+  issuerRef:
+    name: business-site-portal-db-ca
+    kind: Issuer
+    group: cert-manager.io

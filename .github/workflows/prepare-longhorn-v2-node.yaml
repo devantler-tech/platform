@@ -56,7 +56,16 @@ name: Prepare Longhorn V2 Migration
         description: Fixed database for a read-only migration observation; leave node empty
         required: false
         type: choice
-        options: [coroot-db, umami-db, wedding-db, substrate-db, kagent-db]
+        options:
+          [
+            coroot-db,
+            umami-db,
+            wedding-db,
+            substrate-db,
+            kagent-db,
+            customer-identity-db,
+            business-site-portal-db,
+          ]
       confirm:
         description: "Type the exact confirmation documented for the selected operation"
         required: true
@@ -116,7 +125,7 @@ jobs:
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == inventory-v1-runtime ]]
               ;;
             observe-database)
-              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db|customer-identity-db|business-site-portal-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
               ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]

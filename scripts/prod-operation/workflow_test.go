@@ -5,6 +5,7 @@ package prodoperation
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -204,82 +205,212 @@ func TestGuardAdmitsOnlyConfirmedFirstMainDispatchByDevantler(t *testing.T) {
 	}
 }
 
-func TestCredentialStepKeepsMasksDropsCredentialsAndSplitsArguments(t *testing.T) {
+// runCredentialStep executes the real final step of prod-operation.yaml as
+// bash against fixtures: a fake endpoint helper, a fake program and an age
+// binary (fake unless ageBin names a real one).
+func runCredentialStep(t *testing.T, helperExit, programExit int, keep, args, ageBin, recipient string) (string, string, error) {
+	t.Helper()
 	j, _ := operate(t)
 	stepRun := j.Steps[len(j.Steps)-1].Run
 	mktemp, err := exec.LookPath("mktemp")
 	if err != nil {
 		t.Fatal(err)
 	}
+	root := t.TempDir()
+	for _, dir := range []string{"scripts", "tools"} {
+		if err := os.Mkdir(filepath.Join(root, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixtures := map[string]string{
+		"scripts/use-prod-stable-api-endpoint.sh": "#!/bin/bash\nprintf '%s\\n' '::add-mask::192.0.2.1' >&2\nprintf '%s\\n' 'helper stdout must stay private'\nexit \"$OP_TEST_HELPER_EXIT\"\n",
+		"tools/mktemp":         fmt.Sprintf("#!/bin/bash\nexec %q -d \"$OP_TEST_TMPDIR/prod-operation.XXXXXX\"\n", mktemp),
+		"tools/prod-operation": "#!/bin/bash\n[[ -z ${KUBE_CONFIG+x} && -z ${KEEP_HCLOUD_TOKEN+x} && -s $KUBECONFIG ]] || exit 99\n[[ -z ${GITHUB_STEP_SUMMARY+x} && -z ${GITHUB_OUTPUT+x} && -z ${GITHUB_ENV+x} && -z ${GITHUB_PATH+x} && -z ${GITHUB_STATE+x} ]] || exit 98\n[[ -z ${OP_TEST_PROGRAM_BYTES:-} ]] || { head -c \"$OP_TEST_PROGRAM_BYTES\" /dev/zero | tr '\\0' x; printf 'done\\n' || exit 97; exit 0; }\nprintf 'token=%s\\n' \"${HCLOUD_TOKEN:-unset}\"\nprintf 'argc=%s' \"$#\"; [[ $# -eq 0 ]] || printf ' %s' \"$@\"; printf '\\n'\nprintf '%s\\n' 'program stderr detail' >&2\nexit \"$OP_TEST_PROGRAM_EXIT\"\n",
+	}
+	if ageBin == "" {
+		// A stand-in that records its arguments and wraps stdin in base64, so the
+		// test can prove what was encrypted without a real key.
+		fixtures["tools/age"] = "#!/bin/bash\nprintf '%s\\n' \"$*\" > \"$OP_TEST_TMPDIR/age-args\"\n[[ ${OP_TEST_AGE_FAIL:-0} == 1 ]] && exit 1\nprintf 'FAKE-AGE:'; base64 | tr -d '\\n'; printf '\\n'\n"
+	} else {
+		fixtures["tools/age"] = fmt.Sprintf("#!/bin/bash\nexec %q \"$@\"\n", ageBin)
+	}
+	for path, content := range fixtures {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("bash", "--noprofile", "--norc", "-c", stepRun)
+	cmd.Dir = root
+	cmd.Env = []string{
+		"PATH=" + filepath.Join(root, "tools") + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"RUNNER_TEMP=" + filepath.Join(root, "tools"), "OP_TEST_TMPDIR=" + root,
+		fmt.Sprintf("OP_TEST_HELPER_EXIT=%d", helperExit), fmt.Sprintf("OP_TEST_PROGRAM_EXIT=%d", programExit),
+		"KUBE_CONFIG=synthetic-config", "HCLOUD_TOKEN=synthetic-token", "KEEP_HCLOUD_TOKEN=" + keep,
+		"PROD_OPERATION_ARGS=" + args, "PROD_OPERATION_RECIPIENT=" + recipient,
+		// The runner sets these; the program must not see them.
+		"GITHUB_STEP_SUMMARY=" + filepath.Join(root, "summary"), "GITHUB_OUTPUT=" + filepath.Join(root, "output"),
+		"GITHUB_ENV=" + filepath.Join(root, "env"), "GITHUB_PATH=" + filepath.Join(root, "path"),
+		"GITHUB_STATE=" + filepath.Join(root, "state"),
+	}
+	if v := os.Getenv("OP_TEST_PROGRAM_BYTES"); v != "" {
+		cmd.Env = append(cmd.Env, "OP_TEST_PROGRAM_BYTES="+v)
+	}
+	if os.Getenv("OP_TEST_AGE_FAIL") == "1" {
+		cmd.Env = append(cmd.Env, "OP_TEST_AGE_FAIL=1")
+	}
+	output, runErr := cmd.CombinedOutput()
+	leftovers, _ := filepath.Glob(filepath.Join(root, "prod-operation.*"))
+	if len(leftovers) != 0 {
+		t.Fatalf("credential directory not removed: %v", leftovers)
+	}
+	ageArgs, _ := os.ReadFile(filepath.Join(root, "age-args"))
+	return string(output), strings.TrimSpace(string(ageArgs)), runErr
+}
+
+// ciphertext returns what the step printed between its output markers.
+func ciphertext(t *testing.T, out string) string {
+	t.Helper()
+	begin := strings.Index(out, "----- BEGIN PROD OPERATION OUTPUT -----\n")
+	end := strings.Index(out, "----- END PROD OPERATION OUTPUT -----\n")
+	if begin < 0 || end < begin {
+		t.Fatalf("no encrypted output block: %q", out)
+	}
+	return out[begin+len("----- BEGIN PROD OPERATION OUTPUT -----\n") : end]
+}
+
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode()
+	}
+	return -1
+}
+
+// The public log carries the endpoint masks, the exit status and age
+// ciphertext only: nothing the program printed, on stdout or stderr.
+func TestCredentialStepPublishesOnlyEncryptedOutput(t *testing.T) {
+	plaintextMarkers := []string{"token=", "argc=", "program stderr detail", "helper stdout must stay private", "synthetic-config", "synthetic-token"}
 	for _, tc := range []struct {
-		name       string
-		helperExit int
-		keep       string
-		args       string
-		wantToken  bool
-		wantArgs   string
+		name        string
+		programExit int
+		keep, args  string
+		wantPlain   string
 	}{
-		{"read without provider token", 0, "false", "", false, "argc=0"},
-		{"provider read keeps token", 0, "true", "account-census", true, "argc=1 account-census"},
-		{"helper failure stops", 1, "false", "", false, ""},
+		{"read without provider token", 0, "false", "", "token=unset\nargc=0\nprogram stderr detail\n"},
+		{"provider read keeps token", 0, "true", "account-census", "token=synthetic-token\nargc=1 account-census\nprogram stderr detail\n"},
+		{"program failure still encrypts and propagates", 3, "false", "", "token=unset\nargc=0\nprogram stderr detail\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			for _, dir := range []string{"scripts", "tools"} {
-				if err := os.Mkdir(filepath.Join(root, dir), 0o700); err != nil {
-					t.Fatal(err)
+			out, ageArgs, runErr := runCredentialStep(t, 0, tc.programExit, tc.keep, tc.args, "", "age1recipient")
+			if !strings.Contains(out, "::add-mask::192.0.2.1\n") {
+				t.Fatalf("endpoint masks must still reach the runner: %q", out)
+			}
+			for _, marker := range plaintextMarkers {
+				if strings.Contains(out, marker) {
+					t.Fatalf("plaintext %q reached the public log: %q", marker, out)
 				}
 			}
-			fixtures := map[string]string{
-				"scripts/use-prod-stable-api-endpoint.sh": "#!/bin/bash\nprintf '%s\\n' '::add-mask::192.0.2.1' >&2\nprintf '%s\\n' 'helper stdout must stay private'\nexit \"$OP_TEST_HELPER_EXIT\"\n",
-				"tools/mktemp":         fmt.Sprintf("#!/bin/bash\nexec %q -d \"$OP_TEST_TMPDIR/prod-operation.XXXXXX\"\n", mktemp),
-				"tools/prod-operation": "#!/bin/bash\n[[ -z ${KUBE_CONFIG+x} && -z ${KEEP_HCLOUD_TOKEN+x} && -s $KUBECONFIG ]] || exit 99\nprintf 'token=%s\\n' \"${HCLOUD_TOKEN:-unset}\"\nprintf 'argc=%s' \"$#\"; [[ $# -eq 0 ]] || printf ' %s' \"$@\"; printf '\\n'\n",
+			if exitCode(runErr) != tc.programExit || !strings.Contains(out, fmt.Sprintf("PROD_OPERATION_EXIT=%d\n", tc.programExit)) {
+				t.Fatalf("exit status not propagated: %v %q", runErr, out)
 			}
-			for path, content := range fixtures {
-				if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o700); err != nil {
-					t.Fatal(err)
-				}
+			if ageArgs != "--encrypt --armor --recipient age1recipient" {
+				t.Fatalf("age called as %q", ageArgs)
 			}
-			cmd := exec.Command("bash", "--noprofile", "--norc", "-c", stepRun)
-			cmd.Dir = root
-			cmd.Env = []string{
-				"PATH=" + filepath.Join(root, "tools") + string(os.PathListSeparator) + os.Getenv("PATH"),
-				"RUNNER_TEMP=" + filepath.Join(root, "tools"), "OP_TEST_TMPDIR=" + root,
-				fmt.Sprintf("OP_TEST_HELPER_EXIT=%d", tc.helperExit), "KUBE_CONFIG=synthetic-config",
-				"HCLOUD_TOKEN=synthetic-token", "KEEP_HCLOUD_TOKEN=" + tc.keep, "PROD_OPERATION_ARGS=" + tc.args,
-			}
-			output, runErr := cmd.CombinedOutput()
-			out := string(output)
-			if !strings.Contains(out, "::add-mask::192.0.2.1\n") || strings.Contains(out, "helper stdout must stay private") {
-				t.Fatalf("endpoint masks must reach the runner while helper stdout stays private: %q", out)
-			}
-			leftovers, _ := filepath.Glob(filepath.Join(root, "prod-operation.*"))
-			if len(leftovers) != 0 {
-				t.Fatalf("credential directory not removed: %v", leftovers)
-			}
-			if tc.helperExit != 0 {
-				exitErr, ok := runErr.(*exec.ExitError)
-				if !ok || exitErr.ExitCode() != 2 || !strings.Contains(out, "PROD_OPERATION=UNVERIFIED\n") || strings.Contains(out, "token=") {
-					t.Fatalf("failed helper did not stop with an unverified verdict: %v, %q", runErr, out)
-				}
-				return
-			}
-			if runErr != nil {
-				t.Fatalf("operation failed: %v %q", runErr, out)
-			}
-			wantToken := "token=unset\n"
-			if tc.wantToken {
-				wantToken = "token=synthetic-token\n"
-			}
-			if !strings.Contains(out, wantToken) || !strings.Contains(out, tc.wantArgs+"\n") {
-				t.Fatalf("got %q, want %q and %q", out, wantToken, tc.wantArgs)
+			block := strings.TrimSpace(ciphertext(t, out))
+			decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(block, "FAKE-AGE:"))
+			if err != nil || string(decoded) != tc.wantPlain {
+				t.Fatalf("encrypted payload %q (err %v), want %q", decoded, err, tc.wantPlain)
 			}
 		})
 	}
+	t.Run("helper failure stops before the program", func(t *testing.T) {
+		out, _, runErr := runCredentialStep(t, 1, 0, "false", "", "", "age1recipient")
+		if exitCode(runErr) != 2 || !strings.Contains(out, "PROD_OPERATION=UNVERIFIED\n") || strings.Contains(out, "PROD_OPERATION_EXIT=") {
+			t.Fatalf("failed helper did not stop with an unverified verdict: %v, %q", runErr, out)
+		}
+	})
+	// The exact "N more bytes not kept" count proves the step read the whole
+	// output instead of closing the pipe at the cap (which can SIGPIPE-kill a
+	// mutating program); the fake also exits 97 if its final write fails.
+	for _, tc := range []struct {
+		name  string
+		bytes int
+		note  string
+	}{
+		// 8 MiB past the cap outlasts any pipe buffer.
+		{"output beyond 4 MiB is cut, drained and the cut recorded", 4194304 + 8388608, "\n[output truncated at 4 MiB; 8388613 more bytes not kept]\n"},
+		{"output of exactly 4 MiB is kept whole", 4194304 - len("done\n"), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OP_TEST_PROGRAM_BYTES", fmt.Sprint(tc.bytes))
+			out, _, runErr := runCredentialStep(t, 0, 0, "false", "", "", "age1recipient")
+			if runErr != nil || !strings.Contains(out, "PROD_OPERATION_EXIT=0\n") {
+				t.Fatalf("the program did not finish cleanly: %v", runErr)
+			}
+			decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(strings.TrimSpace(ciphertext(t, out)), "FAKE-AGE:"))
+			if err != nil || len(decoded) != 4194304+len(tc.note) || !strings.HasSuffix(string(decoded), tc.note) || decoded[0] != 'x' {
+				t.Fatalf("payload has %d bytes, want %d with note %q (err %v)", len(decoded), 4194304+len(tc.note), tc.note, err)
+			}
+		})
+	}
+	t.Run("encryption failure publishes nothing", func(t *testing.T) {
+		t.Setenv("OP_TEST_AGE_FAIL", "1")
+		out, _, runErr := runCredentialStep(t, 0, 0, "false", "", "", "age1recipient")
+		if exitCode(runErr) != 2 || !strings.Contains(out, "PROD_OPERATION=UNVERIFIED\n") || strings.Contains(out, "BEGIN PROD OPERATION OUTPUT") {
+			t.Fatalf("encryption failure did not stop unverified: %v, %q", runErr, out)
+		}
+		for _, marker := range plaintextMarkers {
+			if strings.Contains(out, marker) {
+				t.Fatalf("plaintext %q reached the public log: %q", marker, out)
+			}
+		}
+	})
 }
 
-// The kubectl download must pass exactly one URL to curl with the pinned
-// hardening flags, so checksum and install never run on a missing download.
+// With real age installed, the published block decrypts back to exactly what
+// the program printed, and only with the matching identity.
+func TestCredentialStepOutputDecryptsWithRealAge(t *testing.T) {
+	ageBin, err := exec.LookPath("age")
+	if err != nil {
+		t.Skip("age not installed")
+	}
+	keygen, err := exec.LookPath("age-keygen")
+	if err != nil {
+		t.Skip("age-keygen not installed")
+	}
+	identity := filepath.Join(t.TempDir(), "identity.txt")
+	if out, err := exec.Command(keygen, "-o", identity).CombinedOutput(); err != nil {
+		t.Fatalf("age-keygen: %v %s", err, out)
+	}
+	pub, err := exec.Command(keygen, "-y", identity).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _, runErr := runCredentialStep(t, 0, 0, "false", "", ageBin, strings.TrimSpace(string(pub)))
+	if runErr != nil {
+		t.Fatalf("operation failed: %v %q", runErr, out)
+	}
+	decrypt := exec.Command(ageBin, "--decrypt", "--identity", identity)
+	decrypt.Stdin = strings.NewReader(ciphertext(t, out))
+	plain, err := decrypt.Output()
+	if err != nil || string(plain) != "token=unset\nargc=0\nprogram stderr detail\n" {
+		t.Fatalf("decrypted %q (err %v)", plain, err)
+	}
+	other := filepath.Join(t.TempDir(), "other.txt")
+	if out, err := exec.Command(keygen, "-o", other).CombinedOutput(); err != nil {
+		t.Fatalf("age-keygen: %v %s", err, out)
+	}
+	wrong := exec.Command(ageBin, "--decrypt", "--identity", other)
+	wrong.Stdin = strings.NewReader(ciphertext(t, out))
+	if _, err := wrong.Output(); err == nil {
+		t.Fatal("another identity decrypted the output")
+	}
+}
+
+// Each pinned download must pass exactly one URL to curl with the hardening
+// flags, so the checksum and install never run on a missing download.
 func TestKubectlDownloadCurlChild(_ *testing.T) {
 	if os.Getenv("PROD_OPERATION_DOWNLOAD_CHILD") != "1" {
 		return
@@ -291,23 +422,23 @@ func TestKubectlDownloadCurlChild(_ *testing.T) {
 			break
 		}
 	}
-	want := []string{"--disable", "--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--max-redirs", "3", "--connect-timeout", "10", "--max-time", "60", "--retry", "3", "--retry-all-errors", "--retry-delay", "5", "--retry-max-time", "120", "https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl", "-o", os.Getenv("RUNNER_TEMP") + "/prod-operation-kubectl"}
+	want := []string{"--disable", "--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--max-redirs", "3", "--connect-timeout", "10", "--max-time", "60", "--retry", "3", "--retry-all-errors", "--retry-delay", "5", "--retry-max-time", "120", os.Getenv("WANT_URL"), "-o", os.Getenv("WANT_OUT")}
 	if !reflect.DeepEqual(args, want) {
 		os.Exit(31)
 	}
 	os.Exit(0)
 }
 
-func TestKubectlDownloadPassesOnlyOneURLToCurl(t *testing.T) {
+func TestPinnedDownloadsPassOnlyOneURLToCurl(t *testing.T) {
 	j, _ := operate(t)
-	statement := ""
+	var statements []string
 	for _, s := range j.Steps {
 		lines := strings.Split(s.Run, "\n")
-		for i, line := range lines {
-			if !strings.HasPrefix(strings.TrimSpace(line), "curl ") {
+		for i := 0; i < len(lines); i++ {
+			if !strings.HasPrefix(strings.TrimSpace(lines[i]), "curl ") {
 				continue
 			}
-			statement = line
+			statement := lines[i]
 			for strings.HasSuffix(strings.TrimSpace(lines[i]), "\\") {
 				i++
 				if i >= len(lines) {
@@ -315,10 +446,11 @@ func TestKubectlDownloadPassesOnlyOneURLToCurl(t *testing.T) {
 				}
 				statement += "\n" + lines[i]
 			}
+			statements = append(statements, statement)
 		}
 	}
-	if statement == "" {
-		t.Fatal("download missing")
+	if len(statements) != 2 {
+		t.Fatalf("want the kubectl and age downloads, found %d", len(statements))
 	}
 	bin := t.TempDir()
 	testbin, err := os.Executable()
@@ -329,14 +461,19 @@ func TestKubectlDownloadPassesOnlyOneURLToCurl(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command("/bin/bash", "--noprofile", "--norc", "-c", "set -euo pipefail\nkubectl_path=\"${RUNNER_TEMP}/prod-operation-kubectl\"\n"+statement+"\nprintf DOWNLOAD_ADMITTED")
-	command.Env = []string{"PROD_OPERATION_DOWNLOAD_CHILD=1", "PATH=" + bin, "RUNNER_TEMP=" + bin, "KUBECTL_VERSION=v1.36.2"}
-	// Coverage runs make the instrumented child warn on stderr, so only stdout
-	// is compared exactly; stderr is reported on failure.
-	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	if err := command.Run(); err != nil || !bytes.Equal(stdout.Bytes(), []byte("DOWNLOAD_ADMITTED")) {
-		t.Fatalf("download command rejected: %v %q %q", err, stdout.String(), stderr.String())
+	for _, tc := range []struct{ statement, prelude, url, out string }{
+		{statements[0], "kubectl_path=\"${RUNNER_TEMP}/prod-operation-kubectl\"", "https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl", bin + "/prod-operation-kubectl"},
+		{statements[1], "age_archive=\"${RUNNER_TEMP}/prod-operation-age.tar.gz\"", "https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz", bin + "/prod-operation-age.tar.gz"},
+	} {
+		command := exec.Command("/bin/bash", "--noprofile", "--norc", "-c", "set -euo pipefail\n"+tc.prelude+"\n"+tc.statement+"\nprintf DOWNLOAD_ADMITTED")
+		command.Env = []string{"PROD_OPERATION_DOWNLOAD_CHILD=1", "PATH=" + bin, "RUNNER_TEMP=" + bin, "KUBECTL_VERSION=v1.36.2", "AGE_VERSION=v1.3.2", "WANT_URL=" + tc.url, "WANT_OUT=" + tc.out}
+		// Coverage runs make the instrumented child warn on stderr, so only stdout
+		// is compared exactly; stderr is reported on failure.
+		var stdout, stderr bytes.Buffer
+		command.Stdout, command.Stderr = &stdout, &stderr
+		if err := command.Run(); err != nil || !bytes.Equal(stdout.Bytes(), []byte("DOWNLOAD_ADMITTED")) {
+			t.Fatalf("download %s rejected: %v %q %q", tc.url, err, stdout.String(), stderr.String())
+		}
 	}
 }
 

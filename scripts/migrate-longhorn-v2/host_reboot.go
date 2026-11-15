@@ -50,15 +50,19 @@ type hostRebootRecord struct {
 type hostDatabaseIdentity struct{ UID, SystemID string }
 
 var hostDatabases = map[string]struct {
-	instances float64
-	legacy    bool
+	instances    float64
+	sinceVersion int
 }{
-	"observability/coroot-db": {instances: 3, legacy: true},
-	"umami/umami-db":          {instances: 3, legacy: true},
-	"wedding-app/wedding-db":  {instances: 3, legacy: true},
-	"ate-system/substrate-db": {instances: 2},
-	"kagent/kagent-db":        {instances: 2},
+	"observability/coroot-db":                {instances: 3, sinceVersion: 1},
+	"umami/umami-db":                         {instances: 3, sinceVersion: 1},
+	"wedding-app/wedding-db":                 {instances: 3, sinceVersion: 1},
+	"ate-system/substrate-db":                {instances: 2, sinceVersion: 2},
+	"kagent/kagent-db":                       {instances: 2, sinceVersion: 2},
+	"customer-identity/customer-identity-db": {instances: 2, sinceVersion: 3},
+	"business-site/business-site-portal-db":  {instances: 2, sinceVersion: 3},
 }
+
+const hostRebootRecordVersion = 3
 
 var hostSystemID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
@@ -74,12 +78,12 @@ func (r hostRebootRecord) identity() journal {
 // validate rejects incomplete or out-of-profile records before their phase can authorize
 // an action, including incomplete original storage and database identities.
 func (r hostRebootRecord) validate(target string) error {
-	if (r.Version != 1 && r.Version != 2) || validateJournal(r.identity(), target) != nil || r.OriginalDiskUUID == "" || !inventoryBoot.MatchString(r.OriginalBootID) || r.OSImage == "" || r.Architecture != "amd64" {
+	if (r.Version < 1 || r.Version > hostRebootRecordVersion) || validateJournal(r.identity(), target) != nil || r.OriginalDiskUUID == "" || !inventoryBoot.MatchString(r.OriginalBootID) || r.OSImage == "" || r.Architecture != "amd64" {
 		return errHostMemory
 	}
 	want := 0
 	for key, profile := range hostDatabases {
-		if r.Version == 1 && !profile.legacy {
+		if r.Version < profile.sinceVersion {
 			continue
 		}
 		want++
@@ -367,7 +371,7 @@ func (h hostMemoryReboot) initialize(ctx context.Context) (hostRebootRecord, err
 		return hostRebootRecord{}, err
 	}
 	n, lh := nodes[h.target], storage[h.target]
-	r := hostRebootRecord{Version: 2, Target: h.target, Source: h.source, OwnerRun: h.owner, Phase: "draining", NodeUID: text(n, "metadata", "uid"), ProviderID: text(n, "spec", "providerID"),
+	r := hostRebootRecord{Version: hostRebootRecordVersion, Target: h.target, Source: h.source, OwnerRun: h.owner, Phase: "draining", NodeUID: text(n, "metadata", "uid"), ProviderID: text(n, "spec", "providerID"),
 		MachineUUID: text(n, "status", "nodeInfo", "systemUUID"), OriginalBootID: text(n, "status", "nodeInfo", "bootID"), LonghornUID: text(lh, "metadata", "uid"),
 		OSImage: text(n, "status", "nodeInfo", "osImage"), Architecture: text(n, "status", "nodeInfo", "architecture"), Databases: databases, OriginalDiskUUID: hostRegisteredDiskUUID(lh)}
 	r.OriginalDisks, _ = value(lh, "spec", "disks").(object)
@@ -416,18 +420,18 @@ func (h hostMemoryReboot) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-	} else if r.OwnerRun != h.owner || r.Source != h.source || r.Version == 1 && r.Phase == "draining" {
+	} else if r.OwnerRun != h.owner || r.Source != h.source || r.Version < hostRebootRecordVersion && r.Phase == "draining" {
 		if (r.OwnerRun != h.owner || r.Source != h.source) && previousRunCompleted(ctx, h.c, r.OwnerRun, r.Source) != nil {
 			return errHostMemory
 		}
 		// Older pre-reboot records must bind the new databases before any
 		// forward action. Post-request recovery still observes the old record.
-		if r.Version == 1 && r.Phase == "draining" {
+		if r.Version < hostRebootRecordVersion && r.Phase == "draining" {
 			databases, readErr := h.databases(ctx, r.Databases)
 			if readErr != nil {
 				return readErr
 			}
-			r.Version, r.Databases = 2, databases
+			r.Version, r.Databases = hostRebootRecordVersion, databases
 		}
 		r.OwnerRun, r.Source = h.owner, h.source
 		if err = h.write(ctx, cm, r); err != nil {

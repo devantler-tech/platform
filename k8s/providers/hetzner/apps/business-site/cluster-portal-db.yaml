@@ -1,0 +1,102 @@
+# The portal's PostgreSQL store (business-site#302): invitations, memberships,
+# sessions and the customer records the portal keeps. Not rebuildable, so it is
+# backed up off-cluster to R2 and Flux never prunes it.
+#
+# Two logins, as server/MIGRATIONS.md requires: `portal_migrator` owns the
+# `portal` database and runs the schema migrations; `portal_web` is the web
+# runtime, with only the table privileges the migration job grants it. The
+# portal refuses to start if the runtime login could change the schema.
+#
+# Server TLS uses the long-lived CA in certificate-portal-db-ca.yaml instead of
+# CNPG's own rotating one, because the portal pins the CA at startup.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: business-site-portal-db
+  namespace: business-site
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie
+  instances: 2
+  priorityClassName: hcloud-volume-workload
+  env:
+    - name: PLATFORM_DATABASE_PRIORITY_CLASS
+      value: hcloud-volume-workload
+  # Hetzner Cloud volumes pinned to the baseline workers, like
+  # customer-identity-db: CNPG already keeps a second copy, and the shared
+  # Longhorn pool cannot spare three replicas per instance. Temporary: these
+  # two claims move to Longhorn V2 with the database migration (#5842).
+  storage:
+    size: 10Gi
+    storageClass: hcloud
+  affinity:
+    nodeSelector:
+      platform.devantler.tech/baseline-worker: "true"
+  # Every certificate comes from the ten-year CA. The client CA and the
+  # replication certificate are set explicitly: left out, CNPG would generate
+  # its client CA in business-site-portal-db-ca, the ten-year CA's own Secret.
+  certificates:
+    serverTLSSecret: business-site-portal-db-server
+    serverCASecret: business-site-portal-db-server
+    clientCASecret: business-site-portal-db-replication
+    replicationTLSSecret: business-site-portal-db-replication
+  # Coroot's Postgres integration, as every platform database has.
+  inheritedMetadata:
+    annotations:
+      coroot.com/postgres-scrape: "true"
+      coroot.com/postgres-scrape-port: "5432"
+      coroot.com/postgres-scrape-credentials-secret-name: business-site-portal-db-coroot-monitor
+      coroot.com/postgres-scrape-credentials-secret-username-key: username
+      coroot.com/postgres-scrape-credentials-secret-password-key: password
+      coroot.com/postgres-scrape-param-sslmode: require
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+    parameters:
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: all
+  bootstrap:
+    initdb:
+      database: portal
+      owner: portal_migrator
+      secret:
+        name: business-site-portal-db-migrator
+      postInitApplicationSQL:
+        - REVOKE CREATE ON SCHEMA public FROM PUBLIC
+  managed:
+    roles:
+      - name: portal_migrator
+        ensure: present
+        login: true
+        passwordSecret:
+          name: business-site-portal-db-migrator
+      # The web runtime: no role memberships, no ownership. Its table
+      # privileges come from the migration job (--runtime-role portal_web).
+      - name: portal_web
+        ensure: present
+        login: true
+        inherit: false
+        passwordSecret:
+          name: business-site-portal-db-web
+      - name: coroot_monitor
+        ensure: present
+        login: true
+        inRoles:
+          - pg_monitor
+        passwordSecret:
+          name: business-site-portal-db-coroot-monitor
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: business-site-portal-db
