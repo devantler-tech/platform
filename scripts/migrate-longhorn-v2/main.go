@@ -11,6 +11,10 @@ import (
 // main admits explicit migration operations through their distinct confirmations
 // and protected workflow identities before constructing any production client.
 func main() {
+	if len(os.Args) > 1 {
+		fmt.Fprintln(os.Stderr, "Migration operations accept no command-line arguments.")
+		os.Exit(1)
+	}
 	operation := os.Getenv("LONGHORN_V2_OPERATION")
 	target := os.Getenv("LONGHORN_V2_NODE")
 	var authorization error
@@ -23,6 +27,8 @@ func main() {
 		authorization = authorizeRetainedTemporaryPreparation(os.Getenv, target)
 	case "benchmark-v1", "benchmark-v2":
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
+	case "register-temporary-v2-storage":
+		authorization = authorizeTemporaryActivation(os.Getenv)
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":
@@ -157,6 +163,15 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == "register-temporary-v2-storage" {
+		activation := temporaryV2Activation{c: client{run: execute, context: "admin@prod", inventoryPools: pools}, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}
+		if err = activation.run(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "Temporary V2 registration held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve its identity journal and any partial registration for explicit recovery.")
+			os.Exit(1)
+		}
+		return
 	}
 	if operation == "prepare-unused-temporary-worker" || operation == "prepare-retained-temporary-worker" {
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}

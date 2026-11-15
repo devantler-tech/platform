@@ -32,6 +32,19 @@ spec:
   values:
     defaultSettings:
       defaultDataPath: /var/lib/longhorn
+      # Coexist during migration; retire V1 only after all active and retained
+      # application data has been recovered and verified on V2.
+      v1DataEngine: true
+      v2DataEngine: true
+      # Each migration worker has eight CPUs. Reserve two polling reactors;
+      # preserve the V1 reservation while the original replicas remain live.
+      guaranteedInstanceManagerCPU: '{"v1":"6","v2":"25"}'
+      dataEngineCPUMask: '{"v2":"0x3"}'
+      dataEngineNumberOfCPUCores: '{"v2":"0"}'
+      dataEngineCPUIsolationEnabled: '{"v2":"true"}'
+      dataEngineInterruptModeEnabled: '{"v2":"false"}'
+      dataEngineHugepageEnabled: '{"v2":"true"}'
+      dataEngineMemorySize: '{"v2":"2048"}'
       # Match the number of workers so every volume is replicated across
       # all available nodes.
       defaultReplicaCount: ${longhorn_replica_count:=3}

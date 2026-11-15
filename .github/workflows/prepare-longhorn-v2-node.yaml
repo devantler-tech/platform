@@ -34,6 +34,7 @@ name: Prepare Longhorn V2 Migration
             inspect-host-memory,
             reboot-host-for-hugepages,
             observe-database,
+            register-temporary-v2-storage,
             repair-v1-reservation,
             reserve-v1-scratch,
             retain-v1-source,
@@ -162,6 +163,9 @@ jobs:
               ;;
             benchmark-v1|benchmark-v2)
               [[ "${LONGHORN_V2_CONFIRM}" == benchmark-longhorn-storage ]]
+              ;;
+            register-temporary-v2-storage)
+              [[ "${LONGHORN_V2_CONFIRM}" == register-longhorn-v2-temporary-storage ]]
               ;;
             *) exit 1 ;;
           esac
