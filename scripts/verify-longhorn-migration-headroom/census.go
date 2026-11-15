@@ -27,7 +27,7 @@ func authorizeAccountCensus(getenv func(string) string) bool {
 		getenv("GITHUB_REF") == "refs/heads/main" &&
 		getenv("GITHUB_WORKFLOW_REF") == "devantler-tech/platform/.github/workflows/observe-longhorn-migration-headroom.yaml@refs/heads/main" &&
 		getenv("GITHUB_RUN_ATTEMPT") == "1" && getenv("RUNNER_ENVIRONMENT") == "github-hosted" &&
-		getenv("LONGHORN_HEADROOM_CONFIRM") == censusConfirmation
+		getenv("PROD_OPERATION") == censusConfirmation
 }
 
 func observeAccountCensus(ctx context.Context, client *http.Client, token string, readNodes func(context.Context) ([]byte, error)) (accountCensus, error) {

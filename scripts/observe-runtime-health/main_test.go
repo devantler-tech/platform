@@ -157,7 +157,7 @@ func TestDispatchBoundary(t *testing.T) {
 	env := map[string]string{
 		"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_EVENT_NAME": "workflow_dispatch",
 		"GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ATTEMPT": "1",
-		"RUNTIME_HEALTH_CONFIRM": "observe-runtime-health",
+		"PROD_OPERATION": "observe-runtime-health",
 		"GITHUB_SHA":             strings.Repeat("a", 40),
 	}
 	get := func(key string) string { return env[key] }
@@ -167,7 +167,7 @@ func TestDispatchBoundary(t *testing.T) {
 	for key, bad := range map[string]string{
 		"GITHUB_REPOSITORY": "outside/platform", "GITHUB_EVENT_NAME": "pull_request",
 		"GITHUB_REF": "refs/heads/proposed", "GITHUB_RUN_ATTEMPT": "2",
-		"RUNTIME_HEALTH_CONFIRM": "yes", "GITHUB_SHA": "short",
+		"PROD_OPERATION": "yes", "GITHUB_SHA": "short",
 	} {
 		old := env[key]
 		env[key] = bad
