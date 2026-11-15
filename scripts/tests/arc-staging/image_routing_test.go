@@ -13,6 +13,16 @@ import (
 	"cel.dev/cel-go/common/types/traits"
 )
 
+// appPublisher is a reviewed maintained publish-app revision the publishapp
+// attestor accepts. deletedPublishers are identities of the deleted legacy
+// publisher repository, which no attestor accepts at any commit (#6264).
+const appPublisher = "https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"
+
+var deletedPublishers = []string{
+	"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40),
+	"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328",
+}
+
 // Evaluate the committed CEL unchanged. Only the remote cryptographic lookup
 // is replaced with deterministic certificate fixtures; routing is not mocked.
 func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
@@ -29,35 +39,35 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 		{mailRepository, "publishprivatemail", mailPublisher},
 		{mailCandidateRepository, "publishprivatemail", mailPublisher},
 		{"ghcr.io/devantler-tech/business-site-identity", "publishcustomeridentity", identityPublisher},
-		{"ghcr.io/devantler-tech/business-site-identity-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
-		{"ghcr.io/devantler-tech/business-site-identity/helper", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
-		{mailRepository + "-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
-		{mailCandidateRepository + "-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
-		{mailCandidateRepository + "/helper", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/business-site-identity-other", "publishapp", appPublisher},
+		{"ghcr.io/devantler-tech/business-site-identity/helper", "publishapp", appPublisher},
+		{mailRepository + "-other", "publishapp", appPublisher},
+		{mailCandidateRepository + "-other", "publishapp", appPublisher},
+		{mailCandidateRepository + "/helper", "publishapp", appPublisher},
 		{analysisRepository + "-other", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
-		{"ghcr.io/devantler-tech/wedding-app", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/wedding-app", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-kubescape-storage", "publishkubescapestorage", "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-storage-hotfix.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-kubescape-node-agent", "publishkubescapenodeagent", "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-node-agent-hotfix.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-coroot-node-agent", "publishcorootnodeagent", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-node-agent-hotfix.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-longhorn-instance-manager", "publishlonghornretirement", retirementPublisher},
 		{"ghcr.io/devantler-tech/platform-longhorn-manager", "publishlonghornv2", v2Publisher},
-		{"ghcr.io/devantler-tech/platform-longhorn-instance-manager-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
-		{"ghcr.io/devantler-tech/platform-longhorn-manager/other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-longhorn-instance-manager-other", "publishapp", appPublisher},
+		{"ghcr.io/devantler-tech/platform-longhorn-manager/other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-coroot", "publishcorootcheckpoint", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-coroot-cluster-agent", "publishcorootcheckpoint", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main"},
-		{"ghcr.io/devantler-tech/platform-coroot-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
-		{"ghcr.io/devantler-tech/platform-coroot-cluster-agent-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-coroot-other", "publishapp", appPublisher},
+		{"ghcr.io/devantler-tech/platform-coroot-cluster-agent-other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-kyverno-reports", "publishkyvernoreports", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-reports-hotfix.yaml@refs/heads/main"},
-		{"ghcr.io/devantler-tech/platform-kyverno-reports-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-kyverno-reports-other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-kyverno-migrate", "publishkyvernomigrate", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-migration-runtime.yaml@refs/heads/main"},
-		{"ghcr.io/devantler-tech/platform-kyverno-migrate-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-kyverno-migrate-other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-kyverno-background", "publishkyvernobackground", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-background-hotfix.yaml@refs/heads/main"},
-		{"ghcr.io/devantler-tech/platform-kyverno-background-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-kyverno-background-other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-dex", "publishdexsecurity", "https://github.com/devantler-tech/platform/.github/workflows/publish-dex-security-image.yaml@refs/heads/main"},
-		{"ghcr.io/devantler-tech/platform-dex-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-dex-other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-mail-submission", "publishmailsubmission", senderPublisher},
-		{"ghcr.io/devantler-tech/platform-mail-submission-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
-		{"ghcr.io/devantler-tech/platform-mail-submission/helper", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-mail-submission-other", "publishapp", appPublisher},
+		{"ghcr.io/devantler-tech/platform-mail-submission/helper", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/world-at-ruin/zone", "publishwarzone", "https://github.com/devantler-tech/world-at-ruin/.github/workflows/server-cd.yaml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/provider-upjet-unifi", "publishprovider", "https://github.com/devantler-tech/provider-upjet-unifi/.github/workflows/publish-provider-package.yml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/ksail", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
@@ -78,7 +88,7 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 						{"wrong issuer", fixture.subject, "https://other.example", fixture.attestor == ""},
 						{"cross workflow signer", crossSigner(fixture.subject), githubIssuer, fixture.attestor == ""},
 						{"customer identity signer", identityPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcustomeridentity"},
-						{"shared app signer", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40), githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
+						{"shared app signer", appPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
 						{"identity wrong workflow", strings.Replace(identityPublisher, "publish-identity.yaml", "publish-runtime.yaml", 1), githubIssuer, fixture.attestor == ""},
 						{"identity tag ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/tags/v4.20.0", 1), githubIssuer, fixture.attestor == ""},
 						{"identity pull request ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/pull/1/merge", 1), githubIssuer, fixture.attestor == ""},
@@ -108,6 +118,16 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 								t.Fatalf("verification calls = %v, want %v", calls, wantCalls)
 							}
 							equal(t, admitted, control.want)
+						})
+					}
+					for _, deleted := range deletedPublishers {
+						t.Run("deleted publisher "+deleted[len(deleted)-40:], func(t *testing.T) {
+							images := map[string][]string{"containers": {}, "initContainers": {}, "ephemeralContainers": {}}
+							images[slot] = []string{image}
+							admitted, _ := evaluator.evaluate(t, images, map[string]certificateFixture{
+								image: {issuer: githubIssuer, subject: deleted},
+							})
+							equal(t, admitted, fixture.attestor == "")
 						})
 					}
 				})
@@ -221,7 +241,7 @@ func TestMixedImagePodCannotHideOneUnsignedImage(t *testing.T) {
 		t.Run(unsigned, func(t *testing.T) {
 			certificates := map[string]certificateFixture{
 				analysis: {githubIssuer, analysisPublisher},
-				app:      {githubIssuer, "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("a", 40)},
+				app:      {githubIssuer, appPublisher},
 				coroot:   {githubIssuer, "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-node-agent-hotfix.yaml@refs/heads/main"},
 			}
 			delete(certificates, unsigned)
@@ -239,7 +259,7 @@ func TestMixedImagePodCannotHideOneUnsignedImage(t *testing.T) {
 
 func crossSigner(subject string) string {
 	if subject == analysisPublisher {
-		return "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("a", 40)
+		return appPublisher
 	}
 	return analysisPublisher
 }

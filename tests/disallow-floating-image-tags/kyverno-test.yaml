@@ -1,0 +1,51 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: disallow-floating-image-tags
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/disallow-floating-image-tags.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: disallow-floating-image-tags
+    resources:
+      - default/semver
+      - default/semver-busybox
+      - default/v-major
+      - default/calendar
+      - default/prerelease
+      - default/registry-port
+      - default/suffix
+      - default/tag-and-digest
+      - default/digest
+      - kube-system/system-namespace
+    kind: Pod
+    result: pass
+  - policy: disallow-floating-image-tags
+    resources:
+      - default/latest
+      - default/stable
+      - default/edge
+      - kube-system/main
+      - default/untagged
+      - default/untagged-registry-port
+      - default/short-digest
+      - default/sha512
+      - default/double-colon
+      - default/floating-init
+      - default/floating-ephemeral
+    kind: Pod
+    result: fail
+  # Autogen: the policy matches only `pods`, so Kyverno generates the same
+  # check for controllers; a floating Deployment fails before any Pod exists.
+  - policy: disallow-floating-image-tags
+    resources:
+      - default/pinned-deployment
+    kind: Deployment
+    result: pass
+  - policy: disallow-floating-image-tags
+    resources:
+      - default/floating-deployment
+    kind: Deployment
+    result: fail

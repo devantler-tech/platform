@@ -246,13 +246,14 @@
       "enabled": false
     },
     {
-      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, oci-repository.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), while retaining the repository-wide minimumReleaseAge cooldown for privileged deployment tooling.",
+      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, oci-repository.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a Dependabot PR (inside its devantler-tech group). Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), while retaining the repository-wide minimumReleaseAge cooldown for privileged deployment tooling. KSail releases about daily and each bump runs a full production deploy, so the group opens on a weekly schedule (platform#6267); vulnerability updates ignore the schedule.",
       "matchPackageNames": [
         "devantler-tech/ksail",
         "ghcr.io/devantler-tech/charts/ksail-operator",
         "ksail-operator"
       ],
-      "groupName": "ksail"
+      "groupName": "ksail",
+      "schedule": ["before 6am on monday"]
     },
     {
       "description": "Security-critical controllers — labelled so security-driven bumps are visible in the PR feed. Automerge stays ON: CI (system-test on a real Talos+Docker cluster, kubescape NSA scan, gitleaks, zizmor, CodeQL) is the trust gate.",

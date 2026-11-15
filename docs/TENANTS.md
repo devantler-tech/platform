@@ -165,8 +165,8 @@ portal or prove any image/identity/private-input readiness.
 | Verifier | Artifact | What it accepts |
 | --- | --- | --- |
 | **Flux** — a registered tenant's `OCIRepository` | manifest | Its recorded legacy signer, current pin and release candidate, plus any exact maintained revisions explicitly approved for that consumer. Other commits are refused. |
-| **Admission** — the `verify-app-images` Kyverno policy | image | Legacy `actions` publishers with a full commit identity, or the explicitly reviewed maintained `.github` publisher revision, from the GitHub OIDC issuer. Other maintained commits, tags and branches are refused. |
-| **Node pull** — the Talos image-verification rule | image | The same legacy compatibility and exact maintained revision as admission. |
+| **Admission** — the `verify-app-images` Kyverno policy | image | The explicitly reviewed maintained `.github` publisher revisions, from the GitHub OIDC issuer. The deleted legacy `actions` publisher repository is refused at every commit ([#6264](https://github.com/devantler-tech/platform/issues/6264)). Other maintained commits, tags and branches are refused. |
+| **Node pull** — the Talos image-verification rule | image | The same exact maintained revisions as admission. |
 
 Because the signatures are separate, a release can pass one layer and fail another: if only the
 manifest is signed, Flux applies the manifests and then admission denies the Pod, or the node
@@ -184,9 +184,9 @@ writer validates the pinned canonical Tenant unchanged. The legacy consumer floo
 `Regenerate Approved Publish Revisions` workflow), so a new tenant registered by hand (§5) is not
 covered until a reviewed platform change adds it there. Maintained revisions are curated separately
 in `scripts/publish-workflow-canonical-approvals.tsv`; recognizing a publisher's location does not
-approve it. The `Tenant` archetype pilot (below) retains the generic legacy full-commit rule and
-accepts the explicitly reviewed maintained revision. Its starter check also requires that this
-rule accept the starter's actual pinned caller.
+approve it. The `Tenant` archetype pilot (below) accepts only the explicitly reviewed maintained
+revisions; the deleted legacy publisher repository is no longer accepted. Its starter check also
+requires that this rule accept the starter's actual pinned caller.
 
 To generate the initial business-site admission candidate, use
 `scripts/bootstrap-tenant-source.sh --admit-canonical-source --tag <tag> --source-sha <sha> --digest <digest>`
@@ -237,9 +237,11 @@ the manifest, admission and node-pull acceptance before moving the caller. Re-ru
 check, merge its pin change, and verify the resulting publication. Releases on an already approved
 revision need no new platform approval.
 
-For the legacy location, admission and node-pull verification do not prove that a commit belongs
-to the actions repository's reviewed history; that compatibility risk is accepted in
-[#3746](https://github.com/devantler-tech/platform/issues/3746). Package write access,
+Admission, node-pull and the generic tenant source no longer accept the deleted legacy location at
+any commit ([#6264](https://github.com/devantler-tech/platform/issues/6264)), which retires the
+compatibility rule accepted in [#3746](https://github.com/devantler-tech/platform/issues/3746).
+Registered consumer sources keep only the exact legacy commits their generated approvals name
+until that machinery is retired. Package write access,
 namespace, RBAC, network policy and admission policy bound what a release can do. A tenant that
 needs authority outside those bounds requires a reviewed platform change.
 
@@ -365,8 +367,8 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   The nodes authenticate every first-party pull, so a per-tenant pull credential cannot keep
   one tenant from running another tenant's private image; the admission policy
   [`restrict-tenant-image-repositories.yaml`](../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-image-repositories.yaml)
-  is that boundary. Third-party images are unaffected. It reports in Audit mode first and
-  moves to Deny once no current tenant workload is reported (#6080).
+  is that boundary and refuses any other first-party reference at admission. Third-party
+  images are unaffected.
 - **A tenant with no allow-list of its own is denied by default.** Adding the allow-list entry is
   therefore part of onboarding, not an optional hardening step: until a tenant namespace has
   an allow-list naming its approved hostnames, its HTTPRoutes are refused at admission with a

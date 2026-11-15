@@ -165,7 +165,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
-    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@f33622708f9f25a32acb46cc419007e18a3223b3 # v21.3.1
+    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@986a62443103435b889dc9651ca5af3af539389d # v21.4.0
     with:
       apply-signed-fixes: false
       # Same measured eight-slot bound as the helper regression job above;
@@ -368,6 +368,9 @@ jobs:
               - 'scripts/tests/test-arc-controller-availability.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
               - 'scripts/tests/test-validate-kyverno-fixture-evaluation.sh'
+              # The CI-identity admission policy also runs offline against the render.
+              - 'scripts/guard-ci-identity-bindings.sh'
+              - 'scripts/tests/test-guard-ci-identity-bindings.sh'
               - 'scripts/tests/test-helm-release-mutation-scope.sh'
               - 'scripts/tests/test-policy-ci-job.sh'
               # Every kyverno fixture, so a change to one alone still runs kyverno test
@@ -1808,7 +1811,7 @@ jobs:
           cache: false
 
       - name: 🔏 Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: 🔏 Test the cosign failure classifier
         # The check below words its failure by WHY cosign failed (#3545). This
@@ -2012,7 +2015,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.10"
+          KSAIL_VERSION: "7.212.12"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2107,6 +2110,9 @@ jobs:
           shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/validate-kyverno-fixture-evaluation.sh tests
+          # platform#6270: the CI-identity binding policy over every rendered prod layer.
+          shellcheck scripts/guard-ci-identity-bindings.sh scripts/tests/test-guard-ci-identity-bindings.sh
+          bash scripts/tests/test-guard-ci-identity-bindings.sh
           shellcheck scripts/tests/test-helm-release-mutation-scope.sh
           bash scripts/tests/test-helm-release-mutation-scope.sh
 
@@ -3350,7 +3356,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.10"
+          KSAIL_VERSION: "7.212.12"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3784,7 +3790,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.10"
+          KSAIL_VERSION: "7.212.12"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3968,7 +3974,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@f33622708f9f25a32acb46cc419007e18a3223b3 # v21.3.1
+        uses: devantler-tech/.github/actions/validate-naming@986a62443103435b889dc9651ca5af3af539389d # v21.4.0
 
       - name: Confirm naming validation completed
         env:
@@ -4841,7 +4847,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.10"
+          KSAIL_VERSION: "7.212.12"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -5071,7 +5077,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@02183e4b176d3bdbedda8519a1f63ee324b8412c # v21.0.2
+        uses: devantler-tech/.github/actions/aggregate-job-checks@986a62443103435b889dc9651ca5af3af539389d # v21.4.0
         with:
           check-workflow-startup: "true"
           job-results: >-

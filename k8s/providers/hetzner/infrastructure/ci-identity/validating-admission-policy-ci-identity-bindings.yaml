@@ -1,0 +1,64 @@
+---
+# Admission-time guard for the EKS CI cluster identity (platform#6270).
+#
+# The aws/aws service account reconciles the AWS tenant, which owns the EKS CI
+# cluster and its IAM role. Its Kubernetes reach is exactly one RoleBinding:
+# aws/aws-managed-resources -> Role aws-managed-resources. This policy refuses
+# every other RoleBinding or ClusterRoleBinding that grants to that identity,
+# named as the service account (a missing or empty subject namespace means the
+# binding's own), as its username (User system:serviceaccount:aws:aws) or
+# through the system:serviceaccounts:aws group, and pins the approved binding's
+# role and its single subject.
+#
+# It is a native ValidatingAdmissionPolicy, enforced by the API server itself:
+# unlike a Kyverno policy it has no namespace exclusions (kube-system and the
+# kyverno namespace included) and does not depend on Kyverno being up. The same
+# policy runs offline in CI with `kyverno apply` over the rendered production
+# layers (scripts/guard-ci-identity-bindings.sh).
+#
+# Not covered here, by design: the cluster-wide groups system:serviceaccounts
+# and system:authenticated (the API server's own default bindings use them),
+# and the rules of the approved Role, which the EKS CI role ledger pins
+# (scripts/validate-eks-ci-role-policy). Widening the identity is a reviewed
+# change to this file.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: restrict-ci-identity-bindings
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["rolebindings", "clusterrolebindings"]
+  variables:
+    - name: bindingNamespace
+      expression: "object.metadata.?namespace.orValue('')"
+    - name: grantsCiIdentity
+      expression: >-
+        object.?subjects.orValue([]).exists(s,
+        (s.kind == 'ServiceAccount' && s.name == 'aws' &&
+        (s.?namespace.orValue('') == '' ? variables.bindingNamespace : s.namespace) == 'aws') ||
+        (s.kind == 'User' && s.name == 'system:serviceaccount:aws:aws') ||
+        (s.kind == 'Group' && s.name == 'system:serviceaccounts:aws'))
+    - name: isApprovedBinding
+      expression: >-
+        object.kind == 'RoleBinding' &&
+        variables.bindingNamespace == 'aws' &&
+        object.metadata.name == 'aws-managed-resources' &&
+        object.roleRef.apiGroup == 'rbac.authorization.k8s.io' &&
+        object.roleRef.kind == 'Role' &&
+        object.roleRef.name == 'aws-managed-resources' &&
+        size(object.?subjects.orValue([])) == 1 &&
+        object.subjects[0].kind == 'ServiceAccount' &&
+        object.subjects[0].name == 'aws' &&
+        object.subjects[0].?namespace.orValue('aws') == 'aws'
+  validations:
+    - expression: "!variables.grantsCiIdentity || variables.isApprovedBinding"
+      message: >-
+        Only the aws/aws-managed-resources RoleBinding to the Role
+        aws-managed-resources may grant to the EKS CI identity (aws/aws), and
+        only to that service account. Widening it is a reviewed change to
+        validating-admission-policy-ci-identity-bindings.yaml.

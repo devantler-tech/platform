@@ -1,0 +1,16 @@
+---
+# platform#6269: the exemption still requires wait: false to be set explicitly.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: enforce-flux-best-practices-platform-health-missing-wait
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/flux/enforce-flux-best-practices.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: enforce-flux-best-practices
+    resources:
+      - flux-system/platform-health
+    kind: Kustomization
+    result: fail
