@@ -62,12 +62,12 @@ validate_writer() {
   jq -e '
     (.sources|sort)==["crd","gateway-httproute"] and
     .provider.name=="cloudflare" and .registry=="txt" and
-    .txtPrefix=="_externaldns." and .txtOwnerId=="${domain}" and
+    .txtPrefix=="_externaldns%{record_type}." and .txtOwnerId=="${domain}" and
     (.replicaCount // 1)==1 and .deploymentStrategy.type=="Recreate"
   ' "$1" >/dev/null
 }
 validate_writer "$work/writer.json"
-for mutation in '.sources=["crd"]' '.replicaCount=2' '.registry="noop"' '.txtOwnerId="another-owner"'; do
+for mutation in '.sources=["crd"]' '.replicaCount=2' '.registry="noop"' '.txtOwnerId="another-owner"' '.txtPrefix="_externaldns."' '.txtPrefix="_externaldns-%{record_type}."'; do
   jq "$mutation" "$work/writer.json" >"$work/widened.json"
   if validate_writer "$work/widened.json"; then
     echo 'documentation tenant guard accepted an unsafe shared DNS writer' >&2

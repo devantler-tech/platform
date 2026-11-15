@@ -35,15 +35,27 @@ spec:
       - TXT
     policy: sync
     # TXT-registry ownership is what makes this single writer safe to reschedule:
-    # every managed record gets a paired "_externaldns." TXT carrying this
+    # every managed record gets a paired ownership TXT carrying this
     # txtOwnerId, so a pod that restarts on another node (node failure / drain)
     # recognises the records it already owns and reconciles idempotently instead
     # of re-creating or fighting them. This ownership fence is also why a second
     # ACTIVE replica is unsafe (see priorityClassName note) — two instances would
     # share one owner id and issue duplicate Cloudflare writes.
+    #
+    # The record type sits in the prefix, so the ownership TXT is its own label:
+    # portal.devantler.tech's A record is owned by _externaldnsa.portal.devantler.tech
+    # and the zone apex by _externaldnsa.devantler.tech, which stays inside the zone.
+    # The old "_externaldns." prefix put the apex marker at
+    # _externaldns.a-devantler.tech, outside the zone, so the apex could never be
+    # owned (platform#6312; upstream docs/registry/txt.md requires %{record_type}
+    # for apex records). This prefix still reads every old "_externaldns.<type>-"
+    # marker (the mapper drops the template and falls back to it), so no record
+    # loses its owner. Each old marker was copied to its new name in the
+    # Cloudflare owner repository before this change, which keeps external-dns
+    # from force-updating every record on every sync.
     registry: txt
     txtOwnerId: "${domain}"
-    txtPrefix: "_externaldns."
+    txtPrefix: "_externaldns%{record_type}."
     domainFilters:
       - "${cloudflare_zone}"
     extraArgs:
