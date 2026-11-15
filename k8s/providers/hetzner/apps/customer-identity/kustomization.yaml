@@ -21,6 +21,7 @@ resources:
   - password-first-admin.yaml
   - external-secret-first-admin.yaml
   - external-secret-platform-dex-client.yaml
+  - external-secret-github-oauth.yaml
   - helm-repository.yaml
   - helm-release.yaml
   # The portal's customer Dex.

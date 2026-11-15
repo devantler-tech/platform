@@ -64,7 +64,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|customer-dex 55a9ceabb55
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|zitadel eeb9881018664637cdefc9c5c0afd6953aa958e5dbfbc9cd8c5d521501e52431
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 1a1e8181ff71a06313611577a55fe9b3cb356a1071139b3d852dcaa42dafe972
+helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 6b11d3e9722c62691ecd9977961a2b1c9bd4e0f60fa78da9fb93bb7ec89378a9
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns 107eaf8ad3d74abff5c6b1c6d7ca1b49ac75829fe425672f81cdc1e799457511
 
@@ -76,7 +76,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|flagger-system|flagger-loadtester 41ddcdab
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|flux-system|flux-operator 0cbdc24c2b42ef3da78473ccd608df4e01e94e83891b9da1e7c5f18473a67f1e
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|homepage|homepage 73c235e4a91bde46f5eeb0400fb986c47b52860d188f97822024b09fd4752b2a
+helm.toolkit.fluxcd.io/v2|HelmRelease|homepage|homepage 22201cee027518e38f10f730b6344c09ad7e8e4ca1cda4b2eac7b7bc0fcc8269
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent 09e3fb96d3d4cb33ebc67aa6cdba8ace8c3ef995de8064d0acc57fd07674cc34
 
