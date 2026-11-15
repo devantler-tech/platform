@@ -14,27 +14,39 @@ const providerRetentionApproval = "retain-hetzner-source:openbao/data:50ca82cea9
 func TestRetainProviderSourcePreservesOnlyTheApprovedPV(t *testing.T) {
 	const source = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	for _, test := range []struct {
-		name, fault string
-		writes      int
-		proven      bool
+		name, fault, namespace string
+		writes                 int
+		proven                 bool
 	}{
-		{"exact original", "", 1, true},
-		{"already retained", "retained", 0, true},
-		{"replacement handle", "handle", 0, false},
-		{"storage class changes driver", "class", 0, false},
-		{"backup-owned PVC", "backup", 0, false},
-		{"lost write response read back", "lost", 1, true},
-		{"changed binding after write", "rebound", 1, false},
+		{"exact original", "", "openbao", 1, true},
+		{"already retained", "retained", "openbao", 0, true},
+		{"replacement handle", "handle", "openbao", 0, false},
+		{"storage class changes driver", "class", "openbao", 0, false},
+		{"backup-owned PVC", "backup", "openbao", 0, false},
+		{"lost write response read back", "lost", "openbao", 1, true},
+		{"changed binding after write", "rebound", "openbao", 1, false},
+		{"identity original", "", "customer-identity", 1, true},
+		{"portal original", "", "business-site", 1, true},
+		{"identity replacement", "handle", "customer-identity", 0, false},
+		{"portal rebound", "rebound", "business-site", 1, false},
+		{"identity borrowed approval", "approval", "customer-identity", 0, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			digests := map[string]string{"openbao": "50ca82cea943a2a39d6fbbccdb1988187c52903c5649562b1c9aa4d58681ba94",
+				"customer-identity": "5f4c4de28c39834b7c60c397b57e999171ae48e34c654afdba1ccbd4c398bdf0",
+				"business-site":     "f6078c49be3cb746756237a663330137d31ed0e366b61d3b2ed26fe996548201"}
+			approval := "retain-hetzner-source:" + test.namespace + "/data:" + digests[test.namespace]
+			if test.fault == "approval" {
+				approval = strings.Replace(providerRetentionApproval, "openbao/", test.namespace+"/", 1)
+			}
 			claim := object{"apiVersion": "v1", "kind": "PersistentVolumeClaim",
-				"metadata": object{"name": "data", "namespace": "openbao", "uid": "claim-uid", "resourceVersion": "21"},
+				"metadata": object{"name": "data", "namespace": test.namespace, "uid": "claim-uid", "resourceVersion": "21"},
 				"spec": object{"volumeName": "pvc-claim-uid", "storageClassName": "hcloud", "accessModes": []any{"ReadWriteOnce"},
 					"volumeMode": "Filesystem", "resources": object{"requests": object{"storage": "10Gi"}}},
 				"status": object{"phase": "Bound", "capacity": object{"storage": "10Gi"}}}
 			pv := object{"apiVersion": "v1", "kind": "PersistentVolume",
 				"metadata": object{"name": "pvc-claim-uid", "uid": "pv-uid", "resourceVersion": "31"},
-				"spec": object{"claimRef": object{"name": "data", "namespace": "openbao", "uid": "claim-uid"},
+				"spec": object{"claimRef": object{"name": "data", "namespace": test.namespace, "uid": "claim-uid"},
 					"capacity": object{"storage": "10Gi"}, "storageClassName": "hcloud", "persistentVolumeReclaimPolicy": "Delete",
 					"csi": object{"driver": hetznerCSIDriver, "volumeHandle": "1234"}, "accessModes": []any{"ReadWriteOnce"}, "volumeMode": "Filesystem"},
 				"status": object{"phase": "Bound"}}
@@ -58,7 +70,7 @@ func TestRetainProviderSourcePreservesOnlyTheApprovedPV(t *testing.T) {
 				}
 				switch request := strings.Join(args[2:5], " "); request {
 				case "get persistentvolumeclaim data":
-					if !strings.Contains(strings.Join(args, " "), "--namespace=openbao") {
+					if !strings.Contains(strings.Join(args, " "), "--namespace="+test.namespace) {
 						t.Fatal("claim read escaped the approved namespace")
 					}
 					return json.Marshal(claim)
@@ -95,7 +107,7 @@ func TestRetainProviderSourcePreservesOnlyTheApprovedPV(t *testing.T) {
 					return nil, nil
 				}
 			}}
-			err := retainProviderSource(t.Context(), c, source, providerRetentionApproval)
+			err := retainProviderSource(t.Context(), c, source, approval)
 			if (err == nil) != test.proven || writes != test.writes {
 				t.Fatalf("expected writes=%d proven=%v, got writes=%d error=%v", test.writes, test.proven, writes, err)
 			}

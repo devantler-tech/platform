@@ -66,7 +66,7 @@ func providerFootprintReadAllowed(program string, args ...string) bool {
 			return providerStatsWorker.MatchString(tail[1]) && tail[2] == "--output=json"
 		}
 		namespace, ok := strings.CutPrefix(tail[2], "--namespace=")
-		return ok && tail[0] == "pods" && tail[1] == "--output=json" && slices.Contains([]string{"kube-system", "observability", "openbao"}, namespace)
+		return ok && tail[0] == "pods" && tail[1] == "--output=json" && providerMigrationNamespace(namespace)
 	default:
 		return false
 	}
