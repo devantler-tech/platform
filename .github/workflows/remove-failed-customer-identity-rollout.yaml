@@ -1,0 +1,215 @@
+# One-off removal of what the failed first ZITADEL rollout (platform#6313, merge
+# group fef3accb, 2026-11-15) left in production. Its deploy timed out because
+# the database volume never attached, and restoring main pruned everything
+# except three prune-disabled objects that no Kustomization declares any more:
+# the customer-identity Namespace, the zitadel HelmRelease and the
+# customer-identity-db CNPG Cluster (with their derived objects and the
+# never-attached Longhorn claim). Remove this workflow once a run reports
+# COMPLETE.
+#
+# Every target is fixed by name and UID. Before anything is deleted the run
+# proves, from the live objects, that nothing declares the namespace now, that
+# the database never initialized (no ready instance, no primary, no backup, a
+# volume that was never attached or written), that ZITADEL's server never ran,
+# and that every object in the namespace comes from those targets or from a
+# known platform generator. Each delete carries a UID precondition, and the run
+# ends with absence readbacks. It has no OpenBao access: ZITADEL's master key
+# (OpenBao apps/customer-identity/zitadel) is untouched and is reused when the
+# fixed rollout runs again.
+name: Remove Failed Customer Identity Rollout
+
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type remove-failed-customer-identity-rollout
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  remove:
+    name: Remove the failed customer identity rollout
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the confirmed first-attempt main dispatch
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/remove-failed-customer-identity-rollout.yaml@refs/heads/main || "$GITHUB_ACTOR" != devantler || "$GITHUB_RUN_ATTEMPT" != 1 || "$CONFIRM" != remove-failed-customer-identity-rollout ]]; then
+            echo 'CUSTOMER_IDENTITY_ROLLOUT_REMOVAL=REFUSED stage=dispatch' >&2
+            exit 2
+          fi
+
+      - name: Install the repository-approved Kubernetes client
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check --quiet
+          mkdir -p "$RUNNER_TEMP/tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
+
+      - name: Verify and remove the failed rollout
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          private_dir="$(mktemp -d)"
+          trap 'rm -rf "$private_dir"' EXIT
+          printf '%s' "$KUBE_CONFIG" >"$private_dir/kubeconfig"
+          export KUBECONFIG="$private_dir/kubeconfig"
+          k() { kubectl --context admin@prod --request-timeout=30s "$@" 2>>"$private_dir/client-errors"; }
+          fail() { echo "CUSTOMER_IDENTITY_ROLLOUT_REMOVAL=REFUSED stage=$1" >&2; exit 2; }
+
+          # The fixed targets, read from production on 2026-11-15.
+          ns=customer-identity
+          ns_uid=c6ce7557-6df5-453d-9cd3-f0a2716f7bad
+          release_uid=8c85192a-e332-466c-b529-20d707998a05
+          cluster_uid=2eeef2ae-da51-4835-a910-1773df49a042
+          claim=customer-identity-db-1
+          claim_uid=48c25421-defa-4132-bfca-c5a6c6d95435
+          volume=pvc-48c25421-defa-4132-bfca-c5a6c6d95435
+          pv_uid=927373f3-c828-47d3-b536-16aab906e428
+          backend_uid=63cc671a-856f-493e-b02a-d55183a18876
+
+          # A target counts as absent only on a successful NotFound read.
+          read_target() {
+            local file="$1" want="$2"
+            shift 2
+            k get "$@" --ignore-not-found -o json >"$file" || fail read
+            if [[ ! -s "$file" ]]; then return 1; fi
+            [[ "$(jq -er '.metadata.uid | strings | select(length > 0)' "$file")" == "$want" ]] || fail replaced
+          }
+          items() { k get "$@" -o json || fail read; }
+
+          # Nothing declares the namespace now. An inventory only describes the
+          # current desired state once `apps` (which applied these objects) has
+          # converged on its source's current artifact: Ready for its current
+          # generation, applied revision == attempted revision == the source's
+          # artifact, nothing reconciling. Then no Kustomization may name the
+          # namespace. Checked again immediately before the namespace delete.
+          undeclared() {
+            items kustomizations.kustomize.toolkit.fluxcd.io -A >"$private_dir/kustomizations.json"
+            jq -e '[.items[] | select(.metadata.name == "apps" and .metadata.namespace == "flux-system")] | length == 1' "$private_dir/kustomizations.json" >/dev/null || fail inventory-read
+            jq '.items[] | select(.metadata.name == "apps" and .metadata.namespace == "flux-system")' "$private_dir/kustomizations.json" >"$private_dir/apps.json" || fail inventory-read
+            jq -e '.spec.sourceRef.kind == "OCIRepository" and (.spec.sourceRef.namespace // "flux-system") == "flux-system" and (.spec.sourceRef.name | type == "string" and length > 0)' "$private_dir/apps.json" >/dev/null || fail apps-source
+            k -n flux-system get ocirepositories.source.toolkit.fluxcd.io "$(jq -er '.spec.sourceRef.name' "$private_dir/apps.json")" -o json >"$private_dir/source.json" || fail source-read
+            jq -e --slurpfile source "$private_dir/source.json" '
+              def ready: [.status.conditions[]? | select(.type == "Ready")] | length == 1 and .[0].status == "True";
+              def settled: [.status.conditions[]? | select(.type == "Reconciling" and .status == "True")] | length == 0;
+              ($source[0]) as $s
+              | ready and settled and .status.observedGeneration == .metadata.generation
+              and (.status.lastAppliedRevision | type == "string" and length > 0)
+              and .status.lastAttemptedRevision == .status.lastAppliedRevision
+              and ($s | ready and settled and .status.observedGeneration == .metadata.generation)
+              and $s.status.artifact.revision == .status.lastAppliedRevision' "$private_dir/apps.json" >/dev/null || fail apps-not-converged
+            jq -e --arg ns "$ns" '[.items[].status.inventory.entries[]?.id | select(startswith($ns + "_") or . == "_" + $ns + "__Namespace")] | length == 0' "$private_dir/kustomizations.json" >/dev/null || fail declared
+          }
+          undeclared
+
+          if read_target "$private_dir/namespace.json" "$ns_uid" namespace "$ns"; then
+            jq -e '.metadata.labels["kustomize.toolkit.fluxcd.io/name"] == "apps" and .metadata.labels["kustomize.toolkit.fluxcd.io/namespace"] == "flux-system"' "$private_dir/namespace.json" >/dev/null || fail namespace-provenance
+
+            # The database never initialized and never held data.
+            read_target "$private_dir/cluster.json" "$cluster_uid" -n "$ns" clusters.postgresql.cnpg.io customer-identity-db || fail cluster-missing
+            jq -e '(.status.readyInstances // 0) == 0 and (.status.currentPrimary // "") == "" and .status.firstRecoverabilityPoint == null and .status.lastSuccessfulBackup == null and ((.status.instancesStatus // {}) | length) == 0' "$private_dir/cluster.json" >/dev/null || fail database-initialized
+            items -n "$ns" backups.postgresql.cnpg.io | jq -e '.items | length == 0' >/dev/null || fail database-backed-up
+            items -n "$ns" persistentvolumeclaims | jq -e --arg claim "$claim" --arg uid "$claim_uid" --arg volume "$volume" '.items | length == 1 and .[0].metadata.name == $claim and .[0].metadata.uid == $uid and .[0].spec.volumeName == $volume' >/dev/null || fail claims
+
+            # ZITADEL's server never ran: no deployed release, no Deployment.
+            read_target "$private_dir/release.json" "$release_uid" -n "$ns" helmreleases.helm.toolkit.fluxcd.io zitadel || fail release-missing
+            jq -e '[.status.history[]? | select(.status == "deployed" or .status == "superseded")] | length == 0' "$private_dir/release.json" >/dev/null || fail release-deployed
+            items -n "$ns" deployments.apps,statefulsets.apps | jq -e '.items | length == 0' >/dev/null || fail server-ran
+          fi
+
+          # The claim's volume was never attached or written.
+          if read_target "$private_dir/pv.json" "$pv_uid" persistentvolume "$volume"; then
+            jq -e --arg ns "$ns" --arg claim "$claim" --arg uid "$claim_uid" '.spec.claimRef.namespace == $ns and .spec.claimRef.name == $claim and .spec.claimRef.uid == $uid and .spec.storageClassName == "longhorn-wffc"' "$private_dir/pv.json" >/dev/null || fail volume-binding
+          fi
+          if read_target "$private_dir/backend.json" "$backend_uid" -n longhorn-system volumes.longhorn.io "$volume"; then
+            jq -e '(.status.actualSize // 0) == 0 and (.spec.lastAttachedBy // "") == "" and (.status.lastAttachedBy // "") == "" and (.status.kubernetesStatus.lastPodRefAt // "") == "" and (.status.lastBackup // "") == "" and .status.state == "detached"' "$private_dir/backend.json" >/dev/null || fail volume-written
+            items -n longhorn-system replicas.longhorn.io -l "longhornvolume=$volume" | jq -e '.items | length == 0' >/dev/null || fail volume-replicas
+          fi
+
+          # Complete inventory: every object in the namespace is a target, is
+          # owned by another object in the namespace, comes from a known
+          # generator, or is telemetry about them. Anything else stops the run.
+          if [[ -s "$private_dir/namespace.json" ]]; then
+            resources="$(k api-resources --namespaced=true --verbs=list -o name | grep -v '\.metrics\.k8s\.io$' | paste -sd, -)" || fail discovery
+            [[ -n "$resources" ]] || fail discovery
+            k get "$resources" -n "$ns" -o json >"$private_dir/inventory.json" || fail inventory
+            jq -e --arg release "$release_uid" --arg cluster "$cluster_uid" '[.items[].metadata.uid] | (index($release) != null) and (index($cluster) != null)' "$private_dir/inventory.json" >/dev/null || fail inventory-incomplete
+            unexpected="$(jq -r --arg release "$release_uid" --arg cluster "$cluster_uid" '
+              ([.items[].metadata.uid]) as $uids
+              | ([.items[] | select(.kind == "Service") | .metadata.name]) as $services
+              | .items[]
+              | (.metadata.labels // {}) as $l
+              | select(.metadata.uid != $release and .metadata.uid != $cluster)
+              | select((.kind == "Event" or .kind == "CiliumEndpoint" or (.apiVersion | startswith("wgpolicyk8s.io/")) or (.apiVersion | startswith("reports.kyverno.io/")) or (.apiVersion | startswith("spdx.softwarecomposition.kubescape.io/"))) | not)
+              | select(((.metadata.ownerReferences // []) as $o | ($o | length) > 0 and ($o | all(.uid as $u | $uids | index($u) != null))) | not)
+              | select(($l["app.kubernetes.io/managed-by"] == "kyverno" and (($l["generate.kyverno.io/policy-name"] // "") | IN("add-default-deny", "add-default-limitrange", "add-ns-quota"))) | not)
+              | select(($l["helm.toolkit.fluxcd.io/name"] == "zitadel" and $l["helm.toolkit.fluxcd.io/namespace"] == "customer-identity") | not)
+              | select((.kind == "Secret" and .type == "helm.sh/release.v1" and $l.owner == "helm" and $l.name == "zitadel") | not)
+              | select((.kind == "ConfigMap" and .metadata.name == "cnpg-default-monitoring" and $l["app.kubernetes.io/managed-by"] == "cloudnative-pg") | not)
+              | select(((.kind == "ConfigMap" and .metadata.name == "kube-root-ca.crt") or (.kind == "ServiceAccount" and .metadata.name == "default")) | not)
+              | select((.kind == "Endpoints" and (.metadata.name as $n | $services | index($n) != null)) | not)
+              | select((.kind == "ConfigMap" and .metadata.name == "cloudflare-origin-ca" and $l["trust.cert-manager.io/bundle"] == "cloudflare-origin-ca" and ((.metadata.ownerReferences // []) | length == 1 and .[0].kind == "Bundle" and .[0].name == "cloudflare-origin-ca")) | not)
+              | "\(.kind)/\(.metadata.name)"' "$private_dir/inventory.json")" || fail inventory
+            [[ -z "$unexpected" ]] || { echo "CUSTOMER_IDENTITY_ROLLOUT_REMOVAL=REFUSED stage=unexpected-objects objects=$(tr '\n' ' ' <<<"$unexpected")" >&2; exit 2; }
+            echo "CUSTOMER_IDENTITY_ROLLOUT_REMOVAL=VERIFIED objects=$(jq '.items | length' "$private_dir/inventory.json") database=NEVER_INITIALIZED volume=NEVER_ATTACHED server=NEVER_RAN"
+          fi
+
+          remove_target() {
+            local identity="$1" path="$2" timeout="$3" uid current deadline
+            shift 3
+            [[ -s "$identity" ]] || return 0
+            uid="$(jq -er '.metadata.uid' "$identity")" || fail identity
+            current="$(k get "$@" --ignore-not-found -o json)" || fail read-before-delete
+            if [[ -z "$current" ]]; then return 0; fi
+            [[ "$(jq -er '.metadata.uid' <<<"$current")" == "$uid" ]] || fail replaced
+            jq -n --arg uid "$uid" '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}' >"$private_dir/delete-options.json"
+            k delete --raw="$path" -f "$private_dir/delete-options.json" >"$private_dir/delete-result" || fail conditional-delete
+            deadline=$((SECONDS + timeout))
+            while (( SECONDS < deadline )); do
+              current="$(k get "$@" --ignore-not-found -o json)" || fail read-after-delete
+              if [[ -z "$current" ]]; then return 0; fi
+              [[ "$(jq -er '.metadata.uid' <<<"$current")" == "$uid" ]] || fail replaced
+              sleep 2
+            done
+            fail deletion-timeout
+          }
+          undeclared
+          remove_target "$private_dir/namespace.json" "/api/v1/namespaces/$ns" 900 namespace "$ns"
+          remove_target "$private_dir/pv.json" "/api/v1/persistentvolumes/$volume" 300 persistentvolume "$volume"
+          remove_target "$private_dir/backend.json" "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/$volume" 300 volumes.longhorn.io "$volume" -n longhorn-system
+
+          absent() {
+            local current
+            current="$(k get "$@" --ignore-not-found -o json)" || fail verify-read
+            [[ -z "$current" ]] || fail verify-present
+          }
+          absent namespace "$ns"
+          absent persistentvolume "$volume"
+          absent volumes.longhorn.io "$volume" -n longhorn-system
+          items persistentvolumes | jq -e --arg ns "$ns" '[.items[] | select(.spec.claimRef.namespace == $ns)] | length == 0' >/dev/null || fail verify-claims
+          echo "CUSTOMER_IDENTITY_ROLLOUT_REMOVAL=COMPLETE namespace=ABSENT volume=ABSENT masterkey=UNTOUCHED"
