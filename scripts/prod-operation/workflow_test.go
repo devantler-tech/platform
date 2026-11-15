@@ -331,15 +331,16 @@ func TestCredentialStepPublishesOnlyEncryptedOutput(t *testing.T) {
 			t.Fatalf("failed helper did not stop with an unverified verdict: %v, %q", runErr, out)
 		}
 	})
-	// The fake program writes "done\n" after its bulk output and exits 97 if
-	// that write fails, so a closed pipe (a program killed mid-operation)
-	// cannot pass as a clean cut.
+	// The exact "N more bytes not kept" count proves the step read the whole
+	// output instead of closing the pipe at the cap (which can SIGPIPE-kill a
+	// mutating program); the fake also exits 97 if its final write fails.
 	for _, tc := range []struct {
 		name  string
 		bytes int
 		note  string
 	}{
-		{"output beyond 4 MiB is cut, drained and the cut recorded", 4194304 + 10, "\n[output truncated at 4 MiB; 15 more bytes not kept]\n"},
+		// 8 MiB past the cap outlasts any pipe buffer.
+		{"output beyond 4 MiB is cut, drained and the cut recorded", 4194304 + 8388608, "\n[output truncated at 4 MiB; 8388613 more bytes not kept]\n"},
 		{"output of exactly 4 MiB is kept whole", 4194304 - len("done\n"), ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
