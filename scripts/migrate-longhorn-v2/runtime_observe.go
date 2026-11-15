@@ -209,6 +209,7 @@ func runtimeInventoryProjection(q runtimeInventoryQuery, o object) object {
 	case "Pod":
 		projection["spec"] = runtimePodProjection(value(o, "spec"))
 		projection["allocationUnqualified"] = podAllocationUnqualified(o)
+		projection["allocation"] = object{"allocatedResources": value(o, "status", "allocatedResources"), "resources": object{"requests": value(o, "status", "resources", "requests")}}
 	case "Deployment", "DaemonSet":
 		projection["spec"] = object{"replicas": value(o, "spec", "replicas"), "selector": value(o, "spec", "selector"), "strategy": value(o, "spec", "strategy"), "updateStrategy": value(o, "spec", "updateStrategy"), "template": runtimePodProjection(value(o, "spec", "template", "spec"))}
 	default:

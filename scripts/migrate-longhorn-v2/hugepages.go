@@ -291,11 +291,40 @@ func containerMemoryRequest(raw any) (kresource.Quantity, error) {
 
 // Keep exact quantities through the Pod-level or peak init/sidecar calculation,
 // then round the effective Pod request to whole bytes as the scheduler does.
-// Allocated/enacted resize state needs separate qualification and is refused.
+// Count retained Pod aggregate allocations as well as declared requests.
+// Container status must remain covered by its corresponding declared request.
 func podMemoryRequest(pod object) (float64, error) {
 	if podAllocationUnqualified(pod) {
 		return 0, errors.New("native resource allocation status is unqualified")
 	}
+	result, err := podDeclaredMemoryRequest(pod)
+	if err != nil {
+		return 0, err
+	}
+	for _, requests := range []any{value(pod, "status", "allocatedResources"), value(pod, "status", "resources", "requests")} {
+		list, _ := requests.(object)
+		if raw := text(list, "memory"); raw != "" {
+			allocated, err := memoryRequestQuantity(raw)
+			if err != nil {
+				return 0, err
+			}
+			if overhead := text(pod, "spec", "overhead", "memory"); overhead != "" {
+				extra, err := memoryRequestQuantity(overhead)
+				if err != nil {
+					return 0, err
+				}
+				allocated.Add(extra)
+			}
+			if allocated.Cmp(*kresource.NewQuantity(1<<52, kresource.BinarySI)) > 0 {
+				return 0, errors.New("effective allocation exceeds exact accounting")
+			}
+			result = max(result, float64(allocated.Value()))
+		}
+	}
+	return result, nil
+}
+
+func podDeclaredMemoryRequest(pod object) (float64, error) {
 	var total, sidecars, peakInit kresource.Quantity
 	maximum := func(a, b kresource.Quantity) kresource.Quantity {
 		if a.Cmp(b) < 0 {
@@ -351,7 +380,11 @@ func podMemoryRequest(pod object) (float64, error) {
 
 func podAllocationUnqualified(pod object) bool {
 	status, _ := value(pod, "status").(object)
-	if status["allocatedResources"] != nil || status["resources"] != nil || text(status, "resize") != "" {
+	spec, _ := value(pod, "spec").(object)
+	cpuCap := kresource.NewMilliQuantity(1<<40, kresource.DecimalSI)
+	memoryCap := kresource.NewQuantity(1<<52, kresource.BinarySI)
+	bound := object{"resources": object{"requests": object{"cpu": cpuCap.String(), "memory": memoryCap.String()}}}
+	if !allocationWithinBound(bound, status) || text(status, "resize") != "" {
 		return true
 	}
 	if claims := status["nodeAllocatableResourceClaimStatuses"]; claims != nil {
@@ -367,16 +400,76 @@ func podAllocationUnqualified(pod object) bool {
 			return true
 		}
 	}
-	for _, group := range []string{"containerStatuses", "initContainerStatuses", "ephemeralContainerStatuses"} {
-		entries, _ := status[group].([]any)
-		for _, raw := range entries {
-			entry, _ := raw.(object)
-			if entry["allocatedResources"] != nil || entry["resources"] != nil {
+	for group, field := range map[string]string{"containerStatuses": "containers", "initContainerStatuses": "initContainers", "ephemeralContainerStatuses": "ephemeralContainers"} {
+		entries, ok := status[group].([]any)
+		if !ok && status[group] != nil {
+			return true
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		containers, _ := spec[field].([]any)
+		declared, seen := map[string]object{}, map[string]bool{}
+		for _, raw := range containers {
+			container, _ := raw.(object)
+			name := text(container, "name")
+			if declared[name] != nil {
 				return true
+			}
+			declared[name] = container
+		}
+		for _, raw := range entries {
+			entry, ok := raw.(object)
+			if !ok {
+				return true
+			}
+			if entry["allocatedResources"] != nil || entry["resources"] != nil {
+				name := text(entry, "name")
+				if name == "" || seen[name] || declared[name] == nil || !allocationWithinBound(declared[name], entry) {
+					return true
+				}
+				seen[name] = true
 			}
 		}
 	}
 	return false
+}
+
+// Compare native CPU/RAM observations with a supplied request bound. Container
+// budgets require declared coverage; Pod aggregates use numeric bounds here
+// and are counted separately in the effective memory and CPU budgets.
+func allocationWithinBound(spec, status object) bool {
+	if !runtimeRequestShape(status["resources"]) {
+		return false
+	}
+	declared := value(spec, "resources", "requests")
+	for _, observed := range []any{status["allocatedResources"], value(status, "resources", "requests")} {
+		if observed == nil {
+			continue
+		}
+		if !runtimeResourceListShape(declared) || !runtimeResourceListShape(observed) {
+			return false
+		}
+		requests, _ := observed.(object)
+		for _, name := range []string{"cpu", "memory"} {
+			if requests[name] == nil {
+				continue
+			}
+			actual, err := kresource.ParseQuantity(text(requests, name))
+			bound := kresource.Quantity{}
+			if raw := text(object{"requests": declared}, "requests", name); raw != "" {
+				var boundErr error
+				bound, boundErr = kresource.ParseQuantity(raw)
+				if boundErr != nil {
+					return false
+				}
+			}
+			if err != nil || actual.Sign() < 0 || bound.Sign() < 0 || actual.Cmp(bound) > 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // refreshExcess is how much of the worker's Pod memory requests would not fit once a

@@ -104,8 +104,9 @@ func runtimeDeclaredOverlap(records []object, image string) (int, string) {
 			if !valid {
 				return unknown()
 			}
-			podCPU, cpuErr := runtimePodCPUUpper(spec)
-			podMemory, memoryErr := podMemoryRequest(object{"spec": spec})
+			accounted := object{"spec": spec, "status": value(pod, "allocation")}
+			podCPU, cpuErr := runtimePodCPURequestUpper(accounted)
+			podMemory, memoryErr := podMemoryRequest(accounted)
 			if cpuErr != nil || memoryErr != nil || !runtimeFiniteMemory(podMemory) || podCPU > 1<<40-requestedCPU {
 				return unknown()
 			}
@@ -128,6 +129,35 @@ func runtimeMilliCPU(raw string) (int64, error) {
 		return 0, errors.New("CPU request cannot be measured")
 	}
 	return q.MilliValue(), nil
+}
+
+func runtimePodCPURequestUpper(pod object) (int64, error) {
+	if podAllocationUnqualified(pod) {
+		return 0, errors.New("native allocation is unqualified")
+	}
+	spec, _ := value(pod, "spec").(object)
+	result, err := runtimePodCPUUpper(spec)
+	if err != nil {
+		return 0, err
+	}
+	var overhead int64
+	if raw := text(spec, "overhead", "cpu"); raw != "" {
+		overhead, err = runtimeMilliCPU(raw)
+		if err != nil {
+			return 0, err
+		}
+	}
+	for _, requests := range []any{value(pod, "status", "allocatedResources"), value(pod, "status", "resources", "requests")} {
+		list, _ := requests.(object)
+		if raw := text(list, "cpu"); raw != "" {
+			allocated, err := runtimeMilliCPU(raw)
+			if err != nil || allocated > 1<<40-overhead {
+				return 0, errors.New("CPU allocation cannot be measured")
+			}
+			result = max(result, allocated+overhead)
+		}
+	}
+	return result, nil
 }
 
 // Summing all init CPU requests is conservative even with native sidecars.

@@ -13,6 +13,10 @@ func runtimeOverlapFixtureFault(index int, item object, fault string) {
 			allocatable["cpu"] = "25m"
 		case "overlap peak init", "overlap sidecar", "overlap Pod request", "overlap overhead", "overlap fractional bytes":
 			allocatable["memory"] = "1Gi"
+		case "overlap retained Pod enactment":
+			allocatable["memory"] = "255Mi"
+		case "overlap aggregate retains overhead":
+			allocatable["memory"] = "257Mi"
 		case "overlap invalid node memory":
 			allocatable["memory"] = "NaN"
 		}
@@ -64,10 +68,47 @@ func runtimeOverlapFixtureFault(index int, item object, fault string) {
 			request["memory"] = "939524095100m"
 		case "overlap Pod allocated":
 			value(item, "status").(object)["allocatedResources"] = object{"memory": "20Gi"}
+		case "overlap Pod enacted":
+			value(item, "status").(object)["resources"] = object{"requests": object{"memory": "20Gi"}}
+		case "overlap Pod CPU allocated":
+			value(item, "status").(object)["allocatedResources"] = object{"cpu": "7900m"}
 		case "overlap container allocated":
 			value(item, "status", "containerStatuses").([]any)[0].(object)["allocatedResources"] = object{"memory": "20Gi"}
 		case "overlap container enacted":
 			value(item, "status", "containerStatuses").([]any)[0].(object)["resources"] = object{"requests": object{"memory": "20Gi"}}
+		case "overlap stable allocation":
+			container := value(item, "status", "containerStatuses").([]any)[0].(object)
+			container["allocatedResources"] = object{"cpu": "480m", "memory": "128Mi"}
+			container["resources"] = object{"requests": object{"cpu": "480m", "memory": "128Mi"}}
+		case "overlap smaller allocation":
+			container := value(item, "status", "containerStatuses").([]any)[0].(object)
+			container["allocatedResources"] = object{"cpu": "100m", "memory": "64Mi"}
+			container["resources"] = object{"requests": object{"cpu": "100m", "memory": "64Mi"}}
+		case "overlap retained CPU":
+			value(item, "status", "containerStatuses").([]any)[0].(object)["allocatedResources"] = object{"cpu": "7900m"}
+		case "overlap allocation unknown container":
+			container := value(item, "status", "containerStatuses").([]any)[0].(object)
+			container["name"] = "foreign"
+			container["allocatedResources"] = object{"memory": "1Mi"}
+		case "overlap malformed allocation":
+			value(item, "status", "containerStatuses").([]any)[0].(object)["allocatedResources"] = object{"memory": float64(1024)}
+		case "overlap stable Pod allocation":
+			spec["resources"] = object{"requests": object{"cpu": "480m", "memory": "128Mi"}}
+			status := value(item, "status").(object)
+			status["allocatedResources"] = object{"cpu": "480m", "memory": "128Mi"}
+			status["resources"] = object{"requests": object{"cpu": "480m", "memory": "128Mi"}}
+		case "overlap aggregate Pod allocation":
+			status := value(item, "status").(object)
+			status["allocatedResources"] = object{"cpu": "480m", "memory": "128Mi"}
+			status["resources"] = object{"requests": object{"cpu": "480m", "memory": "128Mi"}}
+		case "overlap aggregate retains overhead":
+			spec["overhead"] = object{"memory": "1Mi"}
+			value(item, "status").(object)["allocatedResources"] = object{"memory": "129Mi"}
+		case "overlap retained Pod enactment":
+			request["memory"] = "100Mi"
+			status := value(item, "status").(object)
+			status["allocatedResources"] = object{"memory": "100Mi"}
+			status["resources"] = object{"requests": object{"memory": "128Mi"}}
 		}
 	}
 	if index == 2 {
@@ -122,13 +163,18 @@ func TestRuntimeDeclaredOverlapMeasuresCapacityAndRefusesUnknownInputs(t *testin
 		{"overlap CPU full", "HOLD"}, {"overlap memory full", "HOLD"}, {"overlap rounding", "HOLD"},
 		{"overlap override", "HOLD"}, {"overlap sidecar", "HOLD"}, {"overlap Pod request", "HOLD"}, {"overlap overhead", "HOLD"},
 		{"overlap fractional bytes", "HOLD"},
+		{"overlap stable allocation", "FIT"}, {"overlap smaller allocation", "FIT"}, {"overlap stable Pod allocation", "FIT"},
+		{"overlap aggregate Pod allocation", "FIT"},
 		{"overlap malformed override", "UNVERIFIED"}, {"overlap fractional override", "UNVERIFIED"}, {"overlap negative override", "UNVERIFIED"},
 		{"overlap missing percentage", "UNVERIFIED"}, {"overlap duplicate percentage", "UNVERIFIED"}, {"overlap zero percentage", "UNVERIFIED"},
 		{"overlap missing node", "UNVERIFIED"}, {"overlap already adopted", "UNVERIFIED"}, {"overlap quota", "UNVERIFIED"},
 		{"overlap invalid node memory", "UNVERIFIED"}, {"overlap invalid Pod memory", "UNVERIFIED"}, {"overlap invalid CPU", "UNVERIFIED"},
 		{"overlap numeric CPU", "UNVERIFIED"}, {"overlap numeric memory", "UNVERIFIED"}, {"overlap malformed requests", "UNVERIFIED"},
 		{"overlap altered default", "UNVERIFIED"}, {"overlap invalid default", "UNVERIFIED"}, {"overlap CPU admission", "UNVERIFIED"},
-		{"overlap Pod allocated", "UNVERIFIED"}, {"overlap container allocated", "UNVERIFIED"}, {"overlap container enacted", "UNVERIFIED"},
+		{"overlap Pod allocated", "HOLD"}, {"overlap Pod enacted", "HOLD"}, {"overlap Pod CPU allocated", "HOLD"},
+		{"overlap container allocated", "UNVERIFIED"}, {"overlap container enacted", "UNVERIFIED"},
+		{"overlap retained CPU", "UNVERIFIED"}, {"overlap allocation unknown container", "UNVERIFIED"}, {"overlap malformed allocation", "UNVERIFIED"},
+		{"overlap aggregate retains overhead", "HOLD"}, {"overlap retained Pod enactment", "HOLD"},
 	} {
 		t.Run(test.fault, func(t *testing.T) {
 			c, _ := runtimeObservationFixture(t, test.fault)
@@ -141,7 +187,7 @@ func TestRuntimeDeclaredOverlapMeasuresCapacityAndRefusesUnknownInputs(t *testin
 	}
 }
 
-func TestMemoryRequestRoundsTheEffectivePodAndRefusesAllocationStatus(t *testing.T) {
+func TestMemoryRequestRoundsTheEffectivePodAndRefusesUnknownAllocationStatus(t *testing.T) {
 	pod := object{"spec": object{"containers": []any{
 		object{"resources": object{"requests": object{"memory": "100m"}}},
 		object{"resources": object{"requests": object{"memory": "100m"}}},
@@ -150,8 +196,6 @@ func TestMemoryRequestRoundsTheEffectivePodAndRefusesAllocationStatus(t *testing
 		t.Fatalf("effective request must round after summing: got=%v err=%v", got, err)
 	}
 	for _, status := range []object{
-		{"allocatedResources": object{"memory": "1Gi"}},
-		{"resources": object{"requests": object{"memory": "1Gi"}}},
 		{"containerStatuses": []any{object{"name": "app", "resources": object{"requests": object{"memory": "1Gi"}}}}},
 		{"initContainerStatuses": []any{object{"name": "init", "allocatedResources": object{"memory": "1Gi"}}}},
 		{"conditions": []any{object{"type": "PodResizePending", "status": "True"}}},

@@ -137,6 +137,13 @@ func runtimeObservationFixture(t *testing.T, fault string) (client, map[string]i
 		if fault == "epoch changed" && index == 1 && reads[path] > 1 {
 			value(item, "status", "containerStatuses").([]any)[0].(object)["containerID"] = "containerd://" + strings.Repeat("b", 64)
 		}
+		if fault == "allocation changed" && index == 1 {
+			memory := "128Mi"
+			if reads[path] > 1 {
+				memory = "192Mi"
+			}
+			value(item, "status").(object)["allocatedResources"] = object{"memory": memory}
+		}
 		if fault == "UID changed" && index == 3 && reads[path] > 1 {
 			value(item, "metadata").(object)["uid"] = "99999999-9999-4999-8999-999999999999"
 		}
@@ -205,7 +212,7 @@ func TestRuntimeObservationBracketsEveryInventoryAndRemainsReadOnly(t *testing.T
 }
 
 func TestRuntimeObservationRefusesAmbiguityAndDriftWithoutLeakingReadErrors(t *testing.T) {
-	for _, fault := range []string{"source changed", "epoch changed", "UID changed", "missing identity", "partial inventory", "wrong API", "duplicate identity", "read failed"} {
+	for _, fault := range []string{"source changed", "epoch changed", "allocation changed", "UID changed", "missing identity", "partial inventory", "wrong API", "duplicate identity", "read failed"} {
 		t.Run(fault, func(t *testing.T) {
 			c, _ := runtimeObservationFixture(t, fault)
 			got, err := observeRuntimeInventory(t.Context(), c, strings.Repeat("a", 40))

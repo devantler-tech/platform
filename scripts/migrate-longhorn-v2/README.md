@@ -11,10 +11,12 @@ default request. Complete LimitRange and ResourceQuota lists participate in the
 same epoch. Unqualified defaults, quota or resource quantities leave the
 calculation `UNVERIFIED`; an insufficient conservative budget reports `HOLD`.
 Effective memory requests use exact Kubernetes quantities and whole-byte Pod
-rounding. Allocated/enacted in-place resize or node-resource-claim status remains
-unqualified, so its presence also leaves the calculation `UNVERIFIED` rather
-than treating the Pod spec as the allocation. The shared host-memory admission
-uses the same refusal.
+rounding. The budget also counts larger allocated or enacted Pod aggregate
+requests, adding overhead once, and binds those values into the inventory epoch.
+Container-level status must belong to its declared container and fit within its
+declared request. A larger container allocation, active resize, malformed status
+or node-resource claim leaves the calculation `UNVERIFIED`. The shared host-memory
+admission uses the same conservative memory budget.
 These are declared request budgets. Resident-memory measurements, reservations,
 admission, serving health and rollout remain separate checks. The receipt keeps
 `adoption=UNVERIFIED headroom=UNVERIFIED` and authorizes no storage operation.
