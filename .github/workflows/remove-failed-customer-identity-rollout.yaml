@@ -179,7 +179,9 @@ jobs:
 
           # Complete inventory: every object in the namespace is a target, is
           # owned by another object in the namespace, comes from a known
-          # generator, or is telemetry about them. Anything else stops the run.
+          # generator, or is telemetry about them. Anything else stops the run. The
+          # TLS Secret is cert-manager's for the pruned customer-identity Certificate:
+          # cert-manager keeps a Secret when its Certificate is deleted.
           if [[ -s "$private_dir/namespace.json" ]]; then
             resources="$(k api-resources --namespaced=true --verbs=list -o name | grep -v '\.metrics\.k8s\.io$' | paste -sd, -)" || fail discovery
             [[ -n "$resources" ]] || fail discovery
@@ -200,6 +202,8 @@ jobs:
               | select(((.kind == "ConfigMap" and .metadata.name == "kube-root-ca.crt") or (.kind == "ServiceAccount" and .metadata.name == "default")) | not)
               | select((.kind == "Endpoints" and (.metadata.name as $n | $services | index($n) != null)) | not)
               | select((.kind == "ConfigMap" and .metadata.name == "cloudflare-origin-ca" and $l["trust.cert-manager.io/bundle"] == "cloudflare-origin-ca" and ((.metadata.ownerReferences // []) | length == 1 and .[0].kind == "Bundle" and .[0].name == "cloudflare-origin-ca")) | not)
+              | (.metadata.annotations // {}) as $a
+              | select((.kind == "Secret" and .type == "kubernetes.io/tls" and .metadata.name == "customer-identity-tls" and $a["cert-manager.io/certificate-name"] == "customer-identity" and $a["cert-manager.io/issuer-name"] == "letsencrypt-prod" and $a["cert-manager.io/alt-names"] == "accounts.devantler.tech,login.devantler.tech") | not)
               | "\(.kind)/\(.metadata.name)"' "$private_dir/inventory.json")" || fail inventory
             [[ -z "$unexpected" ]] || { echo "CUSTOMER_IDENTITY_ROLLOUT_REMOVAL=REFUSED stage=unexpected-objects objects=$(tr '\n' ' ' <<<"$unexpected")" >&2; exit 2; }
             echo "CUSTOMER_IDENTITY_ROLLOUT_REMOVAL=VERIFIED objects=$(jq '.items | length' "$private_dir/inventory.json") database=NEVER_INITIALIZED postgres=NEVER_STARTED server=NEVER_RAN"

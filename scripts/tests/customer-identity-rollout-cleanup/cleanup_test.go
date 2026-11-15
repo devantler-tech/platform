@@ -197,6 +197,7 @@ func newAPI() *apiFixture {
 	a.add("ConfigMap", ns, "kube-root-ca.crt", "uid-root-ca", nil)
 	a.add("ConfigMap", ns, "cloudflare-origin-ca", "uid-bundle", object{"metadata": object{"labels": object{"trust.cert-manager.io/bundle": "cloudflare-origin-ca"}, "ownerReferences": []object{{"kind": "Bundle", "name": "cloudflare-origin-ca", "uid": "uid-cluster-bundle"}}}})
 	a.add("ServiceAccount", ns, "default", "uid-default-sa", nil)
+	a.add("Secret", ns, "customer-identity-tls", "uid-tls", object{"type": "kubernetes.io/tls", "metadata": object{"annotations": tlsAnnotations()}})
 	a.add("CiliumNetworkPolicy", ns, "default-deny", "uid-default-deny", object{"metadata": object{"labels": object{"app.kubernetes.io/managed-by": "kyverno", "generate.kyverno.io/policy-name": "add-default-deny"}}})
 	a.add("Event", ns, "zitadel.1", "uid-event", nil)
 	a.add("PolicyReport", ns, "report-1", "uid-report", object{"metadata": owner("Pod", "gone", "uid-deleted-pod")})
@@ -591,5 +592,37 @@ func TestFailedReadsNeverClearCleanup(t *testing.T) {
 		if err == nil || a.deletes != 0 || strings.Contains(output, "=COMPLETE") || strings.Contains(output, "=VERIFIED") {
 			t.Fatalf("failed read became clearance: code=%d err=%v deletes=%d output=%s", code, err, a.deletes, output)
 		}
+	}
+}
+
+func tlsAnnotations() object {
+	return object{
+		"cert-manager.io/certificate-name": "customer-identity",
+		"cert-manager.io/issuer-name":      "letsencrypt-prod",
+		"cert-manager.io/alt-names":        "accounts.devantler.tech,login.devantler.tech",
+	}
+}
+
+func TestUnexpectedTLSSecretIsRefused(t *testing.T) {
+	for name, change := range map[string]func(o object){
+		"other certificate": func(o object) {
+			o["metadata"].(object)["annotations"].(object)["cert-manager.io/certificate-name"] = "other"
+		},
+		"other issuer": func(o object) {
+			o["metadata"].(object)["annotations"].(object)["cert-manager.io/issuer-name"] = "self-signed"
+		},
+		"other names": func(o object) {
+			o["metadata"].(object)["annotations"].(object)["cert-manager.io/alt-names"] = "accounts.devantler.tech"
+		},
+		"not TLS": func(o object) { o["type"] = "Opaque" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := newAPI()
+			change(a.objects[path(find("Secret"), ns, "customer-identity-tls")])
+			output, err := runCleanup(t, a)
+			if err == nil || a.deletes != 0 || !strings.Contains(output, "stage=unexpected-objects objects=Secret/customer-identity-tls") {
+				t.Fatalf("unexpected TLS Secret was not refused: err=%v deletes=%d output=%s", err, a.deletes, output)
+			}
+		})
 	}
 }
