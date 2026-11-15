@@ -24,9 +24,20 @@ spec:
   env:
     - name: PLATFORM_DATABASE_PRIORITY_CLASS
       value: hcloud-volume-workload
+  # Hetzner Cloud volumes, as OpenBao and Coroot use, not Longhorn: CNPG
+  # already keeps a second copy, so Longhorn's three replicas per instance
+  # would triple storage the shared pool cannot spare (the first rollout's
+  # volume was refused for insufficient Longhorn storage). An hcloud volume is
+  # not force-detached when its node leaves, so the instances stay on the
+  # static baseline workers (require-baseline-workers-for-hcloud-volumes).
+  # Temporary: every platform volume finishes on Longhorn V2, and this
+  # cluster's two claims move there with the database migration (#5842).
   storage:
-    size: 5Gi
-    storageClass: longhorn-wffc
+    size: 10Gi
+    storageClass: hcloud
+  affinity:
+    nodeSelector:
+      platform.devantler.tech/baseline-worker: "true"
   # Coroot's Postgres integration, as every platform database has. CNPG
   # copies these annotations onto the instance pods, where Coroot's
   # cluster-agent discovers them; it logs in as the coroot_monitor role below,
