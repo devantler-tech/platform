@@ -168,7 +168,7 @@ func (h hostMemoryReboot) read(ctx context.Context) (object, hostRebootRecord, e
 	if err != nil || cm == nil {
 		return cm, hostRebootRecord{}, err
 	}
-	if text(cm, "metadata", "name") != h.name() || text(cm, "metadata", "namespace") != "longhorn-system" {
+	if text(cm, "metadata", "name") != h.name() || text(cm, "metadata", "namespace") != "longhorn-system" || value(cm, "metadata", "deletionTimestamp") != nil {
 		return nil, hostRebootRecord{}, errHostMemory
 	}
 	encoded := text(cm, "data", "record")
@@ -202,14 +202,21 @@ func (h hostMemoryReboot) write(ctx context.Context, cm object, r hostRebootReco
 		return errHostMemory
 	}
 	if cm != nil {
-		return h.c.patch(ctx, "configmap", "longhorn-system", cm, object{"op": "replace", "path": "/data/record", "value": string(b)})
+		if err = h.c.patch(ctx, "configmap", "longhorn-system", cm, object{"op": "replace", "path": "/data/record", "value": string(b)}); err == nil {
+			return nil
+		}
+		confirmed, confirmationErr := h.owned(ctx, r)
+		if confirmationErr == nil && text(confirmed, "metadata", "uid") == text(cm, "metadata", "uid") {
+			return nil
+		}
+		return hostRecoveryFailure("journal-"+r.Phase+"-unconfirmed", errors.Join(err, confirmationErr))
 	}
 	body, err := json.Marshal(object{"apiVersion": "v1", "kind": "ConfigMap", "metadata": object{"name": h.name(), "namespace": "longhorn-system"}, "data": object{"record": string(b)}})
 	if err != nil {
 		return errHostMemory
 	}
 	_, err = h.c.kubectl(ctx, body, "create", "--filename=/dev/stdin", "--output=name")
-	return err
+	return hostRecoveryFailure("journal-"+r.Phase, err)
 }
 
 // owned rebinds the complete journal and current main immediately before a

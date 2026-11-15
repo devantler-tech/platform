@@ -126,6 +126,11 @@ released so Longhorn can recreate its instance manager. The maintenance marker
 and unfinished journal remain until full V1 redundancy and database health return;
 a timeout at this stage leaves the node schedulable under that retained marker.
 Only then is the marker removed and recovery recorded. Both release steps are read back.
+Each release PATCH uses a fresh Node identity and resource version after the
+native safety checks. A failed write response is confirmed only by the exact
+intended state on the same Node and journal identities; the write is never
+repeated. A deleting journal cannot authorize recovery. Fixed stage diagnostics
+identify the failed boundary without publishing private command replies.
 Dispatch each worker separately and verify platform recovery before the next one.
 An interrupted run keeps its journal and cordon; a new first-attempt main dispatch
 may adopt it only after the previous run has ended. This operation enables no V2
