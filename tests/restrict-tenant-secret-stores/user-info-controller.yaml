@@ -1,0 +1,11 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: external-secrets-controller
+userInfo:
+  username: system:serviceaccount:external-secrets:external-secrets
+  groups:
+    - system:serviceaccounts
+    - system:serviceaccounts:external-secrets
+    - system:authenticated
