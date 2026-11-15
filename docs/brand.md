@@ -22,6 +22,13 @@ repository. Each page embeds the files it needs in its own ConfigMap:
   `favicon.png` (the icon at 256 px) and `logo.svg` (the dark-background wordmark).
 - Homepage: [`homepage-brand`](../k8s/bases/apps/homepage/config-map-brand.yaml) holds the icon at
   180, 192 and 512 px and as `icon.svg`.
+- ZITADEL (accounts.devantler.tech and its emails):
+  [`zitadel-branding`](../k8s/providers/hetzner/apps/customer-identity/config-map-branding.yaml)
+  holds both wordmarks and the icon as PNG, because email clients do not show SVG. The setup
+  CronJob owns ZITADEL's whole label policy (colours, logos, icon, no font or watermark), so an
+  edit in its console is undone on the next run.
+  ![ZITADEL sign-in in light mode](images/zitadel-branding/login-light.png)
+  ![ZITADEL sign-in in dark mode](images/zitadel-branding/login-dark.png)
 
 devantler.tech uses the same icon at 256 px as its `favicon.png` and shows the wordmark that matches
 its theme in the header. When the logo changes, update every copy above in the same change.
