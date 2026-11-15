@@ -1078,8 +1078,13 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               # ZITADEL's master key, generated once by its create-only
-              # PushSecret (vault-seed). Exact key only.
+              # PushSecret (vault-seed), and the customer Dex's ZITADEL
+              # client, which the customer-identity setup CronJob issues and
+              # a PushSecret copies here. Exact keys only.
               path "secret/data/apps/customer-identity/zitadel" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/customer-identity/dex-zitadel-client" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/apps/actual-budget/*" {
@@ -1144,6 +1149,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/customer-identity/zitadel" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/customer-identity/dex-zitadel-client" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/actual-budget/*" {

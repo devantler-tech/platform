@@ -25,3 +25,14 @@ resources:
   - certificate.yaml
   - reference-grant.yaml
   - http-route.yaml
+  # The declarative setup: ZITADEL's system API user's key, the CronJob that
+  # reconciles the customer Dex client and the SES login, and the one Secret
+  # it writes.
+  - issuer.yaml
+  - certificate-setup-key.yaml
+  - service-account.yaml
+  - role.yaml
+  - role-binding.yaml
+  - secret-dex-zitadel-client.yaml
+  - push-secret-dex-zitadel-client.yaml
+  - cron-job-setup.yaml

@@ -13,6 +13,11 @@
 #   dropped. The only bootstrap identity is one human administrator (the
 #   maintainer), with a generated one-time password that must be changed at
 #   the first sign-in, where the login policy also forces MFA.
+# - One system API user, `zitadel-setup`, declared in SystemAPIUsers below,
+#   for the setup CronJob (cron-job-setup.yaml). ZITADEL trusts the public key
+#   in cert-manager's certificate (certificate-setup-key.yaml); only that
+#   CronJob's signer mounts the private key. Its only role is IAM_OWNER, so it
+#   can manage this instance but not ZITADEL's system API (no SYSTEM_OWNER).
 # - TLS ends at the platform Gateway, as for every platform app; the Gateway
 #   reaches ZITADEL over h2c inside the WireGuard-encrypted cluster network.
 #
@@ -29,8 +34,8 @@
 # email-smtp.eu-central-1.amazonaws.com:587 as no-reply@devantler.tech, with
 # the credential from OpenBao apps/business-site/smtp (external-secret-smtp.yaml).
 # ZITADEL then keeps the provider in its database: like every DefaultInstance
-# setting it is not re-applied to an existing instance, so a rotated SES
-# credential must also be updated through ZITADEL's admin API.
+# setting it is not re-applied to an existing instance, so the setup CronJob
+# applies a rotated SES credential through ZITADEL's admin API.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -125,9 +130,23 @@ spec:
           items:
             - key: ca.crt
               path: ca.crt
+      # The setup user's certificate only, never its private key. Optional,
+      # so ZITADEL starts before cert-manager has issued it; ZITADEL reads it
+      # when the setup CronJob first signs in.
+      - name: setup-user
+        secret:
+          secretName: zitadel-setup-key
+          defaultMode: 0440
+          optional: true
+          items:
+            - key: tls.crt
+              path: zitadel-setup.crt
     extraVolumeMounts:
       - name: db-ca
         mountPath: /db-ca
+        readOnly: true
+      - name: setup-user
+        mountPath: /system-users
         readOnly: true
     # Rendered into the setup job and the server alike.
     env:
@@ -161,6 +180,16 @@ spec:
         ExternalSecure: true
         TLS:
           Enabled: false
+        # The setup CronJob's identity (see above). Tokens must be signed by
+        # the certificate's key, name this user as issuer and subject, and be
+        # addressed to https://accounts.devantler.tech.
+        SystemAPIUsers:
+          zitadel-setup:
+            Path: /system-users/zitadel-setup.crt
+            Memberships:
+              - MemberType: System
+                Roles:
+                  - IAM_OWNER
         Database:
           Postgres:
             Host: customer-identity-db-rw.customer-identity.svc

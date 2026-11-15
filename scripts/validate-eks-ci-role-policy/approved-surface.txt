@@ -60,7 +60,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|zitadel a2f82a6a6fe6d55240c66c5a084925c4007115a35c80c9aecb97eacbb3f862cb
+helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|zitadel f6fb7a8b2d084beb33aeb0a08b1b82eeeac495cbbe498b65154a57c8c353a905
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex e2cbe6e6b5ace19ebded8d0e75f508277dd450c079ed51062d13649e148904b9
 
@@ -310,6 +310,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|ate-system|substrate-ca-reader b8b1991b
 
 rbac.authorization.k8s.io/v1|RoleBinding|aws|aws-managed-resources 876e05322100f78b490b870ba8733b26daa0f93b65b8fdd77d559e9de94588c1
 
+rbac.authorization.k8s.io/v1|RoleBinding|customer-identity|customer-identity-setup fab367a0961fa37ea2870ac2bd77f7840cedeadc9f589ce7adc72ab758c71377
+
 rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|data-product-readiness-observer 00bcf69a4402d05bf5af23e273f9d3c5d7e7ebeed8c1778017a9f702d261360e
 
 rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|khoist-documentation 2690828917afd76647b314b9009a0401578780b33809e8d3a1f04a1b16244565
@@ -365,6 +367,8 @@ rbac.authorization.k8s.io/v1|Role|agentic-engineer|lane-store-reader 106d83767c8
 rbac.authorization.k8s.io/v1|Role|ate-system|substrate-ca-reader 153cc02bc210a1f00ad70fb8c260500fa9593e634302378d67d91af10cf3fafd
 
 rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources 9207b057fb6d4f1492b13663277658e3bd31849a9aa11dd2185ceb0a0afcbfab
+
+rbac.authorization.k8s.io/v1|Role|customer-identity|customer-identity-setup 7f700c5af8b692b4e51b9e5150cf90b7d7e70f0f4b7d215e5b169a147fadfdcd
 
 rbac.authorization.k8s.io/v1|Role|data-product-controller|data-product-readiness-observer 10df039485be13b0344199a50eacc4fbd942f2bb9b831a84b11c024918a3422a
 

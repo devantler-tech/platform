@@ -1,0 +1,425 @@
+# Declarative ZITADEL setup for the customer sign-in (business-site#302).
+# Every 15 minutes it reconciles, through ZITADEL's own APIs:
+# - the "Customer sign-in" project and its "Customer Dex" client, exactly as the
+#   business-site preparer's CreateApplication template declares it (code grant
+#   only, the exact Dex callback, Login V1). It restores drifted settings and,
+#   when the stored secret is missing or is the placeholder, issues a new one
+#   into secret-dex-zitadel-client.yaml;
+# - the SES SMTP login: when the business site's credential (OpenBao
+#   apps/business-site/smtp) changes, it updates ZITADEL's provider;
+# - the administrator's one-time password: until the maintainer's first
+#   sign-in replaces it, it stays equal to zitadel-first-admin, so the
+#   commissioning step works even after that Secret is regenerated. Once he has
+#   chosen his own password it is never touched again.
+# A run that finds nothing to change writes nothing. A duplicate, a deactivated
+# client, a missing Secret, an API error or a refused write stops the run
+# before it changes anything further; the next run starts again.
+#
+# Credentials stay apart:
+# - The signer (init container) alone mounts the private key of ZITADEL's
+#   `zitadel-setup` system API user (certificate-setup-key.yaml). It writes a
+#   10-minute token to a memory volume and exits.
+# - The setup container alone gets a Kubernetes token, which may only read and
+#   update the client Secret (role.yaml). It reads the SMTP login (zitadel-smtp)
+#   and the one-time password (zitadel-first-admin) through its environment.
+# - Neither prints a secret.
+#
+# The maintainer's own first sign-in (choosing his password, enrolling MFA) is
+# not part of this.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: customer-identity-setup
+  namespace: customer-identity
+  annotations:
+    # The scripts' own ${...} expansions are bash, not Flux variables.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: customer-identity-setup
+        spec:
+          serviceAccountName: customer-identity-setup
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            fsGroupChangePolicy: OnRootMismatch
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: sign-token
+              image: docker.io/alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                capabilities:
+                  drop:
+                    - ALL
+              env:
+                - name: ZITADEL_AUDIENCE
+                  value: https://accounts.devantler.tech
+                - name: ZITADEL_SYSTEM_USER
+                  value: zitadel-setup
+              volumeMounts:
+                - name: setup-key
+                  mountPath: /run/setup-key
+                  readOnly: true
+                - name: setup-token
+                  mountPath: /run/setup-token
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  cpu: 100m
+                  memory: 32Mi
+              command:
+                - /bin/sh
+                - -c
+                - |-
+                  #!/bin/sh
+                  # Signs a short-lived JWT for ZITADEL's `zitadel-setup` system API user with
+                  # the key cert-manager keeps in zitadel-setup-key. Only this init container
+                  # mounts the private key; it writes the token to a memory-backed volume that
+                  # the setup container reads. The token is never printed.
+                  set -eu
+                  key=/run/setup-key/tls.key
+                  out=/run/setup-token/token
+                  audience="${ZITADEL_AUDIENCE:?}"
+                  user="${ZITADEL_SYSTEM_USER:?}"
+                  lifetime="${TOKEN_LIFETIME_SECONDS:-600}"
+
+                  b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+                  [ -s "$key" ] || { echo "sign-token: missing signing key" >&2; exit 1; }
+                  now=$(date +%s)
+                  header=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+                  payload=$(printf '{"iss":"%s","sub":"%s","aud":"%s","iat":%d,"exp":%d}' \
+                    "$user" "$user" "$audience" "$now" "$((now + lifetime))" | b64url)
+                  signature=$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sign "$key" -binary | b64url)
+                  umask 077
+                  printf '%s.%s.%s' "$header" "$payload" "$signature" > "$out"
+                  echo "sign-token: wrote a ${lifetime}s token for ${user}"
+          containers:
+            - name: setup
+              image: docker.io/alpine/k8s:1.37.2@sha256:dcb7185e112a453aa72f426754849a97357727ef8f40168fb208c8cf59952042
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                capabilities:
+                  drop:
+                    - ALL
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: ZITADEL_URL
+                  value: http://zitadel.customer-identity.svc:8080
+                - name: ZITADEL_HOST
+                  value: accounts.devantler.tech
+                - name: TOKEN_FILE
+                  value: /run/setup-token/token
+                - name: SMTP_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: zitadel-smtp
+                      key: username
+                - name: SMTP_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: zitadel-smtp
+                      key: password
+                - name: ADMIN_EMAIL
+                  value: ned@devantler.tech
+                - name: ADMIN_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: zitadel-first-admin
+                      key: password
+              volumeMounts:
+                - name: setup-token
+                  mountPath: /run/setup-token
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: kube-api-access
+                  mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+              command:
+                - /bin/bash
+                - -c
+                - |-
+                  #!/usr/bin/env bash
+                  # Reconciles ZITADEL's customer Dex client and its SES SMTP login from the
+                  # state declared here. Every run is idempotent: it changes nothing when ZITADEL
+                  # and the client Secret already match. Any unexpected state (a duplicate, a
+                  # deactivated client, a missing Secret, an API error) stops the run before it
+                  # writes anything further. No secret value is ever printed.
+                  set -euo pipefail
+                  umask 077
+
+                  : "${ZITADEL_URL:?}" "${ZITADEL_HOST:?}" "${TOKEN_FILE:?}" "${SMTP_USER:?}" "${SMTP_PASSWORD:?}"
+                  : "${ADMIN_EMAIL:?}" "${ADMIN_PASSWORD:?}"
+                  namespace=customer-identity
+                  client_secret_name=customer-dex-zitadel-client
+                  # Fingerprints of what this script last applied, kept as annotations on the
+                  # one Secret it may write, so a run with nothing new changes nothing.
+                  fingerprint_annotation=platform.devantler.tech/smtp-credential-sha256
+                  admin_annotation=platform.devantler.tech/first-admin-password-sha256
+                  project_name="Customer sign-in"
+                  app_name="Customer Dex"
+                  dex_callback=https://login.devantler.tech/callback
+                  smtp_host=email-smtp.eu-central-1.amazonaws.com:587
+                  smtp_sender=no-reply@devantler.tech
+                  smtp_sender_name="Devantler Tech"
+                  smtp_description="Business site sender (Amazon SES)"
+                  placeholder=PLACEHOLDER
+
+                  # The business-site preparer's CreateApplication template (server/internal/
+                  # customeridentity/config.go): one confidential web client, code grant only,
+                  # the exact Dex callback, Login V1.
+                  desired_oidc=$(jq -nc --arg cb "$dex_callback" '{
+                    redirectUris: [$cb], responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
+                    grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"], applicationType: "OIDC_APP_TYPE_WEB",
+                    authMethodType: "OIDC_AUTH_METHOD_TYPE_BASIC", version: "OIDC_VERSION_1_0", developmentMode: false,
+                    accessTokenRoleAssertion: false, idTokenRoleAssertion: false, idTokenUserinfoAssertion: false,
+                    additionalOrigins: [], postLogoutRedirectUris: [], loginVersion: {loginV1: {}}}')
+                  # ZITADEL omits fields that hold their default value, so compare normalised.
+                  normalise_oidc='{
+                    redirectUris: (.redirectUris // []), responseTypes: (.responseTypes // ["OIDC_RESPONSE_TYPE_CODE"]),
+                    grantTypes: (.grantTypes // ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"]),
+                    applicationType: (.applicationType // "OIDC_APP_TYPE_WEB"),
+                    authMethodType: (.authMethodType // "OIDC_AUTH_METHOD_TYPE_BASIC"),
+                    version: (.version // "OIDC_VERSION_1_0"), developmentMode: (.developmentMode // false),
+                    accessTokenRoleAssertion: (.accessTokenRoleAssertion // false),
+                    idTokenRoleAssertion: (.idTokenRoleAssertion // false),
+                    idTokenUserinfoAssertion: (.idTokenUserinfoAssertion // false),
+                    additionalOrigins: (.additionalOrigins // []), postLogoutRedirectUris: (.postLogoutRedirectUris // []),
+                    loginVersion: (.loginVersion // {loginV1: {}})}'
+
+                  log() { printf 'setup: %s\n' "$*"; }
+                  fail() { printf 'setup: FAILED: %s\n' "$*" >&2; exit 1; }
+
+                  work=$(mktemp -d)
+                  trap 'rm -rf "$work"' EXIT
+                  [[ -s $TOKEN_FILE ]] || fail "no signed token at $TOKEN_FILE"
+                  printf 'Authorization: Bearer %s\n' "$(<"$TOKEN_FILE")" > "$work/auth"
+
+                  # api METHOD PATH [BODY]: prints the response body on a 2xx answer. Any other
+                  # answer fails the run with ZITADEL's error code and message only.
+                  api() {
+                    local method=$1 path=$2 body=${3:-'{}'} status
+                    local -a data=()
+                    [[ $method == GET ]] || data=(--data-binary "$body")
+                    status=$(curl -sS -m 20 -o "$work/response" -w '%{http_code}' -X "$method" \
+                      -H "@$work/auth" -H "Host: $ZITADEL_HOST" -H 'Content-Type: application/json' \
+                      -H 'Connect-Protocol-Version: 1' "${data[@]}" "$ZITADEL_URL$path") ||
+                      fail "$method $path: no answer from ZITADEL"
+                    if [[ $status != 2?? ]]; then
+                      fail "$method $path: HTTP $status $(jq -rc '[.code, .message] | map(tostring) | join(" ")' "$work/response" 2>/dev/null || echo 'unreadable error')"
+                    fi
+                    cat "$work/response"
+                  }
+                  connect() { api POST "/$1" "${2-}"; }
+
+                  # The client Secret is created empty by Flux and only ever patched here.
+                  secret_json() {
+                    kubectl -n "$namespace" get secret "$client_secret_name" -o json ||
+                      fail "cannot read Secret $client_secret_name"
+                  }
+                  patch_secret() {
+                    printf '%s' "$1" > "$work/patch"
+                    kubectl -n "$namespace" patch secret "$client_secret_name" --type merge --patch-file "$work/patch" >/dev/null ||
+                      fail "cannot update Secret $client_secret_name"
+                  }
+                  store_client() {
+                    local id=$1
+                    [[ -n $id && -n $CLIENT_SECRET ]] || fail "ZITADEL returned an empty client"
+                    patch_secret "$(jq -nc --arg id "$id" \
+                      '{data: {"client-id": ($id | @base64), "client-secret": (env.CLIENT_SECRET | @base64)}}')"
+                    [[ $(secret_json | jq -r '.data["client-id"] // "" | @base64d') == "$id" ]] ||
+                      fail "Secret $client_secret_name did not keep the new client"
+                  }
+
+                  for attempt in $(seq 1 20); do
+                    curl -sf -m 5 -o /dev/null "$ZITADEL_URL/debug/ready" && break
+                    [[ $attempt == 20 ]] && fail "ZITADEL is not ready"
+                    sleep 6
+                  done
+
+                  # Stop before ZITADEL issues anything if there is nowhere to keep it.
+                  secret_json >/dev/null
+                  [[ $(kubectl -n "$namespace" auth can-i patch "secrets/$client_secret_name" 2>/dev/null) == yes ]] ||
+                    fail "may not update Secret $client_secret_name"
+
+                  changes=()
+                  org_id=$(api GET /admin/v1/orgs/default | jq -er '.org.id') || fail "no default organization"
+
+                  # --- Project ---------------------------------------------------------------
+                  projects=$(connect zitadel.project.v2.ProjectService/ListProjects '{"pagination":{"limit":1000}}')
+                  [[ $(jq -r '.pagination.totalResult // "0"' <<<"$projects") -le $(jq '.projects // [] | length' <<<"$projects") ]] ||
+                    fail "project list is incomplete"
+                  project_ids=$(jq -r --arg n "$project_name" --arg o "$org_id" \
+                    '.projects // [] | map(select(.name == $n and .organizationId == $o)) | .[].projectId' <<<"$projects")
+                  case $(grep -c . <<<"$project_ids" || true) in
+                    0)
+                      project_id=$(connect zitadel.project.v2.ProjectService/CreateProject \
+                        "$(jq -nc --arg o "$org_id" --arg n "$project_name" '{organizationId: $o, name: $n}')" | jq -er '.projectId')
+                      changes+=("created project")
+                      ;;
+                    1) project_id=$project_ids ;;
+                    *) fail "more than one project named '$project_name'" ;;
+                  esac
+
+                  # --- Application -------------------------------------------------------------
+                  apps=$(connect zitadel.application.v2.ApplicationService/ListApplications \
+                    "$(jq -nc --arg p "$project_id" '{pagination: {limit: 1000}, filters: [{projectIdFilter: {projectId: $p}}]}')")
+                  [[ $(jq -r '.pagination.totalResult // "0"' <<<"$apps") -le $(jq '.applications // [] | length' <<<"$apps") ]] ||
+                    fail "application list is incomplete"
+                  matches=$(jq -c --arg n "$app_name" '[.applications // [] | .[] | select(.name == $n)]' <<<"$apps")
+                  case $(jq length <<<"$matches") in
+                    0)
+                      connect zitadel.application.v2.ApplicationService/CreateApplication \
+                        "$(jq -nc --arg p "$project_id" --arg n "$app_name" --argjson c "$desired_oidc" \
+                          '{projectId: $p, name: $n, oidcConfiguration: $c}')" > "$work/created"
+                      app_id=$(jq -er '.applicationId' "$work/created")
+                      client_id=$(jq -er '.oidcConfiguration.clientId' "$work/created")
+                      CLIENT_SECRET=$(jq -er '.oidcConfiguration.clientSecret' "$work/created") store_client "$client_id"
+                      changes+=("created client")
+                      ;;
+                    1)
+                      app=$(jq -c '.[0]' <<<"$matches")
+                      app_id=$(jq -er '.applicationId' <<<"$app")
+                      client_id=$(jq -er '.oidcConfiguration.clientId' <<<"$app")
+                      [[ $(jq -r '.state' <<<"$app") == APPLICATION_STATE_ACTIVE ]] ||
+                        fail "client '$app_name' is not active; reactivate or remove it on purpose"
+                      if [[ $(jq -cS ".oidcConfiguration | $normalise_oidc" <<<"$app") != "$(jq -cS "$normalise_oidc" <<<"$desired_oidc")" ]]; then
+                        connect zitadel.application.v2.ApplicationService/UpdateApplication \
+                          "$(jq -nc --arg p "$project_id" --arg a "$app_id" --argjson c "$desired_oidc" \
+                            '{projectId: $p, applicationId: $a, oidcConfiguration: $c}')" >/dev/null
+                        changes+=("restored client settings")
+                      fi
+                      stored=$(secret_json)
+                      if [[ $(jq -r '.data["client-id"] // "" | @base64d' <<<"$stored") != "$client_id" ]] ||
+                        [[ $(jq -r '.data["client-secret"] // "" | @base64d' <<<"$stored") =~ ^($placeholder)?$ ]]; then
+                        connect zitadel.application.v2.ApplicationService/GenerateClientSecret \
+                          "$(jq -nc --arg p "$project_id" --arg a "$app_id" '{projectId: $p, applicationId: $a}')" > "$work/generated"
+                        CLIENT_SECRET=$(jq -er '.clientSecret' "$work/generated") store_client "$client_id"
+                        changes+=("issued client secret")
+                      fi
+                      ;;
+                    *) fail "more than one client named '$app_name'" ;;
+                  esac
+
+                  # --- SMTP --------------------------------------------------------------------
+                  fingerprint=$(printf '%s\n%s' "$SMTP_USER" "$SMTP_PASSWORD" | sha256sum | cut -d' ' -f1)
+                  providers=$(api POST /admin/v1/smtp/_search)
+                  provider=$(jq -c --arg h "$smtp_host" --arg s "$smtp_sender" \
+                    '[.result // [] | .[] | select(.host == $h and .senderAddress == $s)]' <<<"$providers")
+                  [[ $(jq length <<<"$provider") == 1 ]] || fail "expected exactly one SES provider for $smtp_sender"
+                  provider=$(jq -c '.[0]' <<<"$provider")
+                  smtp_id=$(jq -er '.id' <<<"$provider")
+                  recorded=$(secret_json | jq -r --arg a "$fingerprint_annotation" '.metadata.annotations[$a] // ""')
+                  if [[ $recorded != "$fingerprint" || $(jq -r '.user' <<<"$provider") != "$SMTP_USER" ||
+                    $(jq -r '.tls // false' <<<"$provider") != true || $(jq -r '.senderName // ""' <<<"$provider") != "$smtp_sender_name" ]]; then
+                    api PUT "/admin/v1/smtp/$smtp_id" "$(jq -nc --arg s "$smtp_sender" --arg n "$smtp_sender_name" \
+                      --arg h "$smtp_host" --arg u "$SMTP_USER" --arg d "$smtp_description" \
+                      '{senderAddress: $s, senderName: $n, tls: true, host: $h, user: $u, description: $d}')" >/dev/null
+                    api PUT "/admin/v1/smtp/$smtp_id/password" "$(jq -nc '{password: env.SMTP_PASSWORD}')" >/dev/null
+                    patch_secret "$(jq -nc --arg a "$fingerprint_annotation" --arg f "$fingerprint" '{metadata: {annotations: {($a): $f}}}')"
+                    changes+=("updated SMTP login")
+                  fi
+                  if [[ $(api POST /admin/v1/smtp/_search | jq -r --arg i "$smtp_id" '.result[] | select(.id == $i) | .state') != SMTP_CONFIG_ACTIVE ]]; then
+                    api POST "/admin/v1/smtp/$smtp_id/_activate" >/dev/null
+                    changes+=("activated SMTP provider")
+                  fi
+
+                  # --- The administrator's one-time password -------------------------------------
+                  # ZITADEL set it once, when it created the instance, from zitadel-first-admin.
+                  # Until the maintainer's first sign-in replaces it, keep it equal to that Secret
+                  # (which a rebuild regenerates). Once he has chosen his own password, ZITADEL
+                  # no longer requires a change and this never touches it again.
+                  admins=$(connect zitadel.user.v2.UserService/ListUsers "$(jq -nc --arg e "$ADMIN_EMAIL" \
+                    '{queries: [{emailQuery: {emailAddress: $e, method: "TEXT_QUERY_METHOD_EQUALS"}}, {typeQuery: {type: "TYPE_HUMAN"}}]}')")
+                  [[ $(jq '.result // [] | length' <<<"$admins") == 1 ]] || fail "expected exactly one administrator with $ADMIN_EMAIL"
+                  admin_id=$(jq -er '.result[0].userId' <<<"$admins")
+                  admin_state=own
+                  if [[ $(jq -r '.result[0].human.passwordChangeRequired // false' <<<"$admins") == true ]]; then
+                    admin_state=one-time
+                    admin_fingerprint=$(printf '%s' "$ADMIN_PASSWORD" | sha256sum | cut -d' ' -f1)
+                    if [[ $(secret_json | jq -r --arg a "$admin_annotation" '.metadata.annotations[$a] // ""') != "$admin_fingerprint" ]]; then
+                      connect zitadel.user.v2.UserService/SetPassword "$(jq -nc --arg u "$admin_id" \
+                        '{userId: $u, newPassword: {password: env.ADMIN_PASSWORD, changeRequired: true}}')" >/dev/null
+                      patch_secret "$(jq -nc --arg a "$admin_annotation" --arg f "$admin_fingerprint" '{metadata: {annotations: {($a): $f}}}')"
+                      changes+=("set the administrator's one-time password")
+                    fi
+                  fi
+
+                  summary="project=$project_id client=$client_id application=$app_id smtp=$smtp_id administrator=$admin_state"
+                  if ((${#changes[@]})); then
+                    log "OK $summary changes: $(IFS=,; echo "${changes[*]}")"
+                  else
+                    log "OK $summary no changes"
+                  fi
+          volumes:
+            - name: setup-key
+              secret:
+                secretName: zitadel-setup-key
+                defaultMode: 0440
+                items:
+                  - key: tls.key
+                    path: tls.key
+            - name: setup-token
+              emptyDir:
+                medium: Memory
+                sizeLimit: 1Mi
+            # Holds ZITADEL's answers, which can carry the new client secret,
+            # so it never touches a disk.
+            - name: tmp
+              emptyDir:
+                medium: Memory
+                sizeLimit: 16Mi
+            - name: kube-api-access
+              projected:
+                defaultMode: 0440
+                sources:
+                  - serviceAccountToken:
+                      path: token
+                      expirationSeconds: 3600
+                  - configMap:
+                      name: kube-root-ca.crt
+                      items:
+                        - key: ca.crt
+                          path: ca.crt
+                  - downwardAPI:
+                      items:
+                        - path: namespace
+                          fieldRef:
+                            fieldPath: metadata.namespace

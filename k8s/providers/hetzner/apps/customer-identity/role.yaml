@@ -1,0 +1,19 @@
+# The setup CronJob may read and update one Secret: the customer Dex's ZITADEL
+# client (secret-dex-zitadel-client.yaml). It cannot create, list or delete
+# Secrets, and it has no access to its own signing key, which reaches it only
+# as a mounted volume.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: customer-identity-setup
+  namespace: customer-identity
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    resourceNames:
+      - customer-dex-zitadel-client
+    verbs:
+      - get
+      - patch
