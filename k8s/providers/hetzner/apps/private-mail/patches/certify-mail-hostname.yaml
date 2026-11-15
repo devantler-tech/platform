@@ -1,0 +1,6 @@
+# Mail apps reach SMTP submission and IMAPS at mail.devantler.tech, through the
+# mail server's own load balancer (#5481). The administration name stays first,
+# so the existing route keeps its certificate subject.
+- op: add
+  path: /spec/dnsNames/-
+  value: mail.devantler.tech
