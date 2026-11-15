@@ -1094,14 +1094,27 @@ spec:
               path "secret/data/apps/umami/*" {
                 capabilities = ["create", "update", "read"]
               }
-              # ZITADEL's master key, generated once by its create-only
-              # PushSecret (vault-seed), and the customer Dex's ZITADEL
-              # client, which the customer-identity setup CronJob issues and
-              # a PushSecret copies here. Exact keys only.
+              # ZITADEL's master key and the portal's Dex client secret, each
+              # seeded by a create-only PushSecret (vault-seed), and the
+              # customer Dex's ZITADEL client, which the customer-identity
+              # setup CronJob issues and a PushSecret copies here. Exact keys
+              # only.
               path "secret/data/apps/customer-identity/zitadel" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/apps/customer-identity/dex-zitadel-client" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/customer-identity/portal-client" {
+                capabilities = ["create", "update", "read"]
+              }
+              # The portal database's two login passwords (create-only seed)
+              # and its CA certificate, pushed from the business-site
+              # namespace for the portal's projected Secret. Exact keys only.
+              path "secret/data/apps/business-site/portal-db" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/business-site/portal-db-ca" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/apps/actual-budget/*" {
@@ -1171,6 +1184,15 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/customer-identity/dex-zitadel-client" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/customer-identity/portal-client" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/business-site/portal-db" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/business-site/portal-db-ca" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/actual-budget/*" {
