@@ -159,10 +159,11 @@ spec:
                 - name: TOKEN_FILE
                   value: /run/setup-token/token
                 # Customer GitHub sign-in's rollout switch (see the top of
-                # this file). It lands off; a reviewed change turns it on once
-                # the github-oauth ExternalSecret has synced.
+                # this file). On since the github-oauth ExternalSecret synced
+                # in production (2026-11-15). Turning it off again needs the
+                # Customers organization's GitHub provider removed on purpose.
                 - name: CUSTOMER_GITHUB_SIGNIN
-                  value: "off"
+                  value: "on"
                 - name: ADMIN_EMAIL
                   value: ned@devantler.tech
               volumeMounts:
