@@ -53,10 +53,11 @@ configuration, clients, credentials and storage.
 
 ## Sign-in pages
 
-Dex's pages carry the Devantler Tech look: the green orb logo, the devantler.tech
+Dex's pages carry the Devantler Tech look: the Devantler Tech logo, the devantler.tech
 dark backdrop and neon-green buttons, links and focus rings.
 
-- [`config-map.yaml`](config-map.yaml) holds the theme: its stylesheet and the logo.
+- [`config-map.yaml`](config-map.yaml) holds the theme: its stylesheet, the header logo
+  (`logo.svg`) and the page icon (`favicon.png`).
 - `config.frontend` in [`helm-release.yaml`](helm-release.yaml) names the theme and
   the page title, and the release mounts the ConfigMap beside Dex's built-in themes.
 - [`test-dex-theme-mount.sh`](../../../../../scripts/tests/test-dex-theme-mount.sh)
