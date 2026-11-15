@@ -1,0 +1,29 @@
+# The key pair of ZITADEL's `zitadel-setup` system API user (helm-release.yaml
+# SystemAPIUsers). ZITADEL mounts only tls.crt; only the setup CronJob's
+# signer mounts tls.key (cron-job-setup.yaml), and no Role lets anyone read
+# the Secret through the API.
+#
+# cert-manager renews it with a new key 30 days before it expires. Reloader
+# then restarts ZITADEL so it reads the new certificate; a setup run during
+# that restart fails and the next one succeeds.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: zitadel-setup-key
+  namespace: customer-identity
+spec:
+  secretName: zitadel-setup-key
+  commonName: zitadel-setup
+  duration: 2160h
+  renewBefore: 720h
+  isCA: false
+  usages:
+    - digital signature
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    encoding: PKCS8
+    rotationPolicy: Always
+  issuerRef:
+    name: customer-identity-setup
+    kind: Issuer

@@ -120,6 +120,9 @@ spec:
       namespace: crossplane-system
     - kind: HelmRelease
       name: "*"
+      namespace: customer-identity
+    - kind: HelmRelease
+      name: "*"
       namespace: data-product-controller
     - kind: HelmRelease
       name: "*"

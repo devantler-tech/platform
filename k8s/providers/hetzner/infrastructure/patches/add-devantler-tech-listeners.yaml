@@ -81,3 +81,26 @@
       kinds:
         - group: gateway.networking.k8s.io
           kind: HTTPRoute
+# ZITADEL's customer sign-in name (apps/customer-identity/http-route.yaml), with
+# the customer-identity namespace's own certificate
+# (apps/customer-identity/certificate.yaml, read through its reference-grant.yaml).
+- op: add
+  path: /spec/listeners/-
+  value:
+    name: https-accounts-devantler-tech
+    hostname: accounts.devantler.tech
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - kind: Secret
+          group: ""
+          namespace: customer-identity
+          name: customer-identity-tls
+    allowedRoutes:
+      namespaces:
+        from: All
+      kinds:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute

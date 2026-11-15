@@ -1,0 +1,9 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: zitadel
+  namespace: customer-identity
+spec:
+  # ZITADEL's official chart repository.
+  url: https://charts.zitadel.com
+  interval: 60m
