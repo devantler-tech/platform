@@ -172,6 +172,8 @@ jobs:
                   ((.metadata.ownerReferences // []) | any(.kind == "Job" and .uid == $job))
                   and ([.spec.containers[].name] == ["initdb"])
                   and (([.spec.initContainers[]?.name] - ["bootstrap-controller"]) | length == 0)
+                  and ((.spec.ephemeralContainers // []) | length == 0)
+                  and ((.status.ephemeralContainerStatuses // []) | length == 0)
                   and ([.status.containerStatuses[]? | select(.name == "initdb")] | length <= 1 and all(never_started)))' "$private_dir/pods.json" >/dev/null || fail database-ran
           fi
 

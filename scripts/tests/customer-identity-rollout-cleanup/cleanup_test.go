@@ -465,6 +465,12 @@ func TestStartedPostgresIsRefused(t *testing.T) {
 		"extra init container": {func(a *apiFixture) {
 			pod(a)["spec"].(object)["initContainers"] = []object{{"name": "bootstrap-controller"}, {"name": "restore"}}
 		}, "database-ran"},
+		"ephemeral container": {func(a *apiFixture) {
+			pod(a)["spec"].(object)["ephemeralContainers"] = []object{{"name": "debugger"}}
+		}, "database-ran"},
+		"ephemeral container status": {func(a *apiFixture) {
+			pod(a)["status"].(object)["ephemeralContainerStatuses"] = []object{{"name": "debugger"}}
+		}, "database-ran"},
 		"other pod mounts the claim": {func(a *apiFixture) {
 			a.add("Pod", ns, "debug", "uid-debug", initdbPodOwnedBy("Cluster", clusterUID))
 		}, "database-ran"},
