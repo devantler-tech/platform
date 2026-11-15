@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-health
+  namespace: flux-system
+data:
+  checks: >-
+    Crossplane Providers are Healthy; CloudNativePG Clusters have every
+    instance ready and, when a WAL archiver is configured, continuous
+    archiving working. See docs/dr/alerting.md.
