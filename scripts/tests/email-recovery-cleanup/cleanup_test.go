@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -19,6 +18,15 @@ import (
 )
 
 type object = map[string]any
+
+// The reviewed identities the workflow pins (#6041). The fixture serves the
+// same names and UIDs, so a changed pin fails these tests.
+type identity struct {
+	copy, namespaceUID, claimUID, volume, volumeUID, backendUID, classUID string
+}
+
+var first = identity{"41561215415", "", "97658b9b-8a22-4f02-8275-697bec198e46", "pvc-ba88e988-bd96-4828-bf08-05054047af95", "d04d4704-bb6c-436b-85a1-62ce3ec0899a", "8d9c0f45-2337-4284-b67b-2f0a715151c6", "80c442fe-9dcb-4bbb-99c0-919f39821c45"}
+var second = identity{"42818236850", "d3c5fc1d-43ef-45e6-a581-58de881875a2", "fa4442ce-698b-46b2-a442-ba3ff2e48065", "pvc-898b45a4-11cb-4075-9c25-6a3a6bbd9e57", "01b86e2f-b35b-49bd-bcf9-ddc3c714cfaf", "7fb51fcd-1ae0-49f1-9611-c06088ac506b", "4886f450-1d12-4bb0-8ee4-f3313edaddd0"}
 
 // Keep the real shell, JSON parser and kubectl. Only the remote API is replaced;
 // in particular kubectl must transmit DeleteOptions rather than a name-only delete.
@@ -31,37 +39,83 @@ type apiFixture struct {
 	replaceDelete      int
 	replacementDeleted bool
 	deletes            int
+	deleted            []string
 }
 
+func paths(id identity) (namespace, claim, volume, backend, class, attachment string) {
+	name := "email-data-recovery-" + id.copy
+	return "/api/v1/namespaces/" + name,
+		"/api/v1/namespaces/" + name + "/persistentvolumeclaims/data",
+		"/api/v1/persistentvolumes/" + id.volume,
+		"/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/" + id.volume,
+		"/apis/storage.k8s.io/v1/storageclasses/" + name,
+		"/apis/storage.k8s.io/v1/volumeattachments/csi-" + id.copy
+}
+
+func (a *apiFixture) add(path, version, kind, name, namespace, uid string, body object) {
+	metadata := object{"name": name, "uid": uid, "resourceVersion": "1"}
+	if namespace != "" {
+		metadata["namespace"] = namespace
+	}
+	data := object{"apiVersion": version, "kind": kind, "metadata": metadata}
+	for key, value := range body {
+		data[key] = value
+	}
+	a.objects[path] = data
+}
+
+// addCopy serves one copy in the state its removal has reached: "full" while
+// its reader still runs, "attached" after its namespace went but its volume
+// stayed attached (run 43674222442), and "detached" once that volume is gone.
+func (a *apiFixture) addCopy(id identity, state string) {
+	name := "email-data-recovery-" + id.copy
+	namespace, claim, volume, backend, class, attachment := paths(id)
+	// Longhorn marks the claim reference retired once the claim is gone, and
+	// clears the volume reference once the volume is gone.
+	kubernetesStatus := object{"namespace": name, "pvcName": "data", "pvName": id.volume, "lastPVCRefAt": ""}
+	backendState := "attached"
+	switch state {
+	case "detached":
+		backendState = "detached"
+		kubernetesStatus["pvName"] = ""
+		kubernetesStatus["lastPVCRefAt"] = "2026-11-15T04:26:56Z"
+	case "attached":
+		kubernetesStatus["lastPVCRefAt"] = "2026-11-15T04:26:56Z"
+	}
+	a.add(backend, "longhorn.io/v1beta2", "Volume", id.volume, "longhorn-system", id.backendUID, object{
+		"spec":   object{"encrypted": true},
+		"status": object{"state": backendState, "kubernetesStatus": kubernetesStatus},
+	})
+	a.add(class, "storage.k8s.io/v1", "StorageClass", name, "", id.classUID, object{"provisioner": "driver.longhorn.io"})
+	if state == "detached" {
+		return
+	}
+	a.add(volume, "v1", "PersistentVolume", id.volume, "", id.volumeUID, object{
+		"spec":   object{"storageClassName": name, "claimRef": object{"namespace": name, "name": "data", "uid": id.claimUID}},
+		"status": object{"phase": "Bound"},
+	})
+	a.add(attachment, "storage.k8s.io/v1", "VolumeAttachment", "csi-"+id.copy, "", "uid-attachment-"+id.copy, object{
+		"spec":   object{"attacher": "driver.longhorn.io", "source": object{"persistentVolumeName": id.volume}},
+		"status": object{"attached": true},
+	})
+	if state == "attached" {
+		a.objects[volume]["metadata"].(object)["deletionTimestamp"] = "2026-11-15T04:27:01Z"
+		return
+	}
+	a.add(namespace, "v1", "Namespace", name, "", id.namespaceUID, nil)
+	a.objects[namespace]["metadata"].(object)["labels"] = object{"app.kubernetes.io/part-of": "email-data-recovery", "email.devantler.tech/data-recovery": id.copy}
+	a.add(claim, "v1", "PersistentVolumeClaim", "data", name, id.claimUID, object{"spec": object{"volumeName": id.volume}, "status": object{"phase": "Bound"}})
+}
+
+// newAPI serves production as it is after run 43674222442 and the node agents'
+// propagation fix: the first copy detached, the second complete.
 func newAPI() *apiFixture {
 	a := &apiFixture{objects: map[string]object{}}
-	add := func(path, kind, name, namespace string, spec object) {
-		metadata := object{"name": name, "uid": "uid-" + name, "resourceVersion": "1"}
-		if namespace != "" {
-			metadata["namespace"] = namespace
-		}
-		version := "v1"
-		switch kind {
-		case "StorageClass":
-			version = "storage.k8s.io/v1"
-		case "Volume":
-			version = "longhorn.io/v1beta2"
-		}
-		a.objects[path] = object{"apiVersion": version, "kind": kind, "metadata": metadata, "spec": spec, "status": object{"phase": "Bound"}}
-	}
 	for _, name := range []string{"private-mail-data", "email-data-encrypted"} {
-		add("/api/v1/namespaces/private-mail/persistentvolumeclaims/"+name, "PersistentVolumeClaim", name, "private-mail", object{"volumeName": "pvc-serving-" + name})
+		a.add("/api/v1/namespaces/private-mail/persistentvolumeclaims/"+name, "v1", "PersistentVolumeClaim", name, "private-mail", "uid-"+name, object{"spec": object{"volumeName": "pvc-serving-" + name}, "status": object{"phase": "Bound"}})
 	}
-	for _, copy := range []string{"41561215415", "42818236850"} {
-		name, volume := "email-data-recovery-"+copy, "pvc-recovery-"+copy
-		add("/api/v1/namespaces/"+name, "Namespace", name, "", nil)
-		a.objects["/api/v1/namespaces/"+name]["metadata"].(object)["labels"] = object{"app.kubernetes.io/part-of": "email-data-recovery", "email.devantler.tech/data-recovery": copy}
-		add("/api/v1/namespaces/"+name+"/persistentvolumeclaims/data", "PersistentVolumeClaim", "data", name, object{"volumeName": volume})
-		add("/api/v1/persistentvolumes/"+volume, "PersistentVolume", volume, "", object{"storageClassName": name, "claimRef": object{"namespace": name, "name": "data"}})
-		add("/apis/storage.k8s.io/v1/storageclasses/"+name, "StorageClass", name, "", nil)
-		a.objects["/apis/storage.k8s.io/v1/storageclasses/"+name]["provisioner"] = "driver.longhorn.io"
-		add("/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/"+volume, "Volume", volume, "longhorn-system", nil)
-	}
+	a.addCopy(first, "detached")
+	a.addCopy(second, "full")
 	return a
 }
 
@@ -94,7 +148,7 @@ func (a *apiFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "/api/v1":
 			resources = []object{{"name": "namespaces", "singularName": "namespace", "kind": "Namespace", "namespaced": false}, {"name": "persistentvolumes", "singularName": "persistentvolume", "kind": "PersistentVolume", "shortNames": []string{"pv"}, "namespaced": false}, {"name": "persistentvolumeclaims", "singularName": "persistentvolumeclaim", "kind": "PersistentVolumeClaim", "shortNames": []string{"pvc"}, "namespaced": true}}
 		case "/apis/storage.k8s.io/v1":
-			resources = []object{{"name": "storageclasses", "singularName": "storageclass", "kind": "StorageClass", "namespaced": false}}
+			resources = []object{{"name": "storageclasses", "singularName": "storageclass", "kind": "StorageClass", "namespaced": false}, {"name": "volumeattachments", "singularName": "volumeattachment", "kind": "VolumeAttachment", "namespaced": false}}
 		case "/apis/longhorn.io/v1beta2":
 			resources = []object{{"name": "volumes", "singularName": "volume", "kind": "Volume", "namespaced": true}}
 		}
@@ -120,7 +174,7 @@ func (a *apiFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			write(200, data)
 			return
 		}
-		if path == "/api/v1/persistentvolumes" || strings.HasSuffix(path, "/persistentvolumeclaims") {
+		if path == "/api/v1/persistentvolumes" || path == "/apis/storage.k8s.io/v1/volumeattachments" || strings.HasSuffix(path, "/persistentvolumeclaims") {
 			items := []object{}
 			keys := []string{}
 			for key := range a.objects {
@@ -143,6 +197,7 @@ func (a *apiFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.deletes++
+	a.deleted = append(a.deleted, path)
 	data, ok := a.objects[path]
 	if !ok {
 		status(404, "NotFound")
@@ -155,7 +210,7 @@ func (a *apiFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Preconditions struct{ UID string }
 	}
 	_ = json.NewDecoder(r.Body).Decode(&options)
-	if options.Preconditions.UID != "" && options.Preconditions.UID != data["metadata"].(object)["uid"] {
+	if options.Preconditions.UID == "" || options.Preconditions.UID != data["metadata"].(object)["uid"] {
 		status(409, "Conflict")
 		return
 	}
@@ -167,6 +222,26 @@ func (a *apiFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for key := range a.objects {
 			if strings.HasPrefix(key, path+"/") {
 				delete(a.objects, key)
+			}
+		}
+		// The reader pod is gone, so the node unstages the volume and the
+		// attach-detach controller removes its attachment: an ordinary detach.
+		for _, id := range []identity{first, second} {
+			if namespace, _, _, backend, _, attachment := paths(id); namespace == path {
+				delete(a.objects, attachment)
+				if volume, ok := a.objects[backend]; ok {
+					volume["status"].(object)["state"] = "detached"
+					volume["status"].(object)["kubernetesStatus"].(object)["lastPVCRefAt"] = "2026-11-15T06:00:00Z"
+				}
+			}
+		}
+	}
+	if data["kind"] == "PersistentVolume" {
+		for _, id := range []identity{first, second} {
+			if _, _, volume, backend, _, _ := paths(id); volume == path {
+				if backendVolume, ok := a.objects[backend]; ok {
+					backendVolume["status"].(object)["kubernetesStatus"].(object)["pvName"] = ""
+				}
 			}
 		}
 	}
@@ -214,13 +289,21 @@ func runCleanup(t *testing.T, api *apiFixture) (string, error) {
 	return string(output), err
 }
 
+func refusedBeforeDeleting(t *testing.T, a *apiFixture, stage string) {
+	t.Helper()
+	output, err := runCleanup(t, a)
+	if err == nil || a.deletes != 0 || strings.Contains(output, "=REMOVED") || !strings.Contains(output, "stage="+stage) {
+		t.Fatalf("want refusal at %s before any delete: err=%v deletes=%d output=%s", stage, err, a.deletes, output)
+	}
+}
+
 func TestFailedReadsNeverReportReleasedStorage(t *testing.T) {
 	for _, code := range []int{403, 500} {
 		t.Run(http.StatusText(code), func(t *testing.T) {
 			a := newAPI()
 			a.readFailure = code
 			output, err := runCleanup(t, a)
-			if err == nil || strings.Contains(output, "=COMPLETE") || strings.Contains(output, "=ALREADY_REMOVED") || a.deletes != 0 {
+			if err == nil || strings.Contains(output, "=COMPLETE") || strings.Contains(output, "=REMOVED") || a.deletes != 0 {
 				t.Fatalf("failed API read became cleanup clearance: err=%v deletes=%d output=%s", err, a.deletes, output)
 			}
 		})
@@ -228,12 +311,12 @@ func TestFailedReadsNeverReportReleasedStorage(t *testing.T) {
 }
 
 func TestReplacedResourceIsNotDeleted(t *testing.T) {
-	for index, kind := range []string{"namespace", "volume", "backend", "class"} {
-		t.Run(kind, func(t *testing.T) {
+	for index := 1; index <= 6; index++ {
+		t.Run(fmt.Sprint(index), func(t *testing.T) {
 			a := newAPI()
-			a.replaceDelete = index + 1
+			a.replaceDelete = index
 			output, err := runCleanup(t, a)
-			if err == nil || a.replacementDeleted || strings.Contains(output, "=REMOVED") {
+			if err == nil || a.replacementDeleted || strings.Contains(output, "=COMPLETE") {
 				t.Fatalf("replacement was not preserved: err=%v replacementDeleted=%v output=%s", err, a.replacementDeleted, output)
 			}
 		})
@@ -249,13 +332,78 @@ func TestCleanupRequiresSuccessfulAbsenceReads(t *testing.T) {
 	}
 }
 
-func TestIncompleteSecondCopyRefusesBeforeAnyDeletion(t *testing.T) {
+func TestOutOfOrderAbsenceRefusesBeforeAnyDeletion(t *testing.T) {
 	a := newAPI()
-	delete(a.objects, "/api/v1/namespaces/email-data-recovery-42818236850")
-	delete(a.objects, "/apis/storage.k8s.io/v1/storageclasses/email-data-recovery-42818236850")
+	namespace, _, _, _, class, _ := paths(second)
+	delete(a.objects, namespace)
+	delete(a.objects, class)
+	refusedBeforeDeleting(t, a, "order")
+}
+
+func TestRecreatedNamespaceIsNotDeleted(t *testing.T) {
+	a := newAPI()
+	namespace, _, _, _, _, _ := paths(first)
+	a.add(namespace, "v1", "Namespace", "email-data-recovery-"+first.copy, "", "uid-recreated", nil)
+	refusedBeforeDeleting(t, a, "namespace-replaced")
+}
+
+func TestChangedPinsRefuseBeforeAnyDeletion(t *testing.T) {
+	for _, tt := range []struct{ name, stage string }{{"volume", "volume-replaced"}, {"backend", "backend-replaced"}, {"class", "class-replaced"}} {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newAPI()
+			_, _, volume, backend, class, _ := paths(second)
+			path := map[string]string{"volume": volume, "backend": backend, "class": class}[tt.name]
+			a.objects[path]["metadata"].(object)["uid"] = "uid-other"
+			refusedBeforeDeleting(t, a, tt.stage)
+		})
+	}
+}
+
+func TestAttachedVolumeRefusesBeforeAnyDeletion(t *testing.T) {
+	a := newAPI()
+	a.addCopy(first, "attached")
+	refusedBeforeDeleting(t, a, "detach-pending")
+}
+
+func TestBackendInUseRefusesBeforeAnyDeletion(t *testing.T) {
+	a := newAPI()
+	_, _, _, backend, _, _ := paths(first)
+	a.objects[backend]["status"].(object)["state"] = "attached"
+	refusedBeforeDeleting(t, a, "backend-in-use")
+}
+
+func TestForeignBackendBindingRefusesBeforeAnyDeletion(t *testing.T) {
+	a := newAPI()
+	_, _, _, backend, _, _ := paths(first)
+	a.objects[backend]["status"].(object)["kubernetesStatus"].(object)["namespace"] = "private-mail"
+	refusedBeforeDeleting(t, a, "backend-binding")
+}
+
+func TestBackendReferencesMustMatchTheVolumeState(t *testing.T) {
+	for _, tt := range []struct {
+		name, key string
+		value     any
+	}{
+		{"names the deleted volume", "pvName", first.volume},
+		{"claim reference not retired", "lastPVCRefAt", ""},
+		{"claim reference of another claim", "pvcName", "other"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newAPI()
+			_, _, _, backend, _, _ := paths(first)
+			a.objects[backend]["status"].(object)["kubernetesStatus"].(object)[tt.key] = tt.value
+			refusedBeforeDeleting(t, a, "backend-binding")
+		})
+	}
+}
+
+func TestFullyClearedBackendReferencesAreRemoved(t *testing.T) {
+	a := newAPI()
+	_, _, _, backend, _, _ := paths(first)
+	a.objects[backend]["status"].(object)["kubernetesStatus"] = object{"namespace": "", "pvcName": "", "pvName": "", "lastPVCRefAt": ""}
 	output, err := runCleanup(t, a)
-	if err == nil || a.deletes != 0 || strings.Contains(output, "=COMPLETE") {
-		t.Fatalf("missing identities were accepted: err=%v deletes=%d output=%s", err, a.deletes, output)
+	if err != nil || !strings.Contains(output, "=COMPLETE serving=UNCHANGED") || a.deletes != 6 {
+		t.Fatalf("a naturally cleared backend was refused: err=%v deletes=%d output=%s", err, a.deletes, output)
 	}
 }
 
@@ -268,15 +416,20 @@ func TestChangedServingIdentityPreventsCompletion(t *testing.T) {
 	}
 }
 
-func TestVerifiedCopiesAreRemovedAndServingClaimsRetained(t *testing.T) {
+func TestResumedCopiesAreRemovedAndServingClaimsRetained(t *testing.T) {
 	a := newAPI()
 	output, err := runCleanup(t, a)
-	if err != nil || !strings.Contains(output, "=COMPLETE serving=UNCHANGED") || strings.Count(output, "=REMOVED copy=") != 2 || a.deletes != 8 {
-		t.Fatalf("verified copies did not complete: err=%v deletes=%d output=%s", err, a.deletes, output)
+	if err != nil || !strings.Contains(output, "=COMPLETE serving=UNCHANGED") || strings.Count(output, "=REMOVED copy=") != 2 || a.deletes != 6 {
+		t.Fatalf("resumed copies did not complete: err=%v deletes=%d output=%s", err, a.deletes, output)
+	}
+	for _, path := range a.deleted {
+		if strings.Contains(path, "volumeattachments") || strings.Contains(path, "/private-mail/") {
+			t.Fatalf("cleanup deleted %s; detach must stay ordinary and serving claims untouched", path)
+		}
 	}
 	for path := range a.objects {
 		if !strings.HasPrefix(path, "/api/v1/namespaces/private-mail/persistentvolumeclaims/") {
-			t.Fatalf("recovery resource retained: %s", filepath.Base(path))
+			t.Fatalf("recovery resource retained: %s", path)
 		}
 	}
 	if len(a.objects) != 2 {
