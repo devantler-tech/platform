@@ -15,7 +15,10 @@ cleanup() {
   exit "${rc}"
 }
 trap cleanup EXIT
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 for tool in kyverno kubectl yq jq; do
   command -v "${tool}" >/dev/null || fail "${tool} is required"
 done
