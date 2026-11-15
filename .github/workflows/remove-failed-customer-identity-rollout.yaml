@@ -102,10 +102,30 @@ jobs:
           }
           items() { k get "$@" -o json || fail read; }
 
-          # Nothing declares the namespace now: no Kustomization inventory names it.
-          items kustomizations.kustomize.toolkit.fluxcd.io -A >"$private_dir/kustomizations.json"
-          jq -e '[.items[] | select(.metadata.name == "apps" and .metadata.namespace == "flux-system")] | length == 1' "$private_dir/kustomizations.json" >/dev/null || fail inventory-read
-          jq -e --arg ns "$ns" '[.items[].status.inventory.entries[]?.id | select(startswith($ns + "_") or . == "_" + $ns + "__Namespace")] | length == 0' "$private_dir/kustomizations.json" >/dev/null || fail declared
+          # Nothing declares the namespace now. An inventory only describes the
+          # current desired state once `apps` (which applied these objects) has
+          # converged on its source's current artifact: Ready for its current
+          # generation, applied revision == attempted revision == the source's
+          # artifact, nothing reconciling. Then no Kustomization may name the
+          # namespace. Checked again immediately before the namespace delete.
+          undeclared() {
+            items kustomizations.kustomize.toolkit.fluxcd.io -A >"$private_dir/kustomizations.json"
+            jq -e '[.items[] | select(.metadata.name == "apps" and .metadata.namespace == "flux-system")] | length == 1' "$private_dir/kustomizations.json" >/dev/null || fail inventory-read
+            jq '.items[] | select(.metadata.name == "apps" and .metadata.namespace == "flux-system")' "$private_dir/kustomizations.json" >"$private_dir/apps.json" || fail inventory-read
+            jq -e '.spec.sourceRef.kind == "OCIRepository" and (.spec.sourceRef.namespace // "flux-system") == "flux-system" and (.spec.sourceRef.name | type == "string" and length > 0)' "$private_dir/apps.json" >/dev/null || fail apps-source
+            k -n flux-system get ocirepositories.source.toolkit.fluxcd.io "$(jq -er '.spec.sourceRef.name' "$private_dir/apps.json")" -o json >"$private_dir/source.json" || fail source-read
+            jq -e --slurpfile source "$private_dir/source.json" '
+              def ready: [.status.conditions[]? | select(.type == "Ready")] | length == 1 and .[0].status == "True";
+              def settled: [.status.conditions[]? | select(.type == "Reconciling" and .status == "True")] | length == 0;
+              ($source[0]) as $s
+              | ready and settled and .status.observedGeneration == .metadata.generation
+              and (.status.lastAppliedRevision | type == "string" and length > 0)
+              and .status.lastAttemptedRevision == .status.lastAppliedRevision
+              and ($s | ready and settled and .status.observedGeneration == .metadata.generation)
+              and $s.status.artifact.revision == .status.lastAppliedRevision' "$private_dir/apps.json" >/dev/null || fail apps-not-converged
+            jq -e --arg ns "$ns" '[.items[].status.inventory.entries[]?.id | select(startswith($ns + "_") or . == "_" + $ns + "__Namespace")] | length == 0' "$private_dir/kustomizations.json" >/dev/null || fail declared
+          }
+          undeclared
 
           if read_target "$private_dir/namespace.json" "$ns_uid" namespace "$ns"; then
             jq -e '.metadata.labels["kustomize.toolkit.fluxcd.io/name"] == "apps" and .metadata.labels["kustomize.toolkit.fluxcd.io/namespace"] == "flux-system"' "$private_dir/namespace.json" >/dev/null || fail namespace-provenance
@@ -178,6 +198,7 @@ jobs:
             done
             fail deletion-timeout
           }
+          undeclared
           remove_target "$private_dir/namespace.json" "/api/v1/namespaces/$ns" 900 namespace "$ns"
           remove_target "$private_dir/pv.json" "/api/v1/persistentvolumes/$volume" 300 persistentvolume "$volume"
           remove_target "$private_dir/backend.json" "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/$volume" 300 volumes.longhorn.io "$volume" -n longhorn-system

@@ -56,6 +56,7 @@ var resources = []resource{
 	{"postgresql.cnpg.io", "v1", "backups", "Backup", true},
 	{"helm.toolkit.fluxcd.io", "v2", "helmreleases", "HelmRelease", true},
 	{"kustomize.toolkit.fluxcd.io", "v1", "kustomizations", "Kustomization", true},
+	{"source.toolkit.fluxcd.io", "v1", "ocirepositories", "OCIRepository", true},
 	{"longhorn.io", "v1beta2", "volumes", "Volume", true},
 	{"longhorn.io", "v1beta2", "replicas", "Replica", true},
 	{"cilium.io", "v2", "ciliumnetworkpolicies", "CiliumNetworkPolicy", true},
@@ -69,6 +70,20 @@ type apiFixture struct {
 	replaceAt   int
 	deletes     int
 	replaced    bool
+	// declareAfter > 0 makes the namespace appear in the apps inventory from
+	// that Kustomization list read onwards, while the cleanup is under way.
+	declareAfter      int
+	kustomizationList int
+}
+
+const revision = "latest@sha256:0000000000000000000000000000000000000000000000000000000000000001"
+
+func ready(status string) []object {
+	return []object{{"type": "Ready", "status": status, "reason": "Fixture"}}
+}
+
+func (a *apiFixture) apps() object {
+	return a.objects[path(find("Kustomization"), "flux-system", "apps")]
 }
 
 func base(r resource) string {
@@ -125,7 +140,18 @@ func owner(kind, name, uid string) object {
 
 func newAPI() *apiFixture {
 	a := &apiFixture{objects: map[string]object{}}
-	a.add("Kustomization", "flux-system", "apps", "uid-apps", object{"status": object{"inventory": object{"entries": []object{{"id": "umami_umami_helm.toolkit.fluxcd.io_HelmRelease", "v": "v2"}}}}})
+	a.add("Kustomization", "flux-system", "apps", "uid-apps", object{
+		"metadata": object{"generation": 25},
+		"spec":     object{"sourceRef": object{"kind": "OCIRepository", "name": "flux-system"}},
+		"status": object{
+			"observedGeneration": 25, "lastAppliedRevision": revision, "lastAttemptedRevision": revision, "conditions": ready("True"),
+			"inventory": object{"entries": []object{{"id": "umami_umami_helm.toolkit.fluxcd.io_HelmRelease", "v": "v2"}}},
+		},
+	})
+	a.add("OCIRepository", "flux-system", "flux-system", "uid-source", object{
+		"metadata": object{"generation": 8},
+		"status":   object{"observedGeneration": 8, "artifact": object{"revision": revision}, "conditions": ready("True")},
+	})
 	a.add("Namespace", "", ns, nsUID, object{"metadata": object{"labels": object{"kustomize.toolkit.fluxcd.io/name": "apps", "kustomize.toolkit.fluxcd.io/namespace": "flux-system"}}})
 	a.add("Cluster", ns, "customer-identity-db", clusterUID, object{"status": object{"phase": "Setting up primary", "instances": 1}})
 	a.add("HelmRelease", ns, "zitadel", releaseUID, object{"status": object{"history": []object{{"status": "uninstalling"}}}})
@@ -218,6 +244,12 @@ func (a *apiFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if rest != res.plural {
 				continue
+			}
+			if res.kind == "Kustomization" {
+				a.kustomizationList++
+				if a.declareAfter > 0 && a.kustomizationList >= a.declareAfter {
+					a.apps()["status"].(object)["inventory"] = object{"entries": []object{{"id": ns + "_zitadel_helm.toolkit.fluxcd.io_HelmRelease", "v": "v2"}}}
+				}
 			}
 			items := []object{}
 			keys := []string{}
@@ -393,8 +425,48 @@ func TestDeployedServerIsRefused(t *testing.T) {
 
 func TestDeclaredNamespaceIsRefused(t *testing.T) {
 	a := newAPI()
-	a.objects[path(find("Kustomization"), "flux-system", "apps")]["status"] = object{"inventory": object{"entries": []object{{"id": ns + "_zitadel_helm.toolkit.fluxcd.io_HelmRelease", "v": "v2"}}}}
+	a.apps()["status"].(object)["inventory"] = object{"entries": []object{{"id": ns + "_zitadel_helm.toolkit.fluxcd.io_HelmRelease", "v": "v2"}}}
 	refused(t, a, "declared")
+}
+
+func TestUnconvergedInventoryIsNotTrusted(t *testing.T) {
+	for name, change := range map[string]func(a *apiFixture){
+		"apply failed": func(a *apiFixture) {
+			a.apps()["status"].(object)["lastAttemptedRevision"] = "latest@sha256:0000000000000000000000000000000000000000000000000000000000000002"
+		},
+		"not ready": func(a *apiFixture) { a.apps()["status"].(object)["conditions"] = ready("False") },
+		"reconciling": func(a *apiFixture) {
+			a.apps()["status"].(object)["conditions"] = append(ready("True"), object{"type": "Reconciling", "status": "True"})
+		},
+		"old generation": func(a *apiFixture) { a.apps()["metadata"].(object)["generation"] = 26 },
+		"newer source": func(a *apiFixture) {
+			a.objects[path(find("OCIRepository"), "flux-system", "flux-system")]["status"].(object)["artifact"] = object{"revision": "latest@sha256:0000000000000000000000000000000000000000000000000000000000000003"}
+		},
+		"source not ready": func(a *apiFixture) {
+			a.objects[path(find("OCIRepository"), "flux-system", "flux-system")]["status"].(object)["conditions"] = ready("False")
+		},
+		"source missing": func(a *apiFixture) {
+			delete(a.objects, path(find("OCIRepository"), "flux-system", "flux-system"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := newAPI()
+			change(a)
+			output, err := runCleanup(t, a)
+			if err == nil || a.deletes != 0 || strings.Contains(output, "=COMPLETE") || strings.Contains(output, "=VERIFIED") {
+				t.Fatalf("unconverged inventory authorized deletion: err=%v deletes=%d output=%s", err, a.deletes, output)
+			}
+		})
+	}
+}
+
+func TestNamespaceDeclaredDuringRunIsNotDeleted(t *testing.T) {
+	a := newAPI()
+	a.declareAfter = 2
+	output, err := runCleanup(t, a)
+	if err == nil || a.deletes != 0 || !strings.Contains(output, "=REFUSED stage=declared") || strings.Contains(output, "=COMPLETE") {
+		t.Fatalf("a namespace declared after verification was deleted: err=%v deletes=%d output=%s", err, a.deletes, output)
+	}
 }
 
 func TestUnexpectedObjectIsRefused(t *testing.T) {
