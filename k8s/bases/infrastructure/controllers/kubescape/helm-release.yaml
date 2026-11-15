@@ -441,6 +441,34 @@ spec:
                   preStop:
                     sleep:
                       seconds: 10
+          # The sensor bind-mounts the host's root, /var and the kubelet
+          # directory. Without propagation each container keeps a private copy
+          # of every volume mounted on its node when it starts, so a later
+          # unmount on the host leaves that copy behind. An encrypted Longhorn
+          # volume then cannot close its LUKS device, so it never detaches
+          # (#6041): the encrypted mail store could not move to another node.
+          # HostToContainer lets unmounts reach the sensor's view, while the
+          # sensor still cannot mount anything onto the host.
+          - target:
+              kind: DaemonSet
+              name: ^node-agent$
+            patch: |
+              apiVersion: apps/v1
+              kind: DaemonSet
+              metadata:
+                name: node-agent
+              spec:
+                template:
+                  spec:
+                    containers:
+                      - name: node-agent
+                        volumeMounts:
+                          - mountPath: /host
+                            mountPropagation: HostToContainer
+                          - mountPath: /var
+                            mountPropagation: HostToContainer
+                          - mountPath: /var/lib/kubelet
+                            mountPropagation: HostToContainer
           - target:
               kind: Deployment
               name: ^(kubescape|kubevuln|operator|storage)$
