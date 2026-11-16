@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const approvedImage = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:7626ff9dffe3af11b9fc20ea303a0f2e55cdcb824e464185ddad0ce527cef55c"
+const approvedImage = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:05ce801246615043ecd613c082f7b79216131f49831462a83e5c2afff237d9c1"
 const approvedProxyMap = "email-client-proxy-kkm788c4m9"
 const approvedProxyConfigSHA = "400a77329e2fcda3fea17c821593ef18f7ad2ca8f1fa32acfbf3b5f36aa6fb4c"
 const maxOutput = 16384

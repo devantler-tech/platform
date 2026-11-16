@@ -1,0 +1,9 @@
+# The mail listeners trust PROXY headers from the mail load balancer only
+# (#5481). The address must equal the private-ipv4 annotation on the
+# private-mail-public Service. The setup runs after the one-time storage copy.
+- op: test
+  path: /spec/template/spec/initContainers/1/name
+  value: configure
+- op: add
+  path: /spec/template/spec/initContainers/1/args/-
+  value: --mail-proxy-source=10.0.1.250
