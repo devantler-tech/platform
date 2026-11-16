@@ -30,6 +30,7 @@ resources:
   - database-dex.yaml
   - external-secret-dex-portal-client.yaml
   - helm-repository-dex.yaml
+  - config-map-dex-theme.yaml
   - helm-release-dex.yaml
   - http-route-dex.yaml
   - cilium-network-policy.yaml
