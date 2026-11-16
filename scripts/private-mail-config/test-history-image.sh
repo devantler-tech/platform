@@ -11,7 +11,10 @@ source_id=""
 target_id=""
 cleanup() {
   for container in "$source_id" "$target_id"; do
-    if [[ -n "$container" ]]; then docker stop --time 2 "$container" >/dev/null 2>&1 || true; docker rm "$container" >/dev/null 2>&1 || true; fi
+    if [[ -n "$container" ]]; then
+      docker stop --time 2 "$container" >/dev/null 2>&1 || true
+      docker rm "$container" >/dev/null 2>&1 || true
+    fi
   done
   docker network rm "$network" >/dev/null 2>&1 || true
   docker image rm "$fixture_image" >/dev/null 2>&1 || true
@@ -20,18 +23,18 @@ cleanup() {
 trap cleanup EXIT
 go run ./scripts/private-mail-config/testdata/historyfixture certificates "$fixture_dir"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$fixture_dir/history-fixture" ./scripts/private-mail-config/testdata/historyfixture
-printf '%s' owner@icloud.com > "$fixture_dir/source-username"
-printf '%s' password > "$fixture_dir/source-password"
-printf '%s' password > "$fixture_dir/destination-password"
-printf '%s' ned@devantler.tech > "$fixture_dir/addresses"
-cat > "$fixture_dir/imapsync-diagnostic" <<'WRAPPER'
+printf '%s' owner@icloud.com >"$fixture_dir/source-username"
+printf '%s' password >"$fixture_dir/source-password"
+printf '%s' password >"$fixture_dir/destination-password"
+printf '%s' ned@devantler.tech >"$fixture_dir/addresses"
+cat >"$fixture_dir/imapsync-diagnostic" <<'WRAPPER'
 #!/bin/sh
 /usr/local/bin/imapsync-real "$@" > /tmp/synthetic-imapsync.log 2>&1
 status=$?
 cat /tmp/synthetic-imapsync.log
 exit "$status"
 WRAPPER
-cat > "$fixture_dir/Dockerfile" <<'DOCKERFILE'
+cat >"$fixture_dir/Dockerfile" <<'DOCKERFILE'
 ARG IMPORT_IMAGE
 FROM ${IMPORT_IMAGE}
 USER 0
@@ -53,13 +56,19 @@ source_id=$(docker run -d "${isolated[@]}" --network-alias imap.mail.me.com --en
 target_id=$(docker run -d "${isolated[@]}" --network-alias mail.devantler.tech --entrypoint /usr/local/bin/history-fixture "$fixture_image" serve destination)
 for container in "$source_id" "$target_id"; do
   ready=0
-  for ((attempt=0; attempt<30; attempt++)); do
-    if docker exec "$container" /usr/local/bin/history-fixture probe ready >/dev/null 2>&1; then ready=1; break; fi
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    if docker exec "$container" /usr/local/bin/history-fixture probe ready >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
     sleep 1
   done
-  if [[ $ready != 1 ]]; then docker logs "$container" >&2; exit 1; fi
+  if [[ $ready != 1 ]]; then
+    docker logs "$container" >&2
+    exit 1
+  fi
 done
-for ((pass=1; pass<=2; pass++)); do
+for ((pass = 1; pass <= 2; pass++)); do
   if ! receipt=$(docker run --rm "${isolated[@]}" --entrypoint /bin/sh "$fixture_image" -c '/usr/local/bin/private-mail-bootstrap history --input-dir /private/inputs --confirm copy-icloud-history; status=$?; if [ "$status" != 0 ]; then cat /tmp/synthetic-imapsync.log; fi; exit "$status"' 2>&1); then
     printf 'Synthetic importer did not complete: %s\n' "$receipt" >&2
     exit 1
