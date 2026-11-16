@@ -42,6 +42,22 @@ tenant_source_default_subject() (
           issuer: "^https://token\\.actions\\.githubusercontent\\.com$", subject: $subject
         }]})
       and ([.[] | .. | objects | select(has("subject")) | select(.subject == $subject)] | length) == 1
+      # The verified source must be the ONLY thing the graph can fetch and apply from. Every
+      # child is one of the reviewed kinds; no other Flux source, HelmRelease or controller
+      # template exists; and every sourceRef anywhere in the graph names the verified source.
+      and ([$graphs[0].spec.resources[] | .template | {apiVersion, kind}] | all(. as $child | [
+            {apiVersion: "v1", kind: "Namespace"}, {apiVersion: "v1", kind: "ServiceAccount"},
+            {apiVersion: "v1", kind: "ResourceQuota"}, {apiVersion: "v1", kind: "LimitRange"},
+            {apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding"},
+            {apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding"},
+            {apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy"},
+            {apiVersion: "source.toolkit.fluxcd.io/v1", kind: "OCIRepository"},
+            {apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization"}
+          ] | index([$child]) != null))
+      and ([$graphs[0].spec.resources[] | select(.template.apiVersion | tostring | startswith("source.toolkit.fluxcd.io/"))] | map(.id)) == ["ociRepository"]
+      and ([$graphs[0].spec.resources[] | select(.template.kind == "Kustomization")] | length) >= 1
+      and ([$graphs[0] | .. | objects | select(has("sourceRef") or has("chartRef"))]
+        | all(has("chartRef") | not) and all(.sourceRef == {kind: "OCIRepository", name: "${ociRepository.metadata.name}"}))
     ' >/dev/null; then
     printf 'invalid Tenant source constructor: graph context, input domain or constructor differs\n' >&2
     return 1

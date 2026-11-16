@@ -99,6 +99,11 @@ any-release-repository	(.spec.resources[] | select(.id == "ociRepository").templ
 retyped-tenant-name	.spec.schema.spec.name = "string | default=\"x\""
 second-identity	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity) += [{"issuer":".*","subject":".*"}]
 wrong-node-kind	(.spec.resources[] | select(.id == "ociRepository").template.kind) = "Other"
+second-source	.spec.resources += [{"id":"extra","template":{"apiVersion":"source.toolkit.fluxcd.io/v1","kind":"OCIRepository","metadata":{"name":"x"},"spec":{"url":"oci://example.invalid/x"}}}]
+application-reads-other-source	(.spec.resources[] | select(.id == "kustomization").template.spec.sourceRef.name) = "other"
+cross-namespace-source	(.spec.resources[] | select(.id == "kustomizationSops").template.spec.sourceRef.namespace) = "flux-system"
+helm-release-child	.spec.resources += [{"id":"hr","template":{"apiVersion":"helm.toolkit.fluxcd.io/v2","kind":"HelmRelease","metadata":{"name":"x"},"spec":{"chartRef":{"kind":"OCIRepository","name":"x"}}}}]
+unreviewed-child-kind	.spec.resources += [{"id":"job","template":{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"x"}}}]
 CASES
 printf '%s failure(s)\n' "$failures"
 [[ "$failures" == 0 ]]

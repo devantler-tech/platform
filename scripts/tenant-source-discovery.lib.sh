@@ -107,8 +107,11 @@ tenant_source_inventory_check() (
       then {kind,apiVersion:((.group // "kro.run")+"/"+.apiVersion)}
       else error("source-producing schema GVK is unknown") end] as $schemas |
     {
+      # A Tenant instance counts whether or not its graph was observed: an omitted graph
+      # would otherwise leave the instance on whatever constructor the cluster holds.
       instances: [$nodes[] | . as $node |
-        select(any($schemas[]; .kind==$node.kind and .apiVersion==$node.apiVersion)) |
+        select((.apiVersion=="kro.run/v1alpha1" and .kind=="Tenant") or
+          any($schemas[]; .kind==$node.kind and .apiVersion==$node.apiVersion)) |
         {apiVersion, kind, name:(.metadata | if type=="object" then (.name // "?") else "?" end)}],
       tenantGraphs: [$producers[] | select(.spec.schema.kind=="Tenant" and
         ((.spec.schema.group // "kro.run")+"/"+.spec.schema.apiVersion)=="kro.run/v1alpha1")]

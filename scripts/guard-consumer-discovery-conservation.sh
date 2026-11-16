@@ -1065,6 +1065,14 @@ if tenant_source_inventory_check \
   "$work/typed-source-inventory.jsonl"; then
   tenant_sources_admitted=1
 fi
+# A rendered Tenant counts even when no rendered graph produces it (so the loop below,
+# which walks the graphs it found, never sees it): it would run on whatever constructor
+# the cluster holds.
+rendered_tenants="$(jq -s '[.[] | .document | .. | objects | select(.apiVersion == "kro.run/v1alpha1" and .kind == "Tenant")] | length' \
+  "$work/typed-source-inventory.jsonl")" || refuse 'could not count rendered Tenant instances'
+if [ "$rendered_tenants" != 0 ] && [ "$tenant_sources_admitted" != 1 ]; then
+  refuse "production renders $rendered_tenants Tenant instance(s) of kro.run/v1alpha1; kro turns each into an OCIRepository inside the cluster, which neither the file scan nor this render has a document for"
+fi
 while IFS=$'\t' read -r kind api_version; do
   [ -n "$kind" ] || continue
   instances=0
