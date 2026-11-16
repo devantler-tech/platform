@@ -26,6 +26,10 @@ repository. Each page embeds the files it needs in its own ConfigMap:
   `scripts/tests/test-dex-theme-mount.sh` fails when the two differ.
 - Homepage: [`homepage-brand`](../k8s/bases/apps/homepage/config-map-brand.yaml) holds the icon at
   180, 192 and 512 px and as `icon.svg`.
+- Policy Reporter: [`policy-reporter-brand`](../k8s/bases/infrastructure/policy-reporter/config-map.yaml)
+  holds `logo.png` (the icon at 180 px) and `favicon.ico` (the icon at 32, 64 and 180 px). They
+  replace the UI's own files, which a running pod does not refresh, so a change also sets
+  `platform.devantler.tech/brand-sha256` in its HelmRelease to the new `logo.png`'s sha256.
 - ZITADEL (accounts.devantler.tech and its emails):
   [`zitadel-branding`](../k8s/providers/hetzner/apps/customer-identity/config-map-branding.yaml)
   holds both wordmarks and the icon as PNG, because email clients do not show SVG. The setup
