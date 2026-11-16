@@ -34,6 +34,14 @@ attachment to remain healthy. Re-run the complete native runtime census.
 Placement itself proves neither overlap capacity nor adoption of the approved
 instance-manager image. A remaining HOLD still blocks adoption.
 
+The policy-reporting UI needs three Ready, schedulable eligible hosts for its
+two replicas and rolling surge. Before cordoning, rebuilding or retiring any
+of its eligible hosts, replace or remove its temporary placement through a
+reviewed change. Verify the replacement hosts' request and resident-memory
+budgets, complete the UI rollout and require both replicas Ready before host
+maintenance begins. This prerequisite applies before the first permanent-worker
+preparation, as well as before maintenance of its temporary migration worker.
+
 Remove these temporary placements, including the FluxInstance controller patches
 and the security-progress and policy-reporting UI patches,
 through a reviewed change after the migration's
