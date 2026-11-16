@@ -27,6 +27,12 @@ unmatched server based on provider labels. Use a separate, reviewed ownership
 and cleanup procedure for any provider write. The normal headroom gate still
 requires a reserved builder slot.
 
+A stable account can remain held by a joined node's ownership metadata. Its
+failure report includes the provider-only candidate's fixed label classification,
+with ownership and headroom explicitly unverified. The operation still fails and
+emits no accepted census receipt. Changed, unreadable or incomplete inventories
+produce no candidate classification.
+
 The later worker activation must repeat this check immediately before mutable
 publication and before updating the pool, then require the full nine-node roster
 after Talos readiness. An earlier workflow result alone is insufficient. These
