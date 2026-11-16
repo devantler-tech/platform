@@ -60,7 +60,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|customer-dex 4c568faea9557d01783d606255b6aab07af01519caeca91a8349f62ceff873f5
+helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|customer-dex 6614a7b8c18d0446e108ac98f6f2c74619b916c987ab7c55e276d0a62aeae50a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|zitadel eeb9881018664637cdefc9c5c0afd6953aa958e5dbfbc9cd8c5d521501e52431
 
@@ -120,7 +120,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 7ce46ec995e409241060d9a07503b4949ef5553a24f2f4924dc5bc6d50cd4f9b
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter 3ba681e008bff5e4e723e78b14d850d92a89ab810a4eb6f7e49408a0abf51ef9
+helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter a7f2b4447f2b95c6aa298f20367b851116fcbc81829014f067a10f725b1e2e69
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|reloader|reloader c26139f0a484b501080f4a245c1ce01f6b770827797562919814daa98118ef3f
 
