@@ -99,7 +99,11 @@ func TestAllSkippedBatchIsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	t.Cleanup(func() {
+		if err := reader.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	oldArgs, oldInput := os.Args, os.Stdin
 	os.Args, os.Stdin = []string{"admission-driver", policyPath}, reader
 	defer func() { os.Args, os.Stdin = oldArgs, oldInput }()
