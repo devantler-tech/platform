@@ -120,7 +120,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 7ce46ec995e409241060d9a07503b4949ef5553a24f2f4924dc5bc6d50cd4f9b
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter 125f3e22ab3fc5d9baf3c69642c68c0a5036dde967b0fb7f681bff43937e525d
+helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter a7f2b4447f2b95c6aa298f20367b851116fcbc81829014f067a10f725b1e2e69
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|reloader|reloader c26139f0a484b501080f4a245c1ce01f6b770827797562919814daa98118ef3f
 

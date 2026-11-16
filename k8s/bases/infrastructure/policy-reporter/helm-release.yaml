@@ -118,6 +118,13 @@ spec:
       podSecurityContext:
         seccompProfile:
           type: RuntimeDefault
+      # Dark by default, like the platform's other pages; the page's own
+      # selector still switches it for one browser.
+      displayMode: dark
+      # The production cluster's name (ksail.prod.yaml) in place of "Default".
+      # The chart also names the UI's own cluster entry with it, which still
+      # points at http://policy-reporter:8080.
+      name: prod
       # The Devantler Tech icon as the top-bar logo and the tab icon, from
       # config-map.yaml. Each file replaces the UI's own copy in its static
       # folder; see config-map.yaml for why ui.logo.path is not used.
