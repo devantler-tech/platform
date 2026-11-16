@@ -1,6 +1,6 @@
 # The business-site portal's own customer Dex (ADR 0021): the portal's one
-# OIDC issuer, https://login.devantler.tech, with ZITADEL as its only
-# connector. Separate from the platform's infrastructure Dex (namespace `dex`):
+# OIDC issuer, https://login.devantler.tech, with ZITADEL for customers and
+# platform SSO for the operator. Separate from infrastructure Dex (namespace `dex`):
 # its own issuer, clients, secrets and store. It reuses that Dex's signed,
 # source-built image (platform#5811), so admission verifies its signature.
 #
