@@ -161,11 +161,11 @@ cp "$work/good.yaml" "$work/tree/k8s/providers/docker/local-tenant.yaml"
 discover >"$work/result"
 [ ! -s "$work/result" ]
 
-# The declared schema, not the name Tenant alone, defines a source instance.
+# The declared schema defines a source instance, and a kro.run Tenant counts even when no
+# observed graph produces it: it would run on whatever constructor the cluster holds.
 yq -i '.spec.schema.group="tenants.example.test"' "$work/tree/k8s/controller.yaml"
 cp "$work/good.yaml" "$input"
-discover >"$work/result"
-[ ! -s "$work/result" ]
+refuses 'kro.run Tenant whose graph is not observed'
 yq '.apiVersion="tenants.example.test/v1alpha1"' "$work/good.yaml" >"$input"
 refuses 'matching custom-group instance'
 yq -i 'del(.spec.schema.apiVersion)' "$work/tree/k8s/controller.yaml"
