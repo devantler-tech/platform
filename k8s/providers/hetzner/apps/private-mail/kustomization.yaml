@@ -33,6 +33,14 @@ patches:
       name: private-mail
       namespace: private-mail
     path: patches/migrate-to-encrypted-storage.yaml
+  # The mail listeners trust PROXY headers from their own load balancer only.
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+    path: patches/trust-mail-load-balancer.yaml
   # The public mail hostname, for submission and IMAPS clients (#5481).
   - target:
       group: cert-manager.io

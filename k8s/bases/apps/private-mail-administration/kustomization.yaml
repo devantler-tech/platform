@@ -23,4 +23,4 @@ images:
     # Signed main publication b4253e8d38dc with the secure Stalwart defaults
     # (#6261). Its only change from b9aeb4ed74a2, the SES relay route, is the
     # declared defaults and their read-back (docs/operations/email-secure-defaults.md).
-    digest: sha256:7626ff9dffe3af11b9fc20ea303a0f2e55cdcb824e464185ddad0ce527cef55c
+    digest: sha256:05ce801246615043ecd613c082f7b79216131f49831462a83e5c2afff237d9c1
