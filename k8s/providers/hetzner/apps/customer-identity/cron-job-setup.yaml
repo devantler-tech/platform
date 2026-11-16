@@ -46,8 +46,9 @@
 #   that the portal is invitation-only. ZITADEL has no Danish, so English is
 #   its only language, and public organization registration stays off;
 # - the portal's service account: the machine user business-portal, with only
-#   ORG_USER_MANAGER of the Customers organization, and a proved personal
-#   access token in secret-portal-zitadel-token.yaml, which a PushSecret copies
+#   ORG_USER_MANAGER of the Customers organization, and a proved 90-day personal
+#   access token, renewed with 30 days left, in secret-portal-zitadel-token.yaml,
+#   which a PushSecret copies
 #   to OpenBao apps/business-site/portal-zitadel for the portal's operator page.
 # A run that finds nothing to change writes nothing. A duplicate, a deactivated
 # client, a missing Secret, an API error or a refused write stops the run
@@ -982,10 +983,11 @@ spec:
                   # ZITADEL's API as the machine user business-portal of the Customers organization.
                   # Its one membership is ORG_USER_MANAGER there, ZITADEL's narrowest role that can
                   # create users, and it has no instance role; any other membership stops the run.
-                  # Its personal access token is proved on every run. When it is missing, the
-                  # placeholder or refused, the run removes the user's tokens, issues one, and
-                  # writes it to secret-portal-zitadel-token.yaml, which a PushSecret copies to
-                  # OpenBao apps/business-site/portal-zitadel for the portal.
+                  # Its personal access token lasts 90 days and is proved on every run. When it is
+                  # missing, the placeholder, refused or has fewer than 30 days left, the run removes
+                  # the user's tokens, issues one, and writes it to secret-portal-zitadel-token.yaml,
+                  # which a PushSecret copies to OpenBao apps/business-site/portal-zitadel for the
+                  # portal.
                   portal_account=business-portal
                   portal_accounts=$(connect zitadel.user.v2.UserService/ListUsers "$(jq -nc --arg n "$portal_account" --arg o "$customers_org_id" \
                     '{queries: [{userNameQuery: {userName: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}, {organizationIdQuery: {organizationId: $o}}]}')")
@@ -1037,14 +1039,27 @@ spec:
                     portal_reissue="none stored"
                   elif ! portal_token_works "$stored_portal_token"; then
                     portal_reissue="stored one refused"
+                  else
+                    # A token lasts 90 days and is renewed once fewer than 30 are left, so it never
+                    # runs out under the portal. One that lasts longer than 90 days is renewed too.
+                    portal_token_days=$(api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats/_search" '{}' |
+                      jq -r '[.result // [] | .[] | .expirationDate // "9999-12-31T23:59:59Z" | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601]
+                        | if length == 0 then 0 else (min - now) / 86400 | floor end')
+                    if ((portal_token_days < 30)); then
+                      portal_reissue="expires in $portal_token_days days"
+                    elif ((portal_token_days > 90)); then
+                      portal_reissue="expires in more than 90 days"
+                    fi
                   fi
+                  unset stored_portal_token
                   if [[ -n $portal_reissue ]]; then
                     portal_tokens=$(api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats/_search" '{}' |
                       jq -r '.result // [] | .[].id')
                     for portal_token_id in $portal_tokens; do
                       api_org=$customers_org_id api DELETE "/management/v1/users/$portal_account_id/pats/$portal_token_id" >/dev/null
                     done
-                    api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats" '{}' > "$work/portal-pat"
+                    api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats" \
+                      "$(jq -nc '{expirationDate: (now + 90 * 86400 | floor | todate)}')" > "$work/portal-pat"
                     PORTAL_TOKEN=$(jq -er '.token' "$work/portal-pat") || fail "ZITADEL returned no token for $portal_account"
                     export PORTAL_TOKEN
                     patch_secret "$(jq -nc '{data: {token: (env.PORTAL_TOKEN | @base64)}}')" "$portal_token_secret"
