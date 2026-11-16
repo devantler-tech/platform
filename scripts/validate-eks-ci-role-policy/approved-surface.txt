@@ -514,7 +514,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documen
 
 source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator fdc99e9413e88a5f8a99efa8b515dfbc340303dca5650d34137f1965d2788771
 
-source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config 5014827f3d3e757a6f63867060cadee1c1d6ccd4c5fa774e053c6593554fb0f3
+source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config 2e7ed5cc71190b2c18b48cb6424190cfcf247c80d71ed870cf5d5d727e04a58e
 
 source.toolkit.fluxcd.io/v1|OCIRepository|homepage|homepage ff2c2d1aac0b2315247df9f5266eeb00f4443ea551d6e92270bdf76a243c0f38
 
