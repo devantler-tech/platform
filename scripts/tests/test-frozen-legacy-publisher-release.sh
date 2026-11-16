@@ -133,7 +133,7 @@ generate() {
 }
 : >"$work/requests.log"
 if generate '' && [[ ! -s "$work/requests.log" ]] &&
-  awk -F'\t' -v candidate="$frozen" 'NR>1 { if (NF!=8 || $7!=candidate || $1=="business-site") bad=1; rows++ } END {exit bad || rows!=5}' "$work/generated.tsv"; then
+  awk -F'\t' -v candidate="$frozen" 'NR>1 { if (NF!=8 || $7!=candidate || $1=="business-site" || $1=="data-product-controller") bad=1; rows++ } END {exit bad || rows!=4}' "$work/generated.tsv"; then
   passed=$((passed + 1))
 else
   printf 'FAIL: complete legacy generator must use the frozen default without network requests\n'

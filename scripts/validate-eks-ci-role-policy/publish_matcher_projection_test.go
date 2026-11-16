@@ -49,7 +49,6 @@ spec:
 		{"github-config", "publish-manifests"},
 		{"ascoachingogvaner", "publish-app"},
 		{"aws", "publish-manifests"},
-		{"data-product-controller", "publish-app"},
 		{"wedding-app", "publish-app"},
 	}
 	for _, consumer := range consumers {
@@ -70,6 +69,15 @@ spec:
 			}
 		})
 	}
+	// KHoist signs as itself (ADR 0017): its retired shared-publisher matcher is no
+	// consumer, so even an exact signer subset moves its fingerprint.
+	t.Run("retired data-product-controller", func(t *testing.T) {
+		retired := strings.ReplaceAll(manifest, "github-config", "data-product-controller")
+		retired = strings.ReplaceAll(retired, "publish-manifests", "publish-app")
+		if entry(strings.Replace(retired, "[0-9a-f]{40}", "("+a+"|"+b+")", 1)) == entry(retired) {
+			t.Error("the retired data-product-controller matcher is still projected")
+		}
+	})
 
 	baseline := entry(manifest)
 	narrowed := strings.Replace(manifest, "[0-9a-f]{40}", "("+a+"|"+b+")", 1)

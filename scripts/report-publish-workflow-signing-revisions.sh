@@ -59,12 +59,12 @@ readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?
 # out of the pattern while any other file moves in leaves the total at five, the floor
 # passes, and the vanished consumer's revision is never checked. Verified by deleting
 # wedding-app's manifest and adding an unrelated matching file: five consumers reported,
-# exit 0, wedding-app silently absent. Add a name here when a consumer is genuinely added.
+# exit 0, wedding-app silently absent. Add a name here when a consumer is genuinely added,
+# and remove it only in the change that stops it trusting the shared publisher (ADR 0017).
 readonly EXPECTED_CONSUMERS=(
   '.github'
   'ascoachingogvaner'
   'aws'
-  'data-product-controller'
   'wedding-app'
 )
 
@@ -75,7 +75,6 @@ readonly EXPECTED_CONSUMERS=(
 readonly EXPECTED_ARTIFACTS=(
   'ascoachingogvaner/manifests'
   'aws/manifests'
-  'data-product-controller/manifests'
   'github-config/manifests'
   'wedding-app/manifests'
 )

@@ -35,8 +35,7 @@ scripts/publish-workflow-bootstrap-publications.json
 k8s/bases/apps/github-config/oci-repository.yaml
 k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
 k8s/providers/hetzner/apps/aws/oci-repository.yaml
-k8s/bases/apps/wedding-app/oci-repository.yaml
-k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml'
+k8s/bases/apps/wedding-app/oci-repository.yaml'
 readonly endpoint_script='scripts/use-prod-stable-api-endpoint.sh'
 
 work_dir="$(mktemp -d)"
@@ -320,6 +319,22 @@ check() {
       printf 'VIOLATION A10: consumer(s) %sare in the WRITE token repositories list, which grants them contents/pull-requests write\n' "${leaked}"
       return 1
     }
+  # The read token names no repository beyond the approved consumers: one that signs as
+  # itself leaves the set (ADR 0017), and its read grant leaves with it.
+  consumer_set=" $(printf '%s' "${consumers}" | tr '\n' ' ') "
+  extra=''
+  while IFS= read -r repository; do
+    [ -n "${repository}" ] || continue
+    case "${consumer_set}" in
+      *" ${repository} "*) ;;
+      *) extra="${extra}${repository} " ;;
+    esac
+  done <<<"$(q "$f" ".jobs.regenerate.steps[${read_token_idx}].with.repositories")"
+  [ -z "${extra}" ] ||
+    {
+      printf 'VIOLATION A10: repositories %sare in the consumer-read token repositories list but are no approved consumer\n' "${extra}"
+      return 1
+    }
 
   # A11 — ONE pull request even across refs. The pushed branch is fixed, so a
   # dispatch from another ref and the scheduled run on the default branch contend
@@ -573,7 +588,7 @@ ablate A7 'checkout ref removed' '(.jobs.regenerate.steps[] | select(.uses // ""
 ablate A7 'checkout ref interpolated' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("actions/checkout")) | .with.ref) = "${{ github.ref_name }}"'
 ablate A10 'a consumer added to the WRITE token' '(.jobs.regenerate.steps[] | select(.id == "app-token") | .with.repositories) = "platform\nwedding-app\n"'
 ablate A10 'a consumer dropped from the READ token' '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.repositories) = ".github\naws\nwedding-app\n"'
-ablate A10 'a renamed consumer named by its old repository' '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.repositories) |= sub("khoist"; "data-product-controller")'
+ablate A10 'a retired consumer kept in the READ token' '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.repositories) += "khoist\n"'
 ablate A14 'pull-request step re-gated on moved' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .if) = "steps.moved.outputs.moved == '"'"'true'"'"'"'
 
 ablate A15 'writer removed' 'del(.jobs.regenerate.steps[] | select(.run // "" | contains("write-publish-workflow-matchers.sh")))'
