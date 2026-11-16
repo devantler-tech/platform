@@ -82,7 +82,7 @@ spec:
       SecretProjection:
         secretName: 'string | required=true minLength=1 maxLength=253 pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"'
         items: >-
-          []ProjectionItem | required=true minItems=1 maxItems=8 listType=atomic
+          []ProjectionItem | required=true minItems=1 maxItems=12 listType=atomic
           validation="self.all(x, self.filter(y, y.key == x.key).size() == 1 && self.filter(y, y.path == x.path).size() == 1)"
       ConfigMapProjection:
         configMapName: 'string | required=true minLength=1 maxLength=253 pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"'

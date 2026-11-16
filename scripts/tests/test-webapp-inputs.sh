@@ -60,6 +60,16 @@ for mutation in \
   expect_mutation invalid "$mutation" "$combined"
 done
 expect_mutation valid '.spec.configMapProjections[0].items = [range(0;8)|{key:("k"+tostring),path:("p"+tostring)}]' "$combined"
+for count in 10 12; do
+  expect_mutation valid ".spec.secretProjections[0].items = [range(0;$count)|{key:(\"k\"+tostring),path:(\"p\"+tostring)}]" "$combined"
+done
+private_capacity="$(jq '.spec.secretProjections[0].items = [range(0;12)|{key:("k"+tostring),path:("p"+tostring)}]' <<<"$combined")"
+for mutation in \
+  '.spec.secretProjections[0].items[11].key = .spec.secretProjections[0].items[0].key' \
+  '.spec.secretProjections[0].items[11].path = .spec.secretProjections[0].items[0].path' \
+  '.spec.secretProjections[0].items[11].path = "../private"'; do
+  expect_mutation invalid "$mutation" "$private_capacity"
+done
 for mutation in \
   '.spec.args = null' \
   '.spec.args = [true]' \
@@ -88,7 +98,7 @@ for mutation in \
   '.spec.secretProjections[0].items[0].path = ".hidden"' \
   '.spec.secretProjections[0].items[0].mode = 511' \
   '.spec.secretProjections[0].items[0].key = "a/b"' \
-  '.spec.secretProjections[0].items = [range(0;9)|{key:("k"+tostring),path:("p"+tostring)}]' \
+  '.spec.secretProjections[0].items = [range(0;13)|{key:("k"+tostring),path:("p"+tostring)}]' \
   '.spec.secretProjections[0].items[0].path = ("x" * 65)' \
   '.spec.secretProjections[0] |= del(.items)' \
   '.spec.secretProjections[0] |= del(.secretName)' \

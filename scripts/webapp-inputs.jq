@@ -12,11 +12,11 @@ def item:
   only(["key", "path"]) and has("key") and has("path") and
   (.key | text and length <= 253 and test("^[-._a-zA-Z0-9]+$")) and
   (.path | text and length <= 64 and test("^[A-Za-z0-9][A-Za-z0-9._-]*$"));
-def projection($name):
+def projection($name; $maxItems):
   only([$name, "items"]) and has($name) and has("items") and
   (.[$name] | text and length <= 253 and
     test("^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$")) and
-  (.items | type == "array" and length >= 1 and length <= 8 and all(.[]; item) and
+  (.items | type == "array" and length >= 1 and length <= $maxItems and all(.[]; item) and
     ((map(.key) | unique | length) == length) and
     ((map(.path) | unique | length) == length));
 def spec:
@@ -34,8 +34,8 @@ def spec:
   optional("args"; type == "array" and length <= 32 and all(.[]; argument)) and
   optional("runAsUser"; identity) and optional("runAsGroup"; identity) and
   optional("readOnlyRootFilesystem"; type == "boolean") and
-  optional("secretProjections"; type == "array" and length <= 1 and all(.[]; projection("secretName"))) and
-  optional("configMapProjections"; type == "array" and length <= 1 and all(.[]; projection("configMapName")));
+  optional("secretProjections"; type == "array" and length <= 1 and all(.[]; projection("secretName"; 12))) and
+  optional("configMapProjections"; type == "array" and length <= 1 and all(.[]; projection("configMapName"; 8)));
 length == 1 and (.[0] |
   only(["apiVersion", "kind", "metadata", "spec"]) and
   .apiVersion == "kro.run/v1alpha1" and .kind == "WebApp" and

@@ -39,8 +39,9 @@ with required inputs, fixed 0440 files and the process's primary group. Reloader
 rolls startup-only consumers when either selected input changes. The application
 must explicitly read its file; the platform does not inject environment variables.
 
-Each list admits zero or one projection. Each selected projection has one to
-eight items with unique keys and destination filenames. Keys use only letters,
+Each list admits zero or one projection. A selected Secret has one to twelve
+items; a selected ConfigMap has one to eight. Keys and destination filenames
+must be unique within each projection. Keys use only letters,
 digits, hyphens, periods and underscores, with a maximum of 253 characters.
 Destination filenames must start with a letter or digit, contain only those
 same characters, and have at most 64 characters. Namespace overrides, paths,

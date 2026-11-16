@@ -359,6 +359,45 @@ func TestCommittedWebApp(t *testing.T) {
 			projection["items"] = append(items, map[string]interface{}{"key": "key-8", "path": "file-8"})
 			refused(t, input)
 		})
+		secretItems := func(count int) []interface{} {
+			items := make([]interface{}, 0, count)
+			for i := range count {
+				items = append(items, map[string]interface{}{"key": fmt.Sprintf("key-%d", i), "path": fmt.Sprintf("file-%d", i)})
+			}
+			return items
+		}
+		for _, count := range []int{10, 12} {
+			t.Run(fmt.Sprintf("private selected keys admit and compile %d files", count), func(t *testing.T) {
+				input := candidate()
+				projection := input.Object["spec"].(map[string]interface{})["secretProjections"].([]interface{})[0].(map[string]interface{})
+				projection["items"] = secretItems(count)
+				if err := admit(input); err != nil {
+					t.Fatal(err)
+				}
+				got := desiredDeployment(t, engine, definition, input).Spec.Template.Spec
+				if len(got.Containers) != 1 || len(got.Volumes) != 1 || len(got.Containers[0].VolumeMounts) != 1 {
+					t.Fatal("additional selected keys must stay in the single confined projection")
+				}
+				secret, mount := got.Volumes[0].Secret, got.Containers[0].VolumeMounts[0]
+				if secret == nil || secret.SecretName != "public-disclosure" || len(secret.Items) != count ||
+					secret.DefaultMode == nil || *secret.DefaultMode != 288 || secret.Optional == nil || *secret.Optional ||
+					mount.MountPath != "/run/webapp-inputs" || !mount.ReadOnly || mount.SubPath != "" || mount.SubPathExpr != "" ||
+					len(got.Containers[0].Env) != 0 || len(got.Containers[0].EnvFrom) != 0 {
+					t.Fatal("additional selected keys changed the fixed required read-only input boundary")
+				}
+				for i, item := range secret.Items {
+					if item.Key != fmt.Sprintf("key-%d", i) || item.Path != fmt.Sprintf("file-%d", i) || item.Mode != nil {
+						t.Fatal("actual compiler dropped or changed a selected key, path or fixed item mode")
+					}
+				}
+			})
+		}
+		t.Run("private selected-key bound refuses thirteen", func(t *testing.T) {
+			input := candidate()
+			projection := input.Object["spec"].(map[string]interface{})["secretProjections"].([]interface{})[0].(map[string]interface{})
+			projection["items"] = secretItems(13)
+			refused(t, input)
+		})
 		t.Run("omitted inputs keep effective defaults and no projection", func(t *testing.T) {
 			input := candidate()
 			spec := input.Object["spec"].(map[string]interface{})
