@@ -403,6 +403,21 @@ spec:
                     kubectl -n "$namespace" patch secret "$name" --type merge --patch-file "$work/patch" >/dev/null ||
                       fail "cannot update Secret $name"
                   }
+                  # Export the organization proved by this setup, without changing its token.
+                  # The portal must use that exact organization rather than a guessed identifier.
+                  keep_portal_organization() {
+                    [[ -n $customers_org_id ]] || fail "cannot record an unknown portal organization"
+                    local kept_org
+                    kept_org=$(secret_json "$portal_token_secret" | jq -r '.data["org-id"] // "" | @base64d') ||
+                      fail "cannot read the portal organization"
+                    [[ $kept_org != "$customers_org_id" ]] || return 0
+                    patch_secret "$(jq -nc --arg id "$customers_org_id" '{data: {"org-id": ($id | @base64)}}')" \
+                      "$portal_token_secret"
+                    kept_org=$(secret_json "$portal_token_secret" | jq -r '.data["org-id"] // "" | @base64d') ||
+                      fail "cannot verify the portal organization"
+                    [[ $kept_org == "$customers_org_id" ]] || fail "the portal organization was not kept"
+                    changes+=("recorded the portal service account's organization")
+                  }
                   # client_authenticates ID SECRET: succeeds when ZITADEL accepts this client
                   # secret. A token request with a code that cannot exist fails either at client
                   # authentication (invalid_client: the secret is wrong, for example after a
@@ -1009,6 +1024,7 @@ spec:
                     unset PORTAL_TOKEN PORTAL_TOKEN_ID
                     changes+=("issued the $portal_account token ($portal_reissue)")
                   fi
+                  keep_portal_organization
 
                   # --- Branding ---------------------------------------------------------------------
                   # This run owns ZITADEL's whole look, the instance's label policy, so an edit in the
