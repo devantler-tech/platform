@@ -223,6 +223,10 @@ components:
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
 patches:
+  # Temporary rollout headroom for the storage migration (#6073). This
+  # single-writer metrics collector keeps its existing Recreate strategy.
+  - path: coroot/patches/runtime-headroom.yaml
+  - path: policy-reporter/patches/runtime-headroom.yaml
   - path: ksail-operator/patches/enable-oidc.yaml
   - path: vault-backup-recovery/patches/use-recovery-storage-for-initial-snapshot.yaml
     target:
