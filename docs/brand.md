@@ -22,7 +22,8 @@ repository. Each page embeds the files it needs in its own ConfigMap:
   `favicon.png` (the icon at 256 px) and `logo.svg` (the dark-background wordmark).
 - The customer Dex (login.devantler.tech):
   [`customer-dex-theme`](../k8s/providers/hetzner/apps/customer-identity/config-map-dex-theme.yaml)
-  is a copy of `dex-theme` with only its name and namespace changed; keep the two equal.
+  is a copy of `dex-theme` with only its name and namespace changed;
+  `scripts/tests/test-dex-theme-mount.sh` fails when the two differ.
 - Homepage: [`homepage-brand`](../k8s/bases/apps/homepage/config-map-brand.yaml) holds the icon at
   180, 192 and 512 px and as `icon.svg`.
 - ZITADEL (accounts.devantler.tech and its emails):

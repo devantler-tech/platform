@@ -19,7 +19,8 @@
 # cluster, so it is refused.
 #
 # The customer Dex (customer-identity/customer-dex, in the Hetzner apps layer)
-# carries the same theme and gets the same checks.
+# carries the same theme and gets the same checks, and its theme files must equal
+# the platform Dex's byte for byte.
 #
 # Every check is first run against a broken copy of the real render, to prove
 # it fails for the reason it names.
@@ -265,5 +266,22 @@ expect_failure 'customer Dex ConfigMap missing' "${broken}" 'rendered 0 times'
 out="$(check_theme "${workdir}/apps.yaml")" ||
   fail "customer Dex: ${out}. Its theme is configured in k8s/providers/hetzner/apps/customer-identity/ (helm-release-dex.yaml and config-map-dex-theme.yaml)"
 
-printf 'PASS: on %s and for the customer Dex, Dex is told to use the theme directory its ConfigMap is mounted at, and that theme holds every file the pages link to\n' \
+# themes_equal <controllers.yaml> <apps.yaml>: the customer Dex's theme is a copy
+# of the platform Dex's, so their files must be equal byte for byte.
+themes_equal() {
+  local -r files='{"data": .data, "binaryData": .binaryData}'
+  local platform customer
+  platform="$(yq eval -o=json -I=0 "select(.kind == \"ConfigMap\" and .metadata.name == \"dex-theme\") | ${files}" "$1")" || return 1
+  customer="$(yq eval -o=json -I=0 "select(.kind == \"ConfigMap\" and .metadata.name == \"customer-dex-theme\") | ${files}" "$2")" || return 1
+  [[ -n "${platform}" && "${platform}" == "${customer}" ]]
+}
+yq eval '(select(.kind == "ConfigMap" and .metadata.name == "customer-dex-theme") | .data["styles.css"]) += "/* drift */"' \
+  "${workdir}/apps.yaml" >"${broken}"
+if themes_equal "${workdir}/hetzner.yaml" "${broken}"; then
+  fail "control 'customer Dex theme drifted': the equality check passed a changed stylesheet"
+fi
+themes_equal "${workdir}/hetzner.yaml" "${workdir}/apps.yaml" ||
+  fail "the customer Dex theme (customer-identity/config-map-dex-theme.yaml) differs from the platform Dex theme (dex/config-map.yaml); keep the two equal"
+
+printf 'PASS: on %s and for the customer Dex (whose theme equals the platform Dex theme), Dex is told to use the theme directory its ConfigMap is mounted at, and that theme holds every file the pages link to\n' \
   "${providers[*]}"
