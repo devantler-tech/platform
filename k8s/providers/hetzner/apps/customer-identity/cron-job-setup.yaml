@@ -26,10 +26,13 @@
 #   GitHub: invite-only, linked to an existing customer by verified email or
 #   after one password-and-MFA sign-in;
 # - customer invitations: the maintainer is IAM_OWNER and owner of the
-#   Customers organization, and invites from the ZITADEL console alone by
-#   giving a customer the metadata portal_workspace=<workspace>, which only an
-#   administrator can set. The portalWorkspace Action passes it to the customer
-#   Dex, which hands it to the portal as the groups claim;
+#   Customers organization, and invites from the ZITADEL console alone. He
+#   creates a workspace with the organization metadata
+#   portal_workspace.<workspace> and invites a customer into it with the user
+#   metadata portal_workspace=<workspace>; only an administrator can set either.
+#   On every sign-in the portalWorkspace Action passes an existing workspace to
+#   the customer Dex, which hands it to the portal as the groups claim, and
+#   records the outcome on the user as portal_workspace_status;
 # - a one-shot sign-in recovery for that administrator, run only when
 #   ADMIN_RECOVERY_NONCE holds a value no run has recorded yet: it unlocks him
 #   and removes his second factors, recovery codes and passkeys. Remove the
@@ -754,15 +757,22 @@ spec:
                   esac
 
                   # --- Customer invitations ----------------------------------------------------------
-                  # The maintainer invites a customer from the ZITADEL console alone, on any device:
-                  # he creates the user in the Customers organization (ZITADEL emails the setup link)
-                  # and gives it the metadata portal_workspace=<workspace>. Only an administrator can
-                  # set a user's metadata; a user can neither set nor delete their own. The
-                  # portalWorkspace Action adds a value in the portal's workspace format to the
-                  # userinfo as the portal_workspace claim, the customer Dex passes it on as the
-                  # groups claim, and the portal's first sign-in turns it into a membership. The
-                  # Action may fail without failing a sign-in: the customer then arrives without an
-                  # invitation, and existing members are unaffected. A console edit is undone.
+                  # The maintainer invites a customer from the ZITADEL console alone, on any device.
+                  # A workspace exists once he adds the metadata portal_workspace.<workspace> to the
+                  # Customers organization, a deliberate step of its own. He then creates the user
+                  # there (ZITADEL emails the setup link) and gives it the metadata
+                  # portal_workspace=<workspace>. Only an administrator can set metadata; a user can
+                  # neither set nor delete their own.
+                  # On every sign-in the portalWorkspace Action reads the user's value, trims and
+                  # lowercases it, and adds it to the userinfo as the portal_workspace claim only
+                  # when it is in the portal's workspace format and that workspace exists. The
+                  # customer Dex passes the claim on as the groups claim, which the portal checks on
+                  # every sign-in. So a typo creates no workspace, and removing the value or the
+                  # workspace refuses the next sign-in. The Action records the outcome on the user
+                  # as portal_workspace_status ("ok: <workspace>" or why it refused), where he sees
+                  # it in the console; it writes only when the outcome changes. It may fail without
+                  # failing a sign-in: the customer then arrives without an invitation.
+                  # A console edit of the Action or its trigger is undone.
                   # He administers both organizations: IAM_OWNER of the instance and ORG_OWNER of
                   # the Customers organization, added to any roles he already has.
                   instance_roles=$(api POST /admin/v1/members/_search '{}' |
@@ -787,15 +797,41 @@ spec:
                   fi
                   # The Action, in ZITADEL's Actions v1 (an Action's name is its function's name).
                   action_name=portalWorkspace
+                  # The script holds no single quote: it is a single-quoted shell string.
                   action_script='function portalWorkspace(ctx, api) {
+                    var wanted = null;
+                    var status = "";
                     var md = ctx.v1.user.getMetadata();
-                    if (!md || !md.metadata) { return; }
-                    md.metadata.forEach(function (m) {
-                      var value = "" + m.value;
-                      if (m.key === "portal_workspace" && /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/.test(value)) {
-                        api.v1.claims.setClaim("portal_workspace", value);
+                    if (md && md.metadata) {
+                      md.metadata.forEach(function (m) {
+                        if (m.key === "portal_workspace") { wanted = ("" + m.value).trim().toLowerCase(); }
+                        if (m.key === "portal_workspace_status") { status = "" + m.value; }
+                      });
+                    }
+                    var result;
+                    if (wanted === null) {
+                      if (status === "") { return; }
+                      result = "refused: no portal_workspace";
+                    } else if (!/^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/.test(wanted)) {
+                      result = "refused: " + wanted + " is not a workspace name (lowercase letters, digits and dashes)";
+                    } else {
+                      var exists = false;
+                      var om = ctx.v1.org.getMetadata();
+                      if (om && om.metadata) {
+                        om.metadata.forEach(function (m) {
+                          if (m.key === "portal_workspace." + wanted) { exists = true; }
+                        });
                       }
-                    });
+                      if (exists) {
+                        api.v1.claims.setClaim("portal_workspace", wanted);
+                        result = "ok: " + wanted;
+                      } else {
+                        result = "refused: no workspace " + wanted + " (add portal_workspace." + wanted + " to the organization metadata to create it)";
+                      }
+                    }
+                    if (result !== status) {
+                      try { api.v1.user.setMetadata("portal_workspace_status", result); } catch (e) { }
+                    }
                   }'
                   desired_action=$(jq -cS -n --arg n "$action_name" --arg s "$action_script" \
                     '{name: $n, script: $s, timeout: "10s", allowedToFail: true}')

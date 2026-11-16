@@ -190,11 +190,11 @@ spec:
             getUserInfo: true
             insecureSkipEmailVerified: false
             # The invitation: ZITADEL's portalWorkspace Action (cron-job-setup.yaml)
-            # puts the customer's portal_workspace metadata, which only an
-            # administrator can set, into the userinfo. Dex hands it to the
-            # portal as its groups claim, which the portal reads on a first
-            # sign-in only. Dex takes groups only at sign-in ("insecure" means
-            # they are not refreshed), which is all the portal needs.
+            # puts the customer's workspace, from metadata only an administrator
+            # can set, into the userinfo. Dex hands it to the portal as the groups
+            # claim of its ID token, which the portal checks on every sign-in.
+            # Dex takes groups only at sign-in ("insecure" means a refresh does
+            # not update them); the portal requests no refresh token.
             insecureEnableGroups: true
             claimMapping:
               groups: portal_workspace
