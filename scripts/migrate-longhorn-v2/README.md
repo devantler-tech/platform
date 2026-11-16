@@ -380,7 +380,7 @@ canary, backup and restore, and application acceptance remain separate gates.
 Run the local checks with:
 
 ```sh
-go test -race ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
+go test -race ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory
 actionlint .github/workflows/prepare-longhorn-v2-node.yaml
 zizmor --offline .github/workflows/prepare-longhorn-v2-node.yaml
 ```

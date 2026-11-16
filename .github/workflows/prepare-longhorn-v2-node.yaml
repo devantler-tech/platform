@@ -9,6 +9,7 @@ name: Prepare Longhorn V2 Migration
       - scripts/migrate-longhorn-v2/**
       - internal/longhornmigration/**
       - internal/longhorninventory/**
+      - internal/namespaceinventory/**
       - go.mod
       - go.sum
   merge_group:
@@ -99,7 +100,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Test complete observations and interrupted recovery
-        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
+        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory
 
   prepare:
     name: Run the selected guarded migration step
@@ -123,7 +124,7 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]] || exit 1
           case "${LONGHORN_V2_OPERATION}" in
             inventory-v1-runtime)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == inventory-v1-runtime ]]
