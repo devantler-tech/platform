@@ -1,8 +1,9 @@
-# The tenant reconciles its signed v3.8.0 package: the WebApp, its network
-# policy, budget and runtime inputs. It serves devantler.tech and www (moved off
-# GitHub Pages on 2026-11-15, #6177) and portal.devantler.tech, plus the
-# business-site.platform.devantler.tech staging name. Portal identity and
-# payments stay off.
+# The tenant reconciles its signed v3.9.0 package: the WebApp, its network
+# policy, budget and runtime inputs, and the portal schema migration Job, which
+# reads the business-site-portal-db-migration Secret (#6372). It serves
+# devantler.tech and www (moved off GitHub Pages on 2026-11-15, #6177) and
+# portal.devantler.tech, plus the business-site.platform.devantler.tech staging
+# name. Portal identity and payments stay off.
 apiVersion: kro.run/v1alpha1
 kind: Tenant
 metadata:
@@ -14,6 +15,6 @@ spec:
   sops: false
   webApp: true
   source:
-    digest: sha256:a888373d22cf8ec1393bed517cc066a78187520706aeca7d612132054164b175
+    digest: sha256:3a683a62baa0101aa6f6adf367cafd3227e486a0ee71d7691cfd3a07e9b09c9e
     publisherRevision: a76d5df9371cf712a8f60307fde060825a34cf35
     reconcileApplication: true

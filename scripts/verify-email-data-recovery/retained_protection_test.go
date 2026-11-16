@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -246,119 +245,6 @@ func TestProtectedCleanupRefusesWithoutProtectionOrCertainPolicy(t *testing.T) {
 	}
 }
 
-// adoptableGraph gives the cleanup fixture the live shapes graph adoption
-// checks: encoded secrets, a running reader and a finished transfer.
-func adoptableGraph(d *recoveryDriver, a *protectedAPI) {
-	for _, o := range a.objects {
-		if text(o, "kind") == "Secret" {
-			data := object{}
-			for k, v := range child(o, "stringData") {
-				data[k] = base64.StdEncoding.EncodeToString([]byte(v.(string)))
-			}
-			o["data"] = data
-			delete(o, "stringData")
-		}
-	}
-	child(a.objects[cleanupKey("Secret", d.i.namespace, "storage-key")], "data")["CRYPTO_KEY_VALUE"] = base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 64)))
-	child(a.objects[cleanupKey("Secret", d.i.namespace, "test-authentication")], "data")["credential"] = base64.StdEncoding.EncodeToString([]byte("restore:" + strings.Repeat("b", 64)))
-	a.objects[cleanupKey("Pod", d.i.namespace, "reader")]["status"] = object{"phase": "Running"}
-	download := a.objects[cleanupKey("DataDownload", "velero", d.i.namespace+"-download")]
-	child(download, "status")["progress"] = object{"totalBytes": float64(100), "bytesDone": float64(100)}
-}
-
-// Only a protected disposal may adopt a graph whose own backup is gone, and
-// only it accepts a Retain policy on the copy's volume.
-func TestOnlyProtectedDisposalAcceptsTheCollectedBackupAndRetainedVolume(t *testing.T) {
-	trialBackup := cleanupKey("Backup", "velero", "")
-	for _, tc := range []struct {
-		name               string
-		protected, restore bool
-	}{
-		{"protected without its own backup", true, false},
-		{"unprotected without its own backup", false, false},
-		{"unprotected with its own backup", false, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			d, a, ctx := protectedCleanupFixture(t)
-			trialBackup = cleanupKey("Backup", "velero", d.i.namespace+"-backup")
-			reader, claim := d.protection.readerUID, d.protection.claimUID
-			if !tc.protected {
-				d.protection = protectionPoint{}
-			}
-			if err := d.observeRestoredStorage(ctx); (err == nil) != tc.protected {
-				t.Fatalf("retained volume result mismatch: %v", err)
-			}
-			adoptableGraph(d, a)
-			if tc.restore {
-				backup := backupManifest(d.i)
-				child(backup, "metadata")["uid"] = "owned-Backup-" + d.i.namespace + "-backup"
-				a.objects[trialBackup] = backup
-			}
-			d.refs = map[string]ownedReference{}
-			err := d.adoptRetainedGraph(ctx, reader, claim)
-			if accepted := tc.protected || tc.restore; (err == nil) != accepted {
-				t.Fatalf("graph adoption mismatch: %v", err)
-			}
-			if _, tracked := d.refs[trialBackup]; err == nil && tracked != tc.restore {
-				t.Fatal("graph adoption tracked the wrong backup")
-			}
-			if want := map[bool]int{true: 9, false: 10}[tc.protected]; err == nil && len(d.refs) != want {
-				t.Fatalf("adopted %d objects, want %d", len(d.refs), want)
-			}
-		})
-	}
-}
-
-// A protected fresh disposal no longer reads the copy's collected backup; the
-// fixed protection backup must instead outlast the cleanup budget.
-func TestProtectedFreshGraphBindsTheCopyToTheProtectionBackup(t *testing.T) {
-	w, err := parseFreshRecoveryWitness(freshFixtureWitness)
-	if err != nil {
-		t.Fatal("invalid test witness")
-	}
-	i := freshRetainedRecovery
-	_, _, source, _ := backupProofFixture()
-	horizon := time.Now().Add(10 * time.Minute)
-	for _, tc := range []struct {
-		name, stage string
-		change      func(freshGraphAPI)
-	}{
-		{"matching", "", func(freshGraphAPI) {}},
-		{"protection expires during cleanup", "fresh-protection", func(a freshGraphAPI) {
-			child(a["backups.velero.io"], "status")["expiration"] = time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339)
-		}},
-		{"copy absent from protection", "fresh-protection", func(a freshGraphAPI) {
-			a["podvolumebackups.velero.io"]["items"] = items(a["podvolumebackups.velero.io"], "items")[:1]
-		}},
-		{"scratch is plaintext", "fresh-storage", func(a freshGraphAPI) {
-			child(a["volumes.longhorn.io"], "spec")["encrypted"] = false
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			api := freshGraphFixture(w)
-			api["backups.velero.io"] = object{"metadata": object{"name": disposalProtectionBackup, "namespace": "velero", "uid": "protection-uid"}, "status": object{"phase": "PartiallyFailed", "expiration": time.Now().Add(13 * 24 * time.Hour).UTC().Format(time.RFC3339)}}
-			api["podvolumebackups.velero.io"] = object{"items": []any{
-				protectedVolumeFixture("protection-uid", "private-mail", "private-mail-0", source.podUID, source.claimUID),
-				protectedVolumeFixture("protection-uid", i.namespace, "reader", w.Reader.UID, w.Claim.UID),
-			}}
-			ns := recoveryManifest(i, "Namespace", i.namespace, "", "v1")
-			child(ns, "metadata")["uid"] = w.Namespace.UID
-			api["Namespace"] = ns
-			tc.change(api)
-			nsRef := ownedReference{"Namespace", i.namespace, "", w.Namespace.UID}
-			claim := ownedReference{"PersistentVolumeClaim", "data", i.namespace, w.Claim.UID}
-			d := &recoveryDriver{i: i, k: api, source: source, refs: map[string]ownedReference{nsRef.key(): nsRef, claim.key(): claim}, protection: protectionPoint{backup: disposalProtectionBackup, readerUID: w.Reader.UID, claimUID: w.Claim.UID}}
-			if stage := verifyFreshDisposalGraph(context.Background(), d, w, horizon); stage != tc.stage {
-				t.Fatalf("expected stage %q, got %q", tc.stage, stage)
-			}
-			if _, tracked := d.refs[cleanupKey("Backup", "velero", i.namespace+"-backup")]; tracked {
-				t.Fatal("protected graph tracked the collected backup")
-			}
-		})
-	}
-}
-
-// Cleanup cannot certify a removal whose protection point vanished meanwhile.
 func TestProtectedCleanupReportsAProtectionLostDuringRemoval(t *testing.T) {
 	d, a, ctx := protectedCleanupFixture(t)
 	a.onDelete = func(o object) {

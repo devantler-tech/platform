@@ -27,7 +27,11 @@
 # - a one-shot sign-in recovery for that administrator, run only when
 #   ADMIN_RECOVERY_NONCE holds a value no run has recorded yet: it unlocks him
 #   and removes his second factors, recovery codes and passkeys. Remove the
-#   value once it has run.
+#   value once it has run;
+# - ZITADEL's branding (its label policy), all of it, so an edit in the console
+#   is undone: the declared colours and settings, the Devantler Tech logos and
+#   icon from config-map-branding.yaml, no custom font, and no organization
+#   with a policy of its own.
 # A run that finds nothing to change writes nothing. A duplicate, a deactivated
 # client, a missing Secret, an API error or a refused write stops the run
 # before it changes anything further; the next run starts again.
@@ -187,6 +191,9 @@ spec:
                 - name: kube-api
                   mountPath: /run/kube-api
                   readOnly: true
+                - name: branding
+                  mountPath: /run/branding
+                  readOnly: true
               resources:
                 requests:
                   cpu: 10m
@@ -211,6 +218,7 @@ spec:
                   # Secrets arrive as files, never as environment variables.
                   smtp_dir=${SMTP_DIR:-/run/smtp}
                   admin_password_file=${ADMIN_PASSWORD_FILE:-/run/first-admin/password}
+                  branding_dir=${BRANDING_DIR:-/run/branding}
                   kube_api_dir=${KUBE_API_DIR:-/run/kube-api}
                   namespace=customer-identity
                   client_secret_name=customer-dex-zitadel-client
@@ -219,6 +227,7 @@ spec:
                   fingerprint_annotation=platform.devantler.tech/smtp-credential-sha256
                   admin_annotation=platform.devantler.tech/first-admin-password-sha256
                   recovery_annotation=platform.devantler.tech/admin-recovery-nonce
+                  branding_annotation=platform.devantler.tech/label-policy-assets-sha256
                   # The administrator signs in with GitHub through the platform Dex (see below).
                   platform_dex_secret_file=${PLATFORM_DEX_SECRET_FILE:-/run/platform-dex/client-secret}
                   dex_annotation=platform.devantler.tech/platform-dex-secret-sha256
@@ -242,6 +251,25 @@ spec:
                   smtp_sender_name="Devantler Tech"
                   smtp_description="Business site sender (Amazon SES)"
                   placeholder=PLACEHOLDER
+
+                  # ZITADEL's look (its label policy), as on devantler.tech: the brand green #39ff14
+                  # on the logo's near-black in dark mode, the site's darker #15803d on its light
+                  # background in light mode, ZITADEL's own warning reds, no login-name suffix and
+                  # no "Powered by ZITADEL" watermark.
+                  desired_label=$(jq -nc '{
+                    primaryColor: "#15803d", backgroundColor: "#f6faf7", warnColor: "#cd3d56", fontColor: "#0a0d0b",
+                    primaryColorDark: "#39ff14", backgroundColorDark: "#0a0d0b", warnColorDark: "#ff3b5b",
+                    fontColorDark: "#f1f5f1", hideLoginNameSuffix: true, disableWatermark: true,
+                    themeMode: "THEME_MODE_AUTO"}')
+                  # ZITADEL omits false values, so compare normalised, with colours in lower case.
+                  normalise_label='{
+                    primaryColor: (.primaryColor // "" | ascii_downcase), backgroundColor: (.backgroundColor // "" | ascii_downcase),
+                    warnColor: (.warnColor // "" | ascii_downcase), fontColor: (.fontColor // "" | ascii_downcase),
+                    primaryColorDark: (.primaryColorDark // "" | ascii_downcase),
+                    backgroundColorDark: (.backgroundColorDark // "" | ascii_downcase),
+                    warnColorDark: (.warnColorDark // "" | ascii_downcase), fontColorDark: (.fontColorDark // "" | ascii_downcase),
+                    hideLoginNameSuffix: (.hideLoginNameSuffix // false), disableWatermark: (.disableWatermark // false),
+                    themeMode: (.themeMode // "THEME_MODE_AUTO")}'
 
                   # The business-site preparer's CreateApplication template (server/internal/
                   # customeridentity/config.go): one confidential web client, code grant only,
@@ -328,6 +356,19 @@ spec:
                   connect() { api POST "/$1" "${2-}"; }
                   # mgmt METHOD PATH [BODY]: the management API, in the administrator's organization.
                   mgmt() { api_org=$org_id api "$@"; }
+                  # upload_asset PATH FILE: uploads one image to ZITADEL's assets API as the
+                  # multipart form field `file`, which api() cannot send. Any answer but 2xx
+                  # fails the run with the HTTP status and ZITADEL's message only, which this
+                  # API sends as one line of plain text (for example "invalid content-type").
+                  upload_asset() {
+                    local status
+                    status=$(curl -sS -m 20 -o "$work/response" -w '%{http_code}' -X POST \
+                      -H "@$work/auth" -H "Host: $ZITADEL_HOST" -F "file=@$2;type=image/png" \
+                      "$ZITADEL_URL/assets/v1/$1") || fail "POST /assets/v1/$1: no answer from ZITADEL"
+                    if [[ $status != 2?? ]]; then
+                      fail "POST /assets/v1/$1: HTTP $status $(head -n 1 "$work/response" | cut -c1-200)"
+                    fi
+                  }
 
                   # The client Secret is created empty by Flux and only ever patched here.
                   secret_json() {
@@ -769,6 +810,75 @@ spec:
                     fi
                   fi
 
+                  # --- Branding ---------------------------------------------------------------------
+                  # This run owns ZITADEL's whole look, the instance's label policy, so an edit in the
+                  # console is undone: the colours and settings in desired_label, the logos (one per
+                  # theme) and icon mounted from the zitadel-branding ConfigMap, and no custom font. An
+                  # organization with a label policy of its own is reset to the instance's. Changes
+                  # land in the policy's preview and show once it is activated. ZITADEL keeps no hash
+                  # of an uploaded asset, so the Secret records the files' fingerprint together with
+                  # the asset URLs ZITADEL gave them: a changed file, or an upload made elsewhere
+                  # (which gets a new URL), makes the next run upload the files again.
+                  # Every value is read into a variable before it is compared: a read that fails
+                  # inside [[ ]] would escape set -e and look like a difference.
+                  for asset in logo-light.png logo-dark.png icon.png; do
+                    [[ -s $branding_dir/$asset ]] || fail "missing branding file $asset"
+                  done
+                  for label_org in "$org_id" "$customers_org_id"; do
+                    org_active=$(api_org=$label_org api GET /management/v1/policies/label | jq -r '.policy.isDefault // false')
+                    org_preview=$(api_org=$label_org api GET /management/v1/policies/label/_preview | jq -r '.policy.isDefault // false')
+                    if [[ $org_active != true || $org_preview != true ]]; then
+                      api_org=$label_org api DELETE /management/v1/policies/label >/dev/null
+                      changes+=("reset the label policy of $(org_label "$label_org") to the instance's")
+                    fi
+                  done
+                  branding_files=$(cd "$branding_dir" && sha256sum icon.png logo-dark.png logo-light.png | sha256sum | cut -d' ' -f1)
+                  # assets_record: the fingerprint to record for a label policy read from stdin.
+                  assets_record() {
+                    jq -r --arg f "$branding_files" '[$f, .logoUrl, .logoUrlDark, .iconUrl, .iconUrlDark] | map(. // "") | join("\n")' |
+                      sha256sum | cut -d' ' -f1
+                  }
+                  label_preview=$(api GET /admin/v1/policies/label/_preview | jq -c '.policy | del(.details)')
+                  label_active=$(api GET /admin/v1/policies/label | jq -c '.policy | del(.details)')
+                  desired_settings=$(jq -cS . <<<"$desired_label")
+                  preview_settings=$(jq -cS "$normalise_label" <<<"$label_preview")
+                  if [[ $preview_settings != "$desired_settings" ]]; then
+                    api PUT /admin/v1/policies/label "$desired_label" >/dev/null
+                    changes+=("set the label policy colours and settings")
+                  fi
+                  recorded=$(secret_json | jq -r --arg a "$branding_annotation" '.metadata.annotations[$a] // ""')
+                  uploaded=
+                  active_record=$(assets_record <<<"$label_active")
+                  preview_record=$(assets_record <<<"$label_preview")
+                  if [[ $recorded != "$active_record" || $recorded != "$preview_record" ]]; then
+                    upload_asset instance/policy/label/logo "$branding_dir/logo-light.png"
+                    upload_asset instance/policy/label/logo/dark "$branding_dir/logo-dark.png"
+                    upload_asset instance/policy/label/icon "$branding_dir/icon.png"
+                    upload_asset instance/policy/label/icon/dark "$branding_dir/icon.png"
+                    uploaded=1
+                    changes+=("uploaded the label policy logos and icon")
+                  fi
+                  preview_font=$(jq -r '.fontUrl // ""' <<<"$label_preview")
+                  if [[ -n $preview_font ]]; then
+                    api DELETE /admin/v1/policies/label/font >/dev/null
+                    changes+=("removed the label policy font")
+                  fi
+                  label_preview=$(api GET /admin/v1/policies/label/_preview | jq -c '.policy | del(.details)')
+                  if [[ $label_preview != "$label_active" ]]; then
+                    api POST /admin/v1/policies/label/_activate >/dev/null
+                    changes+=("activated the label policy")
+                    label_active=$(api GET /admin/v1/policies/label | jq -c '.policy | del(.details)')
+                  fi
+                  active_settings=$(jq -cS "$normalise_label" <<<"$label_active")
+                  [[ $active_settings == "$desired_settings" ]] ||
+                    fail "the active label policy does not have the declared colours and settings"
+                  jq -e '([.logoUrl, .logoUrlDark, .iconUrl, .iconUrlDark] | all(. != null and . != "")) and (.fontUrl // "") == ""' \
+                    <<<"$label_active" >/dev/null || fail "the active label policy lacks a logo or icon, or has a font"
+                  if [[ -n $uploaded ]]; then
+                    new_record=$(assets_record <<<"$label_active")
+                    patch_secret "$(jq -nc --arg a "$branding_annotation" --arg f "$new_record" '{metadata: {annotations: {($a): $f}}}')"
+                  fi
+
                   summary="project=$project_id client=$client_id application=$app_id smtp=$smtp_id administrator=$admin_state idp=$admin_idp_id customers=$customers_org_id customer_github=$customer_github"
                   if ((${#changes[@]})); then
                     log "OK $summary changes: $(IFS=,; echo "${changes[*]}")"
@@ -845,3 +955,15 @@ spec:
                     path: client-id
                   - key: client-secret
                     path: client-secret
+            # The Devantler Tech logos and icon for the label policy.
+            - name: branding
+              configMap:
+                name: zitadel-branding
+                defaultMode: 0444
+                items:
+                  - key: logo-light.png
+                    path: logo-light.png
+                  - key: logo-dark.png
+                    path: logo-dark.png
+                  - key: icon.png
+                    path: icon.png
