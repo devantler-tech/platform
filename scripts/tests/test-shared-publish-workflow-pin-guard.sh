@@ -786,6 +786,8 @@ readonly GENERIC_TALOS='talos/cluster/verify-first-party-images.yaml'
 readonly GENERIC_KYVERNO='k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
 readonly GENERIC_TENANT='k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
 readonly NOT_GENERIC='only the maintained publisher'
+# The Tenant graph names no shared publisher at all (ADR 0019).
+readonly NOT_TENANT='may name no shared publisher'
 
 generic_case accept "a canonical-only node-pull rule naming two reviewed commits" "${GENERIC_TALOS}" \
   "      subjectRegex: ${APP_CANONICAL_ONLY}(${CONCRETE_SHA}|${CONCRETE_SHA_2})\$" talos-pair
@@ -799,7 +801,7 @@ generic_case reject "the former two-family admission rule with the deleted publi
   "      subjectRegExp: ^https://github\\.com/devantler-tech/(actions/\\.github/workflows/publish-app\\.yaml@${SHA_PATTERN}|\\.github/\\.github/workflows/publish-app\\.yaml@(${CONCRETE_SHA}|${CONCRETE_SHA_2}))\$" \
   kyverno-two-family "${NOT_GENERIC}"
 generic_case reject "a plain subject naming the deleted publisher in the tenant graph" "${GENERIC_TENANT}" \
-  "        subject: ${Q}${APP_LEGACY_ONLY}${CONCRETE_SHA}\$${Q}" tenant-legacy "${NOT_GENERIC}"
+  "        subject: ${Q}${APP_LEGACY_ONLY}${CONCRETE_SHA}\$${Q}" tenant-legacy "${NOT_TENANT}"
 generic_case reject "a canonical-only generic rule that admits every maintained commit" "${GENERIC_TALOS}" \
   "      subjectRegex: ${APP_CANONICAL_ONLY}${SHA_PATTERN}\$" talos-canonical-pattern 'does not pin one concrete 40-hex commit'
 generic_case reject "a canonical-only generic rule on a branch" "${GENERIC_KYVERNO}" \
@@ -809,9 +811,9 @@ generic_case reject "a canonical-only generic rule with a second identity append
 
 # A PRODUCT'S OWN RELEASE WORKFLOW ON A RELEASE TAG (#6265). One further alternative, written
 # last in the same group, with a tail compared literally and a repository segment fixed per
-# verifier: the first-party segment in the image verifiers, the constructor's marker in the
-# Tenant source (exercised through the real graph by test-tenant-source-constructors.sh), and
-# one literal repository in a consumer's matcher.
+# verifier: the first-party segment in the image verifiers and one literal repository in a
+# consumer's matcher. The Tenant source names only the tenant's own repository, built in CEL
+# (exercised through the real graph by test-tenant-source-constructors.sh).
 readonly OWN_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 readonly OWN_BRANCH_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/heads/main'
 readonly OWN_ANY_PATH_TAIL='/\.github/workflows/.+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
@@ -835,7 +837,7 @@ generic_case reject "a first-party release whose tag may carry a suffix" "${GENE
 generic_case reject "the Tenant marker in an image verifier" "${GENERIC_TALOS}" \
   "      subjectRegex: ${APP_CANONICAL_GROUP}${CONCRETE_SHA}|<tenant>${OWN_TAIL})\$" talos-own-marker "${NOT_GENERIC}"
 generic_case reject "a first-party release in the Tenant graph's plain subject" "${GENERIC_TENANT}" \
-  "        subject: ${Q}${APP_CANONICAL_GROUP}${CONCRETE_SHA}|${FIRST_PARTY}${OWN_TAIL})\$${Q}" tenant-own-plain "${NOT_GENERIC}"
+  "        subject: ${Q}${APP_CANONICAL_GROUP}${CONCRETE_SHA}|${FIRST_PARTY}${OWN_TAIL})\$${Q}" tenant-own-plain "${NOT_TENANT}"
 # Written first, the shared publisher is no longer where the guard selects it, so the floor
 # refuses the file outright.
 generic_case reject "a first-party release written before the shared publisher" "${GENERIC_KYVERNO}" \

@@ -45,12 +45,6 @@ cp "$root/scripts/run-publication-generator-tests.sh" "$fixture/scripts/"
 tests=(
   test-publish-workflow-approved-revisions.sh
   test-tenant-publication-binding.sh
-  test-bootstrap-tenant-source.sh
-  test-canonical-source-bootstrap.sh
-  test-canonical-source-upgrade.sh
-  test-canonical-constructor-attribution.sh
-  test-canonical-generator-output.sh
-  test-canonical-bootstrap-output.sh
   test-canonical-publisher-regeneration.sh
 )
 cat >"$work/probe" <<'BASH'
@@ -102,7 +96,7 @@ collect() {
         ((maximum >= active)) || maximum=$active
         if ((PROBE_LIMIT > 1 && overlap == 0)); then
           held+=" $name"
-          if ((active == PROBE_LIMIT)); then
+          if ((active == PROBE_BOUND)); then
             # No first child can finish before the whole bound is observed running.
             for waiting in $held; do release_probe "$waiting"; done
             overlap=1
@@ -132,6 +126,8 @@ run_case() {
   exec 3<>"$state/events"
   PROBE_LIMIT="$jobs"
   [[ "$jobs" != default ]] || PROBE_LIMIT=1
+  PROBE_BOUND=$PROBE_LIMIT
+  [[ ! "$PROBE_BOUND" =~ ^[0-9]+$ ]] || ((PROBE_BOUND <= ${#tests[@]})) || PROBE_BOUND=${#tests[@]}
   collect &
   collector_pid=$!
   rc=0
@@ -157,10 +153,10 @@ for jobs in 1 2 4; do
   }
   [[ -f "$state/dispatched-limit" && "$(cat "$state/dispatched-limit")" == "$jobs" ]] ||
     fail 'the actual dispatcher limit receipt is missing or wrong'
-  [[ "$(wc -l <"$state/started" | tr -d ' ')" == 9 ]] || fail 'a test was skipped or repeated'
-  [[ "$(sort -u "$state/started" | wc -l | tr -d ' ')" == 9 ]] || fail 'the full test set was not run'
-  [[ "$(cat "$state/maximum")" == "$jobs" ]] || fail "jobs=$jobs did not preserve the concurrency bound"
-  grep -q "PUBLICATION_TESTS jobs=$jobs count=9 failed=0" "$state/output" || fail 'the complete success receipt is missing'
+  [[ "$(wc -l <"$state/started" | tr -d ' ')" == "${#tests[@]}" ]] || fail 'a test was skipped or repeated'
+  [[ "$(sort -u "$state/started" | wc -l | tr -d ' ')" == "${#tests[@]}" ]] || fail 'the full test set was not run'
+  [[ "$(cat "$state/maximum")" == "$PROBE_BOUND" ]] || fail "jobs=$jobs did not preserve the concurrency bound"
+  grep -q "PUBLICATION_TESTS jobs=$jobs count=${#tests[@]} failed=0" "$state/output" || fail 'the complete success receipt is missing'
   for test_file in "${tests[@]}"; do
     [[ "$(grep -cxF "CHILD $test_file" "$state/output")" == 1 ]] || fail "output lost or repeated for $test_file"
   done
@@ -168,8 +164,8 @@ for jobs in 1 2 4; do
   [[ "$rc" == 1 ]] || fail "jobs=$jobs masked a failed child"
   [[ -f "$state/dispatched-limit" && "$(cat "$state/dispatched-limit")" == "$jobs" ]] ||
     fail 'the failed run did not retain its actual dispatcher limit'
-  [[ "$(wc -l <"$state/started" | tr -d ' ')" == 9 ]] || fail 'a failure prevented the remaining tests from running'
-  grep -q "PUBLICATION_TESTS jobs=$jobs count=9 failed=2" "$state/output" || fail 'not all child failures were retained'
+  [[ "$(wc -l <"$state/started" | tr -d ' ')" == "${#tests[@]}" ]] || fail 'a failure prevented the remaining tests from running'
+  grep -q "PUBLICATION_TESTS jobs=$jobs count=${#tests[@]} failed=2" "$state/output" || fail 'not all child failures were retained'
 done
 run_case default 0 default
 [[ "$rc" == 0 && "$(cat "$state/maximum")" == 1 ]] || fail 'the default must retain serial execution'
@@ -180,9 +176,9 @@ for jobs in 0 3 text; do
   [[ "$rc" == 2 && ! -e "$state/started" && ! -e "$state/dispatched-limit" ]] ||
     fail 'an invalid worker limit dispatched tests'
 done
-mv "$fixture/scripts/tests/${tests[8]}" "$work/withheld-test"
+mv "$fixture/scripts/tests/${tests[$((${#tests[@]} - 1))]}" "$work/withheld-test"
 run_case 2 0 missing
 [[ "$rc" == 2 && ! -e "$state/started" && ! -e "$state/dispatched-limit" ]] ||
   fail 'an incomplete test set was dispatched'
 completed=1
-printf 'PASS: every worker limit preserves nine tests, all output, and all failures; invalid and incomplete runs are refused.\n'
+printf 'PASS: every worker limit preserves every test, all output, and all failures; invalid and incomplete runs are refused.\n'

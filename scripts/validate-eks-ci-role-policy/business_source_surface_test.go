@@ -27,12 +27,7 @@ func TestBusinessStagingAuthorization(t *testing.T) {
 		{name: "no webapp capability", mutate: func(spec map[string]any) { spec["webApp"] = false }},
 		{name: "external DNS", mutate: func(spec map[string]any) { spec["externalDns"] = true }},
 		{name: "SOPS", mutate: func(spec map[string]any) { spec["sops"] = true }},
-		{name: "different publisher", mutate: func(spec map[string]any) {
-			spec["source"].(map[string]any)["publisherRevision"] = strings.Repeat("1", 40)
-		}},
-		{name: "different artifact", mutate: func(spec map[string]any) {
-			spec["source"].(map[string]any)["digest"] = "sha256:" + strings.Repeat("1", 64)
-		}},
+		{name: "pinned release", mutate: func(spec map[string]any) { spec["source"].(map[string]any)["version"] = "3.12.0" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			documents, err := decodeDocuments(rendered)

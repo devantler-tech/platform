@@ -1,6 +1,8 @@
 # Canonical-only source bootstrap
 
-Status: Accepted
+Status: Superseded on 2026-11-16 by [ADR 0019](https://github.com/devantler-tech/monorepo/blob/main/docs/adr/0019-tenants-follow-their-signed-release-tags.md):
+a `Tenant` follows its own signed release tags, so no tenant pins a digest and the bindings,
+bootstrap script and regeneration records below were deleted. Kept as history.
 
 ## Decision
 

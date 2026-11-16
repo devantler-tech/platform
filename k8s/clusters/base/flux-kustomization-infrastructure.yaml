@@ -43,9 +43,17 @@ spec:
       failed: has(status.phase) && status.phase == 'Lost'
       current: >-
         !has(metadata.deletionTimestamp) && has(status.phase) && status.phase == 'Bound'
+    # `Active` alone stays true from the previous generation while kro is still
+    # regenerating the instance CRD from a changed graph. Wait until kro reports
+    # Ready for THIS generation, so `apps` never applies an instance against the
+    # previous schema (ADR 0019 changed the Tenant source in the same deploy as
+    # the business-site Tenant).
     - apiVersion: kro.run/v1alpha1
       kind: ResourceGraphDefinition
-      current: status.state == 'Active'
+      current: >-
+        has(status.state) && status.state == 'Active' && has(status.conditions) &&
+        status.conditions.exists(c, c.type == 'Ready' && c.status == 'True' &&
+        has(c.observedGeneration) && c.observedGeneration == metadata.generation)
     # coroot-db lives in this layer. kstatus marks a CNPG `Cluster` NotReady for
     # the whole of any rolling update — and CNPG rolls every instance whenever
     # the operator, the barman-cloud plugin sidecar, or the PostgreSQL image

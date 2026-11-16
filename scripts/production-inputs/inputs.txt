@@ -59,8 +59,6 @@ scripts/validate-eks-ci-role-policy/approved-surface.txt
 
 # Scripts the deploy runs, the libraries they source and the data they read.
 scripts/admit-coroot-baseline-context.sh
-scripts/canonical-tenant-source-bindings.json
-scripts/canonical-tenant-source.lib.sh
 scripts/check-flux-prune-failures.sh
 scripts/cosign-failure-lib.sh
 scripts/detach-flux-root-pull-secret.sh

@@ -30,9 +30,14 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const tenantDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-const tenantPublisher = "a76d5df9371cf712a8f60307fde060825a34cf35"
-const defaultTenantSubject = `^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)|tenant\-fixture/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$`
+// A tenant follows its own stable releases (ADR 0019): a semver range, stable `X.Y.Z` only,
+// signed by its own repository's release workflow on a release tag.
+const stableReleases = `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
+const defaultTenantSubject = `^https://github\.com/devantler-tech/tenant\-fixture/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$`
+
+func releaseRef(version string) map[string]interface{} {
+	return map[string]interface{}{"semver": version, "semverFilter": stableReleases}
+}
 
 // TestCommittedTenant exercises the actual graph compiler and generated API.
 // Desired objects are expression evidence, not Flux or signature verification.
@@ -179,18 +184,19 @@ func TestCommittedTenant(t *testing.T) {
 			assertTenantChildren(t, objects, ignored, true, sops)
 			source := objects["ociRepository"]
 			ref, _, _ := unstructured.NestedMap(source.Object, "spec", "ref")
-			if !reflect.DeepEqual(ref, map[string]interface{}{"semver": ">=1.0.0"}) {
-				t.Fatalf("omitted source changed the existing selector: %v", ref)
+			if !reflect.DeepEqual(ref, releaseRef(">=0.0.0")) {
+				t.Fatalf("omitted source must follow every stable release: %v", ref)
 			}
 			assertTenantIdentity(t, source, defaultTenantSubject)
-			assertDefaultSubjectRefusesDeletedPublisher(t, source)
+			assertDefaultSubjectRefusesSharedPublishers(t, source)
 			assertDefaultSubjectTrustsOnlyOwnRelease(t, source, "tenant-fixture")
 			writeTenantFixture(t, fmt.Sprintf("default-%t", sops), objects)
 		})
+		// An emergency pin names one release; the signature rule does not change.
 		t.Run(fmt.Sprintf("pinned-source-only-sops-%t", sops), func(t *testing.T) {
 			input := instance("pinned-fixture", map[string]interface{}{
 				"sops":   sops,
-				"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false},
+				"source": map[string]interface{}{"version": "3.12.0", "reconcileApplication": false},
 			})
 			if err := admit(input); err != nil {
 				t.Fatalf("valid source-only input must be admitted: %v", err)
@@ -204,10 +210,10 @@ func TestCommittedTenant(t *testing.T) {
 			}
 			source := objects["ociRepository"]
 			ref, _, _ := unstructured.NestedMap(source.Object, "spec", "ref")
-			if !reflect.DeepEqual(ref, map[string]interface{}{"digest": tenantDigest}) {
-				t.Fatalf("pinned source must have exactly the selected digest: %v", ref)
+			if !reflect.DeepEqual(ref, releaseRef("3.12.0")) {
+				t.Fatalf("pinned source must select exactly the pinned release: %v", ref)
 			}
-			assertTenantIdentity(t, source, `^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@a76d5df9371cf712a8f60307fde060825a34cf35$`)
+			assertTenantIdentity(t, source, defaultTenantSubject)
 		})
 		// The own-release alternative is built from the tenant name, regex-escaped. A
 		// name carrying `.` must not become a wildcard: compile one directly (the
@@ -277,16 +283,12 @@ func TestCommittedTenant(t *testing.T) {
 		name string
 		spec map[string]interface{}
 	}{
-		{"source-only without exact publication", map[string]interface{}{"source": map[string]interface{}{"reconcileApplication": false}}},
-		{"source-only with empty publication", map[string]interface{}{"source": map[string]interface{}{"digest": "", "publisherRevision": "", "reconcileApplication": false}}},
 		{"obsolete top-level lifecycle", map[string]interface{}{"reconcileApplication": false}},
-		{"digest without publisher", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest}}},
-		{"publisher without digest", map[string]interface{}{"source": map[string]interface{}{"publisherRevision": tenantPublisher}}},
-		{"tag selector", map[string]interface{}{"source": map[string]interface{}{"digest": "v1.0.3", "publisherRevision": tenantPublisher}}},
-		{"uppercase digest", map[string]interface{}{"source": map[string]interface{}{"digest": strings.ToUpper(tenantDigest), "publisherRevision": tenantPublisher}}},
-		{"short digest", map[string]interface{}{"source": map[string]interface{}{"digest": "sha256:abc", "publisherRevision": tenantPublisher}}},
-		{"branch publisher", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": "main"}}},
-		{"publisher regex", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": "[0-9a-f]{40}"}}},
+		{"obsolete digest pin", map[string]interface{}{"source": map[string]interface{}{"digest": "sha256:" + strings.Repeat("0", 64)}}},
+		{"obsolete publisher pin", map[string]interface{}{"source": map[string]interface{}{"publisherRevision": "a76d5df9371cf712a8f60307fde060825a34cf35"}}},
+		{"empty version", map[string]interface{}{"source": map[string]interface{}{"version": ""}}},
+		{"unbounded version", map[string]interface{}{"source": map[string]interface{}{"version": strings.Repeat("1", 65)}}},
+		{"wrong version type", map[string]interface{}{"source": map[string]interface{}{"version": 3}}},
 		{"source URL override", map[string]interface{}{"source": map[string]interface{}{"url": "oci://example.invalid/other"}}},
 		{"identity override", map[string]interface{}{"source": map[string]interface{}{"subject": ".*"}}},
 		{"wrong lifecycle type", map[string]interface{}{"source": map[string]interface{}{"reconcileApplication": "false"}}},
@@ -308,7 +310,7 @@ func TestCommittedTenant(t *testing.T) {
 			if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false}, "spec", "source"); err != nil {
+			if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"version": "3.12.0", "reconcileApplication": false}, "spec", "source"); err != nil {
 				t.Fatal(err)
 			}
 			err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"})
@@ -317,10 +319,10 @@ func TestCommittedTenant(t *testing.T) {
 			}
 		})
 	}
-	// Every committed Tenant, as written and with an unpinned source, accepts only its
-	// own repository's release workflow (#6265). A repository named `actions` is no
-	// tenant's own, `.github` tags are never accepted, and a pinned source keeps its
-	// single exact publisher revision.
+	// Every committed Tenant, as written and with an omitted source, accepts only its
+	// own repository's release workflow (#6265, ADR 0019). A repository named `actions`
+	// is no tenant's own, and neither `.github` tags nor shared-publisher revisions are
+	// ever accepted.
 	t.Run("own-release-for-every-committed-tenant", func(t *testing.T) {
 		tenants := committedTenants(t, root)
 		if len(tenants) < 2 {
@@ -333,7 +335,6 @@ func TestCommittedTenant(t *testing.T) {
 		}
 		for _, committed := range tenants {
 			name, _, _ := unstructured.NestedString(committed.Object, "spec", "name")
-			revision, _, _ := unstructured.NestedString(committed.Object, "spec", "source", "publisherRevision")
 			for _, mode := range []string{"as-committed", "unpinned"} {
 				t.Run(name+"/"+mode, func(t *testing.T) {
 					input := committed.DeepCopy()
@@ -348,12 +349,13 @@ func TestCommittedTenant(t *testing.T) {
 					objects, _ := desiredTenant(t, engine, &definition, input)
 					matcher := compiledSubject(t, objects["ociRepository"])
 					want := map[string]bool{
-						"https://github.com/devantler-tech/" + name + "/.github/workflows/release.yaml@refs/tags/v1.2.3":          mode == "unpinned" || revision == "",
-						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":           false,
-						"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0":     false,
-						"https://github.com/devantler-tech/actions/.github/workflows/release.yaml@refs/tags/v1.2.3":               false,
-						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("e", 40): false,
-						"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":           false,
+						"https://github.com/devantler-tech/" + name + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                        true,
+						"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35": false,
+						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                         false,
+						"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0":                   false,
+						"https://github.com/devantler-tech/actions/.github/workflows/release.yaml@refs/tags/v1.2.3":                             false,
+						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("e", 40):               false,
+						"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                         false,
 					}
 					for _, other := range names {
 						if other != name {
@@ -371,7 +373,7 @@ func TestCommittedTenant(t *testing.T) {
 	})
 	t.Run("source-only-can-activate", func(t *testing.T) {
 		input := instance("activation-fixture", map[string]interface{}{
-			"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false},
+			"source": map[string]interface{}{"version": "3.12.0", "reconcileApplication": false},
 		})
 		if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 			t.Fatal(err)
@@ -385,14 +387,16 @@ func TestCommittedTenant(t *testing.T) {
 		objects, ignored := desiredTenant(t, engine, &definition, input)
 		assertTenantChildren(t, objects, ignored, true, false)
 		ref, _, _ := unstructured.NestedMap(objects["ociRepository"].Object, "spec", "ref")
-		if !reflect.DeepEqual(ref, map[string]interface{}{"digest": tenantDigest}) {
+		if !reflect.DeepEqual(ref, releaseRef("3.12.0")) {
 			t.Fatal("activation must not change the selected source")
 		}
 	})
-	for _, mode := range []string{"omitted", "empty object", "null", "empty pair"} {
-		t.Run("pinned-source-cannot-become-floating-"+mode, func(t *testing.T) {
+	// An emergency pin is lifted by removing it: the tenant follows its releases again
+	// (ADR 0019). No transition rule holds a pinned tenant on its pin.
+	for _, mode := range []string{"omitted", "empty object", "null"} {
+		t.Run("pinned-source-can-follow-releases-again-"+mode, func(t *testing.T) {
 			input := instance("pin-removal-"+strings.ReplaceAll(mode, " ", "-"), map[string]interface{}{
-				"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher},
+				"source": map[string]interface{}{"version": "3.12.0"},
 			})
 			if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 				t.Fatal(err)
@@ -405,11 +409,14 @@ func TestCommittedTenant(t *testing.T) {
 				spec["source"] = map[string]interface{}{}
 			case "null":
 				spec["source"] = nil
-			case "empty pair":
-				spec["source"] = map[string]interface{}{"digest": "", "publisherRevision": ""}
 			}
-			if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); !apierrors.IsInvalid(err) {
-				t.Fatalf("removing the selected publication via %s must be refused: %v", mode, err)
+			if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); err != nil {
+				t.Fatalf("lifting the pin via %s must be admitted: %v", mode, err)
+			}
+			objects, _ := desiredTenant(t, engine, &definition, input)
+			ref, _, _ := unstructured.NestedMap(objects["ociRepository"].Object, "spec", "ref")
+			if !reflect.DeepEqual(ref, releaseRef(">=0.0.0")) {
+				t.Fatalf("a lifted pin must follow every stable release, got %v", ref)
 			}
 		})
 	}
@@ -450,7 +457,7 @@ func TestCommittedTenant(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
-			return admit(instance("upgrade-readiness", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false}})) == nil, nil
+			return admit(instance("upgrade-readiness", map[string]interface{}{"source": map[string]interface{}{"version": "3.12.0", "reconcileApplication": false}})) == nil, nil
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -459,7 +466,7 @@ func TestCommittedTenant(t *testing.T) {
 		}
 		objects, ignored := desiredTenant(t, engine, &definition, input)
 		assertTenantChildren(t, objects, ignored, true, false)
-		if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false}, "spec", "source"); err != nil {
+		if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"version": "3.12.0", "reconcileApplication": false}, "spec", "source"); err != nil {
 			t.Fatal(err)
 		}
 		if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); !apierrors.IsInvalid(err) {
@@ -566,7 +573,7 @@ func assertTenantIdentity(t *testing.T, source *unstructured.Unstructured, subje
 // subject as the regex cosign applies: the reviewed maintained revisions are
 // accepted and the deleted legacy publisher repository is refused at any
 // commit, including the one its final release was cut from (#6264).
-func assertDefaultSubjectRefusesDeletedPublisher(t *testing.T, source *unstructured.Unstructured) {
+func assertDefaultSubjectRefusesSharedPublishers(t *testing.T, source *unstructured.Unstructured) {
 	t.Helper()
 	identities, _, _ := unstructured.NestedSlice(source.Object, "spec", "verify", "matchOIDCIdentity")
 	if len(identities) != 1 {
@@ -578,8 +585,8 @@ func assertDefaultSubjectRefusesDeletedPublisher(t *testing.T, source *unstructu
 		t.Fatalf("compiled default subject is not a regex: %v", err)
 	}
 	for identity, want := range map[string]bool{
-		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812": true,
-		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35": true,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812": false,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35": false,
 		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328": false,
 		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40):               false,
 		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812": false,
@@ -653,7 +660,7 @@ func assertDefaultSubjectTrustsOnlyOwnRelease(t *testing.T, source *unstructured
 		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                                                                         true,
 		own + "/.github/workflows/cd.yml@refs/tags/v1.2.3-rc.1":                                                                          true,
 		own + "/.github/workflows/release.yaml@refs/tags/v0.0.0-alpha.0.beta-2":                                                          true,
-		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35":          true,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35":          false,
 		own + "-x/.github/workflows/release.yaml@refs/tags/v1.2.3":                                                                       false,
 		"https://github.com/devantler-tech/x" + tenant + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                              false,
 		"https://github.com/devantler-tech/" + strings.ReplaceAll(tenant, "-", "X") + "/.github/workflows/release.yaml@refs/tags/v1.2.3": false,

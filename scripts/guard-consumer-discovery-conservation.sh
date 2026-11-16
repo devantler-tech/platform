@@ -73,8 +73,8 @@
 #     rendered document: a controller creates that object inside the cluster, so neither the
 #     scan nor any render has a document for it. A kro ResourceGraphDefinition is admitted
 #     only while it names its complete schema GVK and production renders no matching instance,
-#     except the exact canonical-only Tenant/constructor/source admission independently
-#     validated below; a publication receipt alone never supplies that admission;
+#     except Tenant instances, admitted only while the rendered Tenant graph is the exact
+#     own-release constructor (ADR 0019): its source then names no shared publisher;
 #     any other carrier (a Flux Operator ResourceSet, say) is refused outright;
 #   - non-empty ResourceSet resourcesTemplate strings, including step templates: their
 #     runtime templating cannot be reproduced by traversing static YAML mappings;
@@ -1046,22 +1046,24 @@ done <<<"$sources"
 # kro creates a templated OCIRepository for every instance of its RGD's complete GVK, inside the
 # cluster. The RGD may sit in one render and its instances in another, so every GVK is
 # collected before any render is searched for instances.
-canonical_rendered=''
-canonical_registration="$(canonical_tenant_bindings "$SCAN_ROOT")" || refuse 'canonical source registrations are unreadable'
-if [ "$(printf '%s\n' "$canonical_registration" | jq -r '.bindings|length')" -gt 0 ]; then
-  : >"$work/typed-source-inventory.jsonl"
-  while IFS=$'\t' read -r file label; do
-    [ -n "$file" ] || continue
-    yq -p=yaml -N -o=json -I=0 '{"file":filename,"document":explode(.)}' "$file" >"$work/typed-source-one.jsonl" ||
-      refuse "could not read typed source declarations in the production render of $label"
-    jq -es --arg file "$file" 'length>0 and all(.[]; type=="object" and keys==["document","file"] and .file==$file)' \
-      "$work/typed-source-one.jsonl" >/dev/null || refuse 'incomplete typed source render observation'
-    cat "$work/typed-source-one.jsonl" >>"$work/typed-source-inventory.jsonl"
-  done <<<"$sources"
-  canonical_typed_source_hits "$SCAN_ROOT" "$work/typed-source-inventory.jsonl" >"$work/typed-source-hits.json" ||
-    refuse 'could not classify every rendered source-producing schema'
-  canonical_rendered="$(canonical_tenant_inventory_projection "$SCAN_ROOT" "$work/typed-source-inventory.jsonl" "$work/typed-source-hits.json" rendered)" ||
-    refuse 'canonical source constructor or instance differs in the production render'
+#
+# A Tenant's source names only the tenant's own repository's release workflow (ADR 0019), so
+# it is never a shared-publisher consumer. Its instances are admitted only when the RENDERED
+# Tenant graph is the exact reviewed own-release constructor; then they add no consumer row.
+: >"$work/typed-source-inventory.jsonl"
+while IFS=$'\t' read -r file label; do
+  [ -n "$file" ] || continue
+  yq -p=yaml -N -o=json -I=0 '{"file":filename,"document":explode(.)}' "$file" >"$work/typed-source-one.jsonl" ||
+    refuse "could not read typed source declarations in the production render of $label"
+  jq -es --arg file "$file" 'length>0 and all(.[]; type=="object" and keys==["document","file"] and .file==$file)' \
+    "$work/typed-source-one.jsonl" >/dev/null || refuse 'incomplete typed source render observation'
+  cat "$work/typed-source-one.jsonl" >>"$work/typed-source-inventory.jsonl"
+done <<<"$sources"
+tenant_sources_admitted=0
+if tenant_source_inventory_check \
+  "$SCAN_ROOT/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" \
+  "$work/typed-source-inventory.jsonl"; then
+  tenant_sources_admitted=1
 fi
 while IFS=$'\t' read -r kind api_version; do
   [ -n "$kind" ] || continue
@@ -1094,7 +1096,7 @@ while IFS=$'\t' read -r kind api_version; do
     done <<<"$clones"
   done <<<"$sources"
   if [ "$instances" -gt 0 ]; then
-    if [ "$kind" != Tenant ] || [ "$api_version" != kro.run/v1alpha1 ] || [ "$instances" -ne 1 ] || [ -z "$canonical_rendered" ]; then
+    if [ "$kind" != Tenant ] || [ "$api_version" != kro.run/v1alpha1 ] || [ "$tenant_sources_admitted" != 1 ]; then
       refuse "production renders $instances $kind instance(s) of $api_version; kro turns each into an OCIRepository inside the cluster, which neither the file scan nor this render has a document for"
     fi
   fi
@@ -1116,13 +1118,6 @@ while IFS=$'\t' read -r file label; do
   object_contracts="$object_contracts$rows
 "
 done <<<"$sources"
-if [ -n "$canonical_rendered" ]; then
-  printf '%s\n' "$canonical_rendered" >"$work/canonical-rendered-source.json"
-  rows="$(consumer_rows "$work/canonical-rendered-source.json" with-identity)" || refuse 'could not attribute the validated canonical source projection'
-  rendered="$rendered$rows"$'\n'
-  rows="$(consumer_rows "$work/canonical-rendered-source.json" with-object-contract)" || refuse 'could not read the complete canonical source contract'
-  object_contracts="$object_contracts$rows"$'\n'
-fi
 printf '%s' "$rendered" | sed '/^$/d' | LC_ALL=C sort -u >"$work/rendered"
 printf '%s' "$object_contracts" | sed '/^$/d' | LC_ALL=C sort -u >"$work/object-contracts"
 scanned="$(discover_consumers "$SCAN_ROOT" with-identity)" ||

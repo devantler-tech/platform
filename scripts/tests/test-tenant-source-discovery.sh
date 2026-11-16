@@ -29,7 +29,7 @@ discover() {
   bash -c 'source "$1"; discover_consumers "$2"' bash "$report" "$work/tree"
 }
 refuses() {
-  local name="$1" reason="${2-needs complete admission}"
+  local name="$1" reason="${2-inventory is UNKNOWN}"
   if discover >"$work/result" 2>"$work/error"; then
     printf 'FAIL: silently accepted %s\n' "$name" >&2
     failures=$((failures + 1))
@@ -53,7 +53,7 @@ spec:
     reconcileApplication: false
 EOF
 cp "$work/good.yaml" "$input"
-refuses 'literal source-only Tenant' 'k8s/apps/tenant.yaml'
+refuses 'Tenant of a graph that is not the own-release constructor'
 yq '.spec.source.reconcileApplication=true' "$work/good.yaml" >"$input"
 refuses 'active Tenant'
 yq -o=json '.' "$work/good.yaml" >"$input"
@@ -170,5 +170,44 @@ yq '.apiVersion="tenants.example.test/v1alpha1"' "$work/good.yaml" >"$input"
 refuses 'matching custom-group instance'
 yq -i 'del(.spec.schema.apiVersion)' "$work/tree/k8s/controller.yaml"
 refuses 'source-producing schema without a complete GVK' 'source-producing schema GVK is unknown'
+
+# The reviewed own-release Tenant graph admits its instances and projects no consumer: a
+# Tenant names only its own repository's release workflow (ADR 0019). The guard reads the
+# graph both as observed and at its reviewed path, so a copy elsewhere proves nothing.
+rm -f "$input" "$work/tree/k8s/controller.yaml"
+graph=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
+mkdir -p "$work/tree/$(dirname "$graph")"
+cp "$root/$graph" "$work/tree/$graph"
+cp "$root/k8s/providers/hetzner/apps/business-site/tenant.yaml" "$input"
+if ! discover >"$work/result" 2>"$work/error" || [ -s "$work/result" ]; then
+  printf 'FAIL: the own-release Tenant was not admitted without a projected consumer\n' >&2
+  cat "$work/error" >&2
+  failures=$((failures + 1))
+fi
+yq -i '.spec.source.version="3.12.0"' "$input"
+if ! discover >"$work/result" 2>"$work/error" || [ -s "$work/result" ]; then
+  printf 'FAIL: an emergency-pinned own-release Tenant was not admitted\n' >&2
+  failures=$((failures + 1))
+fi
+cp "$work/tree/$graph" "$work/graph.yaml"
+yq -i '(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) |= sub("devantler-tech/\" [+]"; "devantler-tech/(\\\\.github/\\\\.github/workflows/publish-app\\\\.yaml@[0-9a-f]{40}|\" +")' "$work/tree/$graph"
+if cmp -s "$work/graph.yaml" "$work/tree/$graph"; then
+  printf 'FAIL: the shared-publisher mutation did not change the graph\n' >&2
+  failures=$((failures + 1))
+fi
+refuses 'Tenant graph that trusts the shared publisher again'
+cp "$work/graph.yaml" "$work/tree/$graph"
+# shellcheck disable=SC2016 # A literal KRO expression, never shell expansion.
+yq -i '(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"digest": "${schema.spec.source.version}"}' "$work/tree/$graph"
+refuses 'Tenant graph that pins a digest'
+cp "$work/graph.yaml" "$work/tree/$graph"
+cp "$work/graph.yaml" "$work/tree/k8s/clone.yaml"
+yq -i '.metadata.name="clone.kro.run"' "$work/tree/k8s/clone.yaml"
+refuses 'cloned Tenant graph'
+rm "$work/tree/k8s/clone.yaml"
+if ! discover >"$work/result" 2>"$work/error"; then
+  printf 'FAIL: restoring the reviewed graph did not restore admission\n' >&2
+  failures=$((failures + 1))
+fi
 printf '%s failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

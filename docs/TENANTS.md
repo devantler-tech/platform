@@ -144,20 +144,18 @@ approved location until migrated. The workflow builds and pushes the image, pins
 **cosign-signs** both (keyless, via GitHub OIDC). The platform's `OCIRepository`
 (§5) **verifies** that signature against the `publish-app.yaml` identity.
 
-`publish-app.yaml` signs two artifacts separately: the OCI **manifest** artifact and the
-container **image**. Three verifiers check them, and they do not check the same thing:
+A `Tenant` follows its own signed releases instead ([ADR 0019](https://github.com/devantler-tech/monorepo/blob/main/docs/adr/0019-tenants-follow-their-signed-release-tags.md)):
+its source takes the newest stable release of `oci://ghcr.io/devantler-tech/<name>/manifests`
+and accepts only the tenant's own repository's release workflow on a release tag. A release goes
+live with no platform change. See [Releases reach production by themselves](#releases-reach-production-by-themselves).
 
-The business site's canonical-only publisher instead uses
-`.github/workflows/publish-runtime.yaml` on a published release. Its initial
-Platform registration is source-only: the typed `Tenant` pins the exact manifest
-digest and reviewed maintained publisher, with application reconciliation,
-WebApp, external DNS and SOPS disabled. Fetching that source does not deploy the
-portal or prove any image/identity/private-input readiness.
+A publisher signs two artifacts separately: the OCI **manifest** artifact and the
+container **image**. Three verifiers check them, and they do not check the same thing:
 
 | Verifier | Artifact | What it accepts |
 | --- | --- | --- |
 | **Flux** — a registered tenant's `OCIRepository` | manifest | Its recorded legacy signer, current pin and release candidate, plus any exact maintained revisions explicitly approved for that consumer, plus that consumer's own repository's release workflow on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)). Other commits and other repositories are refused. |
-| **Flux** — a `Tenant` instance's `OCIRepository` (no pinned publisher) | manifest | The explicitly reviewed maintained revisions, or a workflow in `devantler-tech/<spec.name>/.github/workflows/` on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)). A pinned publisher revision keeps only that exact revision. |
+| **Flux** — a `Tenant` instance's `OCIRepository` | manifest | Only a workflow in `devantler-tech/<spec.name>/.github/workflows/` on a stable release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265), ADR 0019). No shared-publisher revision is accepted. |
 | **Admission** — the `verify-app-images` Kyverno policy | image | The explicitly reviewed maintained `.github` publisher revisions, or any first-party repository's own release workflow on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)), from the GitHub OIDC issuer. The deleted legacy `actions` publisher repository is refused at every commit ([#6264](https://github.com/devantler-tech/platform/issues/6264)). Other maintained commits, tags and branches of the shared publisher are refused. |
 | **Node pull** — the Talos image-verification rule | image | The same as admission. |
 
@@ -168,52 +166,42 @@ refuses the pull (`ImagePullBackOff`).
 The approved Flux list covers the production consumers already registered with the approval
 generator. Legacy compatibility lives in `scripts/publish-workflow-approved-revisions.tsv`, and
 `scripts/write-publish-workflow-matchers.sh` writes it into those consumers'
-`OCIRepository`. Canonical-only registration lives separately in
-`scripts/canonical-tenant-source-bindings.json`; it records the complete typed
-constructor/instance, qualified source and independently verified publication.
-It never fabricates a legacy signer, applied row or release candidate. The
-writer validates the pinned canonical Tenant unchanged. The legacy consumer floor is fixed in code
+`OCIRepository`. A `Tenant` is no consumer of the shared publisher, so it has no row there. The
+legacy consumer floor is fixed in code
 (`scripts/report-publish-workflow-signing-revisions.sh` and the
 `Regenerate Approved Publish Revisions` workflow), so a new tenant registered by hand (§5) is not
 covered until a reviewed platform change adds it there. Maintained revisions are curated separately
 in `scripts/publish-workflow-canonical-approvals.tsv`; recognizing a publisher's location does not
-approve it. The `Tenant` archetype pilot (below) accepts only the explicitly reviewed maintained
-revisions; the deleted legacy publisher repository is no longer accepted. Its starter check also
-requires that this rule accept the starter's actual pinned caller.
+approve it.
 
-To generate the initial business-site admission candidate, use
-`scripts/bootstrap-tenant-source.sh --admit-canonical-source --tag <tag> --source-sha <sha> --digest <digest>`
-with the explicit read-only `PUBLISH_KUBE_CONTEXT`. The command independently
-verifies the immutable release, validates the complete raw constructor/instance
-and inventory, and writes the candidate only after all checks pass. The existing
-`--consumer business-site --verify-only` mode remains evidence-only. Review the
-candidate and registration together; generating a file is not deployed acceptance.
+### Releases reach production by themselves
 
-For a later source-only upgrade, use
-`scripts/bootstrap-tenant-source.sh --prepare-canonical-upgrade --tag <tag> --source-sha <sha> --digest <digest> --output /absolute/new-candidate-directory`
-with that same read-only context. The existing source must already be Ready and
-SourceVerified with its admitted digest and exact publisher constraint. The tool
-verifies the proposed publication, checks the source again, and generates two
-reviewable files in a new private directory. It never updates the checkout or
-cluster. Copy those generated files to their matching repository paths for review;
-do not hand-edit the generated admission or change its disabled application flags.
+A `Tenant`'s source checks for a new release every minute and takes the newest stable `X.Y.Z`
+release signed by the tenant's own release workflow. Flux refuses an artifact whose signature does
+not match and dry-runs the whole package before it applies anything, so a release that fails
+either check changes nothing. One that fails while it is applied, or never becomes healthy, can
+leave part of the package applied, so serve through a rolling update that keeps every old pod
+until its replacement is ready, never `Recreate`. A tenant's health never fails the platform (§8).
+A package that changes its database ships the migration as a Job in the package, and its new
+revision becomes ready only once the schema it needs exists (business-site does this). Old pods
+keep serving meanwhile, so a migration only adds what the new revision needs; removing what the
+old revision reads waits for a later release.
 
-The `published-upgrade` record retains the previous binding and a hashed source
-observation separately from the proposed publication. Discovery projects the new
-desired digest; regeneration preserves the last actual observation while the
-previous source remains verified. It records the replacement only after Flux has
-verified the new digest at its current generation, then removes the transitional
-record. A proposed version is never an applied version. Missing, ambiguous,
-recreated, stale or weakened previous sources fail preparation or regeneration;
-an upgrade never restores first-publication authority or enables an application.
-
-Before first verification, complete inventory may show the exact source absent
-or pending without an artifact. Regeneration emits no applied row for that state.
-Once the uniquely identified source is Ready and SourceVerified at its current
-generation with the exact digest, regeneration writes its qualified seven-column
-observation and retires bootstrap authority. A later missing, pending, malformed,
-duplicated or unreadable observation fails; it cannot restore bootstrap. See the
-[canonical-only source decision](adr/canonical-only-source-bootstrap.md).
+- **What runs:** `kubectl -n <tenant> get ocirepository,kustomization <tenant>` shows the applied
+  `<version>@sha256:<digest>`. The tenant's GitHub release (tag, notes and signed artifacts) and the
+  Flux events are the record of each change.
+- **Roll back:** release a fix; the tenant follows it.
+- **Emergency pin:** set the `Tenant`'s `spec.source.version` to one release, such as `"3.12.0"`, in a
+  normal platform pull request. The pin changes the tenant's lines in
+  `scripts/validate-eks-ci-role-policy/approved-surface.txt` and
+  `scripts/rgd-template-static-scan-baseline.tsv`; take the new values from the failing checks.
+  Remove the pin once a fixed release exists.
+- **Break-glass, while that pull request is on its way:** the maintainer runs
+  `flux suspend kustomization <tenant> -n <tenant>`. Once the pin is live, resume it
+  (`flux resume kustomization <tenant> -n <tenant>`) only after
+  `kubectl -n <tenant> get ocirepository <tenant>` reports Ready with the pinned version, so the
+  Kustomization never re-applies the bad artifact it still holds. Never move or delete a release
+  tag to roll back.
 
 Local regeneration requires GNU coreutils (`gmv` on macOS). Output replacement
 uses its no-target-directory operation, so a concurrent destination-directory

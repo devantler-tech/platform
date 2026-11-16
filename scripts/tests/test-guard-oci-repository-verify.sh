@@ -146,8 +146,8 @@ root="$(fresh_root templated-trusted-stream-tag)"
 repo_doc '${schema.spec.name}' 'oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests' "$(good_verify)" >"$root/tenant-template.yaml"
 add_resource "$root" tenant-template.yaml
 yq -i '.spec.ref = {"tag": "v1.0.0"}' "$root/tenant-template.yaml"
-# shellcheck disable=SC2016 # Expected diagnostic preserves the KRO placeholder.
-expect_refused 'a templated trusted tenant fixed tag is refused by name' "$root" 'OCIRepository ${schema.spec.name} (oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests) must follow the governed release stream with exactly spec.ref.semver: >=1.0.0'
+# Any templated tenant URL must come from the exact own-release constructor (ADR 0019).
+expect_refused 'a templated trusted tenant fixed tag is refused by the constructor' "$root" 'invalid Tenant source constructor'
 
 # --- RED: no spec.verify at all (AC1) ---
 root="$(fresh_root noverify)"
@@ -202,16 +202,14 @@ spec:
         apiVersion: source.toolkit.fluxcd.io/v1
         kind: OCIRepository
         metadata:
-          name: ${schema.spec.name}
+          name: nested
         spec:
-          url: oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests
+          url: oci://ghcr.io/devantler-tech/nested/manifests
           ref:
             semver: ">=1.0.0"
 EOF
 add_resource "$root" rgd.yaml
-# The `${schema.spec.name}` below is the kro template placeholder, quoted verbatim.
-# shellcheck disable=SC2016
-expect_refused 'an unverified OCIRepository nested inside a template is discovered' "$root" 'OCIRepository ${schema.spec.name} (oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests) has NO spec.verify'
+expect_refused 'an unverified OCIRepository nested inside a template is discovered' "$root" 'OCIRepository nested (oci://ghcr.io/devantler-tech/nested/manifests) has NO spec.verify'
 
 # --- RED: discovery across documents — the second document of a multi-doc file ---
 root="$(fresh_root multidoc)"

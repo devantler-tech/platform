@@ -21,7 +21,6 @@ C=3333333333333333333333333333333333333333
 D=4444444444444444444444444444444444444444
 GENERIC_FILES=(
   k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml
-  k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
   talos/cluster/verify-first-party-images.yaml
 )
 fail() {

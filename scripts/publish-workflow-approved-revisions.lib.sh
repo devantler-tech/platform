@@ -20,7 +20,6 @@ readonly HEADER=$'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signe
 # where its absence should be noticed and the boundary redrawn on purpose.
 readonly GENERIC_SUBJECT_FILES=(
   'k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
-  'k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
   'talos/cluster/verify-first-party-images.yaml'
 )
 
@@ -229,23 +228,12 @@ while IFS=$'\t' read -r consumer _rest; do
   [ "$known" -eq 1 ] || refuse "approved set names $consumer, which is not a registered consumer"
 done <<<"$approved"
 
-# Canonical-only consumers have no legacy approval or invented applied history.
-canonical_only="$(canonical_tenant_bindings "$SCAN_ROOT")" || refuse 'invalid canonical-only source binding'
 registered_workflow() {
   local registered_legacy
   registered_legacy="$(lookup "$approved" "$1")"
-  if [ -n "$registered_legacy" ]; then
-    printf '%s\n' "${registered_legacy%%$'\t'*}"
-  else
-    printf '%s\n' "$canonical_only" | jq -er --arg consumer "$1" '[.bindings[]|select(.consumer==$consumer)] | select(length==1) | .[0].workflow'
-  fi
+  [ -n "$registered_legacy" ] || return 1
+  printf '%s\n' "${registered_legacy%%$'\t'*}"
 }
-while IFS= read -r canonical_entry; do
-  canonical_consumer="$(printf '%s\n' "$canonical_entry" | jq -r .consumer)"
-  [ -z "$(lookup "$approved" "$canonical_consumer")" ] || refuse "$canonical_consumer: both legacy and canonical-only registrations exist"
-  canonical_observation_consistent "$canonical_entry" "${APPROVED_IDENTITIES_FILE:-${APPROVED_SET%.tsv}.identities.tsv}" ||
-    refuse "$canonical_consumer: bootstrap/current-observation records disagree"
-done < <(printf '%s\n' "$canonical_only" | jq -c '.bindings[]')
 
 # ── 1b. The canonical approvals, read strictly ──────────────────────────────────────────
 # One row approves one reviewed commit of the matching canonical workflow for one registered
@@ -294,18 +282,6 @@ while IFS= read -r row || [ -n "$row" ]; do
       ;;
   esac
 done <"$CANONICAL_SET"
-
-# The explicit pinned source profile accepts its complete qualified identity only.
-while IFS= read -r canonical_entry; do
-  canonical_consumer="$(printf '%s\n' "$canonical_entry" | jq -r .consumer)"
-  canonical_publisher="$(printf '%s\n' "$canonical_entry" | jq -r .publication.publisherIdentity)"
-  canonical_pin="${canonical_publisher##*@}"
-  canonical_approved="$(lookup "$canonical" "$canonical_consumer")"
-  case "$canonical_approved" in
-    "$canonical_pin" | "($canonical_pin|"*")" | "("*"|$canonical_pin)") ;;
-    *) refuse "$canonical_consumer: canonical-only publisher is not an exact approved member" ;;
-  esac
-done < <(printf '%s\n' "$canonical_only" | jq -c '.bindings[]')
 
 # canonical_ref_ok <ref> → success when <ref> is one 40-hex commit, or exactly two distinct ones
 # written as "(first|second)". Nothing else: no pattern, no third alternative, no repeat.
