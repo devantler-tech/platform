@@ -1,0 +1,154 @@
+---
+name: Publish Email History Importer
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-email-history-import.yaml
+      - scripts/private-mail-config/**
+      - go.mod
+      - go.sum
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-email-history-import.yaml
+      - scripts/private-mail-config/**
+      - go.mod
+      - go.sum
+
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify the isolated mail history importer
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: Check out reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test private input, TLS, copy and reconciliation boundaries
+        run: go test -race ./scripts/private-mail-config
+      - name: Stage the importer without credentials
+        shell: bash
+        run: &stage_importer |
+          set -euo pipefail
+          build_dir="${RUNNER_TEMP}/email-history-build"
+          mkdir -p "$build_dir"
+          upstream=https://raw.githubusercontent.com/imapsync/imapsync/8895966244fb161cc68f2c8427a8f6326a7f2ab0
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-max-time 180 --max-filesize 1048576 \
+            "$upstream/imapsync" -o "$build_dir/imapsync"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-max-time 180 --max-filesize 65536 \
+            "$upstream/LICENSE" -o "$build_dir/LICENSE"
+          printf '%s  %s\n' \
+            89faed96f7c389723ddd7e78a00421b90d5b85bf79407fcf1b11209f3d4d7416 "$build_dir/imapsync" \
+            ff6c1f3ae704d82872e86dd19275e03bfb61a2c9ce5835b6d6989910d88635cf "$build_dir/LICENSE" \
+            | sha256sum --check --strict
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
+            -o "$build_dir/private-mail-bootstrap" ./scripts/private-mail-config
+          cp scripts/private-mail-config/Dockerfile.history "$build_dir/Dockerfile"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+      - name: Build the importer
+        run: docker buildx build --platform linux/amd64 --load --tag email-history-verify "$RUNNER_TEMP/email-history-build"
+      - name: Verify a real copy against isolated synthetic TLS peers
+        run: bash scripts/private-mail-config/test-history-image.sh email-history-verify
+      - name: Verify the packaged tool and refuse absent inputs offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          isolated=(--rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs "/tmp:rw,noexec,nosuid,mode=1777")
+          test "$(docker run "${isolated[@]}" --entrypoint /usr/local/bin/imapsync email-history-verify --version)" = 2.314
+          set +e
+          receipt=$(docker run "${isolated[@]}" email-history-verify --input-dir /missing --check 2>&1)
+          result=$?
+          set -e
+          test "$result" -eq 2
+          test "$receipt" = MAIL_HISTORY_IMPORT=REFUSED
+
+  publish:
+    name: Publish and sign the immutable importer
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      IMAGE: ghcr.io/devantler-tech/platform-email-history-import
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: Check out reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Stage the reviewed importer
+        shell: bash
+        run: *stage_importer
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+        with:
+          driver: docker-container
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push the importer
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ runner.temp }}/email-history-build
+          file: ${{ runner.temp }}/email-history-build/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:v2.314-${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Install checksum-verified supply-chain tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
+      - name: Sign and verify the published digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$DIGEST"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify \
+            --certificate-identity "https://github.com/devantler-tech/platform/.github/workflows/publish-email-history-import.yaml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${IMAGE}@${DIGEST}"
+          printf 'Published signed importer: %s@%s\n' "$IMAGE" "$DIGEST"
