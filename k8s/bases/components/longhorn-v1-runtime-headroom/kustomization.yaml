@@ -23,7 +23,7 @@ patches:
                   - matchExpressions:
                       - key: storage.platform.devantler.tech/migration-pool
                         operator: In
-                        values: [v1, v2]
+                        values: [v2]
   - target:
       group: helm.toolkit.fluxcd.io
       version: v2
@@ -41,13 +41,22 @@ patches:
           reloader:
             deployment:
               affinity:
+                podAntiAffinity:
+                  requiredDuringSchedulingIgnoredDuringExecution:
+                    - topologyKey: kubernetes.io/hostname
+                      labelSelector:
+                        matchLabels:
+                          app: reloader-reloader
                 nodeAffinity:
                   requiredDuringSchedulingIgnoredDuringExecution:
                     nodeSelectorTerms:
                       - matchExpressions:
-                          - key: storage.platform.devantler.tech/migration-pool
-                            operator: In
-                            values: [v1, v2]
+                          - key: node-role.kubernetes.io/control-plane
+                            operator: Exists
+              tolerations:
+                - key: node-role.kubernetes.io/control-plane
+                  operator: Exists
+                  effect: NoSchedule
   - target:
       group: helm.toolkit.fluxcd.io
       version: v2
@@ -64,10 +73,18 @@ patches:
         values:
           controller:
             affinity:
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/component: controller
+                        app.kubernetes.io/instance: hcloud-csi
+                        app.kubernetes.io/name: hcloud-csi
+                    topologyKey: kubernetes.io/hostname
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: platform.devantler.tech/baseline-worker
-                          operator: In
-                          values: ["true"]
+                      - key: storage.platform.devantler.tech/migration-pool
+                        operator: In
+                        values: [v1, v2]

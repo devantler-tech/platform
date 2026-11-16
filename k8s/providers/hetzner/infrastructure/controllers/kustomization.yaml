@@ -86,6 +86,9 @@ components:
   # silently-broken keda external-scaler and homepage Deployments.
   - ../../../../bases/components/helmrelease-drift-detection
   - ../../../../bases/components/helmrelease-flux-defaults
+  # Temporary controller placement for runtime adoption (#6073). Remove it
+  # after the migration's runtime and backup checks pass (#6073).
+  - ../../../../bases/components/longhorn-v1-runtime-headroom
   # ALWAYS-ON: the live private-NIC Cilium device pin (moved out of the
   # strict-mode patch so the homogeneous-devices/ successor below can
   # override it — parent `patches:` apply after component patches, so a value

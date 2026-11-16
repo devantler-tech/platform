@@ -14,7 +14,7 @@ fail() {
 
 # Check the actual chart's placement, HA, security and resource bounds.
 placement_is_independent() {
-  jq -e -s --argjson replicas "$2" '
+  jq -e -s --argjson replicas "$2" --argjson cross_revision "$3" '
     length == 1 and (.[0] |
     .kind == "Deployment" and .metadata.name == "reloader-reloader" and
     .metadata.namespace == "reloader" and .spec.replicas == $replicas and
@@ -31,10 +31,15 @@ placement_is_independent() {
     ($pod.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution // []) as $terms |
     ($terms | length) == 1 and
     $terms[0].topologyKey == "kubernetes.io/hostname" and
-    $terms[0].matchLabelKeys == ["pod-template-hash"] and
+    $terms[0].matchLabelKeys == (if $cross_revision then null else ["pod-template-hash"] end) and
     $terms[0].namespaces == null and $terms[0].namespaceSelector == null and
     $terms[0].labelSelector == {matchLabels:{app:"reloader-reloader"}} and
     all($terms[0].labelSelector.matchLabels | to_entries[]; $labels[.key] == .value) and
+    (if $cross_revision then
+      $pod.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
+        [{matchExpressions:[{key:"node-role.kubernetes.io/control-plane",operator:"Exists"}]}] and
+      $pod.tolerations == [{key:"node-role.kubernetes.io/control-plane",operator:"Exists",effect:"NoSchedule"}]
+    else true end) and
     ($pod.topologySpreadConstraints | length) == 1 and
     $pod.topologySpreadConstraints[0] == {
       maxSkew:1, topologyKey:"kubernetes.io/hostname", whenUnsatisfiable:"DoNotSchedule",
@@ -75,7 +80,15 @@ printf '%s\n' \
 kubectl kustomize "${local_fixture}" |
   yq ea 'select(.kind == "HelmRelease" and .metadata.name == "reloader")' - >"${scratch}/local-release.yaml"
 
+prod_cross_revision=false
+if yq -e '.components | contains(["../../../../bases/components/longhorn-v1-runtime-headroom"])' \
+  "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" >/dev/null; then
+  prod_cross_revision=true
+fi
+
 for replicas in 2 1; do
+  cross_revision=false
+  [[ "${replicas}" != 2 ]] || cross_revision="${prod_cross_revision}"
   effective_release="${scratch}/local-release.yaml"
   [[ "${replicas}" != 2 ]] || effective_release="${scratch}/prod-release.yaml"
   yq '.spec.values' "${effective_release}" >"${scratch}/values.yaml"
@@ -91,8 +104,8 @@ for replicas in 2 1; do
     --values "${scratch}/values.yaml" >"${scratch}/rendered.yaml"
   yq ea -o=json -I=0 'select(.kind == "Deployment" and .metadata.name == "reloader-reloader")' \
     "${scratch}/rendered.yaml" >"${scratch}/deployment.json"
-  placement_is_independent "${scratch}/deployment.json" "${replicas}" ||
-    fail "the rendered ${replicas}-replica reloader must have rollout-scoped hard hostname placement"
+  placement_is_independent "${scratch}/deployment.json" "${replicas}" "${cross_revision}" ||
+    fail "the rendered ${replicas}-replica reloader must have the configured hard hostname placement"
 
   yq ea -o=json -I=0 'select(.kind == "PodDisruptionBudget" and .metadata.name == "reloader-reloader")' \
     "${scratch}/rendered.yaml" >"${scratch}/budget.json"
@@ -104,12 +117,16 @@ for replicas in 2 1; do
     "${scratch}/budget.json" >/dev/null ||
     fail 'the actual chart must retain a selecting, drain-safe disruption budget'
 
+  scope_mutation='del(.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].matchLabelKeys)'
+  if [[ "${cross_revision}" == true ]]; then
+    scope_mutation='.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].matchLabelKeys = ["pod-template-hash"]'
+  fi
   for mutation in \
     'del(.spec.template.spec.affinity)' \
     '.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution = []' \
     '.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey = "topology.kubernetes.io/zone"' \
     '.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].labelSelector.matchLabels.app = "other"' \
-    'del(.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].matchLabelKeys)' \
+    "${scope_mutation}" \
     '.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].namespaceSelector = {}' \
     '.spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable = "ScheduleAnyway"' \
     'del(.spec.template.spec.topologySpreadConstraints[0].matchLabelKeys)' \
@@ -120,7 +137,7 @@ for replicas in 2 1; do
     '.spec.template.spec.containers[0].resources.limits.memory = "1Gi"' \
     '.spec.replicas = 0'; do
     jq "${mutation}" "${scratch}/deployment.json" >"${scratch}/mutated.json"
-    if placement_is_independent "${scratch}/mutated.json" "${replicas}"; then
+    if placement_is_independent "${scratch}/mutated.json" "${replicas}" "${cross_revision}"; then
       fail "the ${replicas}-replica placement guard accepted mutation: ${mutation}"
     fi
   done
@@ -131,4 +148,4 @@ grep -Fq "'scripts/tests/test-reloader-rendered-placement.sh'" "${root_dir}/.git
 grep -Fq 'bash scripts/tests/test-reloader-rendered-placement.sh' "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must execute the rendered placement test'
 
-printf 'PASS: the pinned reloader chart enforces independent rollout-scoped placement\n'
+printf 'PASS: the pinned reloader chart enforces each configured hostname-placement profile\n'
