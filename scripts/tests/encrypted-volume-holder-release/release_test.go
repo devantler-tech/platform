@@ -670,23 +670,35 @@ func TestFailedProcessReadsAreNotMistakenForAbsence(t *testing.T) {
 // The bound ends every read it started: a slow node reports UNAVAILABLE at
 // the deadline and the release goes on at once.
 func TestEvidenceBoundEndsSlowReads(t *testing.T) {
-	a := newAPI()
-	a.talos = nodeAtHold()
-	a.talos["slow"] = ""
-	a.evidenceTimeout = 1
-	started := time.Now()
-	output, err := runRelease(t, a, volume, sha)
-	elapsed := time.Since(started)
-	if err != nil || !strings.Contains(output, "=COMPLETE") || len(a.deleted) != 1 {
-		t.Fatalf("release must complete: err=%v deleted=%v output=%s", err, a.deleted, output)
+	timed := func(slow bool) (string, time.Duration) {
+		a := newAPI()
+		a.talos = nodeAtHold()
+		if slow {
+			a.talos["slow"] = ""
+			a.evidenceTimeout = 1
+		}
+		started := time.Now()
+		output, err := runRelease(t, a, volume, sha)
+		elapsed := time.Since(started)
+		if err != nil || !strings.Contains(output, "=COMPLETE") || len(a.deleted) != 1 {
+			t.Fatalf("release must complete: err=%v deleted=%v output=%s", err, a.deleted, output)
+		}
+		return output, elapsed
 	}
+	// The release's own API reads cost the same in both runs and vary with the
+	// machine's load, so the slow node is measured against a run of the same
+	// release on a responsive node, not against a fixed total.
+	_, baseline := timed(false)
+	output, slow := timed(true)
 	for _, want := range []string{"EVIDENCE=UNAVAILABLE phase=before stage=deadline", "EVIDENCE=UNAVAILABLE phase=after stage=deadline"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("missing %q in:\n%s", want, output)
 		}
 	}
-	// Each slow read takes five seconds; two one-second bounds must not wait for them.
-	if elapsed > 8*time.Second {
-		t.Fatalf("the evidence bound did not end its reads: the release took %s", elapsed)
+	// Each slow read takes five seconds and a phase makes at least six of them
+	// in sequence, so unbounded reads add well over a minute; two one-second
+	// bounds add a few seconds at most.
+	if slow-baseline > 15*time.Second {
+		t.Fatalf("the evidence bound did not end its reads: %s against %s for a responsive node", slow, baseline)
 	}
 }
