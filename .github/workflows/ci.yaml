@@ -299,6 +299,7 @@ jobs:
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-reloader-rendered-placement.sh'
               - 'scripts/tests/test-flux-operator-rendered-placement.sh'
+              - 'scripts/tests/test-ksail-operator-rendered-placement.sh'
               - 'scripts/tests/test-reloader-placement-selection.sh'
               - 'scripts/tests/test-hubble-ui-streaming.sh'
               - 'scripts/check-hubble-ui-streaming/**'
@@ -4229,6 +4230,34 @@ jobs:
             scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
           if [[ -n "$changed_inputs" ]]; then
             bash scripts/tests/test-flux-operator-rendered-placement.sh
+          fi
+
+      - name: 🧩 Verify scoped KSail operator placement
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck -x scripts/tests/test-ksail-operator-rendered-placement.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml \
+            k8s/bases/infrastructure/ksail-operator \
+            k8s/bases/infrastructure/controllers/ksail-operator \
+            k8s/bases/infrastructure/kustomization.yaml \
+            k8s/bases/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/docker/infrastructure/kustomization.yaml \
+            k8s/providers/docker/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/ksail-operator \
+            k8s/bases/components \
+            k8s/clusters ksail.prod.yaml \
+            scripts/tests/test-ksail-operator-rendered-placement.sh \
+            scripts/flux-render.lib.sh scripts/build-controller-helm.sh \
+            scripts/prepare-helm-render-input-capture.sh \
+            scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-ksail-operator-rendered-placement.sh
           fi
 
       - name: 🧩 Verify independent reloader placement
