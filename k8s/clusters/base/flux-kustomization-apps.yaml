@@ -70,24 +70,45 @@ spec:
     - apiVersion: postgresql.cnpg.io/v1
       kind: Cluster
       current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
-    # Tenants own their health (ADR 0019, monorepo#5094). Every Flux source and
+    # Tenants own their health (ADR 0019, monorepo#5094). Every Flux
     # Kustomization this layer applies belongs to a tenant: the product's own
     # release, reconciled in its own namespace. Tenants follow their release
     # tags, so a broken tenant release must not fail `apps` and, through it,
-    # the platform's merge-queue deploys. These objects count as healthy once
-    # they exist. A failing release keeps the tenant on its last good revision
-    # (Flux refuses an unsigned artifact and dry-runs the whole package first),
-    # and the flux-notifications alert reports the tenant's own error events.
-    # HelmReleases keep their normal health check.
+    # the platform's merge-queue deploys. Tenant Kustomizations, and the
+    # sources labelled `platform.devantler.tech/tenant-source`, count as
+    # healthy once they exist. A failing release keeps the tenant on its last
+    # good revision (Flux refuses an unsigned artifact and dry-runs the whole
+    # package first), and the flux-notifications alert reports the tenant's
+    # own error events. Platform chart sources (no label) keep the usual Flux
+    # readiness: in progress until observed at their generation, failed when
+    # stalled, healthy when Ready. HelmReleases keep their normal check.
     - apiVersion: kustomize.toolkit.fluxcd.io/v1
       kind: Kustomization
       current: "true"
     - apiVersion: source.toolkit.fluxcd.io/v1
       kind: OCIRepository
-      current: "true"
+      inProgress: >-
+        !(has(metadata.labels) && 'platform.devantler.tech/tenant-source' in metadata.labels) &&
+        (!has(status.observedGeneration) || status.observedGeneration != metadata.generation ||
+        (has(status.conditions) && status.conditions.exists(c, c.type == 'Reconciling' && c.status == 'True')))
+      failed: >-
+        !(has(metadata.labels) && 'platform.devantler.tech/tenant-source' in metadata.labels) &&
+        has(status.conditions) && status.conditions.exists(c, c.type == 'Stalled' && c.status == 'True')
+      current: >-
+        (has(metadata.labels) && 'platform.devantler.tech/tenant-source' in metadata.labels) ||
+        (has(status.conditions) && status.conditions.exists(c, c.type == 'Ready' && c.status == 'True'))
     - apiVersion: source.toolkit.fluxcd.io/v1
       kind: GitRepository
-      current: "true"
+      inProgress: >-
+        !(has(metadata.labels) && 'platform.devantler.tech/tenant-source' in metadata.labels) &&
+        (!has(status.observedGeneration) || status.observedGeneration != metadata.generation ||
+        (has(status.conditions) && status.conditions.exists(c, c.type == 'Reconciling' && c.status == 'True')))
+      failed: >-
+        !(has(metadata.labels) && 'platform.devantler.tech/tenant-source' in metadata.labels) &&
+        has(status.conditions) && status.conditions.exists(c, c.type == 'Stalled' && c.status == 'True')
+      current: >-
+        (has(metadata.labels) && 'platform.devantler.tech/tenant-source' in metadata.labels) ||
+        (has(status.conditions) && status.conditions.exists(c, c.type == 'Ready' && c.status == 'True'))
   prune: true
   # Immutable conflicts require an operator plan; individual Jobs opt into recreation.
   force: false

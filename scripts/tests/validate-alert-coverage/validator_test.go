@@ -438,3 +438,48 @@ func writeFile(t *testing.T, path string, contents string, permissions os.FileMo
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// A tenant GitRepository no longer fails `apps` (ADR 0019), so its own error events are the
+// only signal; its namespace must be watched like an OCIRepository's.
+func TestGitRepositoryInUnwatchedNamespaceFails(t *testing.T) {
+	fixture := newValidatorFixture(t)
+	resourcePath := filepath.Join(fixture.workspace, layers[len(layers)-1], "resources.yaml")
+	resources, err := os.ReadFile(resourcePath)
+	if err != nil {
+		t.Fatalf("read resource fixture: %v", err)
+	}
+	resources = append(resources, []byte(`---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: tenant
+  namespace: tenant-git
+spec: {}
+`)...)
+	writeFile(t, resourcePath, string(resources), 0o600)
+
+	result := fixture.runValidator(t, nil)
+	output := result.stdout + result.stderr
+	if result.exitCode == 0 {
+		t.Fatalf("validator unexpectedly succeeded; output = %q", output)
+	}
+	for _, want := range []string{
+		"does not watch every namespace holding a GitRepository",
+		"- kind: GitRepository\n      name: \"*\"\n      namespace: tenant-git",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("validator output = %q, want %q", output, want)
+		}
+	}
+
+	alertPath := filepath.Join(fixture.workspace, "k8s", "providers", "hetzner", "infrastructure", "flux-notifications", "alert.yaml")
+	alert, err := os.ReadFile(alertPath)
+	if err != nil {
+		t.Fatalf("read alert fixture: %v", err)
+	}
+	alert = append(alert, []byte("    - kind: GitRepository\n      name: \"*\"\n      namespace: tenant-git\n")...)
+	writeFile(t, alertPath, string(alert), 0o600)
+	if result := fixture.runValidator(t, nil); result.exitCode != 0 {
+		t.Fatalf("validator exit code = %d after watching tenant-git, want 0; output = %q", result.exitCode, result.stdout+result.stderr)
+	}
+}
