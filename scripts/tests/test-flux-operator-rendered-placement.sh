@@ -30,9 +30,29 @@ placement_is_scoped() {
 }
 
 kube_version="$(yq -er '.spec.cluster.kubernetesVersion' "${root_dir}/ksail.prod.yaml")"
-for cluster in prod local; do
-  work="${scratch}/${cluster}"
-  flux_render_cluster "${root_dir}/k8s" "${root_dir}/k8s/clusters/${cluster}" "$work"
+for profile in prod local prod-disabled; do
+  cluster="$profile"
+  tree="${root_dir}/k8s"
+  if [[ "$profile" == prod-disabled ]]; then
+    cluster=prod
+    mkdir -p "$scratch/disabled"
+    cp -R "${root_dir}/k8s" "$scratch/disabled/k8s"
+    tree="$scratch/disabled/k8s"
+    yq -i '.components |= map(select(. != "../../../../bases/components/longhorn-v1-runtime-headroom"))' \
+      "$tree/providers/hetzner/infrastructure/controllers/kustomization.yaml"
+  fi
+  operator_placement_enabled=false
+  if [[ "$cluster" == prod ]]; then
+    selected="$(yq -r '.components | contains(["../../../../bases/components/longhorn-v1-runtime-headroom"])' \
+      "$tree/providers/hetzner/infrastructure/controllers/kustomization.yaml")" || fail 'cannot classify the production headroom component'
+    case "$selected" in
+      true) operator_placement_enabled=true ;;
+      false) ;;
+      *) fail 'the production headroom selection is ambiguous' ;;
+    esac
+  fi
+  work="${scratch}/${profile}"
+  flux_render_cluster "$tree" "$tree/clusters/${cluster}" "$work"
   jq -e '[.[] | select(.kind == "HelmRelease" and .metadata.name == "flux-operator" and .metadata.namespace == "flux-system")]
     | if length == 1 then .[0] else error("missing or duplicated operator release") end' "$work/resolved.json" >"$work/release.json"
   jq -e '.spec.valuesFrom == null and .spec.postRenderStrategy == "nohooks" and
@@ -51,7 +71,7 @@ for cluster in prod local; do
   fi
   jq '.spec.values // {}' "$work/release.json" >"$work/values.json"
   jq '{release:.}' "$work/release.json" >"$work/record.json"
-  if [[ "$cluster" == prod ]]; then
+  if [[ "$operator_placement_enabled" == true ]]; then
     # The production component appends exactly one placement renderer patch.
     jq 'del(.release.spec.postRenderers[0].kustomize.patches[-1])' "$work/record.json" >"$work/baseline.json"
   else
@@ -73,7 +93,7 @@ for cluster in prod local; do
     done
     actual="$work/$mode.actual.json"
     baseline="$work/$mode.baseline.json"
-    if [[ "$cluster" == prod ]]; then
+    if [[ "$operator_placement_enabled" == true ]]; then
       placement_is_scoped "$actual" "$baseline" || fail 'production must change only the required operator hostname exclusion'
       for mutation in \
         'map(if .kind == "Deployment" then del(.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution) else . end)' \
@@ -86,11 +106,11 @@ for cluster in prod local; do
         fi
       done
     else
-      jq -e 'all(.[] | select(.kind == "Deployment");
-        .spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
-        [{matchExpressions:[{key:"kubernetes.io/os",operator:"In",values:["linux"]}]}])' "$actual" >/dev/null ||
-        fail 'the Docker operator inherited production migration placement'
+      jq -e '[.[] | select(.kind == "Deployment" and .metadata.name == "flux-operator" and .metadata.namespace == "flux-system")] as $operators |
+        ($operators | length) == 1 and $operators[0].spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
+        [{matchExpressions:[{key:"kubernetes.io/os",operator:"In",values:["linux"]}]}]' "$actual" >/dev/null ||
+        fail 'an ordinary operator profile inherited temporary migration placement or lost its Deployment'
     fi
   done
 done
-printf 'PASS: native Flux operator placement is scoped in install and upgrade; Docker retains ordinary placement\n'
+printf 'PASS: native operator install and upgrade preserve scoped placement, disabled production and ordinary Docker profiles\n'
