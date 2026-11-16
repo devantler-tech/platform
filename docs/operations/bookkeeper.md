@@ -2,9 +2,10 @@
 
 The platform prepares two daily installations of the signed `bookkeeper` chart. Production uses
 the business mailbox and the production Numina company. Development uses a separate mailbox
-containing synthetic test mail and a separate Numina test company. Both collectors are suspended.
-The development overlay is prepared but not selected by the production apps layer: its independent
-health and non-paging deployment lane must exist before it can be activated (ADR 0016).
+containing synthetic test mail and a separate Numina test company. Both overlays are prepared,
+suspended and unselected by the active apps layers. Merging this preparation installs neither
+collector, so missing private configuration cannot block apps readiness. Development's independent
+health and non-paging deployment lane must exist before it can be selected (ADR 0016).
 The collector reads mail, sets its two processing keywords, and uploads invoice attachments to
 Numina's inbox. It does not move or delete mail, book entries, reconcile accounts or move money.
 
@@ -37,16 +38,19 @@ lookups only. The chart and container are pinned to their verified v1.0.0 public
 
 ## Activation
 
-Keep the deployment change unmerged until both private configuration entries exist and their
-mailbox, company and date have been confirmed. Otherwise the missing required values would hold
-the platform's apps health gate. A rendered manifest does not prove those private facts.
+Keep both overlays unselected until their private configuration entries exist and their mailbox,
+company and date have been confirmed. Selecting an overlay with missing required values would hold
+its deployment health gate. A rendered manifest does not prove those private facts.
 
 1. Complete and accept the business mailbox cutover and historical-mail import. Confirm that the
    chosen production start date covers the intended books without importing unrelated history.
 2. Confirm separate development mailbox and Numina test-company credentials. Put only synthetic
    invoice mail in that mailbox; production mail and credentials remain isolated.
-3. After configuration is complete, install with both chart values `suspend: true`. Read back the
-   Helm releases and their CronJobs, verifying the exact image digest and suspension state.
+3. After configuration is complete, select each overlay through a reviewed Git change, retaining
+   `suspend: true`. Production selection must add its HelmRelease and OCIRepository alert coverage
+   and approve the native validator's measured authorization-ledger delta. Development selection
+   must use its independent non-paging lane. Read back each Helm release and CronJob, verifying the
+   exact image digest and suspension state.
 4. Activate development through a reviewed Git change. Observe a successful scheduled Job, inspect
    its counts-only log, and confirm that the synthetic voucher appears in the test company's inbox.
    Repeat collection and confirm that the same mail is skipped without a duplicate voucher.

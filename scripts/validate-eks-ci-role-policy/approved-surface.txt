@@ -46,8 +46,6 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-crds 1e9dd6ce2680fd5b
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-podcert de41c6a513f7564bdafff7ea66d200f598bdde97f024b14de5669be7641327fa
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|bookkeeper|bookkeeper 28b16dc7cddb8c378052782a07c3cac01e953aee793cda4c898c37930dfeb822
-
 helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|cert-manager 6e91f980ce0c37a8bfa4671319b170384cffd1781e4778d84f57710a97754ca1
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|origin-ca-issuer 692c09671787d077243a0eefb2c0b6cbbf5f726f590c033e12f1d74f58713a14
@@ -509,8 +507,6 @@ source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate-crds 18e1e7791622
 source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate-podcert 17b63a848326ce8c760d1f416a622394a383011ba066abbbed921570ae08b007
 
 source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 2161f682057b52b2d43f21365fead2cbb7f7417125ba2d03f00eff09a2643f2b
-
-source.toolkit.fluxcd.io/v1|OCIRepository|bookkeeper|bookkeeper 18658b6835e9c189a71c2085f93ce60b6c1cf6385fc1801556659d669b32ac35
 
 source.toolkit.fluxcd.io/v1|OCIRepository|cert-manager|origin-ca-issuer 026bb5454bce4d953d216d1c661137a3c3232576488eeff7a41ec4c76a642215
 

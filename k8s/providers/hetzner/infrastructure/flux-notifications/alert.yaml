@@ -111,9 +111,6 @@ spec:
       namespace: ate-system
     - kind: HelmRelease
       name: "*"
-      namespace: bookkeeper
-    - kind: HelmRelease
-      name: "*"
       namespace: cert-manager
     - kind: HelmRelease
       name: "*"
@@ -217,9 +214,6 @@ spec:
     - kind: OCIRepository
       name: "*"
       namespace: business-site
-    - kind: OCIRepository
-      name: "*"
-      namespace: bookkeeper
     - kind: OCIRepository
       name: "*"
       namespace: cert-manager

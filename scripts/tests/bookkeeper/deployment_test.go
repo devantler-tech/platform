@@ -184,11 +184,21 @@ func TestCollectorEgressIsLimitedToMailNuminaAndDNS(t *testing.T) {
 	}
 }
 
-func TestDevelopmentCollectorIsNotInProductionHealthOrPaging(t *testing.T) {
-	for _, item := range render(t) {
-		metadata, _ := item["metadata"].(map[string]any)
-		if metadata["namespace"] == "bookkeeper-dev" || (item["kind"] == "Namespace" && metadata["name"] == "bookkeeper-dev") {
-			t.Fatal("development must wait for its independent, non-paging deployment lane")
-		}
+func TestCollectorsWaitForReviewedActivation(t *testing.T) {
+	collectorNamespaces := map[string]bool{"bookkeeper": true, "bookkeeper-dev": true}
+	for environment, path := range map[string]string{
+		"prod":  "k8s/providers/hetzner/apps",
+		"local": "k8s/providers/docker/apps",
+	} {
+		t.Run(environment, func(t *testing.T) {
+			for _, item := range render(t, path) {
+				metadata, _ := item["metadata"].(map[string]any)
+				namespace, _ := metadata["namespace"].(string)
+				name, _ := metadata["name"].(string)
+				if collectorNamespaces[namespace] || (item["kind"] == "Namespace" && collectorNamespaces[name]) {
+					t.Fatal("collectors must remain outside active apps until configuration and activation are reviewed")
+				}
+			}
+		})
 	}
 }
