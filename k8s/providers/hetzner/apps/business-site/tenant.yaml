@@ -1,4 +1,4 @@
-# The tenant reconciles its signed v3.11.0 package: the WebApp, its network
+# The tenant reconciles its signed v3.12.0 package: the WebApp, its network
 # policy, budget and runtime inputs, the portal schema migration Job and the
 # daily retention CronJob, which both read the business-site-portal-db-migration
 # Secret (#6372). It serves devantler.tech and www (moved off GitHub Pages on
@@ -16,6 +16,6 @@ spec:
   sops: false
   webApp: true
   source:
-    digest: sha256:1734e12b9b8852faaadd482125ec7630daaec6779bff338abf9289b29322ffc7
+    digest: sha256:5312fa2767c40148864ec45ea64428f56aae36bbea3134fe66f18b9289dd5b39
     publisherRevision: a76d5df9371cf712a8f60307fde060825a34cf35
     reconcileApplication: true
