@@ -73,6 +73,7 @@ const (
 	ownerKey      = "platform.devantler.tech/restore-proof-run"
 	backupPrefix  = "business-site-portal-db-restore-proof-"
 	restorePrefix = "portal-db-restore-"
+	liveService   = "business-site-portal-db-rw.business-site.svc.cluster.local"
 )
 
 func value(o object, path ...string) any {
@@ -201,16 +202,18 @@ func resources(run string, s source, backupID string) []object {
 }
 
 // checkInventory refuses a snapshot that is not the portal database or whose
-// ledger is not the contiguous run of versions the migrations record.
+// ledger is not the contiguous run of versions the migrations record. The
+// migrations create the ledger and their tables in one transaction, so before
+// the first one there is no table at all, and an empty ledger stands alone.
 func checkInventory(i inventory) bool {
 	if i.Owner != databaseOwner || i.Tables == nil || i.Applied < 0 || i.Highest != i.Applied {
 		return false
 	}
 	if !i.Ledger {
-		return i.Applied == 0
+		return i.Applied == 0 && len(i.Tables) == 0
 	}
 	rows, ok := i.Tables[ledgerTable]
-	return ok && rows == i.Applied
+	return ok && rows == i.Applied && (i.Applied > 0 || len(i.Tables) == 1)
 }
 
 // compare requires the recovered ledger to equal both live snapshots, the same
@@ -365,12 +368,70 @@ func (k client) source() (source, error) {
 	}
 	return validateSource(c, s)
 }
-func (k client) primary() (string, error) {
+
+var instancePattern = regexp.MustCompile(`^business-site-portal-db-[1-9][0-9]*$`)
+
+// instances returns the live primary and the instance that runs the positive
+// connectivity control: a standby when there is one, since it reaches the
+// primary through the same service for replication, else the primary itself.
+func (k client) instances() (string, string, error) {
 	c, err := k.get(sourceNamespace, "clusters.postgresql.cnpg.io", clusterName)
 	if err != nil || c == nil {
+		return "", "", errRefused
+	}
+	primary := str(c, "status", "currentPrimary")
+	names, _ := value(c, "status", "instanceNames").([]any)
+	if !instancePattern.MatchString(primary) || len(names) == 0 {
+		return "", "", errRefused
+	}
+	peer := primary
+	for _, item := range names {
+		name, _ := item.(string)
+		if !instancePattern.MatchString(name) {
+			return "", "", errRefused
+		}
+		if name != primary {
+			peer = name
+		}
+	}
+	return primary, peer, nil
+}
+
+// psql runs one statement on a live instance's local socket and returns its
+// unaligned, tuples-only output.
+func (k client) psql(instance, statement string) (string, error) {
+	if !instancePattern.MatchString(instance) {
 		return "", errRefused
 	}
-	return str(c, "status", "currentPrimary"), nil
+	out, err := k.call(sourceNamespace, nil, "exec", instance, "--container=postgres", "--", "psql", "--username=postgres", "--dbname=postgres", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align", "--quiet", "--command="+statement)
+	if err != nil {
+		return "", errRefused
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// archiveSnapshot completes the WAL segment that holds every commit up to the
+// live snapshot and waits up to five minutes for the archiver to report it, so
+// the restore replays at least that far.
+func (k client) archiveSnapshot(primary string) error {
+	segment, err := k.psql(primary, "SELECT pg_walfile_name(pg_switch_wal());")
+	if err != nil || !walPattern.MatchString(segment) {
+		return errRefused
+	}
+	for attempt := 0; attempt < 60; attempt++ {
+		archived, err := k.psql(primary, "SELECT coalesce(last_archived_wal, '') FROM pg_stat_archiver;")
+		if err != nil {
+			return err
+		}
+		// Segment names on one timeline sort in WAL order.
+		if walPattern.MatchString(archived) && archived[:8] == segment[:8] && archived >= segment {
+			return nil
+		}
+		if err = k.pause(); err != nil {
+			return err
+		}
+	}
+	return errRefused
 }
 
 func owns(o object, run string) bool {
@@ -457,7 +518,7 @@ func prove(k client, run, sha string) (result object, err error) {
 		return nil, errRefused
 	}
 	phase = "live-snapshot"
-	primary, err := k.primary()
+	primary, _, err := k.instances()
 	if err != nil {
 		return nil, err
 	}
@@ -465,9 +526,8 @@ func prove(k client, run, sha string) (result object, err error) {
 	if err != nil {
 		return nil, err
 	}
-	// Archive the current WAL segment so the restore replays recent commits.
-	if _, err = k.call(sourceNamespace, nil, "exec", primary, "--container=postgres", "--", "psql", "--username=postgres", "--dbname=postgres", "--set=ON_ERROR_STOP=1", "--quiet", "--command=SELECT pg_switch_wal();"); err != nil {
-		return nil, errRefused
+	if err = k.archiveSnapshot(primary); err != nil {
+		return nil, err
 	}
 	phase = "namespace"
 	items := resources(run, state, backup.BackupID)
@@ -528,9 +588,18 @@ func prove(k client, run, sha string) (result object, err error) {
 		return nil, errRefused
 	}
 	phase = "isolation"
+	// Positive control: the live service answers an allowed client right
+	// before the restore's probe, so its silence there is the deny rule.
+	_, peer, err := k.instances()
+	if err != nil {
+		return nil, err
+	}
+	if _, err = k.call(sourceNamespace, nil, "exec", peer, "--container=postgres", "--", "pg_isready", "--host="+liveService, "--port=5432", "--timeout=3", "--quiet"); err != nil {
+		return nil, errRefused
+	}
 	// Resolve the live service first and prove the probe works locally. Only
 	// PostgreSQL's no-response result satisfies the negative connectivity check.
-	const isolationProbe = `set -eu; pg_isready -h 127.0.0.1 -p 5432 -t 3 >/dev/null; getent ahostsv4 business-site-portal-db-rw.business-site.svc.cluster.local >/dev/null; set +e; pg_isready -h business-site-portal-db-rw.business-site.svc.cluster.local -p 5432 -t 3 >/dev/null; rc=$?; test "$rc" -eq 2`
+	const isolationProbe = `set -eu; pg_isready -h 127.0.0.1 -p 5432 -t 3 >/dev/null; getent ahostsv4 ` + liveService + ` >/dev/null; set +e; pg_isready -h ` + liveService + ` -p 5432 -t 3 >/dev/null; rc=$?; test "$rc" -eq 2`
 	if _, err = k.call(ns, nil, "exec", str(restored, "status", "currentPrimary"), "--container=postgres", "--", "sh", "-c", isolationProbe); err != nil {
 		return nil, errRefused
 	}
@@ -542,7 +611,7 @@ func prove(k client, run, sha string) (result object, err error) {
 	if stateAfter, err := k.source(); err != nil || stateAfter != state {
 		return nil, errRefused
 	}
-	primary, err = k.primary()
+	primary, _, err = k.instances()
 	if err != nil {
 		return nil, err
 	}
@@ -556,7 +625,7 @@ func prove(k client, run, sha string) (result object, err error) {
 	}
 	result = object{"sourceSHA": sha, "backupTaken": true, "restoreCompleted": true, "isolationProven": true, "aggregatesMatched": true, "cleanupVerified": true, "productionClusterStable": true, "backupName": backup.Name, "backupID": backup.BackupID, "endWal": backup.EndWAL, "ledgerEmpty": empty, "recovered": recovered}
 	if empty {
-		result["note"] = "The migration ledger is empty: the portal migration Job has not run yet, so the proof compared the database owner and an empty table set."
+		result["note"] = "The migration ledger is empty: the portal migration Job has not run yet, so no migrated schema was compared. The proof compared the database owner and an empty table set."
 	}
 	return result, nil
 }

@@ -24,7 +24,7 @@ func obj(t *testing.T, text string) object {
 }
 
 func fixture(t *testing.T) (object, object) {
-	return obj(t, `{"metadata":{"name":"business-site-portal-db","namespace":"business-site","uid":"00000000-0000-0000-0000-000000000001","generation":2},"spec":{"instances":2,"imageName":"ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie","storage":{"size":"10Gi","storageClass":"hcloud"},"affinity":{"nodeSelector":{"platform.devantler.tech/baseline-worker":"true"}},"bootstrap":{"initdb":{"database":"portal","owner":"portal_migrator"}},"plugins":[{"name":"barman-cloud.cloudnative-pg.io","enabled":true,"isWALArchiver":true,"parameters":{"barmanObjectName":"business-site-portal-db"}}]},"status":{"readyInstances":2,"currentPrimary":"business-site-portal-db-1","conditions":[{"type":"Ready","status":"True"},{"type":"ContinuousArchiving","status":"True"}]}}`),
+	return obj(t, `{"metadata":{"name":"business-site-portal-db","namespace":"business-site","uid":"00000000-0000-0000-0000-000000000001","generation":2},"spec":{"instances":2,"imageName":"ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie","storage":{"size":"10Gi","storageClass":"hcloud"},"affinity":{"nodeSelector":{"platform.devantler.tech/baseline-worker":"true"}},"bootstrap":{"initdb":{"database":"portal","owner":"portal_migrator"}},"plugins":[{"name":"barman-cloud.cloudnative-pg.io","enabled":true,"isWALArchiver":true,"parameters":{"barmanObjectName":"business-site-portal-db"}}]},"status":{"readyInstances":2,"currentPrimary":"business-site-portal-db-1","instanceNames":["business-site-portal-db-1","business-site-portal-db-2"],"conditions":[{"type":"Ready","status":"True"},{"type":"ContinuousArchiving","status":"True"}]}}`),
 		obj(t, `{"metadata":{"name":"business-site-portal-db","namespace":"business-site","uid":"00000000-0000-0000-0000-000000000002","generation":1},"spec":{"retentionPolicy":"30d","configuration":{"destinationPath":"s3://platform-backups/cnpg/business-site-portal-db","endpointURL":"https://00000000000000000000000000000000.r2.cloudflarestorage.com","s3Credentials":{"accessKeyId":{"name":"business-site-portal-db-backup-r2","key":"ACCESS_KEY_ID"},"secretAccessKey":{"name":"business-site-portal-db-backup-r2","key":"SECRET_ACCESS_KEY"},"region":{"name":"business-site-portal-db-backup-r2","key":"REGION"}}}}}`)
 }
 
@@ -251,6 +251,49 @@ func TestEmptyLedgerComparison(t *testing.T) {
 	if _, err := compare(fresh, inventory{Owner: "portal_migrator"}, fresh); err == nil {
 		t.Fatal("a snapshot without a table listing was accepted")
 	}
+	// The migrations create the ledger with their tables, so tables without a
+	// ledger, or beside an empty one, are not the unmigrated portal schema.
+	ledgerless := inventory{Owner: "portal_migrator", Tables: map[string]int64{"portal_sessions": 3}}
+	if _, err := compare(ledgerless, ledgerless, ledgerless); err == nil {
+		t.Fatal("tables without a ledger passed as an empty table set")
+	}
+	emptyLedger := inventory{Owner: "portal_migrator", Ledger: true, Tables: map[string]int64{"portal_schema_version": 0}}
+	if empty, err := compare(emptyLedger, emptyLedger, emptyLedger); err != nil || !empty {
+		t.Fatalf("an empty ledger standing alone was refused or unreported: %v", err)
+	}
+	emptyLedger.Tables["portal_sessions"] = 3
+	if _, err := compare(emptyLedger, emptyLedger, emptyLedger); err == nil {
+		t.Fatal("tables beside an empty ledger passed as an empty table set")
+	}
+}
+
+// The positive control must come from a live standby when there is one, and
+// a malformed instance name must never reach kubectl exec.
+func TestPositiveControlInstance(t *testing.T) {
+	for _, tc := range []struct {
+		names, primary, peer string
+		ok                   bool
+	}{
+		{`["business-site-portal-db-1","business-site-portal-db-2"]`, "business-site-portal-db-1", "business-site-portal-db-2", true},
+		{`["business-site-portal-db-2","business-site-portal-db-3"]`, "business-site-portal-db-3", "business-site-portal-db-2", true},
+		{`["business-site-portal-db-1"]`, "business-site-portal-db-1", "business-site-portal-db-1", true},
+		{`[]`, "business-site-portal-db-1", "", false},
+		{`["business-site-portal-db-1","x; sh"]`, "business-site-portal-db-1", "", false},
+	} {
+		c, _ := fixture(t)
+		status := c["status"].(map[string]any)
+		status["currentPrimary"] = tc.primary
+		var names []any
+		_ = json.Unmarshal([]byte(tc.names), &names)
+		status["instanceNames"] = names
+		k := client{ctx: context.Background(), command: func(context.Context, []string, []byte) ([]byte, error) {
+			return json.Marshal(c)
+		}}
+		primary, peer, err := k.instances()
+		if (err == nil) != tc.ok || (tc.ok && (primary != tc.primary || peer != tc.peer)) {
+			t.Fatalf("%s: got %s %s %v", tc.names, primary, peer, err)
+		}
+	}
 }
 
 func TestDispatchBoundary(t *testing.T) {
@@ -277,12 +320,12 @@ func TestDispatchBoundary(t *testing.T) {
 // the production code. Any production write other than this run's Backup, any
 // unproven backup reaching a restore, or a lost cleanup fails this test.
 func TestProofCleanupAcrossFailures(t *testing.T) {
-	phases := map[string]string{"": "", "empty-ledger": "", "backup-failed": "backup", "foreign-backup": "backup", "source-drift": "backup", "policy": "namespace", "foreign-secret": "credential", "secret": "credential", "store": "restore", "cluster": "restore", "wait": "restore", "rebound": "restore", "egress": "isolation", "inventory": "aggregates", "data": "aggregates", "cleanup": "cleanup"}
+	phases := map[string]string{"": "", "empty-ledger": "", "backup-failed": "backup", "foreign-backup": "backup", "source-drift": "backup", "policy": "namespace", "foreign-secret": "credential", "secret": "credential", "store": "restore", "cluster": "restore", "wait": "restore", "rebound": "restore", "archive-stalled": "live-snapshot", "production-down": "isolation", "egress": "isolation", "inventory": "aggregates", "data": "aggregates", "cleanup": "cleanup"}
 	for failure, phase := range phases {
 		t.Run(failure, func(t *testing.T) {
 			c, s := fixture(t)
 			objects := map[string]object{"business-site/clusters.postgresql.cnpg.io/business-site-portal-db": c, "business-site/objectstores.barmancloud.cnpg.io/business-site-portal-db": s, "business-site/secrets/" + credential: obj(t, `{"metadata":{"name":"business-site-portal-db-backup-r2"},"data":{"ACCESS_KEY_ID":"a2V5","SECRET_ACCESS_KEY":"c2VjcmV0","REGION":"YXV0bw=="}}`)}
-			created, deleted, polled := false, false, 0
+			created, deleted, polled, archiverReads := false, false, 0, 0
 			live := inventory{Owner: "portal_migrator", Ledger: true, Applied: 24, Highest: 24, Tables: map[string]int64{"portal_schema_version": 24, "portal_sessions": 3}}
 			if failure == "empty-ledger" {
 				live = inventory{Owner: "portal_migrator", Tables: map[string]int64{}}
@@ -369,6 +412,16 @@ func TestProofCleanupAcrossFailures(t *testing.T) {
 				case "exec":
 					command := strings.Join(args, " ")
 					if strings.Contains(command, "pg_isready") {
+						if ns == "business-site" {
+							// The positive control runs from the standby, through the live service.
+							if args[1] != "business-site-portal-db-2" || !strings.Contains(command, "--host="+liveService) {
+								t.Fatal("positive control did not use the standby and the live service")
+							}
+							if failure == "production-down" {
+								return nil, errors.New("no response")
+							}
+							return nil, nil
+						}
 						if ns != "portal-db-restore-12345" {
 							t.Fatal("isolation probe ran outside the restore")
 						}
@@ -378,7 +431,18 @@ func TestProofCleanupAcrossFailures(t *testing.T) {
 						return nil, nil
 					}
 					if strings.Contains(command, "pg_switch_wal") {
-						return []byte("flushed"), nil
+						if ns != "business-site" || args[1] != "business-site-portal-db-1" {
+							t.Fatal("WAL switch must run on the live primary")
+						}
+						return []byte("000000010000000000000008\n"), nil
+					}
+					if strings.Contains(command, "pg_stat_archiver") {
+						// The archiver reports the switched segment on its second read.
+						archiverReads++
+						if archiverReads < 2 || failure == "archive-stalled" {
+							return []byte("000000010000000000000007\n"), nil
+						}
+						return []byte("000000010000000000000008\n"), nil
 					}
 					if !strings.Contains(command, "--dbname=portal") || !strings.Contains(command, "--command=BEGIN READ ONLY;") {
 						t.Fatal("aggregate query must be read-only on the portal database")
@@ -443,9 +507,9 @@ func TestProofCleanupAcrossFailures(t *testing.T) {
 				}
 			}
 			switch phase {
-			case "backup":
+			case "backup", "live-snapshot":
 				if created {
-					t.Fatal("an unproven backup reached a restore")
+					t.Fatal("an unproven backup or unarchived snapshot reached a restore")
 				}
 			case "cleanup":
 			default:
