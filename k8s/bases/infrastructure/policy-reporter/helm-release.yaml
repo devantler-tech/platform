@@ -118,6 +118,27 @@ spec:
       podSecurityContext:
         seccompProfile:
           type: RuntimeDefault
+      # The Devantler Tech icon as the top-bar logo and the tab icon, from
+      # config-map.yaml. Each file replaces the UI's own copy in its static
+      # folder; see config-map.yaml for why ui.logo.path is not used.
+      extraVolumes:
+        volumes:
+          - name: brand
+            configMap:
+              name: policy-reporter-brand
+        volumeMounts:
+          - name: brand
+            mountPath: /var/run/ko/ui/logo.png
+            subPath: logo.png
+            readOnly: true
+          - name: brand
+            mountPath: /var/run/ko/ui/favicon.ico
+            subPath: favicon.ico
+            readOnly: true
+      # A subPath file is not refreshed in a running pod. Changing this value
+      # with the logo restarts the UI so it serves the new files.
+      podAnnotations:
+        platform.devantler.tech/brand-sha256: 53ae43ad0ab2adee43153b35585152631049b5e0c7c2d23a8b670732aae43dfe
 
     plugin:
       kyverno:
