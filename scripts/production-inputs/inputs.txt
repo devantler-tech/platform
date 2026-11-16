@@ -41,11 +41,14 @@ schemas/
 go.mod
 go.sum
 internal/longhornmigration/
+internal/longhorninventory/
+internal/strictjson/
 
 # Programs the deploy runs.
 scripts/gateway-receiver-binding/
 scripts/guard-arc-recovery/
 scripts/maintain-longhorn-clients/
+scripts/migrate-longhorn-v2/
 scripts/production-inputs/
 scripts/recover-private-mail-probes/
 scripts/retire-arc-pool/

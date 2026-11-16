@@ -21,6 +21,24 @@ These are declared request budgets. Resident-memory measurements, reservations,
 admission, serving health and rollout remain separate checks. The receipt keeps
 `adoption=UNVERIFIED headroom=UNVERIFIED` and authorizes no storage operation.
 
+The shared production publisher brackets KSail's unchanged source inputs before
+staging and before promotion. Its separate read-only publication guard inspects
+the effective production layers and refuses indirect or unknown runtime-image
+selection. The first selection of the reviewed retirement image requires a fresh
+stable native epoch with complete declared overlap capacity, and an isolated
+protected-queue change adding only the reviewed image/rolling-strategy component.
+An unchanged already-selected image needs a stable native epoch rather than a
+second stock-image overlap calculation. Initial selection from manual CD or a
+recovery checkout is held because those checkouts do not prove an isolated
+deployed baseline. A source rollback to the stock profile remains publishable.
+
+Initialized disaster recovery may have complete empty Volume, Engine and Replica
+lists. Those are valid observations; failed reads and missing or partial lists
+remain held. Positive node, runtime and process inventories are still required.
+The guard proves producer-input consistency, not an independent OCI layer readback
+or runtime adoption. Serving-image adoption, resident memory, rollout health and
+benchmark/scratch retirement remain separate acceptance checks.
+
 `observe-database` is a protected, read-only PostgreSQL observation for
 platform#5842. Select one of the seven fixed databases with `database`, leave
 `node` empty, and confirm with `observe-longhorn-v2-database-<database>`.
