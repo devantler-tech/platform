@@ -12,6 +12,13 @@ import (
 // and protected workflow identities before constructing any production client.
 func main() {
 	operation := os.Getenv("LONGHORN_V2_OPERATION")
+	if operation == runtimePublicationCaptureOperation || operation == runtimePublicationCheckOperation {
+		if err := runRuntimePublication(context.Background(), os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	target := os.Getenv("LONGHORN_V2_NODE")
 	var authorization error
 	switch operation {
