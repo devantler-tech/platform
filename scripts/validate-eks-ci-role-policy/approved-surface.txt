@@ -60,7 +60,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|customer-dex 55a9ceabb55c712138a754c1666cf9e55b62b47357e3ac3cddea423a17531051
+helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|customer-dex 4c568faea9557d01783d606255b6aab07af01519caeca91a8349f62ceff873f5
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|zitadel eeb9881018664637cdefc9c5c0afd6953aa958e5dbfbc9cd8c5d521501e52431
 

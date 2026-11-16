@@ -18,6 +18,9 @@
 # A logoURL outside theme/ would load the logo from somewhere other than this
 # cluster, so it is refused.
 #
+# The customer Dex (customer-identity/customer-dex, in the Hetzner apps layer)
+# carries the same theme and gets the same checks.
+#
 # Every check is first run against a broken copy of the real render, to prove
 # it fails for the reason it names.
 set -euo pipefail
@@ -37,7 +40,10 @@ fail() {
   exit 1
 }
 
-readonly dex_release='select(.kind == "HelmRelease" and .metadata.name == "dex" and .metadata.namespace == "dex")'
+# The release under check: DEX_NAME in namespace DEX_NS (the platform Dex unless
+# a case sets them).
+export DEX_NAME=dex DEX_NS=dex
+readonly dex_release='select(.kind == "HelmRelease" and .metadata.name == strenv(DEX_NAME) and .metadata.namespace == strenv(DEX_NS))'
 
 # read_yaml <expression> <file>: one yq read, or a printed reason and status 1.
 # Reads are checked one by one so that a failed read is never taken for an
@@ -67,7 +73,7 @@ check_theme() {
     return 1
   }
   if [[ "${count}" != 1 ]]; then
-    printf 'renders %s dex HelmReleases in namespace dex instead of one\n' "${count:-no}"
+    printf 'renders %s %s HelmReleases in namespace %s instead of one\n' "${count:-no}" "${DEX_NAME}" "${DEX_NS}"
     return 1
   fi
   values="${workdir}/dex-values.yaml"
@@ -150,13 +156,13 @@ check_theme() {
     return 1
   fi
 
-  local -r configmap="select(.kind == \"ConfigMap\" and .metadata.name == strenv(CM) and .metadata.namespace == \"dex\")"
+  local -r configmap="select(.kind == \"ConfigMap\" and .metadata.name == strenv(CM) and .metadata.namespace == strenv(DEX_NS))"
   count="$(CM="${cm_name}" read_all "[${configmap}] | length" "${rendered}")" || {
     printf '%s\n' "${count}"
     return 1
   }
   if [[ "${count}" != 1 ]]; then
-    printf "the ConfigMap '%s' that the theme is mounted from is rendered %s times in namespace dex in this layer instead of once\n" "${cm_name}" "${count}"
+    printf "the ConfigMap '%s' that the theme is mounted from is rendered %s times in namespace %s in this layer instead of once\n" "${cm_name}" "${count}" "${DEX_NS}"
     return 1
   fi
 
@@ -250,5 +256,14 @@ for provider in "${providers[@]}"; do
     fail "${provider}: ${out}. The Dex theme is configured in k8s/bases/infrastructure/controllers/dex/ (helm-release.yaml and config-map.yaml)"
 done
 
-printf 'PASS: on %s, Dex is told to use the theme directory its ConfigMap is mounted at, and that theme holds every file the pages link to\n' \
+# --- The customer Dex (Hetzner apps layer) --------------------------------------
+kubectl kustomize "${repo_root}/k8s/providers/hetzner/apps" >"${workdir}/apps.yaml" 2>"${workdir}/render.err" ||
+  fail "k8s/providers/hetzner/apps failed to build: $(tail -5 "${workdir}/render.err")"
+export DEX_NAME=customer-dex DEX_NS=customer-identity
+yq eval "select((.kind == \"ConfigMap\" and .metadata.name == \"customer-dex-theme\") | not)" "${workdir}/apps.yaml" >"${broken}"
+expect_failure 'customer Dex ConfigMap missing' "${broken}" 'rendered 0 times'
+out="$(check_theme "${workdir}/apps.yaml")" ||
+  fail "customer Dex: ${out}. Its theme is configured in k8s/providers/hetzner/apps/customer-identity/ (helm-release-dex.yaml and config-map-dex-theme.yaml)"
+
+printf 'PASS: on %s and for the customer Dex, Dex is told to use the theme directory its ConfigMap is mounted at, and that theme holds every file the pages link to\n' \
   "${providers[*]}"
