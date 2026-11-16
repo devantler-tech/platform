@@ -10,26 +10,21 @@ import (
 	"testing"
 )
 
-func producerFunction(t *testing.T) string {
+func producerFunction(t *testing.T, name string) string {
 	t.Helper()
 	doc := manifest(t, "k8s/providers/hetzner/apps/customer-identity/cron-job-setup.yaml")
 	containers := field(t, doc, "spec", "jobTemplate", "spec", "template", "spec", "containers").([]any)
 	container := containers[0].(map[string]any)
 	command := container["command"].([]any)
 	script := command[len(command)-1].(string)
-	const start = "keep_portal_organization() {"
+	start := name + "() {"
 	begin := strings.Index(script, start)
 	if begin < 0 {
-		t.Fatal("missing producer organization reconciliation")
+		t.Fatalf("missing producer function %s", name)
 	}
 	end := strings.Index(script[begin:], "\n}")
 	if end < 0 {
 		t.Fatal("unterminated producer reconciliation")
-	}
-	call := strings.LastIndex(script, "keep_portal_organization\n")
-	proof := strings.Index(script, "ZITADEL does not accept the token it issued")
-	if call <= proof || proof < 0 {
-		t.Fatal("organization must be published after token identity proof")
 	}
 	return script[begin : begin+end+2]
 }
@@ -65,7 +60,7 @@ patch_secret() {
 `
 	// The only executable input is the trusted repository's actual bootstrap function.
 	cmd := exec.Command("bash", "-s", "--", file, actualOrg, patchMode)
-	cmd.Stdin = strings.NewReader(harness + producerFunction(t) + "\nkeep_portal_organization\nprintf 'changes=%s\\n' \"${#changes[@]}\"\n")
+	cmd.Stdin = strings.NewReader(harness + producerFunction(t, "keep_portal_organization") + "\nkeep_portal_organization\nprintf 'changes=%s\\n' \"${#changes[@]}\"\n")
 	output, runErr := cmd.CombinedOutput()
 	final, err := os.ReadFile(file)
 	if err != nil {

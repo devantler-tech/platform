@@ -418,6 +418,58 @@ spec:
                     [[ $kept_org == "$customers_org_id" ]] || fail "the portal organization was not kept"
                     changes+=("recorded the portal service account's organization")
                   }
+                  # Publish only a proved token, with the organization from the same setup.
+                  # PushSecret must never observe a renewed token beside an old organization.
+                  publish_portal_token() {
+                    [[ -n $customers_org_id ]] || fail "cannot publish an unknown portal organization"
+                    local accepted='' attempt kept
+                    for attempt in 1 2 3 4 5; do
+                      if portal_token_works "$PORTAL_TOKEN"; then accepted=1; break; fi
+                      sleep 2
+                    done
+                    [[ -n $accepted ]] || fail "ZITADEL does not accept the token it issued for $portal_account"
+                    patch_secret "$(jq -nc --arg org "$customers_org_id" \
+                      '{data: {token: (env.PORTAL_TOKEN | @base64), "token-id": (env.PORTAL_TOKEN_ID | @base64), "org-id": ($org | @base64)}}')" \
+                      "$portal_token_secret"
+                    kept=$(secret_json "$portal_token_secret") || fail "cannot verify the portal credential"
+                    jq -e --arg org "$customers_org_id" \
+                      '.data.token == (env.PORTAL_TOKEN | @base64) and
+                       .data["token-id"] == (env.PORTAL_TOKEN_ID | @base64) and
+                       .data["org-id"] == ($org | @base64)' <<<"$kept" >/dev/null ||
+                      fail "Secret $portal_token_secret did not keep the complete portal credential"
+                  }
+                  # ZITADEL 4.20.3's management membership search hides other organizations.
+                  # This instance-wide API is available to the setup account's IAM_OWNER role.
+                  # It counts before permission filtering: an empty/short visible result alone
+                  # is not proof. Only zero or one membership can be allowed, so limit two is
+                  # sufficient; a larger total fails without accepting a truncated inventory.
+                  read_portal_memberships() {
+                    local response
+                    response=$(api_org='' connect zitadel.internal_permission.v2.InternalPermissionService/ListAdministrators \
+                      "$(jq -nc --arg u "$portal_account_id" \
+                        '{pagination: {offset: "0", limit: 2, asc: true}, filters: [{inUserIdsFilter: {ids: [$u]}}]}')") ||
+                      fail "cannot inspect all portal memberships"
+                    jq -ce --arg user "$portal_account_id" --arg org "$customers_org_id" '
+                      def count:
+                        if type == "string" and test("^(0|[1-9][0-9]*)$") then tonumber
+                        elif type == "number" and . >= 0 and . == floor then .
+                        else error("invalid membership count") end;
+                      if type != "object" or (.pagination | type) != "object" then
+                        error("missing membership pagination")
+                      else . end |
+                      (.pagination | if has("totalResult") then .totalResult else "0" end | count) as $total |
+                      (.pagination.appliedLimit | count) as $limit |
+                      (if has("administrators") then .administrators else [] end) as $rows |
+                      if $limit != 2 or $total > 1 or ($rows | type) != "array" or ($rows | length) != $total then
+                        error("incomplete or excessive portal memberships")
+                      elif $total == 0 then []
+                      elif $rows[0].user.id != $user or $rows[0].organization.id != $org or
+                        ($rows[0] | [keys[] | select(. == "instance" or . == "organization" or . == "project" or . == "projectGrant")] | length) != 1 or
+                        $rows[0].roles != ["ORG_USER_MANAGER"] then
+                        error("portal account has unexpected memberships")
+                      else [{orgId: $org, iam: false, projectId: "", roles: ["ORG_USER_MANAGER"]}] end
+                    ' <<<"$response" || fail "cannot prove the portal account has only its intended membership"
+                  }
                   # client_authenticates ID SECRET: succeeds when ZITADEL accepts this client
                   # secret. A token request with a code that cannot exist fails either at client
                   # authentication (invalid_client: the secret is wrong, for example after a
@@ -941,12 +993,18 @@ spec:
                       ;;
                     *) fail "more than one $portal_account user in $(org_label "$customers_org_id")" ;;
                   esac
-                  portal_memberships=$(api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/memberships/_search" '{}' |
-                    jq -c '[.result // [] | .[] | {orgId: (.orgId // ""), iam: (.iam // false), projectId: (.projectId // ""), roles: (.roles // [] | sort)}]')
+                  portal_memberships=$(read_portal_memberships)
                   want_membership=$(jq -nc --arg o "$customers_org_id" '[{orgId: $o, iam: false, projectId: "", roles: ["ORG_USER_MANAGER"]}]')
                   if [[ $portal_memberships == '[]' ]]; then
                     api_org=$customers_org_id api POST /management/v1/orgs/me/members \
                       "$(jq -nc --arg u "$portal_account_id" '{userId: $u, roles: ["ORG_USER_MANAGER"]}')" >/dev/null
+                    for attempt in 1 2 3 4 5; do
+                      portal_memberships=$(read_portal_memberships)
+                      [[ $portal_memberships != "$want_membership" ]] || break
+                      sleep 2
+                    done
+                    [[ $portal_memberships == "$want_membership" ]] ||
+                      fail "the portal account membership was not kept"
                     changes+=("made $portal_account ORG_USER_MANAGER of $(org_label "$customers_org_id")")
                   elif [[ $portal_memberships != "$want_membership" ]]; then
                     fail "$portal_account has memberships other than ORG_USER_MANAGER of the $customers_org organization; remove them on purpose"
@@ -1010,17 +1068,7 @@ spec:
                     PORTAL_TOKEN=$(jq -er '.token' "$work/portal-pat") || fail "ZITADEL returned no token for $portal_account"
                     PORTAL_TOKEN_ID=$(jq -er '.tokenId' "$work/portal-pat") || fail "ZITADEL returned no token ID for $portal_account"
                     export PORTAL_TOKEN PORTAL_TOKEN_ID
-                    patch_secret "$(jq -nc '{data: {token: (env.PORTAL_TOKEN | @base64), "token-id": (env.PORTAL_TOKEN_ID | @base64)}}')" \
-                      "$portal_token_secret"
-                    kept_portal_token=$(secret_json "$portal_token_secret" | jq -r '.data.token // "" | @base64d')
-                    [[ $kept_portal_token == "$PORTAL_TOKEN" ]] || fail "Secret $portal_token_secret did not keep the new token"
-                    unset kept_portal_token
-                    portal_token_accepted=
-                    for attempt in 1 2 3 4 5; do
-                      if portal_token_works "$PORTAL_TOKEN"; then portal_token_accepted=1; break; fi
-                      sleep 2
-                    done
-                    [[ -n $portal_token_accepted ]] || fail "ZITADEL does not accept the token it issued for $portal_account"
+                    publish_portal_token
                     unset PORTAL_TOKEN PORTAL_TOKEN_ID
                     changes+=("issued the $portal_account token ($portal_reissue)")
                   fi
