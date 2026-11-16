@@ -10,7 +10,7 @@ COSIGN_VERSION="3.1.4"
 # cosign_checksums.txt: cosign-linux-amd64
 COSIGN_SHA256="424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
 # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-SYFT_VERSION="1.57.0"
+SYFT_VERSION="1.57.1"
 # syft_1.57.0_checksums.txt: syft_1.57.0_linux_amd64.tar.gz
 SYFT_SHA256="9c077a7d43029b3b13e98a8db720661e700c4d58db6352153a06395ae4a2a704"
 # Not tracked by Renovate: this Trivy runs the paired scanner-exception checks,
