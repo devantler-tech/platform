@@ -9,10 +9,16 @@ trap 'rm -rf "$scratch"' EXIT
 yq -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.name == "setup") | .command[2]' \
   "${1:-$repo_root/k8s/providers/hetzner/apps/customer-identity/cron-job-setup.yaml}" |
   awk '/# --- Languages / { selected=1 } /# --- Branding / { selected=0 } selected' >"$scratch/reconcile.sh"
-[[ -s $scratch/reconcile.sh ]] || { echo 'No setup reconciliation selected' >&2; exit 1; }
+[[ -s $scratch/reconcile.sh ]] || {
+  echo 'No setup reconciliation selected' >&2
+  exit 1
+}
 
 export customers_org_id=fictional-customers
-fail() { echo "$1" >&2; exit 1; }
+fail() {
+  echo "$1" >&2
+  exit 1
+}
 org_label() { printf '%s' "$1"; }
 api() {
   local method=$1 route=$2 body=${3:-}
@@ -31,7 +37,7 @@ api() {
       printf 'texts\n' >>"$scratch/writes"
       ;;
     'GET /management/v1/policies/privacy') cat "$scratch/privacy.json" ;;
-    'POST /management/v1/policies/privacy'|'PUT /management/v1/policies/privacy')
+    'POST /management/v1/policies/privacy' | 'PUT /management/v1/policies/privacy')
       [[ $method == "$expected_method" ]] || fail 'Wrong create/update method'
       jq -e --argjson body "$body" '.policy | del(.details,.isDefault)
         | .helpLink="https://devantler.tech/" | . == $body' "$scratch/privacy.json" >/dev/null || fail 'Unrelated privacy settings changed'
