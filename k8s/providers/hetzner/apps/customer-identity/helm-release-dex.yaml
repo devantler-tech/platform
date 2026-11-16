@@ -124,6 +124,13 @@ spec:
           secretKeyRef:
             name: customer-dex-portal-client
             key: client-secret
+      # The platform Dex's shared client, for the operator connector below
+      # (external-secret-platform-dex-client.yaml, also ZITADEL's).
+      - name: PLATFORM_DEX_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: platform-dex-client
+            key: client-secret
     config:
       issuer: https://login.devantler.tech
       # The Devantler Tech theme, as on the platform Dex: the wordmark as the
@@ -188,6 +195,32 @@ spec:
               # policy, which sends its administrator straight to GitHub.
               - urn:zitadel:iam:org:domain:primary:customers.accounts.devantler.tech
             getUserInfo: true
+            insecureSkipEmailVerified: false
+            insecureEnableGroups: false
+            insecureSkipVerify: false
+            pkceChallenge: S256
+        # The maintainer's sign-in to the portal's operator area: GitHub through
+        # the platform Dex (platform SSO), never a customer account. The portal
+        # selects a connector on every request (connector_id): customer-zitadel
+        # for customers, platform only on its operator link. It admits a subject
+        # through this connector only when its server-side
+        # PORTAL_OPERATOR_SUBJECTS lists it, and never redeems a customer
+        # invitation for one. The connector reuses the platform Dex's shared
+        # public-client, whose redirect URIs include this Dex's callback
+        # (infrastructure dex/patches/allow-customer-dex-operator-sign-in.yaml).
+        # With DEX_CONTINUE_ON_CONNECTOR_FAILURE false, this Dex starts only
+        # while the platform Dex (two replicas) answers its discovery.
+        - type: oidc
+          id: platform
+          name: Devantler Tech staff
+          config:
+            issuer: https://dex.platform.devantler.tech
+            clientID: public-client
+            clientSecret: $PLATFORM_DEX_CLIENT_SECRET
+            redirectURI: https://login.devantler.tech/callback
+            scopes:
+              - profile
+              - email
             insecureSkipEmailVerified: false
             insecureEnableGroups: false
             insecureSkipVerify: false

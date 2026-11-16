@@ -152,6 +152,14 @@ patches:
       kind: HelmRelease
       name: dex
       namespace: dex
+  # Prod-only: let the portal's operator sign in through the customer Dex — see file.
+  - path: dex/patches/allow-customer-dex-operator-sign-in.yaml
+    target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: dex
+      namespace: dex
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
   # Require relay replicas to use separate nodes in prod; local retains soft spread.
