@@ -1034,22 +1034,29 @@ spec:
                     esac
                   }
                   stored_portal_token=$(secret_json "$portal_token_secret" | jq -r '.data.token // "" | @base64d')
+                  stored_portal_token_id=$(secret_json "$portal_token_secret" | jq -r '.data["token-id"] // "" | @base64d')
                   portal_reissue=
+                  portal_clear=
                   if [[ $stored_portal_token =~ ^($placeholder)?$ ]]; then
                     portal_reissue="none stored"
+                    portal_clear=1
                   elif ! portal_token_works "$stored_portal_token"; then
                     portal_reissue="stored one refused"
+                    portal_clear=1
                   else
-                    # A token lasts 90 days. Only this run issues them, so the newest is the stored
-                    # one; it is renewed once fewer than 30 days are left. The token it replaces
-                    # stays valid until it expires on its own, so the portal keeps working while
-                    # the new one reaches OpenBao. A token that outlives 90 days was not issued
-                    # here and stops the run.
-                    portal_token_days=$(api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats/_search" '{}' |
-                      jq -r '[.result // [] | .[] | .expirationDate // "9999-12-31T23:59:59Z" | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601]
-                        | if length == 0 then 0 else (max - now) / 86400 | floor end')
-                    if ((portal_token_days > 90)); then
-                      fail "$portal_account has a token valid for more than 90 days; remove it on purpose"
+                    # A token lasts 90 days. The Secret records the stored token's ID next to it,
+                    # and that token is renewed once fewer than 30 days are left (or when its expiry
+                    # is unknown). The token it replaces stays valid until it expires on its own,
+                    # so the portal keeps working while the new one reaches OpenBao. A token that
+                    # outlives 90 days was not issued here and stops the run.
+                    portal_pats=$(api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats/_search" '{}' |
+                      jq -c '[.result // [] | .[] | {id, expires: (.expirationDate // "9999-12-31T23:59:59Z" | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}]')
+                    portal_longest=$(jq -r 'if length == 0 then 0 else (map(.expires) | max) - now | . / 86400 | floor end' <<<"$portal_pats")
+                    ((portal_longest <= 90)) || fail "$portal_account has a token valid for more than 90 days; remove it on purpose"
+                    portal_token_days=$(jq -r --arg id "$stored_portal_token_id" \
+                      '[.[] | select(.id == $id) | .expires] | if length == 0 then "unknown" else (.[0] - now) / 86400 | floor end' <<<"$portal_pats")
+                    if [[ $portal_token_days == unknown ]]; then
+                      portal_reissue="expiry of the stored token unknown"
                     elif ((portal_token_days < 30)); then
                       portal_reissue="expires in $portal_token_days days"
                     fi
@@ -1057,8 +1064,8 @@ spec:
                   unset stored_portal_token
                   if [[ -n $portal_reissue ]]; then
                     # A missing or refused token serves no one, so the account's tokens go first.
-                    # A routine renewal keeps them until they expire.
-                    if [[ $portal_reissue != expires* ]]; then
+                    # A renewal keeps them until they expire.
+                    if [[ -n $portal_clear ]]; then
                       portal_tokens=$(api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats/_search" '{}' |
                         jq -r '.result // [] | .[].id')
                       for portal_token_id in $portal_tokens; do
@@ -1068,8 +1075,10 @@ spec:
                     api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats" \
                       "$(jq -nc '{expirationDate: (now + 90 * 86400 | floor | todate)}')" > "$work/portal-pat"
                     PORTAL_TOKEN=$(jq -er '.token' "$work/portal-pat") || fail "ZITADEL returned no token for $portal_account"
-                    export PORTAL_TOKEN
-                    patch_secret "$(jq -nc '{data: {token: (env.PORTAL_TOKEN | @base64)}}')" "$portal_token_secret"
+                    PORTAL_TOKEN_ID=$(jq -er '.tokenId' "$work/portal-pat") || fail "ZITADEL returned no token ID for $portal_account"
+                    export PORTAL_TOKEN PORTAL_TOKEN_ID
+                    patch_secret "$(jq -nc '{data: {token: (env.PORTAL_TOKEN | @base64), "token-id": (env.PORTAL_TOKEN_ID | @base64)}}')" \
+                      "$portal_token_secret"
                     kept_portal_token=$(secret_json "$portal_token_secret" | jq -r '.data.token // "" | @base64d')
                     [[ $kept_portal_token == "$PORTAL_TOKEN" ]] || fail "Secret $portal_token_secret did not keep the new token"
                     unset kept_portal_token
@@ -1079,7 +1088,7 @@ spec:
                       sleep 2
                     done
                     [[ -n $portal_token_accepted ]] || fail "ZITADEL does not accept the token it issued for $portal_account"
-                    unset PORTAL_TOKEN
+                    unset PORTAL_TOKEN PORTAL_TOKEN_ID
                     changes+=("issued the $portal_account token ($portal_reissue)")
                   fi
 
