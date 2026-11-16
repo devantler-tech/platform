@@ -133,10 +133,10 @@ func runtimePublicationFirstSelection(ctx context.Context, binding runtimePublic
 		return errRuntimePublication
 	}
 	raw, err := inventoryExecuteCommand(ctx, "git", "diff", "--name-only", "--no-renames", binding.Base, binding.Candidate, "--")
-	if err != nil || strings.TrimSpace(string(raw)) != runtimeControllersRoot {
+	if err != nil || !runtimePublicationChangeScope(raw) {
 		return errRuntimePublication
 	}
-	if _, err := inventoryExecuteCommand(ctx, "git", "diff", "--quiet", "HEAD", "--", "k8s/", "ksail.prod.yaml", "ksail.yaml", "talos/", "talos-local/", ".sops.yaml", ".gitignore"); err != nil {
+	if _, err := inventoryExecuteCommand(ctx, "git", "diff", "--quiet", "HEAD", "--", "k8s/", "ksail.prod.yaml", "ksail.yaml", "talos/", "talos-local/", ".sops.yaml", ".gitignore", runtimePublicationApprovalPath); err != nil {
 		return errRuntimePublication
 	}
 	untracked, err := inventoryExecuteCommand(ctx, "git", "ls-files", "--others", "--", "k8s/")
@@ -149,6 +149,14 @@ func runtimePublicationFirstSelection(ctx context.Context, binding runtimePublic
 	}
 	candidate, err := os.ReadFile(runtimeControllersRoot)
 	if err != nil || runtimePublicationActivation(baseline, candidate) != nil {
+		return errRuntimePublication
+	}
+	previousApproval, err := inventoryExecuteCommand(ctx, "git", "show", binding.Base+":"+runtimePublicationApprovalPath)
+	if err != nil {
+		return errRuntimePublication
+	}
+	proposedApproval, err := os.ReadFile(runtimePublicationApprovalPath)
+	if err != nil || runtimePublicationApprovalDelta(previousApproval, proposedApproval) != nil {
 		return errRuntimePublication
 	}
 	profile, err := os.ReadFile("k8s/bases/components/longhorn-v1-retirement-runtime/kustomization.yaml")

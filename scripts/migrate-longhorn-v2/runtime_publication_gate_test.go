@@ -116,3 +116,26 @@ func TestRuntimePublicationFirstSelectionIsOnlyTheReviewedComponent(t *testing.T
 		}
 	}
 }
+
+func TestRuntimePublicationActivationKeepsItsMatchingAuthorizationApproval(t *testing.T) {
+	paths := runtimeControllersRoot + "\n" + runtimePublicationApprovalPath + "\n"
+	if !runtimePublicationChangeScope([]byte(paths)) {
+		t.Fatal("required component and authorization update rejected")
+	}
+	for _, bad := range []string{runtimeControllersRoot + "\n", runtimePublicationApprovalPath + "\n", paths + "k8s/other.yaml\n", paths + runtimePublicationApprovalPath + "\n"} {
+		if runtimePublicationChangeScope([]byte(bad)) {
+			t.Fatal("missing or unrelated activation change accepted")
+		}
+	}
+	prefix := "helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn "
+	base := []byte("# Approved surface\n\n" + prefix + strings.Repeat("a", 64) + "\n\nother-entry " + strings.Repeat("c", 64) + "\n")
+	candidate := []byte(strings.ReplaceAll(string(base), prefix+strings.Repeat("a", 64), prefix+strings.Repeat("b", 64)))
+	if runtimePublicationApprovalDelta(base, candidate) != nil {
+		t.Fatal("sole matching approval rejected")
+	}
+	for _, bad := range [][]byte{base, append(candidate, []byte("extra-entry "+strings.Repeat("d", 64)+"\n")...), []byte(strings.ReplaceAll(string(candidate), "other-entry "+strings.Repeat("c", 64), "other-entry "+strings.Repeat("d", 64))), append(candidate, []byte(prefix+strings.Repeat("e", 64)+"\n")...), []byte(strings.ReplaceAll(string(candidate), strings.Repeat("b", 64), "invalid"))} {
+		if runtimePublicationApprovalDelta(base, bad) == nil {
+			t.Fatal("unrelated or malformed authorization update accepted")
+		}
+	}
+}

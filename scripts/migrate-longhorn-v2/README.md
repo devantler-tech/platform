@@ -26,7 +26,9 @@ staging and before promotion. Its separate read-only publication guard inspects
 the effective production layers and refuses indirect or unknown runtime-image
 selection. The first selection of the reviewed retirement image requires a fresh
 stable native epoch with complete declared overlap capacity, and an isolated
-protected-queue change adding only the reviewed image/rolling-strategy component.
+protected-queue change adding only the reviewed image/rolling-strategy component
+and its matching Longhorn authorization-ledger entry. Every other approval must
+remain unchanged; the existing required validator checks the new exact digest.
 An unchanged already-selected image needs a stable native epoch rather than a
 second stock-image overlap calculation. Initial selection from manual CD or a
 recovery checkout is held because those checkouts do not prove an isolated

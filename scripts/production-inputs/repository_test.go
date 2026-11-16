@@ -448,8 +448,9 @@ func TestReadsFromGitHistoryAreReviewed(t *testing.T) {
 		// under a listed path.
 		"scripts/maintain-longhorn-clients/interruption.go": "diff",
 		// diff compares commit path names and the listed working-tree producer
-		// inputs. show reads only the controllers root Kustomization under k8s/
-		// at the validated current-main base, never an unlisted file.
+		// inputs. show reads only the controllers root Kustomization and the
+		// explicitly listed authorization ledger at the validated current-main
+		// base, never an unlisted file.
 		"scripts/migrate-longhorn-v2/runtime_publication_check.go": "diff show",
 		// cat-file -e checks that a commit and its list exist, show reads the
 		// list at two commits, diff --name-only lists the files that differ.
