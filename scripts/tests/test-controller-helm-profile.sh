@@ -38,6 +38,13 @@ for provider in docker hetzner; do
           [{matchExpressions:[{key:"node-role.kubernetes.io/control-plane",operator:"Exists"}]}] and
         .spec.template.spec.tolerations ==
           [{key:"node-role.kubernetes.io/control-plane",operator:"Exists",effect:"NoSchedule"}] else true end)) and
+    all(.[] | select(.kind == "Deployment" and .metadata.name == "kustomize-controller");
+      (if $provider == "hetzner" then .spec.minReadySeconds == 30 and
+        .spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution ==
+          [{labelSelector:{matchLabels:{app:"kustomize-controller"}},topologyKey:"kubernetes.io/hostname"}] and
+        .spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
+          [{matchExpressions:[{key:"kubernetes.io/hostname",operator:"In",values:["prod-worker-1"]}]},
+           {matchExpressions:[{key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v1","v2"]}]}] else true end)) and
     ([.[] | select(.kind == "ClusterRole" or .kind == "Role") | .rules[]?.resources[]? | select(. == "serviceaccounts/token")] | length == 0)
   ' "$work/$provider.json" >/dev/null || fail "$provider native image, HA, placement or identity boundary changed"
   actual="$(jq -cS '.[] | select(.kind == "CustomResourceDefinition" and .metadata.name == "helmreleases.helm.toolkit.fluxcd.io") | .spec' "$work/$provider.json" | shasum -a 256 | cut -d ' ' -f 1)"
