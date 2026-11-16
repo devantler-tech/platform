@@ -428,3 +428,17 @@ hostnames *and* its dashboard annotations) as the reference.
 template-sync opens a PR in the tenant whenever the template's shared plumbing
 changes (a bumped action pin, a workflow fix, an updated convention). Review and
 merge it like any dependency update — your owned files are untouched.
+
+## 8. A tenant's health is its own
+
+A tenant cannot fail the platform ([ADR 0019](https://github.com/devantler-tech/monorepo/blob/main/docs/adr/0019-tenants-follow-their-signed-release-tags.md)).
+The `apps` layer counts every tenant's Flux source and `Kustomization` as healthy once they exist,
+and the deploy's reconcile skips every `Kustomization` marked
+`ksail.devantler.tech/reconcile-exclude: "true"`. A broken tenant release therefore never fails
+`apps` or a merge-queue deploy. The tenant stays on its last good revision: Flux refuses an
+artifact whose signature does not match and dry-runs the whole package before it applies anything.
+The `platform-reconciliation` alert reports the tenant's own error events.
+
+Mark every tenant `Kustomization` with that annotation. `scripts/tests/tenant-health` fails when the
+prod `apps` layer renders a `Kustomization` without it, or when a platform `HelmRelease` stops being
+gated.
