@@ -29,6 +29,7 @@ resources:
   - external-secret-db-dex.yaml
   - database-dex.yaml
   - external-secret-dex-portal-client.yaml
+  - external-secret-dex-portal-agent-client.yaml
   - helm-repository-dex.yaml
   - config-map-dex-theme.yaml
   - helm-release-dex.yaml
