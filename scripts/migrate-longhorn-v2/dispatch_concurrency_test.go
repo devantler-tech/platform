@@ -49,6 +49,9 @@ func validateMigrationDispatchConcurrency(workflow object) error {
 }
 
 func validateMigrationDispatchDependencies(workflow object) error {
+	if !migrationDispatchMustRun(valueObject(workflow, "jobs", "tests")) || !migrationDispatchMustSucceed(valueObject(workflow, "jobs", "prepare")) {
+		return errors.New("migration safety jobs can be skipped or tolerate failure")
+	}
 	if len(valueObject(workflow, "permissions")) != 0 || text(workflow, "jobs", "tests", "permissions", "contents") != "read" ||
 		text(workflow, "jobs", "prepare", "needs") != "tests" || text(workflow, "jobs", "prepare", "if") != "${{ github.event_name == 'workflow_dispatch' }}" ||
 		text(workflow, "jobs", "prepare", "environment") != "prod" {
@@ -63,6 +66,9 @@ func validateMigrationDispatchBoundarySteps(workflow object) error {
 	for _, raw := range tests {
 		step := raw.(object)
 		if text(step, "run") == "go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory" {
+			if !migrationDispatchMustRun(step) {
+				return errors.New("boundary tests can be skipped or tolerate failure")
+			}
 			tested = true
 		}
 	}
@@ -78,6 +84,12 @@ func validateMigrationDispatchSourceSteps(workflow object) error {
 	for i, raw := range steps {
 		step := raw.(object)
 		positions[text(step, "name")] = i + 1
+		switch text(step, "name") {
+		case "Require confirmed first attempt on main", "Checkout reviewed source", "Require current main":
+			if !migrationDispatchMustRun(step) {
+				return errors.New("authorization or source gate can be skipped or tolerate failure")
+			}
+		}
 		if text(step, "name") == "Require current main" && strings.TrimSpace(text(step, "run")) != `./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"` {
 			return errors.New("serialization must not replace source freshness")
 		}
@@ -92,6 +104,32 @@ func validateMigrationDispatchSourceSteps(workflow object) error {
 		}
 	}
 	return nil
+}
+
+func migrationDispatchMustRun(scope object) bool {
+	return value(scope, "if") == nil && migrationDispatchMustSucceed(scope)
+}
+
+func migrationDispatchMustSucceed(scope object) bool {
+	policy := value(scope, "continue-on-error")
+	return policy == nil || policy == false
+}
+
+func TestMigrationDispatchAllowsExplicitFailureIntolerance(t *testing.T) {
+	workflow := migrationDispatchWorkflow(t)
+	for _, job := range []string{"tests", "prepare"} {
+		scope := valueObject(workflow, "jobs", job)
+		scope["continue-on-error"] = false
+		steps, _ := scope["steps"].([]any)
+		for _, raw := range steps {
+			raw.(object)["continue-on-error"] = false
+		}
+	}
+	for _, validate := range []func(object) error{validateMigrationDispatchDependencies, validateMigrationDispatchBoundarySteps, validateMigrationDispatchSourceSteps} {
+		if err := validate(workflow); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestMigrationDispatchRejectsSkippedOrFailureTolerantSafetyChecks(t *testing.T) {
