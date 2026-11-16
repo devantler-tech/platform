@@ -31,7 +31,11 @@
 # - ZITADEL's branding (its label policy), all of it, so an edit in the console
 #   is undone: the declared colours and settings, the Devantler Tech logos and
 #   icon from config-map-branding.yaml, no custom font, and no organization
-#   with a policy of its own.
+#   with a policy of its own;
+# - the Customers organization's sign-in texts, all of them, so an edit in
+#   the console is undone: the sign-in page says it is the client portal and
+#   that the portal is invitation-only. ZITADEL has no Danish, so English is
+#   its only language, and public organization registration stays off.
 # A run that finds nothing to change writes nothing. A duplicate, a deactivated
 # client, a missing Secret, an API error or a refused write stops the run
 # before it changes anything further; the next run starts again.
@@ -808,6 +812,35 @@ spec:
                       log "recovery $ADMIN_RECOVERY_NONCE: unlocked=$unlocked removed=$(IFS=,; echo "${removed[*]:-nothing}")"
                       changes+=("recovered the administrator's sign-in")
                     fi
+                  fi
+
+                  # --- Languages and the customers' sign-in texts -------------------------------------
+                  # ZITADEL v4 has no Danish: it refuses custom texts in "da" (LANG-lg4DP). With every
+                  # language it has allowed, a Danish browser gets English text on a page tagged
+                  # lang="ar", the first language it lists. English is therefore its only language.
+                  # The restrictions keep public organization registration off, as FirstInstance set it.
+                  restrictions=$(api GET /admin/v1/restrictions |
+                    jq -cS '{disallowPublicOrgRegistration: (.disallowPublicOrgRegistration // false),
+                      allowedLanguages: (.allowedLanguages // [])}')
+                  if [[ $restrictions != '{"allowedLanguages":["en"],"disallowPublicOrgRegistration":true}' ]]; then
+                    api PUT /admin/v1/restrictions '{"disallowPublicOrgRegistration": true, "allowedLanguages": {"list": ["en"]}}' >/dev/null
+                    changes+=("allowed only English and kept public organization registration off")
+                  fi
+                  # The Customers sign-in page shows the description and then the "must be a member"
+                  # line, so the invitation-only sentence is split across the two. A write replaces
+                  # every custom text of the language, so a console edit is undone. A read can lag a
+                  # write by a moment; then the next run only writes the same texts again.
+                  desired_texts=$(jq -cS -n '{loginText: {
+                    title: "Sign in to your client portal",
+                    description: "The portal is invitation-only.",
+                    userMustBeMemberOfOrg: "Sign in with the account from your invitation email."}}')
+                  texts=$(api_org=$customers_org_id api GET /management/v1/text/login/en |
+                    jq -cS '.customText | del(.details, .isDefault, .language)
+                      | map_values(if type == "object" then with_entries(select(.value != "" and .value != null)) else . end)
+                      | with_entries(select(.value != {} and .value != "" and .value != null))')
+                  if [[ $texts != "$desired_texts" ]]; then
+                    api_org=$customers_org_id api PUT /management/v1/text/login/en "$desired_texts" >/dev/null
+                    changes+=("set the sign-in texts of $(org_label "$customers_org_id")")
                   fi
 
                   # --- Branding ---------------------------------------------------------------------
