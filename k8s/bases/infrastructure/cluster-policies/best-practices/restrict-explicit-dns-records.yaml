@@ -16,8 +16,8 @@ metadata:
     policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
       Limits explicit ExternalDNS records to the owning product's namespace and
-      the approved DNS-only records: the documentation CNAME and company
-      Email's Amazon SES records. Tenant labels do not grant DNS
+      the approved DNS-only records: the documentation CNAME, company Email's
+      Amazon SES records and the mail server's host. Tenant labels do not grant DNS
       ownership. New records require a reviewed allow-list change.
 spec:
   validationActions:
@@ -91,6 +91,28 @@ spec:
             "providerSpecific": dyn([{"name": "cloudflare/proxied", "value": "false"}])
           }
         ]
+    # The company mail server's host (platform#5481), DNS-only and owned by one
+    # DNSEndpoint in the private-mail namespace: the public IPv4 and IPv6
+    # addresses of the mail server's own load balancer. Mail apps use it for
+    # submission and IMAPS; the domain's MX records are not managed here.
+    - name: mailServerEndpoints
+      expression: >-
+        [
+          {
+            "dnsName": dyn("mail.devantler.tech"),
+            "recordType": dyn("A"),
+            "recordTTL": dyn(300),
+            "targets": dyn(["167.233.123.140"]),
+            "providerSpecific": dyn([{"name": "cloudflare/proxied", "value": "false"}])
+          },
+          {
+            "dnsName": dyn("mail.devantler.tech"),
+            "recordType": dyn("AAAA"),
+            "recordTTL": dyn(300),
+            "targets": dyn(["2a01:4f8:c016:43fc::1"]),
+            "providerSpecific": dyn([{"name": "cloudflare/proxied", "value": "false"}])
+          }
+        ]
   validations:
     # CEL equality compares the complete endpoint list, field by field and
     # without wildcard matching: extra targets, endpoints, routing fields or
@@ -100,7 +122,10 @@ spec:
          object.?spec.?endpoints.orValue([]) == variables.approvedEndpoints) ||
         (object.metadata.namespace == 'aws' &&
          object.metadata.name == 'company-mail-ses' &&
-         object.?spec.?endpoints.orValue([]) == variables.companyMailEndpoints)
+         object.?spec.?endpoints.orValue([]) == variables.companyMailEndpoints) ||
+        (object.metadata.namespace == 'private-mail' &&
+         object.metadata.name == 'mail-server' &&
+         object.?spec.?endpoints.orValue([]) == variables.mailServerEndpoints)
       message: >-
         Explicit DNS records require platform ownership and an approved
         endpoint, target, record type and DNS-only provider configuration.

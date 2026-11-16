@@ -1,0 +1,32 @@
+# The company mail server's host (platform#5481), published DNS-only by the
+# platform's external-dns. Mail apps reach submission and IMAPS here, through
+# the mail server's own load balancer (private-mail-public). These are its
+# public addresses; a new load balancer needs a reviewed change to both this
+# record and restrict-explicit-dns-records, which admits exactly this endpoint
+# list in this namespace and under this name. The domain's MX records still
+# point at iCloud and are not managed here.
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: mail-server
+  namespace: private-mail
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  endpoints:
+    - dnsName: mail.devantler.tech
+      recordTTL: 300
+      recordType: A
+      targets:
+        - 167.233.123.140
+      providerSpecific:
+        - name: cloudflare/proxied
+          value: "false"
+    - dnsName: mail.devantler.tech
+      recordTTL: 300
+      recordType: AAAA
+      targets:
+        - 2a01:4f8:c016:43fc::1
+      providerSpecific:
+        - name: cloudflare/proxied
+          value: "false"
