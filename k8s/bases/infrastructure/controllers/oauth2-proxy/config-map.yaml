@@ -1,0 +1,189 @@
+---
+# oauth2-proxy's error page in the Devantler Tech look. The proxy shows it when
+# it turns someone away (403), when a login fails or gets out of step, and when
+# an app behind it does not answer (502). The sign-in page is never shown
+# (skip_provider_button), so this is the only page of its own anyone sees.
+#
+# helm-release.yaml mounts this ConfigMap at /etc/oauth2_proxy/templates and
+# points custom_templates_dir there. oauth2-proxy reads the template once, when
+# it starts, so the reloader annotation in helm-release.yaml restarts it after a
+# change here. A template that fails to parse stops the proxy from starting;
+# scripts/oauth2-proxy-error-page/error_page_test.go parses and renders this one
+# the way oauth2-proxy does, for 403, 500 and 502, on every pull request.
+#
+# The template is upstream's own error.html (pkg/app/pagewriter, v7.15.6) with
+# the same fields and the same Go back / Sign in forms, restyled. The page links
+# to nothing outside itself: the styles are inline, the wordmark is the Dex
+# theme's logo.svg inlined byte for byte, and the tab icon is the brand icon as
+# a data: URL. The test fails when either copy drifts from its source.
+#
+# Every colour pair clears WCAG AA (4.5:1) on its background.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oauth2-proxy-templates
+  namespace: oauth2-proxy
+data:
+  error.html: |
+    {{define "error.html"}}
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex">
+    <title>{{.StatusCode}} {{.Title}} · Devantler Tech</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgNTEyIDUxMiI+PHRpdGxlPkRldmFudGxlciBUZWNoPC90aXRsZT48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM1QkZGM0MiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyQ0UwMEUiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgcng9IjExMiIgZmlsbD0idXJsKCNnKSIvPjxyZWN0IHg9IjMiIHk9IjMiIHdpZHRoPSI1MDYiIGhlaWdodD0iNTA2IiByeD0iMTA5IiBmaWxsPSJub25lIiBzdHJva2U9IiNGRkZGRkYiIHN0cm9rZS1vcGFjaXR5PSIwLjI4IiBzdHJva2Utd2lkdGg9IjYiLz48cGF0aCBmaWxsPSIjMEEwRDBCIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xODAgMTI4SDI1MEExMjggMTI4IDAgMCAxIDI1MCAzODRIMTM0VjE3NFpNMjA0IDE5OFYzMTRIMjUwQTU4IDU4IDAgMCAwIDI1MCAxOThaIi8+PC9zdmc+Cg==">
+    <style>
+      :root {
+        color-scheme: dark;
+        /* The Dex theme's palette: devantler.tech's dark backdrop and neon green. */
+        --dt-bg: hsl(224, 10%, 10%);
+        --dt-card: hsl(224, 10%, 13%);
+        --dt-card-border: rgba(255, 255, 255, 0.12);
+        --dt-accent: #39ff14;
+        --dt-accent-high: #7aff6e;
+        --dt-ink: #0a0d0b;
+        --dt-fg: rgba(255, 255, 255, 0.92);
+        --dt-fg-muted: rgba(255, 255, 255, 0.68);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem 1rem;
+        background-color: var(--dt-bg);
+        color: var(--dt-fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        line-height: 1.5;
+      }
+      main {
+        width: 100%;
+        max-width: 32rem;
+        padding: 2.5rem 2rem;
+        background-color: var(--dt-card);
+        border: 1px solid var(--dt-card-border);
+        border-radius: 16px;
+        box-shadow: 0 0 48px rgba(57, 255, 20, 0.08);
+        text-align: center;
+      }
+      .logo {
+        width: min(100%, 18rem);
+        margin: 0 auto 2rem;
+      }
+      .logo svg {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .status {
+        margin: 0;
+        color: var(--dt-accent);
+        font-size: clamp(4rem, 20vw, 6rem);
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: -0.03em;
+      }
+      h1 {
+        margin: 0.5rem 0 1rem;
+        font-size: 1.5rem;
+        font-weight: 600;
+      }
+      .message {
+        margin: 0;
+        color: var(--dt-fg-muted);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 2rem;
+      }
+      .actions form {
+        flex: 1 1 10rem;
+        margin: 0;
+      }
+      button {
+        width: 100%;
+        padding: 0.75rem 1rem;
+        border: 1px solid var(--dt-accent);
+        border-radius: 10px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .primary {
+        background-color: var(--dt-accent);
+        color: var(--dt-ink);
+      }
+      .primary:hover {
+        background-color: var(--dt-accent-high);
+        border-color: var(--dt-accent-high);
+      }
+      .secondary {
+        background-color: transparent;
+        color: var(--dt-accent);
+      }
+      .secondary:hover {
+        background-color: rgba(57, 255, 20, 0.1);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--dt-accent);
+        outline-offset: 2px;
+      }
+      .request-id {
+        margin: 2rem 0 0;
+        color: var(--dt-fg-muted);
+        font-size: 0.8125rem;
+      }
+      code {
+        color: var(--dt-fg);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        word-break: break-all;
+      }
+      footer {
+        margin-top: 1.5rem;
+        color: var(--dt-fg-muted);
+        font-size: 0.8125rem;
+      }
+    </style>
+    </head>
+    <body>
+    <main>
+      <div class="logo" role="img" aria-label="Devantler Tech">
+    <svg xmlns="http://www.w3.org/2000/svg" width="573" height="108" viewBox="0 0 573 108"><title>Devantler Tech</title><g transform="scale(.210937)"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5BFF3C"/><stop offset="1" stop-color="#2CE00E"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="url(#g)"/><rect x="3" y="3" width="506" height="506" rx="109" fill="none" stroke="#FFFFFF" stroke-opacity="0.28" stroke-width="6"/><path fill="#0A0D0B" fill-rule="evenodd" d="M180 128H250A128 128 0 0 1 250 384H134V174ZM204 198V314H250A58 58 0 0 0 250 198Z"/></g><path fill="#F1F5F1" d="M135.90 81.83Q129.78 81.83 125.36 79.26Q120.97 76.69 118.58 72.01Q116.23 67.34 116.23 60.99Q116.23 54.73 118.54 50.01Q120.90 45.30 125.18 42.66Q129.49 39.98 135.29 39.98Q138.98 39.98 142.32 41.17Q145.69 42.37 148.26 44.87Q150.87 47.37 152.32 51.25Q153.81 55.09 153.81 60.42L153.81 63.39L120.68 63.39L120.68 56.97L149.13 56.97L144.71 58.86Q144.71 55.45 143.66 52.88Q142.61 50.27 140.51 48.82Q138.44 47.37 135.32 47.37Q132.21 47.37 130.03 48.85Q127.86 50.30 126.70 52.77Q125.58 55.20 125.58 58.20L125.58 62.63Q125.58 66.47 126.88 69.11Q128.18 71.76 130.54 73.10Q132.90 74.44 136.01 74.44Q138.08 74.44 139.75 73.86Q141.45 73.24 142.68 72.08Q143.91 70.89 144.53 69.19L153.19 70.96Q152.21 74.22 149.86 76.69Q147.50 79.12 143.95 80.49Q140.43 81.83 135.90 81.83M171.75 81.00L156.67 40.48L166.75 40.48L174.14 62.52Q175.44 66.39 176.39 70.31Q177.33 74.22 178.31 78.25L175.95 78.25Q176.97 74.22 177.87 70.31Q178.81 66.39 180.08 62.52L187.44 40.48L197.44 40.48L182.29 81.00L171.75 81.00M213.50 81.83Q209.65 81.83 206.57 80.46Q203.49 79.04 201.72 76.32Q199.94 73.61 199.94 69.62Q199.94 66.18 201.21 63.93Q202.52 61.68 204.69 60.34Q206.90 59.00 209.65 58.31Q212.41 57.62 215.38 57.33Q218.90 56.94 221.11 56.65Q223.32 56.36 224.33 55.70Q225.38 55.05 225.38 53.67L225.38 53.49Q225.38 51.50 224.59 50.12Q223.79 48.71 222.19 47.98Q220.64 47.22 218.32 47.22Q215.96 47.22 214.22 47.95Q212.52 48.67 211.43 49.83Q210.34 50.99 209.84 52.33L201.10 50.56Q202.30 46.97 204.80 44.65Q207.30 42.29 210.74 41.13Q214.22 39.98 218.28 39.98Q221.14 39.98 224.04 40.66Q226.98 41.32 229.41 42.91Q231.83 44.51 233.32 47.19Q234.81 49.87 234.81 53.93L234.81 81.00L225.78 81.00L225.78 75.42L225.42 75.42Q224.51 77.12 222.92 78.61Q221.36 80.06 219.00 80.96Q216.69 81.83 213.50 81.83M215.92 74.84Q218.86 74.84 220.96 73.68Q223.10 72.52 224.26 70.64Q225.46 68.71 225.46 66.47L225.46 61.68Q224.98 62.05 223.86 62.37Q222.77 62.70 221.40 62.95Q220.06 63.21 218.71 63.39Q217.41 63.57 216.50 63.68Q214.40 63.97 212.70 64.62Q211.00 65.27 210.02 66.47Q209.07 67.63 209.07 69.51Q209.07 71.25 209.94 72.45Q210.85 73.61 212.37 74.22Q213.93 74.84 215.92 74.84M252.60 57.26L252.60 81.00L243.18 81.00L243.18 40.48L252.09 40.48L252.24 50.49L251.48 50.49Q253.18 45.23 256.48 42.62Q259.78 39.98 264.74 39.98Q268.91 39.98 272.03 41.75Q275.14 43.53 276.85 46.93Q278.59 50.34 278.59 55.23L278.59 81.00L269.16 81.00L269.16 56.68Q269.16 52.62 267.06 50.30Q264.96 47.98 261.26 47.98Q258.76 47.98 256.80 49.07Q254.85 50.16 253.72 52.26Q252.60 54.33 252.60 57.26M305.69 40.48L305.69 47.88L282.68 47.88L282.68 40.48L305.69 40.48M288.44 30.84L297.87 30.84L297.87 69.58Q297.87 71.79 298.81 72.85Q299.75 73.86 301.89 73.86Q302.54 73.86 303.59 73.72Q304.68 73.53 305.33 73.39L306.82 80.67Q305.26 81.14 303.63 81.33Q302.00 81.54 300.51 81.54Q294.68 81.54 291.56 78.64Q288.44 75.75 288.44 70.38L288.44 30.84M320.95 27.00L320.95 81.00L311.53 81.00L311.53 27.00L320.95 27.00M347.23 81.83Q341.10 81.83 336.68 79.26Q332.29 76.69 329.90 72.01Q327.55 67.34 327.55 60.99Q327.55 54.73 329.87 50.01Q332.22 45.30 336.50 42.66Q340.81 39.98 346.61 39.98Q350.31 39.98 353.64 41.17Q357.01 42.37 359.58 44.87Q362.19 47.37 363.64 51.25Q365.13 55.09 365.13 60.42L365.13 63.39L332.00 63.39L332.00 56.97L360.45 56.97L356.03 58.86Q356.03 55.45 354.98 52.88Q353.93 50.27 351.83 48.82Q349.76 47.37 346.65 47.37Q343.53 47.37 341.35 48.85Q339.18 50.30 338.02 52.77Q336.90 55.20 336.90 58.20L336.90 62.63Q336.90 66.47 338.20 69.11Q339.51 71.76 341.86 73.10Q344.22 74.44 347.33 74.44Q349.40 74.44 351.07 73.86Q352.77 73.24 354.00 72.08Q355.23 70.89 355.85 69.19L364.51 70.96Q363.53 74.22 361.18 76.69Q358.82 79.12 355.27 80.49Q351.76 81.83 347.23 81.83M371.58 81.00L371.58 40.48L380.71 40.48L380.71 47.26L381.15 47.26Q382.23 43.74 384.95 41.86Q387.67 39.94 391.15 39.94Q391.95 39.94 392.93 40.01Q393.90 40.08 394.59 40.19L394.59 48.85Q394.01 48.67 392.71 48.53Q391.40 48.38 390.13 48.38Q387.53 48.38 385.42 49.51Q383.36 50.63 382.16 52.62Q381.00 54.58 381.00 57.15L381.00 81.00L371.58 81.00"/><path fill="#39FF14" d="M397.42 35.16L397.42 27.00L440.40 27.00L440.40 35.16L423.77 35.16L423.77 81.00L414.09 81.00L414.09 35.16L397.42 35.16M464.68 81.83Q458.56 81.83 454.14 79.26Q449.75 76.69 447.36 72.01Q445.00 67.34 445.00 60.99Q445.00 54.73 447.32 50.01Q449.68 45.30 453.95 42.66Q458.27 39.98 464.07 39.98Q467.76 39.98 471.10 41.17Q474.47 42.37 477.04 44.87Q479.65 47.37 481.10 51.25Q482.58 55.09 482.58 60.42L482.58 63.39L449.46 63.39L449.46 56.97L477.91 56.97L473.49 58.86Q473.49 55.45 472.44 52.88Q471.39 50.27 469.28 48.82Q467.22 47.37 464.10 47.37Q460.98 47.37 458.81 48.85Q456.64 50.30 455.48 52.77Q454.35 55.20 454.35 58.20L454.35 62.63Q454.35 66.47 455.66 69.11Q456.96 71.76 459.32 73.10Q461.67 74.44 464.79 74.44Q466.86 74.44 468.52 73.86Q470.23 73.24 471.46 72.08Q472.69 70.89 473.31 69.19L481.97 70.96Q480.99 74.22 478.63 76.69Q476.28 79.12 472.73 80.49Q469.21 81.83 464.68 81.83M506.61 81.83Q500.70 81.83 496.36 79.22Q492.01 76.58 489.62 71.90Q487.26 67.19 487.26 60.96Q487.26 54.65 489.62 49.94Q492.01 45.19 496.36 42.58Q500.70 39.98 506.61 39.98Q509.98 39.98 512.88 40.84Q515.78 41.71 518.06 43.38Q520.35 45.01 521.87 47.37Q523.43 49.72 524.08 52.70L515.27 54.54Q514.88 52.99 514.11 51.72Q513.39 50.41 512.30 49.51Q511.21 48.60 509.80 48.13Q508.39 47.62 506.68 47.62Q503.39 47.62 501.21 49.40Q499.04 51.14 497.95 54.15Q496.86 57.12 496.86 60.92Q496.86 64.66 497.95 67.66Q499.04 70.67 501.21 72.45Q503.39 74.19 506.68 74.19Q508.42 74.19 509.84 73.68Q511.29 73.17 512.37 72.23Q513.50 71.29 514.26 69.95Q515.02 68.61 515.38 66.97L524.19 68.82Q523.54 71.87 521.98 74.26Q520.46 76.65 518.14 78.35Q515.85 80.02 512.92 80.93Q510.02 81.83 506.61 81.83M540.06 57.26L540.06 81.00L530.64 81.00L530.64 27.00L539.92 27.00L539.92 50.49L538.94 50.49Q540.64 45.23 543.94 42.62Q547.24 39.98 552.20 39.98Q556.37 39.98 559.49 41.75Q562.64 43.53 564.34 46.93Q566.08 50.34 566.08 55.23L566.08 81.00L556.62 81.00L556.62 56.68Q556.62 52.62 554.52 50.30Q552.42 47.98 548.72 47.98Q546.22 47.98 544.27 49.07Q542.31 50.16 541.19 52.26Q540.06 54.33 540.06 57.26"/></svg>
+      </div>
+      <p class="status">{{.StatusCode}}</p>
+      <h1>{{.Title}}</h1>
+      {{ if .Message }}
+      <p class="message">{{.Message}}</p>
+      {{ end }}
+      {{ if .Redirect }}
+      <div class="actions">
+        <form method="GET" action="{{.Redirect}}">
+          <button type="submit" class="secondary">Go back</button>
+        </form>
+        <form method="GET" action="{{.ProxyPrefix}}/sign_in">
+          <input type="hidden" name="rd" value="{{.Redirect}}">
+          <button type="submit" class="primary">Sign in</button>
+        </form>
+      </div>
+      {{ end }}
+      {{ if .RequestID }}
+      <p class="request-id">Request ID: <code>{{.RequestID}}</code></p>
+      {{ end }}
+    </main>
+    {{ if eq .Footer "-" }}
+    {{ else if eq .Footer "" }}
+    {{ else }}
+    <footer>{{.Footer}}</footer>
+    {{ end }}
+    </body>
+    </html>
+    {{end}}
