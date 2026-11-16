@@ -110,7 +110,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 26000fada860269dd6bcbf187f
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn 3687bc9ddaa8177bc383eb7d25fc8f1bff732a935e2874656fdd8b438aea6e03
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|oauth2-proxy|oauth2-proxy d16150bb9a7d264f002fd3cb8d82d459a368d6428207e23fd0b8479e4194f60d
+helm.toolkit.fluxcd.io/v2|HelmRelease|oauth2-proxy|oauth2-proxy cedbba9c47277b2385aa2c32cc4d69db1e6e2189d288f69c8771a699a6295cdf
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|observability|audit-log-forwarder 49f6267c3f99814d688e1e77d0665ad2c142f07c6e5b6af3f424902393c4b311
 
@@ -120,7 +120,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 7ce46ec995e409241060d9a07503b4949ef5553a24f2f4924dc5bc6d50cd4f9b
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter 3ba681e008bff5e4e723e78b14d850d92a89ab810a4eb6f7e49408a0abf51ef9
+helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter a7f2b4447f2b95c6aa298f20367b851116fcbc81829014f067a10f725b1e2e69
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|reloader|reloader c26139f0a484b501080f4a245c1ce01f6b770827797562919814daa98118ef3f
 
@@ -514,7 +514,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documen
 
 source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator fdc99e9413e88a5f8a99efa8b515dfbc340303dca5650d34137f1965d2788771
 
-source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config d15d341a9c0b313ee142376fbb44e46d51b39b42a0dd30326bb884ff8b79cbe7
+source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config 693869c0294bdfb9f54e224ffef97926d7d9752bf307ecb60e55c473b5386d09
 
 source.toolkit.fluxcd.io/v1|OCIRepository|homepage|homepage ff2c2d1aac0b2315247df9f5266eeb00f4443ea551d6e92270bdf76a243c0f38
 

@@ -33,4 +33,4 @@ spec:
       # devantler-tech/.github hosts the shared reusable publishers, and a tag of a
       # reusable workflow carries that repository's identity whoever calls it.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-manifests\.yaml@(1d726483facb9340655489913f609082677be8f5|ea4df9004d4ab43b6c9af5b0c5f55712f7211328)|\.github/\.github/workflows/publish-manifests\.yaml@(2666baeaf1384d3c2d918e19692b8a6d9fb6fd78|f33622708f9f25a32acb46cc419007e18a3223b3))$'
+        subject: '^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-manifests\.yaml@(1d726483facb9340655489913f609082677be8f5|ea4df9004d4ab43b6c9af5b0c5f55712f7211328)|\.github/\.github/workflows/publish-manifests\.yaml@(f33622708f9f25a32acb46cc419007e18a3223b3|d70d50665465117f01104313e53057374a96a1a3))$'
