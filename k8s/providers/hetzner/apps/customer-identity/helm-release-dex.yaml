@@ -124,6 +124,11 @@ spec:
           secretKeyRef:
             name: customer-dex-portal-client
             key: client-secret
+      - name: CUSTOMER_PORTAL_AGENT_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: customer-dex-portal-agent-client
+            key: client-secret
     config:
       issuer: https://login.devantler.tech
       # The Devantler Tech theme, as on the platform Dex: the wordmark as the
@@ -161,6 +166,7 @@ spec:
       oauth2:
         grantTypes:
           - authorization_code
+          - client_credentials
         responseTypes:
           - code
         skipApprovalScreen: true
@@ -199,3 +205,10 @@ spec:
           # The portal is served at the root of its own host.
           redirectURIs:
             - https://portal.devantler.tech/callback
+        # No redirect or cross-client trust: this client represents itself only.
+        # Portal authorization is a separate, initially disabled allow-list.
+        - id: business-portal-agent
+          name: Devantler Tech portal agent
+          public: false
+          secretEnv: CUSTOMER_PORTAL_AGENT_CLIENT_SECRET
+          redirectURIs: []
