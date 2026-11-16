@@ -29,6 +29,26 @@ func capacityFixture() []object {
 	return nodes
 }
 
+func TestV2CapacityHoldsWhileTheEngineIsOff(t *testing.T) {
+	f, c, _ := newCapacityAPI(t)
+	pools, err := configuredMigrationPools(poolConfigFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.base.v2Off = true
+	if err = bootstrapCapacity(context.Background(), c, journalFixture().Source, pools["v2"]); err == nil || !strings.Contains(err.Error(), "V2 data engine is off") || f.storageWrites != 0 {
+		t.Fatalf("V2 capacity activation ran with the engine off: %v", err)
+	}
+	f.base.v2Off = false
+	if err = bootstrapCapacity(context.Background(), c, journalFixture().Source, pools["v2"]); err != nil && strings.Contains(err.Error(), "V2 data engine is off") {
+		t.Fatal("V2 capacity activation held with the engine on")
+	}
+	f.base.v2Off = true
+	if err = bootstrapCapacity(context.Background(), c, journalFixture().Source, pools["v1"]); err != nil {
+		t.Fatalf("V1 capacity must not depend on the V2 engine: %v", err)
+	}
+}
+
 func TestClientRefreshRequiresTheCompleteFixedRoster(t *testing.T) {
 	pools, err := configuredMigrationPools(poolConfigFixture())
 	if err != nil {

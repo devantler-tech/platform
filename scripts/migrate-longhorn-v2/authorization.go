@@ -15,6 +15,13 @@ func authorize(getenv func(string) string, target string) error {
 	return authorizeWorkflow(getenv, "prepare-longhorn-v2-"+target)
 }
 
+func authorizeCapacity(getenv func(string) string, role string) error {
+	if role != "v1" && role != "v2" || getenv("LONGHORN_V2_POOL") != role || getenv("LONGHORN_V2_OPERATION") != "enable-capacity" {
+		return errors.New("only the explicitly selected migration pool may be enabled")
+	}
+	return authorizeWorkflow(getenv, "enable-longhorn-migration-capacity-"+role)
+}
+
 func authorizeWorkflow(getenv func(string) string, confirmation string) error {
 	for key, expected := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",

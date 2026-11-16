@@ -30,6 +30,29 @@ func TestClientRefreshRequiresItsOwnConfirmation(t *testing.T) {
 	}
 }
 
+func TestCapacityActivationHasItsOwnExplicitOperationAndConfirmation(t *testing.T) {
+	env := dispatchFixture()
+	env["LONGHORN_V2_OPERATION"] = "enable-capacity"
+	env["LONGHORN_V2_CONFIRM"] = "enable-longhorn-migration-capacity-v1"
+	env["LONGHORN_V2_POOL"] = "v1"
+	if err := authorizeCapacity(func(k string) string { return env[k] }, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"LONGHORN_V2_OPERATION", "LONGHORN_V2_CONFIRM", "LONGHORN_V2_POOL", "GITHUB_REF", "GITHUB_WORKFLOW_REF"} {
+		t.Run(key, func(t *testing.T) {
+			old := env[key]
+			env[key] = "invalid"
+			defer func() { env[key] = old }()
+			if err := authorizeCapacity(func(k string) string { return env[k] }, "v1"); err == nil {
+				t.Fatal("unconfirmed or foreign capacity activation accepted")
+			}
+		})
+	}
+	if err := authorizeCapacity(func(k string) string { return env[k] }, "other-pool"); err == nil {
+		t.Fatal("arbitrary pool could be armed for storage")
+	}
+}
+
 func TestBenchmarkAuthorizationDoesNotAuthorizeOtherMigrationWrites(t *testing.T) {
 	for _, phase := range []string{"v1", "v2"} {
 		env := dispatchFixture()
