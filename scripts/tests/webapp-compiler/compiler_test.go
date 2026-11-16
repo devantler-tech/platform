@@ -214,6 +214,12 @@ func TestCommittedWebApp(t *testing.T) {
 		}
 		deployment := desiredDeployment(t, engine, definition, instance)
 		writeDesiredFixture(t, "enabled", deployment)
+		if deployment.Annotations["reloader.stakater.com/auto"] != "true" {
+			t.Fatal("startup file inputs must trigger a rollout when their Secret changes")
+		}
+		if deployment.Spec.Template.Annotations["platform.devantler.tech/input-reloader"] != "v1" {
+			t.Fatal("installing the input watcher must also roll existing input consumers")
+		}
 		pod := deployment.Spec.Template.Spec
 		if pod.SecurityContext == nil || pod.SecurityContext.RunAsUser == nil || *pod.SecurityContext.RunAsUser != 65532 ||
 			pod.SecurityContext.RunAsGroup == nil || *pod.SecurityContext.RunAsGroup != 65532 ||
@@ -361,6 +367,9 @@ func TestCommittedWebApp(t *testing.T) {
 			}
 			defaultDeployment := desiredDeployment(t, engine, definition, input)
 			writeDesiredFixture(t, "omitted", defaultDeployment)
+			if defaultDeployment.Annotations["reloader.stakater.com/auto"] != "false" || len(defaultDeployment.Spec.Template.Annotations) != 0 {
+				t.Fatal("workloads without projected inputs must not opt into input rollouts")
+			}
 			got := defaultDeployment.Spec.Template.Spec
 			if len(got.Containers) != 1 || len(got.Containers[0].Args) != 0 || len(got.Containers[0].VolumeMounts) != 0 || len(got.Volumes) != 0 ||
 				got.SecurityContext == nil || got.SecurityContext.RunAsUser == nil || *got.SecurityContext.RunAsUser != 1000 ||
