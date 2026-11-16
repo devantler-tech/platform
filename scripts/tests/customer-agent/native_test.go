@@ -126,7 +126,11 @@ func TestNativeCustomerAgentTokens(t *testing.T) {
 		if err != nil {
 			t.Fatal("native synthetic token request failed")
 		}
-		defer response.Body.Close()
+		defer func() {
+			if err := response.Body.Close(); err != nil {
+				t.Error("native token response could not close")
+			}
+		}()
 		var body map[string]any
 		if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&body); err != nil {
 			t.Fatal("native token response was invalid")
@@ -187,7 +191,11 @@ func TestNativeCustomerAgentTokens(t *testing.T) {
 			t.Fatal("machine browser-flow connector refusal failed")
 		}
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Error("native browser-flow response could not close")
+		}
+	}()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatal("machine client unexpectedly accepted a browser redirect")
 	}
@@ -200,7 +208,11 @@ func fixtureSigningKey(t *testing.T, client *http.Client, baseURL string) *rsa.P
 	if err != nil {
 		t.Fatal("native signing-key read failed")
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Error("native signing-key response could not close")
+		}
+	}()
 	var set struct{ Keys []struct{ Kty, N, E string } }
 	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&set) != nil || len(set.Keys) != 1 || set.Keys[0].Kty != "RSA" {
 		t.Fatal("unexpected native signing-key set")
