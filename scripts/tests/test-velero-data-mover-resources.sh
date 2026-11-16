@@ -137,14 +137,14 @@ for mode in unset production longhorn wffc both; do
   expected_longhorn='longhorn'
   expected_wffc='longhorn-wffc'
   case "${mode}" in
-  production)
-    printf 'velero_backup_pvc_storage_class\t%s\nvelero_backup_wffc_pvc_storage_class\t%s\n' \
-      "${production_backup_class}" "${production_wffc_backup_class}" >"${substitution_variables}"
-    ;;
-  longhorn | both)
-    printf 'velero_backup_pvc_storage_class\tlonghorn-backup\n' >>"${substitution_variables}"
-    expected_longhorn='longhorn-backup'
-    ;;
+    production)
+      printf 'velero_backup_pvc_storage_class\t%s\nvelero_backup_wffc_pvc_storage_class\t%s\n' \
+        "${production_backup_class}" "${production_wffc_backup_class}" >"${substitution_variables}"
+      ;;
+    longhorn | both)
+      printf 'velero_backup_pvc_storage_class\tlonghorn-backup\n' >>"${substitution_variables}"
+      expected_longhorn='longhorn-backup'
+      ;;
   esac
   if [[ "${mode}" == 'wffc' || "${mode}" == 'both' ]]; then
     printf 'velero_backup_wffc_pvc_storage_class\tlonghorn-backup\n' >>"${substitution_variables}"
