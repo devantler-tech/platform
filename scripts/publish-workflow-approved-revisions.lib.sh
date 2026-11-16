@@ -82,10 +82,11 @@ refuse() {
 # The GitHub repository a registered consumer lives in today. A consumer keeps its
 # logical name (approval rows, namespace, package and signing identity) when its
 # repository is renamed. REST reads by the old name are redirected, but an App
-# installation token must name each repository as GitHub calls it now.
+# installation token must name each repository as GitHub calls it now. No registered
+# consumer is renamed today (KHoist, the renamed data-product-controller, signs as itself
+# and left this set under ADR 0017); add a case here when one is.
 consumer_github_repository() {
   case "$1" in
-    data-product-controller) printf '%s\n' 'khoist' ;;
     *) printf '%s\n' "$1" ;;
   esac
 }

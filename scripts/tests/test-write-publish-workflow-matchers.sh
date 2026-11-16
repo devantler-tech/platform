@@ -59,7 +59,6 @@ EOF
 .github publish-manifests github-config $A $B
 ascoachingogvaner publish-app ascoachingogvaner $C $B
 aws publish-manifests aws $A $A
-data-product-controller publish-app data-product-controller $A $B
 wedding-app publish-app wedding-app $A $B
 EOF
   for file in "${GENERIC_FILES[@]}"; do
