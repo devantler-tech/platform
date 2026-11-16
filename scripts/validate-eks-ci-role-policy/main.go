@@ -105,55 +105,31 @@ type resourceType struct {
 	kind       string
 }
 
-// validatePinnedUnifiSource keeps the external repository from moving without
-// a reviewed Platform change. This source retains patch/update authority over
-// live UniFi managed resources, so a branch, tag, abbreviated hash, alternate
-// repository, or mixed selector is not an acceptable provenance boundary.
-func validatePinnedUnifiSource(document map[string]any, identity resourceIdentity) error {
+// The UniFi source follows devantler-tech/unifi's own signed releases (ADR 0019).
+const (
+	unifiReleaseArtifactURL = "oci://ghcr.io/devantler-tech/unifi/manifests"
+	// stableReleaseSemverFilter admits only `X.Y.Z` releases, never a pre-release.
+	stableReleaseSemverFilter = `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
+	githubActionsOIDCIssuer   = `^https://token\.actions\.githubusercontent\.com$`
+	// unifiReleaseSubject is unifi's own release workflow on a strict release tag,
+	// in the same grammar as every tenant's own-release alternative (#6265).
+	unifiReleaseSubject = publishSubjectHost + "unifi" + ownReleaseTail + "$"
+)
+
+// validateUnifiReleaseSource keeps the UniFi source on exactly one trust rule.
+// This source retains patch/update authority over live UniFi managed resources,
+// and since it follows releases instead of a reviewed commit pin, the signature
+// is the whole provenance boundary: only devantler-tech/unifi's own release
+// workflow on a release tag may sign what it applies, and only a stable
+// release is selected. Another artifact, a second or wider identity, a
+// credential, or a selector that bypasses the stable filter (a tag, a digest)
+// is not acceptable. An emergency pin is one exact version in `semver`.
+func validateUnifiReleaseSource(documents []map[string]any) error {
 	wantIdentity := resourceIdentity{
 		apiVersion: "source.toolkit.fluxcd.io/v1",
-		kind:       "GitRepository",
+		kind:       "OCIRepository",
 		namespace:  "unifi",
 		name:       "unifi",
-	}
-	if identity != wantIdentity {
-		return nil
-	}
-
-	spec, ok := document["spec"].(map[string]any)
-	if !ok || spec["url"] != "https://github.com/devantler-tech/unifi" {
-		return errors.New("unifi GitRepository must use the trusted devantler-tech/unifi source")
-	}
-	ref, ok := spec["ref"].(map[string]any)
-	if !ok || len(ref) != 1 {
-		return errors.New("unifi GitRepository must pin exactly one full immutable commit")
-	}
-	commit, ok := ref["commit"].(string)
-	if !ok || !exactGitCommit.MatchString(commit) {
-		return errors.New("unifi GitRepository must pin exactly one full immutable commit")
-	}
-	verify, ok := spec["verify"].(map[string]any)
-	if !ok || len(verify) != 2 || verify["mode"] != "HEAD" {
-		return errors.New("unifi GitRepository must verify the pinned HEAD commit")
-	}
-	secretRef, ok := verify["secretRef"].(map[string]any)
-	if !ok || len(secretRef) != 1 || secretRef["name"] != "unifi-git-signing-keys" {
-		return errors.New("unifi GitRepository must trust only the reviewed unifi Git signing key Secret")
-	}
-	return nil
-}
-
-const expectedUnifiPublicMaterialSHA = "40ce89d21fb075092d256f9fbf62a1c19299d3282cb913d3e61d08235d0c491a"
-
-// validateUnifiSigningKey pins the public trust root used by the UniFi
-// GitRepository. A secretRef alone only proves that Flux will look up a name;
-// it says nothing about which signer that Secret actually trusts.
-func validateUnifiSigningKey(documents []map[string]any) error {
-	wantIdentity := resourceIdentity{
-		apiVersion: "v1",
-		kind:       "Secret",
-		namespace:  "unifi",
-		name:       "unifi-git-signing-keys",
 	}
 	count := 0
 	for _, document := range documents {
@@ -161,26 +137,43 @@ func validateUnifiSigningKey(documents []map[string]any) error {
 			continue
 		}
 		count++
-		if document["type"] != "Opaque" {
-			return errors.New("unifi Git signing key Secret must be type Opaque")
-		}
-		if _, exists := document["data"]; exists {
-			return errors.New("unifi Git signing key Secret must not contain data")
-		}
-		stringData, ok := document["stringData"].(map[string]any)
-		if !ok || len(stringData) != 1 {
-			return errors.New("unifi Git signing key Secret must contain only github.asc")
-		}
-		key, ok := stringData["github.asc"].(string)
-		if !ok || key == "" {
-			return errors.New("unifi Git signing key Secret must contain github.asc")
-		}
-		if actual := fingerprint([]byte(key)); actual != expectedUnifiPublicMaterialSHA {
-			return fmt.Errorf("unapproved unifi Git signing key fingerprint: %s", actual)
+		if err := validateUnifiReleaseSourceSpec(document); err != nil {
+			return err
 		}
 	}
 	if count != 1 {
-		return fmt.Errorf("unifi Git signing key Secret count is %d, want exactly 1", count)
+		return fmt.Errorf("unifi OCIRepository count is %d, want exactly 1", count)
+	}
+	return nil
+}
+
+// validateUnifiReleaseSourceSpec checks one unifi/unifi OCIRepository.
+func validateUnifiReleaseSourceSpec(document map[string]any) error {
+	spec, ok := document["spec"].(map[string]any)
+	if !ok || spec["url"] != unifiReleaseArtifactURL {
+		return errors.New("unifi OCIRepository must use the devantler-tech/unifi release artifact")
+	}
+	if _, exists := spec["secretRef"]; exists {
+		return errors.New("unifi OCIRepository must pull the public release artifact without a credential")
+	}
+	ref, ok := spec["ref"].(map[string]any)
+	if !ok || len(ref) != 2 || ref["semverFilter"] != stableReleaseSemverFilter {
+		return errors.New("unifi OCIRepository must select a semver release through the stable-release filter alone")
+	}
+	if semver, ok := ref["semver"].(string); !ok || strings.TrimSpace(semver) == "" {
+		return errors.New("unifi OCIRepository must select a semver release through the stable-release filter alone")
+	}
+	verify, ok := spec["verify"].(map[string]any)
+	if !ok || len(verify) != 2 || verify["provider"] != "cosign" {
+		return errors.New("unifi OCIRepository must verify a cosign signature and nothing else")
+	}
+	identities, ok := verify["matchOIDCIdentity"].([]any)
+	if !ok || len(identities) != 1 {
+		return errors.New("unifi OCIRepository must accept exactly one signing identity")
+	}
+	matcher, ok := identities[0].(map[string]any)
+	if !ok || len(matcher) != 2 || matcher["issuer"] != githubActionsOIDCIssuer || matcher["subject"] != unifiReleaseSubject {
+		return errors.New("unifi OCIRepository must accept only devantler-tech/unifi's own release workflow on a release tag")
 	}
 	return nil
 }
@@ -295,7 +288,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "b57d4628072b0fd25ef25663fb2070f0ccedb9812efb7ebc47f719f93b39904d",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "f0e86fa4bc64945a57bd4c4bd10ff8593134b4047b3b99d4bcbd71720dcde8ab",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "325a2db2626235b38b7122c10c06642697aee92f88f33a34423b6c72f3fb680a",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "5af50c107c3ca59ea39bf2fa334fb99b5372acc720e469d0a07f52ec97242440",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "4a6ec38f394015dc77b188d30b88321d13ea2da675a59f52f154f20a7bccfb49",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "d38bc83699fcc577a97c346db6cf1447b2ae5cc1da702f3e5a460086f8f0fe4f",
 }
 
@@ -1526,8 +1519,8 @@ func evaluateRenderedSurface(rendered []byte) ([]string, []error, []error, error
 	seen := make(map[resourceIdentity]bool, len(expectedRenderedHashes))
 	surfaceEntries := make([]string, 0, len(expectedRenderedHashes))
 	problems := make([]error, 0)
-	if keyErr := validateUnifiSigningKey(documents); keyErr != nil {
-		problems = append(problems, keyErr)
+	if sourceErr := validateUnifiReleaseSource(documents); sourceErr != nil {
+		problems = append(problems, sourceErr)
 	}
 	substitutionProblems := make([]error, 0)
 	for _, document := range documents {
@@ -1537,9 +1530,6 @@ func evaluateRenderedSurface(rendered []byte) ([]string, []error, []error, error
 		}
 		if isolationErr := validateAuthorizationIsolation(document, identity); isolationErr != nil {
 			problems = append(problems, fmt.Errorf("invalid authorization isolation for %+v: %w", identity, isolationErr))
-		}
-		if sourceErr := validatePinnedUnifiSource(document, identity); sourceErr != nil {
-			problems = append(problems, sourceErr)
 		}
 		if exemptionErr := validateUnifiPruneExemption(document, identity); exemptionErr != nil {
 			problems = append(problems, exemptionErr)
