@@ -41,17 +41,21 @@ schemas/
 go.mod
 go.sum
 internal/longhornmigration/
+internal/longhorninventory/
+internal/strictjson/
 
 # Programs the deploy runs.
 scripts/gateway-receiver-binding/
 scripts/guard-arc-recovery/
 scripts/maintain-longhorn-clients/
+scripts/migrate-longhorn-v2/
 scripts/production-inputs/
 scripts/recover-private-mail-probes/
 scripts/retire-arc-pool/
 scripts/validate-flux-force-safety/
 scripts/validate-matcher-efficacy/
 scripts/verify-merge-group-queued/
+scripts/validate-eks-ci-role-policy/approved-surface.txt
 
 # Scripts the deploy runs, the libraries they source and the data they read.
 scripts/admit-coroot-baseline-context.sh

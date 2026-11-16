@@ -135,7 +135,10 @@ func readRuntimeInventory(ctx context.Context, c client) (runtimeInventoryReceip
 			}
 			var ok bool
 			items, ok = root["items"].([]any)
-			if !ok || len(items) == 0 && q.kind != "Orphan" && q.kind != "ResourceQuota" {
+			// Fresh recovery can have no storage objects yet. Only complete,
+			// successfully typed empty lists count; runtime/node/process lists
+			// must still establish a positive installation epoch.
+			if !ok || len(items) == 0 && q.kind != "Orphan" && q.kind != "ResourceQuota" && q.kind != "Volume" && q.kind != "Engine" && q.kind != "Replica" {
 				return runtimeInventoryReceipt{}, refused
 			}
 		}
