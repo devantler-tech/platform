@@ -5,15 +5,19 @@ state lives in its own repository,
 [`devantler-tech/unifi`](https://github.com/devantler-tech/unifi), as Crossplane
 **Managed Resources** (`Client`, `TrafficRoute`, `Record`, … from the
 [`provider-upjet-unifi`](https://github.com/devantler-tech/provider-upjet-unifi)
-provider). On the cluster, a Flux `Kustomization` pulls the repo and applies the
-resources into the `unifi` namespace, and the Crossplane provider continuously
+provider). Every release of that repository publishes its `deploy/` folder as a signed
+OCI artifact; on the cluster, a Flux `OCIRepository` follows the newest stable
+release, a Flux `Kustomization` applies the resources into the `unifi` namespace,
+and the Crossplane provider continuously
 reconciles each one against the controller API. The Managed Resource _is_ the
 state (observed status in `.status.atProvider`); there is no Terraform and no
 separate state store.
 
 ```
 devantler-tech/unifi (Crossplane Managed Resources)
-   │  Flux GitRepository + Kustomization (namespace: unifi, runs as the unifi SA)
+   │  signed release artifact (oci://ghcr.io/devantler-tech/unifi/manifests)
+   │  Flux OCIRepository (newest stable release) + Kustomization
+   │  (namespace: unifi, runs as the unifi SA)
    ▼
 provider-upjet-unifi (Crossplane, crossplane-system)
    │  reconciles Client / TrafficRoute / Record against the controller API
@@ -29,7 +33,7 @@ Broadening coverage (VLANs/WLANs/firewall) and a cross-resource reference for
 | Piece                                                                                                                                                     | Path                                               |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
 | Provider install (prod): `Provider` + `DeploymentRuntimeConfig` + `ManagedResourceActivationPolicy`                                                       | `k8s/providers/hetzner/infrastructure/crossplane/` |
-| Tenant (ns, SA/RBAC, netpol, namespaced `SecretStore`, `ProviderConfig`, credential + WireGuard `ExternalSecret`s, `GitRepository`, Flux `Kustomization`) | `k8s/providers/hetzner/apps/unifi/`                |
+| Tenant (ns, SA/RBAC, netpol, namespaced `SecretStore`, `ProviderConfig`, credential + WireGuard `ExternalSecret`s, `OCIRepository`, Flux `Kustomization`) | `k8s/providers/hetzner/apps/unifi/`                |
 | OpenBao read policy (`infra-unifi-readonly`) + dedicated `unifi` auth role + placeholder seeding (Job)                                                    | `k8s/bases/infrastructure/vault-config/job.yaml`   |
 | Registered in the apps overlay                                                                                                                            | `k8s/providers/hetzner/apps/kustomization.yaml`    |
 
@@ -47,7 +51,23 @@ ManagedResourceDefinitions install inactive; the
 The tenant's Flux `Kustomization` runs **as the namespace-scoped `unifi`
 ServiceAccount** (a plain `Role` over the UniFi MR API groups — no cluster RBAC),
 so the Managed Resources are applied with least privilege. The tenant repo is
-**public** and holds **no secrets** — the `GitRepository` needs no auth.
+**public** and holds **no secrets** — its release artifact is public, so the
+`OCIRepository` pulls it without a credential.
+
+The tenant follows its own signed releases
+([ADR 0019](https://github.com/devantler-tech/monorepo/blob/main/docs/adr/0019-tenants-follow-their-signed-release-tags.md)):
+a UniFi release reaches the cluster within minutes with no Platform change, and a
+pre-release never does. The signature is the trust: the `OCIRepository` accepts only
+an artifact keylessly signed by a workflow of `devantler-tech/unifi` itself on a
+`v<semver>` release tag, which only its release process can create, from `main`.
+`scripts/validate-eks-ci-role-policy` refuses any other artifact, identity or
+selector. A bad release is fixed by the next one. To stop on a known-good release
+instead, set `spec.ref.semver` to that one version (`"1.2.3"`) in a reviewed PR and
+remove the pin once a fixed release exists. While that PR is on its way, the
+maintainer may `flux suspend kustomization unifi -n unifi`; resume it only after
+`kubectl -n unifi get ocirepository unifi` reports Ready at the pinned version.
+Whatever a release contains, the patches and admission guards below keep every
+live UniFi object.
 
 ## Credentials flow + the one gate
 

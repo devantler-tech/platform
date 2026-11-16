@@ -7,10 +7,9 @@ resources:
   - role.yaml
   - role-binding.yaml
   - network-policy.yaml
-  - secret-git-signing-keys.yaml
   - secret-store.yaml
   - provider-config.yaml
   - external-secret.yaml
   - external-secret-wireguard.yaml
-  - git-repository.yaml
+  - oci-repository.yaml
   - flux-kustomization.yaml
