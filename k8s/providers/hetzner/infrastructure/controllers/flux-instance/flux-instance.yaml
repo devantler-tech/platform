@@ -79,6 +79,17 @@ spec:
           - op: add
             path: /spec/template/spec/affinity
             value:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: kubernetes.io/hostname
+                          operator: In
+                          values: [prod-worker-1]
+                    - matchExpressions:
+                        - key: storage.platform.devantler.tech/migration-pool
+                          operator: In
+                          values: [v1, v2]
               podAntiAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - labelSelector:
@@ -135,12 +146,24 @@ spec:
           - op: add
             path: /spec/template/spec/affinity
             value:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node-role.kubernetes.io/control-plane
+                          operator: Exists
               podAntiAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - labelSelector:
                       matchLabels:
                         app: helm-controller
                     topologyKey: kubernetes.io/hostname
+          - op: add
+            path: /spec/template/spec/tolerations
+            value:
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
+                effect: NoSchedule
           - op: test
             path: /spec/template/spec/containers/0/name
             value: manager

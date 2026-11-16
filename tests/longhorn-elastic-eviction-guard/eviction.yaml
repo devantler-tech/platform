@@ -1,0 +1,9 @@
+---
+apiVersion: policy/v1
+kind: Eviction
+metadata:
+  name: instance-manager-example
+  namespace: longhorn-system
+deleteOptions:
+  preconditions:
+    uid: pod-uid

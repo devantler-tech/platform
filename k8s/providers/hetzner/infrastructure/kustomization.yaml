@@ -223,6 +223,36 @@ components:
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
 patches:
+  # Temporary rollout headroom for the storage migration (#6073). This
+  # single-writer metrics collector keeps its existing Recreate strategy.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: coroot-security-progress
+      namespace: observability
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: coroot-security-progress
+        namespace: observability
+      spec:
+        template:
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: kubernetes.io/hostname
+                          operator: In
+                          values: [prod-worker-1]
+                    - matchExpressions:
+                        - key: storage.platform.devantler.tech/migration-pool
+                          operator: In
+                          values: [v2]
+  - path: policy-reporter/patches/runtime-headroom.yaml
   - path: ksail-operator/patches/enable-oidc.yaml
   - path: vault-backup-recovery/patches/use-recovery-storage-for-initial-snapshot.yaml
     target:

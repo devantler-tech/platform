@@ -5,7 +5,7 @@
       "consumer": "business-site",
       "consumerRepository": "devantler-tech/business-site",
       "workflow": "publish-app",
-      "kind": "published-binding",
+      "kind": "published-upgrade",
       "sourcePath": "k8s/providers/hetzner/apps/business-site/tenant.yaml",
       "constructorSpecSha256": "7d77b5eab3b26ca19b36c9923b2a7124225da85a117637fe868e29338c48e0c1",
       "tenantIdentity": {
@@ -20,17 +20,55 @@
         "namespace": "business-site",
         "name": "business-site",
         "artifactURL": "oci://ghcr.io/devantler-tech/business-site/manifests",
-        "digest": "sha256:8a5e9decc3189ef7117fa9bfbb3bcb3ae25135a9e0b5bb550a8310cd8e4bc841"
+        "digest": "sha256:0ffcda5f8e79dae29d27d36e45f1cb918f1ff41ec30f0838473797bf6e3f9bc8"
       },
       "publication": {
-        "gitTag": "v3.3.0",
-        "sourceSHA": "303e366d26a1a58d87d7574541c065ccc560f14c",
+        "gitTag": "v3.13.0",
+        "sourceSHA": "28d95a0c141e1a649108c5ea53cb4bdc606e5dda",
         "publisherIdentity": "devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35",
         "callerWorkflow": ".github/workflows/publish-runtime.yaml",
         "event": "release",
-        "workflowRunId": 43666570961,
+        "workflowRunId": 43862032891,
         "workflowRunAttempt": 1,
-        "verifiedOn": "2026-11-15"
+        "verifiedOn": "2026-11-16"
+      },
+      "previousBinding": {
+        "consumer": "business-site",
+        "consumerRepository": "devantler-tech/business-site",
+        "workflow": "publish-app",
+        "kind": "published-binding",
+        "sourcePath": "k8s/providers/hetzner/apps/business-site/tenant.yaml",
+        "constructorSpecSha256": "7d77b5eab3b26ca19b36c9923b2a7124225da85a117637fe868e29338c48e0c1",
+        "tenantIdentity": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Tenant",
+          "namespace": "flux-system",
+          "name": "business-site"
+        },
+        "sourceIdentity": {
+          "apiVersion": "source.toolkit.fluxcd.io/v1",
+          "kind": "OCIRepository",
+          "namespace": "business-site",
+          "name": "business-site",
+          "artifactURL": "oci://ghcr.io/devantler-tech/business-site/manifests",
+          "digest": "sha256:5312fa2767c40148864ec45ea64428f56aae36bbea3134fe66f18b9289dd5b39"
+        },
+        "publication": {
+          "gitTag": "v3.12.0",
+          "sourceSHA": "8eccde0ffb40bb8ef996f6f38ebaf3a5d2208927",
+          "publisherIdentity": "devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35",
+          "callerWorkflow": ".github/workflows/publish-runtime.yaml",
+          "event": "release",
+          "workflowRunId": 43834739167,
+          "workflowRunAttempt": 2,
+          "verifiedOn": "2026-11-16"
+        }
+      },
+      "previousObservation": {
+        "uidSha256": "38aff5c8aafbd89fc51dbbe131d27c9a3fb0e78108a20779d0e7a5680a6cc2d2",
+        "generation": 14,
+        "snapshotSha256": "16459049cd72615f6762f107797dc48ba92a4b5b4c0283af3c4ae6e38b38f2ff",
+        "observedOn": "2026-11-16"
       }
     }
   ]

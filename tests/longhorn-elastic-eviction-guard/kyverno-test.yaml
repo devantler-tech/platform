@@ -1,0 +1,18 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: longhorn-elastic-eviction-guard
+policies:
+  - ../../k8s/bases/components/longhorn-elastic-eviction-guard/cluster-policies/cluster-policy-validation.yaml
+  - ../../k8s/bases/components/longhorn-elastic-eviction-guard/cluster-policies/cluster-policy-uid-mutation.yaml
+resources:
+  - eviction.yaml
+variables: values.yaml
+results:
+  - policy: protect-elastic-longhorn-eviction
+    rule: require-empty-owned-instance-manager
+    resources:
+      - instance-manager-example
+    kind: Eviction
+    result: pass

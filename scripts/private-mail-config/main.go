@@ -150,6 +150,8 @@ func command(args []string, log io.Writer) int {
 	output := f.String("output-file", "", "new private plan in memory-backed storage")
 	var proxy proxyOption
 	f.Var(&proxy, "proxy-client-ip", "explicit deployment transport override")
+	var mailProxy mailProxySourceOption
+	f.Var(&mailProxy, "mail-proxy-source", "private IPv4 address of the mail load balancer")
 	fail := func() int { _, _ = fmt.Fprintln(log, errConfiguration); return 2 }
 	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) || !filepath.IsAbs(*output) {
 		return fail()
@@ -161,6 +163,7 @@ func command(args []string, log io.Writer) int {
 	if proxy.value != nil {
 		v.UseProxyClientIP = *proxy.value
 	}
+	v.mailProxySource = mailProxy.value
 	inventory, err := privateInput(*dir, "listener-inventory.json", 65536)
 	if err != nil || validateInventoryFor(inventory, v.RuntimeVersion) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return fail()

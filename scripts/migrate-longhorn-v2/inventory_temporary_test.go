@@ -294,6 +294,13 @@ func TestTemporaryInventoryNativeWorkflowGuardPreservesResetBoundary(t *testing.
 		{"inventory-replicas", "temporary-v1-1", "refs/heads/feature", "1", "inventory-longhorn-replicas-temporary-v1-1", false},
 		{"inventory-replicas", "temporary-v1-1", "refs/heads/main", "2", "inventory-longhorn-replicas-temporary-v1-1", false},
 		{"inventory-replicas", "temporary-v1-1", "refs/heads/main", "1", "prepare-longhorn-v2-temporary-v1-1", false},
+		{"retain-provider-source", "", "refs/heads/main", "1", strings.Replace(providerRetentionApproval, "openbao/", "customer-identity/", 1), true},
+		{"retain-provider-source", "", "refs/heads/main", "1", strings.Replace(providerRetentionApproval, "openbao/", "business-site/", 1), true},
+		{"retain-provider-source", "", "refs/heads/main", "1", strings.Replace(providerRetentionApproval, "openbao/", "customer-identity-other/", 1), false},
+		{"retain-provider-source", "", "refs/heads/main", "1", strings.Replace(providerRetentionApproval, "openbao/", "business-site-other/", 1), false},
+		{"retain-provider-source", "prod-worker-1", "refs/heads/main", "1", providerRetentionApproval, false},
+		{"retain-provider-source", "", "refs/heads/feature", "1", providerRetentionApproval, false},
+		{"retain-provider-source", "", "refs/heads/main", "2", providerRetentionApproval, false},
 	} {
 		command := exec.Command("bash", "-c", script)
 		command.Env = []string{"PATH=" + os.Getenv("PATH"), "DISPATCH_REF=" + test.ref, "GITHUB_RUN_ATTEMPT=" + test.attempt,

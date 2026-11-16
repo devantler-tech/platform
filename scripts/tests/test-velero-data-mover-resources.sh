@@ -8,6 +8,9 @@ readonly node_agent_config="${root_dir}/k8s/bases/infrastructure/controllers/vel
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/velero/helm-release.yaml"
 readonly volume_policy="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/velero/config-map.yaml"
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../flux-render.lib.sh
+. "${root_dir}/scripts/flux-render.lib.sh"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -108,11 +111,66 @@ rendered_infrastructure="$(mktemp)"
 readonly rendered_infrastructure
 rendered_controllers="$(mktemp)"
 readonly rendered_controllers
-trap 'rm -f "${rendered_infrastructure}" "${rendered_controllers}"' EXIT
+rendered_effective="$(mktemp)"
+readonly rendered_effective
+substitution_variables="$(mktemp)"
+readonly substitution_variables
+trap 'rm -f "${rendered_infrastructure}" "${rendered_controllers}" "${rendered_effective}" "${substitution_variables}"' EXIT
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure" >"${rendered_infrastructure}" ||
   fail 'the production infrastructure overlay did not render'
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers" >"${rendered_controllers}" ||
   fail 'the production infrastructure controllers overlay did not render'
+
+# Production and an unset setting must keep the source class until runtime
+# backup and restore validation explicitly opts into the disposable copy.
+production_backup_class="$(yq -er '.data.velero_backup_pvc_storage_class // "longhorn"' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" ||
+  fail 'the production backup storage setting could not be read'
+readonly production_backup_class
+for configured_class in '' "${production_backup_class}"; do
+  : >"${substitution_variables}"
+  if [[ -n "${configured_class}" ]]; then
+    printf 'velero_backup_pvc_storage_class\t%s\n' "${configured_class}" >"${substitution_variables}"
+  fi
+  flux_render_substitute "${substitution_variables}" "${rendered_controllers}" >"${rendered_effective}" ||
+    fail 'the default backup storage configuration did not substitute'
+  default_backup_class="$(yq -N -er '
+    select(.kind == "ConfigMap" and .metadata.namespace == "velero" and .metadata.name == "node-agent-config") |
+    .data["node-agent-config.json"] | from_json | .backupPVC.longhorn.storageClass
+  ' "${rendered_effective}")" || fail 'the default snapshot copy mapping is missing'
+  [[ "${default_backup_class}" == 'longhorn' ]] ||
+    fail "single-replica staging must be off by default; found ${default_backup_class}"
+done
+
+# Opt in through the same postBuild variable, then follow the effective mapping
+# into the deployed StorageClass rather than testing an uncomposed fixture.
+printf 'velero_backup_pvc_storage_class\tlonghorn-backup\n' >"${substitution_variables}"
+flux_render_substitute "${substitution_variables}" "${rendered_controllers}" >"${rendered_effective}" ||
+  fail 'the opted-in backup storage configuration did not substitute'
+backup_storage_class="$(yq -N -er '
+  select(.kind == "ConfigMap" and .metadata.namespace == "velero" and .metadata.name == "node-agent-config") |
+  .data["node-agent-config.json"] | from_json | .backupPVC.longhorn.storageClass
+' "${rendered_effective}")" || fail 'Longhorn snapshot uploads need an explicit staging storage class'
+export backup_storage_class
+readonly backup_storage_class
+
+[[ "${backup_storage_class}" == 'longhorn-backup' ]] ||
+  fail 'opted-in snapshot uploads must select the disposable staging class'
+
+backup_storage_contract="$(yq -N -er '
+  select(.kind == "StorageClass" and .metadata.name == strenv(backup_storage_class)) |
+  .provisioner + "|" + .parameters.numberOfReplicas + "|" + .volumeBindingMode + "|" + .reclaimPolicy + "|" +
+  (.metadata.annotations."storageclass.kubernetes.io/is-default-class" // "false")
+' "${rendered_controllers}")" || fail 'the mapped snapshot staging class must be deployed with the controllers'
+readonly backup_storage_contract
+
+[[ "${backup_storage_contract}" == 'driver.longhorn.io|1|Immediate|Delete|false' ]] ||
+  fail "snapshot staging needs one disposable Longhorn replica and immediate binding, never the default class; found ${backup_storage_contract}"
+
+source_replica_count="$(yq -N -er '
+  select(.kind == "StorageClass" and .metadata.name == "longhorn-wffc") | .parameters.numberOfReplicas
+' "${rendered_controllers}")" || fail 'the durable source storage class must still render'
+readonly source_replica_count
+[[ "${source_replica_count}" == '3' ]] || fail 'source-volume redundancy must remain at three replicas'
 
 hcloud_pvcs="$(
   yq -N -r '

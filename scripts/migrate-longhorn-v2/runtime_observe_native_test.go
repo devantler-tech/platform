@@ -19,7 +19,16 @@ func TestRuntimeInventoryNativeReadOnlyAPI(t *testing.T) {
 	if !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(source) {
 		t.Fatal("the current full main source is required for the native read")
 	}
-	c := client{context: "admin@prod", run: func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+	got, err := observeRuntimeInventory(t.Context(), runtimeNativeReadClient(t), source)
+	if err != nil {
+		t.Fatal("native read-only runtime inventory did not qualify:", err)
+	}
+	t.Logf("LONGHORN_RUNTIME_NATIVE_READ=OBSERVED nodes=%d storageNodes=%d instanceManagers=%d v1Volumes=%d v2Volumes=%d default=%s declaredOverlap=%s overlapNodes=%d adoption=UNVERIFIED headroom=UNVERIFIED writes=0", got.KubernetesNodes, got.Nodes, got.InstanceManagers, got.V1Volumes, got.V2Volumes, got.Default, got.DeclaredOverlap, got.OverlapNodes)
+}
+
+func runtimeNativeReadClient(t *testing.T) client {
+	t.Helper()
+	return client{context: "admin@prod", run: func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
 		if input != nil || !runtimeObservationReadAllowed(program, args...) {
 			t.Fatal("native fixture selected an operation outside the fixed read boundary")
 		}
@@ -31,9 +40,4 @@ func TestRuntimeInventoryNativeReadOnlyAPI(t *testing.T) {
 		}
 		return inventoryExecuteCommand(ctx, program, actual...)
 	}}
-	got, err := observeRuntimeInventory(t.Context(), c, source)
-	if err != nil {
-		t.Fatal("native read-only runtime inventory did not qualify:", err)
-	}
-	t.Logf("LONGHORN_RUNTIME_NATIVE_READ=OBSERVED nodes=%d storageNodes=%d instanceManagers=%d v1Volumes=%d v2Volumes=%d default=%s declaredOverlap=%s overlapNodes=%d adoption=UNVERIFIED headroom=UNVERIFIED writes=0", got.KubernetesNodes, got.Nodes, got.InstanceManagers, got.V1Volumes, got.V2Volumes, got.Default, got.DeclaredOverlap, got.OverlapNodes)
 }

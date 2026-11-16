@@ -1,0 +1,9 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: dex
+  namespace: customer-identity
+spec:
+  # Dex's official chart repository, as the infrastructure Dex uses.
+  url: https://charts.dexidp.io
+  interval: 60m

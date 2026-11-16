@@ -1,0 +1,24 @@
+# Let Coroot's cluster-agent (observability namespace) reach the
+# business-site-portal-db instances on 5432 for its Postgres integration
+# (cluster-portal-db.yaml). Additive: it admits only the cluster-agent, and only
+# to the database pods.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: business-site-portal-db-coroot
+  namespace: business-site
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: business-site-portal-db
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+            app.kubernetes.io/managed-by: coroot-operator
+            app.kubernetes.io/part-of: coroot
+            app.kubernetes.io/component: coroot-cluster-agent
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP

@@ -34,6 +34,8 @@ func checkCommand(args []string, log io.Writer) int {
 	endpoint := f.String("url", "", "serving management endpoint, http://host:port")
 	var proxy proxyOption
 	f.Var(&proxy, "proxy-client-ip", "explicit deployment transport override")
+	var mailProxy mailProxySourceOption
+	f.Var(&mailProxy, "mail-proxy-source", "private IPv4 address of the mail load balancer")
 	unknown := func(reason string) int {
 		_, _ = fmt.Fprintln(log, "Email configuration check could not run:", reason)
 		return checkUnknown
@@ -52,6 +54,7 @@ func checkCommand(args []string, log io.Writer) int {
 	if proxy.value != nil {
 		v.UseProxyClientIP = *proxy.value
 	}
+	v.mailProxySource = mailProxy.value
 	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 2 * time.Second}).DialContext, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	m := management{

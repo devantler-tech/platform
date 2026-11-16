@@ -5,6 +5,10 @@ resources:
   # The mail store is encrypted at rest; its key comes from OpenBao (#5387).
   - ../../../../bases/apps/email-encrypted-storage
   - secret-settings.enc.yaml
+  # The mail server's own load balancer for SMTP, submission and IMAPS (#5481).
+  - service.yaml
+  # Its DNS-only host, mail.devantler.tech.
+  - dns-endpoint.yaml
 patches:
   # Production has retained credential custody. Never infer a fresh installation
   # from missing records while an older backup is being restored.
@@ -31,6 +35,30 @@ patches:
       name: private-mail
       namespace: private-mail
     path: patches/migrate-to-encrypted-storage.yaml
+  # The mail listeners trust PROXY headers from their own load balancer only.
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+    path: patches/trust-mail-load-balancer.yaml
+  # SMTP, submission and IMAPS are reachable from their own load balancer only.
+  - target:
+      group: cilium.io
+      version: v2
+      kind: CiliumNetworkPolicy
+      name: private-mail
+      namespace: private-mail
+    path: patches/admit-mail-load-balancer.yaml
+  # The public mail hostname, for submission and IMAPS clients (#5481).
+  - target:
+      group: cert-manager.io
+      version: v1
+      kind: Certificate
+      name: private-mail
+      namespace: private-mail
+    path: patches/certify-mail-hostname.yaml
 # The copy step uses the same signed setup image as the server. A parent image
 # transformer does not pin a container added here.
 replacements:

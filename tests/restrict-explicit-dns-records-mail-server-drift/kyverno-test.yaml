@@ -1,0 +1,18 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-explicit-dns-records-mail-server-drift
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-explicit-dns-records.yaml
+resources:
+  - resources.yaml
+variables: ../restrict-explicit-dns-records-create/values.yaml
+results:
+  # A different address, as after a replaced load balancer, needs a reviewed
+  # change to the allow-list; the old approval does not cover it.
+  - policy: restrict-explicit-dns-records
+    resources:
+      - private-mail/mail-server
+    kind: DNSEndpoint
+    result: fail
