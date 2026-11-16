@@ -302,7 +302,7 @@ A completed receipt requires healthy storage and explicit cleanup of the recorde
 scratch Pod, network policy, claim, retained PV, backend and class. Both phases use
 the GitOps-managed `longhorn-benchmark` namespace. The workflow records its UID and
 leaves the namespace in place. An incomplete run, including one that reaches the
-Pod's 25 minute deadline, holds with its journal and resources preserved for explicit recovery.
+Pod's 25-minute deadline, holds with its journal and resources preserved for explicit recovery.
 
 Run `benchmark-v2` only after every volume uses V2 and every replica is back on
 the same three permanent workers. It requires the baseline's hardware, OS,

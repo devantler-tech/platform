@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -137,10 +138,14 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 	if err != nil || endpoint.String() != "https://203.0.113.10:6443" {
 		t.Fatalf("direct endpoint is not pinned: %v", err)
 	}
-	if _, err := client.Get(server.URL + "/version"); err == nil {
+	response, err := client.Get(server.URL + "/version")
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil {
 		t.Fatal("direct client accepted a request for a different peer")
 	}
-	if client.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
+	if !errors.Is(client.CheckRedirect(nil, nil), http.ErrUseLastResponse) {
 		t.Fatal("direct client permits a redirect")
 	}
 	for _, test := range []struct{ method, query string }{
@@ -148,11 +153,15 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 		{http.MethodPatch, "?dryRun=All&dryRun="},
 		{http.MethodDelete, "?dryRun=All"},
 	} {
-		req, err := http.NewRequest(test.method, endpoint.String()+"/api/v1/persistentvolumes/scratch"+test.query, nil)
+		req, err := http.NewRequestWithContext(t.Context(), test.method, endpoint.String()+"/api/v1/persistentvolumes/scratch"+test.query, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := client.Do(req); err == nil || !strings.Contains(err.Error(), "only observations and server dry-runs") {
+		response, err := client.Do(req)
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "only observations and server dry-runs") {
 			t.Fatal("direct API client did not reject a write-capable request locally")
 		}
 	}

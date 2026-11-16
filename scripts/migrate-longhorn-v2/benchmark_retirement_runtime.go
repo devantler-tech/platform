@@ -131,47 +131,9 @@ func retireBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRe
 	if err := verifyRuntime(); err != nil {
 		return err
 	}
-	// Rebind the original backend revision after the physical seals. The
-	// subsequent precondition refuses even a status update between proof and
-	// DELETE, so the Longhorn controller can only retire the object proven here.
-	current, err := c.get(ctx, "volumes.longhorn.io", "longhorn-system", identity.Name, false)
-	if err != nil || benchmarkIdentity(current) != identity || text(current, "spec", "accessMode") != "rwo" ||
-		value(current, "metadata", "deletionTimestamp") != nil || verifyBenchmarkDetachedBackendState(current) != nil ||
-		verifyRecoveredBackendCascadeCleared(current) != nil {
-		return errors.New("the original V1 backend changed while the physical instances were sealed")
-	}
-	groups, observations, err := readBenchmarkInstanceGroups(ctx, c)
+	current, err := verifySealedBenchmarkV1Backend(ctx, c, *record, policies, verifyRuntime)
 	if err != nil {
 		return err
-	}
-	children, err := qualifyRetirementInstances(*record, groups)
-	if err != nil || len(children) != 5 {
-		return errors.New("original checkpointed V1 children changed before retirement")
-	}
-	for _, child := range children {
-		if text(observations[child.Identity.UID], "metadata", "annotations", retirementCheckpointAnnotation) != record.FenceCheckpoint {
-			return errors.New("a V1 instance lost its native retirement checkpoint")
-		}
-	}
-	if err := proveBenchmarkReferenceFenceOnServingAPIs(ctx, c, *record, current); err != nil {
-		return err
-	}
-	policy, err := benchmarkRetirementInstanceFence(*record, groups, record.FenceCheckpoint)
-	if err != nil {
-		return err
-	}
-	if _, err := observeBenchmarkReferenceFence(ctx, c, policy, record.Fences[text(policy, "metadata", "name")]); err != nil {
-		return err
-	}
-	if _, err := observeBenchmarkReferenceFence(ctx, c, policies[0], record.Fences[text(policies[0], "metadata", "name")]); err != nil {
-		return err
-	}
-	if err := verifyRuntime(); err != nil {
-		return err
-	}
-	_, owned, err := readBenchmark(ctx, c, record.Phase)
-	if err != nil || !reflect.DeepEqual(owned, *record) {
-		return errors.New("the current benchmark no longer owns its V1 retirement journal")
 	}
 	if err := c.deleteObserved(ctx, record.Source, "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/"+identity.Name, current); err != nil {
 		return err
@@ -186,6 +148,53 @@ func retireBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRe
 		}
 		return nil
 	})
+}
+
+func verifySealedBenchmarkV1Backend(ctx context.Context, c client, record benchmarkRecord, policies []object, verifyRuntime func() error) (object, error) {
+	identity := record.Resources["LonghornVolume"]
+	// Rebind the original backend revision after the physical seals. The
+	// subsequent precondition refuses even a status update between proof and
+	// DELETE, so the Longhorn controller can only retire the object proven here.
+	current, err := c.get(ctx, "volumes.longhorn.io", "longhorn-system", identity.Name, false)
+	if err != nil || benchmarkIdentity(current) != identity || text(current, "spec", "accessMode") != "rwo" ||
+		value(current, "metadata", "deletionTimestamp") != nil || verifyBenchmarkDetachedBackendState(current) != nil ||
+		verifyRecoveredBackendCascadeCleared(current) != nil {
+		return nil, errors.New("the original V1 backend changed while the physical instances were sealed")
+	}
+	groups, observations, err := readBenchmarkInstanceGroups(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	children, err := qualifyRetirementInstances(record, groups)
+	if err != nil || len(children) != 5 {
+		return nil, errors.New("original checkpointed V1 children changed before retirement")
+	}
+	for _, child := range children {
+		if text(observations[child.Identity.UID], "metadata", "annotations", retirementCheckpointAnnotation) != record.FenceCheckpoint {
+			return nil, errors.New("a V1 instance lost its native retirement checkpoint")
+		}
+	}
+	if err := proveBenchmarkReferenceFenceOnServingAPIs(ctx, c, record, current); err != nil {
+		return nil, err
+	}
+	policy, err := benchmarkRetirementInstanceFence(record, groups, record.FenceCheckpoint)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := observeBenchmarkReferenceFence(ctx, c, policy, record.Fences[text(policy, "metadata", "name")]); err != nil {
+		return nil, err
+	}
+	if _, err := observeBenchmarkReferenceFence(ctx, c, policies[0], record.Fences[text(policies[0], "metadata", "name")]); err != nil {
+		return nil, err
+	}
+	if err := verifyRuntime(); err != nil {
+		return nil, err
+	}
+	_, owned, err := readBenchmark(ctx, c, record.Phase)
+	if err != nil || !reflect.DeepEqual(owned, record) {
+		return nil, errors.New("the current benchmark no longer owns its V1 retirement journal")
+	}
+	return current, nil
 }
 
 func observeBenchmarkV1Runtime(ctx context.Context, c client, image string, requiredNodes []string) (benchmarkV1Runtime, error) {

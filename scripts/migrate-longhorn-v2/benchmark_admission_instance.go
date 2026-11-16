@@ -51,16 +51,9 @@ func proveAndCheckpointBenchmarkInstances(ctx context.Context, c client, record 
 	if err != nil {
 		return err
 	}
-	children, err := qualifyRetirementInstances(*record, groups)
+	children, err := qualifyBenchmarkV1InstanceRoster(*record, groups)
 	if err != nil {
 		return err
-	}
-	counts := map[string]int{}
-	for _, child := range children {
-		counts[child.Resource]++
-	}
-	if counts["engines"] != 1 || counts["replicas"] != 3 || counts["volumeattachments"] != 1 || counts["enginefrontends"] != 0 {
-		return errors.New("benchmark V1 instance roster differs from one engine, three replicas and one attachment")
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -98,6 +91,32 @@ func proveAndCheckpointBenchmarkInstances(ctx context.Context, c client, record 
 	if err != nil || !reflect.DeepEqual(children, qualified) {
 		return errors.New("benchmark instances changed while their admission fence activated")
 	}
+	if err := checkpointBenchmarkInstances(ctx, c, *record, children, observations); err != nil {
+		return err
+	}
+	if err := verifyBenchmarkInstanceCheckpoints(ctx, c, *record, children, observations); err != nil {
+		return err
+	}
+	_, err = observeBenchmarkReferenceFence(ctx, c, policy, receipt)
+	return err
+}
+
+func qualifyBenchmarkV1InstanceRoster(record benchmarkRecord, groups map[string][]object) ([]retirementChild, error) {
+	children, err := qualifyRetirementInstances(record, groups)
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	for _, child := range children {
+		counts[child.Resource]++
+	}
+	if counts["engines"] != 1 || counts["replicas"] != 3 || counts["volumeattachments"] != 1 || counts["enginefrontends"] != 0 {
+		return nil, errors.New("benchmark V1 instance roster differs from one engine, three replicas and one attachment")
+	}
+	return children, nil
+}
+
+func checkpointBenchmarkInstances(ctx context.Context, c client, record benchmarkRecord, children []retirementChild, observations map[string]object) error {
 	for _, child := range children {
 		original := observations[child.Identity.UID]
 		kind := child.Resource + ".longhorn.io"
@@ -118,11 +137,15 @@ func proveAndCheckpointBenchmarkInstances(ctx context.Context, c client, record 
 			return errors.New("benchmark instance checkpoint was not confirmed")
 		}
 	}
+	return nil
+}
+
+func verifyBenchmarkInstanceCheckpoints(ctx context.Context, c client, record benchmarkRecord, children []retirementChild, observations map[string]object) error {
 	afterCheckpoints, current, err := readBenchmarkInstanceGroups(ctx, c)
 	if err != nil {
 		return err
 	}
-	qualified, err = qualifyRetirementInstances(*record, afterCheckpoints)
+	qualified, err := qualifyRetirementInstances(record, afterCheckpoints)
 	if err != nil || len(qualified) != len(children) {
 		return errors.New("the checkpointed benchmark instance roster changed")
 	}
@@ -134,8 +157,7 @@ func proveAndCheckpointBenchmarkInstances(ctx context.Context, c client, record 
 			return errors.New("a native benchmark checkpoint identity or spec changed")
 		}
 	}
-	_, err = observeBenchmarkReferenceFence(ctx, c, policy, receipt)
-	return err
+	return nil
 }
 
 func probeBenchmarkInstanceAdmission(ctx context.Context, client *http.Client, endpoint *url.URL, child retirementChild, actual object, policy, checkpoint string) error {

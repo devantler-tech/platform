@@ -29,6 +29,15 @@ func qualifyRetirementInstances(record benchmarkRecord, groups map[string][]obje
 	if err := verifyRetirementReceipts(record); err != nil {
 		return nil, err
 	}
+	if err := validateBenchmarkRuntimeReceipt(record); err != nil {
+		return nil, err
+	}
+	managerNodes := map[string]string{}
+	if record.V1Runtime != nil {
+		for _, epoch := range record.V1Runtime.Epochs {
+			managerNodes[epoch.Pod] = epoch.Node
+		}
+	}
 	if len(groups) != len(benchmarkInstanceKinds) {
 		return nil, errors.New("complete native child inventories are required")
 	}
@@ -99,6 +108,15 @@ func qualifyRetirementInstances(record benchmarkRecord, groups map[string][]obje
 				child.NodeID = text(item, "spec", "nodeID")
 				child.EngineName = text(item, "spec", "engineName")
 				child.InstanceManagerName = text(item, "status", "instanceManagerName")
+				// Native stop clears the manager name. The fresh scratch runtime
+				// receipt predates creation, and retirement rechecks its complete
+				// default-image and process epochs; an empty name is not a receipt.
+				if record.V1Runtime != nil && child.InstanceManagerName != "" {
+					node, approved := managerNodes[child.InstanceManagerName]
+					if !approved || child.NodeID != "" && child.NodeID != node {
+						return nil, errors.New("a backend instance names a manager outside its sealed runtime baseline")
+					}
+				}
 				if text(item, "spec", "dataEngine") != record.Phase || text(item, "spec", "desireState") != "stopped" || text(item, "status", "currentState") != "stopped" || !falseOrAbsent(value(item, "status", "starting")) || !falseOrAbsent(value(item, "status", "started")) || child.OwnerID == "" || !kubeName.MatchString(child.OwnerID) {
 					return nil, errors.New("backend instance ownership or stopped state is unknown")
 				}
