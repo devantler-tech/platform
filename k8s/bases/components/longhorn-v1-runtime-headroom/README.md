@@ -3,9 +3,10 @@
 The Hetzner controllers overlay enables this temporary placement for the V1 runtime
 rollout in #6073: Velero's server uses the temporary V2 migration pool, Hetzner CSI
 uses the three existing migration workers, and Reloader and the Flux Helm
-controller use the existing control-plane nodes. The policy-reporting UI also
-uses those control-plane nodes through its production patch. These workloads
-receive a narrow control-plane NoSchedule toleration. Kustomize's two controllers
+controller use the existing control-plane nodes with a narrow control-plane
+NoSchedule toleration. The policy-reporting UI uses workers 1 and 2 or the V2
+migration worker through its production patch. Its three eligible hosts allow
+two replicas and a rolling surge to remain on separate nodes. Kustomize's two controllers
 use worker 1 or the migration workers; the Coroot security-progress collector
 uses worker 1 or the V2 migration worker.
 CSI and Reloader require separate hosts across revisions so their rolling surges

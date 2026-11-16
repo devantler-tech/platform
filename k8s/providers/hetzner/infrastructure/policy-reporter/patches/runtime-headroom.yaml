@@ -11,15 +11,19 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
-                  - key: node-role.kubernetes.io/control-plane
-                    operator: Exists
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - prod-worker-1
+                      - prod-worker-2
+              - matchExpressions:
+                  - key: storage.platform.devantler.tech/migration-pool
+                    operator: In
+                    values:
+                      - v2
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector:
                 matchLabels:
                   app.kubernetes.io/name: policy-reporter-ui
               topologyKey: kubernetes.io/hostname
-      tolerations:
-        - key: node-role.kubernetes.io/control-plane
-          operator: Exists
-          effect: NoSchedule
