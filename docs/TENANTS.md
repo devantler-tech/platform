@@ -296,7 +296,7 @@ grants below) and rename — with:
 | `service-account.yaml` | SA with `automountServiceAccountToken: false` (no `imagePullSecrets`: tenant packages are public) |
 | `role-binding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
 | `role-binding-external-dns*.yaml` + `cluster-role-binding.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — bind the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
-| `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`) |
+| `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`, label `platform.devantler.tech/tenant-source: "true"`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`, annotation `ksail.devantler.tech/reconcile-exclude: "true"`) |
 
 > **Tenant-owned (in the tenant repo's `deploy/`, not here):** the
 > `CiliumNetworkPolicy` allow-lists (`networkpolicy.yaml`, and
@@ -428,3 +428,20 @@ hostnames *and* its dashboard annotations) as the reference.
 template-sync opens a PR in the tenant whenever the template's shared plumbing
 changes (a bumped action pin, a workflow fix, an updated convention). Review and
 merge it like any dependency update — your owned files are untouched.
+
+## 8. A tenant's health is its own
+
+A tenant cannot fail the platform ([ADR 0019](https://github.com/devantler-tech/monorepo/blob/main/docs/adr/0019-tenants-follow-their-signed-release-tags.md)).
+The `apps` layer counts every tenant `Kustomization`, and every source labelled
+`platform.devantler.tech/tenant-source: "true"`, as healthy once they exist, and the deploy's
+reconcile skips every `Kustomization` marked `ksail.devantler.tech/reconcile-exclude: "true"`.
+Platform chart sources carry no label and keep Flux's usual readiness check. A broken tenant release therefore never fails
+`apps` or a merge-queue deploy. The tenant stays on its last good revision: Flux refuses an
+artifact whose signature does not match and dry-runs the whole package before it applies anything.
+The `platform-reconciliation` alert reports the tenant's own error events.
+
+Mark every tenant `Kustomization` with that annotation and its source with that label.
+`scripts/tests/tenant-health` fails when the prod `apps` layer renders a `Kustomization` without the
+annotation, a tenant source without the label, a labelled source a platform `HelmRelease` reads, or
+a platform `HelmRelease` that stops being gated. The `platform-reconciliation` alert watches every
+namespace holding an OCIRepository or GitRepository (`scripts/validate-alert-coverage.sh`).
