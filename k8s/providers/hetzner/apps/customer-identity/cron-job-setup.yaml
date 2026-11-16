@@ -2,9 +2,10 @@
 # Every 15 minutes it reconciles, through ZITADEL's own APIs:
 # - the "Customer sign-in" project and its "Customer Dex" client, exactly as the
 #   business-site preparer's CreateApplication template declares it (code grant
-#   only, the exact Dex callback, Login V1). It restores drifted settings; the
-#   two lists the client does not use (additional origins, post-logout URIs)
-#   are set only at creation, because ZITADEL cannot clear a list by update.
+#   only, the exact Dex callback, Login V1, and the portal's two post-logout
+#   pages). It restores drifted settings; additional origins, which the client
+#   does not use, are set only at creation, because ZITADEL cannot clear a list
+#   by update.
 #   Every run proves the stored secret against ZITADEL's token endpoint, and
 #   when it is missing, the placeholder or refused (for example after a
 #   database restore), it issues a new one into secret-dex-zitadel-client.yaml;
@@ -24,6 +25,14 @@
 #   (apps/customer-identity/github-oauth), customers may also sign in with
 #   GitHub: invite-only, linked to an existing customer by verified email or
 #   after one password-and-MFA sign-in;
+# - customer invitations: the maintainer is IAM_OWNER and owner of the
+#   Customers organization, and invites from the ZITADEL console alone. He
+#   creates a workspace with the organization metadata
+#   portal_workspace.<workspace> and invites a customer into it with the user
+#   metadata portal_workspace=<workspace>; only an administrator can set either.
+#   On every sign-in the portalWorkspace Action passes an existing workspace to
+#   the customer Dex, which hands it to the portal as the groups claim, and
+#   records the outcome on the user as portal_workspace_status;
 # - a one-shot sign-in recovery for that administrator, run only when
 #   ADMIN_RECOVERY_NONCE holds a value no run has recorded yet: it unlocks him
 #   and removes his second factors, recovery codes and passkeys. Remove the
@@ -277,18 +286,23 @@ spec:
 
                   # The business-site preparer's CreateApplication template (server/internal/
                   # customeridentity/config.go): one confidential web client, code grant only,
-                  # the exact Dex callback, Login V1.
+                  # the exact Dex callback, Login V1. The portal ends a customer's ZITADEL session
+                  # through this client (end_session with its client_id), so the two pages it
+                  # returns to are its post-logout redirect URIs: a fresh sign-in after a refused
+                  # one, and the website after signing out.
                   create_oidc=$(jq -nc --arg cb "$dex_callback" '{
                     redirectUris: [$cb], responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
                     grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"], applicationType: "OIDC_APP_TYPE_WEB",
                     authMethodType: "OIDC_AUTH_METHOD_TYPE_BASIC", version: "OIDC_VERSION_1_0", developmentMode: false,
                     accessTokenRoleAssertion: false, idTokenRoleAssertion: false, idTokenUserinfoAssertion: false,
-                    additionalOrigins: [], postLogoutRedirectUris: [], loginVersion: {loginV1: {}}}')
+                    additionalOrigins: [],
+                    postLogoutRedirectUris: ["https://portal.devantler.tech/signed-out", "https://devantler.tech/"],
+                    loginVersion: {loginV1: {}}}')
                   # The settings kept equal to that template on every run. ZITADEL cannot clear a
-                  # list through an update (it reads an empty list as "unchanged"), so the two
-                  # lists the client does not use, additional origins and post-logout redirect
-                  # URIs, are set only at creation and not managed afterwards.
-                  desired_oidc=$(jq -c 'del(.additionalOrigins, .postLogoutRedirectUris)' <<<"$create_oidc")
+                  # list through an update (it reads an empty list as "unchanged"), so additional
+                  # origins, which the client does not use, are set only at creation and not
+                  # managed afterwards.
+                  desired_oidc=$(jq -c 'del(.additionalOrigins)' <<<"$create_oidc")
                   # ZITADEL omits fields that hold their default value, so compare normalised.
                   normalise_oidc='{
                     redirectUris: (.redirectUris // []), responseTypes: (.responseTypes // ["OIDC_RESPONSE_TYPE_CODE"]),
@@ -299,6 +313,7 @@ spec:
                     accessTokenRoleAssertion: (.accessTokenRoleAssertion // false),
                     idTokenRoleAssertion: (.idTokenRoleAssertion // false),
                     idTokenUserinfoAssertion: (.idTokenUserinfoAssertion // false),
+                    postLogoutRedirectUris: (.postLogoutRedirectUris // [] | sort),
                     loginVersion: (.loginVersion // {loginV1: {}})}'
 
                   log() { printf 'setup: %s\n' "$*"; }
@@ -744,6 +759,115 @@ spec:
                       ;;
                     *) fail "CUSTOMER_GITHUB_SIGNIN must be on or off" ;;
                   esac
+
+                  # --- Customer invitations ----------------------------------------------------------
+                  # The maintainer invites a customer from the ZITADEL console alone, on any device.
+                  # A workspace exists once he adds the metadata portal_workspace.<workspace> to the
+                  # Customers organization, a deliberate step of its own. He then creates the user
+                  # there (ZITADEL emails the setup link) and gives it the metadata
+                  # portal_workspace=<workspace>. Only an administrator can set metadata; a user can
+                  # neither set nor delete their own.
+                  # On every sign-in the portalWorkspace Action reads the user's value, trims and
+                  # lowercases it, and adds it to the userinfo as the portal_workspace claim only
+                  # when it is in the portal's workspace format and that workspace exists. The
+                  # customer Dex passes the claim on as the groups claim, which the portal checks on
+                  # every sign-in. So a typo creates no workspace, and removing the value or the
+                  # workspace refuses the next sign-in. The Action records the outcome on the user
+                  # as portal_workspace_status ("ok: <workspace>" or why it refused), where he sees
+                  # it in the console; it writes only when the outcome changes. It may fail without
+                  # failing a sign-in: the customer then arrives without an invitation.
+                  # A console edit of the Action or its trigger is undone.
+                  # He administers both organizations: IAM_OWNER of the instance and ORG_OWNER of
+                  # the Customers organization, added to any roles he already has.
+                  instance_roles=$(api POST /admin/v1/members/_search '{}' |
+                    jq -c --arg u "$admin_id" '[.result // [] | .[] | select(.userId == $u) | .roles // [] | .[]]')
+                  if [[ $instance_roles == '[]' ]]; then
+                    api POST /admin/v1/members "$(jq -nc --arg u "$admin_id" '{userId: $u, roles: ["IAM_OWNER"]}')" >/dev/null
+                    changes+=("made the administrator IAM_OWNER")
+                  elif ! jq -e 'index("IAM_OWNER") != null' <<<"$instance_roles" >/dev/null; then
+                    api PUT "/admin/v1/members/$admin_id" "$(jq -nc --argjson r "$instance_roles" '{roles: ($r + ["IAM_OWNER"])}')" >/dev/null
+                    changes+=("made the administrator IAM_OWNER")
+                  fi
+                  customers_roles=$(api_org=$customers_org_id api POST /management/v1/orgs/me/members/_search '{}' |
+                    jq -c --arg u "$admin_id" '[.result // [] | .[] | select(.userId == $u) | .roles // [] | .[]]')
+                  if [[ $customers_roles == '[]' ]]; then
+                    api_org=$customers_org_id api POST /management/v1/orgs/me/members \
+                      "$(jq -nc --arg u "$admin_id" '{userId: $u, roles: ["ORG_OWNER"]}')" >/dev/null
+                    changes+=("made the administrator ORG_OWNER of $(org_label "$customers_org_id")")
+                  elif ! jq -e 'index("ORG_OWNER") != null' <<<"$customers_roles" >/dev/null; then
+                    api_org=$customers_org_id api PUT "/management/v1/orgs/me/members/$admin_id" \
+                      "$(jq -nc --argjson r "$customers_roles" '{roles: ($r + ["ORG_OWNER"])}')" >/dev/null
+                    changes+=("made the administrator ORG_OWNER of $(org_label "$customers_org_id")")
+                  fi
+                  # The Action, in ZITADEL's Actions v1 (an Action's name is its function's name).
+                  action_name=portalWorkspace
+                  # The script holds no single quote: it is a single-quoted shell string.
+                  action_script='function portalWorkspace(ctx, api) {
+                    var wanted = null;
+                    var status = "";
+                    var md = ctx.v1.user.getMetadata();
+                    if (md && md.metadata) {
+                      md.metadata.forEach(function (m) {
+                        if (m.key === "portal_workspace") { wanted = ("" + m.value).trim().toLowerCase(); }
+                        if (m.key === "portal_workspace_status") { status = "" + m.value; }
+                      });
+                    }
+                    var result;
+                    if (wanted === null) {
+                      if (status === "") { return; }
+                      result = "refused: no portal_workspace";
+                    } else if (!/^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/.test(wanted)) {
+                      result = "refused: " + wanted + " is not a workspace name (lowercase letters, digits and dashes)";
+                    } else {
+                      var exists = false;
+                      var om = ctx.v1.org.getMetadata();
+                      if (om && om.metadata) {
+                        om.metadata.forEach(function (m) {
+                          if (m.key === "portal_workspace." + wanted) { exists = true; }
+                        });
+                      }
+                      if (exists) {
+                        api.v1.claims.setClaim("portal_workspace", wanted);
+                        result = "ok: " + wanted;
+                      } else {
+                        result = "refused: no workspace " + wanted + " (add portal_workspace." + wanted + " to the organization metadata to create it)";
+                      }
+                    }
+                    if (result !== status) {
+                      try { api.v1.user.setMetadata("portal_workspace_status", result); } catch (e) { }
+                    }
+                  }'
+                  desired_action=$(jq -cS -n --arg n "$action_name" --arg s "$action_script" \
+                    '{name: $n, script: $s, timeout: "10s", allowedToFail: true}')
+                  actions=$(api_org=$customers_org_id api POST /management/v1/actions/_search '{}' |
+                    jq -c --arg n "$action_name" '[.result // [] | .[] | select(.name == $n)]')
+                  case $(jq length <<<"$actions") in
+                    0)
+                      action_id=$(api_org=$customers_org_id api POST /management/v1/actions "$desired_action" | jq -er '.id')
+                      changes+=("created the $action_name Action")
+                      ;;
+                    1)
+                      action_id=$(jq -er '.[0].id' <<<"$actions")
+                      action_state=$(jq -r '.[0].state' <<<"$actions")
+                      [[ $action_state == ACTION_STATE_ACTIVE ]] ||
+                        fail "the $action_name Action is $action_state; reactivate or remove it on purpose"
+                      action_now=$(jq -cS '.[0] | {name, script, timeout, allowedToFail: (.allowedToFail // false)}' <<<"$actions")
+                      if [[ $action_now != "$desired_action" ]]; then
+                        api_org=$customers_org_id api PUT "/management/v1/actions/$action_id" "$desired_action" >/dev/null
+                        changes+=("restored the $action_name Action")
+                      fi
+                      ;;
+                    *) fail "more than one $action_name Action in $(org_label "$customers_org_id")" ;;
+                  esac
+                  # It runs, alone, on the "Pre Userinfo creation" trigger (4) of the "Complement
+                  # Token" flow (2): the customer Dex reads the userinfo.
+                  trigger_actions=$(api_org=$customers_org_id api GET /management/v1/flows/2 |
+                    jq -c '[.flow.triggerActions // [] | .[] | select(.triggerType.id == "4") | .actions // [] | .[].id]')
+                  if [[ $trigger_actions != "$(jq -nc --arg a "$action_id" '[$a]')" ]]; then
+                    api_org=$customers_org_id api POST /management/v1/flows/2/trigger/4 \
+                      "$(jq -nc --arg a "$action_id" '{actionIds: [$a]}')" >/dev/null
+                    changes+=("set the $action_name Action on the userinfo of $(org_label "$customers_org_id")")
+                  fi
 
                   # --- One-shot sign-in recovery for the administrator ---------------------------
                   # A reviewed change sets ADMIN_RECOVERY_NONCE to a new value when the maintainer
