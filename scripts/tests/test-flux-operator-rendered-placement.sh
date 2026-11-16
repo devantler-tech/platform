@@ -3,8 +3,14 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 script_dir="${root_dir}/scripts"
-die() { printf 'UNKNOWN: %s\n' "$1" >&2; exit 2; }
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+die() {
+  printf 'UNKNOWN: %s\n' "$1" >&2
+  exit 2
+}
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 # shellcheck source=scripts/flux-render.lib.sh
 source "${script_dir}/flux-render.lib.sh"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/flux-operator-placement.XXXXXX")"
