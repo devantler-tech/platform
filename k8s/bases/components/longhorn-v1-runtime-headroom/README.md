@@ -9,6 +9,10 @@ migration worker through its production patch. Its three eligible hosts allow
 two replicas and a rolling surge to remain on separate nodes. Kustomize's two controllers
 use worker 1 or the migration workers; the Coroot security-progress collector
 uses worker 1 or the V2 migration worker.
+The Flux operator retains its ordinary Linux placement except for worker 3,
+which needs room for an additional storage manager during the runtime rollout.
+Its existing rolling surge keeps the serving operator available while its
+replacement schedules on another eligible host.
 CSI and Reloader require separate hosts across revisions so their rolling surges
 cannot concentrate controller requests. Their replicas, resource requests,
 disruption budgets, security settings and other spreading rules remain
@@ -42,11 +46,21 @@ budgets, complete the UI rollout and require both replicas Ready before host
 maintenance begins. This prerequisite applies before the first permanent-worker
 preparation, as well as before maintenance of its temporary migration worker.
 
-Remove these temporary placements, including the FluxInstance controller patches
+Before moving the operator, include its admitted and allocated requests and the
+rolling surge in both request and resident-memory checks on fallback hosts. Verify
+the current Deployment generation has one updated, Ready and available operator
+away from worker 3, its old ReplicaSet has retired, and reconciliation is healthy.
+Then repeat the protected storage-runtime census; every storage node must fit the
+additional manager before selecting the maintenance runtime.
+
+Remove these temporary placements, including the operator exclusion, FluxInstance
+controller patches
 and the security-progress and policy-reporting UI patches,
 through a reviewed change after the migration's
 runtime and backup checks pass, before rebuilding or retiring any temporary
 CSI or Velero target. Keep that cleanup within #6073 and verify the
 ordinary worker placement has sufficient headroom before returning controllers
-there. Returning to the preceding Git configuration restores their ordinary
+there. Requalify operator fallback capacity and availability before any eligible
+host maintenance, including permanent-worker preparation. Returning to the
+preceding Git configuration restores their ordinary
 placement.

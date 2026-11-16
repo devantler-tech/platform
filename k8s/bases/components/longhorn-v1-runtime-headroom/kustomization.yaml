@@ -6,6 +6,33 @@ patches:
       group: helm.toolkit.fluxcd.io
       version: v2
       kind: HelmRelease
+      name: flux-operator
+      namespace: flux-system
+    patch: |-
+      - op: add
+        path: /spec/postRenderers/0/kustomize/patches/-
+        value:
+          target:
+            kind: Deployment
+            name: flux-operator
+          patch: |-
+            - op: test
+              path: /spec/template/spec/affinity/nodeAffinity/requiredDuringSchedulingIgnoredDuringExecution/nodeSelectorTerms
+              value:
+                - matchExpressions:
+                    - key: kubernetes.io/os
+                      operator: In
+                      values: [linux]
+            - op: add
+              path: /spec/template/spec/affinity/nodeAffinity/requiredDuringSchedulingIgnoredDuringExecution/nodeSelectorTerms/0/matchExpressions/-
+              value:
+                key: kubernetes.io/hostname
+                operator: NotIn
+                values: [prod-worker-3]
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
       name: velero
       namespace: velero
     patch: |-
