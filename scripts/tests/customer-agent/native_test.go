@@ -7,11 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"maps"
 	"math/big"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,14 +21,37 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// This characterizes the deployed distribution, rather than assuming that a
-// client_credentials access token has the same claims as an ID token. Removing
-// the grant, changing its audience/subject, or extending expiry must fail here.
+// Preparation must refuse issuance before a test-only activation characterizes
+// the pinned distribution's token claims. Production activation is separate.
 func TestNativeCustomerAgentTokens(t *testing.T) {
 	if os.Getenv("CUSTOMER_AGENT_NATIVE_TEST") != "1" {
 		t.Skip("set CUSTOMER_AGENT_NATIVE_TEST=1 for the isolated native Dex proof")
 	}
-	fixture := nativeDexFixture(t)
+	image, production := nativeDexConfiguration(t)
+	if !t.Run("production grant stays disabled", func(t *testing.T) {
+		fixture := nativeDexFixture(t, image, production)
+		for _, client := range []struct{ id, secret string }{
+			{"business-portal-agent", "synthetic-agent-fixture"},
+			{"business-portal", "synthetic-browser-fixture"},
+		} {
+			status, body := fixture.tokens(t, client.id, client.secret, "openid")
+			if status != http.StatusBadRequest || body["error"] != "unsupported_grant_type" ||
+				body["access_token"] != nil || body["id_token"] != nil || body["refresh_token"] != nil {
+				t.Errorf("production must refuse client credentials for %s: status=%d error=%v", client.id, status, body["error"])
+			}
+		}
+	}) {
+		return
+	}
+	t.Run("explicit test-only activation", func(t *testing.T) {
+		activated := activatedFixtureGrant(t, production)
+		fixture := nativeDexFixture(t, image, activated)
+		assertActivatedCustomerAgentTokens(t, fixture)
+	})
+}
+
+func assertActivatedCustomerAgentTokens(t *testing.T, fixture nativeFixture) {
+	t.Helper()
 	key := fixtureSigningKey(t, fixture)
 	status, body := fixture.tokens(t, "business-portal-agent", "synthetic-agent-fixture", "openid")
 	if status != http.StatusOK {
@@ -68,10 +93,10 @@ func TestNativeCustomerAgentTokens(t *testing.T) {
 	if fixture.browserAuthStatus(t) != http.StatusBadRequest {
 		t.Fatal("machine client unexpectedly accepted a browser redirect")
 	}
-	t.Log("native signature, issuer, audience, subject and 300-second lifetime passed for both token types; credential, refresh and browser-flow refusals passed")
+	t.Log("activated fixture: native signature, issuer, audience, subject and 300-second lifetime passed for both token types; credential, refresh and browser-flow refusals passed")
 }
 
-func nativeDexConfiguration(t *testing.T) (string, []byte) {
+func nativeDexConfiguration(t *testing.T) (string, map[string]any) {
 	t.Helper()
 	manifest, err := os.ReadFile("../../../k8s/providers/hetzner/apps/customer-identity/helm-release-dex.yaml")
 	if err != nil {
@@ -93,9 +118,32 @@ func nativeDexConfiguration(t *testing.T) (string, []byte) {
 	if !strings.HasPrefix(image, "ghcr.io/devantler-tech/platform-dex:") || !strings.Contains(image, "@sha256:") {
 		t.Fatal("the native proof requires the pinned first-party Dex distribution")
 	}
+	return image, values.Config
+}
+
+// The positive issuance proof is explicitly activated in memory only after the
+// unchanged production grant configuration has refused both client credentials.
+func activatedFixtureGrant(t *testing.T, production map[string]any) map[string]any {
+	t.Helper()
+	oauth2, ok := production["oauth2"].(map[string]any)
+	if !ok {
+		t.Fatal("the declared OAuth2 policy is missing")
+	}
+	grants, ok := oauth2["grantTypes"].([]any)
+	if !ok || slices.Contains(grants, any("client_credentials")) {
+		t.Fatal("test-only activation requires the explicit disabled production grant list")
+	}
+	activated := maps.Clone(production)
+	activated["oauth2"] = maps.Clone(oauth2)
+	activated["oauth2"].(map[string]any)["grantTypes"] = append(slices.Clone(grants), "client_credentials")
+	return activated
+}
+
+func fixtureDexConfiguration(t *testing.T, production map[string]any) []byte {
+	t.Helper()
 	// Only persistence, listening and upstream human login are fixture-specific.
-	// Production issuer, clients, grant policy and expiry remain unchanged.
-	config := values.Config
+	// Issuer, clients, supplied grant policy and expiry remain unchanged.
+	config := maps.Clone(production)
 	config["storage"] = map[string]any{"type": "memory"}
 	config["web"] = map[string]any{"http": "0.0.0.0:5556"}
 	config["enablePasswordDB"] = true
@@ -105,12 +153,12 @@ func nativeDexConfiguration(t *testing.T) (string, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return image, configBytes
+	return configBytes
 }
 
-func nativeDexFixture(t *testing.T) nativeFixture {
+func nativeDexFixture(t *testing.T, image string, configuration map[string]any) nativeFixture {
 	t.Helper()
-	image, config := nativeDexConfiguration(t)
+	config := fixtureDexConfiguration(t, configuration)
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	// This contains only synthetic fixture references; the non-root image must
 	// read the copied file. Its parent is the test's private temporary directory.

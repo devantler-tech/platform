@@ -166,7 +166,6 @@ spec:
       oauth2:
         grantTypes:
           - authorization_code
-          - client_credentials
         responseTypes:
           - code
         skipApprovalScreen: true

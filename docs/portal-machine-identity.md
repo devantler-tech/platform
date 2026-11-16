@@ -1,7 +1,8 @@
 # Portal machine identity
 
-The customer Dex has a confidential client `business-portal-agent` for portal
-automation. It has no browser redirect and no cross-client trust. It is separate
+The customer Dex is prepared with a confidential client `business-portal-agent`
+for portal automation. Its client-credentials grant is disabled in production.
+The client has no browser redirect and no cross-client trust. It is separate
 from the `business-portal` browser client and represents no human user.
 
 The native vault-seed Password generator creates its credential once in a durable
@@ -13,8 +14,9 @@ signing keys. Agents must never read, print, copy or transmit the credential or
 production tokens. A future caller receives the credential through its own
 reviewed native workload projection.
 
-Request `grant_type=client_credentials` and `scope=openid` at the issuer's token
-endpoint. The pinned Dex distribution returns both `access_token` and `id_token`
+After a separate reviewed activation, request `grant_type=client_credentials`
+and `scope=openid` at the issuer's token endpoint. The explicitly activated native
+fixture of the pinned Dex distribution returns both `access_token` and `id_token`
 as signed JWTs with these claims:
 
 | Claim | Value |
@@ -25,18 +27,26 @@ as signed JWTs with these claims:
 | `exp - iat` | 300 seconds |
 
 The subject encodes the client ID and an empty connector. The browser sign-in
-verifier must refuse that subject. Dex's grant list is global: the browser
-client's credential can also obtain client-credentials tokens, but those have the
+verifier must refuse that subject. Dex's grant list is global: after activation,
+the browser client's credential can also obtain client-credentials tokens, but those have the
 browser audience and its own empty-connector subject. Neither token belongs to
 the portal's machine allow-list or its human sign-in flow. Refresh tokens and
 `offline_access` are unavailable for client credentials.
 
 ## Activation and acceptance
 
-This prerequisite does not enable portal API access. Deploy a signed
-business-site release supporting the strict machine verifier and rejecting
-empty-connector subjects in browser sign-in before enabling the Dex grant in
-production. Only then add the following non-secret settings to the platform's portal-settings
+The production grant list contains only `authorization_code`, so both the
+browser and machine clients are refused client-credentials issuance. Preparing
+the static client and its credential does not enable that grant or portal API
+access.
+
+Activation is tracked separately in [#6448](https://github.com/devantler-tech/platform/issues/6448).
+It requires a reviewed Git change after a signed business-site
+release supporting the strict machine verifier and rejecting empty-connector
+subjects in browser sign-in is deployed and verified. The supporting source is
+[business-site #665](https://github.com/devantler-tech/business-site/pull/665);
+source merge alone does not establish deployment. Only then enable the Dex grant
+and add the following non-secret settings to the platform's portal-settings
 projection, starting with no write grants:
 
 ```dotenv
@@ -46,9 +56,13 @@ PORTAL_AGENT_SUBJECTS=[{"issuer":"https://login.devantler.tech","subject":"ChVid
 
 The native regression exercises the exact first-party image selected by the
 customer Dex HelmRelease with disposable synthetic credentials and memory
-storage. It verifies both signatures, the identity and lifetime of both tokens,
-wrong-credential and offline-access refusals, the browser client's separate
-identity, and rejection of a browser redirect for the machine client:
+storage. It first proves the actual production grant configuration refuses both
+clients with `unsupported_grant_type` and emits no tokens. Only after that proof
+passes does it add `client_credentials` to a copied configuration in memory for
+an explicitly activated test-only fixture. That fixture verifies both
+signatures, the identity and lifetime of both tokens, wrong-credential and
+offline-access refusals, the browser client's separate identity, and rejection
+of a browser redirect for the machine client:
 
 ```sh
 CUSTOMER_AGENT_NATIVE_TEST=1 go test -count=1 -v ./scripts/tests/customer-agent
