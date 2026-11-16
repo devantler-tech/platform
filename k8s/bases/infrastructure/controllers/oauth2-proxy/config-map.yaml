@@ -10,6 +10,12 @@
 # change here. A template that fails to parse stops the proxy from starting;
 # scripts/oauth2-proxy-error-page/error_page_test.go parses and renders this one
 # the way oauth2-proxy does, for 403, 500 and 502, on every pull request.
+# Keep everything inside {{define "error.html"}}: text outside it, even an HTML
+# comment, is a second definition that oauth2-proxy refuses at startup.
+#
+# There is no sign_in.html here, so the proxy logs "Could not load file
+# .../sign_in.html ... will use default template" at error level on each start.
+# That line is expected and harmless.
 #
 # The template is upstream's own error.html (pkg/app/pagewriter, v7.15.6) with
 # the same fields and the same Go back / Sign in forms, restyled. The page links

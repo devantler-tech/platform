@@ -332,6 +332,9 @@ func TestErrorPageChecksFailOnABrokenCopy(t *testing.T) {
 		mutate func(sources) sources
 	}{
 		{"does-not-parse", func(s sources) sources { s.page = strings.Replace(s.page, "{{ end }}", "", 1); return s }},
+		// Anything outside {{define "error.html"}} becomes a second definition of
+		// error.html, which oauth2-proxy refuses at startup.
+		{"text-outside-define", func(s sources) sources { s.page = "<!-- note -->\n" + s.page; return s }},
 		{"unknown-field", func(s sources) sources {
 			s.page = strings.Replace(s.page, "</main>", "{{.Missing}}</main>", 1)
 			return s
