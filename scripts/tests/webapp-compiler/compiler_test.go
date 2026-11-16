@@ -303,6 +303,9 @@ func TestCommittedWebApp(t *testing.T) {
 				if got.Annotations["reloader.stakater.com/auto"] != "true" {
 					t.Fatal("startup-only ConfigMap settings must trigger a rollout on input change")
 				}
+				if got.Spec.Template.Annotations["platform.devantler.tech/input-reloader"] != "v1" {
+					t.Fatal("installing the input watcher must also roll existing ConfigMap consumers")
+				}
 			})
 		}
 		for _, tc := range []struct {
@@ -359,7 +362,7 @@ func TestCommittedWebApp(t *testing.T) {
 		t.Run("omitted inputs keep effective defaults and no projection", func(t *testing.T) {
 			input := candidate()
 			spec := input.Object["spec"].(map[string]interface{})
-			for _, key := range []string{"args", "runAsUser", "runAsGroup", "readOnlyRootFilesystem", "secretProjections"} {
+			for _, key := range []string{"args", "runAsUser", "runAsGroup", "readOnlyRootFilesystem", "secretProjections", "configMapProjections"} {
 				delete(spec, key)
 			}
 			if err := admit(input); err != nil {
