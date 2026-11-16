@@ -74,7 +74,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|flagger-system|flagger eea7d417849bbd7c141
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|flagger-system|flagger-loadtester 41ddcdabe588958ecb1d6cbb4208ddb5dcc834c1bc380c944b01d90b39e516f2
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|flux-system|flux-operator c2238b0273375780061ebad2566e0b3a70ef822300edc3db35da900d3ef9a203
+helm.toolkit.fluxcd.io/v2|HelmRelease|flux-system|flux-operator 0cbdc24c2b42ef3da78473ccd608df4e01e94e83891b9da1e7c5f18473a67f1e
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|homepage|homepage 22201cee027518e38f10f730b6344c09ad7e8e4ca1cda4b2eac7b7bc0fcc8269
 

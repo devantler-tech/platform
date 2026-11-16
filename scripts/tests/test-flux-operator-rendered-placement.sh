@@ -36,21 +36,31 @@ placement_is_scoped() {
 }
 
 kube_version="$(yq -er '.spec.cluster.kubernetesVersion' "${root_dir}/ksail.prod.yaml")"
-for profile in prod local prod-disabled; do
+for profile in prod local prod-enabled prod-disabled; do
   cluster="$profile"
   tree="${root_dir}/k8s"
-  if [[ "$profile" == prod-disabled ]]; then
+  if [[ "$profile" == prod-enabled || "$profile" == prod-disabled ]]; then
     cluster=prod
-    mkdir -p "$scratch/disabled"
-    cp -R "${root_dir}/k8s" "$scratch/disabled/k8s"
-    tree="$scratch/disabled/k8s"
-    yq -i '.components |= map(select(. != "../../../../bases/components/longhorn-v1-runtime-headroom"))' \
-      "$tree/providers/hetzner/infrastructure/controllers/kustomization.yaml"
+    mkdir -p "$scratch/$profile"
+    cp -R "${root_dir}/k8s" "$scratch/$profile/k8s"
+    tree="$scratch/$profile/k8s"
+    selection_file="$tree/providers/hetzner/infrastructure/controllers/kustomization.yaml"
+    if [[ "$profile" == prod-disabled ]]; then
+      yq -i '.components |= map(select(. != "../../../../bases/components/longhorn-v1-operator-headroom"))' "$selection_file"
+    else
+      selected="$(yq -r '.components | contains(["../../../../bases/components/longhorn-v1-operator-headroom"])' "$selection_file")" ||
+        fail 'cannot classify the explicit operator opt-in fixture'
+      case "$selected" in
+        true) ;;
+        false) yq -i '.components += ["../../../../bases/components/longhorn-v1-operator-headroom"]' "$selection_file" ;;
+        *) fail 'the explicit operator opt-in fixture is ambiguous' ;;
+      esac
+    fi
   fi
   operator_placement_enabled=false
   if [[ "$cluster" == prod ]]; then
-    selected="$(yq -r '.components | contains(["../../../../bases/components/longhorn-v1-runtime-headroom"])' \
-      "$tree/providers/hetzner/infrastructure/controllers/kustomization.yaml")" || fail 'cannot classify the production headroom component'
+    selected="$(yq -r '.components | contains(["../../../../bases/components/longhorn-v1-operator-headroom"])' \
+      "$tree/providers/hetzner/infrastructure/controllers/kustomization.yaml")" || fail 'cannot classify the production operator component'
     case "$selected" in
       true) operator_placement_enabled=true ;;
       false) ;;

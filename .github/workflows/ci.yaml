@@ -4218,12 +4218,14 @@ jobs:
           changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
             .github/workflows/ci.yaml \
             k8s/bases/infrastructure/controllers/flux-operator \
+            k8s/bases/infrastructure/controllers/kustomization.yaml \
             k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml \
             k8s/providers/docker/infrastructure/controllers/kustomization.yaml \
             k8s/bases/components \
             k8s/clusters/prod/bootstrap/config-map.yaml ksail.prod.yaml \
             scripts/tests/test-flux-operator-rendered-placement.sh \
             scripts/flux-render.lib.sh scripts/build-controller-helm.sh \
+            scripts/prepare-helm-render-input-capture.sh \
             scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
           if [[ -n "$changed_inputs" ]]; then
             bash scripts/tests/test-flux-operator-rendered-placement.sh
