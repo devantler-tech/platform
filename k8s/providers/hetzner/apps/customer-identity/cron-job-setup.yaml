@@ -39,7 +39,12 @@
 # - the Customers organization's sign-in texts, all of them, so an edit in
 #   the console is undone: the sign-in page says it is the client portal and
 #   that the portal is invitation-only. ZITADEL has no Danish, so English is
-#   its only language, and public organization registration stays off.
+#   its only language, and public organization registration stays off;
+# - the portal's service account: the machine user business-portal, with only
+#   ORG_USER_MANAGER of the Customers organization, and a proved 90-day personal
+#   access token, renewed with 30 days left, in secret-portal-zitadel-token.yaml,
+#   which a PushSecret copies
+#   to OpenBao apps/business-site/portal-zitadel for the portal's operator page.
 # A run that finds nothing to change writes nothing. A duplicate, a deactivated
 # client, a missing Secret, an API error or a refused write stops the run
 # before it changes anything further; the next run starts again.
@@ -230,6 +235,7 @@ spec:
                   kube_api_dir=${KUBE_API_DIR:-/run/kube-api}
                   namespace=customer-identity
                   client_secret_name=customer-dex-zitadel-client
+                  portal_token_secret=business-portal-zitadel-token
                   # Fingerprints of what this script last applied, kept as annotations on the
                   # one Secret it may write, so a run with nothing new changes nothing.
                   fingerprint_annotation=platform.devantler.tech/smtp-credential-sha256
@@ -384,15 +390,18 @@ spec:
                     fi
                   }
 
-                  # The client Secret is created empty by Flux and only ever patched here.
+                  # The client Secret (and the portal's token Secret, named as a second argument)
+                  # is created with placeholders by Flux and only ever patched here.
                   secret_json() {
-                    kubectl -n "$namespace" get secret "$client_secret_name" -o json ||
-                      fail "cannot read Secret $client_secret_name"
+                    local name=${1:-$client_secret_name}
+                    kubectl -n "$namespace" get secret "$name" -o json ||
+                      fail "cannot read Secret $name"
                   }
                   patch_secret() {
+                    local name=${2:-$client_secret_name}
                     printf '%s' "$1" > "$work/patch"
-                    kubectl -n "$namespace" patch secret "$client_secret_name" --type merge --patch-file "$work/patch" >/dev/null ||
-                      fail "cannot update Secret $client_secret_name"
+                    kubectl -n "$namespace" patch secret "$name" --type merge --patch-file "$work/patch" >/dev/null ||
+                      fail "cannot update Secret $name"
                   }
                   # client_authenticates ID SECRET: succeeds when ZITADEL accepts this client
                   # secret. A token request with a code that cannot exist fails either at client
@@ -435,9 +444,11 @@ spec:
                   done
 
                   # Stop before ZITADEL issues anything if there is nowhere to keep it.
-                  secret_json >/dev/null
-                  [[ $(kubectl -n "$namespace" auth can-i patch "secrets/$client_secret_name" 2>/dev/null) == yes ]] ||
-                    fail "may not update Secret $client_secret_name"
+                  for kept_secret in "$client_secret_name" "$portal_token_secret"; do
+                    secret_json "$kept_secret" >/dev/null
+                    may_patch=$(kubectl -n "$namespace" auth can-i patch "secrets/$kept_secret" 2>/dev/null || true)
+                    [[ $may_patch == yes ]] || fail "may not update Secret $kept_secret"
+                  done
 
                   changes=()
                   org_id=$(api GET /admin/v1/orgs/default | jq -er '.org.id') || fail "no default organization"
@@ -883,6 +894,120 @@ spec:
                   if [[ $texts != "$desired_texts" ]]; then
                     api_org=$customers_org_id api PUT /management/v1/text/login/en "$desired_texts" >/dev/null
                     changes+=("set the sign-in texts of $(org_label "$customers_org_id")")
+                  fi
+
+                  # --- The portal's service account ------------------------------------------------
+                  # The portal's operator page creates, reads and deactivates customers through
+                  # ZITADEL's API as the machine user business-portal of the Customers organization.
+                  # Its one membership is ORG_USER_MANAGER there, ZITADEL's narrowest role that can
+                  # create users, and it has no instance role; any other membership stops the run.
+                  # Its personal access token lasts 90 days and is proved on every run. When it is
+                  # missing, the placeholder or refused, the run removes the user's tokens and issues
+                  # one; with fewer than 30 days left it issues one and lets the old one expire. It
+                  # writes the new token to secret-portal-zitadel-token.yaml, which a PushSecret
+                  # copies to OpenBao apps/business-site/portal-zitadel for the portal.
+                  portal_account=business-portal
+                  portal_accounts=$(connect zitadel.user.v2.UserService/ListUsers "$(jq -nc --arg n "$portal_account" --arg o "$customers_org_id" \
+                    '{queries: [{userNameQuery: {userName: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}, {organizationIdQuery: {organizationId: $o}}]}')")
+                  case $(jq '.result // [] | length' <<<"$portal_accounts") in
+                    0)
+                      portal_account_id=$(api_org=$customers_org_id api POST /management/v1/users/machine "$(jq -nc --arg n "$portal_account" \
+                        '{userName: $n, name: "Business portal", description: "The business-site portal operator page", accessTokenType: "ACCESS_TOKEN_TYPE_BEARER"}')" |
+                        jq -er '.userId')
+                      changes+=("created the $portal_account service account")
+                      ;;
+                    1)
+                      portal_account_id=$(jq -er '.result[0].userId' <<<"$portal_accounts")
+                      portal_account_kind=$(jq -r 'if .result[0].machine then "machine" else "human" end' <<<"$portal_accounts")
+                      [[ $portal_account_kind == machine ]] || fail "$portal_account is a human user; remove it on purpose"
+                      portal_account_state=$(jq -r '.result[0].state' <<<"$portal_accounts")
+                      [[ $portal_account_state == USER_STATE_ACTIVE ]] ||
+                        fail "the $portal_account service account is $portal_account_state; reactivate or remove it on purpose"
+                      ;;
+                    *) fail "more than one $portal_account user in $(org_label "$customers_org_id")" ;;
+                  esac
+                  portal_memberships=$(api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/memberships/_search" '{}' |
+                    jq -c '[.result // [] | .[] | {orgId: (.orgId // ""), iam: (.iam // false), projectId: (.projectId // ""), roles: (.roles // [] | sort)}]')
+                  want_membership=$(jq -nc --arg o "$customers_org_id" '[{orgId: $o, iam: false, projectId: "", roles: ["ORG_USER_MANAGER"]}]')
+                  if [[ $portal_memberships == '[]' ]]; then
+                    api_org=$customers_org_id api POST /management/v1/orgs/me/members \
+                      "$(jq -nc --arg u "$portal_account_id" '{userId: $u, roles: ["ORG_USER_MANAGER"]}')" >/dev/null
+                    changes+=("made $portal_account ORG_USER_MANAGER of $(org_label "$customers_org_id")")
+                  elif [[ $portal_memberships != "$want_membership" ]]; then
+                    fail "$portal_account has memberships other than ORG_USER_MANAGER of the $customers_org organization; remove them on purpose"
+                  fi
+                  # portal_token_works TOKEN: succeeds when ZITADEL accepts TOKEN as this account's.
+                  portal_token_works() {
+                    local status me
+                    PORTAL_TOKEN=$1 jq -rn '"Authorization: Bearer " + env.PORTAL_TOKEN' > "$work/portal-auth"
+                    status=$(curl -sS -m 20 -o "$work/portal-me" -w '%{http_code}' -H "@$work/portal-auth" \
+                      -H "Host: $ZITADEL_HOST" "$ZITADEL_URL/auth/v1/users/me") || fail "auth API: no answer from ZITADEL"
+                    case $status in
+                      200)
+                        me=$(jq -r '.user.id // ""' "$work/portal-me") || return 1
+                        [[ $me == "$portal_account_id" ]]
+                        ;;
+                      401 | 403 | 404) return 1 ;;
+                      *) fail "auth API: unexpected answer to the $portal_account token (HTTP $status)" ;;
+                    esac
+                  }
+                  stored_portal_token=$(secret_json "$portal_token_secret" | jq -r '.data.token // "" | @base64d')
+                  stored_portal_token_id=$(secret_json "$portal_token_secret" | jq -r '.data["token-id"] // "" | @base64d')
+                  portal_reissue=
+                  portal_clear=
+                  if [[ $stored_portal_token =~ ^($placeholder)?$ ]]; then
+                    portal_reissue="none stored"
+                    portal_clear=1
+                  elif ! portal_token_works "$stored_portal_token"; then
+                    portal_reissue="stored one refused"
+                    portal_clear=1
+                  else
+                    # A token lasts 90 days. The Secret records the stored token's ID next to it,
+                    # and that token is renewed once fewer than 30 days are left (or when its expiry
+                    # is unknown). The token it replaces stays valid until it expires on its own,
+                    # so the portal keeps working while the new one reaches OpenBao. A token that
+                    # outlives 90 days was not issued here and stops the run.
+                    portal_pats=$(api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats/_search" '{}' |
+                      jq -c '[.result // [] | .[] | {id, expires: (.expirationDate // "9999-12-31T23:59:59Z" | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}]')
+                    portal_longest=$(jq -r 'if length == 0 then 0 else (map(.expires) | max) - now | . / 86400 | floor end' <<<"$portal_pats")
+                    ((portal_longest <= 90)) || fail "$portal_account has a token valid for more than 90 days; remove it on purpose"
+                    portal_token_days=$(jq -r --arg id "$stored_portal_token_id" \
+                      '[.[] | select(.id == $id) | .expires] | if length == 0 then "unknown" else (.[0] - now) / 86400 | floor end' <<<"$portal_pats")
+                    if [[ $portal_token_days == unknown ]]; then
+                      portal_reissue="expiry of the stored token unknown"
+                    elif ((portal_token_days < 30)); then
+                      portal_reissue="expires in $portal_token_days days"
+                    fi
+                  fi
+                  unset stored_portal_token
+                  if [[ -n $portal_reissue ]]; then
+                    # A missing or refused token serves no one, so the account's tokens go first.
+                    # A renewal keeps them until they expire.
+                    if [[ -n $portal_clear ]]; then
+                      portal_tokens=$(api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats/_search" '{}' |
+                        jq -r '.result // [] | .[].id')
+                      for portal_token_id in $portal_tokens; do
+                        api_org=$customers_org_id api DELETE "/management/v1/users/$portal_account_id/pats/$portal_token_id" >/dev/null
+                      done
+                    fi
+                    api_org=$customers_org_id api POST "/management/v1/users/$portal_account_id/pats" \
+                      "$(jq -nc '{expirationDate: (now + 90 * 86400 | floor | todate)}')" > "$work/portal-pat"
+                    PORTAL_TOKEN=$(jq -er '.token' "$work/portal-pat") || fail "ZITADEL returned no token for $portal_account"
+                    PORTAL_TOKEN_ID=$(jq -er '.tokenId' "$work/portal-pat") || fail "ZITADEL returned no token ID for $portal_account"
+                    export PORTAL_TOKEN PORTAL_TOKEN_ID
+                    patch_secret "$(jq -nc '{data: {token: (env.PORTAL_TOKEN | @base64), "token-id": (env.PORTAL_TOKEN_ID | @base64)}}')" \
+                      "$portal_token_secret"
+                    kept_portal_token=$(secret_json "$portal_token_secret" | jq -r '.data.token // "" | @base64d')
+                    [[ $kept_portal_token == "$PORTAL_TOKEN" ]] || fail "Secret $portal_token_secret did not keep the new token"
+                    unset kept_portal_token
+                    portal_token_accepted=
+                    for attempt in 1 2 3 4 5; do
+                      if portal_token_works "$PORTAL_TOKEN"; then portal_token_accepted=1; break; fi
+                      sleep 2
+                    done
+                    [[ -n $portal_token_accepted ]] || fail "ZITADEL does not accept the token it issued for $portal_account"
+                    unset PORTAL_TOKEN PORTAL_TOKEN_ID
+                    changes+=("issued the $portal_account token ($portal_reissue)")
                   fi
 
                   # --- Branding ---------------------------------------------------------------------
