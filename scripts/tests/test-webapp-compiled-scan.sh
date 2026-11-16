@@ -28,6 +28,8 @@ jq -e '
   [.Results[] | {key:.Target,value:([.Misconfigurations[]? | {ID,Severity}]|sort_by(.ID))}] | from_entries |
   . == {
     "enabled.json":[],
+    "settings.json":[],
+    "combined.json":[],
     "omitted.json":[{ID:"KSV-0014",Severity:"HIGH"},{ID:"KSV-0020",Severity:"LOW"},{ID:"KSV-0021",Severity:"LOW"}],
     "writable.json":[{ID:"KSV-0014",Severity:"HIGH"}],
     "low-user.json":[{ID:"KSV-0020",Severity:"LOW"}],

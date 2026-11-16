@@ -76,7 +76,7 @@ jq -n '{apiVersion:"kro.run/v1alpha1",kind:"WebApp",metadata:{name:"runtime-fixt
 }
 unset hosted_ci_read_token
 yq -o=json '.' "$work/deploy/webapp.yaml" >"$work/omitted.json"
-jq '.spec += {args:["--public","/app/public","--listen","0.0.0.0:8080","--company-disclosure-projection","/run/webapp-inputs/disclosure"],runAsUser:65532,runAsGroup:65532,readOnlyRootFilesystem:true,secretProjections:[{secretName:"synthetic-disclosure",items:[{key:"disclosure",path:"disclosure"}]}]}' \
+jq '.spec += {args:["--public","/app/public","--listen","0.0.0.0:8080","--company-disclosure-projection","/run/webapp-inputs/disclosure"],runAsUser:65532,runAsGroup:65532,readOnlyRootFilesystem:true,secretProjections:[{secretName:"synthetic-disclosure",items:[{key:"disclosure",path:"disclosure"}]}],configMapProjections:[{configMapName:"synthetic-settings",items:[{key:"settings.env",path:"portal-settings"}]}]}' \
   "$work/omitted.json" >"$work/enabled.json"
 bash "$root/scripts/validate-webapp-inputs.sh" "$work/enabled.json"
 created=true
@@ -109,6 +109,8 @@ kubectl create namespace runtime-fixture >/dev/null
 kubectl label namespace runtime-fixture pod-security.kubernetes.io/enforce=restricted >/dev/null
 printf 'Example & Partners Road 1\n1234 Exampletown\n' >"$work/disclosure"
 kubectl -n runtime-fixture create secret generic synthetic-disclosure --from-file="disclosure=$work/disclosure" >/dev/null
+printf 'PUBLIC_FIXTURE_SETTING=enabled\n' >"$work/settings.env"
+kubectl -n runtime-fixture create configmap synthetic-settings --from-file="settings.env=$work/settings.env" >/dev/null
 
 # Observe actual controller convergence in both directions, not just resolved CEL.
 # The production-template image intentionally cannot serve without disclosure;
@@ -128,8 +130,14 @@ converged() {
           $s.securityContext.runAsUser == 65532 and $s.securityContext.runAsGroup == 65532 and
           $s.securityContext.fsGroup == 65532 and $c.securityContext.readOnlyRootFilesystem == true and
           $c.args[-1] == "/run/webapp-inputs/disclosure" and
-          $s.volumes == [{name:"webapp-inputs",secret:{secretName:"synthetic-disclosure",defaultMode:288,optional:false,items:[{key:"disclosure",path:"disclosure"}]}}] and
-          $c.volumeMounts == [{name:"webapp-inputs",mountPath:"/run/webapp-inputs",readOnly:true}]
+          $s.volumes == [
+            {name:"webapp-inputs",secret:{secretName:"synthetic-disclosure",defaultMode:288,optional:false,items:[{key:"disclosure",path:"disclosure"}]}},
+            {name:"webapp-settings",configMap:{name:"synthetic-settings",defaultMode:288,optional:false,items:[{key:"settings.env",path:"portal-settings"}]}}
+          ] and
+          $c.volumeMounts == [
+            {name:"webapp-inputs",mountPath:"/run/webapp-inputs",readOnly:true},
+            {name:"webapp-settings",mountPath:"/run/webapp-settings",readOnly:true}
+          ]
         end' "$work/deployment.json" >/dev/null; then
       generation="$(jq -er .metadata.generation "$work/deployment.json")"
       if [[ "$generation" == "$previous" ]]; then stable=$((stable + 1)); else stable=1; fi
@@ -164,6 +172,13 @@ docker exec "$fixture-control-plane" sh -eu -c '
   test "$(readlink disclosure)" = "..data/disclosure"
   test -L ..data && test -f disclosure
   test "$(stat -L -c "%u:%g:%a" disclosure)" = "0:65532:440"
+' sh "$uid"
+docker exec "$fixture-control-plane" sh -eu -c '
+  cd "/var/lib/kubelet/pods/$1/volumes/kubernetes.io~configmap/webapp-settings"
+  test "$(readlink portal-settings)" = "..data/portal-settings"
+  test -L ..data && test -f portal-settings
+  test "$(stat -L -c "%u:%g:%a" portal-settings)" = "0:65532:440"
+  grep -Fxq "PUBLIC_FIXTURE_SETTING=enabled" portal-settings
 ' sh "$uid"
 kubectl -n runtime-fixture port-forward "pod/$pod" 18080:8080 >"$work/forward.log" 2>&1 &
 forward_pid=$!
@@ -206,23 +221,29 @@ jq '.metadata.name="unsafe-input" | .spec.secretProjections[0].items[0].path="..
 if kubectl create --dry-run=server --validate=strict -f "$work/unsafe-input.json" >"$work/input-refusal.log" 2>&1; then fail 'real generated API accepted a traversal destination'; fi
 grep -Fq 'Invalid' "$work/input-refusal.log" || fail 'unsafe destination did not receive API validation refusal'
 
-# A selected key absent from the actual Secret must never start the executable.
-jq '.spec.template | .apiVersion="v1" | .kind="Pod" | .metadata={name:"missing-key",namespace:"runtime-fixture"} |
-  .spec.restartPolicy="Never" | .spec.volumes[0].secret.items[0].key="absent"' "$work/deployment.json" >"$work/missing-key.json"
-kubectl apply --validate=strict -f "$work/missing-key.json" >/dev/null
-missing_uid="$(kubectl -n runtime-fixture get pod missing-key -o jsonpath='{.metadata.uid}')"
-mount_refused=false
-for _attempt in {1..60}; do
-  if kubectl -n runtime-fixture get events --field-selector "involvedObject.uid=$missing_uid" -o json |
-    jq -e 'any(.items[]; .reason=="FailedMount" and (.message|contains("non-existent secret key")))' >/dev/null; then
-    mount_refused=true
-    break
-  fi
-  sleep 2
+# A selected key absent from either real input must never start the executable.
+for source in secret configmap; do
+  jq --arg source "$source" '.spec.template | .apiVersion="v1" | .kind="Pod" |
+    .metadata={name:("missing-"+$source+"-key"),namespace:"runtime-fixture"} | .spec.restartPolicy="Never" |
+    if $source=="secret" then .spec.volumes[0].secret.items[0].key="absent"
+    else .spec.volumes[1].configMap.items[0].key="absent" end' "$work/deployment.json" >"$work/missing-key.json"
+  kubectl apply --validate=strict -f "$work/missing-key.json" >/dev/null
+  missing_uid="$(kubectl -n runtime-fixture get pod "missing-$source-key" -o jsonpath='{.metadata.uid}')"
+  mount_refused=false
+  key_error='non-existent secret key'
+  [[ "$source" != configmap ]] || key_error='non-existent config key'
+  for _attempt in {1..60}; do
+    if kubectl -n runtime-fixture get events --field-selector "involvedObject.uid=$missing_uid" -o json |
+      jq -e --arg key_error "$key_error" 'any(.items[]; .reason=="FailedMount" and (.message|contains($key_error)))' >/dev/null; then
+      mount_refused=true
+      break
+    fi
+    sleep 2
+  done
+  [[ "$mount_refused" == true ]] || fail "missing selected $source key did not produce an observed kubelet mount refusal"
+  kubectl -n runtime-fixture get pod "missing-$source-key" -o json | jq -e '[.status.containerStatuses[]? | select(.state.running!=null or .state.terminated!=null)] | length==0' >/dev/null
+  kubectl -n runtime-fixture delete pod "missing-$source-key" --wait=true >/dev/null
 done
-[[ "$mount_refused" == true ]] || fail 'missing selected key did not produce an observed kubelet mount refusal'
-kubectl -n runtime-fixture get pod missing-key -o json | jq -e '[.status.containerStatuses[]? | select(.state.running!=null or .state.terminated!=null)] | length==0' >/dev/null
-kubectl -n runtime-fixture delete pod missing-key --wait=true >/dev/null
 kubectl apply --validate=strict -f "$work/omitted.json" >/dev/null
 converged omitted
 # A zero-unavailable rollout may keep the healthy old Pod when new startup

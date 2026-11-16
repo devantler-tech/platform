@@ -82,6 +82,11 @@ spec:
       SecretProjection:
         secretName: 'string | required=true minLength=1 maxLength=253 pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"'
         items: >-
+          []ProjectionItem | required=true minItems=1 maxItems=12 listType=atomic
+          validation="self.all(x, self.filter(y, y.key == x.key).size() == 1 && self.filter(y, y.path == x.path).size() == 1)"
+      ConfigMapProjection:
+        configMapName: 'string | required=true minLength=1 maxLength=253 pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"'
+        items: >-
           []ProjectionItem | required=true minItems=1 maxItems=8 listType=atomic
           validation="self.all(x, self.filter(y, y.key == x.key).size() == 1 && self.filter(y, y.path == x.path).size() == 1)"
     spec:
@@ -118,6 +123,8 @@ spec:
       readOnlyRootFilesystem: boolean | default=false
       # One same-namespace directory projection; no generic paths or modes.
       secretProjections: '[]SecretProjection | default=[] maxItems=1 listType=atomic'
+      # Public release settings have their own fixed, same-namespace mount.
+      configMapProjections: '[]ConfigMapProjection | default=[] maxItems=1 listType=atomic'
   resources:
     - id: deployment
       template:
@@ -126,6 +133,9 @@ spec:
         metadata:
           name: ${schema.spec.name}
           namespace: ${schema.spec.name}
+          annotations:
+            # Startup-only inputs need a new process after either input changes.
+            reloader.stakater.com/auto: '${schema.spec.secretProjections.size() > 0 || schema.spec.configMapProjections.size() > 0 ? "true" : "false"}'
           labels:
             app.kubernetes.io/name: ${schema.spec.name}
             app.kubernetes.io/managed-by: ksail
@@ -145,6 +155,9 @@ spec:
               maxUnavailable: 0
           template:
             metadata:
+              # Also roll existing input consumers when installing the watcher:
+              # the first input update may arrive before its annotation does.
+              annotations: '${schema.spec.secretProjections.size() > 0 || schema.spec.configMapProjections.size() > 0 ? {"platform.devantler.tech/input-reloader": "v1"} : {}}'
               labels:
                 app.kubernetes.io/name: ${schema.spec.name}
                 app.kubernetes.io/managed-by: ksail
@@ -163,7 +176,7 @@ spec:
                 seccompProfile:
                   type: RuntimeDefault
               volumes: >-
-                ${schema.spec.secretProjections.map(p, {"name": "webapp-inputs", "secret": {"secretName": p.secretName, "defaultMode": 288, "optional": false, "items": p.items.map(i, {"key": i.key, "path": i.path})}})}
+                ${schema.spec.secretProjections.map(p, {"name": "webapp-inputs", "secret": {"secretName": p.secretName, "defaultMode": 288, "optional": false, "items": p.items.map(i, {"key": i.key, "path": i.path})}}) + schema.spec.configMapProjections.map(p, {"name": "webapp-settings", "configMap": {"name": p.configMapName, "defaultMode": 288, "optional": false, "items": p.items.map(i, {"key": i.key, "path": i.path})}})}
               # Spread replicas across nodes (soft) so a single node failure can't
               # take out the whole app; ScheduleAnyway keeps single-node local/CI
               # clusters schedulable — matches both pilots + the operator tier.
@@ -179,7 +192,7 @@ spec:
                   image: ${schema.spec.image}
                   args: ${schema.spec.args}
                   volumeMounts: >-
-                    ${schema.spec.secretProjections.map(p, {"name": "webapp-inputs", "mountPath": "/run/webapp-inputs", "readOnly": true})}
+                    ${schema.spec.secretProjections.map(p, {"name": "webapp-inputs", "mountPath": "/run/webapp-inputs", "readOnly": true}) + schema.spec.configMapProjections.map(p, {"name": "webapp-settings", "mountPath": "/run/webapp-settings", "readOnly": true})}
                   ports:
                     - containerPort: ${schema.spec.port}
                       protocol: TCP
