@@ -51,6 +51,17 @@ jobs:
           set -euo pipefail
           build_dir="${RUNNER_TEMP}/email-history-build"
           mkdir -p "$build_dir"
+          upstream=https://raw.githubusercontent.com/imapsync/imapsync/8895966244fb161cc68f2c8427a8f6326a7f2ab0
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-max-time 180 --max-filesize 1048576 \
+            "$upstream/imapsync" -o "$build_dir/imapsync"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-max-time 180 --max-filesize 65536 \
+            "$upstream/LICENSE" -o "$build_dir/LICENSE"
+          printf '%s  %s\n' \
+            89faed96f7c389723ddd7e78a00421b90d5b85bf79407fcf1b11209f3d4d7416 "$build_dir/imapsync" \
+            ff6c1f3ae704d82872e86dd19275e03bfb61a2c9ce5835b6d6989910d88635cf "$build_dir/LICENSE" \
+            | sha256sum --check --strict
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
             -o "$build_dir/private-mail-bootstrap" ./scripts/private-mail-config
           cp scripts/private-mail-config/Dockerfile.history "$build_dir/Dockerfile"

@@ -11,10 +11,8 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     libsys-meminfo-perl libterm-readkey-perl libtest-deep-perl \
     libtest-mockobject-perl libtest-pod-perl libunicode-string-perl liburi-perl \
     libwww-perl procps && rm -rf /var/lib/apt/lists/*
-# checkov:skip=CKV_DOCKER_4:ADD verifies the checksum of one pinned upstream file; COPY cannot fetch it.
-ADD --chmod=0555 --checksum=sha256:89faed96f7c389723ddd7e78a00421b90d5b85bf79407fcf1b11209f3d4d7416 https://raw.githubusercontent.com/imapsync/imapsync/8895966244fb161cc68f2c8427a8f6326a7f2ab0/imapsync /usr/local/bin/imapsync
-# checkov:skip=CKV_DOCKER_4:ADD verifies the checksum of the pinned upstream licence.
-ADD --chmod=0444 --checksum=sha256:ff6c1f3ae704d82872e86dd19275e03bfb61a2c9ce5835b6d6989910d88635cf https://raw.githubusercontent.com/imapsync/imapsync/8895966244fb161cc68f2c8427a8f6326a7f2ab0/LICENSE /usr/local/share/licenses/imapsync/LICENSE
+COPY --chmod=0555 imapsync /usr/local/bin/imapsync
+COPY --chmod=0444 LICENSE /usr/local/share/licenses/imapsync/LICENSE
 COPY --chmod=0555 private-mail-bootstrap /usr/local/bin/private-mail-bootstrap
 RUN test "$(imapsync --version)" = 2.314
 USER 2000:2000

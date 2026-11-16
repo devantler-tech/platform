@@ -44,7 +44,9 @@ COPY --chown=2000:2000 --chmod=0400 server.pem server.key /fixture/
 COPY --chown=2000:2000 --chmod=0400 source-username source-password destination-password addresses /private/inputs/
 USER 2000:2000
 DOCKERFILE
-docker buildx build --quiet --platform linux/amd64 --load --build-arg "IMPORT_IMAGE=$image" --tag "$fixture_image" "$fixture_dir" >/dev/null
+# The tested image is loaded in the daemon. The default docker builder can use
+# it directly; an isolated docker-container builder would attempt a public pull.
+docker buildx build --builder default --quiet --platform linux/amd64 --load --build-arg "IMPORT_IMAGE=$image" --tag "$fixture_image" "$fixture_dir" >/dev/null
 docker network create --internal "$network" >/dev/null
 isolated=(--platform linux/amd64 --network "$network" --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs "/tmp:rw,noexec,nosuid,mode=1777")
 source_id=$(docker run -d "${isolated[@]}" --network-alias imap.mail.me.com --entrypoint /usr/local/bin/history-fixture "$fixture_image" serve source)
