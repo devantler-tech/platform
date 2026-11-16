@@ -164,7 +164,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|aws|aws 88fe1a404c036bfe73b4eda38a3
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|data-product-controller|khoist-documentation b3952d56aa05acfe28c6d04c63287709d20ca44b069c95cf96da7ce3125ec9b9
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps ff202a09e4554fee8262ea71c2b1ec5e9a408a4fd882307d049e8bc51a431607
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps 38f69650c00ff11fb991a58dcebf6d9e51ac16787f8c0e8a7f8ae3b8bd9570de
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|bootstrap df15a74c32342880c533cc49f41971742874791e306e3edd95603a98396a1612
 
