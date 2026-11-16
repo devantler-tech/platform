@@ -1,0 +1,24 @@
+---
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: mail-server
+  namespace: private-mail
+spec:
+  endpoints:
+    - dnsName: mail.devantler.tech
+      recordTTL: 300
+      recordType: A
+      targets:
+        - 167.233.123.141
+      providerSpecific:
+        - name: cloudflare/proxied
+          value: "false"
+    - dnsName: mail.devantler.tech
+      recordTTL: 300
+      recordType: AAAA
+      targets:
+        - 2a01:4f8:c016:43fc::1
+      providerSpecific:
+        - name: cloudflare/proxied
+          value: "false"

@@ -7,6 +7,8 @@ resources:
   - secret-settings.enc.yaml
   # The mail server's own load balancer for SMTP, submission and IMAPS (#5481).
   - service.yaml
+  # Its DNS-only host, mail.devantler.tech.
+  - dns-endpoint.yaml
 patches:
   # Production has retained credential custody. Never infer a fresh installation
   # from missing records while an older backup is being restored.

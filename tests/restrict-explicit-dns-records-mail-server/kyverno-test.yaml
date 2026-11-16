@@ -1,0 +1,28 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-explicit-dns-records-mail-server
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-explicit-dns-records.yaml
+resources:
+  - resources.yaml
+variables: ../restrict-explicit-dns-records-create/values.yaml
+results:
+  # The mail server's exact DNS-only host, in its own namespace and name.
+  - policy: restrict-explicit-dns-records
+    resources:
+      - private-mail/mail-server
+    kind: DNSEndpoint
+    result: pass
+  # The same record elsewhere does not inherit the mail server's ownership.
+  - policy: restrict-explicit-dns-records
+    resources:
+      - aws/mail-server
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    resources:
+      - private-mail/mail-host
+    kind: DNSEndpoint
+    result: fail
