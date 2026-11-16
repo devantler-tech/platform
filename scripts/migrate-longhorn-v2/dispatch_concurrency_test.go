@@ -19,7 +19,7 @@ func TestManualMigrationValidationSharesTheProductionTurnWithoutNestedLocks(t *t
 	if err != nil || json.Unmarshal(data, &workflow) != nil {
 		t.Fatal("workflow is not strict YAML")
 	}
-	group := "${{ github.event_name == 'workflow_dispatch' && 'prod-deploy' || format('longhorn-v2-validation-{0}-{1}', github.run_id, github.run_attempt) }}"
+	group := "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && 'prod-deploy' || format('longhorn-v2-validation-{0}-{1}', github.run_id, github.run_attempt) }}"
 	if text(workflow, "concurrency", "group") != group || value(workflow, "concurrency", "cancel-in-progress") != false || text(workflow, "concurrency", "queue") != "max" {
 		t.Fatal("manual validation can be overtaken, cancelled, or share the production lock with PR validation")
 	}

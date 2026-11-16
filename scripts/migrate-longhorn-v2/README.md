@@ -1,8 +1,9 @@
 # Prepare Longhorn V2 workers
 
-Manual runs join the ordinary production queue before validation and keep that
-turn through the selected operation. Pull-request and merge-group validation
-use separate groups. All boundary tests still run before production credentials
+First-attempt manual runs on main join the ordinary production queue before
+validation and keep that turn through the selected operation. Other events, refs
+and attempts use separate groups and keep their existing operation refusals.
+All boundary tests still run before production credentials
 are restored. The original dispatch source must remain current: the production
 lock does not lock Git refs, and a stale source still refuses the operation.
 
