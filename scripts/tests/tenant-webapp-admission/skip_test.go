@@ -76,7 +76,19 @@ func TestExplicitMatchConditionSkip(t *testing.T) {
 }
 
 func TestAllSkippedBatchIsRejected(t *testing.T) {
+	rejectedNonDecisionBatch(t, "skip")
+}
+
+func TestAllUnmatchedBatchIsRejected(t *testing.T) {
+	rejectedNonDecisionBatch(t, "unmatched")
+}
+
+func rejectedNonDecisionBatch(t *testing.T, expected string) {
+	t.Helper()
 	policy, object := skipPolicyControl(t)
+	if expected == "unmatched" {
+		policy.Spec.MatchConstraints.ResourceRules[0].Resources = []string{"services"}
+	}
 	dir := t.TempDir()
 	policyPath := filepath.Join(dir, "policy.yaml")
 	policyData, err := yaml.Marshal(policy)
@@ -86,7 +98,7 @@ func TestAllSkippedBatchIsRejected(t *testing.T) {
 	if err := os.WriteFile(policyPath, policyData, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f := fixture{Label: "only skipped", Policy: "skip-control", Actor: "synthetic", Object: object, Operation: "CREATE", Expected: "skip"}
+	f := fixture{Label: "only " + expected, Policy: "skip-control", Actor: "synthetic", Object: object, Operation: "CREATE", Expected: expected}
 	input, err := json.Marshal(f)
 	if err != nil {
 		t.Fatal(err)

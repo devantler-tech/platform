@@ -111,7 +111,7 @@ func run() error {
 			return fmt.Errorf("%s: %w", f.Label, err)
 		}
 		count++
-		if f.Expected != "skip" {
+		if f.Expected != "skip" && f.Expected != "unmatched" {
 			decisionControls++
 		}
 	}
@@ -127,7 +127,7 @@ func run() error {
 
 func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) error {
 	policy, ok := policies[f.Policy]
-	if !ok || f.Label == "" || f.Actor == "" || (f.Expected != "pass" && f.Expected != "fail" && f.Expected != "error" && f.Expected != "skip") {
+	if !ok || f.Label == "" || f.Actor == "" || (f.Expected != "pass" && f.Expected != "fail" && f.Expected != "error" && f.Expected != "skip" && f.Expected != "unmatched") {
 		return fmt.Errorf("incomplete fixture")
 	}
 	if (f.LookupFailure != "" && f.LookupFailure != "forbidden" && f.LookupFailure != "servererror") ||
@@ -145,7 +145,7 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 		target = f.OldObject
 	}
 	resources := map[string]string{"CiliumNetworkPolicy": "ciliumnetworkpolicies", "WebApp": "webapps", "Deployment": "deployments", "Service": "services", "HTTPRoute": "httproutes", "ExternalSecret": "externalsecrets", "SecretStore": "secretstores", "PushSecret": "pushsecrets", "ConfigMap": "configmaps", "Team": "teams", "TeamRepository": "teamrepositories", "TeamMembership": "teammemberships",
-		"HelmRelease": "helmreleases", "AutoscalingRunnerSet": "autoscalingrunnersets", "AutoscalingListener": "autoscalinglisteners", "Pod": "pods", "Secret": "secrets", "Namespace": "namespaces", "Job": "jobs", "CronJob": "cronjobs"}
+		"HelmRelease": "helmreleases", "AutoscalingRunnerSet": "autoscalingrunnersets", "AutoscalingListener": "autoscalinglisteners", "Pod": "pods", "Secret": "secrets", "Namespace": "namespaces", "Job": "jobs", "CronJob": "cronjobs", "PodDisruptionBudget": "poddisruptionbudgets"}
 	gvk := target.GroupVersionKind()
 	resource, ok := resources[gvk.Kind]
 	if !ok || gvk.Version == "" {
@@ -207,12 +207,25 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 	if err != nil {
 		return err
 	}
-	if len(response.Policies) != 1 || len(response.Policies[0].Rules) == 0 {
+	// The provider returns the authored policy and any generated controller
+	// policies. Judge every rule result; a nonmatching original must not hide
+	// a generated Job/CronJob decision or stand in for an evaluated pass.
+	rules, err := policyResponseRules(policy, response)
+	if err != nil {
+		return err
+	}
+	if f.Expected == "unmatched" {
+		if len(rules) != 0 {
+			return fmt.Errorf("expected no matching rules, got %+v", rules)
+		}
+		return nil
+	}
+	if len(rules) == 0 {
 		return fmt.Errorf("policy did not evaluate: %+v", response.Policies)
 	}
 	failed, evaluationError := false, false
 	skipped := 0
-	for _, rule := range response.Policies[0].Rules {
+	for _, rule := range rules {
 		switch rule.Status() {
 		case engineapi.RuleStatusPass:
 		case engineapi.RuleStatusFail:
@@ -231,13 +244,26 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 		}
 	}
 	if f.Expected == "skip" {
-		if skipped != len(response.Policies[0].Rules) {
-			return fmt.Errorf("expected only explicit match-condition skips, got %+v", response.Policies[0].Rules)
+		if skipped != len(rules) {
+			return fmt.Errorf("expected only explicit match-condition skips, got %+v", rules)
 		}
 		return nil
 	}
 	if (f.Expected == "error" && !evaluationError) || (f.Expected != "error" && evaluationError) || (f.Expected != "error" && failed != (f.Expected == "fail")) {
-		return fmt.Errorf("expected %s, failed=%v error=%v: %+v", f.Expected, failed, evaluationError, response.Policies[0].Rules)
+		return fmt.Errorf("expected %s, failed=%v error=%v: %+v", f.Expected, failed, evaluationError, rules)
 	}
 	return nil
+}
+
+// Generated policy specifications may differ, but their originating policy
+// identity must stay bound. No unrelated response family can supply a verdict.
+func policyResponseRules(policy policiesv1beta1.ValidatingPolicyLike, response celengine.EngineResponse) ([]engineapi.RuleResponse, error) {
+	var rules []engineapi.RuleResponse
+	for _, result := range response.Policies {
+		if result.Policy == nil || result.Policy.GetName() != policy.GetName() || result.Policy.GetNamespace() != policy.GetNamespace() || result.Policy.GetObjectKind().GroupVersionKind() != policy.GetObjectKind().GroupVersionKind() {
+			return nil, fmt.Errorf("unexpected policy response identity")
+		}
+		rules = append(rules, result.Rules...)
+	}
+	return rules, nil
 }
