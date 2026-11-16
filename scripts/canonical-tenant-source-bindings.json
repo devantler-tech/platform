@@ -20,15 +20,15 @@
         "namespace": "business-site",
         "name": "business-site",
         "artifactURL": "oci://ghcr.io/devantler-tech/business-site/manifests",
-        "digest": "sha256:5d0832526d3fcb256952365b57318d3b7ad4ed1fbe4521f5e8b2c4fb2f4ec9fc"
+        "digest": "sha256:1734e12b9b8852faaadd482125ec7630daaec6779bff338abf9289b29322ffc7"
       },
       "publication": {
-        "gitTag": "v3.10.0",
-        "sourceSHA": "f427b128591d8da925d38c451db82a75194349b9",
+        "gitTag": "v3.11.0",
+        "sourceSHA": "4e4469a786bc073768921c9d233741c9663289bd",
         "publisherIdentity": "devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35",
         "callerWorkflow": ".github/workflows/publish-runtime.yaml",
         "event": "release",
-        "workflowRunId": 43795464673,
+        "workflowRunId": 43802057077,
         "workflowRunAttempt": 1,
         "verifiedOn": "2026-11-16"
       },
@@ -51,23 +51,23 @@
           "namespace": "business-site",
           "name": "business-site",
           "artifactURL": "oci://ghcr.io/devantler-tech/business-site/manifests",
-          "digest": "sha256:3a683a62baa0101aa6f6adf367cafd3227e486a0ee71d7691cfd3a07e9b09c9e"
+          "digest": "sha256:5d0832526d3fcb256952365b57318d3b7ad4ed1fbe4521f5e8b2c4fb2f4ec9fc"
         },
         "publication": {
-          "gitTag": "v3.9.0",
-          "sourceSHA": "24ee9a0b1a55fa4721168fa855a9e98d89fdc20c",
+          "gitTag": "v3.10.0",
+          "sourceSHA": "f427b128591d8da925d38c451db82a75194349b9",
           "publisherIdentity": "devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35",
           "callerWorkflow": ".github/workflows/publish-runtime.yaml",
           "event": "release",
-          "workflowRunId": 43775564917,
+          "workflowRunId": 43795464673,
           "workflowRunAttempt": 1,
           "verifiedOn": "2026-11-16"
         }
       },
       "previousObservation": {
         "uidSha256": "38aff5c8aafbd89fc51dbbe131d27c9a3fb0e78108a20779d0e7a5680a6cc2d2",
-        "generation": 11,
-        "snapshotSha256": "a7ab869d448fa0ad4cf2e3067becbe5be59efaab1c5a101dbb3a35f507c9b830",
+        "generation": 12,
+        "snapshotSha256": "da08e4d7c95649764b7b73c5f35e38fb3a8f862a75c64e5fc9d7fdf0cb7ce158",
         "observedOn": "2026-11-16"
       }
     }
