@@ -145,7 +145,7 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 		target = f.OldObject
 	}
 	resources := map[string]string{"CiliumNetworkPolicy": "ciliumnetworkpolicies", "WebApp": "webapps", "Deployment": "deployments", "Service": "services", "HTTPRoute": "httproutes", "ExternalSecret": "externalsecrets", "SecretStore": "secretstores", "PushSecret": "pushsecrets", "ConfigMap": "configmaps", "Team": "teams", "TeamRepository": "teamrepositories", "TeamMembership": "teammemberships",
-		"HelmRelease": "helmreleases", "AutoscalingRunnerSet": "autoscalingrunnersets", "AutoscalingListener": "autoscalinglisteners", "Pod": "pods", "Secret": "secrets", "Namespace": "namespaces"}
+		"HelmRelease": "helmreleases", "AutoscalingRunnerSet": "autoscalingrunnersets", "AutoscalingListener": "autoscalinglisteners", "Pod": "pods", "Secret": "secrets", "Namespace": "namespaces", "Job": "jobs", "CronJob": "cronjobs"}
 	gvk := target.GroupVersionKind()
 	resource, ok := resources[gvk.Kind]
 	if !ok || gvk.Version == "" {
