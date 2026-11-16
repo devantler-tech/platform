@@ -20,7 +20,7 @@ PLATFORM_COMPILED_WEBAPP_DIR="$scratch/compiled" bash "$root/scripts/tests/test-
   cat "$scratch/compiler.log" >&2
   exit 1
 }
-for state in omitted enabled; do
+for state in omitted enabled settings combined; do
   cp "$scratch/compiled/$state.json" "$scratch/current.json"
 
   jq 'del(.spec.template.spec.containers[].securityContext.runAsNonRoot)' "$scratch/current.json" >"$scratch/missing.json"
