@@ -13,10 +13,22 @@ import (
 func producerFunction(t *testing.T, name string) string {
 	t.Helper()
 	doc := manifest(t, "k8s/providers/hetzner/apps/customer-identity/cron-job-setup.yaml")
-	containers := field(t, doc, "spec", "jobTemplate", "spec", "template", "spec", "containers").([]any)
-	container := containers[0].(map[string]any)
-	command := container["command"].([]any)
-	script := command[len(command)-1].(string)
+	containers, ok := field(t, doc, "spec", "jobTemplate", "spec", "template", "spec", "containers").([]any)
+	if !ok || len(containers) == 0 {
+		t.Fatal("missing producer containers")
+	}
+	container, ok := containers[0].(map[string]any)
+	if !ok {
+		t.Fatal("producer container is not a mapping")
+	}
+	command, ok := container["command"].([]any)
+	if !ok || len(command) == 0 {
+		t.Fatal("missing producer command")
+	}
+	script, ok := command[len(command)-1].(string)
+	if !ok {
+		t.Fatal("producer script is not a string")
+	}
 	start := name + "() {"
 	begin := strings.Index(script, start)
 	if begin < 0 {
