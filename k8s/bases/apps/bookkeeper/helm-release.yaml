@@ -1,0 +1,38 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: bookkeeper
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  timeout: 5m
+  chartRef:
+    kind: OCIRepository
+    name: bookkeeper
+  valuesFrom:
+    # No fallback mailbox or accounting date. Missing configuration blocks installation.
+    - kind: Secret
+      name: bookkeeper
+      valuesKey: mail-user
+      targetPath: mail.user
+    - kind: Secret
+      name: bookkeeper
+      valuesKey: since
+      targetPath: since
+  values:
+    image:
+      repository: ghcr.io/devantler-tech/bookkeeper
+      tag: 1.0.0
+      digest: sha256:90904b258bed9c66b56d5c32b78d1b85f10c2bc2690a0210cc77f305059c6711
+    schedule: "15 6 * * *"
+    timeZone: Europe/Copenhagen
+    suspend: true
+    mail:
+      url: https://mail.${domain}
+    numina:
+      url: https://api.numina.app
+    existingSecret:
+      name: bookkeeper
+    securityContext:
+      runAsNonRoot: true

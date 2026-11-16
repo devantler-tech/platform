@@ -1,0 +1,18 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: bookkeeper
+spec:
+  interval: 10m
+  url: oci://ghcr.io/devantler-tech/charts/bookkeeper
+  ref:
+    # Signed bookkeeper chart v1.0.0; a moved tag cannot change this installation.
+    digest: sha256:9f0858b8d0cdb9eb16d401e72fd7d8dba0748eda763673442d0e8b3c0494f170
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/bookkeeper/\.github/workflows/publish\.yaml@refs/tags/v1\.0\.0$'
