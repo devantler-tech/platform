@@ -4,13 +4,19 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -137,10 +143,18 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 	if err != nil || endpoint.String() != "https://203.0.113.10:6443" {
 		t.Fatalf("direct endpoint is not pinned: %v", err)
 	}
-	if _, err := client.Get(server.URL + "/version"); err == nil {
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/version", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(request)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil {
 		t.Fatal("direct client accepted a request for a different peer")
 	}
-	if client.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
+	if !errors.Is(client.CheckRedirect(nil, nil), http.ErrUseLastResponse) {
 		t.Fatal("direct client permits a redirect")
 	}
 	for _, test := range []struct{ method, query string }{
@@ -148,11 +162,15 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 		{http.MethodPatch, "?dryRun=All&dryRun="},
 		{http.MethodDelete, "?dryRun=All"},
 	} {
-		req, err := http.NewRequest(test.method, endpoint.String()+"/api/v1/persistentvolumes/scratch"+test.query, nil)
+		req, err := http.NewRequestWithContext(t.Context(), test.method, endpoint.String()+"/api/v1/persistentvolumes/scratch"+test.query, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := client.Do(req); err == nil || !strings.Contains(err.Error(), "only observations and server dry-runs") {
+		response, err := client.Do(req)
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "only observations and server dry-runs") {
 			t.Fatal("direct API client did not reject a write-capable request locally")
 		}
 	}
@@ -161,5 +179,104 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 func TestBenchmarkCredentialLoaderRefusesOutsideProtectedDispatch(t *testing.T) {
 	if _, _, err := LoadBenchmarkAdmissionClient(func(string) string { return "" }, netip.MustParseAddr("203.0.113.10")); err == nil {
 		t.Fatal("direct credential loader admitted an unverified dispatch")
+	}
+}
+
+func nativeSeedAdmissionDispatch() map[string]string {
+	return map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
+		"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted",
+		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/prepare-longhorn-v2-node.yaml@refs/heads/main",
+		"GITHUB_SHA":          strings.Repeat("a", 40), "GITHUB_RUN_ID": "1234",
+		"LONGHORN_V2_OPERATION": "prepare-native-v1-seed", "LONGHORN_V2_CONFIRM": "prepare-longhorn-native-v1-seed",
+		// Deliberately invalid: no credential file may be opened by this test.
+		"KUBECONFIG": "private-credential-path-canary",
+	}
+}
+
+func TestNativeSeedReachesTheExistingAdmissionCredentialBoundary(t *testing.T) {
+	valid := nativeSeedAdmissionDispatch()
+	getenv := func(key string) string { return valid[key] }
+	client, endpoint, err := LoadBenchmarkAdmissionClient(getenv, netip.MustParseAddr("203.0.113.10"))
+	if client != nil || endpoint != nil || err == nil || err.Error() != "fixed benchmark admission credentials and direct IPv4 peer are required" {
+		t.Fatal("the confirmed seed did not reach the unchanged credential boundary:", err)
+	}
+	benchmark := func(key string) string {
+		if key == "LONGHORN_V2_OPERATION" {
+			return "benchmark-v1"
+		}
+		if key == "LONGHORN_V2_CONFIRM" {
+			return "benchmark-longhorn-storage"
+		}
+		return valid[key]
+	}
+	if client, endpoint, err := LoadBenchmarkAdmissionClient(benchmark, netip.MustParseAddr("203.0.113.10")); client != nil || endpoint != nil || err == nil || err.Error() != "fixed benchmark admission credentials and direct IPv4 peer are required" {
+		t.Fatal("the original confirmed benchmark lost its credential boundary:", err)
+	}
+	for _, key := range []string{"GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_REPOSITORY", "GITHUB_RUN_ATTEMPT", "RUNNER_ENVIRONMENT", "GITHUB_WORKFLOW_REF", "LONGHORN_V2_OPERATION", "LONGHORN_V2_CONFIRM", "LONGHORN_V2_NODE", "LONGHORN_V2_DATABASE"} {
+		t.Run(key, func(t *testing.T) {
+			changed := func(name string) string {
+				if name == key {
+					return "foreign"
+				}
+				return valid[name]
+			}
+			client, endpoint, err := LoadBenchmarkAdmissionClient(changed, netip.MustParseAddr("203.0.113.10"))
+			if client != nil || endpoint != nil || err == nil || err.Error() != "protected benchmark admission dispatch is unverified" {
+				t.Fatal("a foreign or targeted seed reached credential loading:", err)
+			}
+		})
+	}
+	for _, pair := range [][2]string{{"benchmark-v1", "prepare-longhorn-native-v1-seed"}, {"prepare-native-v1-seed", "benchmark-longhorn-storage"}, {"restore-native-v2-seed", "prepare-longhorn-native-v1-seed"}} {
+		changed := func(key string) string {
+			if key == "LONGHORN_V2_OPERATION" {
+				return pair[0]
+			}
+			if key == "LONGHORN_V2_CONFIRM" {
+				return pair[1]
+			}
+			return valid[key]
+		}
+		if _, _, err := LoadBenchmarkAdmissionClient(changed, netip.MustParseAddr("203.0.113.10")); err == nil || err.Error() != "protected benchmark admission dispatch is unverified" {
+			t.Fatal("mismatched operation/confirmation pair reached credentials:", err)
+		}
+	}
+}
+
+func TestAdmissionLoaderBuildsBothConfirmedClientsFromPrivateMemoryCredentials(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the protected credential directory is Linux memory-backed storage")
+	}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("loader contacted an API") }))
+	t.Cleanup(server.Close)
+	directory, err := os.MkdirTemp("/dev/shm", "longhorn-v2.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(directory); err != nil {
+			t.Error(err)
+		}
+	})
+	raw, err := clientcmd.Write(*fixtureConfig(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "kubeconfig")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{{"benchmark-v1", "benchmark-longhorn-storage"}, {"prepare-native-v1-seed", "prepare-longhorn-native-v1-seed"}} {
+		valid := nativeSeedAdmissionDispatch()
+		valid["LONGHORN_V2_OPERATION"], valid["LONGHORN_V2_CONFIRM"] = pair[0], pair[1]
+		valid["KUBECONFIG"], valid["LONGHORN_V2_CREDENTIAL_DIR"] = path, directory
+		client, endpoint, err := LoadBenchmarkAdmissionClient(func(key string) string { return valid[key] }, netip.MustParseAddr("203.0.113.10"))
+		if err != nil || client == nil || endpoint == nil || endpoint.String() != "https://203.0.113.10:6443" || client.Timeout != 20*time.Second {
+			t.Fatal("confirmed operation could not construct its fixed client:", pair[0], err)
+		}
+		if _, err := client.Get(server.URL + "/version"); err == nil {
+			t.Fatal("loaded client addressed a different peer")
+		}
+		client.CloseIdleConnections()
 	}
 }

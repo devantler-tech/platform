@@ -302,7 +302,7 @@ A completed receipt requires healthy storage and explicit cleanup of the recorde
 scratch Pod, network policy, claim, retained PV, backend and class. Both phases use
 the GitOps-managed `longhorn-benchmark` namespace. The workflow records its UID and
 leaves the namespace in place. An incomplete run, including one that reaches the
-Pod's 25 minute deadline, holds with its journal and resources preserved for explicit recovery.
+Pod's 25-minute deadline, holds with its journal and resources preserved for explicit recovery.
 
 Run `benchmark-v2` only after every volume uses V2 and every replica is back on
 the same three permanent workers. It requires the baseline's hardware, OS,
@@ -336,6 +336,43 @@ writes, and direct instance-manager observations under stable controller and pro
 The instance-manager registry is an observation of native runtime state, not an independent
 disk or kernel audit. The builders and stopped-state checks alone do not authorize backend
 retirement. Complete that recovery path before dispatching a benchmark.
+
+## Disposable recovery source
+
+`prepare-native-v1-seed`, confirmed with `prepare-longhorn-native-v1-seed`,
+prepares only the source half of a filesystem recovery canary. Leave `node` and
+`database` empty. It requires the cleaned V1 baseline, three healthy copies of
+every Longhorn volume, the original approved retirement-manager epochs, and an
+already available four-GiB scratch budget. It changes no reservation.
+
+The fixed `longhorn-benchmark` workspace must be empty. Every Velero schedule
+must exclude it; the daily schedule declares that exclusion. The source Pod and
+claim opt in only their `data` filesystem volume for this run's separately
+selected Backup. The procedure writes and verifies a 128-MiB payload, sentinel
+and checksum. It refuses restored, cloned, encrypted or differently bound
+source storage.
+
+The existing default Velero destination must be Available, ReadWrite and recently
+validated. No Longhorn backup target or credentials are added. A seven-day Backup
+selects only this run's Pod and claim, with CSI snapshots, data movement and
+cluster resources disabled. Native completion, exactly one complete Kopia
+transfer, its source Pod UID, snapshot ID and the original Ready repository UID
+and spec are required. A completed Backup by itself does not establish data
+transfer. The same evidence is checked again before source retirement and after
+local cleanup.
+
+`longhorn-v2-native-seed` retains the original resource identities and each
+conditional phase transition. Uncertain creates or journal writes stop without
+retrying or adopting objects by name. Cleanup uses the V1 benchmark's original
+runtime, serving-API fences and physical retirement proof, then removes the run's
+replica tags. It leaves the remote backup and workspace intact. An interrupted
+run preserves its journal and assets for a separately reviewed recovery path.
+
+`SOURCE_CLEANED` accepts no V2 restore, reattachment, benchmark measurement or
+application migration. A separate V2 phase must restore the original snapshot to
+new storage, verify the original bytes, persist a new write, reattach on another
+qualified worker and verify both again. Encrypted storage and application-specific
+recovery still require their own proofs.
 
 ## Prepare a permanent worker
 

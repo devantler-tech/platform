@@ -25,7 +25,7 @@ type benchmarkAdmissionEpoch struct {
 // Prove the fence for the supplied original reference. Instance and namespace
 // fences and the journal still require separate evidence before any delete.
 func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, record benchmarkRecord, observed object) error {
-	if err := authorizeBenchmark(os.Getenv, "v1"); err != nil {
+	if err := authorizeScratchV1(c, os.Getenv); err != nil {
 		return err
 	}
 	if record.Source != os.Getenv("GITHUB_SHA") || record.Run != os.Getenv("GITHUB_RUN_ID") {
