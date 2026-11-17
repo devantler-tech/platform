@@ -65,7 +65,7 @@ func validateMigrationDispatchBoundarySteps(workflow object) error {
 	tested := false
 	for _, raw := range tests {
 		step := raw.(object)
-		if text(step, "run") == "go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory" {
+		if text(step, "run") == "go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory" {
 			if !migrationDispatchMustRun(step) {
 				return errors.New("boundary tests can be skipped or tolerate failure")
 			}
@@ -76,6 +76,17 @@ func validateMigrationDispatchBoundarySteps(workflow object) error {
 		return errors.New("the complete boundary tests must still finish before the operation")
 	}
 	return nil
+}
+
+func TestMigrationDispatchRequiresEveryBoundaryPackage(t *testing.T) {
+	for _, pkg := range []string{"./scripts/migrate-longhorn-v2", "./internal/longhornmigration", "./internal/longhorninventory", "./internal/namespaceinventory"} {
+		workflow := migrationDispatchWorkflow(t)
+		step := migrationDispatchStep(t, valueObject(workflow, "jobs", "tests"), "Test complete observations and interrupted recovery")
+		step["run"] = strings.ReplaceAll(text(step, "run"), " "+pkg, "")
+		if validateMigrationDispatchBoundarySteps(workflow) == nil {
+			t.Fatal("an omitted boundary package was admitted:", pkg)
+		}
+	}
 }
 
 func validateMigrationDispatchSourceSteps(workflow object) error {
