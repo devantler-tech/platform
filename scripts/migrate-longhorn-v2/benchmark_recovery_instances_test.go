@@ -6,38 +6,44 @@ import (
 	"time"
 )
 
+func retirementRuntimeInstanceFixture(t *testing.T) (benchmarkRecord, map[string][]object) {
+	t.Helper()
+	record, groups := retirementInstanceFixture(t)
+	record.Version = 3
+	oldNamespace := record.Namespace
+	record.Namespace = benchmarkNamespace
+	for kind, identity := range record.Resources {
+		if kind == "Namespace" {
+			identity.Name = record.Namespace
+		} else if identity.Namespace == oldNamespace {
+			identity.Namespace = record.Namespace
+		}
+		record.Resources[kind] = identity
+	}
+	record.V1Runtime = &benchmarkV1Runtime{Image: testRetirementImage, SettingUID: "setting-uid", SettingVersion: "17"}
+	for _, index := range []string{"1", "2", "3"} {
+		record.V1Runtime.Epochs = append(record.V1Runtime.Epochs, benchmarkManagerEpoch{
+			Pod: "instance-manager-" + index, PodUID: "pod-" + index, ManagerUID: "manager-" + index,
+			Node: "prod-worker-" + index, ContainerID: "containerd://" + strings.Repeat(index, 64),
+			StartedAt: time.Date(2026, 11, 10, 1, 2, 3, 0, time.UTC),
+		})
+	}
+	for _, kind := range []string{"engines", "replicas", "enginefrontends"} {
+		groups[kind][0]["status"].(object)["instanceManagerName"] = "instance-manager-1"
+	}
+	if err := verifyRetirementReceipts(record); err != nil {
+		t.Fatalf("invalid original-resource fixture: %v", err)
+	}
+	if err := validateBenchmarkRuntimeReceipt(record); err != nil {
+		t.Fatalf("invalid approved runtime fixture: %v", err)
+	}
+	return record, groups
+}
+
 func TestRetirementInstancesRequireSealedRecordedManager(t *testing.T) {
 	for _, fault := range []string{"", "native stopped empty manager", "foreign engine manager", "foreign replica manager", "foreign frontend manager", "manager on another node", "missing runtime", "incomplete runtime"} {
 		t.Run(fault, func(t *testing.T) {
-			record, groups := retirementInstanceFixture(t)
-			record.Version = 3
-			oldNamespace := record.Namespace
-			record.Namespace = benchmarkNamespace
-			for kind, identity := range record.Resources {
-				if kind == "Namespace" {
-					identity.Name = record.Namespace
-				} else if identity.Namespace == oldNamespace {
-					identity.Namespace = record.Namespace
-				}
-				record.Resources[kind] = identity
-			}
-			record.V1Runtime = &benchmarkV1Runtime{Image: testRetirementImage, SettingUID: "setting-uid", SettingVersion: "17"}
-			for _, index := range []string{"1", "2", "3"} {
-				record.V1Runtime.Epochs = append(record.V1Runtime.Epochs, benchmarkManagerEpoch{
-					Pod: "instance-manager-" + index, PodUID: "pod-" + index, ManagerUID: "manager-" + index,
-					Node: "prod-worker-" + index, ContainerID: "containerd://" + strings.Repeat(index, 64),
-					StartedAt: time.Date(2026, 11, 10, 1, 2, 3, 0, time.UTC),
-				})
-			}
-			for _, kind := range []string{"engines", "replicas", "enginefrontends"} {
-				groups[kind][0]["status"].(object)["instanceManagerName"] = "instance-manager-1"
-			}
-			if err := verifyRetirementReceipts(record); err != nil {
-				t.Fatalf("invalid original-resource fixture: %v", err)
-			}
-			if err := validateBenchmarkRuntimeReceipt(record); err != nil {
-				t.Fatalf("invalid approved runtime fixture: %v", err)
-			}
+			record, groups := retirementRuntimeInstanceFixture(t)
 			switch fault {
 			case "native stopped empty manager":
 				for _, kind := range []string{"engines", "replicas", "enginefrontends"} {

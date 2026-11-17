@@ -138,7 +138,11 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 	if err != nil || endpoint.String() != "https://203.0.113.10:6443" {
 		t.Fatalf("direct endpoint is not pinned: %v", err)
 	}
-	response, err := client.Get(server.URL + "/version")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/version", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(request)
 	if response != nil {
 		_ = response.Body.Close()
 	}
