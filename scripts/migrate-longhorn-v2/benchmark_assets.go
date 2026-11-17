@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"regexp"
 	"time"
 )
 
@@ -45,11 +44,29 @@ for profile in randread randwrite randrw; do
 done
 `
 
-func benchmarkResources(phase, runID, tag string) ([]object, error) {
-	if (phase != "v1" && phase != "v2") || !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(runID) || tag != "longhorn-benchmark-"+phase+"-"+runID {
+const benchmarkNamespace = "longhorn-benchmark"
+
+func benchmarkTag(phase, runID string) string {
+	return benchmarkNamespace + "-" + phase + "-" + runID
+}
+
+func benchmarkNamespaceMatches(record benchmarkRecord) bool {
+	switch record.Version {
+	case 2:
+		return record.Namespace == benchmarkTag(record.Phase, record.Run)
+	case 3:
+		return record.Namespace == benchmarkNamespace
+	default:
+		return false
+	}
+}
+
+func benchmarkResources(phase, runID, namespace string) ([]object, error) {
+	tag := benchmarkTag(phase, runID)
+	if (phase != "v1" && phase != "v2") || !benchmarkRunPattern.MatchString(runID) || (namespace != tag && namespace != benchmarkNamespace) {
 		return nil, errors.New("unreviewed benchmark identity")
 	}
-	namespace, class := tag, "lh-benchmark-"+phase+"-"+runID
+	class := "lh-benchmark-" + phase + "-" + runID
 	meta := func(name string, namespaced bool) object {
 		m := object{"name": name, "labels": object{"storage.platform.devantler.tech/benchmark-run": runID, "velero.io/exclude-from-backup": "true"}}
 		if namespaced {
@@ -63,7 +80,7 @@ func benchmarkResources(phase, runID, tag string) ([]object, error) {
 	nsMeta := meta(namespace, false)
 	nsMeta["labels"].(object)["pod-security.kubernetes.io/enforce"] = "restricted"
 	nsMeta["labels"].(object)["pod-security.kubernetes.io/enforce-version"] = "latest"
-	return []object{
+	assets := []object{
 		{"apiVersion": "v1", "kind": "Namespace", "metadata": nsMeta},
 		{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("fio-default-deny", true),
 			"spec": object{"podSelector": object{}, "policyTypes": []any{"Ingress", "Egress"}}},
@@ -86,5 +103,9 @@ func benchmarkResources(phase, runID, tag string) ([]object, error) {
 				"volumeMounts": []any{object{"name": "data", "mountPath": "/data"}, object{"name": "scratch", "mountPath": "/tmp"}}}},
 			"volumes": []any{object{"name": "data", "persistentVolumeClaim": object{"claimName": "fio-data"}},
 				object{"name": "scratch", "emptyDir": object{"sizeLimit": "32Mi"}}}}},
-	}, nil
+	}
+	if namespace == benchmarkNamespace {
+		return assets[1:], nil
+	}
+	return assets, nil
 }

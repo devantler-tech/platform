@@ -42,6 +42,7 @@ go.mod
 go.sum
 internal/longhornmigration/
 internal/longhorninventory/
+internal/namespaceinventory/
 internal/strictjson/
 
 # Programs the deploy runs.

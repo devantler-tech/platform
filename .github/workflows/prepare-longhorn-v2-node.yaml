@@ -9,6 +9,7 @@ name: Prepare Longhorn V2 Migration
       - scripts/migrate-longhorn-v2/**
       - internal/longhornmigration/**
       - internal/longhorninventory/**
+      - internal/namespaceinventory/**
       - go.mod
       - go.sum
   merge_group:
@@ -26,6 +27,7 @@ name: Prepare Longhorn V2 Migration
             refresh-clients,
             benchmark-v1,
             benchmark-v2,
+            prepare-native-v1-seed,
             inventory-replicas,
             inventory-storage-root,
             inventory-storage-layout,
@@ -99,7 +101,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Test complete observations and interrupted recovery
-        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
+        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory
 
   prepare:
     name: Run the selected guarded migration step
@@ -123,8 +125,11 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]] || exit 1
           case "${LONGHORN_V2_OPERATION}" in
+            prepare-native-v1-seed)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == prepare-longhorn-native-v1-seed ]]
+              ;;
             inventory-v1-runtime)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == inventory-v1-runtime ]]
               ;;
@@ -224,8 +229,15 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh
       - name: Run the confirmed migration preparation
+        if: ${{ inputs.operation != 'benchmark-v1' && inputs.operation != 'prepare-native-v1-seed' }}
         env:
           GH_TOKEN: ${{ github.token }}
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Run the confirmed V1 scratch operation
+        if: ${{ inputs.operation == 'benchmark-v1' || inputs.operation == 'prepare-native-v1-seed' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: go run ./scripts/migrate-longhorn-v2
       - name: Remove runner credentials
         if: ${{ always() }}
