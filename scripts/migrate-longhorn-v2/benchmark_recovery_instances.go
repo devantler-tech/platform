@@ -33,9 +33,11 @@ func qualifyRetirementInstances(record benchmarkRecord, groups map[string][]obje
 		return nil, err
 	}
 	managerNodes := map[string]string{}
+	sealedNodes := map[string]bool{}
 	if record.V1Runtime != nil {
 		for _, epoch := range record.V1Runtime.Epochs {
 			managerNodes[epoch.Pod] = epoch.Node
+			sealedNodes[epoch.Node] = true
 		}
 	}
 	if len(groups) != len(benchmarkInstanceKinds) {
@@ -111,6 +113,9 @@ func qualifyRetirementInstances(record benchmarkRecord, groups map[string][]obje
 				// Native stop clears the manager name. The fresh scratch runtime
 				// receipt predates creation, and retirement rechecks its complete
 				// default-image and process epochs; an empty name is not a receipt.
+				if record.V1Runtime != nil && child.NodeID != "" && !sealedNodes[child.NodeID] {
+					return nil, errors.New("a backend instance names a node outside its sealed runtime baseline")
+				}
 				if record.V1Runtime != nil && child.InstanceManagerName != "" {
 					node, approved := managerNodes[child.InstanceManagerName]
 					if !approved || child.NodeID != "" && child.NodeID != node {
