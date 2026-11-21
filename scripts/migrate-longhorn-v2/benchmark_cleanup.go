@@ -82,7 +82,7 @@ func observeBenchmarkWorkspace(ctx context.Context, c client, expectedUID string
 		text(namespace, "status", "phase") != "Active" || value(namespace, "metadata", "deletionTimestamp") != nil ||
 		text(namespace, "metadata", "labels", "pod-security.kubernetes.io/enforce") != "restricted" ||
 		text(namespace, "metadata", "labels", "pod-security.kubernetes.io/enforce-version") != "latest" ||
-		text(namespace, "metadata", "labels", "velero.io/exclude-from-backup") != "true" ||
+		text(namespace, "metadata", "labels", "velero.io/exclude-from-backup") == "true" ||
 		text(namespace, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune") != "disabled" {
 		return nil, errors.New("the reviewed GitOps benchmark namespace is missing, replaced or unverified")
 	}
