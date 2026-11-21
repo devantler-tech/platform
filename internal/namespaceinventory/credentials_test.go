@@ -274,7 +274,11 @@ func TestAdmissionLoaderBuildsBothConfirmedClientsFromPrivateMemoryCredentials(t
 		if err != nil || client == nil || endpoint == nil || endpoint.String() != "https://203.0.113.10:6443" || client.Timeout != 20*time.Second {
 			t.Fatal("confirmed operation could not construct its fixed client:", pair[0], err)
 		}
-		if _, err := client.Get(server.URL + "/version"); err == nil {
+		response, err := client.Get(server.URL + "/version")
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		if err == nil {
 			t.Fatal("loaded client addressed a different peer")
 		}
 		client.CloseIdleConnections()

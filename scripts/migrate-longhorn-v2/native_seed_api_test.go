@@ -117,7 +117,12 @@ func TestNativeSeedJournalThroughKubectl(t *testing.T) {
 						journal["metadata"].(object)["uid"] = "replacement-journal"
 					}
 					if fault == "write acknowledged then lost" {
-						connection, _, hijackErr := w.(http.Hijacker).Hijack()
+						hijacker, ok := w.(http.Hijacker)
+						if !ok {
+							t.Error("fixture response writer does not support hijacking")
+							return
+						}
+						connection, _, hijackErr := hijacker.Hijack()
 						if hijackErr != nil {
 							t.Error(hijackErr)
 							return

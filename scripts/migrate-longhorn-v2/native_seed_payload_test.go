@@ -59,7 +59,8 @@ func TestNativeSeedChecksTheOriginalReadyExecutableBeforePayloadAccess(t *testin
 			case "different data mount":
 				value(pod, "spec", "containers").([]any)[0].(object)["volumeMounts"] = []any{object{"name": "scratch", "mountPath": "/data"}}
 			case "extra volume":
-				pod["spec"].(object)["volumes"] = append(value(pod, "spec", "volumes").([]any), object{"name": "foreign", "secret": object{"secretName": "other"}})
+				volumes := value(pod, "spec", "volumes").([]any)
+				pod["spec"].(object)["volumes"] = append(volumes, object{"name": "foreign", "secret": object{"secretName": "other"}})
 			case "injected environment":
 				value(pod, "spec", "containers").([]any)[0].(object)["envFrom"] = []any{object{"secretRef": object{"name": "other"}}}
 			}
