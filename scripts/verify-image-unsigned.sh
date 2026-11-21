@@ -31,6 +31,10 @@
 # file inside a private temporary directory that an EXIT trap removes, the same
 # pattern scripts/inventory-first-party-image-signatures.sh uses.
 #
+# REGISTRY_ANONYMOUS=true instead requests an anonymous pull token, the way a
+# consumer that holds no credential reads a public package. It must be explicit:
+# a missing credential stays a usage error rather than silently going anonymous.
+#
 # Exit status:
 #   0  UNSIGNED  every signature location is confirmed empty
 #   1  SIGNED    a signature, attestation or SBOM tag, or a referrer, exists
@@ -44,7 +48,8 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: verify-image-unsigned.sh --image <registry>/<repository>@sha256:<64 hex>
 
-Environment: REGISTRY_USERNAME and REGISTRY_PASSWORD (a credential that can read the image)
+Environment: REGISTRY_USERNAME and REGISTRY_PASSWORD (a credential that can read the image),
+             or REGISTRY_ANONYMOUS=true (an anonymous read of a public package)
 
 Exit status: 0 unsigned, 1 signed, 2 usage error, 3 unknown (never read as unsigned)
 USAGE
@@ -94,11 +99,20 @@ readonly repository="${BASH_REMATCH[4]}"
 readonly hex="${BASH_REMATCH[6]}"
 readonly digest="sha256:${hex}"
 
-[[ -n "${REGISTRY_USERNAME:-}" && -n "${REGISTRY_PASSWORD:-}" ]] ||
-  fail_usage 'REGISTRY_USERNAME and REGISTRY_PASSWORD must both be set'
-case "${REGISTRY_USERNAME}${REGISTRY_PASSWORD}" in
-  *$'\n'* | *$'\r'*) fail_usage 'the registry credential contains a line break' ;;
-esac
+anonymous=false
+if [[ "${REGISTRY_ANONYMOUS:-}" == true ]]; then
+  [[ -z "${REGISTRY_USERNAME:-}${REGISTRY_PASSWORD:-}" ]] ||
+    fail_usage 'REGISTRY_ANONYMOUS=true excludes REGISTRY_USERNAME and REGISTRY_PASSWORD'
+  anonymous=true
+else
+  [[ -z "${REGISTRY_ANONYMOUS:-}" ]] || fail_usage 'REGISTRY_ANONYMOUS must be unset or exactly true'
+  [[ -n "${REGISTRY_USERNAME:-}" && -n "${REGISTRY_PASSWORD:-}" ]] ||
+    fail_usage 'REGISTRY_USERNAME and REGISTRY_PASSWORD must both be set'
+  case "${REGISTRY_USERNAME}${REGISTRY_PASSWORD}" in
+    *$'\n'* | *$'\r'*) fail_usage 'the registry credential contains a line break' ;;
+  esac
+fi
+readonly anonymous
 
 command -v curl >/dev/null 2>&1 || fail_unknown 'curl is not installed'
 command -v jq >/dev/null 2>&1 || fail_unknown 'jq is not installed'
@@ -155,7 +169,10 @@ http() {
 
 # Exchange the credential for a pull token. `printf` is a shell builtin, so
 # writing the file starts no process whose arguments could expose the secret.
-printf 'user = %s\n' "$(conf_string "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}")" >"${conf}"
+# An anonymous read sends no credential at all.
+if [[ "${anonymous}" == false ]]; then
+  printf 'user = %s\n' "$(conf_string "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}")" >"${conf}"
+fi
 code="$(http "https://${registry}/token?service=${registry}&scope=repository:${repository}:pull" 'application/json' "${body}")"
 [[ "${code}" == '200' ]] ||
   fail_unknown "the registry refused the credential for ${registry}/${repository} (token endpoint HTTP ${code})"

@@ -1,0 +1,16 @@
+# The lane store's files: the lane's memory between runs and each run's
+# transcript. Kept if the store is ever removed from Git, so a mistaken
+# removal cannot delete them.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lane-store
+  namespace: agentic-engineer
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi

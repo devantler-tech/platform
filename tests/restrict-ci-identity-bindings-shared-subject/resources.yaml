@@ -1,0 +1,20 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-managed-resources
+  namespace: aws
+  labels:
+    fixture: shared-subject
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aws-managed-resources
+subjects:
+  - kind: ServiceAccount
+    name: aws
+    namespace: aws
+  - kind: ServiceAccount
+    name: intruder
+    namespace: default
+# Widening: any ClusterRoleBinding for the CI identity.

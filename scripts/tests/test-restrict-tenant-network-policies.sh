@@ -41,7 +41,7 @@ expect_summary() {
 #    used to be refused now admits. The unmanaged namespace control is an explicit
 #    match-condition skip; a namespaceSelector previously omitted its result.
 apply "${tests}/resources.yaml" "${tests}/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 18, fail: 80, warn: 0, error: 0, skip: 1" \
+expect_summary "pass: 19, fail: 80, warn: 0, error: 0, skip: 1" \
   "tenant CiliumNetworkPolicy boundary"
 
 # 2. Carve-out: kyverno's background controller owns the generated floor. These
@@ -57,10 +57,11 @@ expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 3" \
 #    Besides the reserved name, allow-dns reaches CoreDNS by naming kube-system
 #    through the namespace label and allow-cnpg-operator names cnpg-system, the
 #    cross-namespace selector a tenant is refused (#3399, #3655). default-deny's
-#    one empty rule per direction names no source or destination, which is refused
-#    because a sourceless rule WITH toPorts allows every peer on that port. Without
-#    toPorts, as here, Cilium allows nothing (#3501), so the refusal is conservative,
-#    not a hole. The generated floor is exempt only through its applying identity.
+#    empty ingress rule names no source, which is refused because a sourceless rule
+#    WITH toPorts allows every peer on that port. Without toPorts, as here, Cilium
+#    allows nothing (#3501), so the refusal is conservative, not a hole; its empty
+#    egress rule is admitted for the same reason. The generated floor is exempt
+#    only through its applying identity.
 apply "${tests}/kyverno-author/resources.yaml" \
   "${tests}/kyverno-author/values.yaml" "${tests}/user-info.yaml"
 expect_summary "pass: 0, fail: 3, warn: 0, error: 0, skip: 0" \
@@ -193,7 +194,12 @@ control() {
 }
 hold_control() {
   local label="$1" actor="$2" operation="$3" namespace="$4" name="$5" expected="$6" managed="$7"
-  yq -o=json '.' "${repo_root}/k8s/providers/hetzner/apps/business-site/cilium-network-policy-staging-hold.yaml" |
+  # The former staging hold's body: the hold itself was lifted, but its name stays
+  # reserved, so these controls still exercise it (devantler-tech/business-site#554).
+  jq -n '{apiVersion: "cilium.io/v2", kind: "CiliumNetworkPolicy",
+    metadata: {name: "business-site-staging-hold", namespace: "business-site"},
+    spec: {endpointSelector: {matchLabels: {"app.kubernetes.io/name": "business-site"}},
+      ingressDeny: [{fromEntities: ["ingress"], toPorts: [{ports: [{port: "8080", protocol: "TCP"}]}]}]}}' |
     jq -c --arg label "${label}" --arg actor "${actor}" --arg operation "${operation}" \
       --arg namespace "${namespace}" --arg name "${name}" --arg expected "${expected}" --arg managed "${managed}" '
       .metadata.namespace = $namespace | .metadata.name = $name | . as $resource |
@@ -268,6 +274,16 @@ legacy_plural="$(jq -c '.specs = [.spec]' <<<"${existing}")"
         hold_control "platform-hold-${operation}-${managed:-unlabelled}-${actor}" \
           "${actor}" "${operation}" business-site business-site-staging-hold skip "${managed}"
       done
+      for actor in system:serviceaccount:business-site:business-site \
+        system:serviceaccount:business-site:kustomize-controller "${kyverno_sa}"; do
+        hold_control "identity-hold-${operation}-${managed:-unlabelled}-${actor}" \
+          "${actor}" "${operation}" business-site business-site-customer-identity-hold fail "${managed}"
+      done
+      hold_control "platform-identity-hold-${operation}-${managed:-unlabelled}" \
+        "${flux_sa}" "${operation}" business-site business-site-customer-identity-hold skip "${managed}"
+      hold_control "other-namespace-identity-hold-${operation}-${managed:-unlabelled}" "${tenant}" \
+        "${operation}" other-tenant business-site-customer-identity-hold \
+        "$(if [[ -n "${managed}" ]]; then echo pass; else echo skip; fi)" "${managed}"
       hold_control "other-name-${operation}-${managed:-unlabelled}" "${tenant}" \
         "${operation}" business-site tenant-allow-gateway \
         "$(if [[ -n "${managed}" ]]; then echo pass; else echo skip; fi)" "${managed}"

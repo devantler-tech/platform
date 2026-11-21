@@ -15,6 +15,10 @@ func verifyNode(n object, j journal, original bool) (string, error) {
 		value(n, "metadata", "deletionTimestamp") != nil {
 		return "", errors.New("worker hardware or Kubernetes identity changed")
 	}
+	return workerPrivateAddress(n)
+}
+
+func workerPrivateAddress(n object) (string, error) {
 	addresses, _ := value(n, "status", "addresses").([]any)
 	address := ""
 	for _, raw := range addresses {

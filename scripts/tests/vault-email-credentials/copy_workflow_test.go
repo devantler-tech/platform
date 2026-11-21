@@ -130,7 +130,7 @@ set -eu
 [[ $SYNTHETIC_CASE != restore-failure ]] || exit 7
 if [[ $SYNTHETIC_CASE == restore-format ]]; then printf '%s\n' synthetic-private-restore; else
  touch "$SYNTHETIC_CASE_DIR/restored"
- printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3'
+ printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2'
 fi
 `,
 				"scripts/prepare-email-credentials.sh": `#!/bin/bash

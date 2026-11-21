@@ -69,12 +69,24 @@ func TestMaintainedProxyIsActiveInProduction(t *testing.T) {
 	objects := render(t, "k8s/providers/hetzner/apps")
 	pod := mapping(t, mapping(t, mapping(t, object(t, objects, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
 	initializers := sequence(t, pod["initContainers"])
-	if len(initializers) != 1 {
+	// Production copies its store onto encrypted storage before the managed setup.
+	if len(initializers) != 2 || mapping(t, initializers[1])["name"] != "configure" {
 		t.Fatal("active transport must retain the managed initializer")
 	}
-	args := sequence(t, mapping(t, initializers[0])["args"])
-	if len(args) != 1 || args[0] != "--proxy-client-ip=true" {
+	args := sequence(t, mapping(t, initializers[1])["args"])
+	if len(args) != 2 || args[0] != "--proxy-client-ip=true" {
 		t.Fatal("activation must explicitly override a retained encrypted transport setting")
+	}
+	// The mail listeners trust PROXY headers only from the mail server's own
+	// load balancer, at exactly the private address that load balancer is pinned to.
+	service := object(t, objects, "Service", "private-mail-public")
+	annotations := mapping(t, mapping(t, service["metadata"])["annotations"])
+	if annotations["load-balancer.hetzner.cloud/uses-proxyprotocol"] != "true" || mapping(t, service["spec"])["type"] != "LoadBalancer" {
+		t.Fatal("the mail load balancer must send PROXY protocol")
+	}
+	address, ok := annotations["load-balancer.hetzner.cloud/private-ipv4"].(string)
+	if !ok || address == "" || args[1] != "--mail-proxy-source="+address {
+		t.Fatalf("the mail listeners must trust exactly the load balancer's pinned address, got %v and %v", args[1], annotations["load-balancer.hetzner.cloud/private-ipv4"])
 	}
 	proxies := 0
 	for _, item := range sequence(t, pod["containers"]) {

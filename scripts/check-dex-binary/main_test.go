@@ -53,7 +53,7 @@ func TestNativeAdmissionRefusesAStaleCertificate(t *testing.T) {
 }
 
 func TestJudgeReportRefusesUnexaminedOrNewFindings(t *testing.T) {
-	const sbom = `{"SBOM":{"go_version":"go1.27.3","modules":[{"path":"github.com/dexidp/dex","version":"v0.0.0-20261021142137-75eb19238e10"}]}}`
+	const sbom = `{"SBOM":{"go_version":"go1.27.4","modules":[{"path":"github.com/dexidp/dex","version":"v0.0.0-20261021142137-75eb19238e10"}]}}`
 	const historical = `{"finding":{"osv":"GO-2024-2476","trace":[{"module":"github.com/dexidp/dex","function":"loadTLSConfig"}]}}`
 	for _, tc := range []struct {
 		name, report               string
@@ -61,9 +61,9 @@ func TestJudgeReportRefusesUnexaminedOrNewFindings(t *testing.T) {
 	}{
 		{"empty is not a scan", "", true, false},
 		{"progress is not a scan", `{"progress":{"message":"scanning"}}`, true, false},
-		{"empty module coverage", `{"SBOM":{"go_version":"go1.27.3","modules":[]}}`, true, false},
-		{"different executable", `{"SBOM":{"go_version":"go1.27.3","modules":[{"path":"example.com/other"}]}}`, true, false},
-		{"missing compiler coverage", strings.ReplaceAll(sbom, `"go1.27.3"`, `""`), true, false},
+		{"empty module coverage", `{"SBOM":{"go_version":"go1.27.4","modules":[]}}`, true, false},
+		{"different executable", `{"SBOM":{"go_version":"go1.27.4","modules":[{"path":"example.com/other"}]}}`, true, false},
+		{"missing compiler coverage", strings.ReplaceAll(sbom, `"go1.27.4"`, `""`), true, false},
 		{"malformed suffix", sbom + "{", true, false},
 		{"new reachable finding", sbom + `{"finding":{"osv":"GO-2099-0001","trace":[{"module":"stdlib","function":"Serve"}]}}`, true, false},
 		{"missing finding identity", sbom + `{"finding":{"trace":[{"module":"stdlib","function":"Serve"}]}}`, true, false},
@@ -74,7 +74,7 @@ func TestJudgeReportRefusesUnexaminedOrNewFindings(t *testing.T) {
 		{"examined clean executable", sbom, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			disposition, err := judgeReport(strings.NewReader(tc.report), "go1.27.3")
+			disposition, err := judgeReport(strings.NewReader(tc.report), "go1.27.4")
 			if (err != nil) != tc.wantError || disposition != tc.wantDisposition {
 				t.Fatalf("disposition=%v err=%v; want disposition=%v error=%v", disposition, err, tc.wantDisposition, tc.wantError)
 			}

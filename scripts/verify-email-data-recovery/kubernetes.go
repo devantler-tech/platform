@@ -81,7 +81,8 @@ type recoveryDriver struct {
 	source                     sourceIdentity
 	namespacePolicies          map[string]namespacePolicy
 	completeNamespaceInventory func(context.Context) error
-	retainedGraph              map[string]object
+	// protection is set only for disposal of a retained copy; see verifyProtection.
+	protection protectionPoint
 }
 
 func (d *recoveryDriver) lookup(ctx context.Context, kind, name, ns string) (object, bool, error) {
@@ -115,10 +116,6 @@ func (d *recoveryDriver) owned(ctx context.Context, ref ownedReference) (object,
 	if text(m, "uid") != ref.uid || text(child(m, "labels"), recoveryLabel) != d.i.run {
 		d.uncertain = true
 		return nil, errors.New("replacement")
-	}
-	if d.retainedGraph != nil && !reflect.DeepEqual(retainedMutableFields(o), d.retainedGraph[ref.key()]) {
-		d.uncertain = true
-		return nil, errors.New("retained-graph-changed")
 	}
 	return o, nil
 }

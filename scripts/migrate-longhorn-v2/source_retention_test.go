@@ -81,6 +81,7 @@ func TestRetainV1SourceWritesOnlyTheApprovedPersistentVolume(t *testing.T) {
 						{"op": "test", "path": "/metadata/uid", "value": "pv-uid"},
 						{"op": "test", "path": "/metadata/resourceVersion", "value": "25"},
 						{"op": "test", "path": "/spec/claimRef", "value": object{"name": "data", "namespace": "tenant", "uid": "claim-uid"}},
+						{"op": "test", "path": "/spec/csi/driver", "value": "driver.longhorn.io"},
 						{"op": "test", "path": "/spec/csi/volumeHandle", "value": "pvc-claim-uid"},
 						{"op": "test", "path": "/spec/persistentVolumeReclaimPolicy", "value": "Delete"},
 						{"op": "replace", "path": "/spec/persistentVolumeReclaimPolicy", "value": "Retain"},

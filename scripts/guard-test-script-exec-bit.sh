@@ -28,16 +28,16 @@ if [[ "$count" == 0 ]]; then
   exit 2
 fi
 [[ "$status" == 0 ]] || exit "$status"
-library_filter='(^|/)scripts/(cosign-failure-lib|ghcr-auth-lib|publish-workflow-approved-revisions\.lib|refresh-flux-ghcr-auth-safety)\.sh$'
+library_filter='(^|/)scripts/(cosign-failure-lib|publish-workflow-approved-revisions\.lib)\.sh$'
 if ! actual_library_filter="$(yq -r '.BASH_EXEC_FILTER_REGEX_EXCLUDE' "$repo_root/.mega-linter.yml")"; then
   echo '::error::cannot read the bash-exec library exclusion' >&2
   exit 2
 fi
 if [[ "$actual_library_filter" != "$library_filter" ]]; then
-  echo '::error::bash-exec must exclude only the four reviewed sourced libraries' >&2
+  echo '::error::bash-exec must exclude only the two reviewed sourced libraries' >&2
   exit 1
 fi
-for library in cosign-failure-lib.sh ghcr-auth-lib.sh publish-workflow-approved-revisions.lib.sh refresh-flux-ghcr-auth-safety.sh; do
+for library in cosign-failure-lib.sh publish-workflow-approved-revisions.lib.sh; do
   path="scripts/$library"
   entry="$(git -C "$repo_root" ls-files --stage -- "$path")" || exit 2
   metadata="${entry%%$'\t'*}"

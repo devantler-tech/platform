@@ -1,0 +1,10 @@
+# Signs the setup user's certificate (certificate-setup-key.yaml) with its
+# own key. ZITADEL trusts that one certificate's public key directly, so no CA
+# is involved.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: customer-identity-setup
+  namespace: customer-identity
+spec:
+  selfSigned: {}

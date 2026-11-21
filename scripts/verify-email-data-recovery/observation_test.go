@@ -72,6 +72,64 @@ func TestObservationClientHasOnlyThreeFixedReads(t *testing.T) {
 	}
 }
 
+const freshFixtureWitness = `{
+  "run":42818236850,
+  "namespace":{"uid":"00000000-0000-4000-8000-000000000001"},
+  "reader":{"uid":"00000000-0000-4000-8000-000000000002"},
+  "claim":{"uid":"00000000-0000-4000-8000-000000000003","volume":"pvc-synthetic-fresh"},
+  "backup":{"uid":"00000000-0000-4000-8000-000000000004","created":"2026-11-10T12:44:40Z","expires":"2026-11-11T12:44:40Z"},
+  "download":{"uid":"00000000-0000-4000-8000-000000000005"}
+}`
+
+func TestFreshObservationRequiresExactWitnessBeforeAccess(t *testing.T) {
+	for _, data := range []string{
+		"",
+		freshFixtureWitness + "{}",
+		strings.Replace(freshFixtureWitness, "42818236850", "41561215415", 1),
+		strings.Replace(freshFixtureWitness, `"reader"`, `"Reader"`, 1),
+		strings.Replace(freshFixtureWitness, `"reader":{`, `"reader":{"uid":"replaced",`, 1),
+		strings.Replace(freshFixtureWitness, "000000000002", "000000000001", 1),
+		strings.Replace(freshFixtureWitness, "2026-11-11T12:44:40Z", "2026-11-12T12:44:40Z", 1),
+	} {
+		e := observationEnv()
+		e["EMAIL_DATA_RECOVERY_CONFIRM"] = freshParityConfirm
+		e["EMAIL_FRESH_RECOVERY_WITNESS"] = data
+		api := &observationAPI{}
+		var out bytes.Buffer
+		if runRecoveryObservation(context.Background(), func(k string) string { return e[k] }, api, &out) != 2 ||
+			api.calls != 0 || out.String() != "EMAIL_RECOVERY_OBSERVATION=UNVERIFIED stage=fresh-witness\n" {
+			t.Fatal("unbound witness reached the cluster or leaked evidence")
+		}
+	}
+}
+
+func TestFreshObservationDoesNotReadTheOriginalGraphOrWrite(t *testing.T) {
+	w, err := parseFreshRecoveryWitness(freshFixtureWitness)
+	if err != nil {
+		t.Fatal("exact fixture refused")
+	}
+	api := &observationAPI{}
+	k := observationReadOnly{base: api, parity: true, fresh: w}
+	for _, args := range w.reads() {
+		_, _ = k.call(context.Background(), nil, args...)
+	}
+	if api.calls != 5 {
+		t.Fatal("one of the exact graph reads was refused")
+	}
+	for _, args := range [][]string{
+		{"get", "Pod", "reader", "--ignore-not-found=true", "-o=json", "--namespace=" + retainedRecovery.namespace},
+		{"get", "backups.velero.io", retainedRecovery.namespace + "-backup", "--ignore-not-found=true", "-o=json", "--namespace=velero"},
+		{"get", "podvolumebackups.velero.io", "--namespace=velero", "-o=json", "--selector=velero.io/backup-uid=" + w.Download.UID},
+		{"get", "PersistentVolume", "pvc-foreign", "--ignore-not-found=true", "-o=json"},
+		{"delete", "Namespace", freshRetainedRecovery.namespace},
+	} {
+		_, _ = k.call(context.Background(), nil, args...)
+	}
+	if api.calls != 5 {
+		t.Fatal("fresh scope forwarded a foreign read or mutation")
+	}
+}
+
 // A real local HTTP server distinguishes readiness from successful transport.
 // This probe must send no credential and never follow a server-selected URL.
 func TestObservationHealthReportsStatusWithoutAuthenticationOrRedirects(t *testing.T) {

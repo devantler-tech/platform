@@ -9,8 +9,7 @@ import (
 
 type commandFunc func(context.Context, string, []string, []byte, map[string]string) ([]byte, error)
 type snapshot struct {
-	objects            []object
-	username, password string
+	objects []object
 }
 
 func active(ctx context.Context) error {
@@ -97,21 +96,9 @@ func takeSnapshot(ctx context.Context, run commandFunc, desired []byte) (snapsho
 	if err != nil {
 		return snapshot{}, err
 	}
-	// Read the one authoritative pull credential only after the public bindings
-	// qualify. It and the complete private footprint are never serialized.
-	secretRaw, err := nativeRead(ctx, run, "/api/v1/namespaces/kyverno/secrets/ghcr-auth")
-	if err != nil {
-		return snapshot{}, err
-	}
-	username, password, err := registryCredential(secretRaw)
-	if err != nil {
-		return snapshot{}, err
-	}
-	secret, err := decodeObject(secretRaw)
-	if err != nil {
-		return snapshot{}, err
-	}
-	objects := []object{policy, namespace, webhook, secret}
+	// Kyverno holds no registry credential: first-party packages are public
+	// (platform#6272), so the policy reads them anonymously and so does this proof.
+	objects := []object{policy, namespace, webhook}
 	objects = append(objects, exceptions...)
 	objects = append(objects, controllers...)
 	objects = append(objects, service...)
@@ -127,5 +114,5 @@ func takeSnapshot(ctx context.Context, run commandFunc, desired []byte) (snapsho
 	if err = active(ctx); err != nil {
 		return snapshot{}, err
 	}
-	return snapshot{objects: objects, username: username, password: password}, nil
+	return snapshot{objects: objects}, nil
 }

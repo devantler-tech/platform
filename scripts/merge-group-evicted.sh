@@ -119,7 +119,16 @@ while :; do
     exit 0
   fi
 
-  [ "$polls" -lt "$max_polls" ] ||
-    fail "#${number} had not merged, or the queue had not drained, after ${max_polls} reads; its outcome is unknown"
+  # The bound ends in one of two different states (#5014), and the failure names which,
+  # with the queued count it last read: this group's own entry may still be queued, or
+  # the PR has left and the answer is waiting for the queue to drain. In the second
+  # case main is NOT restored, so production can keep the unmerged artifact until a
+  # later deploy replaces it.
+  if [ "$polls" -ge "$max_polls" ]; then
+    if [ -z "$left" ]; then
+      fail "#${number}: this merge group's own queue entry was still queued after ${max_polls} reads (last read: ${queued} entries queued); it had neither merged nor left, so its outcome is unknown"
+    fi
+    fail "#${number} left the merge queue (${left}), but the queue had not drained after ${max_polls} reads (last read: ${queued} entries queued); main was not restored, so production may still run this PR's unmerged artifact until a later deploy replaces it"
+  fi
   sleep "$poll_seconds"
 done

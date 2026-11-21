@@ -9,17 +9,17 @@ import (
 )
 
 type runtimeSchema struct {
-	version, domainEnabled, implicitTLS, applicationEnabled, applicationInterval, aliasEnabled string
-	v1                                                                                         bool
+	version, domainEnabled, implicitTLS, applicationEnabled, applicationInterval, aliasEnabled, relayHostField string
+	v1                                                                                                         bool
 }
 
 // schemaFor selects an audited schema. Omission preserves the deployed baseline.
 func schemaFor(version string) (runtimeSchema, error) {
 	switch version {
 	case "", "0.16.27":
-		return runtimeSchema{"0.16.27", "isEnabled", "tlsImplicit", "enabled", "autoUpdateFrequency", "enabled", false}, nil
+		return runtimeSchema{"0.16.27", "isEnabled", "tlsImplicit", "enabled", "autoUpdateFrequency", "enabled", "address", false}, nil
 	case "1.0.2", "1.0.3":
-		return runtimeSchema{version, "enable", "implicitTls", "enable", "autoUpdateInterval", "enable", true}, nil
+		return runtimeSchema{version, "enable", "implicitTls", "enable", "autoUpdateInterval", "enable", "host", true}, nil
 	default:
 		return runtimeSchema{}, errConfiguration
 	}

@@ -204,11 +204,13 @@ render() {
 
   # jq and yq print "null" for a missing field, so an empty check alone passes it.
   local field
-  for field in "$chart" "$version" "$release" "$namespace" "$url"; do
+  for field in "$chart" "$release" "$namespace" "$url"; do
     if [ -z "$field" ] || [ "$field" = "null" ]; then
       fail "${name}: could not read chart, version, release, namespace and repository"
     fi
   done
+  [ -n "$version" ] || [[ "$url" =~ @sha256:[a-f0-9]{64}$ ]] ||
+    fail "${name}: an unversioned chart requires its exact OCI digest"
 
   # Every post-renderer must be a kustomize patch or image override whose patches each
   # name an explicit kind; anything else fails closed. A patch without a kind could
@@ -237,16 +239,33 @@ render() {
 
   jq '.spec.values // {}' "${work}/release.json" >"${work}/values.json"
   case "$url" in
+    oci://*@sha256:*) helm pull "$url" --destination "$work" >/dev/null ;;
     oci://*) helm pull "$url" --version "$version" --destination "$work" >/dev/null ;;
     *) helm pull "$chart" --repo "$url" --version "$version" --destination "$work" >/dev/null ;;
   esac
+  # A digest names the OCI artifact, not the chart's embedded version. Select
+  # the single package Helm actually downloaded; metadata never chooses a path.
+  local chart_archives=("${work}"/*.tgz)
+  [ "${#chart_archives[@]}" -eq 1 ] && [ -f "${chart_archives[0]}" ] ||
+    fail "${name}: expected exactly one downloaded chart"
+  local chart_archive="${chart_archives[0]}" chart_metadata metadata_version
+  chart_metadata="$(helm show chart "$chart_archive")"
+  [ "$(yq -r '.name' <<<"$chart_metadata")" = "$chart" ] ||
+    fail "${name}: downloaded chart name differs from its source"
+  metadata_version="$(yq -r '.version' <<<"$chart_metadata")"
+  [ -n "$metadata_version" ] && [ "$metadata_version" != null ] ||
+    fail "${name}: downloaded chart has no version"
+  # Helm accepts the equivalent optional v prefix in chart metadata.
+  [ -z "$version" ] || [ "${version#v}" = "${metadata_version#v}" ] ||
+    fail "${name}: downloaded chart version differs from its source"
+  [ -n "$version" ] || version="$metadata_version"
 
   # A chart can condition RBAC on .Release.IsUpgrade, and Flux upgrades an existing
   # release when its chart version changes, so both renders are evaluated.
-  helm template "$release" "${work}/${chart}-${version}.tgz" \
+  helm template "$release" "$chart_archive" \
     --namespace "$namespace" --kube-version "$kube_version" \
     --values "${work}/values.json" >"${work}/rendered-install.yaml"
-  helm template "$release" "${work}/${chart}-${version}.tgz" \
+  helm template "$release" "$chart_archive" \
     --namespace "$namespace" --kube-version "$kube_version" --is-upgrade \
     --values "${work}/values.json" >"${work}/rendered-upgrade.yaml"
   if [ "$post_render" = true ]; then

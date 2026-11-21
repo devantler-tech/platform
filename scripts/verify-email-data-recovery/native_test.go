@@ -64,6 +64,7 @@ func TestNativeRecoveryMarkerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal("native nonce unavailable")
 	}
+	window := &retainedMessageWindow{after: time.Now().UTC().Truncate(time.Second).Add(-time.Second)}
 	marker, err := client.createMarker(ctx, nonce)
 	if err != nil {
 		if marker != nil && marker.identity.email != "" {
@@ -71,8 +72,22 @@ func TestNativeRecoveryMarkerLifecycle(t *testing.T) {
 		}
 		t.Fatalf("native marker import: %s", err)
 	}
+	window.before = time.Now().UTC().Truncate(time.Second).Add(time.Second)
 	if _, err = client.verifyMessage(ctx, marker.identity); err != nil {
 		t.Fatalf("native marker read: %s", err)
+	}
+	reader, err := newRetainedMailboxClientInWindow(client.endpoint, password, window)
+	if err != nil {
+		t.Fatal("native read-only fixture endpoint refused")
+	}
+	reader.http.Transport = fixtureIdentityTransport{base: reader.http.Transport, password: password}
+	if err = reader.session(ctx); err != nil {
+		t.Fatal("native read-only fixture session refused")
+	}
+	observed, stage := readRetainedDiagnostic(ctx, reader, window)
+	observed.receivedAt = ""
+	if stage != "" || observed != marker.identity {
+		t.Fatalf("native bounded marker read failed at stage %q", stage)
 	}
 	if err = client.cleanupMarker(ctx, marker); err != nil {
 		t.Fatalf("native marker cleanup: %s", err)

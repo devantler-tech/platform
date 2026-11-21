@@ -12,7 +12,8 @@ capture-openbao-replacement \
 ```
 
 The protected [`Replace OpenBao Server`](../../.github/workflows/replace-openbao-server.yaml)
-workflow runs it in `preflight` mode and then runs both judges for the server it was asked about.
+workflow runs it, then both judges for the server it was asked about, before it replaces anything and
+again after each replacement until both judges return `PROVEN`.
 The expected servers and release come from the reviewed render, never from the cluster.
 
 | Exit | Line | Meaning |

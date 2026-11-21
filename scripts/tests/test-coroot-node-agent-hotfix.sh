@@ -12,7 +12,7 @@ readonly source_tag='v1.38.1'
 readonly source_commit='e335bf21a4657e9c91f56945f726e28b5f56a589'
 readonly upstream_image='ghcr.io/coroot/coroot-node-agent:1.38.1@sha256:a1488ca3e541703fe4b4cdefeff2dae992cc9f45affd18f9f41e5b12a8016cae'
 readonly image_repository='ghcr.io/devantler-tech/platform-coroot-node-agent'
-readonly go_version='1.26.10'
+readonly go_version='1.26.11'
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2

@@ -10,6 +10,8 @@ resources:
   - khoist-documentation/
   # Fetch/verify the exact reviewed publication only; no tenant application.
   - business-site/
+  # Customer sign-in for the business-site portal (ZITADEL, business-site#302).
+  - customer-identity/
   # Prod-only tenant: the UniFi network managed declaratively through Crossplane
   # Managed Resources (providers/hetzner/apps/unifi/). Lives in the hetzner apps
   # overlay because its provider and the controller API it reaches are

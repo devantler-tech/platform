@@ -1177,6 +1177,34 @@ printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization
 run_guard "$TREE"
 assert_rc 'a cluster overlay that names no Flux Kustomization' 2
 
+# The rendering library is shared with the PodDisruptionBudget selector guard (#4465): what one
+# guard refuses or tolerates there, this one does too.
+new_tree
+pr_3580 | release
+mkdir -p "$TREE/k8s/clusters/second"
+printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: stray' >"$TREE/k8s/clusters/second/config-map.yaml"
+run_guard "$TREE"
+assert_rc 'a directory under clusters/ with no kustomization file' 2
+assert_contains 'refuses to skip it' "clusters/second' holds no kustomization.yaml, kustomization.yml or Kustomization, so it cannot be rendered as a cluster overlay — refusing to skip it"
+
+new_tree
+pr_3580 | release
+mv "$TREE/k8s/clusters/test/kustomization.yaml" "$TREE/k8s/clusters/test/kustomization.yml"
+run_guard "$TREE"
+assert_rc 'an overlay built from kustomization.yml is rendered' 0
+assert_contains 'and its release checked' ', 1 checked, all apply'
+
+new_tree
+pr_3580 | release
+yq -i '.spec.chart.spec.chart = "absent"' "$TREE/k8s/controllers/test/helm-release.yaml"
+POST_RENDERER_GUARD_PULL_BACKOFF=0 run_guard "$TREE"
+assert_rc 'a chart that cannot be pulled' 2
+assert_contains 'says the pull failed, and after how many attempts' 'after 3 attempt(s): Error: chart "absent" not found'
+assert_pulls 'a failed pull is tried again, a bounded number of times' 3
+POST_RENDERER_GUARD_PULL_ATTEMPTS=0 run_guard "$TREE"
+assert_rc 'a bound of zero attempts is refused' 2
+assert_contains 'names the variable' 'POST_RENDERER_GUARD_PULL_ATTEMPTS must be a whole number of at least 1'
+
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1
 printf 'PASS: the post-renderer guard fails #3577, passes #3580, renders only what changed, and refuses what it cannot render\n'

@@ -22,7 +22,7 @@ repo_root="$(cd "${script_dir}/../.." && pwd)"
 
 role_file="${repo_root}/k8s/bases/infrastructure/cluster-roles/gateway-tenant-edit.yaml"
 # The prod overlay is what carries every listener: two come from the base
-# Gateway and two more are appended by the hetzner JSON6902 patch, which a
+# Gateway and more are appended by the hetzner JSON6902 patches, which a
 # per-file check would never see.
 overlay="${repo_root}/k8s/providers/hetzner/infrastructure"
 
@@ -83,6 +83,18 @@ unpinned="$(yq eval \
 [ -z "${unpinned// /}" ] ||
   fail "these Gateway listeners do not pin allowedRoutes.kinds to exactly [HTTPRoute]: ${unpinned}— an unpinned HTTPS listener also accepts GRPCRoute, which restrict-tenant-route-hostnames does not match."
 
+# Introduce the apex listener before narrowing the original listener. Homepage
+# already uses a port-only parent, so the more-specific listener can take over
+# its hostname without changing the app layer in the same deployment.
+apex_listeners="$(yq -o=json -I=0 '[.spec.listeners[] | select(.name == "https-apex")]' "${gateway}")"
+jq -e 'length == 1 and .[0].hostname == "${domain}" and .[0].port == 443 and .[0].protocol == "HTTPS" and .[0].allowedRoutes.namespaces.from == "All"' <<<"${apex_listeners}" >/dev/null ||
+  fail 'expected exactly one production apex HTTPS listener on port 443 with the existing route namespace scope'
+original_listeners="$(yq -o=json -I=0 '[.spec.listeners[] | select(.name == "https")]' "${gateway}")"
+jq -e 'length == 1 and (.[0] | has("hostname") | not) and .[0].port == 443 and .[0].protocol == "HTTPS"' <<<"${original_listeners}" >/dev/null ||
+  fail 'keep the original hostname-less HTTPS listener until the separately observed narrowing stage'
+jq -e --argjson original "${original_listeners}" '.[0].tls == $original[0].tls and .[0].tls.mode == "Terminate" and (.[0].tls.certificateRefs | length) == 1' <<<"${apex_listeners}" >/dev/null ||
+  fail 'the apex listener must terminate TLS with the same existing certificate reference as the original HTTPS listener'
+
 # --- Layer 3: what the policy's CLI fixtures cannot show ---------------------
 # A ValidatingPolicy's operations only decide which requests the webhook
 # receives, so the CLI evaluates a DELETE fixture the same way as a create.
@@ -107,6 +119,22 @@ for tenant in wedding-app ascoachingogvaner; do
   owner="$(yq -r '.metadata.labels."app.kubernetes.io/managed-by" // ""' "${namespace_file}")"
   [ "${owner}" = "ksail" ] ||
     fail "${namespace_file} must carry app.kubernetes.io/managed-by: ksail or its routes escape restrict-tenant-route-hostnames (found: '${owner}')"
+done
+
+# Homepage must remain attached only to the shared Gateway's HTTPS port while
+# its listener name changes. A name-only parent would lose the apex route when
+# Cilium isolates a new, more-specific listener; an unconstrained parent could
+# attach to a future plaintext listener. Check the shared input AND its actual
+# production apps render, rather than assuming an overlay preserves the base.
+apps_render="${workdir}/apps.yaml"
+kubectl kustomize "${repo_root}/k8s/providers/hetzner/apps" >"${apps_render}" 2>"${workdir}/apps.err" ||
+  fail "prod apps overlay failed to build: $(tail -5 "${workdir}/apps.err")"
+for route_input in "${repo_root}/k8s/bases/apps/homepage/http-route.yaml" "${apps_render}"; do
+  homepage_count="$(yq -o=json -I=0 'select(.kind == "HTTPRoute" and .metadata.namespace == "homepage" and .metadata.name == "homepage")' "${route_input}" | jq -s 'length')"
+  [ "${homepage_count}" = 1 ] || fail "expected exactly one Homepage route in ${route_input}"
+  homepage_parents="$(yq -o=json -I=0 'select(.kind == "HTTPRoute" and .metadata.namespace == "homepage" and .metadata.name == "homepage") | .spec.parentRefs' "${route_input}")"
+  jq -e 'length == 1 and .[0].name == "platform" and .[0].namespace == "kube-system" and .[0].port == 443 and (.[0].group // "gateway.networking.k8s.io") == "gateway.networking.k8s.io" and (.[0].kind // "Gateway") == "Gateway"' <<<"${homepage_parents}" >/dev/null ||
+    fail "Homepage must have exactly one parent on Gateway kube-system/platform, constrained to HTTPS port 443 (${route_input})"
 done
 
 echo "Tenant route-kind boundary holds: RBAC grants HTTPRoute only and all ${listener_count} listeners pin kinds to HTTPRoute."

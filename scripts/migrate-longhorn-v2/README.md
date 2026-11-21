@@ -1,13 +1,64 @@
 # Prepare Longhorn V2 workers
 
+First-attempt manual runs on main join the ordinary production queue before
+validation and keep that turn through the selected operation. Other events, refs
+and attempts use separate groups and keep their existing operation refusals.
+All boundary tests still run before production credentials
+are restored. The original dispatch source must remain current: the production
+lock does not lock Git refs, and a stale source still refuses the operation.
+
+`inventory-v1-runtime` is a protected, target-free read-only inventory. Its exact
+confirmation is `inventory-v1-runtime`, with empty `node` and `database`.
+It observes the complete runtime inventory twice between current-main checks.
+`declaredOverlap=FIT` means the observed CPU and memory requests fit one
+additional V1 manager per storage node. CPU uses a conservative sum of init
+requests and the actual per-node override or rounded global V1 percentage.
+Memory uses the scheduler's peak init/sidecar accounting and observed namespace
+default request. Complete LimitRange and ResourceQuota lists participate in the
+same epoch. Unqualified defaults, quota or resource quantities leave the
+calculation `UNVERIFIED`; an insufficient conservative budget reports `HOLD`.
+Effective memory requests use exact Kubernetes quantities and whole-byte Pod
+rounding. The budget also counts larger allocated or enacted Pod aggregate
+requests, adding overhead once, and binds those values into the inventory epoch.
+Container-level status must belong to its declared container and fit within its
+declared request. A larger container allocation, active resize, malformed status
+or node-resource claim leaves the calculation `UNVERIFIED`. The shared host-memory
+admission uses the same conservative memory budget.
+These are declared request budgets. Resident-memory measurements, reservations,
+admission, serving health and rollout remain separate checks. The receipt keeps
+`adoption=UNVERIFIED headroom=UNVERIFIED` and authorizes no storage operation.
+
+The shared production publisher brackets KSail's unchanged source inputs before
+staging and before promotion. Its separate read-only publication guard inspects
+the effective production layers and refuses indirect or unknown runtime-image
+selection. The first selection of the reviewed retirement image requires a fresh
+stable native epoch with complete declared overlap capacity, and an isolated
+protected-queue change adding only the reviewed image/rolling-strategy component
+and its matching Longhorn authorization-ledger entry. Every other approval must
+remain unchanged; the existing required validator checks the new exact digest.
+An unchanged already-selected image needs a stable native epoch rather than a
+second stock-image overlap calculation. Initial selection from manual CD or a
+recovery checkout is held because those checkouts do not prove an isolated
+deployed baseline. A source rollback to the stock profile remains publishable.
+
+Initialized disaster recovery may have complete empty Volume, Engine and Replica
+lists. Those are valid observations; failed reads and missing or partial lists
+remain held. Positive node, runtime and process inventories are still required.
+The guard proves producer-input consistency, not an independent OCI layer readback
+or runtime adoption. Serving-image adoption, resident memory, rollout health and
+benchmark/scratch retirement remain separate acceptance checks.
+
 `observe-database` is a protected, read-only PostgreSQL observation for
-platform#5842. Select one of the five fixed databases with `database`, leave
+platform#5842. Select one of the seven fixed databases with `database`, leave
 `node` empty, and confirm with `observe-longhorn-v2-database-<database>`.
 It requires all reviewed healthy, owned instances with stable primary and archive
 state. Fixed SQL reads physical database identity, timeline and WAL positions;
-the primary's captured flush position must be replayed by both standbys. The
+the primary's captured flush position must be replayed by every standby. The
 client uses the Pod's fixed local socket with a cleared connection environment
 and fixed executable search path, rather than inheriting libpq overrides.
+It qualifies PostgreSQL built-ins explicitly and fixes catalog lookup and
+read-only transaction defaults for the connection. Persisted role or database
+settings cannot redirect this physical-state query through a shadow function.
 Complete namespace Pod inventories and process identities bracket the reads,
 including a final whole-cluster read after the last SQL command. The operation
 prints only a success summary, with no application rows, credentials or physical
@@ -42,6 +93,14 @@ phases, encryption properties and counts, while withholding device paths and
 identities. It grants no reset clearance and never treats a failed read as absence.
 The original root-only mode keeps its existing scope and schema.
 
+`inventory-provider-volume-footprint` reads the current provider-backed claims
+and native Talos filesystem usage from their running mounts. Confirm with
+`inventory-provider-volume-footprint` on a first-attempt main dispatch.
+It binds each running CSI mount to its provider disk and checks the claim,
+volume, disk and worker identities on both sides of the read. The receipt reports aggregate GiB rounded up, with
+unmounted claims accounted for at their full requested capacity. Use the result
+as an input to capacity planning and validate each restore before cutover.
+
 `inspect-host-memory` is a read-only diagnostic for a fixed permanent worker,
 confirmed with `inspect-longhorn-v2-host-memory-<worker>`. It reads only the native
 huge-page allocation and selected `/proc/meminfo` counters, bracketed by unchanged
@@ -57,7 +116,7 @@ requires two intact peer copies before scheduling and full redundancy afterward.
 For a confirmed allocation shortfall, `reboot-host-for-hugepages` selects exactly one
 permanent worker with `reboot-longhorn-v2-host-<worker>`. It requires the loaded
 reservation, unused native huge pages, disabled V2, the complete fixed migration roster, all V1
-volumes fully redundant, and all three database clusters healthy. It records the
+volumes fully redundant, and all seven database clusters healthy. It records the
 original node, hardware, boot, encrypted EPHEMERAL partition, storage disks and
 database identities before an owned cordon and an eviction-based application drain.
 The live `block-if-contains-last-replica` policy and target V1 instance-manager
@@ -75,11 +134,13 @@ reboot intent. The single reboot request has no reset or disk-wipe selector.
 An unfinished or unreadable peer journal, another worker's cordon, or lost proof
 of a peer's recorded recovery prevents starting the next worker.
 
-New journals bind all five production PostgreSQL clusters and their full declared
-replica counts. The two-instance kagent and Substrate databases must both recover
-before the reboot, alongside Coroot, Umami and Wedding. Existing journals preserve
-their original identities. A legacy journal that has yet to request a reboot must
-bind the current database roster before moving the worker.
+New version-3 journals bind all seven production PostgreSQL clusters and their
+full declared replica counts, including the two-instance identity and portal
+databases. Every cluster must recover before a reboot. Version-1 and version-2
+journals remain readable with their original three-owner and five-owner scopes.
+A record that has yet to request a reboot must freshly bind the current roster
+before moving the worker, preserving each original identity. Post-request
+recovery retains the original receipt's scope.
 
 Recovery never repeats an uncertain reboot. It requires a changed boot with the
 same node, hardware, OS, encrypted partition, registered disks and database system
@@ -92,6 +153,11 @@ released so Longhorn can recreate its instance manager. The maintenance marker
 and unfinished journal remain until full V1 redundancy and database health return;
 a timeout at this stage leaves the node schedulable under that retained marker.
 Only then is the marker removed and recovery recorded. Both release steps are read back.
+Each release PATCH uses a fresh Node identity and resource version after the
+native safety checks. A failed write response is confirmed only by the exact
+intended state on the same Node and journal identities; the write is never
+repeated. A deleting journal cannot authorize recovery. Fixed stage diagnostics
+identify the failed boundary without publishing private command replies.
 Dispatch each worker separately and verify platform recovery before the next one.
 An interrupted run keeps its journal and cordon; a new first-attempt main dispatch
 may adopt it only after the previous run has ended. This operation enables no V2
@@ -443,3 +509,22 @@ migration scratch and unbound claims. A lost write response is checked without
 repeating the patch. This operation neither replaces claims nor changes storage
 classes. Keep the original PV and backend until the application's recovery and
 cutover checks pass.
+
+## Retain one Hetzner source before replacing its claim
+
+Select `retain-provider-source` with no worker. Read the original bound
+Filesystem PVC and PV plus their `hcloud` StorageClass. Compute a SHA-256
+digest without a trailing newline over
+`csi.hetzner.cloud:namespace/claim:claim-uid:pv-name:pv-uid:volume-handle:pv-capacity-bytes`.
+Supply `retain-hetzner-source:<namespace>/<claim>:<digest>` as confirmation.
+
+The fixed migration namespaces are `kube-system`, `observability`, `openbao`,
+`customer-identity` and `business-site`. The provider footprint reader uses the
+same namespace set, including the identity and portal databases. Each retention
+request still binds one original claim, PV and provider handle; a digest from a
+different namespace cannot authorize it.
+
+The workflow verifies the original binding and provider handle, changes
+only that PV's reclaim policy, and reads the same binding back. Keep the
+retained provider volume until the workload has passed its V2 recovery and
+application checks.

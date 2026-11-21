@@ -1,0 +1,112 @@
+# ZITADEL's PostgreSQL store: every customer account, credential, MFA factor
+# and session. Not rebuildable, so it is backed up off-cluster to R2
+# (object-store.yaml, scheduled-backup.yaml) and Flux never prunes it.
+#
+# CNPG creates the `zitadel` database and its owner login with the generated
+# password (external-secret-db-zitadel.yaml). ZITADEL connects as that owner
+# and creates its own schemas (`zitadel init zitadel`, then `zitadel setup`),
+# so no ZITADEL step needs a superuser (helm-release.yaml).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: customer-identity-db
+  namespace: customer-identity
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie
+  instances: 2
+  # The platform's storage tier for database pods (as every production
+  # database declares). CNPG ignores a priorityClassName change, so the
+  # matching env var is what rolls the instances when it changes.
+  priorityClassName: hcloud-volume-workload
+  env:
+    - name: PLATFORM_DATABASE_PRIORITY_CLASS
+      value: hcloud-volume-workload
+  # Hetzner Cloud volumes, as OpenBao and Coroot use, not Longhorn: CNPG
+  # already keeps a second copy, so Longhorn's three replicas per instance
+  # would triple storage the shared pool cannot spare (the first rollout's
+  # volume was refused for insufficient Longhorn storage). An hcloud volume is
+  # not force-detached when its node leaves, so the instances stay on the
+  # static baseline workers (require-baseline-workers-for-hcloud-volumes).
+  # Temporary: every platform volume finishes on Longhorn V2, and this
+  # cluster's two claims move there with the database migration (#5842).
+  storage:
+    size: 10Gi
+    storageClass: hcloud
+  affinity:
+    nodeSelector:
+      platform.devantler.tech/baseline-worker: "true"
+  # Coroot's Postgres integration, as every platform database has. CNPG
+  # copies these annotations onto the instance pods, where Coroot's
+  # cluster-agent discovers them; it logs in as the coroot_monitor role below,
+  # and only it may reach the instances for this (cilium-network-policy-coroot.yaml).
+  inheritedMetadata:
+    annotations:
+      coroot.com/postgres-scrape: "true"
+      coroot.com/postgres-scrape-port: "5432"
+      coroot.com/postgres-scrape-credentials-secret-name: customer-identity-db-coroot-monitor
+      coroot.com/postgres-scrape-credentials-secret-username-key: username
+      coroot.com/postgres-scrape-credentials-secret-password-key: password
+      coroot.com/postgres-scrape-param-sslmode: require
+  # Same quorum replication as the platform's other databases. While
+  # synchronous replication is active, every commit waits for the standby, so
+  # a promoted standby holds every committed transaction. With
+  # dataDurability: preferred, CNPG counts only healthy standbys, so writes
+  # continue when the standby is unavailable (down or unhealthy), and commits
+  # made then exist only on the primary until the standby or the WAL archive
+  # receives them. This is not RPO=0.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+    # Any pg_stat_statements.* parameter makes CNPG preload the extension and
+    # create it in every database, which feeds Coroot's per-query view.
+    parameters:
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: all
+  bootstrap:
+    initdb:
+      database: zitadel
+      owner: zitadel
+      secret:
+        name: customer-identity-db-zitadel
+      postInitApplicationSQL:
+        - REVOKE CREATE ON SCHEMA public FROM PUBLIC
+  managed:
+    roles:
+      # Keeps the owner's password equal to its Secret after bootstrap.
+      - name: zitadel
+        ensure: present
+        login: true
+        passwordSecret:
+          name: customer-identity-db-zitadel
+      # The customer Dex's login, owner of the customer_dex database only
+      # (database-dex.yaml).
+      - name: customer_dex
+        ensure: present
+        login: true
+        passwordSecret:
+          name: customer-identity-db-dex
+      # Coroot's read-only monitoring login: pg_monitor only, no access to
+      # ZITADEL's data.
+      - name: coroot_monitor
+        ensure: present
+        login: true
+        inRoles:
+          - pg_monitor
+        passwordSecret:
+          name: customer-identity-db-coroot-monitor
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: customer-identity-db

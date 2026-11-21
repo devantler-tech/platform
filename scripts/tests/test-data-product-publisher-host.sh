@@ -54,7 +54,7 @@ $pod.containers[0] as $container |
   ($deployment.spec.template.metadata.labels == labels),
   ($pod.serviceAccountName == $account.metadata.name and $pod.automountServiceAccountToken == false),
   ($account.automountServiceAccountToken == false),
-  ($pod.imagePullSecrets == [{name:"ghcr-auth"}] and $account.imagePullSecrets == [{name:"ghcr-auth"}]),
+  (($pod.imagePullSecrets // []) == [] and ($account.imagePullSecrets // []) == []),
   ($pod.securityContext | restricted),
   ($pod.securityContext.fsGroup == 65532),
   (($pod.hostNetwork // false) == false and ($pod.hostPID // false) == false and ($pod.hostIPC // false) == false),

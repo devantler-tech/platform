@@ -36,6 +36,8 @@ resources:
   # Coroot/Flagger. Establishes the namespaced github CRDs the github-config app
   # (bases/apps/github-config/) consumes. Prod-only (Crossplane is Hetzner-only).
   - crossplane/
+  # Native admission guard for the EKS CI identity (platform#6270).
+  - ci-identity/
   # external-dns lives in this `infrastructure` layer (not
   # `infrastructure/controllers/`) because its Cloudflare token is a user-fed
   # OpenBao secret materialised by an ExternalSecret, and the openbao
@@ -69,6 +71,9 @@ resources:
   # runtime-generated DaemonSet. Both are exact and version-coupled (#3931).
   - cluster-policies/remove-longhorn-registrar-prestop.yaml
   - cluster-policies/remove-existing-longhorn-registrar-prestop.yaml
+  # Keep the existing root identity for the exact temporary V1 benchmark runtime.
+  - cluster-policies/mutating-admission-policy-longhorn-v1-benchmark-runtime.yaml
+  - cluster-policies/mutating-admission-policy-binding-longhorn-v1-benchmark-runtime.yaml
   # Prod-only: retrofit the two non-privilege C-0211 fields onto the four
   # Longhorn CSI sidecar Deployments that predate the longhorn-system
   # baseline-context opt-in. mutate-existing only -- nothing writes those
@@ -218,6 +223,36 @@ components:
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
 patches:
+  # Temporary rollout headroom for the storage migration (#6073). This
+  # single-writer metrics collector keeps its existing Recreate strategy.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: coroot-security-progress
+      namespace: observability
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: coroot-security-progress
+        namespace: observability
+      spec:
+        template:
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: kubernetes.io/hostname
+                          operator: In
+                          values: [prod-worker-1]
+                    - matchExpressions:
+                        - key: storage.platform.devantler.tech/migration-pool
+                          operator: In
+                          values: [v2]
+  - path: policy-reporter/patches/runtime-headroom.yaml
   - path: ksail-operator/patches/enable-oidc.yaml
   - path: vault-backup-recovery/patches/use-recovery-storage-for-initial-snapshot.yaml
     target:
@@ -268,6 +303,20 @@ patches:
       group: gateway.networking.k8s.io
       kind: Gateway
       name: platform
+  - path: patches/add-apex-https-listener.yaml
+    target:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: platform
+      namespace: kube-system
+  # Adds HTTPS listeners for the business-site public and portal names; see the
+  # file header.
+  - path: patches/add-devantler-tech-listeners.yaml
+    target:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: platform
+      namespace: kube-system
   # Prod-only Coroot tuning: hcloud-backed persistent storage + Slack webhook
   # wiring. The CR it patches comes from ../../../bases/infrastructure/coroot/
   # (the `infrastructure` layer); the strategic-merge patch matches on the

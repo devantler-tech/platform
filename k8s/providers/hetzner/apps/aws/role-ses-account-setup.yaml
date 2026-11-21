@@ -1,0 +1,73 @@
+# GitHub OIDC role for devantler-tech/aws's main-only "Set Up SES Account"
+# workflow (platform#5481). It sets the account's SES pricing plan to
+# pay-per-use and requests SES production access, then reads the account back.
+# Neither has a Crossplane resource. Platform-owned, like the EKS CI role, so
+# the public aws tenant cannot widen it.
+#
+# Trust is limited to workflows running on that repository's protected main
+# branch. The three account-level SES actions have no resource scope, so the
+# policy limits them to the relay's region. The role cannot send mail, read
+# mail or change identities.
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: ses-account-setup
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    description: >-
+      GitHub OIDC role for devantler-tech/aws's main-only SES account set-up
+      workflow: pricing plan, production access request and account readback.
+    maxSessionDuration: 3600
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "arn:aws:iam::939001610192:oidc-provider/token.actions.githubusercontent.com"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+              "StringEquals": {
+                "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                "token.actions.githubusercontent.com:sub": "repo:devantler-tech/aws:ref:refs/heads/main"
+              }
+            }
+          }
+        ]
+      }
+    inlinePolicy:
+      - name: ses-account-setup
+        policy: |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "SesAccountSetUp",
+                "Effect": "Allow",
+                "Action": [
+                  "ses:GetAccount",
+                  "ses:PutAccountDetails",
+                  "ses:PutAccountPricingAttributes"
+                ],
+                "Resource": "*",
+                "Condition": {
+                  "StringEquals": {
+                    "aws:RequestedRegion": "eu-central-1"
+                  }
+                }
+              }
+            ]
+          }
+  providerConfigRef:
+    kind: ProviderConfig
+    name: default

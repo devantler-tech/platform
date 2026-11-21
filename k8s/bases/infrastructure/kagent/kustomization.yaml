@@ -1,4 +1,4 @@
-# kagent 1.0 (release candidate 3), the agent control plane the Agentic
+# kagent 1.0, the agent control plane the Agentic
 # Engineer's cluster lane runs on (devantler-tech/monorepo#4866,
 # devantler-tech/platform#5892). Prod-only, opted in by the Hetzner
 # infrastructure overlay together with Substrate, which it requires.

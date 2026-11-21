@@ -1,0 +1,45 @@
+# login.devantler.tech: the portal's customer Dex (helm-release-dex.yaml). The
+# portal's issuer, so it stays fixed. Customers pass through it on the way to
+# ZITADEL and back. The listener is in
+# infrastructure/patches/add-devantler-tech-listeners.yaml; certificate.yaml
+# already covers the name.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: customer-dex
+  namespace: customer-identity
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https-login-devantler-tech
+  hostnames:
+    - login.devantler.tech
+  rules:
+    # The theme (config-map-dex-theme.yaml) is served at stable URLs, so no
+    # shared or browser cache may keep it after a change: Cloudflare otherwise
+    # holds it for four hours, as it did on the platform Dex.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /theme/
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+              - name: Cache-Control
+                value: private, no-store
+      backendRefs:
+        - name: customer-dex
+          port: 5556
+    - filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: customer-dex
+          port: 5556

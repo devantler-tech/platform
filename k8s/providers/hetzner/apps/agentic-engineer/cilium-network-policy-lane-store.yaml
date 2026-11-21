@@ -1,0 +1,38 @@
+# The lane store takes the agent's traffic only from Substrate's egress gateway,
+# which adds the store credential, and its read-only view only from the
+# Kubernetes API server, which checks the reader's services/proxy grant. The
+# agent's sandbox has no direct path to either, and the store reaches nothing.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-lane-store
+  namespace: agentic-engineer
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: lane-store
+  # Deny everything not allowed below, including all egress: the store calls
+  # nothing.
+  enableDefaultDeny:
+    ingress: true
+    egress: true
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ate-system
+            app: atenet-egress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # The API server runs on the control-plane nodes' host network, so its
+    # proxied requests can arrive as the node, as for the platform's webhooks.
+    # Only host-network system pods share that identity.
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP

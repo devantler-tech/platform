@@ -47,8 +47,6 @@ record of how a procedure works.
   of the emergency-access entry without printing it.
 - [`verify-arc-app-identity`](verify-arc-app-identity/README.md) — proof run by
   a manual workflow. Its `--preflight` mode alone needs no credentials.
-- [`prove-scoped-package-access`](prove-scoped-package-access/README.md) — a
-  manual CI experiment on registry access.
 - [`observe-longhorn-namespace-inventory`](observe-longhorn-namespace-inventory/README.md)
   — a protected metadata observation before benchmark cleanup work. It
   authorizes no deletion.

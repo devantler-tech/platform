@@ -14,7 +14,6 @@ resources:
   # retired after a dedicated-only restore and an observed access denial (#3253).
   - external-secret-db-backup-dedicated.yaml
   - object-store-dedicated.yaml
-  - external-secret-ghcr-auth.yaml
   - namespace.yaml
   - network-policy.yaml
   - role-binding.yaml

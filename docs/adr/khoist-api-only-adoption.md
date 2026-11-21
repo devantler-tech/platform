@@ -43,7 +43,25 @@ receipt with requirements that its two named products do not declare `spec.ui` a
 no serving workload carries the retired settings. Products elsewhere are counted, not
 refused. It also requires the in-place chart rename.
 
-## Rollback
+## Amendment: KHoist 9.0.12 (2026-11-13)
+
+The platform moves to KHoist 9.0.12:
+
+- **Image:** `ghcr.io/devantler-tech/khoist@sha256:fb97d7bef59c9898373f65acb90a001313806c1112bef295b464c3d161563056`.
+- **Chart:** `oci://ghcr.io/devantler-tech/charts/khoist@sha256:806cbdd4513f8ef9593f5426f5c609669651b2a4fee5970af2b3bc0519be0341`.
+
+The image is signed by the reviewed v19.0.5 `publish-app` revision (`af042c54…`), not by v8.0.0. That frees v8.0.0's slot in the generic image rules for a publisher whose signature bundle every node can read (Platform #6226, #6227). The chart keeps KHoist's own `publish-chart` signer.
+
+9.0.6 to 9.0.12 contain:
+- a Go 1.27.4 security rebuild;
+- dependency bumps, including OpenTelemetry 1.47.0;
+- test and CI fixes.
+
+The CRD changes only its `controller-gen` version annotation, and its schema is unchanged. So the decision above and the CRD upgrade path still apply.
+
+To roll back this amendment, revert its change. That restores the 9.0.5 image, chart and probe pins. The data-product-controller approvals and the documentation source keep accepting v8.0.0 until it is retired (Platform #6228), so the 9.0.5 artifacts still verify. Do not apply the rollback of the 9.0.5 adoption below for this transition: it returns to 2.9.1, `ui-kit` and the previous verifier.
+
+## Rollback of the 9.0.5 adoption
 
 Restore the 2.9.1 image, chart source and signing identity, the `ui-kit` resources and
 the previous verifier in one revert. Flux re-applies the 2.9.1 CRD through

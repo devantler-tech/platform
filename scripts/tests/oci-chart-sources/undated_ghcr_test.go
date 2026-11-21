@@ -24,6 +24,9 @@ var undatedGHCRDependencies = []renovateDependency{
 	{"ghcr.io/coroot/coroot", "dockerfile", "docker", "k8s/bases/infrastructure/coroot/CorootCheckpoint.Dockerfile"},
 	{"ghcr.io/coroot/coroot-cluster-agent", "dockerfile", "docker", "k8s/bases/infrastructure/coroot/CorootClusterAgentCheckpoint.Dockerfile"},
 	{"ghcr.io/umami-software/umami", "kubernetes", "docker", "k8s/bases/apps/umami/cron-job.yaml"},
+	// Pinned by digest with no version tag, so no release exists to age a
+	// digest update against (#5982).
+	{"docker.io/badouralix/curl-jq", "kubernetes", "docker", "k8s/providers/hetzner/infrastructure/coroot/cron-job-crossplane-sync-alerter.yaml"},
 }
 
 // Every ordinary update is proposed (no release-age wait) and none merges

@@ -13,14 +13,15 @@ spec:
   chart:
     spec:
       chart: oauth2-proxy
-      version: 10.7.1
+      version: 10.7.2
       sourceRef:
         kind: HelmRepository
         name: oauth2-proxy
   # https://github.com/oauth2-proxy/manifests/blob/main/helm/oauth2-proxy/values.yaml
   values:
     deploymentAnnotations:
-      configmap.reloader.stakater.com/reload: oauth2-proxy
+      # oauth2-proxy reads its config and its error template only at startup.
+      configmap.reloader.stakater.com/reload: oauth2-proxy,oauth2-proxy-templates
     replicaCount: ${oauth2_proxy_replicas:=2}
     serviceAccount:
       # oauth2-proxy authenticates against Dex and proxies to in-cluster HTTP
@@ -149,6 +150,19 @@ spec:
         # needs no extra clicks.
         skip_provider_button = true
         reverse_proxy = true
+        # The Devantler Tech error page (config-map.yaml), mounted below. A
+        # missing file falls back to the built-in page; footer = "-" keeps the
+        # proxy's version off that page too.
+        custom_templates_dir = "/etc/oauth2_proxy/templates"
+        footer = "-"
+    extraVolumes:
+      - name: templates
+        configMap:
+          name: oauth2-proxy-templates
+    extraVolumeMounts:
+      - name: templates
+        mountPath: /etc/oauth2_proxy/templates
+        readOnly: true
     ingress:
       enabled: false
     # Gateway API HTTPRoute rendered by the chart (replaces the former hand-rolled

@@ -1,0 +1,359 @@
+# Recovery for #6327: an encrypted Longhorn volume that cannot detach because a
+# Kubescape node-agent pod on its node keeps a busy view of its mount. The CSI
+# driver then cannot close the volume's LUKS device ("still in use"), so the
+# volume stays attached to that node and its next pod cannot start anywhere
+# else. Replacing that one node-agent pod released the device twice on
+# 2026-11-15 (#6041). The attribution is an inference, not node-level proof, so
+# the run reports whether the ordinary detach followed.
+#
+# The run acts only on what it observes now: one encrypted volume, attached
+# through one attachment, that no pod on that node uses, whose CSI plugin there
+# has just logged the failed LUKS close; and one node-agent pod there at its
+# DaemonSet's current template while the DaemonSet is fully available. It
+# deletes that one pod with a UID precondition, waits for its ready
+# replacement, then waits for the ordinary detach. Nothing here deletes an
+# attachment, edits a finalizer, touches another pod or retries.
+#
+# Before the delete and after the detach wait, it also records read-only
+# evidence of what holds the device: the node-agent's namespace descriptors
+# that no live process is in any more, and the live mount namespaces that still
+# contain the device. It reads through the Talos API and prints counts and
+# process names only. Evidence that cannot be read is reported as UNAVAILABLE
+# and never changes what the release does.
+#
+# It does not take the production deploy lock: a deploy can be the thing
+# waiting on this volume, and would otherwise block its own recovery. Runs for
+# one volume never overlap.
+name: Release Encrypted Volume Holder
+
+"on":
+  # checkov:skip=CKV_GHA_7:Not a build. `confirm` is the typed interlock, and `volume` names
+  # the one encrypted volume to act on: it must match pvc-<uuid>, and every other identity is
+  # read live and verified. The run builds and publishes nothing.
+  workflow_dispatch:
+    inputs:
+      volume:
+        description: The encrypted volume's PersistentVolume name (pvc-…)
+        required: true
+        type: string
+      confirm:
+        description: Type release-encrypted-volume-holder
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-encrypted-volume-holder-${{ inputs.volume }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release the encrypted volume's holder
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the confirmed first-attempt dispatch of current main
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          VOLUME: ${{ inputs.volume }}
+        run: |
+          refuse() { echo "ENCRYPTED_VOLUME_HOLDER_RELEASE=REFUSED stage=$1" >&2; exit 2; }
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/release-encrypted-volume-holder.yaml@refs/heads/main || "$GITHUB_ACTOR" != devantler || "$GITHUB_RUN_ATTEMPT" != 1 || "$CONFIRM" != release-encrypted-volume-holder ]]; then
+            refuse dispatch
+          fi
+          [[ "$VOLUME" =~ ^pvc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || refuse volume-name
+          latest="$(git ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main)" || refuse current-main
+          [[ "$latest" == "$GITHUB_SHA"$'\trefs/heads/main' ]] || refuse current-main
+
+      - name: Check out the verified main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the repository-approved Talos client
+        shell: bash
+        run: bash .github/scripts/setup-talosctl.sh
+
+      - name: Install the repository-approved Kubernetes client
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check --quiet
+          mkdir -p "$RUNNER_TEMP/tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
+
+      - name: Verify and release the holder
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
+          VOLUME: ${{ inputs.volume }}
+        run: |
+          set -euo pipefail
+          umask 077
+          private_dir="$(mktemp -d)"
+          trap 'rm -rf "$private_dir"' EXIT
+          printf '%s' "$KUBE_CONFIG" >"$private_dir/kubeconfig"
+          export KUBECONFIG="$private_dir/kubeconfig"
+          k() { kubectl --context admin@prod --request-timeout=30s "$@" 2>>"$private_dir/client-errors"; }
+          fail() { echo "ENCRYPTED_VOLUME_HOLDER_RELEASE=REFUSED stage=$1" >&2; exit 2; }
+          replacement_timeout=600
+          detach_timeout=600
+          volume="$VOLUME"
+          [[ "$volume" =~ ^pvc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || fail volume-name
+
+          # Only a successful NotFound read proves absence: kubectl prints
+          # nothing for it, and any other failure refuses.
+          read_object() {
+            local file="$1"
+            shift
+            k get "$@" --ignore-not-found -o json >"$private_dir/$file" || fail read
+          }
+          attachments() {
+            k get volumeattachments -o json >"$private_dir/attachments.json" || fail read
+            jq -c --arg volume "$volume" '[.items[] | select(.spec.source.persistentVolumeName == $volume)]' "$private_dir/attachments.json" || fail read
+          }
+
+          # The volume: a Longhorn CSI volume that is encrypted.
+          read_object volume.json pv "$volume"
+          jq -e '.spec.csi.driver == "driver.longhorn.io"' "$private_dir/volume.json" >/dev/null || fail volume
+          read_object backend.json volumes.longhorn.io "$volume" -n longhorn-system
+          jq -e --arg volume "$volume" '.metadata.name == $volume and .spec.encrypted == true' "$private_dir/backend.json" >/dev/null || fail backend
+
+          # Attached through exactly one attachment, on one node.
+          held="$(attachments)"
+          jq -e 'length == 1 and .[0].spec.attacher == "driver.longhorn.io" and .[0].status.attached == true and (.[0].spec.nodeName | type == "string" and length > 0)' <<<"$held" >/dev/null || fail attachment
+          node="$(jq -er '.[0].spec.nodeName' <<<"$held")"
+          attachment_uid="$(jq -er '.[0].metadata.uid' <<<"$held")"
+
+          # No pod on that node uses the volume's claim, so nothing there
+          # legitimately holds it.
+          claim_namespace="$(jq -r '.spec.claimRef.namespace // ""' "$private_dir/volume.json")"
+          claim_name="$(jq -r '.spec.claimRef.name // ""' "$private_dir/volume.json")"
+          k get pods -A -o json >"$private_dir/pods.json" || fail read
+          jq -e --arg node "$node" --arg namespace "$claim_namespace" --arg claim "$claim_name" '
+            [.items[] | select(.spec.nodeName == $node and .metadata.namespace == $namespace
+              and any(.spec.volumes[]?; .persistentVolumeClaim.claimName? == $claim))] | length == 0' "$private_dir/pods.json" >/dev/null || fail in-use-on-node
+
+          # That node's CSI plugin has just failed to close this volume's LUKS
+          # device because it is still in use.
+          k -n longhorn-system get pods -l app=longhorn-csi-plugin -o json >"$private_dir/plugins.json" || fail read
+          plugin="$(jq -er --arg node "$node" '[.items[] | select(.spec.nodeName == $node) | .metadata.name] | if length == 1 then .[0] else error("plugins") end' "$private_dir/plugins.json")" || fail csi-plugin
+          k -n longhorn-system logs "$plugin" -c longhorn-csi-plugin --since=15m >"$private_dir/plugin.log" || fail read
+          # The second grep reads all input, so a long log cannot end the first
+          # with SIGPIPE under pipefail.
+          grep -F "cryptsetup luksClose $volume" "$private_dir/plugin.log" | grep -F "Device $volume is still in use" >/dev/null || fail no-stuck-close
+
+          # The holder: the one node-agent pod on that node, at its
+          # DaemonSet's current template, while the DaemonSet is fully available.
+          daemon_set_healthy() {
+            read_object daemon-set.json daemonset node-agent -n kubescape
+            jq -e '
+              (.metadata.uid | type == "string" and length > 0)
+              and .status.observedGeneration == .metadata.generation
+              and .status.desiredNumberScheduled > 0
+              and .status.currentNumberScheduled == .status.desiredNumberScheduled
+              and .status.numberReady == .status.desiredNumberScheduled
+              and .status.updatedNumberScheduled == .status.desiredNumberScheduled
+              and .status.numberAvailable == .status.desiredNumberScheduled
+              and (.status.numberUnavailable // 0) == 0
+              and (.status.numberMisscheduled // 0) == 0
+              and .spec.updateStrategy.type == "RollingUpdate"' "$private_dir/daemon-set.json" >/dev/null
+          }
+          daemon_set_healthy || fail daemon-set
+          daemon_set_uid="$(jq -er '.metadata.uid' "$private_dir/daemon-set.json")"
+          # The current template is the DaemonSet's highest ControllerRevision;
+          # its hash is what every up-to-date pod carries.
+          k -n kubescape get controllerrevisions -o json >"$private_dir/revisions.json" || fail read
+          revision="$(jq -er --arg owner "$daemon_set_uid" '
+            [.items[] | select(any(.metadata.ownerReferences[]?; .controller == true and .uid == $owner))]
+            | if length == 0 then error("revisions") else (max_by(.revision) | .metadata.labels["controller-revision-hash"] | strings | select(length > 0)) end' "$private_dir/revisions.json")" || fail revision
+          k -n kubescape get pods -o json >"$private_dir/agents.json" || fail read
+          holder="$(jq -c --arg node "$node" --arg owner "$daemon_set_uid" '
+            [.items[] | select(.spec.nodeName == $node and any(.metadata.ownerReferences[]?; .controller == true and .uid == $owner))]' "$private_dir/agents.json")" || fail read
+          jq -e --arg revision "$revision" '
+            length == 1 and .[0].metadata.deletionTimestamp == null
+            and .[0].metadata.labels["controller-revision-hash"] == $revision
+            and any(.[0].status.conditions[]?; .type == "Ready" and .status == "True")' <<<"$holder" >/dev/null || fail holder
+          pod="$(jq -er '.[0].metadata.name' <<<"$holder")"
+          pod_uid="$(jq -er '.[0].metadata.uid' <<<"$holder")"
+          echo "ENCRYPTED_VOLUME_HOLDER_RELEASE=OBSERVED volume=$volume node=$node attachment=$attachment_uid holder=$pod/$pod_uid"
+
+          # Read-only evidence of what holds the device (#6327), recorded here
+          # and again after the detach wait. Two facts:
+          #  - which of the node-agent's open namespace descriptors no live
+          #    process is in any more;
+          #  - which live mount namespaces still contain the volume's device.
+          # It prints counts and process names only, never a path, so nothing
+          # stored on the volume reaches the log. A failed read of a process that
+          # is still running, an unexpected listing or the time bound reports
+          # UNAVAILABLE, so a guess is never printed as evidence. The whole
+          # collection runs under one timeout that ends every read it started.
+          # It never stops, retries or changes the release.
+          evidence_timeout=120
+          printf '%s' "${TALOS_CONFIG:-}" >"$private_dir/talosconfig"
+          node_ip=""
+          if k get node "$node" -o json >"$private_dir/node.json"; then
+            node_ip="$(jq -r '[.status.addresses[]? | select(.type == "InternalIP") | .address] | if length == 1 then .[0] else "" end' "$private_dir/node.json")" || node_ip=""
+          fi
+          export EVIDENCE_TALOSCONFIG="$private_dir/talosconfig" EVIDENCE_NODE="$node_ip" EVIDENCE_VOLUME="$volume" EVIDENCE_DIR="$private_dir"
+          # One read per process, run eight at a time: its namespaces, or for
+          # `mountinfo`, a count of its mount namespace's mounts of the device by
+          # propagation type (shared, slave, private). A failed read prints
+          # `FAILED <pid>`, so it is never mistaken for an empty answer.
+          cat >"$private_dir/evidence-of" <<'EVIDENCE_OF'
+          kind="$1" pid="$2"
+          [[ "$pid" =~ ^[0-9]+$ ]] || exit 0
+          if [[ "$kind" == namespaces ]]; then
+            if out="$(talosctl --talosconfig "$EVIDENCE_TALOSCONFIG" -n "$EVIDENCE_NODE" list -l "/proc/$pid/ns" 2>/dev/null)"; then
+              { grep -o -E '(mnt|net):\[[0-9]+\]' <<<"$out" || true; } | sed "s/^/$pid /"
+            else
+              echo "FAILED $pid"
+            fi
+          elif out="$(talosctl --talosconfig "$EVIDENCE_TALOSCONFIG" -n "$EVIDENCE_NODE" read "/proc/$pid/mountinfo" 2>/dev/null)"; then
+            awk -v pid="$pid" -v device="$EVIDENCE_DEVICE" '
+              $3 == device { n++; tags = $0; sub(/ - .*/, "", tags)
+                if (tags ~ / shared:/) shared++; else if (tags ~ / master:/) slave++; else private++ }
+              END { if (n) print pid, n, shared + 0, slave + 0, private + 0 }' <<<"$out"
+          else
+            echo "FAILED $pid"
+          fi
+          exit 0
+          EVIDENCE_OF
+          # The collection for one phase. It prints nothing until it is complete,
+          # so a run that the timeout ends leaves no partial evidence.
+          cat >"$private_dir/evidence" <<'EVIDENCE'
+          set -uo pipefail
+          phase="$1" dir="$EVIDENCE_DIR/evidence-$1" volume="$EVIDENCE_VOLUME"
+          unavailable() { echo "ENCRYPTED_VOLUME_HOLDER_EVIDENCE=UNAVAILABLE phase=$phase stage=$1"; exit 0; }
+          talos() { talosctl --talosconfig "$EVIDENCE_TALOSCONFIG" -n "$EVIDENCE_NODE" "$@" 2>>"$EVIDENCE_DIR/talos-errors"; }
+          # PID and full command, cut at the COMMAND column, because the LABEL
+          # column can contain spaces.
+          processes() {
+            talos processes >"$1.raw" || return 1
+            awk 'NR == 1 { c = index($0, "COMMAND") }
+              NR > 1 && c > 0 && $2 ~ /^[0-9]+$/ { cmd = substr($0, c); sub(/[ \t]+$/, "", cmd); print $2 "\t" cmd }' "$1.raw" >"$1" || return 1
+            [[ -s "$1" ]]
+          }
+          # A process whose read failed may only count as absent once a second
+          # process listing proves it has exited.
+          exited() {
+            [[ -s "$1" ]] || return 0
+            processes "$dir/processes-again" || return 1
+            ! cut -f1 "$dir/processes-again" | grep -q -x -F -f "$1"
+          }
+          [[ -n "$EVIDENCE_NODE" ]] || unavailable node-address
+          mkdir -p "$dir" || unavailable scratch
+          processes "$dir/processes" || unavailable processes
+          # Exactly one Kubescape node-agent process on the node.
+          agent="$(awk -F '\t' '$2 == "/usr/bin/node-agent" { print $1 }' "$dir/processes")"
+          [[ "$agent" =~ ^[0-9]+$ ]] || unavailable agent
+          talos list -l "/proc/$agent/fd" >"$dir/agent-descriptors" || unavailable agent-descriptors
+          { grep -o -E '(mnt|net):\[[0-9]+\]' "$dir/agent-descriptors" || true; } | sort -u >"$dir/held"
+          cut -f1 "$dir/processes" | xargs -P 8 -n 1 bash "$EVIDENCE_DIR/evidence-of" namespaces >"$dir/namespaces" || unavailable namespaces
+          { grep '^FAILED ' "$dir/namespaces" || true; } | cut -d' ' -f2 >"$dir/namespaces-failed"
+          exited "$dir/namespaces-failed" || unavailable namespaces
+          { grep -v '^FAILED ' "$dir/namespaces" || true; } >"$dir/live-by-pid"
+          awk '{ print $2 }' "$dir/live-by-pid" | sort -u >"$dir/live"
+          [[ -s "$dir/live" ]] || unavailable namespaces
+          comm -23 "$dir/held" "$dir/live" >"$dir/dead"
+          held_mnt="$(grep -c '^mnt:' "$dir/held" || true)"
+          held_net="$(grep -c '^net:' "$dir/held" || true)"
+          dead_mnt="$(grep -c '^mnt:' "$dir/dead" || true)"
+          dead_net="$(grep -c '^net:' "$dir/dead" || true)"
+          # The volume's device, while it still exists on the node. A listing
+          # that names the volume in an unexpected form is not proof that the
+          # device is gone.
+          talos list -l /dev/mapper >"$dir/mapper" || unavailable device
+          dm="$({ grep -E " $volume -> \.\./dm-[0-9]+$" "$dir/mapper" || true; } | grep -o -E 'dm-[0-9]+$' | head -n 1)"
+          if [[ -z "$dm" ]] && grep -q -F " $volume" "$dir/mapper"; then unavailable device; fi
+          devno=absent with_device=0 agent_has=no
+          : >"$dir/report"
+          if [[ -n "$dm" ]]; then
+            devno="$(talos read "/sys/block/$dm/dev" | tr -d '[:space:]')" || unavailable device
+            [[ "$devno" =~ ^[0-9]+:[0-9]+$ ]] || unavailable device
+            # One process per live mount namespace, the node-agent first, so its
+            # own namespace is read through its own process.
+            { awk -v agent="$agent" '$1 == agent' "$dir/live-by-pid"; awk -v agent="$agent" '$1 != agent' "$dir/live-by-pid"; } |
+              awk '$2 ~ /^mnt:/ && !seen[$2]++ { print $1 }' |
+              EVIDENCE_DEVICE="$devno" xargs -P 8 -n 1 bash "$EVIDENCE_DIR/evidence-of" mountinfo >"$dir/mounts" || unavailable mounts
+            { grep '^FAILED ' "$dir/mounts" || true; } | cut -d' ' -f2 >"$dir/mounts-failed"
+            exited "$dir/mounts-failed" || unavailable mounts
+            while read -r p n shared slave private; do
+              with_device=$((with_device + 1))
+              [[ "$p" == "$agent" ]] && agent_has=yes
+              cmd="$(awk -F '\t' -v pid="$p" '$1 == pid { print $2; exit }' "$dir/processes")"
+              name="${cmd%% *}"
+              name="$(printf '%s' "${name##*/}" | tr -cd 'A-Za-z0-9._-')"
+              echo "ENCRYPTED_VOLUME_HOLDER_EVIDENCE=NAMESPACE phase=$phase process=${name:-unknown} mounts=$n shared=$shared slave=$slave private=$private" >>"$dir/report"
+            done < <(grep -v '^FAILED ' "$dir/mounts" || true)
+          fi
+          cat "$dir/report"
+          echo "ENCRYPTED_VOLUME_HOLDER_EVIDENCE=RECORDED phase=$phase agent_pid=$agent held_mnt=$held_mnt dead_mnt=$dead_mnt held_net=$held_net dead_net=$dead_net device=$devno namespaces_with_device=$with_device agent_namespace_has_device=$agent_has"
+          EVIDENCE
+          evidence() {
+            local status=0
+            timeout --kill-after=5 "$evidence_timeout" bash "$private_dir/evidence" "$1" || status=$?
+            if (( status == 124 || status == 137 )); then
+              echo "ENCRYPTED_VOLUME_HOLDER_EVIDENCE=UNAVAILABLE phase=$1 stage=deadline"
+            elif (( status != 0 )); then
+              echo "ENCRYPTED_VOLUME_HOLDER_EVIDENCE=UNAVAILABLE phase=$1 stage=error"
+            fi
+          }
+          evidence before
+
+          # Still current main immediately before the only mutation.
+          latest="$(git ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main)" || fail current-main
+          [[ "$latest" == "$GITHUB_SHA"$'\trefs/heads/main' ]] || fail current-main
+
+          jq -n --arg uid "$pod_uid" '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}' >"$private_dir/delete-options.json"
+          k delete --raw="/api/v1/namespaces/kubescape/pods/$pod" -f "$private_dir/delete-options.json" >"$private_dir/delete-result" || fail delete
+          echo "ENCRYPTED_VOLUME_HOLDER_RELEASE=DELETED pod=$pod uid=$pod_uid"
+
+          # The DaemonSet replaces it on the same node from the same template.
+          replacement=""
+          deadline=$((SECONDS + replacement_timeout))
+          while (( SECONDS < deadline )); do
+            k -n kubescape get pods -o json >"$private_dir/agents.json" || fail replacement-read
+            replacement="$(jq -r --arg old "$pod_uid" --arg node "$node" --arg owner "$daemon_set_uid" --arg revision "$revision" '
+              [.items[] | select(.spec.nodeName == $node and any(.metadata.ownerReferences[]?; .controller == true and .uid == $owner))] as $on_node
+              | if ($on_node | map(select(.metadata.uid == $old)) | length) > 0 then ""
+                else [$on_node[] | select(.metadata.deletionTimestamp == null
+                    and .metadata.labels["controller-revision-hash"] == $revision
+                    and any(.status.conditions[]?; .type == "Ready" and .status == "True"))
+                  | "\(.metadata.name)/\(.metadata.uid)"] | if length == 1 then .[0] else "" end
+                end' "$private_dir/agents.json")" || fail replacement-read
+            if [[ -n "$replacement" ]] && daemon_set_healthy; then break; fi
+            replacement=""
+            sleep 5
+          done
+          [[ -n "$replacement" ]] || fail replacement-timeout
+          echo "ENCRYPTED_VOLUME_HOLDER_RELEASE=REPLACED replacement=$replacement"
+
+          # The ordinary CSI detach: the attachment on that node goes on its
+          # own. Not following is a finding, not something to retry.
+          deadline=$((SECONDS + detach_timeout))
+          detached=0
+          while (( SECONDS < deadline )); do
+            held="$(attachments)"
+            if jq -e --arg uid "$attachment_uid" 'all(.[]; .metadata.uid != $uid)' <<<"$held" >/dev/null; then detached=1; break; fi
+            sleep 10
+          done
+          evidence after
+          if (( ! detached )); then
+            echo "ENCRYPTED_VOLUME_HOLDER_RELEASE=DETACH_NOT_OBSERVED volume=$volume node=$node" >&2
+            exit 3
+          fi
+          echo "ENCRYPTED_VOLUME_HOLDER_RELEASE=COMPLETE volume=$volume node=$node detached=ORDINARY"

@@ -22,6 +22,17 @@ spec:
     sources:
       - gateway-httproute
       - crd
+    # The chart default manages only A, AAAA and CNAME. Company Email's SES
+    # DNSEndpoint also declares MX and TXT records (platform#5481). The TXT
+    # registry still owns only records carrying this instance's marker, so
+    # existing MX, SPF and DMARC records that external-dns did not create stay
+    # untouched.
+    managedRecordTypes:
+      - A
+      - AAAA
+      - CNAME
+      - MX
+      - TXT
     policy: sync
     # TXT-registry ownership is what makes this single writer safe to reschedule:
     # every managed record gets a paired "_externaldns." TXT carrying this

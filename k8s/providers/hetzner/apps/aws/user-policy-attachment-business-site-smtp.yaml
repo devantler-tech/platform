@@ -1,0 +1,22 @@
+# Attaches the send-only policy to the business site's SMTP identity.
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: UserPolicyAttachment
+metadata:
+  name: business-site-smtp-send
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    userRef:
+      name: business-site-smtp
+    policyArnRef:
+      name: business-site-smtp-send
+  providerConfigRef:
+    kind: ProviderConfig
+    name: default

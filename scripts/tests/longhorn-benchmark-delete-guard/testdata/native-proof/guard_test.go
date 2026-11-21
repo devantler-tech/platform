@@ -138,7 +138,7 @@ func TestNativeUIDBoundDeletion(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					attr := admission.NewAttributesRecord(nil, tc.old, gvk, "longhorn-benchmark-v1-1234", "", gvr, "", admission.Delete, &metav1.DeleteOptions{}, false, nil)
-					versioned := &admission.VersionedAttributes{Attributes: attr, VersionedOldObject: tc.old, VersionedKind: gvk}
+					versioned := &admission.VersionedAttributes{Attributes: attr, VersionedOldObject: admission.NewLazyObject(tc.old), VersionedKind: gvk}
 					result := validator.Validate(context.Background(), gvr, versioned, tc.params, tc.namespace, celconfig.RuntimeCELCostBudget, nil)
 					if len(result.Decisions) != 1 {
 						t.Fatalf("native decision missing: %+v", result)
@@ -158,7 +158,7 @@ func TestNativeUIDBoundDeletion(t *testing.T) {
 				{"longhorn-system", false}, {"customer", false}, {"longhorn-benchmark-v1-0", false},
 			} {
 				attr := admission.NewAttributesRecord(nil, old("object-owned"), gvk, tc.namespace, "", gvr, "", admission.Delete, &metav1.DeleteOptions{}, false, nil)
-				versioned := &admission.VersionedAttributes{Attributes: attr, VersionedOldObject: old("object-owned"), VersionedKind: gvk}
+				versioned := &admission.VersionedAttributes{Attributes: attr, VersionedOldObject: admission.NewLazyObject(old("object-owned")), VersionedKind: gvk}
 				request := admissioncel.CreateAdmissionRequest(attr, metav1.GroupVersionResource(gvr), metav1.GroupVersionKind(gvk))
 				result, _, err := condition.ForInput(context.Background(), versioned, request, admissioncel.OptionalVariableBindings{VersionedParams: params()}, namespace("ns-owned"), celconfig.RuntimeCELCostBudget)
 				if err != nil || len(result) != 1 || result[0].Error != nil || result[0].EvalResult.Value() != tc.selected {

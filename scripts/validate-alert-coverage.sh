@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fail if a Flux HelmRelease or Kustomization lives in a namespace the reconciliation
-# Alert does not watch.
+# Fail if a Flux HelmRelease, Kustomization or OCIRepository lives in a namespace the
+# reconciliation Alert does not watch.
 #
 # notification-controller has NO namespace wildcard: it defaults an omitted
 # eventSources[].namespace to the Alert's own namespace and then matches on strict
@@ -19,6 +19,11 @@
 # what the Alert exists to prevent (2026-07-14: ksail-operator sat four releases
 # behind for over a day with prod looking green), so drift is a CI failure, not a
 # comment.
+#
+# OCIRepository has the same blindness one step earlier (#5287). A source that refuses
+# a release, for example one signed by a publisher the platform does not accept, keeps
+# its last verified artifact, so the Kustomization applying it stays Ready and only the
+# source itself reports the refusal.
 
 set -euo pipefail
 
@@ -49,7 +54,7 @@ work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
 rendered="${work_dir}/rendered.yaml"
 
-# Render every layer once; both kinds are then read from the same output.
+# Render every layer once; every kind is then read from the same output.
 #
 # Fail CLOSED on a render error. Swallowing `kubectl kustomize` failures (a bad
 # kustomization, an unreachable remote base, a schema/input error) would drop every
@@ -64,7 +69,7 @@ for layer in "${LAYERS[@]}"; do
   echo '---'
 done >"${rendered}"
 
-for kind in HelmRelease Kustomization; do
+for kind in HelmRelease Kustomization OCIRepository; do
   declared="${work_dir}/declared-${kind}.txt"
   declared_raw="${work_dir}/declared-${kind}-raw.txt"
   missing_namespace="${work_dir}/missing-namespace-${kind}.txt"
@@ -76,11 +81,14 @@ for kind in HelmRelease Kustomization; do
   case "${kind}" in
     HelmRelease) group="helm.toolkit.fluxcd.io" ;;
     Kustomization) group="kustomize.toolkit.fluxcd.io" ;;
+    OCIRepository) group="source.toolkit.fluxcd.io" ;;
     *)
       echo "::error::Unknown watched kind ${kind}."
       exit 64
       ;;
   esac
+  article=a
+  [[ "${kind}" == OCIRepository ]] && article=an
 
   # These Flux APIs are namespaced and this render path has no targetNamespace
   # fallback. Silently dropping an omitted namespace would make the coverage
@@ -105,6 +113,25 @@ for kind in HelmRelease Kustomization; do
     | .metadata.namespace
     | select(. != null and . != \"\")
   " "${rendered}" >"${declared_raw}"
+
+  # A kro Tenant is not rendered as its children: the tenant ResourceGraphDefinition
+  # generates the Tenant's OCIRepository at reconcile time, in the namespace named by
+  # spec.name. Count that namespace too, and refuse a Tenant without one.
+  if [[ "${kind}" == OCIRepository ]]; then
+    unnamed_tenants="$(yq ea -r '
+      select(.kind == "Tenant" and (.apiVersion | test("^kro\\.run/")))
+      | select((.spec.name // "") == "")
+      | (.metadata.name // "<unnamed>")
+    ' "${rendered}" | awk 'NF && $0 != "---"')"
+    if [[ -n "${unnamed_tenants}" ]]; then
+      echo "::error::Rendered kro Tenants have no spec.name, so the namespace of their OCIRepository is unknown: $(echo "${unnamed_tenants}" | tr '\n' ' ')"
+      exit 1
+    fi
+    yq ea -r '
+      select(.kind == "Tenant" and (.apiVersion | test("^kro\\.run/")))
+      | .spec.name
+    ' "${rendered}" >>"${declared_raw}"
+  fi
   awk 'NF && $0 != "---"' "${declared_raw}" |
     LC_ALL=C sort -u >"${declared}"
 
@@ -120,9 +147,9 @@ for kind in HelmRelease Kustomization; do
 
   uncovered="$(comm -23 "${declared}" "${watched}")"
   if [[ -n "${uncovered}" ]]; then
-    echo "::error::The reconciliation Alert does not watch every namespace holding a ${kind}."
-    echo "A ${kind} in an unwatched namespace can fail, roll back and report Ready — silently, with no alert."
-    echo "Add a ${kind} eventSource for each namespace below to ${ALERT_FILE}:"
+    echo "::error::The reconciliation Alert does not watch every namespace holding ${article} ${kind}."
+    echo "Any ${kind} in an unwatched namespace can fail while everything reports Ready — silently, with no alert."
+    echo "Add ${article} ${kind} eventSource for each namespace below to ${ALERT_FILE}:"
     while read -r ns; do
       [[ -n "${ns}" ]] && printf '    - kind: %s\n      name: "*"\n      namespace: %s\n' "${kind}" "${ns}"
     done <<<"${uncovered}"
@@ -136,5 +163,5 @@ for kind in HelmRelease Kustomization; do
     echo "::warning::The Alert watches namespaces that hold no ${kind} (dead entries): $(echo "${stale}" | tr '\n' ' ')"
   fi
 
-  echo "✅ Alert covers all $(wc -l <"${declared}" | tr -d ' ') namespaces holding a ${kind}."
+  echo "✅ Alert covers all $(wc -l <"${declared}" | tr -d ' ') namespaces holding ${article} ${kind}."
 done

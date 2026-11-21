@@ -67,9 +67,9 @@ grep -Fq 'go test -mod=readonly -race ./pkg/background/... ./cmd/internal/...' "
 grep -Fq './pkg/image/... ./pkg/tracing/... ./pkg/metrics/...' "$dockerfile" || fail 'dependency compatibility coverage missing'
 grep -Fxq 'COPY third_party/docker-credential-acr-env/ ./third_party/docker-credential-acr-env/' "$dockerfile" || fail 'local security dependency missing before module download'
 grep -Fxq '    github.com/chrismellard/docker-credential-acr-env/pkg/credhelper' "$dockerfile" || fail 'credential entry boundary regressions missing'
-grep -Fxq 'FROM docker.io/library/golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS builder' "$dockerfile" || fail 'builder must use the reviewed patched Go release'
+grep -Fxq 'FROM docker.io/library/golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS builder' "$dockerfile" || fail 'builder must use the reviewed patched Go release'
 # shellcheck disable=SC2016
-grep -Fq 'test "$(go version /out/background-controller)" = "/out/background-controller: go1.26.10"' "$dockerfile" || fail 'compiled controller toolchain proof missing'
+grep -Fq 'test "$(go version /out/background-controller)" = "/out/background-controller: go1.26.11"' "$dockerfile" || fail 'compiled controller toolchain proof missing'
 if grep -Eq -- '-ldflags="[^"]*-[sw][ "]' "$dockerfile"; then fail 'stripped symbols defeat the binary scan'; fi
 grep -Fq 'github\.com/kyverno/kyverno[[:space:]]+v1\.19\.2[[:space:]]' "$dockerfile" || fail 'executable release identity proof missing'
 grep -Fq 'vcs\.modified=false$' "$dockerfile" || fail 'clean source proof missing'

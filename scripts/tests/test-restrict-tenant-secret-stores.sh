@@ -30,4 +30,22 @@ if ! grep -Fq "${expected_summary}" "${output_file}"; then
   exit 1
 fi
 
-echo "Tenant SecretStore policy enforced the expected 5-pass/7-deny boundary."
+# The controller carve-out covers only spec-preserving updates. Under the
+# controller identity the CLI evaluates each fixture as a create, so the same
+# boundary must hold: the controller cannot create a store reference.
+controller_user_info="${repo_root}/tests/restrict-tenant-secret-stores/user-info-controller.yaml"
+if kyverno apply "${policy}" \
+  --resource "${fixtures}" \
+  --values-file "${values}" \
+  --userinfo "${controller_user_info}" \
+  --remove-color >"${output_file}" 2>&1; then
+  echo "::error::tenant SecretStore policy admitted every fixture created by the External Secrets controller"
+  exit 1
+fi
+if ! grep -Fq "${expected_summary}" "${output_file}"; then
+  echo "::error::tenant SecretStore policy exempted a create by the External Secrets controller"
+  sed -n '1,80p' "${output_file}"
+  exit 1
+fi
+
+echo "Tenant SecretStore policy enforced the expected 5-pass/7-deny boundary for tenant and controller creates."

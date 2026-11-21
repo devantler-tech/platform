@@ -1650,3 +1650,24 @@ spec:
         - k8sService:
             serviceName: db
             namespace: other-tenant
+---
+# ALLOW case: the business-site package's own policy. Its one egress rule is
+# exactly {}, which allows no destination; it only selects egress default deny.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-ingress-from-gateway-egress-default-deny
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+  egress:
+    - {}

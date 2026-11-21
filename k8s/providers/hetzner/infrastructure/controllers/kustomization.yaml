@@ -86,6 +86,9 @@ components:
   # silently-broken keda external-scaler and homepage Deployments.
   - ../../../../bases/components/helmrelease-drift-detection
   - ../../../../bases/components/helmrelease-flux-defaults
+  # Temporary controller placement for runtime adoption (#6073). Remove it
+  # after the migration's runtime and backup checks pass (#6073).
+  - ../../../../bases/components/longhorn-v1-runtime-headroom
   # ALWAYS-ON: the live private-NIC Cilium device pin (moved out of the
   # strict-mode patch so the homogeneous-devices/ successor below can
   # override it — parent `patches:` apply after component patches, so a value
@@ -141,6 +144,14 @@ patches:
   - path: kyverno/patches/allow-sigstore-cache-eviction.yaml
   # Prod-only: run Dex on the source-built, signed distribution — see file.
   - path: dex/patches/run-source-built-image.yaml
+  # Prod-only: let ZITADEL's administrator sign in through Dex — see file.
+  - path: dex/patches/allow-zitadel-sign-in.yaml
+    target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: dex
+      namespace: dex
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
   # Require relay replicas to use separate nodes in prod; local retains soft spread.

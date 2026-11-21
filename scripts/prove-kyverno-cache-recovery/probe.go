@@ -36,13 +36,13 @@ func prove(ctx context.Context, run commandFunc, meta runMetadata, desired []byt
 		}
 		return active(ctx)
 	}
-	unsigned := func(s snapshot) error {
+	unsigned := func() error {
 		if err := active(ctx); err != nil {
 			return err
 		}
-		_, err := run(ctx, "bash", []string{"./scripts/verify-image-unsigned.sh", "--image", unsignedImage}, nil, map[string]string{"REGISTRY_USERNAME": s.username, "REGISTRY_PASSWORD": s.password, "TMPDIR": meta.credentialDir})
+		_, err := run(ctx, "bash", []string{"./scripts/verify-image-unsigned.sh", "--image", unsignedImage}, nil, map[string]string{"REGISTRY_ANONYMOUS": "true", "TMPDIR": meta.credentialDir})
 		if err != nil {
-			return errors.New("authoritative readable-and-unsigned precheck is unverified")
+			return errors.New("anonymous readable-and-unsigned precheck is unverified")
 		}
 		return active(ctx)
 	}
@@ -56,7 +56,7 @@ func prove(ctx context.Context, run commandFunc, meta runMetadata, desired []byt
 	if pin() != nil {
 		return hold("source-before-registry")
 	}
-	if unsigned(before) != nil {
+	if unsigned() != nil {
 		return hold("unsigned-before")
 	}
 	for _, phase := range []string{"signed-before", "unsigned", "signed-after"} {
@@ -92,7 +92,7 @@ func prove(ctx context.Context, run commandFunc, meta runMetadata, desired []byt
 	if pin() != nil {
 		return hold("source-before-final-registry")
 	}
-	if unsigned(after) != nil {
+	if unsigned() != nil {
 		return hold("unsigned-after")
 	}
 	if pin() != nil {

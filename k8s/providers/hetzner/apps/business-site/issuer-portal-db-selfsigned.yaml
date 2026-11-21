@@ -1,0 +1,11 @@
+# Signs the portal database's own long-lived CA (certificate-portal-db-ca.yaml). The
+# portal reads the database CA once at startup and the WebApp cannot be
+# restarted by Reloader, so the CA must not rotate the way CNPG's built-in
+# 90-day CA does. Only the server certificate renews, under the same CA.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: business-site-portal-db-selfsigned
+  namespace: business-site
+spec:
+  selfSigned: {}

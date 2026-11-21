@@ -117,6 +117,63 @@ the UID returned by creation, so it cannot delete a replacement with the same
 name. A failed credential cleanup fails the job and needs operator attention;
 the denial receipt alone is insufficient when the workflow did not succeed.
 
+## Business-site portal database proof
+
+Dispatch **Verify Portal DB Restore** from `main` with
+`confirm=verify-portal-db-restore`. It shares the production deployment lock and
+uses the same stable API endpoint step as the Wedding proof. The portal database
+(`business-site-portal-db` in `business-site`) keeps serving throughout and is
+never restored over.
+
+One program, `scripts/verify-portal-db-restore`, runs every step:
+
+1. It checks that the Cluster is healthy and archiving through the
+   `business-site-portal-db` ObjectStore, then creates a run-owned online
+   `Backup` through the Barman Cloud plugin and waits up to twenty minutes for it.
+   It accepts only that Backup, completed for this Cluster's UID after it was
+   requested. The Backup object stays in `business-site` as the receipt.
+2. It reads the live aggregates (step 5), completes the WAL segment that holds
+   them and waits up to five minutes for the archiver to report that segment, so
+   the restore replays at least that far. It then creates a separate restricted
+   namespace, `portal-db-restore-<run>`, with a one-instance CloudNativePG
+   Cluster, and copies only the backup credential into it without printing it.
+3. It restores that exact backup ID through the plugin. The restore's own
+   ObjectStore sets no retention policy and the restored Cluster has no WAL
+   archiver, so nothing is written to the live archive. Like the live Cluster,
+   it uses an `hcloud` claim pinned to a baseline worker.
+4. A Cilium deny rule excludes the `business-site` namespace. The proof depends
+   on a positive control: right before the restore's probe, a live standby (or
+   the primary when there is none) must reach the production database through
+   its `-rw` service. Only then does the restored pod's probe count. It proves
+   local database access works, DNS resolves the production database, and that
+   database does not answer.
+5. It compares aggregates only, read in read-only transactions on the live
+   primary before and after the restore and on the restored copy: the owner of
+   the `portal` database, the `portal_schema_version` ledger's applied-migration
+   count and highest version, and the row count of every table in the `public`
+   schema. The ledger must match exactly, with contiguous versions. Each
+   recovered row count must lie between the two live counts, since the portal
+   may write while the proof runs. No row content appears in the receipt. If
+   writes move a count outside these bounds, dispatch a fresh run.
+6. It deletes the namespace, fenced by its UID, and waits for the namespace and
+   every backing PersistentVolume to disappear. A separate `always()` step runs
+   the same cleanup, so cancellation and timeout are covered. A cleanup failure
+   fails the proof. Never force-cancel the job or force-delete a stuck
+   namespace; investigate its finalizers.
+
+Require `backupTaken`, `restoreCompleted`, `isolationProven`,
+`aggregatesMatched` and `cleanupVerified` to be true in a successful production
+run, with `sourceSHA` naming the commit the run checked out. A refusal names
+only the phase it stopped in.
+
+Until the business-site migration Job has run (it ships with the v3.9.0 Tenant
+re-pin), the ledger is empty. The proof still passes on matching aggregates, and
+its receipt then sets `ledgerEmpty` and says that no migrated schema was
+compared, only the database owner and an empty table set. Without a ledger,
+any table refuses the proof, and the owner check still rules out an empty
+database that was never restored. Dispatch it again after the first migration
+to prove the migrated schema.
+
 ## Velero namespace drill
 
 > **No longer runs in CI.** CI no longer boots a cluster — the local Docker

@@ -88,6 +88,22 @@ spec:
       hostnames:
         - dex.${domain}
       rules:
+        # The theme (config-map.yaml) is served at stable URLs, and Cloudflare kept
+        # the previous stylesheet and icon for four hours after a theme change.
+        # private, no-store keeps any shared or browser cache from holding them,
+        # as the Homepage route does for its custom stylesheet.
+        - matches:
+            - path:
+                type: PathPrefix
+                value: /theme/
+          filters:
+            - type: ResponseHeaderModifier
+              responseHeaderModifier:
+                set:
+                  - name: Strict-Transport-Security
+                    value: max-age=63072000; includeSubDomains; preload
+                  - name: Cache-Control
+                    value: private, no-store
         - matches:
             - path:
                 type: PathPrefix
@@ -118,13 +134,13 @@ spec:
       # The sign-in pages carry the Devantler Tech look. Dex reads the theme
       # from <dir>/themes/<theme>: /srv/dex/web is where the image ships its
       # templates, and the theme directory is mounted from config-map.yaml. The
-      # header logo is the theme's favicon.png, so it is served in-cluster.
+      # header logo is the theme's logo.svg, so it is served in-cluster.
       # scripts/tests/test-dex-theme-mount.sh keeps these and the mount in step.
       frontend:
         issuer: Devantler Tech
         dir: /srv/dex/web
         theme: devantler-tech
-        logoURL: theme/favicon.png
+        logoURL: theme/logo.svg
       oauth2:
         skipApprovalScreen: true
       storage:

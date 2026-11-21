@@ -67,12 +67,25 @@ func TestMailPodDeletionPreconditions(t *testing.T) {
 	if err = os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
+	// The nested acceptance must use the verified fixture client even when an
+	// unrelated kubectl is installed ahead of the runner's tools.
+	ambient := t.TempDir()
+	marker := filepath.Join(ambient, "invoked")
+	if err = os.WriteFile(filepath.Join(ambient, "kubectl"), []byte("#!/bin/sh\n: > \"$AMBIENT_KUBECTL_MARKER\"\necho 'unverified ambient kubectl selected' >&2\nexit 97\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMBIENT_KUBECTL_MARKER", marker)
+	t.Setenv("PATH", ambient+string(os.PathListSeparator)+os.Getenv("PATH"))
 	command := exec.CommandContext(ctx, "go", "test", "-count=1", "-run", "^TestNativeCorePodDeletePreconditions$", "-v", "./scripts/recover-private-mail-probes")
 	command.Dir = root
-	command.Env = append(os.Environ(), "MAIL_NATIVE_API_CONFIG="+path, "MAIL_NATIVE_API_SERVER="+cfg.Host, "KUBECONFIG="+path)
+	command.Env = append(os.Environ(), "MAIL_NATIVE_API_CONFIG="+path, "MAIL_NATIVE_API_SERVER="+cfg.Host, "KUBECONFIG="+path,
+		"PATH="+os.Getenv("KUBEBUILDER_ASSETS")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("native Pod deletion acceptance failed: %v\n%s", err, output)
+	}
+	if _, err = os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("native acceptance invoked an unverified ambient client")
 	}
 	t.Log(string(output))
 }

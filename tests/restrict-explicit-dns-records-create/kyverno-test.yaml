@@ -99,3 +99,18 @@ results:
       - wedding-app/forged-label
     kind: DNSEndpoint
     result: fail
+  - policy: restrict-explicit-dns-records
+    resources:
+      - aws/company-mail-ses
+    kind: DNSEndpoint
+    result: pass
+  - policy: restrict-explicit-dns-records
+    resources:
+      - aws/other-mail-records
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    resources:
+      - data-product-controller/company-mail-ses
+    kind: DNSEndpoint
+    result: fail

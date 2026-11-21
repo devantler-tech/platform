@@ -6,7 +6,7 @@ source_dir="${1:?usage: build-dex-security-image.sh upstream-directory image-tag
 image="${2:?usage: build-dex-security-image.sh upstream-directory image-tag}"
 source_dir="$(cd "$source_dir" && pwd)"
 [[ $# == 2 && $(uname -s) == Linux && $(uname -m) == x86_64 ]]
-[[ $(go env GOVERSION) == go1.27.3 ]]
+[[ $(go env GOVERSION) == go1.27.4 ]]
 [[ $(git -C "$source_dir" rev-parse HEAD) == 75eb19238e10fc4750e7efb05a4031b254b04029 ]]
 [[ -z $(git -C "$source_dir" status --porcelain) ]]
 git -C "$source_dir" merge-base --is-ancestor 5bbdb4420254ba73b9c4df4775fe7bdacf233b17 HEAD

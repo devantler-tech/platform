@@ -53,7 +53,7 @@ func compiler(t *testing.T, vars []registration.Variable) *plugincel.CompositedC
 }
 func attrs(obj *unstructured.Unstructured) *admission.VersionedAttributes {
 	a := admission.NewAttributesRecord(obj, nil, gvk, obj.GetNamespace(), obj.GetName(), gvr, "", admission.Create, &metav1.CreateOptions{}, false, nil)
-	return &admission.VersionedAttributes{Attributes: a, VersionedKind: gvk, VersionedObject: obj}
+	return &admission.VersionedAttributes{Attributes: a, VersionedKind: gvk, VersionedObject: admission.NewLazyObject(obj)}
 }
 func mutate(t *testing.T, p registration.MutatingAdmissionPolicy, obj *unstructured.Unstructured) *unstructured.Unstructured {
 	t.Helper()
@@ -69,9 +69,9 @@ func mutate(t *testing.T, p registration.MutatingAdmissionPolicy, obj *unstructu
 		if err != nil {
 			t.Fatal(err)
 		}
-		v.VersionedObject = out
+		v.VersionedObject.Set(out)
 	}
-	return v.VersionedObject.(*unstructured.Unstructured)
+	return v.VersionedObject.Object().(*unstructured.Unstructured)
 }
 func validates(t *testing.T, p registration.ValidatingAdmissionPolicy, obj *unstructured.Unstructured) bool {
 	t.Helper()

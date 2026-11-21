@@ -39,6 +39,9 @@ spec:
     #     AWS identity APIs used by provider-aws-iam. The provider calls STS
     #     GetCallerIdentity before reconciling IAM resources, then uses the
     #     global IAM endpoint for the managed OIDC provider and role.
+    #   email.eu-central-1.amazonaws.com — the SES v2 API used by
+    #     provider-aws-sesv2 for company Email's sending identity, in the
+    #     account's existing region (platform#5481).
     #   api.ui.com — the UniFi Cloud Connector endpoint used by
     #     provider-upjet-unifi for every managed-resource request.
     - toFQDNs:
@@ -49,6 +52,7 @@ spec:
         - matchName: "d3qrbvrml4iuq4.cloudfront.net"
         - matchName: "sts.eu-central-1.amazonaws.com"
         - matchName: "iam.amazonaws.com"
+        - matchName: "email.eu-central-1.amazonaws.com"
         - matchName: "api.ui.com"
       toPorts:
         - ports:
@@ -77,5 +81,6 @@ spec:
               - matchName: "d3qrbvrml4iuq4.cloudfront.net"
               - matchName: "sts.eu-central-1.amazonaws.com"
               - matchName: "iam.amazonaws.com"
+              - matchName: "email.eu-central-1.amazonaws.com"
               - matchName: "api.ui.com"
               - matchPattern: "*.cluster.local"

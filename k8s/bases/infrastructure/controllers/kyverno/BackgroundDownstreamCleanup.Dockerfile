@@ -1,4 +1,4 @@
-FROM docker.io/library/golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS builder
+FROM docker.io/library/golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY third_party/docker-credential-acr-env/ ./third_party/docker-credential-acr-env/
@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
     -ldflags="-X github.com/kyverno/kyverno/pkg/version.BuildVersion=${VERSION}" \
     -o /out/background-controller ./cmd/background-controller \
     && go version /out/background-controller \
-    && test "$(go version /out/background-controller)" = "/out/background-controller: go1.26.10" \
+    && test "$(go version /out/background-controller)" = "/out/background-controller: go1.26.11" \
     && go version -m /out/background-controller > /tmp/build-info \
     && grep -Eq '^[[:space:]]+mod[[:space:]]+github\.com/kyverno/kyverno[[:space:]]+v1\.19\.2[[:space:]]' /tmp/build-info \
     && grep -Eq '^[[:space:]]+build[[:space:]]+vcs\.modified=false$' /tmp/build-info \

@@ -1,0 +1,42 @@
+# Open SMTP, submission and IMAPS to the mail server's own load balancer only
+# (#5481). Its pinned private address must equal the private-ipv4 annotation on
+# the private-mail-public Service and the --mail-proxy-source the server trusts.
+# externalTrafficPolicy Local keeps that address as the source. Management and
+# the recovery and adapter listeners stay denied from every source.
+- op: test
+  path: /spec/ingressDeny/0/toPorts/0/ports
+  value:
+    - port: "8080"
+      protocol: TCP
+    - port: "18080"
+      protocol: TCP
+    - port: "18081"
+      protocol: TCP
+    - port: "1025"
+      protocol: TCP
+    - port: "1587"
+      protocol: TCP
+    - port: "1993"
+      protocol: TCP
+- op: replace
+  path: /spec/ingressDeny/0/toPorts/0/ports
+  value:
+    - port: "8080"
+      protocol: TCP
+    - port: "18080"
+      protocol: TCP
+    - port: "18081"
+      protocol: TCP
+- op: add
+  path: /spec/ingress/-
+  value:
+    fromCIDR:
+      - 10.0.1.250/32
+    toPorts:
+      - ports:
+          - port: "1025"
+            protocol: TCP
+          - port: "1587"
+            protocol: TCP
+          - port: "1993"
+            protocol: TCP

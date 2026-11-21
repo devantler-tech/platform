@@ -1,7 +1,7 @@
 # Worker pods talk only to Substrate (its egress gateway carries the agent's
-# traffic; its router and API server reach the workers). The schedule Job is
-# excluded: its only path, to kagent's API, is
-# cilium-network-policy-schedule.yaml.
+# traffic; its router and API server reach the workers). The schedule Job and
+# the lane store are excluded: their paths are cilium-network-policy-schedule.yaml
+# and cilium-network-policy-lane-store.yaml.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -13,6 +13,9 @@ spec:
       - key: app
         operator: NotIn
         values: [agentic-engineer-schedule]
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values: [lane-store]
   ingress:
     - fromEndpoints:
         - matchLabels:

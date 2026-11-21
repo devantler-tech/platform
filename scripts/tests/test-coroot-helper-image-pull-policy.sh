@@ -8,8 +8,9 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
-readonly image_prefix='docker.io/badouralix/curl-jq:'
-readonly digest_pattern='^docker[.]io/badouralix/curl-jq:[^[:space:]@]+@sha256:[0-9a-f]{64}$'
+readonly image_name='docker.io/badouralix/curl-jq'
+readonly digest_pattern='^docker[.]io/badouralix/curl-jq(:[^[:space:]@]+)?@sha256:[0-9a-f]{64}$'
+export COROOT_HELPER_IMAGE_SELECTOR='^docker[.]io/badouralix/curl-jq([:@]|$)'
 readonly production_overlay="${root_dir}/k8s/providers/hetzner/infrastructure"
 readonly security_component="${root_dir}/k8s/bases/infrastructure/coroot/components/security-progress"
 readonly security_consumer="${security_component}/cron-job.yaml"
@@ -47,7 +48,7 @@ done < <(yq eval -r '(.components // [])[]' "${production_overlay}/kustomization
 manifests=()
 while IFS= read -r manifest; do
   manifests+=("${manifest}")
-done < <(find "${root_dir}/k8s" -type f -name '*.yaml' -exec grep -lF -- "${image_prefix}" {} +)
+done < <(find "${root_dir}/k8s" -type f -name '*.yaml' -exec grep -lF -- "${image_name}" {} +)
 [ "${#manifests[@]}" -ge 11 ] ||
   fail 'expected every existing Coroot curl+jq CronJob consumer to remain covered'
 
@@ -58,7 +59,7 @@ for manifest in "${manifests[@]}"; do
   # pinned and cached.
   case "${manifest#"${root_dir}"/}" in
     k8s/bases/apps/* | k8s/providers/*/apps/*)
-      entries="$(yq eval -r '.. | select(has("image")) | select(.image | contains("docker.io/badouralix/curl-jq:")) | .image + "|" + (.imagePullPolicy // "")' "${manifest}")"
+      entries="$(yq eval -r '.. | select(has("image")) | select(.image | test(strenv(COROOT_HELPER_IMAGE_SELECTOR))) | .image + "|" + (.imagePullPolicy // "")' "${manifest}")"
       [ -n "${entries}" ] || fail "could not read the curl+jq containers of ${manifest}"
       while IFS='|' read -r image policy; do
         [[ "${image}" =~ ${digest_pattern} ]] ||
@@ -71,8 +72,8 @@ for manifest in "${manifests[@]}"; do
   esac
   [ "$(yq eval -r '.kind' "${manifest}")" = CronJob ] ||
     fail "curl+jq consumer is not a CronJob: ${manifest}"
-  image="$(yq eval -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.image | contains("docker.io/badouralix/curl-jq:")) | .image' "${manifest}")"
-  policy="$(yq eval -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.image | contains("docker.io/badouralix/curl-jq:")) | .imagePullPolicy' "${manifest}")"
+  image="$(yq eval -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.image | test(strenv(COROOT_HELPER_IMAGE_SELECTOR))) | .image' "${manifest}")"
+  policy="$(yq eval -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.image | test(strenv(COROOT_HELPER_IMAGE_SELECTOR))) | .imagePullPolicy' "${manifest}")"
   [[ "${image}" =~ ${digest_pattern} ]] ||
     fail "curl+jq image must retain an immutable digest: ${manifest}"
   [ "${policy}" = IfNotPresent ] ||
@@ -89,10 +90,10 @@ render_helpers() {
   local overlay=$1 output=$2
   kubectl kustomize "${overlay}" | yq eval -N -r '
     select(.kind == "CronJob") |
-    select(.spec.jobTemplate.spec.template.spec.containers[].image | contains("docker.io/badouralix/curl-jq:")) |
+    select(.spec.jobTemplate.spec.template.spec.containers[].image | test(strenv(COROOT_HELPER_IMAGE_SELECTOR))) |
     (.metadata.namespace // "") + "/" + .metadata.name + "|" +
     (.spec.jobTemplate.spec.template.spec.containers[] |
-      select(.image | contains("docker.io/badouralix/curl-jq:")) | .image + "|" + (.imagePullPolicy // ""))
+      select(.image | test(strenv(COROOT_HELPER_IMAGE_SELECTOR))) | .image + "|" + (.imagePullPolicy // ""))
   ' - >"${output}" || fail "could not render Coroot helper Jobs from ${overlay}"
   local identity image policy
   while IFS='|' read -r identity image policy; do

@@ -21,7 +21,11 @@ import (
 
 type command func(context.Context, string, ...string) ([]byte, error)
 
-const target = "20Gi"
+const target = "40Gi"
+
+// previous is the only reviewed starting size: the 13 October 2026 recovery
+// moved every audit claim to it, and no other live size is expected.
+const previous = "20Gi"
 const responseLimit = 4 << 20
 
 type snapshotFailure uint8
@@ -119,6 +123,24 @@ func (e engine) api(ctx context.Context, path string) ([]byte, error) {
 	}
 	return b, nil
 }
+
+// accepted proves that a job of the accepted CI or CD run is the last thing
+// that ran in production, and that nothing has run there since or is about to.
+//
+// It reads the prod deployments newest first. A deployment "ran" once it
+// reached in_progress or success. Every deployment newer than the one that
+// ran last must have only waiting, error or failure statuses, or none yet:
+// it never started, so it changed nothing. The deployment that ran last must
+// carry a status logged by the accepted run.
+//
+// That deployment need not have succeeded, nor be at main's SHA. While
+// production is unhealthy no deploy can succeed, because every deploy waits
+// for Flux to converge, and the heal job that restores main records its
+// deployment on the evicted merge-group candidate. The expansion applies no
+// manifest from that deployment. What it needs is that no writer is active:
+// collect() pins every Flux layer to the exact applied revision, current()
+// binds this run to main's tip, and preserved() requires the OpenBao objects
+// to stay unchanged across every sample.
 func (e engine) accepted(ctx context.Context) bool {
 	b, err := e.api(ctx, "repos/devantler-tech/platform/actions/runs/"+e.deploymentRun)
 	if err != nil {
@@ -127,30 +149,56 @@ func (e engine) accepted(ctx context.Context) bool {
 	r, err := decode(b)
 	ci := r["path"] == ".github/workflows/ci.yaml" && r["event"] == "merge_group"
 	cd := r["path"] == ".github/workflows/cd.yaml" && r["event"] == "workflow_dispatch"
-	if err != nil || fmt.Sprint(r["id"]) != e.deploymentRun || r["head_sha"] != e.sha || r["status"] != "completed" || r["conclusion"] != "success" || field(r, "repository", "full_name") != "devantler-tech/platform" || !ci && !cd {
+	if err != nil || fmt.Sprint(r["id"]) != e.deploymentRun || r["status"] != "completed" || field(r, "repository", "full_name") != "devantler-tech/platform" || !ci && !cd {
 		return false
 	}
-	b, err = e.api(ctx, "repos/devantler-tech/platform/deployments?sha="+e.sha+"&environment=prod&per_page=100")
+	b, err = e.api(ctx, "repos/devantler-tech/platform/deployments?environment=prod&per_page=100")
 	var ds []map[string]any
-	if err != nil || yaml.Unmarshal(b, &ds) != nil || len(ds) == 0 || len(ds) >= 100 {
+	if err != nil || yaml.Unmarshal(b, &ds) != nil || len(ds) == 0 {
 		return false
 	}
 	for _, d := range ds {
 		id := fmt.Sprint(d["id"])
-		if !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || d["sha"] != e.sha || d["environment"] != "prod" {
+		if !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || d["environment"] != "prod" {
 			return false
 		}
 		b, err = e.api(ctx, "repos/devantler-tech/platform/deployments/"+id+"/statuses?per_page=100")
 		var statuses []map[string]any
-		if err != nil || yaml.Unmarshal(b, &statuses) != nil || len(statuses) == 0 || len(statuses) >= 100 {
+		if err != nil || yaml.Unmarshal(b, &statuses) != nil || len(statuses) >= 100 {
 			return false
 		}
-		s := statuses[0]
-		if s["state"] == "success" && s["environment"] == "prod" && strings.HasPrefix(str(s["log_url"]), "https://github.com/devantler-tech/platform/actions/runs/"+e.deploymentRun+"/job/") {
-			return true
+		ran, fromRun := false, false
+		for _, s := range statuses {
+			switch s["state"] {
+			case "in_progress", "success":
+				ran = true
+			case "waiting", "queued", "pending", "error", "failure", "inactive":
+			default:
+				return false // a state this does not know
+			}
+			fromRun = fromRun || s["environment"] == "prod" && strings.HasPrefix(str(s["log_url"]), "https://github.com/devantler-tech/platform/actions/runs/"+e.deploymentRun+"/job/")
+		}
+		// GitHub lists statuses newest first. A deployment that is queued,
+		// pending or in progress may be changing production right now.
+		if len(statuses) > 0 {
+			if newest := statuses[0]["state"]; newest == "queued" || newest == "pending" || newest == "in_progress" {
+				return false
+			}
+		}
+		if ran {
+			return fromRun
 		}
 	}
 	return false
+}
+
+// applied proves that a Flux layer has applied, and is attempting, exactly the
+// pinned revision. It does not require the layer to be healthy: this tool
+// repairs the audit disk whose exhaustion makes the layers below the root
+// unhealthy, so requiring their health would keep the repair from running.
+func applied(r map[string]any, revision string) bool {
+	g := number(field(r, "metadata", "generation"))
+	return g >= 1 && number(field(r, "status", "observedGeneration")) == g && field(r, "spec", "suspend") != true && field(r, "status", "lastAppliedRevision") == revision && field(r, "status", "lastAttemptedRevision") == revision
 }
 func ready(r map[string]any) bool {
 	g := number(field(r, "metadata", "generation"))
@@ -180,9 +228,11 @@ type snapshot struct {
 
 func (e engine) collect(ctx context.Context) (snapshot, error) {
 	s := snapshot{claims: map[string]map[string]any{}, volumes: map[string]map[string]any{}, pods: map[string]map[string]any{}}
+	// The root layer must be healthy. The layers below it need only have
+	// applied, and be attempting, the pinned revision (see applied).
 	for _, name := range []string{"flux-system", "infrastructure-controllers", "infrastructure", "apps"} {
 		k, err := e.read(ctx, "--namespace=flux-system", "get", "kustomization", name, "--output=json")
-		if err != nil || !valid(k, "kustomize.toolkit.fluxcd.io/v1", "Kustomization", "flux-system", name) || !ready(k) || field(k, "status", "lastAppliedRevision") != e.revision {
+		if err != nil || !valid(k, "kustomize.toolkit.fluxcd.io/v1", "Kustomization", "flux-system", name) || !applied(k, e.revision) || name == "flux-system" && !ready(k) {
 			return s, sourceUnsettled
 		}
 	}
@@ -207,7 +257,7 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 		}
 		req, capacity := str(field(c, "spec", "resources", "requests", "storage")), str(field(c, "status", "capacity", "storage"))
 		_, typedConditions := field(c, "status", "conditions").([]any)
-		if req != "1Gi" && req != "10Gi" && req != target || capacity != "10Gi" && capacity != target || field(c, "status", "conditions") != nil && !typedConditions {
+		if req != previous && req != target || capacity != previous && capacity != target || field(c, "status", "conditions") != nil && !typedConditions {
 			return s, claimCapacityUnreviewed
 		}
 		pvName := str(field(c, "spec", "volumeName"))
@@ -219,7 +269,7 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 			return s, bindingUnverified
 		}
 		pvCapacity := field(v, "spec", "capacity", "storage")
-		if pvCapacity != "10Gi" && pvCapacity != target {
+		if pvCapacity != previous && pvCapacity != target {
 			return s, volumeCapacityUnreviewed
 		}
 		pod, err := e.read(ctx, "--namespace=openbao", "get", "pod", podName, "--output=json")
@@ -347,7 +397,7 @@ func run(args []string, out io.Writer, execute command, cost func(context.Contex
 		return hold()
 	}
 	sha, rev, id, deploy := os.Getenv("GITHUB_SHA"), os.Getenv("AUDIT_CAPACITY_REVISION"), os.Getenv("GITHUB_RUN_ID"), os.Getenv("AUDIT_CAPACITY_DEPLOYMENT_RUN")
-	if len(args) != 1 || args[0] != "--execute" && args[0] != "--preflight" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_EVENT_NAME") != "workflow_dispatch" || os.Getenv("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/expand-openbao-audit.yaml@refs/heads/main" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("AUDIT_CAPACITY_CONFIRM") != "EXPAND OPENBAO AUDIT ONLY TO 20GI" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(rev) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(deploy) {
+	if len(args) != 1 || args[0] != "--execute" && args[0] != "--preflight" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_EVENT_NAME") != "workflow_dispatch" || os.Getenv("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/expand-openbao-audit.yaml@refs/heads/main" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("AUDIT_CAPACITY_CONFIRM") != "EXPAND OPENBAO AUDIT ONLY TO 40GI" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(rev) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(deploy) {
 		return hold()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
@@ -452,7 +502,7 @@ func run(args []string, out io.Writer, execute command, cost func(context.Contex
 			return hold()
 		}
 	}
-	result := "OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=20Gi preservationSamples=2\n"
+	result := "OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=40Gi preservationSamples=2\n"
 	if n, err := io.WriteString(out, result); err != nil || n != len(result) {
 		return 2
 	}

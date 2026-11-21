@@ -26,3 +26,32 @@ spec:
               protocol: TCP
             - port: "1993"
               protocol: TCP
+  # The served setup relays every remote recipient through Amazon SES
+  # (docs/adr/email-outbound-relay.md). A deny overrides any allow, so the
+  # preparation base's all-egress deny is removed and replaced by exactly two
+  # grants: DNS, inspected so the name rule below is enforced, and the SES SMTP
+  # endpoint on 587. Every other destination, including direct MX delivery,
+  # stays denied by the namespace default.
+  egressDeny: null
+  egress:
+    - toFQDNs:
+        - matchName: "email-smtp.eu-central-1.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "587"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchName: "email-smtp.eu-central-1.amazonaws.com"
+              # Resolver search-domain attempts for the relay name.
+              - matchPattern: "*.cluster.local"

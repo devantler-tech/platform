@@ -130,42 +130,9 @@ func newInventoryReader(ctx context.Context, address string) (nativeReplicaReade
 // workflow's memory-backed credentials and bounded block API. The unused-worker
 // profile additionally verifies its original partition before directory reads.
 func openInventoryReader(ctx context.Context, address, unusedEphemeralUUID string) (nativeReplicaReader, func() error, error) {
-	directory := os.Getenv("LONGHORN_V2_CREDENTIAL_DIR")
-	if !regexp.MustCompile(`^/dev/shm/longhorn-v2\.[A-Za-z0-9]+$`).MatchString(directory) || os.Getenv("TALOSCONFIG") != filepath.Join(directory, "talosconfig") {
-		return nil, nil, errInventory
-	}
-	parent, err := os.Lstat(directory)
-	if err != nil || !parent.IsDir() || parent.Mode().Perm() != 0700 {
-		return nil, nil, errInventory
-	}
-	path := filepath.Join(directory, "talosconfig")
-	before, err := os.Lstat(path)
-	if err != nil || !before.Mode().IsRegular() || before.Mode().Perm() != 0600 || before.Size() <= 0 || before.Size() > 512<<10 {
-		return nil, nil, errInventory
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, nil, errInventory
-	}
-	opened, statErr := file.Stat()
-	data, readErr := io.ReadAll(io.LimitReader(file, (512<<10)+1))
-	closeErr := file.Close()
-	after, lastErr := os.Lstat(path)
-	if statErr != nil || readErr != nil || closeErr != nil || lastErr != nil || len(data) != int(before.Size()) ||
-		!os.SameFile(before, opened) || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
-		return nil, nil, errInventory
-	}
-	config, err := talosconfig.FromBytes(data)
-	if err != nil {
-		return nil, nil, errInventory
-	}
-	endpoint, err := inventoryEndpoint(config)
+	connection, err := openInventoryTalosClient(ctx)
 	if err != nil {
 		return nil, nil, err
-	}
-	connection, err := talos.New(ctx, talos.WithConfig(config), talos.WithContextName(config.Context), talos.WithEndpoints(endpoint), talos.WithGRPCDialOptions(grpc.WithNoProxy()))
-	if err != nil {
-		return nil, nil, errInventory
 	}
 	blocks := longhorninventory.BoundedBlocks{API: v1alpha1.NewStateClient(connection.Conn()), Target: address}
 	var reader nativeReplicaReader = longhorninventory.Native{API: connection.MachineClient, Target: address, Blocks: blocks}
@@ -173,6 +140,47 @@ func openInventoryReader(ctx context.Context, address, unusedEphemeralUUID strin
 		reader = unusedTemporaryReader{nativeReplicaReader: reader, blocks: blocks, address: address, ephemeralUUID: unusedEphemeralUUID}
 	}
 	return reader, connection.Close, nil
+}
+
+func openInventoryTalosClient(ctx context.Context) (*talos.Client, error) {
+	directory := os.Getenv("LONGHORN_V2_CREDENTIAL_DIR")
+	if !regexp.MustCompile(`^/dev/shm/longhorn-v2\.[A-Za-z0-9]+$`).MatchString(directory) || os.Getenv("TALOSCONFIG") != filepath.Join(directory, "talosconfig") {
+		return nil, errInventory
+	}
+	parent, err := os.Lstat(directory)
+	if err != nil || !parent.IsDir() || parent.Mode().Perm() != 0700 {
+		return nil, errInventory
+	}
+	path := filepath.Join(directory, "talosconfig")
+	before, err := os.Lstat(path)
+	if err != nil || !before.Mode().IsRegular() || before.Mode().Perm() != 0600 || before.Size() <= 0 || before.Size() > 512<<10 {
+		return nil, errInventory
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, errInventory
+	}
+	opened, statErr := file.Stat()
+	data, readErr := io.ReadAll(io.LimitReader(file, (512<<10)+1))
+	closeErr := file.Close()
+	after, lastErr := os.Lstat(path)
+	if statErr != nil || readErr != nil || closeErr != nil || lastErr != nil || len(data) != int(before.Size()) ||
+		!os.SameFile(before, opened) || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return nil, errInventory
+	}
+	config, err := talosconfig.FromBytes(data)
+	if err != nil {
+		return nil, errInventory
+	}
+	endpoint, err := inventoryEndpoint(config)
+	if err != nil {
+		return nil, err
+	}
+	connection, err := talos.New(ctx, talos.WithConfig(config), talos.WithContextName(config.Context), talos.WithEndpoints(endpoint), talos.WithGRPCDialOptions(grpc.WithNoProxy()))
+	if err != nil {
+		return nil, errInventory
+	}
+	return connection, nil
 }
 
 func runReplicaInventory(ctx context.Context, target, source, runID string) error {

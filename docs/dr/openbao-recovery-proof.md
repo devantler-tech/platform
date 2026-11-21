@@ -1,6 +1,8 @@
 # Isolated credential recovery proof
 
-The main-only verification workflow reads the fixed deployment facts and a fresh
+## Existing account recovery
+
+The main-only account verification workflow reads the fixed deployment facts and a fresh
 off-cluster snapshot. Recovery credentials come from a completed Velero resource
 backup at the same declared storage destination. It never reads the running
 service's recovery-key Secret. Moving credential custody remains a separate
@@ -115,7 +117,7 @@ server and refuse an altered storage passphrase, corrupt snapshot, wrong unseal
 key or wrong custody scope.
 
 Only the actual independent result
-`OPENBAO_BACKUP_RESTORE=PASS records=4 version=2.6.3` clears this key's recovery
+`OPENBAO_BACKUP_RESTORE=PASS records=4 version=2.7.2` clears this key's recovery
 prerequisite. A prepared key, a recent snapshot missing the key, a skipped native
 test or an offline fixture is insufficient. Encrypted-volume canary, data
 migration, restoration and activation remain separate reviewed operations; keep
