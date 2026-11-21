@@ -19,7 +19,7 @@ name: Expand OpenBao Audit Capacity
         required: true
         type: string
       accepted_deployment_run:
-        description: Successful CI or CD run that deployed the current main commit to prod
+        description: CI or CD run whose job last ran in prod, with no prod deployment started since
         required: true
         type: string
 
