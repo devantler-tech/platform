@@ -81,9 +81,17 @@ func (p *nativeSeedRun) backup(ctx context.Context) error {
 	if err = p.advance(ctx, after); err != nil {
 		return err
 	}
+	after, err = p.waitForVerifiedBackup(ctx, desired)
+	if err != nil {
+		return err
+	}
+	return p.advance(ctx, after)
+}
+
+func (p *nativeSeedRun) waitForVerifiedBackup(ctx context.Context, desired object) (canarySeedState, error) {
 	var transfer, repository object
 	var snapshot string
-	err = waitReadyWithin(ctx, 20*time.Minute, func(ctx context.Context) error {
+	err := waitReadyWithin(ctx, 20*time.Minute, func(ctx context.Context) error {
 		parent, err := p.c.get(ctx, "backups.velero.io", "velero", p.state.Backup.Name, false)
 		if err != nil {
 			return err
@@ -120,16 +128,16 @@ func (p *nativeSeedRun) backup(ctx context.Context) error {
 		return p.originalBackupInputs(ctx)
 	})
 	if err != nil {
-		return err
+		return canarySeedState{}, err
 	}
 	repositorySpec, err := seedSpecDigest(repository)
 	if err != nil {
-		return err
+		return canarySeedState{}, err
 	}
-	after = p.state
+	after := p.state
 	after.Phase, after.Transfer, after.Repository = "backup-verified", benchmarkIdentity(transfer), benchmarkIdentity(repository)
 	after.RepositorySpec, after.Snapshot = repositorySpec, snapshot
-	return p.advance(ctx, after)
+	return after, nil
 }
 
 func (p *nativeSeedRun) retireSource(ctx context.Context) error {
