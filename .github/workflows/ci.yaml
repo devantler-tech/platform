@@ -4222,7 +4222,9 @@ jobs:
             k8s/bases/infrastructure/controllers/kustomization.yaml \
             k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml \
             k8s/providers/docker/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/docker/infrastructure/controllers/flux-operator \
             k8s/bases/components \
+            k8s/clusters/local/kustomization.yaml \
             k8s/clusters/prod/bootstrap/config-map.yaml ksail.prod.yaml \
             scripts/tests/test-flux-operator-rendered-placement.sh \
             scripts/flux-render.lib.sh scripts/build-controller-helm.sh \
