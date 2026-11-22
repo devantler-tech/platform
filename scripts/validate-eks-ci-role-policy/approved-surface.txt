@@ -126,7 +126,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|reloader|reloader c26139f0a484b501080f4a24
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|umami|umami 4e9eeef418273d25d0e56a2fc627783f7ffaa6e4cf32000ad3798aa46cfe422f
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|velero|velero 9be3792c0d2cb88fe94aae10bb1ae9ca552391235d274448e6eda5051a5e6f7f
+helm.toolkit.fluxcd.io/v2|HelmRelease|velero|velero c4b41d5b32df91b2eed62baad1486d3091873ba93eab4eff35bbdb1926772e65
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|vertical-pod-autoscaler|vertical-pod-autoscaler 11dedadfe257ccd515a917f8999bbb21230de5c84be5b2ed522b6e9d6c3ba1b4
 
@@ -380,7 +380,7 @@ rbac.authorization.k8s.io/v1|Role|ate-system|substrate-ca-reader 153cc02bc210a1f
 
 rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources 9207b057fb6d4f1492b13663277658e3bd31849a9aa11dd2185ceb0a0afcbfab
 
-rbac.authorization.k8s.io/v1|Role|customer-identity|customer-identity-setup 7f700c5af8b692b4e51b9e5150cf90b7d7e70f0f4b7d215e5b169a147fadfdcd
+rbac.authorization.k8s.io/v1|Role|customer-identity|customer-identity-setup 0009b5831b03f0e6af872891c102e1ffa08d0bafa881d8c6735667cf48d35da2
 
 rbac.authorization.k8s.io/v1|Role|data-product-controller|data-product-readiness-observer 10df039485be13b0344199a50eacc4fbd942f2bb9b831a84b11c024918a3422a
 
@@ -530,7 +530,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|world-at-ruin|world-at-ruin 04503c3efd
 
 v1|ConfigMap|flux-system|variables-base 3ad340acc55739177ebb22a26bf2c20116c66a818a77793646c4fd54b4c3c8b1
 
-v1|ConfigMap|flux-system|variables-cluster 951217f5ef06eea745ed22d56b9e127c2a4b9799036537831378194f818e0eff
+v1|ConfigMap|flux-system|variables-cluster 0ed6b367d2e52d1aef763acce34391355bbbdf53ba2a25c76ae19f0301994578
 
 v1|Secret|flux-system|variables-cluster 03c1c8eb598a7d2fe2a7c0670282d90139b91fb86e5bff534cd5d748976d19f5
 

@@ -45,3 +45,24 @@ publication and before updating the pool, then require the full nine-node roster
 after Talos readiness. An earlier workflow result alone is insufficient. These
 checks do not prove admission cache recovery, local disk layout, replica
 preservation, historical recoverability, benchmark results or iSCSI removal.
+
+## Reconcile the verified provider records
+
+The protected **Retire Abandoned Longhorn Image Builder** workflow binds one
+reviewed server to its original creation time and both Primary IP IDs. It requires
+an unchanged production Node inventory, the original provider action history,
+no attachments or backups, and exactly the two approved auto-delete Primary IPs.
+Completion requires a successful delete action and provider readback that the
+server and both IPs are gone.
+
+The protected **Repair Longhorn Provider Index** workflow writes the canonical
+index label for each reviewed static server. It ties each edit to the native
+Node UID and carries forward every other provider label. It validates the
+proposed roster before writing and compares the full provider and Node
+inventories afterward. If either operation loses its response, inspect provider
+state before deciding whether a fresh first attempt is needed.
+
+Both workflows require their own operation name as confirmation on current
+`main` and share the protected production deployment lock. The
+`plan-retire-builder` and `plan-repair-index` commands exercise the same
+preflight through the production read-only Kubernetes context and Hetzner token.
