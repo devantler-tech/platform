@@ -40,16 +40,25 @@
 # word — deleting one line would hide an unpinned source. An apiVersion this guard
 # cannot decide is exit 2, exactly like YAML it cannot parse.
 #
-# ⚠️ ANTI-VACUITY: finding NO GitRepository at all is exit 2, not exit 0.
+# ⚠️ ANTI-VACUITY: finding NO Flux source document at all is exit 2, not exit 0.
 # A selector that matched nothing is indistinguishable from a healthy tree, which
 # is the failure mode this guard exists to prevent one level down. "Nothing to
 # check" must never render as "checked and clean".
 #
+# Since the unifi tenant moved to its signed release artifact (an OCIRepository,
+# ADR 0019), the platform may legitimately hold no GitRepository at all. The
+# guard then still has to prove its selector READ the tree, so it also counts
+# every other Flux source document (`source.toolkit.fluxcd.io/*`, such as an
+# OCIRepository) it parses. A tree with no GitRepository passes only when at
+# least one other Flux source was read by the same selector; a tree with no Flux
+# source of any kind is still cannot-check.
+#
 # Exit codes:
-#   0  every GitRepository found is pinned to a 40-hex commit
+#   0  every GitRepository found is pinned to a 40-hex commit, or there is none
+#      and at least one other Flux source document was read
 #   1  at least one is not — the defect
-#   2  cannot check: bad usage, missing root, unparseable YAML, or no
-#      GitRepository document found anywhere under the root
+#   2  cannot check: bad usage, missing root, unparseable YAML, or no Flux
+#      source document found anywhere under the root
 
 set -uo pipefail
 
@@ -89,6 +98,7 @@ find_status=$?
   die "could not enumerate '$root' (find exit $find_status) — refusing to report a tree it could not fully read"
 
 checked=0
+sources=0
 violations=0
 
 # A here-string, not a pipe: a piped `while` runs in a subshell, so the counters
@@ -123,14 +133,27 @@ while IFS= read -r file; do
   # still emits an empty field. `(X // "" | select(. != "")) // "<sentinel>"` catches both.
   # Only the trailing `commit` may be empty, because a stripped trailing field still reads
   # back as the empty string.
+  #
+  # The selector also emits every OTHER Flux source document (a string apiVersion in
+  # `source.toolkit.fluxcd.io/*`), with its kind first, only so the anti-vacuity check below
+  # can tell "this tree holds no GitRepository" from "the selector read nothing". A
+  # GitRepository is still selected by its kind alone, so the apiVersion decision for it stays
+  # in the loop below.
   if ! rows="$(yq eval \
-    'select(tag == "!!map") | select(.kind == "GitRepository") | [((.apiVersion // "" | select(. != "")) // "<absent>"), ((.metadata.namespace // "" | select(. != "")) // "-"), ((.metadata.name // "" | select(. != "")) // "-"), (.spec.ref.commit // "")] | @tsv' \
+    'select(tag == "!!map") | select(.kind == "GitRepository" or ((.apiVersion | tag) == "!!str" and (.apiVersion | test("^source\.toolkit\.fluxcd\.io/.")))) | [((.kind // "" | select(. != "")) // "<absent>"), ((.apiVersion // "" | select(. != "")) // "<absent>"), ((.metadata.namespace // "" | select(. != "")) // "-"), ((.metadata.name // "" | select(. != "")) // "-"), (.spec.ref.commit // "")] | @tsv' \
     "$file" 2>/dev/null)"; then
     die "could not parse '$file' — refusing to report a tree it could not read"
   fi
 
-  while IFS=$'\t' read -r api ns name commit; do
+  while IFS=$'\t' read -r kind api ns name commit; do
     [ -n "${name:-}" ] || continue
+
+    # Another Flux source kind (an OCIRepository, a HelmRepository, ...): not subject to the
+    # commit pin, but proof that the selector read Flux sources in this tree.
+    if [ "$kind" != GitRepository ]; then
+      sources=$((sources + 1))
+      continue
+    fi
 
     # A Kubernetes resource is identified by apiVersion AND kind, never by kind alone.
     # `GitRepository` is not a reserved word: an unrelated CRD may use it, and such a
@@ -166,8 +189,8 @@ while IFS= read -r file; do
   done <<<"$rows"
 done <<<"$candidates"
 
-if [ "$checked" -eq 0 ]; then
-  die "no GitRepository document found under '$root' — selector matched nothing, so nothing was verified"
+if [ "$checked" -eq 0 ] && [ "$sources" -eq 0 ]; then
+  die "no Flux source document found under '$root' — selector matched nothing, so nothing was verified"
 fi
 
 if [ "$violations" -gt 0 ]; then
@@ -188,5 +211,6 @@ FIX
   exit 1
 fi
 
-printf 'guard-gitrepository-commit-pin: OK — %d GitRepository document(s), all commit-pinned\n' "$checked"
+printf 'guard-gitrepository-commit-pin: OK — %d GitRepository document(s), all commit-pinned (%d other Flux source document(s) read)\n' \
+  "$checked" "$sources"
 exit 0
