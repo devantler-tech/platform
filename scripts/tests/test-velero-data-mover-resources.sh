@@ -146,7 +146,8 @@ if ! yq -N -o=json -I0 '
 fi
 
 rebuild_selector="${root_dir}/scripts/select-velero-rebuild-backups.jq"
-rebuild_backups="$(jq -n '
+rebuild_backups="$(
+  jq -n '
   def backup($name; $schedule; $created; $spec):
     {metadata: {name: $name, namespace: "velero", creationTimestamp: $created,
       labels: {"velero.io/schedule-name": $schedule}}, status: {phase: "Completed"},
