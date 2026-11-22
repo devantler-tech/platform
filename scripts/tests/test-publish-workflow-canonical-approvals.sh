@@ -91,7 +91,10 @@ readonly GITHUB_OWN='\.github/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-
 own_release_of() { # <consumer>
   local repository="$1"
   case "$1" in
-    .github) printf '|%s' "$GITHUB_OWN"; return 0 ;;
+    .github)
+      printf '|%s' "$GITHUB_OWN"
+      return 0
+      ;;
     data-product-controller) repository=khoist ;;
   esac
   printf '|%s%s' "${repository//./\\.}" "$OWN_TAIL"
