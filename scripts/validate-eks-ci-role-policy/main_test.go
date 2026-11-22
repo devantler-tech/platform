@@ -258,183 +258,105 @@ spec:
 	}
 }
 
-// TestValidatePinnedUnifiSource rejects every source shape that can move
-// without a reviewed Platform change. The unifi Kustomization keeps patch and
-// update authority over live managed resources, so its external Git source
-// must be both the expected repository and one full immutable commit.
-func TestValidatePinnedUnifiSource(t *testing.T) {
-	const trustedURL = "https://github.com/devantler-tech/unifi"
-	pinnedCommit := strings.Repeat("a", 40)
-	targetIdentity := resourceIdentity{
-		apiVersion: "source.toolkit.fluxcd.io/v1",
-		kind:       "GitRepository",
-		namespace:  "unifi",
-		name:       "unifi",
-	}
-	source := func(url string, ref map[string]any) map[string]any {
-		return map[string]any{
-			"spec": map[string]any{
-				"url": url,
-				"ref": ref,
-				"verify": map[string]any{
-					"mode": "HEAD",
-					"secretRef": map[string]any{
-						"name": "unifi-git-signing-keys",
-					},
-				},
-			},
-		}
-	}
-
-	tests := []struct {
-		name      string
-		identity  resourceIdentity
-		document  map[string]any
-		wantError bool
-	}{
-		{
-			name:     "exact trusted commit",
-			identity: targetIdentity,
-			document: source(trustedURL, map[string]any{"commit": pinnedCommit}),
-		},
-		{
-			name:      "mutable branch",
-			identity:  targetIdentity,
-			document:  source(trustedURL, map[string]any{"branch": "main"}),
-			wantError: true,
-		},
-		{
-			name:      "abbreviated commit",
-			identity:  targetIdentity,
-			document:  source(trustedURL, map[string]any{"commit": "7b17f7e"}),
-			wantError: true,
-		},
-		{
-			name:     "mutable branch beside commit",
-			identity: targetIdentity,
-			document: source(trustedURL, map[string]any{
-				"branch": "main",
-				"commit": pinnedCommit,
-			}),
-			wantError: true,
-		},
-		{
-			name:      "different repository",
-			identity:  targetIdentity,
-			document:  source("https://github.com/attacker/unifi", map[string]any{"commit": pinnedCommit}),
-			wantError: true,
-		},
-		{
-			name:     "missing signature verification",
-			identity: targetIdentity,
-			document: map[string]any{
-				"spec": map[string]any{
-					"url": trustedURL,
-					"ref": map[string]any{"commit": pinnedCommit},
-				},
-			},
-			wantError: true,
-		},
-		{
-			name:     "tag-only signature verification",
-			identity: targetIdentity,
-			document: map[string]any{
-				"spec": map[string]any{
-					"url": trustedURL,
-					"ref": map[string]any{"commit": pinnedCommit},
-					"verify": map[string]any{
-						"mode":      "Tag",
-						"secretRef": map[string]any{"name": "unifi-git-signing-keys"},
-					},
-				},
-			},
-			wantError: true,
-		},
-		{
-			name:     "untrusted signature key secret",
-			identity: targetIdentity,
-			document: map[string]any{
-				"spec": map[string]any{
-					"url": trustedURL,
-					"ref": map[string]any{"commit": pinnedCommit},
-					"verify": map[string]any{
-						"mode":      "HEAD",
-						"secretRef": map[string]any{"name": "some-other-key"},
-					},
-				},
-			},
-			wantError: true,
-		},
-		{
-			name: "unrelated source",
-			identity: resourceIdentity{
-				apiVersion: "source.toolkit.fluxcd.io/v1",
-				kind:       "GitRepository",
-				namespace:  "other",
-				name:       "other",
-			},
-			document: source("https://example.com/other", map[string]any{"branch": "main"}),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validatePinnedUnifiSource(tt.document, tt.identity)
-			if tt.wantError && err == nil {
-				t.Fatal("validatePinnedUnifiSource() error = nil, want rejection")
-			}
-			if !tt.wantError && err != nil {
-				t.Fatalf("validatePinnedUnifiSource() error = %v, want nil", err)
-			}
-		})
-	}
-}
-
-// TestValidateUnifiSigningKey proves the trust root is present exactly once
-// and cannot be replaced or widened without moving the reviewed fingerprint.
-func TestValidateUnifiSigningKey(t *testing.T) {
+// TestValidateUnifiReleaseSource proves the reviewed UniFi source passes and
+// rejects every shape that widens who may sign what the unifi Kustomization
+// applies, or lets a non-stable release through. The unifi Kustomization keeps
+// patch and update authority over live managed resources, and it follows
+// releases, so the signature rule is its whole provenance boundary.
+func TestValidateUnifiReleaseSource(t *testing.T) {
 	manifestPath := filepath.Join(
-		"..", "..", "k8s", "providers", "hetzner", "apps", "unifi", "secret-git-signing-keys.yaml",
+		"..", "..", "k8s", "providers", "hetzner", "apps", "unifi", "oci-repository.yaml",
 	)
 	contents, err := os.ReadFile(manifestPath)
 	if err != nil {
-		t.Fatalf("read the UniFi signing key manifest: %v", err)
+		t.Fatalf("read the UniFi source manifest: %v", err)
 	}
-	documents, err := decodeDocuments(contents)
-	if err != nil {
-		t.Fatalf("decode the UniFi signing key manifest: %v", err)
+	reviewed := func() []map[string]any {
+		documents, decodeErr := decodeDocuments(contents)
+		if decodeErr != nil {
+			t.Fatalf("decode the UniFi source manifest: %v", decodeErr)
+		}
+		return documents
 	}
-	if err := validateUnifiSigningKey(documents); err != nil {
-		t.Fatalf("the reviewed UniFi signing key must validate: %v", err)
+	if err := validateUnifiReleaseSource(reviewed()); err != nil {
+		t.Fatalf("the reviewed UniFi source must validate: %v", err)
 	}
-
-	if err := validateUnifiSigningKey(nil); err == nil {
-		t.Fatal("a missing UniFi signing key Secret must be rejected")
+	if err := validateUnifiReleaseSource(nil); err == nil {
+		t.Fatal("a missing UniFi source must be rejected")
 	}
-	if err := validateUnifiSigningKey(append(documents, documents[0])); err == nil {
-		t.Fatal("a duplicate UniFi signing key Secret must be rejected")
-	}
-
-	tampered, err := decodeDocuments(contents)
-	if err != nil {
-		t.Fatalf("decode the tampered-key fixture: %v", err)
-	}
-	stringData, ok := tampered[0]["stringData"].(map[string]any)
-	if !ok {
-		t.Fatal("the tampered-key fixture must contain stringData")
-	}
-	stringData["github.asc"] = "attacker key\n"
-	if err := validateUnifiSigningKey(tampered); err == nil {
-		t.Fatal("an unreviewed UniFi signing key must be rejected")
+	if documents := reviewed(); validateUnifiReleaseSource(append(documents, documents[0])) == nil {
+		t.Fatal("a duplicate UniFi source must be rejected")
 	}
 
-	widened, err := decodeDocuments(contents)
-	if err != nil {
-		t.Fatalf("decode the widened-key fixture: %v", err)
+	ownRelease := func(repository string) string {
+		return publishSubjectHost + repository + ownReleaseTail + "$"
 	}
-	widened[0]["data"] = map[string]any{"attacker.asc": "YXR0YWNrZXI="}
-	if err := validateUnifiSigningKey(widened); err == nil {
-		t.Fatal("additional base64-encoded signing keys must be rejected")
+	tests := []struct {
+		name   string
+		mutate func(spec map[string]any)
+	}{
+		{"another artifact", func(spec map[string]any) {
+			spec["url"] = "oci://ghcr.io/devantler-tech/unifi-fork/manifests"
+		}},
+		{"a pull credential", func(spec map[string]any) {
+			spec["secretRef"] = map[string]any{"name": "ghcr"}
+		}},
+		{"a tag instead of a release range", func(spec map[string]any) {
+			spec["ref"] = map[string]any{"tag": "latest", "semverFilter": stableReleaseSemverFilter}
+		}},
+		{"a digest beside the range", func(spec map[string]any) {
+			spec["ref"].(map[string]any)["digest"] = "sha256:" + strings.Repeat("a", 64)
+		}},
+		{"no stable-release filter", func(spec map[string]any) {
+			delete(spec["ref"].(map[string]any), "semverFilter")
+		}},
+		{"a filter that admits pre-releases", func(spec map[string]any) {
+			spec["ref"].(map[string]any)["semverFilter"] = ".*"
+		}},
+		{"an empty range", func(spec map[string]any) {
+			spec["ref"].(map[string]any)["semver"] = " "
+		}},
+		{"no signature verification", func(spec map[string]any) {
+			delete(spec, "verify")
+		}},
+		{"a key instead of keyless identity", func(spec map[string]any) {
+			spec["verify"].(map[string]any)["secretRef"] = map[string]any{"name": "cosign-key"}
+		}},
+		{"a second identity", func(spec map[string]any) {
+			verify := spec["verify"].(map[string]any)
+			identities := verify["matchOIDCIdentity"].([]any)
+			verify["matchOIDCIdentity"] = append(identities, identities[0])
+		}},
+		{"another issuer", func(spec map[string]any) {
+			matcher := spec["verify"].(map[string]any)["matchOIDCIdentity"].([]any)[0].(map[string]any)
+			matcher["issuer"] = ".*"
+		}},
+		{"another repository's release workflow", func(spec map[string]any) {
+			matcher := spec["verify"].(map[string]any)["matchOIDCIdentity"].([]any)[0].(map[string]any)
+			matcher["subject"] = ownRelease("aws")
+		}},
+		{"the shared publisher", func(spec map[string]any) {
+			matcher := spec["verify"].(map[string]any)["matchOIDCIdentity"].([]any)[0].(map[string]any)
+			matcher["subject"] = `^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@` +
+				strings.Repeat("a", 40) + "$"
+		}},
+		{"any ref of unifi's workflows", func(spec map[string]any) {
+			matcher := spec["verify"].(map[string]any)["matchOIDCIdentity"].([]any)[0].(map[string]any)
+			matcher["subject"] = `^https://github\.com/devantler-tech/unifi/\.github/workflows/.+$`
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			documents := reviewed()
+			spec, ok := documents[0]["spec"].(map[string]any)
+			if !ok {
+				t.Fatal("the UniFi source manifest has no spec")
+			}
+			tt.mutate(spec)
+			if err := validateUnifiReleaseSource(documents); err == nil {
+				t.Fatal("validateUnifiReleaseSource() error = nil, want rejection")
+			}
+		})
 	}
 }
 

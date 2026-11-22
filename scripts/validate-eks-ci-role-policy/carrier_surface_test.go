@@ -155,12 +155,6 @@ func TestDependencyUpdatesToCarriersNeedNoApproval(t *testing.T) {
 			mutate: func(document map[string]any) { spec(document)["ref"] = map[string]any{"tag": "v9.8.7"} },
 		},
 		{
-			name: "Git source commit", key: "source.toolkit.fluxcd.io/v1|GitRepository|unifi|unifi",
-			mutate: func(document map[string]any) {
-				spec(document)["ref"] = map[string]any{"commit": strings.Repeat("a", 40)}
-			},
-		},
-		{
 			name: "Crossplane provider package", key: "pkg.crossplane.io/v1|Provider||provider-upjet-unifi",
 			mutate: func(document map[string]any) {
 				spec(document)["package"] = "ghcr.io/devantler-tech/provider-upjet-unifi:v9.8.7"

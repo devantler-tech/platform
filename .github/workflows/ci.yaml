@@ -298,6 +298,8 @@ jobs:
               - 'scripts/tests/tenant-webapp-admission/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-reloader-rendered-placement.sh'
+              - 'scripts/tests/test-flux-operator-rendered-placement.sh'
+              - 'scripts/tests/test-ksail-operator-rendered-placement.sh'
               - 'scripts/tests/test-reloader-placement-selection.sh'
               - 'scripts/tests/test-hubble-ui-streaming.sh'
               - 'scripts/check-hubble-ui-streaming/**'
@@ -3076,7 +3078,9 @@ jobs:
         # it — deliberately or as collateral — would silently restore the exposure with
         # nothing in CI noticing (#3124). This runs the guard over the tree and pins its
         # verdict in all three directions, including the anti-vacuity case: finding NO
-        # GitRepository at all is cannot-check, never a clean pass.
+        # Flux source at all is cannot-check, never a clean pass. The unifi source now
+        # follows its signed release artifact (ADR 0019), so the tree may hold no
+        # GitRepository; the guard still proves it read the tree's other Flux sources.
         run: |
           bash scripts/guard-gitrepository-commit-pin.sh k8s
           bash scripts/tests/test-guard-gitrepository-commit-pin.sh
@@ -4245,6 +4249,59 @@ jobs:
         run: |
           bash scripts/guard-helm-post-renderers.sh --flux-version 2.9.6 --release whoami/whoami \
             --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
+
+      - name: 🧩 Verify scoped Flux operator placement
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck -x scripts/tests/test-flux-operator-rendered-placement.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml \
+            k8s/bases/infrastructure/controllers/flux-operator \
+            k8s/bases/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/docker/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/docker/infrastructure/controllers/flux-operator \
+            k8s/bases/components \
+            k8s/clusters/local/kustomization.yaml \
+            k8s/clusters/prod/bootstrap/config-map.yaml ksail.prod.yaml \
+            scripts/tests/test-flux-operator-rendered-placement.sh \
+            scripts/flux-render.lib.sh scripts/build-controller-helm.sh \
+            scripts/prepare-helm-render-input-capture.sh \
+            scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-flux-operator-rendered-placement.sh
+          fi
+
+      - name: 🧩 Verify scoped KSail operator placement
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck -x scripts/tests/test-ksail-operator-rendered-placement.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml \
+            k8s/bases/infrastructure/ksail-operator \
+            k8s/bases/infrastructure/controllers/ksail-operator \
+            k8s/bases/infrastructure/kustomization.yaml \
+            k8s/bases/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/docker/infrastructure/kustomization.yaml \
+            k8s/providers/docker/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/ksail-operator \
+            k8s/bases/components \
+            k8s/clusters ksail.prod.yaml \
+            scripts/tests/test-ksail-operator-rendered-placement.sh \
+            scripts/flux-render.lib.sh scripts/build-controller-helm.sh \
+            scripts/prepare-helm-render-input-capture.sh \
+            scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-ksail-operator-rendered-placement.sh
+          fi
 
       - name: 🧩 Verify independent reloader placement
         env:
