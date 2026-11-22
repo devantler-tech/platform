@@ -175,11 +175,9 @@ spec:
         # --- 0. Fetch newest snapshot from the off-cluster mirror (best-effort) ---
         # Pulls ONLY the newest raft snapshot from R2/MinIO into the shared
         # `snapshots` emptyDir so the vault-init container's DR auto-restore can
-        # read it WITHOUT mounting the RWO vault-snapshots PVC. Best-effort by
-        # design: in steady state (vault already initialized) vault-init never
-        # reads /snapshots, and on a real DR an empty /snapshots makes vault-init
-        # abort with its existing "no snapshot available" guidance -- so a missing
-        # Secret or an R2 hiccup must NEVER fail this Job.
+        # read it without mounting the RWO vault-snapshots PVC. A rebuild's
+        # explicit selection requires matching bytes. Ordinary fetches remain
+        # best-effort because an initialized vault never needs /snapshots.
         - name: fetch-snapshot
           image: quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f
           securityContext:
@@ -231,38 +229,47 @@ spec:
             - /tools/sh
             - -ec
             - |
+              STRICT_RESTORE=false
               if [ -n "$DR_SNAPSHOT_NAME$DR_SNAPSHOT_SHA256" ]; then
                 printf '%s\n' "$DR_SNAPSHOT_NAME" | grep -Eq '^openbao-[0-9]{8}-[0-9]{6}\.snap$'
                 printf '%s\n' "$DR_SNAPSHOT_SHA256" | grep -Eq '^[0-9a-f]{64}$'
-                mc alias set backup "${r2_endpoint}" \
-                  "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)"
-                target="/snapshots/$DR_SNAPSHOT_NAME"
-                mc cp "backup/${r2_bucket}/openbao-snapshots/$DR_SNAPSHOT_NAME" "$target"
-                test -s "$target"
-                printf '%s  %s\n' "$DR_SNAPSHOT_SHA256" "$target" | sha256sum -c -
-                chmod 0640 "$target"
-                exit 0
+                STRICT_RESTORE=true
               fi
+              stop_fetch() {
+                if [ "$STRICT_RESTORE" = true ]; then
+                  exit 1
+                fi
+                exit 0
+              }
+              discard_snapshot() {
+                rm -f "/snapshots/$LATEST"
+                stop_fetch
+              }
               if [ ! -f /r2/access_key_id ]; then
                 echo "vault-snapshot-r2 Secret not synced yet -- skipping snapshot"
-                echo "fetch. Auto-restore aborts cleanly if a DR is in progress."
-                exit 0
+                stop_fetch
               fi
               # ${r2_endpoint}/${r2_bucket} are Flux post-build substitutions
               # (Cloudflare R2 in prod, in-cluster MinIO locally) -- the same vars
               # the vault-snapshot CronJob/init-job use to MIRROR; here we READ.
               mc alias set backup "${r2_endpoint}" \
-                "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)" || exit 0
+                "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)" || stop_fetch
               # Newest by name (openbao-YYYYMMDD-HHMMSS.snap sorts chronologically).
-              LATEST=$(mc ls "backup/${r2_bucket}/openbao-snapshots/" 2>/dev/null \
-                | awk '{print $NF}' | grep '\.snap$' | sort | tail -n1)
+              LATEST="$DR_SNAPSHOT_NAME"
+              if [ "$STRICT_RESTORE" = false ]; then
+                LATEST=$(mc ls "backup/${r2_bucket}/openbao-snapshots/" 2>/dev/null \
+                  | awk '$NF ~ /^openbao-[0-9]{8}-[0-9]{6}\.snap$/ {print $NF}' | sort | tail -n1)
+              fi
               if [ -z "$LATEST" ]; then
                 echo "No snapshot in the mirror yet -- nothing to fetch."
-                exit 0
+                stop_fetch
               fi
-              echo "Fetching newest snapshot $LATEST from the off-cluster mirror..."
-              mc cp "backup/${r2_bucket}/openbao-snapshots/$LATEST" "/snapshots/$LATEST" || true
-              ls -l /snapshots/ || true
+              mc cp "backup/${r2_bucket}/openbao-snapshots/$LATEST" "/snapshots/$LATEST" || discard_snapshot
+              test -s "/snapshots/$LATEST" || discard_snapshot
+              if [ "$STRICT_RESTORE" = true ]; then
+                printf '%s  %s\n' "$DR_SNAPSHOT_SHA256" "/snapshots/$LATEST" | sha256sum -c - || discard_snapshot
+              fi
+              chmod 0640 "/snapshots/$LATEST" || discard_snapshot
         # --- 1. Auto-init + unseal ---
         - name: vault-init
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
