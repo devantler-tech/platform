@@ -621,6 +621,13 @@ restore. `deploy-prod`'s last step reports exactly that pair; any other outcome,
 report or any re-run attempt, still heals: a re-run is refused because the PR has already left
 the queue, while its first attempt may have deployed.
 
+**Never hold production with an approval on the `prod` environment.** Every production job takes the
+`prod-deploy` lock before it waits for approval, so one unapproved job wedges the whole lane: stale
+merge-group runs cannot reach the step that refuses them, a rejected deploy starts a heal that waits
+too, and queued runs cannot be cancelled (#6433). Hold production with the fail-fast rule in
+[the recovery runbook](docs/operations/production-recovery.md#hold-production-without-wedging-the-deploy-lane)
+instead.
+
 **Persistence retirement is always two-stage.** A merge-group artifact is speculative, but
 Kubernetes PVC deletion is irreversible once `deletionTimestamp` is set: queue eviction and the
 heal job cannot un-delete it. The production persistence-safety component therefore disables Flux

@@ -190,10 +190,12 @@ render() {
 # spec.components count, spec.path and its source as kind/namespace/name. A sourceRef
 # without a namespace reads from the Kustomization's own namespace.
 flux_kustomizations() {
+  # A Flux Kustomization object has a spec; a healthCheckExprs entry naming the kind
+  # (apps, ADR 0019) has none and is no object to follow.
   # Evaluated per document: yq's eval-all pairs every match with every other in a
   # collected array, so one row per match needs the per-document form.
   yq -N -r '
-    .. | select(type == "!!map" and .kind == "Kustomization" and
+    .. | select(type == "!!map" and .kind == "Kustomization" and has("spec") and
       ((.apiVersion // "") | test("^kustomize\\.toolkit\\.fluxcd\\.io/"))) |
     [(.metadata.name // "-"), (((.spec.patches // []) | length) | tostring), (((.spec.components // []) | length) | tostring), (.spec.path // ""),
       ((.spec.sourceRef.kind // "-") + "/" + (.spec.sourceRef.namespace // .metadata.namespace // "-") + "/" + (.spec.sourceRef.name // "-"))] |

@@ -1,5 +1,12 @@
 # Prepare Longhorn V2 workers
 
+First-attempt manual runs on main join the ordinary production queue before
+validation and keep that turn through the selected operation. Other events, refs
+and attempts use separate groups and keep their existing operation refusals.
+All boundary tests still run before production credentials
+are restored. The original dispatch source must remain current: the production
+lock does not lock Git refs, and a stale source still refuses the operation.
+
 `inventory-v1-runtime` is a protected, target-free read-only inventory. Its exact
 confirmation is `inventory-v1-runtime`, with empty `node` and `database`.
 It observes the complete runtime inventory twice between current-main checks.

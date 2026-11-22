@@ -3,6 +3,8 @@ kind: GitRepository
 metadata:
   name: unifi
   namespace: unifi
+  labels:
+    platform.devantler.tech/tenant-source: "true"
 spec:
   interval: 5m
   # devantler-tech/unifi is public — no credential is needed. It holds NO
