@@ -200,7 +200,7 @@ func readMetadata(ctx context.Context, client *http.Client, endpoint string) ([]
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return nil, errors.New("metadata read refused or redirected")
+		return nil, fmt.Errorf("metadata read refused or redirected (HTTP %d)", response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
@@ -480,15 +480,15 @@ func run(stage string) error {
 			return err
 		}
 	}
-	for _, endpoint := range recoveryEndpoints {
+	for index, endpoint := range recoveryEndpoints {
+		var readErr error
 		if endpoint == retainedPoolPath {
-			if err := requireRetainedMetadata(ctx, client, base+endpoint); err != nil {
-				return err
-			}
-			continue
+			readErr = requireRetainedMetadata(ctx, client, base+endpoint)
+		} else {
+			readErr = requireEmptyMetadata(ctx, client, base+endpoint)
 		}
-		if err := requireEmptyMetadata(ctx, client, base+endpoint); err != nil {
-			return err
+		if readErr != nil {
+			return fmt.Errorf("%s metadata check %d/%d: %w", stage, index+1, len(recoveryEndpoints), readErr)
 		}
 	}
 	fmt.Printf("ARC drain recovery %s: %d complete metadata lists prove no active organization resources, retained runner children or ARC pods\n", stage, len(recoveryEndpoints))
