@@ -27,3 +27,20 @@ spec:
           resourcePolicy:
             kind: configmap
             name: velero-volume-policies
+      # OpenBao needs its recovery keys even when a volume upload makes the
+      # full backup incomplete. This schedule uses the existing R2 destination.
+      openbao-recovery-keys:
+        disabled: false
+        schedule: "10 6 * * *"
+        useOwnerReferencesInBackup: false
+        template:
+          ttl: "336h"
+          storageLocation: default
+          includedNamespaces:
+            - openbao
+          includedResources:
+            - secrets
+          includeClusterResources: false
+          snapshotVolumes: false
+          snapshotMoveData: false
+          defaultVolumesToFsBackup: false

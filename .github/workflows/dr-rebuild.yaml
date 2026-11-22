@@ -9,8 +9,8 @@
 #      (fresh, empty OpenBao; SOPS-sourced secrets re-seed automatically)
 #   3. (restore=true) Velero resource restore from the newest Completed
 #      backup synced from R2
-#   4. (restore=true) OpenBao data recovery: fetch the newest raft snapshot
-#      from the R2 openbao-snapshots/ mirror onto the vault-snapshots PVC,
+#   4. (restore=true) OpenBao data recovery: fetch the newest pre-rebuild raft snapshot
+#      from the R2 openbao-snapshots/ mirror and bind its name and SHA-256,
 #      restore the pre-incident openbao-unseal Secret from the Velero backup,
 #      reset the fresh vault (scale down + delete data PVCs), and let the
 #      vault-config Job's automated snapshot-restore path bring the old vault
@@ -152,6 +152,7 @@ jobs:
             echo "::error::Confirmation phrase mismatch — type REBUILD-PROD (exactly) to run this workflow."
             exit 1
           fi
+          printf 'DR_RECOVERY_CUTOFF=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_ENV}"
           echo "Confirmation accepted. Rebuilding the production cluster from zero."
 
       - name: 📑 Checkout
@@ -315,7 +316,7 @@ jobs:
           CILIUM_ROLLOUT_REVISION_READY: ${{ steps.wait_flux_revision.outcome == 'success' }}
         run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 
-      - name: 💾 Velero resource restore (newest Completed backup)
+      - name: 💾 Restore the newest completed full Velero backup
         if: ${{ inputs.restore }}
         run: |
           set -euo pipefail
@@ -331,18 +332,21 @@ jobs:
           # controller; give it a moment to populate after the BSL goes ready.
           BACKUP=""
           for i in $(seq 1 30); do
-            BACKUP=$(kubectl -n velero get backups.velero.io -o json | jq -r \
-              '[.items[] | select(.status.phase=="Completed")] | sort_by(.metadata.creationTimestamp) | last | .metadata.name // empty')
+            candidates=$(kubectl -n velero get backups.velero.io -o json |
+              jq -e --arg cutoff "${DR_RECOVERY_CUTOFF:?}" -f scripts/select-velero-rebuild-backups.jq)
+            BACKUP=$(jq -r '.full // empty' <<<"${candidates}")
             [ -n "${BACKUP}" ] && break
-            echo "  ...no Completed backups synced yet (${i}/30)"
+            echo "  ...no completed full backup synced yet (${i}/30)"
             sleep 10
           done
           if [ -z "${BACKUP}" ]; then
-            echo "::error::No Completed Velero backup found in the BSL — cannot restore. The rebuilt (empty) platform is still up."
+            echo "::error::The backup location has no eligible full backup completed before this rebuild."
             exit 1
           fi
-          echo "Restoring from backup: ${BACKUP}"
-          echo "backup_name=${BACKUP}" >> "${GITHUB_ENV}"
+          echo "Restoring platform resources from backup: ${BACKUP}"
+          # The rebuild restores keys from the same full archive. The separate
+          # recovery-key archive is used by the isolated restoration proof.
+          echo "dr_full_backup_name=${BACKUP}" >> "${GITHUB_ENV}"
 
           kubectl -n velero create -f - <<EOF
           apiVersion: velero.io/v1
@@ -382,8 +386,9 @@ jobs:
         if: ${{ inputs.restore }}
         run: |
           set -euo pipefail
+          : "${dr_full_backup_name:?A completed full backup is required}"
 
-          echo "::group::Fetch the newest raft snapshot from R2 onto the vault-snapshots PVC"
+          echo "::group::Fetch the newest pre-rebuild raft snapshot from R2"
           # The fresh vault has already re-seeded the R2 credentials from SOPS,
           # so the vault-snapshot-r2 Secret (vault-backup/external-secret.yaml)
           # is the in-cluster source — no credentials leave the cluster.
@@ -394,9 +399,11 @@ jobs:
           [ -n "${R2_ENDPOINT}" ] || R2_ENDPOINT=$(kubectl -n flux-system get configmap variables-base -o jsonpath='{.data.r2_endpoint}')
           R2_BUCKET=$(kubectl -n flux-system get configmap variables-cluster -o jsonpath='{.data.r2_bucket}' 2>/dev/null || true)
           [ -n "${R2_BUCKET}" ] || R2_BUCKET=$(kubectl -n flux-system get configmap variables-base -o jsonpath='{.data.r2_bucket}')
+          snapshot_cutoff=$(date -u -d "${DR_RECOVERY_CUTOFF:?}" +%Y%m%d-%H%M%S)
           kubectl -n openbao create configmap dr-r2-target \
             --from-literal=endpoint="${R2_ENDPOINT}" \
             --from-literal=bucket="${R2_BUCKET}" \
+            --from-literal=cutoff="${snapshot_cutoff}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl -n openbao delete pod dr-snapshot-fetch --ignore-not-found
@@ -421,8 +428,7 @@ jobs:
                 type: RuntimeDefault
             volumes:
               - name: snapshots
-                persistentVolumeClaim:
-                  claimName: vault-snapshots
+                emptyDir: {}
               - name: r2-credentials
                 secret:
                   secretName: vault-snapshot-r2
@@ -475,6 +481,11 @@ jobs:
                       configMapKeyRef:
                         name: dr-r2-target
                         key: bucket
+                  - name: DR_SNAPSHOT_CUTOFF
+                    valueFrom:
+                      configMapKeyRef:
+                        name: dr-r2-target
+                        key: cutoff
                 resources:
                   requests:
                     cpu: 10m
@@ -496,30 +507,55 @@ jobs:
                   - /tools/sh
                   - -ec
                   - |
+                    set -o pipefail
                     mc alias set backup "$R2_ENDPOINT" \
                       "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)"
                     NEWEST=$(mc ls "backup/$R2_BUCKET/openbao-snapshots/" \
-                      | awk '{print $NF}' | grep '\.snap$' | sort | tail -n 1)
+                      | awk -v cutoff="openbao-$DR_SNAPSHOT_CUTOFF.snap" \
+                        '$NF ~ /^openbao-[0-9]{8}-[0-9]{6}\.snap$/ && $NF < cutoff {print $NF}' \
+                      | LC_ALL=C sort | tail -n 1)
                     if [ -z "$NEWEST" ]; then
-                      echo "ERROR: no snapshots found in openbao-snapshots/ — nothing to restore."
+                      echo "ERROR: no pre-rebuild snapshots found in openbao-snapshots/."
                       exit 1
                     fi
-                    echo "Fetching $NEWEST..."
                     mc cp "backup/$R2_BUCKET/openbao-snapshots/$NEWEST" "/snapshots/$NEWEST"
-                    # The restore reads this file as openbao (uid 100, gid 1000), so it must
-                    # be group-readable. mc creates it owned by THIS pod's high uid, and the
-                    # group entry is the only path left — an explicit chmod rather than a
-                    # reliance on mc's umask, matching what the snapshot writers do.
-                    chmod 0640 "/snapshots/$NEWEST"
-                    ls -l /snapshots/
+                    test -s "/snapshots/$NEWEST"
+                    digest=$(sha256sum "/snapshots/$NEWEST" | awk '{print $1}')
+                    printf 'DR_SNAPSHOT_SELECTION=%s %s\n' "$NEWEST" "$digest"
           POD
           if ! kubectl -n openbao wait pod/dr-snapshot-fetch \
               --for=jsonpath='{.status.phase}'=Succeeded --timeout=10m; then
-            kubectl -n openbao logs pod/dr-snapshot-fetch || true
             echo "::error::Snapshot fetch from R2 failed."
             exit 1
           fi
-          kubectl -n openbao logs pod/dr-snapshot-fetch
+          if ! selection=$(kubectl -n openbao logs pod/dr-snapshot-fetch -c fetch --limit-bytes=65536 |
+            grep -E '^DR_SNAPSHOT_SELECTION=openbao-[0-9]{8}-[0-9]{6}\.snap [0-9a-f]{64}$') ||
+            [[ ! "$selection" =~ ^DR_SNAPSHOT_SELECTION=(openbao-[0-9]{8}-[0-9]{6}\.snap)\ ([0-9a-f]{64})$ ]]; then
+            echo "::error::The snapshot fetch did not report exactly one verified selection."
+            exit 1
+          fi
+          snapshot_name=${BASH_REMATCH[1]}
+          snapshot_sha=${BASH_REMATCH[2]}
+          if [[ "$snapshot_name" > "openbao-$snapshot_cutoff.snap" || "$snapshot_name" == "openbao-$snapshot_cutoff.snap" ]]; then
+            echo "::error::The selected snapshot did not precede the rebuild."
+            exit 1
+          fi
+          # Create the selection before resetting any vault data. The normal
+          # vault-config Job reads the exact immutable object into both
+          # snapshot init containers instead of rediscovering the newest file.
+          if ! selection_uid=$(jq -n --arg name "$snapshot_name" --arg sha "$snapshot_sha" '{
+            apiVersion:"v1",kind:"ConfigMap",
+            metadata:{name:"dr-openbao-snapshot-selection",namespace:"openbao"},
+            immutable:true,data:{name:$name,sha256:$sha}
+          }' | kubectl create -f - -o json |
+            jq -e --arg name "$snapshot_name" --arg sha "$snapshot_sha" '
+              select(.apiVersion=="v1" and .kind=="ConfigMap" and .metadata.name=="dr-openbao-snapshot-selection" and
+                     .metadata.namespace=="openbao" and .immutable==true and .data=={name:$name,sha256:$sha}) |
+              .metadata.uid | select(type=="string" and length>0)
+            ' -r); then
+            echo "::error::The exact snapshot selection was not created and verified."
+            exit 1
+          fi
           kubectl -n openbao delete pod dr-snapshot-fetch --ignore-not-found
           kubectl -n openbao delete configmap dr-r2-target --ignore-not-found
           echo "::endgroup::"
@@ -541,7 +577,7 @@ jobs:
             name: dr-openbao-secrets-${GITHUB_RUN_ID}
             namespace: velero
           spec:
-            backupName: ${backup_name}
+            backupName: ${dr_full_backup_name}
             includedNamespaces:
               - openbao
             includedResources:
@@ -556,8 +592,14 @@ jobs:
               *) sleep 5 ;;
             esac
           done
-          if ! kubectl -n openbao get secret openbao-unseal >/dev/null 2>&1; then
-            echo "::error::openbao-unseal was not restored (restore phase: ${phase:-<none>}) — aborting before touching the data PVCs."
+          if [[ "$phase" != Completed && "$phase" != PartiallyFailed ]] ||
+            ! kubectl -n openbao get secret openbao-unseal -o json |
+              jq -e --arg restore "dr-openbao-secrets-${GITHUB_RUN_ID}" '
+                .metadata.labels["velero.io/restore-name"]==$restore and
+                (.data["unseal-key"] | type=="string" and length>0) and
+                (.data["root-token"] | type=="string" and length>0)
+              ' >/dev/null; then
+            echo "::error::Both original OpenBao keys must come from this restore before resetting the data PVCs."
             exit 1
           fi
           echo "::endgroup::"
@@ -579,6 +621,15 @@ jobs:
             sleep 10
           done
           kubectl -n openbao wait job/vault-config --for=condition=Complete --timeout=30m
+          if ! restored=$(kubectl -n openbao logs job/vault-config -c vault-init --limit-bytes=262144 |
+            grep -F "OPENBAO_DR_SNAPSHOT_RESTORED=") ||
+            [[ "$restored" != "OPENBAO_DR_SNAPSHOT_RESTORED=$snapshot_name $snapshot_sha" ]]; then
+            echo "::error::OpenBao did not report restoring the exact selected snapshot. Its selection is retained."
+            exit 1
+          fi
+          jq -n --arg uid "$selection_uid" '{
+            apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}
+          }' | kubectl delete --raw /api/v1/namespaces/openbao/configmaps/dr-openbao-snapshot-selection -f - >/dev/null
           echo "::endgroup::"
 
           echo "::group::Force ExternalSecrets + PushSecrets to resync against the restored vault"
