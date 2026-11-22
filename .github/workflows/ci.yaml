@@ -324,6 +324,7 @@ jobs:
               - 'scripts/tests/test-customer-login-navigation.sh'
               - 'scripts/tests/longhorn-ui-readonly/**'
               - 'scripts/tests/test-dex-theme-mount.sh'
+              - 'scripts/tests/customer-agent/**'
               - 'scripts/tests/test-umami-tracking-probe.sh'
               - 'scripts/tests/fixtures/umami-curl-stub.sh'
               - 'scripts/verify-umami-tracking.sh'
@@ -3749,6 +3750,12 @@ jobs:
         env:
           LONGHORN_UI_NATIVE_TEST: "1"
         run: go test -race -count=1 -v ./scripts/tests/longhorn-ui-readonly
+      - name: 🔐 Prove native portal machine token boundaries
+        if: matrix.suite == 'native'
+        timeout-minutes: 5
+        env:
+          CUSTOMER_AGENT_NATIVE_TEST: "1"
+        run: go test -count=1 -timeout=4m -v ./scripts/tests/customer-agent
       - name: 🐤 Validate staged OpenBao standby repair
         if: matrix.suite == 'contracts'
         run: |

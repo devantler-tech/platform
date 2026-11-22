@@ -1131,6 +1131,9 @@ spec:
               path "secret/data/apps/customer-identity/portal-client" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/data/apps/customer-identity/portal-agent-client" {
+                capabilities = ["create", "update", "read"]
+              }
               # The portal database's two login passwords (create-only seed)
               # and its CA certificate, pushed from the business-site
               # namespace for the portal's projected Secret. Exact keys only.
@@ -1216,6 +1219,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/customer-identity/portal-client" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/customer-identity/portal-agent-client" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/business-site/portal-db" {
