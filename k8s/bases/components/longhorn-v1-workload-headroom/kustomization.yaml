@@ -24,6 +24,16 @@ patches:
               template:
                 spec:
                   affinity:
+                    # Keep old and new operator replicas apart while the
+                    # storage runtime needs temporary memory headroom.
+                    podAntiAffinity:
+                      requiredDuringSchedulingIgnoredDuringExecution:
+                        - topologyKey: kubernetes.io/hostname
+                          labelSelector:
+                            matchLabels:
+                              app.kubernetes.io/component: operator
+                              app.kubernetes.io/instance: ksail-operator
+                              app.kubernetes.io/name: ksail-operator
                     nodeAffinity:
                       requiredDuringSchedulingIgnoredDuringExecution:
                         nodeSelectorTerms:

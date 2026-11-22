@@ -79,8 +79,9 @@ affected volume and disk identities.
 the original volumes have three healthy copies. It qualifies one 4 GiB V1
 scratch claim across the three permanent disks under the existing scheduling
 settings and keeps an additional 4 GiB above the physical free-space floor.
-It changes the exhausted disk's reservation once and reads back the original
-disks, volume identities and available capacity. An uncertain write stops
+It adjusts the limiting disk's reservation by only the remaining logical
+shortfall and reads back the original disks, volume identities and available
+capacity. An uncertain write stops
 the run. Check the live reservation and storage health before a new dispatch.
 Use the qualified capacity for one recovery or benchmark claim at a time.
 
@@ -211,13 +212,17 @@ storage activation and volume migration follow separately. Original storage repl
 the permanent workers throughout this preparation route.
 
 For the V2-born worker, use `prepare-retained-temporary-worker`,
-`temporary-v2-1` and `prepare-retained-longhorn-v2-temporary-v2-1`. The
-reviewed pool configuration must already declare the original raw volume,
-the distinct 144 GiB staging volume and a 40–44 GiB EPHEMERAL range. The
-protected operation verifies the original 96 GiB raw partition and STATE
-extents, drains the worker and closes the original mapper. It records reset
-intent only after complete native reads show the old configuration, volume
-status and partition holders cleared while the physical extents remain.
+`temporary-v2-1` and `prepare-retained-longhorn-v2-temporary-v2-1`.
+The protected operation verifies the original 96 GiB raw partition and STATE
+extents before draining. It accepts either the original profile with no
+staging declaration or the complete distinct 144 GiB staging profile and a
+40–44 GiB EPHEMERAL range. After the owned drain, it loads the reviewed
+staging profile without a reboot if needed. A partial profile or an
+unconfirmed write stops before the original mapper is closed. On resumption
+it reads back the layout and retained extents before proceeding.
+It records reset intent only after complete native reads show the old raw
+configuration, volume status and partition holders cleared while the physical
+extents remain.
 
 After the EPHEMERAL-only reset, the worker must report a new boot, a replaced
 encrypted EPHEMERAL partition and a separate encrypted staging partition.

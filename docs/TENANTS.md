@@ -18,8 +18,8 @@ runs it in a dedicated, locked-down namespace.
 There are two halves to onboarding, in two repos:
 
 1. **The tenant repo** — created from the
-   [`platform-tenant-template`](https://github.com/devantler-tech/platform-tenant-template),
-   which ships the shared, framework-agnostic CI/CD plumbing and keeps it current
+   [`application-template`](https://github.com/devantler-tech/application-template)
+   with platform tenancy, which ships the shared CI/CD plumbing and keeps it current
    via [template-sync](https://github.com/AndreasAugustin/actions-template-sync).
 2. **The platform registration** — a small directory in *this* repo under
    `k8s/bases/apps/<tenant>/` that grants the tenant a namespace, identity, RBAC,
@@ -36,12 +36,22 @@ the reference while following the steps below.
 
 ## 1. Create the tenant repository
 
-Create the repo from the template with **"Use this template"** (GitHub UI), or:
+Creating a repository from the template is not enabled yet: `application-template`
+becomes a GitHub template with
+[application-template#211](https://github.com/devantler-tech/application-template/issues/211),
+and both ways below work from then on.
+
+Create the repo from the template with **"Use this template"** (GitHub UI) and clone
+it, or create and clone it in one step:
 
 ```sh
 gh repo create devantler-tech/<tenant> \
-  --template devantler-tech/platform-tenant-template --private
+  --template devantler-tech/application-template --private --clone
+cd <tenant>
 ```
+
+Then, in that checkout, lay down its stack and the tenancy with
+`scripts/scaffold.sh <go|dotnet|svelte|none> --tenancy <tenant>`.
 
 The template gives you the shared plumbing it keeps in sync (`cd.yaml`,
 `release.yaml`, `template-sync.yaml`, `CLAUDE.md`, `zizmor.yml`) plus scaffolding
@@ -261,10 +271,14 @@ inside the same single anchored subject, until the consumers have moved and
   signature to the organisation, not to one product: the per-tenant binding is the tenant's
   signed manifest source, which accepts only its own repository and pins its image digests.
 
-The `.github` repository is excluded at every layer, including the `github-config` source: it
+The `.github` repository is excluded from the image rules and from the any-workflow form: it
 hosts the shared reusable publishers, and a tag of a reusable workflow carries that repository's
-identity whoever calls it, so another repository's release could verify as its own. Its own move
-needs a narrower rule. A `Tenant` pinned to an exact publisher revision keeps that single identity,
+identity whoever calls it, so another repository's release could verify as its own. Only the
+`github-config` source names it, through the narrower rule
+`.github/.github/workflows/cd.yaml@refs/tags/v<semver>`
+([devantler-tech/.github#926](https://github.com/devantler-tech/.github/issues/926)): exactly
+that one file, which runs only on `.github`'s own tag pushes and which `.github`'s CI keeps free
+of a `workflow_call` trigger. A `Tenant` pinned to an exact publisher revision keeps that single identity,
 because its admission record names it. These verifiers match only the issuer and the subject, so
 a product must not expose a signing workflow other repositories can call.
 
