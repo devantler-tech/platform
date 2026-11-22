@@ -244,5 +244,11 @@ spec:
     - kind: OCIRepository
       name: "*"
       namespace: world-at-ruin
+    # GitRepository is watched directly for the same reason (ADR 0019): `apps` no
+    # longer waits on a tenant source, and a Kustomization keeps applying its cached
+    # revision while its Git fetches fail. UniFi is the only GitRepository tenant.
+    - kind: GitRepository
+      name: "*"
+      namespace: unifi
   eventMetadata:
     summary: "Flux reconciliation error — prod platform"

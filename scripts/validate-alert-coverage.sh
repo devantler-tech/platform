@@ -69,7 +69,7 @@ for layer in "${LAYERS[@]}"; do
   echo '---'
 done >"${rendered}"
 
-for kind in HelmRelease Kustomization OCIRepository; do
+for kind in HelmRelease Kustomization OCIRepository GitRepository; do
   declared="${work_dir}/declared-${kind}.txt"
   declared_raw="${work_dir}/declared-${kind}-raw.txt"
   missing_namespace="${work_dir}/missing-namespace-${kind}.txt"
@@ -81,7 +81,7 @@ for kind in HelmRelease Kustomization OCIRepository; do
   case "${kind}" in
     HelmRelease) group="helm.toolkit.fluxcd.io" ;;
     Kustomization) group="kustomize.toolkit.fluxcd.io" ;;
-    OCIRepository) group="source.toolkit.fluxcd.io" ;;
+    OCIRepository | GitRepository) group="source.toolkit.fluxcd.io" ;;
     *)
       echo "::error::Unknown watched kind ${kind}."
       exit 64
@@ -136,6 +136,12 @@ for kind in HelmRelease Kustomization OCIRepository; do
     LC_ALL=C sort -u >"${declared}"
 
   if [[ ! -s "${declared}" ]]; then
+    # GitRepository is optional: the only one is the UniFi tenant source, which may move to
+    # an OCIRepository. The other kinds always exist, so none rendered means a broken build.
+    if [[ "${kind}" == GitRepository ]]; then
+      echo "✅ No GitRepository is rendered, so none needs Alert coverage."
+      continue
+    fi
     echo "::error::Rendered no ${kind}s at all — the overlays failed to build, so coverage cannot be proven. Failing closed."
     exit 1
   fi
