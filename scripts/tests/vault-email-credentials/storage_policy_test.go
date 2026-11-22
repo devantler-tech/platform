@@ -123,4 +123,27 @@ func verifyEmailStoragePolicy(t *testing.T, baseURL string, client *http.Client)
 			t.Fatalf("storage reader did not refuse %s %s", check.method, strings.TrimPrefix(check.path, "secret/"))
 		}
 	}
+	// External Secrets validates a store by looking up its own token and revokes
+	// it when done. The reader has no default policy to grant either.
+	status, _ = request(token, http.MethodGet, "auth/token/lookup-self", nil)
+	if status != http.StatusOK {
+		t.Fatal("storage reader cannot look up its own token, so its store never validates")
+	}
+	status, _ = request(token, http.MethodPost, "auth/token/revoke-self", nil)
+	if status != http.StatusNoContent {
+		t.Fatal("storage reader cannot revoke its own token")
+	}
+}
+
+// TestEmailStoragePolicyLetsItsStoreValidate keeps the two token paths External
+// Secrets needs. Without lookup-self the store never validates, the key Secret is
+// never created and the encrypted volume cannot mount.
+func TestEmailStoragePolicyLetsItsStoreValidate(t *testing.T) {
+	policy, _ := emailStoragePolicy(t)
+	for path, capability := range map[string]string{"auth/token/lookup-self": "read", "auth/token/revoke-self": "update"} {
+		pattern := `(?s)path "` + regexp.QuoteMeta(path) + `" \{\s*capabilities = \["` + capability + `"\]\s*\}`
+		if !regexp.MustCompile(pattern).MatchString(policy) {
+			t.Fatalf("Email storage policy does not grant %s on %s", capability, path)
+		}
+	}
 }

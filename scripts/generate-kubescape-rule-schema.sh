@@ -13,8 +13,8 @@ trap 'rm -rf -- "$scratch"' EXIT
 
 catalog_revision=6ec4c804fcb9b0a90fec9dd468aa57b984be150a
 catalog_sha256=cb9df542316730cf11399ec9fdbc91993bc07215343a0511926447637b6bfcb6
-chart_version=1.41.0
-chart_sha256=055db0597fb5d5ba533dbc96774a0ed14a0bad10cc796bd02ca8b43f3b5bdd5d
+chart_version=1.42.0
+chart_sha256=be45f83398f28db8f2ff395e5d8ab411328041e9e2165a42e5fb92a4ba369079
 [[ "$(yq -er '.spec.chart.spec.version' "$root/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml")" == "$chart_version" ]] || {
   printf 'FAIL: audit and regenerate the Rules schema for the changed chart pin\n' >&2
   exit 1

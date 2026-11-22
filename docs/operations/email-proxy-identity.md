@@ -56,6 +56,26 @@ when an enabled legacy setting also needs overriding. Retain data,
 credentials and client access rules throughout. A successful source test is not
 production identity or recovery evidence.
 
+## Mail listeners behind their own load balancer
+
+Inbound SMTP, submission and IMAPS do not use this adapter. They reach the
+server through the mail server's own Hetzner load balancer, which sends PROXY
+protocol directly (#5481). The shared Gateway cannot carry them with the client
+address: its TCP and TLS passthrough opens a new connection from Envoy.
+
+The initializer's `--mail-proxy-source=<address>` option names that load
+balancer's private IPv4 address. The address is not secret and never comes from
+the encrypted settings. With it, the `smtp-inbound`, `submission` and `imaps`
+listeners trust PROXY headers from that one address only. Without it, they
+trust none. Every plan writes these listeners' trust explicitly, so omitting
+the option removes a trust that an earlier plan granted.
+
+The option accepts exactly one private IPv4 address in canonical form. A
+prefix, or a public, loopback or IPv6 address, is refused without being
+repeated. The listener census accepts that one address, alone or as its `/32`,
+on those three listeners only, and the plan readback then requires the exact
+configured address. The management and adapter listeners are unchanged.
+
 References: [Caddy's maintained upstream PROXY transport](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#the-http-transport),
 [Stalwart's listener-scoped trust](https://www.stalw.art/docs/server/reverse-proxy/proxy-protocol/),
 [pinned Gateway cluster construction](https://github.com/cilium/cilium/blob/v1.20.3/operator/pkg/model/translation/envoy_cluster.go).

@@ -2,8 +2,9 @@ package main
 
 import "testing"
 
-// KSail v7.210.0 NodeLabels and the Talos server-creation path use the
-// provider role "controlplane", independently of Kubernetes' role-label spelling.
+// KSail's pinned Talos producer passes its "control-plane" role directly to
+// NodeLabels, preserving the one-based server-name index. Generic provider
+// constants and read-side normalization do not change that producer contract.
 func TestPublishedProviderControlPlaneOwnership(t *testing.T) {
 	servers, nodes := roster(t, true)
 	if err := qualify(servers, nodes, true); err != nil {
@@ -13,7 +14,7 @@ func TestPublishedProviderControlPlaneOwnership(t *testing.T) {
 
 func TestProviderRoleAliasesDoNotEstablishOwnership(t *testing.T) {
 	for _, tc := range []struct{ name, role string }{
-		{"Kubernetes role spelling", "control-plane"},
+		{"generic provider role", "controlplane"},
 		{"different case", "controlPlane"},
 		{"worker role", "worker"},
 		{"missing role", ""},

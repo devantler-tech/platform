@@ -30,6 +30,7 @@ name: Prepare Longhorn V2 Migration
             inventory-storage-root,
             inventory-storage-layout,
             inventory-provider-volume-footprint,
+            inventory-v1-runtime,
             inspect-host-memory,
             reboot-host-for-hugepages,
             observe-database,
@@ -55,13 +56,30 @@ name: Prepare Longhorn V2 Migration
         description: Fixed database for a read-only migration observation; leave node empty
         required: false
         type: choice
-        options: [coroot-db, umami-db, wedding-db, substrate-db, kagent-db]
+        options:
+          [
+            coroot-db,
+            umami-db,
+            wedding-db,
+            substrate-db,
+            kagent-db,
+            customer-identity-db,
+            business-site-portal-db,
+          ]
       confirm:
         description: "Type the exact confirmation documented for the selected operation"
         required: true
         type: string
 
 permissions: {}
+
+# A first main-only manual run joins the ordinary production queue before its tests so a
+# later deployment cannot overtake validation. PR and merge-group tests use
+# independent groups. Current-main checks still reject an aged dispatch.
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && 'prod-deploy' || format('longhorn-v2-validation-{0}-{1}', github.run_id, github.run_attempt) }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   tests:
@@ -93,10 +111,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-    concurrency:
-      group: prod-deploy
-      cancel-in-progress: false
-      queue: max
     env:
       LONGHORN_V2_NODE: ${{ inputs.node }}
       LONGHORN_V2_DATABASE: ${{ inputs.database }}
@@ -111,8 +125,11 @@ jobs:
           set -euo pipefail
           [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
           case "${LONGHORN_V2_OPERATION}" in
+            inventory-v1-runtime)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == inventory-v1-runtime ]]
+              ;;
             observe-database)
-              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db|customer-identity-db|business-site-portal-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
               ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
@@ -142,7 +159,7 @@ jobs:
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-longhorn-v1-source:[a-z0-9][-a-z0-9]*/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
               ;;
             retain-provider-source)
-              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-hetzner-source:(observability|openbao|kube-system)/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-hetzner-source:(observability|openbao|kube-system|customer-identity|business-site)/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
               ;;
             inventory-storage-root)
               [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-storage-root-${LONGHORN_V2_NODE}" ]]

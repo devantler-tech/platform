@@ -19,7 +19,7 @@ import (
 	kroapi "github.com/kubernetes-sigs/kro/api/v1alpha1"
 	"github.com/kubernetes-sigs/kro/pkg/features"
 	"github.com/kubernetes-sigs/kro/pkg/graph"
-	kroruntime "github.com/kubernetes-sigs/kro/pkg/runtime"
+	gecompiler "github.com/kubernetes-sigs/kro/pkg/graphengine/compiler"
 	appsv1 "k8s.io/api/apps/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -135,6 +135,12 @@ func TestCommittedWebApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The ResourceGraphDefinition controller compiles with the builder above;
+	// the instance controller renders children with this graph-engine compiler.
+	engine, err := gecompiler.NewCompiler(config, httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
 	compile := func(t *testing.T, input *kroapi.ResourceGraphDefinition) (*graph.Graph, error) {
 		t.Helper()
 		return builder.NewResourceGraphDefinition(input, graph.Config{MaxCollectionDimensionSize: 5})
@@ -206,7 +212,7 @@ func TestCommittedWebApp(t *testing.T) {
 		if err := apiClient.Create(ctx, instance, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 			t.Fatal(err)
 		}
-		deployment := desiredDeployment(t, compiled, instance)
+		deployment := desiredDeployment(t, engine, definition, instance)
 		writeDesiredFixture(t, "enabled", deployment)
 		pod := deployment.Spec.Template.Spec
 		if pod.SecurityContext == nil || pod.SecurityContext.RunAsUser == nil || *pod.SecurityContext.RunAsUser != 65532 ||
@@ -256,7 +262,7 @@ func TestCommittedWebApp(t *testing.T) {
 			if err := admit(input); err != nil {
 				t.Fatal(err)
 			}
-			defaultDeployment := desiredDeployment(t, compiled, input)
+			defaultDeployment := desiredDeployment(t, engine, definition, input)
 			writeDesiredFixture(t, "omitted", defaultDeployment)
 			got := defaultDeployment.Spec.Template.Spec
 			if len(got.Containers) != 1 || len(got.Containers[0].Args) != 0 || len(got.Containers[0].VolumeMounts) != 0 || len(got.Volumes) != 0 ||
@@ -320,7 +326,7 @@ func TestCommittedWebApp(t *testing.T) {
 			if err := admit(input); err != nil {
 				t.Fatal(err)
 			}
-			got := desiredDeployment(t, compiled, input)
+			got := desiredDeployment(t, engine, definition, input)
 			if !slices.Equal(got.Spec.Template.Spec.Containers[0].Args, []string{value, value}) {
 				t.Fatal("admission or expression evaluation changed literal ordered repeated arguments")
 			}
@@ -527,40 +533,31 @@ func TestFailedStartupStopsControlPlane(t *testing.T) {
 	}
 }
 
-// desiredDeployment evaluates every actual child in dependency order. Seeding
-// observations from those desired objects proves expressions, not reconciliation.
-func desiredDeployment(t *testing.T, compiled *graph.Graph, instance *unstructured.Unstructured) *appsv1.Deployment {
+// desiredDeployment evaluates every actual child in dependency order through the
+// controller's instance runtime. Seeding observations from those desired objects
+// proves expressions, not reconciliation.
+func desiredDeployment(t *testing.T, engine *gecompiler.Compiler, definition *kroapi.ResourceGraphDefinition, instance *unstructured.Unstructured) *appsv1.Deployment {
 	t.Helper()
-	resolved, err := kroruntime.FromGraph(compiled, graph.Config{MaxCollectionDimensionSize: 5}, kroruntime.WithInstance(instance))
+	objects, ignored := resolveChildren(t, engine, definition, instance)
+	if len(ignored) != 0 {
+		t.Fatalf("required graph children were ignored: %v", ignored)
+	}
+	if len(objects) != 3 {
+		t.Fatalf("expected the three WebApp children, resolved %d", len(objects))
+	}
+	object, found := objects["deployment"]
+	if !found {
+		t.Fatal("actual Deployment was not resolved")
+	}
+	data, err := json.Marshal(object.Object)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var deployment *appsv1.Deployment
-	for _, node := range resolved.Nodes() {
-		ignored, err := node.IsIgnored()
-		if err != nil || ignored {
-			t.Fatalf("required graph child was ignored: %v", err)
-		}
-		objects, err := node.GetDesired()
-		if err != nil || len(objects) != 1 {
-			t.Fatalf("resolve actual child %s: count=%d error=%v", node.Spec.Meta.ID, len(objects), err)
-		}
-		if node.Spec.Meta.ID == "deployment" {
-			data, err := json.Marshal(objects[0].Object)
-			if err != nil {
-				t.Fatal(err)
-			}
-			deployment = &appsv1.Deployment{}
-			decoder := json.NewDecoder(bytes.NewReader(data))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(deployment); err != nil {
-				t.Fatalf("strict Deployment decoding: %v", err)
-			}
-		}
-		node.SetObserved(objects)
-	}
-	if deployment == nil {
-		t.Fatal("actual Deployment was not resolved")
+	deployment := &appsv1.Deployment{}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(deployment); err != nil {
+		t.Fatalf("strict Deployment decoding: %v", err)
 	}
 	return deployment
 }

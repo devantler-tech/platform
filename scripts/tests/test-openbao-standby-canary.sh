@@ -38,13 +38,13 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
 readonly release="${scratch}/release.yaml"
 chart_version="$(yq -er '.spec.chart.spec.version' "${release}")"
 readonly chart_version
-[[ "${chart_version}" == '0.29.6' ]] ||
+[[ "${chart_version}" == '0.30.7' ]] ||
   fail 'the OpenBao chart changed; revalidate the staged rollout before updating this guard'
 
 helm pull openbao --repo https://openbao.github.io/openbao-helm \
   --version "${chart_version}" --destination "${scratch}" >/dev/null
 readonly archive="${scratch}/openbao-${chart_version}.tgz"
-readonly expected_sha='8079e985bdf608f965ada59c70051693d14dd2454ac16311229f367d0c48c4b9'
+readonly expected_sha='fa4e6f3c1bbe936dc7ba079f1303ea56810af2f8600f046d8d5809860a4f980f'
 if command -v sha256sum >/dev/null 2>&1; then
   actual_sha="$(sha256sum "${archive}" | cut -d ' ' -f 1)"
 else
@@ -56,17 +56,17 @@ fi
 # without starting Kubernetes, initializing a vault or accessing credentials.
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64)
-    native_asset=openbao_2.6.3_linux_amd64.tar.gz
-    native_sha=c6463ddd4fdc4214b62a7ffdeaa0fc6df170f7e6b75c6dea2c5e525bdc932ed3
+    native_asset=openbao_2.7.2_linux_amd64.tar.gz
+    native_sha=582b1f3c2fdc5afd443b2d57a225ef654de75adea609fdb66731fd582a9cbc96
     ;;
   Darwin/arm64)
-    native_asset=openbao_2.6.3_darwin_arm64.tar.gz
-    native_sha=ed17491ebc6415d075b7b2b2c0ef6b5908b84b161b8e5a50c7da303cd8d15df4
+    native_asset=openbao_2.7.2_darwin_arm64.tar.gz
+    native_sha=2b4fc131910f4b075b2e1c9a9de67c461489491a8f03fbdc73387294d67d9547
     ;;
   *) fail 'the native TLS regression needs a reviewed server archive for this host' ;;
 esac
 curl --proto '=https' --proto-redir '=https' --location --tlsv1.2 --fail --silent --show-error --retry 2 --max-time 120 \
-  "https://github.com/openbao/openbao/releases/download/v2.6.3/${native_asset}" \
+  "https://github.com/openbao/openbao/releases/download/v2.7.2/${native_asset}" \
   --output "${scratch}/native.tar.gz"
 if command -v sha256sum >/dev/null 2>&1; then
   actual_native_sha="$(sha256sum "${scratch}/native.tar.gz" | cut -d ' ' -f 1)"
@@ -135,7 +135,7 @@ yq -e '.spec.updateStrategy.type == "OnDelete" and
   .spec.replicas == 3' "${statefulset}" >/dev/null ||
   fail 'production OpenBao must recreate a lost server from the newest revision and replace no running one'
 yq -e '.spec.template.spec.containers[] | select(.name == "openbao") |
-  .image == "quay.io/openbao/openbao:2.6.3"' "${statefulset}" >/dev/null ||
+  .image == "quay.io/openbao/openbao:2.7.2"' "${statefulset}" >/dev/null ||
   fail 'a recreated server must use the released standby OIDC repair'
 
 yq -e '.spec.template.spec.automountServiceAccountToken == false' "${statefulset}" >/dev/null ||
@@ -174,7 +174,7 @@ yq -o=json "${statefulset}" | jq -e '.spec.template.spec.shareProcessNamespace =
   ((.spec.template.spec.hostNetwork // false) == false)' >/dev/null ||
   fail 'native certificate reload must stay inside the trusted server Pod'
 yq -o=json "${statefulset}" | jq -e '.spec.template.spec.containers[] | select(.name == "arc-tls-reload") |
-  .image == "quay.io/openbao/openbao:2.6.3" and
+  .image == "quay.io/openbao/openbao:2.7.2" and
   ((.volumeMounts // []) | length == 0) and
   .securityContext.runAsUser == 100 and
   .securityContext.allowPrivilegeEscalation == false and

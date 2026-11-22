@@ -57,7 +57,22 @@ var canonicalFields = map[string][]string{
 type expectation struct {
 	servers []string
 	version string
+	// previous is the release a declared rolling upgrade moves away from: a
+	// server not in current may still run it. Empty means no upgrade is declared.
+	previous string
+	// current lists the servers the procedure has already replaced; they must
+	// run version.
+	current map[string]bool
 	maxAge  time.Duration
+}
+
+// acceptsRelease reports whether the named server may run release. Outside a
+// declared rolling upgrade only the expected release passes.
+func (want expectation) acceptsRelease(name, release string) bool {
+	if release == want.version {
+		return true
+	}
+	return want.previous != "" && release == want.previous && !want.current[name]
 }
 
 type finding struct {
@@ -189,7 +204,7 @@ func judge(input io.Reader, want expectation, now time.Time) report {
 			result.Findings = append(result.Findings, unknown(name, "server was not observed"))
 			continue
 		}
-		if f, ok := judgeServer(name, server, want.version, window{startedAt, capturedAt}); !ok {
+		if f, ok := judgeServer(name, server, want, window{startedAt, capturedAt}); !ok {
 			result.Findings = append(result.Findings, f)
 			continue
 		}
@@ -236,7 +251,7 @@ func judge(input io.Reader, want expectation, now time.Time) report {
 //
 // Every check that can make the evidence UNKNOWN runs before the check it
 // guards, so incomplete evidence is never reported as a narrower HOLD.
-func judgeServer(name string, server serverCapture, version string, captured window) (finding, bool) {
+func judgeServer(name string, server serverCapture, want expectation, captured window) (finding, bool) {
 	trimmed := bytes.TrimSpace(server.Health)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return unknown(name, "no health evidence"), false
@@ -272,7 +287,7 @@ func judgeServer(name string, server serverCapture, version string, captured win
 	if *server.HealthStatus != 200 {
 		return unknown(name, "health HTTP status disagrees with its body"), false
 	}
-	if *body.Version != version {
+	if !want.acceptsRelease(name, *body.Version) {
 		return hold(name, "server is not on the expected release"), false
 	}
 	return finding{}, true
@@ -293,6 +308,37 @@ func parseExpectation(servers, version string, maxAge time.Duration) (expectatio
 		}
 		seen[name] = true
 		want.servers = append(want.servers, name)
+	}
+	return want, nil
+}
+
+// parseRollout adds a declared rolling upgrade to a parsed expectation. Like
+// the servers and release, both values come from the procedure's reviewed
+// inputs, never from the capture. Without previous, nothing changes.
+func parseRollout(want expectation, previous, current string) (expectation, error) {
+	if previous == "" {
+		if current != "" {
+			return want, errors.New("--require-current needs --previous-version")
+		}
+		return want, nil
+	}
+	if previous == want.version {
+		return want, errors.New("--previous-version must differ from --expect-version")
+	}
+	want.previous = previous
+	if current == "" {
+		return want, nil
+	}
+	expected := map[string]bool{}
+	for _, name := range want.servers {
+		expected[name] = true
+	}
+	want.current = map[string]bool{}
+	for _, name := range strings.Split(current, ",") {
+		if !expected[name] || want.current[name] {
+			return want, errors.New("--require-current must list distinct servers from --expect-servers")
+		}
+		want.current[name] = true
 	}
 	return want, nil
 }
@@ -336,11 +382,25 @@ func main() {
 	input := flag.String("input", "", "captured observation document, or - for stdin")
 	servers := flag.String("expect-servers", "", "comma-separated server names the reviewed render declares")
 	version := flag.String("expect-version", "", "OpenBao release every server must run")
+	previous := flag.String("previous-version", "", "release a declared rolling upgrade moves away from; a server not in --require-current may still run it")
+	current := flag.String("require-current", "", "comma-separated servers already replaced, which must run --expect-version")
 	maxAge := flag.Duration("max-age", 5*time.Minute, "oldest acceptable capture")
 	err := parseArgs(flag.CommandLine, os.Args[1:])
 	var want expectation
 	if err == nil {
 		want, err = parseExpectation(*servers, *version, *maxAge)
+	}
+	// An explicit empty list would read as "nothing replaced yet", so an unset
+	// variable in the procedure could hide a replacement that did not take.
+	if err == nil {
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "require-current" && *current == "" {
+				err = errors.New("--require-current was given no servers")
+			}
+		})
+	}
+	if err == nil {
+		want, err = parseRollout(want, *previous, *current)
 	}
 	if err == nil && (*input == "" || flag.NArg() != 0) {
 		err = errors.New("--input is required and no positional arguments are accepted")

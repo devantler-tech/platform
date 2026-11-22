@@ -16,7 +16,7 @@ metadata:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
-  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie
   instances: 2
   # The platform's storage tier for database pods (as every production
   # database declares). CNPG ignores a priorityClassName change, so the

@@ -1255,7 +1255,7 @@ func requireEnforcedStep(
 //
 // The boundary is one level deep, and stating it is part of the check: this
 // reads the step, not the scripts a step invokes. `run: ./scripts/x.sh` that
-// pushes internally is not caught here — `run-ksail-prod-with-pull-auth.sh`
+// pushes internally is not caught here — `run-ksail-prod.sh`
 // carries its own staging-only allowlist for exactly that reason.
 func requireSolePublisher(container map[string]any, publisher func(map[string]any) bool, location string) error {
 	steps, _ := container["steps"].([]any)

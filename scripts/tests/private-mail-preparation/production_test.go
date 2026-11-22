@@ -10,8 +10,9 @@ func TestProductionAdministrationUsesEncryptedSettings(t *testing.T) {
 	objects := render(t, "k8s/providers/hetzner/apps")
 	sts := object(t, objects, "StatefulSet", "private-mail")
 	pod := mapping(t, mapping(t, mapping(t, sts["spec"])["template"])["spec"])
-	if len(sequence(t, pod["initContainers"])) != 1 || len(sequence(t, pod["containers"])) != 2 {
-		t.Fatal("production must initialize before serving administration through the client proxy")
+	initializers := sequence(t, pod["initContainers"])
+	if len(initializers) != 2 || mapping(t, initializers[0])["name"] != "migrate-storage" || mapping(t, initializers[1])["name"] != "configure" || len(sequence(t, pod["containers"])) != 2 {
+		t.Fatal("production must copy its store, then initialize, before serving administration through the client proxy")
 	}
 	secret := object(t, objects, "Secret", "private-mail-settings")
 	if mapping(t, secret["metadata"])["namespace"] != "private-mail" || secret["data"] != nil {

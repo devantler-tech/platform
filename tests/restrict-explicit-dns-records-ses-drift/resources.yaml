@@ -1,0 +1,34 @@
+---
+# The approved name and namespace with drifted content: one record is proxied
+# and an extra endpoint is appended. Equality over the complete list refuses it.
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: company-mail-ses
+  namespace: aws
+spec:
+  endpoints:
+    - dnsName: bounce.devantler.tech
+      recordTTL: 300
+      recordType: MX
+      targets:
+        - 10 feedback-smtp.eu-central-1.amazonses.com
+      providerSpecific:
+        - name: cloudflare/proxied
+          value: "true"
+    - dnsName: bounce.devantler.tech
+      recordTTL: 300
+      recordType: TXT
+      targets:
+        - v=spf1 include:amazonses.com ~all
+      providerSpecific:
+        - name: cloudflare/proxied
+          value: "false"
+    - dnsName: mail.devantler.tech
+      recordTTL: 300
+      recordType: A
+      targets:
+        - 192.0.2.1
+      providerSpecific:
+        - name: cloudflare/proxied
+          value: "false"

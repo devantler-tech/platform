@@ -1,9 +1,15 @@
-# Email storage encryption preparation
+# Email storage encryption
 
-The optional `email-encrypted-storage` bundle declares a new retained Longhorn
-volume and its operational-key binding. Production does not select this bundle,
-and the existing mailbox claim is unchanged. This prepares part of #5387; it
-does not establish encrypted production storage or a completed migration.
+The `email-encrypted-storage` bundle declares a retained, encrypted Longhorn
+volume and its operational-key binding. Production serves the mail store from it
+(#5387). The original, unencrypted claim is unchanged and stays as the rollback.
+
+The key comes up before the server switches. The bundle was deployed on its own
+first, and the cutover starts only once the `email-storage` SecretStore is valid
+and the `email-storage-key` ExternalSecret has synced in production. The first
+cutover attempt switched the server and brought up the key in one deployment.
+The key never arrived, so the server could not start until its pod was replaced
+on the original claim.
 
 Longhorn uses dm-crypt/LUKS beneath the mounted filesystem. The Email process and
 ordinary mail clients continue to read ordinary messages. This protects stored
@@ -14,7 +20,9 @@ Application-level backups require their own encryption and recovery proof.
 The operational passphrase resolves from the declared Email record in OpenBao
 through a namespaced store and a dedicated role. That role is bound only to the
 existing Email service identity and reads only this key record, with no account
-credential access, writes, metadata enumeration or default policy. The shared
+credential access, writes, metadata enumeration or default policy. Without the
+default policy, the role's policy itself grants the token lookup that External
+Secrets uses to validate the store, and the token's own revocation. The shared
 External Secrets role gains no permission.
 The bundle never generates a replacement when that record is missing. External
 Secrets materializes the CSI-required Kubernetes Secret, retained independently
@@ -32,18 +40,55 @@ path; a key stored only in OpenBao would not resolve an OpenBao bootstrap loss.
 The existing backup restore must also be extended to compare the new storage-key
 record before it can count as recovery evidence for encrypted Email data.
 
-Before selecting the bundle or moving data:
+The steps before the cutover:
 
-1. Preserve the current mailbox claim and obtain a verified current backup.
+1. Preserve the current mailbox claim, with a current daily backup as a second
+   safety net.
 2. Establish the operational key without overwriting a conflicting value, then
-   restore it from independent custody and compare it privately.
+   restore it from independent custody and compare it privately (#5540).
 3. Run an isolated encrypted-volume canary on the deployed Longhorn/Talos
-   versions. Observe the actual encrypted volume, ordinary write/read, detach and
-   remount, refusal with an unavailable or wrong key, and successful recovery.
-4. Prepare and review the quiesced copy and explicit workload-claim cutover.
-   Verify mailbox history, new delivery, backup restoration and rollback while
-   retaining the original claim. Never try to encrypt the old volume by changing
+   versions. Run 40874287889 (2026-10-29) observed the encrypted volume, ordinary
+   write and read, detach and remount, refusal with a missing or wrong key, and
+   recovery, then verified its cleanup.
+4. The copy-based cutover below. Never try to encrypt the old volume by changing
    its immutable storage-class fields.
+
+## Copy-based cutover
+
+The maintainer chose a simple copy over a full restore test before the cutover
+(2026-11-14), which closed #5578 as a gate. A backup restore proof from encrypted
+storage is a separate, non-blocking task (#6256).
+
+Production's Email Pod mounts the encrypted claim as its data volume and the
+original claim read-only. Its first initializer copies the original store once,
+while the StatefulSet has stopped the previous server, then compares every entry's
+type, mode and path and every file's checksum with the original. Only a matching
+copy gets a completion marker; a mismatch, a missing store or a copy error stops
+the Pod with the original untouched, and an unmarked copy is cleared and redone
+on the next start. Later starts find the marker and skip the copy. The setup then
+reads the accounts and settings back from the copied store before serving.
+
+To roll back, revert the cutover: the Pod serves the original claim again. Mail,
+calendar and contact changes made after the cutover exist only on the encrypted
+volume. The original volume stays declared, prune-protected and mounted read-only
+while the cutover is in place, so it cannot be deleted while in use; switching
+its volume to `Retain` is part of #4441.
+
+A rollback right after a refused copy or a failed start loses nothing: the
+encrypted store has served no changes. A rollback after it has served is
+different. No supported tool here merges two Stalwart stores, so the original
+is the source of truth after any rollback. Every change the encrypted store
+served before the rollback is not preserved: new, edited and deleted messages,
+calendar entries and contacts. Weigh that loss before rolling back from a store
+that has served.
+
+After a rollback, the two stores diverge. Never reapply the cutover as it is:
+its completion marker skips the copy, so the encrypted store would serve again
+and hide every change made on the original during the rollback. Reapplying needs
+its own reviewed change that takes a fresh backup of the original and then
+empties the encrypted claim, marker included, so the next cutover copies the
+original again. That review decides explicitly that the encrypted store's
+changes are discarded, or adds a separately verified way to carry them over.
 
 The existing `private-mail` namespace remains retained by its established storage
 bundle. The replacement class is not the cluster default. Both the replacement
@@ -86,5 +131,5 @@ through a separately reviewed, ownership-bound cleanup when necessary.
 
 A `PASS` receipt requires all native phases and verified cleanup. It proves the
 storage mechanism on this deployed stack. It does not prove recovery of the
-operational Email key, restore a company mailbox, or enable encrypted production
-storage; those remain separate acceptance gates above.
+operational Email key or restore a company mailbox; those are covered above
+(#5540) and by #6256.

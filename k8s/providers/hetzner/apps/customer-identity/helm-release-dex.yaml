@@ -1,0 +1,201 @@
+# The business-site portal's own customer Dex (ADR 0021): the portal's one
+# OIDC issuer, https://login.devantler.tech, with ZITADEL as its only
+# connector. Separate from the platform's infrastructure Dex (namespace `dex`):
+# its own issuer, clients, secrets and store. It reuses that Dex's signed,
+# source-built image (platform#5811), so admission verifies its signature.
+#
+# The configuration follows the business-site preparer's `dexConfig`
+# (`go run ./cmd/customer-identity-config --prepare`), with three platform
+# changes: TLS ends at the Gateway, so Dex serves plain HTTP inside the
+# cluster; the approval screen is skipped, because the portal is our own
+# first-party client; and values come from environment variables.
+#
+# The subject Dex issues the portal encodes the ZITADEL user ID and the
+# connector ID `customer-zitadel`. Keep the issuer and connector ID: changing
+# either changes every customer's portal identity.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: customer-dex
+  namespace: customer-identity
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  timeout: 10m
+  chart:
+    spec:
+      chart: dex
+      version: 0.26.0
+      sourceRef:
+        kind: HelmRepository
+        name: dex
+  values:
+    replicaCount: 2
+    image:
+      repository: ghcr.io/devantler-tech/platform-dex
+      tag: "v2.46.1-security.1-cd65a4e40d53beafd8a8eec9b5a32a71986de2d5@sha256:cffb54b332b8d957ca4c8611814ee1685837370ce5fa7069dacdbc39c0c2afc7"
+      pullPolicy: IfNotPresent
+    # PostgreSQL storage: Dex needs no Kubernetes API access.
+    rbac:
+      create: false
+      createClusterScoped: false
+    # Dex reads its client credentials at startup.
+    deploymentAnnotations:
+      reloader.stakater.com/auto: "true"
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 0
+        maxSurge: 1
+    podDisruptionBudget:
+      enabled: true
+      maxUnavailable: 1
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      runAsGroup: 65534
+      fsGroup: 65534
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      runAsGroup: 65534
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 500m
+        memory: 128Mi
+    volumes:
+      - name: tmp
+        emptyDir: {}
+      # Only the CA certificate, not the CNPG CA's private key.
+      - name: db-ca
+        secret:
+          secretName: customer-identity-db-ca
+          defaultMode: 0440
+          items:
+            - key: ca.crt
+              path: ca.crt
+      # The Devantler Tech theme (config-map-dex-theme.yaml).
+      - name: theme
+        configMap:
+          name: customer-dex-theme
+    volumeMounts:
+      - name: tmp
+        mountPath: /tmp
+      - name: db-ca
+        mountPath: /db-ca
+        readOnly: true
+      - name: theme
+        mountPath: /srv/dex/web/themes/devantler-tech
+        readOnly: true
+    envVars:
+      # Refuse to start with a broken connector instead of serving without it.
+      - name: DEX_CONTINUE_ON_CONNECTOR_FAILURE
+        value: "false"
+      - name: CUSTOMER_DEX_DB_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: customer-identity-db-dex
+            key: password
+      - name: CUSTOMER_ZITADEL_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            name: customer-dex-zitadel-client
+            key: client-id
+      - name: CUSTOMER_ZITADEL_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: customer-dex-zitadel-client
+            key: client-secret
+      - name: CUSTOMER_PORTAL_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: customer-dex-portal-client
+            key: client-secret
+    config:
+      issuer: https://login.devantler.tech
+      # The Devantler Tech theme, as on the platform Dex: the wordmark as the
+      # header, served from the cluster (config-map-dex-theme.yaml).
+      frontend:
+        issuer: Devantler Tech
+        dir: /srv/dex/web
+        theme: devantler-tech
+        logoURL: theme/logo.svg
+      storage:
+        type: postgres
+        config:
+          host: customer-identity-db-rw.customer-identity.svc
+          port: 5432
+          database: customer_dex
+          user: customer_dex
+          password: $CUSTOMER_DEX_DB_PASSWORD
+          ssl:
+            mode: verify-full
+            caFile: /db-ca/ca.crt
+      web:
+        http: 0.0.0.0:5556
+      logger:
+        level: warn
+        format: json
+        excludeFields:
+          - email
+          - username
+          - preferred_username
+          - groups
+      expiry:
+        authRequests: 5m
+        idTokens: 5m
+        signingKeys: 6h
+      oauth2:
+        grantTypes:
+          - authorization_code
+        responseTypes:
+          - code
+        skipApprovalScreen: true
+        pkce:
+          enforce: true
+          codeChallengeMethodsSupported:
+            - S256
+      enablePasswordDB: false
+      connectors:
+        - type: oidc
+          id: customer-zitadel
+          name: Devantler Tech account
+          config:
+            issuer: https://accounts.devantler.tech
+            clientID: $CUSTOMER_ZITADEL_CLIENT_ID
+            clientSecret: $CUSTOMER_ZITADEL_CLIENT_SECRET
+            redirectURI: https://login.devantler.tech/callback
+            scopes:
+              - profile
+              - email
+              # Customers live in ZITADEL's "Customers" organization, which
+              # the setup CronJob creates. This scope signs them in under
+              # its login policy (password and MFA) and admits no one else.
+              # Without it they would get the default organization's
+              # policy, which sends its administrator straight to GitHub.
+              - urn:zitadel:iam:org:domain:primary:customers.accounts.devantler.tech
+            getUserInfo: true
+            insecureSkipEmailVerified: false
+            insecureEnableGroups: false
+            insecureSkipVerify: false
+            pkceChallenge: S256
+      staticClients:
+        - id: business-portal
+          name: Devantler Tech portal
+          secretEnv: CUSTOMER_PORTAL_CLIENT_SECRET
+          # The portal is served at the root of its own host.
+          redirectURIs:
+            - https://portal.devantler.tech/callback

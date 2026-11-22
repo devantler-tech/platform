@@ -40,10 +40,12 @@ the required aggregate and production deployment. In the first hosted trial,
 running half the bridge suite and then all other packages on the same runner
 left a serial tail. The whole-package split lets those two workloads overlap.
 
-`bash scripts/run-go-regressions.sh all` retains the unpartitioned diagnostic
-command. Every execution keeps eight test workers and the explicit 20-minute
-per-package deadline. No production ordering or deployment gate changes. Local
-partition routing is not a hosted throughput measurement: compare complete
+**Update (platform#6272):** the credential-refresh package was retired with the
+GHCR credential bridge, so the complete suite again runs as one unpartitioned
+`validate-go-regressions` job, `go test -parallel 8 -timeout 20m ./...`. It keeps
+eight test workers and the explicit 20-minute per-package deadline.
+
+No production ordering or deployment gate changes. Local partition routing is not a hosted throughput measurement: compare complete
 pre-deployment execution, runner waiting and occupied runner time under #5840
 before claiming that an additional runner allocation improves the queue.
 

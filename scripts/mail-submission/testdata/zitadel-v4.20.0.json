@@ -1,0 +1,5 @@
+{
+  "upstream": "8afa5dd37a8e723efb9eace8d09fd5c1cccef694",
+  "sourceSHA": "94715fb2a0262576a132f5e7f08353b9d12e7fee73df344c4ce241dcdb25c73a",
+  "message": "Return-Path: invitations@example.invalid\r\nTo: client@example.invalid\r\nCc: \r\nDate: Thu, 12 Nov 2026 00:14:49 +0100\r\nFrom: Example Business <invitations@example.invalid>\r\nSubject: Fictional invitation\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\n\r\n\r\nfixture-message-canary"
+}

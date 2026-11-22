@@ -128,7 +128,7 @@ jobs:
         id: scan
         continue-on-error: true
         timeout-minutes: 30
-        uses: devantler-tech/.github/.github/actions/govulncheck@02183e4b176d3bdbedda8519a1f63ee324b8412c # v21.0.2
+        uses: devantler-tech/.github/.github/actions/govulncheck@d70d50665465117f01104313e53057374a96a1a3 # v21.7.2
         with:
           work-dir: ${{ matrix.directory }}
           go-version-file: ${{ matrix.directory }}/go.mod
@@ -148,3 +148,10 @@ jobs:
         run: >-
           bash scripts/judge-go-vulnerability-scan.sh --module "$MODULE" --expect "$EXPECT"
           --outcome "$OUTCOME" --verdict "$VERDICT" --report "$REPORT"
+
+      - name: 🛡️ Verify the pinned SMTP upstream advisory identity
+        if: matrix.directory == '.'
+        env:
+          SCANNER: ${{ runner.temp }}/govulncheck-bin/govulncheck
+          GOTOOLCHAIN: local
+        run: bash scripts/check-smtp-upstream-advisories.sh "$SCANNER"

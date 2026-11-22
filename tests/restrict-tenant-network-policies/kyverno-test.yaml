@@ -137,6 +137,7 @@ results:
       - tenant-ns/allow-web-egress-to-kube-apiserver-selector
       - tenant-ns/allow-web-ingress-from-documentation-cidr
       - tenant-ns/allow-web-ingress-from-gateway
+      - tenant-ns/allow-web-ingress-from-gateway-egress-default-deny
       - tenant-ns/allow-web-ingress-from-ingress-selector
   - policy: restrict-tenant-network-policies
     kind: CiliumNetworkPolicy

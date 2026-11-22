@@ -1,0 +1,24 @@
+# What the Agentic Engineer's live-health check reads across the cluster
+# (devantler-tech/monorepo .claude/scripts/platform-live-health.sh): Flux's Kustomizations,
+# sources and HelmReleases, every Pod, and every HTTPRoute. Only get and list, and nothing else:
+# a Pod's spec is readable here, its logs and Secrets are not.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentic-engineer-cluster-reader
+rules:
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list"]
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["ocirepositories", "gitrepositories", "helmrepositories"]
+    verbs: ["get", "list"]
+  - apiGroups: ["helm.toolkit.fluxcd.io"]
+    resources: ["helmreleases"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list"]

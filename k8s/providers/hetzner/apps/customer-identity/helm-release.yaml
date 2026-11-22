@@ -1,0 +1,283 @@
+# Self-hosted ZITADEL for invited business-site customers (business-site#302,
+# ADR 0021). The official upstream image, unmodified and pinned by digest
+# (business-site ADR 0031): upstream does not sign it, so admission treats it
+# as a third-party image.
+#
+# Shape:
+# - Login V1, embedded in the API server (ADR 0021). The chart's separate
+#   Login V2 service and its API credential stay off.
+# - No superuser: CNPG creates the database and its owner (cluster.yaml), and
+#   `zitadel init zitadel` and `zitadel setup` run as that owner.
+# - No machine administrator: the chart's default machine user and the
+#   kubectl containers and secret-writing Role that export its key are
+#   dropped. The only bootstrap identity is one human administrator (the
+#   maintainer), with a generated one-time password that must be changed at
+#   the first sign-in, where the login policy also forces MFA.
+# - One system API user, `zitadel-setup`, declared in SystemAPIUsers below,
+#   for the setup CronJob (cron-job-setup.yaml). ZITADEL trusts the public key
+#   in cert-manager's certificate (certificate-setup-key.yaml); only that
+#   CronJob's signer mounts the private key. Its only role is IAM_OWNER, so it
+#   can manage this instance but not ZITADEL's system API (no SYSTEM_OWNER).
+# - TLS ends at the platform Gateway, as for every platform app; the Gateway
+#   reaches ZITADEL over h2c inside the WireGuard-encrypted cluster network.
+#
+# The instance policies come from the business-site preparer
+# (`go run ./cmd/customer-identity-config --prepare`, server/CUSTOMER-IDENTITY.md):
+# no self-registration or public organisation creation, no external or
+# passwordless login, MFA always, 14-character passwords, short-lived tokens.
+# ZITADEL applies DefaultInstance and FirstInstance only when it creates the
+# instance; later changes go through the console or its API.
+#
+# Mail is declared: when ZITADEL creates the instance it adds and activates
+# one SMTP provider from DefaultInstance.SMTPConfiguration below, the business
+# site's send-only Amazon SES sender (platform#5400): STARTTLS to
+# email-smtp.eu-central-1.amazonaws.com:587 as no-reply@devantler.tech, with
+# the credential from OpenBao apps/business-site/smtp (external-secret-smtp.yaml).
+# ZITADEL then keeps the provider in its database: like every DefaultInstance
+# setting it is not re-applied to an existing instance, so the setup CronJob
+# applies a rotated SES credential through ZITADEL's admin API.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: zitadel
+  namespace: customer-identity
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  timeout: 10m
+  chart:
+    spec:
+      chart: zitadel
+      version: 10.5.0
+      sourceRef:
+        kind: HelmRepository
+        name: zitadel
+  values:
+    replicaCount: 2
+    # ZITADEL reads its Secrets at startup. CNPG renews the database CA
+    # before it expires (every 90 days); restarting on that change keeps the
+    # verified database TLS working.
+    annotations:
+      reloader.stakater.com/auto: "true"
+    image:
+      repository: ghcr.io/zitadel/zitadel
+      tag: v4.20.3@sha256:1b30fea7ed88826dc0a98dacee4e2f2c8b05201fd26f5e4cb5386615b29f7638
+    login:
+      enabled: false
+    # Only the `zitadel` phase of `zitadel init` (its schemas and tables),
+    # which runs as the database owner. The database, role and grant phases
+    # need a superuser and are CNPG's job here (cluster.yaml).
+    initJob:
+      command: zitadel
+      activeDeadlineSeconds: 600
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: "1"
+          memory: 256Mi
+    # Its post-delete hook only removes the machine-key Secrets this release
+    # never creates.
+    cleanupJob:
+      enabled: false
+    setupJob:
+      activeDeadlineSeconds: 600
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 192Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi
+    pdb:
+      enabled: true
+      maxUnavailable: 1
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      runAsGroup: 65532
+      fsGroup: 65532
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      runAsGroup: 65532
+      readOnlyRootFilesystem: true
+      privileged: false
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+    # Only the CA certificate: the CNPG CA Secret also holds the CA's private
+    # key, which the chart's dbSslCaCrtSecret option would mount as well.
+    extraVolumes:
+      - name: db-ca
+        secret:
+          secretName: customer-identity-db-ca
+          defaultMode: 0440
+          items:
+            - key: ca.crt
+              path: ca.crt
+      # The setup user's certificate only, never its private key. Optional,
+      # so ZITADEL starts before cert-manager has issued it; ZITADEL reads it
+      # when the setup CronJob first signs in.
+      - name: setup-user
+        secret:
+          secretName: zitadel-setup-key
+          defaultMode: 0440
+          optional: true
+          items:
+            - key: tls.crt
+              path: zitadel-setup.crt
+    extraVolumeMounts:
+      - name: db-ca
+        mountPath: /db-ca
+        readOnly: true
+      - name: setup-user
+        mountPath: /system-users
+        readOnly: true
+    # Rendered into the setup job and the server alike.
+    env:
+      - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: customer-identity-db-zitadel
+            key: password
+      - name: ZITADEL_DATABASE_POSTGRES_USER_SSL_ROOTCERT
+        value: /db-ca/ca.crt
+      - name: ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: zitadel-first-admin
+            key: password
+      - name: ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_PLAINAUTH_USER
+        valueFrom:
+          secretKeyRef:
+            name: zitadel-smtp
+            key: username
+      - name: ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_PLAINAUTH_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: zitadel-smtp
+            key: password
+    zitadel:
+      masterkeySecretName: zitadel-masterkey
+      configmapConfig:
+        ExternalDomain: accounts.devantler.tech
+        ExternalPort: 443
+        ExternalSecure: true
+        TLS:
+          Enabled: false
+        # The setup CronJob's identity (see above). Tokens must be signed by
+        # the certificate's key, name this user as issuer and subject, and be
+        # addressed to https://accounts.devantler.tech.
+        SystemAPIUsers:
+          zitadel-setup:
+            Path: /system-users/zitadel-setup.crt
+            Memberships:
+              - MemberType: System
+                Roles:
+                  - IAM_OWNER
+        Database:
+          Postgres:
+            Host: customer-identity-db-rw.customer-identity.svc
+            Port: 5432
+            Database: zitadel
+            MaxOpenConns: 10
+            MaxIdleConns: 5
+            User:
+              Username: zitadel
+              SSL:
+                Mode: verify-full
+        FirstInstance:
+          InstanceName: Devantler Tech
+          DefaultLanguage: en
+          Org:
+            Name: Devantler Tech
+            # Drops the chart's default machine administrator (see above).
+            Machine: null
+            Human:
+              UserName: ned
+              FirstName: Nikolai
+              LastName: Damm
+              # The maintainer's own published company address. Marked
+              # verified so the first sign-in does not wait for mail, which
+              # cannot be sent until the SMTP provider is added. Customers are
+              # never pre-verified (ADR 0021).
+              Email:
+                Address: ned@devantler.tech
+                Verified: true
+              PreferredLanguage: en
+              PasswordChangeRequired: true
+        DefaultInstance:
+          Features:
+            LoginV2:
+              Required: false
+          LockoutPolicy:
+            MaxOTPAttempts: 5
+            MaxPasswordAttempts: 5
+            ShouldShowLockoutFailure: false
+          LoginPolicy:
+            AllowDomainDiscovery: false
+            AllowExternalIDP: false
+            AllowRegister: false
+            AllowUsernamePassword: true
+            DefaultRedirectURI: https://portal.devantler.tech/
+            DisableLoginWithPhone: true
+            ExternalLoginCheckLifetime: 15m
+            ForceMFA: true
+            ForceMFALocalOnly: false
+            HidePasswordReset: false
+            IgnoreUnknownUsernames: true
+            MfaInitSkipLifetime: 0s
+            MultiFactorCheckLifetime: 15m
+            PasswordCheckLifetime: 15m
+            PasswordlessType: 0
+            SecondFactorCheckLifetime: 15m
+          OIDCSettings:
+            AccessTokenLifetime: 5m
+            IdTokenLifetime: 5m
+            RefreshTokenExpiration: 8h
+            RefreshTokenIdleExpiration: 15m
+          PasswordComplexityPolicy:
+            MinLength: 14
+          Restrictions:
+            DisallowPublicOrgRegistration: true
+          # TLS: true makes ZITADEL upgrade the port-587 session with STARTTLS
+          # (certificate checked for the host) and never send in plain text.
+          # The empty PlainAuth keys must stay: ZITADEL reads an environment
+          # variable only for a key its configuration already has, and the
+          # SMTP.User/Password keys in its sample defaults are not read by v4.
+          SMTPConfiguration:
+            Description: Business site sender (Amazon SES)
+            SMTP:
+              Host: email-smtp.eu-central-1.amazonaws.com:587
+              PlainAuth:
+                User: ""
+                Password: ""
+            TLS: true
+            From: no-reply@devantler.tech
+            FromName: Devantler Tech
+          # Only the starting look of a new instance: the setup CronJob
+          # (cron-job-setup.yaml) owns the label policy, so its colours, logos,
+          # icon, font and watermark are declared there and applied on every run.
+          LabelPolicy:
+            PrimaryColor: "#1f7a0f"
+            BackgroundColor: "#fafafa"
+            FontColor: "#111111"
+            PrimaryColorDark: "#39ff14"
+            BackgroundColorDark: "#0b0b0b"
+            FontColorDark: "#ededed"
+            HideLoginNameSuffix: true

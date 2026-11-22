@@ -1,0 +1,17 @@
+# Daily base backup of customer-identity-db to R2 (object-store.yaml). The first
+# runs as soon as the cluster exists.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: customer-identity-db-daily
+  namespace: customer-identity
+spec:
+  # CNPG cron is 6-field (seconds first): 03:30 UTC daily, after umami-db.
+  schedule: "0 30 3 * * *"
+  immediate: true
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  cluster:
+    name: customer-identity-db

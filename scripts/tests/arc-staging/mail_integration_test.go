@@ -37,10 +37,12 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 	}
 	_, policy := captureBaoWrite(t, "bao", "policy", "write", "vault-seed-write")
 	entries := regexp.MustCompile(`(?s)path\s+"(secret/(?:data|metadata)/infrastructure/email/[^\"]+)"\s*\{\s*capabilities\s*=\s*(\[[^\]]+\])\s*\}`).FindAllStringSubmatch(policy, -1)
+	// The three mailbox credentials, plus the SES relay's SMTP credential that a
+	// platform-applied PushSecret copies from its AccessKey (platform#5481).
 	want := map[string]bool{}
 	for _, kind := range []string{"data", "metadata"} {
-		for _, account := range []string{"admin", "maintainer", "agent"} {
-			want["secret/"+kind+"/infrastructure/email/"+account] = true
+		for _, credential := range []string{"admin", "maintainer", "agent", "ses-smtp"} {
+			want["secret/"+kind+"/infrastructure/email/"+credential] = true
 		}
 	}
 	if len(entries) != len(want) {
@@ -48,7 +50,7 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 	}
 	for _, entry := range entries {
 		if !want[entry[1]] {
-			t.Fatal("mail credential authorization is duplicated or broader than its three entries")
+			t.Fatal("mail credential authorization is duplicated or broader than its four entries")
 		}
 		delete(want, entry[1])
 		var capabilities []string
@@ -81,6 +83,22 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 		equal(t, mailField[string](t, seed, "spec", "updatePolicy"), "IfNotExists")
 		equal(t, mailField[string](t, seed, "spec", "deletionPolicy"), "None")
 	}
+	// The relay credential follows its AccessKey, so it replaces rather than
+	// seeds, and it writes only the username and SMTP password of that one key.
+	relay := readYAML(t, "k8s/providers/hetzner/apps/aws/push-secret-email-smtp.yaml")
+	equal(t, mailField[string](t, relay, "metadata", "namespace"), "aws")
+	equal(t, mailField[string](t, relay, "spec", "selector", "secret", "name"), "email-smtp-credentials")
+	equal(t, mailField[string](t, relay, "spec", "updatePolicy"), "Replace")
+	equal(t, mailField[string](t, relay, "spec", "deletionPolicy"), "None")
+	relayData := mailField[[]any](t, relay, "spec", "data")
+	equal(t, len(relayData), 2)
+	pushed := map[string]string{}
+	for _, entry := range relayData {
+		equal(t, mailField[string](t, entry, "match", "remoteRef", "remoteKey"), "infrastructure/email/ses-smtp")
+		pushed[mailField[string](t, entry, "match", "secretKey")] = mailField[string](t, entry, "match", "remoteRef", "property")
+	}
+	equal(t, pushed["username"], "username")
+	equal(t, pushed["attribute.ses_smtp_password_v4"], "password")
 }
 
 // Match the first node rule exactly as declared, including catch-all precedence.

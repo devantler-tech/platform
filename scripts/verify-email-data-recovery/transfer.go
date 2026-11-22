@@ -18,12 +18,15 @@ func downloadManifest(i invocation, snapshot string) object {
 	o["spec"] = object{"targetVolume": object{"pvc": "data", "namespace": i.namespace, "pv": ""}, "backupStorageLocation": "default", "datamover": "velero", "snapshotID": snapshot, "sourceNamespace": "private-mail", "operationTimeout": "10m0s", "nodeOS": "linux"}
 	return o
 }
-func proveRestoredStorage(pvc, pv, volume object, i invocation, claimUID, sourceVolume string) error {
+
+// allowRetain admits a Retain policy for a protected disposal, which returns it
+// to Delete immediately before removing the claim.
+func proveRestoredStorage(pvc, pv, volume object, i invocation, claimUID, sourceVolume string, allowRetain bool) error {
 	ps, vs := child(pvc, "spec"), child(pv, "spec")
 	pm, vm := child(pv, "metadata"), child(volume, "metadata")
 	name := text(pm, "name")
 	ref, csi := child(vs, "claimRef"), child(vs, "csi")
-	if claimUID == "" || sourceVolume == "" || name == "" || name == sourceVolume || text(pm, "uid") == "" || text(child(pvc, "metadata"), "uid") != claimUID || text(child(pvc, "status"), "phase") != "Bound" || text(ps, "storageClassName") != i.namespace || text(ps, "volumeName") != name || text(ref, "uid") != claimUID || text(ref, "name") != "data" || text(ref, "namespace") != i.namespace || text(vs, "persistentVolumeReclaimPolicy") != "Delete" || text(csi, "driver") != "driver.longhorn.io" || text(csi, "volumeHandle") != name || text(vm, "name") != name || text(vm, "uid") == "" {
+	if claimUID == "" || sourceVolume == "" || name == "" || name == sourceVolume || text(pm, "uid") == "" || text(child(pvc, "metadata"), "uid") != claimUID || text(child(pvc, "status"), "phase") != "Bound" || text(ps, "storageClassName") != i.namespace || text(ps, "volumeName") != name || text(ref, "uid") != claimUID || text(ref, "name") != "data" || text(ref, "namespace") != i.namespace || (text(vs, "persistentVolumeReclaimPolicy") != "Delete" && (!allowRetain || text(vs, "persistentVolumeReclaimPolicy") != "Retain")) || text(csi, "driver") != "driver.longhorn.io" || text(csi, "volumeHandle") != name || text(vm, "name") != name || text(vm, "uid") == "" {
 		return errors.New("restored-storage-identity")
 	}
 	spec := child(volume, "spec")

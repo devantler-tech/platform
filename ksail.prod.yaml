@@ -298,8 +298,12 @@ spec:
         - siderolabs/iscsi-tools
         - siderolabs/util-linux-tools
         - siderolabs/qemu-guest-agent
+    # The root manifests package is public (platform#6272), so Flux pulls it
+    # anonymously: no credential here means KSail sets no FluxInstance
+    # spec.sync.pullSecret and writes no root pull Secret. `workload push`
+    # gets the Actions write token from run-ksail-prod.sh.
     localRegistry:
-      registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
+      registry: "ghcr.io/devantler-tech/platform/manifests"
   provider:
     hetzner:
       # Hetzner account hard cap: at most 10 servers total. This mirrors the

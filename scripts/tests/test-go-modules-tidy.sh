@@ -110,6 +110,33 @@ expect fail 'missing or linked manifest/directory for module nested module'
 rm "$fixture/nested module"
 mv "$work/linked-module" "$fixture/nested module"
 
+# A module declaring a newer Go is checked with exactly that release, and a
+# two-part directive names its .0 release. Go runs a matching binary from PATH
+# before it would download one, so a stub proves the selection offline; the
+# offline proxy refuses any download.
+mkdir -p "$work/toolchain" "$fixture/newer module"
+printf 'module example.com/newer\n\ngo 1.99\n' >"$fixture/newer module/go.mod"
+git -C "$fixture" add -- "newer module/go.mod"
+cat >"$work/toolchain/go1.99.0" <<'SH'
+#!/usr/bin/env bash
+printf 'stub go1.99.0 ran: %s\n' "$*"
+SH
+chmod +x "$work/toolchain/go1.99.0"
+PATH="$work/toolchain:$PATH" expect pass 'checking it with go1.99.0'
+if ! grep -Fq 'stub go1.99.0 ran: mod tidy -diff' "$work/result" || [ "$(grep -c 'newer than the installed' "$work/result")" != 1 ]; then
+  cat "$work/result" >&2
+  echo 'FAIL: only the newer module may run on its declared release' >&2
+  exit 1
+fi
+# Without that release available the check fails rather than passing.
+expect fail 'module newer module'
+# An unreadable directive is a refusal, never a fallback to the installed Go.
+printf 'module example.com/newer\n\ngo latest\n' >"$fixture/newer module/go.mod"
+expect fail 'cannot read the go directive of module newer module'
+git -C "$fixture" rm -q --cached -f -- "newer module/go.mod"
+rm -rf -- "$fixture/newer module"
+expect pass 'CHECKED 3 tidy Go modules'
+
 # A producer that emits a plausible prefix and then fails must not run Go.
 mkdir "$work/bin"
 cat >"$work/bin/git" <<'SH'

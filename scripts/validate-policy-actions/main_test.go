@@ -80,7 +80,7 @@ go run ./scripts/validate-policy-actions
 policy_render="$(mktemp -d)"
 trap 'rm -rf "$policy_render"' EXIT
 kubectl kustomize k8s/providers/hetzner/infrastructure > "$policy_render/production.yaml"
-go run ./scripts/validate-policy-actions "$policy_render"
+go run ./scripts/validate-policy-actions "$policy_render" tests/production-policy-failure-actions.json
 `
 		if step.Run == guardRun && step.If == "" && !step.Continue {
 			foundGuard = true
@@ -88,7 +88,7 @@ go run ./scripts/validate-policy-actions "$policy_render"
 	}
 	for _, step := range changes.Steps {
 		filter := step.With["filters"]
-		if strings.Contains(filter, "'scripts/validate-policy-actions/**'") && strings.Contains(filter, "'tests/policy-failure-actions.json'") {
+		if strings.Contains(filter, "'scripts/validate-policy-actions/**'") && strings.Contains(filter, "'tests/policy-failure-actions.json'") && strings.Contains(filter, "'tests/production-policy-failure-actions.json'") {
 			foundPaths = true
 		}
 	}

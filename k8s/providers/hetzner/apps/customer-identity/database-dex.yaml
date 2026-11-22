@@ -1,0 +1,17 @@
+# The customer Dex's own database in customer-identity-db: its signing keys,
+# authorization requests and codes. Separate from ZITADEL's database and owned
+# by its own login. Kept if this manifest is removed.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: customer-identity-db-customer-dex
+  namespace: customer-identity
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  name: customer_dex
+  owner: customer_dex
+  ensure: present
+  databaseReclaimPolicy: retain
+  cluster:
+    name: customer-identity-db

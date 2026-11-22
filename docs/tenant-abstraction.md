@@ -100,7 +100,7 @@ and annotations; they cannot force orphaning by removing that finalizer.
 The existing platform-owned `flux-system/wedding-app` pilot is an exact
 exception, not a wildcard namespace exemption.
 
-KRO 0.9.4 identifies children through ApplySet and `kro.run/instance-*` labels,
+KRO 0.10.0 identifies children through ApplySet and `kro.run/instance-*` labels,
 not WebApp owner references, and its apply path adopts an existing unlabelled
 object. Child admission therefore checks their complete placement/identity and
 refuses updates that would adopt an unlabelled or
@@ -171,7 +171,7 @@ rejects duplicate members before jq can keep a last value; the maintained YAML
 decoder also checks the original source before conversion. Complete inputs are
 bounded to 1 MiB, with at most 1024 raw YAML documents. This is the platform's committed
 source gate, not proof of a future tenant publisher's input validation. The actual
-KRO 0.9.4 compiler/generated API tests admission, defaults, literal arguments and
+KRO 0.10.0 compiler/generated API tests admission, defaults, literal arguments and
 resolved children. Resolved deployments are separately scanned with Trivy 0.74.0;
 the writable-root and low-ID compatibility findings remain explicit rather than
 disappearing behind expressions. Both resolved states pass the actual container
@@ -196,9 +196,12 @@ templated verbatim.
 
 ### Public business-site staging hold
 
-The platform installs `business-site-staging-hold` before enabling the public
-business application. Tenant writers cannot create, update or delete that named
-Cilium policy in `business-site`, including through reconciliation or pruning.
+The platform installed `business-site-staging-hold` before enabling the public
+business application, and lifted it once the signed application ran healthy
+behind it (devantler-tech/business-site#554). The name stays reserved, so only
+the platform can put the hold back. Tenant writers cannot create, update or
+delete that named Cilium policy in `business-site`, including through
+reconciliation or pruning.
 The existing trusted platform-controller carve-outs remain; a controller name
 in a tenant namespace does not grant the same authority. Other policy names and
 the same name in other namespaces retain their ordinary admission rules.
@@ -214,8 +217,10 @@ application.
 
 The maintained `vault-config` Job declares the `business-site` Kubernetes auth
 role for the same-named service account in only that namespace. Its sole token
-policy reads the exact KV-v2 disclosure entry used by the source-owned
-SecretStore; it grants no value writes, metadata listing or other application
+policy reads four exact KV-v2 entries through the source-owned SecretStore: the
+public disclosure, the platform-written SES SMTP credential, and the portal's
+Numina (`apps/business-site/numina`) and Stripe (`apps/business-site/stripe`)
+billing keys. It grants no value writes, metadata listing or other application
 paths. The only other permissions are lookup and revocation of the token itself,
 which the pinned ESO client uses when reusing and closing its authenticated
 connection. These do not authorize lookup or revocation of another token. The
@@ -225,15 +230,16 @@ it does not guess a separate audience absent from that store. The pinned ESO
 2.13.0 Kubernetes connector passes the store's service-account audiences through
 to TokenRequest, without the `vault` default of its separate JWT connector.
 
-The tenant owner materializes and maintains the confirmed disclosure privately
-through the supported operator entry path. This role creates no value, enables
-no WebApp and grants no customer identity or payment access. Missing/unsafe
+The tenant owner materializes and maintains the confirmed disclosure and the
+billing keys privately through the supported operator entry path. This role
+creates no value, enables no WebApp and grants no customer identity access.
+Reading the billing keys does not switch on either portal billing flag. Missing/unsafe
 projection refusal, actual ESO authentication and rotation, HTTPS staging and
 private-route closure remain live acceptance under #5247. Normal production
 reconciliation owns installation; a suspended deployment is not manually bypassed.
 
 `bash scripts/tests/test-business-disclosure-reader.sh` checks the actual rendered
-role/policy payload and twenty-two invalid-payload controls without authenticating or
+role/policy payload and twenty-nine invalid-payload controls without authenticating or
 reading any value. OpenBao supports the policy's native
 [JSON syntax](https://openbao.org/docs/concepts/policies/); the
 [Kubernetes role API](https://openbao.org/docs/api/auth/kubernetes/) defines the
@@ -250,7 +256,7 @@ Kustomization with the controller that installs its CRD (already handled by the 
 `Tenant`/`WebApp` archetypes cover *all* tenant and platform needs (each to be filed and prioritised as
 its own issue, behaviour-preservingly, render-diffed vs the current instances):
 
-- **Arbitrary per-tenant `ExternalSecret`s beyond `ghcr-auth`** — e.g. `wedding-app`'s object-store /
+- **Arbitrary per-tenant `ExternalSecret`s** — e.g. `wedding-app`'s object-store /
   db-backup secrets — via a typed `secrets` list on the `Tenant` schema, so no tenant hand-writes an
   ExternalSecret. Needs kro's `forEach` collections (one `ExternalSecret` per declared entry) plus a
   nested CEL `.map()` to build each one's `data:` list — kro has no offline CEL validator, so this

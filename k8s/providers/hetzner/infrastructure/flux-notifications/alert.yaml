@@ -22,8 +22,8 @@
 # Not hypothetical: on 2026-07-14 the ksail-operator HelmRelease failed its
 # upgrade and rolled back on every attempt for over a day (stuck four releases
 # behind, every ReplicaSet since v7.168.0 at 0 replicas, because the nodes'
-# containerd still held a revoked ghcr.io credential — see
-# scripts/refresh-flux-ghcr-auth.sh). Prod looked green the entire time and no
+# containerd still held a revoked ghcr.io credential; first-party packages are
+# now public and nodes hold no GHCR credential, platform#6272). Prod looked green the entire time and no
 # alert fired.
 #
 # OCIRepository is watched for the same reason one step earlier (#5287). Every
@@ -118,6 +118,9 @@ spec:
     - kind: HelmRelease
       name: "*"
       namespace: crossplane-system
+    - kind: HelmRelease
+      name: "*"
+      namespace: customer-identity
     - kind: HelmRelease
       name: "*"
       namespace: data-product-controller
@@ -241,5 +244,11 @@ spec:
     - kind: OCIRepository
       name: "*"
       namespace: world-at-ruin
+    # GitRepository is watched directly for the same reason (ADR 0019): `apps` no
+    # longer waits on a tenant source, and a Kustomization keeps applying its cached
+    # revision while its Git fetches fail. UniFi is the only GitRepository tenant.
+    - kind: GitRepository
+      name: "*"
+      namespace: unifi
   eventMetadata:
     summary: "Flux reconciliation error — prod platform"

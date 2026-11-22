@@ -19,9 +19,6 @@ var controlNamePattern = regexp.MustCompile(`^longhorn-cache-(signed-before|unsi
 func commandAllowed(program string, args []string, input []byte, env map[string]string) bool {
 	if program == "kubectl" && len(env) == 0 {
 		if len(args) == 6 && reflect.DeepEqual(args[:5], []string{"--context", "admin@prod", "--request-timeout=15s", "get", "--raw"}) && len(input) == 0 {
-			if args[5] == "/api/v1/namespaces/kyverno/secrets/ghcr-auth" {
-				return true
-			}
 			for _, target := range publicReads {
 				if args[5] == target.path {
 					return true
@@ -50,7 +47,7 @@ func commandAllowed(program string, args []string, input []byte, env map[string]
 	if len(args) == 2 && args[0] == "./scripts/verify-prod-recovery-source.sh" && sourcePattern.MatchString(args[1]) && len(env) == 0 {
 		return true
 	}
-	return reflect.DeepEqual(args, []string{"./scripts/verify-image-unsigned.sh", "--image", unsignedImage}) && len(env) == 3 && env["REGISTRY_USERNAME"] != "" && env["REGISTRY_PASSWORD"] != "" && !strings.ContainsAny(env["REGISTRY_USERNAME"]+env["REGISTRY_PASSWORD"], "\r\n") && credentialPattern.MatchString(env["TMPDIR"])
+	return reflect.DeepEqual(args, []string{"./scripts/verify-image-unsigned.sh", "--image", unsignedImage}) && len(env) == 2 && env["REGISTRY_ANONYMOUS"] == "true" && credentialPattern.MatchString(env["TMPDIR"])
 }
 
 type boundedCommandOutput struct {

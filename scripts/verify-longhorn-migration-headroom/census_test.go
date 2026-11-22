@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -89,7 +90,7 @@ func TestAccountCensusRequiresExactProtectedDispatch(t *testing.T) {
 		"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
 		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/observe-longhorn-migration-headroom.yaml@refs/heads/main",
 		"GITHUB_RUN_ATTEMPT":  "1", "RUNNER_ENVIRONMENT": "github-hosted",
-		"LONGHORN_HEADROOM_CONFIRM": "observe-longhorn-provider-account",
+		"PROD_OPERATION": "observe-longhorn-provider-account",
 	}
 	get := func(key string) string { return env[key] }
 	if !authorizeAccountCensus(get) {
@@ -101,5 +102,61 @@ func TestAccountCensusRequiresExactProtectedDispatch(t *testing.T) {
 			t.Fatalf("account reconciliation authorized without %s", key)
 		}
 		env[key] = value
+	}
+}
+
+func TestProviderOwnershipRequiresExactProtectedDispatch(t *testing.T) {
+	env := map[string]string{
+		"GITHUB_EVENT_NAME":   "workflow_dispatch",
+		"GITHUB_REF":          "refs/heads/main",
+		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/observe-longhorn-migration-headroom.yaml@refs/heads/main",
+		"GITHUB_RUN_ATTEMPT":  "1",
+		"RUNNER_ENVIRONMENT":  "github-hosted",
+		"PROD_OPERATION":      "observe-longhorn-provider-ownership",
+	}
+	get := func(key string) string { return env[key] }
+	if !authorizeAccountCensus(get) {
+		t.Fatal("the dedicated protected ownership observation was refused")
+	}
+	env["GITHUB_WORKFLOW_REF"] = "devantler-tech/platform/.github/workflows/another-workflow.yaml@refs/heads/main"
+	if authorizeAccountCensus(get) {
+		t.Fatal("another workflow could read the ownership evidence")
+	}
+}
+
+func TestPrivateOwnershipEvidenceLocatesHeldProviderRecords(t *testing.T) {
+	servers, nodes := roster(t, true)
+	servers[0].Labels["ksail.node.index"] = "202"
+	servers = append(servers, server{
+		ID: 999, Name: "unmatched-fixture", Status: "running",
+		Labels: map[string]string{"unrelated": "not-in-locator"},
+	})
+	body := providerResponse(t, func(response map[string]any) {
+		response["servers"] = servers
+		response["meta"].(map[string]any)["pagination"].(map[string]any)["total_entries"] = len(servers)
+	})
+	repeated, joinedNodes, err := readStableAccount(t.Context(), providerClient(t, body, 200), "private-test-token",
+		func(context.Context) ([]byte, error) { return nodeResponse(t, nodes), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := describeAccountOwnership(repeated, joinedNodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"admission":"none","unmatched":{"id":999,"name":"unmatched-fixture","status":"running"},"control_plane_index_mismatches":[{"id":100,"name":"prod-control-plane-2","expected_index":"2","observed_index":"202"}]}`
+	if string(payload) != want {
+		t.Fatalf("unexpected evidence scope: %s", payload)
+	}
+	if _, err := classifyAccountCensus(repeated, joinedNodes); !errors.Is(err, errCensusHeld) {
+		t.Fatal("the private locator released a held census")
+	}
+	joinedNodes[0].Metadata.Name = "different-node"
+	if _, err := describeAccountOwnership(repeated, joinedNodes); !errors.Is(err, errCensusHeld) {
+		t.Fatal("an ambiguous provider join produced a private locator")
 	}
 }

@@ -1,0 +1,209 @@
+# Fixtures for restrict-tenant-image-repositories (platform#6080).
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: own-digest-only
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app@sha256:eb7a67023db0e3cabf70cc6db72019e4a8f7498b6c391c27ae6da42d3bd971c8
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: own-tag-plus-third-party
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app:1.2.3
+  initContainers:
+    - name: extra
+      image: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: own-subpath-image
+  namespace: ascoachingogvaner
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/ascoachingogvaner/worker:1.0.0
+    - name: extra
+      image: registry.k8s.io/external-dns/external-dns:v0.21.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: third-party-only
+  namespace: business-site
+spec:
+  containers:
+    - name: app
+      image: docker.io/library/nginx:1.27.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: other-tenant-image
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/ascoachingogvaner@sha256:345bf23fc430eebb528ba768d1ec780b3139d7784ac09c717202f54c8996444f
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lookalike-repository
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app-evil:1.0.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lookalike-prefix
+  namespace: ascoachingogvaner
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/ascoachingogvaner2@sha256:345bf23fc430eebb528ba768d1ec780b3139d7784ac09c717202f54c8996444f
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: foreign-init-container
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app:1.2.3
+  initContainers:
+    - name: extra
+      image: ghcr.io/devantler-tech/platform/tools:1.0.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: foreign-ephemeral-container
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app:1.2.3
+  ephemeralContainers:
+    - name: extra
+      image: ghcr.io/devantler-tech/business-site:1.0.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: uppercase-host-variant
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: GHCR.IO/devantler-tech/ascoachingogvaner:1.0.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: explicit-port-variant
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io:443/devantler-tech/ascoachingogvaner:1.0.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unlisted-tenant-first-party
+  namespace: future-tenant
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app:1.2.3
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: platform-pod
+  namespace: platform-ns
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app:1.2.3
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: own-manifests
+  namespace: wedding-app
+spec:
+  interval: 10m
+  url: oci://ghcr.io/devantler-tech/wedding-app/manifests
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: foreign-manifests
+  namespace: wedding-app
+spec:
+  interval: 10m
+  url: oci://ghcr.io/devantler-tech/platform/manifests
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: foreign-oci-charts
+  namespace: ascoachingogvaner
+spec:
+  interval: 10m
+  url: oci://ghcr.io/devantler-tech/wedding-app/charts
+  type: oci
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: third-party-charts
+  namespace: ascoachingogvaner
+spec:
+  interval: 10m
+  url: https://charts.example.com
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: own-image-volume
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app:1.2.3
+  volumes:
+    - name: data
+      image:
+        reference: ghcr.io/devantler-tech/wedding-app/data:1.0.0
+    - name: scratch
+      emptyDir: {}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: foreign-image-volume
+  namespace: wedding-app
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/wedding-app:1.2.3
+  volumes:
+    - name: data
+      image:
+        reference: ghcr.io/devantler-tech/ascoachingogvaner/data:1.0.0

@@ -541,6 +541,16 @@ misconfigurations:
       grants get alone, scoped by resourceNames to the six substrate-* CA Secrets cert-manager
       issues, so the identity cannot list or watch the namespace's Secrets, cannot read any other
       Secret, and cannot create, change or delete one.
+  - id: KSV-0113
+    paths:
+      - k8s/providers/hetzner/apps/customer-identity/role.yaml
+    statement: >-
+      This is a namespaced Role in the customer-identity namespace, bound to the
+      customer-identity/customer-identity-setup ServiceAccount of the ZITADEL setup CronJob. Its one
+      rule grants get and patch alone, scoped by resourceNames to the single
+      customer-dex-zitadel-client Secret the CronJob fills with the client ZITADEL issues, so the
+      identity cannot list or watch the namespace's Secrets, cannot read any other Secret, and cannot
+      create or delete one.
   # KSV-0020 "runs with UID <= 10000" on the vault-config Job — 2 findings, both LOW.
   #
   # UID 100 is the identity the openbao image itself DEFINES — measured against the pinned
@@ -773,16 +783,19 @@ misconfigurations:
       The fragments name only the image repository; the kustomization's images transformer and
       replacement pin every rendered container to the signed bootstrap image digest.
 
-  # KSV-0118 "default security context" on the add-client-proxy fragment. The fragment adds one
-  # container and carries that container's full securityContext; the pod securityContext
-  # (runAsNonRoot, 2000:2000, fsGroup and RuntimeDefault seccomp) comes from the
-  # serve-after-initialization pod spec this overlay builds on.
+  # KSV-0118 "default security context" on the add-client-proxy and serve-from-encrypted-storage
+  # fragments. The first adds one container and carries that container's full securityContext;
+  # the second changes only the volumes. The pod securityContext (runAsNonRoot, 2000:2000,
+  # fsGroup and RuntimeDefault seccomp) comes from the serve-after-initialization pod spec both
+  # overlays build on.
   - id: KSV-0118
     paths:
       - k8s/bases/apps/private-mail-proxy-identity/patches/add-client-proxy.yaml
+      - k8s/providers/hetzner/apps/private-mail/patches/serve-from-encrypted-storage.yaml
     statement: >-
-      This patch adds a hardened container to a StatefulSet whose pod securityContext is set by
-      serve-after-initialization; the rendered pod does not use the default security context.
+      These patches add a hardened container or change volumes on a StatefulSet whose pod
+      securityContext is set by serve-after-initialization; the rendered pod does not use the
+      default security context.
 
   # KSV-0036 reads automountServiceAccountToken from the WORKLOAD's own spec — a Deployment, Job or
   # CronJob spec, which has no such field — and otherwise fires on any container that mounts the
@@ -790,12 +803,14 @@ misconfigurations:
   # projects a short-lived token, through an explicit volume, into the one container that
   # authenticates with it: the vault-backup snapshot container logs in to OpenBao through its
   # Kubernetes auth method (the checkov.io/skip1 CKV_K8S_38 annotation on both workloads records
-  # the same reason), and the security-progress collector reads its scan results through the API.
+  # the same reason), the security-progress collector reads its scan results through the API, and
+  # the Agentic Engineer lane's cluster-reader proxy reads the API as its read-only account.
   - id: KSV-0036
     paths:
       - k8s/bases/infrastructure/vault-backup/job.yaml
       - k8s/bases/infrastructure/vault-backup/cron-job.yaml
       - k8s/bases/infrastructure/coroot/components/security-progress/deployment.yaml
+      - k8s/providers/hetzner/apps/agentic-engineer/deployment-cluster-reader.yaml
     statement: >-
       The pods disable token automounting and project a short-lived token only into the container
       that authenticates with it; the check cannot see the pod-level setting.

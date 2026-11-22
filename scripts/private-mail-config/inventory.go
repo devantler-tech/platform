@@ -105,7 +105,11 @@ func validateInventoryFor(raw []byte, version string) error {
 			return errConfiguration
 		}
 		localProxyTrust := item.Name == "client-proxy" && len(item.ProxyNetworks) == 1 && (item.ProxyNetworks["127.0.0.1"] || item.ProxyNetworks["127.0.0.1/32"])
-		if len(item.ProxyNetworks) != 0 && !localProxyTrust {
+		// A public mail listener may trust one private load-balancer address;
+		// the plan readback requires the exact address that was configured.
+		mailListener := item.Name == "smtp-inbound" || item.Name == "submission" || item.Name == "imaps"
+		mailProxyTrust := mailListener && mailProxySourceTrust(item.ProxyNetworks)
+		if len(item.ProxyNetworks) != 0 && !localProxyTrust && !mailProxyTrust {
 			return errConfiguration
 		}
 		delete(ids, item.ID)

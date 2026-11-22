@@ -46,6 +46,20 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: ⚙️ Setup Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - name: 🔗 Bind the runtime publication inputs
+      id: runtime_inputs
+      shell: bash
+      env:
+        LONGHORN_V2_OPERATION: capture-runtime-publication
+        LONGHORN_RUNTIME_RECOVERY_SOURCE: ${{ inputs.recovery-source-sha }}
+      run: go run ./scripts/migrate-longhorn-v2
+
     - name: 🔐 Install verified supply-chain tools
       id: setup_supply_chain_tools
       shell: bash
@@ -74,7 +88,7 @@ runs:
         GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
         STAGING_OCI_REF: ${{ steps.staging_reference.outputs.oci_ref }}
-      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push "${STAGING_OCI_REF}"
+      run: ./scripts/run-ksail-prod.sh workload push "${STAGING_OCI_REF}"
 
     - name: 🔐 Configure GHCR auth
       shell: bash
@@ -163,18 +177,6 @@ runs:
       # from the fact that the steps ran.
       run: ./scripts/verify-published-evidence.sh "${STAGING_DIGEST}"
 
-    - name: ⚙️ Setup Go
-      # The matcher is read out of the manifests by ci.yaml's extractor rather
-      # than restated here, and that extractor is a Go program — but this
-      # publication path had no toolchain. Setting one up here keeps the gate
-      # self-contained with the promotion it guards, so both callers (the
-      # normal deploy and dr-rebuild.yaml's recovery deploy) inherit it without
-      # either workflow having to remember to add it.
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-      with:
-        go-version-file: go.mod
-        cache: false
-
     - name: 🔏 Verify the deployed matcher accepts the staged digest
       id: verify_matcher_accepts_staged
       shell: bash
@@ -189,6 +191,18 @@ runs:
       # publishing identity itself. Asking here, against the staged digest,
       # catches that before latest moves.
       run: ./scripts/verify-matcher-accepts-digest.sh "${STAGING_DIGEST}"
+
+    - name: 🧮 Verify Longhorn runtime publication capacity
+      id: runtime_capacity_gate
+      shell: bash
+      env:
+        LONGHORN_V2_OPERATION: check-runtime-publication
+        LONGHORN_RUNTIME_RECOVERY_SOURCE: ${{ inputs.recovery-source-sha }}
+        LONGHORN_RUNTIME_INPUT_FINGERPRINT: ${{ steps.runtime_inputs.outputs.source_fingerprint }}
+      # The producer packages these source files unchanged. Bracket its inputs,
+      # then inspect the effective Flux layers and fresh native allocation epoch
+      # before production can see the digest. This is not an adoption receipt.
+      run: go run ./scripts/migrate-longhorn-v2
 
     - name: 🚀 Promote the evidenced digest to latest
       id: promote_latest

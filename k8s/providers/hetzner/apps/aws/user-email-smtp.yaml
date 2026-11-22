@@ -1,0 +1,23 @@
+# Company Email's send-only SMTP identity for the Amazon SES relay
+# (platform#5481). Platform-owned for the same reason as the EKS CI role: the
+# public aws tenant must not be able to widen what this credential may do.
+# Delete is omitted so a prune cannot remove the identity outbound mail uses;
+# revoke by replacing its access key instead.
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: User
+metadata:
+  name: email-smtp
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    path: /email/
+  providerConfigRef:
+    kind: ProviderConfig
+    name: default

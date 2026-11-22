@@ -95,6 +95,10 @@ emit() {
 case "${url}" in
   */token'?'*)
     transfer_kind=token
+    # A public package grants an anonymous token to a request without a user.
+    if [[ -e "${dir}/anonymous_ok" && "${conf_text}" != *'user = '* ]]; then
+      emit "$(value token_status 200)" "$(value token_body '{"token":"fake-bearer-token"}')"
+    fi
     [[ "${conf_text}" == *'user = "fake-user:fake-password"'* ]] || emit 401 '{}'
     emit "$(value token_status 200)" "$(value token_body '{"token":"fake-bearer-token"}')"
     ;;
@@ -136,6 +140,7 @@ run_verify() {
   set +e
   out="$(FAKE_CURL_DIR="${state}" PATH="${fake_bin}:${PATH}" \
     REGISTRY_USERNAME="${REGISTRY_USERNAME-fake-user}" REGISTRY_PASSWORD="${REGISTRY_PASSWORD-fake-password}" \
+    REGISTRY_ANONYMOUS="${REGISTRY_ANONYMOUS-}" \
     bash "${script}" --image "${ref}" 2>&1)"
   rc=$?
   set -e
@@ -310,6 +315,31 @@ reset_state
 REGISTRY_PASSWORD='' run_verify
 expect 'a missing credential is a usage error' 2 'must both be set'
 [[ ! -e "${state}/argv.log" ]] || fail 'a missing credential still called the registry'
+
+# --- Anonymous reads of a public package -----------------------------------------------
+reset_state
+stage anonymous_ok 1
+REGISTRY_USERNAME='' REGISTRY_PASSWORD='' REGISTRY_ANONYMOUS=true run_verify
+expect 'an explicit anonymous read of a public package is UNSIGNED' 0 'UNSIGNED:'
+
+reset_state
+REGISTRY_USERNAME='' REGISTRY_PASSWORD='' REGISTRY_ANONYMOUS=true run_verify
+expect 'an anonymous read the registry refuses is UNKNOWN' 3 'refused'
+
+reset_state
+stage anonymous_ok 1
+REGISTRY_ANONYMOUS=true run_verify
+expect 'an anonymous read that also carries a credential is a usage error' 2 'excludes REGISTRY_USERNAME'
+[[ ! -e "${state}/argv.log" ]] || fail 'a mixed anonymous request still called the registry'
+
+reset_state
+REGISTRY_USERNAME='' REGISTRY_PASSWORD='' REGISTRY_ANONYMOUS=yes run_verify
+expect 'an anonymous switch other than exactly true is a usage error' 2 'unset or exactly true'
+
+reset_state
+stage anonymous_ok 1
+REGISTRY_USERNAME='' REGISTRY_PASSWORD='' run_verify
+expect 'a missing credential never falls back to anonymous' 2 'must both be set'
 
 # --- Wiring ---------------------------------------------------------------------------
 ci="${root_dir}/.github/workflows/ci.yaml"

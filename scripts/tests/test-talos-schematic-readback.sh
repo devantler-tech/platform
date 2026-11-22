@@ -24,7 +24,7 @@ if ! printf '%s\n' "$filters" | yq -e '.talos[] | select(. == ".github/actions/d
   exit 1
 fi
 
-update_line=$(grep -nF './scripts/run-ksail-prod-with-pull-auth.sh cluster update' "$deploy_action" | cut -d: -f1)
+update_line=$(grep -nF './scripts/run-ksail-prod.sh cluster update' "$deploy_action" | cut -d: -f1)
 stability_line=$(grep -nF './scripts/wait-for-prod-api-stability.sh' "$deploy_action" | cut -d: -f1)
 readback_line=$(grep -nF './scripts/verify-talos-schematic-readback.sh' "$deploy_action" | cut -d: -f1)
 if [[ -z "$update_line" || -z "$stability_line" || -z "$readback_line" ]] ||

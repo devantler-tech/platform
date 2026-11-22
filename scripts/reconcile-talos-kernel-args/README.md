@@ -24,9 +24,9 @@ fold inputs are:
 | `charts/` | Carries the generated `Cluster` schema published from those types; earlier audits compared it, so it stays part of the set. |
 | `go.mod`, `go.sum` | Pin the Talos machinery that encodes the machine configuration. |
 
-`--check-pins` reads all explicit KSail pins in seven files: CI, CD, the production
-deployment action, direct-main validation, disaster recovery, and the two operational
-workflows that validate image-verifier liveness and prove scoped package access. They must be explicit release versions and must all agree.
+`--check-pins` reads all explicit KSail pins in five files: CI, CD, the production
+deployment action, direct-main validation and disaster recovery. They must be
+explicit release versions and must all agree.
 The disposable, non-Talos Cilium default-deny proof keeps its separately audited
 KSail 7.193.8 / Cilium image pairing. The caller inventory accounts for that
 independent profile without treating it as a deployment renderer.
@@ -603,6 +603,59 @@ defines `spec.cluster.talos.extensions` and `schematicId`, is unchanged, so both
 fields keep their names, types and defaults. This audit changes no cluster
 configuration or vulnerability exception.
 
+**7.212.0**, commit `308077e2888966260c55e0fdd086347cfcb4ccc3`, is audited
+against 7.211.0. The configuration manager, Talos generator and cluster API
+are byte-identical, preserving the normalized extension/argument trigger,
+both-role fold and explicit schematic-ID boundary. The chart adds only
+`list nodes` to the operator role for the nested Kind network collision guard;
+the Talos schema is unchanged. The module changes update AWS, gRPC and
+Kubernetes dependencies and their transitive requirements; Talos machinery and
+its YAML encoders retain their versions. The real offline render controls
+exercise both roles, explicit schematic IDs and invalid patches.
+
+**7.212.5**, commit `7f6ff621579de15956dc5c6a128fd0bce4b79091`, is audited
+against 7.212.0. The configuration manager, Talos generator, cluster API and
+chart are byte-identical, so the fold's trigger, both-role output and explicit
+schematic-ID boundary are unchanged. The only module change moves the AWS EKS
+SDK from v1.105.0 to v1.105.1 and its two checksum lines; Talos machinery and
+its YAML encoders keep their versions. This audit changes no cluster
+configuration or vulnerability exception.
+
+**7.212.6**, commit `23e4258f9c2cb13b5b376a3e21b31cb422e2436c`, is audited
+against 7.212.5. Only `go.mod` and `go.sum` change; the configuration manager,
+Talos generator, cluster API and chart are byte-identical, so the fold's
+trigger, both-role output and explicit schematic-ID boundary are unchanged. The
+module change moves the COSI runtime from v1.16.3 to v1.16.4 and refreshes
+indirect OpenAPI, OpenTelemetry, gRPC gateway, genproto and `golang.org/x`
+modules. Talos machinery and its YAML encoders keep their versions. This audit
+changes no cluster configuration or vulnerability exception.
+
+**7.212.7**, commit `c9d252980ef7e6c52536851fea600b3616aaf3e4`, is audited
+against 7.212.6. Only `go.mod` and `go.sum` change; the configuration manager,
+Talos generator, cluster API and chart are byte-identical, so the fold's
+trigger, both-role output and explicit schematic-ID boundary are unchanged. The
+only module change moves the snapshot-test library `go-snaps` from v0.5.23 to
+v0.5.25 and its two checksum lines. Talos machinery and its YAML encoders keep
+their versions. This audit changes no cluster configuration or vulnerability
+exception.
+
+**7.212.9**, commit `41a8ea06da57a4b53744cad7a617d6294e7ad588`, is audited
+against 7.212.7. Only `go.mod` and `go.sum` change; the configuration manager,
+Talos generator, cluster API and chart are byte-identical, so the fold's
+trigger, both-role output and explicit schematic-ID boundary are unchanged. The
+only module change moves the indirect compression library `andybalholm/brotli`
+from v1.2.0 to v1.2.7 and its two checksum lines. Talos machinery and its YAML
+encoders keep their versions. This audit changes no cluster configuration or
+vulnerability exception.
+
+**7.212.12**, commit `8eb3950586369daa1639b682f2396977f8bec963`, is audited
+against 7.212.9. Only `go.mod` and `go.sum` change; the configuration manager,
+Talos generator, cluster API and chart are byte-identical, so the fold's
+trigger, both-role output and explicit schematic-ID boundary are unchanged. The
+only module change moves `github.com/cilium/cilium` from v1.20.3 to v1.20.4 and
+its two checksum lines. Talos machinery and its YAML encoders keep their
+versions. This audit changes no cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
@@ -656,3 +709,11 @@ toolchain, and their generated configurations validate with the platform's
 pinned Talos client.
 The offline render regression still checks both shared roles, schematic-ID
 precedence and invalid-patch refusal. This audit changes no runtime exception.
+
+**7.215.46**, commit `983586d20f4890289351f7cd83e06331a5e6c116`, retains the
+Talos generator, cluster API and chart trees from 7.213.4. Its configuration
+manager handles the newer Talos node and kubelet documents under the 1.14
+version contract. The rendered production configuration must still validate
+against the explicit Talos release pinned in `ksail.prod.yaml`. The release includes
+the fixes that preserve the existing Hetzner floating-IP holder and stop an
+update when the provider cannot prove its current node inventory.

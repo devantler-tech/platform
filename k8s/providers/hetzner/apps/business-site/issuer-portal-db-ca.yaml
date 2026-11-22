@@ -1,0 +1,10 @@
+# Issues the portal database's server certificate (certificate-portal-db-server.yaml)
+# from the ten-year CA.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: business-site-portal-db-ca
+  namespace: business-site
+spec:
+  ca:
+    secretName: business-site-portal-db-ca

@@ -216,6 +216,12 @@
       "allowedVersions": "<=1.5.1"
     },
     {
+      "description": "Hold the Kubernetes client libraries below 0.37 in the tenant web-app admission test module, which builds Kyverno v1.19.2. Kyverno v1.20.0 is the first release built on k8s.io v0.37, and it still replaces github.com/kyverno/api with a fork in a personal account; against the newest published kyverno/api (v0.0.1-alpha.5) the module does not compile on v0.37 (#5191). Every other module moves to v0.37. Remove this rule once a Kyverno release builds on v0.37 from a published kyverno/api.",
+      "matchFileNames": ["scripts/tests/tenant-webapp-admission/go.mod"],
+      "matchPackageNames": ["k8s.io/**"],
+      "allowedVersions": "<0.37.0"
+    },
+    {
       "description": "flux-operator is tracked by the dedicated regex customManager above (the built-in `flux` manager stalled on it). Disable the `flux` manager for this chart so the two managers cannot open duplicate PRs if the flux manager later resumes.",
       "matchManagers": ["flux"],
       "matchPackageNames": [
@@ -240,13 +246,14 @@
       "enabled": false
     },
     {
-      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, oci-repository.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), while retaining the repository-wide minimumReleaseAge cooldown for privileged deployment tooling.",
+      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, oci-repository.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a Dependabot PR (inside its devantler-tech group). Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), while retaining the repository-wide minimumReleaseAge cooldown for privileged deployment tooling. KSail releases about daily and each bump runs a full production deploy, so the group opens on a weekly schedule (platform#6267); vulnerability updates ignore the schedule.",
       "matchPackageNames": [
         "devantler-tech/ksail",
         "ghcr.io/devantler-tech/charts/ksail-operator",
         "ksail-operator"
       ],
-      "groupName": "ksail"
+      "groupName": "ksail",
+      "schedule": ["before 6am on monday"]
     },
     {
       "description": "Security-critical controllers — labelled so security-driven bumps are visible in the PR feed. Automerge stays ON: CI (system-test on a real Talos+Docker cluster, kubescape NSA scan, gitleaks, zizmor, CodeQL) is the trust gate.",
@@ -331,11 +338,12 @@
       "automerge": false
     },
     {
-      "description": "provider-aws-iam depends on provider-family-aws, which ships the ProviderConfig CRD every family member uses, and the two must be pinned to the same release (see provider-aws-iam.yaml), so they move in one PR. Grouping does not force equal versions; scripts/tests/test-crossplane-aws-family-version-parity.sh fails a PR that pins them apart.",
+      "description": "provider-aws-iam and provider-aws-sesv2 depend on provider-family-aws, which ships the ProviderConfig CRD every family member uses, and all of them must be pinned to the same release (see provider-aws-iam.yaml), so they move in one PR. Grouping does not force equal versions; scripts/tests/test-crossplane-aws-family-version-parity.sh fails a PR that pins them apart.",
       "matchManagers": ["crossplane"],
       "matchPackageNames": [
         "xpkg.upbound.io/upbound/provider-family-aws",
-        "xpkg.upbound.io/upbound/provider-aws-iam"
+        "xpkg.upbound.io/upbound/provider-aws-iam",
+        "xpkg.upbound.io/upbound/provider-aws-sesv2"
       ],
       "groupName": "crossplane aws providers"
     },
@@ -419,6 +427,16 @@
       "description": "Hold the Kyverno CI policy CLI below 1.20.0 for the same reason and with the same removal condition as the chart rule above (#4994).",
       "matchPackageNames": ["kyverno/kyverno"],
       "allowedVersions": "<1.20.0"
+    },
+    {
+      "description": "Keep the two Kyverno 1.19 source builds (background controller and migration runtime) on Go 1.26. They compile Kyverno 1.19, which upstream builds with Go 1.26, and lint it with golangci-lint v2.11.4, which cannot read Go 1.27 export data; a Go 1.27 builder fails their image builds and their compiler-pin tests (#6164). Go 1.26 still receives security releases, so its patch updates stay visible. Remove this rule when these builds move to Kyverno 1.20 (#4994), or are moved to Go 1.27 together with their linter and accepted-advisory list.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["docker.io/library/golang"],
+      "matchFileNames": [
+        "k8s/bases/infrastructure/controllers/kyverno/BackgroundDownstreamCleanup.Dockerfile",
+        "k8s/bases/infrastructure/controllers/kyverno/MigrationRuntime.Dockerfile"
+      ],
+      "allowedVersions": "/^1\\.26\\./"
     },
     {
       "description": "This test-only parser witnesses the verified Coroot node-agent source, not the latest library. Keep proposals visible, but require the consumer regression and a verified deployed-source refresh before adopting a different parser (platform#4934).",

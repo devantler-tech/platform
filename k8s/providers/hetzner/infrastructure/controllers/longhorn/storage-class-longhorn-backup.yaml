@@ -1,0 +1,25 @@
+---
+# Velero's disposable CSI snapshot copy, used only while uploading to R2.
+# A failed staging replica fails the upload without changing the source volume.
+# Recovery still requires a completed, verified off-cluster backup.
+# Immediate binding lets Velero prepare the volume before its mover pod starts.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-backup
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "1"
+  staleReplicaTimeout: "30"
+  fromBackup: ""
+  fsType: ext4
+  dataLocality: disabled
+  unmapMarkSnapChainRemoved: ignored
+  disableRevisionCounter: "true"
+  dataEngine: v1
+  backupTargetName: default

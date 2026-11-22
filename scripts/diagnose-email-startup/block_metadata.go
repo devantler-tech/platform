@@ -9,6 +9,9 @@ import (
 
 type blockDetails struct{ Reason, Scope, Expiry, Creation string }
 
+// blockReasons maps every reason the supported server stores to its public name.
+var blockReasons = map[string]string{"rcptToFailure": "RCPT_TO_FAILURE", "authFailure": "AUTH_FAILURE", "loitering": "LOITERING", "portScanning": "PORT_SCANNING", "manual": "MANUAL", "other": "OTHER"}
+
 func podCreationTime(raw []byte) (time.Time, error) {
 	var p struct {
 		Metadata struct{ CreationTimestamp string }
@@ -42,7 +45,7 @@ func decodeBlockDetails(raw []byte, candidate netip.Addr, podCreated, now time.T
 	if json.Unmarshal(observation.Security, &envelope) != nil {
 		return blockDetails{}, bad
 	}
-	names := map[string]string{"rcptToFailure": "RCPT_TO_FAILURE", "authFailure": "AUTH_FAILURE", "loitering": "LOITERING", "portScanning": "PORT_SCANNING", "manual": "MANUAL", "other": "OTHER"}
+	names := blockReasons
 	matches := 0
 	result := blockDetails{}
 	for _, call := range envelope.MethodResponses {

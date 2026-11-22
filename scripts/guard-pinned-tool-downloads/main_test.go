@@ -286,10 +286,12 @@ func TestEveryPinnedToolDownloadRetriesWithinBounds(t *testing.T) {
 			t.Errorf("%s: %s\n  %s", d.where, p, d.statement)
 		}
 	}
-	// The scope is not allowed to go quiet: these counts are what the workflows held when the
-	// contract was written (#6065). A drop means the scan lost them, not that they went away.
-	if pinned < 44 || kubectl < 35 {
-		t.Fatalf("found %d pinned downloads (%d kubectl); expected at least 44 (35): the scan is not seeing the workflows", pinned, kubectl)
+	// The scope is not allowed to go quiet: these counts are what the workflows hold. A drop
+	// means the scan lost them, unless the same change deleted those workflows and lowers them.
+	// Retiring the four retained-email workflows removes four pinned kubectl downloads from
+	// main's coverage floors of 44 pinned downloads and 35 kubectl downloads.
+	if pinned < 40 || kubectl < 31 {
+		t.Fatalf("found %d pinned downloads (%d kubectl); expected at least 40 (31): the scan is not seeing the workflows", pinned, kubectl)
 	}
 	t.Logf("pinned tool downloads checked: %d (%d kubectl)", pinned, kubectl)
 }
@@ -443,7 +445,7 @@ func TestChecksumMismatchFailsOnceAndIsNeverRetried(t *testing.T) {
 		})
 		ran++
 	}
-	if ran < 35 {
-		t.Fatalf("exercised %d kubectl downloads; expected at least 35", ran)
+	if ran < 31 {
+		t.Fatalf("exercised %d kubectl downloads; expected at least 31", ran)
 	}
 }

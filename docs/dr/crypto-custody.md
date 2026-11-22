@@ -25,6 +25,8 @@ and [openbao.md](openbao.md) (OpenBao-specific DR).
 | **Hetzner Cloud token**    | provision / destroy nodes; reconfigure Cloud LB and firewall       | destroy infrastructure; pivot via the LB                     | mint a new one in the Hetzner console; rotate `HCLOUD_TOKEN`      |
 | **Cloudflare API token**   | manage DNS for the platform domain                                 | redirect prod traffic; mint Origin CA certs                  | mint a new one in the Cloudflare dashboard                        |
 | **Actual Budget E2EE password** | client-side key to encrypt/decrypt an Actual budget file      | decrypt that budget's financial data                        | the budget is **permanently unrecoverable** — the server never held the key |
+| **ZITADEL master key**     | encrypt the customer identity provider's signing keys and stored secrets (`customer-identity` namespace) | with a database copy, decrypt those keys and secrets — rotate them in ZITADEL | restored `customer-identity-db` backups cannot be used; customer accounts are recreated |
+| **ZITADEL setup user key** | sign the setup CronJob's tokens as ZITADEL's `zitadel-setup` system API user (instance owner) | administer the customer identity provider — delete `customer-identity/zitadel-setup-key` so cert-manager issues a new key | nothing to recover: cert-manager issues a new key and ZITADEL trusts the new certificate |
 
 The rest of this document walks each row in detail.
 
@@ -126,13 +128,13 @@ posture is:
 
    Replacing a workstation therefore recovers the root credential and then
    steps back down to the reader identity. Both halves are required, because
-   `./scripts/run-ksail-prod-with-pull-auth.sh cluster update` and
+   `./scripts/run-ksail-prod.sh cluster update` and
    `talosctl config merge <talosconfig>` each write a **root** context to
    `~/.talos/config`:
 
    1. Recover the root material into a short-lived mode-`0600` file outside
       `~/.talos`, either from a custody store or by re-running
-      `./scripts/run-ksail-prod-with-pull-auth.sh cluster update` (which
+      `./scripts/run-ksail-prod.sh cluster update` (which
       regenerates it from the cluster's running PKI) and moving the result
       out of `~/.talos/config`.
    2. Restore that file to both custody stores if it changed.
@@ -313,6 +315,38 @@ no reset, no recovery, no operator override, because the platform never held the
 key. The only fallback is an *unencrypted* copy of the budget that predates
 encryption (a local device that still has it, or a pre-E2EE export). This is the
 strongest reason to keep the OpenBao entry backed up.
+
+---
+
+## ZITADEL master key
+
+ZITADEL (customer sign-in for the business-site portal) encrypts its signing keys and stored
+secrets with a 32-character master key. The key is generated once in-cluster and written to
+OpenBao `apps/customer-identity/zitadel` (property `masterkey`) by a create-only PushSecret
+(`k8s/bases/infrastructure/vault-seed/push-secret-push-customer-identity-zitadel-masterkey.yaml`).
+OpenBao is its custody of record: an existing value is never replaced, and
+`customer-identity/zitadel-masterkey` is read back from it.
+
+- **Restore order:** restore OpenBao first ([openbao.md](openbao.md)), then `customer-identity-db`
+  from its R2 backups. A fresh OpenBao would generate a new key that cannot read the restored database.
+- **After a database restore:** the restored database can hold an older secret for the customer
+  Dex's client than `customer-identity/customer-dex-zitadel-client`. Nothing has to be done by
+  hand: the setup CronJob proves the stored secret against ZITADEL on every run and issues a new one
+  within 15 minutes when ZITADEL refuses it.
+- **Rotation:** not supported by ZITADEL for an existing database. Treat the key as permanent.
+
+## ZITADEL setup user key
+
+The setup CronJob (`k8s/providers/hetzner/apps/customer-identity/cron-job-setup.yaml`) reaches
+ZITADEL's APIs as the system API user `zitadel-setup`, whose only role is `IAM_OWNER` on the instance.
+ZITADEL trusts the public key in cert-manager's certificate `customer-identity/zitadel-setup-key`.
+It mounts only `tls.crt`; only the CronJob's signer container mounts `tls.key`, and no Role grants
+reading the Secret.
+
+- **Custody:** the cluster only. The key is not backed up and needs no backup: a rebuild issues a new
+  one, and ZITADEL trusts whatever certificate it mounts.
+- **Rotation:** automatic. cert-manager issues a new key 30 days before the 90-day certificate expires,
+  and Reloader restarts ZITADEL to read it. To rotate at once, delete the Secret.
 
 ---
 

@@ -1,0 +1,250 @@
+# Inputs mirror scripts/tests/test-guard-floating-image-tags.sh (#3755).
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: semver
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: nginx:1.27.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: semver-busybox
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: busybox:1.37.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: v-major
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: app:v1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: calendar
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: app:2026.09.13
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: prerelease
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/org/app:v2.0.0-rc.1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: registry-port
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: localhost:5000/team/app:1.2.3
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: suffix
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: postgres:17.2-alpine
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tag-and-digest
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: postgres:17.2@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: digest
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: system-namespace
+  namespace: kube-system
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latest
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: busybox:latest
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: stable
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: busybox:stable
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: edge
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/org/migrate:edge
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: main
+  namespace: kube-system
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/vendor/approver:main
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: untagged
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: nginx
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: untagged-registry-port
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: localhost:5000/team/app
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: short-digest
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: nginx@sha256:abc
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sha512
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: nginx@sha512:abc
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: floating-init
+  namespace: default
+spec:
+  initContainers:
+    - name: migrate
+      image: ghcr.io/org/migrate:edge
+  containers:
+    - name: app
+      image: nginx:1.27.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: floating-ephemeral
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: nginx:1.27.0
+  ephemeralContainers:
+    - name: debug
+      image: busybox:latest
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: double-colon
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: repo:1.2:latest
+---
+# Autogen: the same check runs on the Pod template of a controller.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: floating-deployment
+  namespace: default
+spec:
+  selector:
+    matchLabels: { app: floating }
+  template:
+    metadata:
+      labels: { app: floating }
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/vendor/approver:main
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pinned-deployment
+  namespace: default
+spec:
+  selector:
+    matchLabels: { app: pinned }
+  template:
+    metadata:
+      labels: { app: pinned }
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27.0

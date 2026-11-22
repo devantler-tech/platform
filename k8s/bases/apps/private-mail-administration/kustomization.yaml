@@ -11,6 +11,7 @@ resources:
   - external-secret-generated-agent.yaml
   - push-secret-agent.yaml
   - external-secret-agent.yaml
+  - external-secret-relay.yaml
   - certificate.yaml
   - http-route.yaml
 patches:
@@ -19,5 +20,7 @@ patches:
   - path: patches/isolate-administration.yaml
 images:
   - name: ghcr.io/devantler-tech/platform-private-mail-bootstrap
-    # Signed main publication c674fd84e69a with verified recovery permissions.
-    digest: sha256:3c83be721743e85c455eaacb82d6db0ad442496c9d8c2d54b509430489ec9f82
+    # Signed main publication b4253e8d38dc with the secure Stalwart defaults
+    # (#6261). Its only change from b9aeb4ed74a2, the SES relay route, is the
+    # declared defaults and their read-back (docs/operations/email-secure-defaults.md).
+    digest: sha256:05ce801246615043ecd613c082f7b79216131f49831462a83e5c2afff237d9c1

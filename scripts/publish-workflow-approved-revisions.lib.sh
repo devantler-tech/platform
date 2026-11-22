@@ -59,6 +59,22 @@ readonly CANONICAL_FAMILY='\.github/\.github/workflows/publish-'
 # is unchanged. The generic subject files stay excluded by name, as before.
 readonly FAMILY_SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/[(]?(actions|\\?\.github)/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
 
+# ── The consumer's own release workflow (#6265, ADR 0017) ───────────────────────────────
+# A product moves off the shared publisher by signing from its own release workflow with a
+# composite action, so the signer becomes its own repository at a release tag. A two-family
+# matcher therefore carries ONE further alternative, written last inside the same group:
+#
+#   |<repository>/\.github/workflows/[^/]+\.ya?ml@refs/tags/v<semver>
+#
+# <repository> is the consumer's current GitHub repository with every `.` escaped, so only
+# that repository's release tags match. It is fixed per consumer, never generated from an
+# observation, so the daily regeneration cannot move it. The `.github` consumer is the one
+# exception: its repository hosts the shared reusable publishers, and a tag of a reusable
+# workflow carries that repository's identity whoever calls it, so another consumer's
+# signature would verify for its source. It keeps the two-family form until its move gets
+# a narrower rule.
+readonly OWN_RELEASE_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+
 refuse() {
   printf 'guard-publish-workflow-approved-revisions: %s\n' "$*" >&2
   exit 1
@@ -73,6 +89,15 @@ consumer_github_repository() {
     data-product-controller) printf '%s\n' 'khoist' ;;
     *) printf '%s\n' "$1" ;;
   esac
+}
+
+# consumer_release_alternative <consumer> → the consumer's own-release alternative, without
+# its leading `|`, or nothing for the `.github` consumer (see OWN_RELEASE_TAIL).
+consumer_release_alternative() {
+  local repository
+  [ "$1" != '.github' ] || return 0
+  repository="$(consumer_github_repository "$1")"
+  printf '%s%s' "${repository//./\\.}" "$OWN_RELEASE_TAIL"
 }
 
 case "$ENFORCE" in
@@ -298,15 +323,17 @@ canonical_ref_ok() {
   [ "$1" = "($first|$second)" ] && is_sha "$first" && is_sha "$second" && [ "$first" != "$second" ]
 }
 
-# approved_subject <workflow> <legacy-ref> <canonical-ref-or-empty> → the whole matcher subject.
-# Without a canonical ref this is the legacy subject, byte for byte.
+# approved_subject <workflow> <legacy-ref> <canonical-ref-or-empty> [own-release-alternative]
+# → the whole matcher subject. Without a canonical ref this is the legacy subject, byte for
+# byte. With one, the consumer's own-release alternative, when it has one, is written last
+# inside the same group (#6265).
 approved_subject() {
-  local name="${1#publish-}"
+  local name="${1#publish-}" own="${4:-}"
   if [ -z "$3" ]; then
     printf '%s%s\\.yaml@%s$' "$SUBJECT_PREFIX" "$name" "$2"
   else
-    printf '%s%s%s\\.yaml@%s|%s%s\\.yaml@%s)$' \
-      "$FAMILY_PREFIX" "$LEGACY_FAMILY" "$name" "$2" "$CANONICAL_FAMILY" "$name" "$3"
+    printf '%s%s%s\\.yaml@%s|%s%s\\.yaml@%s%s)$' \
+      "$FAMILY_PREFIX" "$LEGACY_FAMILY" "$name" "$2" "$CANONICAL_FAMILY" "$name" "$3" "${own:+|$own}"
   fi
 }
 
@@ -324,7 +351,8 @@ done
 subject_files="$(grep -rlE "$FAMILY_SUBJECT_PATTERN" --include='*.yaml' --exclude-dir=.git --exclude-dir=.claude "$SCAN_ROOT" 2>/dev/null | sort -u || true)"
 [ -n "$subject_files" ] || refuse "no shared-publish-workflow subject found under $SCAN_ROOT; the scan, not the tree, is the likely cause"
 
-# consumer → "file<TAB>workflow<TAB>ref<TAB>canonical-commit-or-dash"
+# consumer → "file<TAB>workflow<TAB>ref<TAB>canonical-commit-or-dash<TAB>own-release-state", where the
+# state is `present`, `missing`, or `-` for a consumer without an own-release alternative (#6265)
 observed=""
 while IFS= read -r file; do
   [ -n "$file" ] || continue
@@ -377,6 +405,7 @@ while IFS= read -r file; do
   [ -z "$prior" ] || refuse "consumer $repo has an OCIRepository in both $rel and ${prior%%$'\t'*}"
 
   canonical_ref='-'
+  own_state='-'
   case "$subject" in
     "$SUBJECT_PREFIX"*)
       rest="${subject#"$SUBJECT_PREFIX"}" # <workflow>\.yaml@<ref>$
@@ -395,6 +424,23 @@ while IFS= read -r file; do
       case "$inner" in
         *')$') inner="${inner%')$'}" ;;
         *) refuse "$rel: two-family subject does not end with ')\$': $subject" ;;
+      esac
+      # The consumer's own release workflow, written last (#6265): exactly its fixed
+      # alternative. It is removed here, and the two-family subject that remains is read
+      # exactly as before. A missing one is recorded rather than refused, so the writer
+      # can still read the matcher it is about to rewrite; the guard refuses it.
+      own_release="$(consumer_release_alternative "$repo")"
+      if [ -n "$own_release" ]; then
+        case "$inner" in
+          *"|$own_release")
+            inner="${inner%"|$own_release"}"
+            own_state=present
+            ;;
+          *) own_state=missing ;;
+        esac
+      fi
+      case "$inner" in
+        *"$OWN_RELEASE_TAIL"*) refuse "$rel: subject names an own-release alternative that is not exactly $repo's, written last: $subject" ;;
       esac
       family_boundary='|'"$CANONICAL_FAMILY"
       case "$inner" in
@@ -426,5 +472,5 @@ while IFS= read -r file; do
   ref="${rest#*\\.yaml@}"
   # An empty ref would also shift the tab-separated record below by one field.
   [ -n "$ref" ] || refuse "$rel: subject names no revision after '\\.yaml@': $subject"
-  observed="${observed}${repo}"$'\t'"${rel}"$'\t'"${workflow}"$'\t'"${ref}"$'\t'"${canonical_ref}"$'\n'
+  observed="${observed}${repo}"$'\t'"${rel}"$'\t'"${workflow}"$'\t'"${ref}"$'\t'"${canonical_ref}"$'\t'"${own_state}"$'\n'
 done <<<"$subject_files"

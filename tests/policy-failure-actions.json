@@ -1,4 +1,5 @@
 {
+  "protect-elastic-longhorn-eviction/require-empty-owned-instance-manager": "Enforce",
   "restrict-explicit-dns-records": "Enforce",
   "restrict-arc-openbao-certificate": "Enforce",
   "restrict-arc-openbao-listener/public-listener-settings-only": "Enforce",
@@ -6,8 +7,10 @@
   "report-hcloud-claim-lookup-failure": "Audit",
   "audit-privileged-rbac": "Enforce",
   "disallow-latest-tag": "Audit",
+  "disallow-floating-image-tags": "Audit",
   "restrict-homepage-service-groups": "Enforce",
   "require-homepage-href-for-non-root-routes": "Enforce",
+  "restrict-tenant-image-repositories": "Enforce",
   "restrict-tenant-issuer-refs": "Enforce",
   "restrict-tenant-route-hostnames": "Enforce",
   "restrict-tenant-secret-stores": "Enforce",

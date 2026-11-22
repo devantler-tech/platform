@@ -1,0 +1,29 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: policy-reporter
+  namespace: policy-reporter
+spec:
+  values:
+    ui:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - prod-worker-1
+                      - prod-worker-2
+              - matchExpressions:
+                  - key: storage.platform.devantler.tech/migration-pool
+                    operator: In
+                    values:
+                      - v2
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: policy-reporter-ui
+              topologyKey: kubernetes.io/hostname

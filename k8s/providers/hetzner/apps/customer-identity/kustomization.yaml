@@ -1,0 +1,51 @@
+# Customer sign-in for the business-site portal (business-site#302): ZITADEL
+# and the portal's customer Dex, with one CNPG cluster holding a database
+# for each. Production-only, like the business-site tenant
+# it serves. The portal stays switched off until #302's checks pass.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - password-db-zitadel.yaml
+  - external-secret-db-zitadel.yaml
+  # Coroot's Postgres integration for customer-identity-db.
+  - password-db-coroot-monitor.yaml
+  - external-secret-db-coroot-monitor.yaml
+  - cilium-network-policy-coroot.yaml
+  - external-secret-db-backup.yaml
+  - object-store.yaml
+  - cluster.yaml
+  - scheduled-backup.yaml
+  - external-secret-masterkey.yaml
+  - external-secret-smtp.yaml
+  - password-first-admin.yaml
+  - external-secret-first-admin.yaml
+  - external-secret-platform-dex-client.yaml
+  - external-secret-github-oauth.yaml
+  - helm-repository.yaml
+  - helm-release.yaml
+  # The portal's customer Dex.
+  - password-db-dex.yaml
+  - external-secret-db-dex.yaml
+  - database-dex.yaml
+  - external-secret-dex-portal-client.yaml
+  - helm-repository-dex.yaml
+  - config-map-dex-theme.yaml
+  - helm-release-dex.yaml
+  - http-route-dex.yaml
+  - cilium-network-policy.yaml
+  - certificate.yaml
+  - reference-grant.yaml
+  - http-route.yaml
+  # The declarative setup: ZITADEL's system API user's key, the CronJob that
+  # reconciles the customer Dex client, the SES login and ZITADEL's branding
+  # (with the logo files it uploads), and the one Secret it writes.
+  - issuer.yaml
+  - certificate-setup-key.yaml
+  - service-account.yaml
+  - role.yaml
+  - role-binding.yaml
+  - secret-dex-zitadel-client.yaml
+  - config-map-branding.yaml
+  - push-secret-dex-zitadel-client.yaml
+  - cron-job-setup.yaml

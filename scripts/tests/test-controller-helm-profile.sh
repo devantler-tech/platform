@@ -33,9 +33,20 @@ for provider in docker hetzner; do
     all(.[] | select(.kind == "Deployment" and .metadata.name == "helm-controller");
       (.spec.template.spec.containers[0].args | index("--feature-gates=ObjectLevelWorkloadIdentity=false") != null) and
       (if $provider == "hetzner" then .spec.minReadySeconds == 30 and
-        .spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey == "kubernetes.io/hostname" else true end)) and
+        .spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey == "kubernetes.io/hostname" and
+        .spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
+          [{matchExpressions:[{key:"node-role.kubernetes.io/control-plane",operator:"Exists"}]}] and
+        .spec.template.spec.tolerations ==
+          [{key:"node-role.kubernetes.io/control-plane",operator:"Exists",effect:"NoSchedule"}] else true end)) and
+    all(.[] | select(.kind == "Deployment" and .metadata.name == "kustomize-controller");
+      (if $provider == "hetzner" then .spec.minReadySeconds == 30 and
+        .spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution ==
+          [{labelSelector:{matchLabels:{app:"kustomize-controller"}},topologyKey:"kubernetes.io/hostname"}] and
+        .spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
+          [{matchExpressions:[{key:"kubernetes.io/hostname",operator:"In",values:["prod-worker-1"]}]},
+           {matchExpressions:[{key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v1","v2"]}]}] else true end)) and
     ([.[] | select(.kind == "ClusterRole" or .kind == "Role") | .rules[]?.resources[]? | select(. == "serviceaccounts/token")] | length == 0)
-  ' "$work/$provider.json" >/dev/null || fail "$provider native image, HA or identity boundary changed"
+  ' "$work/$provider.json" >/dev/null || fail "$provider native image, HA, placement or identity boundary changed"
   actual="$(jq -cS '.[] | select(.kind == "CustomResourceDefinition" and .metadata.name == "helmreleases.helm.toolkit.fluxcd.io") | .spec' "$work/$provider.json" | shasum -a 256 | cut -d ' ' -f 1)"
   [[ "$actual" == 6adcc483cf20bf1e8d75963504772c5b00917def5aece1e8aaefdc877bb25fcb ]] || fail "$provider CRD differs from the audited upstream v1.7.1 spec"
   # 1.7 retires the ObjectLevelWorkloadIdentity switch. Keep its TokenRequest

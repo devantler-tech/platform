@@ -133,16 +133,49 @@ preparation, deployment and actual publication verification. Do not hand-edit th
 generated matchers or infer an approval from a successful parser test.
 
 Application acceptance spans three generic verification paths: admission, Talos
-node pulls and the KRO tenant source. They retain legacy full-commit compatibility
-but accept only the explicitly reviewed maintained revision, not its repository's
-entire history. The committed-profile controls exercise those paths and the three
-registered application matchers with accepted and rejected identities. A passing
-offline predicate check is not deployed-policy or publication evidence.
+node pulls and the KRO tenant source. They accept only the explicitly reviewed
+maintained revisions, not that repository's entire history, and no longer accept
+the deleted legacy publisher repository at any commit (#6264). The committed-profile
+controls exercise those paths and the three registered application matchers with
+accepted and rejected identities. A passing offline predicate check is not
+deployed-policy or publication evidence.
+
+Each of those paths, and every registered consumer except `.github`, also accepts a
+product's own release workflow on a release tag (#6265), as one further
+alternative written last inside the same anchored subject. The image rules accept
+any first-party repository starting with a letter or digit; a `Tenant` source
+accepts only `devantler-tech/<spec.name>`, regex-escaped; a consumer accepts only
+its current repository, which the writer renders from a fixed per-consumer rule,
+never from an observation. The workflow file sits directly in `.github/workflows/`
+and the tag follows the strict semver grammar of the KSail `cd.yaml` rule. The
+offline controls exercise own, lookalike and other repositories, branches,
+non-release and suffixed tags and nested paths at every layer:
+
+```bash
+bash scripts/tests/test-publish-workflow-canonical-approvals.sh
+bash scripts/tests/test-tenant-source-constructors.sh
+bash scripts/tests/test-webapp-compiler.sh   # compiled Tenant subject
+go test ./scripts/tests/arc-staging/         # admission routing
+```
 
 The independent shared-publisher pin guard accepts the same strict two-family
-form for both workflows. Authorization fingerprinting projects only the generated
-legacy signer revisions; the maintained repository, workflow and exact canonical
-commit or pair remain fingerprinted, so an approval change still requires review.
+form for both workflows. In the three generic verifiers it accepts only the
+canonical-only form, optionally grouped with that verifier's fixed own-release
+alternative, so the deleted legacy publisher's commit-pinned identities stay
+refused there; a registered consumer keeps only the exact legacy commits its
+generated approvals name. Each per-tenant source accepts only its own
+repository's release workflow: in a consumer matcher it must be one literal name
+other than `actions` and `.github`, and which name is the approved-revisions
+guard's question. The image and Talos rules accept any first-party repository's
+release workflow on a release tag except `.github`, which hosts reusable
+workflows other repositories call. A repository named `actions` would be a
+first-party repository like any other, so its release tag passes them; the
+per-tenant binding is the tenant's signed manifest source, which pins its image
+digests.
+Authorization fingerprinting projects only the generated legacy signer revisions;
+the maintained repository, workflow, exact canonical commit or pair and the
+own-release alternative remain fingerprinted, so an approval change still
+requires review.
 
 To move a consumer's canonical publisher to a newer commit, review the workflow
 at that commit, add it as a second row for the consumer in

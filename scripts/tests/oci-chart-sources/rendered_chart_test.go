@@ -19,8 +19,21 @@ func TestRenderedRBACChartResolver(t *testing.T) {
 		name, wantURL, failure string
 		mutate                 func(map[string]any, map[string]any)
 		duplicate              bool
+		digest                 bool
 	}{
 		{name: "OCI chartRef", wantURL: "oci://example.com/charts/kro"},
+		{name: "immutable OCI digest", digest: true, wantURL: "oci://example.com/charts/kro@sha256:" + strings.Repeat("a", 64), mutate: func(_, s map[string]any) {
+			object(s, "spec")["ref"] = map[string]any{"digest": "sha256:" + strings.Repeat("a", 64)}
+		}},
+		{name: "short digest", failure: "exact version", mutate: func(_, s map[string]any) {
+			object(s, "spec")["ref"] = map[string]any{"digest": "sha256:abc"}
+		}},
+		{name: "uppercase digest", failure: "exact version", mutate: func(_, s map[string]any) {
+			object(s, "spec")["ref"] = map[string]any{"digest": "sha256:" + strings.Repeat("A", 64)}
+		}},
+		{name: "digest with tag", failure: "exact version", mutate: func(_, s map[string]any) {
+			object(object(s, "spec"), "ref")["digest"] = "sha256:" + strings.Repeat("a", 64)
+		}},
 		{name: "explicit source namespace", wantURL: "oci://example.com/charts/kro", mutate: func(r, s map[string]any) {
 			object(object(r, "spec"), "chartRef")["namespace"] = "charts"
 			object(s, "metadata")["namespace"] = "charts"
@@ -81,7 +94,11 @@ func TestRenderedRBACChartResolver(t *testing.T) {
 			if err := json.Unmarshal(output, &result); err != nil {
 				t.Fatal(err)
 			}
-			if result.Chart != "kro" || result.Version != "0.9.2" || result.URL != tc.wantURL {
+			version := "0.9.2"
+			if tc.digest {
+				version = ""
+			}
+			if result.Chart != "kro" || result.Version != version || result.URL != tc.wantURL {
 				t.Fatalf("resolved the wrong chart: %+v", result)
 			}
 		})

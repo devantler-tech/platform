@@ -68,6 +68,16 @@ spec:
       expression: >-
         object.metadata.name == 'github-config' &&
         object.metadata.?namespace.orValue('') == 'github-config'
+    # The leaf health signal (platform#6269) applies one inert ConfigMap and
+    # exists to health-check objects other layers own through spec.healthChecks,
+    # which Flux ignores when wait is true. It may set wait: false only for this
+    # exact identity and only while it names at least one health check; every
+    # other reliability requirement still holds.
+    - name: isPlatformHealth
+      expression: >-
+        object.metadata.name == 'platform-health' &&
+        object.metadata.?namespace.orValue('') == 'flux-system' &&
+        size(object.spec.?healthChecks.orValue([])) > 0
     - name: installRetries
       expression: object.spec.?install.?remediation.?retries.orValue(0)
     - name: upgradeRetries
@@ -80,7 +90,8 @@ spec:
         object.spec.?retryInterval.orValue('') != '' &&
         object.spec.?prune.orValue(false) == true &&
         (object.spec.?wait.orValue(false) == true ||
-        (variables.isGitHubConfig && object.spec.?wait.orValue(true) == false)) &&
+        ((variables.isGitHubConfig || variables.isPlatformHealth) &&
+        object.spec.?wait.orValue(true) == false)) &&
         object.spec.?sourceRef.?kind.orValue('') != '' &&
         object.spec.?sourceRef.?name.orValue('') != '')
       message: >-
@@ -88,7 +99,9 @@ spec:
         `spec.interval`, `spec.timeout`, `spec.retryInterval`,
         `spec.prune: true` (garbage collection), and `spec.sourceRef`.
         `spec.wait: true` is required except for the platform-owned GitHub
-        configuration, whose asynchronous API operations do not gate delivery.
+        configuration, whose asynchronous API operations do not gate delivery,
+        and the flux-system/platform-health signal, which health-checks other
+        layers' objects and must set wait: false for Flux to honour them.
         See https://fluxcd.io/flux/components/kustomize/kustomizations/#recommended-settings.
     - expression: >-
         variables.isKustomization || (

@@ -1,0 +1,11 @@
+# Customer sign-in for the business-site portal (devantler-tech/business-site#302,
+# ADR 0021): self-hosted ZITADEL now, and the portal's own customer Dex next.
+# Kept apart from the platform's infrastructure identity (the `dex` namespace):
+# separate issuers, clients, secrets, administration and stores.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: customer-identity
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

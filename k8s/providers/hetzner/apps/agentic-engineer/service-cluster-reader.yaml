@@ -1,0 +1,15 @@
+# The read-only cluster view the agent reaches through Substrate's egress gateway
+# (egress-policy-cluster-reader.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster-reader
+  namespace: agentic-engineer
+spec:
+  selector:
+    app.kubernetes.io/name: cluster-reader
+  ports:
+    - name: http
+      port: 8001
+      targetPort: http
+      protocol: TCP

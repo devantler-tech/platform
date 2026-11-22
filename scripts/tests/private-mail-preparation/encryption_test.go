@@ -69,29 +69,89 @@ func TestEncryptedReplacementKeepsKeysOutsideTheWorkload(t *testing.T) {
 	if metadata["namespace"] != "private-mail" || mapping(t, metadata["annotations"])["kustomize.toolkit.fluxcd.io/prune"] != "disabled" {
 		t.Fatal("replacement data must stay in the retained Email namespace")
 	}
+	if labels, _ := metadata["labels"].(map[string]any); labels["platform.devantler.tech/storage-stage"] != "prepared" {
+		t.Fatal("an unconsumed replacement claim must carry the prepared-storage health marker")
+	}
 	spec := mapping(t, pvc["spec"])
 	if spec["storageClassName"] != "email-encrypted" || !reflect.DeepEqual(spec["accessModes"], []any{"ReadWriteOnce"}) || mapping(t, mapping(t, spec["resources"])["requests"])["storage"] != "2Gi" {
 		t.Fatal("replacement must explicitly request the encrypted class with existing capacity and access mode")
 	}
 }
 
-// TestEncryptedPreparationCannotSwitchTheExistingMailbox protects the incident
-// boundary: preparation cannot rebind or replace the retained production claim.
-func TestEncryptedPreparationCannotSwitchTheExistingMailbox(t *testing.T) {
-	for _, path := range []string{"k8s/providers/hetzner/apps", "k8s/bases/apps", "k8s/providers/docker/apps"} {
+// TestProductionServesTheMailStoreFromEncryptedStorage pins the maintainer's
+// copy-based cutover (#5387): production serves from the encrypted claim after
+// a verified one-time copy, and the original claim stays unchanged, declared
+// and mounted read-only only by that copy step, as the rollback.
+func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
+	for _, path := range []string{"k8s/bases/apps", "k8s/providers/docker/apps"} {
 		for _, o := range render(t, path) {
 			metadata := mapping(t, o["metadata"])
 			for _, name := range []string{"email-storage", "email-storage-key", "email-encrypted", "email-data-encrypted"} {
 				if metadata["name"] == name {
-					t.Fatalf("encrypted storage must remain unselected until recovery and migration proof: %s", path)
+					t.Fatalf("only production holds the storage key, so only production selects encrypted storage: %s", path)
 				}
 			}
 		}
 	}
 	production := render(t, "k8s/providers/hetzner/apps")
 	assertRetainedMailStorage(t, production)
-	pvc := object(t, production, "PersistentVolumeClaim", "private-mail-data")
-	if mapping(t, pvc["spec"])["storageClassName"] == "email-encrypted" {
-		t.Fatal("existing unencrypted claim cannot be encrypted by changing its class")
+	original := object(t, production, "PersistentVolumeClaim", "private-mail-data")
+	if mapping(t, original["spec"])["storageClassName"] == "email-encrypted" {
+		t.Fatal("the original claim cannot be encrypted by changing its class; it stays the rollback")
+	}
+	encrypted := object(t, production, "PersistentVolumeClaim", "email-data-encrypted")
+	if mapping(t, encrypted["spec"])["storageClassName"] != "email-encrypted" || mapping(t, mapping(t, encrypted["metadata"])["annotations"])["kustomize.toolkit.fluxcd.io/prune"] != "disabled" {
+		t.Fatal("the serving claim must use the encrypted class and survive a failed deployment")
+	}
+	if labels, _ := mapping(t, encrypted["metadata"])["labels"].(map[string]any); labels["platform.devantler.tech/storage-stage"] != nil {
+		t.Fatal("the serving claim must leave the prepared-storage health exception and wait for binding")
+	}
+	if mapping(t, object(t, production, "StorageClass", "email-encrypted")["parameters"])["encrypted"] != "true" {
+		t.Fatal("the serving class must encrypt at rest")
+	}
+	pod := mapping(t, mapping(t, mapping(t, object(t, production, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
+	volumes := map[string]map[string]any{}
+	for _, item := range sequence(t, pod["volumes"]) {
+		volume := mapping(t, item)
+		if claim, ok := volume["persistentVolumeClaim"].(map[string]any); ok {
+			volumes[stringField(t, volume, "name")] = claim
+		}
+	}
+	if len(volumes) != 2 || volumes["data"]["claimName"] != "email-data-encrypted" || volumes["data"]["readOnly"] == true ||
+		volumes["legacy-data"]["claimName"] != "private-mail-data" || volumes["legacy-data"]["readOnly"] != true {
+		t.Fatal("the server must store data on the encrypted claim and see the original only read-only")
+	}
+	server := ""
+	for _, item := range sequence(t, pod["containers"]) {
+		container := mapping(t, item)
+		if container["name"] == "private-mail" {
+			server = stringField(t, container, "image")
+		}
+	}
+	copySteps, sourceMounts := 0, 0
+	for index, group := range []string{"initContainers", "containers"} {
+		for position, item := range sequence(t, pod[group]) {
+			container := mapping(t, item)
+			name := stringField(t, container, "name")
+			for _, mountItem := range sequence(t, container["volumeMounts"]) {
+				mount := mapping(t, mountItem)
+				if mount["name"] != "legacy-data" {
+					continue
+				}
+				if index != 0 || position != 0 || name != "migrate-storage" || mount["readOnly"] != true {
+					t.Fatal("only the first initializer, the copy step, may mount the original claim, and only read-only")
+				}
+				sourceMounts++
+			}
+			if name == "migrate-storage" {
+				copySteps++
+				if index != 0 || position != 0 || container["image"] != server {
+					t.Fatal("the copy must run first, before setup, with the server's signed image")
+				}
+			}
+		}
+	}
+	if copySteps != 1 || sourceMounts != 1 {
+		t.Fatal("exactly one copy step must mount the original claim exactly once")
 	}
 }

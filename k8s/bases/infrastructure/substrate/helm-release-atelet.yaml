@@ -60,3 +60,25 @@ spec:
                       # watching need this value changed to roll onto the
                       # current Secret.
                       substrate.devantler.tech/rustfs-credentials-generation: "2026-11-08"
+          # atelet bind-mounts the kubelet's plugin directory, which holds every
+          # CSI volume's staging mount. Without propagation each pod keeps a
+          # private copy of the volumes staged on its node when it starts, so
+          # an encrypted Longhorn volume cannot close its LUKS device and never
+          # detaches (#6041). HostToContainer lets those unmounts reach atelet
+          # while it still cannot mount anything onto the host.
+          - target:
+              kind: DaemonSet
+              name: atelet
+            patch: |
+              apiVersion: apps/v1
+              kind: DaemonSet
+              metadata:
+                name: atelet
+              spec:
+                template:
+                  spec:
+                    containers:
+                      - name: atelet
+                        volumeMounts:
+                          - mountPath: /var/lib/kubelet/plugins
+                            mountPropagation: HostToContainer

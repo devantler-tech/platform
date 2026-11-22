@@ -14,21 +14,6 @@ import (
 
 // main selects one independently authorized recovery operation; unknown flags fail closed.
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--protect-retained-volume" {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		os.Exit(runRetainedVolumeProtection(ctx, os.Getenv, kubectl{}, verifyReaderCustodySource, os.Stdout))
-	}
-	if len(os.Args) == 2 && os.Args[1] == "--prepare-reader-inputs" {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		os.Exit(runReaderInputCustody(ctx, os.Getenv, kubectl{}, verifyReaderCustodySource, loadReaderCustodyStore, os.Stdout))
-	}
-	if len(os.Args) == 2 && os.Args[1] == "--dispose-retained" {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		os.Exit(runRetainedDisposal(ctx, os.Getenv, kubectl{}, os.Stdout))
-	}
 	if len(os.Args) == 2 && os.Args[1] == "--observe-retained" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()

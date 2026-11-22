@@ -83,14 +83,11 @@ ksail cluster list     # existing Talos clusters
 
 ## Validation
 
-The complete Go suite runs on two isolated CI runners. The partitions cover
-every compiled credential bridge test, example and fuzz seed once, and run every
-other root package once. Production and the required check wait for both
-results. `bash scripts/run-go-regressions.sh all` runs the full suite on one
-runner with the same worker and timeout limits. Verify routing and failure
-handling with `bash scripts/tests/test-run-go-regressions.sh`.
+The complete Go suite runs as one unpartitioned `validate-go-regressions` job,
+`go test -parallel 8 -timeout 20m ./...`, on every pull request and merge
+group. Production and the required check wait for it.
 
-The repository has static manifest checks, Go tests and linters, and MegaLinter. **Never run a cluster for maintenance.** For Go changes, run the affected packages' tests from the repository root (for example, `go test ./scripts/validate-eks-ci-role-policy`) and the relevant offline script regressions. The helpers partition of the required `validate-go-regressions` job in [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) checks every tracked module once with `bash scripts/check-go-modules-tidy.sh`. Its offline controls are `bash scripts/tests/test-go-modules-tidy.sh`. The guard leaves module files unchanged and names the module needing `go mod tidy`; it also refuses failed or empty discovery. The organization's required Go workflow (`validate-go-project.yaml` in devantler-tech/.github) applies whenever GitHub detects this repository's language as Go, and Go and Shell are within a few kilobytes of each other, so enrolment can flip with any change. Keep the repository passing that workflow whichever language is detected: its golangci-lint, dead-code, test, race-coverage and whole-repository MegaLinter jobs (#5852). The `validate-go-project` job in `ci.yaml` calls the same workflow read-only on every same-repository pull request, and `CI - Required Checks` requires its success, so a regression cannot merge while the organization rule is not selecting this repository. MegaLinter's scope and dispositions live in [`.mega-linter.yml`](.mega-linter.yml). For manifest changes, validate with:
+The repository has static manifest checks, Go tests and linters, and MegaLinter. **Never run a cluster for maintenance.** For Go changes, run the affected packages' tests from the repository root (for example, `go test ./scripts/validate-eks-ci-role-policy`) and the relevant offline script regressions. The required `validate-go-regressions` job in [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) checks every tracked module once with `bash scripts/check-go-modules-tidy.sh`. Its offline controls are `bash scripts/tests/test-go-modules-tidy.sh`. The guard leaves module files unchanged and names the module needing `go mod tidy`; it also refuses failed or empty discovery. The organization's required Go workflow (`validate-go-project.yaml` in devantler-tech/.github) applies whenever GitHub detects this repository's language as Go, and Go and Shell are within a few kilobytes of each other, so enrolment can flip with any change. Keep the repository passing that workflow whichever language is detected: its golangci-lint, dead-code, test, race-coverage and whole-repository MegaLinter jobs (#5852). The `validate-go-project` job in `ci.yaml` calls the same workflow read-only on every same-repository pull request, and `CI - Required Checks` requires its success, so a regression cannot merge while the organization rule is not selecting this repository. MegaLinter's scope and dispositions live in [`.mega-linter.yml`](.mega-linter.yml). For manifest changes, validate with:
 
 ```bash
 # Preferred when KSail is installed: schema-aware validation with Flux variable
@@ -134,16 +131,14 @@ The complete cluster-policy fixtures and offline regressions run in fixed suites
 
 The Talos gate renders both roles, applies the reviewed KSail post-installer kernel-argument fold, then validates both. Production's extension path clears `extraKernelArgs` and pins the UKI command line; the local path without extensions is unchanged. The unconditional pin check and real offline positive/invalid-patch controls are documented in [`scripts/reconcile-talos-kernel-args/README.md`](scripts/reconcile-talos-kernel-args/README.md). The pin check compares the pinned KSail release's fold inputs by content with the audited sets, so a KSail bump needs a new source audit of this fold only when one of those inputs changed.
 
-The offline Flux credential-bridge shell controls run in `validate-flux-bridge`
-alongside manifest validation on pull requests selected by the existing `k8s` or
-`bridge_validation` filters. Required CI accepts success for a selected family
-and an intentional skip otherwise, rejecting missing selection evidence. The
-shell job is PR-only and is not a merge-group production prerequisite. The
-complete `scripts/tests/refresh-flux-ghcr-auth` Go package runs once through
-`validate-go-regressions` on every PR and merge group. Required CI and production
-deployment require that unconditional job to succeed; the selected shell job
-does not repeat its Go tests. The workflow regression checks real Go package
-discovery so a nested module cannot silently remove the bridge from `./...`.
+The offline production deploy-path shell controls (the stable API endpoint and
+the API stability wait) run in `validate-flux-bridge` alongside manifest
+validation on pull requests selected by the existing `k8s` or
+`bridge_validation` filters. Both keep their names from the retired GHCR
+credential bridge (#6272) because validators pin them. Required CI accepts
+success for a selected family and an intentional skip otherwise, rejecting
+missing selection evidence. The shell job is PR-only, is not a merge-group
+production prerequisite, and repeats no Go tests.
 
 The complete nested-RGD template regression runs alongside manifest validation
 in the read-only `validate-rgd-templates` PR job, selected by `k8s`. Required CI
@@ -323,12 +318,11 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 1. Merging a PR through the merge queue runs the `deploy-prod` job in `ci.yaml` (the normal path). A direct push to `main` bypasses the queue, so deploy it manually by running the `CD` workflow (`cd.yaml`, `workflow_dispatch`). Both run the same `ksail` steps below.
 2. The `deploy-prod` composite action (shared by both paths) uses `ksail --config ksail.prod.yaml` to target the committed prod config.
 3. `ksail.prod.yaml` has `kustomizationFile: clusters/prod`, so KSail/Flux use `k8s/clusters/prod/kustomization.yaml` as the entry point — no root `k8s/kustomization.yaml` or file rewriting is needed.
-4. `scripts/run-ksail-prod-with-pull-auth.sh cluster create|update` provisions / reconciles the Hetzner servers, Talos, CCM, and CSI with the Git/SOPS pull credential; the wrapper also passes a SOPS-ciphertext revision so token-only rotations refresh the Cluster Autoscaler machine template.
-5. The bridge decrypts only the Git/SOPS pull credential and performs real OCI manifest reads for all ten consumers (the Platform and tenant manifest artifacts, the data-product-controller image, the application and World at Ruin zone images, and the KSail plus provider-upjet-unifi packages used by Kyverno verification). On nodes with a changed credential revision, it applies Talos `RegistryAuthConfig` workers-first, reboots under a scheduling fence, removes the exact incoming KSail image from the CRI cache, proves a registry-backed pull, and only then records both proof markers. When the credential proof is current and only the verified image differs, it instead removes and pulls a proof copy in Talos containerd's `system` namespace without cordoning or evicting the Kubernetes CRI image; a failed registry pull leaves that workload cache intact and does not publish a new proof marker. It then updates `variables-base`, force-syncs and verifies the PushSecret plus tenant/Kyverno ExternalSecrets, and finally reasserts root auth — all before a mutable `latest` tag is published. The DR workflow first runs `--check-only` before creating infrastructure, then uses explicit `--allow-incomplete-fanout` bootstrap mode after cluster creation and requires a full bridge pass after Flux converges.
-6. `scripts/run-ksail-prod-with-pull-auth.sh workload push <staging-ref>` packages manifests and pushes them with the separate Actions write token to a unique `oci://ghcr.io/devantler-tech/platform/manifests:staging-<sha>-<run>-<attempt>` reference (the wrapper rejects any other target). Its only caller is the `publish-platform-manifests` composite action (`.github/actions/deploy-prod/publish-platform-manifests/`), which both the `deploy-prod` action and `dr-rebuild.yaml` use: it signs and attests that staged digest, verifies the evidence, and only then promotes the digest to `latest`.
-7. `scripts/refresh-flux-ghcr-auth.sh --check-only` revalidates the newly-published artifact without mutating the cluster.
-8. `scripts/reconcile-flux-workloads.sh` triggers Flux with Git/SOPS pull auth (DR calls `scripts/run-ksail-prod-with-pull-auth.sh workload reconcile` directly). It permits one further reconciliation after a proven control-plane restart, or after the fixed obsolete mail-probe recovery verifies a conditional Pod replacement and its retained claim. Unreadable observations and refused recovery earn no retry; a remaining failure still fails the deployment. Both normal delivery and DR then require `infrastructure-controllers` to apply the exact newly-published digest and report `Ready`.
-9. After `cluster update`, the full bridge reasserts every pull path in case a partial update or older managed state was applied. The normal deploy passes a non-secret, same-job handoff that binds the staged credential revision and image to each Kubernetes Node UID. If KSail only erased the Talos proof annotation, the reassert restores that marker without repeating the uncached pull or rolling reboot; a changed credential, image, or Node UID still takes the full proof path. When nothing has drifted, the bridge first proves that read-only — root auth, `variables-base` and every consumer hold the Git/SOPS value, the `ghcr-seed-probe` ExternalSecret has just read that value back out of OpenBao, admission already enforces the candidate policy, and two node inventories show current proof and no fences — and then exits without taking the synchronization Lease, pausing Flux, restarting kustomize-controller or writing anything. Any failed read or mismatch runs the full fenced transaction instead, and the log names the check that ended the read-only path. DR applies the same Cilium rollout guard around publish and convergence, and also runs the bridge after an OpenBao raft restore because the snapshot may contain an older GHCR value.
+4. `scripts/run-ksail-prod.sh cluster create|update` provisions / reconciles the Hetzner servers, Talos, CCM, and CSI. It injects no registry credential: every first-party package the cluster uses is public (#6272).
+5. Before the mutable `latest` tag can move, `scripts/detach-flux-root-pull-secret.sh` proves an anonymous pull of the synced root artifact and removes a FluxInstance `spec.sync.pullSecret` left from an older bootstrap. DR runs it right after cluster creation.
+6. `scripts/run-ksail-prod.sh workload push <staging-ref>` packages manifests and pushes them with the separate Actions write token to a unique `oci://ghcr.io/devantler-tech/platform/manifests:staging-<sha>-<run>-<attempt>` reference (the wrapper rejects any other target). Its only caller is the `publish-platform-manifests` composite action (`.github/actions/deploy-prod/publish-platform-manifests/`), which both the `deploy-prod` action and `dr-rebuild.yaml` use: it signs and attests that staged digest, verifies the evidence, and only then promotes the digest to `latest`.
+7. `scripts/reconcile-flux-workloads.sh` triggers Flux through the same wrapper (DR calls `scripts/run-ksail-prod.sh workload reconcile` directly). It permits one further reconciliation after a proven control-plane restart, or after the fixed obsolete mail-probe recovery verifies a conditional Pod replacement and its retained claim. Unreadable observations and refused recovery earn no retry; a remaining failure still fails the deployment. Both normal delivery and DR then require `infrastructure-controllers` to apply the exact newly-published digest and report `Ready`.
+8. DR applies the same Cilium rollout guard around publish and convergence.
 
 **Key differences from local:**
 
@@ -340,15 +334,17 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 ### Dual-Provider Model
 
 - **Local / CI:** `ksail cluster create` → Talos + Docker provider → local OCI registry → `ksail workload push` / `reconcile`.
-- **Production:** `scripts/run-ksail-prod-with-pull-auth.sh cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by KSail → the same wrapper's `workload push` to a GHCR staging reference → signed digest promoted to `latest` → `workload reconcile`.
+- **Production:** `scripts/run-ksail-prod.sh cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by KSail → the same wrapper's `workload push` to a GHCR staging reference → signed digest promoted to `latest` → `workload reconcile`.
 
 ## CI/CD Pipelines
 
 - **`ci.yaml`** — runs on `pull_request` (static manifest validation + Kubescape scan, no cluster) and `merge_group` (deploys prod via the Hetzner provider). Concurrency is shared with `cd.yaml` so a manual deploy and a merge-queue deploy can never run against the prod cluster at the same time.
 - **`cd.yaml`** — runs on `workflow_dispatch` (manual). Deploys to the production Hetzner cluster using `ksail --config ksail.prod.yaml`. Covers direct pushes to `main`, which bypass the merge queue and so are not deployed by `ci.yaml`.
+- **`validate-main.yaml`** — runs on every push to `main` and repeats the gates a direct push would otherwise skip. Its `Observe Production Convergence` job takes the `prod-deploy` lock, reads whether production runs what `main` says, and redeploys `main` when production is behind. A job takes its lock before it gets a runner, so the job `Wait for an idle merge queue` runs first, without the lock ([`scripts/await-idle-merge-queue.sh`](scripts/await-idle-merge-queue.sh)): it decides when the observer takes the lock, so the observer no longer takes it on every push while a change's deploy is waiting. A push whose own change did not deploy (a push past the merge queue, or a queued change that merged without deploying) is observed at once, as before. After a queued change that deployed, the job waits while changes are queued and then lets the observer run; it stops without an observation only when a later change has deployed, because that deploy carried this push to production and that change's own run watches from there. Each wait lasts about an hour at most, whatever merges meanwhile, and then the observer runs. A wait that cannot read the queue or a check run lets the observer run as before and says so in a warning (#6205).
 - **`scan-go-vulnerabilities.yaml`** — runs on pull requests that change Go code or module files, and daily on `main`. It fails on advisories a Go module reaches, and on a scan whose report shows no analysed package with Go code in the module. Every tracked module needs a row in `scripts/go-vulnerability-modules.tsv`, and a negative-control fixture must report its known advisories in every run. It is not a required check, so a red scan does not stop a merge on its own. See [`docs/go-vulnerability-scan.md`](docs/go-vulnerability-scan.md).
 - **Current-main recovery** — healing, manual CD and disaster recovery require their validated checkout to remain the current `main` tip before production changes and artifact promotion. A stale or unreadable revision stops recovery; restart from current `main` with all validation. See the [production recovery runbook](docs/operations/production-recovery.md).
-- **`.github/actions/deploy-prod`** — the composite action both regular deploy paths call (stage/verify all GHCR pull consumers → push → cosign-sign → attest SBOM + SLSA provenance → revalidate published artifact → Flux reconcile → exact published-revision Ready proof → failed-prune check → Talos `cluster update` → final reassert → gateway route check), so the merge-queue and manual deploys can never drift. The failed-prune check fails the deploy when a Flux layer recorded `PruneFailed` at the revision just published, naming each object it could not delete; a removed resource otherwise keeps running unmanaged behind a green deploy (#4734). The last step fails the deploy when the gateway has not applied every HTTPRoute at its current generation within five minutes, when it rejected a route or a route names a missing Gateway, or when a running Cilium operator logged that its Gateway API controller failed to start (#4198). DR uses the same exact-revision wait and rollout guard. **No Cilium rollout gate is active**, so every deploy runs its `cluster update` Talos machine-config sync. The guard still runs on both paths and is machinery for the next staged rollout: it reads as active only while the `homogeneous-devices` component is referenced **and** carries `type: OnDelete`. While that holds it suspends Cluster Autoscaler, proves no provider-side node addition is in flight before publish, and skips `cluster update` until a reviewed completion or rollback artifact has applied — a skip that happens inside an otherwise-green deploy, so it is time-bounded against a `platform.devantler.tech/rollout-gate-activated:` marker declared beside the component reference: `scripts/report-cilium-rollout-gate-suppression.sh` **warns** from `warn_after_days` (7) and **fails the deploy** from `fail_after_days` (14). Resolve an expired gate by stepping the remaining Cilium agents onto the current DaemonSet revision or rolling the component back — raising either bound is not a resolution. Secrets are passed as inputs because composite actions cannot read `secrets`.
+- **`.github/actions/deploy-prod`** — the composite action both regular deploy paths call (detach the root source from any pull secret → push → cosign-sign → attest SBOM + SLSA provenance → reassert root verification → Flux reconcile → exact published-revision Ready proof → failed-prune check → Talos `cluster update` → gateway route check), so the merge-queue and manual deploys can never drift. The failed-prune check fails the deploy when a Flux layer recorded `PruneFailed` at the revision just published, naming each object it could not delete; a removed resource otherwise keeps running unmanaged behind a green deploy (#4734). The last step fails the deploy when the gateway has not applied every HTTPRoute at its current generation within five minutes, when it rejected a route or a route names a missing Gateway, or when a running Cilium operator logged that its Gateway API controller failed to start (#4198). DR uses the same exact-revision wait and rollout guard. **No Cilium rollout gate is active**, so every deploy runs its `cluster update` Talos machine-config sync. The guard still runs on both paths and is machinery for the next staged rollout: it reads as active only while the `homogeneous-devices` component is referenced **and** carries `type: OnDelete`. While that holds it suspends Cluster Autoscaler, proves no provider-side node addition is in flight before publish, and skips `cluster update` until a reviewed completion or rollback artifact has applied — a skip that happens inside an otherwise-green deploy, so it is time-bounded against a `platform.devantler.tech/rollout-gate-activated:` marker declared beside the component reference: `scripts/report-cilium-rollout-gate-suppression.sh` **warns** from `warn_after_days` (7) and **fails the deploy** from `fail_after_days` (14). Resolve an expired gate by stepping the remaining Cilium agents onto the current DaemonSet revision or rolling the component back — raising either bound is not a resolution. Secrets are passed as inputs because composite actions cannot read `secrets`.
+- **Production inputs** — [`scripts/production-inputs/inputs.txt`](scripts/production-inputs/inputs.txt) lists every path a production deploy can read: the manifests, the Talos and cluster configuration, the workflows and deploy action, and each script, library, data file and Go program the deploy runs. The merge-queue deploy removes every other tracked file from its working tree before the deploy action installs a tool or reads production (`production-inputs-only` on the deploy action), so a file that is not listed cannot influence that deploy. Recovery, manual and rebuild deploys keep the whole checkout. For a queued change, the `changes` job also reports whether it touches a listed path, as its `production` output and in the job summary. That answer is reported only: which changes deploy still follows the `k8s` filter until #5077 is complete. **When a change makes the deploy read a new file, add its path to the list in the same change.** `go test ./scripts/production-inputs` fails when the list misses a script, sourced library, Go package or imported JavaScript module the deploy can reach, or a file a root configuration such as `ksail.prod.yaml` names; when the list names a path that no longer exists; and when a reachable script starts reading files out of Git history, which the restricted working tree cannot prove. The trace is static, so it cannot see a path computed at run time. A missing file it cannot see fails the first deploy that reads it: the change's own queue deploy when the step always runs, a later deploy when the step runs only on a retry or a failure path, so review those paths by hand.
 
 **Required GitHub Secrets:**
 
@@ -360,24 +356,20 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 - `WG_SERVER_PRIVATE_KEY` — WireGuard private key for the control-plane `wg0` listener, expanded into `talos/control-planes/wireguard.yaml` when KSail renders machine config.
 - `DR_GH_ADMIN_TOKEN` — optional, DR only: lets `dr-rebuild.yaml` refresh the `KUBE_CONFIG` / `TALOS_CONFIG` environment secrets after a rebuild.
 
-The authoritative **production pull** credential for Flux, tenants, Kyverno,
-and Talos hosts is
-`stringData.ghcr_dockerconfigjson` in
-`k8s/bases/bootstrap/secret.enc.yaml`. The deploy bridge refreshes
-`flux-system/ksail-registry-credentials` from that value before Flux must fetch
-the artifact and reasserts it after `cluster update` in case KSail rewrites its
-managed Secret. Before publish on existing clusters, the bridge updates `variables-base`,
-force-syncs `seed-ghcr` into OpenBao, force-syncs the tenant/Kyverno
-ExternalSecrets, and verifies their materialised `ghcr-auth` payloads before
-switching root Flux auth. Only explicit DR bootstrap mode may repair root auth
-after staging `variables-base` while the fan-out is incomplete; DR must run the
-full verifier after Flux converges. A direct credential commit to `main` still
-needs a manual `CD` workflow dispatch because direct pushes bypass the merge-queue
-deploy.
-The lifecycle wrapper injects the same username/token into KSail's local
-registry and Talos patches. A non-secret hash of the committed SOPS ciphertext
-is the desired machine-template revision; the bridge stores a separate verified
-revision on each existing node only after an exact image pull succeeds.
+The **root Flux source needs no credential**: `ghcr.io/devantler-tech/platform/manifests`
+is public (#6272), so `ksail.prod.yaml`'s `localRegistry` carries none, KSail sets no
+FluxInstance `spec.sync.pullSecret`, and both production entrypoints run
+`scripts/detach-flux-root-pull-secret.sh` before the mutable tag moves. It proves an
+anonymous pull of the synced artifact, removes a `pullSecret` left over from bootstrap,
+and waits for the source to be re-rendered without it (not for the source to be Ready,
+since a bad verify matcher is repaired only after publish); a detached cluster takes no write. Only
+`workload push` gets a credentialed registry, with the Actions write token.
+
+**No production pull credential exists.** Every first-party package the cluster
+uses is public, so tenants, Kyverno, kubelet and Talos' node-level signature
+verification all read `ghcr.io` anonymously (#6272). A first-party package that
+must stay private needs a deliberate design for node-level signature reads
+first; see `docs/dr/runbook.md` Scenario 10 for a pull denial.
 
 **Required GitHub Variables:** none.
 
@@ -559,7 +551,7 @@ With the KSail Hetzner provider the cluster is cattle — rebuild it in place:
 export HCLOUD_TOKEN=...
 export WG_SERVER_PRIVATE_KEY=...
 export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt
-./scripts/run-ksail-prod-with-pull-auth.sh cluster update
+./scripts/run-ksail-prod.sh cluster update
 # Publish and reconcile the manifests through CD, which stages, signs,
 # verifies and promotes them before Flux reconciles.
 gh workflow run cd.yaml --repo devantler-tech/platform --ref main
@@ -607,7 +599,7 @@ Repository maintenance follows the **Agentic Engineer** contract in the [devantl
 gh api graphql -f query='{repository(owner:"devantler-tech",name:"platform"){pullRequest(number:<n>){timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT],last:10){nodes{... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}'
 ```
 
-`failed_checks` means a required check failed, so diagnose the `merge_group` run as above. `checks_timed_out` means no result arrived within the queue's check-response timeout. That timeout is 90 minutes and is managed in `devantler-tech/.github` (`deploy/repository-rulesets/require-merge-queue-on-platform.yaml`). For a timeout, look for what kept the run waiting, such as the `prod-deploy` concurrency lock or a runner queue, rather than a deploy fault. `manual` means someone removed the PR from the queue, and `merged` is a normal merge.
+`failed_checks` means a required check failed, so diagnose the `merge_group` run as above. `checks_timed_out` means no result arrived within the queue's check-response timeout. That timeout is 120 minutes and is managed in `devantler-tech/.github` (`deploy/repository-rulesets/require-merge-queue-on-platform.yaml`). For a timeout, look for what kept the run waiting, such as the `prod-deploy` concurrency lock or a runner queue, rather than a deploy fault. The [delivery-lane decision](docs/adr/delivery-lane-throughput.md) records how the queue spends its time and what a runner queue does to it. `manual` means someone removed the PR from the queue, and `merged` is a normal merge.
 
 **Green checks with `mergeStateStatus: BLOCKED` do not identify the blocker.** Rule out unresolved
 threads, approvals and other branch rules first. A missing current-head run of an effective required
@@ -628,6 +620,13 @@ entry and the shared composite never started, production was not touched and the
 restore. `deploy-prod`'s last step reports exactly that pair; any other outcome, including a missing
 report or any re-run attempt, still heals: a re-run is refused because the PR has already left
 the queue, while its first attempt may have deployed.
+
+**Never hold production with an approval on the `prod` environment.** Every production job takes the
+`prod-deploy` lock before it waits for approval, so one unapproved job wedges the whole lane: stale
+merge-group runs cannot reach the step that refuses them, a rejected deploy starts a heal that waits
+too, and queued runs cannot be cancelled (#6433). Hold production with the fail-fast rule in
+[the recovery runbook](docs/operations/production-recovery.md#hold-production-without-wedging-the-deploy-lane)
+instead.
 
 **Persistence retirement is always two-stage.** A merge-group artifact is speculative, but
 Kubernetes PVC deletion is irreversible once `deletionTimestamp` is set: queue eviction and the

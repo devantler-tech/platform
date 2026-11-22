@@ -30,15 +30,15 @@ func setup(t *testing.T) *fixture {
 	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
 	t.Setenv("GITHUB_RUN_ID", "42")
 	t.Setenv("GITHUB_SHA", strings.Repeat("a", 40))
-	t.Setenv("AUDIT_CAPACITY_CONFIRM", "EXPAND OPENBAO AUDIT ONLY TO 20GI")
+	t.Setenv("AUDIT_CAPACITY_CONFIRM", "EXPAND OPENBAO AUDIT ONLY TO 40GI")
 	t.Setenv("AUDIT_CAPACITY_REVISION", "latest@sha256:"+strings.Repeat("b", 64))
 	t.Setenv("AUDIT_CAPACITY_DEPLOYMENT_RUN", "100")
 	f := &fixture{t: t, claims: map[string]map[string]any{}, volumes: map[string]map[string]any{}}
 	for i := 0; i < 3; i++ {
 		name := fmt.Sprintf("audit-openbao-%d", i)
 		pv := fmt.Sprintf("volume-%d", i)
-		f.claims[name] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": name, "namespace": "openbao", "uid": name + "-uid", "resourceVersion": "1", "labels": map[string]any{"app.kubernetes.io/name": "openbao"}}, "spec": map[string]any{"storageClassName": "hcloud", "volumeName": pv, "resources": map[string]any{"requests": map[string]any{"storage": "1Gi"}}}, "status": map[string]any{"phase": "Bound", "capacity": map[string]any{"storage": "10Gi"}}}
-		f.volumes[pv] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolume", "metadata": map[string]any{"name": pv, "uid": pv + "-uid", "resourceVersion": "1"}, "spec": map[string]any{"storageClassName": "hcloud", "capacity": map[string]any{"storage": "10Gi"}, "csi": map[string]any{"driver": "csi.hetzner.cloud", "volumeHandle": "PRIVATE_HANDLE" + pv}, "claimRef": map[string]any{"namespace": "openbao", "name": name, "uid": name + "-uid"}}, "status": map[string]any{"phase": "Bound"}}
+		f.claims[name] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": name, "namespace": "openbao", "uid": name + "-uid", "resourceVersion": "1", "labels": map[string]any{"app.kubernetes.io/name": "openbao"}}, "spec": map[string]any{"storageClassName": "hcloud", "volumeName": pv, "resources": map[string]any{"requests": map[string]any{"storage": "20Gi"}}}, "status": map[string]any{"phase": "Bound", "capacity": map[string]any{"storage": "20Gi"}}}
+		f.volumes[pv] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolume", "metadata": map[string]any{"name": pv, "uid": pv + "-uid", "resourceVersion": "1"}, "spec": map[string]any{"storageClassName": "hcloud", "capacity": map[string]any{"storage": "20Gi"}, "csi": map[string]any{"driver": "csi.hetzner.cloud", "volumeHandle": "PRIVATE_HANDLE" + pv}, "claimRef": map[string]any{"namespace": "openbao", "name": name, "uid": name + "-uid"}}, "status": map[string]any{"phase": "Bound"}}
 	}
 	return f
 }
@@ -104,7 +104,7 @@ func (f *fixture) execute(_ context.Context, p string, a ...string) ([]byte, err
 				api = "kustomize.toolkit.fluxcd.io/v1"
 			}
 		}
-		return jsonBytes(f.t, map[string]any{"apiVersion": api, "kind": kind, "metadata": map[string]any{"name": name, "namespace": "flux-system", "uid": name + "-uid", "resourceVersion": "1", "generation": 1}, "status": map[string]any{"observedGeneration": 1, "conditions": []any{map[string]any{"type": "Ready", "status": "True", "observedGeneration": 1}}, "artifact": map[string]any{"revision": os.Getenv("AUDIT_CAPACITY_REVISION")}, "lastAppliedRevision": os.Getenv("AUDIT_CAPACITY_REVISION")}}), nil
+		return jsonBytes(f.t, map[string]any{"apiVersion": api, "kind": kind, "metadata": map[string]any{"name": name, "namespace": "flux-system", "uid": name + "-uid", "resourceVersion": "1", "generation": 1}, "status": map[string]any{"observedGeneration": 1, "conditions": []any{map[string]any{"type": "Ready", "status": "True", "observedGeneration": 1}}, "artifact": map[string]any{"revision": os.Getenv("AUDIT_CAPACITY_REVISION")}, "lastAppliedRevision": os.Getenv("AUDIT_CAPACITY_REVISION"), "lastAttemptedRevision": os.Getenv("AUDIT_CAPACITY_REVISION")}}), nil
 	}
 	if strings.Contains(args, "get persistentvolumeclaim ") {
 		for i, v := range a {
@@ -148,7 +148,7 @@ func (f *fixture) execute(_ context.Context, p string, a ...string) ([]byte, err
 		if json.Unmarshal(b, &patch) != nil {
 			f.t.Fatal("bad patch")
 		}
-		want := []map[string]any{{"op": "test", "path": "/metadata/uid", "value": name + "-uid"}, {"op": "test", "path": "/metadata/resourceVersion", "value": "1"}, {"op": "replace", "path": "/spec/resources/requests/storage", "value": "20Gi"}}
+		want := []map[string]any{{"op": "test", "path": "/metadata/uid", "value": name + "-uid"}, {"op": "test", "path": "/metadata/resourceVersion", "value": "1"}, {"op": "replace", "path": "/spec/resources/requests/storage", "value": "40Gi"}}
 		if !reflect.DeepEqual(patch, want) {
 			f.t.Fatalf("unbounded or unconditioned patch: %v", patch)
 		}
@@ -157,9 +157,9 @@ func (f *fixture) execute(_ context.Context, p string, a ...string) ([]byte, err
 		}
 		f.patched = append(f.patched, name)
 		c := f.claims[name]
-		c["spec"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"] = "20Gi"
-		c["status"].(map[string]any)["capacity"].(map[string]any)["storage"] = "20Gi"
-		f.volumes[c["spec"].(map[string]any)["volumeName"].(string)]["spec"].(map[string]any)["capacity"].(map[string]any)["storage"] = "20Gi"
+		c["spec"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"] = "40Gi"
+		c["status"].(map[string]any)["capacity"].(map[string]any)["storage"] = "40Gi"
+		f.volumes[c["spec"].(map[string]any)["volumeName"].(string)]["spec"].(map[string]any)["capacity"].(map[string]any)["storage"] = "40Gi"
 		if f.mode == "ambiguous" {
 			return nil, fmt.Errorf("PRIVATE ambiguous result")
 		}
@@ -169,11 +169,11 @@ func (f *fixture) execute(_ context.Context, p string, a ...string) ([]byte, err
 }
 
 func (f *fixture) receiptBytes() []byte {
-	return jsonBytes(f.t, map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "openbao-audit-expansion-42", "namespace": "flux-system", "uid": "receipt-uid", "resourceVersion": "1"}, "immutable": true, "data": map[string]any{"source": os.Getenv("GITHUB_SHA"), "revision": os.Getenv("AUDIT_CAPACITY_REVISION"), "run": "42", "target": "20Gi", "scope": "audit-only"}})
+	return jsonBytes(f.t, map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "openbao-audit-expansion-42", "namespace": "flux-system", "uid": "receipt-uid", "resourceVersion": "1"}, "immutable": true, "data": map[string]any{"source": os.Getenv("GITHUB_SHA"), "revision": os.Getenv("AUDIT_CAPACITY_REVISION"), "run": "42", "target": "40Gi", "scope": "audit-only"}})
 }
 
 func TestAdditionalUncertainEvidenceStopsExpansion(t *testing.T) {
-	for _, mode := range []string{"malformed resize conditions", "larger backing volume", "lost receipt data", "post-patch changed handle", "post-patch changed annotations", "different accepted source", "failed deployment", "wrong deployment run"} {
+	for _, mode := range []string{"malformed resize conditions", "larger backing volume", "lost receipt data", "post-patch changed handle", "post-patch changed annotations", "foreign deployment workflow", "never-started deployment", "wrong deployment run"} {
 		t.Run(mode, func(t *testing.T) {
 			f := setup(t)
 			if mode == "malformed resize conditions" {
@@ -203,15 +203,15 @@ func TestAdditionalUncertainEvidenceStopsExpansion(t *testing.T) {
 					obj(r["metadata"])["annotations"] = map[string]any{"changed": "true"}
 					return jsonBytes(t, r), nil
 				}
-				if strings.Contains(joined, "actions/runs/100") && mode == "different accepted source" {
+				if strings.Contains(joined, "actions/runs/100") && mode == "foreign deployment workflow" {
 					r, _ := decode(b)
-					r["head_sha"] = strings.Repeat("c", 40)
+					r["path"] = ".github/workflows/other.yaml"
 					return jsonBytes(t, r), nil
 				}
-				if strings.Contains(joined, "deployments/7/statuses") && (mode == "failed deployment" || mode == "wrong deployment run") {
+				if strings.Contains(joined, "deployments/7/statuses") && (mode == "never-started deployment" || mode == "wrong deployment run") {
 					var ss []map[string]any
 					_ = json.Unmarshal(b, &ss)
-					if mode == "failed deployment" {
+					if mode == "never-started deployment" {
 						ss[0]["state"] = "failure"
 					} else {
 						ss[0]["log_url"] = "https://github.com/devantler-tech/platform/actions/runs/101/job/123"
@@ -274,7 +274,7 @@ func TestExpandOnlyAuditClaimsPreservingData(t *testing.T) {
 	if code := run([]string{"--execute"}, &out, f.execute, func(context.Context) bool { return true }); code != 0 || len(f.patched) != 3 || !f.receipt {
 		t.Fatalf("expansion not proven: code=%d patches=%v %s", code, f.patched, &out)
 	}
-	if out.String() != "OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=20Gi preservationSamples=2\n" {
+	if out.String() != "OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=40Gi preservationSamples=2\n" {
 		t.Fatalf("invalid receipt: %s", &out)
 	}
 }
@@ -383,6 +383,132 @@ func TestAmbiguousOrConflictingWriteIsNotRetried(t *testing.T) {
 			var out bytes.Buffer
 			if run([]string{"--execute"}, &out, f.execute, func(context.Context) bool { return true }) != 2 || !f.receipt || len(f.patched) > 1 || !strings.Contains(out.String(), "HOLD_CAPACITY_MAY_HAVE_CHANGED") || strings.Contains(out.String(), "PRIVATE") {
 				t.Fatalf("ambiguous capacity write replayed or misreported: %s", &out)
+			}
+		})
+	}
+}
+
+// history replaces the prod deployment list: each entry is one deployment's
+// statuses, newest first, as GitHub returns them, and the list is newest first.
+func history(t *testing.T, f *fixture, deployments ...[]map[string]any) command {
+	return func(ctx context.Context, p string, a ...string) ([]byte, error) {
+		joined := strings.Join(a, " ")
+		if p == "gh" && strings.Contains(joined, "deployments?") {
+			var ds []any
+			for i := range deployments {
+				ds = append(ds, map[string]any{"id": 10 + i, "sha": strings.Repeat("d", 40), "environment": "prod"})
+			}
+			return jsonBytes(t, ds), nil
+		}
+		for i, ss := range deployments {
+			if p == "gh" && strings.Contains(joined, fmt.Sprintf("deployments/%d/statuses", 10+i)) {
+				return jsonBytes(t, ss), nil
+			}
+		}
+		return f.execute(ctx, p, a...)
+	}
+}
+
+func deploymentStatus(state string, run int) map[string]any {
+	return map[string]any{"state": state, "environment": "prod", "log_url": fmt.Sprintf("https://github.com/devantler-tech/platform/actions/runs/%d/job/1", run)}
+}
+
+// The 2026-11-21 outage shape: no deploy can succeed while Flux cannot converge,
+// the last deployment that ran failed after publishing, and every newer one
+// only waited or was refused.
+func outage() [][]map[string]any {
+	return [][]map[string]any{
+		{},
+		{deploymentStatus("error", 300), deploymentStatus("waiting", 300), deploymentStatus("waiting", 300)},
+		{deploymentStatus("failure", 301), deploymentStatus("waiting", 301)},
+		{deploymentStatus("failure", 100), deploymentStatus("in_progress", 100), deploymentStatus("queued", 100), deploymentStatus("waiting", 100)},
+		{deploymentStatus("success", 99), deploymentStatus("in_progress", 99)},
+	}
+}
+
+func unhealthyLayers(f *fixture, next command) command {
+	return func(ctx context.Context, p string, a ...string) ([]byte, error) {
+		b, err := next(ctx, p, a...)
+		joined := strings.Join(a, " ")
+		if err != nil || !strings.Contains(joined, "get kustomization ") || strings.Contains(joined, "get kustomization flux-system") {
+			return b, err
+		}
+		r, _ := decode(b)
+		obj(r["status"])["conditions"] = []any{
+			map[string]any{"type": "Reconciling", "status": "True", "reason": "ProgressingWithRetry"},
+			map[string]any{"type": "Ready", "status": "False", "reason": "DependencyNotReady", "observedGeneration": 1},
+		}
+		return jsonBytes(f.t, r), nil
+	}
+}
+
+func TestExpandsDuringTheOutageItRepairs(t *testing.T) {
+	f := setup(t)
+	var out bytes.Buffer
+	if code := run([]string{"--execute"}, &out, unhealthyLayers(f, history(t, f, outage()...)), func(context.Context) bool { return true }); code != 0 || len(f.patched) != 3 {
+		t.Fatalf("outage repair refused: code=%d patches=%v %s", code, f.patched, &out)
+	}
+}
+
+func TestProductionActivityOrOtherProvenanceHolds(t *testing.T) {
+	for _, mode := range []string{"newer deployment running", "newer deployment queued", "newer deployment ran from another run", "unknown deployment state", "no deployment ran"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			ds := outage()
+			switch mode {
+			case "newer deployment running":
+				ds[1] = []map[string]any{deploymentStatus("in_progress", 302), deploymentStatus("queued", 302)}
+			case "newer deployment queued":
+				ds[1] = []map[string]any{deploymentStatus("queued", 302), deploymentStatus("waiting", 302)}
+			case "newer deployment ran from another run":
+				ds[1] = []map[string]any{deploymentStatus("failure", 302), deploymentStatus("in_progress", 302)}
+			case "unknown deployment state":
+				ds[1] = []map[string]any{deploymentStatus("rolling_back", 302)}
+			case "no deployment ran":
+				ds = ds[:3]
+			}
+			var out bytes.Buffer
+			if code := run([]string{"--execute"}, &out, history(t, f, ds...), func(context.Context) bool { return true }); code != 2 || f.receipt || len(f.patched) > 0 || !strings.Contains(out.String(), "stage=accepted-deployment") {
+				t.Fatalf("%s accepted: %d %v %s", mode, code, f.patched, &out)
+			}
+		})
+	}
+}
+
+func TestUnpinnedOrUnobservedFluxLayerHolds(t *testing.T) {
+	for _, mode := range []string{"other attempted revision", "other applied revision", "unobserved generation", "suspended layer", "unhealthy root"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			next := unhealthyLayers(f, history(t, f, outage()...))
+			wrapped := func(ctx context.Context, p string, a ...string) ([]byte, error) {
+				b, err := next(ctx, p, a...)
+				joined := strings.Join(a, " ")
+				target := "get kustomization infrastructure"
+				if mode == "unhealthy root" {
+					target = "get kustomization flux-system"
+				}
+				if err != nil || !strings.HasSuffix(strings.SplitN(joined, " --output", 2)[0], target) {
+					return b, err
+				}
+				r, _ := decode(b)
+				st := obj(r["status"])
+				switch mode {
+				case "other attempted revision":
+					st["lastAttemptedRevision"] = "latest@sha256:" + strings.Repeat("e", 64)
+				case "other applied revision":
+					st["lastAppliedRevision"] = "latest@sha256:" + strings.Repeat("e", 64)
+				case "unobserved generation":
+					obj(r["metadata"])["generation"] = 2
+				case "suspended layer":
+					r["spec"] = map[string]any{"suspend": true}
+				case "unhealthy root":
+					st["conditions"] = []any{map[string]any{"type": "Ready", "status": "False", "observedGeneration": 1}}
+				}
+				return jsonBytes(t, r), nil
+			}
+			var out bytes.Buffer
+			if code := run([]string{"--execute"}, &out, wrapped, func(context.Context) bool { return true }); code != 2 || f.receipt || len(f.patched) > 0 || !strings.Contains(out.String(), "stage=root-source") {
+				t.Fatalf("%s accepted: %d %v %s", mode, code, f.patched, &out)
 			}
 		})
 	}

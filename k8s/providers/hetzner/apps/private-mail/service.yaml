@@ -1,0 +1,39 @@
+# The mail server's own Hetzner load balancer (#5481), approved by the
+# maintainer as its one new recurring cost. The shared Gateway cannot carry
+# mail with the sender's address: its TCP passthrough opens a new connection
+# from Envoy. This load balancer sends PROXY protocol instead, and the server's
+# mail listeners trust PROXY headers from its pinned private address only.
+#
+# The ports stay closed until the network policy admits them in a separate
+# change; this Service alone delivers nothing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: private-mail-public
+  namespace: private-mail
+  annotations:
+    load-balancer.hetzner.cloud/location: ${hetzner_lb_location}
+    load-balancer.hetzner.cloud/type: ${hetzner_lb_type}
+    load-balancer.hetzner.cloud/name: private-mail
+    load-balancer.hetzner.cloud/use-private-ip: "true"
+    # The one address the mail listeners trust (--mail-proxy-source). It sits
+    # far above the addresses new nodes take, in the nodes' subnet.
+    load-balancer.hetzner.cloud/private-ipv4: 10.0.1.250
+    load-balancer.hetzner.cloud/uses-proxyprotocol: "true"
+spec:
+  type: LoadBalancer
+  # Only nodes running the mail pod receive traffic, so the source address the
+  # server sees stays the load balancer's own.
+  externalTrafficPolicy: Local
+  selector:
+    app: private-mail
+  ports:
+    - name: smtp
+      port: 25
+      targetPort: 1025
+    - name: submission
+      port: 587
+      targetPort: 1587
+    - name: imaps
+      port: 993
+      targetPort: 1993

@@ -1,0 +1,40 @@
+# The only permission of Company Email's SMTP identity: relay raw mail through
+# the company mail domain's SES identity in eu-central-1, with a sender on that
+# domain. It cannot read, configure or verify anything in SES.
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: email-smtp-send
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    description: >-
+      Lets company Email's SMTP identity relay mail through the company mail
+      domain's SES identity, with a sender on that domain only.
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Sid": "RelayCompanyMail",
+            "Effect": "Allow",
+            "Action": "ses:SendRawEmail",
+            "Resource": "arn:aws:ses:eu-central-1:939001610192:identity/devantler.tech",
+            "Condition": {
+              "StringLike": {
+                "ses:FromAddress": "*@devantler.tech"
+              }
+            }
+          }
+        ]
+      }
+  providerConfigRef:
+    kind: ProviderConfig
+    name: default

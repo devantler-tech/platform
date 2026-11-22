@@ -28,7 +28,11 @@ spec:
       `Authorization: Basic kagent-credential-injected`, for example
       `curl -fsS -H 'Authorization: Basic kagent-credential-injected' <url>` to
       read a file and `curl -fsS -T <file> -H '...' <url>` to write one.
-    Only GitHub, the model and the lane store are reachable.
+    - The platform cluster, read only: `kubectl` works as is. It reaches the
+      lane's cluster-reader proxy, which holds the identity and lets you get
+      and list only what the live-health check reads; it refuses every write.
+    Only GitHub, the model, the lane store and that read-only cluster view are
+    reachable.
 
     Rules for every run:
     - Do only what this run's message asks, then stop.

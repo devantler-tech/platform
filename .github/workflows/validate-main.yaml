@@ -134,7 +134,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.213.4"
+          KSAIL_VERSION: "7.215.46"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -195,7 +195,7 @@ jobs:
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
       - name: 🔏 Install cosign for bound publication verification
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       # Which revision SIGNED what is deployed, against what each consumer pins now
       # (#3048). Reported on main rather than gated on a PR: it reads five other
@@ -266,6 +266,14 @@ jobs:
           version: v0.74.0
           cache: true
 
+      - name: 📌 Install reviewed YAML parser for nested RGD templates
+        env:
+          GOBIN: ${{ runner.temp }}/rgd-validation-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+          PATH="$GOBIN:$PATH" yq --version
+
       - name: 🔬 Validate nested RGD workload templates
         run: |
           shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
@@ -327,7 +335,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.213.4"
+          KSAIL_VERSION: "7.215.46"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -476,38 +484,6 @@ jobs:
             *) exit "$rc" ;;
           esac
 
-  # The apps-base component gate and FANOUT_NAMESPACES must agree, or the
-  # post-reconcile reassertion in deploy-prod (--reuse-runtime-proof, no
-  # exemption) marks the fan-out incomplete and FAILS EVERY OTHERWISE-SUCCESSFUL
-  # DEPLOY (#3476). ci.yaml gates that on `pull_request` only, so a direct push
-  # to main — or an apps-base edit that reaches production by the manual CD
-  # route — never exercises the invariant, and the disagreement surfaces for the
-  # first time as a failed production deploy.
-  #
-  # Its own job, for the same reason as validate-shared-publish-pin above: this
-  # validator must not share a job with steps that could subvert it.
-  #
-  # Deliberately not path-filtered, matching this workflow's header: the guard
-  # reads both the apps base and the fan-out list, and a change to either side —
-  # or to the guard itself — can move the result.
-  validate-ghcr-fanout-component-gate:
-    name: 🔗 Validate GHCR Fan-out Component Gate
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read # checkout repository
-    steps:
-      - name: 📑 Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
-        run: |
-          shellcheck scripts/guard-ghcr-fanout-component-gate.sh
-          shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
-          bash scripts/guard-ghcr-fanout-component-gate.sh
-          bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
-
   # Reports whether production runs what main now says (#3848, the follow-up to the
   # resolver merged in #3846). After a merge group lands, prod should already hold its
   # artifact; #2838 describes the interleaving where a heal overwrote it and nothing
@@ -521,9 +497,44 @@ jobs:
   # It takes the prod-deploy lock so it reads `:latest` only after any deploy or heal
   # already in flight has finished publishing. Read earlier, a heal that checked out
   # main before this push landed could still overwrite prod after a CONVERGED reading.
+  #
+  # A job takes its lock before it gets a runner. Taken on the push itself, the lock sat
+  # in front of the next queued change's deploy for as long as this job waited for a
+  # runner (#6205). The job below waits, without the lock, until no change is queued;
+  # this one runs only on its explicit yes. A newer push takes the observation over, so
+  # this job is then skipped, and a failed wait skips it too and is red in its own job.
+  await-idle-merge-queue:
+    name: 🚦 Wait for an idle merge queue
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The wait ends within its own hour; the rest covers the last pause and reads.
+    timeout-minutes: 75
+    permissions:
+      contents: read # checkout the wait script and read the merge queue
+      checks: read # read whether this change, or a later one, deployed
+    outputs:
+      observe: ${{ steps.idle.outputs.observe }}
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/await-idle-merge-queue.sh
+          sparse-checkout-cone-mode: false
+
+      - name: 🚦 Wait until no change is queued
+        id: idle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IDLE_REPOSITORY: ${{ github.repository }}
+          IDLE_BRANCH: main
+          IDLE_SHA: ${{ github.sha }}
+        run: scripts/await-idle-merge-queue.sh
+
   observe-prod-convergence:
     name: 🧭 Observe Production Convergence
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [await-idle-merge-queue]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.await-idle-merge-queue.outputs.observe == 'true'
     runs-on: ubuntu-latest
     concurrency:
       group: prod-deploy

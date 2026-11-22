@@ -37,6 +37,35 @@ on purpose, so that the initialization job can reach them during bootstrap. Read
 nothing about whether a server can serve. A successful HTTP status is not enough on its own either:
 the body has to parse strictly and agree with it.
 
+## A declared rolling upgrade
+
+The servers are replaced one at a time, so during an upgrade some still run the previous release.
+The procedure declares that window explicitly. The new release stays `--expect-version`, and
+`--previous-version` names the release it replaces: any server may still run that one, except
+the servers `--require-current` lists, which the procedure has already replaced and which must
+run the new release. Both values come from the procedure's reviewed inputs, like the rest.
+
+```sh
+go run ./scripts/judge-openbao-health \
+  --input capture.json \
+  --expect-servers openbao-0,openbao-1,openbao-2 \
+  --expect-version 2.7.2 --previous-version 2.6.3 --require-current openbao-0 \
+  --max-age 5m
+```
+
+Without `--previous-version`, every server must run `--expect-version`, as before. Any third
+release is still a `HOLD`. `--require-current` without `--previous-version`, an explicitly empty
+`--require-current`, a previous release equal to the new one, or a replaced server outside
+`--expect-servers` is invalid (exit 2).
+
+The caller owns three rules the judge cannot check:
+
+- `--previous-version` is the release the reviewed render pinned before the upgrade. Never read it
+  from the capture or the live cluster: then any release a server happens to run would pass.
+- `--require-current` lists every server replaced so far, not only the latest one.
+- Only a run without `--previous-version`, or one that lists every server in `--require-current`,
+  proves the upgrade is complete.
+
 ## Capture format
 
 The capture is one JSON document. Each server's `health` is the unmodified body of

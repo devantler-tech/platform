@@ -1259,7 +1259,7 @@ for relative_path in "${RGD_PATHS[@]}"; do
     # emitted line positions. The original RGD path remains the prefix for source ownership.
     RESOURCE_ID="$resource_id" yq \
       '(.spec.resources[] | select(.id == strenv(RESOURCE_ID))).template' \
-      "$source_file" >"$output_file"
+      "$source_file" | awk 'NF { started = 1 } started' >"$output_file"
     resource_count=$((resource_count + 1))
   done < <(yq -r '.spec.resources[].id // ""' "$source_file")
   [ "$resource_count" -eq "$count" ] ||
@@ -1334,18 +1334,19 @@ while IFS=$'\t' read -r finding_target finding_id finding_severity \
 
   first_content_line="$(awk 'NF { print NR; exit }' "$finding_file")"
   [ -n "$first_content_line" ] || fail "Trivy finding target is empty: $finding_target"
-  leading_blank_lines=$((first_content_line - 1))
-  [ "$finding_start_line" -gt "$leading_blank_lines" ] || fail \
+  [ "$first_content_line" -eq 1 ] || fail \
+    "Trivy finding target has unnormalized leading blank lines: $finding_target"
+  [ "$finding_start_line" -ge 1 ] || fail \
     "Trivy finding $finding_id on $finding_target starts before its YAML document"
-  # Trivy ranges are one-based; yq's line operator is zero-based. Remove both that index offset and
-  # the serializer-only leading blanks before comparing source coordinates.
-  semantic_start_line=$((finding_start_line - leading_blank_lines - 1))
-  semantic_end_line=$((finding_end_line - leading_blank_lines - 1))
+  # Native Trivy 0.74.0 and yq both report one-based lines. Read the same normalized manifest
+  # without an index conversion; subtracting one can attribute a finding to its preceding sibling.
+  semantic_start_line=$finding_start_line
+  semantic_end_line=$finding_end_line
 
   # Trivy v0.74.0 reports a source range, not a JSON path. Resolve every scalar path in that range
   # and keep their common semantic parent. This distinguishes byte-identical findings on
-  # containers[0] and containers[1]. Leading serializer blanks move Trivy's physical line while yq
-  # normalizes them, so remove that measured offset before resolving the path.
+  # containers[0] and containers[1]. Normalize serializer-only leading blanks at extraction so
+  # Trivy and yq resolve identical source coordinates regardless of the parser's blank-line policy.
   cause_paths="$(CAUSE_START="$semantic_start_line" CAUSE_END="$semantic_end_line" \
     yq -o=json -I=0 \
     '[.. |

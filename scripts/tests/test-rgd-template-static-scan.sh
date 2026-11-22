@@ -33,12 +33,6 @@ for config in ksail.yaml ksail.prod.yaml; do
     fail "KSail must defer the stale catalog's outer RGD schema to the reviewed RGD gate: $config"
 done
 
-# shellcheck disable=SC2016 # These are literal source invariants, not test-shell arithmetic.
-grep -Fq 'semantic_start_line=$((finding_start_line - leading_blank_lines - 1))' "$GATE" ||
-  fail "Trivy one-based start lines are not converted to yq zero-based lines"
-# shellcheck disable=SC2016 # These are literal source invariants, not test-shell arithmetic.
-grep -Fq 'semantic_end_line=$((finding_end_line - leading_blank_lines - 1))' "$GATE" ||
-  fail "Trivy one-based end lines are not converted to yq zero-based lines"
 grep -Fq -- '--connect-timeout 10 --max-time 60' "$GATE" ||
   fail "remote resource fetches are not bounded by connection and transfer timeouts"
 # shellcheck disable=SC2016 # the scanner variable reference is a literal source invariant.
@@ -178,8 +172,8 @@ tenant_ksv0039_targets="$({
 
 # The content ratchet represents parsed template semantics, not yq's emitted presentation. Put a
 # wrapper first on PATH that adds harmless blank lines and double-quotes every string in each
-# serialized resource. This changes Trivy's ranges and cause text without changing the parsed
-# manifest, so finding identity must remain stable.
+# serialized resource. yq 4.54.1 and 4.54.3 assign different source lines to padded YAML. Both must
+# retain the same cause paths and finding identities for this semantically unchanged manifest.
 YQ_BIN="$(command -v yq)"
 readonly YQ_BIN
 mkdir -p "$WORK/bin"
@@ -1091,6 +1085,27 @@ container_cause_count="$(awk -F '\t' '
 [ "$container_cause_count" -gt 1 ] || {
   sed 's/^/  /' "$container_identity_log" >&2
   fail "the finding ratchet hides a KSV-0013 move between workload containers"
+}
+# Bind the new finding to the actual second container, rather than accepting any changed hash.
+# Its canonical node is the original reviewed container; only the expected semantic path changes.
+expected_container_node="$(yq -o=json -I=0 '
+  .spec.resources[] | select(.id == "deployment") |
+  .template.spec.template.spec.containers[0]
+' "$REPO_ROOT/$WEBAPP_RGD" | jq -cS '.')"
+expected_container_hash="$(
+  printf '%s\n%s\n' '["spec","template","spec","containers",1]' "$expected_container_node" |
+    if command -v sha256sum >/dev/null 2>&1; then
+      sha256sum
+    else
+      shasum -a 256
+    fi | awk '{print $1}'
+)"
+awk -F '\t' -v expected="CAUSE-SHA256:$expected_container_hash" '
+  $1 == "+1" && $3 == "KSV-0013" && $5 == expected { found = 1 }
+  END { exit(found ? 0 : 1) }
+' "$container_identity_log" || {
+  sed 's/^/  /' "$container_identity_log" >&2
+  fail "the moved KSV-0013 finding does not identify containers[1]"
 }
 echo "PASS(probe): container-level finding identity cannot cancel within one resource."
 restore_webapp

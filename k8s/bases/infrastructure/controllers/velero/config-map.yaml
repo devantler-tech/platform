@@ -19,6 +19,12 @@
 # failed with an empty data-path error. A 1Gi ceiling preserves admission on
 # saturated nodes while giving the bursty index phase measured headroom.
 # Velero requires request <= limit for any pair that is set.
+#
+# Only prod routes the longhorn source class through CSI snapshots. Its
+# intermediate backup PVC keeps its source class by default. Set the bootstrap
+# variable to longhorn-backup only for an explicit staging validation rollout;
+# source volumes and restores retain their own durable storage classes.
+# Local uses file-system backup, so it never consults this mapping.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -32,5 +38,10 @@ data:
         "cpuLimit": "500m",
         "memoryRequest": "8Mi",
         "memoryLimit": "1Gi"
+      },
+      "backupPVC": {
+        "longhorn": {
+          "storageClass": "${velero_backup_pvc_storage_class:-longhorn}"
+        }
       }
     }
