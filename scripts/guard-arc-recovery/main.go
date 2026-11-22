@@ -194,9 +194,15 @@ func readMetadata(ctx context.Context, client *http.Client, endpoint string) ([]
 		return nil, errors.New("metadata request invalid")
 	}
 	request.Header.Set("Accept", metadataAccept)
-	response, err := client.Do(request)
+	// A recovery list accepts at most one retained object. A two-item page
+	// is enough to detect excess rows, and the decoder still rejects any
+	// continuation. Keep an existing listener selector on the request.
+	query := request.URL.Query()
+	query.Set("limit", "2")
+	request.URL.RawQuery = query.Encode()
+	response, err := requestMetadata(ctx, client, request)
 	if err != nil {
-		return nil, errors.New("metadata read failed")
+		return nil, err
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
@@ -237,6 +243,51 @@ func readMetadata(ctx context.Context, client *http.Client, endpoint string) ([]
 		return nil, errors.New("metadata response items is not an array or native null")
 	}
 	return items, nil
+}
+
+func requestMetadata(ctx context.Context, client *http.Client, request *http.Request) (*http.Response, error) {
+	for attempt := 1; ; attempt++ {
+		response, err := client.Do(request)
+		if err != nil {
+			return nil, errors.New("metadata read failed")
+		}
+		if response.StatusCode != http.StatusTooManyRequests || attempt == 3 {
+			return response, nil
+		}
+		delay, ok := metadataRetryDelay(response.Header.Get("Retry-After"))
+		if deadline, limited := ctx.Deadline(); !ok || limited && time.Until(deadline) <= delay {
+			return response, nil
+		}
+		_ = response.Body.Close()
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, errors.New("metadata read refused (HTTP 429) before the retry deadline")
+		}
+	}
+}
+
+func metadataRetryDelay(header string) (time.Duration, bool) {
+	const minimum = 250 * time.Millisecond
+	const maximum = 10 * time.Second
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return time.Second, true
+	}
+	if seconds, err := strconv.ParseUint(header, 10, 64); err == nil {
+		if seconds > uint64(maximum/time.Second) {
+			return 0, false
+		}
+		return max(time.Duration(seconds)*time.Second, minimum), true
+	}
+	at, err := http.ParseTime(header)
+	if err != nil {
+		return 0, false
+	}
+	delay := max(time.Until(at), minimum)
+	return delay, delay <= maximum
 }
 
 func requireEmptyMetadata(ctx context.Context, client *http.Client, endpoint string) error {
