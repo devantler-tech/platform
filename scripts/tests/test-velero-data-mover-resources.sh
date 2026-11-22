@@ -18,6 +18,7 @@ fail() {
 }
 
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to inspect the Velero node-agent configuration'
+command -v jq >/dev/null 2>&1 || fail 'jq is required to verify the OpenBao backup schedule'
 command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required to render the production storage contract'
 
 if ! grep -Fq "'scripts/tests/test-velero-data-mover-resources.sh'" "${ci_workflow}" ||
@@ -120,6 +121,29 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure" >"${rendere
   fail 'the production infrastructure overlay did not render'
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers" >"${rendered_controllers}" ||
   fail 'the production infrastructure controllers overlay did not render'
+
+if ! yq -N -o=json -I0 '
+  select(.kind == "HelmRelease" and .metadata.namespace == "velero" and .metadata.name == "velero") |
+  .spec.values.schedules."openbao-recovery-keys"
+' "${rendered_controllers}" | jq -e -s '
+  . == [{
+    disabled: false,
+    schedule: "10 6 * * *",
+    useOwnerReferencesInBackup: false,
+    template: {
+      ttl: "336h",
+      storageLocation: "default",
+      includedNamespaces: ["openbao"],
+      includedResources: ["secrets"],
+      includeClusterResources: false,
+      snapshotVolumes: false,
+      snapshotMoveData: false,
+      defaultVolumesToFsBackup: false
+    }
+  }]
+' >/dev/null; then
+  fail 'the production OpenBao key backup must use the independent Secrets-only schedule'
+fi
 
 # Production and an unset setting must keep the source class until runtime
 # backup and restore validation explicitly opts into the disposable copy.
