@@ -3078,7 +3078,9 @@ jobs:
         # it — deliberately or as collateral — would silently restore the exposure with
         # nothing in CI noticing (#3124). This runs the guard over the tree and pins its
         # verdict in all three directions, including the anti-vacuity case: finding NO
-        # GitRepository at all is cannot-check, never a clean pass.
+        # Flux source at all is cannot-check, never a clean pass. The unifi source now
+        # follows its signed release artifact (ADR 0019), so the tree may hold no
+        # GitRepository; the guard still proves it read the tree's other Flux sources.
         run: |
           bash scripts/guard-gitrepository-commit-pin.sh k8s
           bash scripts/tests/test-guard-gitrepository-commit-pin.sh
