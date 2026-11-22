@@ -66,6 +66,27 @@ func TestRecoveryMetadataReadsRequireCompleteEmptyMetadataLists(t *testing.T) {
 	}
 }
 
+// A refusal names the constant path and the status, so a failed deploy says which read was
+// refused, and never echoes the response body.
+func TestRefusedMetadataReadNamesPathAndStatusOnly(t *testing.T) {
+	for _, code := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusFound} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(`{"message":"synthetic private detail"}`))
+		}))
+		const path = "/api/v1/namespaces/arc-systems/pods?labelSelector=platform.devantler.tech%2Farc-role%3Dlistener"
+		err := requireEmptyMetadata(context.Background(), metadataClient(), server.URL+path)
+		server.Close()
+		want := fmt.Sprintf("metadata read refused or redirected: GET %s returned HTTP %d", path, code)
+		if err == nil || err.Error() != want {
+			t.Fatalf("HTTP %d: got %v, want %q", code, err, want)
+		}
+		if strings.Contains(err.Error(), "synthetic") || strings.Contains(err.Error(), "127.0.0.1") {
+			t.Fatalf("HTTP %d: response or proxy address escaped into diagnostics: %v", code, err)
+		}
+	}
+}
+
 func TestRecoveryObservesRetainedPoolWithoutConfusingItWithActiveRunners(t *testing.T) {
 	const item = `{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"name":"ksail-code-quality","namespace":"arc-ksail-analysis","uid":"retained","resourceVersion":"123"}}`
 	const prefix = `{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":`

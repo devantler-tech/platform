@@ -200,7 +200,9 @@ func readMetadata(ctx context.Context, client *http.Client, endpoint string) ([]
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return nil, errors.New("metadata read refused or redirected")
+		// The path is one of this program's own constants and the status is a number, so
+		// naming both leaks nothing from the response while making a refusal diagnosable.
+		return nil, fmt.Errorf("metadata read refused or redirected: GET %s returned HTTP %d", request.URL.RequestURI(), response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
@@ -306,7 +308,7 @@ func requireControllerScope(ctx context.Context, client *http.Client, endpoint s
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return errors.New("controller scope read refused or redirected")
+		return fmt.Errorf("controller scope read refused or redirected: GET %s returned HTTP %d", request.URL.RequestURI(), response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
