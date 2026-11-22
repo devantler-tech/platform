@@ -16,6 +16,6 @@ spec:
   sops: false
   webApp: true
   source:
-    digest: sha256:0ffcda5f8e79dae29d27d36e45f1cb918f1ff41ec30f0838473797bf6e3f9bc8
+    digest: sha256:0e13f79bbe329a772b9b313f4517293300b19b0c247e7b03db4ba4400249b893
     publisherRevision: a76d5df9371cf712a8f60307fde060825a34cf35
     reconcileApplication: true
