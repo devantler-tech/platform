@@ -1,6 +1,7 @@
 ---
-# Applies the UniFi Managed Resources from the devantler-tech/unifi GitRepository
-# into this namespace, AS the namespace-scoped `unifi` ServiceAccount (so the MRs
+# Applies the UniFi Managed Resources from the devantler-tech/unifi release
+# artifact (oci-repository.yaml; its root is unifi's deploy/ folder) into this
+# namespace, AS the namespace-scoped `unifi` ServiceAccount (so the MRs
 # are created with only the authority granted in role.yaml). It is itself applied
 # by the `apps` Flux Kustomization; it must NOT dependsOn it (deadlock) — it
 # retries benignly until the provider (infrastructure layer) has established the
@@ -24,8 +25,11 @@ spec:
   prune: true
   wait: true
   serviceAccountName: unifi
+  # Every release unifi publishes is applied with the patches below, as this
+  # ServiceAccount and under the UniFi admission guards, exactly like the
+  # commit pin it replaced (ADR 0019).
   sourceRef:
-    kind: GitRepository
+    kind: OCIRepository
     name: unifi
   targetNamespace: unifi
   # The live UniFi objects are retained at the resource layer instead. Every

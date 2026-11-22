@@ -209,6 +209,14 @@ func staticOwnershipFailure(s server, n node, role, field string) error {
 }
 
 func main() {
+	if len(os.Args) == 2 && (os.Args[1] == "plan-retire-builder" || os.Args[1] == "retire-builder") {
+		runProviderCommand(os.Args[1] == "retire-builder", builderWorkflow, runBuilderRetirement)
+		return
+	}
+	if len(os.Args) == 2 && (os.Args[1] == "plan-repair-index" || os.Args[1] == "repair-index") {
+		runProviderCommand(os.Args[1] == "repair-index", indexWorkflow, runIndexRepair)
+		return
+	}
 	if len(os.Args) != 2 || !slices.Contains([]string{"before-publish", "before-update", "after-update", "account-census"}, os.Args[1]) ||
 		os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" {
 		fmt.Fprintln(os.Stderr, "HOLD: migration headroom requires a protected production deployment")
@@ -244,4 +252,27 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("PASS: migration headroom stage=%s joined_nodes=%d account_servers=%d reserved_builder_slots=1\n", os.Args[1], n, n)
+}
+
+func runProviderCommand(apply bool, workflow string, run func(context.Context, migrationProvider, func(context.Context) ([]byte, error), bool) error) {
+	if apply && !authorizedProviderMutation(os.Getenv, workflow) {
+		fmt.Fprintln(os.Stderr, "HOLD: provider mutation requires its own confirmed first-attempt main dispatch")
+		os.Exit(1)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	client := &http.Client{
+		Timeout:       15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") },
+	}
+	readNodes := readNativeNodes
+	if !apply {
+		readNodes = func(ctx context.Context) ([]byte, error) {
+			return readNodesInContext(ctx, "oidc@prod")
+		}
+	}
+	if err := run(ctx, migrationProvider{client: client, token: os.Getenv("HCLOUD_TOKEN")}, readNodes, apply); err != nil {
+		fmt.Fprintf(os.Stderr, "HOLD: provider migration prerequisite: %v\n", err)
+		os.Exit(1)
+	}
 }

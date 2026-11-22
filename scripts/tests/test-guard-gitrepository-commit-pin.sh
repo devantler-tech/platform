@@ -2,15 +2,19 @@
 #
 # Pins the GitRepository commit-pin guard's verdict in all THREE directions.
 #
-#   exit 0  every GitRepository document carries a 40-hex spec.ref.commit
+#   exit 0  every GitRepository document carries a 40-hex spec.ref.commit, or
+#           there is none and another Flux source document was read
 #   exit 1  at least one tracks a mutable ref, or a malformed commit
 #   exit 2  the guard could not check — bad usage, missing root, unparseable
-#           YAML, or NO GitRepository document found at all
+#           YAML, or NO Flux source document found at all
 #
 # Two of these are anti-vacuity cases rather than behaviours. A tree with no
-# GitRepository must come back exit 2, NOT a clean exit 0: a selector that
+# Flux source must come back exit 2, NOT a clean exit 0: a selector that
 # matched nothing is indistinguishable from a healthy tree, and reporting it as
-# clean is the same class of failure the guard exists to prevent. And a
+# clean is the same class of failure the guard exists to prevent. A tree whose
+# only Flux sources are OCIRepositories (the platform since the unifi tenant
+# follows its signed releases) has no GitRepository to pin and passes, but only
+# because the same selector proved it read those sources. And a
 # Kustomization referencing `kind: GitRepository` under `spec.sourceRef` must be
 # IGNORED — it carries no ref of its own, so counting it would be a false
 # refusal on a correct file.
@@ -183,7 +187,7 @@ assert_rc "mixed spacing, one unpinned -> 1" 1 "$GUARD_RC"
 assert_contains "names the oddly-spaced resource" "ns-mixed/case-spaced"
 assert_contains "counted BOTH documents, not just the canonical one" "1 of 2 GitRepository document(s)"
 
-echo "== anti-vacuity: no GitRepository anywhere is CANNOT-CHECK, not clean =="
+echo "== anti-vacuity: no Flux source anywhere is CANNOT-CHECK, not clean =="
 root="$(mkcase empty)"
 cat >"$root/other.yaml" <<'YAML'
 apiVersion: v1
@@ -194,6 +198,62 @@ metadata:
 YAML
 run_guard "$root"
 assert_rc "no GitRepository -> 2" 2 "$GUARD_RC"
+assert_contains "says the selector matched nothing" "matched nothing"
+
+echo "== no GitRepository, but a Flux OCIRepository was read: nothing to pin, and proven read =="
+root="$(mkcase ocionly)"
+cat >"$root/oci.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: case-ocionly
+  namespace: ns-ocionly
+spec:
+  url: oci://ghcr.io/devantler-tech/unifi/manifests
+  ref:
+    semver: ">=0.0.0"
+YAML
+run_guard "$root"
+assert_rc "only an OCIRepository -> 0" 0 "$GUARD_RC"
+assert_contains "reports no GitRepository" "0 GitRepository document(s)"
+assert_contains "reports the Flux source it read" "1 other Flux source document(s) read"
+
+echo "== an OCIRepository does not hide an unpinned GitRepository beside it =="
+root="$(mkcase ocimixed)"
+cat >"$root/sources.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: case-ocimixed-oci
+  namespace: ns-ocimixed
+spec:
+  url: oci://ghcr.io/devantler-tech/unifi/manifests
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-ocimixed-git
+  namespace: ns-ocimixed
+spec:
+  ref:
+    branch: main
+YAML
+run_guard "$root"
+assert_rc "OCIRepository beside an unpinned GitRepository -> 1" 1 "$GUARD_RC"
+assert_contains "names the unpinned GitRepository" "ns-ocimixed/case-ocimixed-git"
+assert_contains "counted only the GitRepository" "1 of 1 GitRepository document(s)"
+
+echo "== anti-vacuity: a FOREIGN OCIRepository is no proof the selector read Flux sources =="
+root="$(mkcase foreignoci)"
+cat >"$root/foreign.yaml" <<'YAML'
+apiVersion: example.dev/v1
+kind: OCIRepository
+metadata:
+  name: case-foreignoci
+  namespace: ns-foreignoci
+YAML
+run_guard "$root"
+assert_rc "only a foreign OCIRepository -> 2" 2 "$GUARD_RC"
 assert_contains "says the selector matched nothing" "matched nothing"
 
 echo "== cannot-check: unparseable YAML is never reported as clean =="

@@ -249,10 +249,14 @@ inside the same single anchored subject, until the consumers have moved and
   signature to the organisation, not to one product: the per-tenant binding is the tenant's
   signed manifest source, which accepts only its own repository and pins its image digests.
 
-The `.github` repository is excluded at every layer, including the `github-config` source: it
+The `.github` repository is excluded from the image rules and from the any-workflow form: it
 hosts the shared reusable publishers, and a tag of a reusable workflow carries that repository's
-identity whoever calls it, so another repository's release could verify as its own. Its own move
-needs a narrower rule. A `Tenant` pinned to an exact publisher revision keeps that single identity,
+identity whoever calls it, so another repository's release could verify as its own. Only the
+`github-config` source names it, through the narrower rule
+`.github/.github/workflows/cd.yaml@refs/tags/v<semver>`
+([devantler-tech/.github#926](https://github.com/devantler-tech/.github/issues/926)): exactly
+that one file, which runs only on `.github`'s own tag pushes and which `.github`'s CI keeps free
+of a `workflow_call` trigger. A `Tenant` pinned to an exact publisher revision keeps that single identity,
 because its admission record names it. These verifiers match only the issuer and the subject, so
 a product must not expose a signing workflow other repositories can call.
 
