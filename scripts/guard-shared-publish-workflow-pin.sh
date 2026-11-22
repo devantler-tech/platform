@@ -168,6 +168,12 @@ readonly OWN_RELEASE_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][
 # the constructor's tenant marker.
 readonly FIRST_PARTY_RELEASE_REPOSITORY='[A-Za-z0-9][A-Za-z0-9_.-]*'
 readonly TENANT_RELEASE_REPOSITORY='<tenant>'
+# The `.github` consumer's own release workflow (devantler-tech/.github#926): exactly its
+# cd.yaml on a release tag, accepted only in the github-config source. `.github` hosts the
+# shared reusable workflows, so the `[^/]+` form would accept a signature from any caller
+# of one of them; cd.yaml runs only on its own tag pushes and is never callable.
+readonly GITHUB_CONFIG_FILE='./k8s/bases/apps/github-config/oci-repository.yaml'
+readonly GITHUB_OWN_RELEASE='\.github/\.github/workflows/cd\.yaml@'"${OWN_RELEASE_TAIL#*@}"
 
 # THE FLOOR NAMES WHAT MUST BE FOUND (#4558).
 # An empty result from a filtered read is a claim about the FILTER. If a refactor moves
@@ -397,6 +403,15 @@ judge_family_subject() {
   case "$subject" in
     *"$OWN_RELEASE_TAIL"')$')
       subject="$(strip_consumer_own_release "$location" "$subject")" || return 1
+      ;;
+    *"|$GITHUB_OWN_RELEASE"')$')
+      # Only the github-config source may name `.github`'s own release workflow.
+      if [ "${location%:*}" != "$GITHUB_CONFIG_FILE" ]; then
+        printf '%s: only %s may accept the .github release workflow (subject: %s)\n' \
+          "$location" "$GITHUB_CONFIG_FILE" "$subject" >&2
+        return 1
+      fi
+      subject="${subject%"|$GITHUB_OWN_RELEASE"')$'}"')$'
       ;;
   esac
 
