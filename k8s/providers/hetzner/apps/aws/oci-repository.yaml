@@ -11,6 +11,7 @@ metadata:
   namespace: aws
   labels:
     app.kubernetes.io/managed-by: ksail
+    platform.devantler.tech/tenant-source: "true"
 spec:
   interval: 1m
   ref:

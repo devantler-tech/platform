@@ -8,7 +8,7 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 yq -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.name == "setup") | .command[2]' \
   "${1:-$repo_root/k8s/providers/hetzner/apps/customer-identity/cron-job-setup.yaml}" |
-  awk '/# --- Languages / { selected=1 } /# --- Branding / { selected=0 } selected' >"$scratch/reconcile.sh"
+  awk '/# --- Languages / { selected=1; print; next } selected && /# --- / { selected=0 } selected' >"$scratch/reconcile.sh"
 [[ -s $scratch/reconcile.sh ]] || {
   echo 'No setup reconciliation selected' >&2
   exit 1
