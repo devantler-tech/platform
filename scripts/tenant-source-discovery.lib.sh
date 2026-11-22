@@ -133,7 +133,10 @@ tenant_source_inventory_check() (
   fi
   # The observed graph itself, and the reviewed file, must both be the exact constructor.
   graphs="$(mktemp)" || return 1
-  printf '%s\n' "$census" | jq -c '.tenantGraphs[0]' >"$graphs" || { rm -f -- "$graphs"; return 1; }
+  printf '%s\n' "$census" | jq -c '.tenantGraphs[0]' >"$graphs" || {
+    rm -f -- "$graphs"
+    return 1
+  }
   # shellcheck source=scripts/tenant-source-constructors.lib.sh
   source "$(dirname "${BASH_SOURCE[0]}")/tenant-source-constructors.lib.sh"
   if ! tenant_source_default_subject "$graphs" >/dev/null || ! tenant_source_default_subject "$graph_file" >/dev/null; then
