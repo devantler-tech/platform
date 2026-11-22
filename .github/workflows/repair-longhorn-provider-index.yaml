@@ -1,0 +1,29 @@
+---
+name: Repair Longhorn Provider Index
+
+"on":
+  # checkov:skip=CKV_GHA_7:Confirmed production operation with source-pinned targets.
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type repair-longhorn-provider-index to reconcile the verified static node index labels
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  repair:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/prod-operation.yaml # zizmor: ignore[self-repository]
+    secrets:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+    with:
+      operation: repair-longhorn-provider-index
+      confirm: ${{ inputs.confirm }}
+      program: scripts/verify-longhorn-migration-headroom
+      args: repair-index
+      hcloud-token: true
+      timeout-minutes: 10
