@@ -79,8 +79,9 @@ affected volume and disk identities.
 the original volumes have three healthy copies. It qualifies one 4 GiB V1
 scratch claim across the three permanent disks under the existing scheduling
 settings and keeps an additional 4 GiB above the physical free-space floor.
-It changes the exhausted disk's reservation once and reads back the original
-disks, volume identities and available capacity. An uncertain write stops
+It adjusts the limiting disk's reservation by only the remaining logical
+shortfall and reads back the original disks, volume identities and available
+capacity. An uncertain write stops
 the run. Check the live reservation and storage health before a new dispatch.
 Use the qualified capacity for one recovery or benchmark claim at a time.
 

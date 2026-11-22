@@ -15,7 +15,7 @@ spec:
                     operator: In
                     values:
                       - prod-worker-1
-                      - prod-worker-2
+                      - prod-worker-3
               - matchExpressions:
                   - key: storage.platform.devantler.tech/migration-pool
                     operator: In

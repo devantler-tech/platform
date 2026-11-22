@@ -18,6 +18,12 @@ func TestV1ScratchHeadroomQualifiesOneClaim(t *testing.T) {
 		t.Fatalf("healthy three-copy fixture did not qualify exactly four GiB: %+v, %v", plan, err)
 	}
 
+	valueObject(s.storageNodes[0], "spec", "disks", "default-disk-fixture")["storageReserved"] = float64(31 * v1FixtureGiB)
+	plan, err = planV1ScratchHeadroom(s)
+	if err != nil || !plan.write || plan.reserve != 29*v1FixtureGiB {
+		t.Fatalf("existing two GiB did not limit the adjustment to the remaining two GiB: %+v, %v", plan, err)
+	}
+
 	valueObject(s.storageNodes[0], "spec", "disks", "default-disk-fixture")["storageReserved"] = float64(29 * v1FixtureGiB)
 	plan, err = planV1ScratchHeadroom(s)
 	if err != nil || plan.write || plan.reserve != 29*v1FixtureGiB {
@@ -46,8 +52,12 @@ func TestV1ScratchHeadroomRefusesUnprovenCapacity(t *testing.T) {
 		"target ledger drift": func(s *inventory) {
 			delete(valueObject(s.storageNodes[0], "status", "diskStatus", "default-disk-fixture", "scheduledReplica"), "retained-1")
 		},
-		"partially consumed existing allowance": func(s *inventory) {
+		"overallocated target": func(s *inventory) {
+			valueObject(s.storageNodes[0], "spec", "disks", "default-disk-fixture")["storageReserved"] = float64(34 * v1FixtureGiB)
+		},
+		"partial logical capacity with low physical margin": func(s *inventory) {
 			valueObject(s.storageNodes[0], "spec", "disks", "default-disk-fixture")["storageReserved"] = float64(31 * v1FixtureGiB)
+			valueObject(s.storageNodes[0], "status", "diskStatus", "default-disk-fixture")["storageAvailable"] = float64(45 * v1FixtureGiB)
 		},
 		"foreign cordon": func(s *inventory) {
 			valueObject(s.nodes[1], "metadata")["annotations"] = object{fenceAnnotation: "foreign"}
@@ -73,6 +83,7 @@ func TestV1ScratchHeadroomWritesOnceAndProvesReadback(t *testing.T) {
 		wantError bool
 	}{
 		{name: "applied", writes: 1, readbacks: 1},
+		{name: "only the partial shortfall", writes: 1, readbacks: 1},
 		{name: "already available"},
 		{name: "uncertain response", writes: 1, wantError: true},
 		{name: "replaced volume", writes: 1, readbacks: 1, wantError: true},
@@ -86,6 +97,9 @@ func TestV1ScratchHeadroomWritesOnceAndProvesReadback(t *testing.T) {
 			f.v2Off = tc.name != "V2 enabled"
 			f.s = v1ReservationFixture(true)
 			f.storage = f.s.storageNodes[0]
+			if tc.name == "only the partial shortfall" {
+				valueObject(f.storage, "spec", "disks", "default-disk-fixture")["storageReserved"] = float64(31 * v1FixtureGiB)
+			}
 			if tc.name == "already available" {
 				valueObject(f.storage, "spec", "disks", "default-disk-fixture")["storageReserved"] = float64(29 * v1FixtureGiB)
 			}

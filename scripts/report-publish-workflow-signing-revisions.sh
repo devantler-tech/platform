@@ -1108,23 +1108,87 @@ report_publisher_at_ref() {
   body="$(gh_retry api --method GET "repos/devantler-tech/${repo}/contents/.github/workflows/$caller" \
     --raw-field "ref=${ref}" -H "Accept: application/vnd.github.raw")" || return 1
   [ -n "$body" ] || return 1
-  calls="$(printf '%s\n' "$body" | yq eval -o=json -I=0 '[.jobs[].uses // ""]' - 2>/dev/null)" || return 1
+  calls="$(printf '%s\n' "$body" | yq eval -o=json -I=0 '{"reusable": [.jobs[].uses // ""], "composite": [.jobs[].steps[]? | .uses // ""]}' - 2>/dev/null)" || return 1
   # Keep decoded calls intact: a second document, non-text value or embedded
   # control cannot turn into a valid prefix. Count unsupported/floating callers
   # before validating the sole identity; even identical jobs are separate callers.
-  printf '%s\n' "$calls" | jq -sre --arg workflow "$workflow" --arg family "$pattern" '
-    select(length == 1 and (.[0] | type == "array" and
-      all(.[]; type == "string" and (test("[[:cntrl:]]") | not)))) | .[0] |
-    [.[] | select(test("/[.]github/workflows/" + $workflow + "[.]yaml@"))] |
+  printf '%s\n' "$calls" | jq -sre --arg workflow "$workflow" --arg family "$pattern" --arg repo "$repo" '
     select(length == 1) | .[0] |
-    select(test("^devantler-tech/" + $family + "/[.]github/workflows/" + $workflow + "[.]yaml@[0-9a-f]{40}$"))
+    select(all((.reusable + .composite)[]; type == "string" and (test("[[:cntrl:]]") | not))) |
+    [.reusable[] | select(test("/[.]github/workflows/publish-(app|manifests)[.]yaml@"))] as $publishers |
+    [$publishers[] | select(test("/[.]github/workflows/" + $workflow + "[.]yaml@"))] as $reusable |
+    [.composite[] | select(test("/actions/publish-app@"))] as $composite |
+    if ($reusable | length) == 1 and ($composite | length) == 0 then
+      $reusable[0] | select(test("^devantler-tech/" + $family + "/[.]github/workflows/" + $workflow + "[.]yaml@[0-9a-f]{40}$"))
+    elif ($publishers | length) == 0 and ($composite | length) == 1 and $repo != ".github" then
+      $composite[0] | select(test("^devantler-tech/[.]github/actions/publish-app@[0-9a-f]{40}$")) | "own-release"
+    else empty end
   '
+}
+
+# The chart package and its historical bindings keep their old consumer name.
+# Current own-release certificates use the repository's current name.
+report_owned_release_workflow() {
+  local repo="$1" caller=cd.yaml
+  case "$repo" in
+    .github | '') return 1 ;;
+    business-site) caller=publish-runtime.yaml ;;
+    data-product-controller) repo=khoist ;;
+  esac
+  printf 'devantler-tech/%s/.github/workflows/%s\n' "$repo" "$caller"
+}
+
+report_current_publisher() {
+  local repo="$1" workflow="$2" branch="$3" current commit owned
+  current="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
+  if [ "$current" != own-release ]; then
+    printf '%s\n' "$current"
+    return
+  fi
+  commit="$(gh_retry api "repos/devantler-tech/$repo/commits/$branch" --jq .sha)" || return 1
+  is_sha "$commit" || return 1
+  [ "$(report_publisher_at_ref "$repo" "$workflow" "$commit")" = own-release ] || return 1
+  [ "$(gh_retry api "repos/devantler-tech/$repo/commits/$branch" --jq .sha)" = "$commit" ] || return 1
+  owned="$(report_owned_release_workflow "$repo")" || return 1
+  printf '%s@%s\n' "$owned" "$commit"
+}
+
+registry_digest_for_release() {
+  local repo="$1" tag="$2" package records
+  package="$(ghcr_package_for_repo "$repo")"
+  package="${package//\//%2F}"
+  records="$(gh_retry api --paginate --slurp "orgs/devantler-tech/packages/container/$package/versions?per_page=100")" || return 1
+  printf '%s\n' "$records" | jq -sre --arg tag "$(registry_tag_for_git_tag "$tag")" '
+    select(length == 1 and (.[0] | type == "array" and length > 0 and all(.[]; type == "array"))) |
+    [.[0][][] | select(any(.metadata.container.tags[]?; . == $tag)) | .name] |
+    select(length == 1) | .[0] | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))
+  '
+}
+
+report_release_signer() {
+  local repo="$1" workflow="$2" tag="$3" commit="$4" signing owned owner digest artifact
+  signing="$(report_publisher_at_ref "$repo" "$workflow" "$commit")" || return 1
+  if [ "$signing" != own-release ]; then
+    printf '%s\n' "$signing"
+    return
+  fi
+  [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || return 1
+  owned="$(report_owned_release_workflow "$repo")" || return 1
+  owner="${owned#devantler-tech/}"
+  owner="${owner%%/*}"
+  signing="$owned@refs/tags/$tag"
+  digest="$(registry_digest_for_release "$repo" "$tag")" || return 1
+  artifact="ghcr.io/devantler-tech/$(ghcr_package_for_repo "$repo")"
+  verify_release_artifact "https://github.com/$signing" "$artifact" "$digest" "$owner" "$tag" "$commit" || return 1
+  [ "$(tag_commit "$repo" "$tag")" = "$commit" ] || return 1
+  [ "$(registry_digest_for_release "$repo" "$tag")" = "$digest" ] || return 1
+  printf '%s\n' "$signing"
 }
 
 # Existing injected resolvers supply legacy SHAs. Fully qualified answers must
 # retain the exact supported repository/workflow identity, never a floating ref.
 report_publisher_identity() {
-  local answer="$1" workflow="$2" pattern
+  local answer="$1" workflow="$2" repo="${3:-}" role="${4:-}" pattern owned ref
   case "$workflow" in
     publish-manifests | publish-app) pattern='(actions|[.]github)' ;;
     *) return 1 ;;
@@ -1134,7 +1198,15 @@ report_publisher_identity() {
   elif [[ "$answer" =~ ^devantler-tech/${pattern}/[.]github/workflows/${workflow}[.]yaml@[0-9a-f]{40}$ ]]; then
     printf '%s\n' "$answer"
   else
-    return 1
+    owned="$(report_owned_release_workflow "$repo")" || return 1
+    [[ "$answer" == "$owned@"* ]] || return 1
+    ref="${answer#"$owned@"}"
+    case "$role" in
+      signing) [[ "$ref" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || return 1 ;;
+      current) is_sha "$ref" || return 1 ;;
+      *) return 1 ;;
+    esac
+    printf '%s\n' "$answer"
   fi
 }
 
@@ -1151,10 +1223,10 @@ default_resolver() {
   # Fail closed rather than fall back to the tag: an empty or malformed third field would
   # restore exactly the mutable-ref read this change exists to close.
   is_sha "${tag_sha:-}" || return 1
-  current="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
+  current="$(report_current_publisher "$repo" "$workflow" "$branch")" || return 1
   # The COMMIT, never `$tag`. `$tag` remains the human-facing name and is what the Actions
   # run query above was scoped to; it is not a stable ref to read file content at.
-  signing="$(report_publisher_at_ref "$repo" "$workflow" "$tag_sha")" || return 1
+  signing="$(report_release_signer "$repo" "$workflow" "$tag" "$tag_sha")" || return 1
   printf '%s\t%s\t%s\n' "$signing" "$current" "$origin"
 }
 
@@ -1168,7 +1240,7 @@ bound_publication_resolver() {
     canonical_publication_verify "$binding" || return 1
     branch="$(gh_retry api repos/devantler-tech/business-site --jq .default_branch)" || return 1
     plausible_ref "$branch" || return 1
-    current="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
+    current="$(report_current_publisher "$repo" "$workflow" "$branch")" || return 1
     printf '%s\t%s\tpublished-binding\n' "$(printf '%s\n' "$binding" | jq -r .publication.publisherIdentity)" "$current"
     return 0
   fi
@@ -1177,7 +1249,7 @@ bound_publication_resolver() {
   verify_bound_publication "$binding" || return 1
   branch="$(gh_retry api "repos/devantler-tech/$repo" --jq .default_branch)" || return 1
   plausible_ref "$branch" || return 1
-  current="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
+  current="$(report_current_publisher "$repo" "$workflow" "$branch")" || return 1
   tag="$(printf '%s\n' "$binding" | jq -r .gitTag)"
   source="$(printf '%s\n' "$binding" | jq -r .sourceSHA)"
   [ "$(tag_commit "$repo" "$tag")" = "$source" ] || return 1
@@ -1250,7 +1322,7 @@ main() {
 
   local resolver="${PUBLISH_REVISION_RESOLVER:-}"
   local repo workflow version _artifact answer signing current origin field field_count signing_identity current_identity
-  local diverged=0 unresolved=0 examined=0
+  local diverged=0 unresolved=0 examined=0 transitions=0 owned_workflow
   # Scratch for one consumer's refusal diagnostic. A file rather than a process
   # substitution so the capture works under a plain POSIX-ish shell, and so the
   # command substitution above still yields `effective_version`'s STDOUT and its exit
@@ -1323,8 +1395,8 @@ main() {
       *$'\n'*) field_count=0 ;;
     esac
     if [ "$field_count" -lt 2 ] || [ "$field_count" -gt 3 ] ||
-      ! signing_identity="$(report_publisher_identity "${signing:-}" "$workflow")" ||
-      ! current_identity="$(report_publisher_identity "${current:-}" "$workflow")"; then
+      ! signing_identity="$(report_publisher_identity "${signing:-}" "$workflow" "$repo" signing)" ||
+      ! current_identity="$(report_publisher_identity "${current:-}" "$workflow" "$repo" current)"; then
       unresolved=$((unresolved + 1))
       printf 'UNRESOLVED %-22s %-18s could not resolve both revisions to a commit SHA\n' \
         "$repo" "$workflow"
@@ -1358,7 +1430,15 @@ main() {
       signing="$signing_identity"
       current="$current_identity"
     fi
-    if [ "$signing_identity" = "$current_identity" ]; then
+    owned_workflow="$(report_owned_release_workflow "$repo")" || owned_workflow=''
+    if [[ -n "$owned_workflow" && "$signing_identity" == "$owned_workflow@"* && "$current_identity" == "$owned_workflow@"* ]]; then
+      printf 'OWN-RELEASE %-22s %-18s signed=%s current=%s (verified publication; not applied-revision evidence)\n' \
+        "$repo" "$workflow" "$signing_identity" "$current_identity"
+    elif [[ -n "$owned_workflow" && ("$signing_identity" == "$owned_workflow@"* || "$current_identity" == "$owned_workflow@"*) ]]; then
+      transitions=$((transitions + 1))
+      printf 'TRANSITION %-22s %-18s signed=%s current=%s%s\n' \
+        "$repo" "$workflow" "$signing_identity" "$current_identity" "$mark"
+    elif [ "$signing_identity" = "$current_identity" ]; then
       printf 'IN-SYNC    %-22s %-18s signed=%s pinned=%s%s\n' \
         "$repo" "$workflow" "$signing" "$current" "$mark"
       if is_sha "$signing"; then
@@ -1387,6 +1467,9 @@ main() {
   # left a human reading `0 diverged` as the last line of a run that had FAILED.
   printf '%d consumer(s) examined, %d diverged, %d unresolved.\n' \
     "$examined" "$diverged" "$unresolved"
+  if [ "$transitions" -gt 0 ]; then
+    printf '%d consumer(s) moving between shared and publisher-owned signing.\n' "$transitions"
+  fi
 
   if [ "$unresolved" -gt 0 ]; then
     printf '\nFAILED: %d consumer(s) could not be resolved. A consumer whose revisions cannot\n' "$unresolved"

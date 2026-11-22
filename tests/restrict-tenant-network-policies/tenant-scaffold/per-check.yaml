@@ -11,7 +11,7 @@ resources:
 variables: values.yaml
 userinfo: user-info.yaml
 results:
-  # A tenant generated from platform-tenant-template must be admissible on day
+  # A tenant generated from application-template must be admissible on day
   # one, under the tenant's own identity, by every rule that evaluates it (the
   # reserved-name rule matches only the generated names, so it has no row). The
   # sibling shell test asserts the exact pass count, so a rule that stopped

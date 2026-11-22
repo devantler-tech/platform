@@ -1741,6 +1741,22 @@ for mutation in \
 done
 pass 'the live report installs a pinned verifier before resolving bound publications'
 
+# The metadata API and cosign use separate authentication paths. The hosted job
+# must authenticate the registry client before cosign reads any signatures.
+if jq -e --arg actor '${{ github.actor }}' --arg token '${{ secrets.GITHUB_TOKEN }}' '
+    [.steps | to_entries[] | select((.value.run // "") | contains("./scripts/report-publish-workflow-signing-revisions.sh")) | .key] as $reports |
+    [.steps | to_entries[] | select(
+      ((.value.uses // "") | test("^docker/login-action@[0-9a-f]{40}$")) and
+      .value.with.registry == "ghcr.io" and .value.with.username == $actor and
+      .value.with.password == $token and .value.if == null and .value["continue-on-error"] != true
+    ) | .key] as $logins |
+    ($reports | length) == 1 and ($logins | length) == 1 and $logins[0] < $reports[0]
+  ' "$WORK/main-report-job.json" >/dev/null; then
+  pass 'the live report authenticates GHCR before verifying signatures'
+else
+  fail 'the live report lacks a pinned GHCR login before signature verification'
+fi
+
 # ---------------------------------------------------------------------------
 # 25. REGISTRY-ONLY HIGHER VERSIONS MUST NOT BE SILENTLY OUTRANKED. (#3331 review)
 #     Flux selects from registry tags. If the highest current version survives in GHCR

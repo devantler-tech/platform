@@ -49,6 +49,9 @@ spec:
   # cluster-policies/best-practices/validate-replica-floor.yaml), not a label.
   # The maxUnavailable: 1 PDB keeps the node drainable at one replica.
   values:
+    # Reviewed v0.16.0 release. Update the recovery guard with both image digests.
+    image:
+      tag: v0.16.0@sha256:6404a416718bd7aad943c67a25a7bb20d0558b43edfeab0bf167f013ca435882
     # 1 replica: the standby can never become ready (leader-gated :9090), so 2
     # only breaks the HelmRelease. The override stays available for the day the
     # upstream chart supports non-leader readiness (or leader-only Service
@@ -66,3 +69,39 @@ spec:
           matchLabels:
             app.kubernetes.io/name: plugin-barman-cloud
             app.kubernetes.io/instance: plugin-barman-cloud
+  postRenderStrategy: nohooks
+  postRenderers:
+    # Bind the sidecar image to the pod revision so recovery can verify the value
+    # loaded by the running operator even if the chart ConfigMap later changes.
+    - kustomize:
+        patches:
+          - target:
+              version: v1
+              kind: ConfigMap
+              name: plugin-barman-cloud-config
+            patch: |
+              - op: test
+                path: /data/SIDECAR_IMAGE
+                value: ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.16.0
+          - target:
+              group: apps
+              version: v1
+              kind: Deployment
+              name: plugin-barman-cloud
+            patch: |
+              - op: test
+                path: /spec/template/spec/containers/0/name
+                value: barman-cloud
+              - op: test
+                path: /spec/template/spec/containers/0/env/0
+                value:
+                  name: SIDECAR_IMAGE
+                  valueFrom:
+                    configMapKeyRef:
+                      name: plugin-barman-cloud-config
+                      key: SIDECAR_IMAGE
+              - op: replace
+                path: /spec/template/spec/containers/0/env/0
+                value:
+                  name: SIDECAR_IMAGE
+                  value: ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.16.0@sha256:c669259e20ed1e11fad821f735c396c19d929985aa05b9544b13ecc8b5a386d0
