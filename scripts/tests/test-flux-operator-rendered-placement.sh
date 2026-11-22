@@ -20,7 +20,7 @@ controller_helm="${CONTROLLER_HELM:-}"
 flux_render_ensure_renderer
 
 # Compare the complete native render. The one permitted difference is the
-# additional required hostname expression on the operator Deployment.
+# temporary required node affinity on the operator Deployment.
 placement_is_scoped() {
   jq -e --slurpfile baseline "$2" '
     def canonical: sort_by([.apiVersion,.kind,.metadata.namespace,.metadata.name]);
@@ -28,10 +28,12 @@ placement_is_scoped() {
     ($operators | length) == 1 and
     $operators[0].spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
       [{matchExpressions:[{key:"kubernetes.io/os",operator:"In",values:["linux"]},
-        {key:"kubernetes.io/hostname",operator:"NotIn",values:["prod-worker-3"]}]}] and
+        {key:"kubernetes.io/hostname",operator:"In",values:["prod-worker-1"]}]},
+       {matchExpressions:[{key:"kubernetes.io/os",operator:"In",values:["linux"]},
+        {key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v2"]}]}] and
     ((map(if .kind == "Deployment" and .metadata.name == "flux-operator" and .metadata.namespace == "flux-system"
-      then .spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions |=
-        map(select(.key != "kubernetes.io/hostname")) else . end) | canonical) == ($baseline[0] | canonical))
+      then .spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms =
+        [{matchExpressions:[{key:"kubernetes.io/os",operator:"In",values:["linux"]}]}] else . end) | canonical) == ($baseline[0] | canonical))
   ' "$1" >/dev/null
 }
 
@@ -110,7 +112,7 @@ for profile in prod local prod-enabled prod-disabled; do
     actual="$work/$mode.actual.json"
     baseline="$work/$mode.baseline.json"
     if [[ "$operator_placement_enabled" == true ]]; then
-      placement_is_scoped "$actual" "$baseline" || fail 'production must change only the required operator hostname exclusion'
+      placement_is_scoped "$actual" "$baseline" || fail 'production must change only the required operator placement'
       for mutation in \
         'map(if .kind == "Deployment" then del(.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution) else . end)' \
         'map(if .kind == "Deployment" then .spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms += [{matchExpressions:[{key:"kubernetes.io/os",operator:"In",values:["linux"]}]}] else . end)' \

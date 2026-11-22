@@ -23,9 +23,20 @@ patches:
                     - key: kubernetes.io/os
                       operator: In
                       values: [linux]
-            - op: add
-              path: /spec/template/spec/affinity/nodeAffinity/requiredDuringSchedulingIgnoredDuringExecution/nodeSelectorTerms/0/matchExpressions/-
+            - op: replace
+              path: /spec/template/spec/affinity/nodeAffinity/requiredDuringSchedulingIgnoredDuringExecution/nodeSelectorTerms
               value:
-                key: kubernetes.io/hostname
-                operator: NotIn
-                values: [prod-worker-3]
+                - matchExpressions:
+                    - key: kubernetes.io/os
+                      operator: In
+                      values: [linux]
+                    - key: kubernetes.io/hostname
+                      operator: In
+                      values: [prod-worker-1]
+                - matchExpressions:
+                    - key: kubernetes.io/os
+                      operator: In
+                      values: [linux]
+                    - key: storage.platform.devantler.tech/migration-pool
+                      operator: In
+                      values: [v2]
