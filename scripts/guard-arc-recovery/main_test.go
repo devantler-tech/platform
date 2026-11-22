@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -88,6 +89,54 @@ func TestRecoveryMetadataRefusalsReportOnlyTheHTTPStatus(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "private-") {
 				t.Fatal("metadata error exposed upstream response data")
+			}
+		})
+	}
+}
+
+func TestRecoveryMetadataSurvivesTransientThrottlingWithABoundedList(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("Accept") != metadataAccept ||
+			r.URL.Query().Get("limit") != "2" || r.URL.Query().Get("labelSelector") != "app=fixture" {
+			t.Error("metadata query lost its fixed read boundary")
+		}
+		if requests.Add(1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":null}`))
+	}))
+	defer server.Close()
+	start := time.Now()
+	if err := requireEmptyMetadata(t.Context(), metadataClient(), server.URL+"?labelSelector=app%3Dfixture"); err != nil {
+		t.Fatalf("a complete empty list after temporary throttling was refused: %v", err)
+	}
+	if requests.Load() != 2 || time.Since(start) < time.Second {
+		t.Fatal("the guard did not wait for the API's specified retry delay")
+	}
+}
+
+func TestRecoveryMetadataHoldsOnPersistentThrottling(t *testing.T) {
+	for _, tc := range []struct {
+		header string
+		want   int32
+	}{
+		{"0", 3},
+		{"60", 1},
+	} {
+		t.Run(tc.header, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Retry-After", tc.header)
+				w.WriteHeader(http.StatusTooManyRequests)
+			}))
+			defer server.Close()
+			err := requireEmptyMetadata(t.Context(), metadataClient(), server.URL)
+			if err == nil || !strings.Contains(err.Error(), "HTTP 429") || requests.Load() != tc.want {
+				t.Fatalf("got %d requests and %v, expected %d requests and a throttling refusal", requests.Load(), err, tc.want)
 			}
 		})
 	}
