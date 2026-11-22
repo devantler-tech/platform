@@ -36,14 +36,21 @@ the reference while following the steps below.
 
 ## 1. Create the tenant repository
 
-Create the repo from the template with **"Use this template"** (GitHub UI), or:
+Creating a repository from the template is not enabled yet: `application-template`
+becomes a GitHub template with
+[application-template#211](https://github.com/devantler-tech/application-template/issues/211),
+and both ways below work from then on.
+
+Create the repo from the template with **"Use this template"** (GitHub UI) and clone
+it, or create and clone it in one step:
 
 ```sh
 gh repo create devantler-tech/<tenant> \
-  --template devantler-tech/application-template --private
+  --template devantler-tech/application-template --private --clone
+cd <tenant>
 ```
 
-Then lay down its stack and the tenancy in the new repository with
+Then, in that checkout, lay down its stack and the tenancy with
 `scripts/scaffold.sh <go|dotnet|svelte|none> --tenancy <tenant>`.
 
 The template gives you the shared plumbing it keeps in sync (`cd.yaml`,
