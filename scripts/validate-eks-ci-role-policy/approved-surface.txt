@@ -62,7 +62,7 @@ iam.aws.m.upbound.io/v1beta1|User|aws|email-smtp 19ce46105be088b444658d4d594f605
 
 kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run ca8b01a51a943893bc0186bb542410a02e48e28c13eb994e8a3177608099479a
 
-kro.run/v1alpha1|Tenant|flux-system|business-site 01085cf85a1d822477c9826a17c80729ec711ab971400010bcf8de0da951ee75
+kro.run/v1alpha1|Tenant|flux-system|business-site 8686a277db5f08624af6db58b95ded0d50ecc6d1324e04f0af50850394379171
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps 6ab22c8a1703a8bfa1755b55c4ceccdf26b94af4ed510ba48251e673b95fefb9
 

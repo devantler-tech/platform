@@ -197,11 +197,7 @@ func (p *temporaryPreparation) beginUnused(ctx context.Context) error {
 	}
 	if p.retainsRaw() {
 		p.j.Schema = 3
-		err = p.verifyRetainedLayoutConfig(ctx, address, true)
-	} else {
-		err = p.desiredLayout(ctx, address)
-	}
-	if err != nil {
+	} else if err = p.desiredLayout(ctx, address); err != nil {
 		return err
 	}
 	eph, err := p.c.talosVolume(ctx, address, "EPHEMERAL")
@@ -212,6 +208,9 @@ func (p *temporaryPreparation) beginUnused(ctx context.Context) error {
 	if p.retainsRaw() {
 		receipt, err := p.observeRetainedPreparation(ctx, false, false)
 		if err != nil {
+			return err
+		}
+		if _, err = p.retainedProfile(ctx, address, receipt); err != nil {
 			return err
 		}
 		p.j.NativeEmptyDigest = temporaryStorageDigest(receipt)
