@@ -390,7 +390,6 @@ jobs:
               # and the reused pinned grant (#3918).
               - 'tests/longhorn-csi-plugin-baseline-context/**'
               - 'scripts/tests/test-longhorn-csi-plugin-baseline-context.sh'
-              - 'scripts/maintain-longhorn-clients/**'
               # The same retrofit for the default engine-image DaemonSet, its
               # fixtures and its own pinned grant (#3918).
               - 'tests/longhorn-engine-image-baseline-context/**'
@@ -1157,9 +1156,6 @@ jobs:
           go test -race ./scripts/guard-arc-recovery ./scripts/retire-arc-pool
           shellcheck scripts/retire-arc-pool.sh scripts/tests/test-retire-arc-pool.sh
           bash scripts/tests/test-retire-arc-pool.sh
-
-      - name: 💾 Validate protected Longhorn client maintenance
-        run: go test -race ./scripts/maintain-longhorn-clients
 
       - name: ⎈ Install checksum-verified native Helm
         shell: bash
@@ -4449,7 +4445,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
-      actions: read # read a prior run attempt status, to prove an interrupted Longhorn maintenance holder is dead (deploy-prod maintain-longhorn-clients)
+      actions: read # read a prior run attempt status, to prove an interrupted ARC retirement owner is dead (deploy-prod retire-arc-pool.sh)
       pull-requests: read # verify the same queue entry before production access
     # `true` only when the queue preflight refused this entry and the production
     # composite never ran; the heal below then has nothing to restore (#4937).
@@ -4609,7 +4605,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
-      actions: read # read a prior run attempt status, to prove an interrupted Longhorn maintenance holder is dead (deploy-prod maintain-longhorn-clients)
+      actions: read # read a prior run attempt status, to prove an interrupted ARC retirement owner is dead (deploy-prod retire-arc-pool.sh)
     steps:
       - name: 📑 Checkout main
         # Deploy the CURRENT tip of `main` (the last state that actually landed in
