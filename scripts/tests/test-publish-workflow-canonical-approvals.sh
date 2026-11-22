@@ -84,12 +84,14 @@ legacy_subject() { # <workflow> <ref>
 }
 # The consumer's own release workflow alternative (#6265), written independently of the
 # library under test: its current repository with dots escaped, on a strict semver tag.
-# The `.github` consumer, whose repository hosts the shared publishers, has none.
+# The `.github` consumer, whose repository hosts the shared publishers, gets only its
+# cd.yaml on a release tag (devantler-tech/.github#926), never any workflow file there.
 readonly OWN_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+readonly GITHUB_OWN='\.github/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 own_release_of() { # <consumer>
   local repository="$1"
   case "$1" in
-    .github) return 0 ;;
+    .github) printf '|%s' "$GITHUB_OWN"; return 0 ;;
     data-product-controller) repository=khoist ;;
   esac
   printf '|%s%s' "${repository//./\\.}" "$OWN_TAIL"
@@ -485,12 +487,23 @@ root="$(build_tree own-release-publisher-host)"
 write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
 write_consumer "$root" "$other_manifest_consumer" \
   "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
-expect_refusal 'the .github consumer accepts no own-release alternative' "$root" 'not exactly'
+expect_refusal "the .github consumer accepts no other repository's release workflow" "$root" 'not exactly'
+
+root="$(build_tree own-release-publisher-host-cd)"
+write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$other_manifest_consumer")"
+expect_pass "the .github consumer accepts exactly its cd.yaml on a release tag" "$root"
 
 root="$(build_tree own-release-publisher-host-none)"
 write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$other_manifest_consumer")"
-expect_pass 'the .github consumer keeps the plain two-family matcher' "$root"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+expect_refusal 'the .github consumer without its cd.yaml release workflow is refused' "$root" 'does not accept its own release workflow'
+
+root="$(build_tree own-release-publisher-host-any)"
+write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
+any_github="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+write_consumer "$root" "$other_manifest_consumer" "${any_github%')$'}|\\.github$OWN_TAIL)\$"
+expect_refusal 'the .github consumer accepting any of its workflows is refused' "$root" 'not exactly'
 
 # ── switch OFF: the canonical family has no pattern form to fall back to ──────────────────
 ENFORCE=0

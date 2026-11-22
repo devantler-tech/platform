@@ -70,9 +70,9 @@ readonly FAMILY_SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]
 # that repository's release tags match. It is fixed per consumer, never generated from an
 # observation, so the daily regeneration cannot move it. The `.github` consumer is the one
 # exception: its repository hosts the shared reusable publishers, and a tag of a reusable
-# workflow carries that repository's identity whoever calls it, so another consumer's
-# signature would verify for its source. It keeps the two-family form until its move gets
-# a narrower rule.
+# workflow carries that repository's identity whoever calls it, so the `[^/]+` form would let
+# another consumer's signature verify for its source. It gets the narrower GITHUB_OWN_RELEASE
+# instead: exactly `.github/.github/workflows/cd.yaml` on a release tag.
 readonly OWN_RELEASE_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 
 refuse() {
@@ -91,11 +91,22 @@ consumer_github_repository() {
   esac
 }
 
+# The `.github` consumer's own release workflow (devantler-tech/.github#926): exactly its
+# cd.yaml on a release tag, never any workflow file there. `.github` hosts the shared
+# reusable workflows, and a caller of a reusable workflow signs with that workflow's
+# identity, so `[^/]+\.ya?ml` would let any repository calling one of them sign for this
+# source. cd.yaml runs only on its own tag pushes, and devantler-tech/.github's CI refuses
+# a `workflow_call` trigger on it, so nothing else can sign as it.
+readonly GITHUB_OWN_RELEASE='\.github/\.github/workflows/cd\.yaml@'"${OWN_RELEASE_TAIL#*@}"
+
 # consumer_release_alternative <consumer> → the consumer's own-release alternative, without
-# its leading `|`, or nothing for the `.github` consumer (see OWN_RELEASE_TAIL).
+# its leading `|`: its repository with OWN_RELEASE_TAIL, or GITHUB_OWN_RELEASE for `.github`.
 consumer_release_alternative() {
   local repository
-  [ "$1" != '.github' ] || return 0
+  if [ "$1" = '.github' ]; then
+    printf '%s' "$GITHUB_OWN_RELEASE"
+    return 0
+  fi
   repository="$(consumer_github_repository "$1")"
   printf '%s%s' "${repository//./\\.}" "$OWN_RELEASE_TAIL"
 }
