@@ -210,6 +210,16 @@ if ! jq 'del(.items[0]) | .items[0].status.completionTimestamp = "2026-11-22T07:
   fail 'rebuild must reject backups that completed after the cutoff'
 fi
 
+vault_config="${root_dir}/k8s/bases/infrastructure/vault-config/job.yaml"
+yq -o=json -I=0 '.spec.template.spec.initContainers' "${vault_config}" |
+  jq -e 'map(select(.name == "fetch-snapshot" or .name == "vault-init")) |
+    length == 2 and all(.[];
+    ([.env[]? | select(.name == "DR_SNAPSHOT_NAME" or .name == "DR_SNAPSHOT_SHA256") |
+      [.name, .valueFrom.configMapKeyRef.name, .valueFrom.configMapKeyRef.key, .valueFrom.configMapKeyRef.optional]] | sort) ==
+    [["DR_SNAPSHOT_NAME", "dr-openbao-snapshot-selection", "name", true],
+     ["DR_SNAPSHOT_SHA256", "dr-openbao-snapshot-selection", "sha256", true]])' >/dev/null ||
+  fail 'both restore containers must consume the same exact snapshot selection'
+
 # Production and an unset setting must keep the source class until runtime
 # backup and restore validation explicitly opts into the disposable copy.
 production_backup_class="$(yq -er '.data.velero_backup_pvc_storage_class // "longhorn"' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" ||

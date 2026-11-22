@@ -10,7 +10,7 @@
 #   3. (restore=true) Velero resource restore from the newest Completed
 #      backup synced from R2
 #   4. (restore=true) OpenBao data recovery: fetch the newest pre-rebuild raft snapshot
-#      from the R2 openbao-snapshots/ mirror onto the vault-snapshots PVC,
+#      from the R2 openbao-snapshots/ mirror and bind its name and SHA-256,
 #      restore the pre-incident openbao-unseal Secret from the Velero backup,
 #      reset the fresh vault (scale down + delete data PVCs), and let the
 #      vault-config Job's automated snapshot-restore path bring the old vault
@@ -428,8 +428,7 @@ jobs:
                 type: RuntimeDefault
             volumes:
               - name: snapshots
-                persistentVolumeClaim:
-                  claimName: vault-snapshots
+                emptyDir: {}
               - name: r2-credentials
                 secret:
                   secretName: vault-snapshot-r2
@@ -519,22 +518,44 @@ jobs:
                       echo "ERROR: no pre-rebuild snapshots found in openbao-snapshots/."
                       exit 1
                     fi
-                    echo "Fetching $NEWEST..."
                     mc cp "backup/$R2_BUCKET/openbao-snapshots/$NEWEST" "/snapshots/$NEWEST"
-                    # The restore reads this file as openbao (uid 100, gid 1000), so it must
-                    # be group-readable. mc creates it owned by THIS pod's high uid, and the
-                    # group entry is the only path left — an explicit chmod rather than a
-                    # reliance on mc's umask, matching what the snapshot writers do.
-                    chmod 0640 "/snapshots/$NEWEST"
-                    ls -l /snapshots/
+                    test -s "/snapshots/$NEWEST"
+                    digest=$(sha256sum "/snapshots/$NEWEST" | awk '{print $1}')
+                    printf 'DR_SNAPSHOT_SELECTION=%s %s\n' "$NEWEST" "$digest"
           POD
           if ! kubectl -n openbao wait pod/dr-snapshot-fetch \
               --for=jsonpath='{.status.phase}'=Succeeded --timeout=10m; then
-            kubectl -n openbao logs pod/dr-snapshot-fetch || true
             echo "::error::Snapshot fetch from R2 failed."
             exit 1
           fi
-          kubectl -n openbao logs pod/dr-snapshot-fetch
+          if ! selection=$(kubectl -n openbao logs pod/dr-snapshot-fetch -c fetch --limit-bytes=65536 |
+            grep -E '^DR_SNAPSHOT_SELECTION=openbao-[0-9]{8}-[0-9]{6}\.snap [0-9a-f]{64}$') ||
+            [[ ! "$selection" =~ ^DR_SNAPSHOT_SELECTION=(openbao-[0-9]{8}-[0-9]{6}\.snap)\ ([0-9a-f]{64})$ ]]; then
+            echo "::error::The snapshot fetch did not report exactly one verified selection."
+            exit 1
+          fi
+          snapshot_name=${BASH_REMATCH[1]}
+          snapshot_sha=${BASH_REMATCH[2]}
+          if [[ "$snapshot_name" > "openbao-$snapshot_cutoff.snap" || "$snapshot_name" == "openbao-$snapshot_cutoff.snap" ]]; then
+            echo "::error::The selected snapshot did not precede the rebuild."
+            exit 1
+          fi
+          # Create the selection before resetting any vault data. The normal
+          # vault-config Job reads the exact immutable object into both
+          # snapshot init containers instead of rediscovering the newest file.
+          if ! selection_uid=$(jq -n --arg name "$snapshot_name" --arg sha "$snapshot_sha" '{
+            apiVersion:"v1",kind:"ConfigMap",
+            metadata:{name:"dr-openbao-snapshot-selection",namespace:"openbao"},
+            immutable:true,data:{name:$name,sha256:$sha}
+          }' | kubectl create -f - -o json |
+            jq -e --arg name "$snapshot_name" --arg sha "$snapshot_sha" '
+              select(.apiVersion=="v1" and .kind=="ConfigMap" and .metadata.name=="dr-openbao-snapshot-selection" and
+                     .metadata.namespace=="openbao" and .immutable==true and .data=={name:$name,sha256:$sha}) |
+              .metadata.uid | select(type=="string" and length>0)
+            ' -r); then
+            echo "::error::The exact snapshot selection was not created and verified."
+            exit 1
+          fi
           kubectl -n openbao delete pod dr-snapshot-fetch --ignore-not-found
           kubectl -n openbao delete configmap dr-r2-target --ignore-not-found
           echo "::endgroup::"
@@ -571,8 +592,14 @@ jobs:
               *) sleep 5 ;;
             esac
           done
-          if ! kubectl -n openbao get secret openbao-unseal >/dev/null 2>&1; then
-            echo "::error::openbao-unseal was not restored (restore phase: ${phase:-<none>}) — aborting before touching the data PVCs."
+          if [[ "$phase" != Completed && "$phase" != PartiallyFailed ]] ||
+            ! kubectl -n openbao get secret openbao-unseal -o json |
+              jq -e --arg restore "dr-openbao-secrets-${GITHUB_RUN_ID}" '
+                .metadata.labels["velero.io/restore-name"]==$restore and
+                (.data["unseal-key"] | type=="string" and length>0) and
+                (.data["root-token"] | type=="string" and length>0)
+              ' >/dev/null; then
+            echo "::error::Both original OpenBao keys must come from this restore before resetting the data PVCs."
             exit 1
           fi
           echo "::endgroup::"
@@ -594,6 +621,15 @@ jobs:
             sleep 10
           done
           kubectl -n openbao wait job/vault-config --for=condition=Complete --timeout=30m
+          if ! restored=$(kubectl -n openbao logs job/vault-config -c vault-init --limit-bytes=262144 |
+            grep -F "OPENBAO_DR_SNAPSHOT_RESTORED=") ||
+            [[ "$restored" != "OPENBAO_DR_SNAPSHOT_RESTORED=$snapshot_name $snapshot_sha" ]]; then
+            echo "::error::OpenBao did not report restoring the exact selected snapshot. Its selection is retained."
+            exit 1
+          fi
+          jq -n --arg uid "$selection_uid" '{
+            apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}
+          }' | kubectl delete --raw /api/v1/namespaces/openbao/configmaps/dr-openbao-snapshot-selection -f - >/dev/null
           echo "::endgroup::"
 
           echo "::group::Force ExternalSecrets + PushSecrets to resync against the restored vault"
