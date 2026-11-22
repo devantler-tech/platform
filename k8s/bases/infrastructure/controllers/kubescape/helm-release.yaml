@@ -344,6 +344,21 @@ spec:
     # scans against their limit despite spare node capacity. A 20:1 ratio gives
     # one core at the 50m floor without raising the idle request (#4389).
     kubevuln:
+      image:
+        # Chart 1.42.0 defaults kubevuln to v0.3.578, which embeds dependency
+        # and Go toolchain releases with published advisory fixes (#5553).
+        # v0.3.585 carries kubescape/kubevuln#1245, which moves them to their
+        # fixed releases. The multi-arch digest below verifies with Sigstore
+        # keyless signing from Kubescape's shared release workflow, run for
+        # kubescape/kubevuln at the v0.3.585 tag commit. The official Go
+        # auditor finds no remaining advisory with a published fix in source or
+        # in either shipped binary (the HTTP service and the SBOM scanner); the
+        # one record without any fix is retained as residual risk, not
+        # suppressed. The same tag serves the sbom-scanner sidecar. Syft,
+        # Grype and stereoscope are unchanged from v0.3.578, so the storage
+        # compatibility build above is unaffected. Drop this override once the
+        # chart's own default reaches a release that passes the same audit.
+        tag: "v0.3.585@sha256:3b8cc0dcff9e4ee09e5a93b339e76e3751ec923f082c1764b3ec3c1e452137ee"
       resources:
         requests:
           cpu: 50m
