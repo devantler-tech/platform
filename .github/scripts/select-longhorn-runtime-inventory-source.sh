@@ -55,7 +55,8 @@ checkout_git merge-base --is-ancestor "$original" "$current" ||
 checkout_git diff --quiet --no-ext-diff "$original" "$current" -- \
   .github/workflows/prepare-longhorn-v2-node.yaml \
   .github/scripts/select-longhorn-runtime-inventory-source.sh .github/scripts/setup-talosctl.sh .github/scripts/release-asset-download.sh \
-  scripts/verify-prod-recovery-source.sh scripts/use-prod-stable-api-endpoint.sh \
+  scripts/verify-prod-recovery-source.sh \
+  scripts/use-prod-stable-api-endpoint.sh \
   scripts/migrate-longhorn-v2 internal vendor go.mod go.sum go.work go.work.sum ||
   refuse 'the current reader or its protected workflow differs from the tested revision'
 checkout_git switch --quiet --detach "$current" || refuse 'cannot bind the runner checkout to current main'
