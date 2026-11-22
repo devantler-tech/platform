@@ -1,0 +1,40 @@
+# The unifi tenant's source: the deploy/ folder of devantler-tech/unifi, which
+# that repository's own cd.yaml publishes as a signed OCI artifact on every
+# release tag. It follows the newest stable release (ADR 0019,
+# devantler-tech/monorepo#5094), so a UniFi release reaches the cluster with no
+# Platform change.
+#
+# Trust is the signature, not a pin: the artifact must be keylessly signed by a
+# workflow directly in .github/workflows/ of devantler-tech/unifi on a strict
+# `v<semver>` release tag (ADR 0017). Release tags cannot be moved or deleted,
+# only the release process may create one, and the publish action signs only
+# tags whose commit is on unifi's main branch. Another repository, the shared
+# publisher, a branch or a non-release tag does not match. cosign's keyless
+# verification rejects multiple identity entries, so keep exactly one.
+#
+# Emergency pin: replace the range with one exact release (`semver: "1.2.3"`)
+# in a reviewed Platform change, and remove it once a fixed release exists. The
+# Kustomization's patches keep every live UniFi object whatever a release says
+# (flux-kustomization.yaml).
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: unifi
+  namespace: unifi
+  labels:
+    platform.devantler.tech/tenant-source: "true"
+spec:
+  interval: 1m
+  ref:
+    semver: ">=0.0.0"
+    # Stable releases only (`X.Y.Z`): a pre-release never reaches the network.
+    semverFilter: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+  # No secretRef: the package is public and holds no secrets (the UniFi API
+  # credentials come from OpenBao, see external-secret.yaml), so it is pulled
+  # anonymously.
+  url: oci://ghcr.io/devantler-tech/unifi/manifests
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/unifi/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'

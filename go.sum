@@ -70,8 +70,8 @@ github.com/containernetworking/cni v1.3.0 h1:v6EpN8RznAZj9765HhXQrtXgX+ECGebEYEm
 github.com/containernetworking/cni v1.3.0/go.mod h1:Bs8glZjjFfGPHMw6hQu82RUgEPNGEaBb9KS5KtNMnJ4=
 github.com/coroot/logparser v1.4.0 h1:/b+XnAh7kuKR1mVSekPCSPpKloWx6wJveHa0HDcXueY=
 github.com/coroot/logparser v1.4.0/go.mod h1:5mgr/LIFAEuhxLgnFTtEXVWKthT1l2ZTsPHF6oOGc/E=
-github.com/cosi-project/runtime v1.17.0 h1:e0CmblUE8cn/HexfBlwdWcDlaXUrf53Djsb7G0b59j0=
-github.com/cosi-project/runtime v1.17.0/go.mod h1:JiSn2h1RyCPR1CvCbw7O2puw7KeGBBchhZMlnNrO0M0=
+github.com/cosi-project/runtime v1.17.1 h1:N4yr9QbUPivm5joJR6mR7Jtd/uTAgsXpcsXKacPIA6k=
+github.com/cosi-project/runtime v1.17.1/go.mod h1:JiSn2h1RyCPR1CvCbw7O2puw7KeGBBchhZMlnNrO0M0=
 github.com/danieljoos/wincred v1.2.2 h1:774zMFJrqaeYCK2W57BgAem/MLi6mtSE47MB6BOJ0i0=
 github.com/danieljoos/wincred v1.2.2/go.mod h1:w7w4Utbrz8lqeMbDAK0lkNJUv5sAOkFi7nd/ogr0Uh8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

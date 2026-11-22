@@ -43,7 +43,7 @@ func publishMatcherSurfaceDocument(identity resourceIdentity, document map[strin
 	if !ok {
 		return document
 	}
-	projectedSubject, ok := projectPublishSubject(subject, workflow)
+	projectedSubject, ok := projectPublishSubjectFor(subject, workflow, spec["url"] == githubConfigURL)
 	if !ok {
 		return document
 	}
@@ -112,9 +112,18 @@ const (
 	publishSubjectHost     = `^https://github\.com/devantler-tech/`
 	legacyPublishFamily    = `actions/\.github/workflows/`
 	canonicalPublishFamily = `\.github/\.github/workflows/`
+	// ownReleaseTagRef is the strict OCI-semver release tag an own-release
+	// alternative signs on.
+	ownReleaseTagRef = `@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?`
 	// ownReleaseTail follows the repository of a consumer's own release workflow
 	// alternative (#6265): one workflow file on a strict OCI-semver release tag.
-	ownReleaseTail = `/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?`
+	ownReleaseTail = `/\.github/workflows/[^/]+\.ya?ml` + ownReleaseTagRef
+	// githubOwnRelease is the `.github` consumer's own release alternative
+	// (devantler-tech/.github#926): exactly its cd.yaml, never any workflow file
+	// there, because `.github` hosts the shared reusable workflows. Only the
+	// github-config source may carry it.
+	githubOwnRelease = `\.github/\.github/workflows/cd\.yaml` + ownReleaseTagRef
+	githubConfigURL  = "oci://ghcr.io/devantler-tech/github-config/manifests"
 )
 
 // ownReleaseRepository is one literal repository name: letters, digits, `_` and
@@ -125,7 +134,12 @@ var ownReleaseRepository = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9_-]|\\\.)*
 // two-family group and returns it with its leading `|`, kept as written. A group
 // without one is returned unchanged with an empty alternative; a malformed one
 // is not recognized.
-func cutOwnRelease(inner string) (string, string, bool) {
+func cutOwnRelease(inner string, githubConfig bool) (string, string, bool) {
+	if githubConfig {
+		if head, ok := strings.CutSuffix(inner, "|"+githubOwnRelease); ok {
+			return head, "|" + githubOwnRelease, true
+		}
+	}
 	head, ok := strings.CutSuffix(inner, ownReleaseTail)
 	if !ok {
 		return inner, "", true
@@ -144,6 +158,13 @@ func cutOwnRelease(inner string) (string, string, bool) {
 // removing or moving a canonical approval or the own-release repository always moves the
 // fingerprint, while the daily legacy regeneration inside it does not.
 func projectPublishSubject(subject, workflow string) (string, bool) {
+	return projectPublishSubjectFor(subject, workflow, false)
+}
+
+// projectPublishSubjectFor is projectPublishSubject for one source: githubConfig
+// is true only for the github-config source, the one subject that may also carry
+// githubOwnRelease as its own-release alternative.
+func projectPublishSubjectFor(subject, workflow string, githubConfig bool) (string, bool) {
 	legacy := legacyPublishFamily + workflow + `\.yaml@`
 	if rest, ok := strings.CutPrefix(subject, publishSubjectHost+legacy); ok {
 		ref, anchored := strings.CutSuffix(rest, "$")
@@ -163,7 +184,7 @@ func projectPublishSubject(subject, workflow string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	inner, own, ok := cutOwnRelease(inner)
+	inner, own, ok := cutOwnRelease(inner, githubConfig)
 	if !ok {
 		return "", false
 	}

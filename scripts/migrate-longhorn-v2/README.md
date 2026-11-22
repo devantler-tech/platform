@@ -1,5 +1,12 @@
 # Prepare Longhorn V2 workers
 
+First-attempt manual runs on main join the ordinary production queue before
+validation and keep that turn through the selected operation. Other events, refs
+and attempts use separate groups and keep their existing operation refusals.
+All boundary tests still run before production credentials
+are restored. The original dispatch source must remain current: the production
+lock does not lock Git refs, and a stale source still refuses the operation.
+
 `inventory-v1-runtime` is a protected, target-free read-only inventory. Its exact
 confirmation is `inventory-v1-runtime`, with empty `node` and `database`.
 It observes the complete runtime inventory twice between current-main checks.
@@ -204,13 +211,17 @@ storage activation and volume migration follow separately. Original storage repl
 the permanent workers throughout this preparation route.
 
 For the V2-born worker, use `prepare-retained-temporary-worker`,
-`temporary-v2-1` and `prepare-retained-longhorn-v2-temporary-v2-1`. The
-reviewed pool configuration must already declare the original raw volume,
-the distinct 144 GiB staging volume and a 40–44 GiB EPHEMERAL range. The
-protected operation verifies the original 96 GiB raw partition and STATE
-extents, drains the worker and closes the original mapper. It records reset
-intent only after complete native reads show the old configuration, volume
-status and partition holders cleared while the physical extents remain.
+`temporary-v2-1` and `prepare-retained-longhorn-v2-temporary-v2-1`.
+The protected operation verifies the original 96 GiB raw partition and STATE
+extents before draining. It accepts either the original profile with no
+staging declaration or the complete distinct 144 GiB staging profile and a
+40–44 GiB EPHEMERAL range. After the owned drain, it loads the reviewed
+staging profile without a reboot if needed. A partial profile or an
+unconfirmed write stops before the original mapper is closed. On resumption
+it reads back the layout and retained extents before proceeding.
+It records reset intent only after complete native reads show the old raw
+configuration, volume status and partition holders cleared while the physical
+extents remain.
 
 After the EPHEMERAL-only reset, the worker must report a new boot, a replaced
 encrypted EPHEMERAL partition and a separate encrypted staging partition.

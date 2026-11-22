@@ -124,7 +124,7 @@ require (
 	github.com/aws/smithy-go v1.28.8 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cloudflare/circl v1.6.4 // indirect
-	github.com/cosi-project/runtime v1.17.0
+	github.com/cosi-project/runtime v1.17.1
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
 	github.com/emersion/go-smtp v0.25.1
 	github.com/gertd/go-pluralize v0.2.1 // indirect

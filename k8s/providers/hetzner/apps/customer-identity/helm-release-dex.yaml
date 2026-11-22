@@ -87,11 +87,18 @@ spec:
           items:
             - key: ca.crt
               path: ca.crt
+      # The Devantler Tech theme (config-map-dex-theme.yaml).
+      - name: theme
+        configMap:
+          name: customer-dex-theme
     volumeMounts:
       - name: tmp
         mountPath: /tmp
       - name: db-ca
         mountPath: /db-ca
+        readOnly: true
+      - name: theme
+        mountPath: /srv/dex/web/themes/devantler-tech
         readOnly: true
     envVars:
       # Refuse to start with a broken connector instead of serving without it.
@@ -119,8 +126,13 @@ spec:
             key: client-secret
     config:
       issuer: https://login.devantler.tech
+      # The Devantler Tech theme, as on the platform Dex: the wordmark as the
+      # header, served from the cluster (config-map-dex-theme.yaml).
       frontend:
         issuer: Devantler Tech
+        dir: /srv/dex/web
+        theme: devantler-tech
+        logoURL: theme/logo.svg
       storage:
         type: postgres
         config:

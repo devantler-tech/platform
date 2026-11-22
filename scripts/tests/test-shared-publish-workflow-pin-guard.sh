@@ -866,6 +866,49 @@ assert_line_rejected "a consumer own release naming two repositories" "$(own_lin
 assert_line_rejected "a consumer own release on a branch" "$(own_line wedding-app "${OWN_BRANCH_TAIL}")" \
   family-own-branch 'where exactly two are expected'
 
+# THE .github CONSUMER'S OWN RELEASE (devantler-tech/.github#926). `.github` hosts the shared
+# reusable workflows, so it gets no `[^/]+` alternative: only its cd.yaml on a release tag,
+# and only in the github-config source.
+readonly GITHUB_CONFIG_PATH='k8s/bases/apps/github-config/oci-repository.yaml'
+readonly GITHUB_OWN='\.github/\.github/workflows/cd\.yaml@'"${OWN_TAIL#*@}"
+# github_config_line <repository-and-tail> — the github-config two-family subject followed by
+# one own-release alternative.
+github_config_line() {
+  printf '        subject: %s%sactions/\\.github/workflows/publish-manifests\\.yaml@%s|\\.github/\\.github/workflows/publish-manifests\\.yaml@%s|%s)$%s' \
+    "${Q}" "${FAMILY_OPEN}" "${CONCRETE_SHA}" "${CONCRETE_SHA_2}" "$1" "${Q}"
+}
+# github_config_case <accept|reject> <label> <line> <slug> [stderr-pattern] — the line in the
+# github-config source, listed where the real matcher list names it.
+github_config_case() {
+  local expect="$1" label="$2" line="$3" dir="${work_dir}/github-config-$4" pattern="${5:-}"
+  build_tree_line "${dir}" "${line}"
+  mkdir -p "${dir}/$(dirname "${GITHUB_CONFIG_PATH}")"
+  mv "${dir}/k8s/subject-1.yaml" "${dir}/${GITHUB_CONFIG_PATH}"
+  sed -i.bak "s|k8s/subject-1.yaml|${GITHUB_CONFIG_PATH}|" "${dir}/scripts/shared-publish-workflow-matchers.tsv"
+  rm -f "${dir}/scripts/shared-publish-workflow-matchers.tsv.bak"
+  if [ "${expect}" = accept ]; then
+    run_tree "${dir}" || fail "guard rejected ${label}: $(head -1 "${dir}/stderr")"
+    ok "accepts ${label}"
+    return
+  fi
+  if run_tree "${dir}"; then
+    fail "guard ACCEPTED ${label}"
+  fi
+  grep -q -- "${pattern}" "${dir}/stderr" ||
+    fail "guard rejected ${label} but not for the expected reason: $(head -1 "${dir}/stderr")"
+  ok "rejects ${label}"
+}
+github_config_case accept "the github-config source naming .github's cd.yaml on a release tag" \
+  "$(github_config_line "${GITHUB_OWN}")" own
+github_config_case reject "the github-config source naming any .github workflow on a release tag" \
+  "$(github_config_line "\\.github${OWN_TAIL}")" own-any 'does not name one literal repository'
+github_config_case reject "the github-config source naming .github's cd.yaml on a branch" \
+  "$(github_config_line '\.github/\.github/workflows/cd\.yaml@refs/heads/main')" own-branch 'where exactly two are expected'
+github_config_case reject "the github-config source naming .github's cd.yaml twice" \
+  "$(github_config_line "${GITHUB_OWN}|${GITHUB_OWN}")" own-twice 'where exactly two are expected'
+assert_line_rejected "another source naming .github's cd.yaml on a release tag" \
+  "$(own_line "${GITHUB_OWN%%/*}" "/${GITHUB_OWN#*/}")" family-own-github-elsewhere 'may accept the .github release workflow'
+
 # Discovery is independent of the subject pattern, and it has to see the canonical family
 # too: a canonical reference under a key the guard does not validate is reported, not
 # skipped, exactly as a legacy one is.
@@ -962,7 +1005,8 @@ fi
 readonly SHARED_TAG_RE='workflows/publish-(app|manifests)\\?\.yaml@[^'\''"]*refs/tags'
 : >"${work_dir}/leftover"
 while IFS= read -r hit; do
-  if [[ "${hit//"${OWN_TAIL}"/}" =~ ${SHARED_TAG_RE} ]]; then
+  hit="${hit//"${OWN_TAIL}"/}"
+  if [[ "${hit//"|${GITHUB_OWN}"/}" =~ ${SHARED_TAG_RE} ]]; then
     printf '%s\n' "${hit}" >>"${work_dir}/leftover"
   fi
 done < <(grep -rnE "${SHARED_TAG_RE}" --include='*.yaml' "${root_dir}" 2>/dev/null || true)
@@ -1003,6 +1047,10 @@ probe="\\.github/\\.github/workflows/publish-app\\.yaml@(${CONCRETE_SHA}|refs/ta
 [[ "${probe//"${OWN_TAIL}"/}" =~ ${SHARED_TAG_RE} ]] ||
   fail "removing the own-release tail hid a shared-publisher tag ref"
 ok "a shared-publisher tag ref beside an own-release alternative is still found"
+probe="\\.github/\\.github/workflows/publish-manifests\\.yaml@(${CONCRETE_SHA}|refs/tags/v1)|${GITHUB_OWN})\$"
+[[ "${probe//"|${GITHUB_OWN}"/}" =~ ${SHARED_TAG_RE} ]] ||
+  fail "removing the .github own-release alternative hid a shared-publisher tag ref"
+ok "a shared-publisher tag ref beside the .github own-release alternative is still found"
 
 # --- Wiring: the guard is actually reached, in all three workflows -----------
 #

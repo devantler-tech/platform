@@ -20,8 +20,23 @@ repository. Each page embeds the files it needs in its own ConfigMap:
 
 - Dex: [`dex-theme`](../k8s/bases/infrastructure/controllers/dex/config-map.yaml) holds
   `favicon.png` (the icon at 256 px) and `logo.svg` (the dark-background wordmark).
+- The customer Dex (login.devantler.tech):
+  [`customer-dex-theme`](../k8s/providers/hetzner/apps/customer-identity/config-map-dex-theme.yaml)
+  is a copy of `dex-theme` with only its name and namespace changed;
+  `scripts/tests/test-dex-theme-mount.sh` fails when the two differ.
 - Homepage: [`homepage-brand`](../k8s/bases/apps/homepage/config-map-brand.yaml) holds the icon at
   180, 192 and 512 px and as `icon.svg`.
+- Policy Reporter: [`policy-reporter-brand`](../k8s/bases/infrastructure/policy-reporter/config-map.yaml)
+  holds `logo.png` (the icon at 180 px) and `favicon.ico` (the icon at 32, 64 and 180 px). They
+  replace the UI's own files, which a running pod does not refresh, so a change also sets
+  `platform.devantler.tech/brand-sha256` in its HelmRelease to the new `logo.png`'s sha256.
+- The single sign-on proxy's error page (oauth2-proxy):
+  [`oauth2-proxy-templates`](../k8s/bases/infrastructure/controllers/oauth2-proxy/config-map.yaml)
+  holds `error.html`, which inlines the Dex `logo.svg` and Homepage's `icon.svg`, because the
+  proxy serves no files of its own. `scripts/oauth2-proxy-error-page` fails when either inlined
+  copy differs from its source, and when the template would not parse or render.
+  ![The sign-on proxy's 403 page](images/oauth2-proxy-error-page/error-403.png)
+  ![The sign-on proxy's 502 page](images/oauth2-proxy-error-page/error-502.png)
 - ZITADEL (accounts.devantler.tech and its emails):
   [`zitadel-branding`](../k8s/providers/hetzner/apps/customer-identity/config-map-branding.yaml)
   holds both wordmarks and the icon as PNG, because email clients do not show SVG. The setup

@@ -126,19 +126,44 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
 production_backup_class="$(yq -er '.data.velero_backup_pvc_storage_class // "longhorn"' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" ||
   fail 'the production backup storage setting could not be read'
 readonly production_backup_class
-for configured_class in '' "${production_backup_class}"; do
+production_wffc_backup_class="$(yq -er '.data.velero_backup_wffc_pvc_storage_class // "longhorn-wffc"' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" ||
+  fail 'the production WFFC backup storage setting could not be read'
+readonly production_wffc_backup_class
+
+# Both source classes occur in production CSI uploads. Exercise each switch on
+# its own as well as together; opting in one must not change the other class.
+for mode in unset production longhorn wffc both; do
   : >"${substitution_variables}"
-  if [[ -n "${configured_class}" ]]; then
-    printf 'velero_backup_pvc_storage_class\t%s\n' "${configured_class}" >"${substitution_variables}"
+  expected_longhorn='longhorn'
+  expected_wffc='longhorn-wffc'
+  case "${mode}" in
+    production)
+      printf 'velero_backup_pvc_storage_class\t%s\nvelero_backup_wffc_pvc_storage_class\t%s\n' \
+        "${production_backup_class}" "${production_wffc_backup_class}" >"${substitution_variables}"
+      ;;
+    longhorn | both)
+      printf 'velero_backup_pvc_storage_class\tlonghorn-backup\n' >>"${substitution_variables}"
+      expected_longhorn='longhorn-backup'
+      ;;
+  esac
+  if [[ "${mode}" == 'wffc' || "${mode}" == 'both' ]]; then
+    printf 'velero_backup_wffc_pvc_storage_class\tlonghorn-backup\n' >>"${substitution_variables}"
+    expected_wffc='longhorn-backup'
   fi
   flux_render_substitute "${substitution_variables}" "${rendered_controllers}" >"${rendered_effective}" ||
-    fail 'the default backup storage configuration did not substitute'
-  default_backup_class="$(yq -N -er '
+    fail "the ${mode} backup storage configuration did not substitute"
+  actual_longhorn="$(yq -N -er '
     select(.kind == "ConfigMap" and .metadata.namespace == "velero" and .metadata.name == "node-agent-config") |
-    .data["node-agent-config.json"] | from_json | .backupPVC.longhorn.storageClass
-  ' "${rendered_effective}")" || fail 'the default snapshot copy mapping is missing'
-  [[ "${default_backup_class}" == 'longhorn' ]] ||
-    fail "single-replica staging must be off by default; found ${default_backup_class}"
+    .data["node-agent-config.json"] | from_json | .backupPVC.longhorn.storageClass // "longhorn"
+  ' "${rendered_effective}")" || fail 'the Longhorn snapshot copy mapping is invalid'
+  actual_wffc="$(yq -N -er '
+    select(.kind == "ConfigMap" and .metadata.namespace == "velero" and .metadata.name == "node-agent-config") |
+    .data["node-agent-config.json"] | from_json | .backupPVC["longhorn-wffc"].storageClass // "longhorn-wffc"
+  ' "${rendered_effective}")" || fail 'the WFFC snapshot copy mapping is invalid'
+  [[ "${actual_longhorn}" == "${expected_longhorn}" ]] ||
+    fail "${mode}: Longhorn copies need ${expected_longhorn}; found ${actual_longhorn}"
+  [[ "${actual_wffc}" == "${expected_wffc}" ]] ||
+    fail "${mode}: WFFC copies need ${expected_wffc}; found ${actual_wffc}"
 done
 
 # Opt in through the same postBuild variable, then follow the effective mapping

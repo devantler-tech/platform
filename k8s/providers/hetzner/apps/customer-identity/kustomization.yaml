@@ -30,6 +30,7 @@ resources:
   - database-dex.yaml
   - external-secret-dex-portal-client.yaml
   - helm-repository-dex.yaml
+  - config-map-dex-theme.yaml
   - helm-release-dex.yaml
   - http-route-dex.yaml
   - cilium-network-policy.yaml
@@ -45,6 +46,8 @@ resources:
   - role.yaml
   - role-binding.yaml
   - secret-dex-zitadel-client.yaml
+  - secret-portal-zitadel-token.yaml
   - config-map-branding.yaml
   - push-secret-dex-zitadel-client.yaml
+  - push-secret-portal-zitadel-token.yaml
   - cron-job-setup.yaml

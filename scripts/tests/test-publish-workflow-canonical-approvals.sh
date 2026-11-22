@@ -84,12 +84,17 @@ legacy_subject() { # <workflow> <ref>
 }
 # The consumer's own release workflow alternative (#6265), written independently of the
 # library under test: its current repository with dots escaped, on a strict semver tag.
-# The `.github` consumer, whose repository hosts the shared publishers, has none.
+# The `.github` consumer, whose repository hosts the shared publishers, gets only its
+# cd.yaml on a release tag (devantler-tech/.github#926), never any workflow file there.
 readonly OWN_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+readonly GITHUB_OWN='\.github/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 own_release_of() { # <consumer>
   local repository="$1"
   case "$1" in
-    .github) return 0 ;;
+    .github)
+      printf '|%s' "$GITHUB_OWN"
+      return 0
+      ;;
     data-product-controller) repository=khoist ;;
   esac
   printf '|%s%s' "${repository//./\\.}" "$OWN_TAIL"
@@ -485,12 +490,23 @@ root="$(build_tree own-release-publisher-host)"
 write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
 write_consumer "$root" "$other_manifest_consumer" \
   "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
-expect_refusal 'the .github consumer accepts no own-release alternative' "$root" 'not exactly'
+expect_refusal "the .github consumer accepts no other repository's release workflow" "$root" 'not exactly'
+
+root="$(build_tree own-release-publisher-host-cd)"
+write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$other_manifest_consumer")"
+expect_pass "the .github consumer accepts exactly its cd.yaml on a release tag" "$root"
 
 root="$(build_tree own-release-publisher-host-none)"
 write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$other_manifest_consumer")"
-expect_pass 'the .github consumer keeps the plain two-family matcher' "$root"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+expect_refusal 'the .github consumer without its cd.yaml release workflow is refused' "$root" 'does not accept its own release workflow'
+
+root="$(build_tree own-release-publisher-host-any)"
+write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
+any_github="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+write_consumer "$root" "$other_manifest_consumer" "${any_github%')$'}|\\.github$OWN_TAIL)\$"
+expect_refusal 'the .github consumer accepting any of its workflows is refused' "$root" 'not exactly'
 
 # ── switch OFF: the canonical family has no pattern form to fall back to ──────────────────
 ENFORCE=0
@@ -835,8 +851,9 @@ reject	https://token.actions.githubusercontent.com	https://github.com/devantler-
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@e6db1a4ed5b23ce6f69e755deeddd6649313e9dc
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@1a0eb6f18b88a7816b91cbf692b8ad8ea9a08123
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@933b53600c15fe7a67189756307cb19e23090c99
-accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78
 accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@f33622708f9f25a32acb46cc419007e18a3223b3
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@d70d50665465117f01104313e53057374a96a1a3
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0966f4b015e85ef14be37411d424a7028a858550
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0f390329b590404c02565b27a263ee841fa02bce
@@ -844,16 +861,16 @@ reject	https://token.actions.githubusercontent.com	https://github.com/devantler-
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d
 accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@1d726483facb9340655489913f609082677be8f5
 accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
-reject	https://another-issuer.invalid	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78
-reject	https://tokenXactionsXgithubusercontentXcom	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78
-reject	https://token.actions.githubusercontent.com	https://github.com/another-org/.github/.github/workflows/publish-manifests.yaml@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/xgithub/.github/workflows/publish-manifests.yaml@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78
+reject	https://another-issuer.invalid	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@f33622708f9f25a32acb46cc419007e18a3223b3
+reject	https://tokenXactionsXgithubusercontentXcom	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@f33622708f9f25a32acb46cc419007e18a3223b3
+reject	https://token.actions.githubusercontent.com	https://github.com/another-org/.github/.github/workflows/publish-manifests.yaml@f33622708f9f25a32acb46cc419007e18a3223b3
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/xgithub/.github/workflows/publish-manifests.yaml@f33622708f9f25a32acb46cc419007e18a3223b3
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@f33622708f9f25a32acb46cc419007e18a3223b3
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@v12.0.1
 reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@main
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@2666bae
-reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@2666baeaf1384d3c2d918e19692b8a6d9fb6fd78-extra
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@f336227
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@f33622708f9f25a32acb46cc419007e18a3223b3-extra
 IDENTITIES
 
 aws_subject="$(yq -er '.spec.verify.matchOIDCIdentity[0].subject' "$REPO_ROOT/k8s/providers/hetzner/apps/aws/oci-repository.yaml")"
