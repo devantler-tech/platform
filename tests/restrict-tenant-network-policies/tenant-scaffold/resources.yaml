@@ -1,5 +1,5 @@
 ---
-# The day-one CiliumNetworkPolicy devantler-tech/platform-tenant-template ships
+# The day-one CiliumNetworkPolicy devantler-tech/application-template ships
 # (deploy/networkpolicy.yaml), with its `app` placeholder renamed the way the
 # template's rename script renames it: the tenant name, which on this platform
 # is also the tenant's namespace. Keep it byte-for-byte in step with the

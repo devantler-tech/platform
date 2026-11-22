@@ -18,8 +18,8 @@ runs it in a dedicated, locked-down namespace.
 There are two halves to onboarding, in two repos:
 
 1. **The tenant repo** — created from the
-   [`platform-tenant-template`](https://github.com/devantler-tech/platform-tenant-template),
-   which ships the shared, framework-agnostic CI/CD plumbing and keeps it current
+   [`application-template`](https://github.com/devantler-tech/application-template)
+   with platform tenancy, which ships the shared CI/CD plumbing and keeps it current
    via [template-sync](https://github.com/AndreasAugustin/actions-template-sync).
 2. **The platform registration** — a small directory in *this* repo under
    `k8s/bases/apps/<tenant>/` that grants the tenant a namespace, identity, RBAC,
@@ -40,8 +40,11 @@ Create the repo from the template with **"Use this template"** (GitHub UI), or:
 
 ```sh
 gh repo create devantler-tech/<tenant> \
-  --template devantler-tech/platform-tenant-template --private
+  --template devantler-tech/application-template --private
 ```
+
+Then lay down its stack and the tenancy in the new repository with
+`scripts/scaffold.sh <go|dotnet|svelte|none> --tenancy <tenant>`.
 
 The template gives you the shared plumbing it keeps in sync (`cd.yaml`,
 `release.yaml`, `template-sync.yaml`, `CLAUDE.md`, `zizmor.yml`) plus scaffolding
