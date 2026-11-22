@@ -66,7 +66,7 @@ func runtimeObservationFixture(t *testing.T, fault string) (client, map[string]i
 		if program == "git" {
 			reads["source"]++
 			sha := strings.Repeat("a", 40)
-			if fault == "source changed" && reads["source"] > 1 {
+			if (fault == "source changed" || fault == "source changed during restart") && reads["source"] > 1 {
 				sha = strings.Repeat("b", 40)
 			}
 			return []byte(sha + "\trefs/heads/main\n"), nil
@@ -134,17 +134,18 @@ func runtimeObservationFixture(t *testing.T, fault string) (client, map[string]i
 			}
 			runtimeOverlapFixtureFault(index, item, fault)
 		}
-		if fault == "epoch changed" && index == 1 && reads[path] > 1 {
+		restarting := fault == "pod restarted" || fault == "source changed during restart"
+		if index == 1 && (fault == "epoch changed" && reads[path]%2 == 0 || restarting && reads[path] > 1) {
 			value(item, "status", "containerStatuses").([]any)[0].(object)["containerID"] = "containerd://" + strings.Repeat("b", 64)
 		}
 		if fault == "allocation changed" && index == 1 {
 			memory := "128Mi"
-			if reads[path] > 1 {
+			if reads[path]%2 == 0 {
 				memory = "192Mi"
 			}
 			value(item, "status").(object)["allocatedResources"] = object{"memory": memory}
 		}
-		if fault == "UID changed" && index == 3 && reads[path] > 1 {
+		if fault == "UID changed" && index == 3 && reads[path]%2 == 0 {
 			value(item, "metadata").(object)["uid"] = "99999999-9999-4999-8999-999999999999"
 		}
 		if fault == "missing identity" {
@@ -211,13 +212,40 @@ func TestRuntimeObservationBracketsEveryInventoryAndRemainsReadOnly(t *testing.T
 	}
 }
 
+func TestRuntimeObservationTakesAFreshPairAfterAPodRestart(t *testing.T) {
+	c, reads := runtimeObservationFixture(t, "pod restarted")
+	got, err := observeRuntimeInventory(t.Context(), c, strings.Repeat("a", 40))
+	if err != nil || len(got.EpochSHA) != 64 || reads["source"] != 4 {
+		t.Fatalf("a fresh stable inventory pair was not accepted: %+v %v", got, err)
+	}
+	for _, path := range runtimeFixturePaths {
+		if reads[path] != 4 {
+			t.Errorf("expected two fresh pairs for %s, got %d reads", path, reads[path])
+		}
+	}
+}
+
 func TestRuntimeObservationRefusesAmbiguityAndDriftWithoutLeakingReadErrors(t *testing.T) {
-	for _, fault := range []string{"source changed", "epoch changed", "allocation changed", "UID changed", "missing identity", "partial inventory", "wrong API", "duplicate identity", "read failed"} {
+	for _, fault := range []string{"source changed", "source changed during restart", "epoch changed", "allocation changed", "UID changed", "missing identity", "partial inventory", "wrong API", "duplicate identity", "read failed"} {
 		t.Run(fault, func(t *testing.T) {
-			c, _ := runtimeObservationFixture(t, fault)
+			c, reads := runtimeObservationFixture(t, fault)
 			got, err := observeRuntimeInventory(t.Context(), c, strings.Repeat("a", 40))
 			if err == nil || got.EpochSHA != "" || strings.Contains(err.Error(), "private-runtime-read-canary") {
 				t.Fatal("changed or incomplete inventory produced a witness or disclosed a native error")
+			}
+			switch fault {
+			case "epoch changed", "allocation changed", "UID changed":
+				if reads["source"] != 2*runtimeInventoryAttempts || !strings.Contains(err.Error(), "phase=inventory-unstable") {
+					t.Fatal("continued inventory drift did not stop at the retry limit")
+				}
+			case "source changed during restart":
+				if reads["source"] != 2 || !strings.Contains(err.Error(), "phase=source-after") {
+					t.Fatal("a source change must stop the inventory before retrying")
+				}
+			case "read failed":
+				if reads["source"] != 1 || reads[runtimeFixturePaths[0]] != 1 {
+					t.Fatal("an incomplete native observation must stop without retrying")
+				}
 			}
 		})
 	}
