@@ -1,0 +1,22 @@
+FROM debian:trixie-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392
+
+# Stream the mailbox without a second full archive. The upstream program and
+# licence are checksum-pinned to imapsync 2.314 at its reviewed source revision.
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    ca-certificates libauthen-ntlm-perl libcrypt-openssl-pkcs12-perl \
+    libcrypt-openssl-rsa-perl libdata-uniqid-perl libdigest-hmac-perl \
+    libencode-imaputf7-perl libfile-copy-recursive-perl libfile-tail-perl \
+    libio-compress-perl libio-socket-ssl-perl libio-tee-perl libjson-webtoken-perl \
+    libmail-imapclient-perl libreadonly-perl libregexp-common-perl \
+    libsys-meminfo-perl libterm-readkey-perl libtest-deep-perl \
+    libtest-mockobject-perl libtest-pod-perl libunicode-string-perl liburi-perl \
+    libwww-perl procps && rm -rf /var/lib/apt/lists/*
+COPY --chmod=0555 imapsync /usr/local/bin/imapsync
+COPY --chmod=0444 LICENSE /usr/local/share/licenses/imapsync/LICENSE
+COPY --chmod=0555 private-mail-bootstrap /usr/local/bin/private-mail-bootstrap
+RUN test "$(imapsync --version)" = 2.314
+USER 2000:2000
+ENV HOME=/tmp
+WORKDIR /tmp
+HEALTHCHECK NONE
+ENTRYPOINT ["/usr/local/bin/private-mail-bootstrap", "history"]

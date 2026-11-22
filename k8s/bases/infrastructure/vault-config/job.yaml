@@ -1312,6 +1312,43 @@ spec:
               # --- 5. Create auth roles ---
               echo "Writing Kubernetes auth roles..."
 
+              # Collector environments have separate mailbox/company credentials.
+              # Neither identity can read the other's entry or acquire a default policy.
+              configure_bookkeeper_secrets() {
+                for collector_environment in prod dev; do
+                  collector_namespace=bookkeeper
+                  if [ "$collector_environment" = dev ]; then
+                    collector_namespace=bookkeeper-dev
+                  fi
+                  bao policy write "app-bookkeeper-$collector_environment-readonly" - <<BOOKKEEPER_POLICY
+              {
+                "path": {
+                  "secret/data/apps/bookkeeper/$collector_environment": {
+                    "capabilities": ["read"]
+                  },
+                  "auth/token/lookup-self": {
+                    "capabilities": ["read"]
+                  },
+                  "auth/token/revoke-self": {
+                    "capabilities": ["update"]
+                  }
+                }
+              }
+              BOOKKEEPER_POLICY
+                  bao write "auth/kubernetes/role/bookkeeper-$collector_environment" - <<BOOKKEEPER_ROLE
+              {
+                "bound_service_account_names": ["bookkeeper-secret-reader"],
+                "bound_service_account_namespaces": ["$collector_namespace"],
+                "token_policies": ["app-bookkeeper-$collector_environment-readonly"],
+                "token_no_default_policy": true,
+                "token_ttl": 3600,
+                "token_max_ttl": 3600
+              }
+              BOOKKEEPER_ROLE
+                done
+              }
+              configure_bookkeeper_secrets
+
               # ESO needs broad read access for ExternalSecrets + write for PushSecrets.
               # This role is bound to the ESO controller's own SA via the
               # `openbao` ClusterSecretStore and covers KV-engine reads only.
