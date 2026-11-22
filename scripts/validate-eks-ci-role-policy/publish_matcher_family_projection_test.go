@@ -229,3 +229,49 @@ func TestProjectPublishSubjectKeepsTheOwnReleaseAlternative(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectPublishSubjectKeepsTheGitHubConfigOwnRelease proves the `.github` consumer's
+// own release alternative (devantler-tech/.github#926): exactly `.github`'s cd.yaml on a
+// release tag. The github-config source keeps it in the fingerprint as written. No other
+// source may carry it, and `.github`'s generic any-workflow form stays refused, because
+// `.github` hosts the shared reusable workflows.
+func TestProjectPublishSubjectKeepsTheGitHubConfigOwnRelease(t *testing.T) {
+	a, b, k := strings.Repeat("1", 40), strings.Repeat("2", 40), strings.Repeat("6", 40)
+	const host = `^https://github\.com/devantler-tech/`
+	legacy := `actions/\.github/workflows/publish-manifests\.yaml@`
+	canonical := `|\.github/\.github/workflows/publish-manifests\.yaml@`
+	subject := func(ref, own string) string { return host + "(" + legacy + ref + canonical + k + own + ")$" }
+
+	baseline, ok := projectPublishSubjectFor(subject(a, "|"+githubOwnRelease), "publish-manifests", true)
+	if !ok {
+		t.Fatal("the github-config own-release subject was not recognised")
+	}
+	if !strings.HasSuffix(baseline, "|"+githubOwnRelease+")$") {
+		t.Fatalf("the .github own-release alternative was not kept as written: %s", baseline)
+	}
+	if projected, _ := projectPublishSubjectFor(subject("("+a+"|"+b+")", "|"+githubOwnRelease), "publish-manifests", true); projected != baseline {
+		t.Error("the legacy signer set inside the github-config matcher moved the approval fingerprint")
+	}
+	if projected, _ := projectPublishSubjectFor(subject(a, ""), "publish-manifests", true); projected == baseline {
+		t.Error("removing the .github own-release alternative did not move the approval fingerprint")
+	}
+
+	for name, input := range map[string]string{
+		"another source with the .github release": subject(a, "|"+githubOwnRelease),
+	} {
+		if projected, ok := projectPublishSubject(input, "publish-manifests"); ok {
+			t.Errorf("%s was projected to %q", name, projected)
+		}
+	}
+	for name, input := range map[string]string{
+		"any .github workflow":  subject(a, `|\.github`+ownReleaseTail),
+		"another .github file":  subject(a, `|\.github/\.github/workflows/publish-manifests\.yaml`+ownReleaseTagRef),
+		"a .github branch ref":  subject(a, `|\.github/\.github/workflows/cd\.yaml@refs/heads/main`),
+		"cd.yaml in a group":    subject(a, `|\.github/\.github/workflows/(cd|ci)\.yaml`+ownReleaseTagRef),
+		"written before others": host + "(" + legacy + a + "|" + githubOwnRelease + canonical + k + ")$",
+	} {
+		if projected, ok := projectPublishSubjectFor(input, "publish-manifests", true); ok {
+			t.Errorf("%s was projected to %q", name, projected)
+		}
+	}
+}
