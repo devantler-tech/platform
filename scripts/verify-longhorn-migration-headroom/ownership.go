@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,9 +11,6 @@ import (
 )
 
 func writeAccountOwnership(ctx context.Context, client *http.Client) error {
-	if !authorizeAccountCensus(os.Getenv) || os.Getenv("PROD_OPERATION") != ownershipConfirmation {
-		return errors.New("requires a confirmed first attempt on main")
-	}
 	servers, nodes, err := readStableAccount(ctx, client, os.Getenv("HCLOUD_TOKEN"), readNativeNodes)
 	if err != nil {
 		return err

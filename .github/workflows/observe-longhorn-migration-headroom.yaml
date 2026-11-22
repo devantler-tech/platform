@@ -38,6 +38,6 @@ jobs:
       operation: ${{ inputs.operation }}
       confirm: ${{ inputs.confirm }}
       program: scripts/verify-longhorn-migration-headroom
-      args: ${{ inputs.operation == 'observe-longhorn-provider-ownership' && 'account-ownership' || inputs.operation == 'observe-longhorn-provider-account' && 'account-census' || 'before-publish' }}
+      args: ${{ inputs.operation == 'observe-longhorn-migration-headroom' && 'before-publish' || 'account-census' }}
       hcloud-token: true
       timeout-minutes: 10

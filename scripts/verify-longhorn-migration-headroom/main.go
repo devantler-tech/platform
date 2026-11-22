@@ -209,7 +209,7 @@ func staticOwnershipFailure(s server, n node, role, field string) error {
 }
 
 func main() {
-	if len(os.Args) != 2 || !slices.Contains([]string{"before-publish", "before-update", "after-update", "account-census", "account-ownership"}, os.Args[1]) ||
+	if len(os.Args) != 2 || !slices.Contains([]string{"before-publish", "before-update", "after-update", "account-census"}, os.Args[1]) ||
 		os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" {
 		fmt.Fprintln(os.Stderr, "HOLD: migration headroom requires a protected production deployment")
 		os.Exit(1)
@@ -217,17 +217,17 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 15 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
-	if os.Args[1] == "account-ownership" {
-		if err := writeAccountOwnership(ctx, client); err != nil {
-			fmt.Fprintf(os.Stderr, "HOLD: provider ownership observation: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
 	if os.Args[1] == "account-census" {
-		if !authorizeAccountCensus(os.Getenv) || os.Getenv("PROD_OPERATION") != censusConfirmation {
+		if !authorizeAccountCensus(os.Getenv) {
 			fmt.Fprintln(os.Stderr, "HOLD: provider account reconciliation requires a confirmed first attempt on main")
 			os.Exit(1)
+		}
+		if os.Getenv("PROD_OPERATION") == ownershipConfirmation {
+			if err := writeAccountOwnership(ctx, client); err != nil {
+				fmt.Fprintf(os.Stderr, "HOLD: provider ownership observation: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
 		result, err := observeAccountCensus(ctx, client, os.Getenv("HCLOUD_TOKEN"), readNativeNodes)
 		if err != nil {
