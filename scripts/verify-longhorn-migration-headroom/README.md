@@ -27,6 +27,13 @@ unmatched server based on provider labels. Use a separate, reviewed ownership
 and cleanup procedure for any provider write. The normal headroom gate still
 requires a reserved builder slot.
 
+If the census cannot identify an unmatched server or reports a control-plane
+index mismatch, confirm `observe-longhorn-provider-ownership`. The same
+stable reads produce a small locator for the operator, containing only the
+unmatched server identity and mismatched control-plane indexes. The workflow
+encrypts that output for the maintainer before publishing its logs. A locator
+helps find the affected records in Hetzner. It grants no cleanup or admission.
+
 A stable account can remain held by a joined node's ownership metadata. Its
 failure report includes the provider-only candidate's fixed label classification,
 with ownership and headroom explicitly unverified. The operation still fails and

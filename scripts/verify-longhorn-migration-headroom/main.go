@@ -222,6 +222,13 @@ func main() {
 			fmt.Fprintln(os.Stderr, "HOLD: provider account reconciliation requires a confirmed first attempt on main")
 			os.Exit(1)
 		}
+		if os.Getenv("PROD_OPERATION") == ownershipConfirmation {
+			if err := writeAccountOwnership(ctx, client); err != nil {
+				fmt.Fprintf(os.Stderr, "HOLD: provider ownership observation: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		result, err := observeAccountCensus(ctx, client, os.Getenv("HCLOUD_TOKEN"), readNativeNodes)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "HOLD: provider account reconciliation: %v\n", err)
