@@ -44,20 +44,31 @@ gh_retry() {
     return
   fi
   case "$args" in
-    *repos/devantler-tech/wedding-app/commits/main*) printf '%s\n' "$MAIN_COMMIT"; return ;;
-    *repos/devantler-tech/wedding-app/commits/v1.0.0*) printf '%s\n' "$COMMIT"; return ;;
-    *repos/devantler-tech/business-site/commits/main*) printf '%s\n' "$MAIN_COMMIT"; return ;;
+    *repos/devantler-tech/wedding-app/commits/main*)
+      printf '%s\n' "$MAIN_COMMIT"
+      return
+      ;;
+    *repos/devantler-tech/wedding-app/commits/v1.0.0*)
+      printf '%s\n' "$COMMIT"
+      return
+      ;;
+    *repos/devantler-tech/business-site/commits/main*)
+      printf '%s\n' "$MAIN_COMMIT"
+      return
+      ;;
     *repos/devantler-tech/business-site/contents/.github/workflows/publish-runtime.yaml*)
       printf '%s\n' 'jobs:' '  publish:' '    steps:' \
         "      - uses: devantler-tech/.github/actions/publish-app@$SHA"
-      return ;;
+      return
+      ;;
     *orgs/devantler-tech/packages/container/wedding-app%2Fmanifests/versions*)
       local selected_digest="$DIGEST"
       if [[ "$fixture_case" == own-release-moved && -f "$WORK/verified-digest" ]]; then
         selected_digest='sha256:6666666666666666666666666666666666666666666666666666666666666666'
       fi
       printf '[[{"name":"%s","metadata":{"container":{"tags":["1.0.0"]}}}]]\n' "$selected_digest"
-      return ;;
+      return
+      ;;
   esac
   [[ "$args" == *'contents/.github/workflows/cd.yaml'* ]] || return 1
   case "$args" in
@@ -77,7 +88,8 @@ gh_retry() {
           if [[ "$fixture_case" == own-release-mixed ]]; then
             printf '%s\n' "  shared: {uses: devantler-tech/.github/.github/workflows/publish-app.yaml@$SHA}"
           fi
-          return ;;
+          return
+          ;;
       esac
       ;;
     *ascoachingogvaner* | *data-product-controller*) workflow=publish-app ;;

@@ -1434,7 +1434,7 @@ main() {
     if [[ -n "$owned_workflow" && "$signing_identity" == "$owned_workflow@"* && "$current_identity" == "$owned_workflow@"* ]]; then
       printf 'OWN-RELEASE %-22s %-18s signed=%s current=%s (verified publication; not applied-revision evidence)\n' \
         "$repo" "$workflow" "$signing_identity" "$current_identity"
-    elif [[ -n "$owned_workflow" && ( "$signing_identity" == "$owned_workflow@"* || "$current_identity" == "$owned_workflow@"* ) ]]; then
+    elif [[ -n "$owned_workflow" && ("$signing_identity" == "$owned_workflow@"* || "$current_identity" == "$owned_workflow@"*) ]]; then
       transitions=$((transitions + 1))
       printf 'TRANSITION %-22s %-18s signed=%s current=%s%s\n' \
         "$repo" "$workflow" "$signing_identity" "$current_identity" "$mark"
