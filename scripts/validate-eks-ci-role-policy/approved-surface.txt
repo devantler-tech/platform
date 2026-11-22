@@ -178,7 +178,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|platform-health d314a9b
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config dc10cfc1ffeb139e69a5ac205f9bce35628dec215fe892e1871145f333d363b2
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi e3b3caea1b9c5a3fc994d9f68c9609d7f77843f24dae91c567e4dd7b5051868a
+kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi fe4d9283bb7e3cfa6493ffead5a95aaf275a0ca5ac91390bc2920bfd2446ec94
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 7ee82dc4494f585162e66b074d47a5e3e4427d85745ea7d68107a09d47798b3e
 
@@ -424,8 +424,6 @@ rbac.authorization.k8s.io/v1|Role|vertical-pod-autoscaler|vpa-leader-election 5b
 
 rbac.authorization.k8s.io/v1|Role|world-at-ruin|world-at-ruin-zone-trial-operator 8ce73bb023e62877deee82fde80f040bac3dfe45e5992da386d32a6788ff4099
 
-source.toolkit.fluxcd.io/v1|GitRepository|unifi|unifi 6a7518c4e7f871bb072769f5e867c95caa7c963d3187ebdc99bdf6d13c66c63f
-
 source.toolkit.fluxcd.io/v1|HelmRepository|actual-budget|actual-budget c77db6e8054359ae32168d3d10940f55c80cb482865df218fc866da00fdc165b
 
 source.toolkit.fluxcd.io/v1|HelmRepository|cert-manager|cert-manager cd18284871c3da7ea497aa40db0f158c71504a0c3a41cae9e5927c3b97a1305b
@@ -523,6 +521,8 @@ source.toolkit.fluxcd.io/v1|OCIRepository|kagent|kagent-crds cb0bac92f6bcee350b5
 source.toolkit.fluxcd.io/v1|OCIRepository|kro-system|kro 76bcb723555afb69d2299cea2394ee4943cffef0c106d59a0fcba56ae87a2caf
 
 source.toolkit.fluxcd.io/v1|OCIRepository|ksail-operator|ksail-operator 2c1b9612623604a381f454532cb10502dd96b56468ffacb5aeaf9d50c3327090
+
+source.toolkit.fluxcd.io/v1|OCIRepository|unifi|unifi 1a31b10aa0c2aac5a1d7c4496d2652bc3711322d957f2014bff11bde2d1260b1
 
 source.toolkit.fluxcd.io/v1|OCIRepository|wedding-app|wedding-app ce9f73b3c36c2d5ca729d9e9efe1a61df0b971ffa88fa127f0567cc72b6d6520
 
