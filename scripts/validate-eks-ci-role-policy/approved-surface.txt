@@ -239,7 +239,7 @@ rbac.authorization.k8s.io/v1|Role|ate-system|substrate-ca-reader 0657a89b6fd41de
 
 rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources b74f7e1cb0c59aeb25fcf7a322973a62cec4805aa612a42afbd4b6a31b5d59f6
 
-rbac.authorization.k8s.io/v1|Role|customer-identity|customer-identity-setup 7d70381ca107fca851327b23abb8e06fb6ab7cf1bf7afef31c1080cc774e45d6
+rbac.authorization.k8s.io/v1|Role|customer-identity|customer-identity-setup 01be2b59329444dcaf4a2752f95569b06d3d1a9681f4d2de8f092359f5cfa3a4
 
 rbac.authorization.k8s.io/v1|Role|data-product-controller|data-product-readiness-observer c9267ae3e7a5f38d23612a51d93e9a087b60afbf5a70266217b139bcfececd0c
 

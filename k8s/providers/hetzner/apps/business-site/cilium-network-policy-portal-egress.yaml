@@ -1,6 +1,8 @@
 # Platform-applied, additive to the tenant's own policies. The portal's web pods:
-# their database, the customer Dex's public name (discovery, token exchange) and
-# the mail sender's SES SMTP endpoint (STARTTLS on 587) for the portal's emails.
+# their database, the customer Dex's public name (discovery, token exchange),
+# ZITADEL's public name (the operator page's service account, which creates and
+# deactivates customers) and the mail sender's SES SMTP endpoint (STARTTLS on
+# 587) for the portal's emails.
 # The migration job has its own, narrower policy
 # (cilium-network-policy-portal-migration.yaml).
 apiVersion: cilium.io/v2
@@ -22,6 +24,7 @@ spec:
               protocol: TCP
     - toFQDNs:
         - matchName: login.devantler.tech
+        - matchName: accounts.devantler.tech
       toPorts:
         - ports:
             - port: "443"

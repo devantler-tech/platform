@@ -1,0 +1,29 @@
+---
+name: Retire Abandoned Longhorn Image Builder
+
+"on":
+  # checkov:skip=CKV_GHA_7:Confirmed production operation with one source-pinned target.
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type retire-abandoned-longhorn-builder to delete the approved abandoned builder and its two auto-delete Primary IPs
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  retire:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/prod-operation.yaml # zizmor: ignore[self-repository]
+    secrets:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+    with:
+      operation: retire-abandoned-longhorn-builder
+      confirm: ${{ inputs.confirm }}
+      program: scripts/verify-longhorn-migration-headroom
+      args: retire-builder
+      hcloud-token: true
+      timeout-minutes: 10

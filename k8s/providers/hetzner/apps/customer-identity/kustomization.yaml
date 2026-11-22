@@ -46,6 +46,8 @@ resources:
   - role.yaml
   - role-binding.yaml
   - secret-dex-zitadel-client.yaml
+  - secret-portal-zitadel-token.yaml
   - config-map-branding.yaml
   - push-secret-dex-zitadel-client.yaml
+  - push-secret-portal-zitadel-token.yaml
   - cron-job-setup.yaml
