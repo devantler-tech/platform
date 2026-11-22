@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -179,6 +180,55 @@ func TestDependencyUpdatesToCarriersNeedNoApproval(t *testing.T) {
 	}
 }
 
+// TestHandoffSubstitutionInputsNeedApproval proves the one part of a Flux
+// handoff the ledger keeps: an inline value or a reordered source changes what
+// Flux substitutes into an RBAC subject such as `oidc:${admin_email}`, so it
+// moves that handoff's entry and nothing else.
+func TestHandoffSubstitutionInputsNeedApproval(t *testing.T) {
+	role, boundary, rendered := repositoryInputs(t)
+	const key = "kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps"
+	postBuild := func(t *testing.T, document map[string]any) map[string]any {
+		t.Helper()
+		spec, _ := document["spec"].(map[string]any)
+		value, ok := spec["postBuild"].(map[string]any)
+		if !ok {
+			t.Fatal("flux-system/apps has no post-build substitution")
+		}
+		return value
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*testing.T, map[string]any)
+	}{
+		{name: "inline value", mutate: func(t *testing.T, document map[string]any) {
+			postBuild(t, document)["substitute"] = map[string]any{"admin_email": "attacker@example.invalid"}
+		}},
+		{name: "reordered sources", mutate: func(t *testing.T, document map[string]any) {
+			sources, ok := postBuild(t, document)["substituteFrom"].([]any)
+			if !ok || len(sources) < 2 {
+				t.Fatal("flux-system/apps substitutes from fewer than two sources")
+			}
+			sources[0], sources[len(sources)-1] = sources[len(sources)-1], sources[0]
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := mutateRenderedDocument(t, rendered, key, func(document map[string]any) { tc.mutate(t, document) })
+			var mismatch *surfaceMismatchError
+			if err := validateAuthorization(role, boundary, changed); !errors.As(err, &mismatch) {
+				t.Fatalf("changed substitution error = %v, want a ledger mismatch", err)
+			}
+			if len(mismatch.delta) != 2 {
+				t.Fatalf("changed substitution moved %d ledger lines, want 2: %v", len(mismatch.delta), mismatch.delta)
+			}
+			for _, line := range mismatch.delta {
+				if !strings.Contains(line, " "+key+" ") {
+					t.Fatalf("changed substitution moved an unrelated ledger line: %s", line)
+				}
+			}
+		})
+	}
+}
+
 // TestAuthorizationSurfaceEntryFingerprintsOnlyAuthorizationFields pins what
 // each authorization object's ledger entry covers: its grant moves the entry,
 // and its other metadata does not.
@@ -250,6 +300,23 @@ spec:
           - resources:
               kinds: [Role]
 `
+	const handoff = `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: variables-base
+      - kind: ConfigMap
+        name: variables-cluster
+`
 	const iamRole = `apiVersion: iam.aws.m.upbound.io/v1beta1
 kind: Role
 metadata:
@@ -282,6 +349,8 @@ spec:
 		{"role rules", role, "verbs: [get]", "verbs: [get, list]", true},
 		{"role substitution switch", role, "    description: reads pods\n", "    description: reads pods\n    kustomize.toolkit.fluxcd.io/substitute: disabled\n", true},
 		{"role autoupdate switch", role, "    description: reads pods\n", "    description: reads pods\n    rbac.authorization.kubernetes.io/autoupdate: \"false\"\n", true},
+		{"role apply skipped", role, "    description: reads pods\n", "    description: reads pods\n    kustomize.toolkit.fluxcd.io/ssa: Ignore\n", true},
+		{"role substitution label", role, "    app.kubernetes.io/part-of: tenant\n", "    app.kubernetes.io/part-of: tenant\n    kustomize.toolkit.fluxcd.io/substitute: disabled\n", true},
 		{"role label", role, "part-of: tenant", "part-of: platform", false},
 		{"role description", role, "reads pods", "reads every pod", false},
 		{"cluster role aggregation rule", clusterRole, "aggregate-to-tenant-edit", "aggregate-to-admin", true},
@@ -291,6 +360,11 @@ spec:
 		{"binding subject", binding, "    name: reader\n    namespace: tenant", "    name: reader\n    namespace: aws", true},
 		{"binding role", binding, "kind: Role\n  name: reader", "kind: ClusterRole\n  name: reader", true},
 		{"binding label", binding, "part-of: tenant", "part-of: platform", false},
+		{"binding substitution label", binding, "    app.kubernetes.io/part-of: tenant\n", "    app.kubernetes.io/part-of: tenant\n    kustomize.toolkit.fluxcd.io/substitute: disabled\n", true},
+		{"handoff inline substitution", handoff, "  postBuild:\n", "  postBuild:\n    substitute:\n      admin_email: attacker@example.invalid\n", true},
+		{"handoff substitution order", handoff, "name: variables-base\n      - kind: ConfigMap\n        name: variables-cluster", "name: variables-cluster\n      - kind: ConfigMap\n        name: variables-base", true},
+		{"handoff path", handoff, "path: ./apps", "path: ./moved", false},
+		{"handoff source", handoff, "    name: flux-system\n", "    name: unreviewed\n", false},
 		{"admission policy spec", admissionPolicy, "failurePolicy: Fail", "failurePolicy: Ignore", true},
 		{"admission policy description", admissionPolicy, "guards bindings", "guards every binding", false},
 		{"Kyverno policy spec", kyvernoPolicy, "kinds: [Role]", "kinds: [ClusterRole]", true},

@@ -4,9 +4,10 @@
 # document's identity and its authorization fields as canonical JSON: a role's rules (and a
 # ClusterRole's aggregation rule and labels), a binding's subjects and roleRef, and an admission
 # policy's spec. Crossplane IAM resources, controller templates with their instances, and Flux
-# substitution sources are covered whole. Flux handoffs and sources, Helm releases and Crossplane
-# packages only carry other objects, so they are not listed and a dependency update to one needs
-# no approval here (platform#6270). The validator requires the rendered surface to equal this list
+# substitution sources are covered whole, and a Flux handoff only by its post-build substitution.
+# Otherwise Flux handoffs and sources, Helm releases and Crossplane packages only carry other
+# objects, so they are not listed and a dependency update to one needs no approval here
+# (platform#6270). The validator requires the rendered surface to equal this list
 # exactly (same entries, same multiplicity), so an added, removed, duplicated or changed document
 # fails exactly as the old single aggregate did.
 #
@@ -62,6 +63,12 @@ iam.aws.m.upbound.io/v1beta1|User|aws|email-smtp 19ce46105be088b444658d4d594f605
 kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run ca8b01a51a943893bc0186bb542410a02e48e28c13eb994e8a3177608099479a
 
 kro.run/v1alpha1|Tenant|flux-system|business-site 01085cf85a1d822477c9826a17c80729ec711ab971400010bcf8de0da951ee75
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps 6ab22c8a1703a8bfa1755b55c4ceccdf26b94af4ed510ba48251e673b95fefb9
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 9f1a9d875f4c26786c23c805bfce054f5fe7b12614c07afc9efaeb9019dd6232
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers 0bca289c996db852fce22f61296381ff9c120a0f7630e2427314de27fc773294
 
 policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-daemonset 3a8fd7f2958d7f002cf566c616d54b21750f030a6c87f722733e5fd10f829331
 

@@ -10,8 +10,9 @@
 //
 // The fingerprints cover authorization objects only: RBAC rules, subjects and
 // role references, admission-policy specs, the Crossplane IAM resources, and
-// the templates and inputs that emit them. Flux handoffs and sources, Helm
-// releases and Crossplane packages only carry other objects, so a dependency
+// the templates and inputs that emit them, a Flux handoff's post-build
+// substitution included. Flux handoffs and sources, Helm releases and
+// Crossplane packages otherwise only carry other objects, so a dependency
 // update to one of them needs no approval here; the
 // restrict-ci-identity-bindings admission policy refuses, at the API server,
 // any binding they would create to the EKS CI identity (platform#6270).
@@ -651,7 +652,9 @@ func isControllerRBACEmitter(identity resourceIdentity) bool {
 // grant of their own, so the approved ledger leaves them out (platform#6270):
 // a binding they deliver to the EKS CI identity is refused at admission by the
 // restrict-ci-identity-bindings policy, and the roles, bindings and IAM objects
-// this render declares stay pinned.
+// this render declares stay pinned. The one exception is a handoff's
+// post-build substitution, which can rewrite those objects' subjects
+// (isFluxSubstitutionHandoff).
 func isAuthorizationCarrier(identity resourceIdentity) bool {
 	return identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" && identity.kind == "Kustomization" ||
 		isFluxSourceResource(identity) ||
@@ -1091,7 +1094,8 @@ func isAuthorizationCapableDocument(document map[string]any, identity resourceId
 
 // isAuthorizationResource selects every rendered object capable of changing
 // the EKS CI identity's IAM or RBAC authorization surface. Carriers are left
-// out (isAuthorizationCarrier).
+// out (isAuthorizationCarrier), except a Flux handoff's post-build substitution
+// (isFluxSubstitutionHandoff).
 func isAuthorizationResource(
 	document map[string]any,
 	identity resourceIdentity,
@@ -1110,7 +1114,8 @@ func isAuthorizationResource(
 		}
 	}
 	if isIndirectAuthorizationPolicy(document, identity) ||
-		isCurrentKyvernoMutationPolicy(identity) {
+		isCurrentKyvernoMutationPolicy(identity) ||
+		isFluxSubstitutionHandoff(document, identity) {
 		return true
 	}
 	return containsEmbeddedAuthorizationTemplate(document, 0)
@@ -1333,11 +1338,20 @@ func cloneStringAnyMap(source map[string]any) map[string]any {
 
 // effectiveMetadataAnnotations change how a projected document's
 // authorization fields apply, so its ledger entry keeps them: Flux substitutes
-// `${…}` in those fields unless substitution is disabled, and the API server
-// rewrites a default role's rules at start-up unless autoupdate is false.
+// `${…}` in those fields unless substitution is disabled, and applies the
+// object at all only as its ssa policy allows (Ignore skips it), and the API
+// server rewrites a default role's rules at start-up unless autoupdate is
+// false.
 var effectiveMetadataAnnotations = []string{
 	"kustomize.toolkit.fluxcd.io/substitute",
+	"kustomize.toolkit.fluxcd.io/ssa",
 	"rbac.authorization.kubernetes.io/autoupdate",
+}
+
+// effectiveMetadataLabels are the labels every projected document keeps for
+// the same reason: Flux also disables substitution through this label.
+var effectiveMetadataLabels = []string{
+	"kustomize.toolkit.fluxcd.io/substitute",
 }
 
 // authorizationFields names the top-level fields that grant or constrain
@@ -1381,17 +1395,11 @@ func authorizationFieldsDocument(identity resourceIdentity, document map[string]
 	projectedMetadata := make(map[string]any)
 	if labels, present := metadata["labels"]; keepLabels && present {
 		projectedMetadata["labels"] = labels
+	} else if kept := keptMetadataKeys(metadata["labels"], effectiveMetadataLabels); len(kept) > 0 {
+		projectedMetadata["labels"] = kept
 	}
-	if annotations, ok := metadata["annotations"].(map[string]any); ok {
-		kept := make(map[string]any)
-		for _, key := range effectiveMetadataAnnotations {
-			if value, present := annotations[key]; present {
-				kept[key] = value
-			}
-		}
-		if len(kept) > 0 {
-			projectedMetadata["annotations"] = kept
-		}
+	if kept := keptMetadataKeys(metadata["annotations"], effectiveMetadataAnnotations); len(kept) > 0 {
+		projectedMetadata["annotations"] = kept
 	}
 	if len(projectedMetadata) > 0 {
 		projected["metadata"] = projectedMetadata
@@ -1399,9 +1407,42 @@ func authorizationFieldsDocument(identity resourceIdentity, document map[string]
 	return projected
 }
 
+// keptMetadataKeys returns the named entries of a label or annotation map.
+func keptMetadataKeys(value any, keys []string) map[string]any {
+	entries, _ := value.(map[string]any)
+	kept := make(map[string]any)
+	for _, key := range keys {
+		if entry, present := entries[key]; present {
+			kept[key] = entry
+		}
+	}
+	return kept
+}
+
+// isFluxSubstitutionHandoff recognizes a Flux handoff with a post-build
+// substitution. Flux substitutes its inline values and ordered sources into
+// every `${…}` the handoff applies, an RBAC subject included, so that block is
+// an authorization input even though the handoff itself is a carrier.
+func isFluxSubstitutionHandoff(document map[string]any, identity resourceIdentity) bool {
+	if identity.apiVersion != "kustomize.toolkit.fluxcd.io/v1" || identity.kind != "Kustomization" {
+		return false
+	}
+	spec, _ := document["spec"].(map[string]any)
+	_, present := spec["postBuild"]
+	return present
+}
+
+// fluxSubstitutionInputs projects a Flux handoff onto its post-build
+// substitution; its path, source and every other field stay out of the ledger.
+func fluxSubstitutionInputs(document map[string]any) map[string]any {
+	spec, _ := document["spec"].(map[string]any)
+	return map[string]any{"spec": map[string]any{"postBuild": spec["postBuild"]}}
+}
+
 // authorizationSurfaceDocument is what one selected object's ledger entry
 // fingerprints. A role, binding or admission policy contributes only its
-// authorization fields (authorizationFieldsDocument). The Crossplane IAM
+// authorization fields (authorizationFieldsDocument), and a Flux handoff only
+// its post-build substitution (fluxSubstitutionInputs). The Crossplane IAM
 // resources, controller templates and their instances, substitution sources
 // and any kind the render cannot classify stay whole, except that a
 // SOPS-encrypted substitution source drops its uninterpretable ciphertext.
@@ -1417,6 +1458,9 @@ func authorizationSurfaceDocument(
 	}
 	if identity.kind == "Secret" {
 		return sopsSubstitutionSourceSurfaceDocument(identity, document)
+	}
+	if isFluxSubstitutionHandoff(document, identity) {
+		return fluxSubstitutionInputs(document)
 	}
 	return authorizationFieldsDocument(identity, document)
 }

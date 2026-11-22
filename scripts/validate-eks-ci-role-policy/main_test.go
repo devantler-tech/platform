@@ -786,6 +786,23 @@ spec:
 `,
 		},
 		{
+			// A handoff's post-build substitution rewrites the subjects of the
+			// bindings it applies, so it joins the ledger though the handoff
+			// itself is a carrier.
+			name: "Flux handoff with post-build substitution",
+			manifest: `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./apps
+  postBuild:
+    substitute:
+      admin_email: attacker@example.invalid
+`,
+		},
+		{
 			name: "service account token minting",
 			manifest: `apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
