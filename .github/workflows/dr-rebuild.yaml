@@ -315,7 +315,7 @@ jobs:
           CILIUM_ROLLOUT_REVISION_READY: ${{ steps.wait_flux_revision.outcome == 'success' }}
         run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 
-      - name: 💾 Velero resource restore (newest Completed backup)
+      - name: 💾 Restore the newest completed full Velero backup
         if: ${{ inputs.restore }}
         run: |
           set -euo pipefail
@@ -330,19 +330,22 @@ jobs:
           # Backup CRs are synced from the R2 bucket by Velero's backup-sync
           # controller; give it a moment to populate after the BSL goes ready.
           BACKUP=""
+          OPENBAO_BACKUP=""
           for i in $(seq 1 30); do
-            BACKUP=$(kubectl -n velero get backups.velero.io -o json | jq -r \
-              '[.items[] | select(.status.phase=="Completed")] | sort_by(.metadata.creationTimestamp) | last | .metadata.name // empty')
+            candidates=$(kubectl -n velero get backups.velero.io -o json |
+              jq -e -f scripts/select-velero-rebuild-backups.jq)
+            BACKUP=$(jq -r '.full // empty' <<<"${candidates}")
+            OPENBAO_BACKUP=$(jq -r '.openbao // empty' <<<"${candidates}")
             [ -n "${BACKUP}" ] && break
-            echo "  ...no Completed backups synced yet (${i}/30)"
+            echo "  ...no completed full backup synced yet (${i}/30)"
             sleep 10
           done
-          if [ -z "${BACKUP}" ]; then
-            echo "::error::No Completed Velero backup found in the BSL — cannot restore. The rebuilt (empty) platform is still up."
+          if [ -z "${BACKUP}" ] || [ -z "${OPENBAO_BACKUP}" ]; then
+            echo "::error::The backup location has no completed full backup or no OpenBao recovery-key backup."
             exit 1
           fi
-          echo "Restoring from backup: ${BACKUP}"
-          echo "backup_name=${BACKUP}" >> "${GITHUB_ENV}"
+          echo "Restoring platform resources from backup: ${BACKUP}"
+          echo "openbao_backup_name=${OPENBAO_BACKUP}" >> "${GITHUB_ENV}"
 
           kubectl -n velero create -f - <<EOF
           apiVersion: velero.io/v1
@@ -382,6 +385,7 @@ jobs:
         if: ${{ inputs.restore }}
         run: |
           set -euo pipefail
+          : "${openbao_backup_name:?A completed OpenBao recovery-key backup is required}"
 
           echo "::group::Fetch the newest raft snapshot from R2 onto the vault-snapshots PVC"
           # The fresh vault has already re-seeded the R2 credentials from SOPS,
@@ -541,7 +545,7 @@ jobs:
             name: dr-openbao-secrets-${GITHUB_RUN_ID}
             namespace: velero
           spec:
-            backupName: ${backup_name}
+            backupName: ${openbao_backup_name}
             includedNamespaces:
               - openbao
             includedResources:

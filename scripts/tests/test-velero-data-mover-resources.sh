@@ -145,6 +145,42 @@ if ! yq -N -o=json -I0 '
   fail 'the production OpenBao key backup must use the independent Secrets-only schedule'
 fi
 
+rebuild_selector="${root_dir}/scripts/select-velero-rebuild-backups.jq"
+rebuild_backups="$(jq -n '
+  def backup($name; $schedule; $created; $spec):
+    {metadata: {name: $name, namespace: "velero", creationTimestamp: $created,
+      labels: {"velero.io/schedule-name": $schedule}}, status: {phase: "Completed"},
+      spec: ({storageLocation: "default"} + $spec)};
+  {items: [
+    backup("full-1"; "velero-daily-full"; "2026-11-22T02:17:00Z";
+      {includedNamespaces: ["*"], excludedNamespaces: ["kube-system", "velero"]}),
+    backup("keys-1"; "velero-openbao-recovery-keys"; "2026-11-22T06:10:00Z";
+      {includedNamespaces: ["openbao"], includedResources: ["secrets"],
+       includeClusterResources: false, snapshotVolumes: false,
+       snapshotMoveData: false, defaultVolumesToFsBackup: false}),
+    backup("other-1"; "manual"; "2026-11-22T07:00:00Z"; {includedNamespaces: ["*"]})
+  ]}'
+)"
+if ! jq -e -f "${rebuild_selector}" <<<"${rebuild_backups}" |
+  jq -e '. == {full: "full-1", openbao: "keys-1"}' >/dev/null; then
+  fail 'rebuild must select the full and newer separate key backups independently'
+fi
+if ! jq 'del(.items[1]) | .items[0].spec.excludedNamespaces += ["longhorn-benchmark"]' <<<"${rebuild_backups}" |
+  jq -e -f "${rebuild_selector}" |
+  jq -e '. == {full: "full-1", openbao: "full-1"}' >/dev/null; then
+  fail 'rebuild must still recover keys from a qualifying full archive'
+fi
+if ! jq '.items[0].spec.includedNamespaces = ["openbao"]' <<<"${rebuild_backups}" |
+  jq -e -f "${rebuild_selector}" |
+  jq -e '. == {full: null, openbao: "keys-1"}' >/dev/null; then
+  fail 'rebuild must hold when the purported full backup covers only one namespace'
+fi
+if ! jq '.items[0].status.phase = "PartiallyFailed" | .items[1].spec.snapshotVolumes = true' <<<"${rebuild_backups}" |
+  jq -e -f "${rebuild_selector}" |
+  jq -e '. == {full: null, openbao: null}' >/dev/null; then
+  fail 'rebuild must reject incomplete full backups and unexpected key-backup scope'
+fi
+
 # Production and an unset setting must keep the source class until runtime
 # backup and restore validation explicitly opts into the disposable copy.
 production_backup_class="$(yq -er '.data.velero_backup_pvc_storage_class // "longhorn"' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" ||

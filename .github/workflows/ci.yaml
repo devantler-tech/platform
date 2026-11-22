@@ -627,6 +627,7 @@ jobs:
               - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
               - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
+              - 'scripts/select-velero-rebuild-backups.jq'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-cancellation-release.sh'
               - 'scripts/tests/test-velero-node-agent-priority.sh'
