@@ -321,6 +321,7 @@ jobs:
               - 'scripts/tests/test-data-product-runtime-digests.sh'
               - 'scripts/verify-data-product-rollout.sh'
               - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
+              - 'scripts/tests/test-customer-login-navigation.sh'
               - 'scripts/tests/longhorn-ui-readonly/**'
               - 'scripts/tests/test-dex-theme-mount.sh'
               - 'scripts/tests/test-umami-tracking-probe.sh'
@@ -2134,6 +2135,8 @@ jobs:
           bash scripts/tests/test-data-product-runtime-digests.sh
           shellcheck scripts/tests/test-oauth2-proxy-sso-redirects.sh
           bash scripts/tests/test-oauth2-proxy-sso-redirects.sh
+          shellcheck scripts/tests/test-customer-login-navigation.sh
+          bash scripts/tests/test-customer-login-navigation.sh
           shellcheck scripts/tests/test-umami-tracking-probe.sh
           bash scripts/tests/test-umami-tracking-probe.sh
           shellcheck scripts/verify-umami-tracking.sh

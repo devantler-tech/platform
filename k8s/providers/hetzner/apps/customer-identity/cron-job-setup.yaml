@@ -40,6 +40,8 @@
 #   the console is undone: the sign-in page says it is the client portal and
 #   that the portal is invitation-only. ZITADEL has no Danish, so English is
 #   its only language, and public organization registration stays off;
+# - the Customers sign-in footer's native website link, preserving its other
+#   privacy, terms and support settings. Ordinary navigation never signs out.
 # - the portal's service account: the machine user business-portal, with only
 #   ORG_USER_MANAGER of the Customers organization, and a proved 90-day personal
 #   access token, renewed with 30 days left, in secret-portal-zitadel-token.yaml,
@@ -953,7 +955,8 @@ spec:
                   desired_texts=$(jq -cS -n '{loginText: {
                     title: "Sign in to your client portal",
                     description: "The portal is invitation-only.",
-                    userMustBeMemberOfOrg: "Sign in with the account from your invitation email."}}')
+                    userMustBeMemberOfOrg: "Sign in with the account from your invitation email."},
+                    footerText: {help: "Back to website (opens in a new tab)"}}')
                   texts=$(api_org=$customers_org_id api GET /management/v1/text/login/en |
                     jq -cS '.customText | del(.details, .isDefault, .language)
                       | map_values(if type == "object" then with_entries(select(.value != "" and .value != null)) else . end)
@@ -961,6 +964,24 @@ spec:
                   if [[ $texts != "$desired_texts" ]]; then
                     api_org=$customers_org_id api PUT /management/v1/text/login/en "$desired_texts" >/dev/null
                     changes+=("set the sign-in texts of $(org_label "$customers_org_id")")
+                  fi
+
+                  # Login V1 renders the native Help link in a new tab. Relabel
+                  # that slot explicitly; changing it never invokes logout. The
+                  # privacy API replaces settings, so retain every other field.
+                  privacy=$(api_org=$customers_org_id api GET /management/v1/policies/privacy |
+                    jq -ce '.policy | select(type == "object")
+                      | select(.isDefault == null or (.isDefault | type == "boolean"))
+                      | select([.tosLink,.privacyLink,.helpLink,.supportEmail,.docsLink,.customLink,.customLinkText]
+                        | all(. == null or type == "string"))') || fail "cannot read the Customers privacy settings"
+                  if [[ $(jq -r '.helpLink // ""' <<<"$privacy") != https://devantler.tech/ ]]; then
+                    privacy_method=PUT
+                    if [[ $(jq -r '.isDefault // false' <<<"$privacy") == true ]]; then
+                      privacy_method=POST
+                    fi
+                    desired_privacy=$(jq -c 'del(.details,.isDefault) | .helpLink="https://devantler.tech/"' <<<"$privacy")
+                    api_org=$customers_org_id api "$privacy_method" /management/v1/policies/privacy "$desired_privacy" >/dev/null
+                    changes+=("set the website link of $(org_label "$customers_org_id")")
                   fi
 
                   # --- The portal's service account ------------------------------------------------
