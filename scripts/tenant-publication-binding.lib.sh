@@ -60,13 +60,18 @@ publication_binding() {
 # Provider acceptance is deliberately separate from parsing the reviewed record.
 # A failed verifier cannot be replaced by plausible JSON on stdout.
 verify_bound_publication() (
-  local binding="$1" verification_dir identity digest artifact repo tag sha
+  local binding="$1" identity digest artifact repo tag sha
   identity="$(printf '%s\n' "$binding" | jq -r '"https://github.com/devantler-tech/actions/.github/workflows/" + .workflow + ".yaml@" + .signerSHA')"
   digest="$(printf '%s\n' "$binding" | jq -r .digest)"
   artifact="$(printf '%s\n' "$binding" | jq -r '.artifactURL | ltrimstr("oci://")')"
   repo="$(printf '%s\n' "$binding" | jq -r .consumer)"
   tag="$(printf '%s\n' "$binding" | jq -r .gitTag)"
   sha="$(printf '%s\n' "$binding" | jq -r .sourceSHA)"
+  verify_release_artifact "$identity" "$artifact" "$digest" "$repo" "$tag" "$sha"
+)
+
+verify_release_artifact() (
+  local identity="$1" artifact="$2" digest="$3" repo="$4" tag="$5" sha="$6" verification_dir
   verification_dir="$(mktemp -d)" || return 1
   trap 'rm -rf "$verification_dir"' EXIT
   cosign verify --certificate-identity "$identity" \
