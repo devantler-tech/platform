@@ -197,6 +197,13 @@ jobs:
       - name: 🔏 Install cosign for bound publication verification
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
+      - name: 🔑 Log in to GHCR for signature reads
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Which revision SIGNED what is deployed, against what each consumer pins now
       # (#3048). Reported on main rather than gated on a PR: it reads five other
       # repositories over the network, so a transient API failure here must never block
