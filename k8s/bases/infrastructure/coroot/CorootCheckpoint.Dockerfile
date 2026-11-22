@@ -16,7 +16,7 @@ RUN go test ./...
 ARG VERSION=unknown
 RUN go build -mod=readonly -ldflags "-X main.version=$VERSION" -o /out/coroot .
 
-FROM ghcr.io/coroot/coroot:1.29.2@sha256:9b9bbd35824beb08f5bbedf1e7cdafd95b32fad5f3e7392f35b4ab70b6d4098b
+FROM ghcr.io/coroot/coroot:1.29.4@sha256:372c1695c6418457fc892fcf35a8840aa65f77881ae34cecafa948bc34133430
 COPY --from=builder --chmod=0755 /out/coroot /usr/bin/coroot
 # Restate the upstream image's own non-root identity; its config User is 65534:65534.
 USER 65534:65534
