@@ -66,6 +66,33 @@ func TestRecoveryMetadataReadsRequireCompleteEmptyMetadataLists(t *testing.T) {
 	}
 }
 
+func TestRecoveryMetadataRefusalsReportOnlyTheHTTPStatus(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		want   string
+	}{
+		{http.StatusForbidden, "HTTP 403"},
+		{http.StatusNotAcceptable, "HTTP 406"},
+		{http.StatusTemporaryRedirect, "HTTP 307"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Location", "https://redirect.invalid/private-location")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte("private-response-body"))
+			}))
+			defer server.Close()
+			err := requireEmptyMetadata(t.Context(), metadataClient(), server.URL)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected refusal reporting %s, got %v", tc.want, err)
+			}
+			if strings.Contains(err.Error(), "private-") {
+				t.Fatal("metadata error exposed upstream response data")
+			}
+		})
+	}
+}
+
 func TestRecoveryObservesRetainedPoolWithoutConfusingItWithActiveRunners(t *testing.T) {
 	const item = `{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"name":"ksail-code-quality","namespace":"arc-ksail-analysis","uid":"retained","resourceVersion":"123"}}`
 	const prefix = `{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":`
