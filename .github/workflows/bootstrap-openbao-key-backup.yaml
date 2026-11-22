@@ -1,0 +1,85 @@
+---
+name: Bootstrap OpenBao Key Backup
+
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: bootstrap-openbao-key-backup"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  bootstrap:
+    name: Create the first independent recovery-key backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the confirmed first-attempt main dispatch
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted || "$CONFIRM" != bootstrap-openbao-key-backup ]]; then
+            printf '%s\n' 'OPENBAO_KEY_BACKUP=UNVERIFIED stage=dispatch' >&2
+            exit 2
+          fi
+
+      - name: Check out the confirmed immutable revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install the repository-approved Kubernetes client
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/refresh-openbao-key-backup.sh
+          kubectl_path="$RUNNER_TEMP/openbao-key-backup-kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+            https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl -o "$kubectl_path"
+          printf '%s  %s\n' 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 "$kubectl_path" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/openbao-key-backup-tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/openbao-key-backup-tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/openbao-key-backup-tools" >> "$GITHUB_PATH"
+
+      - name: Create the reviewed backup if none exists for its schedule
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          OPENBAO_BACKUP_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          ulimit -c 0
+          stage=workspace
+          fail() { printf 'OPENBAO_KEY_BACKUP=UNVERIFIED stage=%s\n' "$stage" >&2; exit 2; }
+          [[ $(id -u) != 0 && $(findmnt -n -o FSTYPE --target /dev/shm) == tmpfs ]] || fail
+          stage=current-source
+          latest=$(git ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main) || fail
+          [[ "$latest" == "$GITHUB_SHA"$'\trefs/heads/main' ]] || fail
+          work=$(mktemp -d /dev/shm/openbao-recovery.XXXXXXXX)
+          trap 'rm -rf "$work"' EXIT
+          stage=private-inputs
+          [[ -n "$KUBE_CONFIG" && ${#KUBE_CONFIG} -le 1048576 ]] || fail
+          export KUBECONFIG="$work/kubeconfig"
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          unset KUBE_CONFIG
+          stage=stable-api
+          if ! ./scripts/use-prod-stable-api-endpoint.sh > "$work/endpoint.log" 2>&1; then
+            fail
+          fi
+          unset HCLOUD_TOKEN
+          bash scripts/refresh-openbao-key-backup.sh "$work"
