@@ -1117,11 +1117,17 @@ report_publisher_at_ref() {
     select(all((.reusable + .composite)[]; type == "string" and (test("[[:cntrl:]]") | not))) |
     [.reusable[] | select(test("/[.]github/workflows/publish-(app|manifests)[.]yaml@"))] as $publishers |
     [$publishers[] | select(test("/[.]github/workflows/" + $workflow + "[.]yaml@"))] as $reusable |
-    [.composite[] | select(test("/actions/publish-app@"))] as $composite |
+    [.composite[] | select(test("/actions/publish-app(@|$)"))] as $composite |
     if ($reusable | length) == 1 and ($composite | length) == 0 then
       $reusable[0] | select(test("^devantler-tech/" + $family + "/[.]github/workflows/" + $workflow + "[.]yaml@[0-9a-f]{40}$"))
-    elif ($publishers | length) == 0 and ($composite | length) == 1 and $repo != ".github" then
-      $composite[0] | select(test("^devantler-tech/[.]github/actions/publish-app@[0-9a-f]{40}$")) | "own-release"
+    elif ($publishers | length) == 0 and ($composite | length) == 1 then
+      $composite[0] |
+      if $repo == ".github" then
+        # The organization repository runs its own manifests action at the workflow commit.
+        select($workflow == "publish-manifests" and . == "$/actions/publish-app")
+      else
+        select(test("^devantler-tech/[.]github/actions/publish-app@[0-9a-f]{40}$"))
+      end | "own-release"
     else empty end
   '
 }
@@ -1131,7 +1137,7 @@ report_publisher_at_ref() {
 report_owned_release_workflow() {
   local repo="$1" caller=cd.yaml
   case "$repo" in
-    .github | '') return 1 ;;
+    '') return 1 ;;
     business-site) caller=publish-runtime.yaml ;;
     data-product-controller) repo=khoist ;;
   esac
