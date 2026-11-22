@@ -146,55 +146,68 @@ if ! yq -N -o=json -I0 '
 fi
 
 rebuild_selector="${root_dir}/scripts/select-velero-rebuild-backups.jq"
+rebuild_cutoff='2026-11-22T07:30:00Z'
 rebuild_backups="$(
   jq -n '
-  def backup($name; $schedule; $created; $spec):
+  def backup($name; $schedule; $created; $start; $stop; $spec):
     {metadata: {name: $name, namespace: "velero", creationTimestamp: $created,
-      labels: {"velero.io/schedule-name": $schedule}}, status: {phase: "Completed"},
+      labels: {"velero.io/schedule-name": $schedule}},
+      status: {phase: "Completed", startTimestamp: $start, completionTimestamp: $stop},
       spec: ({storageLocation: "default"} + $spec)};
-  {items: [
-    backup("full-1"; "velero-daily-full"; "2026-11-22T02:17:00Z";
-      {includedNamespaces: ["*"], excludedNamespaces: ["kube-system", "velero"],
+  def full_spec:
+    {includedNamespaces: ["*"], excludedNamespaces: ["kube-system", "velero"],
        excludedNamespaceScopedResources: ["volumesnapshots.snapshot.storage.k8s.io"],
        excludedClusterScopedResources: ["volumesnapshotcontents.snapshot.storage.k8s.io"],
-       resourcePolicy: {kind: "configmap", name: "velero-volume-policies"}}),
-    backup("keys-1"; "velero-openbao-recovery-keys"; "2026-11-22T06:10:00Z";
-      {includedNamespaces: ["openbao"], includedResources: ["secrets"],
+       resourcePolicy: {kind: "configmap", name: "velero-volume-policies"}};
+  {items: [
+    backup("full-old"; "velero-daily-full"; "2026-11-22T10:09:00Z";
+      "2026-11-21T02:17:00Z"; "2026-11-21T03:00:00Z"; full_spec),
+    backup("full-1"; "velero-daily-full"; "2026-11-22T10:05:00Z";
+      "2026-11-22T02:17:00Z"; "2026-11-22T03:00:00Z"; full_spec),
+    backup("keys-1"; "velero-openbao-recovery-keys"; "2026-11-22T10:10:00Z";
+      "2026-11-22T06:10:00Z"; "2026-11-22T06:11:00Z"; {includedNamespaces: ["openbao"], includedResources: ["secrets"],
        excludedNamespaces: ["longhorn-benchmark"],
        excludedResources: ["volumesnapshots.snapshot.storage.k8s.io", "volumesnapshotcontents.snapshot.storage.k8s.io"],
        includeClusterResources: false, snapshotVolumes: false,
        snapshotMoveData: false, defaultVolumesToFsBackup: false}),
-    backup("other-1"; "manual"; "2026-11-22T07:00:00Z"; {includedNamespaces: ["*"]})
+    backup("full-fresh-cluster"; "velero-daily-full"; "2026-11-22T10:20:00Z";
+      "2026-11-22T10:20:00Z"; "2026-11-22T10:30:00Z"; full_spec),
+    backup("full-missing-time"; "velero-daily-full"; "2026-11-22T10:30:00Z"; null; null; full_spec)
   ]}'
 )"
-if ! jq -e -f "${rebuild_selector}" <<<"${rebuild_backups}" |
-  jq -e '. == {full: "full-1", openbao: "keys-1"}' >/dev/null; then
-  fail 'rebuild must select the full and newer separate key backups independently'
+if ! jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" <<<"${rebuild_backups}" |
+  jq -e '. == {full: "full-1"}' >/dev/null; then
+  fail 'rebuild must select the newest executed full pre-rebuild archive across re-imports'
 fi
-if ! jq 'del(.items[1]) | .items[0].spec.excludedNamespaces += ["longhorn-benchmark"]' <<<"${rebuild_backups}" |
-  jq -e -f "${rebuild_selector}" |
-  jq -e '. == {full: "full-1", openbao: "full-1"}' >/dev/null; then
-  fail 'rebuild must still recover keys from a qualifying full archive'
+if ! jq 'del(.items[0]) | .items[0].spec.excludedNamespaces += ["longhorn-benchmark"]' <<<"${rebuild_backups}" |
+  jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" |
+  jq -e '. == {full: "full-1"}' >/dev/null; then
+  fail 'rebuild must admit a qualifying full archive with its reviewed exclusions'
 fi
-if ! jq '.items[0].spec.includedNamespaces = ["openbao"]' <<<"${rebuild_backups}" |
-  jq -e -f "${rebuild_selector}" |
-  jq -e '. == {full: null, openbao: "keys-1"}' >/dev/null; then
-  fail 'rebuild must hold when the purported full backup covers only one namespace'
+if ! jq 'del(.items[0]) | .items[0].spec.includedNamespaces = ["openbao"]' <<<"${rebuild_backups}" |
+  jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" |
+  jq -e '. == {full: null}' >/dev/null; then
+  fail 'rebuild must hold without an eligible full archive even when a key archive exists'
 fi
-if ! jq '.items[0].status.phase = "PartiallyFailed" | .items[1].spec.snapshotVolumes = true' <<<"${rebuild_backups}" |
-  jq -e -f "${rebuild_selector}" |
-  jq -e '. == {full: null, openbao: null}' >/dev/null; then
-  fail 'rebuild must reject incomplete full backups and unexpected key-backup scope'
+if ! jq 'del(.items[0]) | .items[0].status.phase = "PartiallyFailed"' <<<"${rebuild_backups}" |
+  jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" |
+  jq -e '. == {full: null}' >/dev/null; then
+  fail 'rebuild must reject incomplete full backups'
 fi
-if ! jq '.items[0].spec.excludedClusterScopedResources += ["persistentvolumes"] | .items[1].spec.excludedResources += ["secrets"]' <<<"${rebuild_backups}" |
-  jq -e -f "${rebuild_selector}" |
-  jq -e '. == {full: null, openbao: null}' >/dev/null; then
+if ! jq 'del(.items[0]) | .items[0].spec.excludedClusterScopedResources += ["persistentvolumes"]' <<<"${rebuild_backups}" |
+  jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" |
+  jq -e '. == {full: null}' >/dev/null; then
   fail 'rebuild must reject additional resource exclusions that remove recovery coverage'
 fi
-if ! jq '.items[0].spec.resourcePolicy.name = "different-policy" | .items[1].spec.excludedNamespaces += ["openbao"]' <<<"${rebuild_backups}" |
-  jq -e -f "${rebuild_selector}" |
-  jq -e '. == {full: null, openbao: null}' >/dev/null; then
-  fail 'rebuild must reject a different full volume policy or excluded OpenBao namespace'
+if ! jq 'del(.items[0]) | .items[0].spec.resourcePolicy.name = "different-policy"' <<<"${rebuild_backups}" |
+  jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" |
+  jq -e '. == {full: null}' >/dev/null; then
+  fail 'rebuild must reject a different full volume policy'
+fi
+if ! jq 'del(.items[0]) | .items[0].status.completionTimestamp = "2026-11-22T07:31:00Z"' <<<"${rebuild_backups}" |
+  jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" |
+  jq -e '. == {full: null}' >/dev/null; then
+  fail 'rebuild must reject backups that completed after the cutoff'
 fi
 
 # Production and an unset setting must keep the source class until runtime

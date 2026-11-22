@@ -30,30 +30,19 @@ def full:
   (.spec.excludedClusterScopedResources | only_excludes([volume_snapshot_content])) and
   (.spec.resourcePolicy == null or .spec.resourcePolicy == {kind: "configmap", name: "velero-volume-policies"});
 
-def openbao_keys:
-  .metadata.labels["velero.io/schedule-name"] == "velero-openbao-recovery-keys" and
-  .spec.includedNamespaces == ["openbao"] and
-  .spec.includedResources == ["secrets"] and
-  # The controller also adds all namespaces labeled exclude-from-backup.
-  all((.spec.excludedNamespaces // [])[]; type == "string" and
-    test("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$") and . != "openbao") and
-  (.spec.excludedResources | only_excludes([volume_snapshot, volume_snapshot_content])) and
-  (.spec.includedNamespaceScopedResources // []) == [] and
-  (.spec.excludedNamespaceScopedResources // []) == [] and
-  (.spec.includedClusterScopedResources // []) == [] and
-  (.spec.excludedClusterScopedResources // []) == [] and
-  .spec.resourcePolicy == null and
-  .spec.includeClusterResources == false and
-  (.spec.snapshotVolumes // false) == false and
-  (.spec.snapshotMoveData // false) == false and
-  (.spec.defaultVolumesToFsBackup // false) == false;
+def execution_time:
+  if type == "string" then
+    try (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) catch null
+  else null end;
 
-def newest:
-  sort_by([(.metadata.creationTimestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601), .metadata.name])
-  | last | .metadata.name;
+def before_rebuild($limit):
+  (.status.startTimestamp | execution_time) as $started |
+  (.status.completionTimestamp | execution_time) as $finished |
+  $started != null and $finished != null and $started <= $finished and $finished < $limit;
 
-[.items[] | select(completed)] as $completed
-| {
-    full: ($completed | map(select(full)) | newest),
-    openbao: ($completed | map(select(full or openbao_keys)) | newest)
-  }
+($cutoff | execution_time) as $limit
+| if $limit == null then error("invalid rebuild cutoff") else
+    [ .items[] | select(completed and full and before_rebuild($limit)) ]
+    | sort_by([(.status.startTimestamp | execution_time), .metadata.name])
+    | {full: (last | .metadata.name)}
+  end
