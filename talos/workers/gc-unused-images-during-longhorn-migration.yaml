@@ -1,0 +1,10 @@
+---
+# V1 replicas and container images share /var on the original workers.
+# Keep enough space for the benchmark and recovery scratch claim while
+# Longhorn uses those filesystem disks. Kubelet reclaims unused images.
+# Remove this override after the filesystem disks leave production.
+machine:
+  kubelet:
+    extraConfig:
+      imageGCHighThresholdPercent: 69
+      imageGCLowThresholdPercent: 67

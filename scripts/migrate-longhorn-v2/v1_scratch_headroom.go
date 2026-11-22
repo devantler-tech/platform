@@ -83,12 +83,12 @@ func planV1ScratchHeadroom(s inventory) (v1ScratchHeadroom, error) {
 			peerReserve = reserve
 			continue
 		}
-		if text(longhornNode, "metadata", "resourceVersion") == "" || (logical != 0 && logical < v1ScratchBytes) {
+		if text(longhornNode, "metadata", "resourceVersion") == "" || logical < 0 {
 			return v1ScratchHeadroom{}, refused
 		}
 		plan.node, plan.disk, plan.reserve = longhornNode, disk, reserve
-		if logical == 0 {
-			plan.reserve -= v1ScratchBytes
+		if logical < v1ScratchBytes {
+			plan.reserve -= v1ScratchBytes - logical
 			plan.write = true
 		}
 	}
