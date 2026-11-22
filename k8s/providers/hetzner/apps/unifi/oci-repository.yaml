@@ -21,6 +21,8 @@ kind: OCIRepository
 metadata:
   name: unifi
   namespace: unifi
+  labels:
+    platform.devantler.tech/tenant-source: "true"
 spec:
   interval: 1m
   ref:
