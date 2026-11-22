@@ -9,25 +9,40 @@ def completed:
   (.spec.labelSelector // {}) == {} and
   (.spec.orLabelSelectors // []) == [];
 
+# Velero excludes CSI snapshot objects from the normal resource listing.
+def volume_snapshot: "volumesnapshots.snapshot.storage.k8s.io";
+def volume_snapshot_content: "volumesnapshotcontents.snapshot.storage.k8s.io";
+def only_excludes($approved): ((. // []) - $approved) == [];
+def includes_all: (. // []) | . == [] or . == ["*"];
+
 def full:
   (.spec.excludedNamespaces // []) as $excluded |
   .metadata.labels["velero.io/schedule-name"] == "velero-daily-full" and
   .spec.includedNamespaces == ["*"] and
   (["kube-system", "velero"] - $excluded) == [] and
   ($excluded - ["kube-system", "velero", "longhorn-benchmark"]) == [] and
-  ((.spec.includedResources // []) | . == [] or . == ["*"]) and
-  ((.spec.includedNamespaceScopedResources // []) | . == [] or . == ["*"]) and
-  ((.spec.excludedResources // []) | length) == 0 and
-  ((.spec.excludedNamespaceScopedResources // []) - ["volumesnapshots.snapshot.storage.k8s.io"] | length) == 0;
+  .spec.includeClusterResources != false and
+  (.spec.includedResources | includes_all) and
+  (.spec.includedNamespaceScopedResources | includes_all) and
+  (.spec.includedClusterScopedResources | includes_all) and
+  (.spec.excludedResources | only_excludes([volume_snapshot, volume_snapshot_content])) and
+  (.spec.excludedNamespaceScopedResources | only_excludes([volume_snapshot])) and
+  (.spec.excludedClusterScopedResources | only_excludes([volume_snapshot_content])) and
+  (.spec.resourcePolicy == null or .spec.resourcePolicy == {kind: "configmap", name: "velero-volume-policies"});
 
 def openbao_keys:
   .metadata.labels["velero.io/schedule-name"] == "velero-openbao-recovery-keys" and
   .spec.includedNamespaces == ["openbao"] and
   .spec.includedResources == ["secrets"] and
-  (.spec.excludedNamespaces // []) == [] and
-  (.spec.excludedResources // []) == [] and
+  # The controller also adds all namespaces labeled exclude-from-backup.
+  all((.spec.excludedNamespaces // [])[]; type == "string" and
+    test("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$") and . != "openbao") and
+  (.spec.excludedResources | only_excludes([volume_snapshot, volume_snapshot_content])) and
   (.spec.includedNamespaceScopedResources // []) == [] and
   (.spec.excludedNamespaceScopedResources // []) == [] and
+  (.spec.includedClusterScopedResources // []) == [] and
+  (.spec.excludedClusterScopedResources // []) == [] and
+  .spec.resourcePolicy == null and
   .spec.includeClusterResources == false and
   (.spec.snapshotVolumes // false) == false and
   (.spec.snapshotMoveData // false) == false and

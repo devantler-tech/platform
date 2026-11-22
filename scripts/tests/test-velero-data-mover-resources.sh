@@ -154,9 +154,14 @@ rebuild_backups="$(
       spec: ({storageLocation: "default"} + $spec)};
   {items: [
     backup("full-1"; "velero-daily-full"; "2026-11-22T02:17:00Z";
-      {includedNamespaces: ["*"], excludedNamespaces: ["kube-system", "velero"]}),
+      {includedNamespaces: ["*"], excludedNamespaces: ["kube-system", "velero"],
+       excludedNamespaceScopedResources: ["volumesnapshots.snapshot.storage.k8s.io"],
+       excludedClusterScopedResources: ["volumesnapshotcontents.snapshot.storage.k8s.io"],
+       resourcePolicy: {kind: "configmap", name: "velero-volume-policies"}}),
     backup("keys-1"; "velero-openbao-recovery-keys"; "2026-11-22T06:10:00Z";
       {includedNamespaces: ["openbao"], includedResources: ["secrets"],
+       excludedNamespaces: ["longhorn-benchmark"],
+       excludedResources: ["volumesnapshots.snapshot.storage.k8s.io", "volumesnapshotcontents.snapshot.storage.k8s.io"],
        includeClusterResources: false, snapshotVolumes: false,
        snapshotMoveData: false, defaultVolumesToFsBackup: false}),
     backup("other-1"; "manual"; "2026-11-22T07:00:00Z"; {includedNamespaces: ["*"]})
@@ -180,6 +185,16 @@ if ! jq '.items[0].status.phase = "PartiallyFailed" | .items[1].spec.snapshotVol
   jq -e -f "${rebuild_selector}" |
   jq -e '. == {full: null, openbao: null}' >/dev/null; then
   fail 'rebuild must reject incomplete full backups and unexpected key-backup scope'
+fi
+if ! jq '.items[0].spec.excludedClusterScopedResources += ["persistentvolumes"] | .items[1].spec.excludedResources += ["secrets"]' <<<"${rebuild_backups}" |
+  jq -e -f "${rebuild_selector}" |
+  jq -e '. == {full: null, openbao: null}' >/dev/null; then
+  fail 'rebuild must reject additional resource exclusions that remove recovery coverage'
+fi
+if ! jq '.items[0].spec.resourcePolicy.name = "different-policy" | .items[1].spec.excludedNamespaces += ["openbao"]' <<<"${rebuild_backups}" |
+  jq -e -f "${rebuild_selector}" |
+  jq -e '. == {full: null, openbao: null}' >/dev/null; then
+  fail 'rebuild must reject a different full volume policy or excluded OpenBao namespace'
 fi
 
 # Production and an unset setting must keep the source class until runtime
