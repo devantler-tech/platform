@@ -7,7 +7,8 @@ set -euo pipefail
 # deployed, and nothing reported it. This reads each node's live kubelet
 # configuration and requires every declared setting to be present in it.
 #
-# Declared settings are the cluster-wide machine.kubelet.extraConfig patches.
+# Declared settings come from the cluster-wide patches and the supported
+# worker-only image garbage collection overrides.
 # The comparison is literal and one-directional: a declared key must exist
 # live with exactly the declared value, and anything else the kubelet reports
 # is ignored. Every setting declared today is a number, a boolean or a string
@@ -58,16 +59,16 @@ give_up() { # <exit code> <message>
 
 shopt -s nullglob
 cluster_patches=("$talos_dir"/cluster/*.yaml)
-role_patches=("$talos_dir"/control-planes/*.yaml "$talos_dir"/workers/*.yaml)
+control_plane_patches=("$talos_dir"/control-planes/*.yaml)
+worker_patches=("$talos_dir"/workers/*.yaml)
 shopt -u nullglob
 
 ((${#cluster_patches[@]} > 0)) ||
   give_up 2 "no cluster-wide Talos patches found under $talos_dir/cluster"
 
-# A per-role kubelet setting would make "every node" the wrong expectation.
-# Refuse it instead of comparing those nodes against half their declaration.
-# A file may hold several documents, and a read that fails is not a zero.
-for patch in "${role_patches[@]}"; do
+# Control planes use the cluster-wide settings. Refuse unsupported role
+# settings, including any found in another document of the same patch.
+for patch in "${control_plane_patches[@]}"; do
   role_settings=$(yq eval -o=json -I=0 '.machine.kubelet.extraConfig // {}' "$patch" 2>/dev/null |
     jq -s 'map(length) | add // 0' 2>/dev/null) ||
     give_up 2 "could not read $patch to rule out per-role kubelet settings"
@@ -75,13 +76,35 @@ for patch in "${role_patches[@]}"; do
     give_up 2 "per-role kubelet settings in $patch are not modelled by this check"
 done
 
-# shellcheck disable=SC2016  # yq program, not shell
-declared=$(yq eval-all -o=json -I=0 \
-  '. as $doc ireduce ({}; . * ($doc.machine.kubelet.extraConfig // {}))' \
-  "${cluster_patches[@]}" 2>/dev/null) ||
+fold_kubelet_settings() {
+  # shellcheck disable=SC2016  # yq program, not shell
+  yq eval-all -o=json -I=0 '. as $doc ireduce ({}; . * ($doc.machine.kubelet.extraConfig // {}))' "$@"
+}
+
+declared=$(fold_kubelet_settings "${cluster_patches[@]}" 2>/dev/null) ||
   give_up 2 "could not read the cluster-wide Talos patches under $talos_dir/cluster"
 jq -e 'type == "object" and length > 0' <<<"$declared" >/dev/null 2>&1 ||
   give_up 2 "no declared kubelet settings found under $talos_dir/cluster; nothing to compare"
+
+worker_overrides='{}'
+if ((${#worker_patches[@]} > 0)); then
+  worker_overrides=$(fold_kubelet_settings "${worker_patches[@]}" 2>/dev/null) ||
+    give_up 2 "could not read $talos_dir/workers to rule out per-role kubelet settings"
+fi
+jq -e 'type == "object" and
+  all(to_entries[]; (.key == "imageGCHighThresholdPercent" or .key == "imageGCLowThresholdPercent") and (.value | type == "number"))' \
+  <<<"$worker_overrides" >/dev/null 2>&1 ||
+  give_up 2 "per-role kubelet settings under $talos_dir/workers are not modelled by this check"
+worker_declared=$(jq -c --argjson overrides "$worker_overrides" '. + $overrides' <<<"$declared") ||
+  give_up 2 "could not combine the declared worker image GC settings"
+if [[ "$worker_overrides" != '{}' ]]; then
+  jq -e '
+    .imageGCLowThresholdPercent as $low | .imageGCHighThresholdPercent as $high |
+    ($low | type == "number") and ($high | type == "number") and
+    $low >= 0 and $high <= 100 and $low < $high and $low % 1 == 0 and $high % 1 == 0
+  ' <<<"$worker_declared" >/dev/null 2>&1 ||
+    give_up 2 "the declared worker image GC thresholds are invalid"
+fi
 
 # shellcheck disable=SC2016  # jq program, not shell
 compare='
@@ -132,9 +155,11 @@ for ((attempt = 1; attempt <= max_attempts; attempt++)); do
   # A node the autoscaler has just registered may not answer yet. Never accept
   # an unread node, but allow a normal replacement to converge within a
   # finite window.
-  if names=$("$kubectl_bin" --context "$kube_context" --request-timeout=15s \
-    get nodes -o json 2>/dev/null | jq -r '.items | if type == "array" then .[].metadata.name else error("no items") end'); then
-    while IFS= read -r node; do
+  if nodes=$("$kubectl_bin" --context "$kube_context" --request-timeout=15s \
+    get nodes -o json 2>/dev/null | jq -r '.items | if type != "array" then error("no items") else
+      .[].metadata | [.name, (if (.labels // {} | has("node-role.kubernetes.io/control-plane")) then
+        "control-plane" else "worker" end)] | @tsv end'); then
+    while IFS=$'\t' read -r node role; do
       [[ -n "$node" ]] || continue
       node_count=$((node_count + 1))
       if [[ ! "$node" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
@@ -143,6 +168,17 @@ for ((attempt = 1; attempt <= max_attempts; attempt++)); do
       fi
       [[ "$node" == prod-control-plane-* || "$node" == prod-worker-* ]] ||
         autoscaler_count=$((autoscaler_count + 1))
+      want="$declared"
+      if [[ "$worker_overrides" != '{}' ]]; then
+        case "$role:$node" in
+          control-plane:prod-control-plane-*) ;;
+          worker:prod-worker-* | worker:autoscale-*) want="$worker_declared" ;;
+          *)
+            report+="$node: node role does not match its production name"$'\n'
+            continue
+            ;;
+        esac
+      fi
       if ! configz=$("$kubectl_bin" --context "$kube_context" --request-timeout=15s \
         get --raw "/api/v1/nodes/$node/proxy/configz" 2>/dev/null); then
         report+="$node: kubelet configuration could not be read"$'\n'
@@ -155,14 +191,14 @@ for ((attempt = 1; attempt <= max_attempts; attempt++)); do
         unread=true
         continue
       fi
-      if ! drift=$(jq -r --argjson declared "$declared" "$compare" <<<"$configz" 2>/dev/null); then
+      if ! drift=$(jq -r --argjson declared "$want" "$compare" <<<"$configz" 2>/dev/null); then
         report+="$node: kubelet configuration reply is not valid JSON"$'\n'
         continue
       fi
       while IFS= read -r line; do
         [[ -z "$line" ]] || report+="$node: $line"$'\n'
       done <<<"$drift"
-    done <<<"$names"
+    done <<<"$nodes"
     ((node_count > 0)) || report='the cluster reported no nodes'$'\n'
   else
     report="Kubernetes nodes could not be read from context $kube_context"$'\n'
