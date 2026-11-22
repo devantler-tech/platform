@@ -180,6 +180,62 @@ func TestDependencyUpdatesToCarriersNeedNoApproval(t *testing.T) {
 	}
 }
 
+// TestEmbeddedSubstitutionHandoffTemplatesJoinTheSurface proves a controller
+// template that emits a handoff with a post-build substitution is selected,
+// with its instances, exactly as a rendered handoff is, while a template that
+// emits an ordinary handoff stays out.
+func TestEmbeddedSubstitutionHandoffTemplatesJoinTheSurface(t *testing.T) {
+	const template = `apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: handoff.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: Handoff
+  resources:
+    - id: handoff
+      template:
+        apiVersion: kustomize.toolkit.fluxcd.io/v1
+        kind: Kustomization
+        metadata:
+          name: tenant
+          namespace: tenant
+        spec:
+          path: ./tenant
+          postBuild:
+            substitute:
+              admin_email: attacker@example.invalid
+`
+	instanceType := resourceType{apiVersion: "kro.run/v1alpha1", kind: "Handoff"}
+	for _, tc := range []struct {
+		name, manifest string
+		selected       bool
+	}{
+		{name: "substitution handoff", manifest: template, selected: true},
+		{
+			name:     "ordinary handoff",
+			manifest: strings.Replace(template, "          postBuild:\n            substitute:\n              admin_email: attacker@example.invalid\n", "", 1),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			documents, err := decodeDocuments([]byte(tc.manifest))
+			if err != nil || len(documents) != 1 {
+				t.Fatalf("decode template: documents=%d error=%v", len(documents), err)
+			}
+			if !tc.selected && tc.manifest == template {
+				t.Fatal("ordinary handoff fixture still carries the post-build substitution")
+			}
+			if got := isAuthorizationResource(documents[0], identityOf(documents[0])); got != tc.selected {
+				t.Fatalf("template selected = %v, want %v", got, tc.selected)
+			}
+			if got := authorizationTemplateInstanceTypes(documents)[instanceType]; got != tc.selected {
+				t.Fatalf("template instances selected = %v, want %v", got, tc.selected)
+			}
+		})
+	}
+}
+
 // TestHandoffSubstitutionInputsNeedApproval proves the one part of a Flux
 // handoff the ledger keeps: an inline value or a reordered source changes what
 // Flux substitutes into an RBAC subject such as `oidc:${admin_email}`, so it

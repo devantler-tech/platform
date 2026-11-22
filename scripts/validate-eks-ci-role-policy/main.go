@@ -924,22 +924,29 @@ func isEmbeddedAuthorizationObject(identity resourceIdentity) bool {
 // isEmbeddedAuthorizationOrCarrier also accepts a nested carrier. The
 // isolated-chart contract keeps refusing post-renderers that emit one, even
 // though carriers no longer join the approved ledger.
-func isEmbeddedAuthorizationOrCarrier(identity resourceIdentity) bool {
+func isEmbeddedAuthorizationOrCarrier(_ map[string]any, identity resourceIdentity) bool {
 	return isEmbeddedAuthorizationObject(identity) ||
 		strings.Contains(identity.apiVersion, "${") && isAuthorizationKind(identity.kind) ||
 		isAuthorizationCarrier(identity)
 }
 
+// isEmbeddedAuthorizationTemplate recognizes a nested authorization object, or
+// a nested Flux handoff whose post-build substitution can rewrite binding
+// subjects just as a rendered one can (isFluxSubstitutionHandoff).
+func isEmbeddedAuthorizationTemplate(template map[string]any, identity resourceIdentity) bool {
+	return isEmbeddedAuthorizationObject(identity) || isFluxSubstitutionHandoff(template, identity)
+}
+
 // containsEmbeddedAuthorizationTemplate finds nested authorization object
 // templates emitted later by controllers such as KRO rather than by Kustomize
-// itself. A nested carrier alone does not count (platform#6270).
+// itself. Any other nested carrier does not count (platform#6270).
 func containsEmbeddedAuthorizationTemplate(value any, depth int) bool {
-	return containsEmbeddedTemplate(value, depth, isEmbeddedAuthorizationObject)
+	return containsEmbeddedTemplate(value, depth, isEmbeddedAuthorizationTemplate)
 }
 
 // containsEmbeddedTemplate finds a nested object, below the document root,
-// whose identity matches.
-func containsEmbeddedTemplate(value any, depth int, matches func(resourceIdentity) bool) bool {
+// that matches.
+func containsEmbeddedTemplate(value any, depth int, matches func(map[string]any, resourceIdentity) bool) bool {
 	switch typedValue := value.(type) {
 	case []any:
 		for _, item := range typedValue {
@@ -948,7 +955,7 @@ func containsEmbeddedTemplate(value any, depth int, matches func(resourceIdentit
 			}
 		}
 	case map[string]any:
-		if depth > 0 && matches(identityOf(typedValue)) {
+		if depth > 0 && matches(typedValue, identityOf(typedValue)) {
 			return true
 		}
 		for _, item := range typedValue {
