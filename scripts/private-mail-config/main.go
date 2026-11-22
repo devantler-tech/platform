@@ -138,6 +138,9 @@ func loadInputs(dir string) (inputs, error) {
 
 // command handles the Email configuration CLI without echoing private input values.
 func command(args []string, log io.Writer) int {
+	if len(args) > 0 && args[0] == "history" {
+		return historyCommand(args[1:], log)
+	}
 	if len(args) > 0 && args[0] == "bootstrap" {
 		return bootstrapCommand(args[1:], log)
 	}

@@ -89,6 +89,7 @@ components:
   # Temporary controller placement for runtime adoption (#6073). Remove it
   # after the migration's runtime and backup checks pass (#6073).
   - ../../../../bases/components/longhorn-v1-runtime-headroom
+  - ../../../../bases/components/longhorn-v1-operator-headroom
   # Select the reviewed maintenance runtime with one manager unavailable at
   # a time. Publication requires the native capacity and source guards (#6073).
   - ../../../../bases/components/longhorn-v1-retirement-runtime
@@ -133,6 +134,28 @@ components:
   # e56bb694c251d8f859edc76d005e3508e622ef2f3ba8d7e56ce722de9affbcf9.
   - cilium/components/ebpf-host-routing/
 patches:
+  # Keep the two stateless canary-test endpoints on qualified workers during
+  # the Longhorn maintenance rollout. Retire this placement with #6432.
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: flagger-loadtester
+      namespace: flagger-system
+    patch: |-
+      - op: add
+        path: /spec/values/affinity/nodeAffinity
+        value:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [prod-worker-1]
+              - matchExpressions:
+                  - key: storage.platform.devantler.tech/migration-pool
+                    operator: In
+                    values: [v2]
   - path: openbao/patches/store-data-on-hcloud.yaml
   # Prod-only: HARD-pin OpenBao to the static baseline workers so its hcloud
   # block volumes never ride a node the autoscaler can reclaim (#2363) — see file.

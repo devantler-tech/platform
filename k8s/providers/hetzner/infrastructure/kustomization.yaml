@@ -222,6 +222,7 @@ components:
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
+  - ../../../bases/components/longhorn-v1-workload-headroom
 patches:
   # Temporary rollout headroom for the storage migration (#6073). This
   # single-writer metrics collector keeps its existing Recreate strategy.
