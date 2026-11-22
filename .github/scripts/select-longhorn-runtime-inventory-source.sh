@@ -8,10 +8,10 @@ refuse() {
 }
 
 [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_EVENT_NAME:-}" == workflow_dispatch &&
-   "${GITHUB_REF:-}" == refs/heads/main && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform &&
-   "${GITHUB_RUN_ATTEMPT:-}" == 1 && "${LONGHORN_V2_OPERATION:-}" == inventory-v1-runtime &&
-   "${LONGHORN_V2_CONFIRM:-}" == inventory-v1-runtime && -n "${GH_TOKEN:-}" &&
-   -n "${GITHUB_WORKSPACE:-}" && "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] ||
+  "${GITHUB_REF:-}" == refs/heads/main && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform &&
+  "${GITHUB_RUN_ATTEMPT:-}" == 1 && "${LONGHORN_V2_OPERATION:-}" == inventory-v1-runtime &&
+  "${LONGHORN_V2_CONFIRM:-}" == inventory-v1-runtime && -n "${GH_TOKEN:-}" &&
+  -n "${GITHUB_WORKSPACE:-}" && "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] ||
   refuse 'the confirmed first-attempt inventory is required'
 
 checkout_git() {
