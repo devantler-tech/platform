@@ -386,7 +386,7 @@ assert_single_rule_role KSV-0049 'k8s/bases/infrastructure/controllers/prune-pro
 assert_single_rule_role KSV-0113 'k8s/bases/infrastructure/substrate/role.yaml' ate-system '/secrets' \
   'substrate-actor-id-ca,substrate-actor-id-jwt,substrate-egress-mitm-ca,substrate-service-dns-ca,substrate-pod-identity-ca,substrate-postgres-ca' 'get'
 assert_single_rule_role KSV-0113 'k8s/providers/hetzner/apps/customer-identity/role.yaml' customer-identity '/secrets' \
-  'customer-dex-zitadel-client' 'get patch'
+  'customer-dex-zitadel-client,business-portal-zitadel-token' 'get patch'
 readonly war_role='k8s/providers/hetzner/apps/world-at-ruin/role-operator.yaml'
 assert_single_rule_role KSV-0053 "$war_role" world-at-ruin '/pods/portforward,pods/exec' '' 'create'
 

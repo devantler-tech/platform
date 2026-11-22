@@ -1140,6 +1140,12 @@ spec:
               path "secret/data/apps/business-site/portal-db-ca" {
                 capabilities = ["create", "update", "read"]
               }
+              # The portal service account's ZITADEL token, which the
+              # customer-identity setup CronJob issues and a PushSecret copies
+              # here for the business-site runtime Secret. Exact key only.
+              path "secret/data/apps/business-site/portal-zitadel" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/apps/actual-budget/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -1216,6 +1222,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/business-site/portal-db-ca" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/business-site/portal-zitadel" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/actual-budget/*" {

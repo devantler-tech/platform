@@ -64,7 +64,11 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 }
 
 func readNativeNodes(ctx context.Context) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "--context", "admin@prod", "--request-timeout=15s", "get", "--raw", "/api/v1/nodes?limit=1000")
+	return readNodesInContext(ctx, "admin@prod")
+}
+
+func readNodesInContext(ctx context.Context, kubeContext string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "--context", kubeContext, "--request-timeout=15s", "get", "--raw", "/api/v1/nodes?limit=1000")
 	var output boundedOutput
 	cmd.Stdout = &output
 	cmd.Stderr = io.Discard
