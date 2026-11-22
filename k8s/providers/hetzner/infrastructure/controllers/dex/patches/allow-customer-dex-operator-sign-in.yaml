@@ -1,0 +1,13 @@
+# Prod-only: the customer Dex (login.devantler.tech, apps/customer-identity)
+# signs the maintainer in to the business-site portal's operator area with
+# GitHub through this Dex, as its `platform` OIDC connector (business-site#302).
+# Its callback joins the shared client's redirect URIs; the customer Dex reads
+# that client's secret from OpenBao (infrastructure/oidc/dex). The portal admits
+# only the operator subjects it lists server-side. The test stops the build if
+# the shared client is no longer the first entry.
+- op: test
+  path: /spec/values/config/staticClients/0/id
+  value: public-client
+- op: add
+  path: /spec/values/config/staticClients/0/redirectURIs/-
+  value: https://login.devantler.tech/callback
