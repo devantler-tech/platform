@@ -78,8 +78,8 @@ jobs:
           printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
           unset KUBE_CONFIG
           stage=stable-api
-          if ! ./scripts/use-prod-stable-api-endpoint.sh > "$work/endpoint.log" 2>&1; then
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
             fail
-          fi
+          fi 2>"$work/endpoint.log"
           unset HCLOUD_TOKEN
           bash scripts/refresh-openbao-key-backup.sh "$work"
