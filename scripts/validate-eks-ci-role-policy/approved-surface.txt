@@ -110,7 +110,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 26000fada860269dd6bcbf187f
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn 3687bc9ddaa8177bc383eb7d25fc8f1bff732a935e2874656fdd8b438aea6e03
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|oauth2-proxy|oauth2-proxy cedbba9c47277b2385aa2c32cc4d69db1e6e2189d288f69c8771a699a6295cdf
+helm.toolkit.fluxcd.io/v2|HelmRelease|oauth2-proxy|oauth2-proxy 9e34e0401c43f48f8268b48efebc241902f6090774d3e6ae33e9ff6317975185
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|observability|audit-log-forwarder 49f6267c3f99814d688e1e77d0665ad2c142f07c6e5b6af3f424902393c4b311
 
