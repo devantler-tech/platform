@@ -327,7 +327,6 @@ func TestTheListCoversEverythingTheDeployCanReach(t *testing.T) {
 		"scripts/run-ksail-prod.sh",
 		"scripts/tests/test-pvc-prune-safety.sh",
 		"scripts/verify-merge-group-queued/main.go",
-		"scripts/maintain-longhorn-clients/main.go",
 		"internal/longhornmigration/pools.go",
 		"scripts/publish-workflow-approved-revisions.tsv",
 		// A module another module imports, and what the cluster configuration names.
@@ -444,9 +443,6 @@ func TestHistoryReadsSeeEveryWayToCallGit(t *testing.T) {
 // The entry must match exactly: a new subcommand needs a new review.
 func TestReadsFromGitHistoryAreReviewed(t *testing.T) {
 	reviewed := map[string]string{
-		// diff --name-only between two commits, limited to k8s/: names only,
-		// under a listed path.
-		"scripts/maintain-longhorn-clients/interruption.go": "diff",
 		// diff compares commit path names and the listed working-tree producer
 		// inputs. show reads only the controllers root Kustomization and the
 		// explicitly listed authorization ledger at the validated current-main

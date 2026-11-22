@@ -330,7 +330,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
-      actions: read # read a prior run attempt status, to prove an interrupted Longhorn maintenance holder is dead (deploy-prod maintain-longhorn-clients)
+      actions: read # read a prior run attempt status, to prove an interrupted ARC retirement owner is dead (deploy-prod retire-arc-pool.sh)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
