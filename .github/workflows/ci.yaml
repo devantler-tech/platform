@@ -298,6 +298,8 @@ jobs:
               - 'scripts/tests/tenant-webapp-admission/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-reloader-rendered-placement.sh'
+              - 'scripts/tests/test-flux-operator-rendered-placement.sh'
+              - 'scripts/tests/test-ksail-operator-rendered-placement.sh'
               - 'scripts/tests/test-reloader-placement-selection.sh'
               - 'scripts/tests/test-hubble-ui-streaming.sh'
               - 'scripts/check-hubble-ui-streaming/**'
@@ -1225,6 +1227,45 @@ jobs:
         run: |
           shellcheck scripts/tests/test-pvc-prune-safety.sh
           bash scripts/tests/test-pvc-prune-safety.sh
+
+      - name: 🏠 Validate Homepage route groups against the live allow-list
+        # A route is admitted against the copy of restrict-homepage-service-groups
+        # already in production, not this change's: Flux applies
+        # infrastructure-controllers before the policy's layer, so a change that
+        # adds a group and moves a route to it is denied in the deploy and evicted
+        # from the queue (platform#5383). Like the PVC check above, this runs in
+        # the repository guards job so the merge group is judged against the
+        # queue's own base commit, and no path filter can skip it. The base is
+        # fetched explicitly: a pull request reads the current tip of its base
+        # branch, a merge group its base_sha. A failed fetch fails the step.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          shellcheck scripts/guard-homepage-route-groups.sh scripts/tests/test-guard-homepage-route-groups.sh
+          bash scripts/tests/test-guard-homepage-route-groups.sh
+          case "$EVENT_NAME" in
+            pull_request)
+              [ -n "$PR_BASE_REF" ] || { echo '::error::the pull request names no base branch'; exit 1; }
+              refspec="+refs/heads/${PR_BASE_REF}:refs/remotes/origin/${PR_BASE_REF}"
+              base="origin/${PR_BASE_REF}"
+              ;;
+            merge_group)
+              [ -n "$MERGE_GROUP_BASE_SHA" ] || { echo '::error::the merge group names no base_sha'; exit 1; }
+              refspec="$MERGE_GROUP_BASE_SHA"
+              base="$MERGE_GROUP_BASE_SHA"
+              ;;
+            *)
+              echo "::error::no base revision is defined for the ${EVENT_NAME} event"
+              exit 1
+              ;;
+          esac
+          if ! git fetch --no-tags --quiet origin "$refspec"; then
+            echo "::error::could not fetch the base ${base}, so the allow-list production is admitted against is unreadable"
+            exit 1
+          fi
+          bash scripts/guard-homepage-route-groups.sh --base "$base"
 
       - name: ✂️ Validate every Flux Kustomization prunes
         # Flux defaults spec.prune to false, so an omitted field silently opts a
@@ -4202,6 +4243,59 @@ jobs:
         run: |
           bash scripts/guard-helm-post-renderers.sh --flux-version 2.9.6 --release whoami/whoami \
             --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
+
+      - name: 🧩 Verify scoped Flux operator placement
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck -x scripts/tests/test-flux-operator-rendered-placement.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml \
+            k8s/bases/infrastructure/controllers/flux-operator \
+            k8s/bases/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/docker/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/docker/infrastructure/controllers/flux-operator \
+            k8s/bases/components \
+            k8s/clusters/local/kustomization.yaml \
+            k8s/clusters/prod/bootstrap/config-map.yaml ksail.prod.yaml \
+            scripts/tests/test-flux-operator-rendered-placement.sh \
+            scripts/flux-render.lib.sh scripts/build-controller-helm.sh \
+            scripts/prepare-helm-render-input-capture.sh \
+            scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-flux-operator-rendered-placement.sh
+          fi
+
+      - name: 🧩 Verify scoped KSail operator placement
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck -x scripts/tests/test-ksail-operator-rendered-placement.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml \
+            k8s/bases/infrastructure/ksail-operator \
+            k8s/bases/infrastructure/controllers/ksail-operator \
+            k8s/bases/infrastructure/kustomization.yaml \
+            k8s/bases/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/docker/infrastructure/kustomization.yaml \
+            k8s/providers/docker/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/ksail-operator \
+            k8s/bases/components \
+            k8s/clusters ksail.prod.yaml \
+            scripts/tests/test-ksail-operator-rendered-placement.sh \
+            scripts/flux-render.lib.sh scripts/build-controller-helm.sh \
+            scripts/prepare-helm-render-input-capture.sh \
+            scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-ksail-operator-rendered-placement.sh
+          fi
 
       - name: 🧩 Verify independent reloader placement
         env:
