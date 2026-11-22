@@ -172,7 +172,7 @@ for ((attempt = 1; attempt <= max_attempts; attempt++)); do
       if [[ "$worker_overrides" != '{}' ]]; then
         case "$role:$node" in
           control-plane:prod-control-plane-*) ;;
-          worker:prod-worker-*|worker:autoscale-*) want="$worker_declared" ;;
+          worker:prod-worker-* | worker:autoscale-*) want="$worker_declared" ;;
           *)
             report+="$node: node role does not match its production name"$'\n'
             continue
