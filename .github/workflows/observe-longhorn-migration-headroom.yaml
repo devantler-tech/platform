@@ -1,7 +1,7 @@
 ---
 name: Observe Longhorn Migration Headroom
 
-# Reads provider and Kubernetes migration capacity. Both operations read the
+# Reads provider and Kubernetes migration capacity. Each operation reads the
 # Hetzner account, so they keep HCLOUD_TOKEN. Guards, credential handling and
 # cleanup live in prod-operation.yaml.
 "on":
@@ -16,6 +16,7 @@ name: Observe Longhorn Migration Headroom
         options:
           - observe-longhorn-migration-headroom
           - observe-longhorn-provider-account
+          - observe-longhorn-provider-ownership
       confirm:
         description: Type the selected operation name exactly
         required: true
@@ -37,6 +38,6 @@ jobs:
       operation: ${{ inputs.operation }}
       confirm: ${{ inputs.confirm }}
       program: scripts/verify-longhorn-migration-headroom
-      args: ${{ inputs.operation == 'observe-longhorn-provider-account' && 'account-census' || 'before-publish' }}
+      args: ${{ inputs.operation == 'observe-longhorn-provider-ownership' && 'account-ownership' || inputs.operation == 'observe-longhorn-provider-account' && 'account-census' || 'before-publish' }}
       hcloud-token: true
       timeout-minutes: 10
