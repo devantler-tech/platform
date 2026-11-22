@@ -13,7 +13,7 @@ spec:
   chart:
     spec:
       chart: oauth2-proxy
-      version: 10.7.2
+      version: 10.7.4
       sourceRef:
         kind: HelmRepository
         name: oauth2-proxy
@@ -117,18 +117,20 @@ spec:
         # always finds its own token. Fixes "homepage often doesn't start on
         # first visit".
         cookie_csrf_per_request = true
-        # Cookie scope: the bare apex (${domain}), no leading dot. oauth2-proxy
-        # suffix-matches the request host against cookie_domains, and a leading
-        # dot (".${domain}") fails that match for the apex host itself --
-        # strings.HasSuffix("platform...", ".platform...") is false -- so it
-        # logged a "request host did not match any of the specific cookie
-        # domains" warning on every apex request and fell back to the dotted
-        # domain anyway. The bare apex suffix-matches both the apex and every
-        # subdomain (oauth2-proxy., dex.), and per RFC 6265 a cookie with
-        # Domain=${domain} is still sent to the apex AND all subdomains, so
-        # cross-subdomain SSO is preserved without the warning. whitelist_domains
-        # (the redirect allowlist) keeps both forms intentionally.
-        cookie_domains = ["${domain}"]
+        # Cookie scope: host-only. No cookie_domains is set, so oauth2-proxy
+        # writes the session cookie without a Domain attribute and the browser
+        # returns it only to the exact host that signed in. Other hosts under
+        # ${domain}, including any a tenant serves, never receive it. Signing in
+        # stays click-free: each fronted host finishes its own login at
+        # /oauth2/callback (see redirect_url below), and Dex's own session makes
+        # that a silent redirect after the first sign-in.
+        #
+        # The cookie name is distinct from oauth2-proxy's default
+        # (_oauth2_proxy), so a session cookie a browser still holds under the
+        # default name is ignored rather than read, and every host issues a
+        # fresh host-only one. whitelist_domains (the redirect allowlist) keeps
+        # both forms of ${domain} intentionally.
+        cookie_name = "_oauth2_proxy_host"
         whitelist_domains = ["${domain}", ".${domain}"]
         # No redirect_url, deliberately: oauth2-proxy then finishes each login at
         # /oauth2/callback on the host the user started from (https, because

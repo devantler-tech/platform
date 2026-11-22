@@ -93,16 +93,22 @@ drifted=$(jq '.kubeletconfig.mergeDefaultEvictionSettings = false
 
 new_fixture() { # <dir>: every node healthy
   mkdir -p "$1"
-  printf '%s\n' "${nodes[@]}" | jq -R '{metadata: {name: .}}' | jq -s '{items: .}' >"$1/nodes.json"
+  printf '%s\n' "${nodes[@]}" | jq -R '{metadata: {name: ., labels: (
+    if startswith("prod-control-plane-") then {"node-role.kubernetes.io/control-plane": ""} else {} end
+  )}}' | jq -s '{items: .}' >"$1/nodes.json"
   for node in "${nodes[@]}"; do printf '%s\n' "$healthy" >"$1/$node.json"; done
 }
+
+mkdir -p "$tmp_dir/talos-baseline/cluster"
+cp "$root_dir"/talos/cluster/*.yaml "$tmp_dir/talos-baseline/cluster/"
 
 run() { # <fixture dir> [env assignments...]: sets rc and output
   local dir=$1
   shift
   rc=0
   output=$(env KUBECTL_BIN="$mock_kubectl" MOCK_DIR="$dir" \
-    KUBELET_READBACK_ATTEMPTS=1 KUBELET_READBACK_INTERVAL_SECONDS=0 "$@" "$readback" 2>&1) || rc=$?
+    TALOS_CONFIG_DIR="$tmp_dir/talos-baseline" KUBELET_READBACK_ATTEMPTS=1 \
+    KUBELET_READBACK_INTERVAL_SECONDS=0 "$@" "$readback" 2>&1) || rc=$?
 }
 
 expect() { # <name> <exit code> <fragment>...
@@ -126,6 +132,40 @@ new_fixture "$tmp_dir/healthy"
 run "$tmp_dir/healthy"
 expect 'every node matches the declared settings' 0 \
   'PASS: 3 node(s), 1 of them autoscaler-provisioned' 'mergeDefaultEvictionSettings'
+
+mkdir -p "$tmp_dir/talos-worker-gc/workers"
+cp -R "$tmp_dir/talos-baseline/cluster" "$tmp_dir/talos-worker-gc/"
+printf 'machine:\n  kubelet:\n    extraConfig:\n      imageGCHighThresholdPercent: 69\n      imageGCLowThresholdPercent: 67\n' \
+  >"$tmp_dir/talos-worker-gc/workers/image-gc.yaml"
+new_fixture "$tmp_dir/worker-gc"
+for node in prod-worker-1 autoscale-cx43-example; do
+  jq '.kubeletconfig.imageGCHighThresholdPercent = 69 | .kubeletconfig.imageGCLowThresholdPercent = 67' \
+    <<<"$healthy" >"$tmp_dir/worker-gc/$node.json"
+done
+run "$tmp_dir/worker-gc" TALOS_CONFIG_DIR="$tmp_dir/talos-worker-gc"
+expect 'workers use the migration GC settings and control planes use the defaults' 0 'PASS: 3 node(s)'
+jq '.kubeletconfig.imageGCHighThresholdPercent = 69 | .kubeletconfig.imageGCLowThresholdPercent = 67' \
+  <<<"$healthy" >"$tmp_dir/worker-gc/prod-control-plane-2.json"
+run "$tmp_dir/worker-gc" TALOS_CONFIG_DIR="$tmp_dir/talos-worker-gc"
+expect 'applying worker GC thresholds to a control plane fails' 1 \
+  'prod-control-plane-2: imageGCHighThresholdPercent: declared 75, live 69'
+printf '%s\n' "$healthy" >"$tmp_dir/worker-gc/prod-control-plane-2.json"
+
+jq '(.items[] | select(.metadata.name == "prod-control-plane-2") | .metadata.labels) = {}' \
+  "$tmp_dir/worker-gc/nodes.json" >"$tmp_dir/worker-gc/ambiguous.json"
+cp "$tmp_dir/worker-gc/nodes.json" "$tmp_dir/worker-gc/original.json"
+mv "$tmp_dir/worker-gc/ambiguous.json" "$tmp_dir/worker-gc/nodes.json"
+run "$tmp_dir/worker-gc" TALOS_CONFIG_DIR="$tmp_dir/talos-worker-gc"
+expect 'an ambiguous node role cannot satisfy the worker GC check' 1 'node role does not match its production name'
+mv "$tmp_dir/worker-gc/original.json" "$tmp_dir/worker-gc/nodes.json"
+printf '%s\n' "$healthy" >"$tmp_dir/worker-gc/autoscale-cx43-example.json"
+run "$tmp_dir/worker-gc" TALOS_CONFIG_DIR="$tmp_dir/talos-worker-gc"
+expect 'an autoscaled worker running the default GC settings still fails' 1 \
+  'autoscale-cx43-example: imageGCHighThresholdPercent: declared 69, live 75'
+printf 'machine:\n  kubelet:\n    extraConfig:\n      imageGCHighThresholdPercent: 67\n      imageGCLowThresholdPercent: 69\n' \
+  >"$tmp_dir/talos-worker-gc/workers/image-gc.yaml"
+run "$tmp_dir/worker-gc" TALOS_CONFIG_DIR="$tmp_dir/talos-worker-gc"
+expect 'reversed worker GC thresholds are refused before kubelet reads' 2 'worker image GC thresholds are invalid'
 
 # Keeping the defaults means their values must match too. Presence alone
 # accepts disabled/changed eviction, and must include image-filesystem inodes.

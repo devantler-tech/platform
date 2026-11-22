@@ -24,13 +24,19 @@ placement_is_scoped() {
     def target: .kind == "Deployment" and .metadata.name == "ksail-operator" and .metadata.namespace == "ksail-operator";
     def canonical: map(if target then
       (if .spec.template.spec.affinity.nodeAffinity == {} then del(.spec.template.spec.affinity.nodeAffinity) else . end) |
+      (if .spec.template.spec.affinity.podAntiAffinity == {} then del(.spec.template.spec.affinity.podAntiAffinity) else . end) |
       (if .spec.template.spec.affinity == {} then del(.spec.template.spec.affinity) else . end)
       else . end) | sort_by([.apiVersion,.kind,.metadata.namespace,.metadata.name]);
     ([.[] | select(target)]) as $operators |
     ($operators | length) == 1 and
     $operators[0].spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
       [{matchExpressions:[{key:"kubernetes.io/hostname",operator:"NotIn",values:["prod-worker-2","prod-worker-3"]}]}] and
-    ((map(if target then del(.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution) else . end) | canonical) ==
+    $operators[0].spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution ==
+      [{topologyKey:"kubernetes.io/hostname",labelSelector:{matchLabels:{
+        "app.kubernetes.io/component":"operator","app.kubernetes.io/instance":"ksail-operator","app.kubernetes.io/name":"ksail-operator"
+      }}}] and
+    ((map(if target then del(.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution,
+      .spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution) else . end) | canonical) ==
       ($baseline[0] | canonical))
   ' "$1" >/dev/null
 }
@@ -113,14 +119,16 @@ for profile in prod local prod-enabled prod-disabled; do
       for mutation in \
         'map(if .kind == "Deployment" then del(.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution) else . end)' \
         'map(if .kind == "Deployment" then .spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms += [{}] else . end)' \
+        'map(if .kind == "Deployment" then del(.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution) else . end)' \
         '. + [{apiVersion:"v1",kind:"ConfigMap",metadata:{name:"unrelated",namespace:"ksail-operator"}}]'; do
         jq "$mutation" "$actual" >"$work/mutated.json"
         if placement_is_scoped "$work/mutated.json" "$baseline"; then fail 'an ineffective or unrelated change passed'; fi
       done
     else
       jq -e '[.[] | select(.kind == "Deployment" and .metadata.name == "ksail-operator" and .metadata.namespace == "ksail-operator")]
-        | length == 1 and .[0].spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution == null' "$actual" >/dev/null ||
-        fail 'ordinary placement inherited the temporary exclusion'
+        | length == 1 and .[0].spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution == null and
+          .[0].spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution == null' "$actual" >/dev/null ||
+        fail 'ordinary placement inherited the temporary constraints'
     fi
   done
 done
