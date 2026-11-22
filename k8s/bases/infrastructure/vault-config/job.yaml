@@ -9,7 +9,7 @@
 #                    "unseal-before-join" risk pair called out in
 #                    docs/dr/openbao-raft-ha-migration.md). When the raft data
 #                    is gone but the openbao-unseal Secret survived AND a raft
-#                    snapshot exists on the vault-snapshots PVC, it restores
+#                    snapshot exists in the local restore directory, it restores
 #                    the newest snapshot automatically instead of aborting
 #                    (docs/dr/openbao.md).
 #   2. store-keys  — persists unseal key + root token in a K8s Secret
@@ -175,11 +175,9 @@ spec:
         # --- 0. Fetch newest snapshot from the off-cluster mirror (best-effort) ---
         # Pulls ONLY the newest raft snapshot from R2/MinIO into the shared
         # `snapshots` emptyDir so the vault-init container's DR auto-restore can
-        # read it WITHOUT mounting the RWO vault-snapshots PVC. Best-effort by
-        # design: in steady state (vault already initialized) vault-init never
-        # reads /snapshots, and on a real DR an empty /snapshots makes vault-init
-        # abort with its existing "no snapshot available" guidance -- so a missing
-        # Secret or an R2 hiccup must NEVER fail this Job.
+        # read it without mounting the RWO vault-snapshots PVC. A rebuild's
+        # explicit selection requires matching bytes. Ordinary fetches remain
+        # best-effort because an initialized vault never needs /snapshots.
         - name: fetch-snapshot
           image: quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f
           securityContext:
@@ -196,6 +194,18 @@ spec:
               value: /tmp/.mc
             - name: PATH
               value: /tools:/usr/local/bin:/usr/bin:/bin
+            - name: DR_SNAPSHOT_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: dr-openbao-snapshot-selection
+                  key: name
+                  optional: true
+            - name: DR_SNAPSHOT_SHA256
+              valueFrom:
+                configMapKeyRef:
+                  name: dr-openbao-snapshot-selection
+                  key: sha256
+                  optional: true
           resources:
             requests:
               cpu: 10m
@@ -219,26 +229,47 @@ spec:
             - /tools/sh
             - -ec
             - |
+              STRICT_RESTORE=false
+              if [ -n "$DR_SNAPSHOT_NAME$DR_SNAPSHOT_SHA256" ]; then
+                printf '%s\n' "$DR_SNAPSHOT_NAME" | grep -Eq '^openbao-[0-9]{8}-[0-9]{6}\.snap$'
+                printf '%s\n' "$DR_SNAPSHOT_SHA256" | grep -Eq '^[0-9a-f]{64}$'
+                STRICT_RESTORE=true
+              fi
+              stop_fetch() {
+                if [ "$STRICT_RESTORE" = true ]; then
+                  exit 1
+                fi
+                exit 0
+              }
+              discard_snapshot() {
+                rm -f "/snapshots/$LATEST"
+                stop_fetch
+              }
               if [ ! -f /r2/access_key_id ]; then
                 echo "vault-snapshot-r2 Secret not synced yet -- skipping snapshot"
-                echo "fetch. Auto-restore aborts cleanly if a DR is in progress."
-                exit 0
+                stop_fetch
               fi
               # ${r2_endpoint}/${r2_bucket} are Flux post-build substitutions
               # (Cloudflare R2 in prod, in-cluster MinIO locally) -- the same vars
               # the vault-snapshot CronJob/init-job use to MIRROR; here we READ.
               mc alias set backup "${r2_endpoint}" \
-                "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)" || exit 0
+                "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)" || stop_fetch
               # Newest by name (openbao-YYYYMMDD-HHMMSS.snap sorts chronologically).
-              LATEST=$(mc ls "backup/${r2_bucket}/openbao-snapshots/" 2>/dev/null \
-                | awk '{print $NF}' | grep '\.snap$' | sort | tail -n1)
+              LATEST="$DR_SNAPSHOT_NAME"
+              if [ "$STRICT_RESTORE" = false ]; then
+                LATEST=$(mc ls "backup/${r2_bucket}/openbao-snapshots/" 2>/dev/null \
+                  | awk '$NF ~ /^openbao-[0-9]{8}-[0-9]{6}\.snap$/ {print $NF}' | sort | tail -n1)
+              fi
               if [ -z "$LATEST" ]; then
                 echo "No snapshot in the mirror yet -- nothing to fetch."
-                exit 0
+                stop_fetch
               fi
-              echo "Fetching newest snapshot $LATEST from the off-cluster mirror..."
-              mc cp "backup/${r2_bucket}/openbao-snapshots/$LATEST" "/snapshots/$LATEST" || true
-              ls -l /snapshots/ || true
+              mc cp "backup/${r2_bucket}/openbao-snapshots/$LATEST" "/snapshots/$LATEST" || discard_snapshot
+              test -s "/snapshots/$LATEST" || discard_snapshot
+              if [ "$STRICT_RESTORE" = true ]; then
+                printf '%s  %s\n' "$DR_SNAPSHOT_SHA256" "/snapshots/$LATEST" | sha256sum -c - || discard_snapshot
+              fi
+              chmod 0640 "/snapshots/$LATEST" || discard_snapshot
         # --- 1. Auto-init + unseal ---
         - name: vault-init
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
@@ -260,6 +291,19 @@ spec:
           # No BAO_ADDR env: the script addresses each pod explicitly through
           # the openbao-internal headless Service (publishNotReadyAddresses:
           # true, so per-pod DNS resolves even before readiness).
+          env:
+            - name: DR_SNAPSHOT_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: dr-openbao-snapshot-selection
+                  key: name
+                  optional: true
+            - name: DR_SNAPSHOT_SHA256
+              valueFrom:
+                configMapKeyRef:
+                  name: dr-openbao-snapshot-selection
+                  key: sha256
+                  optional: true
           volumeMounts:
             - name: unseal-keys
               mountPath: /openbao/unseal
@@ -332,6 +376,19 @@ spec:
                 fi
               done
 
+              SELECTED_SNAPSHOT=""
+              if [ -n "$DR_SNAPSHOT_NAME$DR_SNAPSHOT_SHA256" ]; then
+                printf '%s\n' "$DR_SNAPSHOT_NAME" | grep -Eq '^openbao-[0-9]{8}-[0-9]{6}\.snap$'
+                printf '%s\n' "$DR_SNAPSHOT_SHA256" | grep -Eq '^[0-9a-f]{64}$'
+                SELECTED_SNAPSHOT="/snapshots/$DR_SNAPSHOT_NAME"
+                test -s "$SELECTED_SNAPSHOT"
+                printf '%s  %s\n' "$DR_SNAPSHOT_SHA256" "$SELECTED_SNAPSHOT" | sha256sum -c -
+                if [ "$ANY_INITIALIZED" != "false" ] || [ ! -s /openbao/unseal/unseal-key ] || [ ! -s /openbao/unseal/root-token ]; then
+                  echo "ERROR: selected snapshot restore needs an empty raft and both original recovery keys."
+                  exit 1
+                fi
+              fi
+
               if [ "$ANY_INITIALIZED" = "false" ]; then
                 # Data-loss guard (#1982): keys in openbao-unseal mean a cluster
                 # was initialized before. If on top of that NO pod reports an
@@ -339,22 +396,25 @@ spec:
                 # auto-initializing here would silently bring up an EMPTY vault
                 # and overwrite the previous unseal key + root token (exactly
                 # how the 2026-06-10 incident destroyed the whole KV store).
-                # With a raft snapshot on the vault-snapshots PVC the data is
+                # With a raft snapshot from the off-cluster mirror the data is
                 # recoverable WITHOUT operator action: temp-init, restore the
                 # newest snapshot, then unseal with the stored (pre-incident)
                 # key. Only when no snapshot exists does the guard still abort.
                 if [ -f /openbao/unseal/unseal-key ]; then
-                  NEWEST_SNAP=$(ls -1t /snapshots/openbao-*.snap 2>/dev/null | head -n 1 || true)
+                  NEWEST_SNAP="$SELECTED_SNAPSHOT"
+                  if [ -z "$NEWEST_SNAP" ]; then
+                    NEWEST_SNAP=$(ls -1t /snapshots/openbao-*.snap 2>/dev/null | head -n 1 || true)
+                  fi
                   if [ -z "$NEWEST_SNAP" ]; then
                     echo "ERROR: no pod reports an initialized vault, but the openbao-unseal"
                     echo "Secret still holds keys from a previously initialized cluster, and"
-                    echo "no raft snapshot is available on the vault-snapshots PVC."
+                    echo "no raft snapshot was fetched from the off-cluster mirror."
                     echo "Refusing to auto-initialize: that would create an empty vault and"
                     echo "overwrite the old keys, making any surviving data unrecoverable."
                     echo ""
                     echo "Recover the data first (Velero restore / reattach the old data"
-                    echo "PVCs / copy a snapshot from the R2 openbao-snapshots/ mirror onto"
-                    echo "the vault-snapshots PVC) and re-run this Job. If the data loss is"
+                    echo "PVCs / restore access to the R2 openbao-snapshots/ mirror)"
+                    echo "and re-run this Job. If the data loss is"
                     echo "confirmed and a fresh vault is intended, acknowledge it explicitly:"
                     echo "  kubectl delete secret openbao-unseal -n openbao"
                     echo "and let the next Job run initialize from scratch."
@@ -399,6 +459,9 @@ spec:
                   echo "Restoring $NEWEST_SNAP..."
                   BAO_ADDR="$(addr 0)" BAO_TOKEN="$TMP_ROOT" \
                     bao operator raft snapshot restore -force "$NEWEST_SNAP"
+                  if [ -n "$SELECTED_SNAPSHOT" ]; then
+                    printf 'OPENBAO_DR_SNAPSHOT_RESTORED=%s %s\n' "$DR_SNAPSHOT_NAME" "$DR_SNAPSHOT_SHA256"
+                  fi
 
                   # 4. The cluster's barrier is now the snapshot's, so the
                   #    stored pre-incident keys apply again — fall through to

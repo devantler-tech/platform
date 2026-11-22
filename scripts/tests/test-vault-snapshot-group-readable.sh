@@ -87,6 +87,7 @@ count_chmod_commands() { # <label>; normalised text on stdin
 }
 
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to read the snapshot container script'
+command -v jq >/dev/null 2>&1 || fail 'jq is required to check the restore volume and container identities'
 
 # The command splitter, kept as ONE definition so the regression table below and the real-manifest
 # scan below cannot drift apart. `esc` records whether the character most recently appended to
@@ -660,126 +661,70 @@ for target in "${uid_targets[@]}"; do
     "${manifest}" "${pod_uid}" "${pod_gid}" "${pod_fsg}"
 done
 
-# --- The DR fetch writes to the same volume, and it is the leg CI never exercises ---------------
-#
-# The restore reads the fetched snapshot as openbao (uid 100, gid 1000). The fetch pod now runs a
-# high uid, so the group entry is the ONLY remaining path to that file — and mc's umask is not
-# something this repository controls. Assert the explicit chmod instead.
-#
-# Scoped to chmods targeting /snapshots: this workflow also chmods an age private key to 600, which
-# is correct and must not be read as a finding.
-#
-# Text-level rather than yq: the pod spec lives inside a heredoc within a `run:` block, so it is not
-# addressable by a YAML path. Bound the same way as the manifests above — the chmod must name the
-# SAME operand the fetch wrote to, or it could be widening some other file.
-dr_workflow='.github/workflows/dr-rebuild.yaml'
-dr_path="${root_dir}/${dr_workflow}"
-[ -f "${dr_path}" ] || fail "${dr_workflow}: not found"
+# The restore reads the fetched bytes from the vault-config Pod's emptyDir.
+# Bind the effective mode to the actual download destination and verify that
+# both init containers share that volume and its supplemental group.
+dr_manifest='k8s/bases/infrastructure/vault-config/job.yaml'
+dr_path="$root_dir/$dr_manifest"
+dr_source="$(yq -er '.spec.template.spec.initContainers[] | select(.name == "fetch-snapshot") | .command[2]' "$dr_path")" ||
+  fail "$dr_manifest: the snapshot fetch command could not be read"
+dr_normalized="$(printf '%s\n' "$dr_source" | awk -v skip_hd=1 "$split_commands_awk" | awk "$strip_prefixes_awk")" ||
+  fail "$dr_manifest: the command normalizer failed"
+dr_cp="$(printf '%s\n' "$dr_normalized" | grep -E '^[[:space:]]*mc cp .*/snapshots/' || true)"
+[ "$(printf '%s\n' "$dr_cp" | grep -c '[^[:space:]]' || true)" -eq 1 ] ||
+  fail "$dr_manifest: expected one snapshot download to /snapshots"
+dr_operand="$(printf '%s\n' "$dr_cp" | awk '{print $NF}' | tr -d '"')"
 
-dr_cp="$(grep -E '^[[:space:]]*mc cp .*/snapshots/' "${dr_path}" || true)"
-[ -n "${dr_cp}" ] || fail "${dr_workflow}: no 'mc cp' onto /snapshots — the fetch step moved or was renamed"
-dr_operand="$(printf '%s\n' "${dr_cp}" | awk '{print $NF}' | tr -d '"')"
-[ -n "${dr_operand}" ] || fail "${dr_workflow}: could not extract the fetch destination"
-
-# The DR leg gets the SAME normalisation as the manifest scan above, not a line-start-anchored
-# grep. `chmod` is a command here too, so `true && chmod 0600 /snapshots/restored.snap` was
-# invisible to an anchored match while the existing widening 0640 satisfied the binding — a
-# narrowing chmod could re-close the fetched snapshot with this guard still green. Same fail-open,
-# same fix; leaving the two scans on different matchers is exactly the drift the single splitter
-# definition exists to prevent.
-# skip_hd=0 here, unlike the manifest scan: the DR pod spec is written INSIDE a heredoc in a
-# `run:` block, so the commands this leg must see are heredoc BODY lines. Skipping them, which is
-# exactly right when scanning a shell script whose heredocs carry data, would hide the very chmod
-# this check binds to.
-dr_normalized="$(awk -v skip_hd=0 "${split_commands_awk}" "${dr_path}")" ||
-  fail "${dr_workflow}: the command splitter failed; refusing to scan a truncated command list"
-dr_normalized="$(printf '%s\n' "${dr_normalized}" | awk "${strip_prefixes_awk}")" ||
-  fail "${dr_workflow}: the command-prefix normaliser failed; refusing to scan a truncated command list"
-# ONE definition of the DR chmod filter, self-checked immediately below. The mode position is
-# deliberately unconstrained: a symbolic or variable mode MUST reach the validation loop, whose
-# invalid-mode branch is what rejects it. Constraining it to `[0-7]+` made that branch unreachable
-# — `chmod u=rw,go= "/snapshots/$NEWEST"` was dropped by the filter, so an earlier widening chmod
-# carried the guard green while the later command re-closed the snapshot.
+# Keep all chmod modes in the scan so a later invalid or narrowing command
+# cannot be hidden by a previous octal 0640 and the format filter.
 readonly dr_chmod_filter='^[[:space:]]*chmod[[:space:]]+[^[:space:]]+[[:space:]]+"?/snapshots/'
-
-printf '%s\n' 'chmod u=rw,go= "/snapshots/x"' | grep -qE "${dr_chmod_filter}" ||
-  fail 'DR chmod filter must accept a non-octal mode so the invalid-mode check can reject it'
-if printf '%s\n' 'chmod 0640 /other/x' | grep -qE "${dr_chmod_filter}"; then
-  fail 'DR chmod filter must not match a chmod outside /snapshots/'
+printf '%s\n' 'chmod u=rw,go= "/snapshots/x"' | grep -qE "$dr_chmod_filter" ||
+  fail 'restore chmod filter does not accept non-octal modes for validation'
+if printf '%s\n' 'chmod 0640 /other/x' | grep -qE "$dr_chmod_filter"; then
+  fail 'restore chmod filter matches a different path'
 fi
-printf 'ok: DR chmod filter — non-octal modes reach the validation loop; other paths do not\n'
+dr_chmod="$(printf '%s\n' "$dr_normalized" | grep -E "$dr_chmod_filter" || true)"
+[ -n "$dr_chmod" ] || fail "$dr_manifest: the download never sets a private, group-readable mode"
 
-dr_chmod="$(printf '%s\n' "${dr_normalized}" | grep -E "${dr_chmod_filter}" || true)"
-[ -n "${dr_chmod}" ] ||
-  fail "${dr_workflow}: the fetch never chmods the snapshot; the restore depends on mc's umask"
-
-# CONSERVATION BACKSTOP for the DR leg — the same one the manifest scan carries, for the same
-# reason. Without it this leg trusts the normaliser to be complete, and a chmod launched by a
-# COMMAND EXECUTOR is exactly what the normaliser does not see: `find /snapshots -type f -exec
-# chmod 0600 {} +` normalises to a line beginning with `find`, so the path-scoped filter above
-# drops it while the existing widening 0640 keeps `dr_bound` set and this leg green — a narrowing
-# chmod re-closing the fetched snapshot with the guard reporting success.
-#
-# Compared against command-position chmods in the normalised output, NOT against `dr_chmod`: that
-# filter is scoped to /snapshots, and this workflow legitimately chmods the age key elsewhere, so
-# comparing to the scoped set would report a real chmod as a parser loss on every run.
-#
-# Full-line comments are stripped first, mirroring the manifest scan. This file carries a comment
-# that mentions chmod in prose, and counting it would fire this backstop on a correct tree —
-# a false positive that trains the reader to ignore a security guard.
-dr_source_commands="$(grep -vE '^[[:space:]]*#' "${dr_path}")" ||
-  fail "${dr_workflow}: could not read the workflow to count chmod words; refusing to vouch for a truncated count"
-dr_raw_chmod_words="$(printf '%s\n' "${dr_source_commands}" | count_chmod_words "${dr_workflow}")"
-dr_seen_chmod_cmds="$(printf '%s\n' "${dr_normalized}" | count_chmod_commands "${dr_workflow}")"
-[ "${dr_raw_chmod_words}" -le "${dr_seen_chmod_cmds}" ] ||
-  fail "${dr_workflow}: the normaliser accounted for ${dr_seen_chmod_cmds} chmod command(s) but the workflow contains ${dr_raw_chmod_words} chmod word(s) — a chmod was lost by the parser, so this guard cannot vouch for it"
-printf 'ok: %s — conservation backstop, %s chmod word(s) all accounted for by the normaliser\n' "${dr_workflow}" "${dr_raw_chmod_words}"
+# Count potential chmod words before filtering, as for the backup writers.
+# A command executor or unsupported syntax must never hide a later chmod.
+dr_source_commands="$(printf '%s\n' "$dr_source" | grep -vE '^[[:space:]]*#')" ||
+  fail "$dr_manifest: could not read the fetch command to count chmod words"
+dr_raw_chmod_words="$(printf '%s\n' "$dr_source_commands" | count_chmod_words "$dr_manifest")"
+dr_seen_chmod_cmds="$(printf '%s\n' "$dr_normalized" | count_chmod_commands "$dr_manifest")"
+[ "$dr_raw_chmod_words" -le "$dr_seen_chmod_cmds" ] ||
+  fail "$dr_manifest: the normalizer lost a possible chmod command"
 
 dr_bound=0
 while IFS= read -r line; do
-  [ -n "${line}" ] || continue
-  mode="$(printf '%s\n' "${line}" | awk '{print $2}')"
-  operand="$(printf '%s\n' "${line}" | awk '{print $3}' | tr -d '"')"
-  case "${mode}" in
+  [ -n "$line" ] || continue
+  mode="$(printf '%s\n' "$line" | awk '{print $2}')"
+  operand="$(printf '%s\n' "$line" | awk '{print $3}' | tr -d '"')"
+  case "$mode" in
     [0-7][0-7][0-7] | [0-7][0-7][0-7][0-7]) ;;
-    *) fail "${dr_workflow}: chmod mode '${mode}' is not a 3- or 4-digit octal mode" ;;
+    *) fail "$dr_manifest: chmod mode '$mode' is not octal" ;;
   esac
   [ $((${mode: -2:1} & 4)) -eq 4 ] ||
-    fail "${dr_workflow}: chmod mode '${mode}' does not grant GROUP read — the restore cannot open it"
+    fail "$dr_manifest: chmod mode '$mode' leaves the restore unable to read the file"
   [ "${mode: -1}" -eq 0 ] ||
-    fail "${dr_workflow}: chmod mode '${mode}' grants OTHER access to a vault snapshot"
-  [ "${operand}" = "${dr_operand}" ] && dr_bound=1
+    fail "$dr_manifest: chmod mode '$mode' exposes the snapshot to others"
+  [ "$operand" = "$dr_operand" ] && dr_bound=1
 done <<DRCHMODS
 ${dr_chmod}
 DRCHMODS
+[ "$dr_bound" -eq 1 ] || fail "$dr_manifest: no chmod binds to the fetched snapshot '$dr_operand'"
 
-[ "${dr_bound}" -eq 1 ] ||
-  fail "${dr_workflow}: no chmod targets the fetched snapshot '${dr_operand}' — the assertion is unbound"
-
-printf 'ok: %s — fetch writes %s and chmods that same path group-readable\n' "${dr_workflow}" "${dr_operand}"
-
-# The fetch pod's own identity decides the GROUP of the file it writes, so the chmod above is only
-# half of this leg too: a correct 0640 on a file whose group nobody shares is still unreadable.
-# Bound to the pod's own block — the workflow sets securityContext elsewhere as well.
-dr_pod="$(awk '/name: dr-snapshot-fetch/{f=1} f{print} f && /^[[:space:]]*containers:/{exit}' "${dr_path}")"
-[ -n "${dr_pod}" ] || fail "${dr_workflow}: could not locate the dr-snapshot-fetch pod spec"
-
-dr_field() { printf '%s\n' "${dr_pod}" | sed -n "s/^[[:space:]]*$1:[[:space:]]*//p" | head -1; }
-
-dr_uid="$(dr_field runAsUser)"
-dr_gid="$(dr_field runAsGroup)"
-dr_fsg="$(dr_field fsGroup)"
-
-case "${dr_uid}" in
-  '') fail "${dr_workflow}: the fetch pod sets no runAsUser" ;;
-  *[!0-9]*) fail "${dr_workflow}: fetch pod runAsUser '${dr_uid}' is not numeric" ;;
-esac
-[ "${dr_uid}" -ge 10000 ] ||
-  fail "${dr_workflow}: fetch pod runAsUser ${dr_uid} is a low host UID (CKV_K8S_40) — re-coupled to the writer"
-[ "${dr_gid}" = "1000" ] ||
-  fail "${dr_workflow}: fetch pod runAsGroup is '${dr_gid}', not 1000 — the restore could not read what it fetched"
-[ "${dr_fsg}" = "1000" ] ||
-  fail "${dr_workflow}: fetch pod fsGroup is '${dr_fsg}', not 1000 — the restore could not read what it fetched"
-
-printf 'ok: %s — fetch pod runs %s:%s (fsGroup %s)\n' "${dr_workflow}" "${dr_uid}" "${dr_gid}" "${dr_fsg}"
-printf 'PASS: both vault-snapshot writers make the snapshot group-readable, and the UID split holds\n'
+if ! yq -o=json -I=0 '.spec.template.spec' "$dr_path" | jq -e '
+  .securityContext.runAsUser >= 10000 and .securityContext.runAsGroup >= 10001 and
+  .securityContext.fsGroup == 1000 and
+  ([.initContainers[] | select(.name == "fetch-snapshot")] | length) == 1 and
+  ([.initContainers[] | select(.name == "vault-init")] | length) == 1 and
+  ([.initContainers[] | select(.name == "fetch-snapshot" and .securityContext.runAsUser == null and .securityContext.runAsGroup == null) |
+    .volumeMounts[] | select(.name == "snapshots" and .mountPath == "/snapshots" and .readOnly != true)] | length) == 1 and
+  ([.initContainers[] | select(.name == "vault-init" and .securityContext.runAsUser == 100 and .securityContext.runAsGroup == 1000) |
+    .volumeMounts[] | select(.name == "snapshots" and .mountPath == "/snapshots" and .readOnly == true)] | length) == 1 and
+  ([.volumes[] | select(.name == "snapshots" and has("emptyDir"))] | length) == 1
+' >/dev/null; then
+  fail "$dr_manifest: the restore cannot read the fetch init container's file safely"
+fi
+printf 'PASS: backup writers and the restore fetch make snapshots group-readable and retain separate UIDs\n'
