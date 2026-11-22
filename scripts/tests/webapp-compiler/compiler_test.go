@@ -214,6 +214,12 @@ func TestCommittedWebApp(t *testing.T) {
 		}
 		deployment := desiredDeployment(t, engine, definition, instance)
 		writeDesiredFixture(t, "enabled", deployment)
+		if deployment.Annotations["reloader.stakater.com/auto"] != "true" {
+			t.Fatal("startup file inputs must trigger a rollout when their Secret changes")
+		}
+		if deployment.Spec.Template.Annotations["platform.devantler.tech/input-reloader"] != "v1" {
+			t.Fatal("installing the input watcher must also roll existing input consumers")
+		}
 		pod := deployment.Spec.Template.Spec
 		if pod.SecurityContext == nil || pod.SecurityContext.RunAsUser == nil || *pod.SecurityContext.RunAsUser != 65532 ||
 			pod.SecurityContext.RunAsGroup == nil || *pod.SecurityContext.RunAsGroup != 65532 ||
@@ -253,10 +259,149 @@ func TestCommittedWebApp(t *testing.T) {
 				t.Fatalf("expected actual API validation refusal, not success or an operational error: %v", err)
 			}
 		}
+		for _, withSecret := range []bool{false, true} {
+			state := "settings"
+			if withSecret {
+				state = "combined"
+			}
+			t.Run(state+" inputs compile into separate confined directories", func(t *testing.T) {
+				input := candidate()
+				spec := input.Object["spec"].(map[string]interface{})
+				if !withSecret {
+					delete(spec, "secretProjections")
+					delete(spec, "args")
+				}
+				spec["configMapProjections"] = []interface{}{map[string]interface{}{
+					"configMapName": "public-settings", "items": []interface{}{map[string]interface{}{"key": "settings.env", "path": "portal-settings"}},
+				}}
+				if err := admit(input); err != nil {
+					t.Fatal(err)
+				}
+				got := desiredDeployment(t, engine, definition, input)
+				writeDesiredFixture(t, state, got)
+				pod := got.Spec.Template.Spec
+				index := 0
+				if withSecret {
+					index = 1
+				}
+				if len(pod.Containers) != 1 || len(pod.Volumes) != index+1 || len(pod.Containers[0].VolumeMounts) != index+1 || len(pod.Containers[0].Env) != 0 || len(pod.Containers[0].EnvFrom) != 0 {
+					t.Fatal("settings must add only one bounded volume and mount, without environment inputs or containers")
+				}
+				volume, mount := pod.Volumes[index], pod.Containers[0].VolumeMounts[index]
+				settings := volume.ConfigMap
+				if volume.Name != "webapp-settings" || settings == nil || settings.Name != "public-settings" ||
+					settings.DefaultMode == nil || *settings.DefaultMode != 288 || settings.Optional == nil || *settings.Optional ||
+					len(settings.Items) != 1 || settings.Items[0].Key != "settings.env" || settings.Items[0].Path != "portal-settings" || settings.Items[0].Mode != nil {
+					t.Fatal("settings must require the selected same-namespace ConfigMap keys with fixed 0440 permissions")
+				}
+				if mount.Name != "webapp-settings" || mount.MountPath != "/run/webapp-settings" || !mount.ReadOnly || mount.SubPath != "" || mount.SubPathExpr != "" {
+					t.Fatal("settings must use the fixed read-only directory without subPath")
+				}
+				if withSecret && (pod.Volumes[0].Secret == nil || pod.Volumes[0].Secret.SecretName != "public-disclosure" || pod.Containers[0].VolumeMounts[0].MountPath != "/run/webapp-inputs") {
+					t.Fatal("public settings must preserve the separate private projection")
+				}
+				if got.Annotations["reloader.stakater.com/auto"] != "true" {
+					t.Fatal("startup-only ConfigMap settings must trigger a rollout on input change")
+				}
+				if got.Spec.Template.Annotations["platform.devantler.tech/input-reloader"] != "v1" {
+					t.Fatal("installing the input watcher must also roll existing ConfigMap consumers")
+				}
+			})
+		}
+		for _, tc := range []struct {
+			name, key string
+			value     interface{}
+		}{
+			{"cross-namespace settings", "namespace", "other"},
+			{"optional settings", "optional", true},
+			{"settings mount override", "mountPath", "/app"},
+			{"settings mode override", "defaultMode", int64(511)},
+			{"unsafe ConfigMap name", "configMapName", "../settings"},
+			{"no selected settings", "items", []interface{}{}},
+			{"duplicate settings key", "items", []interface{}{map[string]interface{}{"key": "a", "path": "one"}, map[string]interface{}{"key": "a", "path": "two"}}},
+			{"duplicate settings path", "items", []interface{}{map[string]interface{}{"key": "a", "path": "one"}, map[string]interface{}{"key": "b", "path": "one"}}},
+			{"settings traversal", "items", []interface{}{map[string]interface{}{"key": "a", "path": "../one"}}},
+			{"hidden settings destination", "items", []interface{}{map[string]interface{}{"key": "a", "path": ".hidden"}}},
+			{"settings item mode override", "items", []interface{}{map[string]interface{}{"key": "a", "path": "one", "mode": int64(511)}}},
+			{"missing settings key", "items", []interface{}{map[string]interface{}{"path": "one"}}},
+			{"missing settings destination", "items", []interface{}{map[string]interface{}{"key": "a"}}},
+			{"oversized settings destination", "items", []interface{}{map[string]interface{}{"key": "a", "path": strings.Repeat("x", 65)}}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				input := candidate()
+				projection := map[string]interface{}{"configMapName": "public-settings", "items": []interface{}{map[string]interface{}{"key": "a", "path": "one"}}}
+				projection[tc.key] = tc.value
+				input.Object["spec"].(map[string]interface{})["configMapProjections"] = []interface{}{projection}
+				refused(t, input)
+			})
+		}
+		t.Run("too many settings projections", func(t *testing.T) {
+			input := candidate()
+			input.Object["spec"].(map[string]interface{})["configMapProjections"] = slices.Repeat([]interface{}{map[string]interface{}{
+				"configMapName": "public-settings", "items": []interface{}{map[string]interface{}{"key": "a", "path": "one"}},
+			}}, 2)
+			refused(t, input)
+		})
+		t.Run("settings selected-key bound accepts eight and refuses nine", func(t *testing.T) {
+			input := candidate()
+			items := make([]interface{}, 0, 9)
+			for i := range 8 {
+				items = append(items, map[string]interface{}{"key": fmt.Sprintf("key-%d", i), "path": fmt.Sprintf("file-%d", i)})
+			}
+			projection := map[string]interface{}{"configMapName": "public-settings", "items": items}
+			input.Object["spec"].(map[string]interface{})["configMapProjections"] = []interface{}{projection}
+			if err := admit(input); err != nil {
+				t.Fatal(err)
+			}
+			// Admission replaces the client's object with the defaulted response;
+			// mutate that current object rather than the earlier detached map.
+			projection = input.Object["spec"].(map[string]interface{})["configMapProjections"].([]interface{})[0].(map[string]interface{})
+			projection["items"] = append(items, map[string]interface{}{"key": "key-8", "path": "file-8"})
+			refused(t, input)
+		})
+		secretItems := func(count int) []interface{} {
+			items := make([]interface{}, 0, count)
+			for i := range count {
+				items = append(items, map[string]interface{}{"key": fmt.Sprintf("key-%d", i), "path": fmt.Sprintf("file-%d", i)})
+			}
+			return items
+		}
+		for _, count := range []int{10, 12} {
+			t.Run(fmt.Sprintf("private selected keys admit and compile %d files", count), func(t *testing.T) {
+				input := candidate()
+				projection := input.Object["spec"].(map[string]interface{})["secretProjections"].([]interface{})[0].(map[string]interface{})
+				projection["items"] = secretItems(count)
+				if err := admit(input); err != nil {
+					t.Fatal(err)
+				}
+				got := desiredDeployment(t, engine, definition, input).Spec.Template.Spec
+				if len(got.Containers) != 1 || len(got.Volumes) != 1 || len(got.Containers[0].VolumeMounts) != 1 {
+					t.Fatal("additional selected keys must stay in the single confined projection")
+				}
+				secret, mount := got.Volumes[0].Secret, got.Containers[0].VolumeMounts[0]
+				if secret == nil || secret.SecretName != "public-disclosure" || len(secret.Items) != count ||
+					secret.DefaultMode == nil || *secret.DefaultMode != 288 || secret.Optional == nil || *secret.Optional ||
+					mount.MountPath != "/run/webapp-inputs" || !mount.ReadOnly || mount.SubPath != "" || mount.SubPathExpr != "" ||
+					len(got.Containers[0].Env) != 0 || len(got.Containers[0].EnvFrom) != 0 {
+					t.Fatal("additional selected keys changed the fixed required read-only input boundary")
+				}
+				for i, item := range secret.Items {
+					if item.Key != fmt.Sprintf("key-%d", i) || item.Path != fmt.Sprintf("file-%d", i) || item.Mode != nil {
+						t.Fatal("actual compiler dropped or changed a selected key, path or fixed item mode")
+					}
+				}
+			})
+		}
+		t.Run("private selected-key bound refuses thirteen", func(t *testing.T) {
+			input := candidate()
+			projection := input.Object["spec"].(map[string]interface{})["secretProjections"].([]interface{})[0].(map[string]interface{})
+			projection["items"] = secretItems(13)
+			refused(t, input)
+		})
 		t.Run("omitted inputs keep effective defaults and no projection", func(t *testing.T) {
 			input := candidate()
 			spec := input.Object["spec"].(map[string]interface{})
-			for _, key := range []string{"args", "runAsUser", "runAsGroup", "readOnlyRootFilesystem", "secretProjections"} {
+			for _, key := range []string{"args", "runAsUser", "runAsGroup", "readOnlyRootFilesystem", "secretProjections", "configMapProjections"} {
 				delete(spec, key)
 			}
 			if err := admit(input); err != nil {
@@ -264,6 +409,9 @@ func TestCommittedWebApp(t *testing.T) {
 			}
 			defaultDeployment := desiredDeployment(t, engine, definition, input)
 			writeDesiredFixture(t, "omitted", defaultDeployment)
+			if defaultDeployment.Annotations["reloader.stakater.com/auto"] != "false" || len(defaultDeployment.Spec.Template.Annotations) != 0 {
+				t.Fatal("workloads without projected inputs must not opt into input rollouts")
+			}
 			got := defaultDeployment.Spec.Template.Spec
 			if len(got.Containers) != 1 || len(got.Containers[0].Args) != 0 || len(got.Containers[0].VolumeMounts) != 0 || len(got.Volumes) != 0 ||
 				got.SecurityContext == nil || got.SecurityContext.RunAsUser == nil || *got.SecurityContext.RunAsUser != 1000 ||

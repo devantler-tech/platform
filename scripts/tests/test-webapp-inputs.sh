@@ -29,6 +29,47 @@ expect_mutation() {
 expect valid "$valid"
 enabled="$(jq '.spec += {args:["--public","/app/public","--public"],runAsUser:65532,runAsGroup:65532,readOnlyRootFilesystem:true,secretProjections:[{secretName:"public-disclosure",items:[{key:"address",path:"company-address"}]}]}' <<<"$valid")"
 expect valid "$enabled"
+settings="$(jq '.spec.configMapProjections=[{configMapName:"public-settings",items:[{key:"portal-settings",path:"portal-settings"}]}]' <<<"$valid")"
+expect valid "$settings"
+combined="$(jq --argjson settings "$(jq '.spec.configMapProjections' <<<"$settings")" '.spec.configMapProjections=$settings' <<<"$enabled")"
+expect valid "$combined"
+expect_mutation valid '.spec.configMapProjections=[]' "$enabled"
+for mutation in \
+  '.spec.configMapProjections += .spec.configMapProjections' \
+  '.spec.configMapProjections = null' \
+  '.spec.configMapProjections[0].configMapName = "../private"' \
+  '.spec.configMapProjections[0].namespace = "other"' \
+  '.spec.configMapProjections[0].mountPath = "/app"' \
+  '.spec.configMapProjections[0].defaultMode = 511' \
+  '.spec.configMapProjections[0].optional = true' \
+  '.spec.configMapProjections[0].secretName = "private"' \
+  '.spec.configMapProjections[0].items = []' \
+  '.spec.configMapProjections[0].items += .spec.configMapProjections[0].items' \
+  '.spec.configMapProjections[0].items += [{key:"portal-settings",path:"different"}]' \
+  '.spec.configMapProjections[0].items += [{key:"different",path:"portal-settings"}]' \
+  '.spec.configMapProjections[0].items[0] |= del(.key)' \
+  '.spec.configMapProjections[0].items[0] |= del(.path)' \
+  '.spec.configMapProjections[0].items[0].path = "../private"' \
+  '.spec.configMapProjections[0].items[0].path = ".hidden"' \
+  '.spec.configMapProjections[0].items[0].mode = 511' \
+  '.spec.configMapProjections[0].items[0].key = "a/b"' \
+  '.spec.configMapProjections[0].items = [range(0;9)|{key:("k"+tostring),path:("p"+tostring)}]' \
+  '.spec.configMapProjections[0].items[0].path = ("x" * 65)' \
+  '.spec.configMapProjections[0] |= del(.items)' \
+  '.spec.configMapProjections[0] |= del(.configMapName)'; do
+  expect_mutation invalid "$mutation" "$combined"
+done
+expect_mutation valid '.spec.configMapProjections[0].items = [range(0;8)|{key:("k"+tostring),path:("p"+tostring)}]' "$combined"
+for count in 10 12; do
+  expect_mutation valid ".spec.secretProjections[0].items = [range(0;$count)|{key:(\"k\"+tostring),path:(\"p\"+tostring)}]" "$combined"
+done
+private_capacity="$(jq '.spec.secretProjections[0].items = [range(0;12)|{key:("k"+tostring),path:("p"+tostring)}]' <<<"$combined")"
+for mutation in \
+  '.spec.secretProjections[0].items[11].key = .spec.secretProjections[0].items[0].key' \
+  '.spec.secretProjections[0].items[11].path = .spec.secretProjections[0].items[0].path' \
+  '.spec.secretProjections[0].items[11].path = "../private"'; do
+  expect_mutation invalid "$mutation" "$private_capacity"
+done
 for mutation in \
   '.spec.args = null' \
   '.spec.args = [true]' \
@@ -57,7 +98,7 @@ for mutation in \
   '.spec.secretProjections[0].items[0].path = ".hidden"' \
   '.spec.secretProjections[0].items[0].mode = 511' \
   '.spec.secretProjections[0].items[0].key = "a/b"' \
-  '.spec.secretProjections[0].items = [range(0;9)|{key:("k"+tostring),path:("p"+tostring)}]' \
+  '.spec.secretProjections[0].items = [range(0;13)|{key:("k"+tostring),path:("p"+tostring)}]' \
   '.spec.secretProjections[0].items[0].path = ("x" * 65)' \
   '.spec.secretProjections[0] |= del(.items)' \
   '.spec.secretProjections[0] |= del(.secretName)' \
