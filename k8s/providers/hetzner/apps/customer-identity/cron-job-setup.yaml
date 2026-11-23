@@ -862,6 +862,59 @@ spec:
                     *) fail "CUSTOMER_GITHUB_SIGNIN must be on or off" ;;
                   esac
 
+                  customer_github_links() {
+                    local subject=$1 response
+                    response=$(connect zitadel.user.v2.UserService/ListIDPLinks \
+                      "$(jq -nc --arg u "$subject" '{userId:$u,query:{limit:100}}')")
+                    jq -ce '
+                      (.result // []) as $rows | select((.details | type) == "object" and
+                        ((.details.totalResult // "0" | tonumber) == ($rows | length))) | $rows' <<<"$response" ||
+                      fail "could not read the complete customer identity links"
+                  }
+
+                  copy_customer_github_links() {
+                    local previous=$1 shared=$2 customers subjects subject links candidate record
+                    local plan=$work/shared-github-links
+                    [[ -n $previous && -n $shared && $previous != "$shared" ]] ||
+                      fail "the old and shared GitHub identities must name distinct providers"
+                    customers=$(connect zitadel.user.v2.UserService/ListUsers "$(jq -nc --arg o "$customers_org_id" \
+                      '{query:{limit:1000},queries:[{typeQuery:{type:"TYPE_HUMAN"}},{organizationIdQuery:{organizationId:$o}}]}')")
+                    subjects=$(jq -cer --arg o "$customers_org_id" '
+                      (.result // []) as $rows | select((.details | type) == "object" and
+                        ((.details.totalResult // "0" | tonumber) == ($rows | length)) and
+                        all($rows[]; .details.resourceOwner == $o and (.human | type) == "object" and
+                          (.userId | type == "string" and test("^[[:alnum:]-]+$")))) |
+                      $rows | map(.userId) | select(length == (unique | length))' <<<"$customers") ||
+                      fail "could not read the complete customer directory"
+                    : >"$plan"
+                    while IFS= read -r subject; do
+                      links=$(customer_github_links "$subject")
+                      candidate=$(jq -ce --arg a "$previous" --arg b "$shared" --arg s "$subject" '
+                        map(select(.idpId == $a)) as $old | map(select(.idpId == $b)) as $new |
+                        select(($old | length) <= 1 and ($new | length) <= 1) |
+                        if ($old | length) == 0 then {}
+                        else $old[0] | select((.userId | type == "string" and test("^[0-9]+$"))
+                            and (.userName | type == "string" and length > 0)) |
+                          .userId as $id | select(($new | length) == 0 or $new[0].userId == $id) |
+                          if ($new | length) == 0 then {userId:$s,idpLink:{idpId:$b,userId:$id,userName}} else {} end
+                        end' <<<"$links") || fail "a customer GitHub link could not be matched without ambiguity"
+                      [[ $candidate == '{}' ]] || printf '%s\n' "$candidate" >>"$plan"
+                    done < <(jq -r '.[]' <<<"$subjects")
+
+                    jq -es 'map(.idpLink.userId) | length == (unique | length)' "$plan" >/dev/null ||
+                      fail "more than one customer names the same GitHub identity"
+                    while IFS= read -r record; do
+                      connect zitadel.user.v2.UserService/AddIDPLink "$record" >/dev/null
+                      subject=$(jq -er '.userId' <<<"$record")
+                      links=$(customer_github_links "$subject")
+                      jq -e --argjson binding "$record" '
+                        map(select(.idpId == $binding.idpLink.idpId)) |
+                        length == 1 and .[0].userId == $binding.idpLink.userId' <<<"$links" >/dev/null ||
+                        fail "a copied customer GitHub link could not be read back"
+                    done <"$plan"
+                    [[ ! -s $plan ]] || changes+=("preserved existing customer GitHub links")
+                  }
+
                   prepare_portal_operator() {
                     local idp=$1 orgs operator_org query users profile response links
                     query=$(jq -nc --arg n "$portal_operators_org" \

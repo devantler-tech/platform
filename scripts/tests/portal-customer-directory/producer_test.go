@@ -199,3 +199,69 @@ connect() {
 		})
 	}
 }
+
+func TestSharedProviderMigrationUsesOnlyExistingCustomerLinks(t *testing.T) {
+	script := producerFunction(t, "customer_github_links") + "\n" + producerFunction(t, "copy_customer_github_links")
+	for _, mode := range []string{"copy", "already-copied", "conflict", "truncated-customers", "truncated-links", "foreign-customer"} {
+		t.Run(mode, func(t *testing.T) {
+			harness := `set -euo pipefail
+mode=$1
+work=$2
+changes=()
+customers_org_id=customers
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+connect() {
+  case $1 in
+    zitadel.user.v2.UserService/ListUsers)
+      local total=2 owner=customers
+      [[ $mode != truncated-customers ]] || total=3
+      [[ $mode != foreign-customer ]] || owner=other
+      jq -e '.queries == [{typeQuery:{type:"TYPE_HUMAN"}},{organizationIdQuery:{organizationId:"customers"}}]' <<<"$2" >/dev/null
+      jq -nc --arg total "$total" --arg owner "$owner" '{details:{totalResult:$total},result:[
+        {userId:"alice",details:{resourceOwner:"customers"},human:{}},
+        {userId:"bob",details:{resourceOwner:$owner},human:{}}]}'
+      ;;
+    zitadel.user.v2.UserService/ListIDPLinks)
+      case $(jq -r '.userId' <<<"$2") in
+        alice)
+          local rows='[{"idpId":"old","userId":"111","userName":"alice-gh"}]'
+          if [[ -e $work/wrote || $mode == already-copied ]]; then
+            rows=$(jq '. + [{idpId:"shared",userId:"111",userName:"alice-gh"}]' <<<"$rows")
+          elif [[ $mode == conflict ]]; then
+            rows=$(jq '. + [{idpId:"shared",userId:"222",userName:"another"}]' <<<"$rows")
+          fi
+          jq -nc --argjson a "$rows" '{details:{totalResult:($a|length|tostring)},result:$a}'
+          ;;
+        bob)
+          if [[ $mode == truncated-links ]]; then
+            printf '%s\n' '{"details":{"totalResult":"1"}}'
+          else
+            printf '%s\n' '{"details":{"totalResult":"0"}}'
+          fi ;;
+        *) fail 'unexpected subject' ;;
+      esac
+      ;;
+    zitadel.user.v2.UserService/AddIDPLink)
+      jq -e '. == {userId:"alice",idpLink:{idpId:"shared",userId:"111",userName:"alice-gh"}}' <<<"$2" >/dev/null
+      touch "$work/wrote"
+      printf '{}\n'
+      ;;
+    *) fail 'unexpected API call' ;;
+  esac
+}
+`
+			work := t.TempDir()
+			cmd := exec.Command("bash", "-s", "--", mode, work)
+			cmd.Stdin = strings.NewReader(harness + script + "\ncopy_customer_github_links old shared\n")
+			output, err := cmd.CombinedOutput()
+			wantOK := mode == "copy" || mode == "already-copied"
+			if (err == nil) != wantOK {
+				t.Fatalf("expected migration success=%t, got %v: %s", wantOK, err, output)
+			}
+			_, writeErr := os.Stat(filepath.Join(work, "wrote"))
+			if (writeErr == nil) != (mode == "copy") {
+				t.Fatalf("unexpected migration write: %v", writeErr)
+			}
+		})
+	}
+}
