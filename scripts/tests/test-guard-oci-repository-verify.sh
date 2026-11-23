@@ -40,7 +40,7 @@ trap 'rm -rf "$WORK"' EXIT
 : >"$WORK/no-exemptions.tsv"
 
 readonly ISSUER="'^https://token\\.actions\\.githubusercontent\\.com\$'"
-readonly SUBJECT="'^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}\$'"
+readonly SUBJECT="'^https://github\\.com/devantler-tech/wedding-app/\\.github/workflows/[^/]+\\.ya?ml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+\$'"
 
 good_verify() {
   printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "$SUBJECT"
@@ -265,7 +265,7 @@ printf 'patches:\n  - target:\n      kind: OCIRepository\n      name: pa\n    pa
 expect_refused 'a patch that appends an identity is judged on the render' "$root" 'OCIRepository pa (oci://ghcr.io/devantler-tech/pa/manifests) has 2 matchOIDCIdentity entries'
 
 # --- RED: the one identity must be OURS — a foreign issuer or subject passes every
-# shape check and is invisible to both subject guards ---
+# shape check ---
 root="$(fresh_root foreignissuer)"
 repo_doc fiss 'oci://ghcr.io/devantler-tech/fiss/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "'^https://accounts\\.google\\.com\$'" "$SUBJECT")" >"$root/fiss.yaml"
 add_resource "$root" fiss.yaml
@@ -280,6 +280,51 @@ root="$(fresh_root foreignorg)"
 repo_doc fo 'oci://ghcr.io/devantler-tech/fo/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'^https://github\\.com/evil-org/actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}\$'")" >"$root/fo.yaml"
 add_resource "$root" fo.yaml
 expect_refused 'a subject anchored on another organisation is refused' "$root" 'does not anchor on'
+
+# --- The signer must be ONE first-party repository's own workflow (#6266). A shared reusable
+# publisher signs as its host repository whoever calls it, so every spelling that could trust
+# one is refused: beside an own release, through a pattern in the workflow file, through the
+# `.github` or deleted `actions` repository, or through a ref that escapes the anchored
+# repository and workflow prefix: a ref is a literal or one of the exact committed release-tag
+# patterns, so no RE2 construct (`\Q…\E` quoting, a leading `]` in a class) can hide a `|`. Judged by the allowed grammar, never by a retired name.
+signer_case() {
+  local label="$1" verdict="$2" needle="$3" subject="$4" root
+  root="$(fresh_root "signer-$label")"
+  repo_doc sg 'oci://ghcr.io/devantler-tech/sg/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'$subject'")" >"$root/sg.yaml"
+  add_resource "$root" sg.yaml
+  if [ "$verdict" = refuse ]; then
+    expect_refused "signer $label is refused" "$root" "OCIRepository sg (oci://ghcr.io/devantler-tech/sg/manifests) $needle"
+  else
+    expect_accepted "signer $label is accepted" "$root"
+  fi
+}
+while IFS=$'\t' read -r label verdict needle subject; do
+  [ -n "$label" ] || continue
+  signer_case "$label" "$verdict" "$needle" "$subject"
+done <<'CASES'
+shared-beside-own	refuse	trusts subject	^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812|sg/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0)$
+legacy-commit-pin	refuse	trusts subject	^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}$
+optional-extension-pattern	refuse	trusts subject	^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.ya?ml@af042c540ce8db4d64add98c34b5c57691e0e812$
+github-any-workflow	refuse	trusts devantler-tech/.github's	^https://github\.com/devantler-tech/\.github/\.github/workflows/[^/]+\.ya?ml@refs/tags/v1\.0\.0$
+github-shared-tag	refuse	trusts devantler-tech/.github's	^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@refs/tags/v21\.3\.4$
+deleted-actions-tag	refuse	trusts the deleted shared publisher repository	^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@refs/tags/v1\.2\.3$
+top-level-alternation	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0|\.github/\.github/workflows/publish-app\.yaml@.*$
+mid-pattern-anchor	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v1$|x$
+unclosed-group	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/(v1$
+unescaped-repository-dot	refuse	trusts subject	^https://github\.com/devantler-tech/.github/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0$
+any-repository	refuse	trusts subject	^https://github\.com/devantler-tech/[^/]+/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0$
+own-commit-pin	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@[0-9a-f]{40}$
+quoted-delimiter-alternation	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/\Q(\E|^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812$|\Q)\E$
+other-escape	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v\d+\.\d+\.\d+$
+leading-bracket-class	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/[](]|^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812$|[])]$
+unlisted-ref-pattern	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v.*$
+github-own-release	accept	-	^https://github\.com/devantler-tech/\.github/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
+own-branch-workflow	accept	-	^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
+own-strict-semver	accept	-	^https://github\.com/devantler-tech/sg/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
+own-literal-tag	accept	-	^https://github\.com/devantler-tech/bookkeeper/\.github/workflows/publish\.yaml@refs/tags/v1\.0\.0$
+own-loose-semver	accept	-	^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$
+own-stable-semver	accept	-	^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/server-cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
+CASES
 
 # --- RED: host case and substituted hosts ---
 root="$(fresh_root upper)"

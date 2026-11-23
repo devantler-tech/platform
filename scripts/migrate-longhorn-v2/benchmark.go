@@ -93,7 +93,14 @@ func benchmarkMachines(s inventory, phase string) (map[string]benchmarkMachine, 
 }
 
 func readBenchmark(ctx context.Context, c client, phase string) (object, benchmarkRecord, error) {
-	cm, err := c.get(ctx, "configmap", "longhorn-system", "longhorn-v2-benchmark-"+phase, true)
+	name, workload := "longhorn-v2-benchmark-"+phase, benchmarkWorkload()
+	if c.nativeSeed {
+		if phase != "v1" {
+			return nil, benchmarkRecord{}, errors.New("the native seed cannot select another engine's journal")
+		}
+		name, workload = nativeSeedJournal, nativeSeedWorkload()
+	}
+	cm, err := c.get(ctx, "configmap", "longhorn-system", name, true)
 	if err != nil || cm == nil {
 		return cm, benchmarkRecord{}, err
 	}
@@ -121,11 +128,15 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 		return nil, record, errors.New("benchmark journal is malformed")
 	}
 	var extra any
+	allowedImage := record.Image == fioImage || (!c.nativeSeed && record.Image == legacyFioImage)
 	if d.Decode(&extra) != io.EOF || !benchmarkNamespaceMatches(record) || record.Phase != phase ||
-		(record.Image != fioImage && record.Image != legacyFioImage) || record.Workload != benchmarkWorkload() ||
+		!allowedImage || record.Workload != workload ||
 		!validBenchmarkOwner(record.Run, record.Source) || len(record.Machines) != 3 ||
 		(record.clientNode() != benchmarkClientNode && record.clientNode() != legacyBenchmarkClientNode) {
 		return nil, record, errors.New("benchmark journal does not match this reviewed procedure")
+	}
+	if c.nativeSeed && (record.Version != 3 || record.Namespace != benchmarkNamespace || record.Recovery != nil || record.Cleaned || len(record.Measurements) != 0 || len(record.TagNodes) != 3) {
+		return nil, record, errors.New("native seed retirement cannot adopt benchmark results or a different workspace")
 	}
 	for _, name := range []string{"prod-worker-1", "prod-worker-2", "prod-worker-3"} {
 		m := record.Machines[name]

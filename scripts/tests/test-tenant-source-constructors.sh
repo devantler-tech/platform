@@ -1,55 +1,35 @@
 #!/usr/bin/env bash
-# Exercise the actual OCI and publisher guards against the complete Tenant graph.
-# The graph trusts only the tenant's own release workflow (ADR 0019), so the publisher
-# guard holds no matcher for it: it must still prove the CEL subject through the exact
-# constructor reader, beside one ordinary shared-publisher consumer.
+# Exercise the actual OCI guard against the complete Tenant graph. The graph trusts
+# only the tenant's own release workflow (ADR 0019): the guard must prove the CEL
+# subject through the exact constructor reader.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 graph=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
-consumer=k8s/bases/apps/wedding-app/oci-repository.yaml
 failures=0
 new_case() {
   case_root="$work/$1"
-  mkdir -p "$case_root/$(dirname "$graph")" "$case_root/$(dirname "$consumer")" "$case_root/scripts"
+  mkdir -p "$case_root/$(dirname "$graph")"
   cp "$root/$graph" "$case_root/$graph"
-  cp "$root/$consumer" "$case_root/$consumer"
-  cp "$root/scripts/guard-shared-publish-workflow-pin.sh" "$case_root/scripts/"
-  if [[ -f "$root/scripts/tenant-source-constructors.lib.sh" ]]; then
-    cp "$root/scripts/tenant-source-constructors.lib.sh" "$case_root/scripts/"
-  fi
-  printf '1\t%s\n' "$consumer" >"$case_root/scripts/shared-publish-workflow-matchers.tsv"
   printf 'resources:\n  - resource-graph-definition.yaml\n' >"$case_root/$(dirname "$graph")/kustomization.yaml"
   : >"$case_root/exemptions.tsv"
 }
 check_guards() {
-  local label="$1" want="$2" guard out rc
-  for guard in oci publisher; do
-    rc=0
-    if [[ "$guard" == oci ]]; then
-      out="$(OCI_VERIFY_ROOTS="$case_root/$(dirname "$graph")" OCI_VERIFY_EXEMPTIONS_FILE="$case_root/exemptions.tsv" OCI_VERIFY_EXPECTED_MIN=1 \
-        bash "$root/scripts/guard-oci-repository-verify.sh" 2>&1)" || rc=$?
-    else
-      out="$(bash "$case_root/scripts/guard-shared-publish-workflow-pin.sh" 2>&1)" || rc=$?
-    fi
-    if [[ "$want" == accept && "$rc" == 0 ]]; then
-      printf 'ok: %s %s accepted\n' "$guard" "$label"
-    elif [[ "$want" == reject && "$rc" != 0 && "$out" == *'invalid Tenant source constructor'* ]]; then
-      printf 'ok: %s %s refused by constructor boundary\n' "$guard" "$label"
-    elif [[ "$want" == reject && "$guard" == publisher && "$label" == shared-publisher-again && "$rc" != 0 && "$out" == *'that this guard did not validate'* ]]; then
-      # Naming the shared publisher again makes the graph an unlisted shared-workflow
-      # reference, which the publisher guard's independent discovery refuses first.
-      printf 'ok: publisher %s refused as an unlisted shared-workflow reference\n' "$label"
-    elif [[ "$want" == reject && "$guard" == oci && ("$label" == foreign-source-url || "$label" == wrong-node-kind) && "$rc" != 0 && "$out" == *'found 0 in-scope OCIRepositor(y/ies)'* ]]; then
-      # These mutations remove the only kind/URL in this isolated discovery root.
-      # The publisher guard independently rejects their complete graph context.
-      printf 'ok: oci %s refused by the discovery floor\n' "$label"
-    else
-      printf 'FAIL: %s %s expected %s, exit=%s: %s\n' "$guard" "$label" "$want" "$rc" "$out" >&2
-      failures=$((failures + 1))
-    fi
-  done
+  local label="$1" want="$2" out rc=0
+  out="$(OCI_VERIFY_ROOTS="$case_root/$(dirname "$graph")" OCI_VERIFY_EXEMPTIONS_FILE="$case_root/exemptions.tsv" OCI_VERIFY_EXPECTED_MIN=1 \
+    bash "$root/scripts/guard-oci-repository-verify.sh" 2>&1)" || rc=$?
+  if [[ "$want" == accept && "$rc" == 0 ]]; then
+    printf 'ok: %s accepted\n' "$label"
+  elif [[ "$want" == reject && "$rc" != 0 && "$out" == *'invalid Tenant source constructor'* ]]; then
+    printf 'ok: %s refused by constructor boundary\n' "$label"
+  elif [[ "$want" == reject && ("$label" == foreign-source-url || "$label" == wrong-node-kind) && "$rc" != 0 && "$out" == *'found 0 in-scope OCIRepositor(y/ies)'* ]]; then
+    # These mutations remove the only kind/URL in this isolated discovery root.
+    printf 'ok: %s refused by the discovery floor\n' "$label"
+  else
+    printf 'FAIL: %s expected %s, exit=%s: %s\n' "$label" "$want" "$rc" "$out" >&2
+    failures=$((failures + 1))
+  fi
 }
 new_case committed
 check_guards 'complete constrained graph' accept

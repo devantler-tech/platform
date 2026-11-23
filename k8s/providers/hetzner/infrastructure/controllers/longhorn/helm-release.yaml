@@ -156,6 +156,11 @@ spec:
     # Keep the chart's normal scheduling constraints; do not select storage labels.
     longhornManager:
       nodeSelector: {}
+      # Keep a single manager unavailable when its runtime image changes.
+      updateStrategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 1
 
     longhornUI:
       replicas: ${longhorn_ui_replicas:=1}

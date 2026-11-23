@@ -158,7 +158,7 @@ func TestUnstartedBenchmarkRecoveryOrdersAndBindsEveryDeletion(t *testing.T) {
 			meta := namespace["metadata"].(object)
 			meta["uid"], meta["annotations"] = record.NamespaceUID, object{"kustomize.toolkit.fluxcd.io/prune": "disabled"}
 			meta["labels"] = object{"pod-security.kubernetes.io/enforce": "restricted",
-				"pod-security.kubernetes.io/enforce-version": "latest", "velero.io/exclude-from-backup": "true"}
+				"pod-security.kubernetes.io/enforce-version": "latest"}
 			objects := map[string]object{"namespace/" + record.Namespace: namespace, "configmap/longhorn-v2-benchmark-v1": journal}
 			for kind, asset := range assets {
 				objects[strings.ToLower(kind)+"/"+text(asset, "metadata", "name")] = asset

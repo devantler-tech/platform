@@ -1,0 +1,12 @@
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: crossplane
+  namespace: crossplane-system
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: crossplane
+      release: crossplane
