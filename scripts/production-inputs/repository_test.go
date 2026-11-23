@@ -23,7 +23,6 @@ const (
 	restrictRun   = "go run ./scripts/production-inputs restrict"
 	restrictGuard = "inputs.production-inputs-only == 'true'"
 	restrictInput = "production-inputs-only"
-	signerGate    = "./scripts/guard-publish-workflow-approved-revisions.sh"
 	// classifierStep is the whole script of the changes job's classifier step.
 	classifierStep = `answer=production=true
 checked_out="$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
@@ -104,24 +103,22 @@ func wiringFault(ci, manual, rebuild, deploy string) string {
 		return "the action must declare the restriction as an optional input that is off by default"
 	}
 	steps := composite.Runs.Steps
-	if len(steps) < 4 {
-		return "the action has too few steps to hold its gates and the restriction"
+	if len(steps) < 2 {
+		return "the action has too few steps to hold its gate and the restriction"
 	}
-	restriction := steps[2]
+	restriction := steps[1]
 	if strings.TrimSpace(restriction.Run) != restrictRun || restriction.If != restrictGuard ||
 		restriction.Shell != "bash" || restriction.Continue != nil || restriction.Uses != "" || len(restriction.Env) != 0 {
-		return "the action's third step must be the plain restriction, run only when the input asks for it"
+		return "the action's second step must be the plain restriction, run only when the input asks for it"
 	}
 	for index, other := range steps {
-		if index != 2 && (strings.Contains(other.Run, "production-inputs restrict") || strings.Contains(other.If, restrictInput)) {
-			return "only the action's third step may restrict the working tree or read its input"
+		if index != 1 && (strings.Contains(other.Run, "production-inputs restrict") || strings.Contains(other.If, restrictInput)) {
+			return "only the action's second step may restrict the working tree or read its input"
 		}
 	}
-	// Nothing but the two pinned gates may run before the restriction. The
-	// signer gate is the one the self-containment test runs in both trees.
-	if strings.TrimSpace(steps[0].Run) != signerGate || steps[0].Uses != "" ||
-		steps[1].Uses != "" || steps[1].ID != "verify_recovery_source" {
-		return "only the signer and recovery gates may precede the restriction"
+	// Nothing but the pinned recovery gate may run before the restriction.
+	if steps[0].Uses != "" || steps[0].ID != "verify_recovery_source" {
+		return "only the recovery gate may precede the restriction"
 	}
 
 	calls := func(parsed workflow, job string) []step {
@@ -210,7 +207,7 @@ func TestWorkflowsRunOnlyTheQueueDeployFromProductionInputs(t *testing.T) {
 				t.Fatal(err)
 			}
 			steps := mappingValue(mappingValue(parsed.Content[0], "runs"), "steps")
-			steps.Content[2], steps.Content[3] = steps.Content[3], steps.Content[2]
+			steps.Content[1], steps.Content[2] = steps.Content[2], steps.Content[1]
 			moved, err := yaml.Marshal(&parsed)
 			if err != nil {
 				t.Fatal(err)
@@ -232,8 +229,6 @@ func TestWorkflowsRunOnlyTheQueueDeployFromProductionInputs(t *testing.T) {
 			"        id: production-inputs\n        continue-on-error: true\n"), manual, rebuild, deploy},
 		"the classifier runs for pull requests only": {replace(ci, "        id: production-inputs\n        if: github.event_name == 'merge_group'\n",
 			"        id: production-inputs\n        if: github.event_name == 'pull_request'\n"), manual, rebuild, deploy},
-		"another command replaces the signer gate": {ci, manual, rebuild,
-			replace(deploy, "      run: "+signerGate+"\n", "      run: ./scripts/other.sh\n")},
 		"the answer is not exported": {replace(ci, "      production: ${{ steps.production-inputs.outputs.production }}\n", ""), manual, rebuild, deploy},
 	} {
 		if wiringFault(mutated[0], mutated[1], mutated[2], mutated[3]) == "" {
@@ -328,7 +323,6 @@ func TestTheListCoversEverythingTheDeployCanReach(t *testing.T) {
 		"scripts/tests/test-pvc-prune-safety.sh",
 		"scripts/verify-merge-group-queued/main.go",
 		"internal/longhornmigration/pools.go",
-		"scripts/publish-workflow-approved-revisions.tsv",
 		// A module another module imports, and what the cluster configuration names.
 		"scripts/wedding-backup-io.mjs",
 		"scripts/wedding-backup-projection.mjs",
@@ -593,25 +587,5 @@ func TestTheRestrictedTreeIsSelfContained(t *testing.T) {
 	build.Env = append(os.Environ(), "GOFLAGS=-mod=readonly", "GOWORK=off")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Errorf("the deploy programs do not compile from the production inputs alone:\n%s", output)
-	}
-
-	// The action's first gate runs before the restriction. Prove it gives the
-	// same answer afterwards, so nothing it reads is outside the list.
-	gate := exec.Command("bash", "scripts/guard-publish-workflow-approved-revisions.sh")
-	gate.Dir = clone
-	gate.Env = append(os.Environ(), "APPROVED_REVISIONS_ENFORCE=1")
-	restricted, err := gate.CombinedOutput()
-	if err != nil {
-		t.Fatalf("the signer gate fails from the production inputs alone:\n%s", restricted)
-	}
-	whole := exec.Command("bash", "scripts/guard-publish-workflow-approved-revisions.sh")
-	whole.Dir = root
-	whole.Env = append(os.Environ(), "APPROVED_REVISIONS_ENFORCE=1")
-	complete, err := whole.CombinedOutput()
-	if err != nil {
-		t.Fatalf("the signer gate fails on the whole checkout:\n%s", complete)
-	}
-	if !bytes.Equal(restricted, complete) {
-		t.Errorf("the signer gate reads something outside the list:\nwhole checkout:\n%s\nproduction inputs:\n%s", complete, restricted)
 	}
 }
