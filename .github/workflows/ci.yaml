@@ -4548,12 +4548,14 @@ jobs:
           KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
         run: |
           set -euo pipefail
-          tool_dir="$(mktemp -d "$RUNNER_TEMP/oci-verify.XXXXXX")"
+          kubectl_path="$RUNNER_TEMP/oci-verify-kubectl"
+          tool_dir="$RUNNER_TEMP/oci-verify-bin"
           curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
-            -o "$tool_dir/kubectl"
-          printf '%s  %s\n' "$KUBECTL_SHA256" "$tool_dir/kubectl" | sha256sum --check
-          chmod +x "$tool_dir/kubectl"
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          mkdir -p "$tool_dir"
+          install -m 0755 "$kubectl_path" "$tool_dir/kubectl"
           PATH="$tool_dir:$PATH" ./scripts/guard-oci-repository-verify.sh
 
       - name: ⚙️ Setup Go for version compatibility validation
