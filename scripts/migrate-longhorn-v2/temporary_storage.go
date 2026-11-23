@@ -58,7 +58,7 @@ func (r unusedTemporaryReader) verifyPartition(ctx context.Context) error {
 	if ctx.Err() != nil || r.blocks == nil || r.nativeReplicaReader == nil || r.ephemeralUUID == "" || addressErr != nil || address.String() != r.address || !netip.MustParsePrefix("10.0.0.0/16").Contains(address) {
 		return errInventory
 	}
-	ctx, cancel := context.WithTimeout(talos.WithNode(ctx, r.address), 20*time.Second)
+	ctx, cancel := context.WithTimeout(talos.WithNode(ctx, r.address), 15*time.Second)
 	defer cancel()
 	statuses, err := r.blocks.List(ctx, block.NewVolumeStatus(block.NamespaceName, "").Metadata())
 	if err != nil || ctx.Err() != nil {

@@ -154,7 +154,8 @@ func (r *temporaryBlockReaderFixture) List(ctx context.Context, kind cosiresourc
 	r.calls++
 	deadline, bounded := ctx.Deadline()
 	md, _ := metadata.FromOutgoingContext(ctx)
-	if !bounded || time.Until(deadline) > 20*time.Second || len(md.Get("node")) != 1 || md.Get("node")[0] != "10.0.99.4" || len(md.Get("nodes")) != 0 || kind.Namespace() != block.NamespaceName || len(options) != 0 {
+	// Match the production COSI reader's upper bound.
+	if !bounded || time.Until(deadline) > 15*time.Second || len(md.Get("node")) != 1 || md.Get("node")[0] != "10.0.99.4" || len(md.Get("nodes")) != 0 || kind.Namespace() != block.NamespaceName || len(options) != 0 {
 		r.t.Fatal("native resource proof lost its bounded exact-node scope")
 	}
 	var result cosiresource.List

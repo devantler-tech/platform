@@ -14,7 +14,7 @@ git -C "$source_dir" apply --check --unidiff-zero "$root/k8s/bases/infrastructur
 git -C "$source_dir" apply --unidiff-zero "$root/k8s/bases/infrastructure/controllers/dex/dex-v2.46.1-network.patch"
 git -C "$source_dir" diff --check
 git -C "$source_dir" add -- go.mod go.sum
-[[ $(git -C "$source_dir" write-tree) == 6ba6ad659479412f2a33c391e6c64a3cfcc3f05c ]]
+[[ $(git -C "$source_dir" write-tree) == 072d81808a1d5f63e257d1574aacfcffcceff3b6 ]]
 
 export GOTOOLCHAIN=local GOWORK=off
 export GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOVCS='*:off'
