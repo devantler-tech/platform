@@ -203,28 +203,44 @@ connect() {
 
 func TestCustomerProviderTransitionPreservesAccess(t *testing.T) {
 	function := producerFunction(t, "reconcile_customer_login_provider")
-	for _, mode := range []string{"inherited", "legacy", "both", "shared", "rollback", "unexpected", "unconfirmed-add"} {
+	for _, mode := range []string{"inherited", "legacy", "both", "shared", "rollback", "unexpected", "unconfirmed-add",
+		"unknown-both", "reset-drift", "reset-after-migration", "rollback-then-settled", "prepared-then-visible"} {
 		t.Run(mode, func(t *testing.T) {
 			harness := `set -euo pipefail
 mode=$1
 work=$2
 customers_org_id=customers
 customer_policy={}
+legacy_customer_idp=legacy
 changes=()
 from=legacy to=shared owner=IDP_OWNER_TYPE_SYSTEM
+phase_record=null
 case "$mode" in
-  inherited) ids='[]';;
-  legacy|unconfirmed-add) ids='["legacy"]';;
-  both) ids='["legacy","shared"]';;
-  shared|rollback) ids='["shared"]';;
+  inherited|reset-after-migration) ids='[]';;
+  legacy|unconfirmed-add|reset-drift|rollback-then-settled) ids='["legacy"]';;
+  both|unknown-both) ids='["legacy","shared"]';;
+  shared|rollback|prepared-then-visible) ids='["shared"]';;
   unexpected) ids='["legacy","unrelated"]';;
 esac
-if [[ $mode == rollback ]]; then
+case "$mode" in
+  both|prepared-then-visible) phase_record='{"version":1,"phase":"prepared","from":"legacy","to":"shared"}';;
+  reset-drift|reset-after-migration|rollback|shared) phase_record='{"version":1,"phase":"applied","from":"legacy","to":"shared"}';;
+  rollback-then-settled) phase_record='{"version":1,"phase":"applied","from":"shared","to":"legacy"}';;
+esac
+if [[ $mode == rollback || $mode == rollback-then-settled ]]; then
   from=shared to=legacy owner=IDP_OWNER_TYPE_ORG
 fi
 printf '%s\n' "$ids" >"$work/ids"
+printf '%s\n' "$phase_record" >"$work/migration"
 fail() { printf '%s\n' "$1" >&2; exit 1; }
-copy_customer_github_links() {
+customer_migration_state() { cat "$work/migration"; }
+save_customer_migration() {
+  [[ $2 == "$from" && $3 == "$to" ]] || fail 'wrong recorded migration direction'
+  jq -nc --arg phase "$1" --arg from "$2" --arg to "$3" \
+    '{version:1,phase:$phase,from:$from,to:$to}' >"$work/migration"
+  touch "$work/$1"
+}
+reconcile_customer_github_links() {
   [[ $1 == "$from" && $2 == "$to" ]] || fail 'wrong migration direction'
   touch "$work/copied"
 }
@@ -233,13 +249,15 @@ api() {
   case "$1 $2" in
     'GET /management/v1/policies/login')
       jq -nc --arg mode "$mode" --argjson pending "$([[ -e $work/ensured ]] && echo false || echo true)" \
-        '{policy:{isDefault:($mode=="inherited" and $pending)}}'
+        '{policy:{isDefault:(($mode=="inherited" or $mode=="reset-after-migration") and $pending)}}'
       ;;
     'POST /management/v1/policies/login/idps/_search')
       jq '{result: map({idpId:.})}' "$work/ids"
       ;;
     'POST /management/v1/policies/login/idps')
       [[ -e $work/copied ]] || fail 'provider appeared before the links were copied'
+      jq -e --arg to "$to" '.phase == "prepared" and .to == $to' "$work/migration" >/dev/null ||
+        fail 'provider appeared before the copy was durably recorded'
       jq -e --arg to "$to" --arg owner "$owner" '. == {idpId:$to,ownerType:$owner}' <<<"$3" >/dev/null || fail 'wrong provider write'
       if [[ $mode != unconfirmed-add ]]; then
         jq --arg to "$to" '. + [$to]' "$work/ids" >"$work/next"
@@ -247,6 +265,7 @@ api() {
       fi
       ;;
     "DELETE /management/v1/policies/login/idps/$from")
+      touch "$work/delete-attempted"
       jq -e --arg to "$to" 'index($to) != null' "$work/ids" >/dev/null || fail 'removed a provider before its replacement was confirmed'
       jq --arg from "$from" 'map(select(. != $from))' "$work/ids" >"$work/next"
       mv "$work/next" "$work/ids"
@@ -256,8 +275,8 @@ api() {
   esac
 }
 ensure_login_policy() {
-  [[ $1 == customers && $2 == '{}' && $3 == "$to" && $4 == "$owner" && -e $work/copied ]] || fail 'wrong policy reconciliation'
-  if [[ $mode == inherited ]]; then
+  [[ $1 == customers && $2 == '{}' && $3 == "$to" && $4 == "$owner" ]] || fail 'wrong policy reconciliation'
+  if [[ $mode == inherited || $mode == reset-after-migration ]]; then
     jq -nc --arg to "$to" '[$to]' >"$work/ids"
   fi
   touch "$work/ensured"
@@ -267,14 +286,21 @@ ensure_login_policy() {
 			cmd := exec.Command("bash", "-s", "--", mode, work)
 			cmd.Stdin = strings.NewReader(harness + function + "\nreconcile_customer_login_provider \"$from\" \"$to\" \"$owner\"\n")
 			output, err := cmd.CombinedOutput()
-			wantOK := mode != "unexpected" && mode != "unconfirmed-add"
+			wantOK := mode != "unexpected" && mode != "unconfirmed-add" && mode != "unknown-both" && mode != "reset-drift"
 			if (err == nil) != wantOK {
 				t.Fatalf("expected transition success=%t, got %v: %s", wantOK, err, output)
 			}
+			wantRemoval := mode == "legacy" || mode == "both" || mode == "rollback"
+			wantCopy := mode == "legacy" || mode == "rollback" || mode == "inherited" || mode == "unconfirmed-add"
+			wantFinish := mode == "legacy" || mode == "rollback" || mode == "inherited" || mode == "both" ||
+				mode == "prepared-then-visible"
 			for marker, want := range map[string]bool{
-				"copied":  mode != "unexpected",
-				"removed": mode == "legacy" || mode == "both" || mode == "rollback",
-				"ensured": wantOK,
+				"copied":           wantCopy,
+				"prepared":         wantCopy,
+				"applied":          wantFinish,
+				"delete-attempted": wantRemoval,
+				"removed":          wantRemoval,
+				"ensured":          wantOK,
 			} {
 				_, err := os.Stat(filepath.Join(work, marker))
 				if (err == nil) != want {
@@ -288,11 +314,15 @@ ensure_login_policy() {
 func TestSharedProviderMigrationUsesOnlyExistingCustomerLinks(t *testing.T) {
 	script := strings.Join([]string{
 		producerFunction(t, "customer_github_links"),
+		producerFunction(t, "customer_directory_page"),
+		producerFunction(t, "customer_directory_stamp"),
 		producerFunction(t, "read_customer_subjects"),
-		producerFunction(t, "copy_customer_github_links"),
+		producerFunction(t, "customer_github_link_change"),
+		producerFunction(t, "reconcile_customer_github_links"),
 	}, "\n")
 	for _, mode := range []string{"copy", "already-copied", "conflict", "truncated-customers", "truncated-links",
-		"foreign-customer", "duplicate-customer", "changed-directory", "invalid-subject", "empty"} {
+		"foreign-customer", "duplicate-customer", "changed-directory", "first-page-drift", "invalid-subject", "empty",
+		"revoked-source", "revoked-during-plan"} {
 		t.Run(mode, func(t *testing.T) {
 			harness := `set -euo pipefail
 mode=$1
@@ -303,9 +333,17 @@ fail() { printf '%s\n' "$1" >&2; exit 1; }
 connect() {
   case $1 in
     zitadel.user.v2.UserService/ListUsers)
-      jq -e '.query.limit == 100 and .query.asc == true and
-        .queries == [{typeQuery:{type:"TYPE_HUMAN"}},{organizationIdQuery:{organizationId:"customers"}}]' <<<"$2" >/dev/null
+      jq -e '(.query.limit == 1 or .query.limit == 100) and .query.asc == true and
+        .queries == [{typeQuery:{type:"TYPE_HUMAN"}},{organizationIdQuery:{organizationId:"customers"}}]' <<<"$2" >/dev/null ||
+        fail 'unexpected customer directory request'
       local subject owner=customers sequence=42
+      if [[ $mode == first-page-drift ]]; then
+        if [[ $(jq -r '.query.limit' <<<"$2") == 1 ]]; then
+          printf '%s\n' '{"details":{"totalResult":"2","processedSequence":"42"},"result":[{"userId":"former","details":{"resourceOwner":"customers"},"human":{}}]}'
+          return
+        fi
+        sequence=43
+      fi
       case $(jq -er '.query.offset' <<<"$2") in
         0)
           if [[ $mode == empty ]]; then
@@ -335,6 +373,13 @@ connect() {
       case $(jq -r '.userId' <<<"$2") in
         alice)
           local rows='[{"idpId":"old","userId":"111","userName":"alice-gh"}]'
+          if [[ $mode == revoked-source ]]; then
+            rows='[{"idpId":"shared","userId":"111","userName":"alice-gh"}]'
+            [[ ! -e $work/revoked ]] || rows='[]'
+          elif [[ $mode == revoked-during-plan ]]; then
+            [[ ! -e $work/observed ]] || rows='[]'
+            touch "$work/observed"
+          fi
           if [[ -e $work/wrote || $mode == already-copied ]]; then
             rows=$(jq '. + [{idpId:"shared",userId:"111",userName:"alice-gh"}]' <<<"$rows")
           elif [[ $mode == conflict ]]; then
@@ -356,6 +401,12 @@ connect() {
       touch "$work/wrote"
       printf '{}\n'
       ;;
+    zitadel.user.v2.UserService/RemoveIDPLink)
+      jq -e '. == {userId:"alice",idpId:"shared",linkedUserId:"111"}' <<<"$2" >/dev/null ||
+        fail 'tried to revoke a different account or provider'
+      touch "$work/revoked"
+      printf '{}\n'
+      ;;
     *) fail 'unexpected API call' ;;
   esac
 }
@@ -363,15 +414,18 @@ connect() {
 `
 			work := t.TempDir()
 			cmd := exec.Command("bash", "-s", "--", mode, work)
-			cmd.Stdin = strings.NewReader(harness + script + "\ncopy_customer_github_links old shared\n")
+			cmd.Stdin = strings.NewReader(harness + script + "\nreconcile_customer_github_links old shared\n")
 			output, err := cmd.CombinedOutput()
-			wantOK := mode == "copy" || mode == "already-copied" || mode == "empty"
+			wantOK := mode == "copy" || mode == "already-copied" || mode == "empty" || mode == "revoked-source"
 			if (err == nil) != wantOK {
 				t.Fatalf("expected migration success=%t, got %v: %s", wantOK, err, output)
 			}
 			_, writeErr := os.Stat(filepath.Join(work, "wrote"))
 			if (writeErr == nil) != (mode == "copy") {
 				t.Fatalf("unexpected migration write: %v", writeErr)
+			}
+			if _, err := os.Stat(filepath.Join(work, "revoked")); (err == nil) != (mode == "revoked-source") {
+				t.Fatalf("unexpected removal of an inactive link: %v", err)
 			}
 		})
 	}
@@ -384,7 +438,7 @@ func TestSharedInstanceLoginRestoresPreviousSettings(t *testing.T) {
 		producerFunction(t, "reconcile_shared_instance_login"),
 	}, "\n")
 	for _, mode := range []string{"round-trip", "previous-member", "inherited-disabled", "inherited-enabled",
-		"never-activated", "different-provider", "rollback-retry", "unrecorded-baseline"} {
+		"never-activated", "different-provider", "rollback-retry", "unrecorded-baseline", "preflight-only"} {
 		t.Run(mode, func(t *testing.T) {
 			harness := `set -euo pipefail
 mode=$1
@@ -441,6 +495,14 @@ cp "$state" "$state.before"
 if [[ $mode == never-activated ]]; then
   reconcile_shared_instance_login off shared
   cmp "$state.before" "$state"
+  exit
+fi
+if [[ $mode == preflight-only || $mode == inherited-enabled ]]; then
+  reconcile_shared_instance_login on shared preflight
+  jq -es --arg key "$key" '
+    (.[1] | del(.secret.metadata.annotations[$key])) == .[0] and
+    (.[1].secret.metadata.annotations[$key] | fromjson | .member == false and .feature.enabled == true)' \
+    "$state.before" "$state" >/dev/null
   exit
 fi
 reconcile_shared_instance_login on shared
@@ -506,7 +568,12 @@ connect() {
 `
 	subjects := filepath.Join(t.TempDir(), "subjects")
 	cmd := exec.Command("bash", "-s", "--", subjects)
-	cmd.Stdin = strings.NewReader(harness + producerFunction(t, "read_customer_subjects") + "\nread_customer_subjects \"$1\"\n")
+	script := strings.Join([]string{
+		producerFunction(t, "customer_directory_page"),
+		producerFunction(t, "customer_directory_stamp"),
+		producerFunction(t, "read_customer_subjects"),
+	}, "\n")
+	cmd.Stdin = strings.NewReader(harness + script + "\nread_customer_subjects \"$1\"\n")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("paging the customer directory failed: %v: %s", err, output)
 	}
@@ -520,5 +587,63 @@ connect() {
 	}
 	if string(data) != strings.Join(want, "") {
 		t.Fatal("paged customer subjects differ from the complete directory")
+	}
+}
+
+func TestSharedLoginPreflightAndLegacyRepairOrder(t *testing.T) {
+	const harness = `set -euo pipefail
+fixture=$1
+events=$2
+customers_org_id=customers
+customer_policy={}
+customer_idp={}
+idp_name=GitHub
+github_client_secret=synthetic
+github_annotation=unused
+shared_portal_setup=off
+if [[ $fixture == activation* ]]; then shared_portal_setup=on; fi
+log_call() { printf '%s\n' "$*" >>"$events"; }
+customer_migration_state() {
+  if [[ $fixture == rollback* ]]; then printf '{"phase":"applied"}\n'; else printf 'null\n'; fi
+}
+ensure_portal_shared_github() { log_call shared-template; shared_customer_idp=shared; }
+prepare_portal_operator() {
+  log_call "operator $1"
+  [[ $fixture != *operator-mismatch ]]
+}
+reconcile_shared_instance_login() {
+  log_call "instance $*"
+  [[ $fixture != activation-refused ]]
+}
+ensure_idp() { log_call legacy-template; idp_id=legacy; }
+ensure_login_policy() { log_call "legacy-policy $1 $3"; }
+reconcile_customer_login_provider() { log_call "transition $1 $2"; }
+`
+	for _, tt := range []struct {
+		name  string
+		calls string
+		ok    bool
+	}{
+		{"off", "legacy-template\nlegacy-policy customers legacy\nshared-template\ninstance off shared\noperator shared\n", true},
+		{"off-operator-mismatch", "legacy-template\nlegacy-policy customers legacy\nshared-template\ninstance off shared\noperator shared\n", false},
+		{"activation-refused", "shared-template\noperator shared\ninstance on shared preflight\n", false},
+		{"activation", "shared-template\noperator shared\ninstance on shared preflight\nlegacy-template\ntransition legacy shared\ninstance on shared\n", true},
+		{"rollback-operator-mismatch", "legacy-template\nshared-template\ntransition shared legacy\ninstance off shared\noperator shared\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			events := filepath.Join(t.TempDir(), "events")
+			cmd := exec.Command("bash", "-s", "--", tt.name, events)
+			cmd.Stdin = strings.NewReader(harness + producerFunction(t, "reconcile_portal_github") + "\nreconcile_portal_github\n")
+			if output, err := cmd.CombinedOutput(); (err == nil) != tt.ok {
+				t.Fatalf("expected reconciliation success=%t, got %v: %s", tt.ok, err, output)
+			}
+			calls, err := os.ReadFile(events)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(calls) != tt.calls {
+				t.Fatalf("unexpected reconciliation order:\n%s", calls)
+			}
+		})
 	}
 }
