@@ -90,6 +90,9 @@ components:
   # after the migration's runtime and backup checks pass (#6073).
   - ../../../../bases/components/longhorn-v1-runtime-headroom
   - ../../../../bases/components/longhorn-v1-operator-headroom
+  # Select the reviewed maintenance runtime with one manager unavailable at
+  # a time. Publication requires the native capacity and source guards (#6073).
+  - ../../../../bases/components/longhorn-v1-retirement-runtime
   # ALWAYS-ON: the live private-NIC Cilium device pin (moved out of the
   # strict-mode patch so the homogeneous-devices/ successor below can
   # override it — parent `patches:` apply after component patches, so a value
@@ -126,9 +129,7 @@ components:
   # guard may be lifted only after this has soaked.
   # Rollback = re-comment (every node rolls back under the rolling update).
   # CI then also needs scripts/tests/test-cilium-ebpf-host-routing-activation.sh
-  # reverted, and the kube-system/cilium HelmRelease line in
-  # scripts/validate-eks-ci-role-policy/approved-surface.txt set back to
-  # e56bb694c251d8f859edc76d005e3508e622ef2f3ba8d7e56ce722de9affbcf9.
+  # reverted. The HelmRelease has no authorization ledger entry (#6270).
   - cilium/components/ebpf-host-routing/
 patches:
   # Keep the two stateless canary-test endpoints on qualified workers during

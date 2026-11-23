@@ -9,13 +9,13 @@ fail() {
   echo "FAIL: $*" >&2
   exit 1
 }
-[[ "$(yq -er '.spec.ref.tag' "$root/k8s/bases/infrastructure/controllers/flux-operator/oci-repository.yaml")" == 0.62.1 ]] || fail 'native composition must use the admitted operator version'
+[[ "$(yq -er '.spec.ref.tag' "$root/k8s/bases/infrastructure/controllers/flux-operator/oci-repository.yaml")" == 0.63.1 ]] || fail 'native composition must use the admitted operator version'
 for provider in docker hetzner; do
   instance="$root/k8s/providers/$provider/infrastructure/controllers/flux-instance/flux-instance.yaml"
   [[ "$(yq -er '.spec.distribution.version' "$instance")" == 2.9.6 ]] || fail 'the reversible distribution must stay on exact 2.9.6'
   bash "$root/scripts/guard-controller-helm-profile.sh" "$instance"
 done
-[[ "$("$operator" version --client)" == 'client: 0.62.1' ]] || fail 'released flux-operator 0.62.1 is required'
+[[ "$("$operator" version --client)" == 'client: 0.63.1' ]] || fail 'released flux-operator 0.63.1 is required'
 artifact='oci://ghcr.io/controlplaneio-fluxcd/flux-operator-manifests@sha256:033a75c33b911d534e10c58cbcc60dda75027c99054fcd414339c9fd5019f7c3'
 for provider in docker hetzner; do
   instance="$root/k8s/providers/$provider/infrastructure/controllers/flux-instance/flux-instance.yaml"

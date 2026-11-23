@@ -676,34 +676,9 @@ spec:
 `,
 		},
 		{
-			name:          "Flux root handoff",
-			errorContains: "unapproved rendered",
-			manifest: `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./external
-  sourceRef:
-    kind: OCIRepository
-    name: unreviewed
-`,
-		},
-		{
-			name: "Flux source object",
-			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
-kind: OCIRepository
-metadata:
-  name: aws
-  namespace: aws
-spec:
-  interval: 5m
-  url: oci://example.invalid/unreviewed
-`,
-		},
-		{
-			name: "Helm controller RBAC emitter",
+			// A carrier is out of the ledger, but an authorization object it
+			// carries is not: a chart's extra-objects value is a template.
+			name: "Helm values that embed a binding",
 			manifest: `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -717,18 +692,36 @@ spec:
         kind: HelmRepository
         name: controller
   values:
-    rbac:
-      create: true
+    extraObjects:
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: controller-admin
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-admin
+        subjects:
+          - kind: ServiceAccount
+            name: aws
+            namespace: aws
 `,
 		},
 		{
-			name: "Crossplane package RBAC emitter",
-			manifest: `apiVersion: pkg.crossplane.io/v1
-kind: Provider
+			// A handoff's post-build substitution rewrites the subjects of the
+			// bindings it applies, so it joins the ledger though the handoff
+			// itself is a carrier.
+			name: "Flux handoff with post-build substitution",
+			manifest: `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
 metadata:
-  name: provider-example
+  name: apps
+  namespace: flux-system
 spec:
-  package: ghcr.io/example/provider:v1.0.0
+  path: ./apps
+  postBuild:
+    substitute:
+      admin_email: attacker@example.invalid
 `,
 		},
 		{
@@ -918,6 +911,28 @@ subjects:
 			}
 			if err == nil || !strings.Contains(err.Error(), errorContains) {
 				t.Fatalf("validateRendered() error = %v, want %q", err, errorContains)
+			}
+			// A one-document render differs from the committed ledger whatever
+			// it selects, so the mismatch alone proves nothing: every fixture
+			// document must itself be in the surface.
+			documents, decodeErr := decodeDocuments([]byte(tt.manifest))
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			entries, _, _, surfaceErr := evaluateRenderedSurface([]byte(tt.manifest))
+			if surfaceErr != nil {
+				t.Fatal(surfaceErr)
+			}
+			selected := make(map[string]bool, len(entries))
+			for _, entry := range entries {
+				selected[surfaceEntryKey(entry)] = true
+			}
+			for _, document := range documents {
+				identity := identityOf(document)
+				key := strings.Join([]string{identity.apiVersion, identity.kind, identity.namespace, identity.name}, "|")
+				if !selected[key] {
+					t.Fatalf("%s escaped the authorization surface; selected %v", key, selected)
+				}
 			}
 		})
 	}
@@ -1707,91 +1722,6 @@ func TestCiliumTenantEditSupportsFluxReconciliationWithoutBuiltInEditAggregation
 	}
 }
 
-// TestAuthorizationSurfaceEntryNormalizesOnlyImmutableDependencyPins keeps
-// routine dependency pins out of the authorization approval fingerprint while
-// preserving every field that can configure, redirect, or float the chart.
-func TestAuthorizationSurfaceEntryNormalizesOnlyImmutableDependencyPins(t *testing.T) {
-	const manifest = `apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata:
-  name: controller
-  namespace: controllers
-spec:
-  chart:
-    spec:
-      chart: controller
-      version: 1.2.3
-      sourceRef:
-        kind: HelmRepository
-        name: controller
-  values:
-    initContainers:
-      - name: prepare
-        image: docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
-    rbac:
-      clusterAdmin: false
-  postRenderers:
-    - kustomize:
-        patches:
-          - target:
-              kind: Deployment
-            patch: safe
-`
-
-	entry := func(contents string) string {
-		t.Helper()
-		documents, err := decodeDocuments([]byte(contents))
-		if err != nil || len(documents) != 1 {
-			t.Fatalf("decode HelmRelease: documents=%d error=%v", len(documents), err)
-		}
-		identity := identityOf(documents[0])
-		actual, err := authorizationSurfaceEntry(identity, documents[0])
-		if err != nil {
-			t.Fatalf("authorizationSurfaceEntry() error = %v", err)
-		}
-		return actual
-	}
-
-	baseline := entry(manifest)
-	if actual := entry(strings.Replace(manifest, "version: 1.2.3", "version: v2.0.0-rc.1", 1)); actual != baseline {
-		t.Fatal("exact Helm chart version update moved the authorization surface")
-	}
-	if actual := entry(strings.Replace(
-		manifest,
-		"sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616",
-		"sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e",
-		1,
-	)); actual != baseline {
-		t.Fatal("exact container image digest update moved the authorization surface")
-	}
-
-	mutations := []struct {
-		name string
-		old  string
-		new  string
-	}{
-		{name: "floating version range", old: "version: 1.2.3", new: "version: '>=1.2.3'"},
-		{name: "wildcard version", old: "version: 1.2.3", new: "version: '1.2.x'"},
-		{name: "substituted version", old: "version: 1.2.3", new: "version: ${chart_version}"},
-		{name: "missing version pin", old: "      version: 1.2.3\n", new: ""},
-		{name: "container image tag", old: "busybox:1.38.0@", new: "busybox:1.39.0@"},
-		{name: "digest-only container image", old: "busybox:1.38.0@", new: "busybox@"},
-		{name: "substituted container image digest", old: "sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616", new: "${busybox_digest}"},
-		{name: "floating container image", old: "docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616", new: "docker.io/library/busybox:latest"},
-		{name: "chart identity", old: "chart: controller", new: "chart: controller-shadow"},
-		{name: "source identity", old: "name: controller\n  values:", new: "name: untrusted\n  values:"},
-		{name: "authorization values", old: "clusterAdmin: false", new: "clusterAdmin: true"},
-		{name: "post renderer", old: "patch: safe", new: "patch: unsafe"},
-	}
-	for _, tt := range mutations {
-		t.Run(tt.name, func(t *testing.T) {
-			if actual := entry(strings.Replace(manifest, tt.old, tt.new, 1)); actual == baseline {
-				t.Fatal("non-version HelmRelease mutation did not move the authorization surface")
-			}
-		})
-	}
-}
-
 // TestValidateAuthorizationRejectsSourceAndRenderedMutations covers fail-closed edits.
 func TestValidateAuthorizationRejectsSourceAndRenderedMutations(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
@@ -1896,19 +1826,6 @@ apiVersion: iam.aws.m.upbound.io/v1beta1
 kind: Role
 metadata:
   name: unexpected
-  namespace: aws
-`)...),
-			wantError: "unapproved rendered authorization surface",
-		},
-		{
-			name:     "additional tenant Flux handoff",
-			role:     role,
-			boundary: boundary,
-			rendered: append(append([]byte{}, rendered...), []byte(`---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: aws-shadow
   namespace: aws
 `)...),
 			wantError: "unapproved rendered authorization surface",

@@ -7,7 +7,7 @@ RUN go test ./...
 ARG VERSION=unknown
 RUN go build -mod=readonly -ldflags "-X main.version=$VERSION" -o /out/coroot-cluster-agent .
 
-FROM ghcr.io/coroot/coroot-cluster-agent:1.11.9@sha256:2b010cec8c1e898da578125187355c82ddd40cc28b508c014a8a1cb15cc53ed8
+FROM ghcr.io/coroot/coroot-cluster-agent:1.12.0@sha256:b64e9f567ce03670fd3dd74905c61de5956defda9a8b26a0c721ef9a168ab2af
 COPY --from=builder --chmod=0755 /out/coroot-cluster-agent /usr/bin/coroot-cluster-agent
 # Restate the upstream image's own non-root identity; its config User is 65534:65534.
 USER 65534:65534
