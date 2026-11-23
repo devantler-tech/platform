@@ -66,17 +66,22 @@ func LoadProtectedClient(getenv func(string) string) (*http.Client, *url.URL, er
 	return newProductionClient(config)
 }
 
-// LoadBenchmarkAdmissionClient admits the protected V1 benchmark or the
-// explicitly confirmed recovery of originalRun. The caller must first join
-// the selected address to its serving process and verified Hetzner server.
+// LoadBenchmarkAdmissionClient admits the protected V1 benchmark, native seed,
+// or the explicitly confirmed recovery of originalRun. The caller must first
+// join the selected address to its serving process and verified Hetzner server.
 func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Addr, originalRun string) (*http.Client, *url.URL, error) {
 	operation, confirmation := "benchmark-v1", "benchmark-longhorn-storage"
-	if originalRun != "" {
-		if !runPattern.MatchString(originalRun) || originalRun == getenv("GITHUB_RUN_ID") ||
-			getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != "" {
+	switch {
+	case originalRun != "":
+		if !runPattern.MatchString(originalRun) || originalRun == getenv("GITHUB_RUN_ID") {
 			return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
 		}
 		operation, confirmation = "recover-bound-v1-benchmark", "recover-bound-longhorn-v1-benchmark:"+originalRun
+	case getenv("LONGHORN_V2_OPERATION") == "prepare-native-v1-seed":
+		operation, confirmation = "prepare-native-v1-seed", "prepare-longhorn-native-v1-seed"
+	}
+	if operation != "benchmark-v1" && (getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != "") {
+		return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
 	}
 	for key, want := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
