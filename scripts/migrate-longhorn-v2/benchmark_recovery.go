@@ -21,6 +21,15 @@ type benchmarkRecoveryOwner struct {
 	Deletes                 map[string]benchmarkResource `json:",omitempty"`
 }
 
+func benchmarkRecoveryDeletionKind(kind string) bool {
+	switch kind {
+	case "Pod", "NetworkPolicy", "PersistentVolumeClaim", "StorageClass":
+		return true
+	default:
+		return false
+	}
+}
+
 var benchmarkRunPattern = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
 var benchmarkSourcePattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 

@@ -30,6 +30,8 @@ func main() {
 		authorization = authorizeRetainedTemporaryPreparation(os.Getenv, target)
 	case "benchmark-v1", "benchmark-v2":
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
+	case recoverUnstartedV1Operation:
+		authorization = authorizeUnstartedV1Recovery(os.Getenv)
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":
@@ -145,6 +147,14 @@ func main() {
 			fmt.Fprintln(os.Stderr, inventoryFailureMessage(err))
 			os.Exit(1)
 		}
+		return
+	}
+	if operation == recoverUnstartedV1Operation {
+		if err := recoverUnstartedV1Benchmark(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
+			fmt.Fprintln(os.Stderr, "Unstarted V1 benchmark recovery held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("LONGHORN_V1_UNSTARTED_RECOVERY=COMPLETE")
 		return
 	}
 	if operation == "benchmark-v1" || operation == "benchmark-v2" {

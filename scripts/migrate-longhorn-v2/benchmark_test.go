@@ -75,7 +75,7 @@ func TestBenchmarkResourcesUseOnlyOwnedScratchStorageAndPermanentClient(t *testi
 			class = o
 		}
 	}
-	if text(pod, "spec", "nodeSelector", "kubernetes.io/hostname") != "prod-worker-3" ||
+	if text(pod, "spec", "nodeSelector", "kubernetes.io/hostname") != "prod-worker-1" ||
 		value(pod, "spec", "automountServiceAccountToken") != false ||
 		text(claim, "spec", "storageClassName") != text(class, "metadata", "name") ||
 		text(class, "parameters", "dataEngine") != "v1" || text(class, "parameters", "numberOfReplicas") != "3" ||

@@ -45,6 +45,8 @@ done
 `
 
 const benchmarkNamespace = "longhorn-benchmark"
+const benchmarkClientNode = "prod-worker-1"
+const legacyBenchmarkClientNode = "prod-worker-3"
 
 func benchmarkTag(phase, runID string) string {
 	return benchmarkNamespace + "-" + phase + "-" + runID
@@ -62,8 +64,21 @@ func benchmarkNamespaceMatches(record benchmarkRecord) bool {
 }
 
 func benchmarkResources(phase, runID, namespace string) ([]object, error) {
+	return benchmarkResourcesForClient(phase, runID, namespace, benchmarkClientNode)
+}
+
+func (r benchmarkRecord) clientNode() string {
+	if r.ClientNode == "" {
+		return legacyBenchmarkClientNode
+	}
+	return r.ClientNode
+}
+
+func benchmarkResourcesForClient(phase, runID, namespace, clientNode string) ([]object, error) {
 	tag := benchmarkTag(phase, runID)
-	if (phase != "v1" && phase != "v2") || !benchmarkRunPattern.MatchString(runID) || (namespace != tag && namespace != benchmarkNamespace) {
+	if (phase != "v1" && phase != "v2") || !benchmarkRunPattern.MatchString(runID) ||
+		(namespace != tag && namespace != benchmarkNamespace) ||
+		(clientNode != benchmarkClientNode && clientNode != legacyBenchmarkClientNode) {
 		return nil, errors.New("unreviewed benchmark identity")
 	}
 	class := "lh-benchmark-" + phase + "-" + runID
@@ -93,7 +108,7 @@ func benchmarkResources(phase, runID, namespace string) ([]object, error) {
 			"spec": object{"accessModes": []any{"ReadWriteOnce"}, "storageClassName": class,
 				"resources": object{"requests": object{"storage": "4Gi"}}}},
 		{"apiVersion": "v1", "kind": "Pod", "metadata": meta("fio", true), "spec": object{
-			"nodeSelector": object{"kubernetes.io/hostname": "prod-worker-3"}, "restartPolicy": "Never", "hostUsers": false,
+			"nodeSelector": object{"kubernetes.io/hostname": clientNode}, "restartPolicy": "Never", "hostUsers": false,
 			"automountServiceAccountToken": false, "enableServiceLinks": false, "activeDeadlineSeconds": benchmarkDeadlineSeconds,
 			"securityContext": object{"runAsNonRoot": true, "runAsUser": 65532, "runAsGroup": 65532, "fsGroup": 65532,
 				"fsGroupChangePolicy": "OnRootMismatch", "seccompProfile": object{"type": "RuntimeDefault"}},

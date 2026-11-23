@@ -29,6 +29,7 @@ name: Prepare Longhorn V2 Migration
             refresh-clients,
             benchmark-v1,
             benchmark-v2,
+            recover-unstarted-v1-benchmark,
             inventory-replicas,
             inventory-storage-root,
             inventory-storage-layout,
@@ -180,6 +181,10 @@ jobs:
               ;;
             benchmark-v1|benchmark-v2)
               [[ "${LONGHORN_V2_CONFIRM}" == benchmark-longhorn-storage ]]
+              ;;
+            recover-unstarted-v1-benchmark)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" == recover-unstarted-longhorn-v1-benchmark ]]
               ;;
             *) exit 1 ;;
           esac
