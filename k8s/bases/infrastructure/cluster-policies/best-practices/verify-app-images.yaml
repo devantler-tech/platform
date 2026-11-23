@@ -21,7 +21,7 @@ metadata:
       publish-app for app images, the platform's dedicated compatibility-image
       publishers, each Crossplane provider's own package workflow, KSail's
       publish-ksail-analysis-runner.yaml workflow, the mail bootstrap publisher,
-      the dedicated customer identity, Dex, automated mail sender and Longhorn
+      the dedicated customer identity, Dex, kagent controller, automated mail sender and Longhorn
       migration publishers,
       and KSail's release workflow.
       Each class is verified only against its own identity;
@@ -209,6 +209,12 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$
+    - name: publishkagentcontroller
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kagent-controller\.yaml@refs/heads/main$
     # The automated company sender has its own main-only publisher. Its
     # signature cannot satisfy any other image class (platform#5400).
     - name: publishmailsubmission
@@ -282,6 +288,9 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-dex' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-dex:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-dex@') &&
+          image != 'ghcr.io/devantler-tech/platform-kagent-controller' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kagent-controller:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kagent-controller@') &&
           image != 'ghcr.io/devantler-tech/platform-longhorn-instance-manager' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager@') &&
@@ -370,6 +379,16 @@ spec:
       message: >-
         Dex image is not signed by the platform repository's dedicated
         main-branch publisher (keyless cosign)
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-kagent-controller' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kagent-controller:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kagent-controller@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishkagentcontroller]))
+        .all(e, e > 0)
+      message: >-
+        kagent controller image requires its dedicated main-branch signature
     - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,

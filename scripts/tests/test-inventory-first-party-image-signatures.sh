@@ -302,16 +302,17 @@ expected_globs="$(printf '%s\n' \
   'ghcr.io/devantler-tech/platform-kyverno-background' \
   'ghcr.io/devantler-tech/business-site-identity' \
   'ghcr.io/devantler-tech/platform-dex' \
+  'ghcr.io/devantler-tech/platform-kagent-controller' \
   'ghcr.io/devantler-tech/platform-longhorn-instance-manager' \
   'ghcr.io/devantler-tech/platform-longhorn-manager' \
   'ghcr.io/devantler-tech/platform-longhorn-fio' \
   'ghcr.io/devantler-tech/platform-mail-submission' \
   'ghcr.io/devantler-tech/*')"
 if [ "$real_globs" != "$expected_globs" ]; then
-  echo "FAIL  the real rules must retain all exact ordered image routes"
+  echo "FAIL  the real image routes differ from the expected order"
   failures=$((failures + 1))
 else
-  echo "ok    real rules: dedicated publishers ordered before catch-all"
+  echo "ok    real rules: dedicated publishers before catch-all"
 fi
 
 # The real file must also satisfy the completeness gate the fixtures exercise.
@@ -476,6 +477,7 @@ if [ "$talos_dex_identity" != "$dex_identity" ] ||
 else
   echo 'ok    Dex publisher identity matches both verifiers'
 fi
+
 for image in "$dex_repository" "$dex_repository:revision" "$dex_repository@sha256:aa" "$dex_repository:revision@sha256:aa" "$dex_repository-other:revision"; do
   printf '%s\n' "$image" >"${work}/images-dex"
   for signer in dex app; do
@@ -493,6 +495,17 @@ for image in "$dex_repository" "$dex_repository:revision" "$dex_repository@sha25
     check "Dex signer isolation: $image / $signer" "$want_rc" '' "$RC" "$OUT"
   done
 done
+# The startup backport must have the same exact publisher at admission and pull.
+kagent_identity='^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kagent-controller\.yaml@refs/heads/main$'
+kagent_node_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-kagent-controller") | .keyless.subjectRegex' "$real")"
+kagent_admission_identity="$(yq -r '.spec.attestors[] | select(.name == "publishkagentcontroller") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+if [ "$kagent_node_identity" != "$kagent_identity" ] || [ "$kagent_admission_identity" != "$kagent_identity" ]; then
+  echo 'FAIL  kagent controller publisher identity differs between verifiers'
+  failures=$((failures + 1))
+else
+  echo 'ok    kagent controller publisher identity matches both verifiers'
+fi
+
 # The automated company sender has its own exact main-only publisher (#5400).
 # Exercise first-match routing with the real rules, including tag and digest
 # references, and prove that neither publisher can authenticate the other's image.

@@ -61,6 +61,7 @@ while IFS='|' read -r repository attestor workflow; do
 done <<'ROUTES'
 ghcr.io/devantler-tech/platform-kubescape-node-agent|publishkubescapenodeagent|publish-kubescape-node-agent-hotfix
 ghcr.io/devantler-tech/platform-coroot-node-agent|publishcorootnodeagent|publish-coroot-node-agent-hotfix
+ghcr.io/devantler-tech/platform-kagent-controller|publishkagentcontroller|publish-kagent-controller
 ghcr.io/devantler-tech/platform-longhorn-instance-manager|publishlonghornretirement|publish-longhorn-v1-retirement
 ghcr.io/devantler-tech/platform-longhorn-manager|publishlonghornv2|publish-longhorn-v2-only
 ghcr.io/devantler-tech/platform-longhorn-fio|publishlonghornfio|publish-longhorn-fio
