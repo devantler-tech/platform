@@ -286,7 +286,7 @@ ref_tail_is_closed() {
       ']') class=0 ;;
       '(') ((class)) || depth=$((depth + 1)) ;;
       ')')
-        if ((!class)); then
+        if ((! class)); then
           ((depth > 0)) || return 1
           depth=$((depth - 1))
         fi
@@ -294,7 +294,7 @@ ref_tail_is_closed() {
       '|' | '$') ((class || depth)) || return 1 ;;
     esac
   done
-  ((!escaped && !depth && !class))
+  ((! escaped && ! depth && ! class))
 }
 
 status=0
