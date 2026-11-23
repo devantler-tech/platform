@@ -104,11 +104,11 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 5781451a70a8dee38ed71
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager be4e40e80964e37494dde9c1df0662a58b9b8976d2a57b9efed9c65aebdb9611
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape bc4e75c25b3ee373b8290efb0d6f027cda6db1b2058ccc7a0844a82a277c9cfd
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 2a1089874b12c1c58dbb0893443e8b413571df536c14307976724bd0f181f8cf
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 26000fada860269dd6bcbf187f8252861d6cc5dec1b8b357e824d012f1d7dfd5
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn 3687bc9ddaa8177bc383eb7d25fc8f1bff732a935e2874656fdd8b438aea6e03
+helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn 95e26c41a46604536c28eeb62b99d5a009927535f99c7c2eba7f917ccd00b565
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|oauth2-proxy|oauth2-proxy 9e34e0401c43f48f8268b48efebc241902f6090774d3e6ae33e9ff6317975185
 
@@ -120,7 +120,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 7ce46ec995e409241060d9a07503b4949ef5553a24f2f4924dc5bc6d50cd4f9b
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter 815e7f1956b0c2ba1c82e8b5bd7abed62fc99ab6ee7101e31bcbbb45ab989afb
+helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter a7f2b4447f2b95c6aa298f20367b851116fcbc81829014f067a10f725b1e2e69
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|reloader|reloader c26139f0a484b501080f4a245c1ce01f6b770827797562919814daa98118ef3f
 

@@ -129,7 +129,7 @@ require (
 	github.com/cloudflare/circl v1.6.4 // indirect
 	github.com/cosi-project/runtime v1.17.1
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
-	github.com/emersion/go-smtp v0.25.1
+	github.com/emersion/go-smtp v0.26.0
 	github.com/gertd/go-pluralize v0.2.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.33.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect

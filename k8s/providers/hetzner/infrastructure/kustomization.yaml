@@ -253,7 +253,6 @@ patches:
                         - key: storage.platform.devantler.tech/migration-pool
                           operator: In
                           values: [v2]
-  - path: policy-reporter/patches/runtime-headroom.yaml
   - path: ksail-operator/patches/enable-oidc.yaml
   - path: vault-backup-recovery/patches/use-recovery-storage-for-initial-snapshot.yaml
     target:

@@ -429,6 +429,13 @@
       "allowedVersions": "<1.20.0"
     },
     {
+      "description": "Hold the Kyverno engine Go module below 1.20.0 in the tenant web-app admission test module, for the same reason and with the same removal condition as the chart and CLI rules above (#4994): that module builds the 1.19 engine production runs. Kyverno v1.20.0 also cannot be consumed as a library yet: it compiles only with its own replace of github.com/kyverno/api by a fork in a personal account (against the published v0.0.1-alpha.5 it fails with `pc.Enabled undefined`), and it needs Go 1.27.",
+      "matchManagers": ["gomod"],
+      "matchFileNames": ["scripts/tests/tenant-webapp-admission/go.mod"],
+      "matchPackageNames": ["github.com/kyverno/kyverno"],
+      "allowedVersions": "<1.20.0"
+    },
+    {
       "description": "Keep the two Kyverno 1.19 source builds (background controller and migration runtime) on Go 1.26. They compile Kyverno 1.19, which upstream builds with Go 1.26, and lint it with golangci-lint v2.11.4, which cannot read Go 1.27 export data; a Go 1.27 builder fails their image builds and their compiler-pin tests (#6164). Go 1.26 still receives security releases, so its patch updates stay visible. Remove this rule when these builds move to Kyverno 1.20 (#4994), or are moved to Go 1.27 together with their linter and accepted-advisory list.",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["docker.io/library/golang"],
