@@ -188,7 +188,7 @@ spec:
                 - name: CUSTOMER_GITHUB_SIGNIN
                   value: "on"
                 - name: SHARED_PORTAL_LOGIN_SETUP
-                  value: "off"
+                  value: "on"
                 - name: ADMIN_EMAIL
                   value: ned@devantler.tech
               volumeMounts:
@@ -950,7 +950,8 @@ spec:
                     [[ $linked == "$(jq -nc --arg i "$shared" '[$i]')" ]] ||
                       fail "the instance login must list the shared GitHub provider"
                     feature=$(connect zitadel.feature.v2.FeatureService/GetInstanceFeatures '{}')
-                    if jq -e '.loginDefaultOrg.enabled == true' <<<"$feature" >/dev/null; then
+                    if ! jq -e '(.loginDefaultOrg | type) == "object" and (.loginDefaultOrg.enabled // false) == false' \
+                        <<<"$feature" >/dev/null; then
                       connect zitadel.feature.v2.FeatureService/SetInstanceFeatures '{"loginDefaultOrg":false}' >/dev/null
                     fi
                     connect zitadel.feature.v2.FeatureService/GetInstanceFeatures '{}' |
@@ -1183,6 +1184,27 @@ spec:
                     desired_privacy=$(jq -c 'del(.details,.isDefault) | .helpLink="https://devantler.tech/"' <<<"$privacy")
                     api_org=$customers_org_id api "$privacy_method" /management/v1/policies/privacy "$desired_privacy" >/dev/null
                     changes+=("set the website link of $(org_label "$customers_org_id")")
+                  fi
+                  if [[ ${shared_portal_setup:-off} == on ]]; then
+                    shared_text=$(api GET /admin/v1/text/login/en | jq -ce '
+                      .customText | select(type == "object") | del(.details,.isDefault,.language)') ||
+                      fail "cannot read the shared sign-in text"
+                    desired_shared_text=$(jq -c '.loginText.title="Sign in to Devantler Tech" |
+                      .footerText.help="Back to website (opens in a new tab)"' <<<"$shared_text")
+                    if [[ $shared_text != "$desired_shared_text" ]]; then
+                      api PUT /admin/v1/text/login/en "$desired_shared_text" >/dev/null
+                      changes+=("set the shared sign-in text")
+                    fi
+                    shared_privacy=$(api GET /admin/v1/policies/privacy |
+                      jq -ce '.policy | select(type == "object") |
+                        select([.tosLink,.privacyLink,.helpLink,.supportEmail,.docsLink,.customLink,.customLinkText]
+                          | all(. == null or type == "string")) | del(.details,.isDefault)') ||
+                      fail "cannot read the shared sign-in footer settings"
+                    if [[ $(jq -r '.helpLink // ""' <<<"$shared_privacy") != https://devantler.tech/ ]]; then
+                      desired_shared_privacy=$(jq -c '.helpLink="https://devantler.tech/"' <<<"$shared_privacy")
+                      api PUT /admin/v1/policies/privacy "$desired_shared_privacy" >/dev/null
+                      changes+=("kept the website link on the shared sign-in")
+                    fi
                   fi
 
                   # --- The portal's service account ------------------------------------------------
