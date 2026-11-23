@@ -3,6 +3,7 @@ package portaldirectory
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -285,8 +286,13 @@ ensure_login_policy() {
 }
 
 func TestSharedProviderMigrationUsesOnlyExistingCustomerLinks(t *testing.T) {
-	script := producerFunction(t, "customer_github_links") + "\n" + producerFunction(t, "copy_customer_github_links")
-	for _, mode := range []string{"copy", "already-copied", "conflict", "truncated-customers", "truncated-links", "foreign-customer"} {
+	script := strings.Join([]string{
+		producerFunction(t, "customer_github_links"),
+		producerFunction(t, "read_customer_subjects"),
+		producerFunction(t, "copy_customer_github_links"),
+	}, "\n")
+	for _, mode := range []string{"copy", "already-copied", "conflict", "truncated-customers", "truncated-links",
+		"foreign-customer", "duplicate-customer", "changed-directory", "invalid-subject", "empty"} {
 		t.Run(mode, func(t *testing.T) {
 			harness := `set -euo pipefail
 mode=$1
@@ -297,13 +303,33 @@ fail() { printf '%s\n' "$1" >&2; exit 1; }
 connect() {
   case $1 in
     zitadel.user.v2.UserService/ListUsers)
-      local total=2 owner=customers
-      [[ $mode != truncated-customers ]] || total=3
-      [[ $mode != foreign-customer ]] || owner=other
-      jq -e '.queries == [{typeQuery:{type:"TYPE_HUMAN"}},{organizationIdQuery:{organizationId:"customers"}}]' <<<"$2" >/dev/null
-      jq -nc --arg total "$total" --arg owner "$owner" '{details:{totalResult:$total},result:[
-        {userId:"alice",details:{resourceOwner:"customers"},human:{}},
-        {userId:"bob",details:{resourceOwner:$owner},human:{}}]}'
+      jq -e '.query.limit == 100 and .query.asc == true and
+        .queries == [{typeQuery:{type:"TYPE_HUMAN"}},{organizationIdQuery:{organizationId:"customers"}}]' <<<"$2" >/dev/null
+      local subject owner=customers sequence=42
+      case $(jq -er '.query.offset' <<<"$2") in
+        0)
+          if [[ $mode == empty ]]; then
+            printf '%s\n' '{"details":{"processedSequence":"42"}}'
+            return
+          fi
+          subject=alice
+          ;;
+        1)
+          if [[ $mode == truncated-customers ]]; then
+            printf '%s\n' '{"details":{"totalResult":"2","processedSequence":"42"}}'
+            return
+          fi
+          subject=bob
+          [[ $mode != foreign-customer ]] || owner=other
+          [[ $mode != duplicate-customer ]] || subject=alice
+          [[ $mode != changed-directory ]] || sequence=43
+          [[ $mode != invalid-subject ]] || subject=$'bob\nalice'
+          ;;
+        *) fail 'unexpected customer directory offset' ;;
+      esac
+      jq -nc --arg owner "$owner" --arg subject "$subject" --arg sequence "$sequence" \
+        '{details:{totalResult:"2",processedSequence:$sequence},
+          result:[{userId:$subject,details:{resourceOwner:$owner},human:{}}]}'
       ;;
     zitadel.user.v2.UserService/ListIDPLinks)
       case $(jq -r '.userId' <<<"$2") in
@@ -333,12 +359,13 @@ connect() {
     *) fail 'unexpected API call' ;;
   esac
 }
+
 `
 			work := t.TempDir()
 			cmd := exec.Command("bash", "-s", "--", mode, work)
 			cmd.Stdin = strings.NewReader(harness + script + "\ncopy_customer_github_links old shared\n")
 			output, err := cmd.CombinedOutput()
-			wantOK := mode == "copy" || mode == "already-copied"
+			wantOK := mode == "copy" || mode == "already-copied" || mode == "empty"
 			if (err == nil) != wantOK {
 				t.Fatalf("expected migration success=%t, got %v: %s", wantOK, err, output)
 			}
@@ -347,5 +374,151 @@ connect() {
 				t.Fatalf("unexpected migration write: %v", writeErr)
 			}
 		})
+	}
+}
+
+func TestSharedInstanceLoginRestoresPreviousSettings(t *testing.T) {
+	script := strings.Join([]string{
+		producerFunction(t, "instance_login_providers"),
+		producerFunction(t, "instance_login_default_org"),
+		producerFunction(t, "reconcile_shared_instance_login"),
+	}, "\n")
+	for _, mode := range []string{"round-trip", "previous-member", "inherited-disabled", "inherited-enabled",
+		"never-activated", "different-provider", "rollback-retry", "unrecorded-baseline"} {
+		t.Run(mode, func(t *testing.T) {
+			harness := `set -euo pipefail
+mode=$1
+state=$2
+fixture_mode=$1
+portal_token_secret=portal-token
+normalise_policy='.'
+key=platform.devantler.tech/shared-portal-login-baseline
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+change() { jq -c "$@" "$state" > "$state.next"; mv "$state.next" "$state"; }
+secret_json() { [[ $1 == "$portal_token_secret" ]]; jq -c '.secret' "$state"; }
+patch_secret() {
+  [[ $2 == "$portal_token_secret" ]] || fail 'wrong destination'
+  [[ $fixture_mode != unrecorded-baseline ]] || return 0
+  change --arg key "$key" --argjson patch "$1" '
+    $patch.metadata.annotations[$key] as $value |
+    if $value == null then del(.secret.metadata.annotations[$key])
+    else .secret.metadata.annotations[$key]=$value end'
+}
+api() {
+  case "$1 $2" in
+    'GET /admin/v1/policies/login') jq -c '{policy}' "$state" ;;
+    'PUT /admin/v1/policies/login') change --argjson policy "$3" '.policy=$policy' ;;
+    'POST /admin/v1/policies/login/idps/_search')
+      jq -c '{details:{totalResult:(.providers|length|tostring)},result:[.providers[]|{idpId:.}]}' "$state"
+      ;;
+    'POST /admin/v1/policies/login/idps') change --argjson data "$3" '.providers += [$data.idpId]' ;;
+    'DELETE /admin/v1/policies/login/idps/shared') change '.providers -= ["shared"]' ;;
+    *) fail 'unexpected policy API call' ;;
+  esac
+}
+connect() {
+  case "$1" in
+    zitadel.feature.v2.FeatureService/GetInstanceFeatures)
+      [[ $2 == '{"inheritance":true}' ]] || fail 'did not read effective feature'
+      jq -c '.feature | {loginDefaultOrg:(if .enabled then . else del(.enabled) end),userSchema:{enabled:true}}' "$state"
+      ;;
+    zitadel.feature.v2.FeatureService/SetInstanceFeatures)
+      jq -e 'keys == ["loginDefaultOrg"]' <<<"$2" >/dev/null
+      [[ ! -e $state.refuse-feature ]] || fail 'feature temporarily unavailable'
+      change --argjson data "$2" '.feature.enabled=$data.loginDefaultOrg'
+      ;;
+    *) fail 'unexpected feature API call' ;;
+  esac
+}
+`
+			run := `
+case $mode in
+  previous-member) change '.providers=["shared"]' ;;
+  inherited-disabled) change '.feature={enabled:false,source:"SOURCE_SYSTEM"}' ;;
+  inherited-enabled) change '.feature.source="SOURCE_SYSTEM"' ;;
+esac
+cp "$state" "$state.before"
+if [[ $mode == never-activated ]]; then
+  reconcile_shared_instance_login off shared
+  cmp "$state.before" "$state"
+  exit
+fi
+reconcile_shared_instance_login on shared
+baseline=$(jq -er --arg key "$key" '.secret.metadata.annotations[$key]' "$state")
+jq -e --arg key "$key" '
+  .secret.metadata.annotations[$key] != null and .providers == ["shared"] and .feature.enabled == false and
+  (.policy | .allowUsernamePassword and .allowExternalIdp and .forceMfa and (.allowRegister | not))' "$state" >/dev/null
+reconcile_shared_instance_login on shared
+[[ $(jq -er --arg key "$key" '.secret.metadata.annotations[$key]' "$state") == "$baseline" ]]
+change '.policy.defaultRedirectUri="https://example.invalid/current" | .providers += ["unrelated"]'
+if [[ $mode == different-provider ]]; then
+  reconcile_shared_instance_login off another
+  exit
+fi
+if [[ $mode == rollback-retry ]]; then
+  touch "$state.refuse-feature"
+  if bash -e -s -- "$mode" "$state" < "$state.rollback"; then fail 'claimed rollback after failed write'; fi
+  jq -e --arg key "$key" '.secret.metadata.annotations[$key] != null' "$state" >/dev/null
+  rm "$state.refuse-feature"
+fi
+reconcile_shared_instance_login off shared
+jq -es '.[1] == (.[0] | .policy.defaultRedirectUri="https://example.invalid/current" | .providers += ["unrelated"])' \
+  "$state.before" "$state" >/dev/null
+`
+			initial := `{"secret":{"metadata":{"annotations":{"unrelated":"keep"}},"data":{"token":"kept"}},"policy":{"allowUsernamePassword":false,"allowRegister":true,"allowExternalIdp":false,"forceMfa":false,"defaultRedirectUri":"https://example.invalid/before"},"providers":[],"feature":{"enabled":true,"source":"SOURCE_INSTANCE"}}`
+			state := filepath.Join(t.TempDir(), "instance.json")
+			if err := os.WriteFile(state, []byte(initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(state+".rollback", []byte(harness+script+"\nreconcile_shared_instance_login off shared\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-s", "--", mode, state)
+			cmd.Stdin = strings.NewReader(harness + script + "\n" + run)
+			output, err := cmd.CombinedOutput()
+			wantError := map[string]string{
+				"inherited-enabled":   "requires an instance-managed or disabled login default organization",
+				"different-provider":  "rollback settings do not match this provider",
+				"unrecorded-baseline": "could not verify the shared login rollback settings",
+			}[mode]
+			if wantError != "" {
+				if err == nil || !strings.Contains(string(output), wantError) {
+					t.Fatalf("expected %q, got %v: %s", wantError, err, output)
+				}
+			} else if err != nil {
+				t.Fatalf("instance reconciliation failed: %v: %s", err, output)
+			}
+		})
+	}
+}
+
+func TestCustomerDirectoryBeyondSingleRequestLimit(t *testing.T) {
+	harness := `set -euo pipefail
+customers_org_id=customers
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+connect() {
+  [[ $1 == zitadel.user.v2.UserService/ListUsers ]]
+  jq -c '
+    .query | (.offset | tonumber) as $start | [$start + .limit, 1012] | min as $end |
+    {details:{totalResult:"1012",processedSequence:"42"},result:[
+      range($start;$end) | {userId:("user-" + tostring),details:{resourceOwner:"customers"},human:{}}]}' <<<"$2"
+}
+`
+	subjects := filepath.Join(t.TempDir(), "subjects")
+	cmd := exec.Command("bash", "-s", "--", subjects)
+	cmd.Stdin = strings.NewReader(harness + producerFunction(t, "read_customer_subjects") + "\nread_customer_subjects \"$1\"\n")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("paging the customer directory failed: %v: %s", err, output)
+	}
+	data, err := os.ReadFile(subjects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := make([]string, 1012)
+	for i := range want {
+		want[i] = fmt.Sprintf("user-%d\n", i)
+	}
+	if string(data) != strings.Join(want, "") {
+		t.Fatal("paged customer subjects differ from the complete directory")
 	}
 }

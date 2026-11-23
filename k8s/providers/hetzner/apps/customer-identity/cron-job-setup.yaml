@@ -887,20 +887,49 @@ spec:
                       fail "could not read the complete customer identity links"
                   }
 
+                  read_customer_subjects() {
+                    local subjects=$1 offset=0 limit=100 page response snapshot='' details count total duplicates
+                    : >"$subjects"
+                    while :; do
+                      # With no sorting column, this ZITADEL version orders by its unique user ID.
+                      response=$(connect zitadel.user.v2.UserService/ListUsers "$(jq -nc \
+                        --arg o "$customers_org_id" --arg offset "$offset" --argjson limit "$limit" \
+                        '{query:{offset:$offset,limit:$limit,asc:true},
+                          queries:[{typeQuery:{type:"TYPE_HUMAN"}},{organizationIdQuery:{organizationId:$o}}]}')")
+                      page=$(jq -ce --arg o "$customers_org_id" '
+                        (.result // []) as $rows |
+                        select((.details | type) == "object" and ($rows | type) == "array" and
+                          all($rows[]; .details.resourceOwner == $o and (.human | type) == "object" and
+                            (.userId | type == "string" and test("\\A[A-Za-z0-9-]+\\z")))) |
+                        {total:(.details.totalResult // "0"), sequence:(.details.processedSequence // "0"),
+                          timestamp:.details.timestamp, subjects:[$rows[].userId]} |
+                        select(.total | type == "string" and test("\\A(0|[1-9][0-9]{0,14})\\z"))' <<<"$response") ||
+                        fail "could not read a valid customer directory page"
+                      details=$(jq -c '{total,sequence,timestamp}' <<<"$page")
+                      if [[ -z $snapshot ]]; then
+                        snapshot=$details
+                      fi
+                      [[ $snapshot == "$details" ]] || fail "the customer directory changed during pagination"
+                      total=$(jq -r '.total' <<<"$page")
+                      count=$(jq '.subjects | length' <<<"$page")
+                      (( count <= limit && offset + count <= total && (count > 0 || offset == total) )) ||
+                        fail "could not read the complete customer directory"
+                      jq -r '.subjects[]' <<<"$page" >>"$subjects"
+                      offset=$((offset + count))
+                      if (( offset == total )); then
+                        break
+                      fi
+                    done
+                    duplicates=$(LC_ALL=C sort "$subjects" | LC_ALL=C uniq -d)
+                    [[ -z $duplicates ]] || fail "the customer directory contains duplicate subjects"
+                  }
+
                   copy_customer_github_links() {
-                    local previous=$1 shared=$2 customers subjects subject links candidate record
-                    local plan=$work/shared-github-links
+                    local previous=$1 shared=$2 subject links candidate record
+                    local plan=$work/shared-github-links subjects=$work/customer-subjects
                     [[ -n $previous && -n $shared && $previous != "$shared" ]] ||
                       fail "the old and shared GitHub identities must name distinct providers"
-                    customers=$(connect zitadel.user.v2.UserService/ListUsers "$(jq -nc --arg o "$customers_org_id" \
-                      '{query:{limit:1000},queries:[{typeQuery:{type:"TYPE_HUMAN"}},{organizationIdQuery:{organizationId:$o}}]}')")
-                    subjects=$(jq -cer --arg o "$customers_org_id" '
-                      (.result // []) as $rows | select((.details | type) == "object" and
-                        ((.details.totalResult // "0" | tonumber) == ($rows | length)) and
-                        all($rows[]; .details.resourceOwner == $o and (.human | type) == "object" and
-                          (.userId | type == "string" and test("^[[:alnum:]-]+$")))) |
-                      $rows | map(.userId) | select(length == (unique | length))' <<<"$customers") ||
-                      fail "could not read the complete customer directory"
+                    read_customer_subjects "$subjects"
                     : >"$plan"
                     while IFS= read -r subject; do
                       links=$(customer_github_links "$subject")
@@ -914,7 +943,7 @@ spec:
                           if ($new | length) == 0 then {userId:$s,idpLink:{idpId:$b,userId:$id,userName}} else {} end
                         end' <<<"$links") || fail "a customer GitHub link could not be matched without ambiguity"
                       [[ $candidate == '{}' ]] || printf '%s\n' "$candidate" >>"$plan"
-                    done < <(jq -r '.[]' <<<"$subjects")
+                    done <"$subjects"
 
                     jq -es 'map(.idpLink.userId) | length == (unique | length)' "$plan" >/dev/null ||
                       fail "more than one customer names the same GitHub identity"
@@ -963,32 +992,102 @@ spec:
                       fail "the customer login does not list the declared GitHub provider"
                   }
 
-                  prepare_shared_portal_policy() {
-                    local shared=$1 desired linked current feature
-                    current=$(api GET /admin/v1/policies/login | jq -ce ".policy | $normalise_policy")
-                    desired=$(jq -c '.allowUsernamePassword=true | .allowExternalIdp=true |
-                      .allowRegister=false | .forceMfa=true' <<<"$current")
-                    if [[ $(jq -cS . <<<"$desired") != "$(jq -cS . <<<"$current")" ]]; then
+                  instance_login_providers() {
+                    api POST /admin/v1/policies/login/idps/_search '{"query":{"limit":100}}' |
+                      jq -ce '(.result // []) as $rows |
+                        select((.details | type) == "object" and
+                          ((.details.totalResult // "0" | tonumber) == ($rows | length))) |
+                        [$rows[].idpId] | select(length == (unique | length) and
+                          all(.[]; type == "string" and length > 0))' ||
+                      fail "could not read the complete instance login provider list"
+                  }
+
+                  instance_login_default_org() {
+                    connect zitadel.feature.v2.FeatureService/GetInstanceFeatures '{"inheritance":true}' |
+                      jq -ce '.loginDefaultOrg | select(type == "object") |
+                        {enabled:(.enabled // false),source:(.source // "SOURCE_UNSPECIFIED")} |
+                        select((.enabled | type) == "boolean" and
+                          (.source == "SOURCE_SYSTEM" or .source == "SOURCE_INSTANCE" or .source == "SOURCE_UNSPECIFIED"))' ||
+                      fail "could not read the effective instance login default organization"
+                  }
+
+                  reconcile_shared_instance_login() {
+                    local mode=$1 shared=$2 baseline current providers feature membership target feature_target desired observed
+                    local annotation=platform.devantler.tech/shared-portal-login-baseline
+                    local read_baseline='.metadata.annotations[$key] | if . == null then null else fromjson end'
+                    local flags='{allowUsernamePassword,allowRegister,allowExternalIdp,forceMfa}'
+                    baseline=$(secret_json "$portal_token_secret" | jq -c --arg key "$annotation" "$read_baseline")
+                    if [[ $mode == off && $baseline == null ]]; then
+                      return
+                    fi
+                    current=$(api GET /admin/v1/policies/login | jq -ce ".policy | select(type == \"object\") | $normalise_policy")
+                    providers=$(instance_login_providers)
+                    membership=$(jq -c --arg id "$shared" 'index($id) != null' <<<"$providers")
+                    feature=$(instance_login_default_org)
+                    if [[ $mode == on ]]; then
+                      jq -e --arg id "$shared" 'all(.[]; . == $id)' <<<"$providers" >/dev/null ||
+                        fail "the instance login has an unexpected identity provider"
+                      # Setting an inherited true flag would create an override that this API cannot remove.
+                      jq -e '.enabled == false or .source == "SOURCE_INSTANCE"' <<<"$feature" >/dev/null ||
+                        fail "shared login requires an instance-managed or disabled login default organization"
+                      if [[ $baseline == null ]]; then
+                        baseline=$(jq -c --arg id "$shared" --argjson member "$membership" --argjson feature "$feature" \
+                          "{version:1,providerID:\$id,member:\$member,feature:\$feature,flags:$flags}" <<<"$current")
+                        patch_secret "$(jq -nc --arg key "$annotation" --arg value "$baseline" \
+                          '{metadata:{annotations:{($key):$value}}}')" "$portal_token_secret"
+                        [[ $(secret_json "$portal_token_secret" | jq -c --arg key "$annotation" "$read_baseline") == "$baseline" ]] ||
+                          fail "could not verify the shared login rollback settings"
+                      fi
+                    fi
+                    jq -e --arg id "$shared" '
+                      .version == 1 and .providerID == $id and (.member | type) == "boolean" and
+                      (.feature.enabled | type) == "boolean" and
+                      (.feature.source == "SOURCE_INSTANCE" or (.feature.enabled == false and
+                        (.feature.source == "SOURCE_SYSTEM" or .feature.source == "SOURCE_UNSPECIFIED"))) and
+                      (.flags | keys) == ["allowExternalIdp","allowRegister","allowUsernamePassword","forceMfa"] and
+                      all(.flags[]; type == "boolean")' <<<"$baseline" >/dev/null ||
+                      fail "the shared login rollback settings do not match this provider"
+                    target=$baseline
+                    if [[ $mode == on ]]; then
+                      target=$(jq -c '.member=true | .feature.enabled=false |
+                        .flags={allowUsernamePassword:true,allowRegister:false,allowExternalIdp:true,forceMfa:true}' <<<"$baseline")
+                    fi
+                    feature_target=$(jq -c '.feature' <<<"$target")
+                    local feature_source target_source
+                    feature_source=$(jq -r '.source' <<<"$feature")
+                    target_source=$(jq -r '.source' <<<"$feature_target")
+                    [[ $feature_source == "$target_source" ]] ||
+                      fail "the source of the instance login default organization changed"
+                    [[ $feature == "$feature_target" || $feature_source == SOURCE_INSTANCE ]] ||
+                      fail "could not safely restore an inherited login default organization"
+                    desired=$(jq -cS --argjson target "$target" '. + $target.flags' <<<"$current")
+                    if [[ $desired != "$(jq -cS . <<<"$current")" ]]; then
                       api PUT /admin/v1/policies/login "$desired" >/dev/null
                     fi
-                    [[ $(api GET /admin/v1/policies/login | jq -cS ".policy | $normalise_policy") == "$(jq -cS . <<<"$desired")" ]] ||
-                      fail "the shared login policy did not match the instance settings"
-                    linked=$(api POST /admin/v1/policies/login/idps/_search | jq -c '[.result // [] | .[].idpId]')
-                    if [[ $linked == '[]' ]]; then
-                      api POST /admin/v1/policies/login/idps "$(jq -nc --arg i "$shared" '{idpId:$i}')" >/dev/null
+                    if [[ $membership != "$(jq -r '.member' <<<"$target")" ]]; then
+                      if [[ $membership == true ]]; then
+                        api DELETE "/admin/v1/policies/login/idps/$shared" >/dev/null
+                      else
+                        api POST /admin/v1/policies/login/idps "$(jq -nc --arg id "$shared" '{idpId:$id}')" >/dev/null
+                      fi
                     fi
-                    linked=$(api POST /admin/v1/policies/login/idps/_search | jq -c '[.result // [] | .[].idpId]')
-                    [[ $linked == "$(jq -nc --arg i "$shared" '[$i]')" ]] ||
-                      fail "the instance login must list the shared GitHub provider"
-                    feature=$(connect zitadel.feature.v2.FeatureService/GetInstanceFeatures '{}')
-                    if ! jq -e '(.loginDefaultOrg | type) == "object" and (.loginDefaultOrg.enabled // false) == false' \
-                        <<<"$feature" >/dev/null; then
-                      connect zitadel.feature.v2.FeatureService/SetInstanceFeatures '{"loginDefaultOrg":false}' >/dev/null
+                    if [[ $feature != "$feature_target" ]]; then
+                      connect zitadel.feature.v2.FeatureService/SetInstanceFeatures \
+                        "$(jq -c '{loginDefaultOrg:.enabled}' <<<"$feature_target")" >/dev/null
                     fi
-                    connect zitadel.feature.v2.FeatureService/GetInstanceFeatures '{}' |
-                      jq -e '(.loginDefaultOrg | type) == "object" and (.loginDefaultOrg.enabled // false) == false' >/dev/null ||
-                      fail "could not verify that unscoped sign-in uses the instance login policy"
-
+                    [[ $(api GET /admin/v1/policies/login | jq -cS ".policy | $normalise_policy") == "$desired" ]] ||
+                      fail "could not verify the instance login policy"
+                    observed=$(instance_login_providers)
+                    jq -e --arg id "$shared" --argjson target "$target" --argjson previous "$providers" '
+                      sort == (($previous - [$id]) + (if $target.member then [$id] else [] end) | sort)' \
+                      <<<"$observed" >/dev/null || fail "could not verify the instance login providers"
+                    [[ $(instance_login_default_org) == "$feature_target" ]] ||
+                      fail "could not verify the instance login default organization"
+                    if [[ $mode == off ]]; then
+                      patch_secret "$(jq -nc --arg key "$annotation" '{metadata:{annotations:{($key):null}}}')" "$portal_token_secret"
+                      [[ $(secret_json "$portal_token_secret" | jq -c --arg key "$annotation" "$read_baseline") == null ]] ||
+                        fail "could not clear the verified shared login rollback settings"
+                    fi
                   }
 
                   prepare_portal_operator() {
@@ -1048,9 +1147,10 @@ spec:
                     prepare_portal_operator "$idp_id"
                     if [[ $shared_portal_setup == on ]]; then
                       reconcile_customer_login_provider "$legacy_customer_idp" "$idp_id" IDP_OWNER_TYPE_SYSTEM
-                      prepare_shared_portal_policy "$idp_id"
+                      reconcile_shared_instance_login on "$idp_id"
                     else
                       reconcile_customer_login_provider "$idp_id" "$legacy_customer_idp" IDP_OWNER_TYPE_ORG
+                      reconcile_shared_instance_login off "$idp_id"
                     fi
                   fi
 
