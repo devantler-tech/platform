@@ -652,9 +652,6 @@ while IFS=$'\t' read -r profile file selector; do
     # v19.0.5 since its publisher moved there (#6227), so it accepts the same rows.
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
-    # Only the generic rules admit v21.3.4 (#6228); no consumer approves it yet,
-    # so each consumer-specific source must still refuse it.
-    if [[ "$identity" == *@a76d5df9371cf712a8f60307fde060825a34cf35 && "$profile" != admission && "$profile" != node-pull ]]; then expected=reject; fi
     # The generic rules no longer accept the deleted legacy publisher repository at
     # any commit (#6264). The consumer-specific sources keep their exact generated
     # legacy commit until the approval machinery that writes them is retired.
@@ -667,7 +664,7 @@ while IFS=$'\t' read -r profile file selector; do
   done <<'IDENTITIES'
 accept	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
 accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
-accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -690,22 +687,22 @@ wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIde
 product-docs	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
-# The generic rules replace the retired v8.0.0 publisher with v21.3.4 (#6228),
-# whose cosign labels its bundle so Talos can find it (#6226). Exercise the
-# committed predicates at all three boundaries: v21.3.4 only as its exact commit,
-# and v8.0.0 refused in every form.
+# The generic rules admitted v21.3.4 (#6228) in place of the retired v8.0.0
+# publisher. Its only user, business-site, now signs its own releases, so it is
+# retired too (#6266). Exercise the committed predicates at both boundaries:
+# v21.3.4 and v8.0.0 are refused in every form.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
   while IFS=$'\t' read -r expected identity; do
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
     if [ "$result" = "$expected" ]; then
-      pass "v21 transition $profile: $expected $identity"
+      pass "retired v21 $profile: $expected $identity"
     else
-      fail "v21 transition $profile: expected $expected for $identity, got $result"
+      fail "retired v21 $profile: expected $expected for $identity, got $result"
     fi
   done <<'IDENTITIES'
-accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@v21.3.4
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35-extra
@@ -722,7 +719,7 @@ node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image 
 PROFILES
 
 # The legacy publisher repository is deleted (#6264). The generic rules accept only
-# the two reviewed maintained revisions and refuse that repository at every commit:
+# the reviewed maintained revision v19.0.5 and refuse that repository at every commit:
 # an arbitrary one, the commit its final release was cut from, commits that other
 # consumers approved for it, and a maintained commit written under its name.
 while IFS=$'\t' read -r profile file selector; do
@@ -737,7 +734,7 @@ while IFS=$'\t' read -r profile file selector; do
     fi
   done <<'IDENTITIES'
 accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
-accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
 reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@0123456789abcdef0123456789abcdef01234567
 reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
