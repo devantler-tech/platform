@@ -1,0 +1,36 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-business-site-preview-namespace
+  annotations:
+    policies.kyverno.io/title: Reserve the Business Site Preview Namespace
+    policies.kyverno.io/category: Security, Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Namespace
+    policies.kyverno.io/minversion: 1.19.1
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["namespaces"]
+  variables:
+    - name: labels
+      expression: "object.metadata.?labels.orValue({})"
+  validations:
+    - expression: >-
+        object.metadata.name != 'business-site-dev' ||
+        (request.userInfo.username == 'system:serviceaccount:kro-system:kro' &&
+         variables.labels[?'app.kubernetes.io/managed-by'].orValue('') == 'kro' &&
+         variables.labels[?'kro.run/instance-kind'].orValue('') == 'Tenant' &&
+         variables.labels[?'kro.run/instance-name'].orValue('') == object.metadata.name &&
+         variables.labels[?'kro.run/instance-namespace'].orValue('') == 'flux-system' &&
+         variables.labels[?'kro.run/node-id'].orValue('') == 'tenantNamespace' &&
+         variables.labels[?'pod-security.kubernetes.io/enforce'].orValue('') == 'restricted')
+      message: Only the declared Tenant graph may create the reserved restricted preview namespace.
