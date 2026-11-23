@@ -206,7 +206,8 @@ func TestCustomerProviderTransitionPreservesAccess(t *testing.T) {
 	function := producerFunction(t, "reconcile_customer_login_provider")
 	for _, mode := range []string{"inherited", "legacy", "both", "shared", "rollback", "unexpected", "unconfirmed-add",
 		"unknown-both", "reset-drift", "reset-after-migration", "rollback-then-settled", "prepared-then-visible",
-		"cancel-prepared-both", "cancel-prepared-after-removal"} {
+		"cancel-prepared-both", "cancel-prepared-after-removal", "cancel-prepared-inherited",
+		"resume-prepared-inherited", "cancel-overlap-outgoing"} {
 		t.Run(mode, func(t *testing.T) {
 			harness := `set -euo pipefail
 mode=$1
@@ -218,19 +219,19 @@ changes=()
 from=legacy to=shared owner=IDP_OWNER_TYPE_SYSTEM
 phase_record=null
 case "$mode" in
-  inherited|reset-after-migration) ids='[]';;
+  inherited|reset-after-migration|cancel-prepared-inherited|resume-prepared-inherited) ids='[]';;
   legacy|unconfirmed-add|reset-drift|rollback-then-settled|cancel-prepared-after-removal) ids='["legacy"]';;
-  both|unknown-both|cancel-prepared-both) ids='["legacy","shared"]';;
+  both|unknown-both|cancel-prepared-both|cancel-overlap-outgoing) ids='["legacy","shared"]';;
   shared|rollback|prepared-then-visible) ids='["shared"]';;
   unexpected) ids='["legacy","unrelated"]';;
 esac
 case "$mode" in
-  both|prepared-then-visible|cancel-prepared-both|cancel-prepared-after-removal)
+  both|prepared-then-visible|cancel-prepared-*|resume-prepared-inherited|cancel-overlap-outgoing)
     phase_record='{"version":1,"phase":"prepared","from":"legacy","to":"shared"}';;
   reset-drift|reset-after-migration|rollback|shared) phase_record='{"version":1,"phase":"applied","from":"legacy","to":"shared"}';;
   rollback-then-settled) phase_record='{"version":1,"phase":"applied","from":"shared","to":"legacy"}';;
 esac
-if [[ $mode == rollback || $mode == rollback-then-settled || $mode == cancel-prepared-* ]]; then
+if [[ $mode == rollback || $mode == rollback-then-settled || $mode == cancel-* ]]; then
   from=shared to=legacy owner=IDP_OWNER_TYPE_ORG
 fi
 printf '%s\n' "$ids" >"$work/ids"
@@ -245,14 +246,26 @@ save_customer_migration() {
 }
 reconcile_customer_github_links() {
   [[ $1 == "$from" && $2 == "$to" ]] || fail 'wrong migration direction'
+  if [[ $mode == rollback ]]; then
+    [[ ${3:-} == authoritative ]] || fail 'the confirmed rollback provider lost authority'
+  fi
   touch "$work/copied"
+}
+read_customer_subjects() { printf '%s\n' synthetic >"$1"; printf '%s\n' unchanged; }
+customer_directory_page() { printf '%s\n' unchanged; }
+customer_directory_stamp() { cat; }
+verify_customer_github_links() {
+  [[ $1 == "$from" && $2 == "$to" && $4 == preserve-destination && -s $3 ]] ||
+    fail 'wrong membership or verification mode for provider overlap'
+  touch "$work/scanned-overlap"
+  [[ $mode != cancel-overlap-outgoing ]] || fail 'would orphan an approved GitHub link'
 }
 api() {
   [[ $api_org == customers ]] || fail 'wrong scope'
   case "$1 $2" in
     'GET /management/v1/policies/login')
       jq -nc --arg mode "$mode" --argjson pending "$([[ -e $work/ensured ]] && echo false || echo true)" \
-        '{policy:{isDefault:(($mode=="inherited" or $mode=="reset-after-migration") and $pending)}}'
+        '{policy:{isDefault:((["inherited","reset-after-migration","cancel-prepared-inherited","resume-prepared-inherited"]|index($mode) != null) and $pending)}}'
       ;;
     'POST /management/v1/policies/login/idps/_search')
       jq '{result: map({idpId:.})}' "$work/ids"
@@ -279,7 +292,12 @@ api() {
 }
 ensure_login_policy() {
   [[ $1 == customers && $2 == '{}' && $3 == "$to" && $4 == "$owner" ]] || fail 'wrong policy reconciliation'
-  if [[ $mode == inherited || $mode == reset-after-migration ]]; then
+  if [[ $mode == inherited || $mode == resume-prepared-inherited ]]; then
+    [[ -e $work/copied ]] || fail 'shared policy published before links were copied'
+    jq -e --arg to "$to" '.phase == "prepared" and .to == $to' "$work/migration" >/dev/null ||
+      fail 'shared policy published before the migration was prepared'
+  fi
+  if [[ $mode == inherited || $mode == reset-after-migration || $mode == *-prepared-inherited ]]; then
     jq -nc --arg to "$to" '[$to]' >"$work/ids"
   fi
   touch "$work/ensured"
@@ -289,14 +307,16 @@ ensure_login_policy() {
 			cmd := exec.Command("bash", "-s", "--", mode, work)
 			cmd.Stdin = strings.NewReader(harness + function + "\nreconcile_customer_login_provider \"$from\" \"$to\" \"$owner\"\n")
 			output, err := cmd.CombinedOutput()
-			wantOK := mode != "unexpected" && mode != "unconfirmed-add" && mode != "unknown-both" && mode != "reset-drift"
+			wantOK := mode != "unexpected" && mode != "unconfirmed-add" && mode != "unknown-both" &&
+				mode != "reset-drift" && mode != "cancel-overlap-outgoing"
 			if (err == nil) != wantOK {
 				t.Fatalf("expected transition success=%t, got %v: %s", wantOK, err, output)
 			}
 			wantRemoval := mode == "legacy" || mode == "both" || mode == "rollback" || mode == "cancel-prepared-both"
-			wantCopy := mode == "legacy" || mode == "rollback" || mode == "inherited" || mode == "unconfirmed-add"
+			wantCopy := mode == "legacy" || mode == "rollback" || mode == "inherited" ||
+				mode == "unconfirmed-add" || mode == "resume-prepared-inherited"
 			wantFinish := mode == "legacy" || mode == "rollback" || mode == "inherited" || mode == "both" ||
-				mode == "prepared-then-visible" || strings.HasPrefix(mode, "cancel-prepared-")
+				mode == "prepared-then-visible" || strings.HasPrefix(mode, "cancel-prepared-") || mode == "resume-prepared-inherited"
 			for marker, want := range map[string]bool{
 				"copied":           wantCopy,
 				"prepared":         wantCopy,
@@ -304,6 +324,7 @@ ensure_login_policy() {
 				"delete-attempted": wantRemoval,
 				"removed":          wantRemoval,
 				"ensured":          wantOK,
+				"scanned-overlap":  mode == "both" || mode == "cancel-prepared-both" || mode == "cancel-overlap-outgoing",
 			} {
 				_, err := os.Stat(filepath.Join(work, marker))
 				if (err == nil) != want {
@@ -327,7 +348,8 @@ func TestSharedProviderMigrationUsesOnlyExistingCustomerLinks(t *testing.T) {
 	}, "\n")
 	for _, mode := range []string{"copy", "already-copied", "conflict", "truncated-customers", "truncated-links",
 		"foreign-customer", "duplicate-customer", "changed-directory", "first-page-drift", "invalid-subject", "empty",
-		"revoked-source", "revoked-during-plan", "no-op-revoked-during-copy", "link-projection-changed"} {
+		"revoked-source", "revoked-during-plan", "no-op-revoked-during-copy", "link-projection-changed",
+		"authoritative-replaced", "overlap-outgoing-only", "overlap-incoming-only"} {
 		t.Run(mode, func(t *testing.T) {
 			harness := `set -euo pipefail
 mode=$1
@@ -390,8 +412,10 @@ connect() {
           fi
           if [[ -e $work/wrote || $mode == already-copied || $mode == link-projection-changed ]]; then
             rows=$(jq '. + [{idpId:"shared",userId:"111",userName:"alice-gh"}]' <<<"$rows")
-          elif [[ $mode == conflict ]]; then
+          elif [[ $mode == conflict || ( $mode == authoritative-replaced && ! -e $work/revoked ) ]]; then
             rows=$(jq '. + [{idpId:"shared",userId:"222",userName:"another"}]' <<<"$rows")
+          elif [[ $mode == overlap-incoming-only ]]; then
+            rows='[{"idpId":"shared","userId":"222","userName":"another"}]'
           fi
           jq -nc --argjson a "$rows" '{details:{totalResult:($a|length|tostring),processedSequence:"42"},result:$a}'
           ;;
@@ -426,7 +450,9 @@ connect() {
       printf '{}\n'
       ;;
     zitadel.user.v2.UserService/RemoveIDPLink)
-      jq -e '. == {userId:"alice",idpId:"shared",linkedUserId:"111"}' <<<"$2" >/dev/null ||
+      local stale_id=111
+      [[ $mode != authoritative-replaced ]] || stale_id=222
+      jq -e --arg id "$stale_id" '. == {userId:"alice",idpId:"shared",linkedUserId:$id}' <<<"$2" >/dev/null ||
         fail 'tried to revoke a different account or provider'
       touch "$work/revoked"
       printf '{}\n'
@@ -438,17 +464,25 @@ connect() {
 `
 			work := t.TempDir()
 			cmd := exec.Command("bash", "-s", "--", mode, work)
-			cmd.Stdin = strings.NewReader(harness + script + "\nreconcile_customer_github_links old shared\n")
+			command := "\nreconcile_customer_github_links old shared\n"
+			switch mode {
+			case "authoritative-replaced":
+				command = "\nreconcile_customer_github_links old shared authoritative\n"
+			case "overlap-outgoing-only", "overlap-incoming-only":
+				command = "\nread_customer_subjects \"$work/subjects\" >/dev/null\nverify_customer_github_links old shared \"$work/subjects\" preserve-destination\n"
+			}
+			cmd.Stdin = strings.NewReader(harness + script + command)
 			output, err := cmd.CombinedOutput()
-			wantOK := mode == "copy" || mode == "already-copied" || mode == "empty" || mode == "revoked-source"
+			wantOK := mode == "copy" || mode == "already-copied" || mode == "empty" || mode == "revoked-source" ||
+				mode == "authoritative-replaced" || mode == "overlap-incoming-only"
 			if (err == nil) != wantOK {
 				t.Fatalf("expected migration success=%t, got %v: %s", wantOK, err, output)
 			}
 			_, writeErr := os.Stat(filepath.Join(work, "wrote"))
-			if (writeErr == nil) != (mode == "copy") {
+			if (writeErr == nil) != (mode == "copy" || mode == "authoritative-replaced") {
 				t.Fatalf("unexpected migration write: %v", writeErr)
 			}
-			if _, err := os.Stat(filepath.Join(work, "revoked")); (err == nil) != (mode == "revoked-source") {
+			if _, err := os.Stat(filepath.Join(work, "revoked")); (err == nil) != (mode == "revoked-source" || mode == "authoritative-replaced") {
 				t.Fatalf("unexpected removal of an inactive link: %v", err)
 			}
 			if mode == "no-op-revoked-during-copy" {
@@ -655,6 +689,47 @@ connect() {
 	}
 }
 
+func TestSharedRollbackLookupUsesTheRecordedSystemProvider(t *testing.T) {
+	const harness = `set -euo pipefail
+mode=$1
+legacy_customer_idp=legacy
+idp_name=GitHub
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+api() {
+  [[ $1 == POST && $2 == /admin/v1/idps/templates/_search ]] || fail 'lookup tried to modify the provider'
+  jq -e '.queries == [{idpNameQuery:{name:"GitHub",method:"TEXT_QUERY_METHOD_EQUALS"}}]' <<<"$3" >/dev/null
+  case $mode in
+    missing) printf '{"result":[]}\n';;
+    wrong-owner) printf '{"result":[{"id":"shared","name":"GitHub","owner":"IDP_OWNER_TYPE_ORG","config":{"github":{}}}]}\n';;
+    wrong-kind) printf '{"result":[{"id":"shared","name":"GitHub","owner":"IDP_OWNER_TYPE_SYSTEM","config":{"oidc":{}}}]}\n';;
+    *) printf '{"result":[{"id":"shared","name":"GitHub","owner":"IDP_OWNER_TYPE_SYSTEM","config":{"github":{}}}]}\n';;
+  esac
+}
+`
+	function := producerFunction(t, "find_shared_github_for_rollback")
+	for _, tt := range []struct {
+		name, from, to string
+		ok             bool
+	}{
+		{"forward-journal", "legacy", "shared", true},
+		{"reverse-journal", "shared", "legacy", true},
+		{"unrelated-journal", "unrelated", "shared", false},
+		{"missing", "legacy", "shared", false},
+		{"wrong-owner", "legacy", "shared", false},
+		{"wrong-kind", "legacy", "shared", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command("bash", "-s", "--", tt.name, tt.from, tt.to)
+			cmd.Stdin = strings.NewReader(harness + function +
+				"\nfind_shared_github_for_rollback \"$(jq -nc --arg from \"$2\" --arg to \"$3\" '{from:$from,to:$to}')\"\n")
+			output, err := cmd.CombinedOutput()
+			if (err == nil) != tt.ok || tt.ok && strings.TrimSpace(string(output)) != "shared" {
+				t.Fatalf("expected recorded provider success=%t, got %v: %s", tt.ok, err, output)
+			}
+		})
+	}
+}
+
 func TestSharedLoginPreflightAndLegacyRepairOrder(t *testing.T) {
 	const harness = `set -euo pipefail
 fixture=$1
@@ -669,9 +744,18 @@ shared_portal_setup=off
 if [[ $fixture == activation* ]]; then shared_portal_setup=on; fi
 log_call() { printf '%s\n' "$*" >>"$events"; }
 customer_migration_state() {
-  if [[ $fixture == rollback* ]]; then printf '{"phase":"applied"}\n'; else printf 'null\n'; fi
+  if [[ $fixture == rollback* ]]; then printf '{"phase":"applied","from":"legacy","to":"shared"}\n'; else printf 'null\n'; fi
 }
-ensure_portal_shared_github() { log_call shared-template; shared_customer_idp=shared; }
+find_shared_github_for_rollback() {
+  jq -e '.phase == "applied" and .from == "legacy" and .to == "shared"' <<<"$1" >/dev/null
+  log_call shared-lookup
+  printf '%s\n' shared
+}
+ensure_portal_shared_github() {
+  log_call shared-template
+  [[ $fixture != rollback-template-update-refused ]] || return 1
+  shared_customer_idp=shared
+}
 prepare_portal_operator() {
   log_call "operator $1"
   [[ $fixture != *operator-mismatch ]]
@@ -693,7 +777,8 @@ reconcile_customer_login_provider() { log_call "transition $1 $2"; }
 		{"off-operator-mismatch", "legacy-template\nlegacy-policy customers legacy\nshared-template\ninstance off shared\noperator shared\n", false},
 		{"activation-refused", "shared-template\noperator shared\ninstance on shared preflight\n", false},
 		{"activation", "shared-template\noperator shared\ninstance on shared preflight\nlegacy-template\ntransition legacy shared\ninstance on shared\n", true},
-		{"rollback-operator-mismatch", "legacy-template\nshared-template\ntransition shared legacy\ninstance off shared\noperator shared\n", false},
+		{"rollback-operator-mismatch", "legacy-template\nshared-lookup\ntransition shared legacy\ninstance off shared\nshared-template\noperator shared\n", false},
+		{"rollback-template-update-refused", "legacy-template\nshared-lookup\ntransition shared legacy\ninstance off shared\nshared-template\n", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			events := filepath.Join(t.TempDir(), "events")

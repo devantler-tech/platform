@@ -950,8 +950,8 @@ spec:
                   }
 
                   customer_github_link_change() {
-                    local previous=$1 shared=$2 subject=$3 links=$4
-                    jq -ce --arg a "$previous" --arg b "$shared" --arg s "$subject" '
+                    local previous=$1 shared=$2 subject=$3 links=$4 authority=${5:-strict}
+                    jq -ce --arg a "$previous" --arg b "$shared" --arg s "$subject" --arg authority "$authority" '
                       def numeric_id: type == "string" and test("\\A[0-9]+\\z");
                       map(select(.idpId == $a)) as $old | map(select(.idpId == $b)) as $new |
                       select(($old | length) <= 1 and ($new | length) <= 1) |
@@ -961,14 +961,18 @@ spec:
                           {operation:"remove",userId:$s,idpLink:{idpId:$b,userId}}
                         end
                       else $old[0] | select((.userId | numeric_id) and (.userName | type == "string" and length > 0)) |
-                        .userId as $id | select(($new | length) == 0 or $new[0].userId == $id) |
-                        if ($new | length) == 0 then {operation:"add",userId:$s,idpLink:{idpId:$b,userId:$id,userName}}
-                        else {} end
+                        .userId as $id |
+                        {operation:"add",userId:$s,idpLink:{idpId:$b,userId:$id,userName}} as $copy |
+                        if ($new | length) == 0 then $copy
+                        elif $new[0].userId == $id then {}
+                        elif $authority == "authoritative" and ($new[0].userId | numeric_id) then
+                          $copy + {operation:"replace",inactiveUserId:$new[0].userId}
+                        else empty end
                       end' <<<"$links" || fail "a customer GitHub link could not be matched without ambiguity"
                   }
 
                   verify_customer_github_links() {
-                    local previous=$1 shared=$2 subjects=$3 first subject stamp page links
+                    local previous=$1 shared=$2 subjects=$3 verification=${4:-exact} first subject stamp page links candidate
                     [[ -r $subjects ]] || fail "could not read the customer directory for final verification"
                     [[ -s $subjects ]] || return 0
                     IFS= read -r first <"$subjects" || fail "could not read the first customer subject"
@@ -979,15 +983,20 @@ spec:
                       page=$(customer_github_link_page "$subject")
                       links=$(jq -ce --argjson stamp "$stamp" 'select(.stamp == $stamp) | .links' <<<"$page") ||
                         fail "customer GitHub links changed during final verification"
-                      [[ $(customer_github_link_change "$previous" "$shared" "$subject" "$links") == '{}' ]] ||
-                        fail "customer GitHub links no longer match before activating the provider"
+                      candidate=$(customer_github_link_change "$previous" "$shared" "$subject" "$links")
+                      if [[ $verification == preserve-destination ]]; then
+                        [[ $candidate == '{}' || $(jq -r '.operation' <<<"$candidate") == remove ]] ||
+                          fail "selecting one provider would orphan a customer GitHub link"
+                      else
+                        [[ $candidate == '{}' ]] || fail "customer GitHub links no longer match before activating the provider"
+                      fi
                     done <"$subjects"
                     [[ $stamp == "$(customer_github_link_page "$first" | jq -c '.stamp')" ]] ||
                       fail "customer GitHub links changed during final verification"
                   }
 
                   reconcile_customer_github_links() {
-                    local previous=$1 shared=$2 subject links candidate record snapshot
+                    local previous=$1 shared=$2 authority=${3:-strict} subject links candidate record snapshot operation expected
                     local plan=$work/shared-github-links subjects=$work/customer-subjects
                     [[ -n $previous && -n $shared && $previous != "$shared" ]] ||
                       fail "the old and shared GitHub identities must name distinct providers"
@@ -995,30 +1004,37 @@ spec:
                     : >"$plan"
                     while IFS= read -r subject; do
                       links=$(customer_github_links "$subject")
-                      candidate=$(customer_github_link_change "$previous" "$shared" "$subject" "$links")
+                      candidate=$(customer_github_link_change "$previous" "$shared" "$subject" "$links" "$authority")
                       [[ $candidate == '{}' ]] || printf '%s\n' "$candidate" >>"$plan"
                     done <"$subjects"
 
-                    jq -es 'map(select(.operation == "add") | .idpLink.userId) | length == (unique | length)' "$plan" >/dev/null ||
+                    jq -es 'map(select(.operation != "remove") | .idpLink.userId) | length == (unique | length)' "$plan" >/dev/null ||
                       fail "more than one customer names the same GitHub identity"
                     [[ $snapshot == "$(customer_directory_page 0 1 | customer_directory_stamp)" ]] ||
                       fail "the customer directory changed while verifying GitHub links"
                     # A revoked link to the inactive provider must not regain authority on rollback.
                     # Clear stale bindings before copying approved links to the destination.
-                    jq -cs 'sort_by(.operation == "add")[]' "$plan" >"$work/customer-link-actions"
+                    jq -cs '(.[] | select(.operation != "add")),
+                      (.[] | select(.operation != "remove") | .operation = "add" | del(.inactiveUserId))' \
+                      "$plan" >"$work/customer-link-actions"
                     while IFS= read -r record; do
                       subject=$(jq -er '.userId' <<<"$record")
                       links=$(customer_github_links "$subject")
-                      [[ $(customer_github_link_change "$previous" "$shared" "$subject" "$links") == "$record" ]] ||
+                      [[ $(customer_github_link_change "$previous" "$shared" "$subject" "$links" "$authority") == "$record" ]] ||
                         fail "a customer GitHub link changed while preparing the provider switch"
-                      if [[ $(jq -r '.operation' <<<"$record") == remove ]]; then
+                      operation=$(jq -er '.operation' <<<"$record")
+                      expected='{}'
+                      if [[ $operation != add ]]; then
                         connect zitadel.user.v2.UserService/RemoveIDPLink "$(jq -c \
-                          '{userId,idpId:.idpLink.idpId,linkedUserId:.idpLink.userId}' <<<"$record")" >/dev/null
+                          '{userId,idpId:.idpLink.idpId,linkedUserId:(.inactiveUserId // .idpLink.userId)}' <<<"$record")" >/dev/null
+                        if [[ $operation == replace ]]; then
+                          expected=$(jq -c '.operation = "add" | del(.inactiveUserId)' <<<"$record")
+                        fi
                       else
                         connect zitadel.user.v2.UserService/AddIDPLink "$(jq -c 'del(.operation)' <<<"$record")" >/dev/null
                       fi
                       links=$(customer_github_links "$subject")
-                      [[ $(customer_github_link_change "$previous" "$shared" "$subject" "$links") == '{}' ]] ||
+                      [[ $(customer_github_link_change "$previous" "$shared" "$subject" "$links" "$authority") == "$expected" ]] ||
                         fail "could not verify a migrated customer GitHub link"
                     done <"$work/customer-link-actions"
                     verify_customer_github_links "$previous" "$shared" "$subjects"
@@ -1051,7 +1067,7 @@ spec:
                   # links, so reconciliation never restores a link later revoked by an operator.
                   reconcile_customer_login_provider() {
                     local previous=$1 desired=$2 owner_type=$3 org=$customers_org_id policy linked='[]' state phase current
-                    local replacement
+                    local replacement authority subjects snapshot
                     replacement=$(jq -nc --arg id "$desired" '[$id]')
                     state=$(customer_migration_state)
                     jq -e --arg old "$previous" --arg new "$desired" '
@@ -1070,10 +1086,11 @@ spec:
                     fi
                     case $(jq length <<<"$linked") in
                       0)
-                        if [[ $phase == prepared && $current != "$desired" ]]; then
-                          fail "finish the prepared customer provider change before reversing it"
-                        fi
-                        if [[ $current != "$desired" ]]; then
+                        # Without an advertised destination, cancellation restores the source
+                        # policy and leaves its links authoritative. A retry in the original
+                        # direction rechecks links before making the destination visible.
+                        if [[ $phase == prepared && $current == "$desired" ||
+                              $phase != prepared && $current != "$desired" ]]; then
                           reconcile_customer_github_links "$previous" "$desired"
                           save_customer_migration prepared "$previous" "$desired"
                         fi
@@ -1084,16 +1101,25 @@ spec:
                             fail "the visible customer provider differs from the applied migration"
                           # The old provider still owns sign-in, even if a previous job
                           # prepared the destination but stopped before advertising it.
-                          reconcile_customer_github_links "$previous" "$desired"
+                          # A known change and a single visible source prove which
+                          # provider can replace a stale copy.
+                          authority=strict
+                          [[ -z $phase ]] || authority=authoritative
+                          reconcile_customer_github_links "$previous" "$desired" "$authority"
                           save_customer_migration prepared "$previous" "$desired"
                         fi
                         ;;
                       2)
                         [[ $phase == prepared ]] ||
                           fail "two customer login providers are visible without a matching prepared change"
-                        # The journal and the visible policy name the same exact pair.
-                        # Select either advertised provider without rewriting its links.
-                        # Keep the prepared journal until the single provider is confirmed.
+                        # Both providers can accept an independently approved link while
+                        # advertised. Preserve links on the retained provider and refuse
+                        # to remove the other one if that would orphan an approved link.
+                        subjects=$work/overlap-customer-subjects
+                        snapshot=$(read_customer_subjects "$subjects")
+                        verify_customer_github_links "$previous" "$desired" "$subjects" preserve-destination
+                        [[ $snapshot == "$(customer_directory_page 0 1 | customer_directory_stamp)" ]] ||
+                          fail "the customer directory changed before selecting the remaining provider"
                         ;;
                     esac
                     if jq -e --arg old "$previous" 'index($old) != null' <<<"$linked" >/dev/null; then
@@ -1277,6 +1303,22 @@ spec:
                     shared_customer_idp=$idp_id
                   }
 
+                  find_shared_github_for_rollback() {
+                    local state=$1 shared response
+                    shared=$(jq -er --arg legacy "$legacy_customer_idp" '
+                      if .from == $legacy then .to
+                      elif .to == $legacy then .from
+                      else empty end' <<<"$state") ||
+                      fail "customer GitHub migration state does not name the legacy provider"
+                    response=$(api POST /admin/v1/idps/templates/_search "$(jq -nc --arg n "$idp_name" \
+                      '{queries: [{idpNameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')")
+                    jq -er --arg id "$shared" --arg name "$idp_name" '
+                      [.result[]? | select(.id == $id and .name == $name and
+                        .owner == "IDP_OWNER_TYPE_SYSTEM" and (.config.github | type) == "object")] |
+                      select(length == 1) | .[0].id' <<<"$response" ||
+                      fail "could not verify the recorded shared GitHub provider for rollback"
+                  }
+
                   reconcile_portal_github() {
                     local migration
                     migration=$(customer_migration_state)
@@ -1294,12 +1336,14 @@ spec:
                       if [[ $migration == null ]]; then
                         # The normal legacy repair must work before checking the future operator.
                         ensure_login_policy "$customers_org_id" "$customer_policy" "$legacy_customer_idp"
-                      fi
-                      ensure_portal_shared_github
-                      if [[ $migration != null ]]; then
+                        ensure_portal_shared_github
+                        reconcile_shared_instance_login off "$shared_customer_idp"
+                      else
+                        shared_customer_idp=$(find_shared_github_for_rollback "$migration")
                         reconcile_customer_login_provider "$shared_customer_idp" "$legacy_customer_idp" IDP_OWNER_TYPE_ORG
+                        reconcile_shared_instance_login off "$shared_customer_idp"
+                        ensure_portal_shared_github
                       fi
-                      reconcile_shared_instance_login off "$shared_customer_idp"
                       prepare_portal_operator "$shared_customer_idp"
                     fi
                   }
