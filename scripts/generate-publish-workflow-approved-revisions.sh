@@ -302,10 +302,22 @@ default_observer() {
     return 1
   }
   if [ "$(report_publisher_at_ref "$repo" "$workflow" "$commit" 2>/dev/null || true)" = own-release ]; then
+    # The signer check verifies the digest the registry tag names. It proves the APPLIED
+    # artifact only while that tag still names the digest Flux applied.
+    if [ "$(registry_digest_for_release "$repo" "$git_tag" 2>/dev/null || true)" != "$digest" ]; then
+      refuse "$repo: $git_tag no longer names the applied digest in the registry; the applied artifact is unverified"
+      return 1
+    fi
     signer="$(report_release_signer "$repo" "$workflow" "$git_tag" "$commit")" || {
       refuse "$repo: $git_tag is an own-release publication whose signature, tag or digest did not verify"
       return 1
     }
+    # Read again so a tag that moved during verification cannot pair one digest's
+    # signature with another digest's observation.
+    if [ "$(registry_digest_for_release "$repo" "$git_tag" 2>/dev/null || true)" != "$digest" ]; then
+      refuse "$repo: $git_tag moved away from the applied digest during verification"
+      return 1
+    fi
     printf '%s\t%s\t%s\n' "$tag" "$digest" "$signer"
     return 0
   fi

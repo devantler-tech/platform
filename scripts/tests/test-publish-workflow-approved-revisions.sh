@@ -652,6 +652,50 @@ else
   fi
 fi
 
+# The default observer verifies the artifact Flux APPLIED. The own-release signer check reads
+# the digest the registry tag names, so a tag that names another digest, before or after that
+# check, must refuse instead of pairing one digest's signature with the other's observation.
+own_observer_case() { # <registry-digest-before> <registry-digest-after>
+  local reads_file="$WORK/own-observer-reads"
+  : >"$reads_file"
+  # A separate process: sourcing the generator here would redeclare this test's read-only names.
+  OWN_SCRIPT="$SCRIPT" OWN_READS="$reads_file" OWN_APPLIED="$DIGEST_A" OWN_COMMIT="$SHA_C" \
+    OWN_BEFORE="$1" OWN_AFTER="$2" bash -c '
+    set -euo pipefail
+    # shellcheck source=scripts/generate-publish-workflow-approved-revisions.sh
+    source "$OWN_SCRIPT"
+    applied_revision() { printf "1.2.9\t%s\n" "$OWN_APPLIED"; }
+    git_tag_for_registry_tag() { printf "v1.2.9\n"; }
+    tag_commit() { printf "%s\n" "$OWN_COMMIT"; }
+    report_publisher_at_ref() { printf "own-release\n"; }
+    # Each read runs in a command substitution, so count reads in a file.
+    registry_digest_for_release() {
+      printf "read\n" >>"$OWN_READS"
+      if [ "$(grep -c . "$OWN_READS")" -eq 1 ]; then printf "%s\n" "$OWN_BEFORE"; else printf "%s\n" "$OWN_AFTER"; fi
+    }
+    report_release_signer() { printf "devantler-tech/x/.github/workflows/cd.yaml@refs/tags/v1.2.9\n"; }
+    default_observer x publish-app
+  ' 2>/dev/null
+}
+readonly DIGEST_B='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+if own_observer_case "$DIGEST_A" "$DIGEST_A" | grep -qF "$DIGEST_A"; then
+  pass 'the default observer accepts an own-release tag that names the applied digest'
+else
+  fail 'the default observer refused an own-release tag that names the applied digest'
+fi
+for shape in before after; do
+  if [ "$shape" = before ]; then
+    out="$(own_observer_case "$DIGEST_B" "$DIGEST_A" || true)"
+  else
+    out="$(own_observer_case "$DIGEST_A" "$DIGEST_B" || true)"
+  fi
+  if [ -z "$out" ]; then
+    pass "the default observer refuses a tag naming another digest $shape the signer check"
+  else
+    fail "the default observer accepted a tag naming another digest $shape the signer check"
+  fi
+done
+
 if [ "$failures" -gt 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
