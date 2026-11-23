@@ -20,7 +20,7 @@ type benchmarkFenceInstallFake struct {
 }
 
 func TestBenchmarkFenceInstallationPersistsOwnershipBeforeDependentWrites(t *testing.T) {
-	for _, fault := range []string{"", "ambiguous policy create", "policy receipt write", "ambiguous binding create", "binding receipt write", "concurrent journal"} {
+	for _, fault := range []string{"", "ambiguous policy create", "policy receipt write", "lost policy receipt response", "ambiguous binding create", "binding receipt write", "lost binding receipt response", "concurrent journal"} {
 		t.Run(fault, func(t *testing.T) {
 			record := retirementFenceFixture(t)
 			for key, val := range dispatchFixture() {
@@ -123,6 +123,9 @@ func (f *benchmarkFenceInstallFake) patchJournal(input []byte) ([]byte, error) {
 	}
 	f.stored, f.version = next, f.version+1
 	f.events = append(f.events, "journal:"+stage)
+	if f.fault == "lost policy receipt response" && stage == "policy-receipt" || f.fault == "lost binding receipt response" && stage == "binding-receipt" {
+		return nil, errors.New("journal response lost after commit")
+	}
 	return nil, nil
 }
 
@@ -163,6 +166,8 @@ func (f *benchmarkFenceInstallFake) assertResult(c client, record benchmarkRecor
 	switch f.fault {
 	case "ambiguous policy create", "policy receipt write":
 		want = want[:2]
+	case "lost policy receipt response":
+		want = want[:3]
 	case "ambiguous binding create", "binding receipt write":
 		want = want[:5]
 	case "concurrent journal":
@@ -177,7 +182,17 @@ func (f *benchmarkFenceInstallFake) assertResult(c client, record benchmarkRecor
 		}
 		return
 	}
-	if !reflect.DeepEqual(record, f.stored) {
+	if f.fault == "lost policy receipt response" || f.fault == "lost binding receipt response" {
+		wantReceipt := benchmarkFenceReceipt{PolicyUID: "policy-uid"}
+		wantIntent := f.name + "/policy"
+		if f.fault == "lost binding receipt response" {
+			wantReceipt.BindingUID = "binding-uid"
+			wantIntent = f.name + "/binding"
+		}
+		if record.FencePending != wantIntent || f.stored.FencePending != "" || f.stored.Fences[f.name] != wantReceipt {
+			f.t.Fatal("an unconfirmed journal response lost the persisted receipt or advanced the caller")
+		}
+	} else if !reflect.DeepEqual(record, f.stored) {
 		f.t.Fatal("in-memory ownership advanced beyond the persisted journal")
 	}
 	if f.fault == "" {
@@ -187,7 +202,8 @@ func (f *benchmarkFenceInstallFake) assertResult(c client, record benchmarkRecor
 		return
 	}
 	before := slices.Clone(f.events)
-	if installBenchmarkFence(f.t.Context(), c, &record, desired) == nil || !slices.Equal(f.events, before) {
+	persisted := f.stored
+	if installBenchmarkFence(f.t.Context(), c, &record, desired) == nil || !slices.Equal(f.events, before) || !reflect.DeepEqual(f.stored, persisted) {
 		f.t.Fatal("unreceipted create was retried or adopted")
 	}
 }

@@ -115,12 +115,15 @@ func activeBenchmarkV1FenceOwner(c client, record benchmarkRecord) bool {
 		return false
 	}
 	if record.Recovery != nil {
-		return authorizeBoundV1Recovery(os.Getenv) == nil &&
+		return !c.nativeSeed && authorizeBoundV1Recovery(os.Getenv) == nil &&
 			os.Getenv("LONGHORN_V2_CONFIRM") == recoverBoundV1Confirmation+record.Run &&
 			verifyBoundRecoveryRecord(record, record.Run) == nil &&
 			record.Recovery.Source == os.Getenv("GITHUB_SHA") && record.Recovery.Run == os.Getenv("GITHUB_RUN_ID")
 	}
-	return authorizeBenchmark(os.Getenv, "v1") == nil &&
+	if c.nativeSeed && (record.Version != 3 || record.Namespace != benchmarkNamespace || record.Workload != nativeSeedWorkload()) {
+		return false
+	}
+	return authorizeScratchV1(c, os.Getenv) == nil &&
 		record.Source == os.Getenv("GITHUB_SHA") && record.Run == os.Getenv("GITHUB_RUN_ID")
 }
 

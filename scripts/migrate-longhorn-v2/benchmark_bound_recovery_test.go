@@ -79,7 +79,6 @@ func TestBoundRecoveryValidatesOriginalStoppedStorageGraph(t *testing.T) {
 			workspace := object{"apiVersion": "v1", "kind": "Namespace", "metadata": object{
 				"name": record.Namespace, "uid": record.NamespaceUID, "resourceVersion": "1", "labels": object{
 					"pod-security.kubernetes.io/enforce": "restricted", "pod-security.kubernetes.io/enforce-version": "latest",
-					"velero.io/exclude-from-backup": "true",
 				}, "annotations": object{"kustomize.toolkit.fluxcd.io/prune": "disabled"},
 			}, "status": object{"phase": "Active"}}
 			observed["Namespace"] = workspace

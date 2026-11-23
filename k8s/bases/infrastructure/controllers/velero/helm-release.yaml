@@ -306,6 +306,8 @@ spec:
           excludedNamespaces:
             - kube-system
             - velero
+            # Disposable storage trials use their own explicitly owned backup.
+            - longhorn-benchmark
           # snapshotMoveData makes Velero's data mover upload CSI snapshots to
           # the R2 BSL. No-op on base/local (no CSI — everything uses FSB);
           # active in prod, where the hetzner overlay sets features: EnableCSI
