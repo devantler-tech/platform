@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"strings"
 	"testing"
 )
@@ -35,13 +36,10 @@ func TestBoundRecoveryRequiresExactUnacceptedScratch(t *testing.T) {
 		"fence without recovery": func(r *benchmarkRecord) { r.FencePending = "unowned/policy" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			copy := record
-			copy.Resources = make(map[string]benchmarkResource)
-			for kind, receipt := range record.Resources {
-				copy.Resources[kind] = receipt
-			}
-			change(&copy)
-			if verifyBoundRecoveryRecord(copy, record.Run) == nil {
+			recordWithFault := record
+			recordWithFault.Resources = maps.Clone(record.Resources)
+			change(&recordWithFault)
+			if verifyBoundRecoveryRecord(recordWithFault, record.Run) == nil {
 				t.Fatal("unsafe recovery accepted")
 			}
 		})
