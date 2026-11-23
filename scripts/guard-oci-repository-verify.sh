@@ -18,8 +18,8 @@
 #   - that entry names a non-empty `issuer` and a non-empty `subject`.
 #   - that subject names ONE first-party repository's own workflow on a branch or tag
 #     ref: a literal repository (never the deleted `actions` publisher, and for `.github`
-#     only its own `cd.yaml`), a literal workflow file or `[^/]+\.ya?ml`, and a ref whose
-#     groups close with no top-level `|` (#6266, ADR 0017). A shared reusable workflow
+#     only its own `cd.yaml`), a literal workflow file or `[^/]+\.ya?ml`, and a ref that
+#     escapes only `\.` and whose groups close with no top-level `|` (#6266, ADR 0017). A shared reusable workflow
 #     signs with its HOST repository's identity whoever calls it, so trusting one would
 #     let any caller's artifact verify for this source.
 #   - the trusted Wedding and AS Coaching tenant artifacts follow the governed
@@ -260,10 +260,11 @@ readonly YQ_ROWS='[.. | select(type == "!!map" and .kind == "OCIRepository")]
   | map(sub("^$", "-"))
   | join("	")'
 
-# ref_tail_is_closed <ref pattern>: the ref ends with exactly one `$`, and every group and
-# character class it opens closes, with no `|` outside them. A top-level `|` or an unclosed
-# group would let the pattern match beyond the anchored repository and workflow prefix. An
-# unusual but harmless spelling is refused rather than parsed, so this fails closed.
+# ref_tail_is_closed <ref pattern>: the ref ends with exactly one `$`, escapes nothing but
+# `\.`, and every group and character class it opens closes, with no `|` outside them. A
+# top-level `|` or an unclosed group would let the pattern match beyond the anchored
+# repository and workflow prefix. An unusual but harmless spelling is refused rather than
+# parsed, so this fails closed.
 ref_tail_is_closed() {
   local text="$1" char i depth=0 class=0 escaped=0
   [[ "$text" == *'$' ]] || return 1
@@ -275,7 +276,12 @@ ref_tail_is_closed() {
       continue
     fi
     case "$char" in
-      \\) escaped=1 ;;
+      \\)
+        # Only `\.` may be escaped: another escape, RE2's `\Q…\E` quoting above all, could
+        # hide a delimiter from this scan while the regex engine still honours it.
+        [[ "${text:i+1:1}" == . ]] || return 1
+        escaped=1
+        ;;
       '[') class=1 ;;
       ']') class=0 ;;
       '(') ((class)) || depth=$((depth + 1)) ;;
