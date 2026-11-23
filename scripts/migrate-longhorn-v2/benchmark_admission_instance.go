@@ -44,7 +44,7 @@ func readBenchmarkInstanceGroups(ctx context.Context, c client) (map[string][]ob
 }
 
 func proveAndCheckpointBenchmarkInstances(ctx context.Context, c client, record *benchmarkRecord) error {
-	if !activeBenchmarkV1FenceOwner(c, *record) || record.FenceCheckpoint != "" {
+	if !activeBenchmarkV1FenceOwner(c, *record) || record.FenceCheckpoint != "" && record.Recovery == nil {
 		return errors.New("benchmark instance checkpoint has no active workflow owner or is already recorded")
 	}
 	groups, observations, err := readBenchmarkInstanceGroups(ctx, c)
@@ -55,17 +55,19 @@ func proveAndCheckpointBenchmarkInstances(ctx context.Context, c client, record 
 	if err != nil {
 		return err
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
-	}
 	next := *record
-	next.FenceCheckpoint = record.Run + "-" + hex.EncodeToString(nonce[:])
+	if next.FenceCheckpoint == "" {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return err
+		}
+		next.FenceCheckpoint = record.Run + "-" + hex.EncodeToString(nonce[:])
+		if err := advanceBenchmarkFenceJournal(ctx, c, record, next); err != nil {
+			return err
+		}
+	}
 	policy, err := benchmarkRetirementInstanceFence(next, groups, next.FenceCheckpoint)
 	if err != nil {
-		return err
-	}
-	if err := advanceBenchmarkFenceJournal(ctx, c, record, next); err != nil {
 		return err
 	}
 	if err := installBenchmarkFence(ctx, c, record, policy); err != nil {
@@ -73,7 +75,7 @@ func proveAndCheckpointBenchmarkInstances(ctx context.Context, c client, record 
 	}
 	name := text(policy, "metadata", "name")
 	receipt := record.Fences[name]
-	if err := proveBenchmarkFenceOnServingAPIs(ctx, c, record.Source, policy, receipt, func(ctx context.Context, client *http.Client, endpoint *url.URL) error {
+	if err := proveBenchmarkFenceOnServingAPIs(ctx, c, record.mutationSource(), policy, receipt, func(ctx context.Context, client *http.Client, endpoint *url.URL) error {
 		for _, child := range children {
 			if err := probeBenchmarkInstanceAdmission(ctx, client, endpoint, child, observations[child.Identity.UID], name, record.FenceCheckpoint); err != nil {
 				return err
@@ -121,9 +123,12 @@ func checkpointBenchmarkInstances(ctx context.Context, c client, record benchmar
 		original := observations[child.Identity.UID]
 		kind := child.Resource + ".longhorn.io"
 		if text(original, "metadata", "annotations", retirementCheckpointAnnotation) == record.FenceCheckpoint {
+			if record.Recovery != nil {
+				continue
+			}
 			return errors.New("benchmark instance checkpoint is already on an unqualified original")
 		}
-		if err := sourceCurrent(ctx, c.run, record.Source); err != nil {
+		if err := sourceCurrent(ctx, c.run, record.mutationSource()); err != nil {
 			return err
 		}
 		if err := c.patch(ctx, kind, "longhorn-system", original, metadataChanges(original, "annotations", map[string]string{retirementCheckpointAnnotation: record.FenceCheckpoint})...); err != nil {
