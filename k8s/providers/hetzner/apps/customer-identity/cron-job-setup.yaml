@@ -1089,8 +1089,11 @@ spec:
                         fi
                         ;;
                       2)
-                        [[ $phase == prepared && $current == "$desired" ]] ||
+                        [[ $phase == prepared ]] ||
                           fail "two customer login providers are visible without a matching prepared change"
+                        # The journal and the visible policy name the same exact pair.
+                        # Select either advertised provider without rewriting its links.
+                        # Keep the prepared journal until the single provider is confirmed.
                         ;;
                     esac
                     if jq -e --arg old "$previous" 'index($old) != null' <<<"$linked" >/dev/null; then

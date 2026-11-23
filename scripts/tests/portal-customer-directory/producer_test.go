@@ -205,7 +205,8 @@ connect() {
 func TestCustomerProviderTransitionPreservesAccess(t *testing.T) {
 	function := producerFunction(t, "reconcile_customer_login_provider")
 	for _, mode := range []string{"inherited", "legacy", "both", "shared", "rollback", "unexpected", "unconfirmed-add",
-		"unknown-both", "reset-drift", "reset-after-migration", "rollback-then-settled", "prepared-then-visible"} {
+		"unknown-both", "reset-drift", "reset-after-migration", "rollback-then-settled", "prepared-then-visible",
+		"cancel-prepared-both", "cancel-prepared-after-removal"} {
 		t.Run(mode, func(t *testing.T) {
 			harness := `set -euo pipefail
 mode=$1
@@ -218,17 +219,18 @@ from=legacy to=shared owner=IDP_OWNER_TYPE_SYSTEM
 phase_record=null
 case "$mode" in
   inherited|reset-after-migration) ids='[]';;
-  legacy|unconfirmed-add|reset-drift|rollback-then-settled) ids='["legacy"]';;
-  both|unknown-both) ids='["legacy","shared"]';;
+  legacy|unconfirmed-add|reset-drift|rollback-then-settled|cancel-prepared-after-removal) ids='["legacy"]';;
+  both|unknown-both|cancel-prepared-both) ids='["legacy","shared"]';;
   shared|rollback|prepared-then-visible) ids='["shared"]';;
   unexpected) ids='["legacy","unrelated"]';;
 esac
 case "$mode" in
-  both|prepared-then-visible) phase_record='{"version":1,"phase":"prepared","from":"legacy","to":"shared"}';;
+  both|prepared-then-visible|cancel-prepared-both|cancel-prepared-after-removal)
+    phase_record='{"version":1,"phase":"prepared","from":"legacy","to":"shared"}';;
   reset-drift|reset-after-migration|rollback|shared) phase_record='{"version":1,"phase":"applied","from":"legacy","to":"shared"}';;
   rollback-then-settled) phase_record='{"version":1,"phase":"applied","from":"shared","to":"legacy"}';;
 esac
-if [[ $mode == rollback || $mode == rollback-then-settled ]]; then
+if [[ $mode == rollback || $mode == rollback-then-settled || $mode == cancel-prepared-* ]]; then
   from=shared to=legacy owner=IDP_OWNER_TYPE_ORG
 fi
 printf '%s\n' "$ids" >"$work/ids"
@@ -291,10 +293,10 @@ ensure_login_policy() {
 			if (err == nil) != wantOK {
 				t.Fatalf("expected transition success=%t, got %v: %s", wantOK, err, output)
 			}
-			wantRemoval := mode == "legacy" || mode == "both" || mode == "rollback"
+			wantRemoval := mode == "legacy" || mode == "both" || mode == "rollback" || mode == "cancel-prepared-both"
 			wantCopy := mode == "legacy" || mode == "rollback" || mode == "inherited" || mode == "unconfirmed-add"
 			wantFinish := mode == "legacy" || mode == "rollback" || mode == "inherited" || mode == "both" ||
-				mode == "prepared-then-visible"
+				mode == "prepared-then-visible" || strings.HasPrefix(mode, "cancel-prepared-")
 			for marker, want := range map[string]bool{
 				"copied":           wantCopy,
 				"prepared":         wantCopy,
