@@ -75,8 +75,9 @@ jobs:
           cp scripts/kagent-controller/Dockerfile scripts/kagent-controller/IMAGE-NOTICE upstream/LICENSE "${context}/"
           (
             cd upstream/go
+            # kagent's chart checks that the binary reports the release of its harness catalog.
             CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
-              -ldflags '-X github.com/kagent-dev/kagent/go/core/internal/version.Version=1.0.0-startup -X github.com/kagent-dev/kagent/go/core/internal/version.GitCommit=a08cde76ad6482dd758a4220b14213d79185ac30 -X github.com/kagent-dev/kagent/go/core/internal/version.SubstrateVersion=1.0.0' \
+              -ldflags '-X github.com/kagent-dev/kagent/go/core/internal/version.Version=1.0.0 -X github.com/kagent-dev/kagent/go/core/internal/version.GitCommit=a08cde76ad6482dd758a4220b14213d79185ac30 -X github.com/kagent-dev/kagent/go/core/internal/version.SubstrateVersion=1.0.0' \
               -o "${context}/app" ./core/cmd/controller
           )
           docker build --platform linux/amd64 --tag "${IMAGE}:${IMAGE_TAG}" \
@@ -84,6 +85,8 @@ jobs:
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" "${context}"
           docker run --rm --network none "${IMAGE}:${IMAGE_TAG}" --help
           docker run --rm --network none --entrypoint /bin/sh "${IMAGE}:${IMAGE_TAG}" -ec 'test "$(id -u)" = 65532'
+          docker run --rm -i --network none --entrypoint /bin/sh "${IMAGE}:${IMAGE_TAG}" -s \
+            < scripts/kagent-controller/smoke-startup.sh
       - name: Archive the verified image
         id: archive
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
