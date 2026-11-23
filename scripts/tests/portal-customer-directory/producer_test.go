@@ -125,7 +125,7 @@ func TestOrganizationReconciliationRequiresAReadback(t *testing.T) {
 
 func TestPortalOperatorProvisioningIsIsolatedAndUsesTheExactLink(t *testing.T) {
 	script := producerFunction(t, "prepare_portal_operator")
-	for _, mode := range []string{"new", "existing", "customer-org", "foreign-user", "wrong-link", "unverified-email"} {
+	for _, mode := range []string{"new", "existing", "customer-org", "foreign-user", "wrong-username", "wrong-link", "unverified-email"} {
 		t.Run(mode, func(t *testing.T) {
 			harness := `set -euo pipefail
 mode=$1
@@ -135,6 +135,7 @@ customers_org_id=customer-org
 portal_operators_org='Portal operators'
 portal_operators_domain=portal-operators.example.invalid
 portal_operator_id=02bf754c-559b-486d-83f7-ed89cfc38d08
+portal_operator_username=portal-operator-02bf754c-559b-486d-83f7-ed89cfc38d08
 admin_github_login=fictional-owner
 admin_github_id=1234
 ADMIN_EMAIL=operator@example.invalid
@@ -155,18 +156,21 @@ connect() {
     zitadel.user.v2.UserService/ListUsers)
       jq -e --arg id "$portal_operator_id" '.queries == [{inUserIdsQuery:{userIds:[$id]}}]' <<<"$2" >/dev/null
       if [[ $mode != new && $mode != unverified-email || -e $state ]]; then
-        local owner=operator-org
+        local owner=operator-org name=$portal_operator_username
         [[ $mode != foreign-user ]] || owner=$customers_org_id
-        jq -nc --arg id "$portal_operator_id" --arg owner "$owner" '{result:[{userId:$id,details:{resourceOwner:$owner},
-          state:"USER_STATE_ACTIVE",username:"operator@example.invalid",human:{email:{email:"operator@example.invalid",isVerified:true}}}]}'
+        [[ $mode != wrong-username ]] || name=$ADMIN_EMAIL
+        jq -nc --arg id "$portal_operator_id" --arg owner "$owner" --arg name "$name" \
+          '{result:[{userId:$id,details:{resourceOwner:$owner},state:"USER_STATE_ACTIVE",username:$name,
+            human:{email:{email:"operator@example.invalid",isVerified:true}}}]}'
       else
         printf '%s\n' '{"result":[]}'
       fi
       ;;
     zitadel.user.v2.UserService/CreateUser)
-      jq -e --arg id "$portal_operator_id" '. == {userId:$id,organizationId:"operator-org",username:"operator@example.invalid",
+      jq -e --arg id "$portal_operator_id" --arg name "$portal_operator_username" \
+        '. == {userId:$id,organizationId:"operator-org",username:$name,
         human:{profile:{givenName:"Test",familyName:"Operator"},email:{email:"operator@example.invalid",isVerified:true},
-          idpLinks:[{idpId:"approved-provider",userId:"1234",userName:"fictional-owner"}]}}' <<<"$2" >/dev/null
+          idpLinks:[{idpId:"approved-provider",userId:"1234",userName:"fictional-owner"}]}}' <<<"$2" >/dev/null || fail 'unexpected portal operator creation request'
       touch "$state"
       jq -nc --arg id "$portal_operator_id" '{id:$id}'
       ;;

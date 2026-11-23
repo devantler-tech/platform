@@ -186,6 +186,7 @@ readonly dex_pattern='ghcr.io/devantler-tech/platform-dex'
 readonly kagent_pattern='ghcr.io/devantler-tech/platform-kagent-controller'
 readonly longhorn_retirement_pattern='ghcr.io/devantler-tech/platform-longhorn-instance-manager'
 readonly longhorn_v2_pattern='ghcr.io/devantler-tech/platform-longhorn-manager'
+readonly longhorn_fio_pattern='ghcr.io/devantler-tech/platform-longhorn-fio'
 readonly mail_submission_pattern='ghcr.io/devantler-tech/platform-mail-submission'
 readonly app_pattern='ghcr.io/devantler-tech/*'
 fixture_rules_json="$(yq -o=json '.rules' "${root_dir}/talos/cluster/verify-first-party-images.yaml" | jq '
@@ -256,8 +257,9 @@ write_healthy_rules() {
     resource_obj 0016 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kagent_pattern}"
     resource_obj 0017 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_retirement_pattern}"
     resource_obj 0018 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_v2_pattern}"
-    resource_obj 0019 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_submission_pattern}"
-    resource_obj 0020 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0019 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_fio_pattern}"
+    resource_obj 0020 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_submission_pattern}"
+    resource_obj 0021 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -283,7 +285,7 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '21 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '22 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
 

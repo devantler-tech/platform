@@ -151,3 +151,25 @@ func TestBoundRecoveryValidatesOriginalStoppedStorageGraph(t *testing.T) {
 		})
 	}
 }
+
+func TestBoundBenchmarkRecoveryUsesTheImageRecordedAtLaunch(t *testing.T) {
+	record, observed := unstartedBenchmarkFixture(t)
+	pod := observed["Pod"]
+	pod["spec"].(object)["nodeName"] = record.clientNode()
+	container := pod["spec"].(object)["containers"].([]any)[0].(object)
+	container["image"] = legacyFioImage
+	pod["status"] = object{"phase": "Failed", "containerStatuses": []any{object{
+		"name": "fio", "imageID": legacyFioImage,
+	}}}
+	uid := record.Resources["Pod"].UID
+	if err := verifyBenchmarkPod(pod, uid, record.clientNode(), legacyFioImage); err != nil {
+		t.Fatal("the reviewed legacy benchmark Pod cannot be verified:", err)
+	}
+	if verifyBenchmarkPod(pod, uid, record.clientNode(), "registry.example.invalid/other@sha256:"+strings.Repeat("a", 64)) == nil {
+		t.Fatal("the original Pod was accepted for a different benchmark image")
+	}
+	container["image"] = "registry.example.invalid/unpinned"
+	if verifyBenchmarkPod(pod, uid, record.clientNode(), text(container, "image")) == nil {
+		t.Fatal("an unpinned benchmark Pod was accepted")
+	}
+}

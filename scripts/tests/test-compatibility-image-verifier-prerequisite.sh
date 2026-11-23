@@ -64,6 +64,7 @@ ghcr.io/devantler-tech/platform-coroot-node-agent|publishcorootnodeagent|publish
 ghcr.io/devantler-tech/platform-kagent-controller|publishkagentcontroller|publish-kagent-controller
 ghcr.io/devantler-tech/platform-longhorn-instance-manager|publishlonghornretirement|publish-longhorn-v1-retirement
 ghcr.io/devantler-tech/platform-longhorn-manager|publishlonghornv2|publish-longhorn-v2-only
+ghcr.io/devantler-tech/platform-longhorn-fio|publishlonghornfio|publish-longhorn-fio
 ghcr.io/devantler-tech/platform-mail-submission|publishmailsubmission|publish-mail-submission
 ROUTES
 
