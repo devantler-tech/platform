@@ -71,6 +71,11 @@ spec:
   postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
+        images:
+          # The signed controller reclaims failed scheduled starts (#6463).
+          - name: ghcr.io/kagent-dev/kagent/controller
+            newName: ghcr.io/devantler-tech/platform-kagent-controller
+            digest: sha256:9b46df5be1a7afc29ca621f7b88ea0e5fcb5a85b68aec7d4c2f311e673caf29a
         patches:
           # One daily agent run is the only user: a short gap while a node
           # drains only delays the next call.

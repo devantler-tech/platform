@@ -145,6 +145,12 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
+    - name: publishlonghornfio
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-fio\.yaml@refs/heads/main$
     # The reports-controller repair is signed only by its dedicated publisher.
     - name: publishkyvernoreports
       cosign:
@@ -292,6 +298,9 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-longhorn-manager' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager@') &&
+          image != 'ghcr.io/devantler-tech/platform-longhorn-fio' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-fio:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-fio@') &&
           image != 'ghcr.io/devantler-tech/platform-kubescape-storage' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@') &&
@@ -457,6 +466,17 @@ spec:
         .all(e, e > 0)
       message: >-
         The Longhorn V2-only manager image must be signed by its dedicated
+        main-branch publisher.
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-longhorn-fio' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-fio:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-fio@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishlonghornfio]))
+        .all(e, e > 0)
+      message: >-
+        The Longhorn benchmark image must be signed by its dedicated
         main-branch publisher.
     - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
