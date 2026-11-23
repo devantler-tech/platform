@@ -81,7 +81,7 @@ func observeBoundBenchmarkAssets(ctx context.Context, c client, record benchmark
 	}
 	pod, claim, class := observed["Pod"], observed["PersistentVolumeClaim"], observed["StorageClass"]
 	pv, backend := observed["PersistentVolume"], observed["LonghornVolume"]
-	if pod != nil && (text(pod, "status", "phase") != "Failed" || verifyBenchmarkPod(pod, record.Resources["Pod"].UID, record.clientNode()) != nil) {
+	if pod != nil && (text(pod, "status", "phase") != "Failed" || verifyBenchmarkPod(pod, record.Resources["Pod"].UID, record.clientNode(), record.Image) != nil) {
 		return nil, errors.New("the recorded fio Pod is not the failed original consumer")
 	}
 	if claim != nil && (text(claim, "status", "phase") != "Bound" || text(claim, "spec", "volumeName") != record.Resources["PersistentVolume"].Name ||

@@ -18,8 +18,10 @@ const benchmarkUnprovenSamples = 3
 // benchmarkCompletionLimit lets the Pod report Failed at its deadline rather than cutting it short.
 const benchmarkCompletionLimit = (benchmarkDeadlineSeconds + 120) * time.Second
 
-// The linux/amd64 manifest of the fio 3.41 image used by longhorn-tests.
-const fioImage = "docker.io/openeuler/fio:3.41-oe2403sp2@sha256:335e14c142c65c8da4f83172d53387af7c9cd8336910107a4504ba3a5ddbba7f"
+// Older journals bind their scratch Pod to the original Longhorn test image.
+const legacyFioImage = "docker.io/openeuler/fio:3.41-oe2403sp2@sha256:335e14c142c65c8da4f83172d53387af7c9cd8336910107a4504ba3a5ddbba7f"
+
+const fioImage = legacyFioImage
 
 const fioScript = `set -eu
 while [ ! -f /tmp/benchmark-start ]; do sleep 2; done
