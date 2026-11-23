@@ -20,7 +20,7 @@ func verifyRecoveredBenchmarkStorage(record benchmarkRecord, claim, class, pv, v
 	if text(claim, "metadata", "namespace") != record.Namespace || text(claim, "metadata", "name") != "fio-data" || text(claim, "spec", "volumeName") != text(pv, "metadata", "name") || text(volume, "metadata", "namespace") != "longhorn-system" || text(volume, "spec", "dataEngine") != record.Phase {
 		return errors.New("recovery storage scope or engine differs")
 	}
-	assets, err := benchmarkResources(record.Phase, record.Run, record.Namespace)
+	assets, err := benchmarkResourcesForClient(record.Phase, record.Run, record.Namespace, record.clientNode())
 	if err != nil {
 		return err
 	}

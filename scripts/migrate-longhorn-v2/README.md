@@ -342,6 +342,20 @@ The instance-manager registry is an observation of native runtime state, not an 
 disk or kernel audit. The builders and stopped-state checks alone do not authorize backend
 retirement. Complete that recovery path before dispatching a benchmark.
 
+`recover-unstarted-v1-benchmark` recovers a stopped workflow whose fio Pod
+never scheduled and whose claim never bound. Leave `node` and `database`
+empty and confirm `recover-unstarted-longhorn-v1-benchmark`. The procedure
+verifies the latest original workflow attempt is terminal, reads back the
+original objects and refuses any PV, backend or attachment. It uses the
+observed resource versions to remove only the recorded scratch assets.
+The original journal is archived in an immutable ConfigMap. The protected
+workspace remains available for a fresh benchmark.
+
+New V1 benchmarks use the first permanent worker and check its free requested
+memory before creating scratch resources. The V2 comparison uses the worker
+recorded in its completed V1 baseline. Existing baselines retain their original
+third-worker placement.
+
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes

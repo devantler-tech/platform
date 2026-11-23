@@ -29,6 +29,7 @@ type benchmarkRecord struct {
 	FenceCheckpoint                                                           string                           `json:",omitempty"`
 	FencePending                                                              string                           `json:",omitempty"`
 	PendingCreate                                                             string                           `json:",omitempty"`
+	ClientNode                                                                string                           `json:",omitempty"`
 	TagNodes                                                                  map[string]string                `json:",omitempty"`
 	Resources                                                                 map[string]benchmarkResource
 	Version                                                                   int
@@ -99,7 +100,7 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 	var record benchmarkRecord
 	raw := text(cm, "data", "record")
 	fields := map[string][]string{
-		"":                   {"Recovery", "V1Runtime", "Fences", "FenceCheckpoint", "FencePending", "PendingCreate", "TagNodes", "Resources", "Version", "Phase", "Source", "Run", "Image", "Workload", "Namespace", "NamespaceUID", "CompletedAt", "Machines", "Measurements", "Cleaned", "CPU"},
+		"":                   {"Recovery", "V1Runtime", "Fences", "FenceCheckpoint", "FencePending", "PendingCreate", "ClientNode", "TagNodes", "Resources", "Version", "Phase", "Source", "Run", "Image", "Workload", "Namespace", "NamespaceUID", "CompletedAt", "Machines", "Measurements", "Cleaned", "CPU"},
 		"Recovery":           {"Source", "Run", "JournalUID", "Deletes"},
 		"V1Runtime":          {"Image", "SettingUID", "SettingVersion", "Epochs"},
 		"V1Runtime.Epochs[]": {"Pod", "PodUID", "ManagerUID", "Node", "ContainerID", "StartedAt"},
@@ -121,7 +122,8 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 	}
 	var extra any
 	if d.Decode(&extra) != io.EOF || !benchmarkNamespaceMatches(record) || record.Phase != phase || record.Image != fioImage || record.Workload != benchmarkWorkload() ||
-		!validBenchmarkOwner(record.Run, record.Source) || len(record.Machines) != 3 {
+		!validBenchmarkOwner(record.Run, record.Source) || len(record.Machines) != 3 ||
+		(record.clientNode() != benchmarkClientNode && record.clientNode() != legacyBenchmarkClientNode) {
 		return nil, record, errors.New("benchmark journal does not match this reviewed procedure")
 	}
 	for _, name := range []string{"prod-worker-1", "prod-worker-2", "prod-worker-3"} {
@@ -155,7 +157,7 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 	}
 	if record.Recovery != nil {
 		for kind, intent := range record.Recovery.Deletes {
-			if (kind != "Pod" && kind != "NetworkPolicy") || intent.UID == "" || record.Resources[kind] != intent {
+			if !benchmarkRecoveryDeletionKind(kind) || intent.UID == "" || record.Resources[kind] != intent {
 				return nil, record, errors.New("benchmark deletion intent lacks its original UID receipt")
 			}
 		}
@@ -292,10 +294,10 @@ func (c client) setBenchmarkTag(ctx context.Context, source, tag, name, expected
 	return err
 }
 
-func verifyBenchmarkPod(p object, uid string) error {
+func verifyBenchmarkPod(p object, uid, clientNode string) error {
 	containers, _ := value(p, "spec", "containers").([]any)
 	statuses, _ := value(p, "status", "containerStatuses").([]any)
-	if text(p, "metadata", "uid") != uid || text(p, "spec", "nodeName") != "prod-worker-3" || len(containers) != 1 || len(statuses) != 1 {
+	if text(p, "metadata", "uid") != uid || text(p, "spec", "nodeName") != clientNode || len(containers) != 1 || len(statuses) != 1 {
 		return errors.New("benchmark consumer identity or placement differs")
 	}
 	container, _ := containers[0].(object)
@@ -319,10 +321,16 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err != nil {
 		return err
 	}
+	clientNode := benchmarkClientNode
 	if phase == "v2" {
 		if err = requireBenchmarkBaseline(ctx, c, s.nodes); err != nil {
 			return err
 		}
+		_, baseline, err := readBenchmark(ctx, c, "v1")
+		if err != nil || !baseline.Cleaned {
+			return errors.New("the baseline's benchmark client is unverified")
+		}
+		clientNode = baseline.clientNode()
 	}
 	var v1Runtime *benchmarkV1Runtime
 	if phase == "v1" {
@@ -340,9 +348,16 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 		return errors.New("benchmark journal already exists; inspect its completion and scratch-resource state before any recovery")
 	}
 	tag := benchmarkTag(phase, runID)
-	objects, err := benchmarkResources(phase, runID, benchmarkNamespace)
+	objects, err := benchmarkResourcesForClient(phase, runID, benchmarkNamespace, clientNode)
 	if err != nil {
 		return err
+	}
+	for _, asset := range objects {
+		if text(asset, "kind") == "Pod" {
+			if err := verifyBenchmarkClientMemory(s, asset); err != nil {
+				return err
+			}
+		}
 	}
 	namespace, err := observeBenchmarkWorkspace(ctx, c, "")
 	if err != nil {
@@ -359,7 +374,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 		return err
 	}
 	namespaceIdentity := benchmarkIdentity(namespace)
-	record := benchmarkRecord{Version: 3, Phase: phase, Source: source, Run: runID, Image: fioImage, Workload: benchmarkWorkload(), Namespace: benchmarkNamespace, NamespaceUID: namespaceIdentity.UID,
+	record := benchmarkRecord{Version: 3, Phase: phase, Source: source, Run: runID, Image: fioImage, Workload: benchmarkWorkload(), Namespace: benchmarkNamespace, NamespaceUID: namespaceIdentity.UID, ClientNode: clientNode,
 		Resources: map[string]benchmarkResource{"Namespace": namespaceIdentity}, Machines: machines, TagNodes: tagNodes, V1Runtime: v1Runtime}
 	if err := validateBenchmarkRuntimeReceipt(record); err != nil {
 		return err
@@ -387,7 +402,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 		if err != nil || text(current, "status", "phase") != "Running" {
 			return errors.New("benchmark consumer is not running")
 		}
-		if err = verifyBenchmarkPod(current, text(pod, "metadata", "uid")); err != nil {
+		if err = verifyBenchmarkPod(current, text(pod, "metadata", "uid"), clientNode); err != nil {
 			return err
 		}
 		claim, err = c.get(ctx, "persistentvolumeclaim", record.Namespace, "fio-data", false)
@@ -417,7 +432,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err != nil {
 		return err
 	}
-	if err = verifyBenchmarkPod(pod, text(created["Pod"], "metadata", "uid")); err != nil {
+	if err = verifyBenchmarkPod(pod, text(created["Pod"], "metadata", "uid"), clientNode); err != nil {
 		return err
 	}
 	record.CPU, err = captureBenchmarkCPU(ctx, c, phase, pod)
@@ -446,7 +461,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err != nil {
 		return err
 	}
-	if err = verifyBenchmarkPod(current, text(pod, "metadata", "uid")); err != nil {
+	if err = verifyBenchmarkPod(current, text(pod, "metadata", "uid"), clientNode); err != nil {
 		return err
 	}
 	if _, err = c.kubectl(ctx, nil, "exec", "--namespace="+record.Namespace, "fio", "--container=fio", "--", "/bin/sh", "-ec", "touch /tmp/benchmark-start"); err != nil {
@@ -459,7 +474,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 		if err != nil {
 			return err
 		}
-		if err = verifyBenchmarkPod(p, text(pod, "metadata", "uid")); err != nil {
+		if err = verifyBenchmarkPod(p, text(pod, "metadata", "uid"), clientNode); err != nil {
 			return err
 		}
 		switch text(p, "status", "phase") {
@@ -510,7 +525,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err != nil {
 		return err
 	}
-	if err = verifyBenchmarkPod(current, text(pod, "metadata", "uid")); err != nil {
+	if err = verifyBenchmarkPod(current, text(pod, "metadata", "uid"), clientNode); err != nil {
 		return err
 	}
 	endingCPU, err := captureBenchmarkCPU(ctx, c, phase, current)
@@ -537,6 +552,32 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	}
 	fmt.Printf("Longhorn %s: completed eighteen controlled fio trials; scratch resources removed.\n", phase)
 	fmt.Println("Observed CPU configuration:", publicBenchmarkCPU(record.CPU))
+	return nil
+}
+
+// The scratch claim waits for this exact fio client to schedule. Check the
+// client's memory request against live Kubernetes accounting before creating
+// a journal or any scratch assets.
+func verifyBenchmarkClientMemory(s inventory, pod object) error {
+	nodes, err := indexed(s.nodes)
+	if err != nil {
+		return err
+	}
+	client := nodes[text(pod, "spec", "nodeSelector", "kubernetes.io/hostname")]
+	if client == nil || value(client, "spec", "unschedulable") == true || !hugepagesReady(client) {
+		return errors.New("the benchmark client worker is not schedulable")
+	}
+	request, err := podMemoryRequest(pod)
+	if err != nil || request <= 0 {
+		return errors.New("benchmark client memory request is unverified")
+	}
+	excess, err := refreshExcess(client, s.pods)
+	if err != nil {
+		return fmt.Errorf("benchmark client memory capacity is unverified: %w", err)
+	}
+	if request > -excess {
+		return errors.New("benchmark client memory request does not fit on its selected worker")
+	}
 	return nil
 }
 
