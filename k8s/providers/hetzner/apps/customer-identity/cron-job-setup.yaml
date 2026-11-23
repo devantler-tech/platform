@@ -122,9 +122,6 @@ spec:
                   value: https://accounts.devantler.tech
                 - name: ZITADEL_SYSTEM_USER
                   value: zitadel-setup
-                - name: TOKEN_LIFETIME_SECONDS
-                  # The token must cover activeDeadlineSeconds plus startup margin.
-                  value: "900"
               volumeMounts:
                 - name: setup-key
                   mountPath: /run/setup-key
@@ -152,7 +149,8 @@ spec:
                   out=/run/setup-token/token
                   audience="${ZITADEL_AUDIENCE:?}"
                   user="${ZITADEL_SYSTEM_USER:?}"
-                  lifetime="${TOKEN_LIFETIME_SECONDS:?}"
+                  # Cover the Job deadline with up to 60 seconds for startup.
+                  lifetime=900
 
                   b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 

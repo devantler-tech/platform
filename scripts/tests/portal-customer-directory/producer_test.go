@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -512,22 +513,22 @@ func TestSetupTokenCoversTheJobDeadline(t *testing.T) {
 	if !ok || signer["name"] != "sign-token" {
 		t.Fatal("expected the setup token signer")
 	}
-	env, ok := field(t, signer, "env").([]any)
+	command, ok := field(t, signer, "command").([]any)
+	if !ok || len(command) != 3 || command[0] != "/bin/sh" || command[1] != "-c" {
+		t.Fatal("expected the signing script")
+	}
+	script, ok := command[2].(string)
 	if !ok {
-		t.Fatal("missing signer environment")
+		t.Fatal("the signing script must be a string")
 	}
-	for _, item := range env {
-		entry, ok := item.(map[string]any)
-		if !ok || entry["name"] != "TOKEN_LIFETIME_SECONDS" {
-			continue
-		}
-		lifetime, err := strconv.Atoi(fmt.Sprint(entry["value"]))
-		if err != nil || lifetime <= deadline || lifetime > deadline+60 {
-			t.Fatalf("setup token lifetime %v must cover the Job deadline %ds with at most 60 seconds of margin", entry["value"], deadline)
-		}
-		return
+	assignments := regexp.MustCompile(`(?m)^lifetime=([0-9]+)$`).FindAllStringSubmatch(script, -1)
+	if len(assignments) != 1 {
+		t.Fatal("the signer must declare exactly one lifetime in seconds")
 	}
-	t.Fatal("the signer must explicitly receive a token lifetime for this Job")
+	lifetime, err := strconv.Atoi(assignments[0][1])
+	if err != nil || lifetime <= deadline || lifetime > deadline+60 {
+		t.Fatalf("setup token lifetime %s must cover the Job deadline %ds with at most 60 seconds of margin", assignments[0][1], deadline)
+	}
 }
 
 func TestSharedInstanceLoginRestoresPreviousSettings(t *testing.T) {
