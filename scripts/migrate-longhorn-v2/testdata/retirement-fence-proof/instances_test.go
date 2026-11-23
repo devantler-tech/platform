@@ -67,6 +67,14 @@ func instanceCases(phase string) []decisionCase {
 			}
 			p.Object["spec"].(map[string]any)[key] = "foreign"
 		}, admission.Create, true, false)
+		if resource == "volumeattachments" {
+			add("attachment name alone is reserved", func(p *unstructured.Unstructured) {
+				p.SetUID("")
+				p.SetLabels(nil)
+				p.SetOwnerReferences(nil)
+				p.Object["spec"].(map[string]any)["volume"] = "foreign"
+			}, admission.Create, true, false)
+		}
 		add("alias with original association", func(p *unstructured.Unstructured) { p.SetName("alias"); p.SetUID("") }, admission.Create, true, false)
 		add("old original new unrelated", func(p *unstructured.Unstructured) {
 			p.SetName("foreign")

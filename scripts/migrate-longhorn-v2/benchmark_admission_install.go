@@ -111,7 +111,10 @@ func installBenchmarkReferenceFence(ctx context.Context, c client, record *bench
 }
 
 func activeBenchmarkV1FenceOwner(c client, record benchmarkRecord) bool {
-	return c.context == "admin@prod" && authorizeBenchmark(os.Getenv, "v1") == nil &&
+	if c.nativeSeed && (record.Version != 3 || record.Namespace != benchmarkNamespace || record.Workload != nativeSeedWorkload()) {
+		return false
+	}
+	return c.context == "admin@prod" && authorizeScratchV1(c, os.Getenv) == nil &&
 		record.Phase == "v1" && record.Source == os.Getenv("GITHUB_SHA") && record.Run == os.Getenv("GITHUB_RUN_ID") &&
 		record.Recovery == nil && !record.Cleaned && record.FencePending == ""
 }

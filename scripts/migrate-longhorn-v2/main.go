@@ -32,6 +32,8 @@ func main() {
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
 	case recoverUnstartedV1Operation:
 		authorization = authorizeUnstartedV1Recovery(os.Getenv)
+	case nativeSeedOperation:
+		authorization = authorizeNativeSeed(os.Getenv)
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":
@@ -65,6 +67,15 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == nativeSeedOperation {
+		if err := runNativeSeed(ctx, client{run: execute, context: "admin@prod", nativeSeed: true}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
+			fmt.Fprintln(os.Stderr, "Disposable canary source held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve its journal and assets for explicit recovery; no V2 restore or migration is accepted.")
+			os.Exit(1)
+		}
+		fmt.Println("LONGHORN_NATIVE_SEED=SOURCE_CLEANED transfer=KOPIA v2Restore=UNVERIFIED reattachment=UNVERIFIED migration=UNVERIFIED")
+		return
+	}
 	if operation == runtimeInventoryOperation {
 		receipt, err := observeRuntimeInventory(ctx, client{run: runtimeInventoryReadCommand, context: "admin@prod"}, os.Getenv("LONGHORN_RUNTIME_INVENTORY_SOURCE"))
 		if err != nil {
