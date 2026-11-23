@@ -31,6 +31,7 @@ jobs:
       archive: ${{ steps.save.outputs.archive }}
       image_id: ${{ steps.save.outputs.image_id }}
       sha256: ${{ steps.save.outputs.sha256 }}
+      version: ${{ steps.save.outputs.version }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
@@ -65,8 +66,8 @@ jobs:
           [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
           file="${RUNNER_TEMP}/longhorn-fio.tar"
           docker save -o "$file" "${IMAGE}:${VERSION}"
-          printf 'archive=fio-%s-%s\nimage_id=%s\nsha256=%s\n' \
-            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$image_id" "$(sha256sum "$file" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          printf 'archive=fio-%s-%s\nimage_id=%s\nsha256=%s\nversion=%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$image_id" "$(sha256sum "$file" | cut -d' ' -f1)" "$VERSION" >> "$GITHUB_OUTPUT"
       - name: Preserve tested release image
         if: steps.save.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -82,6 +83,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: verify
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
     permissions:
       contents: read
       packages: write
@@ -108,8 +111,10 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{64}$ && "$EXPECTED_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$VERSION" =~ ^3\.41-${GITHUB_SHA}-[1-9][0-9]*$ ]]
           file="${RUNNER_TEMP}/longhorn-fio.tar"
-          printf '%s  %s\n' "$EXPECTED_SHA" "$file" | sha256sum --check
+          actual_sha="$(sha256sum "$file")"
+          test "${actual_sha%% *}" = "$EXPECTED_SHA"
           docker load -i "$file"
           test "$(docker image inspect --format '{{.Id}}' "${IMAGE}:${VERSION}")" = "$EXPECTED_ID"
       - name: Install verified signing and inventory tools
