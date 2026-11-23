@@ -379,7 +379,24 @@ func (c *Client) Auth(a sasl.Client) error {
 	} else if resp != nil {
 		resp64 = []byte{'='}
 	}
-	code, msg64, err := c.cmd(0, "%s", strings.TrimSpace(fmt.Sprintf("AUTH %s %s", mech, resp64)))
+	var code int
+	var msg64 string
+	// 504 = 512 - len("AUTH") - 2*len(" ") - len("\r\n")
+	if len(resp64) == 0 || len(mech)+len(resp64) > 504 {
+		// An initial response that does not fit in the 512-octet command line (RFC 5321
+		// section 4.5.3.1.4) is sent as the reply to the first challenge instead
+		// (RFC 4954 section 4).
+		code, msg64, err = c.cmd(0, "AUTH %s", mech)
+		if err == nil && code == 334 && len(resp64) > 0 {
+			if msg64 != "" {
+				c.cmd(501, "*")
+				return errors.New("smtp: server sent a challenge instead of asking for the initial response")
+			}
+			code, msg64, err = c.cmd(0, "%s", resp64)
+		}
+	} else {
+		code, msg64, err = c.cmd(0, "AUTH %s %s", mech, resp64)
+	}
 	for err == nil {
 		var msg []byte
 		switch code {
@@ -476,6 +493,29 @@ func (c *Client) Mail(from string, opts *MailOptions) error {
 		}
 		// We can safely discard parameter if server does not support AUTH.
 	}
+	if _, ok := c.ext["DELIVERBY"]; ok && opts != nil && opts.DeliverBy != nil {
+		by := int(opts.DeliverBy.Time.Seconds())
+		// Specified in rfc2852
+		// by-time      = ["-" / "+"]1*9digit ; a negative or zero value is not
+		//				      ; allowed with a by-mode of "R"
+		if opts.DeliverBy.Mode == DeliverByReturn && (by < 1 || by > 999999999) {
+			return errors.New("smtp: DELIVERBY mode must be between 1 and 999999999 with return mode")
+		}
+		if opts.DeliverBy.Mode == DeliverByNotify && (by < -999999999 || by > 999999999) {
+			return errors.New("smtp: DELIVERBY mode must be between -999999999 and 999999999 with notify mode")
+		}
+		arg := fmt.Sprintf(" BY=%d;%s", by, opts.DeliverBy.Mode)
+		if opts.DeliverBy.Trace {
+			arg += "T"
+		}
+		sb.WriteString(arg)
+	}
+	if _, ok := c.ext["MT-PRIORITY"]; ok && opts != nil && opts.MTPriority != nil {
+		if *opts.MTPriority < -9 || *opts.MTPriority > 9 {
+			return errors.New("smtp: MT-PRIORITY must be between -9 and 9")
+		}
+		sb.WriteString(fmt.Sprintf(" MT-PRIORITY=%d", *opts.MTPriority))
+	}
 	if _, _, err := c.cmd(250, "%s", sb.String()); err != nil {
 		return err
 	}
@@ -538,22 +578,6 @@ func (c *Client) Rcpt(to string, opts *RcptOptions) error {
 	}
 	if _, ok := c.ext["RRVS"]; ok && opts != nil && !opts.RequireRecipientValidSince.IsZero() {
 		sb.WriteString(fmt.Sprintf(" RRVS=%s", opts.RequireRecipientValidSince.Format(time.RFC3339)))
-	}
-	if _, ok := c.ext["DELIVERBY"]; ok && opts != nil && opts.DeliverBy != nil {
-		if opts.DeliverBy.Mode == DeliverByReturn && opts.DeliverBy.Time < 1 {
-			return errors.New("smtp: DELIVERBY mode must be greater than zero with return mode")
-		}
-		arg := fmt.Sprintf(" BY=%d;%s", int(opts.DeliverBy.Time.Seconds()), opts.DeliverBy.Mode)
-		if opts.DeliverBy.Trace {
-			arg += "T"
-		}
-		sb.WriteString(arg)
-	}
-	if _, ok := c.ext["MT-PRIORITY"]; ok && opts != nil && opts.MTPriority != nil {
-		if *opts.MTPriority < -9 || *opts.MTPriority > 9 {
-			return errors.New("smtp: MT-PRIORITY must be between -9 and 9")
-		}
-		sb.WriteString(fmt.Sprintf(" MT-PRIORITY=%d", *opts.MTPriority))
 	}
 	if _, _, err := c.cmd(25, "%s", sb.String()); err != nil {
 		return err
