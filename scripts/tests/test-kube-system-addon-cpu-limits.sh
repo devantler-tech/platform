@@ -34,7 +34,6 @@ ${cilium}|.spec.values.hubble.ui.backend.resources|15m
 ${cilium}|.spec.values.resources|200m
 ${cilium}|.spec.values.envoy.resources|50m
 ${tetragon}|.spec.values.tetragon.resources|100m
-${tetragon}|.spec.values.export.resources|15m
 ${metrics}|.spec.values.resources|100m
 ${ccm}|.spec.values.resources|100m
 ${csi}|.spec.values.controller.resources.csiAttacher|15m
@@ -119,9 +118,9 @@ expect_caught agent-limit-removed "${cilium}" 'del(.spec.values.resources.limits
   "${cilium} .spec.values.resources: limits.cpu must be \"2\""
 expect_caught envoy-limit-removed "${cilium}" 'del(.spec.values.envoy.resources.limits)' \
   "${cilium} .spec.values.envoy.resources: limits.cpu must be \"2\""
-expect_caught tetragon-export-request-removed "${tetragon}" 'del(.spec.values.export.resources.requests)' \
-  "${tetragon} .spec.values.export.resources: requests.cpu must be 15m"
+expect_caught tetragon-agent-request-removed "${tetragon}" 'del(.spec.values.tetragon.resources.requests)' \
+  "${tetragon} .spec.values.tetragon.resources: requests.cpu must be 100m"
 expect_caught csi-node-limit-removed "${csi}" 'del(.spec.values.node.resources.hcloudCSIDriver.limits)' \
   "${csi} .spec.values.node.resources.hcloudCSIDriver: limits.cpu must be \"2\""
 
-printf 'kube-system add-on CPU limits: 19 containers pin request + limit, 8 defects caught.\n'
+printf 'kube-system add-on CPU limits: 18 containers pin request + limit, 8 defects caught.\n'
