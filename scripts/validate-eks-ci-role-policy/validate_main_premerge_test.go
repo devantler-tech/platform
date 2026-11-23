@@ -29,7 +29,7 @@ func writerCondition(name string) string {
 }
 
 var premergeReaders = []string{
-	"validate-eks-authorization",
+	"validate-eks-authorization", "validate-oci-repository-verify",
 	"validate-talos-kubernetes-compatibility", "validate-rgd-templates",
 	"validate-rgd-template-wiring", "validate-scanner-versions",
 }

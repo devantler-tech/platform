@@ -173,8 +173,11 @@ Because the signatures are separate, a release can pass one layer and fail anoth
 manifest is signed, Flux applies the manifests and then admission denies the Pod, or the node
 refuses the pull (`ImagePullBackOff`).
 
-`scripts/guard-oci-repository-verify.sh` refuses any devantler-tech `OCIRepository` whose subject
-trusts a shared reusable publisher, so a retired identity cannot return unnoticed.
+`scripts/guard-oci-repository-verify.sh` requires every devantler-tech `OCIRepository` subject to
+name one first-party repository's own workflow on a branch or tag ref, never the deleted
+`actions` publisher and, in `.github`, only its own `cd.yaml`, so a retired identity cannot return
+unnoticed. It runs on pull requests, the merge queue, direct pushes to `main`, the manual CD route
+and the DR rebuild.
 
 ### Releases reach production by themselves
 

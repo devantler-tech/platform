@@ -281,25 +281,42 @@ repo_doc fo 'oci://ghcr.io/devantler-tech/fo/manifests' "$(printf '  verify:\n  
 add_resource "$root" fo.yaml
 expect_refused 'a subject anchored on another organisation is refused' "$root" 'does not anchor on'
 
-# --- RED: a subject trusting a retired shared reusable publisher (#6266) — a reusable
-# workflow signs as its host repository whoever calls it, so trusting it would let any
-# caller's artifact verify. Refused beside an own-release alternative, and in the
-# deleted legacy repository too ---
-root="$(fresh_root sharedcanonical)"
-repo_doc sc 'oci://ghcr.io/devantler-tech/sc/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'^https://github\\.com/devantler-tech/(\\.github/\\.github/workflows/publish-app\\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812|sc/\\.github/workflows/cd\\.yaml@refs/tags/v1\\.0\\.0)\$'")" >"$root/sc.yaml"
-add_resource "$root" sc.yaml
-expect_refused 'a shared publish-app revision beside an own release is refused' "$root" "OCIRepository sc (oci://ghcr.io/devantler-tech/sc/manifests) trusts the retired shared publisher '\\.github/\\.github/workflows/publish-app\\.yaml'"
-
-root="$(fresh_root sharedlegacy)"
-repo_doc sl 'oci://ghcr.io/devantler-tech/sl/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-manifests\\.yaml@[0-9a-f]{40}\$'")" >"$root/sl.yaml"
-add_resource "$root" sl.yaml
-expect_refused 'a deleted legacy publish-manifests subject is refused' "$root" "OCIRepository sl (oci://ghcr.io/devantler-tech/sl/manifests) trusts the retired shared publisher 'actions/\\.github/workflows/publish-manifests\\.yaml'"
-
-# --- GREEN: the `.github` repository's own release workflow is not a shared publisher ---
-root="$(fresh_root githubownrelease)"
-repo_doc gc 'oci://ghcr.io/devantler-tech/github-config/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/cd\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\$'")" >"$root/gc.yaml"
-add_resource "$root" gc.yaml
-expect_accepted 'the .github repository own cd.yaml release subject is accepted' "$root"
+# --- The signer must be ONE first-party repository's own workflow (#6266). A shared reusable
+# publisher signs as its host repository whoever calls it, so every spelling that could trust
+# one is refused: beside an own release, through a pattern in the workflow file, through the
+# `.github` or deleted `actions` repository, or through a ref that escapes the anchored
+# repository and workflow prefix. Judged by the allowed grammar, never by a retired name.
+signer_case() {
+  local label="$1" verdict="$2" needle="$3" subject="$4" root
+  root="$(fresh_root "signer-$label")"
+  repo_doc sg 'oci://ghcr.io/devantler-tech/sg/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'$subject'")" >"$root/sg.yaml"
+  add_resource "$root" sg.yaml
+  if [ "$verdict" = refuse ]; then
+    expect_refused "signer $label is refused" "$root" "OCIRepository sg (oci://ghcr.io/devantler-tech/sg/manifests) $needle"
+  else
+    expect_accepted "signer $label is accepted" "$root"
+  fi
+}
+while IFS=$'\t' read -r label verdict needle subject; do
+  [ -n "$label" ] || continue
+  signer_case "$label" "$verdict" "$needle" "$subject"
+done <<'CASES'
+shared-beside-own	refuse	trusts subject	^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812|sg/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0)$
+legacy-commit-pin	refuse	trusts subject	^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}$
+optional-extension-pattern	refuse	trusts subject	^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.ya?ml@af042c540ce8db4d64add98c34b5c57691e0e812$
+github-any-workflow	refuse	trusts devantler-tech/.github's	^https://github\.com/devantler-tech/\.github/\.github/workflows/[^/]+\.ya?ml@refs/tags/v1\.0\.0$
+github-shared-tag	refuse	trusts devantler-tech/.github's	^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@refs/tags/v21\.3\.4$
+deleted-actions-tag	refuse	trusts the deleted shared publisher repository	^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@refs/tags/v1\.2\.3$
+top-level-alternation	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0|\.github/\.github/workflows/publish-app\.yaml@.*$
+mid-pattern-anchor	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v1$|x$
+unclosed-group	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/(v1$
+unescaped-repository-dot	refuse	trusts subject	^https://github\.com/devantler-tech/.github/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0$
+any-repository	refuse	trusts subject	^https://github\.com/devantler-tech/[^/]+/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0$
+own-commit-pin	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@[0-9a-f]{40}$
+github-own-release	accept	-	^https://github\.com/devantler-tech/\.github/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
+own-branch-workflow	accept	-	^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
+own-strict-semver	accept	-	^https://github\.com/devantler-tech/sg/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
+CASES
 
 # --- RED: host case and substituted hosts ---
 root="$(fresh_root upper)"

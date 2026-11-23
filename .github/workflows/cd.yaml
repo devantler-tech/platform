@@ -236,6 +236,9 @@ jobs:
   validate-publication-contract:
     name: 🖋️ Validate Publication Contract
     runs-on: ubuntu-latest
+    # The OCIRepository signer guard gates the deploy THROUGH this job, keeping
+    # deploy-prod's `needs` line byte-identical for validate-dr-signing's ablations.
+    needs: [validate-oci-repository-verify]
     permissions:
       contents: read # checkout repository
     steps:
@@ -257,6 +260,44 @@ jobs:
         run: |
           go test ./scripts/validate-dr-signing
           go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
+
+  # Its OWN job, gating the deploy through validate-publication-contract's `needs`: that job
+  # may run only one command step, and deploy-prod's `needs` line is the literal that
+  # validate-dr-signing's ablations mutate. ci.yaml runs this guard on `pull_request` and
+  # `merge_group` only, so a source signer widened by a DIRECT PUSH to main (a shared reusable
+  # publisher, say) would otherwise reach production through this manual route unchecked
+  # (#2818, #6266).
+  validate-oci-repository-verify:
+    name: 🔐 Validate OCIRepository Signers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Initialize the approved kubectl renderer
+        timeout-minutes: 5
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          echo /usr/local/bin >> "$GITHUB_PATH"
+          export PATH="/usr/local/bin:$PATH"
+          kubectl version --client
+
+      - name: 🔐 Validate every devantler-tech OCIRepository verifies
+        run: ./scripts/guard-oci-repository-verify.sh
 
   # A manual dispatch can deploy a direct main push without a merge-group
   # revision. Validate the root-source recovery path on that exact revision.

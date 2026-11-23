@@ -16,9 +16,12 @@
 #     entries, so a second entry widens the trusted signer set while the first still
 #     reads as narrowed; alternation belongs inside the one subject regex.
 #   - that entry names a non-empty `issuer` and a non-empty `subject`.
-#   - that subject trusts none of the shared reusable publish workflows (#6266, ADR
-#     0017): a reusable workflow signs with its HOST repository's identity whoever
-#     calls it, so trusting one would let any caller's artifact verify for this source.
+#   - that subject names ONE first-party repository's own workflow on a branch or tag
+#     ref: a literal repository (never the deleted `actions` publisher, and for `.github`
+#     only its own `cd.yaml`), a literal workflow file or `[^/]+\.ya?ml`, and a ref whose
+#     groups close with no top-level `|` (#6266, ADR 0017). A shared reusable workflow
+#     signs with its HOST repository's identity whoever calls it, so trusting one would
+#     let any caller's artifact verify for this source.
 #   - the trusted Wedding and AS Coaching tenant artifacts follow the governed
 #     `>=1.0.0` semver stream, and a `Tenant` follows its own stable releases
 #     through the exact constructor (ADR 0019). The platform owns their signer and
@@ -87,9 +90,12 @@ readonly REQUIRED_URL_PREFIX='oci://ghcr.io/devantler-tech/'
 # the literal regex text the manifests carry (the `.` escaped), not evaluated.
 readonly REQUIRED_ISSUER='^https://token\.actions\.githubusercontent\.com$'
 readonly REQUIRED_SUBJECT_PREFIX='^https://github\.com/devantler-tech/'
-# The retired shared publish-app and publish-manifests workflows, in either host
-# repository (the `.github` repository and the deleted `actions` one), escaped or not.
-readonly SHARED_PUBLISHER_RE='(\\?\.github|actions)/\\?\.github/workflows/publish-(app|manifests)\\?\.ya?ml'
+# After that prefix, every signer is ONE first-party repository's own workflow (ADR 0017,
+# #6266): a literal repository name, `/\.github/workflows/`, either one literal workflow
+# file or the any-workflow form `[^/]+\.ya?ml`, then `@refs/tags/` or `@refs/heads/`. Only
+# the ref after that may be a pattern. A `.` in a name must be escaped, or it would match any
+# character. Groups 1, 3, 5 and 6 are the repository, the file, the ref kind and the ref.
+readonly OWN_SIGNER_RE='^(([A-Za-z0-9_-]|\\\.)+)/\\\.github/workflows/(\[\^/\]\+\\\.ya\?ml|([A-Za-z0-9_-]|\\\.)+)@refs/(tags|heads)/(.+)$'
 readonly REQUIRED_TENANT_STREAM_SEMVER='>=1.0.0'
 readonly WEDDING_STREAM_URL='oci://ghcr.io/devantler-tech/wedding-app/manifests'
 readonly ASCOACHING_STREAM_URL='oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests'
@@ -254,6 +260,37 @@ readonly YQ_ROWS='[.. | select(type == "!!map" and .kind == "OCIRepository")]
   | map(sub("^$", "-"))
   | join("	")'
 
+# ref_tail_is_closed <ref pattern>: the ref ends with exactly one `$`, and every group and
+# character class it opens closes, with no `|` outside them. A top-level `|` or an unclosed
+# group would let the pattern match beyond the anchored repository and workflow prefix. An
+# unusual but harmless spelling is refused rather than parsed, so this fails closed.
+ref_tail_is_closed() {
+  local text="$1" char i depth=0 class=0 escaped=0
+  [[ "$text" == *'$' ]] || return 1
+  text="${text%\$}"
+  for ((i = 0; i < ${#text}; i++)); do
+    char="${text:i:1}"
+    if ((escaped)); then
+      escaped=0
+      continue
+    fi
+    case "$char" in
+      \\) escaped=1 ;;
+      '[') class=1 ;;
+      ']') class=0 ;;
+      '(') ((class)) || depth=$((depth + 1)) ;;
+      ')')
+        if ((!class)); then
+          ((depth > 0)) || return 1
+          depth=$((depth - 1))
+        fi
+        ;;
+      '|' | '$') ((class || depth)) || return 1 ;;
+    esac
+  done
+  ((!escaped && !depth && !class))
+}
+
 status=0
 in_scope=0
 seen_exempt=""
@@ -370,10 +407,34 @@ while IFS= read -r root; do
         continue
         ;;
     esac
-    if [[ "$subject" =~ $SHARED_PUBLISHER_RE ]]; then
-      fail "$label: OCIRepository $name ($url) trusts the retired shared publisher '${BASH_REMATCH[0]}'; a reusable workflow signs as its host repository whoever calls it, so trust only this artifact's own release workflow (ADR 0017)"
+    # A shared reusable publisher signs as ITS host repository whoever calls it, so a subject
+    # that trusts one would let any caller's artifact verify here (ADR 0017, #6266). Judged by
+    # what is allowed, never by spotting a retired name: a pattern can spell one many ways.
+    signer="${subject#"$REQUIRED_SUBJECT_PREFIX"}"
+    # The Tenant constructor's proved subject names the tenant through a placeholder.
+    [[ "$url" != "$TEMPLATED_TENANT_STREAM_URL" ]] || signer="${signer/<tenant>/tenant}"
+    signer_repo="" signer_file="" signer_ref=""
+    if [[ "$signer" =~ $OWN_SIGNER_RE ]]; then
+      signer_repo="${BASH_REMATCH[1]//\\./.}"
+      signer_file="${BASH_REMATCH[3]}"
+      signer_ref="${BASH_REMATCH[6]}"
+    fi
+    if [ -z "$signer_repo" ] || ! ref_tail_is_closed "$signer_ref"; then
+      fail "$label: OCIRepository $name ($url) trusts subject '$subject', which is not one first-party repository's own workflow on a branch or tag ref; a shared reusable publisher signs as its host repository whoever calls it (ADR 0017)"
       continue
     fi
+    case "$signer_repo" in
+      actions)
+        fail "$label: OCIRepository $name ($url) trusts the deleted shared publisher repository devantler-tech/actions"
+        continue
+        ;;
+      .github)
+        if [ "$signer_file" != 'cd\.yaml' ]; then
+          fail "$label: OCIRepository $name ($url) trusts devantler-tech/.github's '$signer_file'; that repository hosts the shared reusable workflows, so only its own cd.yaml release is trusted"
+          continue
+        fi
+        ;;
+    esac
   done <"$work/rows"
 done <<EOF
 $roots
