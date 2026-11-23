@@ -25,10 +25,7 @@ type benchmarkAdmissionEpoch struct {
 // Prove the fence for the supplied original reference. Instance and namespace
 // fences and the journal still require separate evidence before any delete.
 func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, record benchmarkRecord, observed object) error {
-	if err := authorizeBenchmark(os.Getenv, "v1"); err != nil {
-		return err
-	}
-	if record.Source != os.Getenv("GITHUB_SHA") || record.Run != os.Getenv("GITHUB_RUN_ID") {
+	if !activeBenchmarkV1FenceOwner(c, record) {
 		return errors.New("the active V1 benchmark does not own this proof")
 	}
 	policies, err := benchmarkRetirementFences(record)
@@ -46,7 +43,7 @@ func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, re
 		return errors.New("benchmark reference fence received an unsupported resource")
 	}
 	receipt := record.Fences[text(policy, "metadata", "name")]
-	return proveBenchmarkFenceOnServingAPIs(ctx, c, record.Source, policy, receipt, func(ctx context.Context, direct *http.Client, address *url.URL) error {
+	return proveBenchmarkFenceOnServingAPIs(ctx, c, record.mutationSource(), policy, receipt, func(ctx context.Context, direct *http.Client, address *url.URL) error {
 		return probe(ctx, direct, address, record, observed)
 	})
 }

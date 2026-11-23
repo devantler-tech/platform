@@ -410,6 +410,16 @@ observed resource versions to remove only the recorded scratch assets.
 The original journal is archived in an immutable ConfigMap. The protected
 workspace remains available for a fresh benchmark.
 
+`recover-bound-v1-benchmark` handles an unmeasured V1 run whose original
+fio Pod failed after its retained scratch claim bound. Leave `node` and
+`database` empty and confirm `recover-bound-longhorn-v1-benchmark:<run-id>`.
+The workflow verifies the original workflow is terminal, archives its
+unchanged run evidence, and removes only its recorded scratch objects. It
+waits for native detach and PV release and uses the same per-API admission
+fences and instance-manager seals as normal V1 cleanup. A missing asset
+requires a matching deletion intent. An ambiguous fence creation or a changed
+runtime epoch holds recovery. A cleaned failure is never a usable baseline.
+
 New V1 benchmarks use the first permanent worker and check its free requested
 memory before creating scratch resources. The V2 comparison uses the worker
 recorded in its completed V1 baseline. Existing baselines retain their original

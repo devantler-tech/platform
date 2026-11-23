@@ -8,15 +8,26 @@ metadata:
     platform.devantler.tech/tenant-source: "true"
 spec:
   interval: 1m
-  url: oci://ghcr.io/devantler-tech/data-product-controller/manifests
+  # The KHoist release's manifests artifact; the Kustomization applies only its
+  # documentation/ directory. Releases up to v6.0.1 used the pre-rename
+  # data-product-controller name, which no longer receives releases.
+  url: oci://ghcr.io/devantler-tech/khoist/manifests
+  # Follows KHoist's own signed release tags (ADR 0019, monorepo#5094): the
+  # newest stable `X.Y.Z` release, checked every minute, with no platform change
+  # per release. An emergency pin is one exact stable version, `semver: "X.Y.Z"`,
+  # in a reviewed pull request.
   ref:
-    digest: sha256:b9b5ff9e0cedf1305528e058708e9729eed9aa39a5dcdd967b7e74197264fe65
+    semver: ">=0.0.0"
+    semverFilter: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
   # The artifact is public; verification needs no registry credential.
   verify:
     provider: cosign
     matchOIDCIdentity:
-      # Written by scripts/write-publish-workflow-matchers.sh. The KHoist repository's
-      # own release workflow on a release tag is accepted beside the shared
-      # publisher revisions (#6265).
+      # Keyless-signed by a workflow directly in .github/workflows/ of KHoist's
+      # OWN repository on a strict OCI-semver release tag (ADR 0017, ADR 0019):
+      # the same grammar as the Tenant graph. Release tags cannot be moved or
+      # deleted, and the publish action signs only tags on `main`. The shared
+      # publisher, another repository, a branch or a non-release tag does not
+      # match.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328|\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812|khoist/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$'
+        subject: '^https://github\.com/devantler-tech/khoist/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'

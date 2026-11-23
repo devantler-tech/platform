@@ -6,7 +6,6 @@ import (
 	"errors"
 	"maps"
 	"reflect"
-	"slices"
 	"time"
 )
 
@@ -233,35 +232,32 @@ func recoverUnstartedV1Benchmark(ctx context.Context, c client, source, run stri
 	if err := verifyUnstartedBenchmarkStorage(ctx, c, record); err != nil {
 		return err
 	}
-	tag := benchmarkTag(phase, record.Run)
-	for _, name := range slices.Sorted(maps.Keys(record.TagNodes)) {
-		node, err := c.get(ctx, "nodes.longhorn.io", "longhorn-system", name, false)
-		if err != nil || text(node, "metadata", "uid") != record.TagNodes[name] {
-			return errors.New("scratch scheduling tag owner changed")
-		}
-		tags, _ := value(node, "spec", "tags").([]any)
-		if text(node, "metadata", "annotations", benchmarkOwner) == "" && !slices.Contains(tags, any(tag)) {
-			continue
-		}
-		if err := c.setBenchmarkTag(ctx, source, tag, name, record.TagNodes[name], false); err != nil {
-			return err
-		}
+	if err := removeRecoveryBenchmarkTags(ctx, c, record); err != nil {
+		return err
 	}
-	return sealUnstartedBenchmarkRecovery(ctx, c, record)
+	if err := archiveBenchmarkRecovery(ctx, c, record, "unstarted"); err != nil {
+		return err
+	}
+	return removeArchivedBenchmarkJournal(ctx, c, record)
 }
 
-func sealUnstartedBenchmarkRecovery(ctx context.Context, c client, record benchmarkRecord) error {
+func archiveBenchmarkRecovery(ctx context.Context, c client, record benchmarkRecord, mode string) error {
 	cm, current, err := readBenchmark(ctx, c, "v1")
 	if err != nil || cm == nil || text(cm, "metadata", "uid") != record.Recovery.JournalUID ||
 		!reflect.DeepEqual(current, record) {
 		return errors.New("scratch cleanup journal changed")
 	}
-	archive := "longhorn-v2-benchmark-v1-unstarted-" + record.Run
+	archive := "longhorn-v2-benchmark-v1-" + mode + "-" + record.Run
 	source := record.Recovery.Source
 	// Store original evidence with a name bound to the stopped run. Exclude
 	// the current recovery owner so an interrupted recovery can verify it.
 	original := record
 	original.Recovery = nil
+	if mode == "bound" {
+		// The failed workflow did not install fences. The recovery journals
+		// its own fences separately from this immutable failure evidence.
+		original.Fences, original.FencePending, original.FenceCheckpoint = nil, "", ""
+	}
 	body, err := json.Marshal(original)
 	if err != nil {
 		return err
@@ -276,12 +272,20 @@ func sealUnstartedBenchmarkRecovery(ctx context.Context, c client, record benchm
 			"data":     object{"record": string(body)}})
 	}
 	if err != nil || value(saved, "immutable") != true || text(saved, "data", "record") != string(body) {
-		return errors.New("original unstarted benchmark archive is unverified")
+		return errors.New("original failed benchmark archive is unverified")
+	}
+	return nil
+}
+
+func removeArchivedBenchmarkJournal(ctx context.Context, c client, record benchmarkRecord) error {
+	cm, current, err := readBenchmark(ctx, c, "v1")
+	if err != nil || cm == nil || text(cm, "metadata", "uid") != record.Recovery.JournalUID || !reflect.DeepEqual(current, record) {
+		return errors.New("scratch cleanup journal changed")
 	}
 	if err := benchmarkOwnerFinished(ctx, c, record.Run, record.Source); err != nil {
 		return err
 	}
-	if err := c.deleteObserved(ctx, source, "/api/v1/namespaces/longhorn-system/configmaps/longhorn-v2-benchmark-v1", cm); err != nil {
+	if err := c.deleteObserved(ctx, record.Recovery.Source, "/api/v1/namespaces/longhorn-system/configmaps/longhorn-v2-benchmark-v1", cm); err != nil {
 		return err
 	}
 	return waitReadyWithin(ctx, 2*time.Minute, func(ctx context.Context) error {

@@ -92,7 +92,6 @@ own_release_of() { # <consumer>
       printf '|%s' "$GITHUB_OWN"
       return 0
       ;;
-    data-product-controller) repository=khoist ;;
   esac
   printf '|%s%s' "${repository//./\\.}" "$OWN_TAIL"
 }
@@ -648,8 +647,6 @@ fi
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
   while IFS=$'\t' read -r expected identity; do
-    # The product documentation consumer is data-product-controller, which approves
-    # v19.0.5 since its publisher moved there (#6227), so it accepts the same rows.
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
     # The generic rules no longer accept the deleted legacy publisher repository at
@@ -684,7 +681,6 @@ admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-im
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
 coaching	k8s/bases/apps/ascoachingogvaner/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
-product-docs	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
 # The generic rules admitted v21.3.4 (#6228) in place of the retired v8.0.0
@@ -775,6 +771,8 @@ admission,node-pull,wedding	https://github.com/devantler-tech/wedding-app/.githu
 admission,node-pull,wedding	https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yml@refs/tags/v1.2.3-rc.1
 admission,node-pull,coaching	https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/release.yaml@refs/tags/v0.1.0
 admission,node-pull,product-docs	https://github.com/devantler-tech/khoist/.github/workflows/release.yaml@refs/tags/v5.4.0
+admission,node-pull,product-docs	https://github.com/devantler-tech/khoist/.github/workflows/cd.yaml@refs/tags/v9.1.0-rc.1
+admission,node-pull,coaching,wedding	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
 admission,node-pull,aws	https://github.com/devantler-tech/aws/.github/workflows/cd.yaml@refs/tags/v1.1.4
 admission,node-pull	https://github.com/devantler-tech/data-product-controller/.github/workflows/release.yaml@refs/tags/v5.4.0
 admission,node-pull	https://github.com/devantler-tech/wedding-app-x/.github/workflows/release.yaml@refs/tags/v1.2.3
@@ -783,7 +781,7 @@ admission,node-pull	https://github.com/devantler-tech/wedding-app-x/.github/work
 -	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3
 admission,node-pull	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3
 admission,node-pull	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0
-coaching,wedding,product-docs	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
+coaching,wedding	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
 -	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/heads/main
 -	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2
 -	https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/latest

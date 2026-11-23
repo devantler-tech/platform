@@ -42,18 +42,9 @@ func removeRecoveredBenchmarkWorkload(ctx context.Context, c client, record *ben
 	}
 	// Reassert ownership through journal UID/version CAS before every delete,
 	// including a retry whose previous API response was lost.
-	next := *record
-	owner := *record.Recovery
-	owner.Deletes = maps.Clone(owner.Deletes)
-	if owner.Deletes == nil {
-		owner.Deletes = map[string]benchmarkResource{}
-	}
-	owner.Deletes[kind] = identity
-	next.Recovery = &owner
-	if err := saveBenchmarkRecoveryProgress(ctx, c, *record, next); err != nil {
+	if err := recordBenchmarkRecoveryDeletion(ctx, c, record, kind); err != nil {
 		return err
 	}
-	*record = next
 	if current == nil {
 		checked, err := c.get(ctx, resource, record.Namespace, identity.Name, true)
 		if err != nil {
@@ -65,6 +56,25 @@ func removeRecoveredBenchmarkWorkload(ctx context.Context, c client, record *ben
 		return nil
 	}
 	return removeScratch(ctx, c, record.Recovery.Source, resource, record.Namespace, path, current)
+}
+
+func recordBenchmarkRecoveryDeletion(ctx context.Context, c client, record *benchmarkRecord, kind string) error {
+	if record.Recovery == nil || !benchmarkRecoveryDeletionKind(kind) || record.Resources[kind].UID == "" {
+		return errors.New("deletion requires an owned, original recovery receipt")
+	}
+	next := *record
+	owner := *record.Recovery
+	owner.Deletes = maps.Clone(owner.Deletes)
+	if owner.Deletes == nil {
+		owner.Deletes = map[string]benchmarkResource{}
+	}
+	owner.Deletes[kind] = record.Resources[kind]
+	next.Recovery = &owner
+	if err := saveBenchmarkRecoveryProgress(ctx, c, *record, next); err != nil {
+		return err
+	}
+	*record = next
+	return nil
 }
 
 func saveBenchmarkRecoveryProgress(ctx context.Context, c client, previous, next benchmarkRecord) error {

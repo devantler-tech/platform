@@ -23,11 +23,18 @@ type benchmarkRecoveryOwner struct {
 
 func benchmarkRecoveryDeletionKind(kind string) bool {
 	switch kind {
-	case "Pod", "NetworkPolicy", "PersistentVolumeClaim", "StorageClass":
+	case "Pod", "NetworkPolicy", "PersistentVolumeClaim", "StorageClass", "PersistentVolume", "LonghornVolume":
 		return true
 	default:
 		return false
 	}
+}
+
+func (r benchmarkRecord) mutationSource() string {
+	if r.Recovery != nil {
+		return r.Recovery.Source
+	}
+	return r.Source
 }
 
 var benchmarkRunPattern = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
