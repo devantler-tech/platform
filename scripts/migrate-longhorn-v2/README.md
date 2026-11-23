@@ -170,8 +170,8 @@ platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCS
 This tool lands in stages (platform#5655). It includes `refresh-clients`, `prepare-worker`,
 `prepare-unused-temporary-worker`, read-only replica inventories and the benchmarks.
 `refresh-clients` holds until the fixed migration workers are Ready and the host
-huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
-capacity follows in its own change.
+huge-page settings are loaded. Permanent-worker preparation is below and stays dormant: it is the
+fallback route (platform#5582), and no change enables temporary V1 replica capacity for it.
 
 For the unused temporary-worker route (platform#5787), finish the client refresh and the
 cleaned V1 baseline first. Select `prepare-unused-temporary-worker`, `temporary-v1-1` or
@@ -409,10 +409,10 @@ recovery still require their own proofs.
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes
-that worker's `EPHEMERAL` partition and requires the separate permanent-worker safeguards. Nothing on the
-cluster enables it yet: it holds with no write until the temporary V1 pool accepts replicas, the worker layout is loaded by Talos, the raw-disk defaults are
-on the Node, huge pages are ready and Longhorn's V2 engine is on. Those land in later changes
-(platform#5655).
+that worker's `EPHEMERAL` partition and requires the separate permanent-worker safeguards. It is the
+fallback route (platform#5582) and nothing on the cluster enables it: it holds with no write until the temporary V1 pool accepts replicas, the worker layout is loaded by Talos, the raw-disk defaults are
+on the Node, huge pages are ready and Longhorn's V2 engine is on. The chosen route reuses the unused
+temporary workers instead (platform#5787, platform#5809) and never enables V1 replicas on them.
 
 Select `prepare-worker`, the worker, and `prepare-longhorn-v2-<worker>`, for example
 `prepare-longhorn-v2-prod-worker-1`. The workflow shares the production deployment lock. It writes
