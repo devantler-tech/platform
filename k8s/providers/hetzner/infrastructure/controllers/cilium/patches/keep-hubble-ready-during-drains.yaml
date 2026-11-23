@@ -1,0 +1,22 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  values:
+    hubble:
+      ui:
+        replicas: 2
+        podDisruptionBudget:
+          enabled: true
+          maxUnavailable: 1
+        topologySpreadConstraints:
+          - maxSkew: 1
+            minDomains: 2
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                k8s-app: hubble-ui

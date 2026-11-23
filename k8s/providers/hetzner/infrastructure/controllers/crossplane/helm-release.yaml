@@ -27,6 +27,19 @@ spec:
         name: crossplane
   # https://github.com/crossplane/crossplane/blob/main/cluster/charts/crossplane/values.yaml
   values:
+    # Keep the webhooks available during a worker drain. Only the elected
+    # Crossplane core reconciles external resources.
+    replicas: 2
+    leaderElection: true
+    topologySpreadConstraints:
+      - maxSkew: 1
+        minDomains: 2
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: crossplane
+            release: crossplane
     # Only these emptyDir caches may move during ordinary autoscaler eviction.
     # PDB, ownership and scheduling checks still apply (#5582).
     customAnnotations:
