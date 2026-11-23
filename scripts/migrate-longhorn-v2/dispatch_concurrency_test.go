@@ -63,8 +63,8 @@ func validateMigrationDispatchDependencies(workflow object) error {
 func validateMigrationDispatchBoundarySteps(workflow object) error {
 	tests, _ := value(workflow, "jobs", "tests", "steps").([]any)
 	required := map[string]bool{
-		"bash scripts/tests/test-longhorn-runtime-inventory-source.sh":                                                               false,
-		"go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory": false,
+		"bash scripts/tests/test-longhorn-runtime-inventory-source.sh":                                                                                             false,
+		"go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory": false,
 	}
 	for _, raw := range tests {
 		step := raw.(object)
@@ -82,6 +82,17 @@ func validateMigrationDispatchBoundarySteps(workflow object) error {
 		}
 	}
 	return nil
+}
+
+func TestMigrationDispatchRequiresEveryBoundaryPackage(t *testing.T) {
+	for _, pkg := range []string{"./scripts/migrate-longhorn-v2", "./internal/longhornmigration", "./internal/longhorninventory", "./internal/namespaceinventory"} {
+		workflow := migrationDispatchWorkflow(t)
+		step := migrationDispatchStep(t, valueObject(workflow, "jobs", "tests"), "Test complete observations and interrupted recovery")
+		step["run"] = strings.ReplaceAll(text(step, "run"), " "+pkg, "")
+		if validateMigrationDispatchBoundarySteps(workflow) == nil {
+			t.Fatal("an omitted boundary package was admitted:", pkg)
+		}
+	}
 }
 
 const migrationDispatchFreshness = `set -euo pipefail
