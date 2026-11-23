@@ -16,4 +16,5 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY --from=build /tmp/fio/fio /usr/local/bin/fio
 COPY --from=build /tmp/fio/COPYING /usr/share/doc/fio/COPYING
 USER 65532:65532
+HEALTHCHECK --interval=60s --timeout=5s --retries=2 CMD ["/usr/local/bin/fio", "--version"]
 ENTRYPOINT ["/usr/local/bin/fio"]
