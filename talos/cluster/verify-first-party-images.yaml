@@ -230,6 +230,10 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$
+  - image: ghcr.io/devantler-tech/platform-kagent-controller
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kagent-controller\.yaml@refs/heads/main$
   # The migration images have separate, exact main-branch publishers.
   - image: ghcr.io/devantler-tech/platform-longhorn-instance-manager
     keyless:

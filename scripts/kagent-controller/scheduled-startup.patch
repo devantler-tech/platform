@@ -1,0 +1,453 @@
+diff --git a/go/core/internal/controller/scheduledrun/controller.go b/go/core/internal/controller/scheduledrun/controller.go
+index c73aa954e9cf7d10656d7da29626369f66768e89..1c3d02ff43a66cf1cbb7ec25c0804c45bbd447a0 100644
+--- a/go/core/internal/controller/scheduledrun/controller.go
++++ b/go/core/internal/controller/scheduledrun/controller.go
+@@ -17,0 +18 @@ import (
++	sessionsvc "github.com/kagent-dev/kagent/go/core/internal/service/session"
+@@ -33,0 +35 @@ type controllerWorkflow interface {
++	DeleteUnstarted(context.Context, *apiv1.Session, database.ScheduledRunExecutionLease) (*apiv1.Session, error)
+@@ -81,2 +83,5 @@ func (c *Controller) tick(ctx context.Context) error {
+-			// Leave room in the 30-second lease for persisting the result.
+-			attemptCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
++			timeout := 10 * time.Second
++			if lease.Execution.GetTaskId() == "" {
++				timeout = scheduling.DispatchAttemptTimeout
++			}
++			attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+@@ -104 +109,8 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+-	expired := !time.Now().Before(execution.GetDeadline().AsTime())
++	now := time.Now()
++	deadline := execution.GetDeadline().AsTime()
++	expired := !now.Before(deadline)
++	var startupDeadline time.Time
++	if created := execution.GetCreatedAt(); created != nil {
++		startupDeadline = created.AsTime().Add(scheduling.StartupTimeout)
++	}
++	startupExpired := !startupDeadline.IsZero() && !now.Before(startupDeadline)
+@@ -109,0 +122,4 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
++		if startupExpired {
++			finishExecution(execution, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_FAILED, startupDeadlineReason)
++			return nil
++		}
+@@ -124 +140,5 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+-		finishExecution(execution, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_FAILED, "Session was deleted")
++		reason := execution.GetFailureReason()
++		if reason == "" {
++			reason = "Session was deleted"
++		}
++		finishExecution(execution, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_FAILED, reason)
+@@ -138,0 +159 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
++		execution.FailureReason = ""
+@@ -143,0 +165,14 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
++	if execution.GetTaskId() == "" && (startupExpired || execution.GetFailureReason() == startupRefusedReason) {
++		reason := execution.GetFailureReason()
++		if reason == "" {
++			reason = startupDeadlineReason
++		}
++		execution.FailureReason = reason
++		// Reuse the durable session deletion workflow. Its admission checks
++		// fence a late save and refuse to discard any session with history.
++		if _, err := c.workflow.DeleteUnstarted(ctx, session, leased.Lease); err != nil {
++			return fmt.Errorf("reclaim unstarted scheduled session: %w", err)
++		}
++		finishExecution(execution, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_FAILED, reason)
++		return nil
++	}
+@@ -165 +200,4 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+-	dispatchCtx, cancel := context.WithDeadline(ctx, execution.GetDeadline().AsTime())
++	if !startupDeadline.IsZero() && startupDeadline.Before(deadline) {
++		deadline = startupDeadline
++	}
++	dispatchCtx, cancel := context.WithDeadline(ctx, deadline)
+@@ -193,0 +232,3 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
++		if execution.GetTaskId() == "" && errors.Is(err, sessionsvc.ErrSendNotAccepted) {
++			execution.FailureReason = startupRefusedReason
++		}
+@@ -198,0 +240,5 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
++const (
++	startupRefusedReason  = "Scheduled input was not accepted"
++	startupDeadlineReason = "Scheduled startup expired before accepting a task"
++)
++
+diff --git a/go/core/internal/controller/scheduledrun/startup_test.go b/go/core/internal/controller/scheduledrun/startup_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..0f9ed80bdac071e977650a5cbbbf96fd80bde9c1
+--- /dev/null
++++ b/go/core/internal/controller/scheduledrun/startup_test.go
+@@ -0,0 +1,166 @@
++package scheduledrun
++
++import (
++	"context"
++	"errors"
++	"iter"
++	"testing"
++	"testing/synctest"
++	"time"
++
++	a2a "github.com/a2aproject/a2a-go/v2/a2a"
++	"github.com/stretchr/testify/require"
++	"google.golang.org/protobuf/types/known/timestamppb"
++
++	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
++	"github.com/kagent-dev/kagent/go/core/internal/database"
++	"github.com/kagent-dev/kagent/go/core/internal/scheduling"
++	sessionsvc "github.com/kagent-dev/kagent/go/core/internal/service/session"
++)
++
++type startupGateway struct {
++	taskLookupGateway
++	delay time.Duration
++	err   error
++	sends int
++}
++
++func (g *startupGateway) SendStreamingMessage(ctx context.Context, _ *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
++	return func(yield func(a2a.Event, error) bool) {
++		g.sends++
++		timer := time.NewTimer(g.delay)
++		defer timer.Stop()
++		select {
++		case <-ctx.Done():
++			yield(nil, ctx.Err())
++		case <-timer.C:
++			if g.err != nil {
++				yield(nil, g.err)
++				return
++			}
++			yield(&a2a.Task{ID: "accepted-task", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}, nil)
++		}
++	}
++}
++
++type startupStore struct {
++	scopedControllerStore
++	execution *apiv1.ScheduledRunExecution
++	progress  database.ScheduledRunExecutionProgress
++}
++
++func (s *startupStore) LeaseScheduledRunExecutions(context.Context, int) ([]database.LeasedScheduledRunExecution, error) {
++	return []database.LeasedScheduledRunExecution{{Execution: s.execution}}, nil
++}
++
++func (s *startupStore) UpdateScheduledRunExecution(_ context.Context, _ database.ScheduledRunExecutionLease, progress database.ScheduledRunExecutionProgress) error {
++	s.progress = progress
++	return nil
++}
++
++type startupCleanup struct {
++	controllerTestCleanup
++	calls int
++	err   error
++}
++
++func (w *startupCleanup) DeleteUnstarted(_ context.Context, session *apiv1.Session, _ database.ScheduledRunExecutionLease) (*apiv1.Session, error) {
++	w.calls++
++	return session, w.err
++}
++
++func newStartupTest() (*startupStore, *startupGateway, *startupCleanup) {
++	store := &startupStore{
++		scopedControllerStore: scopedControllerStore{session: &apiv1.Session{
++			Id: "session", State: apiv1.RuntimeState_RUNTIME_STATE_READY,
++			Operation: apiv1.RuntimeOperation_RUNTIME_OPERATION_NONE,
++		}},
++		execution: &apiv1.ScheduledRunExecution{
++			Id: "execution", Creator: "owner", SessionId: "session", Prompt: "maintenance",
++			State:     apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_PENDING,
++			CreatedAt: timestamppb.Now(),
++			Deadline:  timestamppb.New(time.Now().Add(24 * time.Hour)),
++		},
++	}
++	gateway := &startupGateway{taskLookupGateway: taskLookupGateway{
++		listTasks: func(*a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
++			return &a2a.ListTasksResponse{}, nil
++		},
++	}}
++	return store, gateway, &startupCleanup{}
++}
++
++func TestScheduledColdStartHasTimeToAcceptTask(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		store, gateway, workflow := newStartupTest()
++		gateway.delay = 19 * time.Second
++		c := NewController(store, workflow, gateway, time.Second)
++
++		require.NoError(t, c.tick(t.Context()))
++		require.Equal(t, "accepted-task", store.progress.TaskID)
++		require.Equal(t, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_RUNNING, store.progress.State)
++		require.Zero(t, workflow.calls)
++		require.Equal(t, 1, gateway.sends)
++	})
++}
++
++func TestScheduledRefusalReclaimsWorkerWithoutResending(t *testing.T) {
++	store, gateway, workflow := newStartupTest()
++	gateway.err = sessionsvc.ErrSendNotAccepted
++	workflow.err = database.ErrConflict
++	c := NewController(store, workflow, gateway, time.Second)
++	lease := database.LeasedScheduledRunExecution{Execution: store.execution}
++
++	require.Error(t, c.reconcile(t.Context(), lease))
++	require.NotEmpty(t, lease.Execution.GetFailureReason())
++	require.ErrorIs(t, c.reconcile(t.Context(), lease), database.ErrConflict)
++	workflow.err = nil
++	require.NoError(t, c.reconcile(t.Context(), lease))
++	require.Equal(t, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_FAILED, lease.Execution.GetState())
++	require.Empty(t, lease.Execution.GetTaskId())
++	require.Equal(t, 2, workflow.calls)
++	require.Equal(t, 1, gateway.sends)
++}
++
++func TestScheduledAmbiguousStartWaitsForFencedCleanup(t *testing.T) {
++	store, gateway, workflow := newStartupTest()
++	gateway.err = errors.New("response lost")
++	c := NewController(store, workflow, gateway, time.Second)
++	lease := database.LeasedScheduledRunExecution{Execution: store.execution}
++
++	require.ErrorIs(t, c.reconcile(t.Context(), lease), gateway.err)
++	require.NoError(t, c.reconcile(t.Context(), lease))
++	require.Zero(t, workflow.calls)
++	require.Equal(t, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_RUNNING, lease.Execution.GetState())
++
++	lease.Execution.CreatedAt = timestamppb.New(time.Now().Add(-5 * time.Minute))
++	workflow.err = database.ErrConflict
++	require.ErrorIs(t, c.reconcile(t.Context(), lease), database.ErrConflict)
++	require.Equal(t, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_RUNNING, lease.Execution.GetState())
++	workflow.err = nil
++	require.NoError(t, c.reconcile(t.Context(), lease))
++	require.Equal(t, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_FAILED, lease.Execution.GetState())
++	require.Equal(t, 1, gateway.sends)
++}
++
++func TestScheduledAcceptedHistoryWinsAfterStartupDeadline(t *testing.T) {
++	store, gateway, workflow := newStartupTest()
++	gateway.err = errors.New("response lost")
++	c := NewController(store, workflow, gateway, time.Second)
++	lease := database.LeasedScheduledRunExecution{Execution: store.execution}
++	require.ErrorIs(t, c.reconcile(t.Context(), lease), gateway.err)
++
++	lease.Execution.CreatedAt = timestamppb.New(time.Now().Add(-5 * time.Minute))
++	gateway.listTasks = func(*a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
++		return &a2a.ListTasksResponse{Tasks: []*a2a.Task{{
++			ID:      "recovered-task",
++			Status:  a2a.TaskStatus{State: a2a.TaskStateWorking},
++			History: []*a2a.Message{{ID: scheduling.MessageIDPrefix + "execution"}},
++		}}}, nil
++	}
++	require.NoError(t, c.reconcile(t.Context(), lease))
++	require.Equal(t, "recovered-task", lease.Execution.GetTaskId())
++	require.Equal(t, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_RUNNING, lease.Execution.GetState())
++	require.Zero(t, workflow.calls)
++	require.Equal(t, 1, gateway.sends)
++}
+diff --git a/go/core/internal/database/scheduled_runs.go b/go/core/internal/database/scheduled_runs.go
+index 6f372545e2be9e2e8622e1740bc69a86886626d8..3768da67e2fd542e87572d647e27eed3eebef952 100644
+--- a/go/core/internal/database/scheduled_runs.go
++++ b/go/core/internal/database/scheduled_runs.go
+@@ -19,0 +20 @@ import (
++	"github.com/kagent-dev/kagent/go/core/internal/scheduling"
+@@ -519 +520,2 @@ func (c *Client) LeaseScheduledRunExecutions(ctx context.Context, limit int) ([]
+-		SET lease_token = $2::uuid, next_attempt_at = clock_timestamp() + interval '30 seconds'
++		SET lease_token = $2::uuid, next_attempt_at = clock_timestamp() +
++		    CASE WHEN e.task_id IS NULL THEN $3::int * interval '1 second' ELSE interval '30 seconds' END
+@@ -521 +523 @@ func (c *Client) LeaseScheduledRunExecutions(ctx context.Context, limit int) ([]
+-	`, pgx.RowToStructByName[scheduledRunExecutionRow], int32(limit), token)
++	`, pgx.RowToStructByName[scheduledRunExecutionRow], int32(limit), token, int32(scheduling.DispatchLease/time.Second))
+diff --git a/go/core/internal/database/scheduled_startup_test.go b/go/core/internal/database/scheduled_startup_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..964ae80ff1e99bb9f4489babf909db3cf027a129
+--- /dev/null
++++ b/go/core/internal/database/scheduled_startup_test.go
+@@ -0,0 +1,94 @@
++package database
++
++import (
++	"testing"
++
++	"github.com/a2aproject/a2a-go/v2/a2a"
++	"github.com/google/uuid"
++	"github.com/stretchr/testify/require"
++
++	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
++)
++
++func TestScheduledStartupCleanupFencesLateInputAndPreservesHistory(t *testing.T) {
++	db := setupTestDB(t)
++	ctx := t.Context()
++	client := NewClient(db, "public")
++	schedule, _ := createTestSchedule(t, client)
++	reserveSession := func(request string) (string, ScheduledRunExecutionLease) {
++		t.Helper()
++		execution, err := client.TriggerScheduledRun(ctx, uuid.MustParse(schedule.Id), schedule.Creator, request)
++		require.NoError(t, err)
++		leases, err := client.LeaseScheduledRunExecutions(ctx, 1)
++		require.NoError(t, err)
++		require.Len(t, leases, 1)
++		require.Equal(t, execution.Id, leases[0].Execution.Id)
++		linked, err := client.ReserveScheduledRunExecutionSession(ctx, uuid.MustParse(execution.Id), schedule.Creator)
++		require.NoError(t, err)
++		create, err := client.BeginSessionOperation(ctx, linked.SessionId, apiv1.RuntimeOperation_RUNTIME_OPERATION_CREATE, false)
++		require.NoError(t, err)
++		executor := uuid.New()
++		claimed, err := client.ClaimSessionOperation(ctx, linked.SessionId, create.ID, executor)
++		require.NoError(t, err)
++		require.True(t, claimed)
++		_, err = client.FinishSessionOperation(ctx, linked.SessionId, create.ID, executor, "actor.team", uuid.NewString(), "")
++		require.NoError(t, err)
++		require.NoError(t, client.ClaimScheduledRunDispatch(ctx, leases[0].Lease))
++		return linked.SessionId, leases[0].Lease
++	}
++
++	unused, lease := reserveSession("unused")
++	stale := lease
++	stale.Token = uuid.New()
++	_, err := client.BeginUnstartedSessionDeletion(ctx, unused, stale)
++	require.ErrorIs(t, err, ErrConflict, "an expired lease holder cannot claim cleanup")
++	dispatch := uuid.New()
++	require.NoError(t, client.ReserveSessionDispatch(ctx, unused, dispatch, "late"))
++	_, err = client.BeginUnstartedSessionDeletion(ctx, unused, lease)
++	require.Error(t, err, "a live dispatch still owns admission")
++	_, err = db.Exec(ctx, `UPDATE session SET dispatch_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1`, unused)
++	require.NoError(t, err)
++
++	op, err := client.BeginUnstartedSessionDeletion(ctx, unused, lease)
++	require.NoError(t, err)
++	require.Equal(t, apiv1.RuntimeState_RUNTIME_STATE_DELETING, op.Instance.GetState())
++	_, err = client.CreateRuntimeTask(ctx, unused, taskMutationHash("late"), &a2a.Task{
++		ID: "late-task", ContextID: unused,
++		Status:  a2a.TaskStatus{State: a2a.TaskStateSubmitted},
++		History: []*a2a.Message{{ID: "late", Role: a2a.MessageRoleUser}},
++	}, dispatch.String())
++	require.Error(t, err, "cleanup must fence a late first task save")
++
++	used, usedLease := reserveSession("used")
++	task := &a2a.Task{
++		ID: "accepted-task", ContextID: used,
++		Status:  a2a.TaskStatus{State: a2a.TaskStateSubmitted},
++		History: []*a2a.Message{{ID: "accepted", Role: a2a.MessageRoleUser}},
++	}
++	_, err = client.CreateRuntimeTask(ctx, used, taskMutationHash("accepted"), task, "")
++	require.NoError(t, err)
++	task.Status.State = a2a.TaskStateCompleted
++	require.NoError(t, saveRuntimeTask(t, client, used, task, task, &SessionTaskSnapshot{
++		Atespace: "team-a", URI: "s3://snapshots/accepted", Fidelity: "SNAPSHOT_FIDELITY_VOLUMES",
++	}))
++	_, err = client.BeginUnstartedSessionDeletion(ctx, used, usedLease)
++	require.ErrorIs(t, err, ErrConflict, "a completed task still protects its session")
++	saved, err := client.GetSessionTask(ctx, used, string(task.ID), nil)
++	require.NoError(t, err)
++	require.Equal(t, a2a.TaskStateCompleted, saved.Status.State)
++}
++
++func TestScheduledStartupLeaseOutlivesColdRestoreAndResultWrite(t *testing.T) {
++	db := setupTestDB(t)
++	client := NewClient(db, "public")
++	schedule, _ := createTestSchedule(t, client)
++	execution, err := client.TriggerScheduledRun(t.Context(), uuid.MustParse(schedule.Id), schedule.Creator, "cold-start")
++	require.NoError(t, err)
++	leases, err := client.LeaseScheduledRunExecutions(t.Context(), 1)
++	require.NoError(t, err)
++	require.Len(t, leases, 1)
++	var seconds float64
++	err = db.QueryRow(t.Context(), `SELECT EXTRACT(EPOCH FROM next_attempt_at - clock_timestamp())::double precision FROM scheduled_run_execution WHERE id = $1`, execution.Id).Scan(&seconds)
++	require.NoError(t, err)
++	require.Greater(t, seconds, float64(80))
++}
+diff --git a/go/core/internal/database/session_deletion.go b/go/core/internal/database/session_deletion.go
+index 7b7b22dd467b2c622cac102e7661f81729c13628..59bc3adea24fc7509cc329f5c860e1ad3d1e8c3f 100644
+--- a/go/core/internal/database/session_deletion.go
++++ b/go/core/internal/database/session_deletion.go
+@@ -4,0 +5 @@ import (
++	"errors"
+@@ -21,0 +23,43 @@ const (
++// BeginUnstartedSessionDeletion closes dispatch admission only for a session
++// that has never accepted work. The check and deletion claim share the lock
++// used by the first task save, so a concurrent or late input cannot be lost.
++func (c *Client) BeginUnstartedSessionDeletion(ctx context.Context, sessionID string, lease ScheduledRunExecutionLease) (*SessionOperation, error) {
++	var operation *SessionOperation
++	err := c.withTx(ctx, func(tx pgx.Tx) error {
++		// Follow execution/session lock order used by session reservation.
++		_, err := queryOne(ctx, tx, `
++			SELECT true FROM scheduled_run_execution
++			WHERE id = $1 AND session_id = $2 AND lease_token = $3
++			    AND next_attempt_at > clock_timestamp() AND task_id IS NULL
++			    AND state IN ('SCHEDULED_RUN_EXECUTION_STATE_PENDING', 'SCHEDULED_RUN_EXECUTION_STATE_RUNNING')
++			FOR UPDATE
++		`, pgx.RowTo[bool], lease.ExecutionID, sessionID, lease.Token)
++		if err != nil {
++			if errors.Is(err, pgx.ErrNoRows) {
++				return ErrConflict
++			}
++			return err
++		}
++		row, err := lockSession(ctx, tx, sessionID)
++		if err != nil {
++			return notFoundOr(err)
++		}
++		used, err := queryOne(ctx, tx, `
++			SELECT EXISTS (SELECT 1 FROM session_task WHERE history_id = $1)
++			    OR EXISTS (SELECT 1 FROM session_task_event WHERE history_id = $1)
++			    OR EXISTS (SELECT 1 FROM session_checkpoint WHERE source_session_id = $2)
++		`, pgx.RowTo[bool], row.HistoryID, row.ID)
++		if err != nil {
++			return err
++		}
++		if used {
++			return fmt.Errorf("session has task or checkpoint history: %w", ErrConflict)
++		}
++		// Keep the tombstone, as for explicit deletion. The scheduled
++		// execution retains the reason that its startup failed.
++		operation, err = beginSessionDeletion(ctx, tx, row, sessionDeletionUserRequested, false)
++		return err
++	})
++	return operation, err
++}
++
+diff --git a/go/core/internal/grpcserver/scheduledrun_controller_test.go b/go/core/internal/grpcserver/scheduledrun_controller_test.go
+index 244ad99763fa4d41fa11732430afbefe029268c1..7bddb5e6920530c5abfe8f213cfcd05c351eba6f 100644
+--- a/go/core/internal/grpcserver/scheduledrun_controller_test.go
++++ b/go/core/internal/grpcserver/scheduledrun_controller_test.go
+@@ -87,0 +88,4 @@ func (w *scheduledControllerWorkflow) Delete(ctx context.Context, session *apiv1
++func (w *scheduledControllerWorkflow) DeleteUnstarted(ctx context.Context, session *apiv1.Session, _ database.ScheduledRunExecutionLease) (*apiv1.Session, error) {
++	return w.Delete(ctx, session, false)
++}
++
+diff --git a/go/core/internal/scheduling/startup.go b/go/core/internal/scheduling/startup.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..36c33d34a29a7fbe312ab64ecd12ee1972ae1b40
+--- /dev/null
++++ b/go/core/internal/scheduling/startup.go
+@@ -0,0 +1,14 @@
++package scheduling
++
++import "time"
++
++const (
++	// DispatchAttemptTimeout covers the router's cold-restore budget and
++	// admission overhead. It only bounds reconciliation before a task ID.
++	DispatchAttemptTimeout = 75 * time.Second
++	// DispatchLease reserves time to persist the result after the attempt.
++	DispatchLease = DispatchAttemptTimeout + 20*time.Second
++	// StartupTimeout lets a lost response settle before cleanup is attempted.
++	// Cleanup still checks the session's own dispatch reservation.
++	StartupTimeout = 3 * time.Minute
++)
+diff --git a/go/core/internal/service/session/workflow.go b/go/core/internal/service/session/workflow.go
+index 14e3c617839fc626be1328c79e8635bbccfc1daf..e5864ce899fd57b067f0060365644fe27781f5c3 100644
+--- a/go/core/internal/service/session/workflow.go
++++ b/go/core/internal/service/session/workflow.go
+@@ -17,0 +18 @@ type workflowStore interface {
++	BeginUnstartedSessionDeletion(context.Context, string, database.ScheduledRunExecutionLease) (*database.SessionOperation, error)
+@@ -114,0 +116,11 @@ func (w *ActorWorkflow) Delete(ctx context.Context, session *apiv1.Session, forc
++// DeleteUnstarted is scheduler cleanup for a session with no accepted work.
++func (w *ActorWorkflow) DeleteUnstarted(ctx context.Context, session *apiv1.Session, lease database.ScheduledRunExecutionLease) (*apiv1.Session, error) {
++	ctx, cancel := context.WithTimeout(ctx, database.RuntimeOperationTimeout)
++	defer cancel()
++	operation, err := w.store.BeginUnstartedSessionDeletion(ctx, session.GetId(), lease)
++	if err != nil {
++		return nil, err
++	}
++	return w.execute(ctx, operation)
++}
++
