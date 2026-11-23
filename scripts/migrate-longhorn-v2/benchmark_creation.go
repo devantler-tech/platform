@@ -11,7 +11,7 @@ import (
 // object from its name or labels. Only a successfully recorded UID is ownership.
 func createBenchmarkScratch(ctx context.Context, c client, record *benchmarkRecord, desired object) (object, error) {
 	kind := text(desired, "kind")
-	assets, err := benchmarkResourcesForClient(record.Phase, record.Run, record.Namespace, record.clientNode())
+	assets, err := benchmarkScratchAssets(c, record.Phase, record.Run, record.Namespace, record.clientNode())
 	if err != nil || record.PendingCreate != "" || record.Recovery != nil || record.Cleaned || record.Resources[kind].UID != "" {
 		return nil, errors.New("benchmark scratch creation is not a new owned step")
 	}
