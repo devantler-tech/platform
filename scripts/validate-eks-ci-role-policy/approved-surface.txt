@@ -1,9 +1,15 @@
 # Approved rendered authorization surface, one entry per selected document (platform#3182).
 #
 # Each entry is `<apiVersion>|<kind>|<namespace>|<name> <sha256>`, where the digest covers the
-# document's complete surface entry: its identity and its canonical rendered JSON. The validator
-# requires the rendered surface to equal this list exactly (same entries, same multiplicity), so an
-# added, removed, duplicated or changed document fails exactly as the old single aggregate did.
+# document's identity and its authorization fields as canonical JSON: a role's rules (and a
+# ClusterRole's aggregation rule and labels), a binding's subjects and roleRef, and an admission
+# policy's spec. Crossplane IAM resources, controller templates with their instances, and Flux
+# substitution sources are covered whole, and a Flux handoff only by its post-build substitution.
+# Otherwise Flux handoffs and sources, Helm releases and Crossplane packages only carry other
+# objects, so they are not listed and a dependency update to one needs no approval here
+# (platform#6270). The validator requires the rendered surface to equal this list
+# exactly (same entries, same multiplicity), so an added, removed, duplicated or changed document
+# fails exactly as the old single aggregate did.
 #
 # To approve a change, apply the "-" and "+" lines the failing validator prints, keep the entries
 # sorted byte by byte with exactly one blank line between them, and put the evidence for each
@@ -12,125 +18,25 @@
 # validates the combined render. Evidence for approvals made before this file existed is in
 # approved-surface-history.md.
 
-admissionregistration.k8s.io/v1|MutatingAdmissionPolicyBinding||gateway-receiver 835871036a393f9eed5a90088ec575937b8c8a45393967166b1fa3c15aac2289
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicyBinding||gateway-receiver aeff6463863af834c77a2dda8878b308a460eb69d169c7ec592bc48d3d2e2026
 
-admissionregistration.k8s.io/v1|MutatingAdmissionPolicyBinding||longhorn-v1-benchmark-runtime e566faddafced4d88af3c547020852d26f75b0eb8d63c5b2887bd0cd6f349f32
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicyBinding||longhorn-v1-benchmark-runtime 52ed957a627e19baf52ebb2c07e510d440091514f611b8d8469b805311e02b3f
 
-admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||gateway-receiver 29a4c24f83df36bb1a1cc5880703564b5b853f46e27828aca4493fdc5017d983
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||gateway-receiver 3d17860e191701bf0eb1b5ddfa0c9f195fa6971563a4169dd9ec70118c44417c
 
-admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||longhorn-v1-benchmark-runtime 0cc9ea5c1aec7925eb2409b923967ead9b791913ca3740c2bae2ae3b8b1d7868
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||longhorn-v1-benchmark-runtime 44dd0633a1b795f0a72bef70f184d2cf1623a532ec014c5330913cf1e2c7b169
 
-admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||gateway-receiver 02e679b3bede26c8ef6793955787d34b266667cafe41636288c87e1fcb83d339
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||gateway-receiver 29e79442ac77ce0d72eff55f1ed0056b3f1ee2812e5a10cfc420de8c02bcdbda
 
-admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||longhorn-benchmark-delete 33d9144f35086ed96a084f303f90c44c22cc5e19f47a16752a1b871c6de8b04e
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||longhorn-benchmark-delete ab19acb1f8be991c36f11e84219e0b50392c76bd45ddb6e9cb7a8b1234c4151c
 
-admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||restrict-ci-identity-bindings 7c9f4c58da730b15c911ed2ca77204c0dfe17fb563c38401d0cf207721686a45
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||restrict-ci-identity-bindings 9baac5bff832cca4b818d12b00a5cd2d68d2265a0d6dd79a47099e93c2b2dece
 
-admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||gateway-receiver c22536e4b66d2287780a0126fe46bb8e9b409f932f8844cf1e55cd3b9cf707e2
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||gateway-receiver ecb6472d5102c66eabfc8bbe0c6481303bfd09ebca267c3e548d5f557ef3934c
 
-admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||longhorn-benchmark-delete c762dfaf739eba36be7b0dca44a3e308fc814ea4be9098ff5bc0c6d969452a78
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||longhorn-benchmark-delete 136eefc7a5dbc638c20877020f72f7656a5ca9b0e2ced4e67eb57ba7c43ffcf4
 
-admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||restrict-ci-identity-bindings d9dffd5dbcf9692e4521e75a6ddd1fd92b7d5d0a1e178341eadc5e1147cb1dca
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget 6434448de53dd6fdb9dccec789d93c4dacd387d5f39d95b43842d3e2f1407122
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners f59980a0d056bb796135803ce4cfb1a84947957e943abe9854a78eaf1249b2b0
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|arc-systems|arc-controller bff72aa7aa7b49d98f96e2463835f3a284f9c6ec3dd29b8ab89ca0d672fe8473
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate 646603f78f7124c4bdc214001cd5e0d0b544f6f8a3cc70a87a9bb2768726c101
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-atelet 0565965eb03f0315d503b0c6b869535012da1fc77f81691955fa6128a449d032
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-crds 1e9dd6ce2680fd5b6e03f0811dbc7f8b67ff5a644eed691329a06ee469252024
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|ate-system|substrate-podcert de41c6a513f7564bdafff7ea66d200f598bdde97f024b14de5669be7641327fa
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|cert-manager 6e91f980ce0c37a8bfa4671319b170384cffd1781e4778d84f57710a97754ca1
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|origin-ca-issuer 692c09671787d077243a0eefb2c0b6cbbf5f726f590c033e12f1d74f58713a14
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|simply-dns-webhook dd69036e4e0774e02811aa2511a04ba39800db08f694c832db5c439524801052
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|trust-manager 6a835c24da86d1b76ae4c4da5f91e3defbe6218f4934811d4db7627a7fbef795
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|cloudnative-pg 46ab199a2eabe76e64ee7f020cc81fe9f3d94ffc3fe97dcbec0a1279f8a4b6d1
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45ae481b09a5094419372f311f12cb4b727601c269dd396191f19283d
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|customer-dex 4c568faea9557d01783d606255b6aab07af01519caeca91a8349f62ceff873f5
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|customer-identity|zitadel eeb9881018664637cdefc9c5c0afd6953aa958e5dbfbc9cd8c5d521501e52431
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 85b271be55e3e61d1d38af7ac41013afaa69d85eb29839fa7d95648461db2d18
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns 107eaf8ad3d74abff5c6b1c6d7ca1b49ac75829fe425672f81cdc1e799457511
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|external-secrets|external-secrets 8f35691cdbe76b4011798a5adba69e8fc77415acf56aa0187e460015d8608087
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|flagger-system|flagger eea7d417849bbd7c14126017350e3e912d741add483ee89d1adec57f335eecb5
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|flagger-system|flagger-loadtester 41ddcdabe588958ecb1d6cbb4208ddb5dcc834c1bc380c944b01d90b39e516f2
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|flux-system|flux-operator 0cbdc24c2b42ef3da78473ccd608df4e01e94e83891b9da1e7c5f18473a67f1e
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|homepage|homepage 22201cee027518e38f10f730b6344c09ad7e8e4ca1cda4b2eac7b7bc0fcc8269
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent 09e3fb96d3d4cb33ebc67aa6cdba8ace8c3ef995de8064d0acc57fd07674cc34
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kagent|kagent-crds e1765ef34c0535f7101afad08e946cb5ed9815eb370636b8e735cd0af82a1be2
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|keda|keda 667d9298b1ca426e4c3ea1b623ead7d0e3edca07ec1f00819881b19408a880dd
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kro-system|kro cd7531d09eab1fa5898b2069fef898c6347fb59e5819c7a5de90a7a5724f34fc
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|ksail-operator|ksail-operator dfc2fd679b30a0acf35fcddc41eb883980c345036c95b3ebc5a9d21e0354bfa9
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium 452d744cfeed55527b9b03f5f41b777dd1a55d7ce626100bf3b66b82761efc79
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|descheduler 40d41e62d48b7db3706d544a94b25a75e497d7f11ca6efec1376774c8085de13
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|hcloud-cloud-controller-manager 44695dc94a10137a0769581ead688fd7beef90503deb99146716635440ab5c6c
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|hcloud-csi 6ef9fb81a14da3832dd4a7d5a8162cad8c434e42a1f87b0f6e3d7c680dbff6c5
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|metrics-server 85bf0a38ed8cbb3db7cd353ce4e1c867983ffcc7ef1016250ae19f6a0209f8f0
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|snapshot-controller cb09ae779db06a3817f8ed3fde65bba42fe0c2194acdc010c6d809a770882769
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 5781451a70a8dee38ed7181cae96f51b882f31d7ddd4298fbf097303de352864
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager be4e40e80964e37494dde9c1df0662a58b9b8976d2a57b9efed9c65aebdb9611
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape bc4e75c25b3ee373b8290efb0d6f027cda6db1b2058ccc7a0844a82a277c9cfd
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 26000fada860269dd6bcbf187f8252861d6cc5dec1b8b357e824d012f1d7dfd5
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn 3687bc9ddaa8177bc383eb7d25fc8f1bff732a935e2874656fdd8b438aea6e03
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|oauth2-proxy|oauth2-proxy d16150bb9a7d264f002fd3cb8d82d459a368d6428207e23fd0b8479e4194f60d
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|observability|audit-log-forwarder 49f6267c3f99814d688e1e77d0665ad2c142f07c6e5b6af3f424902393c4b311
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|observability|coroot-operator a6c5d6dfdec7648afce4f0c833eb2945ca35f97a00d8046d473d7fa0a6faded2
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-operator 804fb88028e50d7e3242464f746cc00fac9094f0833d829cabc8a89df6a57575
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 7ce46ec995e409241060d9a07503b4949ef5553a24f2f4924dc5bc6d50cd4f9b
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter 3ba681e008bff5e4e723e78b14d850d92a89ab810a4eb6f7e49408a0abf51ef9
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|reloader|reloader c26139f0a484b501080f4a245c1ce01f6b770827797562919814daa98118ef3f
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|umami|umami 4e9eeef418273d25d0e56a2fc627783f7ffaa6e4cf32000ad3798aa46cfe422f
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|velero|velero 9be3792c0d2cb88fe94aae10bb1ae9ca552391235d274448e6eda5051a5e6f7f
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|vertical-pod-autoscaler|vertical-pod-autoscaler 11dedadfe257ccd515a917f8999bbb21230de5c84be5b2ed522b6e9d6c3ba1b4
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|whoami|whoami 22eb185e9f69bbddf8dc27bd2a852b07b3bbaf791d25ada894eeb8e954f99bed
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||restrict-ci-identity-bindings 18a5069383d29a941c0d1c41f25d43398e435539b1f14eae7e66b971c422434e
 
 iam.aws.m.upbound.io/v1beta1|AccessKey|aws|business-site-smtp bd2f3c05c077842bef856173ff21446e9de19ba48143abe869a5ed146aa071e0
 
@@ -154,383 +60,239 @@ iam.aws.m.upbound.io/v1beta1|User|aws|business-site-smtp 1717b61eedee267eff58840
 
 iam.aws.m.upbound.io/v1beta1|User|aws|email-smtp 19ce46105be088b444658d4d594f6059308f079440336af06af912d60aeb5704
 
-kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 19e9ed09a8c05df082f1a3dba69330b8f4311b678e372cac05628971c907f83a
+kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run ecf2553f3e002b9ebf113fd52c40dd07fb21fa1f4f820602bee2ae2ea9d9fcce
 
-kro.run/v1alpha1|Tenant|flux-system|business-site 068cd8d37a29610f62e0e7dbc334430f0cdd8a386d4cb89b477047e4be3bac70
+kro.run/v1alpha1|Tenant|flux-system|business-site ad1555d8a09c4cd1d7c766b86c7f85d3f2ec08e6e9536b43ecc425eb38c64682
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|ascoachingogvaner|ascoachingogvaner ac00ca29c04de8d2c30a045d583570536a97fc305a1b06c4300da018ecdfb864
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps 6ab22c8a1703a8bfa1755b55c4ceccdf26b94af4ed510ba48251e673b95fefb9
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|aws|aws 88fe1a404c036bfe73b4eda38a33ac31f4546573c9daaebebaae173c23844cba
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 9f1a9d875f4c26786c23c805bfce054f5fe7b12614c07afc9efaeb9019dd6232
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|data-product-controller|khoist-documentation b3952d56aa05acfe28c6d04c63287709d20ca44b069c95cf96da7ce3125ec9b9
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers 0bca289c996db852fce22f61296381ff9c120a0f7630e2427314de27fc773294
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps ff202a09e4554fee8262ea71c2b1ec5e9a408a4fd882307d049e8bc51a431607
+policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-daemonset 3a8fd7f2958d7f002cf566c616d54b21750f030a6c87f722733e5fd10f829331
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|bootstrap df15a74c32342880c533cc49f41971742874791e306e3edd95603a98396a1612
+policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-deployment 83527cea55b7f0d7500c7816717257b3cf8f619175a13174791d4eb020795a35
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|flux-instance cc7711a92e331e29ddaa022dccd94ed0c8d7195f8703e20403267c73874593d3
+policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-statefulset 9c6102c5ef036bc490daf9797c2c2555ab9b5fa6d881b65bbda79dea231bb345
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 032fd015c8626bdf1ede2f4955d0ebf9ac8303231d6fa7196559b5fa70cb0f55
+policies.kyverno.io/v1|MutatingPolicy||helm-release-enable-tests 3ed7808e984aaf48a555d8fa973c19a3e9b0a5f3d7d05ae482453fe6b3d2c6c1
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers d3cb230f3213d7a231fda9e1a700bf77e07440a0786061389357cf744e136a62
+policies.kyverno.io/v1|MutatingPolicy||helm-release-install-crds 1ed20f54e88df43ffee44a3a9a2f71ca0c0dea6ee707b90bfe3738fa8a5e78c7
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|platform-health d314a9b1c3213332ef39d152d9bc244c086fd30f8b36269c3a6f403588db02d5
+policies.kyverno.io/v1|MutatingPolicy||helm-release-remediation-retries a72c67db8f4ef0889da3a95ba761f567787d92eeba5a3c32fce7af9befb1e0ef
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config dc10cfc1ffeb139e69a5ac205f9bce35628dec215fe892e1871145f333d363b2
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||agentic-engineer-cluster-reader e172092c60ddba4ed68198791781c0d5892518ee68bea202c68c111aad76fe3b
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi e3b3caea1b9c5a3fc994d9f68c9609d7f77843f24dae91c567e4dd7b5051868a
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||ascoachingogvaner-external-dns f29012a32779d48988af254b9cb0e54b0c2cf765ab56163dd7cdd4adb095ae3c
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 7ee82dc4494f585162e66b074d47a5e3e4427d85745ea7d68107a09d47798b3e
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||cnpg-degraded-alert 1f9607fb4516ce0f2baae19fcccecfbc3f2883496b52cbb421a04955f59053f2
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|world-at-ruin|world-at-ruin 9c3f8221e384c5bb93de6056be60f16f69de3b08898efc4f3760944f225d15b2
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||coroot-security-progress 04212765fab671fae75bba7779349791b573c1c83f782baf2e04c80dbffc5e03
 
-pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-aws-iam 48e8bcc2257a1affdbdf936c4b871becc6f0fdc02bb40e27665d265f00c465b3
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-provider-unhealthy-alert de44b152ba70d85475dfc2e1b8dfaa08d629c6fafd416724bb7fb3e3eb32fff8
 
-pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-aws-sesv2 6e177a8aac61328a9bfdb3f482d916b30d88191a9d71f6630adecfba6bdb09cf
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-sync-alerter b60f656f5f8a640ba3403a288613ecc2a12d0a90468eb5162b3f1427caddfc77
 
-pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-family-aws 064adcc0f15a96fc4015b549214fd9edf1686f73b930a41ba1a5cd4b581d049d
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-sync-exporter b040463b7649ecfc52fc44f550a08f8c529147d1c3d3f38cd54d58c696ffddc6
 
-pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-upjet-github 7494260fa757d465dcee4e61028ad683fe1f108f82f65d4fe83439179668c3a5
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubelet-serving-cert-approver a3f65ba643a8ad7f3e8021d77b8812251f0da3afafd76a0ad8ea966fcee6b46d
 
-pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-upjet-unifi 29887f0decdc69b37f1263887b53d8fb85e244278d8362476f6a44b50c9c1a9d
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-hostdata-cleanup afc89df0bc3583119b84b11893e14f1ae7c24f3fcae9b00edf53866f9b97cf07
 
-pkg.crossplane.io/v1|Provider||provider-aws-iam c75364b0ab3a09b459668ebe42234af0ea112831ff3b10c6995242169e1805e4
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-security-exceptions-reader fd5e7b360bdbbb5991d50c0d63cb97f316c010f5a82b8210b7e7c62609e1aa32
 
-pkg.crossplane.io/v1|Provider||provider-upjet-github 719f3ea7799fbb895e20bf9da54098e37f67da5cc397a94a5c13df3f6fbb187b
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-storage-scan-record-cleanup 5bcacfd76ffc85681279f9784eaf0ee49f27e60ac6249f26b20dc5d8324c78ff
 
-pkg.crossplane.io/v1|Provider||provider-upjet-unifi 134e66f6ec74fb19b8103ba067b1b1fd6366bbdc3afbc0e7e475a3514d60c3a0
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||longhorn-stale-node-cleanup 5f2ed9633f5399473ffa030d421aa2749bb4ab3fd50f6c3be67e69e0bd2d6bfc
 
-pkg.crossplane.io/v1|Provider||upbound-provider-aws-sesv2 5ca8be06c989614f70c01b8c182a8c15fde540c81e74bd133edec26820d2242c
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-cluster-reader b187eb673e80eefd7af0b0f2ff887cb9ac0c285975c56e9d24533b7e1e7e6693
 
-pkg.crossplane.io/v1|Provider||upbound-provider-family-aws a83423d548656b244181be7dd4b803eaa7b76a4b074522b20c15d0ea66b5e3ca
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-service-account-issuer-discovery 9f9e1237b5bd4f0a6ed5a168ef670fb8434ea0b4a78d1605482f40afd426604c
 
-policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-daemonset 6f099d23ae62bfa0edb816b2cf15efef99a33beb137e3ce82ea92e133676e28d
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-view 02b9ee8da399610c255b8645bd2f0f52cf29f0f57ae8d9f22501dea98e5f368e
 
-policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-deployment 99b7770d4b156520f5ca58cfe6f1f756d2d1da98eeeb12a07e4d1b4093554865
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||posture-staleness-alert 74a21af5704f4bdb1dbc4ce7d9f31642557c86db674d138a9016e7e0e2800e32
 
-policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-statefulset 5c94d40212f54a6106e1a2f1027cbcaa216db4cc09e5099c2213bbc37d959697
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||prune-protected-orphan-alert 343a0c7b4def1865664a03e8af90076a6839a7c47df37cabbfb91aceab98a196
 
-policies.kyverno.io/v1|MutatingPolicy||helm-release-enable-tests 39ee7a21ce13b80032ec52d650116e09d1be5e43538ab18d33769a8e575f532f
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||stranded-autoscaler-node-alerter 1f24e4ef9682c45177d0a19a27d7046f7772bf56843ce79c38bd525e8dc2b192
 
-policies.kyverno.io/v1|MutatingPolicy||helm-release-install-crds e4eff687fb6ed05f18ab75747073569c4cede6309f560dd10d17adcfc71da2df
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||stranded-volume-attach-alert 67f7d54496cf57a1e5bea8c2ac8bc01f98c2aa18632e90ed34daaa8b76829a94
 
-policies.kyverno.io/v1|MutatingPolicy||helm-release-remediation-retries 7f8b71876b6fddd408d6daed4af8374c3f2e611b0143570e1a15c9291ace9659
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||vpa-updater-event-writer fc666baf304c515d6b0a46a777bd0478859e9485e39586f77850b0005efe7c90
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||agentic-engineer-cluster-reader fab82da6caa88262bd6e43d64e258f899afc8783c180725b8d7e83992c7d5f6d
+rbac.authorization.k8s.io/v1|ClusterRole||agentic-engineer-cluster-reader 5b341206b6d2923f98a55fe4f2256130497d9cdf7830d18dc5ec4353b16d6b05
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||ascoachingogvaner-external-dns 2aac6fc040557b155131fdc2ad9261f6ad2b337835915d7dcb50a3704e032478
+rbac.authorization.k8s.io/v1|ClusterRole||cert-manager-tenant-edit a8c843da74bcae63ea8b45955bcfaf0adafbb5a1b2b505fea4c737e645d886ab
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||cnpg-degraded-alert 51487655b693fe18c5d7196d0042e4bc8345a15b0ea3afe03216e69d37905940
+rbac.authorization.k8s.io/v1|ClusterRole||certificates:kubelet-serving-cert-approver f67625382c513c71d0bb2a0136ed5c54aca75739da3b4477b2dc144ed8f7f230
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||coroot-security-progress f2180564b6200bc35eebe9d814c8cad1d38f5f2fb6323322659a73441ad86aa5
+rbac.authorization.k8s.io/v1|ClusterRole||cilium-tenant-edit f2dd30a9fd208a46a7aaf7b25aa5237af582e3e40e112a943f9ad90e371d6200
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-provider-unhealthy-alert 1cc87f7bfd2b06426b26df11488ceb00e9a22e749bfca05814c1c9a0edc7be9a
+rbac.authorization.k8s.io/v1|ClusterRole||cluster-reader dfcdb824af8513e650c8ec03f964f27a049027a3e14bb692cf85b53859c0bfca
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-sync-alerter 2ff039b4399f755bb15112771e2586ac05d68b113313824972720f4a6e156147
+rbac.authorization.k8s.io/v1|ClusterRole||cnpg-degraded-alert 4beeb78556593c6f9f065d5b45d62ac16a25162223010013435a88b5dff485cf
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-sync-exporter 89816b5cc430d16ae2fef6695022844c8658573eb5af90178ec8195c9601f1b1
+rbac.authorization.k8s.io/v1|ClusterRole||cnpg-tenant-edit 1ef8490619fe91fba24d329e4298444c150c2b8e5bc007808d7fe9217e5ab02f
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubelet-serving-cert-approver 8597dac440c89e95680106666300851328ac807fb9a0c58164b70b099c8c35b7
+rbac.authorization.k8s.io/v1|ClusterRole||coroot-security-progress fa301cd937931568494d49458a47e9a3d4bdc3b82a5b0dac738d6fbc017f8a54
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-hostdata-cleanup a54d4b680698a141195ec9c93b1b41f0e7d77614596eceb12083dafe8fca9328
+rbac.authorization.k8s.io/v1|ClusterRole||crossplane-provider-unhealthy-alert cdb16f18302e8e7fdfd304311544b11c046f61c527c10e9e18b7eb9a4c53199c
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-security-exceptions-reader 5477884d858618e5676bd4a8774014d2764031f4ac306954ac44ab10797499eb
+rbac.authorization.k8s.io/v1|ClusterRole||crossplane-sync-alerter 7e4b64e1e366b822b0925e25567645e6e5774ce75f95f7239cfd06a1247d7ece
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-storage-scan-record-cleanup b7edb6f131a2ad3cdc8245957c57a2b4aad99fb74b433d52a2a53fb64fbfd1b4
+rbac.authorization.k8s.io/v1|ClusterRole||crossplane-sync-exporter ea5abc61a0822c61c0b799795a7d3204f708dd83c880fea74db6fa8368402a6d
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||longhorn-stale-node-cleanup 32a8c8df2b6fa88abf3dcf22f679009058edb8699a7ff84ae78712fd10b748e6
+rbac.authorization.k8s.io/v1|ClusterRole||events:kubelet-serving-cert-approver ca51b403be9a351caf8ad19088bcd8a4fd299a63a91707b1b9d35672f85d9753
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-cluster-reader 34201cedeaffda9421ea61847cf168d050e501b5080477f9721f4779c37f3678
+rbac.authorization.k8s.io/v1|ClusterRole||external-secrets-tenant-edit 4a07e6040754066d4b39e8437204e3ffff24b9f920012440f14f09c0dc4f4dd7
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-service-account-issuer-discovery 4e1efe26161bdfe17249e87070cbe914e714667b901fded7305e7f5f34f6e6a1
+rbac.authorization.k8s.io/v1|ClusterRole||gateway-tenant-edit a0e15194da1c43a248423e2ed13a3ffde1a3f00b59493e7280bde6249a75b7df
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-view f50a71214959c7ec60ed893a98512b78e1f56094def24bfd726d8f35fbd06919
+rbac.authorization.k8s.io/v1|ClusterRole||kro-tenant-rgd 619d047d0a7a68c6ab4ad563d9adbb446769b15b3acb9a16763f9d3eef176e84
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||posture-staleness-alert 1f2375a74fbe04a0b7fc079de84bdef31800d0066a9009336ee27a7a1e4134bb
+rbac.authorization.k8s.io/v1|ClusterRole||kubescape-hostdata-cleanup 250568f4c5cb71653cb5d3647b9e01fe37f4e93046c58c7b887a2b1917257275
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||prune-protected-orphan-alert b8da9b103a152ca3b93cd418e30cdfe0f022bc79fd274b26184661d37ba38567
+rbac.authorization.k8s.io/v1|ClusterRole||kubescape-security-exceptions-reader 0081b51ff3892d7cf158d3a1e13d36b5371719cd8d19fde73aed9e0ede49011f
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||stranded-autoscaler-node-alerter 9ef0e6485f7932a0a2b6280717c8cf252a38e5159a466d299068ec2e44018402
+rbac.authorization.k8s.io/v1|ClusterRole||kubescape-storage-scan-record-cleanup a85cbfd76487e3608fe1556d13f21bd2c09afe1ed057725ab6889609272ebec9
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||stranded-volume-attach-alert bc524f2fa40174671bba225581c6eb1104007fb5189fbc3f1fe4d2f1990c267a
+rbac.authorization.k8s.io/v1|ClusterRole||longhorn-stale-node-cleanup 9f88903862f0f7fe8a5e0b5fb94e895cab9f33ca6e9eb19581be24bb42f61b78
 
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||vpa-updater-event-writer 8ef30122cf0855be6427ad4fda8272c0a7509678f2e538e193be4c25a7197a7f
+rbac.authorization.k8s.io/v1|ClusterRole||posture-staleness-alert c5392838c5033ca0f50c31ef31a1349da91e1351a14877ce31b9809efb107199
 
-rbac.authorization.k8s.io/v1|ClusterRole||agentic-engineer-cluster-reader aba58df6e27ebf86f4eb4a46a68edc083d62b4c740cc2677e8dbddf9e761641d
+rbac.authorization.k8s.io/v1|ClusterRole||prune-protected-orphan-alert 412965024e343f73a81799dc5944b143e0402b5d1dddac146988ddd405b71f3d
 
-rbac.authorization.k8s.io/v1|ClusterRole||cert-manager-tenant-edit 7b6c10de4ae32f1d5e081040eae7d6834987c306ee68df85190e518c8e14f2da
+rbac.authorization.k8s.io/v1|ClusterRole||stranded-autoscaler-node-alerter c5d8847738aaa1d7b5d4b59ecea6082d14b51cf65d70bf5907b4e57884301901
 
-rbac.authorization.k8s.io/v1|ClusterRole||certificates:kubelet-serving-cert-approver 136fc62aa10600aa94d15d1f6bb3fb0a7732765460ba0c70b886bcc4a5db0c27
+rbac.authorization.k8s.io/v1|ClusterRole||stranded-volume-attach-alert a5a71f505b337e2699648c1e7473bef68f4c4574ad1272018e0900742282978c
 
-rbac.authorization.k8s.io/v1|ClusterRole||cilium-tenant-edit c19d0d98692a1a6b918bc78646df10924b2050d10142be92fa65540977f5417f
+rbac.authorization.k8s.io/v1|ClusterRole||tenant-base-edit 1989c0982520518ffbdc8f522537bf60815849f98ee17976b40ce4b5ebe6dc71
 
-rbac.authorization.k8s.io/v1|ClusterRole||cluster-reader 71a7ab978d4840e4eda92e86be061f5bf1812ce9999fd6a246d2e8c3ed944b16
+rbac.authorization.k8s.io/v1|ClusterRole||tenant-edit d9a7cc3c7036fd24db049e6b8f663815a592f9316acf81dd842c4e969deba1bf
 
-rbac.authorization.k8s.io/v1|ClusterRole||cnpg-degraded-alert 42c958c00b28103b38a39a68780018e23dd665fcf53bfb7e409aafd956338482
+rbac.authorization.k8s.io/v1|ClusterRole||tenant-external-dns 89706f4cb07eed4dffc649737c3844ed54c25ca265be1d1d220dbf6a5fd4d6e2
 
-rbac.authorization.k8s.io/v1|ClusterRole||cnpg-tenant-edit 942ba69a066888eb7a82444a29f3917aa8c836c0bb800cee159e4e3bda4e3974
+rbac.authorization.k8s.io/v1|ClusterRole||tenant-external-dns-global c53a5dbf6d243cf4cac1fddc704f6c0d7c2748d677c746ebed52d83f145b7642
 
-rbac.authorization.k8s.io/v1|ClusterRole||coroot-security-progress eca07a4b13c08811b86ad738681fa9ca315c6d798380c86d6449b74507213832
+rbac.authorization.k8s.io/v1|ClusterRole||vpa-updater-event-writer 7106233f38657f6b35ee7847f0ff1b701430bc829bd07a20d963167fc07cd07b
 
-rbac.authorization.k8s.io/v1|ClusterRole||crossplane-provider-unhealthy-alert 6a8845e6cd798bea6c9dd0353f5ac34dc93e3f2ccdda4e4d92288705e0dc6a45
+rbac.authorization.k8s.io/v1|RoleBinding|agentic-engineer|lane-store-reader b12e4a6442cee6ac2e745785430ed909963d2d1c3a0407c04b0ee4e5d426d426
 
-rbac.authorization.k8s.io/v1|ClusterRole||crossplane-sync-alerter faf47ab2d737acd58c26bbf7aa3b46f23e5b22fc52aed6acd0fcf7f434fc431f
+rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner 8274a39255824643103df536878b268c4912fc73751ea5cd44b2a05f561e63e4
 
-rbac.authorization.k8s.io/v1|ClusterRole||crossplane-sync-exporter a37e34740575edf8bbd47070e60c94ea4362d3d4d6cb6e1258643f1fdc421239
+rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner-external-dns 4cf800e19c815f93809ec45fb0fc2d41022ee01e2373da69f707010473bb45fd
 
-rbac.authorization.k8s.io/v1|ClusterRole||events:kubelet-serving-cert-approver 89efaa35b7428e392e7562ac0500ad4352ea56a2b3f8228772c6edc2ef09f84f
+rbac.authorization.k8s.io/v1|RoleBinding|ate-system|substrate-ca-reader d697d63678ca53488f86e1369052561aef80368555fe34d8eda46485b9adfb97
 
-rbac.authorization.k8s.io/v1|ClusterRole||external-secrets-tenant-edit 0880321fd06f7e5b537b71469bd99185c64b0813c0c17632415a1ef6a5d3cbb6
+rbac.authorization.k8s.io/v1|RoleBinding|aws|aws-managed-resources 796a59a9435a2c8f307a62d6902f64415e8a8c525de597e8db2d575fe0fe2785
 
-rbac.authorization.k8s.io/v1|ClusterRole||gateway-tenant-edit deb3a7675f72c5c79c121092b933ae775a4a30fc71278e6f843a1e3d4d35d98c
+rbac.authorization.k8s.io/v1|RoleBinding|customer-identity|customer-identity-setup cdb74be765b0e860090ec7944c455cccc020ba24ff40be66bf60d9a4d770e7fe
 
-rbac.authorization.k8s.io/v1|ClusterRole||kro-tenant-rgd 91cb7bc7012ca296f7c73a719a8a28ee548a73813accf94f0f813d4c378c0244
+rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|data-product-readiness-observer 8e38d2c37d82c5a104de264719f135c7003425dd8816c546dc6f30de9530ab04
 
-rbac.authorization.k8s.io/v1|ClusterRole||kubescape-hostdata-cleanup b047f9796da7c8c6d7fa9ae09d559c701219e6ce308c2cc1a5fe155649c52f6f
+rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|khoist-documentation 552b0402ee55719f7e93255de5a31d41e9da9d6d1946c3c148cf2bcdba0d797d
 
-rbac.authorization.k8s.io/v1|ClusterRole||kubescape-security-exceptions-reader 3d85c7c184381722aef7fa31b93af90827111aab2e26af2b3d6cc4adc56d19da
+rbac.authorization.k8s.io/v1|RoleBinding|default|events:kubelet-serving-cert-approver 6dad8252a9f52aba51dbb5838f1ffedbaf776e44d262a348fe6cf64f737a0cfb
 
-rbac.authorization.k8s.io/v1|ClusterRole||kubescape-storage-scan-record-cleanup dbafd3f5af841c22e7b893cd530f3938b8e089107fd3c2ee9ddbccdbf8ef7d72
+rbac.authorization.k8s.io/v1|RoleBinding|flux-system|agentic-engineer-cluster-reader db37ee003ac3c2e037ec7e50b8cad549c0286cd447041287a3f9f2f90a1008fe
 
-rbac.authorization.k8s.io/v1|ClusterRole||longhorn-stale-node-cleanup dbe01ecf21a1b493056dcca2d29870eb4464db6a83dbe93fcb229d8053061af2
+rbac.authorization.k8s.io/v1|RoleBinding|github-config|github-config-managed-resources b2fac3cb5373194d5297c4f2f30fd1747f46f0854555c4cb44dc0682fc8937e3
 
-rbac.authorization.k8s.io/v1|ClusterRole||posture-staleness-alert d0f17ccc32dde7f43179bb5b5274fe0195d0f0b5b64e9ab750c1192145932846
+rbac.authorization.k8s.io/v1|RoleBinding|kube-system|ascoachingogvaner-external-dns 52c4972d4b6d0853666151dfb1d2d893392af5a0366b9b7ce3f132c6312eaaa9
 
-rbac.authorization.k8s.io/v1|ClusterRole||prune-protected-orphan-alert 4df12f6f78d4be6d87c58bce02e9272156f78d1bb07e1c7855e9f5f6b741e71d
+rbac.authorization.k8s.io/v1|RoleBinding|kubelet-serving-cert-approver|leader-election:kubelet-serving-cert-approver fd1544b5865ff4cd7e374db6c5173d0bda5a3a556234c400c1ff7b9303e96eaa
 
-rbac.authorization.k8s.io/v1|ClusterRole||stranded-autoscaler-node-alerter 707d8299b06b63336772cfc7e038f5b1208653ff343906c5800ca5e478dee996
+rbac.authorization.k8s.io/v1|RoleBinding|kubescape|cronjob-failure-alert 3c2aea673deed6c138c02816d2656745a3e30df8478c4c08103fb1153c3fd62d
 
-rbac.authorization.k8s.io/v1|ClusterRole||stranded-volume-attach-alert aada4635dbe3bdff437a2be0cf847261ab955f30670d955c6c56239dd74d7eea
+rbac.authorization.k8s.io/v1|RoleBinding|kubescape|kubescape-scheduler bd1eb77de4dbb6aee02515d82e6ce7a0fbc9ca8be9bc8481a28d6ba62b8f92d1
 
-rbac.authorization.k8s.io/v1|ClusterRole||tenant-base-edit c71cd4cb9ecbdd2d75179970ad289b723cf3a8cf3a0ca4ffb3ae2320ebec572b
+rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-csi-sidecars e30d75a4de4b5865f3ac2e9f3b1293eea1c2d7862a81ec158b4c5499389a7c3c
 
-rbac.authorization.k8s.io/v1|ClusterRole||tenant-edit df435321c9a1b43809a54fee74e16eca54520822eb0f0b9b5c4650e1e67aae32
+rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-longhorn-csi-plugin dc6208d8e1058109ee23b65e193eb6db1b1ad2ad6f54efdb054eb5c4023ed592
 
-rbac.authorization.k8s.io/v1|ClusterRole||tenant-external-dns 3444b92f4b08e11aceec869a3293de45c301b3dd573b94c35dade53a66d30b0d
+rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-longhorn-engine-image dfffd941a06bb3a535509b83fadfdebd27302b41ed7f016fdf4c0784f8470059
 
-rbac.authorization.k8s.io/v1|ClusterRole||tenant-external-dns-global 24084ed6f902f4d13382e23378fca9f5d99513aba3f7468b67ac82a3102386e9
+rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|longhorn-stale-node-cleanup 6d6ad82930cb721509e0037351170ef336a48e69d0ff906a46acb20c57d38cc4
 
-rbac.authorization.k8s.io/v1|ClusterRole||vpa-updater-event-writer 3879241a89e481edb6edef4a634d689ca6cbf648cf0f18ecaa74304e9542e52f
+rbac.authorization.k8s.io/v1|RoleBinding|observability|cronjob-failure-alert 96db22fd68a4e28daf018177361861b54b35407179195c8a918c1e53cbb42d5f
 
-rbac.authorization.k8s.io/v1|RoleBinding|agentic-engineer|lane-store-reader 6cb9a46fe78f3579c7ce18908d16158a633fd3e2fdb3884ddaed99cc2ca083db
+rbac.authorization.k8s.io/v1|RoleBinding|observability|prune-protected-orphan-alert ffe5499e4c0d59e861f243fa0925585b6039585610218936aad92bb2085f47f0
 
-rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner cb7ca7497e2f066851a9354b75f38962fea1e588598d96dde786f7043576a08d
+rbac.authorization.k8s.io/v1|RoleBinding|openbao|vault-config 53bb1afd798d1b0738b2f8e057ed6b11249fab7ff4686c1d6192ff5867faace0
 
-rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner-external-dns bd51e723eadb52df8b583fc8931be70ecade6863d8d2821ecad5f128c8bf6888
+rbac.authorization.k8s.io/v1|RoleBinding|umami|cronjob-failure-alert 5690e39bf27d91ce2997a31baf6b763b9afd4496138551d44dc4dd3b41dc9665
 
-rbac.authorization.k8s.io/v1|RoleBinding|ate-system|substrate-ca-reader b8b1991b6efcbc6d875e48fd3b2cbf8f2c3a33e8db09bdcc95b5fbc60bfa7167
+rbac.authorization.k8s.io/v1|RoleBinding|umami|kyverno:background-controller:mutate-umami-primary 3f31d907bde666aff69c0dc7af3f80379b781374b6c0f9e5cfd826aefaa9d0d2
 
-rbac.authorization.k8s.io/v1|RoleBinding|aws|aws-managed-resources 876e05322100f78b490b870ba8733b26daa0f93b65b8fdd77d559e9de94588c1
+rbac.authorization.k8s.io/v1|RoleBinding|umami|umami-provision-tenants 20000bac03ab95a3bd4d14f0d72ef4eb4b100ce68566f80245548f272593bf59
 
-rbac.authorization.k8s.io/v1|RoleBinding|customer-identity|customer-identity-setup fab367a0961fa37ea2870ac2bd77f7840cedeadc9f589ce7adc72ab758c71377
+rbac.authorization.k8s.io/v1|RoleBinding|unifi|unifi-managed-resources 49259ae42075ecd762e85d3e9be0f08836259349d654a418e9cadde4483189e0
 
-rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|data-product-readiness-observer 00bcf69a4402d05bf5af23e273f9d3c5d7e7ebeed8c1778017a9f702d261360e
+rbac.authorization.k8s.io/v1|RoleBinding|velero|velero-maintenance-oom-alert 9be353b6be9f4e3c372ac662c91bc6d45d2e38cd30bc8bd245b5c30d77d16a66
 
-rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|khoist-documentation 2690828917afd76647b314b9009a0401578780b33809e8d3a1f04a1b16244565
+rbac.authorization.k8s.io/v1|RoleBinding|vertical-pod-autoscaler|vpa-leader-election b9313fb1cf739b05a897b57fed89c2f869abd9e1b12d2be98c7f62baa76be03a
 
-rbac.authorization.k8s.io/v1|RoleBinding|default|events:kubelet-serving-cert-approver 420a3e2f5bb524138bf1a7ee8f953d738a70d03c6f5567541ec03fd093a042f4
+rbac.authorization.k8s.io/v1|RoleBinding|wedding-app|wedding-app c5fbcb141c2d94f8469fb57cf5b66da5d1b4cf1943e383e70b00129e444e2e3e
 
-rbac.authorization.k8s.io/v1|RoleBinding|flux-system|agentic-engineer-cluster-reader 3dda1a78c8ab2d3ea62c27155cccb62303bcb0a0585ebaf1ea76ef31f6bd98b6
+rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin 8b2cb844948a784dfac6e256f0072c1c8d15f6297c4065ced99a7dbf098080a0
 
-rbac.authorization.k8s.io/v1|RoleBinding|github-config|github-config-managed-resources 149f5d805afc668821f5d25d1d5e9b05f5ef79d3e69929a8999faddb1078d417
+rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-operator 9e4c965617fbd9c6785776d8d740da09c1dc92a8da18445036e288a33ddc513f
 
-rbac.authorization.k8s.io/v1|RoleBinding|kube-system|ascoachingogvaner-external-dns 2eff515ebdab80cc259b97acf6d67ef92567d34e440455a70db54c5d34fe943d
+rbac.authorization.k8s.io/v1|Role|agentic-engineer|lane-store-reader a8dd0204b0c1daa8d7614aa74df81630c2604a7943b1d4c03350f21bdf008da6
 
-rbac.authorization.k8s.io/v1|RoleBinding|kubelet-serving-cert-approver|leader-election:kubelet-serving-cert-approver 201ab2011ebe2d40121e0d5c3dab5f0a07eb9683e83d02067e592b99f27aa6d8
+rbac.authorization.k8s.io/v1|Role|ate-system|substrate-ca-reader 0657a89b6fd41deb65ff544553cc7fbd71e82adbea828acd7256e4f187ea7883
 
-rbac.authorization.k8s.io/v1|RoleBinding|kubescape|cronjob-failure-alert 9ba3fcabb476d2388a1842de22e88d0973ec3f91fba944a2761e9f8d1bc182d6
+rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources b74f7e1cb0c59aeb25fcf7a322973a62cec4805aa612a42afbd4b6a31b5d59f6
 
-rbac.authorization.k8s.io/v1|RoleBinding|kubescape|kubescape-scheduler b12dd1aa5621544defd829244292464ae617e4e7a94a7c04ff5ab73ee198b1ef
+rbac.authorization.k8s.io/v1|Role|customer-identity|customer-identity-setup 01be2b59329444dcaf4a2752f95569b06d3d1a9681f4d2de8f092359f5cfa3a4
 
-rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-csi-sidecars dd8caae38ace5ea6508922dd7339e02f16929aa18efa186f47337c03048625d9
+rbac.authorization.k8s.io/v1|Role|data-product-controller|data-product-readiness-observer c9267ae3e7a5f38d23612a51d93e9a087b60afbf5a70266217b139bcfececd0c
 
-rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-longhorn-csi-plugin 44de07bfbc98b39e8a3fe56e39ad53c5b08d45eb5d1a10d9f4d5187af514cca7
+rbac.authorization.k8s.io/v1|Role|data-product-controller|khoist-documentation 00a8bdd2ab074dc2dde22e7b2419417ec357c47a38e1d40fd26dd580272a852d
 
-rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-longhorn-engine-image 637161df9b737dda2a009f1b564f1de4deb7be4be0b255d244bf9fe530ba8e51
+rbac.authorization.k8s.io/v1|Role|flux-system|agentic-engineer-cluster-reader 61b699fa66d3b045314055355bcc66d563bed04f48a0dcd4b48567b293b14b76
 
-rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|longhorn-stale-node-cleanup ce45dfbeb6424059cfe43597e510f23fae3261da823fac750a2d2870d7ec67ab
+rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources b97d5102756b520b0ca56504408d9c3e1e1e063474eef3e93eb64cddf0327664
 
-rbac.authorization.k8s.io/v1|RoleBinding|observability|cronjob-failure-alert 7a272a9eb6665aeab8e4630828da64b5549432ea01a537b0ccf5308a0059ddc1
+rbac.authorization.k8s.io/v1|Role|kubelet-serving-cert-approver|leader-election:kubelet-serving-cert-approver 4f500e3ea4dde8c161b1d79af15e74314080ebfa9044c7487ccc6657763f7c28
 
-rbac.authorization.k8s.io/v1|RoleBinding|observability|prune-protected-orphan-alert 926689d400d2a8cee64373e78a23fe15c1b9abb792a32c4122a3b06273a024c0
+rbac.authorization.k8s.io/v1|Role|kubescape|cronjob-failure-alert 73dbb1d48af784d2c6bc121b42d0f1f1cd40f6cf89010e0ec403419e61c1528c
 
-rbac.authorization.k8s.io/v1|RoleBinding|openbao|vault-config 73bf84c061f045e4bb57309ed8223a3934932262f69aa15baa749c55de07da96
+rbac.authorization.k8s.io/v1|Role|kubescape|kubescape-scheduler 179e0e76d6d6b57b8c282f404dffe28a5a4a720de62498c4834adf6be71a6c73
 
-rbac.authorization.k8s.io/v1|RoleBinding|umami|cronjob-failure-alert c95ff2b4457c46397cd91acb105ad010f12cb6ec6ef4c3aad62410d158de9e33
+rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:mutate-csi-sidecars f8685a33eea79a4c46d21c025a1bb357ee7a8e7ac51720a7e250d33ff235cb87
 
-rbac.authorization.k8s.io/v1|RoleBinding|umami|kyverno:background-controller:mutate-umami-primary a6f3fb55bd604d18cd496ab6f30a6ca13b56ca5960bb89a7917ed4beb71b901d
+rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:mutate-longhorn-csi-plugin 38547e6f4cfca0394b9c054ebf7530341f3cb5bb097c8a2dfe6ebc02bcba3376
 
-rbac.authorization.k8s.io/v1|RoleBinding|umami|umami-provision-tenants 71f15c759d66790554ea61594fc15278c929ce508d7dd0908fae977f5726ffb8
+rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:mutate-longhorn-engine-image dab5a88232dd127b5761d33ed9d2a5cfa62e500784f8eecf54cf150d1d394f93
 
-rbac.authorization.k8s.io/v1|RoleBinding|unifi|unifi-managed-resources 687dcfcb7f55dca881bd90e422e44d5de0425c8f7b13df2ae77674289809f669
+rbac.authorization.k8s.io/v1|Role|longhorn-system|longhorn-stale-node-cleanup 2ae219faa19d19f529df6ca93c2d3e1d84c4e2ac0f96f432d3184fa3a077aa7f
 
-rbac.authorization.k8s.io/v1|RoleBinding|velero|velero-maintenance-oom-alert b8776cd54a95c03ab6bc6c44903ac1fb908c55c95e2095b3aca37e8cc15a4035
+rbac.authorization.k8s.io/v1|Role|observability|cronjob-failure-alert 91708549be030b87b96699657f57e8fecf360a2e2e2ec12c9b522d1e4c3a3d5b
 
-rbac.authorization.k8s.io/v1|RoleBinding|vertical-pod-autoscaler|vpa-leader-election ef85293ff74c0fa5f092bc19cce23eb92db440a5602f288531c6d98cee29afac
+rbac.authorization.k8s.io/v1|Role|observability|prune-protected-orphan-alert eb058ca5848d40ebfceb2d4394c412cbfd40565b02497701045ddd830cc8f169
 
-rbac.authorization.k8s.io/v1|RoleBinding|wedding-app|wedding-app 8fb1f3e7ae50e8f3d35d14b5d707fee91001cab754f2c70fa5befbeba13fddd6
+rbac.authorization.k8s.io/v1|Role|openbao|vault-config 37b5f51d7b93004e260491347b49179eae212f7e8fd5627ab8836546c72d2e12
 
-rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin 593fd95bd84af8840c71270227cabdf8137cba9c58d844b5ca2db3406d4632a2
+rbac.authorization.k8s.io/v1|Role|umami|cronjob-failure-alert 8215bddf80a876380901d2d6f53302dbe0145072c7839cd0cfd86be60d27367d
 
-rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-operator b14714377d4a5317c7d829bc1b378ecea44ed82f2b1fff32d4c923f9ee4809d6
+rbac.authorization.k8s.io/v1|Role|umami|kyverno:background-controller:mutate-umami-primary 08600aa53b2a698a338e08f94b937d4ce04e76ad2991d897410f6cbc4bd7179d
 
-rbac.authorization.k8s.io/v1|Role|agentic-engineer|lane-store-reader 106d83767c8414ced671f67a43a09030e554a529851f0967021c98bc2a031542
+rbac.authorization.k8s.io/v1|Role|umami|umami-provision-tenants 7cada6888488915d040c993e30ad60d7418d836ece10e4cebb73cd8f15b1c40b
 
-rbac.authorization.k8s.io/v1|Role|ate-system|substrate-ca-reader 153cc02bc210a1f00ad70fb8c260500fa9593e634302378d67d91af10cf3fafd
+rbac.authorization.k8s.io/v1|Role|unifi|unifi-managed-resources 2ba58fba4f807aa714bb172bc1cc239760155a8d54c11f6abf44311ac257c5df
 
-rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources 9207b057fb6d4f1492b13663277658e3bd31849a9aa11dd2185ceb0a0afcbfab
+rbac.authorization.k8s.io/v1|Role|velero|velero-maintenance-oom-alert 7ac69066fb86ce5363f9935e623c4807fa7f061428dfdc18484b0ac9b08b60f0
 
-rbac.authorization.k8s.io/v1|Role|customer-identity|customer-identity-setup 7f700c5af8b692b4e51b9e5150cf90b7d7e70f0f4b7d215e5b169a147fadfdcd
+rbac.authorization.k8s.io/v1|Role|vertical-pod-autoscaler|vpa-leader-election 457623c1ed8cceb5ffc4ba0dace3c8bf6a0afb177db8181d7cb99bfddb5bae08
 
-rbac.authorization.k8s.io/v1|Role|data-product-controller|data-product-readiness-observer 10df039485be13b0344199a50eacc4fbd942f2bb9b831a84b11c024918a3422a
-
-rbac.authorization.k8s.io/v1|Role|data-product-controller|khoist-documentation 35e63ab8f23f3de55976023d5c6144ac5a3cd7ed5c0947f1c451d74cf4167bef
-
-rbac.authorization.k8s.io/v1|Role|flux-system|agentic-engineer-cluster-reader 35be0ebfc937ebd838330aeeabdb0249c1c886685c3d4f3469466f8d8b8726b8
-
-rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources f25e2b6e9407f0c330c23b428d3f467745fcdcdc1fa23153b4c8fcd7a286d8be
-
-rbac.authorization.k8s.io/v1|Role|kubelet-serving-cert-approver|leader-election:kubelet-serving-cert-approver b73fcea5da2f0aad8552ff6a168372a6d47e9f4fb967c7df741ba89708240c73
-
-rbac.authorization.k8s.io/v1|Role|kubescape|cronjob-failure-alert 0af4e3cf510c76adfb56a232ee84b752f8cf873c403a742ebe631842bd15fc84
-
-rbac.authorization.k8s.io/v1|Role|kubescape|kubescape-scheduler 6308e2daa12d66b283e8f8303f5b80c16041c4bd78c0038fdd8176c9aca806df
-
-rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:mutate-csi-sidecars de61ebdb8aba68dd660bc5b26a10d1a2bf10ab0fa1ef6f9ee6ea62fcdd0b223b
-
-rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:mutate-longhorn-csi-plugin 9e635e79563a874e390db6fabb175b613e02f0580df83bfa01d2e23263005f1d
-
-rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:mutate-longhorn-engine-image 7f608d46c536199ef293835c61d68573518420f18fa52a56553aef8cb0e96991
-
-rbac.authorization.k8s.io/v1|Role|longhorn-system|longhorn-stale-node-cleanup bb761c018fb1648ee65a6ffe72e770e3cdf125b40a8774f11369f303beb85d50
-
-rbac.authorization.k8s.io/v1|Role|observability|cronjob-failure-alert 3b244783f53c17c55abfbae0a09973d244d258dbfbfdc8aa816539ae02bf4e6c
-
-rbac.authorization.k8s.io/v1|Role|observability|prune-protected-orphan-alert 7a815989a665e8c9d5f6434e51f3dde0e6e9116e05f195f1e56ed34cd7b3b1c2
-
-rbac.authorization.k8s.io/v1|Role|openbao|vault-config f4a498f0733d0dc497233995191721730dc419e176321e4a43b499b5af536cfc
-
-rbac.authorization.k8s.io/v1|Role|umami|cronjob-failure-alert 013941d8ee4be81bb4238f14f2b8c2f3d49636519e220b9448958e1988d9111c
-
-rbac.authorization.k8s.io/v1|Role|umami|kyverno:background-controller:mutate-umami-primary 51e383126fabafae868295f537f3fae2f34c49faa26d932391bfae80f256bed9
-
-rbac.authorization.k8s.io/v1|Role|umami|umami-provision-tenants acd94d4b7b034d6feafb4a9a32a7f57b88421bb9e21f6304fb6f0b5ba3e96662
-
-rbac.authorization.k8s.io/v1|Role|unifi|unifi-managed-resources a9a1f9ca2e6e1154227db67291d54ac4e19a8dcb136843679e8bc0605180a0cd
-
-rbac.authorization.k8s.io/v1|Role|velero|velero-maintenance-oom-alert 062076b82e1a6bb9af4b6f647f2d297cbe683e70792b05f1f34c1ed881a7981f
-
-rbac.authorization.k8s.io/v1|Role|vertical-pod-autoscaler|vpa-leader-election 5b0a336b0836708cfb00e2ab8f28d273f062a986fa4e583f9694114f930bedfa
-
-rbac.authorization.k8s.io/v1|Role|world-at-ruin|world-at-ruin-zone-trial-operator 8ce73bb023e62877deee82fde80f040bac3dfe45e5992da386d32a6788ff4099
-
-source.toolkit.fluxcd.io/v1|GitRepository|unifi|unifi 58cb863c65fbca54948d10a53dcb6dd98b28cfb5a5299dee40604b588e8852c0
-
-source.toolkit.fluxcd.io/v1|HelmRepository|actual-budget|actual-budget c77db6e8054359ae32168d3d10940f55c80cb482865df218fc866da00fdc165b
-
-source.toolkit.fluxcd.io/v1|HelmRepository|cert-manager|cert-manager cd18284871c3da7ea497aa40db0f158c71504a0c3a41cae9e5927c3b97a1305b
-
-source.toolkit.fluxcd.io/v1|HelmRepository|cert-manager|simply-dns-webhook 3284e8d2cb2478e73ccbe1c8b293227fbc859938b9ebf797050f03a975810d64
-
-source.toolkit.fluxcd.io/v1|HelmRepository|cnpg-system|cloudnative-pg 2ca8952aaa7cb74110e7c6a4568406045bb00cd589ef16003025dc12eb791e61
-
-source.toolkit.fluxcd.io/v1|HelmRepository|crossplane-system|crossplane f47ce87b7611344b0d38ff450e6f789a60711bd657a2ff063253c5fcbd30e754
-
-source.toolkit.fluxcd.io/v1|HelmRepository|customer-identity|dex 4c7411e28d76b21561f4902a60751464114ab3f8bde47b8cae3b57a3fea121f0
-
-source.toolkit.fluxcd.io/v1|HelmRepository|customer-identity|zitadel f156b723dae5eac81d6b84453a416739de755378d12a665970576b0ce199b219
-
-source.toolkit.fluxcd.io/v1|HelmRepository|dex|dex d251b34144fb4d376b47526e24b3520a1cc696159aa72f1a8c06fa67aadbda7f
-
-source.toolkit.fluxcd.io/v1|HelmRepository|external-dns|external-dns 81022de05d792a296ac5ce122fd92258c7cd7ac85ce62aa703aa12fdb0ac1326
-
-source.toolkit.fluxcd.io/v1|HelmRepository|external-secrets|external-secrets 1b37d24bf9b45fca6d06fa353858c4364e2e1fc5c526e066a4121a9c914c8386
-
-source.toolkit.fluxcd.io/v1|HelmRepository|flagger-system|flagger c486c0ac9521f94c378ab3b1b331a1c8b11b2e4852d5ba6c1829daec8e877fb9
-
-source.toolkit.fluxcd.io/v1|HelmRepository|kagent|kagent 27efeec945f8e61dc19211d1016b5a084444a00a6ba606e70ac68ff06f26dec9
-
-source.toolkit.fluxcd.io/v1|HelmRepository|keda|keda 0ac84176333ac006ba8e534c1403ea7e7a8f5052860c87bb788eb55c3cfc331c
-
-source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|cilium f35184ba46c66023f433529f9e87bc4513351856c822e5e5550356e313457552
-
-source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|descheduler 1f900af9d94ebb6ff01e0f3e04cc69024cb379f9ee368c61a3c9b774fc6a1442
-
-source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|hcloud 15284232c48241bb2530323817a10a1bf90d3ba08089489924404e3e30ae8a11
-
-source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|metrics-server 123e87cb7ab1d37066fbe1c6fd9708e373815cc2dfe08fd2f5bfa04da246d4ca
-
-source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|piraeus 359ddaa2683909fd184ad93b54b9466be9747cf0e12551b7a04149661e4a04de
-
-source.toolkit.fluxcd.io/v1|HelmRepository|kubescape|kubescape e1762938838a574ea03bba777a96fd8f8769027c41781dd600e34b861762d96b
-
-source.toolkit.fluxcd.io/v1|HelmRepository|kubescape|prometheus-community 1979ae7da2b82058069485830edeeea73a7eb6199f012673330f3bc08d030510
-
-source.toolkit.fluxcd.io/v1|HelmRepository|kyverno|kyverno c553f230e543e385410f783c317d744d6aa8ed191369f6ccd961ec6cc67b4c46
-
-source.toolkit.fluxcd.io/v1|HelmRepository|longhorn-system|longhorn ee0b8681bbe15a63cf4947dda3b36e36dc270d089386353908afb5cd81368a65
-
-source.toolkit.fluxcd.io/v1|HelmRepository|oauth2-proxy|oauth2-proxy efe578dc41c0a43e42deac0de85afc6956aae1dfeb03e557685e28949a6e835e
-
-source.toolkit.fluxcd.io/v1|HelmRepository|observability|coroot 1fd11d289f96dc54d0c2d0bb0bf3ae00d3f628948da13e35c7a9eb9412415979
-
-source.toolkit.fluxcd.io/v1|HelmRepository|observability|open-telemetry 60ecdd93c86bdef19d4c33e6a42006d9737b1d2c5d5863ee00257721f8739b6a
-
-source.toolkit.fluxcd.io/v1|HelmRepository|open-feature-operator-system|open-feature-operator 115a2f6679c69d046a1120ffb873238bbf0c16bd851a24c63c122d3c90b39ee3
-
-source.toolkit.fluxcd.io/v1|HelmRepository|openbao|openbao b508e5c41550708440235415a34dda33e6578ea389efaa3d5b50484b0c60ac00
-
-source.toolkit.fluxcd.io/v1|HelmRepository|policy-reporter|policy-reporter a533fe32e13738290e15c121b90470bc8ab66f127061ca6769a98fdd008b2b6c
-
-source.toolkit.fluxcd.io/v1|HelmRepository|reloader|reloader 183a019e79a4b5c7e2da1bb18119a892080bd25284ff8867794595551ce447a4
-
-source.toolkit.fluxcd.io/v1|HelmRepository|umami|umami ca5626705a569e5e728e26714300d39f07eb8c2e5a007a7b24eb08d20f54f786
-
-source.toolkit.fluxcd.io/v1|HelmRepository|velero|vmware-tanzu c4f7f1772afa82eebb5c8b823f41e9280d964e2b9008f070c753861a8bd0eae4
-
-source.toolkit.fluxcd.io/v1|HelmRepository|vertical-pod-autoscaler|vertical-pod-autoscaler 8a3838c20823f33a9ba171c6d8d889dbb6bac5fa68564ba78df4e4460156eb96
-
-source.toolkit.fluxcd.io/v1|HelmRepository|whoami|whoami 28dc88b5a5e69a086e4f7fb87be34d1b8a0cc20a13b21706aaf534a8e5d80cf8
-
-source.toolkit.fluxcd.io/v1|OCIRepository|arc-ksail-analysis|ksail-analysis-runners 5f89c75739fa50d998e046bc2a388ccf9c7fb4413377510e43f9f12ae4ff4c70
-
-source.toolkit.fluxcd.io/v1|OCIRepository|arc-systems|arc-controller 64fb325741489bbd5ece40cf2cbf6e4aef3e87e89efea97b7b0f2ec498671fa1
-
-source.toolkit.fluxcd.io/v1|OCIRepository|ascoachingogvaner|ascoachingogvaner 4e5990bdebbc8e73a000048ee9349aaec38461ee3fc900e629ff8bb2ace3e230
-
-source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate c18e72675027c27e703a9c81377d00bf511e0ce179fa1a58f2ae07a57456117d
-
-source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate-atelet c47333a5b1c9420871e752394dad081886abcd25e9c67ced379660f798bf973f
-
-source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate-crds 18e1e779162255c57802d54633594aa5ee0e27c17e340d58401cd59eacc1afcd
-
-source.toolkit.fluxcd.io/v1|OCIRepository|ate-system|substrate-podcert 17b63a848326ce8c760d1f416a622394a383011ba066abbbed921570ae08b007
-
-source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 2161f682057b52b2d43f21365fead2cbb7f7417125ba2d03f00eff09a2643f2b
-
-source.toolkit.fluxcd.io/v1|OCIRepository|cert-manager|origin-ca-issuer 026bb5454bce4d953d216d1c661137a3c3232576488eeff7a41ec4c76a642215
-
-source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documentation 673e124340edaf5785f3d7590cc2362cecf856829f8852fe4391855dddba32b1
-
-source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator fdc99e9413e88a5f8a99efa8b515dfbc340303dca5650d34137f1965d2788771
-
-source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config 5014827f3d3e757a6f63867060cadee1c1d6ccd4c5fa774e053c6593554fb0f3
-
-source.toolkit.fluxcd.io/v1|OCIRepository|homepage|homepage ff2c2d1aac0b2315247df9f5266eeb00f4443ea551d6e92270bdf76a243c0f38
-
-source.toolkit.fluxcd.io/v1|OCIRepository|kagent|kagent-crds cb0bac92f6bcee350b5c3262f5d6f22d257cb7e15d8245a5d1eb021ee42a8ba3
-
-source.toolkit.fluxcd.io/v1|OCIRepository|kro-system|kro 76bcb723555afb69d2299cea2394ee4943cffef0c106d59a0fcba56ae87a2caf
-
-source.toolkit.fluxcd.io/v1|OCIRepository|ksail-operator|ksail-operator 2c1b9612623604a381f454532cb10502dd96b56468ffacb5aeaf9d50c3327090
-
-source.toolkit.fluxcd.io/v1|OCIRepository|wedding-app|wedding-app e3a294dd74a4f9299d15b6b9140e8de9b12278a25e49e4220c88815a33feb13d
-
-source.toolkit.fluxcd.io/v1|OCIRepository|world-at-ruin|world-at-ruin e85c1133b6517811831886b22ea6686b98781494c3cd5c1b4d3a4e8ffd6e4714
+rbac.authorization.k8s.io/v1|Role|world-at-ruin|world-at-ruin-zone-trial-operator a84d5e4c58a7f112154c55ce2f68360193bd00b596556c183905dfcd5d99cb52
 
 v1|ConfigMap|flux-system|variables-base 3ad340acc55739177ebb22a26bf2c20116c66a818a77793646c4fd54b4c3c8b1
 
-v1|ConfigMap|flux-system|variables-cluster 951217f5ef06eea745ed22d56b9e127c2a4b9799036537831378194f818e0eff
+v1|ConfigMap|flux-system|variables-cluster 0ed6b367d2e52d1aef763acce34391355bbbdf53ba2a25c76ae19f0301994578
 
 v1|Secret|flux-system|variables-cluster 03c1c8eb598a7d2fe2a7c0670282d90139b91fb86e5bff534cd5d748976d19f5
 

@@ -9,7 +9,9 @@ trap 'rm -rf -- "$work"' EXIT
   exit 1
 }
 bash "$root/scripts/tests/test-webapp-inputs-wiring.sh"
-PLATFORM_COMPILED_WEBAPP_DIR="$work/compiled" bash "$root/scripts/tests/test-webapp-compiler.sh" >"$work/compiler.log" 2>&1 || {
+# Only the compiled output is scanned here; the compiler job judges the Tenant
+# API against its base revision, so without one this run compares the commit with itself.
+KRO_API_BASE="${KRO_API_BASE:-HEAD}" PLATFORM_COMPILED_WEBAPP_DIR="$work/compiled" bash "$root/scripts/tests/test-webapp-compiler.sh" >"$work/compiler.log" 2>&1 || {
   cat "$work/compiler.log" >&2
   exit 1
 }

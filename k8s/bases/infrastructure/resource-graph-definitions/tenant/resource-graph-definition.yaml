@@ -36,9 +36,8 @@
 # field only if a future tenant diverges from the convention.
 #
 # A tenant follows its own signed release tags (ADR 0019, monorepo#5094): the
-# source takes the newest stable release in `spec.source.version` (default: every
-# release), so a release reaches production with no platform change. An
-# emergency pin is an exact version, `version: "3.12.0"`, in a reviewed PR.
+# source takes the newest stable release, so it reaches production without a
+# platform change. The fixed range preserves the installed Tenant API shape.
 #
 # Lands in the `infrastructure` layer (which `dependsOn` infrastructure-controllers
 # where the KRO controller installs the RGD CRD) — a CR of an RGD-defined kind
@@ -76,9 +75,11 @@ spec:
     # exercised anywhere else in this file.
     types:
       TenantSource:
-        # The Flux semver range of releases the tenant follows. Only stable
-        # `X.Y.Z` releases are selected, whatever the range says.
-        version: 'string | default=">=0.0.0" minLength=1 maxLength=64'
+        # Retired pin fields. KRO refuses a Tenant API update that removes a field the
+        # installed API still has, so they stay in the schema, unchanged. The graph
+        # reads neither, and the `source` validation below refuses any value but empty.
+        digest: 'string | default="" maxLength=71 pattern="^$|^sha256:[0-9a-f]{64}$"'
+        publisherRevision: 'string | default="" maxLength=40 pattern="^$|^[0-9a-f]{40}$"'
         # An active application cannot be switched off through this control.
         reconcileApplication: 'boolean | default=true validation="self || !oldSelf"'
       TenantResourceQuota:
@@ -117,7 +118,12 @@ spec:
       # The releases the tenant follows. Trust comes from the signature, not a
       # pin: the source accepts only the tenant's own release workflow on a
       # release tag (ADR 0017, ADR 0019).
-      source: 'TenantSource | default={}'
+      # Publish the new meaning in the API schema. KRO v0.10.0 detects the
+      # description change and updates the CRD in both directions. Its default
+      # comparison does not detect an isolated change to a CEL rule.
+      source: >-
+        TenantSource | default={} description="Follows signed stable releases. Legacy pin fields must be empty."
+        validation="(!has(self.digest) || self.digest == '') && (!has(self.publisherRevision) || self.publisherRevision == '')"
       # Standard multi-tenancy guardrails (#1932 follow-up #2522): a
       # namespace-wide ResourceQuota and a per-container default LimitRange.
       # Both default to `enabled: false` — no behaviour change for existing
@@ -265,9 +271,8 @@ spec:
         spec:
           interval: 1m
           ref:
-            semver: ${schema.spec.source.version}
-            # Stable releases only (`X.Y.Z`): a pre-release never reaches prod,
-            # whatever range the tenant names.
+            semver: ">=0.0.0"
+            # Stable releases only (`X.Y.Z`).
             semverFilter: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           url: oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests
           verify:

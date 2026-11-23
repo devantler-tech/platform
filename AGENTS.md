@@ -262,8 +262,8 @@ only for CRD changes; a refresh that changes nothing but the record is the norma
 The Crossplane provider packages are another exception, for a different reason: neither
 `xpkg.upbound.io` nor `ghcr.io` gives Renovate a release date for them, and an undated release never
 clears the cooldown, so with it no provider update was ever proposed (#4754). Their rule also sets
-`0 days`. Keep it: provider updates are never automerged and cannot merge without the review, the
-signature check and the fingerprint re-approval that rule describes.
+`0 days`. Keep it: provider updates are never automerged and cannot merge without the review and
+the signature check that rule describes. Providers carry no authorization ledger entry (#6270).
 
 The flux-operator chart is a third exception, for the same reason: it is published on `ghcr.io`
 without a release date, so no update was proposed after 0.50.0 (#4985). Its rule sets `0 days` and
@@ -620,6 +620,13 @@ entry and the shared composite never started, production was not touched and the
 restore. `deploy-prod`'s last step reports exactly that pair; any other outcome, including a missing
 report or any re-run attempt, still heals: a re-run is refused because the PR has already left
 the queue, while its first attempt may have deployed.
+
+**Never hold production with an approval on the `prod` environment.** Every production job takes the
+`prod-deploy` lock before it waits for approval, so one unapproved job wedges the whole lane: stale
+merge-group runs cannot reach the step that refuses them, a rejected deploy starts a heal that waits
+too, and queued runs cannot be cancelled (#6433). Hold production with the fail-fast rule in
+[the recovery runbook](docs/operations/production-recovery.md#hold-production-without-wedging-the-deploy-lane)
+instead.
 
 **Persistence retirement is always two-stage.** A merge-group artifact is speculative, but
 Kubernetes PVC deletion is irreversible once `deletionTimestamp` is set: queue eviction and the

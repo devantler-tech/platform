@@ -42,12 +42,12 @@ go.mod
 go.sum
 internal/longhornmigration/
 internal/longhorninventory/
+internal/namespaceinventory/
 internal/strictjson/
 
 # Programs the deploy runs.
 scripts/gateway-receiver-binding/
 scripts/guard-arc-recovery/
-scripts/maintain-longhorn-clients/
 scripts/migrate-longhorn-v2/
 scripts/production-inputs/
 scripts/recover-private-mail-probes/
@@ -81,6 +81,7 @@ scripts/report-cilium-rollout-gate-suppression.sh
 scripts/report-publish-workflow-signing-revisions.sh
 scripts/retire-arc-pool.sh
 scripts/run-ksail-prod.sh
+scripts/select-velero-rebuild-backups.jq
 scripts/tenant-publication-binding.lib.sh
 scripts/tenant-source-constructors.lib.sh
 scripts/tenant-source-discovery.lib.sh

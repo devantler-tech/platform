@@ -184,9 +184,9 @@ if ! discover >"$work/result" 2>"$work/error" || [ -s "$work/result" ]; then
   cat "$work/error" >&2
   failures=$((failures + 1))
 fi
-yq -i '.spec.source.version="3.12.0"' "$input"
+yq -i '.spec.source.reconcileApplication=false' "$input"
 if ! discover >"$work/result" 2>"$work/error" || [ -s "$work/result" ]; then
-  printf 'FAIL: an emergency-pinned own-release Tenant was not admitted\n' >&2
+  printf 'FAIL: a source-only Tenant was not admitted\n' >&2
   failures=$((failures + 1))
 fi
 cp "$work/tree/$graph" "$work/graph.yaml"

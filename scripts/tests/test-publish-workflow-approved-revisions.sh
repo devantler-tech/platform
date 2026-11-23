@@ -582,6 +582,120 @@ else
   cat "$WORK/binding.log" >&2
 fi
 
+# ── A consumer that signs its own releases (ADR 0017, #5267) ──────────────────────────────
+# Its publication and its default branch name its own release workflow, not a shared one.
+# The compatibility set keeps the last proven legacy evidence byte-for-byte, and the
+# companion file records the own-release identities. Any other repository's release
+# workflow, a mutable ref, or a consumer with no legacy row to keep is refused.
+own_consumer="$(printf '%s\n' "$consumers" | cut -f1 | grep -vxE 'business-site|data-product-controller' | head -1)"
+own_workflow="$(printf '%s\n' "$consumers" | awk -F'\t' -v c="$own_consumer" '$1==c {print $2; exit}')"
+own_release="devantler-tech/${own_consumer}/.github/workflows/cd.yaml"
+make_own_pin_resolver() { # <name> <own-repo-answer>
+  local path="$WORK/pin-own-$1.sh"
+  cat >"$path" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "$own_consumer" ]; then printf '%s\n' '$2'; exit 0; fi
+printf '%s\n' "$SHA_B"
+STUB
+  chmod +x "$path"
+  printf '%s\n' "$path"
+}
+run_own_case() { # <name> <signer-identity> <pin-identity> <start-file|"">
+  local table="$WORK/own-$1.tsv"
+  write_table "$table" "$own_consumer" "1.2.9\\t${DIGEST_A}\\t$2" ''
+  OWN_OUT="$WORK/own-$1.out.tsv"
+  rm -f "$OWN_OUT" "${OWN_OUT%.tsv}.identities.tsv"
+  [ -z "$4" ] || cp "$4" "$OWN_OUT"
+  OWN_LOG="$WORK/own-$1.log"
+  run_gen "$(make_observer "$table" "own-$1")" "$(make_own_pin_resolver "$1" "$3")" "$OWN_OUT" 2026-05-05 "$OWN_LOG"
+}
+if [ -z "$own_consumer" ] || [ -z "$own_workflow" ]; then
+  fail 'no consumer available for the own-release cases'
+else
+  if run_own_case kept "$own_release@refs/tags/v1.2.9" "$own_release@$SHA_C" "$WORK/out1.before" &&
+    cmp -s "$OWN_OUT" "$WORK/out1.before" &&
+    awk -F'\t' -v c="$own_consumer" -v s="$own_release@refs/tags/v1.2.9" -v p="$own_release@$SHA_C" \
+      '$1==c && $3=="1.2.9" && $5==s && $6==p {found=1} END {exit !found}' "${OWN_OUT%.tsv}.identities.tsv"; then
+    pass 'an own-release consumer keeps its legacy row and records its own-release identities'
+  else
+    fail 'an own-release consumer did not keep its legacy row or record its identities'
+    cat "$OWN_LOG" >&2
+  fi
+  for shape in foreign mutable; do
+    case "$shape" in
+      foreign) signer="devantler-tech/not-${own_consumer}/.github/workflows/cd.yaml@refs/tags/v1.2.9" ;;
+      mutable) signer="$own_release@refs/heads/main" ;;
+    esac
+    if run_own_case "$shape" "$signer" "$own_release@$SHA_C" "$WORK/out1.before"; then
+      fail "a $shape own-release signer was accepted"
+    elif cmp -s "$OWN_OUT" "$WORK/out1.before" && grep -qF -- "$own_consumer ($own_workflow)" "$OWN_LOG"; then
+      pass "a $shape own-release signer is refused by name with the set untouched"
+    else
+      fail "a $shape own-release refusal changed the set or did not name the consumer"
+      cat "$OWN_LOG" >&2
+    fi
+  done
+  if run_own_case floating "$own_release@refs/tags/v1.2.9" "$own_release@refs/heads/main" "$WORK/out1.before"; then
+    fail 'an own-release pin on a mutable ref was accepted'
+  elif cmp -s "$OWN_OUT" "$WORK/out1.before"; then
+    pass 'an own-release pin on a mutable ref is refused with the set untouched'
+  else
+    fail 'an own-release pin refusal changed the set'
+  fi
+  if run_own_case unproven "$own_release@refs/tags/v1.2.9" "$own_release@$SHA_C" ''; then
+    fail 'an own-release consumer with no legacy row to keep was accepted'
+  elif [ ! -e "$OWN_OUT" ] && grep -qF -- 'retained legacy publication evidence' "$OWN_LOG"; then
+    pass 'an own-release consumer with no legacy row to keep is refused and nothing is written'
+  else
+    fail 'an own-release consumer without a legacy row was not refused for that reason'
+    cat "$OWN_LOG" >&2
+  fi
+fi
+
+# The default observer verifies the artifact Flux APPLIED. The own-release signer check reads
+# the digest the registry tag names, so a tag that names another digest, before or after that
+# check, must refuse instead of pairing one digest's signature with the other's observation.
+own_observer_case() { # <registry-digest-before> <registry-digest-after>
+  local reads_file="$WORK/own-observer-reads"
+  : >"$reads_file"
+  # A separate process: sourcing the generator here would redeclare this test's read-only names.
+  OWN_SCRIPT="$SCRIPT" OWN_READS="$reads_file" OWN_APPLIED="$DIGEST_A" OWN_COMMIT="$SHA_C" \
+    OWN_BEFORE="$1" OWN_AFTER="$2" bash -c '
+    set -euo pipefail
+    # shellcheck source=scripts/generate-publish-workflow-approved-revisions.sh
+    source "$OWN_SCRIPT"
+    applied_revision() { printf "1.2.9\t%s\n" "$OWN_APPLIED"; }
+    git_tag_for_registry_tag() { printf "v1.2.9\n"; }
+    tag_commit() { printf "%s\n" "$OWN_COMMIT"; }
+    report_publisher_at_ref() { printf "own-release\n"; }
+    # Each read runs in a command substitution, so count reads in a file.
+    registry_digest_for_release() {
+      printf "read\n" >>"$OWN_READS"
+      if [ "$(grep -c . "$OWN_READS")" -eq 1 ]; then printf "%s\n" "$OWN_BEFORE"; else printf "%s\n" "$OWN_AFTER"; fi
+    }
+    report_release_signer() { printf "devantler-tech/x/.github/workflows/cd.yaml@refs/tags/v1.2.9\n"; }
+    default_observer x publish-app
+  ' 2>/dev/null
+}
+readonly DIGEST_B='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+if own_observer_case "$DIGEST_A" "$DIGEST_A" | grep -qF "$DIGEST_A"; then
+  pass 'the default observer accepts an own-release tag that names the applied digest'
+else
+  fail 'the default observer refused an own-release tag that names the applied digest'
+fi
+for shape in before after; do
+  if [ "$shape" = before ]; then
+    out="$(own_observer_case "$DIGEST_B" "$DIGEST_A" || true)"
+  else
+    out="$(own_observer_case "$DIGEST_A" "$DIGEST_B" || true)"
+  fi
+  if [ -z "$out" ]; then
+    pass "the default observer refuses a tag naming another digest $shape the signer check"
+  else
+    fail "the default observer accepted a tag naming another digest $shape the signer check"
+  fi
+done
+
 if [ "$failures" -gt 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1

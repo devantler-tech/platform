@@ -18,6 +18,9 @@ spec:
       configRef:
         name: gvisor-default
   template:
+    annotations:
+      # Roll the worker to release the unfinished resume's assignment (#6463).
+      platform.devantler.tech/worker-recovery: "6463"
     serviceAccountName: agentic-engineer-worker
     resources:
       requests:

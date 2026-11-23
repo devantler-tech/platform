@@ -547,10 +547,11 @@ misconfigurations:
     statement: >-
       This is a namespaced Role in the customer-identity namespace, bound to the
       customer-identity/customer-identity-setup ServiceAccount of the ZITADEL setup CronJob. Its one
-      rule grants get and patch alone, scoped by resourceNames to the single
-      customer-dex-zitadel-client Secret the CronJob fills with the client ZITADEL issues, so the
-      identity cannot list or watch the namespace's Secrets, cannot read any other Secret, and cannot
-      create or delete one.
+      rule grants get and patch alone, scoped by resourceNames to the two Secrets the CronJob fills
+      with credentials ZITADEL issues: customer-dex-zitadel-client (the customer Dex's client) and
+      business-portal-zitadel-token (the portal service account's token). So the identity cannot
+      list or watch the namespace's Secrets, cannot read any other Secret, and cannot create or
+      delete one.
   # KSV-0020 "runs with UID <= 10000" on the vault-config Job — 2 findings, both LOW.
   #
   # UID 100 is the identity the openbao image itself DEFINES — measured against the pinned

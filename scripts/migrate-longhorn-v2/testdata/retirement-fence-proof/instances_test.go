@@ -14,10 +14,14 @@ func instanceCases(phase string) []decisionCase {
 	for _, resource := range []string{"engines", "replicas", "enginefrontends", "volumeattachments"} {
 		kind := map[string]string{"engines": "Engine", "replicas": "Replica", "enginefrontends": "EngineFrontend", "volumeattachments": "VolumeAttachment"}[resource]
 		name := "scratch-" + resource
+		if resource == "volumeattachments" {
+			name = "scratch-backend"
+		}
 		child := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "longhorn.io/v1beta2", "kind": kind,
-			"metadata": map[string]any{"name": name, "namespace": "longhorn-system", "uid": "uid-" + name, "resourceVersion": "1", "finalizers": []any{"longhorn.io"},
+			"metadata": map[string]any{"name": name, "namespace": "longhorn-system", "uid": "uid-scratch-" + resource, "resourceVersion": "1", "finalizers": []any{"longhorn.io"},
 				"ownerReferences": []any{map[string]any{"apiVersion": "longhorn.io/v1beta2", "kind": "Volume", "name": "scratch-backend", "uid": "uid-scratch-backend"}},
+				"labels":          map[string]any{"longhornvolume": "scratch-backend"},
 				"annotations":     map[string]any{"storage.platform.devantler.tech/retirement-checkpoint": "5678-" + strings.Repeat("a", 32)}},
 			"spec":   map[string]any{"volumeName": "scratch-backend", "dataEngine": phase, "desireState": "stopped", "nodeID": "prod-worker-1"},
 			"status": map[string]any{"ownerID": "prod-worker-1", "instanceManagerName": "scratch-im", "currentState": "stopped", "starting": false, "started": false},
@@ -50,6 +54,7 @@ func instanceCases(phase string) []decisionCase {
 		add("replacement UID", func(p *unstructured.Unstructured) { p.SetUID("replacement") }, admission.Update, true, false)
 		add("foreign owner", func(p *unstructured.Unstructured) { p.SetOwnerReferences([]metav1.OwnerReference{{UID: "foreign"}}) }, admission.Update, true, false)
 		add("missing owner", func(p *unstructured.Unstructured) { p.SetOwnerReferences(nil) }, admission.Update, true, false)
+		add("missing native selector label", func(p *unstructured.Unstructured) { p.SetLabels(nil) }, admission.Update, true, false)
 		add("spec mutation", func(p *unstructured.Unstructured) { p.Object["spec"].(map[string]any)["nodeID"] = "foreign" }, admission.Update, true, false)
 		add("metadata namespace escape", func(p *unstructured.Unstructured) { p.SetNamespace("foreign") }, admission.Update, true, false)
 		add("original name recreation", func(p *unstructured.Unstructured) { p.SetUID("") }, admission.Create, true, false)
@@ -75,12 +80,22 @@ func instanceCases(phase string) []decisionCase {
 		add("unrelated create", func(p *unstructured.Unstructured) {
 			p.SetName("foreign")
 			p.SetOwnerReferences(nil)
+			p.SetLabels(nil)
 			key := "volumeName"
 			if resource == "volumeattachments" {
 				key = "volume"
 			}
 			p.Object["spec"].(map[string]any)[key] = "foreign"
 		}, admission.Create, false, false)
+		add("native selector label without owner or spec reference", func(p *unstructured.Unstructured) {
+			p.SetName("foreign")
+			p.SetOwnerReferences(nil)
+			key := "volumeName"
+			if resource == "volumeattachments" {
+				key = "volume"
+			}
+			p.Object["spec"].(map[string]any)[key] = "foreign"
+		}, admission.Create, true, false)
 		for _, operation := range []admission.Operation{admission.Create, admission.Update} {
 			foreign := child.DeepCopy()
 			foreign.SetName("scratch-engines")
@@ -89,6 +104,7 @@ func instanceCases(phase string) []decisionCase {
 			}
 			foreign.SetUID("foreign")
 			foreign.SetOwnerReferences(nil)
+			foreign.SetLabels(nil)
 			key := "volumeName"
 			if resource == "volumeattachments" {
 				key = "volume"

@@ -82,7 +82,7 @@ func saveBenchmarkRecoveryProgress(ctx context.Context, c client, previous, next
 		}
 	}
 	for kind, receipt := range next.Recovery.Deletes {
-		if (kind != "Pod" && kind != "NetworkPolicy") || receipt.UID == "" || next.Resources[kind] != receipt {
+		if !benchmarkRecoveryDeletionKind(kind) || receipt.UID == "" || next.Resources[kind] != receipt {
 			return errors.New("recovery deletion intent is outside its original UID receipts")
 		}
 	}

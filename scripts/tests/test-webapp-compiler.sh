@@ -45,7 +45,7 @@ fetch_schema() {
     exit 1
   }
 }
-[[ "$(yq -er '.spec.chart.spec.version' "${root}/k8s/bases/infrastructure/controllers/external-secrets/helm-release.yaml")" == 2.14.0 ]] || {
+[[ "$(yq -er '.spec.chart.spec.version' "${root}/k8s/bases/infrastructure/controllers/external-secrets/helm-release.yaml")" == 2.15.0 ]] || {
   echo 'FAIL: review Tenant schema fixtures for the new External Secrets chart' >&2
   exit 1
 }
@@ -53,8 +53,8 @@ fetch_schema 'https://raw.githubusercontent.com/fluxcd/source-controller/v1.9.6/
   80c7c6e5c8de0764cc83acd4de5c74bea8e51186085304d22cecc5f2eb35500e "${work}/oci.yaml"
 fetch_schema 'https://raw.githubusercontent.com/fluxcd/kustomize-controller/v1.9.6/config/crd/bases/kustomize.toolkit.fluxcd.io_kustomizations.yaml' \
   da23ca0e6b4c80d3d26a91583137491e147ef4ef1e2208aece0d0af4ef851974 "${work}/kustomization.yaml"
-fetch_schema 'https://raw.githubusercontent.com/external-secrets/external-secrets/v2.14.0/deploy/crds/bundle.yaml' \
-  0dd116eb3b2ae247e2d256662d5afa4d1f3cd37d34ad6580261b15acf55b3b0d "${work}/external-secrets.yaml"
+fetch_schema 'https://raw.githubusercontent.com/external-secrets/external-secrets/v2.15.0/deploy/crds/bundle.yaml' \
+  cbde8a1443d958c8a8c3fa76db1a72182440311ba0a3c40d2e07dcb5e78ce1f7 "${work}/external-secrets.yaml"
 yq -o=json -I=0 '.' "${work}/external-secrets.yaml" | jq -se '
   [.[] | select(.kind == "CustomResourceDefinition" and .metadata.name == "externalsecrets.external-secrets.io")]
   | if length == 1 then .[0] else error("expected exactly one actual ExternalSecret schema") end
@@ -85,7 +85,25 @@ actual="$(shasum -a 256 "${work}/envtest.tar.gz" | cut -d ' ' -f 1)"
   exit 1
 }
 tar -xzf "${work}/envtest.tar.gz" -C "${work}"
+
+# The Tenant API the cluster already has is the base revision's graph. KRO
+# updates an installed API only when its compatibility check sees a change, and
+# that check ignores CEL rules, so the compiled change is judged against it
+# (platform#6420). CI fetches the base and exports KRO_API_BASE; locally the
+# default is origin/main.
+api_base="${KRO_API_BASE:-origin/main}"
+api_base_commit="$(git -C "${root}" rev-parse --verify --quiet --end-of-options "${api_base}^{commit}")" || {
+  echo "FAIL: the installed Tenant API's revision ${api_base} is unavailable; fetch it or set KRO_API_BASE" >&2
+  exit 1
+}
+git -C "${root}" show "${api_base_commit}:k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" \
+  >"${work}/tenant-base.yaml" || {
+  echo "FAIL: ${api_base} has no Tenant graph to compare with" >&2
+  exit 1
+}
+echo "Comparing the Tenant API with ${api_base} (${api_base_commit})"
 PLATFORM_TEST_ROOT="${root}" \
+  TENANT_BASE_RGD="${work}/tenant-base.yaml" \
   KUBEBUILDER_ASSETS="${work}/controller-tools/envtest" \
   GATEWAY_HTTPROUTE_CRD="${gateway}/config/crd/standard/gateway.networking.k8s.io_httproutes.yaml" \
   KRO_GRAPH_CRD="${kro}/helm/crds/kro.run_resourcegraphdefinitions.yaml" \

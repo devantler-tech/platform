@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"regexp"
 	"time"
 )
 
@@ -45,11 +44,44 @@ for profile in randread randwrite randrw; do
 done
 `
 
-func benchmarkResources(phase, runID, tag string) ([]object, error) {
-	if (phase != "v1" && phase != "v2") || !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(runID) || tag != "longhorn-benchmark-"+phase+"-"+runID {
+const benchmarkNamespace = "longhorn-benchmark"
+const benchmarkClientNode = "prod-worker-1"
+const legacyBenchmarkClientNode = "prod-worker-3"
+
+func benchmarkTag(phase, runID string) string {
+	return benchmarkNamespace + "-" + phase + "-" + runID
+}
+
+func benchmarkNamespaceMatches(record benchmarkRecord) bool {
+	switch record.Version {
+	case 2:
+		return record.Namespace == benchmarkTag(record.Phase, record.Run)
+	case 3:
+		return record.Namespace == benchmarkNamespace
+	default:
+		return false
+	}
+}
+
+func benchmarkResources(phase, runID, namespace string) ([]object, error) {
+	return benchmarkResourcesForClient(phase, runID, namespace, benchmarkClientNode)
+}
+
+func (r benchmarkRecord) clientNode() string {
+	if r.ClientNode == "" {
+		return legacyBenchmarkClientNode
+	}
+	return r.ClientNode
+}
+
+func benchmarkResourcesForClient(phase, runID, namespace, clientNode string) ([]object, error) {
+	tag := benchmarkTag(phase, runID)
+	if (phase != "v1" && phase != "v2") || !benchmarkRunPattern.MatchString(runID) ||
+		(namespace != tag && namespace != benchmarkNamespace) ||
+		(clientNode != benchmarkClientNode && clientNode != legacyBenchmarkClientNode) {
 		return nil, errors.New("unreviewed benchmark identity")
 	}
-	namespace, class := tag, "lh-benchmark-"+phase+"-"+runID
+	class := "lh-benchmark-" + phase + "-" + runID
 	meta := func(name string, namespaced bool) object {
 		m := object{"name": name, "labels": object{"storage.platform.devantler.tech/benchmark-run": runID, "velero.io/exclude-from-backup": "true"}}
 		if namespaced {
@@ -63,7 +95,7 @@ func benchmarkResources(phase, runID, tag string) ([]object, error) {
 	nsMeta := meta(namespace, false)
 	nsMeta["labels"].(object)["pod-security.kubernetes.io/enforce"] = "restricted"
 	nsMeta["labels"].(object)["pod-security.kubernetes.io/enforce-version"] = "latest"
-	return []object{
+	assets := []object{
 		{"apiVersion": "v1", "kind": "Namespace", "metadata": nsMeta},
 		{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("fio-default-deny", true),
 			"spec": object{"podSelector": object{}, "policyTypes": []any{"Ingress", "Egress"}}},
@@ -76,7 +108,7 @@ func benchmarkResources(phase, runID, tag string) ([]object, error) {
 			"spec": object{"accessModes": []any{"ReadWriteOnce"}, "storageClassName": class,
 				"resources": object{"requests": object{"storage": "4Gi"}}}},
 		{"apiVersion": "v1", "kind": "Pod", "metadata": meta("fio", true), "spec": object{
-			"nodeSelector": object{"kubernetes.io/hostname": "prod-worker-3"}, "restartPolicy": "Never", "hostUsers": false,
+			"nodeSelector": object{"kubernetes.io/hostname": clientNode}, "restartPolicy": "Never", "hostUsers": false,
 			"automountServiceAccountToken": false, "enableServiceLinks": false, "activeDeadlineSeconds": benchmarkDeadlineSeconds,
 			"securityContext": object{"runAsNonRoot": true, "runAsUser": 65532, "runAsGroup": 65532, "fsGroup": 65532,
 				"fsGroupChangePolicy": "OnRootMismatch", "seccompProfile": object{"type": "RuntimeDefault"}},
@@ -86,5 +118,9 @@ func benchmarkResources(phase, runID, tag string) ([]object, error) {
 				"volumeMounts": []any{object{"name": "data", "mountPath": "/data"}, object{"name": "scratch", "mountPath": "/tmp"}}}},
 			"volumes": []any{object{"name": "data", "persistentVolumeClaim": object{"claimName": "fio-data"}},
 				object{"name": "scratch", "emptyDir": object{"sizeLimit": "32Mi"}}}}},
-	}, nil
+	}
+	if namespace == benchmarkNamespace {
+		return assets[1:], nil
+	}
+	return assets, nil
 }

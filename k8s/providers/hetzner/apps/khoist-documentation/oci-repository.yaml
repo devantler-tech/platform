@@ -5,6 +5,7 @@ metadata:
   namespace: data-product-controller
   labels:
     app.kubernetes.io/managed-by: ksail
+    platform.devantler.tech/tenant-source: "true"
 spec:
   interval: 1m
   # The KHoist release's manifests artifact; the Kustomization applies only its

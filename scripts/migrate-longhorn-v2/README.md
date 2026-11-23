@@ -1,5 +1,12 @@
 # Prepare Longhorn V2 workers
 
+First-attempt manual runs on main join the ordinary production queue before
+validation and keep that turn through the selected operation. Other events, refs
+and attempts use separate groups and keep their existing operation refusals.
+All boundary tests still run before production credentials
+are restored. The original dispatch source must remain current: the production
+lock does not lock Git refs, and a stale source still refuses the operation.
+
 `inventory-v1-runtime` is a protected, target-free read-only inventory. Its exact
 confirmation is `inventory-v1-runtime`, with empty `node` and `database`.
 It observes the complete runtime inventory twice between current-main checks.
@@ -27,8 +34,8 @@ the effective production layers and refuses indirect or unknown runtime-image
 selection. The first selection of the reviewed retirement image requires a fresh
 stable native epoch with complete declared overlap capacity, and an isolated
 protected-queue change adding only the reviewed image/rolling-strategy component
-and its matching Longhorn authorization-ledger entry. Every other approval must
-remain unchanged; the existing required validator checks the new exact digest.
+to the production controllers root and nothing else. The Longhorn release has no
+authorization-ledger entry (#6270), so the activation changes no approval.
 An unchanged already-selected image needs a stable native epoch rather than a
 second stock-image overlap calculation. Initial selection from manual CD or a
 recovery checkout is held because those checkouts do not prove an isolated
@@ -72,8 +79,9 @@ affected volume and disk identities.
 the original volumes have three healthy copies. It qualifies one 4 GiB V1
 scratch claim across the three permanent disks under the existing scheduling
 settings and keeps an additional 4 GiB above the physical free-space floor.
-It changes the exhausted disk's reservation once and reads back the original
-disks, volume identities and available capacity. An uncertain write stops
+It adjusts the limiting disk's reservation by only the remaining logical
+shortfall and reads back the original disks, volume identities and available
+capacity. An uncertain write stops
 the run. Check the live reservation and storage health before a new dispatch.
 Use the qualified capacity for one recovery or benchmark claim at a time.
 
@@ -204,13 +212,17 @@ storage activation and volume migration follow separately. Original storage repl
 the permanent workers throughout this preparation route.
 
 For the V2-born worker, use `prepare-retained-temporary-worker`,
-`temporary-v2-1` and `prepare-retained-longhorn-v2-temporary-v2-1`. The
-reviewed pool configuration must already declare the original raw volume,
-the distinct 144 GiB staging volume and a 40–44 GiB EPHEMERAL range. The
-protected operation verifies the original 96 GiB raw partition and STATE
-extents, drains the worker and closes the original mapper. It records reset
-intent only after complete native reads show the old configuration, volume
-status and partition holders cleared while the physical extents remain.
+`temporary-v2-1` and `prepare-retained-longhorn-v2-temporary-v2-1`.
+The protected operation verifies the original 96 GiB raw partition and STATE
+extents before draining. It accepts either the original profile with no
+staging declaration or the complete distinct 144 GiB staging profile and a
+40–44 GiB EPHEMERAL range. After the owned drain, it loads the reviewed
+staging profile without a reboot if needed. A partial profile or an
+unconfirmed write stops before the original mapper is closed. On resumption
+it reads back the layout and retained extents before proceeding.
+It records reset intent only after complete native reads show the old raw
+configuration, volume status and partition holders cleared while the physical
+extents remain.
 
 After the EPHEMERAL-only reset, the worker must report a new boot, a replaced
 encrypted EPHEMERAL partition and a separate encrypted staging partition.
@@ -291,10 +303,11 @@ rebuilds, volume health and the recorded configuration are observed. Scratch obj
 from backups. Compare receipts knowing that, and avoid dispatching around the 02:17 UTC backup,
 whose load on the same disks is not measured. V2's necessary CPU reservation is reported alongside the V1 context;
 the comparison does not assume the engines have identical CPU costs.
-A completed receipt requires healthy storage and
-explicit cleanup of only the owned scratch Pod, claim, retained PV, backend,
-class and namespace. An incomplete run, including one that reaches the Pod's 25 minute
-deadline, holds with its journal and resources preserved for explicit recovery.
+A completed receipt requires healthy storage and explicit cleanup of the recorded
+scratch Pod, network policy, claim, retained PV, backend and class. Both phases use
+the GitOps-managed `longhorn-benchmark` namespace. The workflow records its UID and
+leaves the namespace in place. An incomplete run, including one that reaches the
+Pod's 25-minute deadline, holds with its journal and resources preserved for explicit recovery.
 
 Run `benchmark-v2` only after every volume uses V2 and every replica is back on
 the same three permanent workers. It requires the baseline's hardware, OS,
@@ -307,6 +320,13 @@ carry a UID precondition. Talos reads must report the same hardware UUID as the 
 Kubernetes worker before host configuration can be trusted or a host command can run.
 
 ## Benchmark retirement safeguards
+
+The V1 benchmark requires the exact reviewed retirement image, including its
+release tag and immutable digest. The default setting and each selected manager
+declaration must agree with that image; a matching tag shape, older publication
+or digest-only declaration does not qualify. Containerd may report the approved
+running image by repository and digest without its tag. Publication and admission
+rules alone do not prove that this runtime has been adopted.
 
 Recovery builds per-run admission policies from all seven original resource UID receipts. One
 protects the retained PV's original claim and backend handle; one keeps the original backend
@@ -321,6 +341,20 @@ writes, and direct instance-manager observations under stable controller and pro
 The instance-manager registry is an observation of native runtime state, not an independent
 disk or kernel audit. The builders and stopped-state checks alone do not authorize backend
 retirement. Complete that recovery path before dispatching a benchmark.
+
+`recover-unstarted-v1-benchmark` recovers a stopped workflow whose fio Pod
+never scheduled and whose claim never bound. Leave `node` and `database`
+empty and confirm `recover-unstarted-longhorn-v1-benchmark`. The procedure
+verifies the latest original workflow attempt is terminal, reads back the
+original objects and refuses any PV, backend or attachment. It uses the
+observed resource versions to remove only the recorded scratch assets.
+The original journal is archived in an immutable ConfigMap. The protected
+workspace remains available for a fresh benchmark.
+
+New V1 benchmarks use the first permanent worker and check its free requested
+memory before creating scratch resources. The V2 comparison uses the worker
+recorded in its completed V1 baseline. Existing baselines retain their original
+third-worker placement.
 
 ## Prepare a permanent worker
 
@@ -365,7 +399,7 @@ canary, backup and restore, and application acceptance remain separate gates.
 Run the local checks with:
 
 ```sh
-go test -race ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
+go test -race ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory
 actionlint .github/workflows/prepare-longhorn-v2-node.yaml
 zizmor --offline .github/workflows/prepare-longhorn-v2-node.yaml
 ```

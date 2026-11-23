@@ -3,6 +3,8 @@ kind: OCIRepository
 metadata:
   name: world-at-ruin
   namespace: world-at-ruin
+  labels:
+    platform.devantler.tech/tenant-source: "true"
 spec:
   interval: 1m
   url: oci://ghcr.io/devantler-tech/world-at-ruin/zone-manifests

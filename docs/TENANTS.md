@@ -18,8 +18,8 @@ runs it in a dedicated, locked-down namespace.
 There are two halves to onboarding, in two repos:
 
 1. **The tenant repo** — created from the
-   [`platform-tenant-template`](https://github.com/devantler-tech/platform-tenant-template),
-   which ships the shared, framework-agnostic CI/CD plumbing and keeps it current
+   [`application-template`](https://github.com/devantler-tech/application-template)
+   with platform tenancy, which ships the shared CI/CD plumbing and keeps it current
    via [template-sync](https://github.com/AndreasAugustin/actions-template-sync).
 2. **The platform registration** — a small directory in *this* repo under
    `k8s/bases/apps/<tenant>/` that grants the tenant a namespace, identity, RBAC,
@@ -36,12 +36,22 @@ the reference while following the steps below.
 
 ## 1. Create the tenant repository
 
-Create the repo from the template with **"Use this template"** (GitHub UI), or:
+Creating a repository from the template is not enabled yet: `application-template`
+becomes a GitHub template with
+[application-template#211](https://github.com/devantler-tech/application-template/issues/211),
+and both ways below work from then on.
+
+Create the repo from the template with **"Use this template"** (GitHub UI) and clone
+it, or create and clone it in one step:
 
 ```sh
 gh repo create devantler-tech/<tenant> \
-  --template devantler-tech/platform-tenant-template --private
+  --template devantler-tech/application-template --private --clone
+cd <tenant>
 ```
+
+Then, in that checkout, lay down its stack and the tenancy with
+`scripts/scaffold.sh <go|dotnet|svelte|none> --tenancy <tenant>`.
 
 The template gives you the shared plumbing it keeps in sync (`cd.yaml`,
 `release.yaml`, `template-sync.yaml`, `CLAUDE.md`, `zizmor.yml`) plus scaffolding
@@ -190,18 +200,16 @@ old revision reads waits for a later release.
 - **What runs:** `kubectl -n <tenant> get ocirepository,kustomization <tenant>` shows the applied
   `<version>@sha256:<digest>`. The tenant's GitHub release (tag, notes and signed artifacts) and the
   Flux events are the record of each change.
-- **Roll back:** release a fix; the tenant follows it.
-- **Emergency pin:** set the `Tenant`'s `spec.source.version` to one release, such as `"3.12.0"`, in a
-  normal platform pull request. The pin changes the tenant's lines in
-  `scripts/validate-eks-ci-role-policy/approved-surface.txt` and
-  `scripts/rgd-template-static-scan-baseline.tsv`; take the new values from the failing checks.
-  Remove the pin once a fixed release exists.
-- **Break-glass, while that pull request is on its way:** the maintainer runs
-  `flux suspend kustomization <tenant> -n <tenant>`. Once the pin is live, resume it
-  (`flux resume kustomization <tenant> -n <tenant>`) only after
-  `kubectl -n <tenant> get ocirepository <tenant>` reports Ready with the pinned version, so the
-  Kustomization never re-applies the bad artifact it still holds. Never move or delete a release
-  tag to roll back.
+- **Recover from a bad release:** publish a fixed release with a new signed tag. If the
+  maintainer suspends the tenant Kustomization during recovery, resume it after the
+  OCIRepository reports Ready with the fixed version.
+- **API compatibility:** the selector uses a fixed stable range. The API retains
+  `spec.source.digest` and `spec.source.publisherRevision` for schema compatibility.
+  The source validation accepts only empty values for these retired fields.
+- **Changing the Tenant API:** KRO updates the installed API only when its compatibility check
+  sees a change, and that check ignores CEL rules and formats. CI compiles the Tenant API from
+  the base revision too, and it fails a change KRO would not install. Pair such a change with
+  one KRO does compare, such as a field description.
 
 Local regeneration requires GNU coreutils (`gmv` on macOS). Output replacement
 uses its no-target-directory operation, so a concurrent destination-directory
@@ -252,10 +260,14 @@ inside the same single anchored subject, until the consumers have moved and
   signature to the organisation, not to one product: the per-tenant binding is the tenant's
   signed manifest source, which accepts only its own repository and pins its image digests.
 
-The `.github` repository is excluded at every layer, including the `github-config` source: it
+The `.github` repository is excluded from the image rules and from the any-workflow form: it
 hosts the shared reusable publishers, and a tag of a reusable workflow carries that repository's
-identity whoever calls it, so another repository's release could verify as its own. Its own move
-needs a narrower rule. A `Tenant` pinned to an exact publisher revision keeps that single identity,
+identity whoever calls it, so another repository's release could verify as its own. Only the
+`github-config` source names it, through the narrower rule
+`.github/.github/workflows/cd.yaml@refs/tags/v<semver>`
+([devantler-tech/.github#926](https://github.com/devantler-tech/.github/issues/926)): exactly
+that one file, which runs only on `.github`'s own tag pushes and which `.github`'s CI keeps free
+of a `workflow_call` trigger. A `Tenant` pinned to an exact publisher revision keeps that single identity,
 because its admission record names it. These verifiers match only the issuer and the subject, so
 a product must not expose a signing workflow other repositories can call.
 
@@ -287,7 +299,7 @@ grants below) and rename — with:
 | `service-account.yaml` | SA with `automountServiceAccountToken: false` (no `imagePullSecrets`: tenant packages are public) |
 | `role-binding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
 | `role-binding-external-dns*.yaml` + `cluster-role-binding.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — bind the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
-| `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`) |
+| `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`, label `platform.devantler.tech/tenant-source: "true"`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`, annotation `ksail.devantler.tech/reconcile-exclude: "true"`) |
 
 > **Tenant-owned (in the tenant repo's `deploy/`, not here):** the
 > `CiliumNetworkPolicy` allow-lists (`networkpolicy.yaml`, and
@@ -419,3 +431,20 @@ hostnames *and* its dashboard annotations) as the reference.
 template-sync opens a PR in the tenant whenever the template's shared plumbing
 changes (a bumped action pin, a workflow fix, an updated convention). Review and
 merge it like any dependency update — your owned files are untouched.
+
+## 8. A tenant's health is its own
+
+A tenant cannot fail the platform ([ADR 0019](https://github.com/devantler-tech/monorepo/blob/main/docs/adr/0019-tenants-follow-their-signed-release-tags.md)).
+The `apps` layer counts every tenant `Kustomization`, and every source labelled
+`platform.devantler.tech/tenant-source: "true"`, as healthy once they exist, and the deploy's
+reconcile skips every `Kustomization` marked `ksail.devantler.tech/reconcile-exclude: "true"`.
+Platform chart sources carry no label and keep Flux's usual readiness check. A broken tenant release therefore never fails
+`apps` or a merge-queue deploy. The tenant stays on its last good revision: Flux refuses an
+artifact whose signature does not match and dry-runs the whole package before it applies anything.
+The `platform-reconciliation` alert reports the tenant's own error events.
+
+Mark every tenant `Kustomization` with that annotation and its source with that label.
+`scripts/tests/tenant-health` fails when the prod `apps` layer renders a `Kustomization` without the
+annotation, a tenant source without the label, a labelled source a platform `HelmRelease` reads, or
+a platform `HelmRelease` that stops being gated. The `platform-reconciliation` alert watches every
+namespace holding an OCIRepository or GitRepository (`scripts/validate-alert-coverage.sh`).

@@ -122,6 +122,9 @@ data:
       # The company site first, then the client projects hosted for it.
       Business & Clients:
         icon: mdi-briefcase
+      # How the business is presented and reviewed publicly, e.g. Trustpilot.
+      Marketing:
+        icon: mdi-bullhorn-outline
       Products:
         icon: mdi-book-open-page-variant
       Email:
@@ -297,6 +300,14 @@ data:
             href: https://devantler.tech
             description: Business site — products, services, guides and documentation.
             weight: -1
+    # External marketing consoles for the business.
+    - Marketing:
+        # The company's Trustpilot Business account, opened on its plan, billing
+        # and verified-domains view.
+        - Trustpilot Business:
+            icon: si-trustpilot-#00B67A
+            href: https://businessapp.b2b.trustpilot.com/plans-and-billing?tab=domains
+            description: Trustpilot plan, billing and verified domains.
     - Products:
         - KSail Docs:
             icon: https://ksail.devantler.tech/favicon.svg
