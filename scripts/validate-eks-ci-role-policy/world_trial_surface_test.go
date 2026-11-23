@@ -9,20 +9,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The trial has five authorization-bearing documents. Its owner binding is
+// The trial has three authorization-bearing documents. Its owner binding is
 // approved with the literal admin_email substitution, so a different subject,
 // rule or reconciliation identity must still move the complete ledger entry.
+// Its Flux Kustomization and OCIRepository only carry those objects, so they
+// are not in the ledger (platform#6270).
 func TestWorldAtRuinTrialApprovalRejectsRemovalAndPrivilegeChanges(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
 	if err := validateAuthorization(role, boundary, rendered); err != nil {
 		t.Fatalf("reviewed trial control failed: %v", err)
 	}
 	trialKeys := map[string]bool{
-		"kustomize.toolkit.fluxcd.io/v1|Kustomization|world-at-ruin|world-at-ruin":                 true,
 		"rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin":                     true,
 		"rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-operator": true,
 		"rbac.authorization.k8s.io/v1|Role|world-at-ruin|world-at-ruin-zone-trial-operator":        true,
-		"source.toolkit.fluxcd.io/v1|OCIRepository|world-at-ruin|world-at-ruin":                    true,
 	}
 	entries, _, _, err := evaluateRenderedSurface(rendered)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestWorldAtRuinTrialApprovalRejectsRemovalAndPrivilegeChanges(t *testing.T)
 		mutate     func(map[string]any)
 		wantDeltas int
 	}{
-		{name: "removed trial authorization objects", remove: true, wantDeltas: 5},
+		{name: "removed trial authorization objects", remove: true, wantDeltas: 3},
 		{
 			name: "operator can read Secrets", key: operatorRole, wantDeltas: 2,
 			mutate: func(document map[string]any) {

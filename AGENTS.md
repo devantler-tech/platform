@@ -262,8 +262,8 @@ only for CRD changes; a refresh that changes nothing but the record is the norma
 The Crossplane provider packages are another exception, for a different reason: neither
 `xpkg.upbound.io` nor `ghcr.io` gives Renovate a release date for them, and an undated release never
 clears the cooldown, so with it no provider update was ever proposed (#4754). Their rule also sets
-`0 days`. Keep it: provider updates are never automerged and cannot merge without the review, the
-signature check and the fingerprint re-approval that rule describes.
+`0 days`. Keep it: provider updates are never automerged and cannot merge without the review and
+the signature check that rule describes. Providers carry no authorization ledger entry (#6270).
 
 The flux-operator chart is a third exception, for the same reason: it is published on `ghcr.io`
 without a release date, so no update was proposed after 0.50.0 (#4985). Its rule sets `0 days` and
