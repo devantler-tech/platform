@@ -90,6 +90,9 @@ components:
   # after the migration's runtime and backup checks pass (#6073).
   - ../../../../bases/components/longhorn-v1-runtime-headroom
   - ../../../../bases/components/longhorn-v1-operator-headroom
+  # Select the reviewed maintenance runtime with one manager unavailable at
+  # a time. Publication requires the native capacity and source guards (#6073).
+  - ../../../../bases/components/longhorn-v1-retirement-runtime
   # ALWAYS-ON: the live private-NIC Cilium device pin (moved out of the
   # strict-mode patch so the homogeneous-devices/ successor below can
   # override it — parent `patches:` apply after component patches, so a value
