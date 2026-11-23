@@ -16,7 +16,9 @@ expected="$(sed -n 's/^release=v//p' "$scratch/version")"
 # Resolve both real API-defaulted instances through the pinned compiler/runtime.
 # This proves dynamic expressions too; a hand-written empty-list substitution
 # would conceal a changed projection or security expression from this policy.
-PLATFORM_COMPILED_WEBAPP_DIR="$scratch/compiled" bash "$root/scripts/tests/test-webapp-compiler.sh" >"$scratch/compiler.log" 2>&1 || {
+# The compiler job judges the Tenant API against its base revision; this policy
+# check needs only the compiled output, so it compares the commit with itself.
+KRO_API_BASE="${KRO_API_BASE:-HEAD}" PLATFORM_COMPILED_WEBAPP_DIR="$scratch/compiled" bash "$root/scripts/tests/test-webapp-compiler.sh" >"$scratch/compiler.log" 2>&1 || {
   cat "$scratch/compiler.log" >&2
   exit 1
 }

@@ -65,6 +65,10 @@ jobs:
           shellcheck scripts/validate-webapp-inputs.sh scripts/tests/test-webapp-inputs.sh
           bash scripts/tests/test-webapp-inputs.sh
       - name: 🧩 Compile the committed WebApp and refusal controls
+        env:
+          # The merge group already judged the Tenant API against its base and
+          # deployed it, so on main this commit is the installed API.
+          KRO_API_BASE: HEAD
         run: bash scripts/tests/test-webapp-compiler.sh
       - name: ⚙️ Install pinned Trivy for compiled workloads
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1

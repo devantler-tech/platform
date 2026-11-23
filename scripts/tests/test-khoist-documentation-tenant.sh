@@ -6,8 +6,13 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 kubectl kustomize "$repo_root/k8s/providers/hetzner/apps/khoist-documentation" >"$work/resources.yaml"
 yq -o=json -I=0 '.' "$work/resources.yaml" | jq -s '.' >"$work/resources.json"
+# The source follows KHoist's own stable releases (ADR 0019) and trusts only its
+# own release workflow on a release tag: the Tenant graph's grammar, literally.
+readonly stable='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+readonly issuer='^https://token\.actions\.githubusercontent\.com$'
+readonly subject='^https://github\.com/devantler-tech/khoist/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
 validate() {
-  jq -e '
+  jq -e --arg stable "$stable" --arg issuer "$issuer" --arg subject "$subject" '
     length==5 and all(.[]; .metadata.name=="khoist-documentation" and .metadata.namespace=="data-product-controller") and
     ([.[].kind]|sort)==["Kustomization","OCIRepository","Role","RoleBinding","ServiceAccount"] and
     (map(select(.kind=="ServiceAccount"))[0] | .automountServiceAccountToken==false) and
@@ -16,10 +21,11 @@ validate() {
       .roleRef=={apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"khoist-documentation"} and
       .subjects==[{kind:"ServiceAccount",name:"khoist-documentation",namespace:"data-product-controller"}]) and
     (map(select(.kind=="OCIRepository"))[0] |
-      .spec.url=="oci://ghcr.io/devantler-tech/data-product-controller/manifests" and
-      (.spec.ref|keys)==["digest"] and (.spec.ref.digest|test("^sha256:[0-9a-f]{64}$")) and
+      .spec.url=="oci://ghcr.io/devantler-tech/khoist/manifests" and
+      (.spec.ref|keys|sort)==["semver","semverFilter"] and .spec.ref.semver==">=0.0.0" and
+      .spec.ref.semverFilter==$stable and
       (.spec|has("secretRef")|not) and .spec.verify.provider=="cosign" and
-      (.spec.verify.matchOIDCIdentity|length)==1) and
+      .spec.verify.matchOIDCIdentity==[{issuer:$issuer,subject:$subject}]) and
     (map(select(.kind=="Kustomization"))[0] |
       .apiVersion=="kustomize.toolkit.fluxcd.io/v1" and
       .spec.path=="./documentation" and .spec.targetNamespace=="data-product-controller" and
@@ -41,6 +47,13 @@ yq -o=json -I=0 '.' "$work/local.yaml" | jq -es 'all(.[]; .metadata.name!="khois
 # A changed trust boundary must fail this guard, not merely change its output.
 for mutation in \
   'map(if .kind=="OCIRepository" then .spec.secretRef={name:"unneeded-registry-credential"} else . end)' \
+  'map(if .kind=="OCIRepository" then .spec.url="oci://ghcr.io/devantler-tech/data-product-controller/manifests" else . end)' \
+  'map(if .kind=="OCIRepository" then .spec.ref={digest:("sha256:"+("0"*64))} else . end)' \
+  'map(if .kind=="OCIRepository" then .spec.ref.semverFilter=".*" else . end)' \
+  'map(if .kind=="OCIRepository" then .spec.ref|=del(.semverFilter) else . end)' \
+  'map(if .kind=="OCIRepository" then .spec.verify.matchOIDCIdentity[0].subject="^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812$" else . end)' \
+  'map(if .kind=="OCIRepository" then .spec.verify.matchOIDCIdentity[0].subject="^https://github\\.com/devantler-tech/[^/]+/\\.github/workflows/[^/]+\\.ya?ml@refs/tags/v.*$" else . end)' \
+  'map(if .kind=="OCIRepository" then .spec.verify.matchOIDCIdentity+=[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:".*"}] else . end)' \
   'map(if .kind=="Role" then .rules[0].resources=["secrets"] else . end)' \
   'map(if .kind=="RoleBinding" then .roleRef.kind="ClusterRole" else . end)' \
   'map(if .kind=="Kustomization" then .spec.path="." else . end)' \
@@ -74,4 +87,4 @@ for mutation in '.sources=["crd"]' '.replicaCount=2' '.registry="noop"' '.txtOwn
     exit 1
   fi
 done
-echo 'documentation reconciliation is path-scoped and DNS-only; the existing writer retains Gateway API and TXT ownership'
+echo 'documentation reconciliation follows only KHoist'"'"'s own signed stable releases, is path-scoped and DNS-only; the existing writer retains Gateway API and TXT ownership'

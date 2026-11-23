@@ -177,7 +177,7 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 }
 
 func TestBenchmarkCredentialLoaderRefusesOutsideProtectedDispatch(t *testing.T) {
-	if _, _, err := LoadBenchmarkAdmissionClient(func(string) string { return "" }, netip.MustParseAddr("203.0.113.10")); err == nil {
+	if _, _, err := LoadBenchmarkAdmissionClient(func(string) string { return "" }, netip.MustParseAddr("203.0.113.10"), ""); err == nil {
 		t.Fatal("direct credential loader admitted an unverified dispatch")
 	}
 }
@@ -197,7 +197,7 @@ func nativeSeedAdmissionDispatch() map[string]string {
 func TestNativeSeedReachesTheExistingAdmissionCredentialBoundary(t *testing.T) {
 	valid := nativeSeedAdmissionDispatch()
 	getenv := func(key string) string { return valid[key] }
-	client, endpoint, err := LoadBenchmarkAdmissionClient(getenv, netip.MustParseAddr("203.0.113.10"))
+	client, endpoint, err := LoadBenchmarkAdmissionClient(getenv, netip.MustParseAddr("203.0.113.10"), "")
 	if client != nil || endpoint != nil || err == nil || err.Error() != "fixed benchmark admission credentials and direct IPv4 peer are required" {
 		t.Fatal("the confirmed seed did not reach the unchanged credential boundary:", err)
 	}
@@ -210,7 +210,7 @@ func TestNativeSeedReachesTheExistingAdmissionCredentialBoundary(t *testing.T) {
 		}
 		return valid[key]
 	}
-	if client, endpoint, err := LoadBenchmarkAdmissionClient(benchmark, netip.MustParseAddr("203.0.113.10")); client != nil || endpoint != nil || err == nil || err.Error() != "fixed benchmark admission credentials and direct IPv4 peer are required" {
+	if client, endpoint, err := LoadBenchmarkAdmissionClient(benchmark, netip.MustParseAddr("203.0.113.10"), ""); client != nil || endpoint != nil || err == nil || err.Error() != "fixed benchmark admission credentials and direct IPv4 peer are required" {
 		t.Fatal("the original confirmed benchmark lost its credential boundary:", err)
 	}
 	for _, key := range []string{"GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_REPOSITORY", "GITHUB_RUN_ATTEMPT", "RUNNER_ENVIRONMENT", "GITHUB_WORKFLOW_REF", "LONGHORN_V2_OPERATION", "LONGHORN_V2_CONFIRM", "LONGHORN_V2_NODE", "LONGHORN_V2_DATABASE"} {
@@ -221,7 +221,7 @@ func TestNativeSeedReachesTheExistingAdmissionCredentialBoundary(t *testing.T) {
 				}
 				return valid[name]
 			}
-			client, endpoint, err := LoadBenchmarkAdmissionClient(changed, netip.MustParseAddr("203.0.113.10"))
+			client, endpoint, err := LoadBenchmarkAdmissionClient(changed, netip.MustParseAddr("203.0.113.10"), "")
 			if client != nil || endpoint != nil || err == nil || err.Error() != "protected benchmark admission dispatch is unverified" {
 				t.Fatal("a foreign or targeted seed reached credential loading:", err)
 			}
@@ -237,13 +237,13 @@ func TestNativeSeedReachesTheExistingAdmissionCredentialBoundary(t *testing.T) {
 			}
 			return valid[key]
 		}
-		if _, _, err := LoadBenchmarkAdmissionClient(changed, netip.MustParseAddr("203.0.113.10")); err == nil || err.Error() != "protected benchmark admission dispatch is unverified" {
+		if _, _, err := LoadBenchmarkAdmissionClient(changed, netip.MustParseAddr("203.0.113.10"), ""); err == nil || err.Error() != "protected benchmark admission dispatch is unverified" {
 			t.Fatal("mismatched operation/confirmation pair reached credentials:", err)
 		}
 	}
 }
 
-func TestAdmissionLoaderBuildsBothConfirmedClientsFromPrivateMemoryCredentials(t *testing.T) {
+func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the protected credential directory is Linux memory-backed storage")
 	}
@@ -266,13 +266,21 @@ func TestAdmissionLoaderBuildsBothConfirmedClientsFromPrivateMemoryCredentials(t
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, pair := range [][2]string{{"benchmark-v1", "benchmark-longhorn-storage"}, {"prepare-native-v1-seed", "prepare-longhorn-native-v1-seed"}} {
+	for _, dispatch := range []struct {
+		operation    string
+		confirmation string
+		originalRun  string
+	}{
+		{operation: "benchmark-v1", confirmation: "benchmark-longhorn-storage"},
+		{operation: "prepare-native-v1-seed", confirmation: "prepare-longhorn-native-v1-seed"},
+		{operation: "recover-bound-v1-benchmark", confirmation: "recover-bound-longhorn-v1-benchmark:99", originalRun: "99"},
+	} {
 		valid := nativeSeedAdmissionDispatch()
-		valid["LONGHORN_V2_OPERATION"], valid["LONGHORN_V2_CONFIRM"] = pair[0], pair[1]
+		valid["LONGHORN_V2_OPERATION"], valid["LONGHORN_V2_CONFIRM"] = dispatch.operation, dispatch.confirmation
 		valid["KUBECONFIG"], valid["LONGHORN_V2_CREDENTIAL_DIR"] = path, directory
-		client, endpoint, err := LoadBenchmarkAdmissionClient(func(key string) string { return valid[key] }, netip.MustParseAddr("203.0.113.10"))
+		client, endpoint, err := LoadBenchmarkAdmissionClient(func(key string) string { return valid[key] }, netip.MustParseAddr("203.0.113.10"), dispatch.originalRun)
 		if err != nil || client == nil || endpoint == nil || endpoint.String() != "https://203.0.113.10:6443" || client.Timeout != 20*time.Second {
-			t.Fatal("confirmed operation could not construct its fixed client:", pair[0], err)
+			t.Fatal("confirmed operation could not construct its fixed client:", dispatch.operation, err)
 		}
 		response, err := client.Get(server.URL + "/version")
 		if response != nil {

@@ -111,12 +111,20 @@ func installBenchmarkReferenceFence(ctx context.Context, c client, record *bench
 }
 
 func activeBenchmarkV1FenceOwner(c client, record benchmarkRecord) bool {
+	if c.context != "admin@prod" || record.Phase != "v1" || record.Cleaned || record.FencePending != "" {
+		return false
+	}
+	if record.Recovery != nil {
+		return !c.nativeSeed && authorizeBoundV1Recovery(os.Getenv) == nil &&
+			os.Getenv("LONGHORN_V2_CONFIRM") == recoverBoundV1Confirmation+record.Run &&
+			verifyBoundRecoveryRecord(record, record.Run) == nil &&
+			record.Recovery.Source == os.Getenv("GITHUB_SHA") && record.Recovery.Run == os.Getenv("GITHUB_RUN_ID")
+	}
 	if c.nativeSeed && (record.Version != 3 || record.Namespace != benchmarkNamespace || record.Workload != nativeSeedWorkload()) {
 		return false
 	}
-	return c.context == "admin@prod" && authorizeScratchV1(c, os.Getenv) == nil &&
-		record.Phase == "v1" && record.Source == os.Getenv("GITHUB_SHA") && record.Run == os.Getenv("GITHUB_RUN_ID") &&
-		record.Recovery == nil && !record.Cleaned && record.FencePending == ""
+	return authorizeScratchV1(c, os.Getenv) == nil &&
+		record.Source == os.Getenv("GITHUB_SHA") && record.Run == os.Getenv("GITHUB_RUN_ID")
 }
 
 func installBenchmarkFence(ctx context.Context, c client, record *benchmarkRecord, desired object) error {
@@ -135,7 +143,7 @@ func installBenchmarkFence(ctx context.Context, c client, record *benchmarkRecor
 		if err := advanceBenchmarkFenceJournal(ctx, c, record, next); err != nil {
 			return err
 		}
-		policy, err := c.create(ctx, record.Source, desired)
+		policy, err := c.create(ctx, record.mutationSource(), desired)
 		if err != nil {
 			return err
 		}
@@ -156,7 +164,7 @@ func installBenchmarkFence(ctx context.Context, c client, record *benchmarkRecor
 	if err := advanceBenchmarkFenceJournal(ctx, c, record, next); err != nil {
 		return err
 	}
-	binding, err := c.create(ctx, record.Source, benchmarkDenyBinding(name, receipt.PolicyUID))
+	binding, err := c.create(ctx, record.mutationSource(), benchmarkDenyBinding(name, receipt.PolicyUID))
 	if err != nil {
 		return err
 	}
@@ -189,7 +197,15 @@ func advanceBenchmarkFenceJournal(ctx context.Context, c client, record *benchma
 	if err := validateBenchmarkFenceReceipts(next); err != nil {
 		return err
 	}
-	if err := writeBenchmarkProgress(ctx, c, cm, record.Source, next); err != nil {
+	if record.Recovery != nil {
+		if text(cm, "metadata", "uid") != record.Recovery.JournalUID {
+			return errors.New("recovery no longer owns its original journal")
+		}
+		if err := benchmarkOwnerFinished(ctx, c, record.Run, record.Source); err != nil {
+			return err
+		}
+	}
+	if err := writeBenchmarkProgress(ctx, c, cm, record.mutationSource(), next); err != nil {
 		return err
 	}
 	checked, actual, err := readBenchmark(ctx, c, record.Phase)
@@ -226,21 +242,25 @@ func removeCompletedBenchmarkFences(ctx context.Context, c client, record benchm
 	}
 	for _, name := range benchmarkFenceNames(record.Phase, record.Run) {
 		receipt := record.Fences[name]
-		binding, err := c.get(ctx, bindingResource, "", name, false)
-		if err != nil || text(binding, "metadata", "uid") != receipt.BindingUID || receipt.BindingUID == "" ||
-			text(binding, "spec", "policyName") != name {
+		binding, err := c.get(ctx, bindingResource, "", name, record.Recovery != nil)
+		if err != nil || receipt.BindingUID == "" || binding != nil &&
+			(text(binding, "metadata", "uid") != receipt.BindingUID || text(binding, "spec", "policyName") != name) {
 			return errors.New("the original benchmark policy binding changed before retirement")
 		}
-		policy, err := c.get(ctx, policyResource, "", name, false)
-		if err != nil || text(policy, "metadata", "uid") != receipt.PolicyUID || receipt.PolicyUID == "" {
+		policy, err := c.get(ctx, policyResource, "", name, record.Recovery != nil)
+		if err != nil || receipt.PolicyUID == "" || policy != nil && text(policy, "metadata", "uid") != receipt.PolicyUID {
 			return errors.New("the original benchmark policy changed before retirement")
 		}
 		base := "/apis/" + benchmarkAdmissionAPI + "/"
-		if err := removeScratch(ctx, c, record.Source, bindingResource, "", base+"validatingadmissionpolicybindings/"+name, binding); err != nil {
-			return err
+		if binding != nil {
+			if err := removeScratch(ctx, c, record.mutationSource(), bindingResource, "", base+"validatingadmissionpolicybindings/"+name, binding); err != nil {
+				return err
+			}
 		}
-		if err := removeScratch(ctx, c, record.Source, policyResource, "", base+"validatingadmissionpolicies/"+name, policy); err != nil {
-			return err
+		if policy != nil {
+			if err := removeScratch(ctx, c, record.mutationSource(), policyResource, "", base+"validatingadmissionpolicies/"+name, policy); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

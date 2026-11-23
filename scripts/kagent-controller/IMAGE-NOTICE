@@ -1,0 +1,7 @@
+This image uses the kagent 1.0.0 controller distribution.
+Upstream source is https://github.com/kagent-dev/kagent/tree/a08cde76ad6482dd758a4220b14213d79185ac30
+and the upstream Apache License 2.0 is included alongside this notice.
+
+Devantler Tech rebuilt the controller with scheduled startup recovery.
+The source patch and regression tests are in scripts/kagent-controller/scheduled-startup.patch
+in https://github.com/devantler-tech/platform.

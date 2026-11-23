@@ -206,6 +206,10 @@ old revision reads waits for a later release.
 - **API compatibility:** the selector uses a fixed stable range. The API retains
   `spec.source.digest` and `spec.source.publisherRevision` for schema compatibility.
   The source validation accepts only empty values for these retired fields.
+- **Changing the Tenant API:** KRO updates the installed API only when its compatibility check
+  sees a change, and that check ignores CEL rules and formats. CI compiles the Tenant API from
+  the base revision too, and it fails a change KRO would not install. Pair such a change with
+  one KRO does compare, such as a field description.
 
 Local regeneration requires GNU coreutils (`gmv` on macOS). Output replacement
 uses its no-target-directory operation, so a concurrent destination-directory
@@ -245,7 +249,10 @@ inside the same single anchored subject, until the consumers have moved and
 - a manifest source accepts only its own repository: a `Tenant` derives it from `spec.name`,
   regex-escaped (the artifact URL is `oci://ghcr.io/devantler-tech/<name>/manifests`), and a
   registered consumer's matcher names its current repository, written by
-  `scripts/write-publish-workflow-matchers.sh` (the KHoist documentation source names `khoist`);
+  `scripts/write-publish-workflow-matchers.sh`. A source that has moved accepts only its own
+  repository and follows its stable release tags: the KHoist documentation source
+  (`oci://ghcr.io/devantler-tech/khoist/manifests`) trusts only `devantler-tech/khoist`'s release
+  workflows on a release tag, with the `Tenant` graph's grammar;
 - the image rules accept any first-party repository whose name starts with a letter or digit, as
   one path segment, so every first-party repository except `.github`. A repository named
   `actions` would be a first-party repository like any other, so its release tag passes them;
