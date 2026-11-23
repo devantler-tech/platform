@@ -9,9 +9,9 @@ spec:
   interval: 10m
   url: oci://ghcr.io/devantler-tech/charts/khoist
   ref:
-    # v9.0.12. Pin the content digest so a moved registry tag cannot change the
+    # v9.0.15. Pin the content digest so a moved registry tag cannot change the
     # chart Flux installs.
-    digest: sha256:806cbdd4513f8ef9593f5426f5c609669651b2a4fee5970af2b3bc0519be0341
+    digest: sha256:56bcec6934e9ae1564928de6b0e145a18c7948c3566de5abd676782506f6037f
   layerSelector:
     mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
     operation: copy
