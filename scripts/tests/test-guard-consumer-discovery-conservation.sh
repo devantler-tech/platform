@@ -2854,6 +2854,25 @@ YAML
     'production renders 1 Tenant instance(s)'
 done
 
+# A Tenant rendered with NO graph in production would run on whatever constructor the
+# cluster holds. It is refused even though no rendered schema names its kind (ADR 0019).
+root="$(fixture rendered-tenant-without-graph)"
+printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: no-graph\n  namespace: flux-system\n' \
+  >"$root/k8s/providers/prod/infrastructure/config-map.yaml"
+printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - config-map.yaml\n' \
+  >"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+cat >"$root/k8s/providers/prod/apps/tenant.yaml" <<'YAML'
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: iota
+spec:
+  name: iota
+YAML
+printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+expect_refusal 'a Tenant rendered without its graph is refused' "$root" \
+  'production renders 1 Tenant instance(s)'
+
 # (i) An RGD that templates an OCIRepository but names no schema kind: its instances
 #     cannot be counted, so it cannot be judged.
 root="$(fixture rgd-no-kind)"
@@ -3491,15 +3510,11 @@ YAML
   expect_refusal "ResourceSet $placement string templates are not silently omitted" "$root" 'resourcesTemplate' 'consumers are UNKNOWN'
 done
 
-for peer in another-group another-version custom-schema-group; do
+for peer in another-group another-version; do
   root="$(fixture "rgd-peer-$peer")"
   peer_api='unrelated.example.test/v1alpha1'
   case "$peer" in
     another-version) peer_api='kro.run/v1beta1' ;;
-    custom-schema-group)
-      yq -i '.spec.schema.group = "tenants.example.test"' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
-      peer_api='kro.run/v1alpha1'
-      ;;
   esac
   cat >"$root/k8s/providers/prod/apps/peer.yaml" <<YAML
 apiVersion: $peer_api
@@ -3512,6 +3527,21 @@ YAML
   printf '  - peer.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass "an unrelated same-kind $peer peer is not a kro instance" "$root" '2 consumer(s)'
 done
+# A kro.run/v1alpha1 Tenant is a source instance even when the only rendered graph moved to
+# another group: no reviewed graph produces it, so it is refused (ADR 0019).
+root="$(fixture rgd-peer-custom-schema-group)"
+yq -i '.spec.schema.group = "tenants.example.test"' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+cat >"$root/k8s/providers/prod/apps/peer.yaml" <<'YAML'
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: unrelated
+spec:
+  name: unrelated
+YAML
+printf '  - peer.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+expect_refusal 'a kro.run Tenant beside a graph of another group is refused' "$root" \
+  'production renders 1 Tenant instance(s)'
 root="$(fixture rgd-custom-group-instance)"
 yq -i '.spec.schema.group = "tenants.example.test"' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
 cat >"$root/k8s/providers/prod/apps/tenant.yaml" <<'YAML'

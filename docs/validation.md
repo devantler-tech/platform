@@ -48,10 +48,10 @@ bash scripts/tests/test-webapp-compiler-wiring.sh
 ```
 
 Tenant controls compile the complete graph and submit its generated API schema
-to the real API server. They cover source-only creation, paired digest and
-publisher inputs, unchanged omitted defaults, later application activation and
-refusal to disable active tenants, including objects stored under the earlier
-schema. These checks do not prove a live controller has reconciled a tenant.
+to the real API server. They cover the release range a tenant follows, an
+emergency pin and its removal, refusal of the retired digest and publisher pins,
+source-only creation, later application activation and refusal to disable active
+tenants, including objects stored under the earlier schema. These checks do not prove a live controller has reconciled a tenant.
 They also use the pinned controller's label decorator and server-side applier
 against the isolated API server. A competing writer uses the committed Kyverno
 baseline body: the old shared policy is retired only after the independently

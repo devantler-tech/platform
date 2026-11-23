@@ -84,7 +84,6 @@ jobs:
             .github
             ascoachingogvaner
             aws
-            business-site
             khoist
             wedding-app
           permission-contents: read
@@ -172,7 +171,6 @@ jobs:
             scripts/publish-workflow-approved-revisions.tsv
             scripts/publish-workflow-approved-revisions.identities.tsv
             scripts/publish-workflow-bootstrap-publications.json
-            scripts/canonical-tenant-source-bindings.json
             k8s/bases/apps/github-config/oci-repository.yaml
             k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
             k8s/providers/hetzner/apps/aws/oci-repository.yaml
@@ -226,7 +224,6 @@ jobs:
             scripts/publish-workflow-approved-revisions.tsv
             scripts/publish-workflow-approved-revisions.identities.tsv
             scripts/publish-workflow-bootstrap-publications.json
-            scripts/canonical-tenant-source-bindings.json
             k8s/bases/apps/github-config/oci-repository.yaml
             k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
             k8s/providers/hetzner/apps/aws/oci-repository.yaml

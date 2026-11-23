@@ -18,8 +18,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly REPO_ROOT
-# shellcheck source=scripts/tenant-source-constructors.lib.sh
-source "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh"
 readonly GUARD="$REPO_ROOT/scripts/guard-publish-workflow-approved-revisions.sh"
 readonly WRITER="$REPO_ROOT/scripts/write-publish-workflow-matchers.sh"
 readonly REPORT="$REPO_ROOT/scripts/report-publish-workflow-signing-revisions.sh"
@@ -35,7 +33,6 @@ readonly CANONICAL_REPOSITORY='devantler-tech/.github'
 readonly LEGACY_SET="($SHA_A|$SHA_B|$SHA_E)"
 readonly GENERICS=(
   'k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
-  'k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
   'talos/cluster/verify-first-party-images.yaml'
 )
 
@@ -196,26 +193,16 @@ expect_refusal() { # <case> <root> <must-mention>...
 root="$(build_tree control)"
 expect_pass 'control: a legacy-only tree with a record that approves nothing passes' "$root"
 
-# A typed source has no literal subject for the old grep to find. It must not
-# disappear beside an otherwise complete legacy census without explicit admission.
+# A typed source has no literal subject for the old grep to find. A Tenant is admitted
+# only beside the exact own-release graph (ADR 0019); beside any other graph its
+# controller-made source must not disappear from attribution.
 root="$(build_tree unapproved-typed-source)"
-cp "$REPO_ROOT/${GENERICS[1]}" "$root/${GENERICS[1]}"
-mkdir -p "$root/k8s/providers/hetzner/apps/business-site"
-cat >"$root/k8s/providers/hetzner/apps/business-site/tenant.yaml" <<EOF
-apiVersion: kro.run/v1alpha1
-kind: Tenant
-metadata:
-  name: business-site
-  namespace: default
-spec:
-  name: business-site
-  webApp: true
-  source:
-    digest: $DIGEST
-    publisherRevision: $SHA_K
-    reconcileApplication: false
-EOF
-expect_refusal 'an unapproved typed business source cannot disappear from attribution' "$root" 'k8s/providers/hetzner/apps/business-site/tenant.yaml'
+tenant_graph=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
+mkdir -p "$root/$(dirname "$tenant_graph")" "$root/k8s/providers/hetzner/apps/business-site"
+cp "$REPO_ROOT/$tenant_graph" "$root/$tenant_graph"
+yq -i '(.spec.resources[] | select(.id == "ociRepository").template.spec.ref.semverFilter) = ".*"' "$root/$tenant_graph"
+cp "$REPO_ROOT/k8s/providers/hetzner/apps/business-site/tenant.yaml" "$root/k8s/providers/hetzner/apps/business-site/tenant.yaml"
+expect_refusal 'a typed source beside an unreviewed Tenant graph cannot disappear from attribution' "$root" 'inventory is UNKNOWN'
 
 # ── the record, read strictly ─────────────────────────────────────────────────────────────
 root="$(build_tree record-missing)"
@@ -660,7 +647,6 @@ fi
 # revision may join them; a wildcard or an unanchored alternation fails below.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
-  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
     # The product documentation consumer is data-product-controller, which approves
     # v19.0.5 since its publisher moved there (#6227), so it accepts the same rows.
@@ -668,11 +654,11 @@ while IFS=$'\t' read -r profile file selector; do
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
     # Only the generic rules admit v21.3.4 (#6228); no consumer approves it yet,
     # so each consumer-specific source must still refuse it.
-    if [[ "$identity" == *@a76d5df9371cf712a8f60307fde060825a34cf35 && "$profile" != admission && "$profile" != node-pull && "$profile" != generic-tenant ]]; then expected=reject; fi
+    if [[ "$identity" == *@a76d5df9371cf712a8f60307fde060825a34cf35 && "$profile" != admission && "$profile" != node-pull ]]; then expected=reject; fi
     # The generic rules no longer accept the deleted legacy publisher repository at
     # any commit (#6264). The consumer-specific sources keep their exact generated
     # legacy commit until the approval machinery that writes them is retired.
-    if [[ "$identity" == https://github.com/devantler-tech/actions/* && ("$profile" == admission || "$profile" == node-pull || "$profile" == generic-tenant) ]]; then expected=reject; fi
+    if [[ "$identity" == https://github.com/devantler-tech/actions/* && ("$profile" == admission || "$profile" == node-pull) ]]; then expected=reject; fi
     if [ "$result" = "$expected" ]; then
       pass "committed $profile: $expected $identity"
     else
@@ -699,7 +685,6 @@ IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
-generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 coaching	k8s/bases/apps/ascoachingogvaner/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 product-docs	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
@@ -711,7 +696,6 @@ PROFILES
 # and v8.0.0 refused in every form.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
-  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
@@ -735,7 +719,6 @@ IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
-generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
 # The legacy publisher repository is deleted (#6264). The generic rules accept only
@@ -744,7 +727,6 @@ PROFILES
 # consumers approved for it, and a maintained commit written under its name.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
-  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
@@ -766,7 +748,6 @@ IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
-generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
 # A product's own release workflow on a release tag (#6265, ADR 0017). The image rules accept
@@ -782,7 +763,6 @@ PROFILES
 # consumers whose generated approvals name that exact legacy commit keep it.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
-  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r accepting identity; do
     expected=reject
     case ",$accepting," in *",$profile,"*) expected=accept ;; esac
@@ -820,7 +800,6 @@ IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
-generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 coaching	k8s/bases/apps/ascoachingogvaner/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 product-docs	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject

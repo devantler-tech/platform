@@ -29,11 +29,8 @@ var canonicalCICommands = map[string]string{
 var canonicalCIPaths = []string{
 	"k8s/**", "ksail.prod.yaml", "talos*/**", ".github/workflows/ci.yaml",
 	"scripts/validate-eks-ci-role-policy/**",
-	"scripts/canonical-tenant-source.lib.sh",
-	"scripts/canonical-tenant-source-bindings.json",
 	"scripts/tenant-source-discovery.lib.sh",
 	"scripts/tenant-publication-binding.lib.sh",
-	"scripts/bootstrap-tenant-source.sh",
 	"scripts/tests/lib/legacy-consumer-fixture.sh",
 	"scripts/publish-workflow-canonical-approvals.tsv",
 	"scripts/publish-workflow-approved-revisions.tsv",
@@ -43,11 +40,6 @@ var canonicalCIPaths = []string{
 	"scripts/generate-publish-workflow-approved-revisions.sh",
 	"scripts/run-publication-generator-tests.sh",
 	"scripts/tests/test-run-publication-generator-tests.sh",
-	"scripts/tests/test-canonical-source-bootstrap.sh",
-	"scripts/tests/test-canonical-source-upgrade.sh",
-	"scripts/tests/test-canonical-constructor-attribution.sh",
-	"scripts/tests/test-canonical-generator-output.sh",
-	"scripts/tests/test-canonical-bootstrap-output.sh",
 	"scripts/tests/test-canonical-publisher-regeneration.sh",
 	"scripts/tests/test-tenant-source-discovery.sh",
 	"scripts/tests/test-tenant-kro-pull-secret.sh",
@@ -73,12 +65,6 @@ func TestCanonicalPublicationRunnerKeepsEveryFixtureAndFailure(t *testing.T) {
 	fixtures := []struct{ name, suite string }{
 		{"test-publish-workflow-approved-revisions.sh", "upgrade"},
 		{"test-tenant-publication-binding.sh", "upgrade"},
-		{"test-bootstrap-tenant-source.sh", "upgrade"},
-		{"test-canonical-source-bootstrap.sh", "bootstrap"},
-		{"test-canonical-source-upgrade.sh", "upgrade"},
-		{"test-canonical-constructor-attribution.sh", "bootstrap"},
-		{"test-canonical-generator-output.sh", "bootstrap"},
-		{"test-canonical-bootstrap-output.sh", "bootstrap"},
 		{"test-canonical-publisher-regeneration.sh", "bootstrap"},
 	}
 	root := t.TempDir()

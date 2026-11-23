@@ -8,12 +8,6 @@ driver="$root/scripts/run-publication-generator-tests.sh"
 tests=(
   upgrade:test-publish-workflow-approved-revisions.sh
   upgrade:test-tenant-publication-binding.sh
-  upgrade:test-bootstrap-tenant-source.sh
-  bootstrap:test-canonical-source-bootstrap.sh
-  upgrade:test-canonical-source-upgrade.sh
-  bootstrap:test-canonical-constructor-attribution.sh
-  bootstrap:test-canonical-generator-output.sh
-  bootstrap:test-canonical-bootstrap-output.sh
   bootstrap:test-canonical-publisher-regeneration.sh
 )
 die() {

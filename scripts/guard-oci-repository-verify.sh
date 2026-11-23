@@ -22,9 +22,10 @@
 #     subject guards judge it.
 #   - that entry names a non-empty `issuer` and a non-empty `subject`.
 #   - the trusted Wedding and AS Coaching tenant artifacts follow the governed
-#     `>=1.0.0` semver stream. The platform owns their signer and namespace
-#     boundaries; restoring a tag or digest would reintroduce a platform PR for
-#     every tenant release and is therefore rejected by the rendered-tree guard.
+#     `>=1.0.0` semver stream, and a `Tenant` follows its own stable releases
+#     through the exact constructor (ADR 0019). The platform owns their signer and
+#     namespace boundaries; restoring a tag or digest would reintroduce a platform
+#     PR for every tenant release and is therefore rejected by the rendered-tree guard.
 #
 # IT JUDGES THE KUSTOMIZE BUILD, NOT THE SOURCE FILES — MEASURED, NOT PREFERRED. A first
 # version scanned `k8s/**/*.yaml` with yq and was bypassed five ways in one review
@@ -304,19 +305,17 @@ while IFS= read -r root; do
       *) continue ;;
     esac
     in_scope=$((in_scope + 1))
-    # Only the complete constrained Tenant profile may construct these values.
-    # Validate its supplied branch too, before judging the unchanged default.
-    if [[ "$url" == "$TEMPLATED_TENANT_STREAM_URL" && "$ref_type" == '!!str' ]]; then
+    # Only the complete constrained Tenant profile may construct these values: it
+    # follows the tenant's own stable releases in its exact range (ADR 0019) and
+    # binds the subject to the tenant's own repository.
+    if [[ "$url" == "$TEMPLATED_TENANT_STREAM_URL" ]]; then
       if ! subject="$(tenant_source_default_subject "$work/render.yaml" "$subject")"; then
         fail "$label: invalid Tenant source constructor"
         continue
       fi
-      ref_type='!!map'
-      ref_key_count=1
-      ref_semver="$REQUIRED_TENANT_STREAM_SEMVER"
     fi
     case "$url" in
-      "$WEDDING_STREAM_URL" | "$ASCOACHING_STREAM_URL" | "$TEMPLATED_TENANT_STREAM_URL")
+      "$WEDDING_STREAM_URL" | "$ASCOACHING_STREAM_URL")
         if [ "$ref_type" != "!!map" ] || [ "$ref_key_count" -ne 1 ] || [ "$ref_semver" != "$REQUIRED_TENANT_STREAM_SEMVER" ]; then
           fail "$label: OCIRepository $name ($url) must follow the governed release stream with exactly spec.ref.semver: $REQUIRED_TENANT_STREAM_SEMVER; tag, digest, mixed and missing selectors require a platform boundary change"
           continue
