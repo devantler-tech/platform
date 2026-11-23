@@ -75,6 +75,12 @@ type MailOptions struct {
 	//
 	// Defined in RFC 4954.
 	Auth *string
+
+	// Value of BY= argument or nil if unset.
+	DeliverBy *DeliverByOptions
+
+	// Value of MT-PRIORITY= or nil if unset.
+	MTPriority *int
 }
 
 // DSNNotify selects delivery-notification conditions.
@@ -137,10 +143,4 @@ type RcptOptions struct {
 	// Time value of the RRVS= argument
 	// or the zero time if unset.
 	RequireRecipientValidSince time.Time
-
-	// Value of BY= argument or nil if unset.
-	DeliverBy *DeliverByOptions
-
-	// Value of MT-PRIORITY= or nil if unset.
-	MTPriority *int
 }

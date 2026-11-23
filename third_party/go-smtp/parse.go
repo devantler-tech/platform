@@ -89,7 +89,12 @@ func parseDeliverByArgument(arg string) *DeliverByOptions {
 	}
 	modeValue := DeliverByMode(modeStr)
 	secondsValue, err := strconv.Atoi(secondsStr)
-	if err != nil || (modeValue == DeliverByReturn && secondsValue < 1) {
+	// Specified in rfc2852
+	// by-time      = ["-" / "+"]1*9digit ; a negative or zero value is not
+	//				      ; allowed with a by-mode of "R"
+	if err != nil ||
+		(modeValue == DeliverByReturn && (secondsValue < 1 || secondsValue > 999999999)) ||
+		(modeValue == DeliverByNotify && (secondsValue < -999999999 || secondsValue > 999999999)) {
 		return nil
 	}
 	return &DeliverByOptions{
@@ -142,6 +147,19 @@ func (p *parser) parseReversePath() (string, error) {
 	if strings.HasPrefix(p.s, "<>") {
 		p.s = strings.TrimPrefix(p.s, "<>")
 		return "", nil
+	}
+	return p.parsePath()
+}
+
+// parseForwardPath parses the argument of RCPT TO. Unlike a reverse-path, it
+// may be "<Postmaster>" without a domain (RFC 5321 section 4.1.1.3), which is
+// returned as given.
+func (p *parser) parseForwardPath() (string, error) {
+	const postmaster = "<postmaster>"
+	if len(p.s) >= len(postmaster) && strings.EqualFold(p.s[:len(postmaster)], postmaster) {
+		path := p.s[1 : len(postmaster)-1]
+		p.s = p.s[len(postmaster):]
+		return path, nil
 	}
 	return p.parsePath()
 }
