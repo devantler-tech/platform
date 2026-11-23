@@ -649,8 +649,7 @@ rules:
   # tabs and line breaks are removed (under the same no-whitespace-in-literals
   # rule as the auto-vpa expressions below). Every other field is refused,
   # because variables, conditions and patch values are CEL that can read or
-  # write the cluster (#5106). The same condition pattern and expression are
-  # pinned in scripts/guard-consumer-discovery-conservation.sh.
+  # write the cluster (#5106).
   #
   # #5102: the shared catalog's auto-vpa
   # (devantler-tech/kyverno-policies
@@ -669,10 +668,8 @@ rules:
   # not a network policy. Whitespace is removed only to tolerate formatting
   # between tokens: the expression must also hold no backslash and no
   # double-quoted literal containing whitespace, so removing it can never turn
-  # a different key or value ("update Policy") into a reviewed one. The
-  # same three expressions are pinned in
-  # scripts/guard-consumer-discovery-conservation.sh; a catalog change is
-  # refused by both until it is reviewed here.
+  # a different key or value ("update Policy") into a reviewed one. A
+  # catalog change is refused until it is reviewed here.
   # #5357 adds only the two closed Helm-default specs, which match only Flux
   # HelmReleases since #6135. Their fixed patches
   # may vary token whitespace, never quoted literal whitespace or escapes.

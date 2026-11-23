@@ -25,15 +25,10 @@ spec:
   verify:
     provider: cosign
     matchOIDCIdentity:
-      # Generated from scripts/publish-workflow-approved-revisions.tsv by
-      # scripts/write-publish-workflow-matchers.sh. Accept the deployed artifact
-      # signer and this consumer's current publish-workflow pin in one identity.
-      # Regeneration updates the pair and the approved set in the same PR.
-      # Its own-release alternative is narrower than the other consumers' (#6265,
-      # devantler-tech/.github#926): exactly .github's cd.yaml on a release tag.
-      # devantler-tech/.github hosts the shared reusable publishers, and a tag of a
-      # reusable workflow carries that repository's identity whoever calls it, so
-      # no other workflow file there is trusted, and .github's CI keeps cd.yaml
-      # uncallable.
+      # Exactly devantler-tech/.github's own cd.yaml on a strict OCI-semver release tag
+      # (ADR 0017, #6265, devantler-tech/.github#926). That repository also hosts
+      # reusable workflows, and a reusable workflow carries its host's identity whoever
+      # calls it, so no other workflow file there is trusted, and .github's CI keeps
+      # cd.yaml uncallable.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-manifests\.yaml@(1d726483facb9340655489913f609082677be8f5|ea4df9004d4ab43b6c9af5b0c5f55712f7211328)|\.github/\.github/workflows/publish-manifests\.yaml@(f33622708f9f25a32acb46cc419007e18a3223b3|d70d50665465117f01104313e53057374a96a1a3)|\.github/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$'
+        subject: '^https://github\.com/devantler-tech/\.github/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'

@@ -100,3 +100,8 @@ func TestGateJobToleranceGuardIsNotVacuous(t *testing.T) {
 		}
 	})
 }
+
+// errorIsTolerated reports whether a continue-on-error value lets a failure pass.
+func errorIsTolerated(value any) bool {
+	return value != nil && value != false
+}

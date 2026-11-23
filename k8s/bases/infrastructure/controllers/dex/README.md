@@ -8,7 +8,7 @@ A federated OpenID Connect provider for Kubernetes.
 ## Source-built distribution
 
 [`publish-dex-security-image.yaml`](../../../../../.github/workflows/publish-dex-security-image.yaml)
-builds a reviewed Dex release with the narrow dependency correction in
+builds a reviewed Dex release with the narrow dependency corrections in
 [`dex-v2.46.1-network.patch`](dex-v2.46.1-network.patch). It verifies the exact
 upstream commit and patched tree, runs the upstream command, server, memory-store
 and OIDC connector tests, then compiles a static executable with SQLite support.
