@@ -126,6 +126,9 @@ spec:
         metadata:
           name: ${schema.spec.name}
           namespace: ${schema.spec.name}
+          annotations:
+            # Startup-only inputs need a new process after their Secret changes.
+            reloader.stakater.com/auto: '${schema.spec.secretProjections.size() > 0 ? "true" : "false"}'
           labels:
             app.kubernetes.io/name: ${schema.spec.name}
             app.kubernetes.io/managed-by: ksail
@@ -145,6 +148,9 @@ spec:
               maxUnavailable: 0
           template:
             metadata:
+              # Also roll existing input consumers when installing the watcher:
+              # the first Secret update may arrive before its annotation does.
+              annotations: '${schema.spec.secretProjections.size() > 0 ? {"platform.devantler.tech/input-reloader": "v1"} : {}}'
               labels:
                 app.kubernetes.io/name: ${schema.spec.name}
                 app.kubernetes.io/managed-by: ksail
