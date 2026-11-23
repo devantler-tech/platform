@@ -25,6 +25,10 @@
 #   (apps/customer-identity/github-oauth), customers may also sign in with
 #   GitHub: invite-only, linked to an existing customer by verified email or
 #   after one password-and-MFA sign-in;
+# - the separate portal operator account, linked to the declared GitHub ID.
+#   It belongs to a different organization from the directory managed by the
+#   portal's invitation credential. Its shared GitHub provider is prepared
+#   separately from switching the live portal login to use it;
 # - the maintainer's administration roles: IAM_OWNER of the instance and owner
 #   of the Customers organization. The retired portalWorkspace Action is
 #   removed wherever a run finds it;
@@ -259,6 +263,11 @@ spec:
                   # Customers may also sign in with GitHub, through a GitHub App (see below).
                   github_oauth_dir=${GITHUB_OAUTH_DIR:-/run/github-oauth}
                   github_annotation=platform.devantler.tech/github-oauth-secret-sha256
+                  shared_github_annotation=platform.devantler.tech/shared-github-secret-sha256
+                  portal_operators_org="Portal operators"
+                  portal_operators_domain=portal-operators.accounts.devantler.tech
+                  portal_operator_id=c3bc4cc5-443f-4c86-84ae-516e36296451
+                  admin_github_id=26203420
                   project_name="Customer sign-in"
                   app_name="Customer Dex"
                   dex_callback=https://login.devantler.tech/callback
@@ -619,7 +628,8 @@ spec:
                   # (which a rebuild regenerates). Once he has chosen his own password, ZITADEL
                   # no longer requires a change and this never touches it again.
                   admins=$(connect zitadel.user.v2.UserService/ListUsers "$(jq -nc --arg e "$ADMIN_EMAIL" \
-                    '{queries: [{emailQuery: {emailAddress: $e, method: "TEXT_QUERY_METHOD_EQUALS"}}, {typeQuery: {type: "TYPE_HUMAN"}}]}')")
+                    --arg o "$org_id" '{queries: [{emailQuery: {emailAddress: $e, method: "TEXT_QUERY_METHOD_EQUALS"}},
+                      {typeQuery: {type: "TYPE_HUMAN"}}, {organizationIdQuery: {organizationId: $o}}]}')")
                   [[ $(jq '.result // [] | length' <<<"$admins") == 1 ]] || fail "expected exactly one administrator with $ADMIN_EMAIL"
                   admin_id=$(jq -er '.result[0].userId' <<<"$admins")
                   admin_state=own
@@ -666,6 +676,7 @@ spec:
                   # identity provider of KIND (generic_oidc or github) named NAME in ORG, equal to
                   # DESIRED, and sets idp_id. ZITADEL never returns a client secret, so a
                   # fingerprint of SECRET kept under ANNOTATION decides whether to send it again.
+                  # An empty ORG selects the instance's own providers.
                   normalise_options='{isLinkingAllowed: (.config.options.isLinkingAllowed // false),
                     isCreationAllowed: (.config.options.isCreationAllowed // false),
                     isAutoCreation: (.config.options.isAutoCreation // false), isAutoUpdate: (.config.options.isAutoUpdate // false),
@@ -676,24 +687,31 @@ spec:
                   normalise_github="{clientId: (.config.github.clientId // \"\"), scopes: (.config.github.scopes // []),
                     providerOptions: $normalise_options}"
                   ensure_idp() {
-                    local org=$1 kind=$2 name=$3 desired=$4 secret=$5 annotation=$6 normalise found fingerprint request
+                    local org=$1 kind=$2 name=$3 desired=$4 secret=$5 annotation=$6 normalise found fingerprint request prefix owner
                     jq -e 'type == "object" and length > 0' <<<"$desired" >/dev/null 2>&1 || fail "empty declared settings for $(org_label "$org")"
                     case $kind in
                       generic_oidc) normalise=$normalise_generic_oidc ;;
                       github) normalise=$normalise_github ;;
                       *) fail "unknown identity provider kind $kind" ;;
                     esac
-                    list_org_idps() {
-                      api_org=$org api POST /management/v1/idps/templates/_search "$(jq -nc --arg n "$name" \
+                    prefix=/management/v1/idps
+                    owner=IDP_OWNER_TYPE_ORG
+                    if [[ -z $org ]]; then
+                      prefix=/admin/v1/idps
+                      owner=IDP_OWNER_TYPE_SYSTEM
+                    fi
+                    list_scoped_idps() {
+                      api_org=$org api POST "$prefix/templates/_search" "$(jq -nc --arg n "$name" \
                         '{queries: [{idpNameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')" |
-                        jq -c --arg o "$org" '[.result // [] | .[] | select(.owner == "IDP_OWNER_TYPE_ORG" and .details.resourceOwner == $o)]'
+                        jq -c --arg t "$owner" --arg o "$org" \
+                          '[.result // [] | .[] | select(.owner == $t and ($o == "" or .details.resourceOwner == $o))]'
                     }
                     fingerprint=$(printf '%s' "$secret" | sha256sum | cut -d' ' -f1)
                     request=$(IDP_SECRET=$secret jq -c --arg n "$name" '. + {name: $n, clientSecret: env.IDP_SECRET}' <<<"$desired")
-                    found=$(list_org_idps)
+                    found=$(list_scoped_idps)
                     case $(jq length <<<"$found") in
                       0)
-                        idp_id=$(api_org=$org api POST "/management/v1/idps/$kind" "$request" | jq -er '.id')
+                        idp_id=$(api_org=$org api POST "$prefix/$kind" "$request" | jq -er '.id')
                         changes+=("created the $name identity provider in $(org_label "$org")")
                         ;;
                       1)
@@ -705,8 +723,8 @@ spec:
                         if [[ $(jq -cS ".[0] | $normalise" <<<"$found") == "$(jq -cS . <<<"$desired")" && $recorded == "$fingerprint" ]]; then
                           return 0
                         fi
-                        api_org=$org api PUT "/management/v1/idps/$kind/$idp_id" "$request" >/dev/null
-                        [[ $(list_org_idps | jq -cS ".[0] | $normalise") == "$(jq -cS . <<<"$desired")" ]] ||
+                        api_org=$org api PUT "$prefix/$kind/$idp_id" "$request" >/dev/null
+                        [[ $(list_scoped_idps | jq -cS ".[0] | $normalise") == "$(jq -cS . <<<"$desired")" ]] ||
                           fail "identity provider '$name' in $(org_label "$org") still differs from its declared settings after the update"
                         changes+=("updated the $name identity provider in $(org_label "$org")")
                         ;;
@@ -714,7 +732,13 @@ spec:
                     esac
                     patch_secret "$(jq -nc --arg a "$annotation" --arg f "$fingerprint" '{metadata: {annotations: {($a): $f}}}')"
                   }
-                  org_label() { if [[ $1 == "$org_id" ]]; then echo "the administrator's organization"; else echo "the $customers_org organization"; fi; }
+                  org_label() {
+                    case $1 in
+                      "") echo "the instance" ;;
+                      "$org_id") echo "the administrator's organization" ;;
+                      *) echo "the $customers_org organization" ;;
+                    esac
+                  }
 
                   # ensure_login_policy ORG DESIRED IDP: keeps ORG's own login policy equal to
                   # DESIRED and its identity providers equal to exactly IDP. With a second one
@@ -834,6 +858,61 @@ spec:
                       ;;
                     *) fail "CUSTOMER_GITHUB_SIGNIN must be on or off" ;;
                   esac
+
+                  prepare_portal_operator() {
+                    local idp=$1 orgs operator_org query users profile response links
+                    query=$(jq -nc --arg n "$portal_operators_org" \
+                      '{queries:[{nameQuery:{name:$n,method:"TEXT_QUERY_METHOD_EQUALS"}}]}')
+                    orgs=$(connect zitadel.org.v2.OrganizationService/ListOrganizations "$query")
+                    if jq -e '(.result // []) == []' <<<"$orgs" >/dev/null; then
+                      connect zitadel.org.v2.OrganizationService/AddOrganization \
+                        "$(jq -nc --arg n "$portal_operators_org" '{name:$n}')" >/dev/null
+                      orgs=$(connect zitadel.org.v2.OrganizationService/ListOrganizations "$query")
+                    fi
+                    operator_org=$(jq -er --arg d "$portal_operators_domain" '
+                      .result | select(length == 1 and .[0].primaryDomain == $d) | .[0].id | select(length > 0)' <<<"$orgs") ||
+                      fail "could not verify the portal operators organization"
+                    [[ $operator_org != "$customers_org_id" && $operator_org != "$org_id" ]] ||
+                      fail "the portal operators organization must be isolated"
+
+                    query=$(jq -nc --arg u "$portal_operator_id" '{queries:[{inUserIdsQuery:{userIds:[$u]}}]}')
+                    users=$(connect zitadel.user.v2.UserService/ListUsers "$query")
+                    if jq -e '(.result // []) == []' <<<"$users" >/dev/null; then
+                      # This profile comes from the already linked, explicitly approved administrator.
+                      profile=$(jq -ce --arg email "$ADMIN_EMAIL" '.result[0].human
+                        | select(.email.email == $email and .email.isVerified == true)
+                        | .profile | {givenName,familyName}' <<<"$admins") ||
+                        fail "the existing administrator address is not verified"
+                      response=$(connect zitadel.user.v2.UserService/CreateUser "$(jq -nc \
+                        --arg u "$portal_operator_id" --arg o "$operator_org" --arg e "$ADMIN_EMAIL" --argjson p "$profile" \
+                        --arg i "$idp" --arg g "$admin_github_id" --arg n "$admin_github_login" \
+                        '{userId:$u,organizationId:$o,username:"portal-operator",
+                          human:{profile:$p,email:{email:$e,isVerified:true},idpLinks:[{idpId:$i,userId:$g,userName:$n}]}}')")
+                      [[ $(jq -er '.id' <<<"$response") == "$portal_operator_id" ]] ||
+                        fail "the portal operator was created with an unexpected identity"
+                      users=$(connect zitadel.user.v2.UserService/ListUsers "$query")
+                      changes+=("prepared the portal operator account")
+                    fi
+                    jq -e --arg u "$portal_operator_id" --arg o "$operator_org" --arg e "$ADMIN_EMAIL" '
+                      .result | length == 1 and (.[0] | .userId == $u and .details.resourceOwner == $o and
+                        .state == "USER_STATE_ACTIVE" and .username == "portal-operator" and
+                        .human.email.email == $e and .human.email.isVerified == true)' <<<"$users" >/dev/null ||
+                      fail "the portal operator account does not match the declared identity"
+                    links=$(connect zitadel.user.v2.UserService/ListIDPLinks \
+                      "$(jq -nc --arg u "$portal_operator_id" '{userId:$u}')")
+                    jq -e --arg i "$idp" --arg g "$admin_github_id" '
+                      .result | length == 1 and (.[0] | .idpId == $i and .userId == $g)' <<<"$links" >/dev/null ||
+                      fail "the portal operator GitHub link does not match the declared identity"
+                  }
+
+                  if [[ $customer_github == on ]]; then
+                    shared_idp=$(jq -nc --arg c "$github_client_id" '{
+                      clientId:$c, scopes:["read:user","user:email"],
+                      providerOptions:{isLinkingAllowed:true,isCreationAllowed:false,isAutoCreation:false,isAutoUpdate:false,
+                        autoLinking:"AUTO_LINKING_OPTION_UNSPECIFIED"}}')
+                    ensure_idp "" github "$idp_name" "$shared_idp" "$github_client_secret" "$shared_github_annotation"
+                    prepare_portal_operator "$idp_id"
+                  fi
 
                   # --- The maintainer's administration roles ---------------------------------------
                   # He administers both organizations: IAM_OWNER of the instance and ORG_OWNER of

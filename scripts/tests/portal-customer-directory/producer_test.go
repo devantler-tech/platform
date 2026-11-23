@@ -122,3 +122,76 @@ func TestOrganizationReconciliationRequiresAReadback(t *testing.T) {
 		t.Fatal("an ignored write must fail rather than claiming the organization was stored")
 	}
 }
+
+func TestPortalOperatorProvisioningIsIsolatedAndUsesTheExactLink(t *testing.T) {
+	script := producerFunction(t, "prepare_portal_operator")
+	for _, mode := range []string{"new", "existing", "customer-org", "foreign-user", "wrong-link", "unverified-email"} {
+		t.Run(mode, func(t *testing.T) {
+			harness := `set -euo pipefail
+mode=$1
+changes=()
+org_id=instance-admin-org
+customers_org_id=customer-org
+portal_operators_org='Portal operators'
+portal_operators_domain=portal-operators.example.invalid
+portal_operator_id=02bf754c-559b-486d-83f7-ed89cfc38d08
+admin_github_login=fictional-owner
+admin_github_id=1234
+ADMIN_EMAIL=operator@example.invalid
+admins='{"result":[{"human":{"email":{"email":"operator@example.invalid","isVerified":true},"profile":{"givenName":"Test","familyName":"Operator"}}}]}'
+if [[ $mode == unverified-email ]]; then
+  admins=$(jq '.result[0].human.email.isVerified=false' <<<"$admins")
+fi
+state=$2
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+connect() {
+  case $1 in
+    zitadel.org.v2.OrganizationService/ListOrganizations)
+      jq -e '.queries == [{nameQuery:{name:"Portal operators",method:"TEXT_QUERY_METHOD_EQUALS"}}]' <<<"$2" >/dev/null
+      local id=operator-org
+      [[ $mode != customer-org ]] || id=$customers_org_id
+      jq -nc --arg id "$id" '{result:[{id:$id,primaryDomain:"portal-operators.example.invalid"}]}'
+      ;;
+    zitadel.user.v2.UserService/ListUsers)
+      jq -e --arg id "$portal_operator_id" '.queries == [{inUserIdsQuery:{userIds:[$id]}}]' <<<"$2" >/dev/null
+      if [[ $mode != new && $mode != unverified-email || -e $state ]]; then
+        local owner=operator-org
+        [[ $mode != foreign-user ]] || owner=$customers_org_id
+        jq -nc --arg id "$portal_operator_id" --arg owner "$owner" '{result:[{userId:$id,details:{resourceOwner:$owner},
+          state:"USER_STATE_ACTIVE",username:"portal-operator",human:{email:{email:"operator@example.invalid",isVerified:true}}}]}'
+      else
+        printf '%s\n' '{"result":[]}'
+      fi
+      ;;
+    zitadel.user.v2.UserService/CreateUser)
+      jq -e --arg id "$portal_operator_id" '. == {userId:$id,organizationId:"operator-org",username:"portal-operator",
+        human:{profile:{givenName:"Test",familyName:"Operator"},email:{email:"operator@example.invalid",isVerified:true},
+          idpLinks:[{idpId:"approved-provider",userId:"1234",userName:"fictional-owner"}]}}' <<<"$2" >/dev/null
+      touch "$state"
+      jq -nc --arg id "$portal_operator_id" '{id:$id}'
+      ;;
+    zitadel.user.v2.UserService/ListIDPLinks)
+      jq -e --arg id "$portal_operator_id" '.userId == $id' <<<"$2" >/dev/null
+      local upstream=$admin_github_id
+      [[ $mode != wrong-link ]] || upstream=5678
+      jq -nc --arg u "$upstream" '{result:[{idpId:"approved-provider",userId:$u}]}'
+      ;;
+    *) fail 'unexpected API call' ;;
+  esac
+}
+`
+			state := filepath.Join(t.TempDir(), "created")
+			cmd := exec.Command("bash", "-s", "--", mode, state)
+			cmd.Stdin = strings.NewReader(harness + script + "\nprepare_portal_operator approved-provider\n")
+			output, err := cmd.CombinedOutput()
+			wantOK := mode == "new" || mode == "existing"
+			if (err == nil) != wantOK {
+				t.Fatalf("expected success=%t, got %v: %s", wantOK, err, output)
+			}
+			_, writeErr := os.Stat(state)
+			if (writeErr == nil) != (mode == "new") {
+				t.Fatalf("unexpected provisioning write: %v", writeErr)
+			}
+		})
+	}
+}
