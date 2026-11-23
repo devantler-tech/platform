@@ -115,6 +115,7 @@ func TestComparisonCannotRunWithAnIncompleteOrForeignBaseline(t *testing.T) {
 		"incomplete cleanup":         func(r *benchmarkRecord) { r.Cleaned = false },
 		"missing trial":              func(r *benchmarkRecord) { r.Measurements = r.Measurements[1:] },
 		"wrong image":                func(r *benchmarkRecord) { r.Image = "unpinned" },
+		"legacy image":               func(r *benchmarkRecord) { r.Image = legacyFioImage },
 		"changed workload":           func(r *benchmarkRecord) { r.Workload = "changed" },
 		"missing namespace identity": func(r *benchmarkRecord) { r.NamespaceUID = "" },
 		"lost resource identities":   func(r *benchmarkRecord) { r.Resources = nil },
