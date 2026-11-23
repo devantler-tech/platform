@@ -98,7 +98,7 @@ Run checks from the repository root, choosing those affected by your change:
   commands and factual claims against the configuration or cited sources.
 
 The [validation guide](docs/validation.md) explains the manifest checks and
-consumer-discovery guard in more detail. Static checks prove configuration is
+signer identities in more detail. Static checks prove configuration is
 well-formed; they do not prove a production rollout succeeded. For a runtime
 change, describe how to verify its effect safely before and after deployment.
 

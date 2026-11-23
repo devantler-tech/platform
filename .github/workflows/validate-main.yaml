@@ -103,11 +103,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 🔐 Enforce approved publication signers
-        env:
-          APPROVED_REVISIONS_ENFORCE: "1"
-        run: ./scripts/guard-publish-workflow-approved-revisions.sh
-
       - name: ⚙️ Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -172,55 +167,42 @@ jobs:
           bash scripts/tests/test-production-authorization-rules.sh
           ksail --config ksail.prod.yaml workload validate
 
-  # The cosign subjects that trust the SHARED actions publish workflows must pin a
-  # fixed revision, or a compromised branch build could be verified as first-party.
-  # ci.yaml gates that on `pull_request` and `merge_group`; this is the same gate on
-  # the push itself, for exactly the reason in this workflow's header — a direct push
-  # to main fires neither of those, so a widened matcher would sit on main unreported
-  # and be deployed by the manual CD route (#2818).
-  #
-  # Its own job, not a second step in the one above: a validator job that runs other
-  # command steps can be subverted by one of them (BASH_ENV / a fake tool on $PATH),
-  # which is the property scripts/validate-dr-signing enforces on cd.yaml's contract
-  # job. Same shape here, so neither validator's job grows a tampering surface.
-  validate-shared-publish-pin:
-    name: 🔐 Validate Shared Publish Workflow Pins
+  # ci.yaml judges OCIRepository signers on `pull_request` and `merge_group`; this is the same
+  # guard on the push itself, for this workflow's header reason: a source signer widened by a
+  # direct push to main (a shared reusable publisher, say) would otherwise sit on main
+  # unreported and be deployed by the manual CD route (#2818, #6266). Its own job, so no other
+  # command step shares it.
+  validate-oci-repository-verify:
+    name: 🔐 Validate OCIRepository Signers
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
-      packages: read # report current GHCR package tags for signing-revision attribution
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: 🔐 Validate shared publish workflows are pinned
-        run: ./scripts/guard-shared-publish-workflow-pin.sh
-
-      - name: 🔏 Install cosign for bound publication verification
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-
-      - name: 🔑 Log in to GHCR for signature reads
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Which revision SIGNED what is deployed, against what each consumer pins now
-      # (#3048). Reported on main rather than gated on a PR: it reads five other
-      # repositories over the network, so a transient API failure here must never block
-      # an unrelated pull request. Its hermetic half runs in ci.yaml on every PR.
-      - name: 🔐 Report publish-workflow signing revisions
+      - name: ⚙️ Initialize the approved kubectl renderer
+        timeout-minutes: 5
+        shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
         run: |
-          # `set -o pipefail` is load-bearing: Actions' default shell does not set it, so
-          # a bare pipe into `tee` would report TEE's status and a failed report would
-          # read as a passing step.
-          set -o pipefail
-          ./scripts/report-publish-workflow-signing-revisions.sh | tee -a "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          echo /usr/local/bin >> "$GITHUB_PATH"
+          export PATH="/usr/local/bin:$PATH"
+          kubectl version --client
+
+      - name: 🔐 Validate every devantler-tech OCIRepository verifies
+        run: ./scripts/guard-oci-repository-verify.sh
 
   # ci.yaml's validate-talos job runs the Kubernetes/Talos compatibility predicate on
   # `pull_request` and `merge_group`, but neither event fires for a direct push to main.
@@ -229,8 +211,8 @@ jobs:
   # accepts the pins offline, the same way `talosctl validate --strict` does. Same gate on
   # the push itself, for this workflow's header reason.
   #
-  # Its own job rather than a step in another, matching validate-shared-publish-pin: a
-  # validator sharing a job with other command steps can be subverted by one of them.
+  # Its own job rather than a step in another: a validator sharing a job with other
+  # command steps can be subverted by one of them.
   validate-talos-kubernetes-compatibility:
     name: 🧪 Validate Kubernetes/Talos Pin Compatibility
     runs-on: ubuntu-latest
