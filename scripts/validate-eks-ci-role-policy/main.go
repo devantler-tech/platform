@@ -82,7 +82,6 @@ var authorizationOverlayPaths = []string{
 	rootProductionOverlayPath,
 }
 
-var exactGitCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var exactSHA256Digest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 const authorizationIsolationAnnotation = "security.devantler.tech/authorization-scope"
@@ -1332,16 +1331,6 @@ func authorizationTemplateInstanceTypes(documents []map[string]any) map[resource
 		selected[resourceType{apiVersion: apiVersion, kind: kind}] = true
 	}
 	return selected
-}
-
-// cloneStringAnyMap returns a shallow copy used to project one nested field
-// without changing the decoded document used by the remaining checks.
-func cloneStringAnyMap(source map[string]any) map[string]any {
-	clone := make(map[string]any, len(source))
-	for key, value := range source {
-		clone[key] = value
-	}
-	return clone
 }
 
 // effectiveMetadataAnnotations change how a projected document's
