@@ -205,7 +205,9 @@ old revision reads waits for a later release.
   normal platform pull request. The pin changes the tenant's lines in
   `scripts/validate-eks-ci-role-policy/approved-surface.txt` and
   `scripts/rgd-template-static-scan-baseline.tsv`; take the new values from the failing checks.
-  Remove the pin once a fixed release exists.
+  Remove the pin once a fixed release exists. `spec.source.digest` and
+  `spec.source.publisherRevision` are retired: the schema keeps them only because KRO will not
+  remove a field from an installed `Tenant` API, and it refuses any value other than empty.
 - **Break-glass, while that pull request is on its way:** the maintainer runs
   `flux suspend kustomization <tenant> -n <tenant>`. Once the pin is live, resume it
   (`flux resume kustomization <tenant> -n <tenant>`) only after

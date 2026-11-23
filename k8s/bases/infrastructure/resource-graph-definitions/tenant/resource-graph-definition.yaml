@@ -79,6 +79,11 @@ spec:
         # The Flux semver range of releases the tenant follows. Only stable
         # `X.Y.Z` releases are selected, whatever the range says.
         version: 'string | default=">=0.0.0" minLength=1 maxLength=64'
+        # Retired pin fields. KRO refuses a Tenant API update that removes a field the
+        # installed API still has, so they stay in the schema, unchanged. The graph
+        # reads neither, and the `source` validation below refuses any value but empty.
+        digest: 'string | default="" maxLength=71 pattern="^$|^sha256:[0-9a-f]{64}$"'
+        publisherRevision: 'string | default="" maxLength=40 pattern="^$|^[0-9a-f]{40}$"'
         # An active application cannot be switched off through this control.
         reconcileApplication: 'boolean | default=true validation="self || !oldSelf"'
       TenantResourceQuota:
@@ -117,7 +122,8 @@ spec:
       # The releases the tenant follows. Trust comes from the signature, not a
       # pin: the source accepts only the tenant's own release workflow on a
       # release tag (ADR 0017, ADR 0019).
-      source: 'TenantSource | default={}'
+      source: >-
+        TenantSource | default={} validation="(!has(self.digest) || self.digest == '') && (!has(self.publisherRevision) || self.publisherRevision == '')"
       # Standard multi-tenancy guardrails (#1932 follow-up #2522): a
       # namespace-wide ResourceQuota and a per-container default LimitRange.
       # Both default to `enabled: false` — no behaviour change for existing
