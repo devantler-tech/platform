@@ -41,8 +41,34 @@ placement_is_scoped() {
   ' "$1" >/dev/null
 }
 
+assert_workload_headroom() {
+  jq -e --argjson enabled "$2" --argjson scanner_enabled "$3" '
+    def workload($kind;$namespace;$name):
+      [.[] | select(.kind == $kind and .metadata.namespace == $namespace and .metadata.name == $name)]
+      | if length == 1 then .[0] else error("missing or duplicated workload") end;
+    workload("HelmRelease";"kubescape";"kubescape") as $kubescape |
+    workload("Deployment";"observability";"crossplane-sync-exporter") as $exporter |
+    workload("HelmRelease";"policy-reporter";"policy-reporter") as $reporter |
+    $kubescape.spec.values.kubevuln.nodeSelector["kubernetes.io/hostname"] as $scannerHost |
+    $exporter.spec.template.spec.nodeSelector["kubernetes.io/hostname"] as $exporterHost |
+    $reporter.spec.values.ui.affinity.nodeAffinity as $reporterAffinity |
+    ($scannerHost == (if $scanner_enabled then "prod-worker-1" else null end)) and
+    (if $enabled then
+      $exporterHost == "prod-worker-1" and $exporter.spec.strategy.type == "Recreate" and
+      $reporterAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
+        [{matchExpressions:[{key:"kubernetes.io/hostname",operator:"In",values:["prod-worker-1","prod-worker-2"]}]},
+         {matchExpressions:[{key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v2"]}]}] and
+      $reporter.spec.values.ui.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution ==
+        [{labelSelector:{matchLabels:{"app.kubernetes.io/name":"policy-reporter-ui"}},topologyKey:"kubernetes.io/hostname"}]
+    else
+      $exporterHost == null and $reporterAffinity == null
+    end)
+  ' "$1" >/dev/null || fail 'temporary migration placement is missing, widened or present without the component'
+}
+
 kube_version="$(yq -er '.spec.cluster.kubernetesVersion' "${root_dir}/ksail.prod.yaml")"
 component='../../../bases/components/longhorn-v1-workload-headroom'
+scanner_component='../../../../bases/components/longhorn-v1-runtime-headroom'
 for profile in prod local prod-enabled prod-disabled; do
   cluster="$profile"
   tree="${root_dir}/k8s"
@@ -52,14 +78,22 @@ for profile in prod local prod-enabled prod-disabled; do
     cp -R "${root_dir}/k8s" "$scratch/$profile/k8s"
     tree="$scratch/$profile/k8s"
     selection_file="$tree/providers/hetzner/infrastructure/kustomization.yaml"
+    scanner_selection_file="$tree/providers/hetzner/infrastructure/controllers/kustomization.yaml"
     if [[ "$profile" == prod-disabled ]]; then
       COMPONENT="$component" yq -i '.components |= map(select(. != strenv(COMPONENT)))' "$selection_file"
+      COMPONENT="$scanner_component" yq -i '.components |= map(select(. != strenv(COMPONENT)))' "$scanner_selection_file"
     else
       selected="$(COMPONENT="$component" yq -r '.components | contains([strenv(COMPONENT)])' "$selection_file")"
       case "$selected" in
         true) ;;
         false) COMPONENT="$component" yq -i '.components += [strenv(COMPONENT)]' "$selection_file" ;;
         *) fail 'the explicit workload opt-in is ambiguous' ;;
+      esac
+      scanner_selected="$(COMPONENT="$scanner_component" yq -r '.components | contains([strenv(COMPONENT)])' "$scanner_selection_file")"
+      case "$scanner_selected" in
+        true) ;;
+        false) COMPONENT="$scanner_component" yq -i '.components += [strenv(COMPONENT)]' "$scanner_selection_file" ;;
+        *) fail 'the explicit scanner opt-in is ambiguous' ;;
       esac
     fi
   fi
@@ -76,6 +110,9 @@ for profile in prod local prod-enabled prod-disabled; do
       | length == 0' "$work/resolved.json" >/dev/null || fail 'local inherited the production-only operator release'
     continue
   fi
+  scanner_enabled="$(COMPONENT="$scanner_component" yq -r '.components | contains([strenv(COMPONENT)])' "$tree/providers/hetzner/infrastructure/controllers/kustomization.yaml")"
+  [[ "$scanner_enabled" == true || "$scanner_enabled" == false ]] || fail 'the production scanner selection is ambiguous'
+  assert_workload_headroom "$work/resolved.json" "$enabled" "$scanner_enabled"
   jq -e '[.[] | select(.kind == "HelmRelease" and .metadata.name == "ksail-operator" and .metadata.namespace == "ksail-operator")]
     | if length == 1 then .[0] else error("missing or duplicated operator release") end' "$work/resolved.json" >"$work/release.json"
   jq -e '.spec.valuesFrom == null and .spec.postRenderStrategy == "nohooks" and .spec.chartRef == {kind:"OCIRepository",name:"ksail-operator"}' "$work/release.json" >/dev/null ||

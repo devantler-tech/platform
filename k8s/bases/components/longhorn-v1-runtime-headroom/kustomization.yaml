@@ -6,6 +6,23 @@ patches:
       group: helm.toolkit.fluxcd.io
       version: v2
       kind: HelmRelease
+      name: kubescape
+      namespace: kubescape
+    patch: |-
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: kubescape
+        namespace: kubescape
+      spec:
+        values:
+          kubevuln:
+            nodeSelector:
+              kubernetes.io/hostname: prod-worker-1
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
       name: velero
       namespace: velero
     patch: |-
