@@ -293,6 +293,22 @@ default_observer() {
     refuse "$repo: applied tag $tag does not translate to exactly one git tag on devantler-tech/$repo"
     return 1
   }
+  # A release published by the consumer's own release workflow references no shared
+  # workflow, so its CD run carries no signer reference to read. The report's signer
+  # resolution verifies that artifact's own-release signature, tag and commit instead.
+  local commit
+  commit="$(tag_commit "$repo" "$git_tag")" || {
+    refuse "$repo: $git_tag did not resolve to a commit"
+    return 1
+  }
+  if [ "$(report_publisher_at_ref "$repo" "$workflow" "$commit" 2>/dev/null || true)" = own-release ]; then
+    signer="$(report_release_signer "$repo" "$workflow" "$git_tag" "$commit")" || {
+      refuse "$repo: $git_tag is an own-release publication whose signature, tag or digest did not verify"
+      return 1
+    }
+    printf '%s\t%s\t%s\n' "$tag" "$digest" "$signer"
+    return 0
+  fi
   signer="$(signer_for_tag "$repo" "$workflow" "$git_tag")" || {
     refuse "$repo: no single successful CD run published $git_tag at its current commit referencing $workflow.yaml"
     return 1
@@ -304,7 +320,8 @@ default_pin_resolver() {
   local repo="$1" workflow="$2" branch identity
   branch="$(gh_retry api "repos/devantler-tech/${repo}" --jq .default_branch)" || return 1
   plausible_ref "$branch" || return 1
-  identity="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
+  # An own-release caller resolves to its release workflow at the exact default-branch commit.
+  identity="$(report_current_publisher "$repo" "$workflow" "$branch")" || return 1
   case "$identity" in
     devantler-tech/actions/*) printf '%s\n' "${identity##*@}" ;;
     *) printf '%s\n' "$identity" ;;
@@ -449,7 +466,7 @@ main() {
     fi
     split_observation "$answer"
     local signer_identity='' pin_identity=''
-    signer_identity="$(report_publisher_identity "$OBS_SIGNER" "$workflow")" || signer_identity=''
+    signer_identity="$(report_publisher_identity "$OBS_SIGNER" "$workflow" "$repo" signing)" || signer_identity=''
     if [ "$OBS_COUNT" -ne 3 ] || ! plausible_tag "$OBS_TAG" || ! is_digest "$OBS_DIGEST" || [ -z "$signer_identity" ]; then
       refuse "$repo ($workflow): applied revision not resolved to <tag>, <sha256:digest> and one signer SHA; refusing to write a set with one revision"
       unresolved=$((unresolved + 1))
@@ -461,17 +478,34 @@ main() {
       pin="$(default_pin_resolver "$repo" "$workflow")" || pin=''
     fi
     case "$pin" in *$'\n'*) pin='' ;; esac
-    pin_identity="$(report_publisher_identity "$pin" "$workflow")" || pin_identity=''
+    pin_identity="$(report_publisher_identity "$pin" "$workflow" "$repo" current)" || pin_identity=''
     if [ -z "$pin_identity" ]; then
       refuse "$repo ($workflow): default-branch pin not resolved to one commit SHA; refusing to write a set with one revision"
       unresolved=$((unresolved + 1))
       continue
     fi
-    local actual_tag="$OBS_TAG" actual_digest="$OBS_DIGEST" previous_legacy
+    local actual_tag="$OBS_TAG" actual_digest="$OBS_DIGEST" previous_legacy owned signer_kind pin_kind
     previous_legacy="$(prev_row "$repo" "$workflow")"
-    case "$signer_identity" in
-      devantler-tech/.github/*)
-        if ! require_canonical_approval "$repo" "$workflow" "$signer_identity"; then
+    # A publication signed by the consumer's own release workflow, and a default branch
+    # that calls only the shared action, need no shared-publisher approval: the platform
+    # trusts that repository's release tags directly (ADR 0017). Like a canonical
+    # observation, it keeps the last proven legacy evidence in the compatibility set and
+    # records the current identities in the companion file.
+    owned="$(report_owned_release_workflow "$repo")" || owned=''
+    publisher_kind() { # <identity>
+      if [ -n "$owned" ] && [[ "$1" == "$owned@"* ]]; then
+        printf 'own-release\n'
+      elif [[ "$1" == devantler-tech/.github/* ]]; then
+        printf 'canonical\n'
+      else
+        printf 'legacy\n'
+      fi
+    }
+    signer_kind="$(publisher_kind "$signer_identity")"
+    pin_kind="$(publisher_kind "$pin_identity")"
+    case "$signer_kind" in
+      canonical | own-release)
+        if [ "$signer_kind" = canonical ] && ! require_canonical_approval "$repo" "$workflow" "$signer_identity"; then
           unresolved=$((unresolved + 1))
           continue
         fi
@@ -486,9 +520,9 @@ main() {
         ;;
       *) OBS_SIGNER="${signer_identity##*@}" ;;
     esac
-    case "$pin_identity" in
-      devantler-tech/.github/*)
-        if ! require_canonical_approval "$repo" "$workflow" "$pin_identity"; then
+    case "$pin_kind" in
+      canonical | own-release)
+        if [ "$pin_kind" = canonical ] && ! require_canonical_approval "$repo" "$workflow" "$pin_identity"; then
           unresolved=$((unresolved + 1))
           continue
         fi
