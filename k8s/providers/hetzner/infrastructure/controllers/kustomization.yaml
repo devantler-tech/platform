@@ -129,6 +129,7 @@ components:
   # reverted. The HelmRelease has no authorization ledger entry (#6270).
   - cilium/components/ebpf-host-routing/
 patches:
+  - path: cilium/patches/keep-hubble-ready-during-drains.yaml
   # Keep the two stateless canary-test endpoints on qualified workers during
   # the Longhorn maintenance rollout. Retire this placement with #6432.
   - target:
