@@ -80,7 +80,7 @@ done <<'CASES'
 wrong-graph-name	.metadata.name = "other.kro.run"
 wrong-generated-kind	.spec.schema.kind = "Other"
 wrong-scope	.spec.schema.scope = "Cluster"
-unbounded-version	.spec.schema.types.TenantSource.version = "string"
+release-range-input	.spec.schema.types.TenantSource.version = "string | default=\">=0.0.0\" minLength=1 maxLength=64"
 obsolete-digest-field	.spec.schema.types.TenantSource.digest = "string | default=\"\""
 changed-source-rule	.spec.schema.spec.source = "TenantSource | default={} validation=\"self == oldSelf\""
 unsafe-active-toggle	.spec.schema.types.TenantSource.reconcileApplication = "boolean | default=true"
@@ -91,6 +91,7 @@ foreign-namespace	(.spec.resources[] | select(.id == "ociRepository").template.m
 tag-constructor	(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"tag": "${schema.spec.source.version}"}
 digest-constructor	(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"digest": "${schema.spec.source.version}"}
 prerelease-filter	(.spec.resources[] | select(.id == "ociRepository").template.spec.ref.semverFilter) = ".*"
+narrow-release-range	(.spec.resources[] | select(.id == "ociRepository").template.spec.ref.semver) = "3.12.0"
 no-stable-filter	del(.spec.resources[] | select(.id == "ociRepository").template.spec.ref.semverFilter)
 wildcard-subject	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) += "|.*"
 shared-publisher-again	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) |= sub("devantler-tech/\" [+]"; "devantler-tech/(\\\\.github/\\\\.github/workflows/publish-app\\\\.yaml@a76d5df9371cf712a8f60307fde060825a34cf35|\" +")

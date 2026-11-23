@@ -200,20 +200,12 @@ old revision reads waits for a later release.
 - **What runs:** `kubectl -n <tenant> get ocirepository,kustomization <tenant>` shows the applied
   `<version>@sha256:<digest>`. The tenant's GitHub release (tag, notes and signed artifacts) and the
   Flux events are the record of each change.
-- **Roll back:** release a fix; the tenant follows it.
-- **Emergency pin:** set the `Tenant`'s `spec.source.version` to one release, such as `"3.12.0"`, in a
-  normal platform pull request. The pin changes the tenant's lines in
-  `scripts/validate-eks-ci-role-policy/approved-surface.txt` and
-  `scripts/rgd-template-static-scan-baseline.tsv`; take the new values from the failing checks.
-  Remove the pin once a fixed release exists. `spec.source.digest` and
-  `spec.source.publisherRevision` are retired: the schema keeps them only because KRO will not
-  remove a field from an installed `Tenant` API, and it refuses any value other than empty.
-- **Break-glass, while that pull request is on its way:** the maintainer runs
-  `flux suspend kustomization <tenant> -n <tenant>`. Once the pin is live, resume it
-  (`flux resume kustomization <tenant> -n <tenant>`) only after
-  `kubectl -n <tenant> get ocirepository <tenant>` reports Ready with the pinned version, so the
-  Kustomization never re-applies the bad artifact it still holds. Never move or delete a release
-  tag to roll back.
+- **Recover from a bad release:** publish a fixed release with a new signed tag. If the
+  maintainer suspends the tenant Kustomization during recovery, resume it after the
+  OCIRepository reports Ready with the fixed version.
+- **API compatibility:** the selector uses a fixed stable range. The API retains
+  `spec.source.digest` and `spec.source.publisherRevision` for schema compatibility.
+  The source validation accepts only empty values for these retired fields.
 
 Local regeneration requires GNU coreutils (`gmv` on macOS). Output replacement
 uses its no-target-directory operation, so a concurrent destination-directory

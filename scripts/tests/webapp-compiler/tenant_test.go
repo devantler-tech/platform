@@ -35,8 +35,8 @@ import (
 const stableReleases = `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
 const defaultTenantSubject = `^https://github\.com/devantler-tech/tenant\-fixture/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$`
 
-func releaseRef(version string) map[string]interface{} {
-	return map[string]interface{}{"semver": version, "semverFilter": stableReleases}
+func releaseRef() map[string]interface{} {
+	return map[string]interface{}{"semver": ">=0.0.0", "semverFilter": stableReleases}
 }
 
 // TestCommittedTenant exercises the actual graph compiler and generated API.
@@ -184,7 +184,7 @@ func TestCommittedTenant(t *testing.T) {
 			assertTenantChildren(t, objects, ignored, true, sops)
 			source := objects["ociRepository"]
 			ref, _, _ := unstructured.NestedMap(source.Object, "spec", "ref")
-			if !reflect.DeepEqual(ref, releaseRef(">=0.0.0")) {
+			if !reflect.DeepEqual(ref, releaseRef()) {
 				t.Fatalf("omitted source must follow every stable release: %v", ref)
 			}
 			assertTenantIdentity(t, source, defaultTenantSubject)
@@ -192,11 +192,10 @@ func TestCommittedTenant(t *testing.T) {
 			assertDefaultSubjectTrustsOnlyOwnRelease(t, source, "tenant-fixture")
 			writeTenantFixture(t, fmt.Sprintf("default-%t", sops), objects)
 		})
-		// An emergency pin names one release; the signature rule does not change.
-		t.Run(fmt.Sprintf("pinned-source-only-sops-%t", sops), func(t *testing.T) {
-			input := instance("pinned-fixture", map[string]interface{}{
+		t.Run(fmt.Sprintf("source-only-sops-%t", sops), func(t *testing.T) {
+			input := instance("source-only-fixture", map[string]interface{}{
 				"sops":   sops,
-				"source": map[string]interface{}{"version": "3.12.0", "reconcileApplication": false},
+				"source": map[string]interface{}{"reconcileApplication": false},
 			})
 			if err := admit(input); err != nil {
 				t.Fatalf("valid source-only input must be admitted: %v", err)
@@ -210,8 +209,8 @@ func TestCommittedTenant(t *testing.T) {
 			}
 			source := objects["ociRepository"]
 			ref, _, _ := unstructured.NestedMap(source.Object, "spec", "ref")
-			if !reflect.DeepEqual(ref, releaseRef("3.12.0")) {
-				t.Fatalf("pinned source must select exactly the pinned release: %v", ref)
+			if !reflect.DeepEqual(ref, releaseRef()) {
+				t.Fatalf("source-only tenant must still follow every stable release: %v", ref)
 			}
 			assertTenantIdentity(t, source, defaultTenantSubject)
 		})
@@ -286,9 +285,7 @@ func TestCommittedTenant(t *testing.T) {
 		{"obsolete top-level lifecycle", map[string]interface{}{"reconcileApplication": false}},
 		{"obsolete digest pin", map[string]interface{}{"source": map[string]interface{}{"digest": "sha256:" + strings.Repeat("0", 64)}}},
 		{"obsolete publisher pin", map[string]interface{}{"source": map[string]interface{}{"publisherRevision": "a76d5df9371cf712a8f60307fde060825a34cf35"}}},
-		{"empty version", map[string]interface{}{"source": map[string]interface{}{"version": ""}}},
-		{"unbounded version", map[string]interface{}{"source": map[string]interface{}{"version": strings.Repeat("1", 65)}}},
-		{"wrong version type", map[string]interface{}{"source": map[string]interface{}{"version": 3}}},
+		{"release-range override", map[string]interface{}{"source": map[string]interface{}{"version": "3.12.0"}}},
 		{"source URL override", map[string]interface{}{"source": map[string]interface{}{"url": "oci://example.invalid/other"}}},
 		{"identity override", map[string]interface{}{"source": map[string]interface{}{"subject": ".*"}}},
 		{"wrong lifecycle type", map[string]interface{}{"source": map[string]interface{}{"reconcileApplication": "false"}}},
@@ -310,7 +307,7 @@ func TestCommittedTenant(t *testing.T) {
 			if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"version": "3.12.0", "reconcileApplication": false}, "spec", "source"); err != nil {
+			if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"reconcileApplication": false}, "spec", "source"); err != nil {
 				t.Fatal(err)
 			}
 			err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"})
@@ -373,7 +370,7 @@ func TestCommittedTenant(t *testing.T) {
 	})
 	t.Run("source-only-can-activate", func(t *testing.T) {
 		input := instance("activation-fixture", map[string]interface{}{
-			"source": map[string]interface{}{"version": "3.12.0", "reconcileApplication": false},
+			"source": map[string]interface{}{"reconcileApplication": false},
 		})
 		if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 			t.Fatal(err)
@@ -387,39 +384,64 @@ func TestCommittedTenant(t *testing.T) {
 		objects, ignored := desiredTenant(t, engine, &definition, input)
 		assertTenantChildren(t, objects, ignored, true, false)
 		ref, _, _ := unstructured.NestedMap(objects["ociRepository"].Object, "spec", "ref")
-		if !reflect.DeepEqual(ref, releaseRef("3.12.0")) {
+		if !reflect.DeepEqual(ref, releaseRef()) {
 			t.Fatal("activation must not change the selected source")
 		}
 	})
-	// An emergency pin is lifted by removing it: the tenant follows its releases again
-	// (ADR 0019). No transition rule holds a pinned tenant on its pin.
-	for _, mode := range []string{"omitted", "empty object", "null"} {
-		t.Run("pinned-source-can-follow-releases-again-"+mode, func(t *testing.T) {
-			input := instance("pin-removal-"+strings.ReplaceAll(mode, " ", "-"), map[string]interface{}{
-				"source": map[string]interface{}{"version": "3.12.0"},
-			})
-			if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
-				t.Fatal(err)
-			}
-			spec := input.Object["spec"].(map[string]interface{})
-			switch mode {
-			case "omitted":
-				delete(spec, "source")
-			case "empty object":
-				spec["source"] = map[string]interface{}{}
-			case "null":
-				spec["source"] = nil
-			}
-			if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); err != nil {
-				t.Fatalf("lifting the pin via %s must be admitted: %v", mode, err)
-			}
-			objects, _ := desiredTenant(t, engine, &definition, input)
-			ref, _, _ := unstructured.NestedMap(objects["ociRepository"].Object, "spec", "ref")
-			if !reflect.DeepEqual(ref, releaseRef(">=0.0.0")) {
-				t.Fatalf("a lifted pin must follow every stable release, got %v", ref)
-			}
-		})
-	}
+	t.Run("upgrade-clears-stored-digest-pin", func(t *testing.T) {
+		key := client.ObjectKey{Name: compiled.CRD.Name}
+		var legacy extv1.CustomResourceDefinition
+		if err := apiClient.Get(ctx, key, &legacy); err != nil {
+			t.Fatal(err)
+		}
+		spec := legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+		source := spec.Properties["source"]
+		// Before the upgrade, the schema admitted paired digest and publisher pins.
+		source.XValidations = []extv1.ValidationRule{
+			{Rule: "(!has(self.digest) || self.digest == '') == (!has(self.publisherRevision) || self.publisherRevision == '')"},
+			{Rule: "!has(oldSelf.digest) || oldSelf.digest == '' || (has(self.digest) && self.digest != '')"},
+		}
+		spec.Properties["source"] = source
+		legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"] = spec
+		if err := apiClient.Update(ctx, &legacy); err != nil {
+			t.Fatal(err)
+		}
+		pin := map[string]interface{}{"digest": "sha256:" + strings.Repeat("0", 64), "publisherRevision": strings.Repeat("1", 40)}
+		legacyInput := func(name string) *unstructured.Unstructured {
+			return instance(name, map[string]interface{}{"source": pin})
+		}
+		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
+			return admit(legacyInput("legacy-pin-dry-run")) == nil, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		input := legacyInput("legacy-pin")
+		if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
+			t.Fatal(err)
+		}
+		var upgraded extv1.CustomResourceDefinition
+		if err := apiClient.Get(ctx, key, &upgraded); err != nil {
+			t.Fatal(err)
+		}
+		upgraded.Spec = *compiled.CRD.Spec.DeepCopy()
+		if err := apiClient.Update(ctx, &upgraded); err != nil {
+			t.Fatal(err)
+		}
+		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
+			return apierrors.IsInvalid(admit(legacyInput("new-pin-dry-run"))), nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"reconcileApplication": true}, "spec", "source"); err != nil {
+			t.Fatal(err)
+		}
+		if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); err != nil {
+			t.Fatalf("the upgraded API must allow Flux to clear a stored pin: %v", err)
+		}
+		objects, ignored := desiredTenant(t, engine, &definition, input)
+		assertTenantChildren(t, objects, ignored, true, false)
+		assertTenantIdentity(t, objects["ociRepository"], defaultTenantSubject)
+	})
 	t.Run("pre-upgrade-active-tenant-cannot-be-disabled", func(t *testing.T) {
 		// Store an actual legacy object under a schema without the new fields.
 		// Creating an omitted field under the new schema would only test defaults.
@@ -457,7 +479,7 @@ func TestCommittedTenant(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
-			return admit(instance("upgrade-readiness", map[string]interface{}{"source": map[string]interface{}{"version": "3.12.0", "reconcileApplication": false}})) == nil, nil
+			return admit(instance("upgrade-readiness", map[string]interface{}{"source": map[string]interface{}{"reconcileApplication": false}})) == nil, nil
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -466,7 +488,7 @@ func TestCommittedTenant(t *testing.T) {
 		}
 		objects, ignored := desiredTenant(t, engine, &definition, input)
 		assertTenantChildren(t, objects, ignored, true, false)
-		if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"version": "3.12.0", "reconcileApplication": false}, "spec", "source"); err != nil {
+		if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"reconcileApplication": false}, "spec", "source"); err != nil {
 			t.Fatal(err)
 		}
 		if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); !apierrors.IsInvalid(err) {
