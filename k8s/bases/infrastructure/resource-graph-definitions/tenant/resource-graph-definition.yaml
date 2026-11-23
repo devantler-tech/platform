@@ -118,8 +118,12 @@ spec:
       # The releases the tenant follows. Trust comes from the signature, not a
       # pin: the source accepts only the tenant's own release workflow on a
       # release tag (ADR 0017, ADR 0019).
+      # Publish the new meaning in the API schema. KRO v0.10.0 detects the
+      # description change and updates the CRD in both directions. Its default
+      # comparison does not detect an isolated change to a CEL rule.
       source: >-
-        TenantSource | default={} validation="(!has(self.digest) || self.digest == '') && (!has(self.publisherRevision) || self.publisherRevision == '')"
+        TenantSource | default={} description="Follows signed stable releases. Legacy pin fields must be empty."
+        validation="(!has(self.digest) || self.digest == '') && (!has(self.publisherRevision) || self.publisherRevision == '')"
       # Standard multi-tenancy guardrails (#1932 follow-up #2522): a
       # namespace-wide ResourceQuota and a per-container default LimitRange.
       # Both default to `enabled: false` — no behaviour change for existing

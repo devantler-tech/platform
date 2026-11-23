@@ -20,7 +20,7 @@ tenant_source_default_subject() (
   default_subject='^https://github\.com/devantler-tech/<tenant>/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
   # The retired pin fields stay in the schema only because KRO refuses an API update that removes
   # an installed field; the source validation refuses every non-empty value.
-  source_type="TenantSource | default={} validation=\"(!has(self.digest) || self.digest == '') && (!has(self.publisherRevision) || self.publisherRevision == '')\""
+  source_type="TenantSource | default={} description=\"Follows signed stable releases. Legacy pin fields must be empty.\" validation=\"(!has(self.digest) || self.digest == '') && (!has(self.publisherRevision) || self.publisherRevision == '')\""
   digest_type='string | default="" maxLength=71 pattern="^$|^sha256:[0-9a-f]{64}$"'
   publisher_type='string | default="" maxLength=40 pattern="^$|^[0-9a-f]{40}$"'
   lifecycle='boolean | default=true validation="self || !oldSelf"'

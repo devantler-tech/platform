@@ -14,10 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/testr"
 	kroapi "github.com/kubernetes-sigs/kro/api/v1alpha1"
+	kroclient "github.com/kubernetes-sigs/kro/pkg/client"
 	"github.com/kubernetes-sigs/kro/pkg/features"
 	"github.com/kubernetes-sigs/kro/pkg/graph"
 	gecompiler "github.com/kubernetes-sigs/kro/pkg/graphengine/compiler"
+	krometadata "github.com/kubernetes-sigs/kro/pkg/metadata"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,6 +53,9 @@ func TestCommittedTenant(t *testing.T) {
 	}
 	if features.FeatureGate.Enabled(features.CELOmitFunction) {
 		t.Fatal("Tenant compilation must use the deployed omission feature gate")
+	}
+	if features.FeatureGate.Enabled(features.ConservativeCRDComparison) {
+		t.Fatal("Tenant upgrades must use the deployed CRD comparison")
 	}
 	var definition kroapi.ResourceGraphDefinition
 	readYAML(t, filepath.Join(root, "k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"), &definition)
@@ -397,13 +404,18 @@ func TestCommittedTenant(t *testing.T) {
 		}
 		spec := legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
 		source := spec.Properties["source"]
-		// Before the upgrade, the schema admitted paired digest and publisher pins.
+		// The installed schema admitted paired pins and prevented clearing them.
+		source.Description = ""
 		source.XValidations = []extv1.ValidationRule{
-			{Rule: "(!has(self.digest) || self.digest == '') == (!has(self.publisherRevision) || self.publisherRevision == '')"},
-			{Rule: "!has(oldSelf.digest) || oldSelf.digest == '' || (has(self.digest) && self.digest != '')"},
+			{Rule: "((!has(self.digest) || self.digest == '') == (!has(self.publisherRevision) || self.publisherRevision == '')) && (!has(self.reconcileApplication) || self.reconcileApplication || (has(self.digest) && self.digest != ''))", Message: "validation failed"},
+			{Rule: "!has(oldSelf.digest) || oldSelf.digest == '' || (has(self.digest) && self.digest != '')", Message: "validation failed"},
 		}
 		spec.Properties["source"] = source
 		legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"] = spec
+		legacy.Labels = map[string]string{
+			krometadata.OwnedLabel:                       "true",
+			krometadata.ResourceGraphDefinitionNameLabel: definition.Name,
+		}
 		if err := apiClient.Update(ctx, &legacy); err != nil {
 			t.Fatal(err)
 		}
@@ -420,14 +432,30 @@ func TestCommittedTenant(t *testing.T) {
 		if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict", FieldManager: "legacy-pin-owner"}); err != nil {
 			t.Fatal(err)
 		}
-		var upgraded extv1.CustomResourceDefinition
-		if err := apiClient.Get(ctx, key, &upgraded); err != nil {
+		kroClients, err := kroclient.NewSet(kroclient.Config{RestConfig: rest.CopyConfig(config)})
+		if err != nil {
 			t.Fatal(err)
 		}
-		upgraded.Spec = *compiled.CRD.Spec.DeepCopy()
-		if err := apiClient.Update(ctx, &upgraded); err != nil {
-			t.Fatal(err)
+		kroCRDs := kroClients.CRD(kroclient.CRDWrapperConfig{})
+		kroCtx := logr.NewContext(ctx, testr.New(t))
+		ensureSourceRules := func(target extv1.CustomResourceDefinition) {
+			t.Helper()
+			if err := kroCRDs.Ensure(kroCtx, target, false); err != nil {
+				t.Fatalf("KRO rejected the Tenant CRD transition: %v", err)
+			}
+			installed, err := kroCRDs.Get(ctx, target.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := installed.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["source"]
+			want := target.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["source"]
+			if !reflect.DeepEqual(got.XValidations, want.XValidations) {
+				t.Fatalf("KRO reported success without installing the requested Tenant source validation: got %v, want %v", got.XValidations, want.XValidations)
+			}
 		}
+		upgraded := compiled.CRD.DeepCopy()
+		upgraded.Labels = legacy.Labels
+		ensureSourceRules(*upgraded)
 		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
 			return apierrors.IsInvalid(admit(legacyInput("new-pin-dry-run"))), nil
 		}); err != nil {
@@ -461,6 +489,27 @@ func TestCommittedTenant(t *testing.T) {
 		objects, ignored := desiredTenant(t, engine, &definition, desired)
 		assertTenantChildren(t, objects, ignored, true, false)
 		assertTenantIdentity(t, objects["ociRepository"], defaultTenantSubject)
+
+		ensureSourceRules(legacy)
+		rollback := legacyInput(input.GetName())
+		payload, err = json.Marshal(rollback)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rollbackPatch := client.RawPatch(types.ApplyPatchType, payload)
+		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
+			err := apiClient.Patch(ctx, rollback, rollbackPatch, append(options, client.DryRunAll)...)
+			if apierrors.IsInvalid(err) {
+				return false, nil
+			}
+			return err == nil, err
+		}); err != nil {
+			t.Fatalf("Flux dry-run must accept the old pins after the schema rollback: %v", err)
+		}
+		if err := apiClient.Patch(ctx, rollback, rollbackPatch, options...); err != nil {
+			t.Fatalf("Flux apply must restore the old pins after the schema rollback: %v", err)
+		}
+		ensureSourceRules(*upgraded)
 	})
 	t.Run("pre-upgrade-active-tenant-cannot-be-disabled", func(t *testing.T) {
 		// Store an actual legacy object under a schema without the new fields.
