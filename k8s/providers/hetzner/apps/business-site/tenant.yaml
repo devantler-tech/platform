@@ -8,8 +8,7 @@
 # plus the business-site.platform.devantler.tech staging name. Portal sign-in is
 # on, invite-only (#6389); payments stay off.
 #
-# Emergency pin: set `source.version` to one release, e.g. "3.12.0", in a
-# reviewed PR, and remove it once a fixed release exists (docs/TENANTS.md).
+# For release recovery, see docs/TENANTS.md.
 apiVersion: kro.run/v1alpha1
 kind: Tenant
 metadata:
