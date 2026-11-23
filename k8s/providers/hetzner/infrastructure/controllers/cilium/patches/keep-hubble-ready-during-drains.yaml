@@ -8,6 +8,7 @@ spec:
   values:
     hubble:
       ui:
+        replicas: 2
         podDisruptionBudget:
           enabled: true
           maxUnavailable: 1

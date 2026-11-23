@@ -81,7 +81,7 @@ data:
   # at 0 behind KEDA scale-to-zero; with the HTTPScaledObject removed, 0 would
   # mean permanently down, so it is pinned to 1.
   actual_budget_replicas: "1"
-  hubble_ui_replicas: "2"
+  hubble_ui_replicas: "1"
   # Auth chain: 2 replicas for HA (the require-replica-floor minimum). User-facing
   # auth survives a node drain; also prevents 502s during VPA InPlaceOrRecreate
   # evictions.
