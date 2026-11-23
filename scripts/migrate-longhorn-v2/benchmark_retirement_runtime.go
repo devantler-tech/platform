@@ -73,14 +73,8 @@ func retireBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRe
 	if !activeBenchmarkV1FenceOwner(c, *record) || validateBenchmarkRuntimeReceipt(*record) != nil || record.V1Runtime == nil {
 		return errors.New("only the active benchmark with its original runtime may retire this V1 backend")
 	}
-	baseline := *record.V1Runtime
-	requiredNodes := slices.Sorted(maps.Keys(record.Machines))
 	verifyRuntime := func() error {
-		current, err := observeBenchmarkV1Runtime(ctx, c, baseline.Image, requiredNodes)
-		if err != nil || !reflect.DeepEqual(baseline, current) {
-			return errors.New("the approved V1 runtime epochs changed since the benchmark started")
-		}
-		return nil
+		return verifyOriginalBenchmarkV1Runtime(ctx, c, *record)
 	}
 	if err := verifyRuntime(); err != nil {
 		return err
@@ -120,8 +114,8 @@ func retireBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRe
 	if err := verifyRuntime(); err != nil {
 		return err
 	}
-	for _, epoch := range baseline.Epochs {
-		if err := sourceCurrent(ctx, c.run, record.Source); err != nil {
+	for _, epoch := range record.V1Runtime.Epochs {
+		if err := sourceCurrent(ctx, c.run, record.mutationSource()); err != nil {
 			return err
 		}
 		if err := requestBenchmarkV1Seal(ctx, c, *record, epoch); err != nil {
@@ -135,7 +129,12 @@ func retireBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRe
 	if err != nil {
 		return err
 	}
-	if err := c.deleteObserved(ctx, record.Source, "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/"+identity.Name, current); err != nil {
+	if record.Recovery != nil {
+		if err := recordBenchmarkRecoveryDeletion(ctx, c, record, "LonghornVolume"); err != nil {
+			return err
+		}
+	}
+	if err := c.deleteObserved(ctx, record.mutationSource(), "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/"+identity.Name, current); err != nil {
 		return err
 	}
 	return waitReady(ctx, func(ctx context.Context) error {
@@ -148,6 +147,17 @@ func retireBenchmarkV1Backend(ctx context.Context, c client, record *benchmarkRe
 		}
 		return nil
 	})
+}
+
+func verifyOriginalBenchmarkV1Runtime(ctx context.Context, c client, record benchmarkRecord) error {
+	if record.V1Runtime == nil {
+		return errors.New("the benchmark has no original V1 runtime receipt")
+	}
+	current, err := observeBenchmarkV1Runtime(ctx, c, record.V1Runtime.Image, slices.Sorted(maps.Keys(record.Machines)))
+	if err != nil || !reflect.DeepEqual(*record.V1Runtime, current) {
+		return errors.New("the approved V1 runtime epochs changed since the benchmark started")
+	}
+	return nil
 }
 
 func verifySealedBenchmarkV1Backend(ctx context.Context, c client, record benchmarkRecord, policies []object, verifyRuntime func() error) (object, error) {
