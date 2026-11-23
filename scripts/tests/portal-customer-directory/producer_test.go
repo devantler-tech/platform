@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -313,16 +314,18 @@ ensure_login_policy() {
 
 func TestSharedProviderMigrationUsesOnlyExistingCustomerLinks(t *testing.T) {
 	script := strings.Join([]string{
+		producerFunction(t, "customer_github_link_page"),
 		producerFunction(t, "customer_github_links"),
 		producerFunction(t, "customer_directory_page"),
 		producerFunction(t, "customer_directory_stamp"),
 		producerFunction(t, "read_customer_subjects"),
 		producerFunction(t, "customer_github_link_change"),
+		producerFunction(t, "verify_customer_github_links"),
 		producerFunction(t, "reconcile_customer_github_links"),
 	}, "\n")
 	for _, mode := range []string{"copy", "already-copied", "conflict", "truncated-customers", "truncated-links",
 		"foreign-customer", "duplicate-customer", "changed-directory", "first-page-drift", "invalid-subject", "empty",
-		"revoked-source", "revoked-during-plan"} {
+		"revoked-source", "revoked-during-plan", "no-op-revoked-during-copy", "link-projection-changed"} {
 		t.Run(mode, func(t *testing.T) {
 			harness := `set -euo pipefail
 mode=$1
@@ -379,24 +382,43 @@ connect() {
           elif [[ $mode == revoked-during-plan ]]; then
             [[ ! -e $work/observed ]] || rows='[]'
             touch "$work/observed"
+          elif [[ $mode == no-op-revoked-during-copy ]]; then
+            rows=$(jq '. + [{idpId:"shared",userId:"111",userName:"alice-gh"}]' <<<"$rows")
+            [[ ! -e $work/bob-copied ]] || rows=$(jq 'map(select(.idpId == "shared"))' <<<"$rows")
           fi
-          if [[ -e $work/wrote || $mode == already-copied ]]; then
+          if [[ -e $work/wrote || $mode == already-copied || $mode == link-projection-changed ]]; then
             rows=$(jq '. + [{idpId:"shared",userId:"111",userName:"alice-gh"}]' <<<"$rows")
           elif [[ $mode == conflict ]]; then
             rows=$(jq '. + [{idpId:"shared",userId:"222",userName:"another"}]' <<<"$rows")
           fi
-          jq -nc --argjson a "$rows" '{details:{totalResult:($a|length|tostring)},result:$a}'
+          jq -nc --argjson a "$rows" '{details:{totalResult:($a|length|tostring),processedSequence:"42"},result:$a}'
           ;;
         bob)
           if [[ $mode == truncated-links ]]; then
             printf '%s\n' '{"details":{"totalResult":"1"}}'
+          elif [[ $mode == link-projection-changed && -e $work/bob-read ]]; then
+            printf '%s\n' '{"details":{"totalResult":"0","processedSequence":"43"}}'
+          elif [[ $mode == no-op-revoked-during-copy ]]; then
+            local rows='[{"idpId":"old","userId":"222","userName":"bob-gh"}]'
+            if [[ -e $work/bob-copied ]]; then
+              rows=$(jq '. + [{idpId:"shared",userId:"222",userName:"bob-gh"}]' <<<"$rows")
+            fi
+            jq -nc --argjson a "$rows" '{details:{totalResult:($a|length|tostring),processedSequence:"42"},result:$a}'
           else
-            printf '%s\n' '{"details":{"totalResult":"0"}}'
+            touch "$work/bob-read"
+            printf '%s\n' '{"details":{"totalResult":"0","processedSequence":"42"}}'
           fi ;;
         *) fail 'unexpected subject' ;;
       esac
       ;;
     zitadel.user.v2.UserService/AddIDPLink)
+      if [[ $mode == no-op-revoked-during-copy ]]; then
+        jq -e '. == {userId:"bob",idpLink:{idpId:"shared",userId:"222",userName:"bob-gh"}}' <<<"$2" >/dev/null ||
+          fail 'unexpected changed link in fixture'
+        touch "$work/bob-copied"
+        printf '{}\n'
+        return
+      fi
       jq -e '. == {userId:"alice",idpLink:{idpId:"shared",userId:"111",userName:"alice-gh"}}' <<<"$2" >/dev/null
       touch "$work/wrote"
       printf '{}\n'
@@ -427,8 +449,49 @@ connect() {
 			if _, err := os.Stat(filepath.Join(work, "revoked")); (err == nil) != (mode == "revoked-source") {
 				t.Fatalf("unexpected removal of an inactive link: %v", err)
 			}
+			if mode == "no-op-revoked-during-copy" {
+				if _, err := os.Stat(filepath.Join(work, "bob-copied")); err != nil ||
+					!strings.Contains(string(output), "before activating the provider") {
+					t.Fatalf("expected refusal after Bob's copy and Alice's revocation, got %v: %s", err, output)
+				}
+			}
+			if mode == "link-projection-changed" && !strings.Contains(string(output), "changed during final verification") {
+				t.Fatalf("expected the final link scan to reject a changed projection: %s", output)
+			}
 		})
 	}
+}
+
+func TestSetupTokenCoversTheJobDeadline(t *testing.T) {
+	doc := manifest(t, "k8s/providers/hetzner/apps/customer-identity/cron-job-setup.yaml")
+	deadline, ok := field(t, doc, "spec", "jobTemplate", "spec", "activeDeadlineSeconds").(int)
+	if !ok {
+		t.Fatal("missing setup Job deadline")
+	}
+	init, ok := field(t, doc, "spec", "jobTemplate", "spec", "template", "spec", "initContainers").([]any)
+	if !ok || len(init) != 1 {
+		t.Fatal("expected the setup Job signing init container")
+	}
+	signer, ok := init[0].(map[string]any)
+	if !ok || signer["name"] != "sign-token" {
+		t.Fatal("expected the setup token signer")
+	}
+	env, ok := field(t, signer, "env").([]any)
+	if !ok {
+		t.Fatal("missing signer environment")
+	}
+	for _, item := range env {
+		entry, ok := item.(map[string]any)
+		if !ok || entry["name"] != "TOKEN_LIFETIME_SECONDS" {
+			continue
+		}
+		lifetime, err := strconv.Atoi(fmt.Sprint(entry["value"]))
+		if err != nil || lifetime <= deadline || lifetime > deadline+60 {
+			t.Fatalf("setup token lifetime %v must cover the Job deadline %ds with at most 60 seconds of margin", entry["value"], deadline)
+		}
+		return
+	}
+	t.Fatal("the signer must explicitly receive a token lifetime for this Job")
 }
 
 func TestSharedInstanceLoginRestoresPreviousSettings(t *testing.T) {

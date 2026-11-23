@@ -85,8 +85,8 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      # A provider switch can scan the directory once. Keep that run inside one
-      # schedule interval. Steady-state repair does not walk the directory.
+      # A provider switch plans and verifies the directory. Keep that run inside
+      # one schedule interval. Steady-state repair does not walk the directory.
       activeDeadlineSeconds: 840
       ttlSecondsAfterFinished: 86400
       template:
@@ -122,6 +122,9 @@ spec:
                   value: https://accounts.devantler.tech
                 - name: ZITADEL_SYSTEM_USER
                   value: zitadel-setup
+                - name: TOKEN_LIFETIME_SECONDS
+                  # The token must cover activeDeadlineSeconds plus startup margin.
+                  value: "900"
               volumeMounts:
                 - name: setup-key
                   mountPath: /run/setup-key
@@ -149,7 +152,7 @@ spec:
                   out=/run/setup-token/token
                   audience="${ZITADEL_AUDIENCE:?}"
                   user="${ZITADEL_SYSTEM_USER:?}"
-                  lifetime="${TOKEN_LIFETIME_SECONDS:-600}"
+                  lifetime="${TOKEN_LIFETIME_SECONDS:?}"
 
                   b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 
@@ -877,14 +880,23 @@ spec:
                     *) fail "CUSTOMER_GITHUB_SIGNIN must be on or off" ;;
                   esac
 
-                  customer_github_links() {
+                  customer_github_link_page() {
                     local subject=$1 response
                     response=$(connect zitadel.user.v2.UserService/ListIDPLinks \
                       "$(jq -nc --arg u "$subject" '{userId:$u,query:{limit:100}}')")
                     jq -ce '
                       (.result // []) as $rows | select((.details | type) == "object" and
-                        ((.details.totalResult // "0" | tonumber) == ($rows | length))) | $rows' <<<"$response" ||
+                        ($rows | type) == "array" and
+                        ((.details.totalResult // "0" | tonumber) == ($rows | length))) |
+                      {links:$rows,stamp:{sequence:(.details.processedSequence // "0"),timestamp:.details.timestamp}} |
+                      select((.stamp.sequence | type == "string" and test("\\A[0-9]{1,20}\\z")) and
+                        (.stamp.timestamp == null or (.stamp.timestamp | type) == "string") and
+                        ((.links | length) == 0 or .stamp.sequence != "0"))' <<<"$response" ||
                       fail "could not read the complete customer identity links"
+                  }
+
+                  customer_github_links() {
+                    customer_github_link_page "$1" | jq -c '.links'
                   }
 
                   customer_directory_page() {
@@ -955,6 +967,25 @@ spec:
                       end' <<<"$links" || fail "a customer GitHub link could not be matched without ambiguity"
                   }
 
+                  verify_customer_github_links() {
+                    local previous=$1 shared=$2 subjects=$3 first subject stamp page links
+                    [[ -r $subjects ]] || fail "could not read the customer directory for final verification"
+                    [[ -s $subjects ]] || return 0
+                    IFS= read -r first <"$subjects" || fail "could not read the first customer subject"
+                    # ZITADEL reads link rows and their shared projection state separately.
+                    # Fence the entire verification, including subjects absent from the plan.
+                    stamp=$(customer_github_link_page "$first" | jq -c '.stamp')
+                    while IFS= read -r subject; do
+                      page=$(customer_github_link_page "$subject")
+                      links=$(jq -ce --argjson stamp "$stamp" 'select(.stamp == $stamp) | .links' <<<"$page") ||
+                        fail "customer GitHub links changed during final verification"
+                      [[ $(customer_github_link_change "$previous" "$shared" "$subject" "$links") == '{}' ]] ||
+                        fail "customer GitHub links no longer match before activating the provider"
+                    done <"$subjects"
+                    [[ $stamp == "$(customer_github_link_page "$first" | jq -c '.stamp')" ]] ||
+                      fail "customer GitHub links changed during final verification"
+                  }
+
                   reconcile_customer_github_links() {
                     local previous=$1 shared=$2 subject links candidate record snapshot
                     local plan=$work/shared-github-links subjects=$work/customer-subjects
@@ -990,6 +1021,9 @@ spec:
                       [[ $(customer_github_link_change "$previous" "$shared" "$subject" "$links") == '{}' ]] ||
                         fail "could not verify a migrated customer GitHub link"
                     done <"$work/customer-link-actions"
+                    verify_customer_github_links "$previous" "$shared" "$subjects"
+                    [[ $snapshot == "$(customer_directory_page 0 1 | customer_directory_stamp)" ]] ||
+                      fail "the customer directory changed before activating the provider"
                     [[ ! -s $plan ]] || changes+=("reconciled customer GitHub links for the provider switch")
                   }
 
