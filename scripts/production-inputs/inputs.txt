@@ -80,6 +80,7 @@ scripts/report-cilium-rollout-gate-suppression.sh
 scripts/report-publish-workflow-signing-revisions.sh
 scripts/retire-arc-pool.sh
 scripts/run-ksail-prod.sh
+scripts/select-velero-rebuild-backups.jq
 scripts/tenant-publication-binding.lib.sh
 scripts/tenant-source-constructors.lib.sh
 scripts/tenant-source-discovery.lib.sh

@@ -6,6 +6,8 @@ name: Prepare Longhorn V2 Migration
     branches: [main]
     paths:
       - .github/workflows/prepare-longhorn-v2-node.yaml
+      - .github/scripts/select-longhorn-runtime-inventory-source.sh
+      - scripts/tests/test-longhorn-runtime-inventory-source.sh
       - scripts/migrate-longhorn-v2/**
       - internal/longhornmigration/**
       - internal/longhorninventory/**
@@ -98,6 +100,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Test queued read-only source selection
+        run: bash scripts/tests/test-longhorn-runtime-inventory-source.sh
       - name: Test complete observations and interrupted recovery
         run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
 
@@ -184,9 +188,20 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
       - name: Require current main
+        id: recovery-source
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+        run: |
+          set -euo pipefail
+          if [[ "${LONGHORN_V2_OPERATION}" == inventory-v1-runtime ]]; then
+            source_sha="$(bash .github/scripts/select-longhorn-runtime-inventory-source.sh)"
+            ./scripts/verify-prod-recovery-source.sh "${source_sha}"
+            printf 'sha=%s\n' "${source_sha}" >>"${GITHUB_OUTPUT}"
+            printf 'LONGHORN_RUNTIME_INVENTORY_SOURCE=BOUND sha=%s\n' "${source_sha}"
+          else
+            ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+          fi
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -226,6 +241,7 @@ jobs:
       - name: Run the confirmed migration preparation
         env:
           GH_TOKEN: ${{ github.token }}
+          LONGHORN_RUNTIME_INVENTORY_SOURCE: ${{ steps.recovery-source.outputs.sha }}
         run: go run ./scripts/migrate-longhorn-v2
       - name: Remove runner credentials
         if: ${{ always() }}

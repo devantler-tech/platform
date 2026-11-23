@@ -44,11 +44,11 @@ gh_retry() {
     return
   fi
   case "$args" in
-    *repos/devantler-tech/wedding-app/commits/main*)
+    *repos/devantler-tech/wedding-app/commits/main* | *repos/devantler-tech/.github/commits/main*)
       printf '%s\n' "$MAIN_COMMIT"
       return
       ;;
-    *repos/devantler-tech/wedding-app/commits/v1.0.0*)
+    *repos/devantler-tech/wedding-app/commits/v1.0.0* | *repos/devantler-tech/.github/commits/v1.0.0*)
       printf '%s\n' "$COMMIT"
       return
       ;;
@@ -61,7 +61,7 @@ gh_retry() {
         "      - uses: devantler-tech/.github/actions/publish-app@$SHA"
       return
       ;;
-    *orgs/devantler-tech/packages/container/wedding-app%2Fmanifests/versions*)
+    *orgs/devantler-tech/packages/container/wedding-app%2Fmanifests/versions* | *orgs/devantler-tech/packages/container/github-config%2Fmanifests/versions*)
       local selected_digest="$DIGEST"
       if [[ "$fixture_case" == own-release-moved && -f "$WORK/verified-digest" ]]; then
         selected_digest='sha256:6666666666666666666666666666666666666666666666666666666666666666'
@@ -95,6 +95,15 @@ gh_retry() {
     *ascoachingogvaner* | *data-product-controller*) workflow=publish-app ;;
     *'devantler-tech/.github/'*)
       case "$fixture_case" in
+        github-own-release*)
+          printf '%s\n' 'jobs:' '  publish:' '    steps:' \
+            '      - uses: $/actions/publish-app' '        with:' \
+            '          mode: manifests' '          oci-name: devantler-tech/github-config'
+          if [[ "$fixture_case" == github-own-release-mixed ]]; then
+            printf '  shared: {uses: devantler-tech/.github/.github/workflows/publish-manifests.yaml@%s}\n' "$SHA"
+          fi
+          return
+          ;;
         canonical-signed) [[ "$args" != *ref=main* ]] && family=.github ;;
         canonical-both) family=.github ;;
         ambiguous) second="  second: {uses: devantler-tech/.github/.github/workflows/publish-manifests.yaml@$SHA}" ;;
@@ -117,12 +126,23 @@ bad: [' ;;
 }
 
 cosign() {
-  [[ "$fixture_case" == own-release || "$fixture_case" == own-release-moved ]] || return 1
-  [[ "$*" == "verify --certificate-identity https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@refs/tags/v1.0.0 --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-repository devantler-tech/wedding-app --certificate-github-workflow-ref refs/tags/v1.0.0 --certificate-github-workflow-sha $COMMIT ghcr.io/devantler-tech/wedding-app/manifests@$DIGEST" ]] || return 1
+  local repository artifact
+  case "$fixture_case" in
+    own-release | own-release-moved)
+      repository=wedding-app
+      artifact=ghcr.io/devantler-tech/wedding-app/manifests
+      ;;
+    github-own-release)
+      repository=.github
+      artifact=ghcr.io/devantler-tech/github-config/manifests
+      ;;
+    *) return 1 ;;
+  esac
+  [[ "$*" == "verify --certificate-identity https://github.com/devantler-tech/$repository/.github/workflows/cd.yaml@refs/tags/v1.0.0 --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-repository devantler-tech/$repository --certificate-github-workflow-ref refs/tags/v1.0.0 --certificate-github-workflow-sha $COMMIT $artifact@$DIGEST" ]] || return 1
   touch "$WORK/verified-digest"
-  jq -n --arg digest "$DIGEST" '[{critical: {
+  jq -n --arg digest "$DIGEST" --arg artifact "$artifact" '[{critical: {
     image: {"docker-manifest-digest": $digest},
-    identity: {"docker-reference": "ghcr.io/devantler-tech/wedding-app/manifests"}
+    identity: {"docker-reference": $artifact}
   }}]'
 }
 
@@ -171,7 +191,13 @@ for fixture_case in own-release-rejected own-release-moved own-release-mixed; do
   printf 'PASS: %s remains unresolved\n' "$fixture_case"
 done
 
-for fixture_case in ambiguous duplicate unknown malformed canonical-app unknown-mixed floating-mixed multiline; do
+fixture_case=github-own-release
+main >"$WORK/github-own-release" 2>&1 || fail 'the .github release signed through its local publish action did not resolve'
+grep -Eq "^OWN-RELEASE +[.]github +publish-manifests +signed=devantler-tech/[.]github/[.]github/workflows/cd[.]yaml@refs/tags/v1[.]0[.]0 current=devantler-tech/[.]github/[.]github/workflows/cd[.]yaml@$MAIN_COMMIT " \
+  "$WORK/github-own-release" || fail 'the report lost the .github release tag or current workflow commit'
+printf 'PASS: .github release is verified against its github-config artifact by digest\n'
+
+for fixture_case in ambiguous duplicate unknown malformed canonical-app unknown-mixed floating-mixed multiline github-own-release-mixed github-own-release-unverified; do
   if main >"$WORK/$fixture_case" 2>&1; then fail "$fixture_case caller was accepted"; fi
   grep -Eq '^UNRESOLVED +[.]github ' "$WORK/$fixture_case" || fail "$fixture_case refusal lost its consumer"
   printf 'PASS: %s caller remains unresolved\n' "$fixture_case"
