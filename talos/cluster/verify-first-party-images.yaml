@@ -76,12 +76,10 @@
 #      repository's dedicated publish-private-mail-bootstrap.yaml workflow on main.
 #      The automated company sender image is signed by the dedicated
 #      publish-mail-submission.yaml workflow on main.
-#   9. the app images (wedding-app, ascoachingogvaner, …) are signed by the
-#      shared publish-app.yaml workflow at an explicitly reviewed maintained
-#      revision, or by a first-party repository's own release workflow on a
-#      release tag (ADR 0017, #6265), matching the app admission rule. The
-#      deleted legacy publisher repository is no longer accepted at any
-#      commit (#6264).
+#   9. the app images (wedding-app, ascoachingogvaner, …) are signed by their
+#      first-party repository's own release workflow on a release tag (ADR 0017,
+#      #6265), matching the app admission rule. The shared reusable publishers
+#      are no longer accepted at any revision (#6266).
 # The two checkpoint compatibility images use the main-only
 # publish-coroot-checkpoint-hotfix.yaml workflow, separately from the node agent.
 # Talos evaluates rules in order, first match wins, so the specific rules
@@ -116,7 +114,7 @@ rules:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/ksail/\.github/workflows/publish-ksail-analysis-runner\.yaml@refs/heads/main$
   # ksail-operator image — signed by ksail's OWN release pipeline (cd.yaml),
-  # a different keyless identity than publish-app.yaml. MUST precede the
+  # a different keyless identity than the app catch-all. MUST precede the
   # catch-all below (first-match-wins). Requires ksail >= the first release
   # that ships the GoReleaser docker_signs cosign step (devantler-tech/ksail
   # #5165) AND the ksail-operator HelmRelease pinned to that signed image tag.
@@ -134,11 +132,11 @@ rules:
       subjectRegex: ^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
   # Crossplane PROVIDER package images (ghcr.io/devantler-tech/provider-upjet-*)
   # are signed by each provider repo's OWN publish-provider-package.yml — a
-  # different keyless identity than publish-app.yaml, because the upstream
-  # crossplane-contrib publish reusable workflow can't run publish-app.yaml.
+  # different keyless identity than the app catch-all, because the upstream
+  # crossplane-contrib publish reusable workflow signs them.
   # Mirrors the verify-app-images ImageValidatingPolicy provider-upjet-*
   # attestor (#2382). MUST precede the catch-all below (first-match-wins) or the
-  # catch-all's publish-app.yaml identity rejects these (ImagePullBackOff).
+  # catch-all's app identity rejects these (ImagePullBackOff).
   # The ref is pinned to release tags: publish-provider-package.yml rejects
   # any non-tag ref before it checks anything out, so a v* tag is the sole
   # legitimate signing ref. Pinning it rejects a package signed from an
@@ -248,22 +246,16 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-mail-submission\.yaml@refs/heads/main$
-  # First-party APP images accept, in one anchored group, exactly what the app
-  # admission policy accepts:
-  # 1. the reviewed maintained publisher revision v19.0.5 (#5404). v21.3.4
-  #    (#6228) is retired: business-site, its only user, signs its own
-  #    releases (#6266). The deleted legacy publisher repository is refused at
-  #    every commit (#6264). Mutable refs, tags and other maintained commits of
-  #    the shared publisher are refused. Kept until its consumers move (#6266).
-  # 2. a first-party repository's own release workflow on a release tag
-  #    (ADR 0017, #6265). One repository path segment starting with a letter or
-  #    digit, so `.github`, which hosts the shared reusable publishers, is
-  #    excluded; a workflow file directly in .github/workflows/; and the same
-  #    strict OCI-semver tag grammar as the ksail rule above.
-  #    Every other first-party name matches, `actions` included, as a
-  #    first-party repository like any other; the deleted publisher's
-  #    commit-pinned identities stay refused.
+  # First-party APP images accept exactly what the app admission policy accepts:
+  # a first-party repository's own release workflow on a release tag (ADR 0017,
+  # #6265). The shared reusable publishers are no longer accepted at any revision
+  # (#6266). One repository path segment starting with a letter or digit, so
+  # `.github`, which hosts reusable workflows, is excluded; a workflow file
+  # directly in .github/workflows/; and the same strict OCI-semver tag grammar
+  # as the ksail rule above. Every other first-party name matches, `actions`
+  # included, as a first-party repository like any other; the deleted
+  # publisher's commit-pinned identities stay refused.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812|[A-Za-z0-9][A-Za-z0-9_.-]*/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$
+      subjectRegex: ^https://github\.com/devantler-tech/[A-Za-z0-9][A-Za-z0-9_.-]*/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$

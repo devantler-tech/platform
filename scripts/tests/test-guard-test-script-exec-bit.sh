@@ -10,10 +10,8 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"$work/scripts/tests/test-entry.sh"
 printf 'library_function() { :; }\n' >"$work/scripts/library.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$work/scripts/tests/fixtures/fake.sh"
 cp "$root/.mega-linter.yml" "$work/.mega-linter.yml"
-for library in cosign-failure-lib.sh publish-workflow-approved-revisions.lib.sh; do
-  printf 'library_function() { :; }\n' >"$work/scripts/$library"
-  git -C "$work" add -- "scripts/$library"
-done
+printf 'library_function() { :; }\n' >"$work/scripts/cosign-failure-lib.sh"
+git -C "$work" add -- scripts/cosign-failure-lib.sh
 git -C "$work" add -- scripts/tests/test-entry.sh scripts/library.sh scripts/tests/fixtures/fake.sh
 fail() {
   echo "::error::$*" >&2
@@ -27,7 +25,7 @@ bash "$guard" "$work"
 cp "$work/.mega-linter.yml" "$work/valid-linter.yml"
 yq -i '.BASH_EXEC_FILTER_REGEX_EXCLUDE = ".*"' "$work/.mega-linter.yml"
 if bash "$guard" "$work" >"$work/out" 2>&1; then fail 'accepted a broadened bash-exec library exclusion'; fi
-grep -Fq 'exclude only the two reviewed sourced libraries' "$work/out" || fail 'did not identify the broadened boundary'
+grep -Fq 'exclude only the reviewed sourced library' "$work/out" || fail 'did not identify the broadened boundary'
 cp "$work/valid-linter.yml" "$work/.mega-linter.yml"
 printf '\n---\nmalformed: [\n' >>"$work/.mega-linter.yml"
 parser_status=0

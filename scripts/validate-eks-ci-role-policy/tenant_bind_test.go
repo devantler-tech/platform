@@ -323,3 +323,37 @@ func TestTenantBindGrantMatchesActualConstructor(t *testing.T) {
 		})
 	}
 }
+
+// canonicalCIWorkflow loads the actual workflow so every mutation starts from shipping source.
+func canonicalCIWorkflow(t *testing.T) workflow {
+	t.Helper()
+	body, err := os.ReadFile("../../.github/workflows/ci.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf workflow
+	if err := yaml.Unmarshal(body, &wf); err != nil {
+		t.Fatal(err)
+	}
+	return wf
+}
+
+// Every non-comment line in this fixed CI block must remain a simple command.
+// This reuses the existing positive shell grammar, so an earlier exit, disabled
+// errexit or conditional cannot make a later textual mention count as coverage.
+func canonicalCommandCount(script, command string) int {
+	count := 0
+	for _, raw := range strings.Split(script, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !isSimpleCommandLine(line) {
+			return 0
+		}
+		if strings.Join(strings.Fields(line), " ") == command {
+			count++
+		}
+	}
+	return count
+}

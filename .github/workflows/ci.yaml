@@ -696,57 +696,8 @@ jobs:
               - 'scripts/cosign-failure-lib.sh'
               - 'scripts/tests/test-cosign-failure-lib.sh'
               - 'scripts/tests/fixtures/cosign-verify-failures/**'
-              # The pin guard itself runs unconditionally in the validate job, so
-              # only its TEST is selected here. Both halves are listed anyway: a PR
-              # that edits the guard must also run the test that pins its ablations,
-              # or a widened allow-list would ship with every check still green.
-              - 'scripts/guard-shared-publish-workflow-pin.sh'
-              - 'scripts/shared-publish-workflow-matchers.tsv'
-              - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
-              # Both halves, for the same reason as the pin guard above: the guard step itself
-              # runs unconditionally, and listing the pair here is what keeps a guard edit
-              # inside the k8s-gated validation matrix alongside the manifests it judges.
-              - 'scripts/guard-publish-workflow-approved-revisions.sh'
-              - 'scripts/publish-workflow-approved-revisions.lib.sh'
-              - 'scripts/tenant-publication-binding.lib.sh'
-              - 'scripts/tenant-source-discovery.lib.sh'
-              - 'scripts/tests/lib/legacy-consumer-fixture.sh'
-              - 'scripts/tests/test-tenant-source-discovery.sh'
-              - 'scripts/publish-workflow-bootstrap-publications.json'
-              - 'scripts/tests/test-tenant-publication-binding.sh'
-              - 'scripts/write-publish-workflow-matchers.sh'
-              - 'scripts/tests/test-write-publish-workflow-matchers.sh'
-              - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
-              # The fixed canonical-publisher approvals the same library reads, and their test (#4502).
-              - 'scripts/publish-workflow-canonical-approvals.tsv'
-              - 'scripts/tests/test-publish-workflow-canonical-approvals.sh'
-              # The generator that writes the set the guard above reads, and its test — both
-              # halves, so editing either alone still runs the fail-closed proof (an unresolved
-              # consumer writes nothing) that step 🔐 Validate the approved-revisions generator pins.
-              - 'scripts/generate-publish-workflow-approved-revisions.sh'
-              - 'scripts/tests/test-publish-workflow-approved-revisions.sh'
-              - 'scripts/tests/test-canonical-publisher-regeneration.sh'
-              - 'scripts/run-publication-generator-tests.sh'
-              - 'scripts/tests/test-run-publication-generator-tests.sh'
-              - 'scripts/publish-workflow-approved-revisions.identities.tsv'
-              # The scheduled regeneration workflow and its contract test — both halves, so a
-              # PR that edits only the workflow (a widened token grant, an interpolated branch,
-              # a continue-on-error) still runs the ablated test that refuses each of those.
-              - '.github/workflows/regenerate-publish-workflow-approved-revisions.yaml'
-              - 'scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh'
-              # The final legacy-release snapshot replaces live catalogue discovery.
-              - 'scripts/frozen-legacy-publisher-release.tsv'
-              - 'scripts/tests/test-frozen-legacy-publisher-release.sh'
-              # Retired paths still select the absence control if reintroduced.
-              - '.github/workflows/watch-actions-release.yaml'
-              - 'scripts/watch-actions-release-candidate.sh'
-              - 'scripts/tests/test-watch-actions-release-candidate.sh'
-              # The generated set itself. The contract test reads it to derive which
-              # consumer repositories the workflow's App token must be scoped to, so a
-              # PR that only adds a consumer here — the exact change that would leave
-              # the token unable to read that consumer — must still run that check.
-              - 'scripts/publish-workflow-approved-revisions.tsv'
-              # Both halves, for the same reason as the guards above.
+              # Both halves, so editing the guard alone, or its test alone, still
+              # runs the check that covers it.
               - 'scripts/guard-oci-repository-verify.sh'
               - 'scripts/tests/test-guard-oci-repository-verify.sh'
               # Both halves, for the same reason as the guard above.
@@ -1359,14 +1310,6 @@ jobs:
           tar -xzf "$archive" -C "$tool_dir" flux-operator
           FLUX_OPERATOR_BIN="$tool_dir/flux-operator" bash scripts/tests/test-controller-helm-profile.sh
 
-      # The step above covers the ROOT source. These are the other eight cosign
-      # subjects — app OCIRepositories, the tenant RGD, the Kyverno policy and the
-      # Talos image config — which trust the SHARED actions publish workflows and
-      # must therefore pin a fixed revision. #2816 set that by hand in eight places;
-      # this is what keeps it set (#2818).
-      - name: 🔐 Validate shared publish workflows are pinned
-        run: ./scripts/guard-shared-publish-workflow-pin.sh
-
       # The rules in talos/cluster/verify-first-party-images.yaml decide which images a node
       # will REFUSE once verification enforces, so a change to their order or their identities
       # silently changes the blast radius. This is the inventory tool's own hermetic suite —
@@ -1414,12 +1357,10 @@ jobs:
       - name: 🔐 Validate OCI chart source readiness contracts
         run: go test ./scripts/tests/oci-chart-sources
 
-      # The subject guards examine a file only when it already carries a
-      # shared-publish-workflow subject, so an OCIRepository pointed at a devantler-tech
-      # artifact with NO spec.verify at all is invisible to them — and refused by nothing
-      # else. This one discovers OCIRepositories by KIND and URL, at any nesting depth,
-      # and requires cosign with exactly one identity on every devantler-tech GHCR
-      # artifact (#3558). Unconditional, like the guards above.
+      # Discovers OCIRepositories by KIND and URL, at any nesting depth, and requires
+      # cosign with exactly one identity on every devantler-tech GHCR artifact (#3558).
+      # It also refuses a subject that trusts the shared reusable publishers (#6266).
+      # Unconditional, like the guards above.
       - name: 🔐 Validate every devantler-tech OCIRepository verifies
         run: |
           shellcheck -x scripts/guard-oci-repository-verify.sh
@@ -1523,9 +1464,9 @@ jobs:
           bash scripts/tests/test-verify-wedding-backup-cutover.sh
           go test ./scripts/verify-wedding-dedicated-restore
 
-  # Run publication checks and the native receiver proof in their own checkout.
+  # Run the independent guards and the native receiver proof in their own checkout.
   # They consume source, not outputs of the complete Go regression suite.
-  # Both fixed jobs must succeed before required CI or production can proceed.
+  # This job must succeed before required CI or production can proceed.
   validate-independent-guards:
     name: 🔐 Validate Independent Guards
     runs-on: ubuntu-latest
@@ -1567,74 +1508,6 @@ jobs:
           GATEWAY_RECEIVER_NATIVE_TEST: "1"
         run: go -C scripts/tests/gateway-receiver-admission test -timeout 8m ./...
 
-      # The shared pin guard proves every matcher pins A revision. It cannot say WHICH,
-      # and narrowing them to approved revisions (#2818) needs that fact for each consumer.
-      # This runs the hermetic report with a stubbed network resolver.
-      - name: 🔐 Validate the publish-revision report
-        run: |
-          shellcheck -x scripts/report-publish-workflow-signing-revisions.sh
-          shellcheck -x scripts/tests/test-publish-workflow-signing-revisions.sh
-          bash scripts/tests/test-publish-workflow-signing-revisions.sh
-          shellcheck -x scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
-          bash scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
-
-      # The report above discovers its consumers with a raw FILE SCAN, while production is
-      # what Flux RENDERS. This renders every production root (read from k8s/clusters/prod)
-      # and fails when the two consumer sets differ — an excluded base, a patched ref or URL,
-      # a consumer in a file the scan never opens — or when the render cannot be judged
-      # statically (#3332). Renders only manifests. Unconditional, like the report: one half
-      # of what it compares lives under scripts/, outside the k8s paths.
-      - name: 🔐 Validate consumer discovery against the production render
-        run: |
-          shellcheck -x scripts/guard-consumer-discovery-conservation.sh
-          shellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh
-          ./scripts/guard-consumer-discovery-conservation.sh
-
-      # The shared pin guard proves each matcher pins a FIXED revision; this one proves each
-      # per-consumer matcher pins the revision PAIR the committed approved set names for that
-      # consumer, and refuses any revision outside it (#3551, AC4 of #3308). Unconditional for
-      # the same reason as the pin guard: the subjects live in four different trees.
-      # Enforcement rejects broad SHA patterns and revisions outside each approved pair.
-      - name: 🔐 Validate the approved-revisions guard
-        env:
-          APPROVED_REVISIONS_ENFORCE: "1"
-        run: |
-          shellcheck -x scripts/publish-workflow-approved-revisions.lib.sh
-          shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
-          shellcheck -x scripts/write-publish-workflow-matchers.sh
-          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
-          shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
-          shellcheck -x scripts/tests/test-publish-workflow-canonical-approvals.sh
-          shellcheck -x scripts/tenant-source-discovery.lib.sh scripts/tests/test-tenant-source-discovery.sh
-          bash scripts/tests/test-tenant-source-discovery.sh
-          bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
-          bash scripts/tests/test-write-publish-workflow-matchers.sh
-          bash scripts/tests/test-publish-workflow-canonical-approvals.sh
-
-      - name: 🔐 Enforce approved publication signers
-        env:
-          APPROVED_REVISIONS_ENFORCE: "1"
-        run: ./scripts/guard-publish-workflow-approved-revisions.sh
-
-      # The scheduled regeneration (#3552, third child of #3308) runs the generator and
-      # writer and guard above against prod and turns a moved set into ONE draft pull request.
-      # Its safety is the WORKFLOW's shape — a fixed branch, a draft, an App-signed
-      # commit, least-privilege token grants, and generator → writer → guard → pull request with
-      # no continue-on-error — none of which any script it calls can enforce, so the
-      # test below pins each with an ablation. Unconditional for the same reason as
-      # the two steps above: the workflow lives outside the k8s paths.
-      - name: 🔐 Validate the approved-revisions regeneration workflow
-        run: |
-          shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
-          bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
-
-      # Historical compatibility must remain available after deleting the catalogue;
-      # current observations and canonical approvals remain separately required.
-      - name: 🔐 Validate frozen legacy publisher evidence
-        run: |
-          shellcheck -x scripts/tests/test-frozen-legacy-publisher-release.sh
-          bash scripts/tests/test-frozen-legacy-publisher-release.sh
-
       # The authorization gate's verdict and its moved-entry diagnostics are two
       # commands in one step, and a real aggregate mismatch fails BOTH — so a step
       # that stopped at the first never ran the diagnostics on the one failure they
@@ -1643,100 +1516,12 @@ jobs:
       # binaries and ablates each assertion. It also refuses an `if:` or a tolerated
       # failure on that step, which would let the gate run without deciding
       # anything — the Go coverage guards cannot read this compound step (#4361).
-      # Unconditional for the same reason as the steps above: its subjects are
-      # ci.yaml and cd.yaml themselves, which sit outside the k8s paths.
+      # Unconditional: its subjects are ci.yaml and cd.yaml themselves, which sit
+      # outside the k8s paths.
       - name: 🔐 Validate the authorization gate reports its diagnostics
         run: |
           shellcheck scripts/tests/test-authorization-gate-diagnostics.sh
           bash scripts/tests/test-authorization-gate-diagnostics.sh
-
-  validate-publication-generator:
-    name: 🔐 Validate Publication Generator (${{ matrix.suite }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        suite: [bootstrap, upgrade]
-    permissions:
-      contents: read
-    steps:
-      - name: 📑 Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-
-      - name: ⚙️ Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: ⚙️ Initialize the approved kubectl for native regressions
-        timeout-minutes: 5
-        shell: bash
-        env:
-          KUBECTL_VERSION: "v1.36.2"
-          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
-        run: |
-          set -euo pipefail
-          kubectl_path="$RUNNER_TEMP/kubectl"
-          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
-            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
-            -o "$kubectl_path"
-          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
-          sudo install "$kubectl_path" /usr/local/bin/kubectl
-          echo /usr/local/bin >> "$GITHUB_PATH"
-          export PATH="/usr/local/bin:$PATH"
-          kubectl version --client
-
-      - name: ⎈ Install checksum-verified native Helm
-        shell: bash
-        env:
-          HELM_VERSION: v4.3.1
-          HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
-        run: |
-          set -euo pipefail
-          native_dir="$(mktemp -d)"
-          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
-          printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
-          tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
-          printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$native_dir/linux-amd64/helm" >> "$GITHUB_ENV"
-
-      - name: 🔍 Lint and exercise publication fixture routing
-        if: matrix.suite == 'bootstrap'
-        run: |
-          # -x: the generator SOURCES the report, and without it SC1091 is reported and the run exits 1.
-          shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
-          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
-          shellcheck -x scripts/tenant-publication-binding.lib.sh scripts/tests/test-tenant-publication-binding.sh
-          shellcheck -x scripts/tests/test-canonical-publisher-regeneration.sh
-          shellcheck scripts/run-publication-generator-tests.sh scripts/tests/test-run-publication-generator-tests.sh
-          bash scripts/tests/test-run-publication-generator-tests.sh
-
-      # Fixture adapters replace external reads; the actual generator must
-      # still refuse unresolved inputs and preserve committed outputs.
-      - name: 🔐 Validate the approved-revisions generator
-        env:
-          PUBLICATION_SUITE: ${{ matrix.suite }}
-        run: bash scripts/run-publication-generator-tests.sh --jobs 4
-
-  validate-consumer-discovery:
-    name: 🔐 Validate Consumer Discovery Regressions
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read # checkout repository
-    steps:
-      - name: 📑 Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: 🔐 Validate the full consumer discovery fixture suite
-        run: |
-          bash scripts/tests/test-guard-consumer-discovery-conservation.sh
 
   validate-publication-contract:
     name: 🖋️ Validate Publication Contract
@@ -3827,15 +3612,6 @@ jobs:
           bash scripts/guard-kubescape-scan-scope.sh
           bash scripts/tests/test-guard-kubescape-scan-scope.sh
 
-      - name: 🔐 Validate the shared-publish-workflow pin guard
-        if: matrix.suite == 'contracts'
-        # The guard fails by PASSING: a widened cosign matcher still verifies, so
-        # nothing else in CI notices. This pins the shapes it must reject — above
-        # all the SHA-or-tag alternation removed in #3022, which is the exact
-        # prior contents of all eight subjects and would otherwise revert in
-        # silence — plus the floor and the wiring that reaches it.
-        run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
-
   validate-flux-bridge:
     name: 🔐 Validate Production Deploy Path Controls
     needs: [changes]
@@ -4533,10 +4309,8 @@ jobs:
         validate-repository-guards,
         validate-independent-guards,
         test-publish-release-recovery,
-        validate-publication-generator,
         validate-go-regressions,
         validate-webapp-compiler,
-        validate-consumer-discovery,
         validate-floating-image-tags,
         validate-helm-post-renderers,
         validate-eks-authorization,
@@ -4901,12 +4675,10 @@ jobs:
         validate-independent-guards,
         test-publish-release-recovery,
         test-publish-release-recovery-disabled,
-        validate-publication-generator,
         validate-manifest-regressions,
         validate-go-regressions,
         validate-go-project,
         validate-webapp-compiler,
-        validate-consumer-discovery,
         validate-publication-contract,
         validate-flux-bridge,
         validate-rgd-templates,
@@ -5031,12 +4803,10 @@ jobs:
             ${{ needs.validate-independent-guards.result }}
             ${{ needs.test-publish-release-recovery.result }}
             ${{ needs.test-publish-release-recovery-disabled.result }}
-            ${{ needs.validate-publication-generator.result }}
             ${{ needs.validate-manifest-regressions.result }}
             ${{ needs.validate-go-regressions.result }}
             ${{ needs.validate-go-project.result }}
             ${{ needs.validate-webapp-compiler.result }}
-            ${{ needs.validate-consumer-discovery.result }}
             ${{ needs.validate-publication-contract.result }}
             ${{ needs.validate-flux-bridge.result }}
             ${{ needs.validate-rgd-templates.result }}
@@ -5084,16 +4854,7 @@ jobs:
           INDEPENDENT_GUARDS_RESULT: ${{ needs.validate-independent-guards.result }}
         run: |
           if [ "$INDEPENDENT_GUARDS_RESULT" != success ]; then
-            echo "::error::Publication guards did not succeed ($INDEPENDENT_GUARDS_RESULT)"
-            exit 1
-          fi
-
-      - name: 🔐 Require publication generator validation
-        env:
-          GENERATOR_RESULT: ${{ needs.validate-publication-generator.result }}
-        run: |
-          if [ "$GENERATOR_RESULT" != success ]; then
-            echo "::error::Publication generator did not succeed ($GENERATOR_RESULT)"
+            echo "::error::Independent guards did not succeed ($INDEPENDENT_GUARDS_RESULT)"
             exit 1
           fi
 

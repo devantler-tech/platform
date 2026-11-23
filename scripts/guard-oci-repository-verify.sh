@@ -3,14 +3,10 @@
 # and URL in what Flux actually applies (#3558, under #3308).
 #
 # WHY THIS EXISTS
-# Both cosign-subject guards (scripts/guard-shared-publish-workflow-pin.sh and
-# scripts/guard-publish-workflow-approved-revisions.sh) examine a file only when it
-# already carries a shared-publish-workflow subject. An OCIRepository pointed at a
-# devantler-tech artifact with NO `spec.verify` at all therefore carries no subject, is
-# examined by neither guard, and is refused by nothing else: validate-flux-verify covers
-# the root source only, and the Kyverno cluster policies do not touch OCIRepositories.
-# Flux would apply an unsigned or foreign-signed artifact with every check green. This
-# guard asks the question the other way round: every OCIRepository whose URL is a
+# An OCIRepository pointed at a devantler-tech artifact with NO `spec.verify` at all is
+# refused by nothing else: validate-flux-verify covers the root source only, and the
+# Kyverno cluster policies do not touch OCIRepositories. Flux would apply an unsigned or
+# foreign-signed artifact with every check green. So every OCIRepository whose URL is a
 # devantler-tech GHCR artifact must verify.
 #
 # WHAT IT REQUIRES, PER OCIRepository UNDER oci://ghcr.io/devantler-tech/
@@ -18,9 +14,11 @@
 #   - `spec.verify.provider: cosign`
 #   - `spec.verify.matchOIDCIdentity` a sequence of EXACTLY ONE entry. Flux ORs the
 #     entries, so a second entry widens the trusted signer set while the first still
-#     reads as narrowed; alternation belongs inside the one subject regex, where the
-#     subject guards judge it.
+#     reads as narrowed; alternation belongs inside the one subject regex.
 #   - that entry names a non-empty `issuer` and a non-empty `subject`.
+#   - that subject trusts none of the shared reusable publish workflows (#6266, ADR
+#     0017): a reusable workflow signs with its HOST repository's identity whoever
+#     calls it, so trusting one would let any caller's artifact verify for this source.
 #   - the trusted Wedding and AS Coaching tenant artifacts follow the governed
 #     `>=1.0.0` semver stream, and a `Tenant` follows its own stable releases
 #     through the exact constructor (ADR 0019). The platform owns their signer and
@@ -89,6 +87,9 @@ readonly REQUIRED_URL_PREFIX='oci://ghcr.io/devantler-tech/'
 # the literal regex text the manifests carry (the `.` escaped), not evaluated.
 readonly REQUIRED_ISSUER='^https://token\.actions\.githubusercontent\.com$'
 readonly REQUIRED_SUBJECT_PREFIX='^https://github\.com/devantler-tech/'
+# The retired shared publish-app and publish-manifests workflows, in either host
+# repository (the `.github` repository and the deleted `actions` one), escaped or not.
+readonly SHARED_PUBLISHER_RE='(\\?\.github|actions)/\\?\.github/workflows/publish-(app|manifests)\\?\.ya?ml'
 readonly REQUIRED_TENANT_STREAM_SEMVER='>=1.0.0'
 readonly WEDDING_STREAM_URL='oci://ghcr.io/devantler-tech/wedding-app/manifests'
 readonly ASCOACHING_STREAM_URL='oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests'
@@ -355,12 +356,9 @@ while IFS= read -r root; do
       continue
     fi
     # The one identity must be OURS. A single `issuer: '.*'` / `subject: '.*'` entry
-    # satisfies every shape check above and is invisible to both subject guards
-    # (they examine only subjects naming the shared publish workflows), so without
-    # this an OCIRepository could accept any signer with every check green. The
-    # issuer is exactly GitHub Actions' token issuer and the subject regex must
-    # anchor on a devantler-tech GitHub path; WHICH revision it pins is the
-    # subject guards' question, not this one's.
+    # satisfies every shape check above, so without this an OCIRepository could accept
+    # any signer with every check green. The issuer is exactly GitHub Actions' token
+    # issuer and the subject regex must anchor on a devantler-tech GitHub path.
     if [ "$issuer" != "$REQUIRED_ISSUER" ]; then
       fail "$label: OCIRepository $name ($url) trusts issuer '$issuer'; the only accepted issuer is '$REQUIRED_ISSUER' (GitHub Actions keyless signing)"
       continue
@@ -372,6 +370,10 @@ while IFS= read -r root; do
         continue
         ;;
     esac
+    if [[ "$subject" =~ $SHARED_PUBLISHER_RE ]]; then
+      fail "$label: OCIRepository $name ($url) trusts the retired shared publisher '${BASH_REMATCH[0]}'; a reusable workflow signs as its host repository whoever calls it, so trust only this artifact's own release workflow (ADR 0017)"
+      continue
+    fi
   done <"$work/rows"
 done <<EOF
 $roots

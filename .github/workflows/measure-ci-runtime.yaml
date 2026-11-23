@@ -7,7 +7,7 @@ name: Measure CI Runtime
   workflow_dispatch:
     inputs:
       confirmation:
-        description: 'Type "measure current main" to run four bounded validation samples'
+        description: 'Type "measure current main" to run two bounded validation samples'
         required: true
         type: string
 
@@ -34,10 +34,6 @@ jobs:
             workers: 4
           - suite: go
             workers: 8
-          - suite: publication
-            workers: 2
-          - suite: publication
-            workers: 4
     env:
       GOTOOLCHAIN: local
       GOMAXPROCS: "4"
@@ -66,7 +62,7 @@ jobs:
             *) echo '::error::Unsupported measurement event'; exit 1 ;;
           esac
           case "$BENCHMARK_SUITE:$BENCHMARK_WORKERS" in
-            go:4|go:8|publication:2|publication:4) ;;
+            go:4|go:8) ;;
             *) echo '::error::Unknown fixed benchmark arm'; exit 1 ;;
           esac
 
@@ -101,21 +97,6 @@ jobs:
           export PATH="/usr/local/bin:$PATH"
           kubectl version --client
 
-      - name: ⎈ Install checksum-verified native Helm
-        if: matrix.suite == 'publication'
-        shell: bash
-        env:
-          HELM_VERSION: v4.3.1
-          HELM_SHA256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
-        run: |
-          set -euo pipefail
-          native_dir="$(mktemp -d)"
-          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
-          printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
-          tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
-          printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$native_dir/linux-amd64/helm" >> "$GITHUB_ENV"
-
       - name: Record the measured environment
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
@@ -128,16 +109,8 @@ jobs:
           go version
           kubectl version --client
           yq --version
-          if [ "$BENCHMARK_SUITE" = publication ]; then
-            "$KYVERNO_LOG_HELM_BIN" version --short
-          fi
 
       - name: Measure complete Go regressions
         if: matrix.suite == 'go'
         run: |
           /usr/bin/time -p go test -json -count=1 -parallel "$BENCHMARK_WORKERS" -timeout 20m ./...
-
-      - name: Measure complete publication fixtures
-        if: matrix.suite == 'publication'
-        run: |
-          /usr/bin/time -p bash scripts/run-publication-generator-tests.sh --jobs "$BENCHMARK_WORKERS"

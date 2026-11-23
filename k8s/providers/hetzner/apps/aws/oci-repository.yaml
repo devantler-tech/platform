@@ -22,11 +22,8 @@ spec:
   verify:
     provider: cosign
     matchOIDCIdentity:
-      # Generated from scripts/publish-workflow-approved-revisions.tsv by
-      # scripts/write-publish-workflow-matchers.sh. Accept the deployed artifact
-      # signer and this consumer's current publish-workflow pin in one identity.
-      # Regeneration updates the pair and the approved set in the same PR.
-      # It also accepts this consumer's own repository's release workflow on a
-      # release tag (#6265), the signer once it moves off the shared publisher.
+      # Keyless-signed by a workflow directly in .github/workflows/ of this product's
+      # OWN repository on a strict OCI-semver release tag (ADR 0017, #6265). The shared
+      # publisher, another repository, a branch or a non-release tag does not match.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-manifests\.yaml@(b089a1b041cb86af22cdc57de58a4d7d258dcc32|ea4df9004d4ab43b6c9af5b0c5f55712f7211328)|\.github/\.github/workflows/publish-manifests\.yaml@(2fa404276b0ce5c0527683b080e39045045c4e42|bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b)|aws/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$'
+        subject: '^https://github\.com/devantler-tech/aws/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'

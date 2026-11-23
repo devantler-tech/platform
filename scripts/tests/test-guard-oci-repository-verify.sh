@@ -40,7 +40,7 @@ trap 'rm -rf "$WORK"' EXIT
 : >"$WORK/no-exemptions.tsv"
 
 readonly ISSUER="'^https://token\\.actions\\.githubusercontent\\.com\$'"
-readonly SUBJECT="'^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}\$'"
+readonly SUBJECT="'^https://github\\.com/devantler-tech/wedding-app/\\.github/workflows/[^/]+\\.ya?ml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+\$'"
 
 good_verify() {
   printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "$SUBJECT"
@@ -265,7 +265,7 @@ printf 'patches:\n  - target:\n      kind: OCIRepository\n      name: pa\n    pa
 expect_refused 'a patch that appends an identity is judged on the render' "$root" 'OCIRepository pa (oci://ghcr.io/devantler-tech/pa/manifests) has 2 matchOIDCIdentity entries'
 
 # --- RED: the one identity must be OURS — a foreign issuer or subject passes every
-# shape check and is invisible to both subject guards ---
+# shape check ---
 root="$(fresh_root foreignissuer)"
 repo_doc fiss 'oci://ghcr.io/devantler-tech/fiss/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "'^https://accounts\\.google\\.com\$'" "$SUBJECT")" >"$root/fiss.yaml"
 add_resource "$root" fiss.yaml
@@ -280,6 +280,26 @@ root="$(fresh_root foreignorg)"
 repo_doc fo 'oci://ghcr.io/devantler-tech/fo/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'^https://github\\.com/evil-org/actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}\$'")" >"$root/fo.yaml"
 add_resource "$root" fo.yaml
 expect_refused 'a subject anchored on another organisation is refused' "$root" 'does not anchor on'
+
+# --- RED: a subject trusting a retired shared reusable publisher (#6266) — a reusable
+# workflow signs as its host repository whoever calls it, so trusting it would let any
+# caller's artifact verify. Refused beside an own-release alternative, and in the
+# deleted legacy repository too ---
+root="$(fresh_root sharedcanonical)"
+repo_doc sc 'oci://ghcr.io/devantler-tech/sc/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'^https://github\\.com/devantler-tech/(\\.github/\\.github/workflows/publish-app\\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812|sc/\\.github/workflows/cd\\.yaml@refs/tags/v1\\.0\\.0)\$'")" >"$root/sc.yaml"
+add_resource "$root" sc.yaml
+expect_refused 'a shared publish-app revision beside an own release is refused' "$root" "OCIRepository sc (oci://ghcr.io/devantler-tech/sc/manifests) trusts the retired shared publisher '\\.github/\\.github/workflows/publish-app\\.yaml'"
+
+root="$(fresh_root sharedlegacy)"
+repo_doc sl 'oci://ghcr.io/devantler-tech/sl/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-manifests\\.yaml@[0-9a-f]{40}\$'")" >"$root/sl.yaml"
+add_resource "$root" sl.yaml
+expect_refused 'a deleted legacy publish-manifests subject is refused' "$root" "OCIRepository sl (oci://ghcr.io/devantler-tech/sl/manifests) trusts the retired shared publisher 'actions/\\.github/workflows/publish-manifests\\.yaml'"
+
+# --- GREEN: the `.github` repository's own release workflow is not a shared publisher ---
+root="$(fresh_root githubownrelease)"
+repo_doc gc 'oci://ghcr.io/devantler-tech/github-config/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/cd\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\$'")" >"$root/gc.yaml"
+add_resource "$root" gc.yaml
+expect_accepted 'the .github repository own cd.yaml release subject is accepted' "$root"
 
 # --- RED: host case and substituted hosts ---
 root="$(fresh_root upper)"

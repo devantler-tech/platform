@@ -145,14 +145,14 @@ including `tenant-edit`, rather than the unrelated built-in `edit` role.
 
 ## 4. How publishing & trust fit together
 
-For the existing legacy/dual-family consumers, each `v*` tag makes the tenant's `cd.yaml` call its approved, commit-pinned
-shared publisher. The maintained
-[`publish-app.yaml`](https://github.com/devantler-tech/.github/blob/main/.github/workflows/publish-app.yaml)
-and the legacy location implement that contract. Existing callers stay on their
-approved location until migrated. The workflow builds and pushes the image, pins its digest into
-`deploy/deployment.yaml`, pushes the manifests as an OCI artifact, and
-**cosign-signs** both (keyless, via GitHub OIDC). The platform's `OCIRepository`
-(§5) **verifies** that signature against the `publish-app.yaml` identity.
+Each product signs its own releases (monorepo ADR 0017): on a `v*` tag, the product's own
+release workflow calls the `devantler-tech/.github/actions/publish-app` composite action, which
+builds and pushes the image, pins its digest into `deploy/deployment.yaml`, pushes the manifests
+as an OCI artifact, and **cosign-signs** both (keyless, via GitHub OIDC). Because the action runs
+inside the product's own workflow, the signer is that workflow in the product's own repository at
+its release tag. The platform's `OCIRepository` (§5) **verifies** that signature against that
+identity. The shared reusable publishers are no longer trusted at any revision
+([#6266](https://github.com/devantler-tech/platform/issues/6266)).
 
 A `Tenant` follows its own signed releases instead ([ADR 0019](https://github.com/devantler-tech/monorepo/blob/main/docs/adr/0019-tenants-follow-their-signed-release-tags.md)):
 its source takes the newest stable release of `oci://ghcr.io/devantler-tech/<name>/manifests`
@@ -164,25 +164,17 @@ container **image**. Three verifiers check them, and they do not check the same 
 
 | Verifier | Artifact | What it accepts |
 | --- | --- | --- |
-| **Flux** — a registered tenant's `OCIRepository` | manifest | Its recorded legacy signer, current pin and release candidate, plus any exact maintained revisions explicitly approved for that consumer, plus that consumer's own repository's release workflow on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)). Other commits and other repositories are refused. |
+| **Flux** — a registered tenant's `OCIRepository` | manifest | Only that consumer's own repository's release workflow on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)); for `github-config`, exactly `.github`'s `cd.yaml`. No shared-publisher revision is accepted ([#6266](https://github.com/devantler-tech/platform/issues/6266)). |
 | **Flux** — a `Tenant` instance's `OCIRepository` | manifest | Only a workflow in `devantler-tech/<spec.name>/.github/workflows/` on a stable release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265), ADR 0019). No shared-publisher revision is accepted. |
-| **Admission** — the `verify-app-images` Kyverno policy | image | The explicitly reviewed maintained `.github` publisher revisions, or any first-party repository's own release workflow on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)), from the GitHub OIDC issuer. The deleted legacy `actions` publisher repository is refused at every commit ([#6264](https://github.com/devantler-tech/platform/issues/6264)). Other maintained commits, tags and branches of the shared publisher are refused. |
+| **Admission** — the `verify-app-images` Kyverno policy | image | Any first-party repository's own release workflow on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)), from the GitHub OIDC issuer. The shared publishers are refused at every revision: the `.github` repository is excluded ([#6266](https://github.com/devantler-tech/platform/issues/6266)), and the deleted legacy `actions` repository's commit-pinned identities never match ([#6264](https://github.com/devantler-tech/platform/issues/6264)). |
 | **Node pull** — the Talos image-verification rule | image | The same as admission. |
 
 Because the signatures are separate, a release can pass one layer and fail another: if only the
 manifest is signed, Flux applies the manifests and then admission denies the Pod, or the node
 refuses the pull (`ImagePullBackOff`).
 
-The approved Flux list covers the production consumers already registered with the approval
-generator. Legacy compatibility lives in `scripts/publish-workflow-approved-revisions.tsv`, and
-`scripts/write-publish-workflow-matchers.sh` writes it into those consumers'
-`OCIRepository`. A `Tenant` is no consumer of the shared publisher, so it has no row there. The
-legacy consumer floor is fixed in code
-(`scripts/report-publish-workflow-signing-revisions.sh` and the
-`Regenerate Approved Publish Revisions` workflow), so a new tenant registered by hand (§5) is not
-covered until a reviewed platform change adds it there. Maintained revisions are curated separately
-in `scripts/publish-workflow-canonical-approvals.tsv`; recognizing a publisher's location does not
-approve it.
+`scripts/guard-oci-repository-verify.sh` refuses any devantler-tech `OCIRepository` whose subject
+trusts a shared reusable publisher, so a retired identity cannot return unnoticed.
 
 ### Releases reach production by themselves
 
@@ -211,46 +203,29 @@ old revision reads waits for a later release.
   the base revision too, and it fails a change KRO would not install. Pair such a change with
   one KRO does compare, such as a field description.
 
-Local regeneration requires GNU coreutils (`gmv` on macOS). Output replacement
-uses its no-target-directory operation, so a concurrent destination-directory
-change is refused instead of receiving a nested generated file.
+**What this means for a registered tenant:** a release needs no platform approval. A new
+version of the composite action is adopted by the product's own dependency update, and its
+releases keep the same signer because the signer is the product's own workflow.
 
-**What this means for a registered tenant:** the platform must approve a `publish-app.yaml` commit
-before `cd.yaml` can move to it. Each registered application tenant runs a required check that
-refuses a pin the platform's committed approved list does not contain, so a pin change made too
-early waits instead of merging. The daily `Regenerate Approved Publish Revisions` workflow in this
-repository (06:20 UTC, or run it by hand) refreshes publication and caller observations in a pull
-request. It never invents a maintained approval: review the publisher source, record the exact
-consumer/workflow/revision approval, and regenerate its matcher. Merge and verify deployment of
-the manifest, admission and node-pull acceptance before moving the caller. Re-run the tenant's
-check, merge its pin change, and verify the resulting publication. Releases on an already approved
-revision need no new platform approval.
-
-Admission, node-pull and the generic tenant source no longer accept the deleted legacy location at
-any commit ([#6264](https://github.com/devantler-tech/platform/issues/6264)), which retires the
-compatibility rule accepted in [#3746](https://github.com/devantler-tech/platform/issues/3746).
-Registered consumer sources keep only the exact legacy commits their generated approvals name
-until that machinery is retired. Package write access,
+No verifier accepts the deleted legacy location at any commit
+([#6264](https://github.com/devantler-tech/platform/issues/6264)), which retires the
+compatibility rule accepted in [#3746](https://github.com/devantler-tech/platform/issues/3746),
+and none accepts the shared `.github` publishers at any revision
+([#6266](https://github.com/devantler-tech/platform/issues/6266)). Package write access,
 namespace, RBAC, network policy and admission policy bound what a release can do. A tenant that
 needs authority outside those bounds requires a reviewed platform change.
 
 **A product's own release workflow ([#6265](https://github.com/devantler-tech/platform/issues/6265)).**
-Products are moving from the shared reusable publisher to a composite action called from their
-own release workflow (monorepo ADR 0017). The keyless signer then names the product's own
-repository at its release tag, for example
+The keyless signer names the product's own repository at its release tag, for example
 `https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3`.
-Every verifier above accepts that identity beside the shared publisher's reviewed revisions,
-inside the same single anchored subject, until the consumers have moved and
-[#6266](https://github.com/devantler-tech/platform/issues/6266) removes the old ones:
+Every verifier above accepts exactly that form, as one anchored subject:
 
 - the workflow file sits directly in `.github/workflows/` and the ref is a release tag in the
   strict OCI-semver grammar of the KSail `cd.yaml` rule, pre-releases included; branches,
   commits, other tags and anything after the version are refused;
 - a manifest source accepts only its own repository: a `Tenant` derives it from `spec.name`,
   regex-escaped (the artifact URL is `oci://ghcr.io/devantler-tech/<name>/manifests`), and a
-  registered consumer's matcher names its current repository, written by
-  `scripts/write-publish-workflow-matchers.sh`. A source that has moved accepts only its own
-  repository and follows its stable release tags: the KHoist documentation source
+  registered consumer's matcher names its current repository. The KHoist documentation source
   (`oci://ghcr.io/devantler-tech/khoist/manifests`) trusts only `devantler-tech/khoist`'s release
   workflows on a release tag, with the `Tenant` graph's grammar;
 - the image rules accept any first-party repository whose name starts with a letter or digit, as
@@ -261,14 +236,13 @@ inside the same single anchored subject, until the consumers have moved and
   signed manifest source, which accepts only its own repository and pins its image digests.
 
 The `.github` repository is excluded from the image rules and from the any-workflow form: it
-hosts the shared reusable publishers, and a tag of a reusable workflow carries that repository's
+hosts reusable workflows, and a tag of a reusable workflow carries that repository's
 identity whoever calls it, so another repository's release could verify as its own. Only the
 `github-config` source names it, through the narrower rule
 `.github/.github/workflows/cd.yaml@refs/tags/v<semver>`
 ([devantler-tech/.github#926](https://github.com/devantler-tech/.github/issues/926)): exactly
 that one file, which runs only on `.github`'s own tag pushes and which `.github`'s CI keeps free
-of a `workflow_call` trigger. A `Tenant` pinned to an exact publisher revision keeps that single identity,
-because its admission record names it. These verifiers match only the issuer and the subject, so
+of a `workflow_call` trigger. These verifiers match only the issuer and the subject, so
 a product must not expose a signing workflow other repositories can call.
 
 > Tags come from `release.yaml` → semantic-release: merge Conventional-Commit

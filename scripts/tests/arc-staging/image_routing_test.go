@@ -13,15 +13,19 @@ import (
 	"cel.dev/cel-go/common/types/traits"
 )
 
-// appPublisher is a reviewed maintained publish-app revision the publishapp
-// attestor accepts. deletedPublishers are the deleted legacy publisher's
-// commit-pinned identities, which no attestor accepts at any commit (#6264). A
-// release tag under that repository name is a different identity: the
-// publishapp attestor accepts any first-party repository's release workflow on
-// a release tag except `.github` (#6265), see ownReleaseSigners.
-const appPublisher = "https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"
+// appPublisher is a product's own release workflow on a release tag, the identity
+// the publishapp attestor accepts (ADR 0017, #6265). deletedPublishers are the
+// shared publishers' commit-pinned identities, which no attestor accepts at any
+// commit: the deleted legacy repository (#6264) and the retired `.github`
+// revisions (#6266). A release tag under the `actions` repository name is a
+// different identity: the publishapp attestor accepts any first-party
+// repository's release workflow on a release tag except `.github`, see
+// ownReleaseSigners.
+const appPublisher = "https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@refs/tags/v1.2.3"
 
 var deletedPublishers = []string{
+	"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812",
+	"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35",
 	"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40),
 	"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328",
 }
@@ -123,7 +127,7 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 						{"wrong issuer", fixture.subject, "https://other.example", fixture.attestor == ""},
 						{"cross workflow signer", crossSigner(fixture.subject), githubIssuer, fixture.attestor == ""},
 						{"customer identity signer", identityPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcustomeridentity"},
-						{"shared app signer", appPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
+						{"app release signer", appPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
 						{"identity wrong workflow", strings.Replace(identityPublisher, "publish-identity.yaml", "publish-runtime.yaml", 1), githubIssuer, fixture.attestor == ""},
 						// The business-site repository's workflow on a release tag is a
 						// first-party release identity (#6265), so it satisfies only the

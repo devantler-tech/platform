@@ -29,7 +29,7 @@ func writerCondition(name string) string {
 }
 
 var premergeReaders = []string{
-	"validate-eks-authorization", "validate-shared-publish-pin",
+	"validate-eks-authorization",
 	"validate-talos-kubernetes-compatibility", "validate-rgd-templates",
 	"validate-rgd-template-wiring", "validate-scanner-versions",
 }
@@ -204,7 +204,7 @@ func TestValidateMainPremergeBoundaryRejectsRealWorkflowMutations(t *testing.T) 
 		},
 		"observer depends on a second job": func(w *workflow) {
 			j := w.Jobs["observe-prod-convergence"]
-			j.Needs = []any{idleQueueWait, "validate-shared-publish-pin"}
+			j.Needs = []any{idleQueueWait, "validate-eks-authorization"}
 			w.Jobs["observe-prod-convergence"] = j
 		},
 		"wait acquires a write permission": func(w *workflow) {
@@ -231,29 +231,29 @@ func TestValidateMainPremergeBoundaryRejectsRealWorkflowMutations(t *testing.T) 
 		"privileged pull-request trigger": func(w *workflow) { w.On["pull_request_target"] = triggerSpec{} },
 		"path-filter main pushes":         func(w *workflow) { p := w.On["push"]; p.Paths = []string{"docs/**"}; w.On["push"] = p },
 		"reader write permission": func(w *workflow) {
-			j := w.Jobs["validate-shared-publish-pin"]
+			j := w.Jobs["validate-eks-authorization"]
 			j.Permissions.(map[string]any)["packages"] = "write"
-			w.Jobs["validate-shared-publish-pin"] = j
+			w.Jobs["validate-eks-authorization"] = j
 		},
 		"suppress reader": func(w *workflow) {
-			j := w.Jobs["validate-shared-publish-pin"]
+			j := w.Jobs["validate-eks-authorization"]
 			j.If = "false"
-			w.Jobs["validate-shared-publish-pin"] = j
+			w.Jobs["validate-eks-authorization"] = j
 		},
 		"reader tolerates errors": func(w *workflow) {
-			j := w.Jobs["validate-shared-publish-pin"]
+			j := w.Jobs["validate-eks-authorization"]
 			j.ContinueOnError = true
-			w.Jobs["validate-shared-publish-pin"] = j
+			w.Jobs["validate-eks-authorization"] = j
 		},
 		"reader depends on skipped writer": func(w *workflow) {
-			j := w.Jobs["validate-shared-publish-pin"]
+			j := w.Jobs["validate-eks-authorization"]
 			j.Needs = "observe-prod-convergence"
-			w.Jobs["validate-shared-publish-pin"] = j
+			w.Jobs["validate-eks-authorization"] = j
 		},
 		"reader checks out main": func(w *workflow) {
-			j := w.Jobs["validate-shared-publish-pin"]
+			j := w.Jobs["validate-eks-authorization"]
 			j.Steps[0].With.Ref = "main"
-			w.Jobs["validate-shared-publish-pin"] = j
+			w.Jobs["validate-eks-authorization"] = j
 		},
 		"add unrestricted writer": func(w *workflow) { w.Jobs["other-writer"] = job{Permissions: map[string]any{"contents": "write"}} },
 		"missing original reader": func(w *workflow) { delete(w.Jobs, "validate-scanner-versions") },
