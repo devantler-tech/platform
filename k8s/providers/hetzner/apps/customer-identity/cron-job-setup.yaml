@@ -267,6 +267,9 @@ spec:
                   portal_operators_org="Portal operators"
                   portal_operators_domain=portal-operators.accounts.devantler.tech
                   portal_operator_id=c3bc4cc5-443f-4c86-84ae-516e36296451
+                  # The verified email is shared with the existing administrator.
+                  # ZITADEL requires a distinct username across this instance.
+                  portal_operator_username="portal-operator-$portal_operator_id"
                   admin_github_id=26203420
                   project_name="Customer sign-in"
                   app_name="Customer Dex"
@@ -885,17 +888,19 @@ spec:
                         fail "the existing administrator address is not verified"
                       response=$(connect zitadel.user.v2.UserService/CreateUser "$(jq -nc \
                         --arg u "$portal_operator_id" --arg o "$operator_org" --arg e "$ADMIN_EMAIL" --argjson p "$profile" \
+                        --arg login "$portal_operator_username" \
                         --arg i "$idp" --arg g "$admin_github_id" --arg n "$admin_github_login" \
-                        '{userId:$u,organizationId:$o,username:$e,
+                        '{userId:$u,organizationId:$o,username:$login,
                           human:{profile:$p,email:{email:$e,isVerified:true},idpLinks:[{idpId:$i,userId:$g,userName:$n}]}}')")
                       [[ $(jq -er '.id' <<<"$response") == "$portal_operator_id" ]] ||
                         fail "the portal operator was created with an unexpected identity"
                       users=$(connect zitadel.user.v2.UserService/ListUsers "$query")
                       changes+=("prepared the portal operator account")
                     fi
-                    jq -e --arg u "$portal_operator_id" --arg o "$operator_org" --arg e "$ADMIN_EMAIL" '
+                    jq -e --arg u "$portal_operator_id" --arg o "$operator_org" --arg e "$ADMIN_EMAIL" \
+                      --arg login "$portal_operator_username" '
                       .result | length == 1 and (.[0] | .userId == $u and .details.resourceOwner == $o and
-                        .state == "USER_STATE_ACTIVE" and .username == $e and
+                        .state == "USER_STATE_ACTIVE" and .username == $login and
                         .human.email.email == $e and .human.email.isVerified == true)' <<<"$users" >/dev/null ||
                       fail "the portal operator account does not match the declared identity"
                     links=$(connect zitadel.user.v2.UserService/ListIDPLinks \
