@@ -5,7 +5,7 @@
 # Keep this consumer's existing <name>-daemonset naming and namespace exclusion.
 # The upstream required-UID expression is inlined so the existing closed producer
 # contract still permits no CEL variables. Sizing and update modes are unchanged.
-# Both consumer-discovery guards pin the complete resulting expression.
+# scripts/tests/crossplane-egress-policy-rules.yaml pins the complete resulting expression.
 apiVersion: policies.kyverno.io/v1
 kind: GeneratingPolicy
 metadata:
