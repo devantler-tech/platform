@@ -12,10 +12,13 @@ releases the empty runtime through the session lifecycle with a matching
 execution lease. The session row lock fences late task saves. A live dispatch
 reservation or any task or checkpoint history blocks cleanup. The scheduler
 keeps the claim when a response is uncertain and recovers accepted work from
-history. Accepted tasks keep their configured execution deadline.
+history. The recovery window uses the runtime reservation time. Pending
+executions still get a dispatch attempt within their configured execution
+deadline, and accepted tasks keep that deadline.
 
 The publisher tests the patch, replaces the controller binary in the pinned
 upstream runtime image, and signs the verified image digest from `main`.
-The Platform Helm release uses a reviewed digest. Return to the upstream
-distribution once a supported release handles cold startup, safe recovery of
-unused worker assignments, and rejected dispatches. [kagent scheduler tracking](https://github.com/kagent-dev/kagent/issues/3727)
+The deployment will pin the reviewed digest after publication. Return the Helm
+release to the upstream image once a supported release handles cold startup,
+safe recovery of unused worker assignments, and rejected dispatches.
+[kagent scheduler tracking](https://github.com/kagent-dev/kagent/issues/3727)

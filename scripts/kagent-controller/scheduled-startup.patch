@@ -1,5 +1,5 @@
 diff --git a/go/core/internal/controller/scheduledrun/controller.go b/go/core/internal/controller/scheduledrun/controller.go
-index c73aa954e9cf7d10656d7da29626369f66768e89..1c3d02ff43a66cf1cbb7ec25c0804c45bbd447a0 100644
+index c73aa954e9cf7d10656d7da29626369f66768e89..9f2e75171c34c0febdecc0f588b74c2fb4daaabd 100644
 --- a/go/core/internal/controller/scheduledrun/controller.go
 +++ b/go/core/internal/controller/scheduledrun/controller.go
 @@ -17,0 +18 @@ import (
@@ -14,32 +14,30 @@ index c73aa954e9cf7d10656d7da29626369f66768e89..1c3d02ff43a66cf1cbb7ec25c0804c45
 +				timeout = scheduling.DispatchAttemptTimeout
 +			}
 +			attemptCtx, cancel := context.WithTimeout(ctx, timeout)
-@@ -104 +109,8 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+@@ -104 +109,3 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
 -	expired := !time.Now().Before(execution.GetDeadline().AsTime())
 +	now := time.Now()
 +	deadline := execution.GetDeadline().AsTime()
 +	expired := !now.Before(deadline)
-+	var startupDeadline time.Time
-+	if created := execution.GetCreatedAt(); created != nil {
-+		startupDeadline = created.AsTime().Add(scheduling.StartupTimeout)
-+	}
-+	startupExpired := !startupDeadline.IsZero() && !now.Before(startupDeadline)
-@@ -109,0 +122,4 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
-+		if startupExpired {
-+			finishExecution(execution, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_FAILED, startupDeadlineReason)
-+			return nil
-+		}
-@@ -124 +140,5 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+@@ -124 +131,5 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
 -		finishExecution(execution, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_FAILED, "Session was deleted")
 +		reason := execution.GetFailureReason()
 +		if reason == "" {
 +			reason = "Session was deleted"
 +		}
 +		finishExecution(execution, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_FAILED, reason)
-@@ -138,0 +159 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+@@ -138,0 +150 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
 +		execution.FailureReason = ""
-@@ -143,0 +165,14 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
-+	if execution.GetTaskId() == "" && (startupExpired || execution.GetFailureReason() == startupRefusedReason) {
+@@ -143,0 +156,22 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
++	// The session is reserved when preparation begins, independently of time
++	// in the execution queue. Only a claimed send can enter startup recovery.
++	started := session.GetCreatedAt()
++	if started == nil {
++		started = execution.GetCreatedAt()
++	}
++	dispatchClaimed := execution.GetState() == apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_RUNNING
++	startupExpired := started != nil && !now.Before(started.AsTime().Add(scheduling.StartupTimeout))
++	if dispatchClaimed && execution.GetTaskId() == "" && (startupExpired || execution.GetFailureReason() == startupRefusedReason) {
 +		reason := execution.GetFailureReason()
 +		if reason == "" {
 +			reason = startupDeadlineReason
@@ -53,17 +51,20 @@ index c73aa954e9cf7d10656d7da29626369f66768e89..1c3d02ff43a66cf1cbb7ec25c0804c45
 +		finishExecution(execution, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_FAILED, reason)
 +		return nil
 +	}
-@@ -165 +200,4 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+@@ -158 +192 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+-	if execution.GetTaskId() != "" || execution.GetState() == apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_RUNNING {
++	if execution.GetTaskId() != "" || dispatchClaimed {
+@@ -162 +196 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+-		// or the deadline expires; sending again could duplicate native work.
++		// or startup recovery is due; sending again could duplicate native work.
+@@ -165 +199 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
 -	dispatchCtx, cancel := context.WithDeadline(ctx, execution.GetDeadline().AsTime())
-+	if !startupDeadline.IsZero() && startupDeadline.Before(deadline) {
-+		deadline = startupDeadline
-+	}
 +	dispatchCtx, cancel := context.WithDeadline(ctx, deadline)
-@@ -193,0 +232,3 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+@@ -193,0 +228,3 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
 +		if execution.GetTaskId() == "" && errors.Is(err, sessionsvc.ErrSendNotAccepted) {
 +			execution.FailureReason = startupRefusedReason
 +		}
-@@ -198,0 +240,5 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
+@@ -198,0 +236,5 @@ func (c *Controller) reconcile(ctx context.Context, leased database.LeasedSchedu
 +const (
 +	startupRefusedReason  = "Scheduled input was not accepted"
 +	startupDeadlineReason = "Scheduled startup expired before accepting a task"
@@ -71,10 +72,10 @@ index c73aa954e9cf7d10656d7da29626369f66768e89..1c3d02ff43a66cf1cbb7ec25c0804c45
 +
 diff --git a/go/core/internal/controller/scheduledrun/startup_test.go b/go/core/internal/controller/scheduledrun/startup_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..0f9ed80bdac071e977650a5cbbbf96fd80bde9c1
+index 0000000000000000000000000000000000000000..1efe70de91bb0ff360daabfbd7ae9fe50b305e89
 --- /dev/null
 +++ b/go/core/internal/controller/scheduledrun/startup_test.go
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,196 @@
 +package scheduledrun
 +
 +import (
@@ -151,6 +152,7 @@ index 0000000000000000000000000000000000000000..0f9ed80bdac071e977650a5cbbbf96fd
 +		scopedControllerStore: scopedControllerStore{session: &apiv1.Session{
 +			Id: "session", State: apiv1.RuntimeState_RUNTIME_STATE_READY,
 +			Operation: apiv1.RuntimeOperation_RUNTIME_OPERATION_NONE,
++			CreatedAt: timestamppb.Now(),
 +		}},
 +		execution: &apiv1.ScheduledRunExecution{
 +			Id: "execution", Creator: "owner", SessionId: "session", Prompt: "maintenance",
@@ -179,6 +181,35 @@ index 0000000000000000000000000000000000000000..0f9ed80bdac071e977650a5cbbbf96fd
 +		require.Zero(t, workflow.calls)
 +		require.Equal(t, 1, gateway.sends)
 +	})
++}
++
++func TestScheduledPendingExecutionStillDispatchesAfterQueueDelay(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		store, gateway, workflow := newStartupTest()
++		store.execution.CreatedAt = timestamppb.New(time.Now().Add(-time.Hour))
++		store.session.CreatedAt = timestamppb.New(time.Now().Add(-time.Hour))
++		gateway.delay = 19 * time.Second
++		c := NewController(store, workflow, gateway, time.Second)
++
++		require.NoError(t, c.tick(t.Context()))
++		require.Equal(t, "accepted-task", store.progress.TaskID)
++		require.Equal(t, 1, gateway.sends)
++		require.Zero(t, workflow.calls)
++	})
++}
++
++func TestScheduledQueueDelayDoesNotExpireNewlyReservedRuntime(t *testing.T) {
++	store, gateway, workflow := newStartupTest()
++	store.execution.CreatedAt = timestamppb.New(time.Now().Add(-time.Hour))
++	gateway.err = errors.New("response lost")
++	c := NewController(store, workflow, gateway, time.Second)
++	lease := database.LeasedScheduledRunExecution{Execution: store.execution}
++
++	require.ErrorIs(t, c.reconcile(t.Context(), lease), gateway.err)
++	require.NoError(t, c.reconcile(t.Context(), lease))
++	require.Equal(t, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_RUNNING, lease.Execution.GetState())
++	require.Equal(t, 1, gateway.sends)
++	require.Zero(t, workflow.calls)
 +}
 +
 +func TestScheduledRefusalReclaimsWorkerWithoutResending(t *testing.T) {
@@ -210,7 +241,7 @@ index 0000000000000000000000000000000000000000..0f9ed80bdac071e977650a5cbbbf96fd
 +	require.Zero(t, workflow.calls)
 +	require.Equal(t, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_RUNNING, lease.Execution.GetState())
 +
-+	lease.Execution.CreatedAt = timestamppb.New(time.Now().Add(-5 * time.Minute))
++	store.session.CreatedAt = timestamppb.New(time.Now().Add(-5 * time.Minute))
 +	workflow.err = database.ErrConflict
 +	require.ErrorIs(t, c.reconcile(t.Context(), lease), database.ErrConflict)
 +	require.Equal(t, apiv1.ScheduledRunExecutionState_SCHEDULED_RUN_EXECUTION_STATE_RUNNING, lease.Execution.GetState())
@@ -227,7 +258,7 @@ index 0000000000000000000000000000000000000000..0f9ed80bdac071e977650a5cbbbf96fd
 +	lease := database.LeasedScheduledRunExecution{Execution: store.execution}
 +	require.ErrorIs(t, c.reconcile(t.Context(), lease), gateway.err)
 +
-+	lease.Execution.CreatedAt = timestamppb.New(time.Now().Add(-5 * time.Minute))
++	store.session.CreatedAt = timestamppb.New(time.Now().Add(-5 * time.Minute))
 +	gateway.listTasks = func(*a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
 +		return &a2a.ListTasksResponse{Tasks: []*a2a.Task{{
 +			ID:      "recovered-task",
@@ -242,7 +273,7 @@ index 0000000000000000000000000000000000000000..0f9ed80bdac071e977650a5cbbbf96fd
 +	require.Equal(t, 1, gateway.sends)
 +}
 diff --git a/go/core/internal/database/scheduled_runs.go b/go/core/internal/database/scheduled_runs.go
-index 6f372545e2be9e2e8622e1740bc69a86886626d8..3768da67e2fd542e87572d647e27eed3eebef952 100644
+index 6f372545e2be9e2e8622e1740bc69a86886626d8..86c83c3a260aabaed09bc5ba7cf4996b93ff8aa8 100644
 --- a/go/core/internal/database/scheduled_runs.go
 +++ b/go/core/internal/database/scheduled_runs.go
 @@ -19,0 +20 @@ import (
@@ -254,12 +285,15 @@ index 6f372545e2be9e2e8622e1740bc69a86886626d8..3768da67e2fd542e87572d647e27eed3
 @@ -521 +523 @@ func (c *Client) LeaseScheduledRunExecutions(ctx context.Context, limit int) ([]
 -	`, pgx.RowToStructByName[scheduledRunExecutionRow], int32(limit), token)
 +	`, pgx.RowToStructByName[scheduledRunExecutionRow], int32(limit), token, int32(scheduling.DispatchLease/time.Second))
+@@ -542 +544 @@ func (c *Client) LeaseScheduledRunExecutions(ctx context.Context, limit int) ([]
+-// dispatch. A crash before sending therefore waits for the execution deadline.
++// dispatch. They may reclaim an unstarted runtime after the startup window.
 diff --git a/go/core/internal/database/scheduled_startup_test.go b/go/core/internal/database/scheduled_startup_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..964ae80ff1e99bb9f4489babf909db3cf027a129
+index 0000000000000000000000000000000000000000..ef9ce900a791ef25d3d3eda6b75b12c04477fa91
 --- /dev/null
 +++ b/go/core/internal/database/scheduled_startup_test.go
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,96 @@
 +package database
 +
 +import (
@@ -295,6 +329,8 @@ index 0000000000000000000000000000000000000000..964ae80ff1e99bb9f4489babf909db3c
 +		require.True(t, claimed)
 +		_, err = client.FinishSessionOperation(ctx, linked.SessionId, create.ID, executor, "actor.team", uuid.NewString(), "")
 +		require.NoError(t, err)
++		_, err = client.BeginUnstartedSessionDeletion(ctx, linked.SessionId, leases[0].Lease)
++		require.ErrorIs(t, err, ErrConflict, "a pending execution is still eligible for its first dispatch")
 +		require.NoError(t, client.ClaimScheduledRunDispatch(ctx, leases[0].Lease))
 +		return linked.SessionId, leases[0].Lease
 +	}
@@ -355,7 +391,7 @@ index 0000000000000000000000000000000000000000..964ae80ff1e99bb9f4489babf909db3c
 +	require.Greater(t, seconds, float64(80))
 +}
 diff --git a/go/core/internal/database/session_deletion.go b/go/core/internal/database/session_deletion.go
-index 7b7b22dd467b2c622cac102e7661f81729c13628..59bc3adea24fc7509cc329f5c860e1ad3d1e8c3f 100644
+index 7b7b22dd467b2c622cac102e7661f81729c13628..e96c87919abdf669deb6d014017df0a725d609f2 100644
 --- a/go/core/internal/database/session_deletion.go
 +++ b/go/core/internal/database/session_deletion.go
 @@ -4,0 +5 @@ import (
@@ -372,7 +408,7 @@ index 7b7b22dd467b2c622cac102e7661f81729c13628..59bc3adea24fc7509cc329f5c860e1ad
 +			SELECT true FROM scheduled_run_execution
 +			WHERE id = $1 AND session_id = $2 AND lease_token = $3
 +			    AND next_attempt_at > clock_timestamp() AND task_id IS NULL
-+			    AND state IN ('SCHEDULED_RUN_EXECUTION_STATE_PENDING', 'SCHEDULED_RUN_EXECUTION_STATE_RUNNING')
++			    AND state = 'SCHEDULED_RUN_EXECUTION_STATE_RUNNING'
 +			FOR UPDATE
 +		`, pgx.RowTo[bool], lease.ExecutionID, sessionID, lease.Token)
 +		if err != nil {
