@@ -94,7 +94,7 @@ func (challengeAuth) Start() (proto string, toServer []byte, err error) {
 	return "CHALLENGE", nil, nil
 }
 
-func (challengeAuth) Next(fromServer []byte) (toServer []byte, err error) {
+func (challengeAuth) Next(_ []byte) (toServer []byte, err error) {
 	return []byte("response"), nil
 }
 
@@ -193,7 +193,7 @@ func (a largeInitialRespAuth) Start() (proto string, toServer []byte, err error)
 	return a.mech, a.resp, nil
 }
 
-func (a largeInitialRespAuth) Next(fromServer []byte) (toServer []byte, err error) {
+func (a largeInitialRespAuth) Next(_ []byte) (toServer []byte, err error) {
 	return []byte("response"), nil
 }
 
