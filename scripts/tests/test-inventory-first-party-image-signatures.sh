@@ -304,13 +304,14 @@ expected_globs="$(printf '%s\n' \
   'ghcr.io/devantler-tech/platform-dex' \
   'ghcr.io/devantler-tech/platform-longhorn-instance-manager' \
   'ghcr.io/devantler-tech/platform-longhorn-manager' \
+  'ghcr.io/devantler-tech/platform-longhorn-fio' \
   'ghcr.io/devantler-tech/platform-mail-submission' \
   'ghcr.io/devantler-tech/*')"
 if [ "$real_globs" != "$expected_globs" ]; then
-  echo "FAIL  the real rules must retain all twenty exact ordered image routes"
+  echo "FAIL  the real rules must retain all exact ordered image routes"
   failures=$((failures + 1))
 else
-  echo "ok    real rules: twenty ordered rules, dedicated publishers before catch-all"
+  echo "ok    real rules: dedicated publishers ordered before catch-all"
 fi
 
 # The real file must also satisfy the completeness gate the fixtures exercise.
