@@ -22,19 +22,8 @@ func verifySeedBackupInputs(location object, schedules []object, now time.Time) 
 			return benchmarkResource{}, "", errSeedEvidence
 		}
 		seenNames[name], seenUIDs[uid] = true, true
-		excluded, ok := value(schedule, "spec", "template", "excludedNamespaces").([]any)
-		if !ok {
-			return benchmarkResource{}, "", errSeedEvidence
-		}
-		isolated := false
-		for _, namespace := range excluded {
-			name, ok := namespace.(string)
-			if !ok || name == "" {
-				return benchmarkResource{}, "", errSeedEvidence
-			}
-			isolated = isolated || name == benchmarkNamespace
-		}
-		if !isolated {
+		template, ok := value(schedule, "spec", "template").(object)
+		if !ok || !seedScheduleIsolated(template) {
 			return benchmarkResource{}, "", errSeedEvidence
 		}
 		daily = daily || name == "velero-daily-full"
@@ -47,6 +36,39 @@ func verifySeedBackupInputs(location object, schedules []object, now time.Time) 
 		return benchmarkResource{}, "", err
 	}
 	return benchmarkIdentity(location), digest, nil
+}
+
+func seedScheduleIsolated(template object) bool {
+	if raw, present := template["excludedNamespaces"]; present {
+		excluded, ok := raw.([]any)
+		if !ok {
+			return false
+		}
+		explicit := false
+		for _, namespace := range excluded {
+			name, ok := namespace.(string)
+			if !ok || name == "" {
+				return false
+			}
+			explicit = explicit || name == benchmarkNamespace
+		}
+		if explicit {
+			return true
+		}
+	}
+	// Without an explicit exclusion, prove the schedule selects only other
+	// namespaces and cannot pick up the canary's cluster-scoped resources.
+	included, ok := template["includedNamespaces"].([]any)
+	if !ok || len(included) == 0 || template["includeClusterResources"] != false || template["resourcePolicy"] != nil {
+		return false
+	}
+	for _, namespace := range included {
+		name, ok := namespace.(string)
+		if !ok || len(name) > 63 || !kubeNamespace.MatchString(name) || name == benchmarkNamespace {
+			return false
+		}
+	}
+	return true
 }
 
 func seedVeleroIdentity(o object) bool {

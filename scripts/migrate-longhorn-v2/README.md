@@ -366,8 +366,9 @@ already available four-GiB scratch budget. The source Pod's memory request must
 fit on the first permanent worker before scratch creation. The procedure changes
 no reservation.
 
-The fixed `longhorn-benchmark` workspace must be empty. Every Velero schedule
-must exclude it; the daily schedule declares that exclusion. The source Pod and
+The fixed `longhorn-benchmark` workspace must be empty. The daily Velero schedule
+explicitly excludes it. Other schedules may instead select only named, unrelated
+namespaces with cluster-scoped resources disabled and no resource policy. The source Pod and
 claim opt in only their `data` filesystem volume for this run's separately
 selected Backup. The procedure writes and verifies a 128-MiB payload, sentinel
 and checksum. It refuses restored, cloned, encrypted or differently bound

@@ -72,3 +72,33 @@ func TestNativeSeedRequiresTheExistingWritableStoreAndScheduleIsolation(t *testi
 		})
 	}
 }
+
+func TestNativeSeedAcceptsOtherNamespaceSchedulesOnlyWithProvenIsolation(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		template object
+		isolated bool
+	}{
+		{"OpenBao-only schedule", object{"includedNamespaces": []any{"openbao"}, "includeClusterResources": false}, true},
+		{"canary included", object{"includedNamespaces": []any{"openbao", benchmarkNamespace}, "includeClusterResources": false}, false},
+		{"all namespaces", object{"includedNamespaces": []any{"*"}, "includeClusterResources": false}, false},
+		{"namespace pattern", object{"includedNamespaces": []any{"longhorn-*"}, "includeClusterResources": false}, false},
+		{"empty include list", object{"includedNamespaces": []any{}, "includeClusterResources": false}, false},
+		{"malformed include list", object{"includedNamespaces": []any{"openbao", 1}, "includeClusterResources": false}, false},
+		{"cluster scope unspecified", object{"includedNamespaces": []any{"openbao"}}, false},
+		{"cluster resources included", object{"includedNamespaces": []any{"openbao"}, "includeClusterResources": true}, false},
+		{"additional resource policy", object{"includedNamespaces": []any{"openbao"}, "includeClusterResources": false,
+			"resourcePolicy": object{"kind": "configmap", "name": "namespace-filter"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			location, schedules, now := seedBackupInputFixture()
+			schedules = append(schedules, object{"apiVersion": "velero.io/v1", "kind": "Schedule",
+				"metadata": object{"name": "openbao-recovery-keys", "namespace": "velero", "uid": "keys-uid", "resourceVersion": "22"},
+				"spec":     object{"template": tc.template}})
+			_, _, err := verifySeedBackupInputs(location, schedules, now)
+			if (err == nil) != tc.isolated {
+				t.Fatalf("schedule isolation = %t, want %t: %v", err == nil, tc.isolated, err)
+			}
+		})
+	}
+}
