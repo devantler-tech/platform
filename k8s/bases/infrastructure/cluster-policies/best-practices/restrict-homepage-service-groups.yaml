@@ -45,6 +45,8 @@
 #   2. once that is live, move the routes, and only then drop the old group.
 # Doing both in one change denies the route's dry-run and fails the whole Flux
 # layer — the merge-group deploy of platform#5383 was evicted for exactly this.
+# scripts/guard-homepage-route-groups.sh enforces this before merge: CI judges
+# every route in a change against the base branch's copy of this list too.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -112,6 +114,7 @@ spec:
           'Data',
           'Artificial Intelligence',
           'Business & Clients',
+          'Marketing',
           'Products',
           'Personal',
           'Email'
@@ -128,7 +131,7 @@ spec:
         Observability, Storage, Analytics, Secrets Management, Governance,
         Diagnostics, Device Management, Infrastructure as Code, Cloud,
         Network, Home, Finance, Data, Artificial Intelligence,
-        Business & Clients, Products, Personal, or Email.
+        Business & Clients, Marketing, Products, Personal, or Email.
         An undeclared group still renders,
         but sorts below every declared group with a generic icon. Bookmark
         group names are deliberately not accepted here.

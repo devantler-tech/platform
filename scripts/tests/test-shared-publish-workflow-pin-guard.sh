@@ -786,6 +786,8 @@ readonly GENERIC_TALOS='talos/cluster/verify-first-party-images.yaml'
 readonly GENERIC_KYVERNO='k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
 readonly GENERIC_TENANT='k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
 readonly NOT_GENERIC='only the maintained publisher'
+# The Tenant graph names no shared publisher at all (ADR 0019).
+readonly NOT_TENANT='may name no shared publisher'
 
 generic_case accept "a canonical-only node-pull rule naming two reviewed commits" "${GENERIC_TALOS}" \
   "      subjectRegex: ${APP_CANONICAL_ONLY}(${CONCRETE_SHA}|${CONCRETE_SHA_2})\$" talos-pair
@@ -799,7 +801,7 @@ generic_case reject "the former two-family admission rule with the deleted publi
   "      subjectRegExp: ^https://github\\.com/devantler-tech/(actions/\\.github/workflows/publish-app\\.yaml@${SHA_PATTERN}|\\.github/\\.github/workflows/publish-app\\.yaml@(${CONCRETE_SHA}|${CONCRETE_SHA_2}))\$" \
   kyverno-two-family "${NOT_GENERIC}"
 generic_case reject "a plain subject naming the deleted publisher in the tenant graph" "${GENERIC_TENANT}" \
-  "        subject: ${Q}${APP_LEGACY_ONLY}${CONCRETE_SHA}\$${Q}" tenant-legacy "${NOT_GENERIC}"
+  "        subject: ${Q}${APP_LEGACY_ONLY}${CONCRETE_SHA}\$${Q}" tenant-legacy "${NOT_TENANT}"
 generic_case reject "a canonical-only generic rule that admits every maintained commit" "${GENERIC_TALOS}" \
   "      subjectRegex: ${APP_CANONICAL_ONLY}${SHA_PATTERN}\$" talos-canonical-pattern 'does not pin one concrete 40-hex commit'
 generic_case reject "a canonical-only generic rule on a branch" "${GENERIC_KYVERNO}" \
@@ -809,9 +811,9 @@ generic_case reject "a canonical-only generic rule with a second identity append
 
 # A PRODUCT'S OWN RELEASE WORKFLOW ON A RELEASE TAG (#6265). One further alternative, written
 # last in the same group, with a tail compared literally and a repository segment fixed per
-# verifier: the first-party segment in the image verifiers, the constructor's marker in the
-# Tenant source (exercised through the real graph by test-tenant-source-constructors.sh), and
-# one literal repository in a consumer's matcher.
+# verifier: the first-party segment in the image verifiers and one literal repository in a
+# consumer's matcher. The Tenant source names only the tenant's own repository, built in CEL
+# (exercised through the real graph by test-tenant-source-constructors.sh).
 readonly OWN_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 readonly OWN_BRANCH_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/heads/main'
 readonly OWN_ANY_PATH_TAIL='/\.github/workflows/.+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
@@ -835,7 +837,7 @@ generic_case reject "a first-party release whose tag may carry a suffix" "${GENE
 generic_case reject "the Tenant marker in an image verifier" "${GENERIC_TALOS}" \
   "      subjectRegex: ${APP_CANONICAL_GROUP}${CONCRETE_SHA}|<tenant>${OWN_TAIL})\$" talos-own-marker "${NOT_GENERIC}"
 generic_case reject "a first-party release in the Tenant graph's plain subject" "${GENERIC_TENANT}" \
-  "        subject: ${Q}${APP_CANONICAL_GROUP}${CONCRETE_SHA}|${FIRST_PARTY}${OWN_TAIL})\$${Q}" tenant-own-plain "${NOT_GENERIC}"
+  "        subject: ${Q}${APP_CANONICAL_GROUP}${CONCRETE_SHA}|${FIRST_PARTY}${OWN_TAIL})\$${Q}" tenant-own-plain "${NOT_TENANT}"
 # Written first, the shared publisher is no longer where the guard selects it, so the floor
 # refuses the file outright.
 generic_case reject "a first-party release written before the shared publisher" "${GENERIC_KYVERNO}" \
@@ -865,6 +867,49 @@ assert_line_rejected "a consumer own release naming two repositories" "$(own_lin
   family-own-two 'does not pin one concrete 40-hex commit'
 assert_line_rejected "a consumer own release on a branch" "$(own_line wedding-app "${OWN_BRANCH_TAIL}")" \
   family-own-branch 'where exactly two are expected'
+
+# THE .github CONSUMER'S OWN RELEASE (devantler-tech/.github#926). `.github` hosts the shared
+# reusable workflows, so it gets no `[^/]+` alternative: only its cd.yaml on a release tag,
+# and only in the github-config source.
+readonly GITHUB_CONFIG_PATH='k8s/bases/apps/github-config/oci-repository.yaml'
+readonly GITHUB_OWN='\.github/\.github/workflows/cd\.yaml@'"${OWN_TAIL#*@}"
+# github_config_line <repository-and-tail> — the github-config two-family subject followed by
+# one own-release alternative.
+github_config_line() {
+  printf '        subject: %s%sactions/\\.github/workflows/publish-manifests\\.yaml@%s|\\.github/\\.github/workflows/publish-manifests\\.yaml@%s|%s)$%s' \
+    "${Q}" "${FAMILY_OPEN}" "${CONCRETE_SHA}" "${CONCRETE_SHA_2}" "$1" "${Q}"
+}
+# github_config_case <accept|reject> <label> <line> <slug> [stderr-pattern] — the line in the
+# github-config source, listed where the real matcher list names it.
+github_config_case() {
+  local expect="$1" label="$2" line="$3" dir="${work_dir}/github-config-$4" pattern="${5:-}"
+  build_tree_line "${dir}" "${line}"
+  mkdir -p "${dir}/$(dirname "${GITHUB_CONFIG_PATH}")"
+  mv "${dir}/k8s/subject-1.yaml" "${dir}/${GITHUB_CONFIG_PATH}"
+  sed -i.bak "s|k8s/subject-1.yaml|${GITHUB_CONFIG_PATH}|" "${dir}/scripts/shared-publish-workflow-matchers.tsv"
+  rm -f "${dir}/scripts/shared-publish-workflow-matchers.tsv.bak"
+  if [ "${expect}" = accept ]; then
+    run_tree "${dir}" || fail "guard rejected ${label}: $(head -1 "${dir}/stderr")"
+    ok "accepts ${label}"
+    return
+  fi
+  if run_tree "${dir}"; then
+    fail "guard ACCEPTED ${label}"
+  fi
+  grep -q -- "${pattern}" "${dir}/stderr" ||
+    fail "guard rejected ${label} but not for the expected reason: $(head -1 "${dir}/stderr")"
+  ok "rejects ${label}"
+}
+github_config_case accept "the github-config source naming .github's cd.yaml on a release tag" \
+  "$(github_config_line "${GITHUB_OWN}")" own
+github_config_case reject "the github-config source naming any .github workflow on a release tag" \
+  "$(github_config_line "\\.github${OWN_TAIL}")" own-any 'does not name one literal repository'
+github_config_case reject "the github-config source naming .github's cd.yaml on a branch" \
+  "$(github_config_line '\.github/\.github/workflows/cd\.yaml@refs/heads/main')" own-branch 'where exactly two are expected'
+github_config_case reject "the github-config source naming .github's cd.yaml twice" \
+  "$(github_config_line "${GITHUB_OWN}|${GITHUB_OWN}")" own-twice 'where exactly two are expected'
+assert_line_rejected "another source naming .github's cd.yaml on a release tag" \
+  "$(own_line "${GITHUB_OWN%%/*}" "/${GITHUB_OWN#*/}")" family-own-github-elsewhere 'may accept the .github release workflow'
 
 # Discovery is independent of the subject pattern, and it has to see the canonical family
 # too: a canonical reference under a key the guard does not validate is reported, not
@@ -962,7 +1007,8 @@ fi
 readonly SHARED_TAG_RE='workflows/publish-(app|manifests)\\?\.yaml@[^'\''"]*refs/tags'
 : >"${work_dir}/leftover"
 while IFS= read -r hit; do
-  if [[ "${hit//"${OWN_TAIL}"/}" =~ ${SHARED_TAG_RE} ]]; then
+  hit="${hit//"${OWN_TAIL}"/}"
+  if [[ "${hit//"|${GITHUB_OWN}"/}" =~ ${SHARED_TAG_RE} ]]; then
     printf '%s\n' "${hit}" >>"${work_dir}/leftover"
   fi
 done < <(grep -rnE "${SHARED_TAG_RE}" --include='*.yaml' "${root_dir}" 2>/dev/null || true)
@@ -1003,6 +1049,10 @@ probe="\\.github/\\.github/workflows/publish-app\\.yaml@(${CONCRETE_SHA}|refs/ta
 [[ "${probe//"${OWN_TAIL}"/}" =~ ${SHARED_TAG_RE} ]] ||
   fail "removing the own-release tail hid a shared-publisher tag ref"
 ok "a shared-publisher tag ref beside an own-release alternative is still found"
+probe="\\.github/\\.github/workflows/publish-manifests\\.yaml@(${CONCRETE_SHA}|refs/tags/v1)|${GITHUB_OWN})\$"
+[[ "${probe//"|${GITHUB_OWN}"/}" =~ ${SHARED_TAG_RE} ]] ||
+  fail "removing the .github own-release alternative hid a shared-publisher tag ref"
+ok "a shared-publisher tag ref beside the .github own-release alternative is still found"
 
 # --- Wiring: the guard is actually reached, in all three workflows -----------
 #

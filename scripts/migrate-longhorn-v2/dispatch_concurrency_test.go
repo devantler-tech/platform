@@ -62,21 +62,48 @@ func validateMigrationDispatchDependencies(workflow object) error {
 
 func validateMigrationDispatchBoundarySteps(workflow object) error {
 	tests, _ := value(workflow, "jobs", "tests", "steps").([]any)
-	tested := false
+	required := map[string]bool{
+		"bash scripts/tests/test-longhorn-runtime-inventory-source.sh":                                                                                             false,
+		"go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory": false,
+	}
 	for _, raw := range tests {
 		step := raw.(object)
-		if text(step, "run") == "go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory" {
+		command := text(step, "run")
+		if _, safetyTest := required[command]; safetyTest {
 			if !migrationDispatchMustRun(step) {
 				return errors.New("boundary tests can be skipped or tolerate failure")
 			}
-			tested = true
+			required[command] = true
 		}
 	}
-	if !tested {
-		return errors.New("the complete boundary tests must still finish before the operation")
+	for command, tested := range required {
+		if !tested {
+			return errors.New("required pre-operation test is missing: " + command)
+		}
 	}
 	return nil
 }
+
+func TestMigrationDispatchRequiresEveryBoundaryPackage(t *testing.T) {
+	for _, pkg := range []string{"./scripts/migrate-longhorn-v2", "./internal/longhornmigration", "./internal/longhorninventory", "./internal/namespaceinventory"} {
+		workflow := migrationDispatchWorkflow(t)
+		step := migrationDispatchStep(t, valueObject(workflow, "jobs", "tests"), "Test complete observations and interrupted recovery")
+		step["run"] = strings.ReplaceAll(text(step, "run"), " "+pkg, "")
+		if validateMigrationDispatchBoundarySteps(workflow) == nil {
+			t.Fatal("an omitted boundary package was admitted:", pkg)
+		}
+	}
+}
+
+const migrationDispatchFreshness = `set -euo pipefail
+if [[ "${LONGHORN_V2_OPERATION}" == inventory-v1-runtime ]]; then
+  source_sha="$(bash .github/scripts/select-longhorn-runtime-inventory-source.sh)"
+  ./scripts/verify-prod-recovery-source.sh "${source_sha}"
+  printf 'sha=%s\n' "${source_sha}" >>"${GITHUB_OUTPUT}"
+  printf 'LONGHORN_RUNTIME_INVENTORY_SOURCE=BOUND sha=%s\n' "${source_sha}"
+else
+  ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+fi`
 
 func validateMigrationDispatchSourceSteps(workflow object) error {
 	steps, _ := value(workflow, "jobs", "prepare", "steps").([]any)
@@ -90,11 +117,19 @@ func validateMigrationDispatchSourceSteps(workflow object) error {
 				return errors.New("authorization or source gate can be skipped or tolerate failure")
 			}
 		}
-		if text(step, "name") == "Require current main" && strings.TrimSpace(text(step, "run")) != `./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"` {
-			return errors.New("serialization must not replace source freshness")
-		}
-		if text(step, "name") == "Checkout reviewed source" && (text(step, "with", "ref") != "${{ github.sha }}" || value(step, "with", "persist-credentials") != false) {
-			return errors.New("the dispatch must keep its original reviewed source")
+		switch text(step, "name") {
+		case "Require current main":
+			if strings.TrimSpace(text(step, "run")) != migrationDispatchFreshness || text(step, "id") != "recovery-source" || text(step, "env", "GH_TOKEN") != "${{ github.token }}" {
+				return errors.New("only the read-only inventory may rebind tested source before the main freshness gate")
+			}
+		case "Checkout reviewed source":
+			if text(step, "with", "ref") != "${{ github.sha }}" || value(step, "with", "persist-credentials") != false {
+				return errors.New("the dispatch must check out its original reviewed source")
+			}
+		case "Run the confirmed migration preparation":
+			if text(step, "env", "LONGHORN_RUNTIME_INVENTORY_SOURCE") != "${{ steps.recovery-source.outputs.sha }}" {
+				return errors.New("the inventory must read the source selected by the freshness gate")
+			}
 		}
 	}
 	credentials := positions["Restore production credentials in memory"]
@@ -102,6 +137,9 @@ func validateMigrationDispatchSourceSteps(workflow object) error {
 		if positions[gate] == 0 || credentials == 0 || positions[gate] >= credentials {
 			return errors.New("credentials preceded the original authorization or freshness gate: " + gate)
 		}
+	}
+	if positions["Run the confirmed migration preparation"] <= credentials {
+		return errors.New("the confirmed operation must follow credential setup")
 	}
 	return nil
 }
@@ -139,6 +177,7 @@ func TestMigrationDispatchRejectsSkippedOrFailureTolerantSafetyChecks(t *testing
 	}
 	for _, scope := range []struct{ job, step string }{
 		{"tests", ""}, {"prepare", ""},
+		{"tests", "Test queued read-only source selection"},
 		{"tests", "Test complete observations and interrupted recovery"},
 		{"prepare", "Require confirmed first attempt on main"},
 		{"prepare", "Checkout reviewed source"},
@@ -166,6 +205,22 @@ func TestMigrationDispatchRejectsSkippedOrFailureTolerantSafetyChecks(t *testing
 				}
 			})
 		}
+	}
+}
+
+func TestMigrationDispatchRejectsAnUnboundRuntimeInventory(t *testing.T) {
+	workflow := migrationDispatchWorkflow(t)
+	prepare := valueObject(workflow, "jobs", "prepare")
+	gate := migrationDispatchStep(t, prepare, "Require current main")
+	gate["run"] = strings.Replace(migrationDispatchFreshness, "inventory-v1-runtime", "retain-provider-source", 1)
+	if validateMigrationDispatchSourceSteps(workflow) == nil {
+		t.Fatal("a storage mutation was allowed to rebind its dispatch source")
+	}
+	gate["run"] = migrationDispatchFreshness
+	run := migrationDispatchStep(t, prepare, "Run the confirmed migration preparation")
+	valueObject(run, "env")["LONGHORN_RUNTIME_INVENTORY_SOURCE"] = "${{ github.sha }}"
+	if validateMigrationDispatchSourceSteps(workflow) == nil {
+		t.Fatal("the reader was allowed to ignore the verified source")
 	}
 }
 

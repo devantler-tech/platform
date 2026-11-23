@@ -1,0 +1,26 @@
+---
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 40GiB
+  maxSize: 44GiB
+  grow: false
+---
+apiVersion: v1alpha1
+kind: RawVolumeConfig
+name: longhorn-stage
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 144GiB
+  maxSize: 144GiB
+  grow: false
+encryption:
+  provider: luks2
+  keys:
+    - slot: 0
+      nodeID: {}
+      lockToState: true

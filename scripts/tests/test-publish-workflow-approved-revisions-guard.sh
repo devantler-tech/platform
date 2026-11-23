@@ -29,7 +29,6 @@ readonly SHA_D='4444444444444444444444444444444444444444'
 readonly SHA_E='5555555555555555555555555555555555555555' # release candidate (#3960)
 readonly DIGEST='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 readonly GENERIC_KYVERNO='k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
-readonly GENERIC_RGD='k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
 readonly GENERIC_TALOS='talos/cluster/verify-first-party-images.yaml'
 
 failures=0
@@ -150,7 +149,7 @@ EOF
 # write_generics <root> <ref> — the three generic subject files, on the given ref form.
 write_generics() {
   local root="$1" ref="$2"
-  mkdir -p "$root/$(dirname "$GENERIC_KYVERNO")" "$root/$(dirname "$GENERIC_RGD")" "$root/$(dirname "$GENERIC_TALOS")"
+  mkdir -p "$root/$(dirname "$GENERIC_KYVERNO")" "$root/$(dirname "$GENERIC_TALOS")"
   cat >"$root/$GENERIC_KYVERNO" <<EOF
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
@@ -164,26 +163,6 @@ spec:
             - entries:
                 - keyless:
                     subjectRegExp: ^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@$ref\$
-EOF
-  cat >"$root/$GENERIC_RGD" <<EOF
-apiVersion: kro.run/v1alpha1
-kind: ResourceGraphDefinition
-metadata:
-  name: tenant
-spec:
-  schema:
-    apiVersion: v1alpha1
-    kind: Tenant
-  resources:
-    - id: oci
-      template:
-        apiVersion: source.toolkit.fluxcd.io/v1
-        kind: OCIRepository
-        spec:
-          verify:
-            matchOIDCIdentity:
-              - issuer: x
-                subject: $(subject_for publish-app "$ref")
 EOF
   cat >"$root/$GENERIC_TALOS" <<EOF
 apiVersion: v1alpha1

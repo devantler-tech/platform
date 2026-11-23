@@ -6,9 +6,12 @@ name: Prepare Longhorn V2 Migration
     branches: [main]
     paths:
       - .github/workflows/prepare-longhorn-v2-node.yaml
+      - .github/scripts/select-longhorn-runtime-inventory-source.sh
+      - scripts/tests/test-longhorn-runtime-inventory-source.sh
       - scripts/migrate-longhorn-v2/**
       - internal/longhornmigration/**
       - internal/longhorninventory/**
+      - internal/namespaceinventory/**
       - go.mod
       - go.sum
   merge_group:
@@ -26,6 +29,7 @@ name: Prepare Longhorn V2 Migration
             refresh-clients,
             benchmark-v1,
             benchmark-v2,
+            recover-unstarted-v1-benchmark,
             inventory-replicas,
             inventory-storage-root,
             inventory-storage-layout,
@@ -99,8 +103,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Test queued read-only source selection
+        run: bash scripts/tests/test-longhorn-runtime-inventory-source.sh
       - name: Test complete observations and interrupted recovery
-        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
+        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory
 
   prepare:
     name: Run the selected guarded migration step
@@ -124,7 +130,7 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]] || exit 1
           case "${LONGHORN_V2_OPERATION}" in
             inventory-v1-runtime)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == inventory-v1-runtime ]]
@@ -177,8 +183,13 @@ jobs:
             benchmark-v1|benchmark-v2)
               [[ "${LONGHORN_V2_CONFIRM}" == benchmark-longhorn-storage ]]
               ;;
+            recover-unstarted-v1-benchmark)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" == recover-unstarted-longhorn-v1-benchmark ]]
+              ;;
             register-temporary-v2-storage)
-              [[ "${LONGHORN_V2_CONFIRM}" == register-longhorn-v2-temporary-storage ]]
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" == register-longhorn-v2-temporary-storage ]]
               ;;
             *) exit 1 ;;
           esac
@@ -188,9 +199,20 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
       - name: Require current main
+        id: recovery-source
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+        run: |
+          set -euo pipefail
+          if [[ "${LONGHORN_V2_OPERATION}" == inventory-v1-runtime ]]; then
+            source_sha="$(bash .github/scripts/select-longhorn-runtime-inventory-source.sh)"
+            ./scripts/verify-prod-recovery-source.sh "${source_sha}"
+            printf 'sha=%s\n' "${source_sha}" >>"${GITHUB_OUTPUT}"
+            printf 'LONGHORN_RUNTIME_INVENTORY_SOURCE=BOUND sha=%s\n' "${source_sha}"
+          else
+            ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+          fi
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -228,8 +250,16 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh
       - name: Run the confirmed migration preparation
+        if: ${{ inputs.operation != 'benchmark-v1' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          LONGHORN_RUNTIME_INVENTORY_SOURCE: ${{ steps.recovery-source.outputs.sha }}
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Run the confirmed V1 benchmark
+        if: ${{ inputs.operation == 'benchmark-v1' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: go run ./scripts/migrate-longhorn-v2
       - name: Remove runner credentials
         if: ${{ always() }}

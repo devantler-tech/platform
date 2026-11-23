@@ -73,7 +73,7 @@
 #
 # THE GENERIC VERIFIERS NAME ONLY THE MAINTAINED PUBLISHER (#6264)
 # The legacy publisher repository has been deleted, so the generic verifiers (app image
-# admission, the Talos node-pull catch-all and the generic Tenant source) no longer accept
+# admission and the Talos node-pull catch-all) no longer accept
 # it at any commit. Each holds exactly ONE canonical-only subject:
 #
 #   ^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-<w>\.yaml@<commit>$
@@ -99,8 +99,8 @@
 # - A consumer's matcher names one literal, escaped repository, which must be that
 #   consumer's own (the approved-revisions guard's question). `actions` and `.github`, the
 #   two repositories that host or hosted the shared publishers, are refused there.
-# - The generic Tenant source names the constructor's `<tenant>` marker: the tenant's own
-#   repository, bound by the exact constructor.
+# - The generic Tenant source is not a shared-publisher verifier any more: it names only
+#   the tenant's own repository, built in CEL and proved by its exact constructor (ADR 0019).
 # - The image verifiers name the first-party segment FIRST_PARTY_RELEASE_REPOSITORY, which
 #   accepts any first-party repository's release workflow on a release tag EXCEPT
 #   `.github`: it hosts reusable workflows other repositories call, and a reusable workflow
@@ -128,7 +128,7 @@ readonly REPO_ROOT
 # Either publisher family, with an optional group opener (#4502), so a two-family subject
 # and a canonical-only one are FOUND and judged rather than left outside the scan. Kept
 # textually parallel to FAMILY_SUBJECT_PATTERN in publish-workflow-approved-revisions.lib.sh.
-readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*(.?\^?https://github\\?\.com/devantler-tech/[(]?(actions|\\?\.github)/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@|.?[$][{]schema[.]spec[.]source[.]publisherRevision)'
+readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*(.?\^?https://github\\?\.com/devantler-tech/[(]?(actions|\\?\.github)/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@)'
 
 # The workflow identity of either family with no key name, no organisation prefix and no
 # line structure, for the independent discovery below. The canonical half of a two-family
@@ -147,16 +147,14 @@ readonly CANONICAL_FAMILY='\.github/\.github/workflows/publish-'
 # The exact opening of a canonical-only subject, up to the workflow name (#6264).
 readonly CANONICAL_SUBJECT_PREFIX='^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-'
 # The generic verifiers, as grep reports them from the repository root. Only these may, and
-# must, hold the canonical-only form. The generic Tenant source's CEL constructor is read
-# through its constructor reader first, which binds its exact subject; any plain subject
-# written there instead is held to the canonical-only form like the other two.
+# must, hold the canonical-only form. The generic Tenant source is not one of them: it
+# trusts only the tenant's own release workflow (ADR 0019), read through its exact
+# constructor reader, so it names no shared publisher at all.
 readonly CANONICAL_ONLY_FILES=(
   './k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
-  './k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
   './talos/cluster/verify-first-party-images.yaml'
 )
-# The generic Tenant source's plain-subject path is in that list, but has no tenant name
-# to bind an own-release repository to, so it accepts none (#6265).
+# The generic Tenant graph, whose CEL subject constructor is proved by its reader instead.
 readonly GENERIC_TENANT_FILE='./k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
 
 # A product's own release workflow on a release tag (#6265): everything after the
@@ -164,10 +162,14 @@ readonly GENERIC_TENANT_FILE='./k8s/bases/infrastructure/resource-graph-definiti
 readonly OWN_RELEASE_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 # The repository segment each verifier may name. The image verifiers accept any
 # first-party repository that starts with a letter or digit: every name except one with a
-# leading dot such as `.github`, so `actions` matches too. The generic Tenant source names
-# the constructor's tenant marker.
+# leading dot such as `.github`, so `actions` matches too.
 readonly FIRST_PARTY_RELEASE_REPOSITORY='[A-Za-z0-9][A-Za-z0-9_.-]*'
-readonly TENANT_RELEASE_REPOSITORY='<tenant>'
+# The `.github` consumer's own release workflow (devantler-tech/.github#926): exactly its
+# cd.yaml on a release tag, accepted only in the github-config source. `.github` hosts the
+# shared reusable workflows, so the `[^/]+` form would accept a signature from any caller
+# of one of them; cd.yaml runs only on its own tag pushes and is never callable.
+readonly GITHUB_CONFIG_FILE='./k8s/bases/apps/github-config/oci-repository.yaml'
+readonly GITHUB_OWN_RELEASE='\.github/\.github/workflows/cd\.yaml@'"${OWN_RELEASE_TAIL#*@}"
 
 # THE FLOOR NAMES WHAT MUST BE FOUND (#4558).
 # An empty result from a filtered read is a claim about the FILTER. If a refactor moves
@@ -397,6 +399,15 @@ judge_family_subject() {
   case "$subject" in
     *"$OWN_RELEASE_TAIL"')$')
       subject="$(strip_consumer_own_release "$location" "$subject")" || return 1
+      ;;
+    *"|$GITHUB_OWN_RELEASE"')$')
+      # Only the github-config source may name `.github`'s own release workflow.
+      if [ "${location%:*}" != "$GITHUB_CONFIG_FILE" ]; then
+        printf '%s: only %s may accept the .github release workflow (subject: %s)\n' \
+          "$location" "$GITHUB_CONFIG_FILE" "$subject" >&2
+        return 1
+      fi
+      subject="${subject%"|$GITHUB_OWN_RELEASE"')$'}"')$'
       ;;
   esac
 
@@ -897,6 +908,25 @@ EOF
       status=1
       continue
     fi
+    # The generic Tenant source builds its subject in CEL from the tenant's name. Only its
+    # exact constructor may do that, and the reader proves it names the tenant's own
+    # repository's release workflow and nothing else (ADR 0019).
+    # shellcheck disable=SC2016 # Match the literal CEL expression opener.
+    if [[ "$subject" == '${'* ]]; then
+      if [ "${location%:*}" != "$GENERIC_TENANT_FILE" ] ||
+        [[ ! -r "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh" ]]; then
+        printf '%s: invalid Tenant source constructor: only the Tenant graph may build a subject in CEL\n' "$location" >&2
+        status=1
+        continue
+      fi
+      # shellcheck source=scripts/tenant-source-constructors.lib.sh
+      source "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh"
+      if ! tenant_source_default_subject "${location%:*}" "$subject" >/dev/null; then
+        printf '%s: invalid Tenant source constructor\n' "$location" >&2
+        status=1
+      fi
+      continue
+    fi
     if ! audited_helm_schema_subject "$location" "$subject"; then
       prove_other_identity "$location" "$subject" || status=1
     fi
@@ -923,37 +953,29 @@ EOF
       continue
     fi
 
+    # A CEL-built subject that names a shared publish workflow is refused: no reviewed
+    # constructor builds one. The Tenant source trusts only the tenant's own release
+    # workflow (ADR 0019) and is proved by its constructor reader in the unselected-subject pass.
     # shellcheck disable=SC2016 # Match the literal CEL expression opener.
     if [[ "$subject" == '${'* ]]; then
-      if [[ ! -r "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh" ]]; then
-        printf '%s: invalid Tenant source constructor: reader is missing\n' "$location" >&2
-        status=1
-        continue
-      fi
-      # shellcheck source=scripts/tenant-source-constructors.lib.sh
-      source "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh"
-      if ! subject="$(tenant_source_default_subject "${location%:*}" "$subject")"; then
-        printf '%s: invalid Tenant source constructor\n' "$location" >&2
-        status=1
-        continue
-      fi
-      # The generic Tenant source is a generic verifier: canonical-only (#6264), grouped
-      # with the tenant's own release workflow under the constructor's marker (#6265).
-      judge_canonical_subject "$location" "$subject" "$TENANT_RELEASE_REPOSITORY" || status=1
+      printf '%s: invalid Tenant source constructor: a CEL subject may not name a shared publish workflow (subject: %s)\n' "$location" "$subject" >&2
+      status=1
+      continue
+    fi
+    # The Tenant graph trusts only the tenant's own release workflow (ADR 0019), so no
+    # subject written there may name a shared publish workflow, in any form.
+    if [ "${location%:*}" = "$GENERIC_TENANT_FILE" ]; then
+      printf '%s: the Tenant graph may name no shared publisher; it trusts only the tenant'\''s own release workflow (subject: %s)\n' "$location" "$subject" >&2
+      status=1
       continue
     fi
 
     # THE GENERIC VERIFIERS ARE CANONICAL-ONLY (#6264), and judged by that parse alone, so
     # the legacy family's commit form cannot return to them in any spelling this guard
     # selects. The image verifiers may group it with any first-party repository's own
-    # release workflow on a release tag (#6265), a name of `actions` included; a plain
-    # subject in the Tenant graph has no tenant name to bind one to.
+    # release workflow on a release tag (#6265), a name of `actions` included.
     if is_canonical_only_file "${location%:*}"; then
-      if [ "${location%:*}" = "$GENERIC_TENANT_FILE" ]; then
-        judge_canonical_subject "$location" "$subject" || status=1
-      else
-        judge_canonical_subject "$location" "$subject" "$FIRST_PARTY_RELEASE_REPOSITORY" || status=1
-      fi
+      judge_canonical_subject "$location" "$subject" "$FIRST_PARTY_RELEASE_REPOSITORY" || status=1
       continue
     fi
 

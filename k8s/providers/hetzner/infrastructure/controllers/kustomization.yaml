@@ -89,6 +89,10 @@ components:
   # Temporary controller placement for runtime adoption (#6073). Remove it
   # after the migration's runtime and backup checks pass (#6073).
   - ../../../../bases/components/longhorn-v1-runtime-headroom
+  - ../../../../bases/components/longhorn-v1-operator-headroom
+  # Select the reviewed maintenance runtime with one manager unavailable at
+  # a time. Publication requires the native capacity and source guards (#6073).
+  - ../../../../bases/components/longhorn-v1-retirement-runtime
   # ALWAYS-ON: the live private-NIC Cilium device pin (moved out of the
   # strict-mode patch so the homogeneous-devices/ successor below can
   # override it — parent `patches:` apply after component patches, so a value
@@ -125,11 +129,31 @@ components:
   # guard may be lifted only after this has soaked.
   # Rollback = re-comment (every node rolls back under the rolling update).
   # CI then also needs scripts/tests/test-cilium-ebpf-host-routing-activation.sh
-  # reverted, and the kube-system/cilium HelmRelease line in
-  # scripts/validate-eks-ci-role-policy/approved-surface.txt set back to
-  # e56bb694c251d8f859edc76d005e3508e622ef2f3ba8d7e56ce722de9affbcf9.
+  # reverted. The HelmRelease has no authorization ledger entry (#6270).
   - cilium/components/ebpf-host-routing/
 patches:
+  # Keep the two stateless canary-test endpoints on qualified workers during
+  # the Longhorn maintenance rollout. Retire this placement with #6432.
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: flagger-loadtester
+      namespace: flagger-system
+    patch: |-
+      - op: add
+        path: /spec/values/affinity/nodeAffinity
+        value:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [prod-worker-1]
+              - matchExpressions:
+                  - key: storage.platform.devantler.tech/migration-pool
+                    operator: In
+                    values: [v2]
   - path: openbao/patches/store-data-on-hcloud.yaml
   # Prod-only: HARD-pin OpenBao to the static baseline workers so its hcloud
   # block volumes never ride a node the autoscaler can reclaim (#2363) — see file.
@@ -146,6 +170,14 @@ patches:
   - path: dex/patches/run-source-built-image.yaml
   # Prod-only: let ZITADEL's administrator sign in through Dex — see file.
   - path: dex/patches/allow-zitadel-sign-in.yaml
+    target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: dex
+      namespace: dex
+  # Prod-only: let the portal's operator sign in through the customer Dex — see file.
+  - path: dex/patches/allow-customer-dex-operator-sign-in.yaml
     target:
       group: helm.toolkit.fluxcd.io
       version: v2

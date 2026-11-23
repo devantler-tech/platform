@@ -20,7 +20,6 @@ readonly HEADER=$'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signe
 # where its absence should be noticed and the boundary redrawn on purpose.
 readonly GENERIC_SUBJECT_FILES=(
   'k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
-  'k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
   'talos/cluster/verify-first-party-images.yaml'
 )
 
@@ -70,9 +69,9 @@ readonly FAMILY_SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]
 # that repository's release tags match. It is fixed per consumer, never generated from an
 # observation, so the daily regeneration cannot move it. The `.github` consumer is the one
 # exception: its repository hosts the shared reusable publishers, and a tag of a reusable
-# workflow carries that repository's identity whoever calls it, so another consumer's
-# signature would verify for its source. It keeps the two-family form until its move gets
-# a narrower rule.
+# workflow carries that repository's identity whoever calls it, so the `[^/]+` form would let
+# another consumer's signature verify for its source. It gets the narrower GITHUB_OWN_RELEASE
+# instead: exactly `.github/.github/workflows/cd.yaml` on a release tag.
 readonly OWN_RELEASE_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 
 refuse() {
@@ -91,11 +90,22 @@ consumer_github_repository() {
   esac
 }
 
+# The `.github` consumer's own release workflow (devantler-tech/.github#926): exactly its
+# cd.yaml on a release tag, never any workflow file there. `.github` hosts the shared
+# reusable workflows, and a caller of a reusable workflow signs with that workflow's
+# identity, so `[^/]+\.ya?ml` would let any repository calling one of them sign for this
+# source. cd.yaml runs only on its own tag pushes, and devantler-tech/.github's CI refuses
+# a `workflow_call` trigger on it, so nothing else can sign as it.
+readonly GITHUB_OWN_RELEASE='\.github/\.github/workflows/cd\.yaml@'"${OWN_RELEASE_TAIL#*@}"
+
 # consumer_release_alternative <consumer> → the consumer's own-release alternative, without
-# its leading `|`, or nothing for the `.github` consumer (see OWN_RELEASE_TAIL).
+# its leading `|`: its repository with OWN_RELEASE_TAIL, or GITHUB_OWN_RELEASE for `.github`.
 consumer_release_alternative() {
   local repository
-  [ "$1" != '.github' ] || return 0
+  if [ "$1" = '.github' ]; then
+    printf '%s' "$GITHUB_OWN_RELEASE"
+    return 0
+  fi
   repository="$(consumer_github_repository "$1")"
   printf '%s%s' "${repository//./\\.}" "$OWN_RELEASE_TAIL"
 }
@@ -229,23 +239,12 @@ while IFS=$'\t' read -r consumer _rest; do
   [ "$known" -eq 1 ] || refuse "approved set names $consumer, which is not a registered consumer"
 done <<<"$approved"
 
-# Canonical-only consumers have no legacy approval or invented applied history.
-canonical_only="$(canonical_tenant_bindings "$SCAN_ROOT")" || refuse 'invalid canonical-only source binding'
 registered_workflow() {
   local registered_legacy
   registered_legacy="$(lookup "$approved" "$1")"
-  if [ -n "$registered_legacy" ]; then
-    printf '%s\n' "${registered_legacy%%$'\t'*}"
-  else
-    printf '%s\n' "$canonical_only" | jq -er --arg consumer "$1" '[.bindings[]|select(.consumer==$consumer)] | select(length==1) | .[0].workflow'
-  fi
+  [ -n "$registered_legacy" ] || return 1
+  printf '%s\n' "${registered_legacy%%$'\t'*}"
 }
-while IFS= read -r canonical_entry; do
-  canonical_consumer="$(printf '%s\n' "$canonical_entry" | jq -r .consumer)"
-  [ -z "$(lookup "$approved" "$canonical_consumer")" ] || refuse "$canonical_consumer: both legacy and canonical-only registrations exist"
-  canonical_observation_consistent "$canonical_entry" "${APPROVED_IDENTITIES_FILE:-${APPROVED_SET%.tsv}.identities.tsv}" ||
-    refuse "$canonical_consumer: bootstrap/current-observation records disagree"
-done < <(printf '%s\n' "$canonical_only" | jq -c '.bindings[]')
 
 # ── 1b. The canonical approvals, read strictly ──────────────────────────────────────────
 # One row approves one reviewed commit of the matching canonical workflow for one registered
@@ -294,18 +293,6 @@ while IFS= read -r row || [ -n "$row" ]; do
       ;;
   esac
 done <"$CANONICAL_SET"
-
-# The explicit pinned source profile accepts its complete qualified identity only.
-while IFS= read -r canonical_entry; do
-  canonical_consumer="$(printf '%s\n' "$canonical_entry" | jq -r .consumer)"
-  canonical_publisher="$(printf '%s\n' "$canonical_entry" | jq -r .publication.publisherIdentity)"
-  canonical_pin="${canonical_publisher##*@}"
-  canonical_approved="$(lookup "$canonical" "$canonical_consumer")"
-  case "$canonical_approved" in
-    "$canonical_pin" | "($canonical_pin|"*")" | "("*"|$canonical_pin)") ;;
-    *) refuse "$canonical_consumer: canonical-only publisher is not an exact approved member" ;;
-  esac
-done < <(printf '%s\n' "$canonical_only" | jq -c '.bindings[]')
 
 # canonical_ref_ok <ref> → success when <ref> is one 40-hex commit, or exactly two distinct ones
 # written as "(first|second)". Nothing else: no pattern, no third alternative, no repeat.

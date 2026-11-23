@@ -4,25 +4,31 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
 
-// A provider update moves one approved-surface line. The job summary must name
-// that exact edit, taken from the real validation of a changed render.
+// A widened Role moves one approved-surface line. The job summary must name
+// that exact edit, taken from the real validation of a changed render. (A
+// provider package update was this test's trigger until platform#6270 took
+// carriers out of the ledger; it now needs no approval at all.)
 func TestApprovalSummaryNamesTheExactLedgerEdit(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
-	providerPackage := regexp.MustCompile(`(package: ghcr\.io/devantler-tech/provider-upjet-unifi:)v[0-9]+\.[0-9]+\.[0-9]+`)
-	if !providerPackage.Match(rendered) {
-		t.Fatal("rendered surface has no UniFi provider package to update")
-	}
-	changed := providerPackage.ReplaceAll(rendered, []byte("${1}v9.8.7"))
+	const widenedRole = "rbac.authorization.k8s.io/v1|Role|vertical-pod-autoscaler|vpa-leader-election"
+	changed := mutateRenderedDocument(t, rendered, widenedRole, func(document map[string]any) {
+		rules, ok := document["rules"].([]any)
+		if !ok {
+			t.Fatal("vpa-leader-election Role has no rules list")
+		}
+		document["rules"] = append(rules, map[string]any{
+			"apiGroups": []any{""}, "resources": []any{"secrets"}, "verbs": []any{"get"},
+		})
+	})
 
 	validationErr := validateAuthorization(role, boundary, changed)
 	var mismatch *surfaceMismatchError
 	if !errors.As(validationErr, &mismatch) {
-		t.Fatalf("updated provider error = %v, want an approved-surface mismatch", validationErr)
+		t.Fatalf("widened Role error = %v, want an approved-surface mismatch", validationErr)
 	}
 
 	summary := filepath.Join(t.TempDir(), "summary.md")
@@ -57,8 +63,8 @@ func TestApprovalSummaryNamesTheExactLedgerEdit(t *testing.T) {
 	}
 	removed, added := 0, 0
 	for _, line := range mismatch.delta {
-		if !strings.Contains(line, "|Provider||provider-upjet-unifi ") {
-			t.Fatalf("provider update moved an unrelated ledger line: %s", line)
+		if !strings.Contains(line, " "+widenedRole+" ") {
+			t.Fatalf("widened Role moved an unrelated ledger line: %s", line)
 		}
 		switch line[0] {
 		case '-':
@@ -68,7 +74,7 @@ func TestApprovalSummaryNamesTheExactLedgerEdit(t *testing.T) {
 		}
 	}
 	if removed != 1 || added != 1 {
-		t.Fatalf("provider update edit = %d removed, %d added; want one of each: %v", removed, added, mismatch.delta)
+		t.Fatalf("widened Role edit = %d removed, %d added; want one of each: %v", removed, added, mismatch.delta)
 	}
 }
 

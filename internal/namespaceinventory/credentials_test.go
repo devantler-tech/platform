@@ -4,9 +4,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -121,5 +123,56 @@ func TestNativeClientRefusesDynamicExternalOrAmbiguousCredentials(t *testing.T) 
 func TestCredentialLoaderRefusesOutsideProtectedDispatch(t *testing.T) {
 	if _, _, err := LoadProtectedClient(func(string) string { return "" }); err == nil {
 		t.Fatal("credential loader admitted an unverified dispatch")
+	}
+}
+
+func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("the old endpoint must not receive direct-client credentials")
+	}))
+	t.Cleanup(server.Close)
+	raw := fixtureConfig(server)
+	raw.Clusters["prod"].TLSServerName = "old-dns-name.invalid"
+	direct := netip.MustParseAddr("203.0.113.10")
+	client, endpoint, err := newProductionClientAt(raw, direct)
+	if err != nil || endpoint.String() != "https://203.0.113.10:6443" {
+		t.Fatalf("direct endpoint is not pinned: %v", err)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/version", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(request)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil {
+		t.Fatal("direct client accepted a request for a different peer")
+	}
+	if !errors.Is(client.CheckRedirect(nil, nil), http.ErrUseLastResponse) {
+		t.Fatal("direct client permits a redirect")
+	}
+	for _, test := range []struct{ method, query string }{
+		{http.MethodPatch, ""},
+		{http.MethodPatch, "?dryRun=All&dryRun="},
+		{http.MethodDelete, "?dryRun=All"},
+	} {
+		req, err := http.NewRequestWithContext(t.Context(), test.method, endpoint.String()+"/api/v1/persistentvolumes/scratch"+test.query, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Do(req)
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "only observations and server dry-runs") {
+			t.Fatal("direct API client did not reject a write-capable request locally")
+		}
+	}
+}
+
+func TestBenchmarkCredentialLoaderRefusesOutsideProtectedDispatch(t *testing.T) {
+	if _, _, err := LoadBenchmarkAdmissionClient(func(string) string { return "" }, netip.MustParseAddr("203.0.113.10")); err == nil {
+		t.Fatal("direct credential loader admitted an unverified dispatch")
 	}
 }

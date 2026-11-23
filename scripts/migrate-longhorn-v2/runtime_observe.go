@@ -16,6 +16,7 @@ import (
 
 const runtimeInventoryOperation = "inventory-v1-runtime"
 const runtimeRetirementImage = "ghcr.io/devantler-tech/platform-longhorn-instance-manager:v1.13.0-retirement.1-591ed0ccebd032c4d9705c356c267e724b30e2a9-1@sha256:4f7c2ff5666c6ce1ccab78a5e8c5c108147b12b80729303b9f1d91dfb9ee9cd7"
+const runtimeInventoryAttempts = 3
 
 type runtimeInventoryQuery struct{ path, api, kind, namespace string }
 
@@ -96,25 +97,33 @@ func observeRuntimeInventory(ctx context.Context, c client, source string) (resu
 		}
 		return delegate(ctx, input, program, args...)
 	}
-	phase = "source-before"
-	if err = sourceCurrent(ctx, c.run, source); err != nil {
-		return result, err
+	// A completed Job or restarted Pod can change an otherwise complete read
+	// pair. Discard both observations and bind a fresh pair to current main.
+	for range runtimeInventoryAttempts {
+		phase = "source-before"
+		if err = sourceCurrent(ctx, c.run, source); err != nil {
+			return result, err
+		}
+		phase = "inventory-before"
+		before, err := readRuntimeInventory(ctx, c)
+		if err != nil {
+			return result, err
+		}
+		phase = "inventory-after"
+		after, err := readRuntimeInventory(ctx, c)
+		if err != nil {
+			return result, err
+		}
+		phase = "source-after"
+		if err = sourceCurrent(ctx, c.run, source); err != nil || !commandContextActive(ctx) {
+			return result, errors.New("source or context changed during inventory")
+		}
+		if before == after {
+			return after, nil
+		}
 	}
-	phase = "inventory-before"
-	before, err := readRuntimeInventory(ctx, c)
-	if err != nil {
-		return result, err
-	}
-	phase = "inventory-after"
-	after, err := readRuntimeInventory(ctx, c)
-	if err != nil || before != after {
-		return result, errors.New("native identities, configuration or container epochs changed")
-	}
-	phase = "source-after"
-	if err = sourceCurrent(ctx, c.run, source); err != nil || !commandContextActive(ctx) {
-		return result, errors.New("source or context changed during inventory")
-	}
-	return after, nil
+	phase = "inventory-unstable"
+	return result, errors.New("native identities, configuration or container epochs did not stabilize")
 }
 
 func readRuntimeInventory(ctx context.Context, c client) (runtimeInventoryReceipt, error) {

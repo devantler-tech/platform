@@ -18,6 +18,6 @@ spec:
   # providers are verified (#4189). The digest makes the reviewed bytes the ones
   # that run: a moved or re-pushed tag cannot change what the cluster installs.
   # Renovate updates the tag and the digest together.
-  package: ghcr.io/crossplane-contrib/provider-upjet-github:v0.22.0@sha256:1e75f4a2f4473caa17c8213031b5893357eb4366947031ec64994d65886f7954
+  package: ghcr.io/crossplane-contrib/provider-upjet-github:v0.23.0@sha256:3da1fc7df824246e0d31bc55d47d5b5acfcb65d13b3f495027b84fdfbc9b1836
   runtimeConfigRef:
     name: provider-upjet-github

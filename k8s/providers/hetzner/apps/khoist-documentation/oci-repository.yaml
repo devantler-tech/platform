@@ -5,6 +5,7 @@ metadata:
   namespace: data-product-controller
   labels:
     app.kubernetes.io/managed-by: ksail
+    platform.devantler.tech/tenant-source: "true"
 spec:
   interval: 1m
   url: oci://ghcr.io/devantler-tech/data-product-controller/manifests

@@ -19,7 +19,8 @@ const temporaryActivationOwner = longhornmigration.ActivationOwner
 // authorizeTemporaryActivation requires a distinct confirmation for registering
 // the fixed three-disk pool through the protected first-attempt main workflow.
 func authorizeTemporaryActivation(getenv func(string) string) error {
-	if getenv("LONGHORN_V2_OPERATION") != "register-temporary-v2-storage" {
+	if getenv("LONGHORN_V2_OPERATION") != "register-temporary-v2-storage" ||
+		getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != "" {
 		return errTemporaryActivation
 	}
 	return authorizeWorkflow(getenv, "register-longhorn-v2-temporary-storage")

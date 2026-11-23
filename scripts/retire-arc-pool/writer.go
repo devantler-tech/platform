@@ -29,6 +29,22 @@ type writerReceipt struct {
 const reviewedFluxImage = "ghcr.io/fluxcd/kustomize-controller:v1.8.5@sha256:70e2a25edeee82690e68662409fb1b60f7d3084c93435e8ab5337a6e0244ffed"
 const reviewedFluxImageID = "ghcr.io/fluxcd/kustomize-controller@sha256:70e2a25edeee82690e68662409fb1b60f7d3084c93435e8ab5337a6e0244ffed"
 
+// Each exact image needs a review of finalization and the SSA worker barrier.
+// v1.9.6 uses SSA v0.76.2: ApplyAll waits for every worker before returning a
+// dry-run denial, and deferred finalizeStatus then acknowledges the request.
+// https://github.com/fluxcd/kustomize-controller/blob/v1.9.6/internal/controller/kustomization_controller.go
+// https://github.com/fluxcd/pkg/blob/ssa/v0.76.2/ssa/manager_apply.go
+func reviewedFluxImageIDFor(image string) string {
+	switch image {
+	case reviewedFluxImage:
+		return reviewedFluxImageID
+	case "ghcr.io/fluxcd/kustomize-controller:v1.9.6@sha256:2ebeaa341da77d52b6abbbba5efcee0450d47f8b42f0e6f33b08f9020262d606":
+		return "ghcr.io/fluxcd/kustomize-controller@sha256:2ebeaa341da77d52b6abbbba5efcee0450d47f8b42f0e6f33b08f9020262d606"
+	default:
+		return ""
+	}
+}
+
 type fluxWriterEpoch struct {
 	UID        string   `json:"uid"`
 	Generation int64    `json:"generation"`
@@ -50,7 +66,12 @@ func fluxWriterProof(value any) (*fluxWriterEpoch, error) {
 		}
 	}
 	containers, cok := sliceAt(dep, "spec", "template", "spec", "containers")
-	if !cok || len(containers) != 1 || textAt(containers[0], "name") != "manager" || textAt(containers[0], "image") != reviewedFluxImage {
+	if !cok || len(containers) != 1 || textAt(containers[0], "name") != "manager" {
+		return nil, errors.New("source failure proof requires the reviewed controller image")
+	}
+	image := textAt(containers[0], "image")
+	imageID := reviewedFluxImageIDFor(image)
+	if imageID == "" {
 		return nil, errors.New("source failure proof requires the reviewed controller image")
 	}
 	pods, pok := sliceAt(value, "Pods")
@@ -58,11 +79,11 @@ func fluxWriterProof(value any) (*fluxWriterEpoch, error) {
 	if !pok || len(pods) != 2 || !sok {
 		return nil, errors.New("source writer process inventory is incomplete")
 	}
-	f := &fluxWriterEpoch{UID: textAt(dep, "metadata", "uid"), Generation: gen, Image: reviewedFluxImage}
+	f := &fluxWriterEpoch{UID: textAt(dep, "metadata", "uid"), Generation: gen, Image: image}
 	seen := map[string]bool{}
 	for _, pod := range pods {
 		uid := textAt(pod, "uid")
-		if uid == "" || seen[uid] || textAt(pod, "phase") != "Running" || textAt(pod, "ready") != "True" || textAt(pod, "deleting") != "" || textAt(pod, "ownerKind") != "ReplicaSet" || textAt(pod, "imageID") != reviewedFluxImageID {
+		if uid == "" || seen[uid] || textAt(pod, "phase") != "Running" || textAt(pod, "ready") != "True" || textAt(pod, "deleting") != "" || textAt(pod, "ownerKind") != "ReplicaSet" || textAt(pod, "imageID") != imageID {
 			return nil, errors.New("source writer has an old or unreviewed process")
 		}
 		owners := 0
@@ -118,7 +139,7 @@ func decodeWriter(raw []byte) (*writerReceipt, error) {
 		seen[layer.Name] = true
 	}
 	if w.Flux != nil {
-		if _, err := canonicalFields(fields["flux"], []string{"uid", "generation", "podUIDs", "image"}, ""); err != nil || w.Flux.UID == "" || w.Flux.Generation < 1 || w.Flux.Image != reviewedFluxImage || len(w.Flux.PodUIDs) != 2 || w.Flux.PodUIDs[0] == "" || w.Flux.PodUIDs[1] == "" || w.Flux.PodUIDs[0] >= w.Flux.PodUIDs[1] {
+		if _, err := canonicalFields(fields["flux"], []string{"uid", "generation", "podUIDs", "image"}, ""); err != nil || w.Flux.UID == "" || w.Flux.Generation < 1 || reviewedFluxImageIDFor(w.Flux.Image) == "" || len(w.Flux.PodUIDs) != 2 || w.Flux.PodUIDs[0] == "" || w.Flux.PodUIDs[1] == "" || w.Flux.PodUIDs[0] >= w.Flux.PodUIDs[1] {
 			return nil, errors.New("invalid source failure runtime epoch")
 		}
 	}
@@ -164,8 +185,8 @@ func recordWriter(s state, body []byte) ([]operation, error) {
 }
 
 // A partial opening can never become Ready after its missing CREATE is closed.
-// Flux v1.8.5 finalizes the request nonce after SSA v0.67.5 has joined every
-// apply worker. Its precise dry-run denial and ProgressingWithRetry conditions
+// The reviewed Flux images finalize the request nonce after SSA has joined every
+// apply worker. Their precise dry-run denial and ProgressingWithRetry conditions
 // therefore prove a completed attempt, while never asserting source readiness.
 // Keep the normal and post-publication Ready proof unchanged.
 func sourceWriterProof(s state, j journal, body []byte) error {

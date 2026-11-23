@@ -1,7 +1,6 @@
 # shellcheck shell=bash
-# A typed Tenant creates its source inside kro. Only the complete qualified
-# admission chain may attribute that source; all other instances are refused.
-# A publication-evidence receipt alone never grants admission.
+# A typed Tenant creates its source inside kro. Only the exact own-release Tenant
+# constructor may create one (ADR 0019); all other instances are refused.
 
 canonical_tenant_source_documents() (
   set -euo pipefail
@@ -82,14 +81,70 @@ canonical_tenant_source_documents() (
     return 1
   }
   # Join complete schema GVKs across the whole tree before inspecting instances:
-  # an RGD and the objects it creates can live in different roots. A same-kind
-  # resource in a different group/version is not one of its instances.
-  # Only an explicit fully qualified binding may project a source. Keep all
-  # output buffered until every discovered producer and instance is attributed.
-  # shellcheck source=scripts/canonical-tenant-source.lib.sh
-  source "$(dirname "${BASH_SOURCE[0]}")/canonical-tenant-source.lib.sh"
-  canonical_typed_source_hits "$discovery_root" "$source_discovery_work/documents.jsonl" >"$source_discovery_work/hits.json" || return 1
-  canonical_tenant_inventory_projection "$discovery_root" "$source_discovery_work/documents.jsonl" "$source_discovery_work/hits.json"
+  # an RGD and the objects it creates can live in different roots.
+  tenant_source_inventory_check "$discovery_root/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" \
+    "$source_discovery_work/documents.jsonl"
+)
+
+# A typed source exists only inside the cluster: kro creates it from a schema instance.
+# The Tenant graph's source names only the tenant's own repository's release workflow
+# (ADR 0019), so a Tenant is never a shared-publisher consumer and projects nothing.
+# Every instance of any other source-producing schema, a cloned Tenant schema, or a
+# Tenant graph whose source differs from the reviewed constructor is UNKNOWN and refused.
+#   $1  the reviewed Tenant graph file the constructor reader checks
+#   $2  JSONL of {file, document} for every document observed (raw tree or render)
+tenant_source_inventory_check() (
+  set -euo pipefail
+  local graph_file="$1" inventory="$2" census graphs
+  census="$(jq -cse '
+    [.[] | .document | .. | objects] as $nodes |
+    [$nodes[] | select(.kind=="ResourceGraphDefinition") |
+      select(any(.. | objects; .kind=="OCIRepository" and has("spec")))] as $producers |
+    [$producers[] | .spec.schema |
+      if (.kind|type=="string" and test("^[A-Za-z][A-Za-z0-9]*$")) and
+         ((.group // "kro.run")|type=="string" and test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
+         (.apiVersion|type=="string" and test("^[a-z][a-z0-9]*$"))
+      then {kind,apiVersion:((.group // "kro.run")+"/"+.apiVersion)}
+      else error("source-producing schema GVK is unknown") end] as $schemas |
+    {
+      # A Tenant instance counts whether or not its graph was observed: an omitted graph
+      # would otherwise leave the instance on whatever constructor the cluster holds.
+      instances: [$nodes[] | . as $node |
+        select((.apiVersion=="kro.run/v1alpha1" and .kind=="Tenant") or
+          any($schemas[]; .kind==$node.kind and .apiVersion==$node.apiVersion)) |
+        {apiVersion, kind, name:(.metadata | if type=="object" then (.name // "?") else "?" end)}],
+      tenantGraphs: [$producers[] | select(.spec.schema.kind=="Tenant" and
+        ((.spec.schema.group // "kro.run")+"/"+.spec.schema.apiVersion)=="kro.run/v1alpha1")]
+    }' "$inventory")" || {
+    printf 'typed source discovery could not classify every source-producing schema; inventory is UNKNOWN\n' >&2
+    return 1
+  }
+  [ "$(printf '%s\n' "$census" | jq -r '.instances|length')" != 0 ] || return 0
+  if [ "$(printf '%s\n' "$census" | jq -r '[.instances[]|select(.apiVersion!="kro.run/v1alpha1" or .kind!="Tenant")]|length')" != 0 ]; then
+    printf 'typed source of a schema other than the Tenant graph; inventory is UNKNOWN: %s\n' \
+      "$(printf '%s\n' "$census" | jq -c .instances)" >&2
+    return 1
+  fi
+  # A cloned schema is ambiguous even when its CEL happens to be identical.
+  if [ "$(printf '%s\n' "$census" | jq -r '[.tenantGraphs[]|select(.metadata.name=="tenant.kro.run")]|length')" != 1 ] ||
+    [ "$(printf '%s\n' "$census" | jq -r '.tenantGraphs|length')" != 1 ]; then
+    printf 'Tenant instances need exactly one Tenant graph; inventory is UNKNOWN\n' >&2
+    return 1
+  fi
+  # The observed graph itself, and the reviewed file, must both be the exact constructor.
+  graphs="$(mktemp)" || return 1
+  printf '%s\n' "$census" | jq -c '.tenantGraphs[0]' >"$graphs" || {
+    rm -f -- "$graphs"
+    return 1
+  }
+  # shellcheck source=scripts/tenant-source-constructors.lib.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/tenant-source-constructors.lib.sh"
+  if ! tenant_source_default_subject "$graphs" >/dev/null || ! tenant_source_default_subject "$graph_file" >/dev/null; then
+    rm -f -- "$graphs"
+    printf 'Tenant instances need the exact own-release source constructor; inventory is UNKNOWN\n' >&2
+    return 1
+  fi
+  rm -f -- "$graphs"
 )
 
 # Validation callers receive no projection stream or partial inventory.

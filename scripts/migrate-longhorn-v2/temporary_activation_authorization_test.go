@@ -14,11 +14,16 @@ func TestTemporaryActivationRequiresItsOwnFirstAttemptMainConfirmation(t *testin
 	env := dispatchFixture()
 	env["LONGHORN_V2_OPERATION"] = "register-temporary-v2-storage"
 	env["LONGHORN_V2_CONFIRM"] = "register-longhorn-v2-temporary-storage"
+	env["LONGHORN_V2_NODE"] = ""
 	getenv := func(key string) string { return env[key] }
 	if err := authorizeTemporaryActivation(getenv); err != nil {
 		t.Fatal(err)
 	}
-	for key, value := range map[string]string{"LONGHORN_V2_CONFIRM": "prepare-longhorn-v2-prod-worker-1", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_REF": "refs/heads/topic", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_WORKFLOW_REF": "other/workflow@main"} {
+	for key, value := range map[string]string{
+		"LONGHORN_V2_CONFIRM": "prepare-longhorn-v2-prod-worker-1", "GITHUB_RUN_ATTEMPT": "2",
+		"GITHUB_REF": "refs/heads/topic", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_WORKFLOW_REF": "other/workflow@main",
+		"LONGHORN_V2_NODE": "prod-worker-1", "LONGHORN_V2_DATABASE": "coroot-db",
+	} {
 		t.Run(key, func(t *testing.T) {
 			old := env[key]
 			env[key] = value
@@ -52,7 +57,7 @@ func TestTemporaryActivationWorkflowRequiresTheDistinctConfirmation(t *testing.T
 	}
 	for _, confirmation := range []string{"register-longhorn-v2-temporary-storage", "verify-longhorn-v2-restore", "prepare-unused-longhorn-v2-temporary-v1-1"} {
 		cmd := exec.CommandContext(t.Context(), "bash", "-c", workflow.Jobs["prepare"].Steps[0].Run)
-		cmd.Env = append(os.Environ(), "DISPATCH_REF=refs/heads/main", "GITHUB_RUN_ATTEMPT=1", "LONGHORN_V2_OPERATION=register-temporary-v2-storage", "LONGHORN_V2_CONFIRM="+confirmation)
+		cmd.Env = append(os.Environ(), "DISPATCH_REF=refs/heads/main", "GITHUB_RUN_ATTEMPT=1", "LONGHORN_V2_OPERATION=register-temporary-v2-storage", "LONGHORN_V2_NODE=", "LONGHORN_V2_DATABASE=", "LONGHORN_V2_CONFIRM="+confirmation)
 		if err = cmd.Run(); (err == nil) != (confirmation == "register-longhorn-v2-temporary-storage") {
 			t.Fatalf("registration confirmation %s: %v", confirmation, err)
 		}

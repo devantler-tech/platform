@@ -25,10 +25,13 @@ func writerFixture(t *testing.T) *writerReceipt {
 	return &writerReceipt{Owner: fixture().Owner, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Ticket: "native-123-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", OCI: writerEpoch{UID: "source", Generation: 2}, Layers: []writerLayer{{Name: "flux-system", writerEpoch: writerEpoch{UID: "flux-system", Generation: 2}}, {Name: "infrastructure-controllers", writerEpoch: writerEpoch{UID: "infrastructure-controllers", Generation: 2}}, {Name: "infrastructure", writerEpoch: writerEpoch{UID: "infrastructure", Generation: 2}}}}
 }
 func fluxFixture() map[string]any {
+	return fluxFixtureForImage(reviewedFluxImage, reviewedFluxImageID)
+}
+func fluxFixtureForImage(image, imageID string) map[string]any {
 	return map[string]any{
-		"Deployment":  map[string]any{"metadata": map[string]any{"name": "kustomize-controller", "namespace": "flux-system", "uid": "flux-deployment", "generation": 3}, "spec": map[string]any{"replicas": 2, "template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "manager", "image": reviewedFluxImage}}}}}, "status": map[string]any{"observedGeneration": 3, "replicas": 2, "updatedReplicas": 2, "readyReplicas": 2, "availableReplicas": 2}},
+		"Deployment":  map[string]any{"metadata": map[string]any{"name": "kustomize-controller", "namespace": "flux-system", "uid": "flux-deployment", "generation": 3}, "spec": map[string]any{"replicas": 2, "template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "manager", "image": image}}}}}, "status": map[string]any{"observedGeneration": 3, "replicas": 2, "updatedReplicas": 2, "readyReplicas": 2, "availableReplicas": 2}},
 		"ReplicaSets": []any{map[string]any{"metadata": map[string]any{"uid": "flux-rs", "ownerReferences": []any{map[string]any{"kind": "Deployment", "uid": "flux-deployment", "controller": true}}}}},
-		"Pods":        []any{map[string]any{"uid": "flux-pod-1", "ownerUID": "flux-rs", "ownerKind": "ReplicaSet", "phase": "Running", "ready": "True", "deleting": "", "imageID": reviewedFluxImageID}, map[string]any{"uid": "flux-pod-2", "ownerUID": "flux-rs", "ownerKind": "ReplicaSet", "phase": "Running", "ready": "True", "deleting": "", "imageID": reviewedFluxImageID}},
+		"Pods":        []any{map[string]any{"uid": "flux-pod-1", "ownerUID": "flux-rs", "ownerKind": "ReplicaSet", "phase": "Running", "ready": "True", "deleting": "", "imageID": imageID}, map[string]any{"uid": "flux-pod-2", "ownerUID": "flux-rs", "ownerKind": "ReplicaSet", "phase": "Running", "ready": "True", "deleting": "", "imageID": imageID}},
 	}
 }
 func TestWriterBarrierSurvivesClosedSourceReadinessButNotChangedAuthority(t *testing.T) {
@@ -126,8 +129,18 @@ func TestWriterReceiptRequiresCompleteFreshBarrierBeforeDrain(t *testing.T) {
 }
 
 func TestOpeningWriterBarrierRequiresTheCompletedExactMissingCreateDenial(t *testing.T) {
-	for _, missing := range []string{"hr", "eso"} {
-		t.Run(missing, func(t *testing.T) {
+	for _, test := range []struct {
+		missing string
+		current bool
+	}{{"hr", false}, {"eso", false}, {"hr", true}, {"eso", true}} {
+		missing := test.missing
+		image, imageID := "ghcr.io/fluxcd/kustomize-controller:v1.8.5@sha256:70e2a25edeee82690e68662409fb1b60f7d3084c93435e8ab5337a6e0244ffed", "ghcr.io/fluxcd/kustomize-controller@sha256:70e2a25edeee82690e68662409fb1b60f7d3084c93435e8ab5337a6e0244ffed"
+		name := "legacy/" + missing
+		if test.current {
+			name = "current/" + missing
+			image, imageID = "ghcr.io/fluxcd/kustomize-controller:v1.9.6@sha256:2ebeaa341da77d52b6abbbba5efcee0450d47f8b42f0e6f33b08f9020262d606", "ghcr.io/fluxcd/kustomize-controller@sha256:2ebeaa341da77d52b6abbbba5efcee0450d47f8b42f0e6f33b08f9020262d606"
+		}
+		t.Run(name, func(t *testing.T) {
 			s := baselineFixture(t)
 			if missing == "hr" {
 				s.Release = nil
@@ -146,7 +159,7 @@ func TestOpeningWriterBarrierRequiresTheCompletedExactMissingCreateDenial(t *tes
 			}
 			proof["Digest"] = j.Baseline.Digest
 			proof["Ticket"] = "native-123-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-			proof["FluxBefore"], proof["Flux"] = fluxFixture(), fluxFixture()
+			proof["FluxBefore"], proof["Flux"] = fluxFixtureForImage(image, imageID), fluxFixtureForImage(image, imageID)
 			proof["OCI"].(map[string]any)["status"].(map[string]any)["artifact"].(map[string]any)["revision"] = "latest@" + j.Baseline.Digest
 			for _, value := range proof["Kustomizations"].([]any) {
 				layer := value.(map[string]any)
@@ -175,7 +188,7 @@ func TestOpeningWriterBarrierRequiresTheCompletedExactMissingCreateDenial(t *tes
 			if _, err := recordWriter(s, body); err != nil {
 				t.Fatal("completed missing-create denial must permit retirement:", err)
 			}
-			for _, kind := range []string{"generic-error", "wrong-policy", "wrong-target", "active-apply", "stale-condition", "unacknowledged", "different-digest", "other-layer-failed", "runtime-version", "runtime-rollout", "runtime-old-pod", "runtime-replaced", "duplicate-condition", "stalled", "bound-missing-identity"} {
+			for _, kind := range []string{"generic-error", "wrong-policy", "wrong-target", "active-apply", "stale-condition", "unacknowledged", "different-digest", "other-layer-failed", "runtime-version", "runtime-tag", "runtime-mixed-images", "runtime-rollout", "runtime-old-pod", "runtime-replaced", "duplicate-condition", "stalled", "bound-missing-identity"} {
 				var mutated map[string]any
 				if err := json.Unmarshal(body, &mutated); err != nil {
 					t.Fatal(err)
@@ -204,6 +217,14 @@ func TestOpeningWriterBarrierRequiresTheCompletedExactMissingCreateDenial(t *tes
 					layers[0].(map[string]any)["status"].(map[string]any)["conditions"] = conditions
 				case "runtime-version":
 					mutated["Flux"].(map[string]any)["Pods"].([]any)[0].(map[string]any)["imageID"] = "unreviewed"
+				case "runtime-tag":
+					mutated["Flux"].(map[string]any)["Deployment"].(map[string]any)["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = strings.Replace(image, ":v", ":unreviewed-v", 1)
+				case "runtime-mixed-images":
+					other := "ghcr.io/fluxcd/kustomize-controller@sha256:70e2a25edeee82690e68662409fb1b60f7d3084c93435e8ab5337a6e0244ffed"
+					if !test.current {
+						other = "ghcr.io/fluxcd/kustomize-controller@sha256:2ebeaa341da77d52b6abbbba5efcee0450d47f8b42f0e6f33b08f9020262d606"
+					}
+					mutated["Flux"].(map[string]any)["Pods"].([]any)[0].(map[string]any)["imageID"] = other
 				case "runtime-rollout":
 					mutated["Flux"].(map[string]any)["Deployment"].(map[string]any)["status"].(map[string]any)["updatedReplicas"] = 1
 				case "runtime-old-pod":

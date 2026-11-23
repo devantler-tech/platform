@@ -18,8 +18,8 @@ runs it in a dedicated, locked-down namespace.
 There are two halves to onboarding, in two repos:
 
 1. **The tenant repo** — created from the
-   [`platform-tenant-template`](https://github.com/devantler-tech/platform-tenant-template),
-   which ships the shared, framework-agnostic CI/CD plumbing and keeps it current
+   [`application-template`](https://github.com/devantler-tech/application-template)
+   with platform tenancy, which ships the shared CI/CD plumbing and keeps it current
    via [template-sync](https://github.com/AndreasAugustin/actions-template-sync).
 2. **The platform registration** — a small directory in *this* repo under
    `k8s/bases/apps/<tenant>/` that grants the tenant a namespace, identity, RBAC,
@@ -36,12 +36,22 @@ the reference while following the steps below.
 
 ## 1. Create the tenant repository
 
-Create the repo from the template with **"Use this template"** (GitHub UI), or:
+Creating a repository from the template is not enabled yet: `application-template`
+becomes a GitHub template with
+[application-template#211](https://github.com/devantler-tech/application-template/issues/211),
+and both ways below work from then on.
+
+Create the repo from the template with **"Use this template"** (GitHub UI) and clone
+it, or create and clone it in one step:
 
 ```sh
 gh repo create devantler-tech/<tenant> \
-  --template devantler-tech/platform-tenant-template --private
+  --template devantler-tech/application-template --private --clone
+cd <tenant>
 ```
+
+Then, in that checkout, lay down its stack and the tenancy with
+`scripts/scaffold.sh <go|dotnet|svelte|none> --tenancy <tenant>`.
 
 The template gives you the shared plumbing it keeps in sync (`cd.yaml`,
 `release.yaml`, `template-sync.yaml`, `CLAUDE.md`, `zizmor.yml`) plus scaffolding
@@ -144,20 +154,18 @@ approved location until migrated. The workflow builds and pushes the image, pins
 **cosign-signs** both (keyless, via GitHub OIDC). The platform's `OCIRepository`
 (§5) **verifies** that signature against the `publish-app.yaml` identity.
 
-`publish-app.yaml` signs two artifacts separately: the OCI **manifest** artifact and the
-container **image**. Three verifiers check them, and they do not check the same thing:
+A `Tenant` follows its own signed releases instead ([ADR 0019](https://github.com/devantler-tech/monorepo/blob/main/docs/adr/0019-tenants-follow-their-signed-release-tags.md)):
+its source takes the newest stable release of `oci://ghcr.io/devantler-tech/<name>/manifests`
+and accepts only the tenant's own repository's release workflow on a release tag. A release goes
+live with no platform change. See [Releases reach production by themselves](#releases-reach-production-by-themselves).
 
-The business site's canonical-only publisher instead uses
-`.github/workflows/publish-runtime.yaml` on a published release. Its initial
-Platform registration is source-only: the typed `Tenant` pins the exact manifest
-digest and reviewed maintained publisher, with application reconciliation,
-WebApp, external DNS and SOPS disabled. Fetching that source does not deploy the
-portal or prove any image/identity/private-input readiness.
+A publisher signs two artifacts separately: the OCI **manifest** artifact and the
+container **image**. Three verifiers check them, and they do not check the same thing:
 
 | Verifier | Artifact | What it accepts |
 | --- | --- | --- |
 | **Flux** — a registered tenant's `OCIRepository` | manifest | Its recorded legacy signer, current pin and release candidate, plus any exact maintained revisions explicitly approved for that consumer, plus that consumer's own repository's release workflow on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)). Other commits and other repositories are refused. |
-| **Flux** — a `Tenant` instance's `OCIRepository` (no pinned publisher) | manifest | The explicitly reviewed maintained revisions, or a workflow in `devantler-tech/<spec.name>/.github/workflows/` on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)). A pinned publisher revision keeps only that exact revision. |
+| **Flux** — a `Tenant` instance's `OCIRepository` | manifest | Only a workflow in `devantler-tech/<spec.name>/.github/workflows/` on a stable release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265), ADR 0019). No shared-publisher revision is accepted. |
 | **Admission** — the `verify-app-images` Kyverno policy | image | The explicitly reviewed maintained `.github` publisher revisions, or any first-party repository's own release workflow on a release tag ([#6265](https://github.com/devantler-tech/platform/issues/6265)), from the GitHub OIDC issuer. The deleted legacy `actions` publisher repository is refused at every commit ([#6264](https://github.com/devantler-tech/platform/issues/6264)). Other maintained commits, tags and branches of the shared publisher are refused. |
 | **Node pull** — the Talos image-verification rule | image | The same as admission. |
 
@@ -168,52 +176,40 @@ refuses the pull (`ImagePullBackOff`).
 The approved Flux list covers the production consumers already registered with the approval
 generator. Legacy compatibility lives in `scripts/publish-workflow-approved-revisions.tsv`, and
 `scripts/write-publish-workflow-matchers.sh` writes it into those consumers'
-`OCIRepository`. Canonical-only registration lives separately in
-`scripts/canonical-tenant-source-bindings.json`; it records the complete typed
-constructor/instance, qualified source and independently verified publication.
-It never fabricates a legacy signer, applied row or release candidate. The
-writer validates the pinned canonical Tenant unchanged. The legacy consumer floor is fixed in code
+`OCIRepository`. A `Tenant` is no consumer of the shared publisher, so it has no row there. The
+legacy consumer floor is fixed in code
 (`scripts/report-publish-workflow-signing-revisions.sh` and the
 `Regenerate Approved Publish Revisions` workflow), so a new tenant registered by hand (§5) is not
 covered until a reviewed platform change adds it there. Maintained revisions are curated separately
 in `scripts/publish-workflow-canonical-approvals.tsv`; recognizing a publisher's location does not
-approve it. The `Tenant` archetype pilot (below) accepts only the explicitly reviewed maintained
-revisions; the deleted legacy publisher repository is no longer accepted. Its starter check also
-requires that this rule accept the starter's actual pinned caller.
+approve it.
 
-To generate the initial business-site admission candidate, use
-`scripts/bootstrap-tenant-source.sh --admit-canonical-source --tag <tag> --source-sha <sha> --digest <digest>`
-with the explicit read-only `PUBLISH_KUBE_CONTEXT`. The command independently
-verifies the immutable release, validates the complete raw constructor/instance
-and inventory, and writes the candidate only after all checks pass. The existing
-`--consumer business-site --verify-only` mode remains evidence-only. Review the
-candidate and registration together; generating a file is not deployed acceptance.
+### Releases reach production by themselves
 
-For a later source-only upgrade, use
-`scripts/bootstrap-tenant-source.sh --prepare-canonical-upgrade --tag <tag> --source-sha <sha> --digest <digest> --output /absolute/new-candidate-directory`
-with that same read-only context. The existing source must already be Ready and
-SourceVerified with its admitted digest and exact publisher constraint. The tool
-verifies the proposed publication, checks the source again, and generates two
-reviewable files in a new private directory. It never updates the checkout or
-cluster. Copy those generated files to their matching repository paths for review;
-do not hand-edit the generated admission or change its disabled application flags.
+A `Tenant`'s source checks for a new release every minute and takes the newest stable `X.Y.Z`
+release signed by the tenant's own release workflow. Flux refuses an artifact whose signature does
+not match and dry-runs the whole package before it applies anything, so a release that fails
+either check changes nothing. One that fails while it is applied, or never becomes healthy, can
+leave part of the package applied, so serve through a rolling update that keeps every old pod
+until its replacement is ready, never `Recreate`. A tenant's health never fails the platform (§8).
+A package that changes its database ships the migration as a Job in the package, and its new
+revision becomes ready only once the schema it needs exists (business-site does this). Old pods
+keep serving meanwhile, so a migration only adds what the new revision needs; removing what the
+old revision reads waits for a later release.
 
-The `published-upgrade` record retains the previous binding and a hashed source
-observation separately from the proposed publication. Discovery projects the new
-desired digest; regeneration preserves the last actual observation while the
-previous source remains verified. It records the replacement only after Flux has
-verified the new digest at its current generation, then removes the transitional
-record. A proposed version is never an applied version. Missing, ambiguous,
-recreated, stale or weakened previous sources fail preparation or regeneration;
-an upgrade never restores first-publication authority or enables an application.
-
-Before first verification, complete inventory may show the exact source absent
-or pending without an artifact. Regeneration emits no applied row for that state.
-Once the uniquely identified source is Ready and SourceVerified at its current
-generation with the exact digest, regeneration writes its qualified seven-column
-observation and retires bootstrap authority. A later missing, pending, malformed,
-duplicated or unreadable observation fails; it cannot restore bootstrap. See the
-[canonical-only source decision](adr/canonical-only-source-bootstrap.md).
+- **What runs:** `kubectl -n <tenant> get ocirepository,kustomization <tenant>` shows the applied
+  `<version>@sha256:<digest>`. The tenant's GitHub release (tag, notes and signed artifacts) and the
+  Flux events are the record of each change.
+- **Recover from a bad release:** publish a fixed release with a new signed tag. If the
+  maintainer suspends the tenant Kustomization during recovery, resume it after the
+  OCIRepository reports Ready with the fixed version.
+- **API compatibility:** the selector uses a fixed stable range. The API retains
+  `spec.source.digest` and `spec.source.publisherRevision` for schema compatibility.
+  The source validation accepts only empty values for these retired fields.
+- **Changing the Tenant API:** KRO updates the installed API only when its compatibility check
+  sees a change, and that check ignores CEL rules and formats. CI compiles the Tenant API from
+  the base revision too, and it fails a change KRO would not install. Pair such a change with
+  one KRO does compare, such as a field description.
 
 Local regeneration requires GNU coreutils (`gmv` on macOS). Output replacement
 uses its no-target-directory operation, so a concurrent destination-directory
@@ -261,10 +257,14 @@ inside the same single anchored subject, until the consumers have moved and
   signature to the organisation, not to one product: the per-tenant binding is the tenant's
   signed manifest source, which accepts only its own repository and pins its image digests.
 
-The `.github` repository is excluded at every layer, including the `github-config` source: it
+The `.github` repository is excluded from the image rules and from the any-workflow form: it
 hosts the shared reusable publishers, and a tag of a reusable workflow carries that repository's
-identity whoever calls it, so another repository's release could verify as its own. Its own move
-needs a narrower rule. A `Tenant` pinned to an exact publisher revision keeps that single identity,
+identity whoever calls it, so another repository's release could verify as its own. Only the
+`github-config` source names it, through the narrower rule
+`.github/.github/workflows/cd.yaml@refs/tags/v<semver>`
+([devantler-tech/.github#926](https://github.com/devantler-tech/.github/issues/926)): exactly
+that one file, which runs only on `.github`'s own tag pushes and which `.github`'s CI keeps free
+of a `workflow_call` trigger. A `Tenant` pinned to an exact publisher revision keeps that single identity,
 because its admission record names it. These verifiers match only the issuer and the subject, so
 a product must not expose a signing workflow other repositories can call.
 
@@ -296,7 +296,7 @@ grants below) and rename — with:
 | `service-account.yaml` | SA with `automountServiceAccountToken: false` (no `imagePullSecrets`: tenant packages are public) |
 | `role-binding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
 | `role-binding-external-dns*.yaml` + `cluster-role-binding.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — bind the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
-| `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`) |
+| `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`, label `platform.devantler.tech/tenant-source: "true"`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`, annotation `ksail.devantler.tech/reconcile-exclude: "true"`) |
 
 > **Tenant-owned (in the tenant repo's `deploy/`, not here):** the
 > `CiliumNetworkPolicy` allow-lists (`networkpolicy.yaml`, and
@@ -428,3 +428,20 @@ hostnames *and* its dashboard annotations) as the reference.
 template-sync opens a PR in the tenant whenever the template's shared plumbing
 changes (a bumped action pin, a workflow fix, an updated convention). Review and
 merge it like any dependency update — your owned files are untouched.
+
+## 8. A tenant's health is its own
+
+A tenant cannot fail the platform ([ADR 0019](https://github.com/devantler-tech/monorepo/blob/main/docs/adr/0019-tenants-follow-their-signed-release-tags.md)).
+The `apps` layer counts every tenant `Kustomization`, and every source labelled
+`platform.devantler.tech/tenant-source: "true"`, as healthy once they exist, and the deploy's
+reconcile skips every `Kustomization` marked `ksail.devantler.tech/reconcile-exclude: "true"`.
+Platform chart sources carry no label and keep Flux's usual readiness check. A broken tenant release therefore never fails
+`apps` or a merge-queue deploy. The tenant stays on its last good revision: Flux refuses an
+artifact whose signature does not match and dry-runs the whole package before it applies anything.
+The `platform-reconciliation` alert reports the tenant's own error events.
+
+Mark every tenant `Kustomization` with that annotation and its source with that label.
+`scripts/tests/tenant-health` fails when the prod `apps` layer renders a `Kustomization` without the
+annotation, a tenant source without the label, a labelled source a platform `HelmRelease` reads, or
+a platform `HelmRelease` that stops being gated. The `platform-reconciliation` alert watches every
+namespace holding an OCIRepository or GitRepository (`scripts/validate-alert-coverage.sh`).

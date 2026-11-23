@@ -14,15 +14,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/testr"
 	kroapi "github.com/kubernetes-sigs/kro/api/v1alpha1"
+	kroclient "github.com/kubernetes-sigs/kro/pkg/client"
 	"github.com/kubernetes-sigs/kro/pkg/features"
 	"github.com/kubernetes-sigs/kro/pkg/graph"
 	gecompiler "github.com/kubernetes-sigs/kro/pkg/graphengine/compiler"
+	krometadata "github.com/kubernetes-sigs/kro/pkg/metadata"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
@@ -30,19 +35,27 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const tenantDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-const tenantPublisher = "a76d5df9371cf712a8f60307fde060825a34cf35"
-const defaultTenantSubject = `^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)|tenant\-fixture/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$`
+// A tenant follows its own stable releases (ADR 0019): a semver range, stable `X.Y.Z` only,
+// signed by its own repository's release workflow on a release tag.
+const stableReleases = `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
+const defaultTenantSubject = `^https://github\.com/devantler-tech/tenant\-fixture/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$`
+
+func releaseRef() map[string]interface{} {
+	return map[string]interface{}{"semver": ">=0.0.0", "semverFilter": stableReleases}
+}
 
 // TestCommittedTenant exercises the actual graph compiler and generated API.
 // Desired objects are expression evidence, not Flux or signature verification.
 func TestCommittedTenant(t *testing.T) {
 	root := os.Getenv("PLATFORM_TEST_ROOT")
-	if root == "" || os.Getenv("KUBEBUILDER_ASSETS") == "" {
-		t.Fatal("explicit source root and verified API-server assets are required")
+	if root == "" || os.Getenv("KUBEBUILDER_ASSETS") == "" || os.Getenv("TENANT_BASE_RGD") == "" {
+		t.Fatal("explicit source root, installed Tenant graph and verified API-server assets are required")
 	}
 	if features.FeatureGate.Enabled(features.CELOmitFunction) {
 		t.Fatal("Tenant compilation must use the deployed omission feature gate")
+	}
+	if features.FeatureGate.Enabled(features.ConservativeCRDComparison) {
+		t.Fatal("Tenant upgrades must use the deployed CRD comparison")
 	}
 	var definition kroapi.ResourceGraphDefinition
 	readYAML(t, filepath.Join(root, "k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"), &definition)
@@ -138,6 +151,25 @@ func TestCommittedTenant(t *testing.T) {
 	if err := completeTenant(compiled); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("installed-api-receives-the-change", func(t *testing.T) {
+		var base kroapi.ResourceGraphDefinition
+		readYAML(t, os.Getenv("TENANT_BASE_RGD"), &base)
+		if base.Name != definition.Name {
+			t.Fatalf("expected the installed Tenant graph, got %q", base.Name)
+		}
+		// Default it through the API server exactly as the committed graph was.
+		base.Name = "installed." + definition.Name
+		if err := apiClient.Create(ctx, &base, client.DryRunAll); err != nil {
+			t.Fatalf("default the installed Tenant graph: %v", err)
+		}
+		installed, err := builder.NewResourceGraphDefinition(&base, graph.Config{MaxCollectionDimensionSize: 5})
+		if err != nil {
+			t.Fatalf("compile the installed Tenant graph: %v", err)
+		}
+		if err := uninstalledAPIChange(installed.CRD, compiled.CRD); err != nil {
+			t.Fatal(err)
+		}
+	})
 	if err := apiClient.Create(ctx, compiled.CRD); err != nil {
 		t.Fatal(err)
 	}
@@ -179,18 +211,18 @@ func TestCommittedTenant(t *testing.T) {
 			assertTenantChildren(t, objects, ignored, true, sops)
 			source := objects["ociRepository"]
 			ref, _, _ := unstructured.NestedMap(source.Object, "spec", "ref")
-			if !reflect.DeepEqual(ref, map[string]interface{}{"semver": ">=1.0.0"}) {
-				t.Fatalf("omitted source changed the existing selector: %v", ref)
+			if !reflect.DeepEqual(ref, releaseRef()) {
+				t.Fatalf("omitted source must follow every stable release: %v", ref)
 			}
 			assertTenantIdentity(t, source, defaultTenantSubject)
-			assertDefaultSubjectRefusesDeletedPublisher(t, source)
+			assertDefaultSubjectRefusesSharedPublishers(t, source)
 			assertDefaultSubjectTrustsOnlyOwnRelease(t, source, "tenant-fixture")
 			writeTenantFixture(t, fmt.Sprintf("default-%t", sops), objects)
 		})
-		t.Run(fmt.Sprintf("pinned-source-only-sops-%t", sops), func(t *testing.T) {
-			input := instance("pinned-fixture", map[string]interface{}{
+		t.Run(fmt.Sprintf("source-only-sops-%t", sops), func(t *testing.T) {
+			input := instance("source-only-fixture", map[string]interface{}{
 				"sops":   sops,
-				"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false},
+				"source": map[string]interface{}{"reconcileApplication": false},
 			})
 			if err := admit(input); err != nil {
 				t.Fatalf("valid source-only input must be admitted: %v", err)
@@ -204,10 +236,10 @@ func TestCommittedTenant(t *testing.T) {
 			}
 			source := objects["ociRepository"]
 			ref, _, _ := unstructured.NestedMap(source.Object, "spec", "ref")
-			if !reflect.DeepEqual(ref, map[string]interface{}{"digest": tenantDigest}) {
-				t.Fatalf("pinned source must have exactly the selected digest: %v", ref)
+			if !reflect.DeepEqual(ref, releaseRef()) {
+				t.Fatalf("source-only tenant must still follow every stable release: %v", ref)
 			}
-			assertTenantIdentity(t, source, `^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@a76d5df9371cf712a8f60307fde060825a34cf35$`)
+			assertTenantIdentity(t, source, defaultTenantSubject)
 		})
 		// The own-release alternative is built from the tenant name, regex-escaped. A
 		// name carrying `.` must not become a wildcard: compile one directly (the
@@ -277,16 +309,10 @@ func TestCommittedTenant(t *testing.T) {
 		name string
 		spec map[string]interface{}
 	}{
-		{"source-only without exact publication", map[string]interface{}{"source": map[string]interface{}{"reconcileApplication": false}}},
-		{"source-only with empty publication", map[string]interface{}{"source": map[string]interface{}{"digest": "", "publisherRevision": "", "reconcileApplication": false}}},
 		{"obsolete top-level lifecycle", map[string]interface{}{"reconcileApplication": false}},
-		{"digest without publisher", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest}}},
-		{"publisher without digest", map[string]interface{}{"source": map[string]interface{}{"publisherRevision": tenantPublisher}}},
-		{"tag selector", map[string]interface{}{"source": map[string]interface{}{"digest": "v1.0.3", "publisherRevision": tenantPublisher}}},
-		{"uppercase digest", map[string]interface{}{"source": map[string]interface{}{"digest": strings.ToUpper(tenantDigest), "publisherRevision": tenantPublisher}}},
-		{"short digest", map[string]interface{}{"source": map[string]interface{}{"digest": "sha256:abc", "publisherRevision": tenantPublisher}}},
-		{"branch publisher", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": "main"}}},
-		{"publisher regex", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": "[0-9a-f]{40}"}}},
+		{"obsolete digest pin", map[string]interface{}{"source": map[string]interface{}{"digest": "sha256:" + strings.Repeat("0", 64)}}},
+		{"obsolete publisher pin", map[string]interface{}{"source": map[string]interface{}{"publisherRevision": "a76d5df9371cf712a8f60307fde060825a34cf35"}}},
+		{"release-range override", map[string]interface{}{"source": map[string]interface{}{"version": "3.12.0"}}},
 		{"source URL override", map[string]interface{}{"source": map[string]interface{}{"url": "oci://example.invalid/other"}}},
 		{"identity override", map[string]interface{}{"source": map[string]interface{}{"subject": ".*"}}},
 		{"wrong lifecycle type", map[string]interface{}{"source": map[string]interface{}{"reconcileApplication": "false"}}},
@@ -308,7 +334,7 @@ func TestCommittedTenant(t *testing.T) {
 			if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false}, "spec", "source"); err != nil {
+			if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"reconcileApplication": false}, "spec", "source"); err != nil {
 				t.Fatal(err)
 			}
 			err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"})
@@ -317,10 +343,10 @@ func TestCommittedTenant(t *testing.T) {
 			}
 		})
 	}
-	// Every committed Tenant, as written and with an unpinned source, accepts only its
-	// own repository's release workflow (#6265). A repository named `actions` is no
-	// tenant's own, `.github` tags are never accepted, and a pinned source keeps its
-	// single exact publisher revision.
+	// Every committed Tenant, as written and with an omitted source, accepts only its
+	// own repository's release workflow (#6265, ADR 0019). A repository named `actions`
+	// is no tenant's own, and neither `.github` tags nor shared-publisher revisions are
+	// ever accepted.
 	t.Run("own-release-for-every-committed-tenant", func(t *testing.T) {
 		tenants := committedTenants(t, root)
 		if len(tenants) < 2 {
@@ -333,7 +359,6 @@ func TestCommittedTenant(t *testing.T) {
 		}
 		for _, committed := range tenants {
 			name, _, _ := unstructured.NestedString(committed.Object, "spec", "name")
-			revision, _, _ := unstructured.NestedString(committed.Object, "spec", "source", "publisherRevision")
 			for _, mode := range []string{"as-committed", "unpinned"} {
 				t.Run(name+"/"+mode, func(t *testing.T) {
 					input := committed.DeepCopy()
@@ -348,12 +373,13 @@ func TestCommittedTenant(t *testing.T) {
 					objects, _ := desiredTenant(t, engine, &definition, input)
 					matcher := compiledSubject(t, objects["ociRepository"])
 					want := map[string]bool{
-						"https://github.com/devantler-tech/" + name + "/.github/workflows/release.yaml@refs/tags/v1.2.3":          mode == "unpinned" || revision == "",
-						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":           false,
-						"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0":     false,
-						"https://github.com/devantler-tech/actions/.github/workflows/release.yaml@refs/tags/v1.2.3":               false,
-						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("e", 40): false,
-						"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":           false,
+						"https://github.com/devantler-tech/" + name + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                        true,
+						"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35": false,
+						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                         false,
+						"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0":                   false,
+						"https://github.com/devantler-tech/actions/.github/workflows/release.yaml@refs/tags/v1.2.3":                             false,
+						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("e", 40):               false,
+						"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                         false,
 					}
 					for _, other := range names {
 						if other != name {
@@ -371,7 +397,7 @@ func TestCommittedTenant(t *testing.T) {
 	})
 	t.Run("source-only-can-activate", func(t *testing.T) {
 		input := instance("activation-fixture", map[string]interface{}{
-			"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false},
+			"source": map[string]interface{}{"reconcileApplication": false},
 		})
 		if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 			t.Fatal(err)
@@ -385,34 +411,125 @@ func TestCommittedTenant(t *testing.T) {
 		objects, ignored := desiredTenant(t, engine, &definition, input)
 		assertTenantChildren(t, objects, ignored, true, false)
 		ref, _, _ := unstructured.NestedMap(objects["ociRepository"].Object, "spec", "ref")
-		if !reflect.DeepEqual(ref, map[string]interface{}{"digest": tenantDigest}) {
+		if !reflect.DeepEqual(ref, releaseRef()) {
 			t.Fatal("activation must not change the selected source")
 		}
 	})
-	for _, mode := range []string{"omitted", "empty object", "null", "empty pair"} {
-		t.Run("pinned-source-cannot-become-floating-"+mode, func(t *testing.T) {
-			input := instance("pin-removal-"+strings.ReplaceAll(mode, " ", "-"), map[string]interface{}{
-				"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher},
-			})
-			if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
+	t.Run("upgrade-clears-stored-digest-pin", func(t *testing.T) {
+		key := client.ObjectKey{Name: compiled.CRD.Name}
+		var legacy extv1.CustomResourceDefinition
+		if err := apiClient.Get(ctx, key, &legacy); err != nil {
+			t.Fatal(err)
+		}
+		spec := legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+		source := spec.Properties["source"]
+		// The installed schema admitted paired pins and prevented clearing them.
+		source.Description = ""
+		source.XValidations = []extv1.ValidationRule{
+			{Rule: "((!has(self.digest) || self.digest == '') == (!has(self.publisherRevision) || self.publisherRevision == '')) && (!has(self.reconcileApplication) || self.reconcileApplication || (has(self.digest) && self.digest != ''))", Message: "validation failed"},
+			{Rule: "!has(oldSelf.digest) || oldSelf.digest == '' || (has(self.digest) && self.digest != '')", Message: "validation failed"},
+		}
+		spec.Properties["source"] = source
+		legacy.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"] = spec
+		legacy.Labels = map[string]string{
+			krometadata.OwnedLabel:                       "true",
+			krometadata.ResourceGraphDefinitionNameLabel: definition.Name,
+		}
+		if err := apiClient.Update(ctx, &legacy); err != nil {
+			t.Fatal(err)
+		}
+		pin := map[string]interface{}{"digest": "sha256:" + strings.Repeat("0", 64), "publisherRevision": strings.Repeat("1", 40)}
+		legacyInput := func(name string) *unstructured.Unstructured {
+			return instance(name, map[string]interface{}{"source": pin})
+		}
+		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
+			return admit(legacyInput("legacy-pin-dry-run")) == nil, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		input := legacyInput("legacy-pin")
+		if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict", FieldManager: "legacy-pin-owner"}); err != nil {
+			t.Fatal(err)
+		}
+		kroClients, err := kroclient.NewSet(kroclient.Config{RestConfig: rest.CopyConfig(config)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		kroCRDs := kroClients.CRD(kroclient.CRDWrapperConfig{})
+		kroCtx := logr.NewContext(ctx, testr.New(t))
+		ensureSourceRules := func(target extv1.CustomResourceDefinition) {
+			t.Helper()
+			if err := kroCRDs.Ensure(kroCtx, target, false); err != nil {
+				t.Fatalf("KRO rejected the Tenant CRD transition: %v", err)
+			}
+			installed, err := kroCRDs.Get(ctx, target.Name)
+			if err != nil {
 				t.Fatal(err)
 			}
-			spec := input.Object["spec"].(map[string]interface{})
-			switch mode {
-			case "omitted":
-				delete(spec, "source")
-			case "empty object":
-				spec["source"] = map[string]interface{}{}
-			case "null":
-				spec["source"] = nil
-			case "empty pair":
-				spec["source"] = map[string]interface{}{"digest": "", "publisherRevision": ""}
+			got := installed.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["source"]
+			want := target.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["source"]
+			if !reflect.DeepEqual(got.XValidations, want.XValidations) {
+				t.Fatalf("KRO reported success without installing the requested Tenant source validation: got %v, want %v", got.XValidations, want.XValidations)
 			}
-			if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); !apierrors.IsInvalid(err) {
-				t.Fatalf("removing the selected publication via %s must be refused: %v", mode, err)
+		}
+		upgraded := compiled.CRD.DeepCopy()
+		upgraded.Labels = legacy.Labels
+		ensureSourceRules(*upgraded)
+		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
+			return apierrors.IsInvalid(admit(legacyInput("new-pin-dry-run"))), nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var committed unstructured.Unstructured
+		readYAML(t, filepath.Join(root, "k8s/providers/hetzner/apps/business-site/tenant.yaml"), &committed)
+		migratedSource, found, err := unstructured.NestedMap(committed.Object, "spec", "source")
+		if err != nil || !found {
+			t.Fatalf("read the committed Business Site source: found=%t, error=%v", found, err)
+		}
+		desired := instance(input.GetName(), map[string]interface{}{"source": migratedSource})
+		payload, err := json.Marshal(desired)
+		if err != nil {
+			t.Fatal(err)
+		}
+		patch := client.RawPatch(types.ApplyPatchType, payload)
+		options := []client.PatchOption{client.FieldOwner("kustomize-controller"), client.ForceOwnership, &client.PatchOptions{FieldValidation: "Strict"}}
+		if err := apiClient.Patch(ctx, desired, patch, append(options, client.DryRunAll)...); err != nil {
+			t.Fatalf("Flux dry-run must clear a pin owned by another manager: %v", err)
+		}
+		if err := apiClient.Patch(ctx, desired, patch, options...); err != nil {
+			t.Fatalf("Flux apply must clear a stored pin: %v", err)
+		}
+		for _, field := range []string{"digest", "publisherRevision"} {
+			value, _, err := unstructured.NestedString(desired.Object, "spec", "source", field)
+			if err != nil || value != "" {
+				t.Fatalf("Flux apply left %s set: value=%q, error=%v", field, value, err)
 			}
-		})
-	}
+		}
+		objects, ignored := desiredTenant(t, engine, &definition, desired)
+		assertTenantChildren(t, objects, ignored, true, false)
+		assertTenantIdentity(t, objects["ociRepository"], defaultTenantSubject)
+
+		ensureSourceRules(legacy)
+		rollback := legacyInput(input.GetName())
+		payload, err = json.Marshal(rollback)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rollbackPatch := client.RawPatch(types.ApplyPatchType, payload)
+		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
+			err := apiClient.Patch(ctx, rollback, rollbackPatch, append(options, client.DryRunAll)...)
+			if apierrors.IsInvalid(err) {
+				return false, nil
+			}
+			return err == nil, err
+		}); err != nil {
+			t.Fatalf("Flux dry-run must accept the old pins after the schema rollback: %v", err)
+		}
+		if err := apiClient.Patch(ctx, rollback, rollbackPatch, options...); err != nil {
+			t.Fatalf("Flux apply must restore the old pins after the schema rollback: %v", err)
+		}
+		ensureSourceRules(*upgraded)
+	})
 	t.Run("pre-upgrade-active-tenant-cannot-be-disabled", func(t *testing.T) {
 		// Store an actual legacy object under a schema without the new fields.
 		// Creating an omitted field under the new schema would only test defaults.
@@ -450,7 +567,7 @@ func TestCommittedTenant(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
-			return admit(instance("upgrade-readiness", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false}})) == nil, nil
+			return admit(instance("upgrade-readiness", map[string]interface{}{"source": map[string]interface{}{"reconcileApplication": false}})) == nil, nil
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -459,7 +576,7 @@ func TestCommittedTenant(t *testing.T) {
 		}
 		objects, ignored := desiredTenant(t, engine, &definition, input)
 		assertTenantChildren(t, objects, ignored, true, false)
-		if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false}, "spec", "source"); err != nil {
+		if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"reconcileApplication": false}, "spec", "source"); err != nil {
 			t.Fatal(err)
 		}
 		if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); !apierrors.IsInvalid(err) {
@@ -566,7 +683,7 @@ func assertTenantIdentity(t *testing.T, source *unstructured.Unstructured, subje
 // subject as the regex cosign applies: the reviewed maintained revisions are
 // accepted and the deleted legacy publisher repository is refused at any
 // commit, including the one its final release was cut from (#6264).
-func assertDefaultSubjectRefusesDeletedPublisher(t *testing.T, source *unstructured.Unstructured) {
+func assertDefaultSubjectRefusesSharedPublishers(t *testing.T, source *unstructured.Unstructured) {
 	t.Helper()
 	identities, _, _ := unstructured.NestedSlice(source.Object, "spec", "verify", "matchOIDCIdentity")
 	if len(identities) != 1 {
@@ -578,8 +695,8 @@ func assertDefaultSubjectRefusesDeletedPublisher(t *testing.T, source *unstructu
 		t.Fatalf("compiled default subject is not a regex: %v", err)
 	}
 	for identity, want := range map[string]bool{
-		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812": true,
-		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35": true,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812": false,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35": false,
 		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328": false,
 		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40):               false,
 		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812": false,
@@ -653,7 +770,7 @@ func assertDefaultSubjectTrustsOnlyOwnRelease(t *testing.T, source *unstructured
 		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                                                                         true,
 		own + "/.github/workflows/cd.yml@refs/tags/v1.2.3-rc.1":                                                                          true,
 		own + "/.github/workflows/release.yaml@refs/tags/v0.0.0-alpha.0.beta-2":                                                          true,
-		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35":          true,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35":          false,
 		own + "-x/.github/workflows/release.yaml@refs/tags/v1.2.3":                                                                       false,
 		"https://github.com/devantler-tech/x" + tenant + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                              false,
 		"https://github.com/devantler-tech/" + strings.ReplaceAll(tenant, "-", "X") + "/.github/workflows/release.yaml@refs/tags/v1.2.3": false,

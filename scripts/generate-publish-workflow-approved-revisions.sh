@@ -293,6 +293,34 @@ default_observer() {
     refuse "$repo: applied tag $tag does not translate to exactly one git tag on devantler-tech/$repo"
     return 1
   }
+  # A release published by the consumer's own release workflow references no shared
+  # workflow, so its CD run carries no signer reference to read. The report's signer
+  # resolution verifies that artifact's own-release signature, tag and commit instead.
+  local commit
+  commit="$(tag_commit "$repo" "$git_tag")" || {
+    refuse "$repo: $git_tag did not resolve to a commit"
+    return 1
+  }
+  if [ "$(report_publisher_at_ref "$repo" "$workflow" "$commit" 2>/dev/null || true)" = own-release ]; then
+    # The signer check verifies the digest the registry tag names. It proves the APPLIED
+    # artifact only while that tag still names the digest Flux applied.
+    if [ "$(registry_digest_for_release "$repo" "$git_tag" 2>/dev/null || true)" != "$digest" ]; then
+      refuse "$repo: $git_tag no longer names the applied digest in the registry; the applied artifact is unverified"
+      return 1
+    fi
+    signer="$(report_release_signer "$repo" "$workflow" "$git_tag" "$commit")" || {
+      refuse "$repo: $git_tag is an own-release publication whose signature, tag or digest did not verify"
+      return 1
+    }
+    # Read again so a tag that moved during verification cannot pair one digest's
+    # signature with another digest's observation.
+    if [ "$(registry_digest_for_release "$repo" "$git_tag" 2>/dev/null || true)" != "$digest" ]; then
+      refuse "$repo: $git_tag moved away from the applied digest during verification"
+      return 1
+    fi
+    printf '%s\t%s\t%s\n' "$tag" "$digest" "$signer"
+    return 0
+  fi
   signer="$(signer_for_tag "$repo" "$workflow" "$git_tag")" || {
     refuse "$repo: no single successful CD run published $git_tag at its current commit referencing $workflow.yaml"
     return 1
@@ -304,7 +332,8 @@ default_pin_resolver() {
   local repo="$1" workflow="$2" branch identity
   branch="$(gh_retry api "repos/devantler-tech/${repo}" --jq .default_branch)" || return 1
   plausible_ref "$branch" || return 1
-  identity="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
+  # An own-release caller resolves to its release workflow at the exact default-branch commit.
+  identity="$(report_current_publisher "$repo" "$workflow" "$branch")" || return 1
   case "$identity" in
     devantler-tech/actions/*) printf '%s\n' "${identity##*@}" ;;
     *) printf '%s\n' "$identity" ;;
@@ -399,13 +428,6 @@ main() {
     exit 1
   fi
   local canonical_baseline_checked=0
-  local canonical_root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" canonical_document canonical_file canonical_initial
-  canonical_file="${CANONICAL_TENANT_BINDINGS_FILE:-$canonical_root/scripts/canonical-tenant-source-bindings.json}"
-  canonical_document="$(canonical_tenant_bindings "$canonical_root")" || {
-    refuse 'canonical source admission is invalid'
-    exit 1
-  }
-  canonical_initial="$canonical_document"
   local bootstrap_file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}" bootstrap_document=''
   if [ -e "$bootstrap_file" ] || [ -n "${PUBLISH_BOOTSTRAP_FILE:-}" ]; then
     bootstrap_document="$(read_bound_publications "${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" "$bootstrap_file")" || {
@@ -449,71 +471,6 @@ main() {
   while IFS=$'\t' read -r repo workflow _version; do
     [ -n "$repo" ] || continue
     examined=$((examined + 1))
-    local canonical_record
-    canonical_record="$(printf '%s\n' "$canonical_document" | jq -c --arg consumer "$repo" '.bindings[]|select(.consumer==$consumer)')"
-    if [ -n "$canonical_record" ]; then
-      # No legacy row/candidate is fabricated for a canonical-only consumer.
-      # A failed observation or immutable publication read never becomes absence.
-      local source_state source_inventory canonical_pin canonical_tuple canonical_previous canonical_date
-      canonical_observation_consistent "$canonical_record" "$IDENTITIES_OUTPUT" || {
-        refuse "$repo: bootstrap/current-observation records disagree"
-        exit 1
-      }
-      canonical_publication_verify "$canonical_record" || {
-        refuse "$repo: immutable publication verification failed"
-        exit 1
-      }
-      require_canonical_approval "$repo" "$workflow" "$(printf '%s\n' "$canonical_record" | jq -r .publication.publisherIdentity)" || exit 1
-      [ -n "${PUBLISH_KUBE_CONTEXT:-}" ] || {
-        refuse "$repo: source inventory context is unset"
-        exit 1
-      }
-      source_inventory="$(mktemp)" || exit 1
-      if ! kubectl --context "$PUBLISH_KUBE_CONTEXT" get ocirepositories.source.toolkit.fluxcd.io -A -o json >"$source_inventory"; then
-        rm -f "$source_inventory"
-        refuse "$repo: source inventory read failed"
-        exit 1
-      fi
-      source_state="$(canonical_source_inventory_state "$canonical_record" "$source_inventory")" || {
-        rm -f "$source_inventory"
-        refuse "$repo: source inventory is incomplete, ambiguous or inconsistent"
-        exit 1
-      }
-      rm -f "$source_inventory"
-      canonical_pin="$(default_pin_resolver "$repo" "$workflow")" || exit 1
-      [ "$canonical_pin" = "$(printf '%s\n' "$canonical_record" | jq -r .publication.publisherIdentity)" ] || {
-        refuse "$repo: current publisher is outside the pinned admission"
-        exit 1
-      }
-      case "$source_state" in
-        previous)
-          # Keep the last actual row, including absence before first observation.
-          canonical_previous="$(awk -F '\t' -v consumer="$repo" '$1==consumer {print}' "$IDENTITIES_OUTPUT")"
-          if [ -n "$canonical_previous" ]; then identities_rows="${identities_rows}${canonical_previous}"$'\n'; fi
-          ;;
-        absent | pending)
-          [ "$(printf '%s\n' "$canonical_record" | jq -r .kind)" = published-bootstrap ] || {
-            refuse "$repo: observed publication cannot regress to bootstrap"
-            exit 1
-          }
-          ;;
-        observed)
-          canonical_tuple="$(printf '%s\n' "$canonical_record" | jq -r '[.consumer,.workflow,(.publication.gitTag|ltrimstr("v")),.sourceIdentity.digest,.publication.publisherIdentity,.publication.publisherIdentity]|@tsv')"
-          canonical_previous="$(awk -F '\t' -v consumer="$repo" '$1==consumer {print}' "$IDENTITIES_OUTPUT")"
-          canonical_date="$today"
-          if [ "${canonical_previous%$'\t'*}" = "$canonical_tuple" ] && is_date "${canonical_previous##*$'\t'}"; then
-            canonical_date="${canonical_previous##*$'\t'}"
-          fi
-          identities_rows="${identities_rows}${canonical_tuple}"$'\t'"${canonical_date}"$'\n'
-          canonical_document="$(printf '%s\n' "$canonical_document" | jq --arg consumer "$repo" '.bindings |= map(if .consumer==$consumer then .kind="published-binding"|del(.previousBinding,.previousObservation) else . end)')"
-          ;;
-        *)
-          refuse "$repo: unknown canonical source state"
-          exit 1
-          ;;
-      esac
-      continue
-    fi
     if [ -n "$observer" ]; then
       answer="$("$observer" "$repo" "$workflow")" || answer=''
     else
@@ -521,7 +478,7 @@ main() {
     fi
     split_observation "$answer"
     local signer_identity='' pin_identity=''
-    signer_identity="$(report_publisher_identity "$OBS_SIGNER" "$workflow")" || signer_identity=''
+    signer_identity="$(report_publisher_identity "$OBS_SIGNER" "$workflow" "$repo" signing)" || signer_identity=''
     if [ "$OBS_COUNT" -ne 3 ] || ! plausible_tag "$OBS_TAG" || ! is_digest "$OBS_DIGEST" || [ -z "$signer_identity" ]; then
       refuse "$repo ($workflow): applied revision not resolved to <tag>, <sha256:digest> and one signer SHA; refusing to write a set with one revision"
       unresolved=$((unresolved + 1))
@@ -533,17 +490,34 @@ main() {
       pin="$(default_pin_resolver "$repo" "$workflow")" || pin=''
     fi
     case "$pin" in *$'\n'*) pin='' ;; esac
-    pin_identity="$(report_publisher_identity "$pin" "$workflow")" || pin_identity=''
+    pin_identity="$(report_publisher_identity "$pin" "$workflow" "$repo" current)" || pin_identity=''
     if [ -z "$pin_identity" ]; then
       refuse "$repo ($workflow): default-branch pin not resolved to one commit SHA; refusing to write a set with one revision"
       unresolved=$((unresolved + 1))
       continue
     fi
-    local actual_tag="$OBS_TAG" actual_digest="$OBS_DIGEST" previous_legacy
+    local actual_tag="$OBS_TAG" actual_digest="$OBS_DIGEST" previous_legacy owned signer_kind pin_kind
     previous_legacy="$(prev_row "$repo" "$workflow")"
-    case "$signer_identity" in
-      devantler-tech/.github/*)
-        if ! require_canonical_approval "$repo" "$workflow" "$signer_identity"; then
+    # A publication signed by the consumer's own release workflow, and a default branch
+    # that calls only the shared action, need no shared-publisher approval: the platform
+    # trusts that repository's release tags directly (ADR 0017). Like a canonical
+    # observation, it keeps the last proven legacy evidence in the compatibility set and
+    # records the current identities in the companion file.
+    owned="$(report_owned_release_workflow "$repo")" || owned=''
+    publisher_kind() { # <identity>
+      if [ -n "$owned" ] && [[ "$1" == "$owned@"* ]]; then
+        printf 'own-release\n'
+      elif [[ "$1" == devantler-tech/.github/* ]]; then
+        printf 'canonical\n'
+      else
+        printf 'legacy\n'
+      fi
+    }
+    signer_kind="$(publisher_kind "$signer_identity")"
+    pin_kind="$(publisher_kind "$pin_identity")"
+    case "$signer_kind" in
+      canonical | own-release)
+        if [ "$signer_kind" = canonical ] && ! require_canonical_approval "$repo" "$workflow" "$signer_identity"; then
           unresolved=$((unresolved + 1))
           continue
         fi
@@ -558,9 +532,9 @@ main() {
         ;;
       *) OBS_SIGNER="${signer_identity##*@}" ;;
     esac
-    case "$pin_identity" in
-      devantler-tech/.github/*)
-        if ! require_canonical_approval "$repo" "$workflow" "$pin_identity"; then
+    case "$pin_kind" in
+      canonical | own-release)
+        if [ "$pin_kind" = canonical ] && ! require_canonical_approval "$repo" "$workflow" "$pin_identity"; then
           unresolved=$((unresolved + 1))
           continue
         fi
@@ -644,31 +618,10 @@ main() {
     exit 1
   }
 
-  local tmp identities_tmp bootstrap_tmp='' canonical_tmp=''
+  local tmp identities_tmp bootstrap_tmp=''
   tmp="$(mktemp "${OUTPUT}.XXXXXX")"
   identities_tmp="$(mktemp "${IDENTITIES_OUTPUT}.XXXXXX")"
-  trap 'rm -f "$tmp" "$identities_tmp" "${bootstrap_tmp:-}" "${canonical_tmp:-}"' EXIT
-  if [ "$(printf '%s\n' "$canonical_document" | jq '.bindings|length')" -gt 0 ]; then
-    if [ ! -f "$canonical_file" ] || [ -L "$canonical_file" ]; then
-      refuse 'canonical destination changed; no file written'
-      exit 1
-    fi
-    # The reader normalizes JSON for validation; that formatting is not an
-    # observation. Keep the original bytes unless the validated data changed.
-    local canonical_unchanged
-    canonical_unchanged="$(printf '%s\n' "$canonical_document" | jq -cr --argjson initial "$canonical_initial" '. == $initial')" || {
-      refuse 'canonical comparison failed; no file written'
-      exit 1
-    }
-    if [ "$canonical_unchanged" = false ]; then
-      canonical_tmp="$(mktemp "${canonical_file}.XXXXXX")"
-      printf '%s\n' "$canonical_document" | jq . >"$canonical_tmp"
-      chmod 0644 "$canonical_tmp"
-    elif [ "$canonical_unchanged" != true ]; then
-      refuse 'canonical comparison was not boolean; no file written'
-      exit 1
-    fi
-  fi
+  trap 'rm -f "$tmp" "$identities_tmp" "${bootstrap_tmp:-}"' EXIT
   if [ -n "$bootstrap_document" ]; then
     bootstrap_tmp="$(mktemp "${bootstrap_file}.XXXXXX")"
     printf '%s\n' "$bootstrap_document" >"$bootstrap_tmp"
@@ -687,7 +640,6 @@ main() {
   replace_generated_record "$tmp" "$OUTPUT"
   replace_generated_record "$identities_tmp" "$IDENTITIES_OUTPUT"
   [ -z "$bootstrap_tmp" ] || replace_generated_record "$bootstrap_tmp" "$bootstrap_file"
-  [ -z "$canonical_tmp" ] || replace_generated_record "$canonical_tmp" "$canonical_file"
   trap - EXIT
   printf '%d consumer(s) examined, %d row(s) re-stamped, written to %s\n' "$examined" "$changed" "$OUTPUT"
 }

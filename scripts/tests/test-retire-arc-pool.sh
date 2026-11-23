@@ -394,11 +394,23 @@ if grep -q 'delete.*autoscalingrunnersets' "$ARC_TEST_STATE/commands"; then
   exit 1
 fi
 jq -e '.metadata.uid=="replacement-ars"' "$ARC_TEST_STATE/ars.json" >/dev/null
-for missing in hr eso; do
-  baseline_fixture "never-created-$missing"
-  rm "$ARC_TEST_STATE/$missing.json"
-  run_native before-publish
-  jq -e '.metadata.annotations."platform.devantler.tech/arc-retirement"|fromjson|.phase=="absent" and .baseline.writer.flux.podUIDs==["flux-pod-1","flux-pod-2"]' "$ARC_TEST_STATE/ns.json" >/dev/null
+for runtime in legacy current; do
+  for missing in hr eso; do
+    baseline_fixture "never-created-$runtime-$missing"
+    if [[ "$runtime" == current ]]; then
+      image='ghcr.io/fluxcd/kustomize-controller:v1.9.6@sha256:2ebeaa341da77d52b6abbbba5efcee0450d47f8b42f0e6f33b08f9020262d606'
+      image_id='ghcr.io/fluxcd/kustomize-controller@sha256:2ebeaa341da77d52b6abbbba5efcee0450d47f8b42f0e6f33b08f9020262d606'
+      jq --arg image "$image" '.spec.template.spec.containers[0].image=$image' "$ARC_TEST_STATE/flux-controller.json" >"$ARC_TEST_STATE/next.json"
+      mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/flux-controller.json"
+      jq --arg image "$image_id" 'map(.imageID=$image)' "$ARC_TEST_STATE/flux-pods.json" >"$ARC_TEST_STATE/next.json"
+      mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/flux-pods.json"
+    else
+      image='ghcr.io/fluxcd/kustomize-controller:v1.8.5@sha256:70e2a25edeee82690e68662409fb1b60f7d3084c93435e8ab5337a6e0244ffed'
+    fi
+    rm "$ARC_TEST_STATE/$missing.json"
+    run_native before-publish
+    jq -e --arg image "$image" '.metadata.annotations."platform.devantler.tech/arc-retirement"|fromjson|.phase=="absent" and .baseline.writer.flux.podUIDs==["flux-pod-1","flux-pod-2"] and .baseline.writer.flux.image==$image' "$ARC_TEST_STATE/ns.json" >/dev/null
+  done
 done
 baseline_fixture generic-source-failure
 rm "$ARC_TEST_STATE/eso.json"

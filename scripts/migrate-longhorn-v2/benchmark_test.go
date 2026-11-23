@@ -75,7 +75,7 @@ func TestBenchmarkResourcesUseOnlyOwnedScratchStorageAndPermanentClient(t *testi
 			class = o
 		}
 	}
-	if text(pod, "spec", "nodeSelector", "kubernetes.io/hostname") != "prod-worker-3" ||
+	if text(pod, "spec", "nodeSelector", "kubernetes.io/hostname") != "prod-worker-1" ||
 		value(pod, "spec", "automountServiceAccountToken") != false ||
 		text(claim, "spec", "storageClassName") != text(class, "metadata", "name") ||
 		text(class, "parameters", "dataEngine") != "v1" || text(class, "parameters", "numberOfReplicas") != "3" ||
@@ -100,6 +100,28 @@ func TestScratchResourcesStayOutOfBackupsAndGeneratedNames(t *testing.T) {
 		}
 		if text(o, "kind") == "NetworkPolicy" && text(o, "metadata", "name") == "default-deny" {
 			t.Fatal("the scratch policy collides with the generated default-deny")
+		}
+	}
+}
+func TestCurrentBenchmarkUsesReviewedWorkspaceWithoutNamespaceCreate(t *testing.T) {
+	const run = "1234"
+	for _, phase := range []string{"v1", "v2"} {
+		assets, err := benchmarkResources(phase, run, benchmarkNamespace)
+		if err != nil || len(assets) != 4 {
+			t.Fatalf("expected four scratch assets in the dedicated workspace: %v", err)
+		}
+		for _, asset := range assets {
+			switch text(asset, "kind") {
+			case "StorageClass":
+				if text(asset, "parameters", "nodeSelector") != benchmarkTag(phase, run) ||
+					text(asset, "metadata", "namespace") != "" {
+					t.Fatal("the storage class must select only this run's temporary node tag")
+				}
+			default:
+				if text(asset, "kind") == "Namespace" || text(asset, "metadata", "namespace") != benchmarkNamespace {
+					t.Fatal("benchmark asset escaped the dedicated workspace")
+				}
+			}
 		}
 	}
 }

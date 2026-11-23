@@ -183,6 +183,7 @@ readonly mail_pattern='ghcr.io/devantler-tech/platform-private-mail-bootstrap'
 readonly mail_candidate_pattern='ghcr.io/devantler-tech/platform-private-mail-bootstrap-candidate'
 readonly customer_identity_pattern='ghcr.io/devantler-tech/business-site-identity'
 readonly dex_pattern='ghcr.io/devantler-tech/platform-dex'
+readonly kagent_pattern='ghcr.io/devantler-tech/platform-kagent-controller'
 readonly longhorn_retirement_pattern='ghcr.io/devantler-tech/platform-longhorn-instance-manager'
 readonly longhorn_v2_pattern='ghcr.io/devantler-tech/platform-longhorn-manager'
 readonly mail_submission_pattern='ghcr.io/devantler-tech/platform-mail-submission'
@@ -252,10 +253,11 @@ write_healthy_rules() {
     resource_obj 0013 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${background_pattern}"
     resource_obj 0014 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${customer_identity_pattern}"
     resource_obj 0015 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${dex_pattern}"
-    resource_obj 0016 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_retirement_pattern}"
-    resource_obj 0017 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_v2_pattern}"
-    resource_obj 0018 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_submission_pattern}"
-    resource_obj 0019 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0016 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kagent_pattern}"
+    resource_obj 0017 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_retirement_pattern}"
+    resource_obj 0018 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_v2_pattern}"
+    resource_obj 0019 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_submission_pattern}"
+    resource_obj 0020 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -281,7 +283,7 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '20 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '21 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
 

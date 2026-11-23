@@ -20,18 +20,11 @@ func absentOrEmptyMap(v any) bool {
 // checks, mutation fences and recovery ownership at each destructive boundary.
 func verifyRecoveredBenchmarkDetached(volume object, attachments, engines, frontends []object) error {
 	name := text(volume, "metadata", "name")
-	if name == "" || text(volume, "metadata", "uid") == "" || text(volume, "metadata", "resourceVersion") == "" || text(volume, "status", "state") != "detached" || attachments == nil || engines == nil || frontends == nil {
+	if attachments == nil || engines == nil || frontends == nil {
 		return errors.New("complete detached backend observations are required")
 	}
-	for _, key := range []string{"nodeID", "engineNodeID", "migrationNodeID"} {
-		if !absentOrEmptyString(value(volume, "spec", key)) {
-			return errors.New("backend still has a desired attachment or migration target")
-		}
-	}
-	for _, key := range []string{"currentNodeID", "currentEngineNodeID", "currentMigrationNodeID", "switchoverState"} {
-		if !absentOrEmptyString(value(volume, "status", key)) {
-			return errors.New("backend attachment or switchover remains observed")
-		}
+	if err := verifyBenchmarkDetachedBackendState(volume); err != nil {
+		return err
 	}
 	seen := map[string]bool{text(volume, "metadata", "uid"): true}
 	for group, items := range [][]object{attachments, engines, frontends} {
@@ -55,6 +48,24 @@ func verifyRecoveredBenchmarkDetached(volume object, attachments, engines, front
 			} else if text(item, "spec", "desireState") != "stopped" || text(item, "status", "currentState") != "stopped" {
 				return errors.New("backend engine or frontend has not fully stopped")
 			}
+		}
+	}
+	return nil
+}
+
+func verifyBenchmarkDetachedBackendState(volume object) error {
+	if text(volume, "metadata", "name") == "" || text(volume, "metadata", "uid") == "" ||
+		text(volume, "metadata", "resourceVersion") == "" || text(volume, "status", "state") != "detached" {
+		return errors.New("complete detached backend observations are required")
+	}
+	for _, key := range []string{"nodeID", "engineNodeID", "migrationNodeID"} {
+		if !absentOrEmptyString(value(volume, "spec", key)) {
+			return errors.New("backend still has a desired attachment or migration target")
+		}
+	}
+	for _, key := range []string{"currentNodeID", "currentEngineNodeID", "currentMigrationNodeID", "switchoverState"} {
+		if !absentOrEmptyString(value(volume, "status", key)) {
+			return errors.New("backend attachment or switchover remains observed")
 		}
 	}
 	return nil

@@ -298,7 +298,7 @@
       "automerge": true
     },
     {
-      "description": "Crossplane provider packages (the crossplane manager reads each Provider's spec.package). NOT automerged, whatever the update type: every provider is part of the production-authorization surface, so a bump cannot pass CI until its fingerprint is re-approved in scripts/validate-eks-ci-role-policy/main.go, and a provider's revision-hashed service account can stop matching an exact-name carve-out on upgrade. Before merge, first-party ghcr.io/devantler-tech packages are verified against this organisation's signers, and xpkg.upbound.io/upbound packages against Upbound's supplychain.yml build identity (scripts/check-upbound-package-signatures.sh). crossplane-contrib/provider-upjet-github publishes no signature, so nothing verifies it: it is pinned by digest so the reviewed bytes are the ones that run, and each bump moves the tag and digest together. Review its upstream release before approving. minimumReleaseAge is 0 days for these packages: neither xpkg.upbound.io nor ghcr.io gives Renovate a release date for them, and a release with no date never clears the repository-wide wait, so no update was proposed at all (#4754). Raising the PR adopts nothing: it is never automerged and cannot merge without the review, the signature check and the fingerprint re-approval named above.",
+      "description": "Crossplane provider packages (the crossplane manager reads each Provider's spec.package). NOT automerged, whatever the update type: a provider's revision-hashed service account can stop matching an exact-name carve-out on upgrade. Before merge, first-party ghcr.io/devantler-tech packages are verified against this organisation's signers, and xpkg.upbound.io/upbound packages against Upbound's supplychain.yml build identity (scripts/check-upbound-package-signatures.sh). crossplane-contrib/provider-upjet-github publishes no signature, so nothing verifies it: it is pinned by digest so the reviewed bytes are the ones that run, and each bump moves the tag and digest together. Review its upstream release before approving. minimumReleaseAge is 0 days for these packages: neither xpkg.upbound.io nor ghcr.io gives Renovate a release date for them, and a release with no date never clears the repository-wide wait, so no update was proposed at all (#4754). Raising the PR adopts nothing: it is never automerged and cannot merge without the review and the signature check named above. Providers carry no production-authorization ledger entry (#6270).",
       "matchManagers": ["crossplane"],
       "minimumReleaseAge": "0 days",
       "automerge": false,
@@ -426,6 +426,13 @@
     {
       "description": "Hold the Kyverno CI policy CLI below 1.20.0 for the same reason and with the same removal condition as the chart rule above (#4994).",
       "matchPackageNames": ["kyverno/kyverno"],
+      "allowedVersions": "<1.20.0"
+    },
+    {
+      "description": "Hold the Kyverno engine Go module below 1.20.0 in the tenant web-app admission test module, for the same reason and with the same removal condition as the chart and CLI rules above (#4994): that module builds the 1.19 engine production runs. Kyverno v1.20.0 also cannot be consumed as a library yet: it compiles only with its own replace of github.com/kyverno/api by a fork in a personal account (against the published v0.0.1-alpha.5 it fails with `pc.Enabled undefined`), and it needs Go 1.27.",
+      "matchManagers": ["gomod"],
+      "matchFileNames": ["scripts/tests/tenant-webapp-admission/go.mod"],
+      "matchPackageNames": ["github.com/kyverno/kyverno"],
       "allowedVersions": "<1.20.0"
     },
     {

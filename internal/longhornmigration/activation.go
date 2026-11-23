@@ -113,25 +113,3 @@ func (r ActivationRecord) Validate() error {
 	}
 	return nil
 }
-
-// registeredRawTransition checks stable ownership for the read-only pool
-// exception. A later normal reboot or OS upgrade does not revoke registration;
-// destructive operations continue to require their separate native boot proof.
-func registeredRawTransition(n, lh, cm Object) bool {
-	if text(cm, "metadata", "name") != ActivationJournal || text(cm, "metadata", "namespace") != "longhorn-system" ||
-		text(cm, "metadata", "uid") == "" || value(cm, "metadata", "deletionTimestamp") != nil ||
-		text(lh, "metadata", "annotations", ActivationOwner) != text(cm, "metadata", "uid") {
-		return false
-	}
-	r, err := DecodeActivationRecord([]byte(text(cm, "data", "record")))
-	if err != nil || !r.Completed {
-		return false
-	}
-	for _, b := range r.Targets {
-		if b.Name == text(n, "metadata", "name") {
-			return b.NodeUID == text(n, "metadata", "uid") && b.ProviderID == text(n, "spec", "providerID") &&
-				strings.EqualFold(b.MachineUUID, text(n, "status", "nodeInfo", "systemUUID")) && b.LonghornUID == text(lh, "metadata", "uid")
-		}
-	}
-	return false
-}

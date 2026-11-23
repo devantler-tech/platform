@@ -18,8 +18,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly REPO_ROOT
-# shellcheck source=scripts/tenant-source-constructors.lib.sh
-source "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh"
 readonly GUARD="$REPO_ROOT/scripts/guard-publish-workflow-approved-revisions.sh"
 readonly WRITER="$REPO_ROOT/scripts/write-publish-workflow-matchers.sh"
 readonly REPORT="$REPO_ROOT/scripts/report-publish-workflow-signing-revisions.sh"
@@ -35,7 +33,6 @@ readonly CANONICAL_REPOSITORY='devantler-tech/.github'
 readonly LEGACY_SET="($SHA_A|$SHA_B|$SHA_E)"
 readonly GENERICS=(
   'k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
-  'k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
   'talos/cluster/verify-first-party-images.yaml'
 )
 
@@ -84,12 +81,17 @@ legacy_subject() { # <workflow> <ref>
 }
 # The consumer's own release workflow alternative (#6265), written independently of the
 # library under test: its current repository with dots escaped, on a strict semver tag.
-# The `.github` consumer, whose repository hosts the shared publishers, has none.
+# The `.github` consumer, whose repository hosts the shared publishers, gets only its
+# cd.yaml on a release tag (devantler-tech/.github#926), never any workflow file there.
 readonly OWN_TAIL='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+readonly GITHUB_OWN='\.github/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 own_release_of() { # <consumer>
   local repository="$1"
   case "$1" in
-    .github) return 0 ;;
+    .github)
+      printf '|%s' "$GITHUB_OWN"
+      return 0
+      ;;
     data-product-controller) repository=khoist ;;
   esac
   printf '|%s%s' "${repository//./\\.}" "$OWN_TAIL"
@@ -191,26 +193,16 @@ expect_refusal() { # <case> <root> <must-mention>...
 root="$(build_tree control)"
 expect_pass 'control: a legacy-only tree with a record that approves nothing passes' "$root"
 
-# A typed source has no literal subject for the old grep to find. It must not
-# disappear beside an otherwise complete legacy census without explicit admission.
+# A typed source has no literal subject for the old grep to find. A Tenant is admitted
+# only beside the exact own-release graph (ADR 0019); beside any other graph its
+# controller-made source must not disappear from attribution.
 root="$(build_tree unapproved-typed-source)"
-cp "$REPO_ROOT/${GENERICS[1]}" "$root/${GENERICS[1]}"
-mkdir -p "$root/k8s/providers/hetzner/apps/business-site"
-cat >"$root/k8s/providers/hetzner/apps/business-site/tenant.yaml" <<EOF
-apiVersion: kro.run/v1alpha1
-kind: Tenant
-metadata:
-  name: business-site
-  namespace: default
-spec:
-  name: business-site
-  webApp: true
-  source:
-    digest: $DIGEST
-    publisherRevision: $SHA_K
-    reconcileApplication: false
-EOF
-expect_refusal 'an unapproved typed business source cannot disappear from attribution' "$root" 'k8s/providers/hetzner/apps/business-site/tenant.yaml'
+tenant_graph=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
+mkdir -p "$root/$(dirname "$tenant_graph")" "$root/k8s/providers/hetzner/apps/business-site"
+cp "$REPO_ROOT/$tenant_graph" "$root/$tenant_graph"
+yq -i '(.spec.resources[] | select(.id == "ociRepository").template.spec.ref.semverFilter) = ".*"' "$root/$tenant_graph"
+cp "$REPO_ROOT/k8s/providers/hetzner/apps/business-site/tenant.yaml" "$root/k8s/providers/hetzner/apps/business-site/tenant.yaml"
+expect_refusal 'a typed source beside an unreviewed Tenant graph cannot disappear from attribution' "$root" 'inventory is UNKNOWN'
 
 # ── the record, read strictly ─────────────────────────────────────────────────────────────
 root="$(build_tree record-missing)"
@@ -485,12 +477,23 @@ root="$(build_tree own-release-publisher-host)"
 write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
 write_consumer "$root" "$other_manifest_consumer" \
   "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$manifest_consumer")"
-expect_refusal 'the .github consumer accepts no own-release alternative' "$root" 'not exactly'
+expect_refusal "the .github consumer accepts no other repository's release workflow" "$root" 'not exactly'
+
+root="$(build_tree own-release-publisher-host-cd)"
+write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$other_manifest_consumer")"
+expect_pass "the .github consumer accepts exactly its cd.yaml on a release tag" "$root"
 
 root="$(build_tree own-release-publisher-host-none)"
 write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
-write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K" "$other_manifest_consumer")"
-expect_pass 'the .github consumer keeps the plain two-family matcher' "$root"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+expect_refusal 'the .github consumer without its cd.yaml release workflow is refused' "$root" 'does not accept its own release workflow'
+
+root="$(build_tree own-release-publisher-host-any)"
+write_record "$root" "$(record_row "$other_manifest_consumer" "$SHA_K")"
+any_github="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+write_consumer "$root" "$other_manifest_consumer" "${any_github%')$'}|\\.github$OWN_TAIL)\$"
+expect_refusal 'the .github consumer accepting any of its workflows is refused' "$root" 'not exactly'
 
 # ── switch OFF: the canonical family has no pattern form to fall back to ──────────────────
 ENFORCE=0
@@ -644,19 +647,15 @@ fi
 # revision may join them; a wildcard or an unanchored alternation fails below.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
-  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
     # The product documentation consumer is data-product-controller, which approves
     # v19.0.5 since its publisher moved there (#6227), so it accepts the same rows.
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
-    # Only the generic rules admit v21.3.4 (#6228); no consumer approves it yet,
-    # so each consumer-specific source must still refuse it.
-    if [[ "$identity" == *@a76d5df9371cf712a8f60307fde060825a34cf35 && "$profile" != admission && "$profile" != node-pull && "$profile" != generic-tenant ]]; then expected=reject; fi
     # The generic rules no longer accept the deleted legacy publisher repository at
     # any commit (#6264). The consumer-specific sources keep their exact generated
     # legacy commit until the approval machinery that writes them is retired.
-    if [[ "$identity" == https://github.com/devantler-tech/actions/* && ("$profile" == admission || "$profile" == node-pull || "$profile" == generic-tenant) ]]; then expected=reject; fi
+    if [[ "$identity" == https://github.com/devantler-tech/actions/* && ("$profile" == admission || "$profile" == node-pull) ]]; then expected=reject; fi
     if [ "$result" = "$expected" ]; then
       pass "committed $profile: $expected $identity"
     else
@@ -665,7 +664,7 @@ while IFS=$'\t' read -r profile file selector; do
   done <<'IDENTITIES'
 accept	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
 accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
-accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -683,29 +682,27 @@ IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
-generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 coaching	k8s/bases/apps/ascoachingogvaner/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 product-docs	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
-# The generic rules replace the retired v8.0.0 publisher with v21.3.4 (#6228),
-# whose cosign labels its bundle so Talos can find it (#6226). Exercise the
-# committed predicates at all three boundaries: v21.3.4 only as its exact commit,
-# and v8.0.0 refused in every form.
+# The generic rules admitted v21.3.4 (#6228) in place of the retired v8.0.0
+# publisher. Its only user, business-site, now signs its own releases, so it is
+# retired too (#6266). Exercise the committed predicates at both boundaries:
+# v21.3.4 and v8.0.0 are refused in every form.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
-  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
     if [ "$result" = "$expected" ]; then
-      pass "v21 transition $profile: $expected $identity"
+      pass "retired v21 $profile: $expected $identity"
     else
-      fail "v21 transition $profile: expected $expected for $identity, got $result"
+      fail "retired v21 $profile: expected $expected for $identity, got $result"
     fi
   done <<'IDENTITIES'
-accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@v21.3.4
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35-extra
@@ -719,16 +716,14 @@ IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
-generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
 # The legacy publisher repository is deleted (#6264). The generic rules accept only
-# the two reviewed maintained revisions and refuse that repository at every commit:
+# the reviewed maintained revision v19.0.5 and refuse that repository at every commit:
 # an arbitrary one, the commit its final release was cut from, commits that other
 # consumers approved for it, and a maintained commit written under its name.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
-  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
@@ -739,7 +734,7 @@ while IFS=$'\t' read -r profile file selector; do
     fi
   done <<'IDENTITIES'
 accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
-accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35
 reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@0123456789abcdef0123456789abcdef01234567
 reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
@@ -750,7 +745,6 @@ IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
-generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
 # A product's own release workflow on a release tag (#6265, ADR 0017). The image rules accept
@@ -766,7 +760,6 @@ PROFILES
 # consumers whose generated approvals name that exact legacy commit keep it.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
-  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r accepting identity; do
     expected=reject
     case ",$accepting," in *",$profile,"*) expected=accept ;; esac
@@ -804,7 +797,6 @@ IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
-generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 coaching	k8s/bases/apps/ascoachingogvaner/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 product-docs	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject

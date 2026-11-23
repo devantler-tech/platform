@@ -209,11 +209,9 @@ spec:
     # changed exits 0 and emits the object completely unpatched. The uid is
     # chart-version-coupled for the same reason — revisit both on a major bump.
     #
-    # It does NOT go unnoticed, though. This HelmRelease is a member of the pinned
-    # EKS authorization surface (document 217 of the rendered membership), so any
-    # chart bump moves its approved-surface entry and reds that gate, forcing a
-    # re-approval — which is exactly the checkpoint where this patch gets
-    # re-verified. The gate is the backstop; this comment is the instruction.
+    # The EKS authorization ledger no longer pins this HelmRelease (#6270), so a
+    # chart bump needs no re-approval there to force that check. Re-verify the
+    # patch target against the new chart in the bump's own review.
     #
     # The three writable paths (/var/cache/nginx, /var/config/nginx, /var/run) are
     # chart-provided emptyDirs and world-writable, so the UI needs no fsGroup to

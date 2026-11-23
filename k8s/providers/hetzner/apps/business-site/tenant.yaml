@@ -1,10 +1,14 @@
-# The tenant reconciles its signed v3.13.0 package: the WebApp, its network
-# policy, budget and runtime inputs, the portal schema migration Job and the
-# daily retention CronJob, which both read the business-site-portal-db-migration
-# Secret (#6372). It serves devantler.tech and www (moved off GitHub Pages on
-# 2026-11-15, #6177) and portal.devantler.tech, plus the
-# business-site.platform.devantler.tech staging name. Portal sign-in is on,
-# invite-only (#6389); payments stay off.
+# The tenant follows its own signed releases (ADR 0019, monorepo#5094): Flux
+# takes the newest stable business-site release signed by the repository's own
+# release workflow, so a release goes live with no platform change. The package
+# carries the WebApp, its network policy, budget and runtime inputs, the portal
+# schema migration Job and the daily retention CronJob, which both read the
+# business-site-portal-db-migration Secret (#6372). It serves devantler.tech and
+# www (moved off GitHub Pages on 2026-11-15, #6177) and portal.devantler.tech,
+# plus the business-site.platform.devantler.tech staging name. Portal sign-in is
+# on, invite-only (#6389); payments stay off.
+#
+# For release recovery, see docs/TENANTS.md.
 apiVersion: kro.run/v1alpha1
 kind: Tenant
 metadata:
@@ -16,6 +20,7 @@ spec:
   sops: false
   webApp: true
   source:
-    digest: sha256:0ffcda5f8e79dae29d27d36e45f1cb918f1ff41ec30f0838473797bf6e3f9bc8
-    publisherRevision: a76d5df9371cf712a8f60307fde060825a34cf35
+    # Clear the legacy pin explicitly during server-side apply.
+    digest: ""
+    publisherRevision: ""
     reconcileApplication: true

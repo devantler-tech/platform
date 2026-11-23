@@ -37,7 +37,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly job='validate-eks-authorization'
 readonly step='🔐 Validate static production authorization controls'
-readonly diagnostic_line='+ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|hcloud-csi'
+readonly diagnostic_line='+ rbac.authorization.k8s.io/v1|RoleBinding|kube-system|hcloud-csi'
 
 work_dir="$(mktemp -d)"
 readonly work_dir

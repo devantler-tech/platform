@@ -4,6 +4,7 @@ kind: OCIRepository
 metadata:
   labels:
     app.kubernetes.io/managed-by: ksail
+    platform.devantler.tech/tenant-source: "true"
   name: wedding-app
   namespace: wedding-app
 spec:

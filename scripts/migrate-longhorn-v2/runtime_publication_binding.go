@@ -16,7 +16,6 @@ import (
 
 const runtimeControllersRoot = "k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
 const runtimeComponentReference = "../../../../bases/components/longhorn-v1-retirement-runtime"
-const runtimePublicationApprovalPath = "scripts/validate-eks-ci-role-policy/approved-surface.txt"
 
 type runtimePublicationBinding struct{ Base, Candidate, Kind string }
 
@@ -149,45 +148,12 @@ func runtimePublicationActivation(base, candidate []byte) error {
 	return nil
 }
 
+// runtimePublicationChangeScope accepts an activation that changes the
+// production controllers root and nothing else. The Longhorn HelmRelease the
+// component patches has no authorization ledger entry since platform#6270, so
+// the activation carries no approval edit, and a change to any other file,
+// the ledger included, is outside it.
 func runtimePublicationChangeScope(data []byte) bool {
 	paths := strings.Fields(string(data))
-	if len(paths) != 2 {
-		return false
-	}
-	seen := map[string]bool{}
-	for _, path := range paths {
-		if path != runtimeControllersRoot && path != runtimePublicationApprovalPath || seen[path] {
-			return false
-		}
-		seen[path] = true
-	}
-	return seen[runtimeControllersRoot] && seen[runtimePublicationApprovalPath]
-}
-
-// The existing required authorization validator establishes the new digest
-// from the full native render. This guard permits only that same release's
-// ledger entry to change; it cannot authorize another resource or weaken the
-// authorization validator's exact-content check.
-func runtimePublicationApprovalDelta(base, candidate []byte) error {
-	entry := regexp.MustCompile(`^helm\.toolkit\.fluxcd\.io/v2\|HelmRelease\|longhorn-system\|longhorn ([a-f0-9]{64})$`)
-	normalize := func(raw []byte) (string, string, bool) {
-		if len(raw) == 0 || len(raw) > 1<<20 {
-			return "", "", false
-		}
-		lines, hash, count := strings.Split(string(raw), "\n"), "", 0
-		for i, line := range lines {
-			if match := entry.FindStringSubmatch(line); match != nil {
-				count++
-				hash = match[1]
-				lines[i] = "<matching Longhorn authorization entry>"
-			}
-		}
-		return strings.Join(lines, "\n"), hash, count == 1
-	}
-	previous, oldHash, oldOK := normalize(base)
-	proposed, newHash, newOK := normalize(candidate)
-	if !oldOK || !newOK || previous != proposed || oldHash == newHash {
-		return errRuntimePublication
-	}
-	return nil
+	return len(paths) == 1 && paths[0] == runtimeControllersRoot
 }

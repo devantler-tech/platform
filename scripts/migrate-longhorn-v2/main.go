@@ -34,6 +34,8 @@ func main() {
 		authorization = authorizeRetainedTemporaryPreparation(os.Getenv, target)
 	case "benchmark-v1", "benchmark-v2":
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
+	case recoverUnstartedV1Operation:
+		authorization = authorizeUnstartedV1Recovery(os.Getenv)
 	case "register-temporary-v2-storage":
 		authorization = authorizeTemporaryActivation(os.Getenv)
 	case "inventory-replicas":
@@ -70,7 +72,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
 	if operation == runtimeInventoryOperation {
-		receipt, err := observeRuntimeInventory(ctx, client{run: runtimeInventoryReadCommand, context: "admin@prod"}, os.Getenv("GITHUB_SHA"))
+		receipt, err := observeRuntimeInventory(ctx, client{run: runtimeInventoryReadCommand, context: "admin@prod"}, os.Getenv("LONGHORN_RUNTIME_INVENTORY_SOURCE"))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -151,6 +153,14 @@ func main() {
 			fmt.Fprintln(os.Stderr, inventoryFailureMessage(err))
 			os.Exit(1)
 		}
+		return
+	}
+	if operation == recoverUnstartedV1Operation {
+		if err := recoverUnstartedV1Benchmark(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
+			fmt.Fprintln(os.Stderr, "Unstarted V1 benchmark recovery held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("LONGHORN_V1_UNSTARTED_RECOVERY=COMPLETE")
 		return
 	}
 	if operation == "benchmark-v1" || operation == "benchmark-v2" {
