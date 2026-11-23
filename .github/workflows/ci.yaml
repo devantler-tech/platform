@@ -4536,8 +4536,26 @@ jobs:
           fi
           bash scripts/tests/test-reassert-flux-root-verify.sh
 
-      # Signer approval is enforced first by the deploy action from this main
-      # checkout, so recovery uses the policy version of the revision it restores.
+      # This job re-deploys main, which a direct push may have changed after the queued
+      # revision was validated, so judge the OCIRepository signers on this exact checkout
+      # before anything changes production (#6266). The pinned renderer is on PATH for this
+      # step only, so the heal deploy keeps the same kubectl as every other deploy route.
+      - name: 🔐 Validate every devantler-tech OCIRepository verifies on main
+        timeout-minutes: 10
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d "$RUNNER_TEMP/oci-verify.XXXXXX")"
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$tool_dir/kubectl"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$tool_dir/kubectl" | sha256sum --check
+          chmod +x "$tool_dir/kubectl"
+          PATH="$tool_dir:$PATH" ./scripts/guard-oci-repository-verify.sh
+
       - name: ⚙️ Setup Go for version compatibility validation
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

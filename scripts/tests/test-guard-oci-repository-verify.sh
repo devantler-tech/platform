@@ -285,7 +285,8 @@ expect_refused 'a subject anchored on another organisation is refused' "$root" '
 # publisher signs as its host repository whoever calls it, so every spelling that could trust
 # one is refused: beside an own release, through a pattern in the workflow file, through the
 # `.github` or deleted `actions` repository, or through a ref that escapes the anchored
-# repository and workflow prefix, including by an escape such as RE2's `\Q…\E` quoting. Judged by the allowed grammar, never by a retired name.
+# repository and workflow prefix: a ref is a literal or one of the exact committed release-tag
+# patterns, so no RE2 construct (`\Q…\E` quoting, a leading `]` in a class) can hide a `|`. Judged by the allowed grammar, never by a retired name.
 signer_case() {
   local label="$1" verdict="$2" needle="$3" subject="$4" root
   root="$(fresh_root "signer-$label")"
@@ -315,9 +316,14 @@ any-repository	refuse	trusts subject	^https://github\.com/devantler-tech/[^/]+/\
 own-commit-pin	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@[0-9a-f]{40}$
 quoted-delimiter-alternation	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/\Q(\E|^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812$|\Q)\E$
 other-escape	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v\d+\.\d+\.\d+$
+leading-bracket-class	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/[](]|^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812$|[])]$
+unlisted-ref-pattern	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v.*$
 github-own-release	accept	-	^https://github\.com/devantler-tech/\.github/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
 own-branch-workflow	accept	-	^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
 own-strict-semver	accept	-	^https://github\.com/devantler-tech/sg/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
+own-literal-tag	accept	-	^https://github\.com/devantler-tech/bookkeeper/\.github/workflows/publish\.yaml@refs/tags/v1\.0\.0$
+own-loose-semver	accept	-	^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$
+own-stable-semver	accept	-	^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/server-cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
 CASES
 
 # --- RED: host case and substituted hosts ---

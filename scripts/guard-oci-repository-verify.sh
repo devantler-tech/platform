@@ -18,10 +18,10 @@
 #   - that entry names a non-empty `issuer` and a non-empty `subject`.
 #   - that subject names ONE first-party repository's own workflow on a branch or tag
 #     ref: a literal repository (never the deleted `actions` publisher, and for `.github`
-#     only its own `cd.yaml`), a literal workflow file or `[^/]+\.ya?ml`, and a ref that
-#     escapes only `\.` and whose groups close with no top-level `|` (#6266, ADR 0017). A shared reusable workflow
-#     signs with its HOST repository's identity whoever calls it, so trusting one would
-#     let any caller's artifact verify for this source.
+#     only its own `cd.yaml`), a literal workflow file or `[^/]+\.ya?ml`, and a literal ref
+#     or one of the exact release-tag patterns the sources use (#6266, ADR 0017). A shared
+#     reusable workflow signs with its HOST repository's identity whoever calls it, so
+#     trusting one would let any caller's artifact verify for this source.
 #   - the trusted Wedding and AS Coaching tenant artifacts follow the governed
 #     `>=1.0.0` semver stream, and a `Tenant` follows its own stable releases
 #     through the exact constructor (ADR 0019). The platform owns their signer and
@@ -92,10 +92,10 @@ readonly REQUIRED_ISSUER='^https://token\.actions\.githubusercontent\.com$'
 readonly REQUIRED_SUBJECT_PREFIX='^https://github\.com/devantler-tech/'
 # After that prefix, every signer is ONE first-party repository's own workflow (ADR 0017,
 # #6266): a literal repository name, `/\.github/workflows/`, either one literal workflow
-# file or the any-workflow form `[^/]+\.ya?ml`, then `@refs/tags/` or `@refs/heads/`. Only
-# the ref after that may be a pattern. A `.` in a name must be escaped, or it would match any
-# character. Groups 1, 3, 5 and 6 are the repository, the file, the ref kind and the ref.
-readonly OWN_SIGNER_RE='^(([A-Za-z0-9_-]|\\\.)+)/\\\.github/workflows/(\[\^/\]\+\\\.ya\?ml|([A-Za-z0-9_-]|\\\.)+)@refs/(tags|heads)/(.+)$'
+# file or the any-workflow form `[^/]+\.ya?ml`, then `@refs/` and a ref that
+# ref_pattern_is_allowed accepts. A `.` in a name must be escaped, or it would match any
+# character. Groups 1, 3 and 5 are the repository, the file and the ref after `refs/`.
+readonly OWN_SIGNER_RE='^(([A-Za-z0-9_-]|\\\.)+)/\\\.github/workflows/(\[\^/\]\+\\\.ya\?ml|([A-Za-z0-9_-]|\\\.)+)@refs/(.+)$'
 readonly REQUIRED_TENANT_STREAM_SEMVER='>=1.0.0'
 readonly WEDDING_STREAM_URL='oci://ghcr.io/devantler-tech/wedding-app/manifests'
 readonly ASCOACHING_STREAM_URL='oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests'
@@ -260,41 +260,19 @@ readonly YQ_ROWS='[.. | select(type == "!!map" and .kind == "OCIRepository")]
   | map(sub("^$", "-"))
   | join("	")'
 
-# ref_tail_is_closed <ref pattern>: the ref ends with exactly one `$`, escapes nothing but
-# `\.`, and every group and character class it opens closes, with no `|` outside them. A
-# top-level `|` or an unclosed group would let the pattern match beyond the anchored
-# repository and workflow prefix. An unusual but harmless spelling is refused rather than
-# parsed, so this fails closed.
-ref_tail_is_closed() {
-  local text="$1" char i depth=0 class=0 escaped=0
-  [[ "$text" == *'$' ]] || return 1
-  text="${text%\$}"
-  for ((i = 0; i < ${#text}; i++)); do
-    char="${text:i:1}"
-    if ((escaped)); then
-      escaped=0
-      continue
-    fi
-    case "$char" in
-      \\)
-        # Only `\.` may be escaped: another escape, RE2's `\Q…\E` quoting above all, could
-        # hide a delimiter from this scan while the regex engine still honours it.
-        [[ "${text:i+1:1}" == . ]] || return 1
-        escaped=1
-        ;;
-      '[') class=1 ;;
-      ']') class=0 ;;
-      '(') ((class)) || depth=$((depth + 1)) ;;
-      ')')
-        if ((! class)); then
-          ((depth > 0)) || return 1
-          depth=$((depth - 1))
-        fi
-        ;;
-      '|' | '$') ((class || depth)) || return 1 ;;
-    esac
-  done
-  ((! escaped && ! depth && ! class))
+# ref_pattern_is_allowed <pattern after `@refs/`>: the ref is either fully literal, or EXACTLY
+# one of the release-tag patterns the committed sources use. It is compared as text, never
+# scanned as a regex: two reviews of a scanner found RE2 syntax (`\Q…\E` quoting, a leading `]`
+# in a class) that hid a real top-level `|` from it. A new ref pattern is added here on purpose.
+readonly LITERAL_REF_RE='^(tags|heads)/([A-Za-z0-9_/-]|\\\.)+\$$'
+readonly SEMVER_CORE='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+readonly SEMVER_PRERELEASE='(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+ref_pattern_is_allowed() {
+  [[ "$1" =~ $LITERAL_REF_RE ]] && return 0
+  case "$1" in
+    'tags/v[0-9]+\.[0-9]+\.[0-9]+$' | "tags/v${SEMVER_CORE}\$" | "tags/v${SEMVER_CORE}${SEMVER_PRERELEASE}\$") return 0 ;;
+  esac
+  return 1
 }
 
 status=0
@@ -423,9 +401,9 @@ while IFS= read -r root; do
     if [[ "$signer" =~ $OWN_SIGNER_RE ]]; then
       signer_repo="${BASH_REMATCH[1]//\\./.}"
       signer_file="${BASH_REMATCH[3]}"
-      signer_ref="${BASH_REMATCH[6]}"
+      signer_ref="${BASH_REMATCH[5]}"
     fi
-    if [ -z "$signer_repo" ] || ! ref_tail_is_closed "$signer_ref"; then
+    if [ -z "$signer_repo" ] || ! ref_pattern_is_allowed "$signer_ref"; then
       fail "$label: OCIRepository $name ($url) trusts subject '$subject', which is not one first-party repository's own workflow on a branch or tag ref; a shared reusable publisher signs as its host repository whoever calls it (ADR 0017)"
       continue
     fi
