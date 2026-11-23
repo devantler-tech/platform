@@ -21,7 +21,7 @@ metadata:
       publish-app for app images, the platform's dedicated compatibility-image
       publishers, each Crossplane provider's own package workflow, KSail's
       publish-ksail-analysis-runner.yaml workflow, the mail bootstrap publisher,
-      the dedicated customer identity, Dex, automated mail sender and Longhorn
+      the dedicated customer identity, Dex, kagent controller, automated mail sender and Longhorn
       migration publishers,
       and KSail's release workflow.
       Each class is verified only against its own identity;
@@ -60,9 +60,10 @@ spec:
       cosign:
         keyless:
           # Two alternatives in ONE anchored group:
-          # 1. The maintained shared publisher, only at the explicitly reviewed
-          #    revisions (v19.0.5 #5404, v21.3.4 #6228), not every commit in
-          #    its repository. Mutable refs and tags of the shared publisher
+          # 1. The maintained shared publisher, only at the reviewed revision
+          #    v19.0.5 (#5404), not every commit in its repository. v21.3.4
+          #    (#6228) is retired: business-site, its only user, signs its own
+          #    releases (#6266). Mutable refs and tags of the shared publisher
           #    are refused. The deleted legacy publisher repository is not
           #    accepted at any commit (#6264). Kept until its consumers have
           #    moved (#6266).
@@ -95,7 +96,7 @@ spec:
           # form as an alternation inside this one regex.
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@(af042c540ce8db4d64add98c34b5c57691e0e812|a76d5df9371cf712a8f60307fde060825a34cf35)|[A-Za-z0-9][A-Za-z0-9_.-]*/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$
+              subjectRegExp: ^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812|[A-Za-z0-9][A-Za-z0-9_.-]*/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?)$
     # The Kubescape storage compatibility image is produced inside this
     # repository rather than through actions/publish-app.yaml: its publisher
     # checks out one immutable upstream storage commit, applies the reviewed
@@ -144,6 +145,12 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
+    - name: publishlonghornfio
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-fio\.yaml@refs/heads/main$
     # The reports-controller repair is signed only by its dedicated publisher.
     - name: publishkyvernoreports
       cosign:
@@ -203,6 +210,12 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-dex-security-image\.yaml@refs/heads/main$
+    - name: publishkagentcontroller
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kagent-controller\.yaml@refs/heads/main$
     # The automated company sender has its own main-only publisher. Its
     # signature cannot satisfy any other image class (platform#5400).
     - name: publishmailsubmission
@@ -276,12 +289,18 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-dex' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-dex:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-dex@') &&
+          image != 'ghcr.io/devantler-tech/platform-kagent-controller' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kagent-controller:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kagent-controller@') &&
           image != 'ghcr.io/devantler-tech/platform-longhorn-instance-manager' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-instance-manager@') &&
           image != 'ghcr.io/devantler-tech/platform-longhorn-manager' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-manager@') &&
+          image != 'ghcr.io/devantler-tech/platform-longhorn-fio' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-fio:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-longhorn-fio@') &&
           image != 'ghcr.io/devantler-tech/platform-kubescape-storage' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@') &&
@@ -364,6 +383,16 @@ spec:
     - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-kagent-controller' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kagent-controller:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kagent-controller@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishkagentcontroller]))
+        .all(e, e > 0)
+      message: >-
+        kagent controller image requires its dedicated main-branch signature
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
           image == 'ghcr.io/devantler-tech/platform-mail-submission' ||
           image.startsWith('ghcr.io/devantler-tech/platform-mail-submission:') ||
           image.startsWith('ghcr.io/devantler-tech/platform-mail-submission@'))
@@ -437,6 +466,17 @@ spec:
         .all(e, e > 0)
       message: >-
         The Longhorn V2-only manager image must be signed by its dedicated
+        main-branch publisher.
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-longhorn-fio' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-fio:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-longhorn-fio@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishlonghornfio]))
+        .all(e, e > 0)
+      message: >-
+        The Longhorn benchmark image must be signed by its dedicated
         main-branch publisher.
     - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)

@@ -1,0 +1,145 @@
+---
+name: Publish Portable Longhorn fio
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-longhorn-fio.yaml
+      - scripts/migrate-longhorn-v2/fio/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-longhorn-fio.yaml
+      - scripts/migrate-longhorn-v2/fio/**
+
+permissions: {}
+
+env:
+  IMAGE: ghcr.io/devantler-tech/platform-longhorn-fio
+  VERSION: 3.41-${{ github.sha }}-${{ github.run_attempt }}
+  FIO_SOURCE: ed675d3477a70a42d2e757b713f6c7125a27cdca
+
+jobs:
+  verify:
+    name: Exercise portable fio on amd64
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      archive: ${{ steps.save.outputs.archive }}
+      image_id: ${{ steps.save.outputs.image_id }}
+      sha256: ${{ steps.save.outputs.sha256 }}
+      version: ${{ steps.save.outputs.version }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and exercise the reviewed fio release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          context="$(mktemp -d)"
+          trap 'rm -rf "$context"' EXIT
+          curl -fsSL --connect-timeout 10 --max-time 90 --retry 3 \
+            "https://codeload.github.com/axboe/fio/tar.gz/${FIO_SOURCE}" -o "$context/fio.tar.gz"
+          docker build --platform linux/amd64 --file scripts/migrate-longhorn-v2/fio/Dockerfile \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "io.devantler.fio-source=https://github.com/axboe/fio/tree/${FIO_SOURCE}" \
+            --tag "${IMAGE}:${VERSION}" "$context"
+          bash scripts/migrate-longhorn-v2/fio/smoke.sh "${IMAGE}:${VERSION}"
+      - name: Save the exact tested image
+        id: save
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_id="$(docker image inspect --format '{{.Id}}' "${IMAGE}:${VERSION}")"
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          file="${RUNNER_TEMP}/longhorn-fio.tar"
+          docker save -o "$file" "${IMAGE}:${VERSION}"
+          printf 'archive=fio-%s-%s\nimage_id=%s\nsha256=%s\nversion=%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$image_id" "$(sha256sum "$file" | cut -d' ' -f1)" "$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Preserve tested release image
+        if: steps.save.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.save.outputs.archive }}
+          path: ${{ runner.temp }}/longhorn-fio.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: Sign the tested benchmark image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'devantler-tech/platform'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: verify
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the exact tested image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.verify.outputs.archive }}
+          path: ${{ runner.temp }}
+      - name: Recheck the tested image
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.verify.outputs.sha256 }}
+          EXPECTED_ID: ${{ needs.verify.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{64}$ && "$EXPECTED_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$VERSION" =~ ^3\.41-${GITHUB_SHA}-[1-9][0-9]*$ ]]
+          file="${RUNNER_TEMP}/longhorn-fio.tar"
+          actual_sha="$(sha256sum "$file")"
+          test "${actual_sha%% *}" = "$EXPECTED_SHA"
+          docker load -i "$file"
+          test "$(docker image inspect --format '{{.Id}}' "${IMAGE}:${VERSION}")" = "$EXPECTED_ID"
+      - name: Install verified signing and inventory tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
+      - name: Inventory the tested image
+        run: syft "docker:${IMAGE}:${VERSION}" --output "cyclonedx-json=${RUNNER_TEMP}/longhorn-fio-sbom.json"
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish and verify the exact digest
+        shell: bash
+        env:
+          EXPECTED_ID: ${{ needs.verify.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          docker push "${IMAGE}:${VERSION}"
+          digest="$(docker image inspect --format '{{json .RepoDigests}}' "${IMAGE}:${VERSION}" | jq -er --arg prefix "${IMAGE}@sha256:" 'map(select(startswith($prefix))) | if length == 1 then .[0] else error("ambiguous digest") end')"
+          docker buildx imagetools inspect --raw "$digest" | jq -e --arg id "$EXPECTED_ID" '.config.digest == $id'
+          identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/publish-longhorn-fio.yaml@refs/heads/main"
+          issuer=https://token.actions.githubusercontent.com
+          cosign sign --yes "$digest"
+          cosign attest --yes --type cyclonedx --predicate "${RUNNER_TEMP}/longhorn-fio-sbom.json" "$digest"
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$digest" > /dev/null
+          cosign verify-attestation --type cyclonedx --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$digest" > /dev/null
+          printf 'Verified benchmark image: %s@%s\n' "${IMAGE}:${VERSION}" "${digest#*@}"

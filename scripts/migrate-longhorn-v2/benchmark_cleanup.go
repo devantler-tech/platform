@@ -246,7 +246,12 @@ func retireBenchmarkV1PV(ctx context.Context, c client, record *benchmarkRecord,
 	}
 	// Keep the resource version that passed both native dry-runs. A newer
 	// object must pass those same gates before it can be deleted.
-	if err := c.deleteObserved(ctx, record.Source, "/api/v1/persistentvolumes/"+identity.Name, pv); err != nil {
+	if record.Recovery != nil {
+		if err := recordBenchmarkRecoveryDeletion(ctx, c, record, "PersistentVolume"); err != nil {
+			return err
+		}
+	}
+	if err := c.deleteObserved(ctx, record.mutationSource(), "/api/v1/persistentvolumes/"+identity.Name, pv); err != nil {
 		return err
 	}
 	return waitReady(ctx, func(ctx context.Context) error {

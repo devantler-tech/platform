@@ -25,10 +25,7 @@ type benchmarkAdmissionEpoch struct {
 // Prove the fence for the supplied original reference. Instance and namespace
 // fences and the journal still require separate evidence before any delete.
 func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, record benchmarkRecord, observed object) error {
-	if err := authorizeBenchmark(os.Getenv, "v1"); err != nil {
-		return err
-	}
-	if record.Source != os.Getenv("GITHUB_SHA") || record.Run != os.Getenv("GITHUB_RUN_ID") {
+	if !activeBenchmarkV1FenceOwner(c, record) {
 		return errors.New("the active V1 benchmark does not own this proof")
 	}
 	policies, err := benchmarkRetirementFences(record)
@@ -46,12 +43,13 @@ func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, re
 		return errors.New("benchmark reference fence received an unsupported resource")
 	}
 	receipt := record.Fences[text(policy, "metadata", "name")]
-	return proveBenchmarkFenceOnServingAPIs(ctx, c, record.Source, policy, receipt, func(ctx context.Context, direct *http.Client, address *url.URL) error {
+	return proveBenchmarkFenceOnServingAPIs(ctx, c, record, policy, receipt, func(ctx context.Context, direct *http.Client, address *url.URL) error {
 		return probe(ctx, direct, address, record, observed)
 	})
 }
 
-func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, source string, policy object, receipt benchmarkFenceReceipt, probe func(context.Context, *http.Client, *url.URL) error) error {
+func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, record benchmarkRecord, policy object, receipt benchmarkFenceReceipt, probe func(context.Context, *http.Client, *url.URL) error) error {
+	source := record.mutationSource()
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
@@ -66,8 +64,12 @@ func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, source stri
 	if err := verifyBenchmarkProviderEndpoints(ctx, os.Getenv("HCLOUD_TOKEN"), roster); err != nil {
 		return err
 	}
+	originalRun := ""
+	if record.Recovery != nil {
+		originalRun = record.Run
+	}
 	for _, endpoint := range roster {
-		direct, address, err := namespaceinventory.LoadBenchmarkAdmissionClient(os.Getenv, endpoint.ExternalIP)
+		direct, address, err := namespaceinventory.LoadBenchmarkAdmissionClient(os.Getenv, endpoint.ExternalIP, originalRun)
 		if err != nil {
 			return err
 		}

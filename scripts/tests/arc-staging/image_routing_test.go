@@ -64,6 +64,7 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 	identityPublisher := "https://github.com/devantler-tech/business-site/.github/workflows/publish-identity.yaml@refs/heads/main"
 	retirementPublisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-longhorn-v1-retirement.yaml@refs/heads/main"
 	v2Publisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-longhorn-v2-only.yaml@refs/heads/main"
+	fioPublisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-longhorn-fio.yaml@refs/heads/main"
 	senderPublisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-mail-submission.yaml@refs/heads/main"
 	tests := []struct {
 		repository, attestor, subject string
@@ -84,6 +85,8 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 		{"ghcr.io/devantler-tech/platform-coroot-node-agent", "publishcorootnodeagent", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-node-agent-hotfix.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-longhorn-instance-manager", "publishlonghornretirement", retirementPublisher},
 		{"ghcr.io/devantler-tech/platform-longhorn-manager", "publishlonghornv2", v2Publisher},
+		{"ghcr.io/devantler-tech/platform-longhorn-fio", "publishlonghornfio", fioPublisher},
+		{"ghcr.io/devantler-tech/platform-longhorn-fio-other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-longhorn-instance-manager-other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-longhorn-manager/other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-coroot", "publishcorootcheckpoint", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main"},
@@ -98,6 +101,8 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 		{"ghcr.io/devantler-tech/platform-kyverno-background-other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-dex", "publishdexsecurity", "https://github.com/devantler-tech/platform/.github/workflows/publish-dex-security-image.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-dex-other", "publishapp", appPublisher},
+		{"ghcr.io/devantler-tech/platform-kagent-controller", "publishkagentcontroller", "https://github.com/devantler-tech/platform/.github/workflows/publish-kagent-controller.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-kagent-controller-other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-mail-submission", "publishmailsubmission", senderPublisher},
 		{"ghcr.io/devantler-tech/platform-mail-submission-other", "publishapp", appPublisher},
 		{"ghcr.io/devantler-tech/platform-mail-submission/helper", "publishapp", appPublisher},
@@ -132,10 +137,12 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 						{"checkpoint signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcorootcheckpoint"},
 						{"Longhorn retirement signer", retirementPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishlonghornretirement"},
 						{"Longhorn V2-only signer", v2Publisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishlonghornv2"},
+						{"Longhorn fio signer", fioPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishlonghornfio"},
 						{"reports signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-reports-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernoreports"},
 						{"migrate signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-migration-runtime.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernomigrate"},
 						{"background signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-background-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernobackground"},
 						{"dex signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-dex-security-image.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishdexsecurity"},
+						{"kagent signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kagent-controller.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkagentcontroller"},
 						{"automated sender signer", senderPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishmailsubmission"},
 						{"wrong ref", strings.Split(fixture.subject, "@")[0] + "@refs/heads/other", githubIssuer, fixture.attestor == ""},
 						{"wrong repository", strings.Replace(fixture.subject, "devantler-tech/", "other-owner/", 1), githubIssuer, fixture.attestor == ""},
