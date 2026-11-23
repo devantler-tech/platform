@@ -7,6 +7,15 @@
 // diff under review. This command renders each of those overlays and compares
 // the result against approved fingerprints, so an unreviewed privilege grant
 // fails CI instead of reaching the cluster.
+//
+// The fingerprints cover authorization objects only: RBAC rules, subjects and
+// role references, admission-policy specs, the Crossplane IAM resources, and
+// the templates and inputs that emit them, a Flux handoff's post-build
+// substitution included. Flux handoffs and sources, Helm releases and
+// Crossplane packages otherwise only carry other objects, so a dependency
+// update to one of them needs no approval here; the
+// restrict-ci-identity-bindings admission policy refuses, at the API server,
+// any binding they would create to the EKS CI identity (platform#6270).
 package main
 
 import (
@@ -52,6 +61,7 @@ const (
 
 // approvedSurfaceLedger is the approved rendered authorization surface: one
 // line per selected document, `<apiVersion>|<kind>|<namespace>|<name> <sha256>`,
+// where the digest covers the document's identity and authorization fields,
 // sorted, separated by blank lines, after a `#` comment header. The rendered
 // surface must equal it exactly, which is the same guarantee the single
 // aggregate digest gave before platform#3182, but two changes that move
@@ -71,15 +81,6 @@ var authorizationOverlayPaths = []string{
 	bootstrapOverlayPath,
 	rootProductionOverlayPath,
 }
-
-// exactPinnedHelmChartVersion accepts one immutable SemVer selector, including
-// the optional v prefix and prerelease/build suffixes used by this portfolio.
-// Ranges, wildcards, substitutions, and omitted versions remain fingerprinted
-// verbatim because they let a chart move without a reviewed dependency PR.
-var exactPinnedHelmChartVersion = regexp.MustCompile(
-	`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)` +
-		`(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`,
-)
 
 var exactGitCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var exactSHA256Digest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -270,26 +271,18 @@ func validateUnifiPruneExemption(document map[string]any, identity resourceIdent
 }
 
 // expectedRenderedHashes preserves object-specific diagnostics for the core
-// EKS CI identities while the aggregate surface hash pins every selected
-// source, controller, binding, and indirect authorization object.
+// EKS CI identities while the approved ledger pins every selected binding,
+// role, admission policy and indirect authorization object. These core objects
+// stay pinned byte for byte, metadata included.
 var expectedRenderedHashes = map[resourceIdentity]string{
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                                        "3c472068dc4dc05ce8063bd35b1237e2ef2803b15997acffcc85805de50e7acf",
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "9eb6e5e1b43a470a02cb292f8a449a51b7792e50220c7c3d5c08fe6b73e62f02",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:                         "aa3bf06e937983c375682b762ca1214d4597e43e325e311a18390ea0e5f28349",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "63e57d91d99abd5502413cbd9f3daff6de117265c611f523afda232d56e52ef3",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "6378f829ee98f5d9acaa5bd812636385ac066938aa2552d6f2019528758c3edd",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "f921a4720a182b24f289c6a5e1ae684a174ed2f5a748c01cc6bc6bc14c644c03",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "db55c135e4e3868754d549881bb89279bba9b6fc0065970876e91e0230ae9fb3",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "1223b3713886063661be32b3e82a8615856e3e01c526180f0d0d5b2bfade331d",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "0b00e168d4dd190e65b35aeeb920b9854d31ba044e0752deb865240e20298f28",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "f0e86fa4bc64945a57bd4c4bd10ff8593134b4047b3b99d4bcbd71720dcde8ab",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "325a2db2626235b38b7122c10c06642697aee92f88f33a34423b6c72f3fb680a",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "4a6ec38f394015dc77b188d30b88321d13ea2da675a59f52f154f20a7bccfb49",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "d38bc83699fcc577a97c346db6cf1447b2ae5cc1da702f3e5a460086f8f0fe4f",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                       "3c472068dc4dc05ce8063bd35b1237e2ef2803b15997acffcc85805de50e7acf",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:      "9eb6e5e1b43a470a02cb292f8a449a51b7792e50220c7c3d5c08fe6b73e62f02",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:        "aa3bf06e937983c375682b762ca1214d4597e43e325e311a18390ea0e5f28349",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}: "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                          "63e57d91d99abd5502413cbd9f3daff6de117265c611f523afda232d56e52ef3",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:              "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                        "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                          "6378f829ee98f5d9acaa5bd812636385ac066938aa2552d6f2019528758c3edd",
 }
 
 // fingerprint returns the SHA-256 identity used for byte-exact source checks.
@@ -647,6 +640,20 @@ func isControllerRBACEmitter(identity resourceIdentity) bool {
 	return strings.HasPrefix(identity.apiVersion, "pkg.crossplane.io/")
 }
 
+// isAuthorizationCarrier recognizes the Flux handoffs and sources, Helm
+// releases and Crossplane packages that deliver other objects. They hold no
+// grant of their own, so the approved ledger leaves them out (platform#6270):
+// a binding they deliver to the EKS CI identity is refused at admission by the
+// restrict-ci-identity-bindings policy, and the roles, bindings and IAM objects
+// this render declares stay pinned. The one exception is a handoff's
+// post-build substitution, which can rewrite those objects' subjects
+// (isFluxSubstitutionHandoff).
+func isAuthorizationCarrier(identity resourceIdentity) bool {
+	return identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" && identity.kind == "Kustomization" ||
+		isFluxSourceResource(identity) ||
+		isControllerRBACEmitter(identity)
+}
+
 // authorizationIsolationRequested identifies the explicit reviewed contract
 // used by namespace-local charts whose effective RBAC is validated after Helm
 // rendering. Merely adding the annotation never makes it valid.
@@ -721,7 +728,7 @@ func validateAuthorizationIsolation(document map[string]any, identity resourceId
 			return errors.New("isolated-chart HelmRelease must reference an OCIRepository in its own namespace")
 		}
 		if containsAuthorizationKind(spec["postRenderers"]) ||
-			containsEmbeddedAuthorizationTemplate(spec["postRenderers"], 0) {
+			containsEmbeddedTemplate(spec["postRenderers"], 0, isEmbeddedAuthorizationOrCarrier) {
 			return errors.New("isolated-chart HelmRelease must not post-render authorization resources")
 		}
 		return nil
@@ -746,10 +753,6 @@ func validateAuthorizationIsolation(document map[string]any, identity resourceId
 	return fmt.Errorf("isolated-chart authorization scope is unsupported for %s/%s", identity.apiVersion, identity.kind)
 }
 
-func isAuthorizationIsolated(document map[string]any, identity resourceIdentity) bool {
-	return authorizationIsolationRequested(document) && validateAuthorizationIsolation(document, identity) == nil
-}
-
 // isCurrentKyvernoMutationPolicy recognizes the non-legacy Kyverno resources
 // that can generate or mutate objects using CEL-based policy APIs.
 func isCurrentKyvernoMutationPolicy(identity resourceIdentity) bool {
@@ -763,13 +766,40 @@ func isLegacyKyvernoPolicy(identity resourceIdentity) bool {
 		(identity.kind == "Policy" || identity.kind == "ClusterPolicy")
 }
 
+// kindMatchesAny reports whether a Kyverno kind selector names one of the
+// targets, bare or group-qualified.
+func kindMatchesAny(kind string, targets ...string) bool {
+	for _, target := range targets {
+		if kind == target || strings.HasSuffix(kind, "/"+target) {
+			return true
+		}
+	}
+	return false
+}
+
+// isAuthorizationObjectKind recognizes the kinds whose own fields grant or
+// constrain privileges: RBAC, the Crossplane IAM kinds and native admission
+// policies.
+func isAuthorizationObjectKind(kind string) bool {
+	return isRBACAuthorizationKind(kind) || isAWSIAMAuthorizationKind(kind) ||
+		kindMatchesAny(kind,
+			"MutatingAdmissionPolicy",
+			"MutatingAdmissionPolicyBinding",
+			"ValidatingAdmissionPolicy",
+			"ValidatingAdmissionPolicyBinding",
+		) ||
+		strings.HasPrefix(kind, "admissionregistration.k8s.io/") && strings.HasSuffix(kind, "/*")
+}
+
 // isAuthorizationKind recognizes every kind whose contents or controller can
-// redirect, emit, or grant the protected authorization surface.
+// redirect, emit, or grant the protected authorization surface. An admission
+// policy that targets one of these kinds stays in the approved ledger, carriers
+// included: the policy is an authorization object even where its target is not.
 func isAuthorizationKind(kind string) bool {
-	if isRBACAuthorizationKind(kind) || isAWSIAMAuthorizationKind(kind) {
+	if isAuthorizationObjectKind(kind) {
 		return true
 	}
-	targets := []string{
+	if kindMatchesAny(kind,
 		"Kustomization",
 		"OCIRepository",
 		"GitRepository",
@@ -781,18 +811,10 @@ func isAuthorizationKind(kind string) bool {
 		"Function",
 		"Configuration",
 		"DeploymentRuntimeConfig",
-		"MutatingAdmissionPolicy",
-		"MutatingAdmissionPolicyBinding",
-		"ValidatingAdmissionPolicy",
-		"ValidatingAdmissionPolicyBinding",
-	}
-	for _, target := range targets {
-		if kind == target || strings.HasSuffix(kind, "/"+target) {
-			return true
-		}
+	) {
+		return true
 	}
 	return strings.HasPrefix(kind, "source.toolkit.fluxcd.io/") && strings.HasSuffix(kind, "/*") ||
-		strings.HasPrefix(kind, "admissionregistration.k8s.io/") && strings.HasSuffix(kind, "/*") ||
 		strings.HasPrefix(kind, "helm.toolkit.fluxcd.io/") && strings.HasSuffix(kind, "/*") ||
 		strings.HasPrefix(kind, "pkg.crossplane.io/") && strings.HasSuffix(kind, "/*") ||
 		strings.HasPrefix(kind, "kustomize.toolkit.fluxcd.io/") && strings.HasSuffix(kind, "/*")
@@ -880,33 +902,57 @@ func containsAuthorizationKindAtDepth(value any, textDepth int) bool {
 	return false
 }
 
-// containsEmbeddedAuthorizationTemplate finds nested RBAC object templates
-// emitted later by controllers such as KRO rather than by Kustomize itself.
+// isEmbeddedAuthorizationObject recognizes a nested template for an object
+// whose own fields grant or constrain privileges: RBAC, the Crossplane IAM
+// kinds, Kyverno policies and native admission policies.
+func isEmbeddedAuthorizationObject(identity resourceIdentity) bool {
+	return strings.Contains(identity.apiVersion, "${") && isAuthorizationObjectKind(identity.kind) ||
+		strings.HasPrefix(identity.apiVersion, "iam.aws.") ||
+		identity.apiVersion == "rbac.authorization.k8s.io/v1" && isRBACAuthorizationKind(identity.kind) ||
+		isCurrentKyvernoMutationPolicy(identity) ||
+		isLegacyKyvernoPolicy(identity) ||
+		isNativeAdmissionPolicy(identity)
+}
+
+// isEmbeddedAuthorizationOrCarrier also accepts a nested carrier. The
+// isolated-chart contract keeps refusing post-renderers that emit one, even
+// though carriers no longer join the approved ledger.
+func isEmbeddedAuthorizationOrCarrier(_ map[string]any, identity resourceIdentity) bool {
+	return isEmbeddedAuthorizationObject(identity) ||
+		strings.Contains(identity.apiVersion, "${") && isAuthorizationKind(identity.kind) ||
+		isAuthorizationCarrier(identity)
+}
+
+// isEmbeddedAuthorizationTemplate recognizes a nested authorization object, or
+// a nested Flux handoff whose post-build substitution can rewrite binding
+// subjects just as a rendered one can (isFluxSubstitutionHandoff).
+func isEmbeddedAuthorizationTemplate(template map[string]any, identity resourceIdentity) bool {
+	return isEmbeddedAuthorizationObject(identity) || isFluxSubstitutionHandoff(template, identity)
+}
+
+// containsEmbeddedAuthorizationTemplate finds nested authorization object
+// templates emitted later by controllers such as KRO rather than by Kustomize
+// itself. Any other nested carrier does not count (platform#6270).
 func containsEmbeddedAuthorizationTemplate(value any, depth int) bool {
+	return containsEmbeddedTemplate(value, depth, isEmbeddedAuthorizationTemplate)
+}
+
+// containsEmbeddedTemplate finds a nested object, below the document root,
+// that matches.
+func containsEmbeddedTemplate(value any, depth int, matches func(map[string]any, resourceIdentity) bool) bool {
 	switch typedValue := value.(type) {
 	case []any:
 		for _, item := range typedValue {
-			if containsEmbeddedAuthorizationTemplate(item, depth+1) {
+			if containsEmbeddedTemplate(item, depth+1, matches) {
 				return true
 			}
 		}
 	case map[string]any:
-		if depth > 0 {
-			identity := identityOf(typedValue)
-			if strings.Contains(identity.apiVersion, "${") && isAuthorizationKind(identity.kind) ||
-				strings.HasPrefix(identity.apiVersion, "iam.aws.") ||
-				identity.apiVersion == "rbac.authorization.k8s.io/v1" && isRBACAuthorizationKind(identity.kind) ||
-				identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" && identity.kind == "Kustomization" ||
-				isFluxSourceResource(identity) ||
-				isControllerRBACEmitter(identity) ||
-				isCurrentKyvernoMutationPolicy(identity) ||
-				isLegacyKyvernoPolicy(identity) ||
-				isNativeAdmissionPolicy(identity) {
-				return true
-			}
+		if depth > 0 && matches(typedValue, identityOf(typedValue)) {
+			return true
 		}
 		for _, item := range typedValue {
-			if containsEmbeddedAuthorizationTemplate(item, depth+1) {
+			if containsEmbeddedTemplate(item, depth+1, matches) {
 				return true
 			}
 		}
@@ -1029,6 +1075,8 @@ func hasDisabledFluxSubstitution(document map[string]any) bool {
 
 // isAuthorizationCapableDocument scopes substitution rejection to resources
 // that can directly or indirectly change the EKS CI authorization surface.
+// Carriers are not among them: a substitution in a Helm release or a Flux
+// handoff changes what it delivers, not a grant (platform#6270).
 func isAuthorizationCapableDocument(document map[string]any, identity resourceIdentity) bool {
 	if strings.Contains(identity.apiVersion, "${") || strings.Contains(identity.kind, "${") {
 		return true
@@ -1037,11 +1085,7 @@ func isAuthorizationCapableDocument(document map[string]any, identity resourceId
 		identity.apiVersion == "rbac.authorization.k8s.io/v1" {
 		return true
 	}
-	if identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" && identity.kind == "Kustomization" ||
-		(isFluxSourceResource(identity) || isControllerRBACEmitter(identity)) &&
-			!isAuthorizationIsolated(document, identity) ||
-		isCurrentKyvernoMutationPolicy(identity) ||
-		isLegacyKyvernoPolicy(identity) {
+	if isCurrentKyvernoMutationPolicy(identity) || isLegacyKyvernoPolicy(identity) {
 		return true
 	}
 	return isIndirectAuthorizationPolicy(document, identity) ||
@@ -1049,7 +1093,9 @@ func isAuthorizationCapableDocument(document map[string]any, identity resourceId
 }
 
 // isAuthorizationResource selects every rendered object capable of changing
-// the EKS CI identity's IAM, RBAC, or Flux authorization surface.
+// the EKS CI identity's IAM or RBAC authorization surface. Carriers are left
+// out (isAuthorizationCarrier), except a Flux handoff's post-build substitution
+// (isFluxSubstitutionHandoff).
 func isAuthorizationResource(
 	document map[string]any,
 	identity resourceIdentity,
@@ -1069,15 +1115,10 @@ func isAuthorizationResource(
 	}
 	if isIndirectAuthorizationPolicy(document, identity) ||
 		isCurrentKyvernoMutationPolicy(identity) ||
-		(isFluxSourceResource(identity) || isControllerRBACEmitter(identity)) &&
-			!isAuthorizationIsolated(document, identity) {
+		isFluxSubstitutionHandoff(document, identity) {
 		return true
 	}
-	if containsEmbeddedAuthorizationTemplate(document, 0) {
-		return true
-	}
-	return identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" &&
-		identity.kind == "Kustomization"
+	return containsEmbeddedAuthorizationTemplate(document, 0)
 }
 
 // bindingRoleIdentity returns the Role or ClusterRole resolved by one binding.
@@ -1295,104 +1336,133 @@ func cloneStringAnyMap(source map[string]any) map[string]any {
 	return clone
 }
 
-// normalizedPinnedContainerImage keeps the repository and explicit tag as
-// reviewed policy while replacing only an immutable SHA-256 digest. Requiring
-// a tag means floating, substituted, and digest-only shapes remain exact.
-func normalizedPinnedContainerImage(image string) (string, bool) {
-	delimiter := strings.LastIndex(image, "@")
-	if delimiter <= 0 || !exactSHA256Digest.MatchString(image[delimiter+1:]) {
-		return "", false
-	}
-	reference := image[:delimiter]
-	lastSlash := strings.LastIndex(reference, "/")
-	lastColon := strings.LastIndex(reference, ":")
-	if lastColon <= lastSlash || lastColon == len(reference)-1 || strings.Contains(reference, "${") {
-		return "", false
-	}
-	return reference + "@sha256:<exact-digest>", true
+// effectiveMetadataAnnotations change how a projected document's
+// authorization fields apply, so its ledger entry keeps them: Flux substitutes
+// `${…}` in those fields unless substitution is disabled, and applies the
+// object at all only as its ssa policy allows (Ignore skips it), and the API
+// server rewrites a default role's rules at start-up unless autoupdate is
+// false.
+var effectiveMetadataAnnotations = []string{
+	"kustomize.toolkit.fluxcd.io/substitute",
+	"kustomize.toolkit.fluxcd.io/ssa",
+	"rbac.authorization.kubernetes.io/autoupdate",
 }
 
-// normalizePinnedContainerImages recursively projects only map fields named
-// image. Helm-rendered manifests remain validated and scanned by the required
-// manifest job, while routine digest refreshes do not move this authorization
-// fingerprint when the repository and tag are unchanged.
-func normalizePinnedContainerImages(value any) any {
-	switch typedValue := value.(type) {
-	case map[string]any:
-		projected := cloneStringAnyMap(typedValue)
-		for key, item := range projected {
-			if key == "image" {
-				if image, ok := item.(string); ok {
-					if normalized, pinned := normalizedPinnedContainerImage(image); pinned {
-						projected[key] = normalized
-						continue
-					}
-				}
-			}
-			projected[key] = normalizePinnedContainerImages(item)
-		}
-		return projected
-	case []any:
-		projected := make([]any, len(typedValue))
-		for index, item := range typedValue {
-			projected[index] = normalizePinnedContainerImages(item)
-		}
-		return projected
-	default:
-		return value
-	}
+// effectiveMetadataLabels are the labels every projected document keeps for
+// the same reason: Flux also disables substitution through this label.
+var effectiveMetadataLabels = []string{
+	"kustomize.toolkit.fluxcd.io/substitute",
 }
 
-// authorizationSurfaceDocument normalizes immutable Helm dependency pins and
-// exact container image digests beneath Helm values,
-// strict signer subsets handled by the required approved-revisions guard, and
-// the uninterpretable ciphertext of SOPS-encrypted substitution sources.
-// Identity, source, values, post-renderers, substitutions and policy stay exact.
-// The required manifest job separately Helm-renders and security-scans the
-// selected chart version, so a routine Renovate pin does not require a manual
-// refresh of an otherwise unchanged authorization fingerprint.
+// authorizationFields names the top-level fields that grant or constrain
+// privileges in one authorization object, and whether its labels count too. A
+// ClusterRole's labels do: an aggregation selector decides from them which
+// bound role inherits its rules. It returns nil for a document that is pinned
+// whole.
+func authorizationFields(identity resourceIdentity) ([]string, bool) {
+	if identity.apiVersion == "rbac.authorization.k8s.io/v1" {
+		switch identity.kind {
+		case "Role":
+			return []string{"rules"}, false
+		case "ClusterRole":
+			return []string{"rules", "aggregationRule"}, true
+		case "RoleBinding", "ClusterRoleBinding":
+			return []string{"subjects", "roleRef"}, false
+		}
+		return nil, false
+	}
+	if isNativeAdmissionPolicy(identity) || isCurrentKyvernoMutationPolicy(identity) || isLegacyKyvernoPolicy(identity) {
+		return []string{"spec"}, false
+	}
+	return nil, false
+}
+
+// authorizationFieldsDocument projects an authorization object onto its
+// authorization fields and the metadata that changes how they apply, so a
+// label, description or other annotation moves no approval (platform#6270).
+func authorizationFieldsDocument(identity resourceIdentity, document map[string]any) map[string]any {
+	fields, keepLabels := authorizationFields(identity)
+	if fields == nil {
+		return document
+	}
+	projected := make(map[string]any, len(fields)+1)
+	for _, field := range fields {
+		if value, present := document[field]; present {
+			projected[field] = value
+		}
+	}
+	metadata, _ := document["metadata"].(map[string]any)
+	projectedMetadata := make(map[string]any)
+	if labels, present := metadata["labels"]; keepLabels && present {
+		projectedMetadata["labels"] = labels
+	} else if kept := keptMetadataKeys(metadata["labels"], effectiveMetadataLabels); len(kept) > 0 {
+		projectedMetadata["labels"] = kept
+	}
+	if kept := keptMetadataKeys(metadata["annotations"], effectiveMetadataAnnotations); len(kept) > 0 {
+		projectedMetadata["annotations"] = kept
+	}
+	if len(projectedMetadata) > 0 {
+		projected["metadata"] = projectedMetadata
+	}
+	return projected
+}
+
+// keptMetadataKeys returns the named entries of a label or annotation map.
+func keptMetadataKeys(value any, keys []string) map[string]any {
+	entries, _ := value.(map[string]any)
+	kept := make(map[string]any)
+	for _, key := range keys {
+		if entry, present := entries[key]; present {
+			kept[key] = entry
+		}
+	}
+	return kept
+}
+
+// isFluxSubstitutionHandoff recognizes a Flux handoff with a post-build
+// substitution. Flux substitutes its inline values and ordered sources into
+// every `${…}` the handoff applies, an RBAC subject included, so that block is
+// an authorization input even though the handoff itself is a carrier.
+func isFluxSubstitutionHandoff(document map[string]any, identity resourceIdentity) bool {
+	if identity.apiVersion != "kustomize.toolkit.fluxcd.io/v1" || identity.kind != "Kustomization" {
+		return false
+	}
+	spec, _ := document["spec"].(map[string]any)
+	_, present := spec["postBuild"]
+	return present
+}
+
+// fluxSubstitutionInputs projects a Flux handoff onto its post-build
+// substitution; its path, source and every other field stay out of the ledger.
+func fluxSubstitutionInputs(document map[string]any) map[string]any {
+	spec, _ := document["spec"].(map[string]any)
+	return map[string]any{"spec": map[string]any{"postBuild": spec["postBuild"]}}
+}
+
+// authorizationSurfaceDocument is what one selected object's ledger entry
+// fingerprints. A role, binding or admission policy contributes only its
+// authorization fields (authorizationFieldsDocument), and a Flux handoff only
+// its post-build substitution (fluxSubstitutionInputs). The Crossplane IAM
+// resources, controller templates and their instances, substitution sources
+// and any kind the render cannot classify stay whole, except that a
+// SOPS-encrypted substitution source drops its uninterpretable ciphertext.
 func authorizationSurfaceDocument(
 	identity resourceIdentity,
 	document map[string]any,
 ) map[string]any {
 	if identity.kind == "OCIRepository" {
-		return chartSourceTagSurfaceDocument(identity, publishMatcherSurfaceDocument(identity, document))
+		// No OCIRepository joins the ledger since platform#6270. Its signer
+		// projection stays until platform#6266 deletes it with the rest of the
+		// shared-publisher approval machinery.
+		return publishMatcherSurfaceDocument(identity, document)
 	}
 	if identity.kind == "Secret" {
 		return sopsSubstitutionSourceSurfaceDocument(identity, document)
 	}
-	if !strings.HasPrefix(identity.apiVersion, "helm.toolkit.fluxcd.io/") || identity.kind != "HelmRelease" {
-		return document
+	if isFluxSubstitutionHandoff(document, identity) {
+		return fluxSubstitutionInputs(document)
 	}
-	spec, ok := document["spec"].(map[string]any)
-	if !ok {
-		return document
-	}
-	chart, ok := spec["chart"].(map[string]any)
-	if !ok {
-		return document
-	}
-	chartSpec, ok := chart["spec"].(map[string]any)
-	if !ok {
-		return document
-	}
-	version, ok := chartSpec["version"].(string)
-	if !ok || !exactPinnedHelmChartVersion.MatchString(version) {
-		return document
-	}
-
-	projected := cloneStringAnyMap(document)
-	projectedSpec := cloneStringAnyMap(spec)
-	projectedChart := cloneStringAnyMap(chart)
-	projectedChartSpec := cloneStringAnyMap(chartSpec)
-	projectedChartSpec["version"] = "<exact-semver>"
-	projectedChart["spec"] = projectedChartSpec
-	projectedSpec["chart"] = projectedChart
-	if values, ok := spec["values"].(map[string]any); ok {
-		projectedSpec["values"] = normalizePinnedContainerImages(values)
-	}
-	projected["spec"] = projectedSpec
-	return projected
+	return authorizationFieldsDocument(identity, document)
 }
 
 // authorizationSurfaceEntry serializes one selected object with its complete

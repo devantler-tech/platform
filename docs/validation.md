@@ -172,10 +172,9 @@ workflows other repositories call. A repository named `actions` would be a
 first-party repository like any other, so its release tag passes them; the
 per-tenant binding is the tenant's signed manifest source, which pins its image
 digests.
-Authorization fingerprinting projects only the generated legacy signer revisions;
-the maintained repository, workflow, exact canonical commit or pair and the
-own-release alternative remain fingerprinted, so an approval change still
-requires review.
+Flux sources have had no entry in the production authorization ledger since
+platform#6270, so a matcher change is reviewed in its pull request and by the
+guards above rather than by a ledger approval.
 
 To move a consumer's canonical publisher to a newer commit, review the workflow
 at that commit, add it as a second row for the consumer in
@@ -184,8 +183,7 @@ at that commit, add it as a second row for the consumer in
 commits, so the release signed at the old commit and the first one signed at the
 new commit both verify. Deploy that before the consumer moves its pin. Once the
 consumer has published from the new commit, remove the first row and run the
-writer again. A consumer holds at most two rows, and the change to the matcher
-is a reviewed entry in the production authorization ledger each time.
+writer again. A consumer holds at most two rows.
 
 The overlay and all production roots render from an isolated
 snapshot of KSail's published `k8s` files: YAML/YML/JSON files selected by
