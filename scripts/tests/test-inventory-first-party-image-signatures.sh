@@ -305,6 +305,7 @@ expected_globs="$(printf '%s\n' \
   'ghcr.io/devantler-tech/platform-kagent-controller' \
   'ghcr.io/devantler-tech/platform-longhorn-instance-manager' \
   'ghcr.io/devantler-tech/platform-longhorn-manager' \
+  'ghcr.io/devantler-tech/platform-longhorn-fio' \
   'ghcr.io/devantler-tech/platform-mail-submission' \
   'ghcr.io/devantler-tech/*')"
 if [ "$real_globs" != "$expected_globs" ]; then
