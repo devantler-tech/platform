@@ -80,9 +80,11 @@ fi
 # kubevuln v0.3.159 swallows an exhausted conflict retry while updating a
 # VulnerabilityManifestSummary: it logs the original AlreadyExists result and
 # returns success. kubescape/kubevuln#745 fixed both error reporting and
-# propagation, first released in v0.3.404. Chart 1.42.0 selects v0.3.578;
-# verify the rendered image below so a later chart cannot regress silently.
-readonly kubevuln_tag='v0.3.578'
+# propagation, first released in v0.3.404. Chart 1.42.0 selects v0.3.578,
+# which lacks published dependency advisory fixes, so the HelmRelease pins the
+# audited, signed v0.3.585 digest (#5553). Verify the rendered images below so
+# neither a later chart nor a dropped override can regress silently.
+readonly kubevuln_tag='v0.3.585@sha256:3b8cc0dcff9e4ee09e5a93b339e76e3751ec923f082c1764b3ec3c1e452137ee'
 
 keep_local="$(yq -er '
   .spec.values.kubescapeScheduler.requestBody.commands[] |
