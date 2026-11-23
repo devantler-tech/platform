@@ -886,7 +886,7 @@ spec:
                       response=$(connect zitadel.user.v2.UserService/CreateUser "$(jq -nc \
                         --arg u "$portal_operator_id" --arg o "$operator_org" --arg e "$ADMIN_EMAIL" --argjson p "$profile" \
                         --arg i "$idp" --arg g "$admin_github_id" --arg n "$admin_github_login" \
-                        '{userId:$u,organizationId:$o,username:"portal-operator",
+                        '{userId:$u,organizationId:$o,username:$e,
                           human:{profile:$p,email:{email:$e,isVerified:true},idpLinks:[{idpId:$i,userId:$g,userName:$n}]}}')")
                       [[ $(jq -er '.id' <<<"$response") == "$portal_operator_id" ]] ||
                         fail "the portal operator was created with an unexpected identity"
@@ -895,7 +895,7 @@ spec:
                     fi
                     jq -e --arg u "$portal_operator_id" --arg o "$operator_org" --arg e "$ADMIN_EMAIL" '
                       .result | length == 1 and (.[0] | .userId == $u and .details.resourceOwner == $o and
-                        .state == "USER_STATE_ACTIVE" and .username == "portal-operator" and
+                        .state == "USER_STATE_ACTIVE" and .username == $e and
                         .human.email.email == $e and .human.email.isVerified == true)' <<<"$users" >/dev/null ||
                       fail "the portal operator account does not match the declared identity"
                     links=$(connect zitadel.user.v2.UserService/ListIDPLinks \

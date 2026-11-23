@@ -158,13 +158,13 @@ connect() {
         local owner=operator-org
         [[ $mode != foreign-user ]] || owner=$customers_org_id
         jq -nc --arg id "$portal_operator_id" --arg owner "$owner" '{result:[{userId:$id,details:{resourceOwner:$owner},
-          state:"USER_STATE_ACTIVE",username:"portal-operator",human:{email:{email:"operator@example.invalid",isVerified:true}}}]}'
+          state:"USER_STATE_ACTIVE",username:"operator@example.invalid",human:{email:{email:"operator@example.invalid",isVerified:true}}}]}'
       else
         printf '%s\n' '{"result":[]}'
       fi
       ;;
     zitadel.user.v2.UserService/CreateUser)
-      jq -e --arg id "$portal_operator_id" '. == {userId:$id,organizationId:"operator-org",username:"portal-operator",
+      jq -e --arg id "$portal_operator_id" '. == {userId:$id,organizationId:"operator-org",username:"operator@example.invalid",
         human:{profile:{givenName:"Test",familyName:"Operator"},email:{email:"operator@example.invalid",isVerified:true},
           idpLinks:[{idpId:"approved-provider",userId:"1234",userName:"fictional-owner"}]}}' <<<"$2" >/dev/null
       touch "$state"
