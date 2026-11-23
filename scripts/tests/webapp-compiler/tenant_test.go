@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
@@ -416,7 +417,7 @@ func TestCommittedTenant(t *testing.T) {
 			t.Fatal(err)
 		}
 		input := legacyInput("legacy-pin")
-		if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
+		if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict", FieldManager: "legacy-pin-owner"}); err != nil {
 			t.Fatal(err)
 		}
 		var upgraded extv1.CustomResourceDefinition
@@ -432,13 +433,32 @@ func TestCommittedTenant(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"reconcileApplication": true}, "spec", "source"); err != nil {
+		var committed unstructured.Unstructured
+		readYAML(t, filepath.Join(root, "k8s/providers/hetzner/apps/business-site/tenant.yaml"), &committed)
+		migratedSource, found, err := unstructured.NestedMap(committed.Object, "spec", "source")
+		if err != nil || !found {
+			t.Fatalf("read the committed Business Site source: found=%t, error=%v", found, err)
+		}
+		desired := instance(input.GetName(), map[string]interface{}{"source": migratedSource})
+		payload, err := json.Marshal(desired)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); err != nil {
-			t.Fatalf("the upgraded API must allow Flux to clear a stored pin: %v", err)
+		patch := client.RawPatch(types.ApplyPatchType, payload)
+		options := []client.PatchOption{client.FieldOwner("kustomize-controller"), client.ForceOwnership, &client.PatchOptions{FieldValidation: "Strict"}}
+		if err := apiClient.Patch(ctx, desired, patch, append(options, client.DryRunAll)...); err != nil {
+			t.Fatalf("Flux dry-run must clear a pin owned by another manager: %v", err)
 		}
-		objects, ignored := desiredTenant(t, engine, &definition, input)
+		if err := apiClient.Patch(ctx, desired, patch, options...); err != nil {
+			t.Fatalf("Flux apply must clear a stored pin: %v", err)
+		}
+		for _, field := range []string{"digest", "publisherRevision"} {
+			value, _, err := unstructured.NestedString(desired.Object, "spec", "source", field)
+			if err != nil || value != "" {
+				t.Fatalf("Flux apply left %s set: value=%q, error=%v", field, value, err)
+			}
+		}
+		objects, ignored := desiredTenant(t, engine, &definition, desired)
 		assertTenantChildren(t, objects, ignored, true, false)
 		assertTenantIdentity(t, objects["ociRepository"], defaultTenantSubject)
 	})
