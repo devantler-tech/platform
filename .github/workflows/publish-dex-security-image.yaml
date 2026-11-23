@@ -150,7 +150,7 @@ jobs:
           cosign sign --yes "${digest_ref}"
           jq -n --arg revision "${GITHUB_SHA}" --arg imageId "${IMAGE_ID}" --arg binarySha "${BINARY_SHA}" \
             --arg archiveSha "${ARCHIVE_SHA}" --arg run "${GITHUB_RUN_ID}" \
-            '{sourceRevision:$revision,upstreamRevision:"75eb19238e10fc4750e7efb05a4031b254b04029",patchedSourceTree:"6ba6ad659479412f2a33c391e6c64a3cfcc3f05c",imageId:$imageId,binarySha256:$binarySha,verifiedArchiveSha256:$archiveSha,workflowRunId:$run}' \
+            '{sourceRevision:$revision,upstreamRevision:"75eb19238e10fc4750e7efb05a4031b254b04029",patchedSourceTree:"072d81808a1d5f63e257d1574aacfcffcceff3b6",imageId:$imageId,binarySha256:$binarySha,verifiedArchiveSha256:$archiveSha,workflowRunId:$run}' \
             > "${RUNNER_TEMP}/dex-build.json"
           cosign attest --yes --predicate "${RUNNER_TEMP}/dex-build.json" --type https://devantler.tech/attestations/dex-build/v1 "${digest_ref}"
           cosign attest --yes --predicate "${RUNNER_TEMP}/dex-sbom.json" --type cyclonedx "${digest_ref}"
