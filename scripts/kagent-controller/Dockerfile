@@ -2,3 +2,5 @@ FROM ghcr.io/kagent-dev/kagent/controller@sha256:a85cc7452b403e879f592a094dfb3fb
 
 COPY --chmod=0755 app /app
 COPY --chmod=0644 LICENSE IMAGE-NOTICE /usr/share/licenses/kagent/
+
+USER 65532:65532

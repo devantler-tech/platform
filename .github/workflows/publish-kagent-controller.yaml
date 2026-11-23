@@ -149,6 +149,7 @@ jobs:
           ref="$(docker image inspect --format '{{json .RepoDigests}}' "${IMAGE}:${IMAGE_TAG}" |
             jq -er --arg prefix "${IMAGE}@sha256:" 'map(select(startswith($prefix))) | if length == 1 then .[0] else error("ambiguous digest") end')"
           cosign sign --yes "${ref}"
-          cosign verify --certificate-identity 'https://github.com/devantler-tech/platform/.github/workflows/publish-kagent-controller.yaml@refs/heads/main' \
+          identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/publish-kagent-controller.yaml@refs/heads/main"
+          cosign verify --certificate-identity "${identity}" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' "${ref}"
           printf 'Published and verified: %s\n' "${ref}"
