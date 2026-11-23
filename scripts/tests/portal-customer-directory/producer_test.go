@@ -200,6 +200,90 @@ connect() {
 	}
 }
 
+func TestCustomerProviderTransitionPreservesAccess(t *testing.T) {
+	function := producerFunction(t, "reconcile_customer_login_provider")
+	for _, mode := range []string{"inherited", "legacy", "both", "shared", "rollback", "unexpected", "unconfirmed-add"} {
+		t.Run(mode, func(t *testing.T) {
+			harness := `set -euo pipefail
+mode=$1
+work=$2
+customers_org_id=customers
+customer_policy={}
+changes=()
+from=legacy to=shared owner=IDP_OWNER_TYPE_SYSTEM
+case "$mode" in
+  inherited) ids='[]';;
+  legacy|unconfirmed-add) ids='["legacy"]';;
+  both) ids='["legacy","shared"]';;
+  shared|rollback) ids='["shared"]';;
+  unexpected) ids='["legacy","unrelated"]';;
+esac
+if [[ $mode == rollback ]]; then
+  from=shared to=legacy owner=IDP_OWNER_TYPE_ORG
+fi
+printf '%s\n' "$ids" >"$work/ids"
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+copy_customer_github_links() {
+  [[ $1 == "$from" && $2 == "$to" ]] || fail 'wrong migration direction'
+  touch "$work/copied"
+}
+api() {
+  [[ $api_org == customers ]] || fail 'wrong scope'
+  case "$1 $2" in
+    'GET /management/v1/policies/login')
+      jq -nc --arg mode "$mode" --argjson pending "$([[ -e $work/ensured ]] && echo false || echo true)" \
+        '{policy:{isDefault:($mode=="inherited" and $pending)}}'
+      ;;
+    'POST /management/v1/policies/login/idps/_search')
+      jq '{result: map({idpId:.})}' "$work/ids"
+      ;;
+    'POST /management/v1/policies/login/idps')
+      [[ -e $work/copied ]] || fail 'provider appeared before the links were copied'
+      jq -e --arg to "$to" --arg owner "$owner" '. == {idpId:$to,ownerType:$owner}' <<<"$3" >/dev/null || fail 'wrong provider write'
+      if [[ $mode != unconfirmed-add ]]; then
+        jq --arg to "$to" '. + [$to]' "$work/ids" >"$work/next"
+        mv "$work/next" "$work/ids"
+      fi
+      ;;
+    "DELETE /management/v1/policies/login/idps/$from")
+      jq -e --arg to "$to" 'index($to) != null' "$work/ids" >/dev/null || fail 'removed a provider before its replacement was confirmed'
+      jq --arg from "$from" 'map(select(. != $from))' "$work/ids" >"$work/next"
+      mv "$work/next" "$work/ids"
+      touch "$work/removed"
+      ;;
+    *) fail 'unexpected provider request' ;;
+  esac
+}
+ensure_login_policy() {
+  [[ $1 == customers && $2 == '{}' && $3 == "$to" && $4 == "$owner" && -e $work/copied ]] || fail 'wrong policy reconciliation'
+  if [[ $mode == inherited ]]; then
+    jq -nc --arg to "$to" '[$to]' >"$work/ids"
+  fi
+  touch "$work/ensured"
+}
+`
+			work := t.TempDir()
+			cmd := exec.Command("bash", "-s", "--", mode, work)
+			cmd.Stdin = strings.NewReader(harness + function + "\nreconcile_customer_login_provider \"$from\" \"$to\" \"$owner\"\n")
+			output, err := cmd.CombinedOutput()
+			wantOK := mode != "unexpected" && mode != "unconfirmed-add"
+			if (err == nil) != wantOK {
+				t.Fatalf("expected transition success=%t, got %v: %s", wantOK, err, output)
+			}
+			for marker, want := range map[string]bool{
+				"copied":  mode != "unexpected",
+				"removed": mode == "legacy" || mode == "both" || mode == "rollback",
+				"ensured": wantOK,
+			} {
+				_, err := os.Stat(filepath.Join(work, marker))
+				if (err == nil) != want {
+					t.Fatalf("unexpected %s marker: %v", marker, err)
+				}
+			}
+		})
+	}
+}
+
 func TestSharedProviderMigrationUsesOnlyExistingCustomerLinks(t *testing.T) {
 	script := producerFunction(t, "customer_github_links") + "\n" + producerFunction(t, "copy_customer_github_links")
 	for _, mode := range []string{"copy", "already-copied", "conflict", "truncated-customers", "truncated-links", "foreign-customer"} {

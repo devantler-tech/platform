@@ -188,7 +188,8 @@ spec:
                 - name: CUSTOMER_GITHUB_SIGNIN
                   value: "on"
                 - name: SHARED_PORTAL_LOGIN_SETUP
-                  value: "on"
+                  # Install both reconciliation paths before enabling shared sign-in.
+                  value: "off"
                 - name: ADMIN_EMAIL
                   value: ned@devantler.tech
               volumeMounts:
@@ -864,9 +865,6 @@ spec:
                       ensure_idp "$customers_org_id" github "$idp_name" "$customer_idp" "$github_client_secret" "$github_annotation"
                       legacy_customer_idp=$idp_id
                       customer_policy=$(policy_from_instance '{}')
-                      if [[ $shared_portal_setup == off ]]; then
-                        ensure_login_policy "$customers_org_id" "$customer_policy" "$legacy_customer_idp"
-                      fi
                       ;;
                     off)
                       customer_idps=$(api_org=$customers_org_id api POST /management/v1/idps/templates/_search "$(jq -nc --arg n "$idp_name" \
@@ -932,8 +930,41 @@ spec:
                     [[ ! -s $plan ]] || changes+=("preserved existing customer GitHub links")
                   }
 
+                  # Reconcile both directions before switching the portal entry point.
+                  # Existing links outlive policy resets and are kept for rollback.
+                  reconcile_customer_login_provider() {
+                    local previous=$1 desired=$2 owner_type=$3 org=$customers_org_id policy linked='[]'
+                    policy=$(api_org=$org api GET /management/v1/policies/login |
+                      jq -ce '.policy | select(type == "object")')
+                    if [[ $(jq -r '.isDefault // false' <<<"$policy") == false ]]; then
+                      linked=$(api_org=$org api POST /management/v1/policies/login/idps/_search |
+                        jq -c '[.result // [] | .[].idpId]')
+                      jq -e --arg old "$previous" --arg new "$desired" \
+                        'all(.[]; . == $old or . == $new) and length == (unique | length)' <<<"$linked" >/dev/null ||
+                        fail "the customer login policy has an unexpected identity provider"
+                    fi
+                    copy_customer_github_links "$previous" "$desired"
+                    if jq -e --arg old "$previous" 'index($old) != null' <<<"$linked" >/dev/null; then
+                      if jq -e --arg new "$desired" 'index($new) == null' <<<"$linked" >/dev/null; then
+                        api_org=$org api POST /management/v1/policies/login/idps \
+                          "$(jq -nc --arg i "$desired" --arg t "$owner_type" '{idpId:$i,ownerType:$t}')" >/dev/null
+                        linked=$(api_org=$org api POST /management/v1/policies/login/idps/_search |
+                          jq -c '[.result // [] | .[].idpId]')
+                        jq -e --arg old "$previous" --arg new "$desired" \
+                          'sort == ([$old, $new] | sort)' <<<"$linked" >/dev/null ||
+                          fail "the replacement customer identity provider was not confirmed"
+                      fi
+                      api_org=$org api DELETE "/management/v1/policies/login/idps/$previous" >/dev/null
+                    fi
+                    ensure_login_policy "$org" "$customer_policy" "$desired" "$owner_type"
+                    linked=$(api_org=$org api POST /management/v1/policies/login/idps/_search |
+                      jq -c '[.result // [] | .[].idpId]')
+                    [[ $linked == "$(jq -nc --arg i "$desired" '[$i]')" ]] ||
+                      fail "the customer login does not list the declared GitHub provider"
+                  }
+
                   prepare_shared_portal_policy() {
-                    local previous=$1 shared=$2 desired linked query_org current feature
+                    local shared=$1 desired linked current feature
                     current=$(api GET /admin/v1/policies/login | jq -ce ".policy | $normalise_policy")
                     desired=$(jq -c '.allowUsernamePassword=true | .allowExternalIdp=true |
                       .allowRegister=false | .forceMfa=true' <<<"$current")
@@ -958,23 +989,6 @@ spec:
                       jq -e '(.loginDefaultOrg | type) == "object" and (.loginDefaultOrg.enabled // false) == false' >/dev/null ||
                       fail "could not verify that unscoped sign-in uses the instance login policy"
 
-                    query_org=$customers_org_id
-                    if [[ $(api_org=$query_org api GET /management/v1/policies/login | jq -r '.policy.isDefault // false') == false ]]; then
-                      linked=$(api_org=$query_org api POST /management/v1/policies/login/idps/_search |
-                        jq -c '[.result // [] | .[].idpId]')
-                      jq -e --arg old "$previous" --arg new "$shared" \
-                        'all(.[]; . == $old or . == $new) and length == (unique | length)' <<<"$linked" >/dev/null ||
-                        fail "the customer login policy has an unexpected identity provider"
-                      if jq -e --arg old "$previous" 'index($old) != null' <<<"$linked" >/dev/null; then
-                        copy_customer_github_links "$previous" "$shared"
-                        if jq -e --arg new "$shared" 'index($new) == null' <<<"$linked" >/dev/null; then
-                          api_org=$query_org api POST /management/v1/policies/login/idps \
-                            "$(jq -nc --arg i "$shared" '{idpId:$i,ownerType:"IDP_OWNER_TYPE_SYSTEM"}')" >/dev/null
-                        fi
-                        api_org=$query_org api DELETE "/management/v1/policies/login/idps/$previous" >/dev/null
-                      fi
-                    fi
-                    ensure_login_policy "$query_org" "$customer_policy" "$shared" IDP_OWNER_TYPE_SYSTEM
                   }
 
                   prepare_portal_operator() {
@@ -1033,7 +1047,10 @@ spec:
                     ensure_idp "" github "$idp_name" "$shared_idp" "$github_client_secret" "$shared_github_annotation"
                     prepare_portal_operator "$idp_id"
                     if [[ $shared_portal_setup == on ]]; then
-                      prepare_shared_portal_policy "$legacy_customer_idp" "$idp_id"
+                      reconcile_customer_login_provider "$legacy_customer_idp" "$idp_id" IDP_OWNER_TYPE_SYSTEM
+                      prepare_shared_portal_policy "$idp_id"
+                    else
+                      reconcile_customer_login_provider "$idp_id" "$legacy_customer_idp" IDP_OWNER_TYPE_ORG
                     fi
                   fi
 
