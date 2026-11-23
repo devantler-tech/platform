@@ -4,8 +4,8 @@ set -eu
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
-printf '%s\n' 'postgresql://127.0.0.1:1/kagent?sslmode=disable&connect_timeout=1' > "$workdir/database-url"
-cat > "$workdir/controller.yaml" <<'YAML'
+printf '%s\n' 'postgresql://127.0.0.1:1/kagent?sslmode=disable&connect_timeout=1' >"$workdir/database-url"
+cat >"$workdir/controller.yaml" <<'YAML'
 database:
   skipMigrations: true
   readWrite:
@@ -19,7 +19,7 @@ YAML
 
 # The isolated image must pass the built-in harness catalog check and reach
 # PostgreSQL. The fixture deliberately has no database or network access.
-if /app --config "$workdir/controller.yaml" > "$workdir/startup.log" 2>&1; then
+if /app --config "$workdir/controller.yaml" >"$workdir/startup.log" 2>&1; then
   printf '%s\n' 'Controller unexpectedly started without a database.' >&2
   exit 1
 fi
