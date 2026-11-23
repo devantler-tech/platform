@@ -170,7 +170,7 @@ connect() {
       jq -e --arg id "$portal_operator_id" --arg name "$portal_operator_username" \
         '. == {userId:$id,organizationId:"operator-org",username:$name,
         human:{profile:{givenName:"Test",familyName:"Operator"},email:{email:"operator@example.invalid",isVerified:true},
-          idpLinks:[{idpId:"approved-provider",userId:"1234",userName:"fictional-owner"}]}}' <<<"$2" >/dev/null
+          idpLinks:[{idpId:"approved-provider",userId:"1234",userName:"fictional-owner"}]}}' <<<"$2" >/dev/null || fail 'unexpected portal operator creation request'
       touch "$state"
       jq -nc --arg id "$portal_operator_id" '{id:$id}'
       ;;
