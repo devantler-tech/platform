@@ -40,6 +40,38 @@ jobs:
         run: |
           shellcheck scripts/validate-webapp-inputs.sh scripts/tests/test-webapp-inputs.sh
           bash scripts/tests/test-webapp-inputs.sh
+      - name: 📥 Fetch the installed Tenant API's revision
+        # KRO updates an installed API only when its compatibility check sees a
+        # change, and that check ignores CEL rules, so the compiler judges the
+        # Tenant API against the base revision's (platform#6420). A pull
+        # request reads the current tip of its base branch, a merge group its
+        # base_sha. A failed fetch fails the step.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request)
+              [ -n "$PR_BASE_REF" ] || { echo '::error::the pull request names no base branch'; exit 1; }
+              refspec="+refs/heads/${PR_BASE_REF}:refs/remotes/origin/${PR_BASE_REF}"
+              base="origin/${PR_BASE_REF}"
+              ;;
+            merge_group)
+              [ -n "$MERGE_GROUP_BASE_SHA" ] || { echo '::error::the merge group names no base_sha'; exit 1; }
+              refspec="$MERGE_GROUP_BASE_SHA"
+              base="$MERGE_GROUP_BASE_SHA"
+              ;;
+            *)
+              echo "::error::no base revision is defined for the ${EVENT_NAME} event"
+              exit 1
+              ;;
+          esac
+          if ! git fetch --no-tags --quiet --depth=1 origin "$refspec"; then
+            echo "::error::could not fetch the base ${base}, so the installed Tenant API is unreadable"
+            exit 1
+          fi
+          printf 'KRO_API_BASE=%s\n' "$base" >>"$GITHUB_ENV"
       - name: 🧩 Compile the committed WebApp and refusal controls
         run: bash scripts/tests/test-webapp-compiler.sh
       - name: ⚙️ Install pinned Trivy for compiled workloads

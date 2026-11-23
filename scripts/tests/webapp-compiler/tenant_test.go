@@ -48,8 +48,8 @@ func releaseRef() map[string]interface{} {
 // Desired objects are expression evidence, not Flux or signature verification.
 func TestCommittedTenant(t *testing.T) {
 	root := os.Getenv("PLATFORM_TEST_ROOT")
-	if root == "" || os.Getenv("KUBEBUILDER_ASSETS") == "" {
-		t.Fatal("explicit source root and verified API-server assets are required")
+	if root == "" || os.Getenv("KUBEBUILDER_ASSETS") == "" || os.Getenv("TENANT_BASE_RGD") == "" {
+		t.Fatal("explicit source root, installed Tenant graph and verified API-server assets are required")
 	}
 	if features.FeatureGate.Enabled(features.CELOmitFunction) {
 		t.Fatal("Tenant compilation must use the deployed omission feature gate")
@@ -151,6 +151,25 @@ func TestCommittedTenant(t *testing.T) {
 	if err := completeTenant(compiled); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("installed-api-receives-the-change", func(t *testing.T) {
+		var base kroapi.ResourceGraphDefinition
+		readYAML(t, os.Getenv("TENANT_BASE_RGD"), &base)
+		if base.Name != definition.Name {
+			t.Fatalf("expected the installed Tenant graph, got %q", base.Name)
+		}
+		// Default it through the API server exactly as the committed graph was.
+		base.Name = "installed." + definition.Name
+		if err := apiClient.Create(ctx, &base, client.DryRunAll); err != nil {
+			t.Fatalf("default the installed Tenant graph: %v", err)
+		}
+		installed, err := builder.NewResourceGraphDefinition(&base, graph.Config{MaxCollectionDimensionSize: 5})
+		if err != nil {
+			t.Fatalf("compile the installed Tenant graph: %v", err)
+		}
+		if err := uninstalledAPIChange(installed.CRD, compiled.CRD); err != nil {
+			t.Fatal(err)
+		}
+	})
 	if err := apiClient.Create(ctx, compiled.CRD); err != nil {
 		t.Fatal(err)
 	}
