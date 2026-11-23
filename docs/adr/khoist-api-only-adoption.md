@@ -43,6 +43,24 @@ receipt with requirements that its two named products do not declare `spec.ui` a
 no serving workload carries the retired settings. Products elsewhere are counted, not
 refused. It also requires the in-place chart rename.
 
+## Amendment: KHoist 9.0.15 (2026-11-23)
+
+The platform moves to KHoist 9.0.15, the newest release, signed by KHoist itself (monorepo ADR 0017):
+
+- **Image:** `ghcr.io/devantler-tech/khoist@sha256:e19eebc960af47442b583ff547fcf1ecef80cc574c1825599485fc93669a7764`, signed by `devantler-tech/khoist/.github/workflows/cd.yaml@refs/tags/v9.0.15`.
+- **Chart:** `oci://ghcr.io/devantler-tech/charts/khoist@sha256:56bcec6934e9ae1564928de6b0e145a18c7948c3566de5abd676782506f6037f`, signed by `publish-chart.yaml@refs/tags/v9.0.15` as before.
+
+The controller and its probes no longer need the shared `publish-app` publisher. The generic image rules already accept a first-party repository's own release workflow on a release tag.
+
+9.0.13 to 9.0.15 contain:
+- KHoist signing its own releases;
+- a zlib security rebuild of the PostgreSQL AGE image, which the platform does not run;
+- a Go dependency bump, chart unit tests and template-sync changes.
+
+The chart's templates, values and CRDs are unchanged, so the decision above and the CRD upgrade path still apply. The chart still follows a pinned digest; following KHoist's release tags is Platform #6428.
+
+To roll back this amendment, revert its change. The generic image rules still accept the v19.0.5 `publish-app` revision that signed 9.0.12, so the 9.0.12 image verifies again.
+
 ## Amendment: KHoist 9.0.12 (2026-11-13)
 
 The platform moves to KHoist 9.0.12:
