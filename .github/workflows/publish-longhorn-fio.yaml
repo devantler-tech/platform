@@ -134,8 +134,15 @@ jobs:
         run: |
           set -euo pipefail
           docker push "${IMAGE}:${VERSION}"
-          digest="$(docker image inspect --format '{{json .RepoDigests}}' "${IMAGE}:${VERSION}" | jq -er --arg prefix "${IMAGE}@sha256:" 'map(select(startswith($prefix))) | if length == 1 then .[0] else error("ambiguous digest") end')"
-          docker buildx imagetools inspect --raw "$digest" | jq -e --arg id "$EXPECTED_ID" '.config.digest == $id'
+          published="$(docker image inspect --format '{{json .RepoDigests}}' "${IMAGE}:${VERSION}" | jq -er --arg prefix "${IMAGE}@sha256:" 'map(select(startswith($prefix))) | if length == 1 then .[0] else error("ambiguous digest") end')"
+          manifest="$(docker buildx imagetools inspect --raw "$published" |
+            jq -er --arg published "${published#*@}" --arg tested "$EXPECTED_ID" \
+              -f scripts/migrate-longhorn-v2/fio/published-amd64-digest.jq)"
+          digest="${IMAGE}@${manifest}"
+          docker buildx imagetools inspect --raw "$digest" |
+            jq -e --arg published "$manifest" --arg tested "$manifest" \
+              -f scripts/migrate-longhorn-v2/fio/published-amd64-digest.jq |
+            jq -es --arg manifest "$manifest" '. == [$manifest]' > /dev/null
           identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/publish-longhorn-fio.yaml@refs/heads/main"
           issuer=https://token.actions.githubusercontent.com
           cosign sign --yes "$digest"

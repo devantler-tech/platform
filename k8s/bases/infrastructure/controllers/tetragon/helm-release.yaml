@@ -64,7 +64,7 @@ spec:
     # C-0211 baseline context (#3239). kube-system is excluded from
     # add-security-context, so the two fields it would supply are declared on
     # both workloads here: fsGroupChangePolicy on each pod, and seLinuxOptions
-    # on each container (tetragon.securityContext, export.securityContext and
+    # on each container (tetragon.securityContext and
     # tetragonOperator.containerSecurityContext below). Helm merges these maps
     # over the chart's defaults, so the agent keeps `privileged: true` and the
     # operator keeps its non-root, no-escalation, drop-ALL context.
@@ -116,7 +116,7 @@ spec:
       enableProcessCred: true
       enableProcessNs: true
       # Command-line arguments are excluded from every exported event. The
-      # export sidecar's JSON reaches Coroot's log store, which has a broader
+      # exported JSON reaches Coroot's log store, which has a broader
       # access boundary and a longer retention window than the pod that ran the
       # process, so an argument passed by any workload -- including workloads
       # this repo does not own and cannot change -- is otherwise durably
@@ -175,22 +175,13 @@ spec:
       prometheus:
         serviceMonitor:
           enabled: false
-    # The export-stdout sidecar is on by default (export.mode: stdout), so
-    # Tetragon's JSON events go to the pod's stdout -- where Coroot's node-agent
-    # ingests them, making them searchable in the Coroot UI with no extra wiring.
+    # Events reach Coroot once, from the agent's own export file. The agent
+    # writes every event to /var/log/tetragon/tetragon.log, and Coroot's
+    # node-agent already reads that file (it records `log.source` as the file
+    # path). The chart's default export-stdout sidecar printed the same file a
+    # second time, so every event was stored twice -- about 15 % of all log
+    # messages in the cluster (#6143). "" turns the sidecar off; the agent's
+    # file export is configured separately (tetragon.exportFilename) and is
+    # unchanged, so no event is lost.
     export:
-      # C-0211 baseline context (#3239), explained at the top of these values.
-      securityContext:
-        seLinuxOptions: {}
-      # The sidecar declares no resources in the chart, so today it takes both
-      # kube-system default-limitrange defaults: request 15m, limit "2".
-      # Declaring the same pair keeps a fresh cluster from starting it uncapped
-      # before that LimitRange exists (#3790). The request must be pinned too:
-      # Kubernetes defaults a missing request to the limit, which would turn
-      # 15m:2 into 2:2 and the prod VPA would then shrink the limit to the
-      # request.
-      resources:
-        requests:
-          cpu: 15m
-        limits:
-          cpu: "2"
+      mode: ""

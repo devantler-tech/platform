@@ -24,9 +24,7 @@ yq -e '(.spec.values.tetragonOperator.priorityClassName // "") == "" and
   .spec.values.tetragon.resources.requests.cpu == "100m" and
   .spec.values.tetragon.resources.requests.memory == "128Mi" and
   .spec.values.tetragon.resources.limits.cpu == "2" and
-  .spec.values.tetragon.resources.limits.memory == null and
-  .spec.values.export.resources.requests.cpu == "15m" and
-  .spec.values.export.resources.limits.cpu == "2"' "$release" >/dev/null || {
+  .spec.values.tetragon.resources.limits.memory == null' "$release" >/dev/null || {
   printf 'FAIL: agent scheduling repair must not elevate the operator or lower resource reservations\n' >&2
   exit 1
 }

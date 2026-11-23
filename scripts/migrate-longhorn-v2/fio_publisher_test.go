@@ -83,3 +83,44 @@ esac
 		})
 	}
 }
+
+func TestFioPublisherSelectsTheTestedLinuxAMD64Manifest(t *testing.T) {
+	index := "sha256:" + strings.Repeat("1", 64)
+	image := "sha256:" + strings.Repeat("2", 64)
+	attestation := "sha256:" + strings.Repeat("3", 64)
+	config := "sha256:" + strings.Repeat("4", 64)
+	imageDescriptor := fmt.Sprintf(`{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":%q,"platform":{"os":"linux","architecture":"amd64"}}`, image)
+	attestationDescriptor := fmt.Sprintf(`{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":%q,"platform":{"os":"unknown","architecture":"unknown"}}`, attestation)
+	imageManifest := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"digest":%q}}`, config)
+	imageIndex := func(descriptors ...string) string {
+		return fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[%s]}`, strings.Join(descriptors, ","))
+	}
+	for _, tc := range []struct {
+		name, published, tested, manifest, want string
+	}{
+		{"OCI index with BuildKit attestation", index, index, imageIndex(imageDescriptor, attestationDescriptor), image},
+		{"direct image with config identity", image, config, imageManifest, image},
+		{"direct image with manifest identity", image, image, imageManifest, image},
+		{"wrong index identity", index, config, imageIndex(imageDescriptor, attestationDescriptor), ""},
+		{"wrong config identity", image, attestation, imageManifest, ""},
+		{"ambiguous platform", index, index, imageIndex(imageDescriptor, imageDescriptor), ""},
+		{"missing platform", index, index, imageIndex(attestationDescriptor), ""},
+		{"invalid child digest", index, index, imageIndex(strings.Replace(imageDescriptor, image, "invalid", 1)), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.CommandContext(t.Context(), "jq", "-er", "--arg", "published", tc.published, "--arg", "tested", tc.tested,
+				"-f", "fio/published-amd64-digest.jq")
+			cmd.Stdin = strings.NewReader(tc.manifest)
+			out, err := cmd.CombinedOutput()
+			if tc.want == "" {
+				if err == nil {
+					t.Fatalf("unsafe image identity was accepted: %s", out)
+				}
+				return
+			}
+			if err != nil || strings.TrimSpace(string(out)) != tc.want {
+				t.Fatalf("wrong manifest: %v\n%s", err, out)
+			}
+		})
+	}
+}
