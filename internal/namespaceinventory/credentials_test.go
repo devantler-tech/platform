@@ -172,7 +172,7 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 }
 
 func TestBenchmarkCredentialLoaderRefusesOutsideProtectedDispatch(t *testing.T) {
-	if _, _, err := LoadBenchmarkAdmissionClient(func(string) string { return "" }, netip.MustParseAddr("203.0.113.10")); err == nil {
+	if _, _, err := LoadBenchmarkAdmissionClient(func(string) string { return "" }, netip.MustParseAddr("203.0.113.10"), ""); err == nil {
 		t.Fatal("direct credential loader admitted an unverified dispatch")
 	}
 }

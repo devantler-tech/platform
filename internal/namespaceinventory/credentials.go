@@ -66,16 +66,24 @@ func LoadProtectedClient(getenv func(string) string) (*http.Client, *url.URL, er
 	return newProductionClient(config)
 }
 
-// LoadBenchmarkAdmissionClient only admits the protected migration benchmark
-// operation. The caller must first join the selected address to the serving
-// Kubernetes process and independently verified Hetzner server.
-func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Addr) (*http.Client, *url.URL, error) {
+// LoadBenchmarkAdmissionClient admits the protected V1 benchmark or the
+// explicitly confirmed recovery of originalRun. The caller must first join
+// the selected address to its serving process and verified Hetzner server.
+func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Addr, originalRun string) (*http.Client, *url.URL, error) {
+	operation, confirmation := "benchmark-v1", "benchmark-longhorn-storage"
+	if originalRun != "" {
+		if !runPattern.MatchString(originalRun) || originalRun == getenv("GITHUB_RUN_ID") ||
+			getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != "" {
+			return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
+		}
+		operation, confirmation = "recover-bound-v1-benchmark", "recover-bound-longhorn-v1-benchmark:"+originalRun
+	}
 	for key, want := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
 		"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted",
 		"GITHUB_WORKFLOW_REF":   "devantler-tech/platform/.github/workflows/prepare-longhorn-v2-node.yaml@refs/heads/main",
-		"LONGHORN_V2_CONFIRM":   "benchmark-longhorn-storage",
-		"LONGHORN_V2_OPERATION": "benchmark-v1",
+		"LONGHORN_V2_CONFIRM":   confirmation,
+		"LONGHORN_V2_OPERATION": operation,
 	} {
 		if getenv(key) != want {
 			return nil, nil, errors.New("protected benchmark admission dispatch is unverified")

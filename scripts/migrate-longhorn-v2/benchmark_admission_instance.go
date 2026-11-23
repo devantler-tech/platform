@@ -75,7 +75,7 @@ func proveAndCheckpointBenchmarkInstances(ctx context.Context, c client, record 
 	}
 	name := text(policy, "metadata", "name")
 	receipt := record.Fences[name]
-	if err := proveBenchmarkFenceOnServingAPIs(ctx, c, record.mutationSource(), policy, receipt, func(ctx context.Context, client *http.Client, endpoint *url.URL) error {
+	if err := proveBenchmarkFenceOnServingAPIs(ctx, c, *record, policy, receipt, func(ctx context.Context, client *http.Client, endpoint *url.URL) error {
 		for _, child := range children {
 			if err := probeBenchmarkInstanceAdmission(ctx, client, endpoint, child, observations[child.Identity.UID], name, record.FenceCheckpoint); err != nil {
 				return err

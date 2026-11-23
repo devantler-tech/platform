@@ -43,12 +43,13 @@ func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, re
 		return errors.New("benchmark reference fence received an unsupported resource")
 	}
 	receipt := record.Fences[text(policy, "metadata", "name")]
-	return proveBenchmarkFenceOnServingAPIs(ctx, c, record.mutationSource(), policy, receipt, func(ctx context.Context, direct *http.Client, address *url.URL) error {
+	return proveBenchmarkFenceOnServingAPIs(ctx, c, record, policy, receipt, func(ctx context.Context, direct *http.Client, address *url.URL) error {
 		return probe(ctx, direct, address, record, observed)
 	})
 }
 
-func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, source string, policy object, receipt benchmarkFenceReceipt, probe func(context.Context, *http.Client, *url.URL) error) error {
+func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, record benchmarkRecord, policy object, receipt benchmarkFenceReceipt, probe func(context.Context, *http.Client, *url.URL) error) error {
+	source := record.mutationSource()
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
@@ -63,8 +64,12 @@ func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, source stri
 	if err := verifyBenchmarkProviderEndpoints(ctx, os.Getenv("HCLOUD_TOKEN"), roster); err != nil {
 		return err
 	}
+	originalRun := ""
+	if record.Recovery != nil {
+		originalRun = record.Run
+	}
 	for _, endpoint := range roster {
-		direct, address, err := namespaceinventory.LoadBenchmarkAdmissionClient(os.Getenv, endpoint.ExternalIP)
+		direct, address, err := namespaceinventory.LoadBenchmarkAdmissionClient(os.Getenv, endpoint.ExternalIP, originalRun)
 		if err != nil {
 			return err
 		}
