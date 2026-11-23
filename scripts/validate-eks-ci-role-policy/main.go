@@ -289,7 +289,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                          "63e57d91d99abd5502413cbd9f3daff6de117265c611f523afda232d56e52ef3",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:              "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                        "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                          "6378f829ee98f5d9acaa5bd812636385ac066938aa2552d6f2019528758c3edd",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                          "80c97a9d056fcb0e0ed565cdc483ade01d1eee8530c7a5ad6061b4dee6e74eeb",
 }
 
 // fingerprint returns the SHA-256 identity used for byte-exact source checks.

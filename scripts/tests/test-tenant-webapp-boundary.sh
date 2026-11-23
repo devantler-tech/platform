@@ -13,11 +13,13 @@ policy_dir="$root/k8s/bases/infrastructure/cluster-policies/best-practices"
 parent="$policy_dir/restrict-tenant-webapps.yaml"
 children="$policy_dir/restrict-webapp-child-ownership.yaml"
 deletion="$policy_dir/restrict-webapp-child-deletion.yaml"
+preview_parent="$policy_dir/restrict-tenant-previews.yaml"
+preview_namespace="$policy_dir/restrict-business-site-preview-namespace.yaml"
 role="$root/k8s/bases/infrastructure/cluster-roles/tenant-webapp-edit.yaml"
 GITHUB_OUTPUT="$scratch/version" bash "$root/.github/scripts/kyverno-version.sh"
 engine_version="$(cd "$root/scripts/tests/tenant-webapp-admission" && go list -m -f '{{.Version}}' github.com/kyverno/kyverno)"
 [[ "$(<"$scratch/version")" == "release=$engine_version" ]] || fail 'the admission engine must match the reviewed Kyverno CLI pin'
-for policy in "$parent" "$children" "$deletion"; do
+for policy in "$parent" "$children" "$deletion" "$preview_parent" "$preview_namespace"; do
   [[ "$(yq -r '.spec.failurePolicy' "$policy")" == Fail ]] || fail 'admission lookup/evaluation failures must fail closed'
 done
 yq -o=json '.spec.values.admissionController.rbac.clusterRole.extraResources' "$root/k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml" | jq -e 'map(select(.apiGroups == ["kro.run"])) == [{apiGroups:["kro.run"],resources:["webapps"],verbs:["get"]}]' >/dev/null || fail 'admission may read only the owning WebApp'
@@ -41,8 +43,9 @@ for aggregation_key in "$tenant_selector" rbac.kro.run/aggregate-to-controller r
     fail "the role guard admitted the real aggregation selector $aggregation_key"
   fi
 done
-yq -o=json '.spec.resources[] | select(.id == "webAppBinding")' "$graph" | jq -e '
-  .includeWhen == ["${schema.spec.webApp}"] and
+webapp_gate="\${schema.spec.webApp && schema.metadata.name != schema.spec.name + '-dev'}"
+yq -o=json '.spec.resources[] | select(.id == "webAppBinding")' "$graph" | jq -e --arg gate "$webapp_gate" '
+  .includeWhen == [$gate] and
   .template.kind == "RoleBinding" and
   .template.metadata.namespace == "${tenantNamespace.metadata.name}" and
   .template.roleRef == {apiGroup:"rbac.authorization.k8s.io",kind:"ClusterRole",name:"tenant-webapp-edit"} and
@@ -51,9 +54,10 @@ yq -o=json '.spec.resources[] | select(.id == "webAppBinding")' "$graph" | jq -e
 
 count=0
 check() {
-  local label="$1" policy="$2" object="$3" old="$4" actor="$5" operation="$6" expected="$7" subresource="${8:-}" parents="${9:-[]}" lookup_failure="${10:-}"
-  jq -nc --arg label "$label" --arg policy "$(yq -r '.metadata.name' "$policy")" --argjson object "$object" --argjson old "$old" --arg actor "$actor" --arg operation "$operation" --arg expected "$expected" --arg subresource "$subresource" --argjson parents "$parents" --arg lookupFailure "$lookup_failure" \
-    '{label:$label,policy:$policy,object:$object,oldObject:$old,actor:$actor,operation:$operation,expected:$expected,subresource:$subresource,parents:$parents,lookupFailure:$lookupFailure}' >>"$scratch/requests.jsonl"
+  local label="$1" policy="$2" object="$3" old="$4" actor="$5" operation="$6" expected="$7"
+  local subresource="${8:-}" parents="${9:-[]}" lookup_failure="${10:-}" lookups="${11:-[]}"
+  jq -nc --arg label "$label" --arg policy "$(yq -r '.metadata.name' "$policy")" --argjson object "$object" --argjson old "$old" --arg actor "$actor" --arg operation "$operation" --arg expected "$expected" --arg subresource "$subresource" --argjson parents "$parents" --arg lookupFailure "$lookup_failure" --argjson lookups "$lookups" \
+    '{label:$label,policy:$policy,object:$object,oldObject:$old,actor:$actor,operation:$operation,expected:$expected,subresource:$subresource,parents:$parents,lookupFailure:$lookupFailure,lookups:$lookups}' >>"$scratch/requests.jsonl"
   count=$((count + 1))
 }
 
@@ -160,11 +164,40 @@ pilot_child="$(jq '.metadata.name="wedding-app"|.metadata.namespace="wedding-app
 pilot_owner="$(jq '.metadata.name="wedding-app"|.metadata.namespace="flux-system"' <<<"$owner")"
 check pilot-cleanup "$deletion" null "$pilot_child" "$kro" DELETE pass '' "[$pilot_owner]"
 check active-pilot-collision-rollback "$deletion" null "$pilot_child" "$kro" DELETE fail '' "[$(jq 'del(.metadata.deletionTimestamp)' <<<"$pilot_owner")]"
+
+prod_tenant='{"apiVersion":"kro.run/v1alpha1","kind":"Tenant","metadata":{"name":"business-site","namespace":"flux-system"},"spec":{"name":"business-site"}}'
+preview_tenant="$(jq '.metadata.name += "-dev" | .spec.source.reconcileApplication=false | .spec.resourceQuota.enabled=true' <<<"$prod_tenant")"
+reserved_namespace='{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"business-site-dev","labels":{"app.kubernetes.io/managed-by":"kro","kro.run/instance-kind":"Tenant","kro.run/instance-name":"business-site-dev","kro.run/instance-namespace":"flux-system","kro.run/node-id":"tenantNamespace","pod-security.kubernetes.io/enforce":"restricted"}}}'
+unrelated_namespace="$(jq '.metadata.name="unrelated-dev"' <<<"$reserved_namespace")"
+check production-tenant "$preview_parent" "$prod_tenant" null "$flux" CREATE pass '' '[]' servererror
+check reserved-production-name "$preview_parent" "$(jq '.spec.name += "-dev"' <<<"$prod_tenant")" null "$flux" CREATE fail
+check preview-source "$preview_parent" "$preview_tenant" null "$flux" CREATE pass
+check preview-tenant-actor "$preview_parent" "$preview_tenant" null "$tenant" CREATE fail
+check preview-repository-actor "$preview_parent" "$preview_tenant" null "$kro" CREATE fail
+check preview-outside-platform "$preview_parent" "$(jq '.metadata.namespace="tenant-a"' <<<"$preview_tenant")" null "$flux" CREATE fail
+check another-preview "$preview_parent" "$(jq '.metadata.name="other-dev" | .spec.name="other"' <<<"$preview_tenant")" null "$flux" CREATE fail
+check preview-kro-status "$preview_parent" "$(jq '.status.state="ACTIVE"' <<<"$preview_tenant")" "$preview_tenant" "$kro" UPDATE pass status
+check preview-kro-spec "$preview_parent" "$(jq '.spec.resourceQuota.pods="100"' <<<"$preview_tenant")" "$preview_tenant" "$kro" UPDATE fail
+check preview-without-quota "$preview_parent" "$(jq 'del(.spec.resourceQuota)' <<<"$preview_tenant")" null "$flux" CREATE fail
+check preview-without-source-hold "$preview_parent" "$(jq 'del(.spec.source)' <<<"$preview_tenant")" null "$flux" CREATE fail
+check preview-with-webapp "$preview_parent" "$(jq '.spec.webApp=true' <<<"$preview_tenant")" null "$flux" CREATE fail
+check preview-with-external-dns "$preview_parent" "$(jq '.spec.externalDns=true' <<<"$preview_tenant")" null "$flux" CREATE fail
+check preview-with-application "$preview_parent" "$(jq '.spec.source.reconcileApplication=true' <<<"$preview_tenant")" "$preview_tenant" "$flux" UPDATE fail
+check preview-namespace-collision "$preview_parent" "$preview_tenant" null "$flux" CREATE fail '' '[]' '' "[$reserved_namespace]"
+check preview-unrelated-namespace "$preview_parent" "$preview_tenant" null "$flux" CREATE pass '' '[]' '' "[$unrelated_namespace]"
+check preview-namespace-read-refused "$preview_parent" "$preview_tenant" null "$flux" CREATE error '' '[]' forbidden
+check preview-namespace-read-failed "$preview_parent" "$preview_tenant" null "$flux" CREATE error '' '[]' servererror
+check preview-namespace-from-declared-graph "$preview_namespace" "$reserved_namespace" null "$kro" CREATE pass
+check preview-namespace-from-other-graph "$preview_namespace" "$(jq '.metadata.labels["kro.run/instance-name"]="other"' <<<"$reserved_namespace")" null "$kro" CREATE fail
+check preview-namespace-from-wrong-actor "$preview_namespace" "$reserved_namespace" null "$flux" CREATE fail
+check preview-namespace-without-restrictions "$preview_namespace" "$(jq 'del(.metadata.labels["pod-security.kubernetes.io/enforce"])' <<<"$reserved_namespace")" null "$kro" CREATE fail
+check unrelated-namespace "$preview_namespace" "$unrelated_namespace" null "$flux" CREATE pass
+
 # The CLI's UPDATE adapter clones object into oldObject and drops subresources.
 # Feed the unmodified requests directly to the same pinned compiler/engine.
 (
   cd "$root/scripts/tests/tenant-webapp-admission"
   go test -mod=readonly -count=1 -timeout=60s ./...
-  go run -mod=readonly . "$parent" "$children" "$deletion" <"$scratch/requests.jsonl"
+  go run -mod=readonly . "$parent" "$children" "$deletion" "$preview_parent" "$preview_namespace" <"$scratch/requests.jsonl"
 )
 printf 'Tenant WebApp boundary: %d controls submitted.\n' "$count"

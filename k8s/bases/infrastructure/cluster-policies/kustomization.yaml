@@ -20,6 +20,7 @@ resources:
   - best-practices/disallow-floating-image-tags.yaml
   - best-practices/propagate-reloader-to-flagger-primary.yaml
   - best-practices/require-homepage-href-for-non-root-routes.yaml
+  - best-practices/restrict-business-site-preview-namespace.yaml
   - best-practices/restrict-github-team-external-identity.yaml
   - best-practices/restrict-github-team-management.yaml
   - best-practices/restrict-arc-openbao-listener.yaml
@@ -30,6 +31,7 @@ resources:
   - best-practices/restrict-tenant-issuer-refs.yaml
   - best-practices/restrict-tenant-image-repositories.yaml
   - best-practices/restrict-tenant-network-policies.yaml
+  - best-practices/restrict-tenant-previews.yaml
   - best-practices/restrict-tenant-route-hostnames.yaml
   - best-practices/restrict-tenant-secret-stores.yaml
   - best-practices/restrict-tenant-webapps.yaml
