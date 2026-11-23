@@ -85,7 +85,25 @@ actual="$(shasum -a 256 "${work}/envtest.tar.gz" | cut -d ' ' -f 1)"
   exit 1
 }
 tar -xzf "${work}/envtest.tar.gz" -C "${work}"
+
+# The Tenant API the cluster already has is the base revision's graph. KRO
+# updates an installed API only when its compatibility check sees a change, and
+# that check ignores CEL rules, so the compiled change is judged against it
+# (platform#6420). CI fetches the base and exports KRO_API_BASE; locally the
+# default is origin/main.
+api_base="${KRO_API_BASE:-origin/main}"
+api_base_commit="$(git -C "${root}" rev-parse --verify --quiet --end-of-options "${api_base}^{commit}")" || {
+  echo "FAIL: the installed Tenant API's revision ${api_base} is unavailable; fetch it or set KRO_API_BASE" >&2
+  exit 1
+}
+git -C "${root}" show "${api_base_commit}:k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" \
+  >"${work}/tenant-base.yaml" || {
+  echo "FAIL: ${api_base} has no Tenant graph to compare with" >&2
+  exit 1
+}
+echo "Comparing the Tenant API with ${api_base} (${api_base_commit})"
 PLATFORM_TEST_ROOT="${root}" \
+  TENANT_BASE_RGD="${work}/tenant-base.yaml" \
   KUBEBUILDER_ASSETS="${work}/controller-tools/envtest" \
   GATEWAY_HTTPROUTE_CRD="${gateway}/config/crd/standard/gateway.networking.k8s.io_httproutes.yaml" \
   KRO_GRAPH_CRD="${kro}/helm/crds/kro.run_resourcegraphdefinitions.yaml" \

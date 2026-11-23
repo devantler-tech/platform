@@ -65,6 +65,41 @@ check_job() {
 }
 check_job "${ci}" "needs.changes.outputs.k8s == 'true'"
 check_job "${main}" ""
+# KRO ignores CEL rules when it compares an installed API, so the compiler must
+# judge the Tenant API against the base revision, fetched before it runs
+# (platform#6420). On main the commit itself is the installed API.
+check_api_base() {
+  jq -e '
+    .jobs["validate-webapp-compiler"].steps as $steps
+    | [$steps | to_entries[] | select((.value.run // "") | contains("KRO_API_BASE="))] as $base
+    | [$steps | to_entries[] | select(.value.run == "bash scripts/tests/test-webapp-compiler.sh")] as $compile
+    | ($base | length) == 1 and ($compile | length) == 1
+      and $base[0].key < $compile[0].key
+      and ($base[0].value | has("if") | not)
+      and ($base[0].value["continue-on-error"] // false) == false
+      and $base[0].value.env == {
+        EVENT_NAME: "${{ github.event_name }}",
+        PR_BASE_REF: "${{ github.base_ref }}",
+        MERGE_GROUP_BASE_SHA: "${{ github.event.merge_group.base_sha }}"}
+      and ($base[0].value.run | contains("git fetch --no-tags --quiet --depth=1 origin \"$refspec\""))
+      and ($base[0].value.run | contains(">>\"$GITHUB_ENV\""))
+      and ($compile[0].value.env.KRO_API_BASE? // "") == ""
+  ' <<<"$1" >/dev/null || fail 'the compiler must judge the Tenant API against the fetched base revision'
+}
+check_api_base "${ci}"
+jq -e '[.jobs["validate-webapp-compiler"].steps[] | select(.run == "bash scripts/tests/test-webapp-compiler.sh")]
+  | length == 1 and .[0].env == {KRO_API_BASE: "HEAD"}' <<<"${main}" >/dev/null ||
+  fail 'main must judge the Tenant API against itself'
+for mutation in \
+  'del(.jobs["validate-webapp-compiler"].steps[] | select((.run // "") | contains("KRO_API_BASE=")))' \
+  '(.jobs["validate-webapp-compiler"].steps[] | select((.run // "") | contains("KRO_API_BASE="))).if = "false"' \
+  '(.jobs["validate-webapp-compiler"].steps[] | select((.run // "") | contains("KRO_API_BASE=")))["continue-on-error"] = true' \
+  '(.jobs["validate-webapp-compiler"].steps[] | select(.run == "bash scripts/tests/test-webapp-compiler.sh")).env.KRO_API_BASE = "HEAD"' \
+  '.jobs["validate-webapp-compiler"].steps |= (map(select((.run // "") | contains("KRO_API_BASE=") | not)) + map(select((.run // "") | contains("KRO_API_BASE="))))'; do
+  if (check_api_base "$(jq "$mutation" <<<"${ci}")") >"${work}/api-base.log" 2>&1; then
+    fail "a missing, skippable, overridden or late base revision was accepted: ${mutation}"
+  fi
+done
 jq -e '
   (.jobs["deploy-prod"].needs | index("validate-webapp-compiler") != null)
   and (.jobs["ci-required-checks"].needs | index("validate-webapp-compiler") != null)
