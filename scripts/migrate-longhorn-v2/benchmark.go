@@ -168,8 +168,8 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 
 func requireBenchmarkBaseline(ctx context.Context, c client, current []object) error {
 	_, record, err := readBenchmark(ctx, c, "v1")
-	if err != nil || !record.Cleaned || len(record.Measurements) != 18 || record.CompletedAt == "" {
-		return errors.New("the completed, cleaned V1 baseline is required before moving any replicas")
+	if err != nil || record.Image != fioImage || !record.Cleaned || len(record.Measurements) != 18 || record.CompletedAt == "" {
+		return errors.New("the completed, cleaned V1 baseline with the pinned benchmark image is required before moving any replicas")
 	}
 	if _, err = time.Parse(time.RFC3339, record.CompletedAt); err != nil {
 		return errors.New("baseline completion time is invalid")

@@ -21,7 +21,8 @@ const benchmarkCompletionLimit = (benchmarkDeadlineSeconds + 120) * time.Second
 // Older journals bind their scratch Pod to the original Longhorn test image.
 const legacyFioImage = "docker.io/openeuler/fio:3.41-oe2403sp2@sha256:335e14c142c65c8da4f83172d53387af7c9cd8336910107a4504ba3a5ddbba7f"
 
-const fioImage = legacyFioImage
+// Use the same signed Linux amd64 image for both benchmark phases.
+const fioImage = "ghcr.io/devantler-tech/platform-longhorn-fio:3.41-35354eb7fab273d43729eda40d1ff76046559294-1@sha256:20222110de9f5c38bbcf91b1ccd0d3b9406717f7ca02922183061e1403776631"
 
 const fioScript = `set -eu
 while [ ! -f /tmp/benchmark-start ]; do sleep 2; done
