@@ -82,7 +82,6 @@ var authorizationOverlayPaths = []string{
 	rootProductionOverlayPath,
 }
 
-var exactGitCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var exactSHA256Digest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 const authorizationIsolationAnnotation = "security.devantler.tech/authorization-scope"
@@ -112,6 +111,14 @@ const (
 	// stableReleaseSemverFilter admits only `X.Y.Z` releases, never a pre-release.
 	stableReleaseSemverFilter = `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
 	githubActionsOIDCIssuer   = `^https://token\.actions\.githubusercontent\.com$`
+	// publishSubjectHost anchors a cosign subject on a devantler-tech repository.
+	publishSubjectHost = `^https://github\.com/devantler-tech/`
+	// ownReleaseTagRef is the strict OCI-semver release tag an own-release
+	// identity signs on.
+	ownReleaseTagRef = `@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?`
+	// ownReleaseTail follows the repository of an own release workflow (#6265):
+	// one workflow file on a strict OCI-semver release tag.
+	ownReleaseTail = `/\.github/workflows/[^/]+\.ya?ml` + ownReleaseTagRef
 	// unifiReleaseSubject is unifi's own release workflow on a strict release tag,
 	// in the same grammar as every tenant's own-release alternative (#6265).
 	unifiReleaseSubject = publishSubjectHost + "unifi" + ownReleaseTail + "$"
@@ -1326,16 +1333,6 @@ func authorizationTemplateInstanceTypes(documents []map[string]any) map[resource
 	return selected
 }
 
-// cloneStringAnyMap returns a shallow copy used to project one nested field
-// without changing the decoded document used by the remaining checks.
-func cloneStringAnyMap(source map[string]any) map[string]any {
-	clone := make(map[string]any, len(source))
-	for key, value := range source {
-		clone[key] = value
-	}
-	return clone
-}
-
 // effectiveMetadataAnnotations change how a projected document's
 // authorization fields apply, so its ledger entry keeps them: Flux substitutes
 // `${…}` in those fields unless substitution is disabled, and applies the
@@ -1450,12 +1447,6 @@ func authorizationSurfaceDocument(
 	identity resourceIdentity,
 	document map[string]any,
 ) map[string]any {
-	if identity.kind == "OCIRepository" {
-		// No OCIRepository joins the ledger since platform#6270. Its signer
-		// projection stays until platform#6266 deletes it with the rest of the
-		// shared-publisher approval machinery.
-		return publishMatcherSurfaceDocument(identity, document)
-	}
 	if identity.kind == "Secret" {
 		return sopsSubstitutionSourceSurfaceDocument(identity, document)
 	}

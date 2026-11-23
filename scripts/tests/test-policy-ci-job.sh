@@ -200,38 +200,6 @@ for result in success failure cancelled skipped pending unknown ''; do
   fi
 done
 echo 'PASS: both guard families retain the native proof; 14 incomplete routes and every non-success result refused'
-
-jq -e --arg routing_condition "matrix.suite == 'bootstrap'" '
-  .jobs["validate-publication-generator"] as $job |
-  ($job.permissions == {contents: "read"}) and
-  ($job | has("if") | not) and
-  (($job["continue-on-error"] // false) == false) and
-  all($job.steps[]; ((.["continue-on-error"] // false) == false) and
-    (if .name == "🔍 Lint and exercise publication fixture routing"
-     then .if == $routing_condition else .if == null end)) and
-  ([$job.steps[] | select(.name == "🔐 Validate the approved-revisions generator"
-    and .if == null and (.run | type == "string" and length > 0))] | length) == 1 and
-  (.jobs["ci-required-checks"].needs | index("validate-publication-generator") != null) and
-  (.jobs["deploy-prod"].needs | index("validate-publication-generator") != null)
-' "${work}/workflow.json" >/dev/null
-generator_step="$(jq -c '[.steps[] | select(.name == "🔐 Require publication generator validation")]' <<<"${gate}")"
-jq -e 'length == 1 and .[0].env == {
-  GENERATOR_RESULT: "${{ needs.validate-publication-generator.result }}"
-} and (.[0] | has("if") | not)
-  and ((.[0]["continue-on-error"] // false) == false)
-  and (.[0].run | type == "string" and length > 0)' <<<"${generator_step}" >/dev/null
-jq -r '.[0].run' <<<"${generator_step}" >"${work}/generator-gate.sh"
-for result in success failure cancelled skipped pending unknown ''; do
-  actual=0
-  GENERATOR_RESULT="$result" bash -e "${work}/generator-gate.sh" >"${work}/generator-output" 2>&1 || actual=$?
-  expected=1
-  [ "$result" != success ] || expected=0
-  if [ "$actual" -ne "$expected" ]; then
-    printf 'FAIL: generator result=%s expected=%s actual=%s\n' "$result" "$expected" "$actual" >&2
-    exit 1
-  fi
-done
-echo 'PASS: the generator is required before deployment and every non-success result is refused'
 if ! jq -e '.needs | index("validate-cluster-policies") != null' <<<"${gate}" >/dev/null; then
   echo 'FAIL: required aggregate must wait for the independent policy job' >&2
   exit 1
@@ -286,7 +254,6 @@ jq -e --arg selection "github.event_name == 'pull_request' && needs.changes.outp
     "✉️ Prove native gateway client identity boundaries",
     "🔐 Validate Kyverno review admission boundaries",
     "🗺️ Validate every unscanned namespace is reviewed",
-    "🔐 Validate the shared-publish-workflow pin guard",
     "🩺 Validate declarative Coroot application health",
     "🔁 Validate KSail startup layer ordering"] | all(.[];
       . as $name |
@@ -323,7 +290,7 @@ for event in pull_request merge_group; do
     done
   done
 done
-echo 'PASS: all twelve manifest regressions run once and selected non-success outcomes are refused'
+echo 'PASS: all eleven manifest regressions run once and selected non-success outcomes are refused'
 
 jq -e --arg selection "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository" '
   .jobs["validate-go-project"] as $job |

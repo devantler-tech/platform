@@ -3,14 +3,10 @@
 # and URL in what Flux actually applies (#3558, under #3308).
 #
 # WHY THIS EXISTS
-# Both cosign-subject guards (scripts/guard-shared-publish-workflow-pin.sh and
-# scripts/guard-publish-workflow-approved-revisions.sh) examine a file only when it
-# already carries a shared-publish-workflow subject. An OCIRepository pointed at a
-# devantler-tech artifact with NO `spec.verify` at all therefore carries no subject, is
-# examined by neither guard, and is refused by nothing else: validate-flux-verify covers
-# the root source only, and the Kyverno cluster policies do not touch OCIRepositories.
-# Flux would apply an unsigned or foreign-signed artifact with every check green. This
-# guard asks the question the other way round: every OCIRepository whose URL is a
+# An OCIRepository pointed at a devantler-tech artifact with NO `spec.verify` at all is
+# refused by nothing else: validate-flux-verify covers the root source only, and the
+# Kyverno cluster policies do not touch OCIRepositories. Flux would apply an unsigned or
+# foreign-signed artifact with every check green. So every OCIRepository whose URL is a
 # devantler-tech GHCR artifact must verify.
 #
 # WHAT IT REQUIRES, PER OCIRepository UNDER oci://ghcr.io/devantler-tech/
@@ -18,9 +14,14 @@
 #   - `spec.verify.provider: cosign`
 #   - `spec.verify.matchOIDCIdentity` a sequence of EXACTLY ONE entry. Flux ORs the
 #     entries, so a second entry widens the trusted signer set while the first still
-#     reads as narrowed; alternation belongs inside the one subject regex, where the
-#     subject guards judge it.
+#     reads as narrowed; alternation belongs inside the one subject regex.
 #   - that entry names a non-empty `issuer` and a non-empty `subject`.
+#   - that subject names ONE first-party repository's own workflow on a branch or tag
+#     ref: a literal repository (never the deleted `actions` publisher, and for `.github`
+#     only its own `cd.yaml`), a literal workflow file or `[^/]+\.ya?ml`, and a literal ref
+#     or one of the exact release-tag patterns the sources use (#6266, ADR 0017). A shared
+#     reusable workflow signs with its HOST repository's identity whoever calls it, so
+#     trusting one would let any caller's artifact verify for this source.
 #   - the trusted Wedding and AS Coaching tenant artifacts follow the governed
 #     `>=1.0.0` semver stream, and a `Tenant` follows its own stable releases
 #     through the exact constructor (ADR 0019). The platform owns their signer and
@@ -89,6 +90,12 @@ readonly REQUIRED_URL_PREFIX='oci://ghcr.io/devantler-tech/'
 # the literal regex text the manifests carry (the `.` escaped), not evaluated.
 readonly REQUIRED_ISSUER='^https://token\.actions\.githubusercontent\.com$'
 readonly REQUIRED_SUBJECT_PREFIX='^https://github\.com/devantler-tech/'
+# After that prefix, every signer is ONE first-party repository's own workflow (ADR 0017,
+# #6266): a literal repository name, `/\.github/workflows/`, either one literal workflow
+# file or the any-workflow form `[^/]+\.ya?ml`, then `@refs/` and a ref that
+# ref_pattern_is_allowed accepts. A `.` in a name must be escaped, or it would match any
+# character. Groups 1, 3 and 5 are the repository, the file and the ref after `refs/`.
+readonly OWN_SIGNER_RE='^(([A-Za-z0-9_-]|\\\.)+)/\\\.github/workflows/(\[\^/\]\+\\\.ya\?ml|([A-Za-z0-9_-]|\\\.)+)@refs/(.+)$'
 readonly REQUIRED_TENANT_STREAM_SEMVER='>=1.0.0'
 readonly WEDDING_STREAM_URL='oci://ghcr.io/devantler-tech/wedding-app/manifests'
 readonly ASCOACHING_STREAM_URL='oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests'
@@ -253,6 +260,21 @@ readonly YQ_ROWS='[.. | select(type == "!!map" and .kind == "OCIRepository")]
   | map(sub("^$", "-"))
   | join("	")'
 
+# ref_pattern_is_allowed <pattern after `@refs/`>: the ref is either fully literal, or EXACTLY
+# one of the release-tag patterns the committed sources use. It is compared as text, never
+# scanned as a regex: two reviews of a scanner found RE2 syntax (`\Q…\E` quoting, a leading `]`
+# in a class) that hid a real top-level `|` from it. A new ref pattern is added here on purpose.
+readonly LITERAL_REF_RE='^(tags|heads)/([A-Za-z0-9_/-]|\\\.)+\$$'
+readonly SEMVER_CORE='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+readonly SEMVER_PRERELEASE='(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+ref_pattern_is_allowed() {
+  [[ "$1" =~ $LITERAL_REF_RE ]] && return 0
+  case "$1" in
+    'tags/v[0-9]+\.[0-9]+\.[0-9]+$' | "tags/v${SEMVER_CORE}\$" | "tags/v${SEMVER_CORE}${SEMVER_PRERELEASE}\$") return 0 ;;
+  esac
+  return 1
+}
+
 status=0
 in_scope=0
 seen_exempt=""
@@ -355,12 +377,9 @@ while IFS= read -r root; do
       continue
     fi
     # The one identity must be OURS. A single `issuer: '.*'` / `subject: '.*'` entry
-    # satisfies every shape check above and is invisible to both subject guards
-    # (they examine only subjects naming the shared publish workflows), so without
-    # this an OCIRepository could accept any signer with every check green. The
-    # issuer is exactly GitHub Actions' token issuer and the subject regex must
-    # anchor on a devantler-tech GitHub path; WHICH revision it pins is the
-    # subject guards' question, not this one's.
+    # satisfies every shape check above, so without this an OCIRepository could accept
+    # any signer with every check green. The issuer is exactly GitHub Actions' token
+    # issuer and the subject regex must anchor on a devantler-tech GitHub path.
     if [ "$issuer" != "$REQUIRED_ISSUER" ]; then
       fail "$label: OCIRepository $name ($url) trusts issuer '$issuer'; the only accepted issuer is '$REQUIRED_ISSUER' (GitHub Actions keyless signing)"
       continue
@@ -370,6 +389,34 @@ while IFS= read -r root; do
       *)
         fail "$label: OCIRepository $name ($url) trusts subject '$subject', which does not anchor on '$REQUIRED_SUBJECT_PREFIX' — a signer outside devantler-tech would verify"
         continue
+        ;;
+    esac
+    # A shared reusable publisher signs as ITS host repository whoever calls it, so a subject
+    # that trusts one would let any caller's artifact verify here (ADR 0017, #6266). Judged by
+    # what is allowed, never by spotting a retired name: a pattern can spell one many ways.
+    signer="${subject#"$REQUIRED_SUBJECT_PREFIX"}"
+    # The Tenant constructor's proved subject names the tenant through a placeholder.
+    [[ "$url" != "$TEMPLATED_TENANT_STREAM_URL" ]] || signer="${signer/<tenant>/tenant}"
+    signer_repo="" signer_file="" signer_ref=""
+    if [[ "$signer" =~ $OWN_SIGNER_RE ]]; then
+      signer_repo="${BASH_REMATCH[1]//\\./.}"
+      signer_file="${BASH_REMATCH[3]}"
+      signer_ref="${BASH_REMATCH[5]}"
+    fi
+    if [ -z "$signer_repo" ] || ! ref_pattern_is_allowed "$signer_ref"; then
+      fail "$label: OCIRepository $name ($url) trusts subject '$subject', which is not one first-party repository's own workflow on a branch or tag ref; a shared reusable publisher signs as its host repository whoever calls it (ADR 0017)"
+      continue
+    fi
+    case "$signer_repo" in
+      actions)
+        fail "$label: OCIRepository $name ($url) trusts the deleted shared publisher repository devantler-tech/actions"
+        continue
+        ;;
+      .github)
+        if [ "$signer_file" != 'cd\.yaml' ]; then
+          fail "$label: OCIRepository $name ($url) trusts devantler-tech/.github's '$signer_file'; that repository hosts the shared reusable workflows, so only its own cd.yaml release is trusted"
+          continue
+        fi
         ;;
     esac
   done <"$work/rows"

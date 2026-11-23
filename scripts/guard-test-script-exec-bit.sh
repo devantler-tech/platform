@@ -28,22 +28,20 @@ if [[ "$count" == 0 ]]; then
   exit 2
 fi
 [[ "$status" == 0 ]] || exit "$status"
-library_filter='(^|/)scripts/(cosign-failure-lib|publish-workflow-approved-revisions\.lib)\.sh$'
+library_filter='(^|/)scripts/cosign-failure-lib\.sh$'
 if ! actual_library_filter="$(yq -r '.BASH_EXEC_FILTER_REGEX_EXCLUDE' "$repo_root/.mega-linter.yml")"; then
   echo '::error::cannot read the bash-exec library exclusion' >&2
   exit 2
 fi
 if [[ "$actual_library_filter" != "$library_filter" ]]; then
-  echo '::error::bash-exec must exclude only the two reviewed sourced libraries' >&2
+  echo '::error::bash-exec must exclude only the reviewed sourced library' >&2
   exit 1
 fi
-for library in cosign-failure-lib.sh publish-workflow-approved-revisions.lib.sh; do
-  path="scripts/$library"
-  entry="$(git -C "$repo_root" ls-files --stage -- "$path")" || exit 2
-  metadata="${entry%%$'\t'*}"
-  if [[ ! "$metadata" =~ ^100644[[:space:]][0-9a-f]+[[:space:]]0$ ]] || [[ -x "$repo_root/$path" ]]; then
-    echo "::error::$path must remain a non-executable tracked sourced library" >&2
-    exit 1
-  fi
-done
+path=scripts/cosign-failure-lib.sh
+entry="$(git -C "$repo_root" ls-files --stage -- "$path")" || exit 2
+metadata="${entry%%$'\t'*}"
+if [[ ! "$metadata" =~ ^100644[[:space:]][0-9a-f]+[[:space:]]0$ ]] || [[ -x "$repo_root/$path" ]]; then
+  echo "::error::$path must remain a non-executable tracked sourced library" >&2
+  exit 1
+fi
 printf 'Verified tracked execute bits on %s test entries.\n' "$count"
