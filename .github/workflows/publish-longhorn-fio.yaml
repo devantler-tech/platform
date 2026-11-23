@@ -131,7 +131,7 @@ jobs:
           docker push "${IMAGE}:${VERSION}"
           digest="$(docker image inspect --format '{{json .RepoDigests}}' "${IMAGE}:${VERSION}" | jq -er --arg prefix "${IMAGE}@sha256:" 'map(select(startswith($prefix))) | if length == 1 then .[0] else error("ambiguous digest") end')"
           docker buildx imagetools inspect --raw "$digest" | jq -e --arg id "$EXPECTED_ID" '.config.digest == $id'
-          identity=https://github.com/devantler-tech/platform/.github/workflows/publish-longhorn-fio.yaml@refs/heads/main
+          identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/publish-longhorn-fio.yaml@refs/heads/main"
           issuer=https://token.actions.githubusercontent.com
           cosign sign --yes "$digest"
           cosign attest --yes --type cyclonedx --predicate "${RUNNER_TEMP}/longhorn-fio-sbom.json" "$digest"
