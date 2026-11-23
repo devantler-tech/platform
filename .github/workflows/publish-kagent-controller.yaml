@@ -76,7 +76,7 @@ jobs:
           (
             cd upstream/go
             CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
-              -ldflags '-X github.com/kagent-dev/kagent/go/core/internal/version.Version=1.0.0-startup -X github.com/kagent-dev/kagent/go/core/internal/version.GitCommit=a08cde76ad6482dd758a4220b14213d79185ac30 -X github.com/kagent-dev/kagent/go/core/internal/version.SubstrateVersion=1.0.0' \
+              -ldflags '-X github.com/kagent-dev/kagent/go/core/internal/version.Version=1.0.0 -X github.com/kagent-dev/kagent/go/core/internal/version.GitCommit=a08cde76ad6482dd758a4220b14213d79185ac30 -X github.com/kagent-dev/kagent/go/core/internal/version.SubstrateVersion=1.0.0' \
               -o "${context}/app" ./core/cmd/controller
           )
           docker build --platform linux/amd64 --tag "${IMAGE}:${IMAGE_TAG}" \
@@ -84,6 +84,26 @@ jobs:
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" "${context}"
           docker run --rm --network none "${IMAGE}:${IMAGE_TAG}" --help
           docker run --rm --network none --entrypoint /bin/sh "${IMAGE}:${IMAGE_TAG}" -ec 'test "$(id -u)" = 65532'
+
+          install -d -m 0755 "${context}/smoke"
+          cat > "${context}/smoke/controller.yaml" <<'CONFIG'
+          database:
+            readWrite:
+              urlFile: database-url
+              role: kagent_readwrite
+            skipMigrations: true
+          harnessImages:
+            release: "1.0.0"
+          CONFIG
+          printf '%s\n' 'postgres://kagent_readwrite@127.0.0.1:1/kagent?connect_timeout=2&sslmode=disable' > "${context}/smoke/database-url"
+          # The controller checks the Harness release before it reaches the offline database.
+          if startup_output="$(docker run --rm --network none \
+            --mount "type=bind,source=${context}/smoke,target=/smoke,readonly" \
+            "${IMAGE}:${IMAGE_TAG}" --config /smoke/controller.yaml 2>&1)" ||
+            ! grep -Fq 'verify database migrations:' <<< "${startup_output}"; then
+            printf 'Controller failed to reach the database migration check:\n%s\n' "${startup_output}" >&2
+            exit 1
+          fi
       - name: Archive the verified image
         id: archive
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
