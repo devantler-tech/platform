@@ -8,11 +8,17 @@ if [[ $# != 1 || "$1" != /* || ! -x "$1" ]]; then
   exit 1
 fi
 
+kubeconfig="${KUBECONFIG:-}"
+if [[ "$kubeconfig" != /* || ! -f "$kubeconfig" || ! -s "$kubeconfig" ]]; then
+  printf '%s\n' 'Expected one scoped kubeconfig file for the Talos lifecycle preview.' >&2
+  exit 1
+fi
+
 scratch="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/talos-pool-layout.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 bash scripts/render-talos-storage-pool-layout.sh >"$scratch/ksail.production.yaml"
 status=0
-"$1" --config "$scratch/ksail.production.yaml" cluster update --dry-run --output json \
+"$1" --config "$scratch/ksail.production.yaml" cluster update --kubeconfig "$kubeconfig" --dry-run --output json \
   >"$scratch/plan.json" 2>"$scratch/diagnostics.log" || status=$?
 if ((status != 0)); then
   # The native client may report credentials or endpoints alongside an error.

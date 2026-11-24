@@ -29,10 +29,13 @@ if (cd -- "$scratch/invalid" && bash "$root/scripts/render-talos-storage-pool-la
 fi
 test ! -s "$scratch/invalid.out"
 
+export KUBECONFIG="$scratch/reader-kubeconfig"
+printf '%s\n' 'private kubeconfig fixture' >"$KUBECONFIG"
 cat >"$scratch/ksail" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ $# == 7 && "$1" == --config && -s "$2" && "$3 $4 $5 $6 $7" == "cluster update --dry-run --output json" ]]
+[[ $# == 9 && "$1" == --config && -s "$2" && "$3 $4 $5" == "cluster update --kubeconfig" &&
+  "$6" == "$KUBECONFIG" && "$7 $8 $9" == "--dry-run --output json" ]]
 [[ "$(yq '.spec.cluster.autoscaler.node.pools[] | select(.name == "autoscale-longhorn-v2") | .talosPatches | length' "$2")" == 1 ]]
 if [[ -n "${KS_TEST_FAILURE:-}" ]]; then
   printf '%s\n' "$KS_TEST_FAILURE" >&2
@@ -42,6 +45,14 @@ cat -- "$KS_TEST_PLAN"
 printf '%s\n' 'fixture diagnostics must stay private' >&2
 EOF
 chmod 0700 "$scratch/ksail"
+if KUBECONFIG="$scratch/missing-kubeconfig" bash scripts/preview-prod-talos-pool-layout.sh "$scratch/ksail" \
+  >"$scratch/missing.out" 2>"$scratch/missing.err"; then
+  printf '%s\n' 'The preview unexpectedly ran without a scoped kubeconfig.' >&2
+  exit 1
+fi
+test ! -s "$scratch/missing.out"
+grep -Fxq 'Expected one scoped kubeconfig file for the Talos lifecycle preview.' "$scratch/missing.err"
+
 cat >"$scratch/complete.json" <<'EOF'
 {"totalChanges":1,"inPlaceChanges":[{"field":"private fixture field","category":"InPlace"}],"rebootRequired":[],"recreateRequired":[],"rollingRecreate":[],"wipeRequired":[],"unknownBaseline":[],"requiresConfirmation":false}
 EOF
