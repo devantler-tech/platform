@@ -165,6 +165,26 @@ func TestV2RuntimeRequiresRealRawDisksAndReservedReactors(t *testing.T) {
 	}
 }
 
+func TestV2ClientsAcceptTheEquivalentStockImageReferences(t *testing.T) {
+	pools, err := configuredMigrationPools(poolConfigFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const unqualified = "longhornio/longhorn-instance-manager:v1.13.0"
+	for _, images := range []struct{ manager, pod string }{
+		{unqualified, unqualified},
+		{runtimeStockImage, unqualified},
+		{unqualified, runtimeStockImage},
+	} {
+		s, managers := v2ReadinessFixture()
+		valueObject(managers[0], "spec")["image"] = images.manager
+		value(s.pods[0], "spec", "containers").([]any)[0].(object)["image"] = images.pod
+		if err := verifyV2Clients(s, managers, pools, v2ManagerImage); err != nil {
+			t.Errorf("stock manager %q and pod %q: %v", images.manager, images.pod, err)
+		}
+	}
+}
+
 func TestV2ClientsRejectOverridesToTheVerifiedIsolation(t *testing.T) {
 	pools, err := configuredMigrationPools(poolConfigFixture())
 	if err != nil {
