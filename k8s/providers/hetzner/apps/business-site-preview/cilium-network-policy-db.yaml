@@ -2,6 +2,7 @@ apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: portal-preview-db
+  namespace: business-site-dev
 spec:
   endpointSelector:
     matchLabels:

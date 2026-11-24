@@ -2,12 +2,17 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: portal-preview-db
+  namespace: business-site-dev
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie
   instances: 1
+  priorityClassName: hcloud-volume-workload
+  env:
+    - name: PLATFORM_DATABASE_PRIORITY_CLASS
+      value: hcloud-volume-workload
   # The fictional workspace can go offline while its only pod drains.
   enablePDB: false
   enableSuperuserAccess: false
