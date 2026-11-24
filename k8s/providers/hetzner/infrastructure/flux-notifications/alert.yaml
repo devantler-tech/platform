@@ -84,9 +84,6 @@ spec:
       namespace: aws
     - kind: Kustomization
       name: "*"
-      namespace: business-site-dev
-    - kind: Kustomization
-      name: "*"
       namespace: data-product-controller
     - kind: Kustomization
       name: "*"

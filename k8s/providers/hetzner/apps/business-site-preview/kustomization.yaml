@@ -15,7 +15,5 @@ resources:
   - cilium-network-policy-db-coroot.yaml
   - cilium-network-policy-migration.yaml
   - cilium-network-policy-web.yaml
-  - service-account-deployer.yaml
-  - role-deployer.yaml
-  - role-binding-deployer.yaml
-  - flux-kustomization.yaml
+  - job-migration.yaml
+  - webapp.yaml

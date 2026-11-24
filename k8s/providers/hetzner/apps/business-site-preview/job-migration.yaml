@@ -1,0 +1,70 @@
+# Business Site v3.19.0 preview overlay (source 5f6913e40811e6d9b6ac3d8e92e87002a9b8a6eb).
+# Verified manifests package: sha256:791059e07d91311b6a900e2687f56e67bdc70b718e8766041a70fe8eb5866d13. Update both workloads together.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    kustomize.toolkit.fluxcd.io/force: enabled
+  name: business-site-dev-migration
+  namespace: business-site-dev
+spec:
+  activeDeadlineSeconds: 240
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: business-site-dev-migration
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - args:
+            - --migrate
+            - --migration-database-projection
+            - /run/portal-migration/database-url
+            - --runtime-role
+            - portal_preview_web
+          image: ghcr.io/devantler-tech/business-site@sha256:5db6b9151405cf68b493414d3c6c5f18810de8e799a780e6a256bc47552ca31a
+          name: migrate
+          resources:
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          volumeMounts:
+            - mountPath: /run/portal-migration
+              name: migration
+              readOnly: true
+            - mountPath: /tmp
+              name: tmp
+      enableServiceLinks: false
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: migration
+          secret:
+            defaultMode: 256
+            items:
+              - key: database-url
+                path: database-url
+              - key: ca.crt
+                path: ca.crt
+            secretName: business-site-dev-migration
+        - emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+          name: tmp
