@@ -19,6 +19,7 @@ results:
       - ascoachingogvaner/own-subpath-image
       - business-site/third-party-only
       - wedding-app/own-image-volume
+      - business-site-dev/preview-release-image
     kind: Pod
     result: pass
   # Another tenant's or the platform's first-party image is reported, including
@@ -36,6 +37,8 @@ results:
       - wedding-app/uppercase-host-variant
       - wedding-app/explicit-port-variant
       - future-tenant/unlisted-tenant-first-party
+      - business-site-dev/preview-mutable-image
+      - business-site-dev/preview-wrong-repository-image
     kind: Pod
     result: fail
   # Platform namespaces are outside the boundary.
@@ -47,11 +50,13 @@ results:
   - policy: restrict-tenant-image-repositories
     resources:
       - wedding-app/own-manifests
+      - business-site-dev/business-site
     kind: OCIRepository
     result: pass
   - policy: restrict-tenant-image-repositories
     resources:
       - wedding-app/foreign-manifests
+      - business-site-dev/preview-wrong-source-name
     kind: OCIRepository
     result: fail
   - policy: restrict-tenant-image-repositories
@@ -62,5 +67,6 @@ results:
   - policy: restrict-tenant-image-repositories
     resources:
       - ascoachingogvaner/foreign-oci-charts
+      - business-site-dev/preview-helm-source
     kind: HelmRepository
     result: fail

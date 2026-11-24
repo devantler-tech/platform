@@ -1,5 +1,73 @@
 # Fixtures for restrict-tenant-image-repositories (platform#6080).
 ---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: business-site
+  namespace: business-site-dev
+spec:
+  interval: 1m
+  url: oci://ghcr.io/devantler-tech/business-site/manifests
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/business\-site/\.github/workflows/publish-runtime\.yaml@refs/tags/v3\.18\.3$'
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: preview-wrong-source-name
+  namespace: business-site-dev
+spec:
+  interval: 1m
+  url: oci://ghcr.io/devantler-tech/business-site/manifests
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/business\-site/\.github/workflows/publish-runtime\.yaml@refs/tags/v3\.18\.3$'
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: preview-helm-source
+  namespace: business-site-dev
+spec:
+  interval: 1m
+  type: oci
+  url: oci://ghcr.io/devantler-tech/business-site/manifests
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: preview-release-image
+  namespace: business-site-dev
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/business-site@sha256:6f64cba41b8d545c927db23cff5f4fc82dfefca3cfa350ad1ce40757339d708e
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: preview-mutable-image
+  namespace: business-site-dev
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/business-site:3.18.3
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: preview-wrong-repository-image
+  namespace: business-site-dev
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/devantler-tech/business-site-dev@sha256:6f64cba41b8d545c927db23cff5f4fc82dfefca3cfa350ad1ce40757339d708e
+---
 apiVersion: v1
 kind: Pod
 metadata:

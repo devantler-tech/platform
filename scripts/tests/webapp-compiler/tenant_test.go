@@ -215,13 +215,13 @@ func TestCommittedTenant(t *testing.T) {
 			t.Fatal(err)
 		}
 		previewChildren, _ := desiredTenant(t, engine, &definition, &preview)
-		for _, id := range []string{"tenantNamespace", "defaultDeny", "resourceQuota", "ociRepository"} {
+		for _, id := range []string{"tenantNamespace", "defaultDeny", "ociRepository"} {
 			if previewChildren[id] == nil {
 				t.Fatalf("missing child for the committed preview Tenant: %s", id)
 			}
 		}
-		if len(previewChildren) != 4 {
-			t.Fatal("the committed preview Tenant must provision only its namespace, isolation, quota and signed source")
+		if len(previewChildren) != 3 {
+			t.Fatal("the committed preview Tenant must provision only its namespace, default deny and signed source; the platform generates the standard namespace quota")
 		}
 		productChildren, _ := desiredTenant(t, engine, &definition, &prod)
 		for _, sops := range []bool{false, true} {

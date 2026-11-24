@@ -15,6 +15,9 @@ namespaceSelector:
   - name: business-site
     labels:
       app.kubernetes.io/managed-by: kro
+  - name: business-site-dev
+    labels:
+      app.kubernetes.io/managed-by: kro
   - name: future-tenant
     labels:
       app.kubernetes.io/managed-by: ksail
