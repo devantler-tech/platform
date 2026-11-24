@@ -100,6 +100,11 @@ spec:
       expression: >-
         '^([a-z]+://)?ghcr\\.io\\.?(:[0-9]+)?/devantler-tech/'
         + object.metadata.namespace + '([/:@]|$)'
+    # Keep the one approved identity equal to the source emitted by the Tenant graph.
+    - name: previewReleaseIdentity
+      expression: >-
+        [{'issuer': '^https://token\\.actions\\.githubusercontent\\.com$',
+          'subject': '^https://github\\.com/devantler-tech/business\\-site/\\.github/workflows/publish-runtime\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'}]
     - name: foreign
       expression: >-
         variables.refs.filter(r,
@@ -112,7 +117,7 @@ spec:
                   && object.metadata.name == 'business-site'
                   && r == 'oci://ghcr.io/devantler-tech/business-site/manifests'
                   && object.spec.?verify.?provider.orValue('') == 'cosign'
-                  && size(object.spec.?verify.?matchOIDCIdentity.orValue([])) == 1))
+                  && object.spec.?verify.?matchOIDCIdentity.orValue([]) == variables.previewReleaseIdentity))
             : !r.lowerAscii().matches(variables.own)))
   validations:
     - expression: "size(variables.foreign) == 0"
