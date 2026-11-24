@@ -65,12 +65,12 @@ test ! -s "$scratch/missing-talos.out"
 grep -Fxq 'Expected one scoped Talos config file for the Talos lifecycle preview.' "$scratch/missing-talos.err"
 
 cat >"$scratch/complete.json" <<'EOF'
-{"totalChanges":1,"inPlaceChanges":[{"field":"private fixture field","category":"InPlace"}],"rebootRequired":[],"recreateRequired":[],"rollingRecreate":[],"wipeRequired":[],"unknownBaseline":[],"requiresConfirmation":false}
+{"totalChanges":3,"inPlaceChanges":[{"field":"private fixture field","category":"InPlace"},{"field":"autoscalerWorkerTemplate","category":"InPlace"},{"field":"machine.install.private-value","category":"InPlace"}],"rebootRequired":[],"recreateRequired":[],"rollingRecreate":[],"wipeRequired":[],"unknownBaseline":[],"requiresConfirmation":false}
 EOF
 KS_TEST_PLAN="$scratch/complete.json" bash scripts/preview-prod-talos-pool-layout.sh "$scratch/ksail" \
   >"$scratch/summary.json" 2>"$scratch/summary.err"
 test ! -s "$scratch/summary.err"
-jq -e '. == {inPlace:1,reboot:0,recreate:0,rollingRecreate:0,wipe:0,unknown:0}' "$scratch/summary.json" >/dev/null
+jq -e '. == {inPlace:3,inPlaceScopes:{autoscalerWorkerTemplate:1,machine:1,other:1},reboot:0,recreate:0,rollingRecreate:0,wipe:0,unknown:0}' "$scratch/summary.json" >/dev/null
 
 jq 'del(.unknownBaseline)' "$scratch/complete.json" >"$scratch/incomplete.json"
 if KS_TEST_PLAN="$scratch/incomplete.json" bash scripts/preview-prod-talos-pool-layout.sh "$scratch/ksail" \
