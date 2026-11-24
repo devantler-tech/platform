@@ -122,9 +122,9 @@ func nativeRestoreV2MountObject(raw any) (object, bool) {
 	if err != nil {
 		return nil, false
 	}
-	var copy object
-	err = json.Unmarshal(encoded, &copy)
-	return copy, err == nil && copy != nil
+	var decoded object
+	err = json.Unmarshal(encoded, &decoded)
+	return decoded, err == nil && decoded != nil
 }
 
 func nativeRestoreV2NormalizeVolume(volume object) {
