@@ -196,6 +196,13 @@ patches:
       kind: HelmRelease
       name: oauth2-proxy
       namespace: oauth2-proxy
+  - path: auth-proxy/patches/allow-business-site-preview-upstream.yaml
+    target:
+      group: cilium.io
+      version: v2
+      kind: CiliumNetworkPolicy
+      name: allow-auth-proxy
+      namespace: oauth2-proxy
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
   # Require relay replicas to use separate nodes in prod; local retains soft spread.
