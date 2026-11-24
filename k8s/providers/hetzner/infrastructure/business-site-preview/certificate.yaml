@@ -1,0 +1,13 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: business-site-preview
+  namespace: kube-system
+spec:
+  secretName: business-site-preview-tls
+  dnsNames:
+    - dev.devantler.tech
+  issuerRef:
+    group: ${issuer_group}
+    kind: ${issuer_kind}
+    name: ${issuer_name}
