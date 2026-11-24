@@ -85,6 +85,15 @@ capacity. An uncertain write stops
 the run. Check the live reservation and storage health before a new dispatch.
 Use the qualified capacity for one recovery or benchmark claim at a time.
 
+`reserve-v1-backup-scratch` requires `reserve-longhorn-v1-backup-scratch` on a
+first-attempt main dispatch with no worker or database selection. Run it after
+the active backup and its staging claims have cleared. The operation qualifies
+10 GiB for a temporary backup replica on each original V1 disk under the
+existing physical free-space floor and a further 4 GiB margin. It changes only
+the measured reservation shortfall and verifies the disks and original
+allocations after each write. Backup acceptance requires a successful upload
+and a representative restore.
+
 `inventory-storage-layout` adds read-only native block metadata to the storage-root
 observation for a fixed temporary worker. Confirm it with
 `inventory-longhorn-storage-layout-<selection>`. Two complete, bounded native volume
