@@ -74,18 +74,26 @@ func TestResetRecoveryUsesMatchingNativeEphemeralIdentityWhenStatusOmitsUUID(t *
 				}
 				return rebuiltEphemeralReaderFixture{nativeReplicaReader: reader, mode: mode, originalUUID: originalUUID}, closeReader, nil
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			// Interrupt at the recorded reset rather than racing the runner's
+			// scheduler through the pre-reset inventory observations.
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			err := p.prepare(ctx)
+			f.afterReset = cancel
+			if err := p.prepare(ctx); !errors.Is(err, context.Canceled) || p.j.Phase != "reset-requested" ||
+				f.base.resets != 1 || value(f.base.node, "spec", "unschedulable") != true {
+				t.Fatalf("reset interruption did not preserve the owned fence: phase=%s resets=%d err=%v", p.j.Phase, f.base.resets, err)
+			}
 			if mode == "new" {
+				err := p.prepare(t.Context())
 				if err != nil || p.j.Phase != "prepared" || f.base.resets != 1 {
 					t.Fatalf("native recovery did not release the worker: phase=%s resets=%d err=%v", p.j.Phase, f.base.resets, err)
 				}
 				return
 			}
+			_, err := p.unusedPostState(t.Context())
 			if err == nil || p.j.Phase != "reset-requested" || f.base.resets != 1 ||
 				value(f.base.node, "spec", "unschedulable") != true {
-				t.Fatalf("unproven recovery released the worker: phase=%s resets=%d err=%v", p.j.Phase, f.base.resets, err)
+				t.Fatalf("unproven recovery was accepted: phase=%s resets=%d err=%v", p.j.Phase, f.base.resets, err)
 			}
 		})
 	}
