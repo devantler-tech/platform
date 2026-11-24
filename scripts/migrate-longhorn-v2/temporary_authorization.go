@@ -17,3 +17,14 @@ func authorizeRetainedTemporaryPreparation(getenv func(string) string, selection
 	}
 	return authorizeWorkflow(getenv, "prepare-retained-longhorn-v2-temporary-v2-1")
 }
+
+const observeTemporaryRecoveryOperation = "observe-temporary-recovery"
+
+func authorizeTemporaryRecoveryObservation(getenv func(string) string, selection string) error {
+	if (selection != "temporary-v1-1" && selection != "temporary-v1-2") ||
+		getenv("LONGHORN_V2_NODE") != selection || getenv("LONGHORN_V2_OPERATION") != observeTemporaryRecoveryOperation ||
+		getenv("LONGHORN_V2_DATABASE") != "" {
+		return errors.New("the explicit unused temporary recovery observation is required")
+	}
+	return authorizeWorkflowRef(getenv, "observe-longhorn-v2-recovery-"+selection, ".github/workflows/observe-longhorn-temporary-recovery.yaml")
+}

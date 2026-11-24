@@ -29,6 +29,8 @@ func main() {
 		authorization = authorizeTemporaryPreparation(os.Getenv, target)
 	case "prepare-retained-temporary-worker":
 		authorization = authorizeRetainedTemporaryPreparation(os.Getenv, target)
+	case observeTemporaryRecoveryOperation:
+		authorization = authorizeTemporaryRecoveryObservation(os.Getenv, target)
 	case "benchmark-v1", "benchmark-v2":
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
 	case recoverUnstartedV1Operation:
@@ -198,8 +200,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if operation == "prepare-unused-temporary-worker" || operation == "prepare-retained-temporary-worker" {
+	if operation == "prepare-unused-temporary-worker" || operation == "prepare-retained-temporary-worker" || operation == observeTemporaryRecoveryOperation {
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		if operation == observeTemporaryRecoveryOperation {
+			c.run = temporaryRecoveryReadCommand
+		}
 		nodes, readErr := c.list(ctx, "nodes", "")
 		if readErr != nil {
 			fmt.Fprintln(os.Stderr, "Temporary preparation held: node inventory is unreadable.")
@@ -235,6 +240,14 @@ func main() {
 			}
 		}
 		p := temporaryPreparation{preparation: preparation{c: c, target: resolved, name: "longhorn-v2-prepare-" + target, temporarySelection: target, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}, staging: true}
+		if operation == observeTemporaryRecoveryOperation {
+			if err = p.observeRecovery(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, "Temporary worker recovery observation held:", err)
+				os.Exit(1)
+			}
+			fmt.Println("TEMPORARY_WORKER_RECOVERY=OBSERVED writes=0")
+			return
+		}
 		if err = p.prepare(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "Temporary worker preparation held:", err)
 			fmt.Fprintln(os.Stderr, "Preserve its journal and owned cordon; uncertain resets are never replayed.")

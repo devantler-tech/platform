@@ -1,0 +1,105 @@
+---
+name: Observe Longhorn Temporary Worker Recovery
+
+"on":
+  workflow_dispatch:
+    inputs:
+      node:
+        description: Temporary worker with an existing reset journal
+        required: true
+        type: choice
+        options: [temporary-v1-1, temporary-v1-2]
+      confirm:
+        description: Type observe-longhorn-v2-recovery- followed by the selected worker
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+    env:
+      LONGHORN_V2_OPERATION: observe-temporary-recovery
+      LONGHORN_V2_NODE: ${{ inputs.node }}
+      LONGHORN_V2_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Require the confirmed first attempt on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == devantler-tech/platform &&
+             "${GITHUB_EVENT_NAME}" == workflow_dispatch &&
+             "${GITHUB_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 &&
+             "${LONGHORN_V2_NODE}" =~ ^temporary-v1-[12]$ &&
+             "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-recovery-${LONGHORN_V2_NODE}" ]]
+
+      - name: Checkout the reviewed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build the observer before restoring credentials
+        run: go build -o "${RUNNER_TEMP}/longhorn-recovery-observer" ./scripts/migrate-longhorn-v2
+
+      - name: Install the verified Talos client
+        run: .github/scripts/setup-talosctl.sh
+
+      - name: Install the verified Kubernetes client
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="${RUNNER_TEMP}/longhorn-recovery-kubectl"
+          curl --disable -fsSL --proto '=https' --proto-redir '=https' --retry 3 --retry-all-errors \
+            --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 60 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "${kubectl_path}"
+          printf '%s  %s\n' "${KUBECTL_SHA256}" "${kubectl_path}" | sha256sum --check
+          sudo install "${kubectl_path}" /usr/local/bin/kubectl
+
+      - name: Observe the existing reset journal and native worker
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ -n "${KUBE_CONFIG}" && -n "${TALOS_CONFIG}" ]]
+          credential_dir="$(mktemp -d /dev/shm/longhorn-v2.XXXXXX)"
+          trap 'rm -rf -- "${credential_dir}"' EXIT
+          export LONGHORN_V2_CREDENTIAL_DIR="${credential_dir}"
+          export KUBECONFIG="${credential_dir}/kubeconfig" TALOSCONFIG="${credential_dir}/talosconfig"
+          printf '%s' "${KUBE_CONFIG}" >"${KUBECONFIG}"
+          printf '%s' "${TALOS_CONFIG}" >"${TALOSCONFIG}"
+          unset KUBE_CONFIG TALOS_CONFIG
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >"${credential_dir}/endpoint.log" 2>&1; then
+            printf '%s\n' 'TEMPORARY_WORKER_RECOVERY=UNVERIFIED stable endpoint unavailable'
+            exit 2
+          fi
+          unset HCLOUD_TOKEN
+          "${RUNNER_TEMP}/longhorn-recovery-observer"
