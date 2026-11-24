@@ -8,7 +8,6 @@ spec:
   externalDns: false
   webApp: false
   sops: false
-  resourceQuota:
-    enabled: true
+  # The platform's namespace policy generates the standard quota.
   source:
     reconcileApplication: false
