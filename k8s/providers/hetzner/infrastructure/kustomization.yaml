@@ -248,9 +248,12 @@ patches:
                   nodeSelectorTerms:
                     - matchExpressions:
                         - key: kubernetes.io/hostname
-                          operator: In
-                          values: [prod-worker-1]
-                    - matchExpressions:
+                          operator: NotIn
+                          values: [prod-worker-1, prod-worker-2]
+                preferredDuringSchedulingIgnoredDuringExecution:
+                  - weight: 100
+                    preference:
+                      matchExpressions:
                         - key: storage.platform.devantler.tech/migration-pool
                           operator: In
                           values: [v2]
@@ -330,6 +333,7 @@ patches:
   # embedded coroot.com/v1 Coroot/coroot identity, so no explicit target.
   - path: coroot/patches/enable-ha.yaml
   - path: coroot/patches/allow-agent-ephemeral-eviction.yaml
+  - path: coroot/patches/longhorn-v2-prometheus-placement.yaml
   # Prod-only: migrate the OpenBao raft-snapshot PVC from the default longhorn
   # StorageClass to hcloud so node-mobile snapshot Jobs can attach it reliably
   # (see the file header). Self-identifies via PersistentVolumeClaim/openbao/
