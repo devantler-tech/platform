@@ -127,7 +127,7 @@ spec:
       - name: CUSTOMER_PREVIEW_CLIENT_SECRET
         valueFrom:
           secretKeyRef:
-            name: customer-dex-preview-client
+            name: customer-dex-preview-client-v1
             key: client-secret
       # The platform Dex's shared client, for the operator connector below
       # (external-secret-platform-dex-client.yaml, also ZITADEL's).

@@ -145,11 +145,16 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps/customer-identity" |
         serviceAccountRef:{name:"business-site-preview-dex-secrets"}}}
     }) and
     (resource("ExternalSecret"; "customer-dex-preview-client")|.spec=={
+      refreshInterval:"1h",secretStoreRef:{kind:"SecretStore",name:"business-site-preview-dex"},
+      target:{creationPolicy:"Owner",name:"customer-dex-preview-client"},
+      data:[{secretKey:"client-secret",remoteRef:{key:"apps/business-site-dev/oidc",property:"client-secret"}}]
+    }) and
+    (resource("ExternalSecret"; "customer-dex-preview-client-v1")|.spec=={
       refreshPolicy:"CreatedOnce",secretStoreRef:{kind:"SecretStore",name:"business-site-preview-dex"},
-      target:{creationPolicy:"Owner",name:"customer-dex-preview-client",immutable:true},
+      target:{creationPolicy:"Owner",name:"customer-dex-preview-client-v1",immutable:true},
       data:[{secretKey:"client-secret",remoteRef:{key:"apps/business-site-dev/oidc",property:"client-secret",version:"1"}}]
     })
-  ' >/dev/null || fail 'the preview Dex consumer must read only its dedicated client value'
+  ' >/dev/null || fail 'the pinned preview Dex credential must have a new target and preserve the legacy projection during rollout'
 
 kubectl kustomize "${root_dir}/k8s/clusters/prod" |
   yq -o=json -I=0 'select(.apiVersion == "kustomize.toolkit.fluxcd.io/v1" and .kind == "Kustomization")' |
@@ -237,7 +242,7 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
     (resource("customer-identity";"HelmRelease";"customer-dex")|.spec.values|
       ([.envVars[]|select(.name=="CUSTOMER_PREVIEW_CLIENT_SECRET")]==[{
         name:"CUSTOMER_PREVIEW_CLIENT_SECRET",
-        valueFrom:{secretKeyRef:{name:"customer-dex-preview-client",key:"client-secret"}}
+        valueFrom:{secretKeyRef:{name:"customer-dex-preview-client-v1",key:"client-secret"}}
       }]) and
       ([.config.staticClients[]|select(.id=="business-site-preview")]==[{
         id:"business-site-preview",name:"Devantler Tech preview",secretEnv:"CUSTOMER_PREVIEW_CLIENT_SECRET",

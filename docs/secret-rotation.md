@@ -56,6 +56,10 @@ been unchanged for days and there are no live `GeneratorState` instances.
 The preview client uses a create-only OpenBao entry. Dex and the portal pin the
 same KV version. Dex loads its immutable Secret at startup. The portal's other
 runtime inputs can refresh on schedule while the OIDC credential stays pinned.
+The initial pinned rollout creates a separate immutable Secret and keeps the
+existing preview credential projection through rollout and sign-in verification.
+Retire the original projection in a later reviewed change after the rollback
+window closes and no workload references it.
 
 1. Provision a successor client ID and a new OpenBao entry with the declarative
    password generator. Give only the preview readers access to the successor
@@ -68,8 +72,10 @@ runtime inputs can refresh on schedule while the OIDC credential stays pinned.
    credential reference together in its runtime ExternalSecret. Complete an
    authorized preview sign-in while the previous client remains available.
    Rollback switches both portal inputs back to the previous pair.
-4. Remove the previous Dex registration and retire its Secret after the
-   rollback window and any in-flight sign-ins are clear.
+4. After the rollback window closes and in-flight sign-ins finish, remove the
+   previous Dex registration and its matching `envVars` entry. Verify all Dex
+   replicas become Ready before retiring the previous Secret and its
+   ExternalSecret in a separate rollout.
 
 ## OpenBao-native rotation (chosen mechanism)
 
