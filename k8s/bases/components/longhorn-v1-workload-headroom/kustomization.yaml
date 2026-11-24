@@ -71,18 +71,21 @@ patches:
       spec:
         values:
           ui:
+            # Keep both dashboards available while their replicas move off
+            # the workers that need memory for the V2 instance managers.
+            updateStrategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 1
+                maxUnavailable: 0
             affinity:
               nodeAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
-                        - key: kubernetes.io/hostname
-                          operator: In
-                          values: [prod-worker-1, prod-worker-2]
-                    - matchExpressions:
                         - key: storage.platform.devantler.tech/migration-pool
                           operator: In
-                          values: [v2]
+                          values: [v1, v2]
               podAntiAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - labelSelector:
