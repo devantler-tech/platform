@@ -189,6 +189,36 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
           endswith("@portal-preview-db-rw.business-site-dev.svc.cluster.local:5432/portal_preview?sslmode=verify-full&sslrootcert=/run/webapp-inputs/portal-database-ca"))))
   ' >/dev/null || fail 'the preview database and projected inputs must stay isolated'
 
+kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
+  yq -o=json -I=0 '.' |
+  jq -es '
+    def resource($namespace; $kind; $name):
+      [.[]|select(.kind==$kind and .metadata.name==$name and .metadata.namespace==$namespace)] |
+      if length==1 then .[0] else error("expected exactly one preview application resource") end;
+    def permissions($group; $resource):
+      {apiGroups:[$group],resources:[$resource],verbs:["get","list","watch","create","update","patch","delete"]};
+    (resource("business-site-dev";"ServiceAccount";"business-site-preview-deployer")|
+      .automountServiceAccountToken==false) and
+    (resource("business-site-dev";"Role";"business-site-preview-deployer")|
+      .rules==[permissions("kro.run";"webapps"),permissions("batch";"jobs")]) and
+    (resource("business-site-dev";"RoleBinding";"business-site-preview-deployer")|
+      .roleRef=={apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"business-site-preview-deployer"} and
+      .subjects==[{kind:"ServiceAccount",name:"business-site-preview-deployer",namespace:"business-site-dev"}]) and
+    (resource("business-site-dev";"Kustomization";"business-site-preview")|.spec|
+      .targetNamespace=="business-site-dev" and .serviceAccountName=="business-site-preview-deployer" and
+      .sourceRef=={kind:"OCIRepository",name:"business-site"} and .path=="./dev" and
+      .wait and .prune and (.force|not) and (.decryption==null)) and
+    (resource("customer-identity";"HelmRelease";"customer-dex")|.spec.values|
+      ([.envVars[]|select(.name=="CUSTOMER_PREVIEW_CLIENT_SECRET")]==[{
+        name:"CUSTOMER_PREVIEW_CLIENT_SECRET",
+        valueFrom:{secretKeyRef:{name:"customer-dex-preview-client",key:"client-secret"}}
+      }]) and
+      ([.config.staticClients[]|select(.id=="business-site-preview")]==[{
+        id:"business-site-preview",name:"Devantler Tech preview",secretEnv:"CUSTOMER_PREVIEW_CLIENT_SECRET",
+        redirectURIs:["https://dev.devantler.tech/callback"]
+      }]))
+  ' >/dev/null || fail 'the preview must use its own narrow deployment account and sign-in client'
+
 grep -Fq "'scripts/tests/test-business-disclosure-reader.sh'" "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must select changes to this contract'
 grep -Fq 'bash scripts/tests/test-business-disclosure-reader.sh' "${root_dir}/.github/workflows/ci.yaml" ||
