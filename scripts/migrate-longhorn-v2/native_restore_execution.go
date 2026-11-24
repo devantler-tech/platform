@@ -91,7 +91,7 @@ func (r *nativeRestoreRun) observeSeedTransfer(ctx context.Context, velero nativ
 func nativeRestoreTerminalFailure(restore object) error {
 	switch text(restore, "status", "phase") {
 	case "FailedValidation", "PartiallyFailed", "Failed":
-		return errors.Join(errReadinessTerminal, errors.New("Velero finished without a complete restore; preserve the source and restore journal"))
+		return errors.Join(errReadinessTerminal, errors.New("the Velero restore ended without a complete result, so preserve the source and restore journal"))
 	default:
 		return nil
 	}

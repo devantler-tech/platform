@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/devantler-tech/platform/internal/longhornmigration"
@@ -49,7 +50,8 @@ func (p nativeRestorePreparationReceipt) mapper(target string) (string, error) {
 }
 
 func nativeRestoreFixedRoster(targets []nativeRestoreTarget) bool {
-	if len(targets) != len(longhornmigration.ActivationSelections()) {
+	selections := longhornmigration.ActivationSelections()
+	if len(targets) != len(selections) {
 		return false
 	}
 	original := targets[0].Preparation
@@ -57,7 +59,7 @@ func nativeRestoreFixedRoster(targets []nativeRestoreTarget) bool {
 	for _, target := range targets {
 		prepared := target.Preparation
 		selection := prepared.selection()
-		if _, err := prepared.mapper(target.Name); err != nil || seen[selection] ||
+		if _, err := prepared.mapper(target.Name); err != nil || !slices.Contains(selections[:], selection) || seen[selection] ||
 			prepared.Activation != original.Activation || prepared.ActivationSHA256 != original.ActivationSHA256 {
 			return false
 		}

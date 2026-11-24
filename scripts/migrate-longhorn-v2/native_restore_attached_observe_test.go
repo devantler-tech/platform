@@ -84,9 +84,10 @@ func TestNativeRestoreAttachmentObserverRequiresAStableReadOnlyEpoch(t *testing.
 					t.Fatal("the attachment observer requested an unreviewed collection", args)
 				}
 				namespace := "longhorn-system"
-				if kind == "nodes" {
+				switch kind {
+				case "nodes":
 					namespace = ""
-				} else if kind == "pods" {
+				case "pods":
 					namespace = "*"
 				}
 				want := append([]string{"--context=admin@prod", "--request-timeout=20s", "get", kind, "--output=json"}, namespaceArgs(namespace)...)
