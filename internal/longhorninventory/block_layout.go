@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -29,7 +30,10 @@ type BlockLayoutReport struct {
 	RawExtentObserved                                           bool `json:",omitempty"`
 	Digest                                                      string
 	retained                                                    RetainedLayoutIdentity
+	ephemeral                                                   ephemeralIdentity
 }
+
+type ephemeralIdentity struct{ partitionUUID, containerUUID string }
 
 // RetainedLayoutIdentity binds the raw and STATE physical extents across
 // boots. It is private journal evidence, separate from the public report.
@@ -46,12 +50,28 @@ const (
 	ordinaryLayout blockLayoutMode = iota
 	retainedOpen
 	retainedClosed
+	rebuiltLayout
 )
+
+var blockUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // ListBlockLayout reads the block layout twice and reports it only when both
 // complete reads agree.
 func (n Native) ListBlockLayout(ctx context.Context) (BlockLayoutReport, error) {
 	return n.listBlockLayout(ctx, ordinaryLayout)
+}
+
+// RebuiltEphemeralUUID returns the LUKS UUID corroborated by two complete
+// observations of the exact GPT partition reported by VolumeStatus.
+func (n Native) RebuiltEphemeralUUID(ctx context.Context, partitionUUID string) (string, error) {
+	report, err := n.listBlockLayout(ctx, rebuiltLayout)
+	if err != nil {
+		return "", err
+	}
+	if report.ephemeral.partitionUUID != partitionUUID {
+		return "", nativeFailure{code: "block-shape"}
+	}
+	return report.ephemeral.containerUUID, nil
 }
 
 // ListRetainedBlockLayout compares the raw and STATE extents and the expected
@@ -116,6 +136,7 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 		return nil, BlockLayoutReport{}, invalid
 	}
 	report := BlockLayoutReport{VolumeStatuses: len(statuses.Items), DiscoveredVolumes: len(discovered.Items), RawPhase: "absent"}
+	retained := mode == retainedOpen || mode == retainedClosed
 	rows := make([][]byte, 0, len(statuses.Items)+len(discovered.Items))
 	metadataBytes := 0
 	appendRow := func(row any) bool {
@@ -184,7 +205,7 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 			report.OtherUserVolumes++
 		default:
 			if strings.HasPrefix(id, "r-") || strings.HasPrefix(id, "u-") {
-				if mode != ordinaryLayout {
+				if retained {
 					return nil, BlockLayoutReport{}, invalid
 				}
 				report.OtherUserVolumes++
@@ -216,7 +237,7 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 			report.RawDiscoveredPartitions++
 			rawPartition = s
 		}
-		if mode != ordinaryLayout && s.PartitionLabel == "STATE" {
+		if retained && s.PartitionLabel == "STATE" {
 			if statePartition != nil {
 				return nil, BlockLayoutReport{}, invalid
 			}
@@ -228,7 +249,7 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 			}
 			ephemeralPartition = s
 		}
-		if mode != ordinaryLayout && s.PartitionLabel != "r-longhorn" &&
+		if retained && s.PartitionLabel != "r-longhorn" &&
 			(strings.HasPrefix(s.PartitionLabel, "r-") || strings.HasPrefix(s.PartitionLabel, "u-")) {
 			if s.PartitionLabel != "r-longhorn-stage" || stagePartition != nil {
 				return nil, BlockLayoutReport{}, invalid
@@ -242,7 +263,15 @@ func (n Native) readBlockLayout(ctx context.Context, mode blockLayoutMode) ([]by
 			return nil, BlockLayoutReport{}, invalid
 		}
 	}
-	if mode != ordinaryLayout {
+	if mode == rebuiltLayout || retained && ephemeralUUID == "" {
+		identity, ok := matchingEphemeralIdentity(ephemeralStatus, ephemeralPartition)
+		if !ok || !appendRow([]any{"ephemeral-container", identity.partitionUUID, identity.containerUUID}) {
+			return nil, BlockLayoutReport{}, invalid
+		}
+		report.ephemeral = identity
+		ephemeralUUID = identity.containerUUID
+	}
+	if retained {
 		if ephemeralUUID == "" || report.RawDiscoveredPartitions != 1 || !validRetainedRaw(rawPartition) ||
 			!retainedStateMatches(statePartition, rawPartition) || !retainedEphemeralMatches(ephemeralStatus, ephemeralPartition, rawPartition, statePartition) {
 			return nil, BlockLayoutReport{}, invalid
@@ -336,6 +365,18 @@ func retainedEphemeralMatches(status *block.VolumeStatusSpec, ephemeral, raw, st
 		ephemeral.PartitionUUID != raw.PartitionUUID && ephemeral.PartitionUUID != state.PartitionUUID &&
 		ephemeral.ParentDevPath == raw.ParentDevPath && validPartitionExtent(ephemeral) &&
 		extentsDisjoint(ephemeral, raw) && extentsDisjoint(ephemeral, state) && retainedRawMatches(status, ephemeral)
+}
+
+func matchingEphemeralIdentity(status *block.VolumeStatusSpec, partition *block.DiscoveredVolumeSpec) (ephemeralIdentity, bool) {
+	if partition == nil || partition.Type != "partition" || partition.Name != "luks" ||
+		!blockUUID.MatchString(partition.UUID) || !blockUUID.MatchString(partition.PartitionUUID) ||
+		partition.UUID == partition.PartitionUUID || partition.ParentDevPath == "" || !validPartitionExtent(partition) ||
+		!retainedRawMatches(status, partition) || status.EncryptionProvider != block.EncryptionProviderLUKS2 ||
+		!status.EncryptionLockedToState || !slices.Equal(status.ConfiguredEncryptionKeys, []string{"nodeID"}) ||
+		(status.UUID != "" && !strings.EqualFold(status.UUID, partition.UUID)) {
+		return ephemeralIdentity{}, false
+	}
+	return ephemeralIdentity{partitionUUID: partition.PartitionUUID, containerUUID: partition.UUID}, true
 }
 
 func validStagedPartition(status *block.VolumeStatusSpec, stage, raw, state *block.DiscoveredVolumeSpec) bool {

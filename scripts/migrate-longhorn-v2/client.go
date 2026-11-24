@@ -33,9 +33,8 @@ func decodeList(data []byte) ([]object, error) {
 	return result, nil
 }
 
-func verifyResetLayout(raw, ephemeral object, originalUUID string) error {
-	if originalUUID == "" || text(raw, "metadata", "id") != "r-longhorn" || text(ephemeral, "metadata", "id") != "EPHEMERAL" ||
-		text(ephemeral, "spec", "uuid") == "" || text(ephemeral, "spec", "uuid") == originalUUID {
+func verifyResetLayout(raw, ephemeral object, originalUUID, recoveredUUID string) error {
+	if originalUUID == "" || recoveredUUID == "" || strings.EqualFold(recoveredUUID, originalUUID) {
 		return errors.New("a new ephemeral partition is not proven")
 	}
 	if err := verifyEncryptedLocalLayout(raw, ephemeral); err != nil {
@@ -52,7 +51,7 @@ func verifyEncryptedLocalLayout(raw, ephemeral object) error {
 }
 
 func verifyEncryptedRawDisk(raw, ephemeral object, rawGiB uint64) error {
-	if text(raw, "metadata", "id") != "r-longhorn" || text(ephemeral, "metadata", "id") != "EPHEMERAL" || text(ephemeral, "spec", "uuid") == "" {
+	if text(raw, "metadata", "id") != "r-longhorn" || text(ephemeral, "metadata", "id") != "EPHEMERAL" {
 		return errors.New("encrypted local partition identities are missing")
 	}
 	for _, volume := range []object{raw, ephemeral} {

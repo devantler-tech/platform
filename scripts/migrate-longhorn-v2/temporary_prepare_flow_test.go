@@ -41,6 +41,75 @@ func TestUnusedStagingPreparationRequiresTheLargerNativeLayout(t *testing.T) {
 	}
 }
 
+func TestResetRecoveryUsesMatchingNativeEphemeralIdentityWhenStatusOmitsUUID(t *testing.T) {
+	const originalUUID = "12345678-1234-4234-8234-000000000047"
+	for _, mode := range []string{"new", "original", "wrong partition", "missing"} {
+		t.Run(mode, func(t *testing.T) {
+			f, p := unusedPreparationAPI(t)
+			p.staging = true
+			p.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+				data, err := f.run(ctx, input, program, args...)
+				if err != nil || program != "talosctl" || len(args) != 5 ||
+					args[2] != "volumestatus" || args[3] != "EPHEMERAL" {
+					return data, err
+				}
+				var volume object
+				if err := json.Unmarshal(data, &volume); err != nil {
+					t.Fatal(err)
+				}
+				spec := valueObject(volume, "spec")
+				if !f.base.postReset {
+					spec["uuid"] = originalUUID
+					return json.Marshal(volume)
+				}
+				delete(spec, "uuid")
+				spec["partitionUUID"] = "12345678-1234-4234-8234-000000000045"
+				return json.Marshal(volume)
+			}
+			open := p.reader
+			p.reader = func(ctx context.Context, address string) (nativeReplicaReader, func() error, error) {
+				reader, closeReader, err := open(ctx, address)
+				if err != nil || !f.base.postReset {
+					return reader, closeReader, err
+				}
+				return rebuiltEphemeralReaderFixture{nativeReplicaReader: reader, mode: mode, originalUUID: originalUUID}, closeReader, nil
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			defer cancel()
+			err := p.prepare(ctx)
+			if mode == "new" {
+				if err != nil || p.j.Phase != "prepared" || f.base.resets != 1 {
+					t.Fatalf("native recovery did not release the worker: phase=%s resets=%d err=%v", p.j.Phase, f.base.resets, err)
+				}
+				return
+			}
+			if err == nil || p.j.Phase != "reset-requested" || f.base.resets != 1 ||
+				value(f.base.node, "spec", "unschedulable") != true {
+				t.Fatalf("unproven recovery released the worker: phase=%s resets=%d err=%v", p.j.Phase, f.base.resets, err)
+			}
+		})
+	}
+}
+
+type rebuiltEphemeralReaderFixture struct {
+	nativeReplicaReader
+	mode, originalUUID string
+}
+
+func (r rebuiltEphemeralReaderFixture) RebuiltEphemeralUUID(_ context.Context, partitionUUID string) (string, error) {
+	if partitionUUID != "12345678-1234-4234-8234-000000000045" || r.mode == "wrong partition" {
+		return "", errors.New("native partition mismatch")
+	}
+	switch r.mode {
+	case "new":
+		return "12345678-1234-4234-8234-000000000046", nil
+	case "original":
+		return r.originalUUID, nil
+	default:
+		return "", nil
+	}
+}
+
 func TestUncertainStagingConfigurationRequiresNativeReadbackBeforeReset(t *testing.T) {
 	f, p := unusedPreparationAPI(t)
 	p.staging, f.layoutWriteUncertain = true, true
