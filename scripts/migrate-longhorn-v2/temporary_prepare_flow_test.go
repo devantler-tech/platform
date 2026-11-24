@@ -41,6 +41,89 @@ func TestUnusedStagingPreparationRequiresTheLargerNativeLayout(t *testing.T) {
 	}
 }
 
+func TestUnusedStagingRecoveryRestoresConfigurationWithoutReset(t *testing.T) {
+	f, p := unusedPreparationAPI(t)
+	p.staging = true
+	interruptTemporaryReset(t, f, &p)
+	// A routine deployment has reinstalled the standard config. The larger
+	// native partition remains in place and must not be provisioned again.
+	f.layoutInstalled = false
+	if _, err := p.unusedPostState(t.Context()); err != replacedStagingLayout || f.layoutWrites != 1 {
+		t.Fatalf("read-only recovery did not identify the rollback without writing: %v, writes=%d", err, f.layoutWrites)
+	}
+	if err := p.prepare(t.Context()); err != nil || p.j.Phase != "prepared" || f.layoutWrites != 2 || f.base.resets != 1 {
+		t.Fatalf("protected recovery did not restore and release: %v, phase=%s writes=%d resets=%d", err, p.j.Phase, f.layoutWrites, f.base.resets)
+	}
+	if err := p.prepare(t.Context()); err != nil || f.layoutWrites != 2 || f.base.resets != 1 {
+		t.Fatalf("completed recovery repeated a host change: %v", err)
+	}
+}
+
+func TestUnusedStagingRecoveryHoldsOnUnprovenInputs(t *testing.T) {
+	for _, mode := range []string{"unreadable config", "different layout", "wrong raw geometry", "foreign fence", "unowned pin", "resident engine", "stale source"} {
+		t.Run(mode, func(t *testing.T) {
+			f, p := unusedPreparationAPI(t)
+			p.staging = true
+			interruptTemporaryReset(t, f, &p)
+			f.layoutInstalled = false
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			checked := false
+			p.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+				data, err := f.run(ctx, input, program, args...)
+				if program != "talosctl" || len(args) != 5 || args[1] != "get" {
+					return data, err
+				}
+				if args[2] == "volumestatus" && args[3] == "r-longhorn" && mode == "wrong raw geometry" {
+					checked = true
+					defer cancel()
+					var volume object
+					if json.Unmarshal(data, &volume) != nil {
+						t.Fatal("malformed fixture volume")
+					}
+					valueObject(volume, "spec")["size"] = float64(96 << 30)
+					return json.Marshal(volume)
+				}
+				if args[2] == "volumeconfig" && args[3] == "r-longhorn" {
+					checked = true
+					switch mode {
+					case "unreadable config":
+						defer cancel()
+						return nil, errors.New("private read error")
+					case "different layout":
+						defer cancel()
+						raw, _ := desiredConfigFixture()
+						valueObject(raw, "spec", "provisioning", "partitionSpec")["maxSize"] = float64(120 << 30)
+						return json.Marshal(raw)
+					case "foreign fence":
+						valueObject(f.base.node, "metadata", "annotations")[fenceAnnotation] = "foreign"
+					case "unowned pin":
+						delete(valueObject(f.base.node, "metadata", "annotations"), scaleDownDisabled)
+					case "resident engine":
+						f.base.s.engines[0]["spec"].(object)["nodeID"] = p.target
+					case "stale source":
+						f.base.staleSource = true
+					}
+				}
+				return data, err
+			}
+			if err := p.prepare(ctx); err == nil || !checked || f.layoutWrites != 1 || f.base.resets != 1 || p.j.Phase != "reset-requested" || value(f.base.node, "spec", "unschedulable") != true {
+				t.Fatalf("unproven recovery changed the held host: %v, checked=%v, phase=%s writes=%d resets=%d", err, checked, p.j.Phase, f.layoutWrites, f.base.resets)
+			}
+		})
+	}
+}
+
+func interruptTemporaryReset(t *testing.T, f *unusedPreparationFixture, p *temporaryPreparation) {
+	t.Helper()
+	initial, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f.afterReset = cancel
+	if err := p.prepare(initial); !errors.Is(err, context.Canceled) || !f.base.postReset || f.base.resets != 1 || p.j.Phase != "reset-requested" {
+		t.Fatalf("need the interrupted, journaled reset: phase=%s resets=%d err=%v", p.j.Phase, f.base.resets, err)
+	}
+}
+
 func TestResetRecoveryReportsTheLastSafeReadinessGate(t *testing.T) {
 	f, p := unusedPreparationAPI(t)
 	p.staging = true
@@ -340,7 +423,8 @@ func (f *unusedPreparationFixture) run(ctx context.Context, input []byte, progra
 		want := []string{"--nodes=10.0.99.7", "patch", "machineconfig", "--mode=no-reboot", "--patch=" + stagingLayoutPatch}
 		var j journal
 		if !reflect.DeepEqual(args, want) || json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &j) != nil ||
-			!j.StagingLayout || j.Phase != "draining" || f.nativeCalls < 2 || value(f.base.node, "spec", "unschedulable") != true {
+			!j.StagingLayout || (j.Phase != "draining" && (j.Phase != "reset-requested" || !f.base.postReset)) || f.nativeCalls < 2 ||
+			value(f.base.node, "spec", "unschedulable") != true {
 			f.base.t.Fatal("staging patch lacked the exact target, journal, cordon and fresh native proof")
 		}
 		f.layoutWrites++
@@ -381,7 +465,7 @@ func (f *unusedPreparationFixture) run(ctx context.Context, input []byte, progra
 	}
 	data, err := f.base.run(ctx, input, program, args...)
 	if err == nil && f.base.postReset && program == "talosctl" && len(args) == 5 && args[2] == "volumestatus" &&
-		(args[3] == "EPHEMERAL" || f.layoutInstalled && args[3] == "r-longhorn") {
+		(args[3] == "EPHEMERAL" || f.layoutWrites > 0 && args[3] == "r-longhorn") {
 		var volume object
 		if json.Unmarshal(data, &volume) != nil {
 			f.base.t.Fatal("malformed fixture volume")

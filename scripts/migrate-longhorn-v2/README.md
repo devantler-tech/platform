@@ -212,11 +212,13 @@ the selected worker. It checks the loaded configuration and repeats the native e
 read before recording reset intent. The profile retains a 40 GiB minimum for EPHEMERAL and
 keeps both encryption keys locked to STATE. Existing journals retain their recorded geometry.
 
-Recovery from `reset-requested` only observes post-state. An uncertain response never causes a
-second reset. A new boot and encrypted EPHEMERAL UUID, the exact encrypted raw size bound
-by the journal, loaded configuration and huge-page readiness must be observed before releasing the
-owned cordon. CPX42 workers retain their larger root capacity; the permanent-worker root-size
-cap does not apply to this separate profile. The raw disk remains unregistered and fenced;
+An uncertain reset response never causes a second reset. A new boot and encrypted EPHEMERAL UUID,
+the exact encrypted raw size bound by the journal, loaded configuration and huge-page readiness
+must be observed before releasing the owned cordon. If a deployment reapplied the standard
+configuration, recovery can restore the staging profile in place only after verifying the
+rebuilt disk, the owned cordon and capacity pin, and current storage safety. Recovery reads
+the restored configuration before releasing the worker. CPX42 workers use a separate profile
+with more space for the root filesystem. The raw disk remains unregistered and fenced;
 storage activation and volume migration follow separately. Original storage replicas remain on
 the permanent workers throughout this preparation route.
 
