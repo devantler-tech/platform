@@ -7,8 +7,8 @@ name: GitHub Broker Smoke Test
 # - A workflow exchanges its Actions OIDC token for a token on this repository,
 #   through the reviewed policy .github/chainguard/github-broker-smoke.sts.yaml,
 #   and uses it for what that policy grants (reading this repository).
-# - The token reaches nothing else: a private repository the policy does not
-#   name must stay invisible to it.
+# - The token reaches nothing else: GitHub must list this repository, and only
+#   this one, as the token's reach.
 # - An identity with no policy is refused.
 #
 # It holds no credential and writes nothing. The action's post step revokes the
@@ -53,11 +53,11 @@ jobs:
           [[ -n "${GH_TOKEN}" ]] || { echo '::error::the broker returned no token'; exit 1; }
           name="$(gh api repos/devantler-tech/platform --jq .full_name)"
           [[ "${name}" == devantler-tech/platform ]] || { echo '::error::the token cannot read this repository'; exit 1; }
-          # A private repository the policy does not name must stay invisible.
-          if gh api repos/devantler-tech/ascoachingogvaner --silent 2>/dev/null; then
-            echo '::error::the token reaches a repository its policy does not name'
-            exit 1
-          fi
+          # GitHub lists the repositories an installation token may reach. The
+          # Apps are installed on every repository, so anything beyond this one
+          # means the broker widened the scope its policy asked for.
+          reach="$(gh api installation/repositories --jq '[.repositories[].full_name] | sort | join(",")')"
+          [[ "${reach}" == devantler-tech/platform ]] || { echo "::error::the token reaches more than this repository: ${reach}"; exit 1; }
           echo 'GITHUB_BROKER_SMOKE=PASS scope=repository'
 
       - name: Ask for an identity that has no policy
