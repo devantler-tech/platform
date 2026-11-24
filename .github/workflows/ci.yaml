@@ -1002,6 +1002,13 @@ jobs:
           bash scripts/tests/test-github-bootstrap-isolation.sh
           bash scripts/tests/test-crossplane-sync-alerter.sh
 
+      # The platform's deploy and recovery paths must never need the GitHub
+      # token broker the platform hosts (devantler-tech/monorepo ADR 0020).
+      - name: 🧭 Validate deploy independence from the GitHub token broker
+        run: |
+          shellcheck scripts/guard-github-broker-independence.sh scripts/tests/test-github-broker-independence.sh
+          bash scripts/tests/test-github-broker-independence.sh
+
       - name: 🚩 Validate runtime flag definitions
         run: |
           go test ./scripts/validate-feature-flags
