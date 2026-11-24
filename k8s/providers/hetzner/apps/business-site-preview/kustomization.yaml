@@ -16,4 +16,4 @@ resources:
   - cilium-network-policy-migration.yaml
   - cilium-network-policy-web.yaml
   - job-migration.yaml
-  - webapp.yaml
+  - web-app.yaml
