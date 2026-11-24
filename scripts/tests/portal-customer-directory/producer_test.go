@@ -531,6 +531,49 @@ func TestSetupTokenCoversTheJobDeadline(t *testing.T) {
 	}
 }
 
+func TestSharedPortalLoginActivationReadiness(t *testing.T) {
+	const harness = `set -euo pipefail
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+connect() {
+  [[ $1 == zitadel.feature.v2.FeatureService/GetInstanceFeatures && $2 == '{"inheritance":true}' ]] || exit 31
+  printf '%s\n' "$1" >>"$read_marker"
+  printf '%s\n' "$reply"
+  [[ $reply != 'null' ]]
+}
+reply=$1
+read_marker=$2
+`
+	for _, tc := range []struct {
+		name, response, want string
+	}{
+		{"disabled inherited feature", `{"loginDefaultOrg":{"enabled":false,"source":"SOURCE_SYSTEM"}}`, "ready"},
+		{"managed feature", `{"loginDefaultOrg":{"enabled":true,"source":"SOURCE_INSTANCE"}}`, "ready"},
+		{"enabled inherited feature", `{"loginDefaultOrg":{"enabled":true,"source":"SOURCE_SYSTEM"}}`, "blocked"},
+		{"indeterminate feature", `{}`, "unavailable"},
+		{"read failure", `null`, "unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			marker := filepath.Join(t.TempDir(), "requests")
+			script := strings.Join([]string{
+				harness,
+				producerFunction(t, "instance_login_default_org"),
+				producerFunction(t, "report_shared_login_activation_readiness"),
+				"report_shared_login_activation_readiness",
+			}, "\n")
+			cmd := exec.Command("bash", "-c", script, "fixture", tc.response, marker)
+			output, err := cmd.Output()
+			want := "Shared portal login activation readiness: " + tc.want + "\n"
+			if err != nil || string(output) != want {
+				t.Fatalf("activation readiness=%q err=%v, want %q", output, err, want)
+			}
+			reads, err := os.ReadFile(marker)
+			if err != nil || string(reads) != "zitadel.feature.v2.FeatureService/GetInstanceFeatures\n" {
+				t.Fatalf("expected exactly one native feature read, got %q (%v)", reads, err)
+			}
+		})
+	}
+}
+
 func TestSharedInstanceLoginRestoresPreviousSettings(t *testing.T) {
 	script := strings.Join([]string{
 		producerFunction(t, "instance_login_providers"),

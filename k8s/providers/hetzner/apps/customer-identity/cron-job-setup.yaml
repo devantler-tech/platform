@@ -1162,6 +1162,18 @@ spec:
                       fail "could not read the effective instance login default organization"
                   }
 
+                  report_shared_login_activation_readiness() {
+                    local feature status
+                    if ! feature=$(instance_login_default_org); then
+                      status=unavailable
+                    elif jq -e '.enabled == false or .source == "SOURCE_INSTANCE"' <<<"$feature" >/dev/null; then
+                      status=ready
+                    else
+                      status=blocked
+                    fi
+                    printf 'Shared portal login activation readiness: %s\n' "$status"
+                  }
+
                   reconcile_shared_instance_login() {
                     local mode=$1 shared=$2 phase=${3:-apply}
                     local baseline current providers feature membership target feature_target desired observed
@@ -1348,6 +1360,9 @@ spec:
 
                   if [[ $customer_github == on ]]; then
                     reconcile_portal_github
+                    if [[ $shared_portal_setup == off ]]; then
+                      report_shared_login_activation_readiness
+                    fi
                   fi
 
                   # --- The maintainer's administration roles ---------------------------------------
