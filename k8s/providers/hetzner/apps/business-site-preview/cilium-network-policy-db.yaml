@@ -1,0 +1,22 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: portal-preview-db
+  namespace: business-site-dev
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: portal-preview-db
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: business-site-dev
+        - matchLabels:
+            app.kubernetes.io/name: business-site-dev-migration
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+  egress:
+    - toEntities:
+        - kube-apiserver

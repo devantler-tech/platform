@@ -1,0 +1,20 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-coroot-postgres-scrape
+  namespace: business-site-dev
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: portal-preview-db
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+            app.kubernetes.io/managed-by: coroot-operator
+            app.kubernetes.io/part-of: coroot
+            app.kubernetes.io/component: coroot-cluster-agent
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP

@@ -952,6 +952,31 @@ spec:
               }
               BUSINESS_SITE_POLICY
 
+              # The preview's store may read only its new credentials and CA.
+              # Keep the customer Dex's reader confined to the one shared value.
+              bao policy write app-business-site-preview-readonly - <<'BUSINESS_SITE_PREVIEW_POLICY'
+              {
+                "path": {
+                  "secret/data/apps/business-site-dev/oidc": {"capabilities": ["read"]},
+                  "secret/data/apps/business-site-dev/portal-migrator": {"capabilities": ["read"]},
+                  "secret/data/apps/business-site-dev/portal-web": {"capabilities": ["read"]},
+                  "secret/data/apps/business-site-dev/portal-db-ca": {"capabilities": ["read"]},
+                  "auth/token/lookup-self": {"capabilities": ["read"]},
+                  "auth/token/revoke-self": {"capabilities": ["update"]}
+                }
+              }
+              BUSINESS_SITE_PREVIEW_POLICY
+
+              bao policy write app-business-site-preview-dex-readonly - <<'BUSINESS_SITE_PREVIEW_DEX_POLICY'
+              {
+                "path": {
+                  "secret/data/apps/business-site-dev/oidc": {"capabilities": ["read"]},
+                  "auth/token/lookup-self": {"capabilities": ["read"]},
+                  "auth/token/revoke-self": {"capabilities": ["update"]}
+                }
+              }
+              BUSINESS_SITE_PREVIEW_DEX_POLICY
+
               bao policy write app-wedding-readonly - <<'POLICY'
               path "secret/data/apps/wedding-app/*" {
                 capabilities = ["read"]
@@ -1203,6 +1228,19 @@ spec:
               path "secret/data/apps/business-site/portal-db-ca" {
                 capabilities = ["create", "update", "read"]
               }
+              # Exact entries for the preview's generators and CA publisher.
+              path "secret/data/apps/business-site-dev/oidc" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/business-site-dev/portal-migrator" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/business-site-dev/portal-web" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/business-site-dev/portal-db-ca" {
+                capabilities = ["create", "update", "read"]
+              }
               # The portal service account's ZITADEL token, which the
               # customer-identity setup CronJob issues and a PushSecret copies
               # here for the business-site runtime Secret. Exact key only.
@@ -1285,6 +1323,18 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/business-site/portal-db-ca" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/business-site-dev/oidc" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/business-site-dev/portal-migrator" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/business-site-dev/portal-web" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/business-site-dev/portal-db-ca" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/business-site/portal-zitadel" {
@@ -1461,6 +1511,28 @@ spec:
                 "token_max_ttl": 3600
               }
               BUSINESS_SITE_ROLE
+
+              bao write auth/kubernetes/role/business-site-preview - <<'BUSINESS_SITE_PREVIEW_ROLE'
+              {
+                "bound_service_account_names": ["business-site-preview-secrets"],
+                "bound_service_account_namespaces": ["business-site-dev"],
+                "token_policies": ["app-business-site-preview-readonly"],
+                "token_no_default_policy": true,
+                "token_ttl": 3600,
+                "token_max_ttl": 3600
+              }
+              BUSINESS_SITE_PREVIEW_ROLE
+
+              bao write auth/kubernetes/role/business-site-preview-dex - <<'BUSINESS_SITE_PREVIEW_DEX_ROLE'
+              {
+                "bound_service_account_names": ["business-site-preview-dex-secrets"],
+                "bound_service_account_namespaces": ["customer-identity"],
+                "token_policies": ["app-business-site-preview-dex-readonly"],
+                "token_no_default_policy": true,
+                "token_ttl": 3600,
+                "token_max_ttl": 3600
+              }
+              BUSINESS_SITE_PREVIEW_DEX_ROLE
 
               # Dedicated tenant role for wedding-app. Authenticates the tenant's
               # own `wedding-app` ServiceAccount (used by its namespaced
