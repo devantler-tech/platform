@@ -1,0 +1,21 @@
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: github-broker-gate
+spec:
+  reason: >-
+    C-0012's generic credential-text pattern matches the Envoy configuration in
+    the GitHub token broker's github-broker-gate ConfigMap, which names the
+    Authorization header the gate reads bearer tokens from and the key path of
+    the verified token's claims. The ConfigMap holds no credential: callers
+    present short-lived OIDC tokens per request, and the gate verifies them
+    against the issuer's public keys. Other ConfigMaps, controls and genuine
+    credentials remain scanned.
+  match:
+    resources:
+      - apiGroup: ""
+        kind: ConfigMap
+        name: ^github-broker-gate$
+  posture:
+    - controlID: C-0012
+      action: ignore
