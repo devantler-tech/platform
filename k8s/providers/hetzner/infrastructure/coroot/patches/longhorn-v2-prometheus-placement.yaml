@@ -6,16 +6,12 @@ metadata:
   namespace: observability
 spec:
   prometheus:
-    # Move the existing collector and its provider-backed claim together.
-    # Prefer the pinned migration pool and retain a baseline fallback.
+    # Keep the provider-backed collector on baseline compute. The separate
+    # security exporter placement opens space on the preferred worker.
     affinity:
       nodeAffinity:
         requiredDuringSchedulingIgnoredDuringExecution:
           nodeSelectorTerms:
-            - matchExpressions:
-                - key: storage.platform.devantler.tech/migration-pool
-                  operator: In
-                  values: [v2]
             - matchExpressions:
                 - key: platform.devantler.tech/baseline-worker
                   operator: In
@@ -27,6 +23,6 @@ spec:
           - weight: 100
             preference:
               matchExpressions:
-                - key: storage.platform.devantler.tech/migration-pool
+                - key: kubernetes.io/hostname
                   operator: In
-                  values: [v2]
+                  values: [prod-worker-1]
