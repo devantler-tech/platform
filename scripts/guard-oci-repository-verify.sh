@@ -18,7 +18,7 @@
 #   - that entry names a non-empty `issuer` and a non-empty `subject`.
 #   - that subject names ONE first-party repository's own workflow on a branch or tag
 #     ref: a literal repository (never the deleted `actions` publisher, and for `.github`
-#     only its own `cd.yaml`), a literal workflow file or `[^/]+\.ya?ml`, and a literal ref
+#     only its own `cd.yaml`), one literal workflow file (never `[^/]+\.ya?ml`, #6306), and a literal ref
 #     or one of the exact release-tag patterns the sources use (#6266, ADR 0017). A shared
 #     reusable workflow signs with its HOST repository's identity whoever calls it, so
 #     trusting one would let any caller's artifact verify for this source.
@@ -91,11 +91,11 @@ readonly REQUIRED_URL_PREFIX='oci://ghcr.io/devantler-tech/'
 readonly REQUIRED_ISSUER='^https://token\.actions\.githubusercontent\.com$'
 readonly REQUIRED_SUBJECT_PREFIX='^https://github\.com/devantler-tech/'
 # After that prefix, every signer is ONE first-party repository's own workflow (ADR 0017,
-# #6266): a literal repository name, `/\.github/workflows/`, either one literal workflow
-# file or the any-workflow form `[^/]+\.ya?ml`, then `@refs/` and a ref that
-# ref_pattern_is_allowed accepts. A `.` in a name must be escaped, or it would match any
+# #6266): a literal repository name, `/\.github/workflows/`, the one literal workflow
+# file that product releases from (never the any-workflow form, #6306), then `@refs/`
+# and a ref that ref_pattern_is_allowed accepts. A `.` in a name must be escaped, or it would match any
 # character. Groups 1, 3 and 5 are the repository, the file and the ref after `refs/`.
-readonly OWN_SIGNER_RE='^(([A-Za-z0-9_-]|\\\.)+)/\\\.github/workflows/(\[\^/\]\+\\\.ya\?ml|([A-Za-z0-9_-]|\\\.)+)@refs/(.+)$'
+readonly OWN_SIGNER_RE='^(([A-Za-z0-9_-]|\\\.)+)/\\\.github/workflows/(([A-Za-z0-9_-]|\\\.)+)@refs/(.+)$'
 readonly REQUIRED_TENANT_STREAM_SEMVER='>=1.0.0'
 readonly WEDDING_STREAM_URL='oci://ghcr.io/devantler-tech/wedding-app/manifests'
 readonly ASCOACHING_STREAM_URL='oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests'

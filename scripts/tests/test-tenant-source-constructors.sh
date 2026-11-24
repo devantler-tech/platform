@@ -78,6 +78,9 @@ shared-publisher-again	(.spec.resources[] | select(.id == "ociRepository").templ
 unescaped-tenant-name	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) |= sub("[.]replace[(][^)]*[)]"; "")
 any-release-repository	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) |= sub("schema[.]spec[.]name"; "\"[a-z0-9-]+\"")
 retyped-tenant-name	.spec.schema.spec.name = "string | default=\"x\""
+unvalidated-tenant-name	.spec.schema.spec.name = "string"
+any-release-workflow	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) |= sub("[(]schema[.]spec[.]name == \"business-site\" [?] \"publish-runtime\" : \"cd\"[)]"; "\"[^/]+\"")
+shared-release-exception	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) |= sub("schema[.]spec[.]name == \"business-site\""; "true")
 second-identity	(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity) += [{"issuer":".*","subject":".*"}]
 wrong-node-kind	(.spec.resources[] | select(.id == "ociRepository").template.kind) = "Other"
 second-source	.spec.resources += [{"id":"extra","template":{"apiVersion":"source.toolkit.fluxcd.io/v1","kind":"OCIRepository","metadata":{"name":"x"},"spec":{"url":"oci://example.invalid/x"}}}]

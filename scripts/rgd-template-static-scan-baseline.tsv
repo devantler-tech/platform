@@ -17,7 +17,7 @@
 # The parameterized WebApp identities are additionally scanned after actual KRO resolution by
 # test-webapp-compiled-scan.sh: omitted defaults still report writable root and UID/GID <= 10000.
 # Disappearing low-ID rows below are not clearance for those compatibility defaults.
-1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	RGD-CONTENT	SHA256	0e2103d55503c542b7606847910a0ed44c20cc8adcfcc88d828238d229c0625d
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	RGD-CONTENT	SHA256	d52ff34fdbaab99d8afbdebcff8bc78b8bf06cd713b45ca2a335cf624d974517
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0039	LOW	CAUSE-SHA256:a2265d1d299462f16ecc9cc286f8738f334c1445a15972a688edb5646313a834
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0040	LOW	CAUSE-SHA256:a2265d1d299462f16ecc9cc286f8738f334c1445a15972a688edb5646313a834
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomization.yaml	KSV-0039	LOW	CAUSE-SHA256:8c10da5ff473744057ecd21583783774e1906b57fa768c295107f36ba9a91c97
@@ -26,8 +26,8 @@
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomizationSops.yaml	KSV-0040	LOW	CAUSE-SHA256:f57025bd576270d935acc50c9f3187e678cd82bcba5c4fa06ef6359cc1054e6e
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/limitRange.yaml	KSV-0039	LOW	CAUSE-SHA256:b50be454e00e16ae8e1f91bf66112525d43b47f3b543ca3d92eb330bf58cd459
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/limitRange.yaml	KSV-0040	LOW	CAUSE-SHA256:b50be454e00e16ae8e1f91bf66112525d43b47f3b543ca3d92eb330bf58cd459
-1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0039	LOW	CAUSE-SHA256:573586289a171bee1770ca57799fa4b0dfc0c31ecc3e6450f95117b9ec8e4f23
-1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0040	LOW	CAUSE-SHA256:573586289a171bee1770ca57799fa4b0dfc0c31ecc3e6450f95117b9ec8e4f23
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0039	LOW	CAUSE-SHA256:2cd7a6b76d590e4bdd3d192a134e1cd560eed42fa0bd1e6cba22b2c2cc86adbb
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0040	LOW	CAUSE-SHA256:2cd7a6b76d590e4bdd3d192a134e1cd560eed42fa0bd1e6cba22b2c2cc86adbb
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/resourceQuota.yaml	KSV-0039	LOW	CAUSE-SHA256:6c734e7055af24d7df7253ea2132440b043ba4d16d969ea187f684ae1722b82c
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	RGD-CONTENT	SHA256	1e6eeac997228b492769016b77a028a6419887a63d9e2ec1581a705cda49796a
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0013	MEDIUM	CAUSE-SHA256:c801aedba500c27744aa5111215741ee7a4703a4968fb26c3e42a1fd33423767
