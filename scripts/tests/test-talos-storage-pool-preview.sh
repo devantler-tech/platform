@@ -34,6 +34,10 @@ cat >"$scratch/ksail" <<'EOF'
 set -euo pipefail
 [[ $# == 7 && "$1" == --config && -s "$2" && "$3 $4 $5 $6 $7" == "cluster update --dry-run --output json" ]]
 [[ "$(yq '.spec.cluster.autoscaler.node.pools[] | select(.name == "autoscale-longhorn-v2") | .talosPatches | length' "$2")" == 1 ]]
+if [[ -n "${KS_TEST_FAILURE:-}" ]]; then
+  printf '%s\n' "$KS_TEST_FAILURE" >&2
+  exit 73
+fi
 cat -- "$KS_TEST_PLAN"
 printf '%s\n' 'fixture diagnostics must stay private' >&2
 EOF
@@ -53,3 +57,15 @@ if KS_TEST_PLAN="$scratch/incomplete.json" bash scripts/preview-prod-talos-pool-
   exit 1
 fi
 test ! -s "$scratch/incomplete.out"
+
+verify_failed_preview() {
+  local diagnostic=$1 label=$2 status=0
+  KS_TEST_FAILURE="$diagnostic; private fixture value" bash scripts/preview-prod-talos-pool-layout.sh "$scratch/ksail" \
+    >"$scratch/failure.out" 2>"$scratch/failure.err" || status=$?
+  [[ $status == 73 && ! -s "$scratch/failure.out" ]]
+  [[ "$(cat "$scratch/failure.err")" == "Talos lifecycle preview failed ($label, exit 73)." ]]
+}
+
+verify_failed_preview 'could not retrieve current cluster configuration: detect CNI: secrets is forbidden' 'Kubernetes authorization'
+verify_failed_preview 'could not retrieve current cluster configuration: detect CNI: failed to check release history' 'Kubernetes component discovery'
+verify_failed_preview 'unexpected private backend diagnostic' 'unclassified error'

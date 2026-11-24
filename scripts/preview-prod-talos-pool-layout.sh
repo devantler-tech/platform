@@ -11,10 +11,33 @@ fi
 scratch="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/talos-pool-layout.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 bash scripts/render-talos-storage-pool-layout.sh >"$scratch/ksail.production.yaml"
-if ! "$1" --config "$scratch/ksail.production.yaml" cluster update --dry-run --output json \
-  >"$scratch/plan.json" 2>"$scratch/diagnostics.log"; then
-  printf '%s\n' 'The Talos lifecycle preview did not complete.' >&2
-  exit 1
+status=0
+"$1" --config "$scratch/ksail.production.yaml" cluster update --dry-run --output json \
+  >"$scratch/plan.json" 2>"$scratch/diagnostics.log" || status=$?
+if ((status != 0)); then
+  # The native client may report credentials or endpoints alongside an error.
+  # Send fixed classifications to the workflow log and discard the source text.
+  case "$(<"$scratch/diagnostics.log")" in
+    *"is forbidden: User "*|*"secrets is forbidden"*|*"the server has asked for the client to provide credentials"*)
+      reason='Kubernetes authorization' ;;
+    *"failed to create Talos provisioner: create Hetzner provider"*|*"hetzner API token not set"*)
+      reason='Hetzner provider initialization' ;;
+    *"connection refused"*|*"connection reset"*|*"context deadline exceeded"*|*"i/o timeout"*|*"certificate signed by unknown authority"*)
+      reason='endpoint connection' ;;
+    *"detect components"*|*"failed to check release history"*)
+      reason='Kubernetes component discovery' ;;
+    *"upgrade path"*|*"version reconciliation"*|*"detect current Talos version"*)
+      reason='cluster version discovery' ;;
+    *"failed to retrieve machine config"*|*"failed to get machine config"*|*"autoscaler pool patch"*)
+      reason='Talos machine configuration' ;;
+    *"could not retrieve current cluster configuration"*)
+      reason='current cluster configuration' ;;
+    *"invalid autoscaler configuration"*|*"failed to load configuration"*|*"invalid configuration"*)
+      reason='desired cluster configuration' ;;
+    *) reason='unclassified error' ;;
+  esac
+  printf 'Talos lifecycle preview failed (%s, exit %d).\n' "$reason" "$status" >&2
+  exit "$status"
 fi
 
 jq -es '
