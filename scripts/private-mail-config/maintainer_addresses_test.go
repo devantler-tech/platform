@@ -32,7 +32,24 @@ func maintainerAliasesInPlan(t *testing.T, output string) (map[string]any, bool)
 		t.Fatal(err)
 	}
 	for _, op := range ops {
-		if op.Object != "Account" || op.Type != "create" {
+		if op.Object != "Account" {
+			continue
+		}
+		// A retained maintainer (fixture id "retained") is updated in place.
+		if op.Type == "update" {
+			aliases, exists := op.Value["aliases"]
+			if op.ID != "retained" && exists {
+				t.Fatal("receiving aliases granted to another account")
+			}
+			if op.ID == "retained" {
+				if !exists {
+					return nil, false
+				}
+				return aliases.(map[string]any), true
+			}
+			continue
+		}
+		if op.Type != "create" {
 			continue
 		}
 		for ref, value := range op.Value {
@@ -151,6 +168,24 @@ func TestInventoryKeepsSettingsAliasesAndAddsTheRest(t *testing.T) {
 	}
 	if strings.Contains(log.String(), "former-") || strings.Contains(log.String(), "later") {
 		t.Fatal("private inventory leaked")
+	}
+}
+
+// The production adoption case: the maintainer's account already holds the
+// settings' approved aliases, and the inventory adds a new address.
+func TestInventoryExtendsAnAlreadyPopulatedMaintainer(t *testing.T) {
+	existing := map[string]any{"0": nativeAlias("former-a"), "1": nativeAlias("former-b")}
+	input, output := aliasInputs(t, aliasesSettings, receivingInventory([]map[string]any{receivingOwner("retained", "maintainer", existing)}, nil))
+	if err := os.WriteFile(filepath.Join(input, "maintainer-addresses"), []byte("former-b@example.test,maintainer@example.test,later@example.test"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	if command([]string{"--input-dir", input, "--output-file", output}, &log) != 0 {
+		t.Fatalf("adopting the inventory on a populated maintainer refused: %s", &log)
+	}
+	aliases, ok := maintainerAliasesInPlan(t, output)
+	if !ok || len(aliases) != 3 {
+		t.Fatalf("adopted aliases = %v", aliases)
 	}
 }
 

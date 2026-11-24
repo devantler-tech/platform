@@ -161,7 +161,7 @@ func TestAliasReadbackRejectsAnExtraReceivingIdentity(t *testing.T) {
 }
 
 func TestAliasPlanRefusesExistingOwnersAndIncompleteCensus(t *testing.T) {
-	for _, kind := range []string{"account-primary", "account-alias", "disabled-account-alias", "group-primary", "list-primary", "list-alias", "maintainer-extra", "maintainer-partial", "maintainer-wrong-type", "missing-account", "partial-account", "partial-list", "duplicate-account-id", "domain-alias"} {
+	for _, kind := range []string{"account-primary", "account-alias", "disabled-account-alias", "group-primary", "list-primary", "list-alias", "maintainer-extra", "maintainer-subset-plus-extra", "maintainer-disabled", "maintainer-described", "maintainer-wrong-type", "missing-account", "partial-account", "partial-list", "duplicate-account-id", "domain-alias"} {
 		t.Run(kind, func(t *testing.T) {
 			maintainer := receivingOwner("retained", "maintainer", map[string]any{})
 			other := receivingOwner("competing", "other", map[string]any{})
@@ -189,8 +189,16 @@ func TestAliasPlanRefusesExistingOwnersAndIncompleteCensus(t *testing.T) {
 				lists = append(lists, other)
 			case "maintainer-extra":
 				maintainer["aliases"] = map[string]any{"0": nativeAlias("unapproved")}
-			case "maintainer-partial":
-				maintainer["aliases"] = map[string]any{"0": nativeAlias("former-a")}
+			case "maintainer-subset-plus-extra":
+				maintainer["aliases"] = map[string]any{"0": nativeAlias("former-a"), "1": nativeAlias("unapproved")}
+			case "maintainer-disabled":
+				alias := nativeAlias("former-a")
+				alias["enabled"] = false
+				maintainer["aliases"] = map[string]any{"0": alias}
+			case "maintainer-described":
+				alias := nativeAlias("former-a")
+				alias["description"] = "kept elsewhere"
+				maintainer["aliases"] = map[string]any{"0": alias}
 			case "maintainer-wrong-type":
 				maintainer["@type"] = "Group"
 			}
@@ -218,6 +226,40 @@ func TestAliasPlanRefusesExistingOwnersAndIncompleteCensus(t *testing.T) {
 				t.Fatal("refused ownership produced a plan")
 			}
 		})
+	}
+}
+
+// An approved set can grow, for example when the address inventory adds an
+// address (#5481): the maintainer already holds part of the desired set, and
+// the plan sets the whole of it.
+func TestAliasPlanGrowsAnApprovedSubset(t *testing.T) {
+	existing := map[string]any{"0": nativeAlias("former-a")}
+	input, output := aliasInputs(t, aliasesSettings, receivingInventory([]map[string]any{receivingOwner("retained", "maintainer", existing)}, nil))
+	var log bytes.Buffer
+	if command([]string{"--input-dir", input, "--output-file", output}, &log) != 0 {
+		t.Fatalf("growing an approved subset refused: %s", &log)
+	}
+	raw, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops, err := planOperations(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"0": map[string]any{"name": "former-a", "domainId": "#domain", "enabled": true, "description": nil},
+		"1": map[string]any{"name": "former-b", "domainId": "#domain", "enabled": true, "description": nil},
+	}
+	found := false
+	for _, op := range ops {
+		// The retained maintainer is updated in place, with the whole set.
+		if op.Object == "Account" && op.Type == "update" && op.ID == "retained" {
+			found = reflect.DeepEqual(op.Value["aliases"], want)
+		}
+	}
+	if !found {
+		t.Fatal("the plan must set the complete desired alias set on the retained maintainer")
 	}
 }
 
