@@ -125,12 +125,12 @@ patches:
       spec:
         values:
           cainjector:
-            tolerations:
+            tolerations: &certificate_control_plane_tolerations
               - key: node-role.kubernetes.io/control-plane
                 operator: Exists
                 effect: NoSchedule
             affinity:
-              nodeAffinity:
+              nodeAffinity: &certificate_control_plane_affinity
                 requiredDuringSchedulingIgnoredDuringExecution:
                   nodeSelectorTerms:
                     - matchExpressions:
@@ -143,11 +143,34 @@ patches:
                       matchLabels:
                         app.kubernetes.io/name: cainjector
                         app.kubernetes.io/instance: cert-manager
-            strategy:
+            strategy: &certificate_control_plane_rollout
               type: RollingUpdate
               rollingUpdate:
                 maxSurge: 1
                 maxUnavailable: 0
+          tolerations: *certificate_control_plane_tolerations
+          affinity:
+            nodeAffinity: *certificate_control_plane_affinity
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: cert-manager
+                      app.kubernetes.io/instance: cert-manager
+          strategy: *certificate_control_plane_rollout
+          webhook:
+            tolerations: *certificate_control_plane_tolerations
+            affinity:
+              nodeAffinity: *certificate_control_plane_affinity
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - topologyKey: kubernetes.io/hostname
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: webhook
+                        app.kubernetes.io/instance: cert-manager
+            strategy: *certificate_control_plane_rollout
   - target:
       group: helm.toolkit.fluxcd.io
       version: v2

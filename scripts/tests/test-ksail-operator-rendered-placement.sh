@@ -63,12 +63,12 @@ assert_workload_headroom() {
           {matchExpressions:[{key:"kubernetes.io/hostname",operator:"NotIn",values:$hosts}]}]},
         preferredDuringSchedulingIgnoredDuringExecution:[{weight:100,preference:{
           matchExpressions:[{key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v2"]}]}}]}};
-    def cainjector_affinity:
+    def certificate_affinity($name):
       {nodeAffinity:{requiredDuringSchedulingIgnoredDuringExecution:{nodeSelectorTerms:[
         {matchExpressions:[{key:"node-role.kubernetes.io/control-plane",operator:"Exists"}]}]}},
        podAntiAffinity:{requiredDuringSchedulingIgnoredDuringExecution:[
         {topologyKey:"kubernetes.io/hostname",labelSelector:{matchLabels:{
-          "app.kubernetes.io/name":"cainjector","app.kubernetes.io/instance":"cert-manager"}}}]}};
+          "app.kubernetes.io/name":$name,"app.kubernetes.io/instance":"cert-manager"}}}]}};
     workload("HelmRelease";"kubescape";"kubescape") as $kubescape |
     workload("Deployment";"observability";"crossplane-sync-exporter") as $exporter |
     workload("HelmRelease";"policy-reporter";"policy-reporter") as $reporter |
@@ -117,18 +117,25 @@ assert_workload_headroom() {
       $secrets.certController.affinity == $secrets.affinity and
       $secrets.strategy == rolling_strategy and
       $secrets.certController.strategy == rolling_strategy and
-      $certificates.cainjector.affinity == cainjector_affinity and
+      $certificates.cainjector.affinity == certificate_affinity("cainjector") and
       $certificates.cainjector.tolerations ==
         [{key:"node-role.kubernetes.io/control-plane",operator:"Exists",effect:"NoSchedule"}] and
       $certificates.cainjector.strategy == rolling_strategy and
-      $certificates.cainjector.podDisruptionBudget == {enabled:true,minAvailable:1}
+      $certificates.cainjector.podDisruptionBudget == {enabled:true,minAvailable:1} and
+      $certificates.affinity == certificate_affinity("cert-manager") and
+      $certificates.webhook.affinity == certificate_affinity("webhook") and
+      all([$certificates,$certificates.webhook][];
+        .tolerations == $certificates.cainjector.tolerations and
+        .strategy == rolling_strategy and
+        .podDisruptionBudget == {enabled:true,minAvailable:1})
     else
       $hubbleAffinity == null and $veleroAffinity.requiredDuringSchedulingIgnoredDuringExecution == null and
       $cnpg.affinity == null and $cnpg.updateStrategy.rollingUpdate == {maxSurge:0,maxUnavailable:1} and
       $secrets.affinity == null and $secrets.certController.affinity == null and
       $secrets.strategy == null and $secrets.certController.strategy == null and
-      $certificates.cainjector.affinity == null and $certificates.cainjector.tolerations == null and
-      $certificates.cainjector.strategy.rollingUpdate == {maxSurge:0,maxUnavailable:1}
+      all([$certificates,$certificates.webhook,$certificates.cainjector][];
+        .affinity == null and .tolerations == null and
+        .strategy.rollingUpdate == {maxSurge:0,maxUnavailable:1})
     end) and
     $secrets.webhook.affinity == null and $secrets.webhook.strategy == null and
     $probe.spec.replicas == 2 and $probeBudget.spec.maxUnavailable == 1 and
