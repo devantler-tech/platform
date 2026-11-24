@@ -184,7 +184,11 @@ check pilot-cleanup "$deletion" null "$pilot_child" "$kro" DELETE pass '' "[$pil
 check active-pilot-collision-rollback "$deletion" null "$pilot_child" "$kro" DELETE fail '' "[$(jq 'del(.metadata.deletionTimestamp)' <<<"$pilot_owner")]"
 
 prod_tenant='{"apiVersion":"kro.run/v1alpha1","kind":"Tenant","metadata":{"name":"business-site","namespace":"flux-system"},"spec":{"name":"business-site"}}'
-preview_tenant="$(jq '.metadata.name += "-dev" | .spec.source.reconcileApplication=false | .spec.resourceQuota.enabled=true' <<<"$prod_tenant")"
+kubectl kustomize "$root/k8s/providers/hetzner/apps" >"$scratch/apps.yaml" || fail 'production apps must render'
+preview_tenant="$(
+  yq -o=json -I=0 'select(.kind == "Tenant" and .metadata.name == "business-site-dev")' "$scratch/apps.yaml" |
+    jq -ces 'if length == 1 then .[0] else error("expected the reserved source-only preview Tenant") end'
+)" || fail 'the reserved preview Tenant must be declared in the production apps layer'
 reserved_namespace='{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"business-site-dev","labels":{"app.kubernetes.io/managed-by":"kro","kro.run/instance-kind":"Tenant","kro.run/instance-name":"business-site-dev","kro.run/instance-namespace":"flux-system","kro.run/node-id":"tenantNamespace","pod-security.kubernetes.io/enforce":"restricted"}}}'
 unrelated_namespace="$(jq '.metadata.name="unrelated-dev"' <<<"$reserved_namespace")"
 check production-tenant "$preview_parent" "$prod_tenant" null "$flux" CREATE pass '' '[]' servererror
