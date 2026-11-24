@@ -4,9 +4,10 @@ The Hetzner controllers overlay enables this temporary placement for the V1 runt
 rollout in #6073: Velero's server uses the temporary V2 migration pool, Hetzner CSI
 uses the three existing migration workers, and Reloader and the Flux Helm
 controller use the existing control-plane nodes with a narrow control-plane
-NoSchedule toleration. The policy-reporting UI uses workers 1 and 2 or the V2
-migration worker through its production patch. Its three eligible hosts allow
-two replicas and a rolling surge to remain on separate nodes. Kustomize's two controllers
+NoSchedule toleration. The policy-reporting UI, Hubble UI and the data product
+contract probe use the three migration workers to free memory for V2 managers
+on the permanent workers. Their rollouts keep both replicas available.
+Kustomize's two controllers
 use worker 1 or the migration workers; the Coroot security-progress collector
 and the vulnerability scanner use worker 1 or the V2 migration worker. The
 scanner's memory request follows its autoscaler recommendation, so a single
@@ -18,8 +19,10 @@ configured by their owning releases. Node agents
 keep their existing placement. No server or storage capacity is added.
 The Flux controllers' placements live in the production FluxInstance's existing
 controller patches, because the FluxInstance reconciles in its own layer. The
-security-progress and policy-reporting UI patches live in the production infrastructure layer. The collector's
-existing single-writer Recreate rollout briefly pauses security-progress metrics.
+security-progress and policy-reporting UI patches live in the production
+infrastructure layer. The Hubble UI patch lives in its controller layer, and
+the contract probe uses the separate component in the production apps layer.
+The collector's single-writer Recreate rollout briefly pauses security-progress metrics.
 
 Before rollout, verify the three temporary workers and three control-plane nodes are
 Ready, have no pressure and have both request and resident-memory headroom for
@@ -36,19 +39,14 @@ attachment to remain healthy. Re-run the complete native runtime census.
 Placement itself proves neither overlap capacity nor adoption of the approved
 instance-manager image. A remaining HOLD still blocks adoption.
 
-The policy-reporting UI needs three Ready, schedulable eligible hosts for its
-two replicas and rolling surge. Before cordoning, rebuilding or retiring any
-of its eligible hosts, replace or remove its temporary placement through a
-reviewed change. Verify the replacement hosts' request and resident-memory
-budgets, complete the UI rollout and require both replicas Ready before host
-maintenance begins. This prerequisite applies before the first permanent-worker
-preparation, as well as before maintenance of its temporary migration worker.
+The dashboards and contract probe need three Ready, schedulable migration hosts
+for their replicas and rolling surge. Before taking any of those hosts out of
+service, replace the temporary placement through review. Verify the replacement
+hosts' request and resident-memory budgets and wait for both replicas of each
+workload to become Ready before starting host maintenance.
 
-Remove these temporary placements, including the FluxInstance controller patches
-and the security-progress and policy-reporting UI patches,
-through a reviewed change after the migration's
-runtime and backup checks pass, before rebuilding or retiring any temporary
-CSI or Velero target. Keep that cleanup within #6073 and verify the
-ordinary worker placement has sufficient headroom before returning controllers
-there. Returning to the preceding Git configuration restores their ordinary
-placement.
+After the migration's runtime and backup checks pass, remove the temporary
+controller and dashboard placements, the FluxInstance patches and the contract
+probe component through review under #6432. Verify ordinary placement has
+sufficient headroom before rebuilding or retiring any temporary CSI or Velero
+target.

@@ -96,9 +96,103 @@ for change in \
   if valid_policy "${invalid}"; then fail 'widened policy mutation was accepted'; fi
 done
 
+check_preview_payload() {
+  local kind="$1" command="$2" end="$3" payload
+  payload="$(extract_payload "$command - <<'$end'" "$end")" ||
+    fail "missing or duplicate $kind bootstrap payload"
+  "${binary_dir}/check" "$kind" <<<"$payload" || fail "$kind exceeds its dedicated scope"
+}
+
+check_preview_payload preview-role 'bao write auth/kubernetes/role/business-site-preview' BUSINESS_SITE_PREVIEW_ROLE
+check_preview_payload preview-dex-role 'bao write auth/kubernetes/role/business-site-preview-dex' BUSINESS_SITE_PREVIEW_DEX_ROLE
+check_preview_payload preview-policy 'bao policy write app-business-site-preview-readonly' BUSINESS_SITE_PREVIEW_POLICY
+check_preview_payload preview-dex-policy 'bao policy write app-business-site-preview-dex-readonly' BUSINESS_SITE_PREVIEW_DEX_POLICY
+
+preview_seeds="$(kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/vault-seed")"
+check_preview_seed() {
+  local name="$1" key="$2" property="$3"
+  yq -o=json -I=0 '.' <<<"$preview_seeds" |
+    jq -es --arg name "$name" --arg key "$key" --arg property "$property" '
+      def resource($kind; $name):
+        [.[]|select(.kind==$kind and .metadata.name==$name and .metadata.namespace=="openbao")] |
+        if length==1 then .[0].spec else error("expected exactly one preview seed resource") end;
+      (resource("Password"; $name)|.length==48) and
+      (resource("ExternalSecret"; "generated-"+$name)|
+        .refreshPolicy=="CreatedOnce" and
+        .target=={"creationPolicy":"Owner","name":("generated-"+$name)} and
+        .dataFrom==[{sourceRef:{generatorRef:{apiVersion:"generators.external-secrets.io/v1alpha1",kind:"Password",name:$name}}}]) and
+      (resource("PushSecret"; "push-"+$name)|
+        .updatePolicy=="IfNotExists" and .selector.secret.name==("generated-"+$name) and
+        .secretStoreRefs==[{kind:"ClusterSecretStore",name:"openbao"}] and
+        .data==[{match:{secretKey:"password",remoteRef:{remoteKey:("apps/business-site-dev/"+$key),property:$property}}}])
+    ' >/dev/null || fail "incorrect generated credential wiring for $name"
+}
+
+check_preview_seed business-site-preview-oidc oidc client-secret
+check_preview_seed business-site-preview-db-migrator portal-migrator password
+check_preview_seed business-site-preview-db-web portal-web password
+
+kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps/customer-identity" |
+  yq -o=json -I=0 '.' |
+  jq -es '
+    def resource($kind; $name):
+      [.[]|select(.kind==$kind and .metadata.name==$name and .metadata.namespace=="customer-identity")] |
+      if length==1 then .[0] else error("expected exactly one preview Dex resource") end;
+    (resource("ServiceAccount"; "business-site-preview-dex-secrets")|.automountServiceAccountToken==false) and
+    (resource("SecretStore"; "business-site-preview-dex")|.spec.provider.vault=={
+      server:"http://openbao-active.openbao.svc.cluster.local:8200",path:"secret",version:"v2",
+      auth:{kubernetes:{mountPath:"kubernetes",role:"business-site-preview-dex",
+        serviceAccountRef:{name:"business-site-preview-dex-secrets"}}}
+    }) and
+    (resource("ExternalSecret"; "customer-dex-preview-client")|.spec=={
+      refreshInterval:"1h",secretStoreRef:{kind:"SecretStore",name:"business-site-preview-dex"},
+      target:{creationPolicy:"Owner",name:"customer-dex-preview-client"},
+      data:[{secretKey:"client-secret",remoteRef:{key:"apps/business-site-dev/oidc",property:"client-secret"}}]
+    })
+  ' >/dev/null || fail 'the preview Dex consumer must read only its dedicated client value'
+
+kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
+  yq -o=json -I=0 'select(.metadata.namespace == "business-site-dev")' |
+  jq -es '
+    def spec($kind; $name):
+      [.[]|select(.kind==$kind and .metadata.name==$name)] |
+      if length==1 then .[0].spec else error("expected exactly one preview resource") end;
+    def paths: [.data[].remoteRef.key] | sort;
+    (any(.[]; .kind=="WebApp" or .kind=="HTTPRoute" or .kind=="Deployment")|not) and
+    (spec("Cluster";"portal-preview-db")|
+      .instances==1 and .enablePDB==false and .enableSuperuserAccess==false and
+      .storage.storageClass=="longhorn-wffc" and .bootstrap.initdb.database=="portal_preview" and
+      .bootstrap.initdb.owner=="portal_preview_migrator" and
+      .managed.roles==[
+        {name:"portal_preview_migrator",ensure:"present",login:true,passwordSecret:{name:"portal-preview-db-migrator"}},
+        {name:"portal_preview_web",ensure:"present",login:true,inherit:false,passwordSecret:{name:"portal-preview-db-web"}},
+        {name:"coroot_monitor",ensure:"present",login:true,inRoles:["pg_monitor"],
+          passwordSecret:{name:"portal-preview-db-coroot-monitor"}}] and
+      .certificates.serverAltDNSNames==["portal-preview-db-rw.business-site-dev.svc.cluster.local"]) and
+    (spec("PushSecret";"portal-preview-db-ca")|
+      .selector.secret.name=="portal-preview-db-ca" and
+      .data==[{match:{secretKey:"ca.crt",remoteRef:{remoteKey:"apps/business-site-dev/portal-db-ca",property:"ca"}}}]) and
+    (spec("ExternalSecret";"business-site-dev-migration")|
+      paths==["apps/business-site-dev/portal-db-ca","apps/business-site-dev/portal-migrator"] and
+      (.target.template.data["database-url"]|startswith("postgres://portal_preview_migrator:") and
+        endswith("@portal-preview-db-rw.business-site-dev.svc.cluster.local:5432/portal_preview?sslmode=verify-full&sslrootcert=/run/portal-migration/ca.crt"))) and
+    (spec("ExternalSecret";"business-site-dev-runtime")|
+      paths==["apps/business-site-dev/oidc","apps/business-site-dev/portal-db-ca","apps/business-site-dev/portal-web"] and
+      (.target.template.data["portal-settings"]|split("\n")|map(select(length>0)) as $settings |
+        ($settings|map(split("=")[0])|sort)==[
+          "PORTAL_CALLBACK_URL","PORTAL_CLIENT_SECRET_PROJECTION_FILE","PORTAL_DATABASE_URL","PORTAL_IDENTITY_PROFILE",
+          "PORTAL_OIDC_CLIENT_ID","PORTAL_OIDC_ISSUER","PORTAL_OPERATOR_SUBJECTS"] and
+        any($settings[]; .=="PORTAL_IDENTITY_PROFILE=preview") and
+        any($settings[]; .=="PORTAL_CALLBACK_URL=https://dev.devantler.tech/callback") and
+        any($settings[]; .=="PORTAL_OIDC_CLIENT_ID=business-site-preview") and
+        any($settings[]; startswith("PORTAL_DATABASE_URL=postgres://portal_preview_web:") and
+          endswith("@portal-preview-db-rw.business-site-dev.svc.cluster.local:5432/portal_preview?sslmode=verify-full&sslrootcert=/run/webapp-inputs/portal-database-ca"))))
+  ' >/dev/null || fail 'the preview database and projected inputs must stay isolated'
+
 grep -Fq "'scripts/tests/test-business-disclosure-reader.sh'" "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must select changes to this contract'
 grep -Fq 'bash scripts/tests/test-business-disclosure-reader.sh' "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must execute this contract'
 
 printf 'PASS: rendered business disclosure identity and 29 invalid-payload controls\n'
+printf 'PASS: isolated preview readers, create-only credential seeds, and verified-TLS database projections\n'
