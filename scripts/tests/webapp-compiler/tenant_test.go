@@ -38,7 +38,7 @@ import (
 // A tenant follows its own stable releases (ADR 0019): a semver range, stable `X.Y.Z` only,
 // signed by its own repository's release workflow on a release tag.
 const stableReleases = `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
-const defaultTenantSubject = `^https://github\.com/devantler-tech/tenant\-fixture/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$`
+const defaultTenantSubject = `^https://github\.com/devantler-tech/tenant\-fixture/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$`
 
 func releaseRef() map[string]interface{} {
 	return map[string]interface{}{"semver": ">=0.0.0", "semverFilter": stableReleases}
@@ -259,6 +259,36 @@ func TestCommittedTenant(t *testing.T) {
 			}
 		}
 	})
+	// The tenant name is also the repository the release signature must come from,
+	// so the graph validates it as a DNS label itself (#6306) rather than relying on
+	// the Namespace it later names.
+	t.Run("tenant-name-is-a-dns-label", func(t *testing.T) {
+		for name, valid := range map[string]bool{
+			"tenant-fixture":        true,
+			"a":                     true,
+			"0tenant":               true,
+			strings.Repeat("a", 63): true,
+			strings.Repeat("a", 64): false,
+			"Tenant-Fixture":        false,
+			"tenant.fixture":        false,
+			"tenant_fixture":        false,
+			"-tenant":               false,
+			"tenant-":               false,
+			"":                      false,
+		} {
+			input := instance("name-check", map[string]interface{}{})
+			if err := unstructured.SetNestedField(input.Object, name, "spec", "name"); err != nil {
+				t.Fatal(err)
+			}
+			err := admit(input)
+			if valid && err != nil {
+				t.Fatalf("tenant name %q must be admitted: %v", name, err)
+			}
+			if !valid && (!apierrors.IsInvalid(err) || !strings.Contains(err.Error(), "spec.name")) {
+				t.Fatalf("tenant name %q must be refused by the graph's name rule: %v", name, err)
+			}
+		}
+	})
 	for _, sops := range []bool{false, true} {
 		t.Run(fmt.Sprintf("omitted-source-sops-%t", sops), func(t *testing.T) {
 			input := instance("default-fixture", map[string]interface{}{"sops": sops})
@@ -300,23 +330,30 @@ func TestCommittedTenant(t *testing.T) {
 			assertTenantIdentity(t, source, defaultTenantSubject)
 		})
 		// The own-release alternative is built from the tenant name, regex-escaped. A
-		// name carrying `.` must not become a wildcard: compile one directly (the
-		// Namespace would refuse it, but the subject is checked on its own here).
+		// name carrying `.` must not become a wildcard. The graph refuses such a name at
+		// admission (#6306); compile one directly to check the subject on its own.
 		t.Run(fmt.Sprintf("own-release-escapes-tenant-name-sops-%t", sops), func(t *testing.T) {
 			input := instance("escaped-fixture", map[string]interface{}{"sops": sops})
-			if err := unstructured.SetNestedField(input.Object, "tenant.fixture", "spec", "name"); err != nil {
-				t.Fatal(err)
-			}
 			// Admission supplies the schema defaults the graph reads.
 			if err := admit(input); err != nil {
+				t.Fatal(err)
+			}
+			refused := instance("escaped-refusal", map[string]interface{}{"sops": sops})
+			if err := unstructured.SetNestedField(refused.Object, "tenant.fixture", "spec", "name"); err != nil {
+				t.Fatal(err)
+			}
+			if err := admit(refused); !apierrors.IsInvalid(err) || !strings.Contains(err.Error(), "spec.name") {
+				t.Fatalf("the graph must refuse a dotted tenant name itself: %v", err)
+			}
+			if err := unstructured.SetNestedField(input.Object, "tenant.fixture", "spec", "name"); err != nil {
 				t.Fatal(err)
 			}
 			objects, _ := desiredTenant(t, engine, &definition, input)
 			matcher := compiledSubject(t, objects["ociRepository"])
 			for identity, want := range map[string]bool{
-				"https://github.com/devantler-tech/tenant.fixture/.github/workflows/release.yaml@refs/tags/v1.2.3": true,
-				"https://github.com/devantler-tech/tenantXfixture/.github/workflows/release.yaml@refs/tags/v1.2.3": false,
-				"https://github.com/devantler-tech/tenant-fixture/.github/workflows/release.yaml@refs/tags/v1.2.3": false,
+				"https://github.com/devantler-tech/tenant.fixture/.github/workflows/cd.yaml@refs/tags/v1.2.3": true,
+				"https://github.com/devantler-tech/tenantXfixture/.github/workflows/cd.yaml@refs/tags/v1.2.3": false,
+				"https://github.com/devantler-tech/tenant-fixture/.github/workflows/cd.yaml@refs/tags/v1.2.3": false,
 			} {
 				if got := matcher.MatchString(identity); got != want {
 					t.Fatalf("compiled subject for a dotted tenant name accepts %s = %t, want %t", identity, got, want)
@@ -430,18 +467,26 @@ func TestCommittedTenant(t *testing.T) {
 					}
 					objects, _ := desiredTenant(t, engine, &definition, input)
 					matcher := compiledSubject(t, objects["ociRepository"])
+					// Each tenant trusts only the workflow it releases from (#6306):
+					// cd.yaml, and publish-runtime.yaml for business-site.
+					release, alien := "cd.yaml", "publish-runtime.yaml"
+					if name == "business-site" {
+						release, alien = alien, release
+					}
 					want := map[string]bool{
-						"https://github.com/devantler-tech/" + name + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                        true,
+						"https://github.com/devantler-tech/" + name + "/.github/workflows/" + release + "@refs/tags/v1.2.3":                     true,
+						"https://github.com/devantler-tech/" + name + "/.github/workflows/" + alien + "@refs/tags/v1.2.3":                       false,
+						"https://github.com/devantler-tech/" + name + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                        false,
 						"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35": false,
 						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                         false,
 						"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0":                   false,
-						"https://github.com/devantler-tech/actions/.github/workflows/release.yaml@refs/tags/v1.2.3":                             false,
+						"https://github.com/devantler-tech/actions/.github/workflows/cd.yaml@refs/tags/v1.2.3":                                  false,
 						"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("e", 40):               false,
 						"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                         false,
 					}
 					for _, other := range names {
 						if other != name {
-							want["https://github.com/devantler-tech/"+other+"/.github/workflows/release.yaml@refs/tags/v1.2.3"] = false
+							want["https://github.com/devantler-tech/"+other+"/.github/workflows/cd.yaml@refs/tags/v1.2.3"] = false
 						}
 					}
 					for identity, accepted := range want {
@@ -825,35 +870,39 @@ func assertDefaultSubjectTrustsOnlyOwnRelease(t *testing.T, source *unstructured
 	matcher := compiledSubject(t, source)
 	own := "https://github.com/devantler-tech/" + tenant
 	for identity, want := range map[string]bool{
-		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                                                                         true,
-		own + "/.github/workflows/cd.yml@refs/tags/v1.2.3-rc.1":                                                                          true,
-		own + "/.github/workflows/release.yaml@refs/tags/v0.0.0-alpha.0.beta-2":                                                          true,
-		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35":          false,
-		own + "-x/.github/workflows/release.yaml@refs/tags/v1.2.3":                                                                       false,
-		"https://github.com/devantler-tech/x" + tenant + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                              false,
-		"https://github.com/devantler-tech/" + strings.ReplaceAll(tenant, "-", "X") + "/.github/workflows/release.yaml@refs/tags/v1.2.3": false,
-		"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3":                                  false,
-		"https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/release.yaml@refs/tags/v1.2.3":                            false,
-		"https://github.com/another-org/" + tenant + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                                  false,
-		own + "/.github/workflows/release.yaml@refs/heads/main":                                                                          false,
-		own + "/.github/workflows/release.yaml@refs/pull/1/merge":                                                                        false,
-		own + "/.github/workflows/release.yaml@" + strings.Repeat("a", 40):                                                               false,
-		own + "/.github/workflows/release.yaml@refs/tags/v1.2":                                                                           false,
-		own + "/.github/workflows/release.yaml@refs/tags/1.2.3":                                                                          false,
-		own + "/.github/workflows/release.yaml@refs/tags/latest":                                                                         false,
-		own + "/.github/workflows/release.yaml@refs/tags/v01.2.3":                                                                        false,
-		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3+build.1":                                                                 false,
-		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3-":                                                                        false,
-		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3/../evil":                                                                 false,
-		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3-rc.1/x":                                                                  false,
-		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3x":                                                                        false,
-		own + "/.github/workflows/nested/release.yaml@refs/tags/v1.2.3":                                                                  false,
-		own + "/.github/workflows/../actions/release.yaml@refs/tags/v1.2.3":                                                              false,
-		own + "/.github/actions/release.yaml@refs/tags/v1.2.3":                                                                           false,
-		own + "/release.yaml@refs/tags/v1.2.3":                                                                                           false,
-		own + "/.github/workflows/release.json@refs/tags/v1.2.3":                                                                         false,
-		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v21.3.4":                                 false,
-		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                                  false,
+		own + "/.github/workflows/cd.yaml@refs/tags/v1.2.3":                                                                         true,
+		own + "/.github/workflows/cd.yaml@refs/tags/v1.2.3-rc.1":                                                                    true,
+		own + "/.github/workflows/cd.yml@refs/tags/v1.2.3":                                                                          false,
+		own + "/.github/workflows/release.yaml@refs/tags/v1.2.3":                                                                    false,
+		own + "/.github/workflows/publish-runtime.yaml@refs/tags/v1.2.3":                                                            false,
+		own + "/.github/workflows/lint.yaml@refs/tags/v1.2.3":                                                                       false,
+		own + "/.github/workflows/cd.yaml@refs/tags/v0.0.0-alpha.0.beta-2":                                                          true,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@a76d5df9371cf712a8f60307fde060825a34cf35":     false,
+		own + "-x/.github/workflows/cd.yaml@refs/tags/v1.2.3":                                                                       false,
+		"https://github.com/devantler-tech/x" + tenant + "/.github/workflows/cd.yaml@refs/tags/v1.2.3":                              false,
+		"https://github.com/devantler-tech/" + strings.ReplaceAll(tenant, "-", "X") + "/.github/workflows/cd.yaml@refs/tags/v1.2.3": false,
+		"https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@refs/tags/v1.2.3":                                  false,
+		"https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/cd.yaml@refs/tags/v1.2.3":                            false,
+		"https://github.com/another-org/" + tenant + "/.github/workflows/cd.yaml@refs/tags/v1.2.3":                                  false,
+		own + "/.github/workflows/cd.yaml@refs/heads/main":                                                                          false,
+		own + "/.github/workflows/cd.yaml@refs/pull/1/merge":                                                                        false,
+		own + "/.github/workflows/cd.yaml@" + strings.Repeat("a", 40):                                                               false,
+		own + "/.github/workflows/cd.yaml@refs/tags/v1.2":                                                                           false,
+		own + "/.github/workflows/cd.yaml@refs/tags/1.2.3":                                                                          false,
+		own + "/.github/workflows/cd.yaml@refs/tags/latest":                                                                         false,
+		own + "/.github/workflows/cd.yaml@refs/tags/v01.2.3":                                                                        false,
+		own + "/.github/workflows/cd.yaml@refs/tags/v1.2.3+build.1":                                                                 false,
+		own + "/.github/workflows/cd.yaml@refs/tags/v1.2.3-":                                                                        false,
+		own + "/.github/workflows/cd.yaml@refs/tags/v1.2.3/../evil":                                                                 false,
+		own + "/.github/workflows/cd.yaml@refs/tags/v1.2.3-rc.1/x":                                                                  false,
+		own + "/.github/workflows/cd.yaml@refs/tags/v1.2.3x":                                                                        false,
+		own + "/.github/workflows/nested/cd.yaml@refs/tags/v1.2.3":                                                                  false,
+		own + "/.github/workflows/../actions/cd.yaml@refs/tags/v1.2.3":                                                              false,
+		own + "/.github/actions/cd.yaml@refs/tags/v1.2.3":                                                                           false,
+		own + "/release.yaml@refs/tags/v1.2.3":                                                                                      false,
+		own + "/.github/workflows/release.json@refs/tags/v1.2.3":                                                                    false,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v21.3.4":                            false,
+		"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                             false,
 		// A repository named `actions` is not this tenant's own: its release tags and
 		// the deleted publisher's commits are refused here, whatever the image rules do.
 		"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3":                         false,

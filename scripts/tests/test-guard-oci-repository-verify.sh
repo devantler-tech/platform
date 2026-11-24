@@ -40,7 +40,7 @@ trap 'rm -rf "$WORK"' EXIT
 : >"$WORK/no-exemptions.tsv"
 
 readonly ISSUER="'^https://token\\.actions\\.githubusercontent\\.com\$'"
-readonly SUBJECT="'^https://github\\.com/devantler-tech/wedding-app/\\.github/workflows/[^/]+\\.ya?ml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+\$'"
+readonly SUBJECT="'^https://github\\.com/devantler-tech/wedding-app/\\.github/workflows/cd\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+\$'"
 
 good_verify() {
   printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "$SUBJECT"
@@ -305,7 +305,7 @@ done <<'CASES'
 shared-beside-own	refuse	trusts subject	^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812|sg/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0)$
 legacy-commit-pin	refuse	trusts subject	^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}$
 optional-extension-pattern	refuse	trusts subject	^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.ya?ml@af042c540ce8db4d64add98c34b5c57691e0e812$
-github-any-workflow	refuse	trusts devantler-tech/.github's	^https://github\.com/devantler-tech/\.github/\.github/workflows/[^/]+\.ya?ml@refs/tags/v1\.0\.0$
+github-any-workflow	refuse	trusts subject	^https://github\.com/devantler-tech/\.github/\.github/workflows/[^/]+\.ya?ml@refs/tags/v1\.0\.0$
 github-shared-tag	refuse	trusts devantler-tech/.github's	^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@refs/tags/v21\.3\.4$
 deleted-actions-tag	refuse	trusts the deleted shared publisher repository	^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@refs/tags/v1\.2\.3$
 top-level-alternation	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0|\.github/\.github/workflows/publish-app\.yaml@.*$
@@ -313,6 +313,7 @@ mid-pattern-anchor	refuse	trusts subject	^https://github\.com/devantler-tech/sg/
 unclosed-group	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/(v1$
 unescaped-repository-dot	refuse	trusts subject	^https://github\.com/devantler-tech/.github/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0$
 any-repository	refuse	trusts subject	^https://github\.com/devantler-tech/[^/]+/\.github/workflows/cd\.yaml@refs/tags/v1\.0\.0$
+own-any-workflow	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/[^/]+\.ya?ml@refs/tags/v1\.0\.0$
 own-commit-pin	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@[0-9a-f]{40}$
 quoted-delimiter-alternation	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/\Q(\E|^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812$|\Q)\E$
 other-escape	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v\d+\.\d+\.\d+$
@@ -320,7 +321,7 @@ leading-bracket-class	refuse	trusts subject	^https://github\.com/devantler-tech/
 unlisted-ref-pattern	refuse	trusts subject	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v.*$
 github-own-release	accept	-	^https://github\.com/devantler-tech/\.github/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
 own-branch-workflow	accept	-	^https://github\.com/devantler-tech/platform/\.github/workflows/publish-longhorn-v2-only\.yaml@refs/heads/main$
-own-strict-semver	accept	-	^https://github\.com/devantler-tech/sg/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
+own-strict-semver	accept	-	^https://github\.com/devantler-tech/sg/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
 own-literal-tag	accept	-	^https://github\.com/devantler-tech/bookkeeper/\.github/workflows/publish\.yaml@refs/tags/v1\.0\.0$
 own-loose-semver	accept	-	^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$
 own-stable-semver	accept	-	^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/server-cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$

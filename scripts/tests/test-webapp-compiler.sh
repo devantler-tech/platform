@@ -101,9 +101,15 @@ git -C "${root}" show "${api_base_commit}:k8s/bases/infrastructure/resource-grap
   echo "FAIL: ${api_base} has no Tenant graph to compare with" >&2
   exit 1
 }
-echo "Comparing the Tenant API with ${api_base} (${api_base_commit})"
+git -C "${root}" show "${api_base_commit}:k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml" \
+  >"${work}/webapp-base.yaml" || {
+  echo "FAIL: ${api_base} has no WebApp graph to compare with" >&2
+  exit 1
+}
+echo "Comparing the Tenant and WebApp APIs with ${api_base} (${api_base_commit})"
 PLATFORM_TEST_ROOT="${root}" \
   TENANT_BASE_RGD="${work}/tenant-base.yaml" \
+  WEBAPP_BASE_RGD="${work}/webapp-base.yaml" \
   KUBEBUILDER_ASSETS="${work}/controller-tools/envtest" \
   GATEWAY_HTTPROUTE_CRD="${gateway}/config/crd/standard/gateway.networking.k8s.io_httproutes.yaml" \
   KRO_GRAPH_CRD="${kro}/helm/crds/kro.run_resourcegraphdefinitions.yaml" \

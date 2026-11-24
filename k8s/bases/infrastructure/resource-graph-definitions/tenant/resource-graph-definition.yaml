@@ -101,8 +101,13 @@ spec:
         defaultRequestMemory: string | default="128Mi"
     spec:
       # Tenant name — used verbatim as the namespace, ServiceAccount,
-      # OCIRepository/Kustomization name. Required.
-      name: string
+      # OCIRepository/Kustomization name, and as the repository the release
+      # signature must come from. Required. The graph validates it as a DNS
+      # label itself (#6306) instead of relying on the Namespace it also names.
+      # The description makes KRO install the rule: its compatibility check
+      # ignores a CEL rule alone (platform#6535).
+      name: >-
+        string | description="A DNS label: lowercase letters, digits and hyphens, at most 63 characters." validation="size(self) <= 63 && self.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')"
       # The tenant runs its own external-dns instance (e.g. ascoachingogvaner's
       # simply.com zone) and needs the privileged cross-namespace reads granted
       # by the tenant-external-dns ClusterRoles.
@@ -285,23 +290,27 @@ spec:
           verify:
             provider: cosign
             matchOIDCIdentity:
-              # Keyless-signed by a workflow directly in .github/workflows/ of
-              # the tenant's OWN repository, devantler-tech/<spec.name>, on a
-              # strict OCI-semver release tag (ADR 0017, #6265; ADR 0019).
+              # Keyless-signed by the workflow the tenant releases from, in its
+              # OWN repository, devantler-tech/<spec.name>, on a strict
+              # OCI-semver release tag (ADR 0017, #6265; ADR 0019; #6306): its
+              # `cd.yaml` by convention, and `publish-runtime.yaml` for
+              # business-site, the one tenant that releases from another
+              # workflow. Any other workflow file of the repository does not
+              # match.
               # Release tags cannot be moved or deleted, only the release
               # process may create one, and the publish action signs only tags
               # on `main`. The repository is the tenant name because the
               # artifact URL above is oci://ghcr.io/devantler-tech/<name>/…: a
               # tenant publishes from the repository its package is named
-              # after. The name is regex-escaped (`.` and `-`). It is also this
-              # object's name, and the Tenant API bounds it to a DNS label so
-              # no other regex metacharacter can reach the subject. Another
-              # repository, the shared publisher, a branch or a non-release
-              # tag does not match. cosign's keyless
+              # after. The name is regex-escaped (`.` and `-`). The graph
+              # validates it as a DNS label (the `name` field above), so no
+              # other regex metacharacter can reach the subject. Another
+              # repository, the shared publisher, a branch or a non-release tag
+              # does not match. cosign's keyless
               # verification rejects MULTIPLE identity entries outright, so any
               # future alternation must stay inside one subject regex.
               - issuer: '^https://token\.actions\.githubusercontent\.com$'
-                subject: '${"^https://github\\.com/devantler-tech/" + schema.spec.name.replace(".", "\\.").replace("-", "\\-") + "/\\.github/workflows/[^/]+\\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$"}'
+                subject: '${"^https://github\\.com/devantler-tech/" + schema.spec.name.replace(".", "\\.").replace("-", "\\-") + "/\\.github/workflows/" + (schema.spec.name == "business-site" ? "publish-runtime" : "cd") + "\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$"}'
     # --- Flux Kustomization (one of two variants by `sops`) ---------------
     # The impersonating Kustomization that reconciles the tenant's own artifact
     # under its namespaced SA (bound to the `tenant-edit` role). Two variants because the SOPS `decryption`
