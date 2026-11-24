@@ -32,11 +32,12 @@ metadata:
     # from the workload's own metadata, not from its pod template.
     secret.reloader.stakater.com/reload: github-broker-apps
 spec:
-  # 0 until the one-off seed-github-broker-apps workflow has loaded both Apps'
-  # credentials into OpenBao: octo-sts refuses to start on the placeholders,
-  # and zero replicas keep the apps deploy healthy meanwhile. A follow-up
-  # raises this to 2 after seeding.
-  replicas: 0
+  # Two replicas with the PDB keep one broker serving through a node drain.
+  # Without its App keys (placeholders after a rebuild from an empty OpenBao)
+  # octo-sts cannot start; this Deployment is applied by its own Flux
+  # Kustomization (k8s/clusters/prod/flux-kustomization-github-broker.yaml) so
+  # that never gates `apps`.
+  replicas: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:

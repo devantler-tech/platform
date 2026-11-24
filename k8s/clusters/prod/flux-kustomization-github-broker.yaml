@@ -1,0 +1,47 @@
+---
+# The GitHub token broker's pods, kept from gating any deploy (#6605).
+#
+# octo-sts refuses to start without its App keys, and after a rebuild from an
+# empty OpenBao the vault-config Job seeds only placeholders. The `apps` layer
+# waits for every object it applies, so the broker's Deployment would hold
+# `apps`, and with it the merge queue and a DR rebuild, until the keys were
+# restored. So `apps` applies the broker's namespace, secrets, Service, route,
+# budget and policies, and this leaf applies only its Deployment
+# (providers/hetzner/apps/github-broker/server), the way platform-health is a
+# leaf beside the four layers:
+# - `apps` never applies or waits on it;
+# - nothing may `dependsOn` it;
+# - the deploy's `ksail workload reconcile` skips it (reconcile-exclude), and
+#   the DR rebuild waits only on the four platform layers.
+#
+# It waits on the Deployment itself, so a broker without keys shows up as this
+# Kustomization NotReady, which the Flux alerts report, instead of passing
+# silently. It depends on `apps`, which applies the namespace and the Secret the
+# pods mount.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: github-broker
+  namespace: flux-system
+  annotations:
+    ksail.devantler.tech/reconcile-exclude: "true"
+spec:
+  interval: 10m
+  timeout: 5m
+  retryInterval: 2m
+  path: providers/__PROVIDER__/apps/github-broker/server
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+  dependsOn:
+    - name: apps
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: variables-base
+      - kind: ConfigMap
+        name: variables-cluster
+  prune: true
+  wait: true
+  # Platform Flux layers never force-recreate (persistence safety).
+  force: false

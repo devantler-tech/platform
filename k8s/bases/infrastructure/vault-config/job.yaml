@@ -693,19 +693,22 @@ spec:
               # serves both botantler Apps. Each App's ID and private key live at
               # secret/infrastructure/github/apps/<app>, reachable only through the
               # broker's namespaced SecretStore (role `github-broker`). Seeded as
-              # PLACEHOLDERS only when absent, so the broker's ExternalSecret syncs
-              # before the real values exist. The one-off seed-github-broker-apps
-              # workflow then writes the real values through a PushSecret, which
-              # replaces only secrets marked managed-by=external-secrets, so the
-              # placeholders carry that mark. A later Job re-run leaves them as-is.
+              # PLACEHOLDERS only when absent (an OpenBao rebuilt from empty), so
+              # the broker's ExternalSecret still syncs and `apps` stays healthy;
+              # the broker's pods stay down until the real values are restored
+              # (from the OpenBao backup, or by the maintainer with
+              # `bao kv put ... app_id=<id> pem=@<key file>`). Their Deployment's
+              # own Flux Kustomization keeps that from gating any deploy. A later
+              # Job re-run leaves existing values as-is. The live values were
+              # loaded once from the organization's App secrets (#6609); nothing
+              # writes these paths through External Secrets any more, so the
+              # placeholders no longer carry its managed-by mark.
               for broker_app in botantler-1 botantler-2; do
                 if ! bao kv get -mount=secret "infrastructure/github/apps/$broker_app" >/dev/null 2>&1; then
                   echo "Seeding placeholder broker App credentials at secret/infrastructure/github/apps/$broker_app..."
                   bao kv put -mount=secret "infrastructure/github/apps/$broker_app" \
                     app_id="REPLACE_WITH_GITHUB_APP_ID" \
                     pem="REPLACE_WITH_GITHUB_APP_PRIVATE_KEY_PEM"
-                  bao kv metadata put -mount=secret -custom-metadata=managed-by=external-secrets \
-                    "infrastructure/github/apps/$broker_app"
                 else
                   echo "Broker App credentials already present at secret/infrastructure/github/apps/$broker_app (leaving as-is)."
                 fi
@@ -893,27 +896,20 @@ spec:
               POLICY
 
               # The GitHub token broker (providers/hetzner/apps/github-broker)
-              # reaches its two App credentials and nothing else.
-              # TEMPORARY write: create and update let the one-off
-              # seed-github-broker-apps workflow's PushSecret, through the
-              # broker's own SecretStore, write the real values; ESO's Vault
-              # provider also reads and writes each path's metadata to mark it
-              # managed-by=external-secrets. The follow-up that deletes that
-              # workflow drops this policy to read on the two data paths. The
-              # shared `external-secrets` role (vault-seed-write) never reaches
-              # these paths.
+              # reads its two App credentials and nothing else. Read on the two
+              # data paths is all its ExternalSecret needs: External Secrets'
+              # Vault provider (v2.15.0, providers/v1/vault/client_get.go) reads
+              # a key's metadata only for `metadataPolicy: Fetch`, which it does
+              # not set. The one-off seeding write is gone with its workflow, and
+              # `bao policy write` replaces the whole policy, so the next Job run
+              # removes it. The shared `external-secrets` role (vault-seed-write)
+              # never reaches these paths.
               bao policy write infra-github-broker - <<'POLICY'
               path "secret/data/infrastructure/github/apps/botantler-1" {
-                capabilities = ["create", "update", "read"]
+                capabilities = ["read"]
               }
               path "secret/data/infrastructure/github/apps/botantler-2" {
-                capabilities = ["create", "update", "read"]
-              }
-              path "secret/metadata/infrastructure/github/apps/botantler-1" {
-                capabilities = ["create", "update", "read"]
-              }
-              path "secret/metadata/infrastructure/github/apps/botantler-2" {
-                capabilities = ["create", "update", "read"]
+                capabilities = ["read"]
               }
               POLICY
 

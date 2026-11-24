@@ -1,0 +1,7 @@
+# The broker's pods. Applied by the production leaf Flux Kustomization
+# k8s/clusters/prod/flux-kustomization-github-broker.yaml, never by `apps`, so
+# a broker that cannot start never gates a deploy.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
