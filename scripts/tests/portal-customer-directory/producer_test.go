@@ -540,35 +540,56 @@ connect() {
   printf '%s\n' "$reply"
   [[ $reply != 'null' ]]
 }
+api() {
+  [[ $1 == POST && $2 == /admin/v1/policies/login/idps/_search && $3 == '{"query":{"limit":100}}' ]] || exit 32
+  printf '%s\n' "$2" >>"$read_marker"
+  printf '%s\n' "$provider_reply"
+  [[ $provider_reply != 'null' ]]
+}
 reply=$1
-read_marker=$2
+provider_reply=$2
+read_marker=$3
 `
+	const disabledFeature = `{"loginDefaultOrg":{"enabled":false,"source":"SOURCE_SYSTEM"}}`
+	const emptyProviders = `{"details":{"totalResult":"0"}}`
 	for _, tc := range []struct {
-		name, response, want string
+		name, feature, providers, want string
+		readProviders                  bool
 	}{
-		{"disabled inherited feature", `{"loginDefaultOrg":{"enabled":false,"source":"SOURCE_SYSTEM"}}`, "ready"},
-		{"managed feature", `{"loginDefaultOrg":{"enabled":true,"source":"SOURCE_INSTANCE"}}`, "ready"},
-		{"enabled inherited feature", `{"loginDefaultOrg":{"enabled":true,"source":"SOURCE_SYSTEM"}}`, "blocked"},
-		{"indeterminate feature", `{}`, "unavailable"},
-		{"read failure", `null`, "unavailable"},
+		{"disabled inherited feature", disabledFeature, emptyProviders, "ready", true},
+		{"managed feature", `{"loginDefaultOrg":{"enabled":true,"source":"SOURCE_INSTANCE"}}`, emptyProviders, "ready", true},
+		{"enabled inherited feature", `{"loginDefaultOrg":{"enabled":true,"source":"SOURCE_SYSTEM"}}`, emptyProviders, "blocked", true},
+		{"indeterminate feature", `{}`, emptyProviders, "unavailable", false},
+		{"feature read failure", `null`, emptyProviders, "unavailable", false},
+		{"existing shared provider", disabledFeature, `{"details":{"totalResult":"1"},"result":[{"idpId":"fixture-shared"}]}`, "ready", true},
+		{"existing unrelated provider", disabledFeature, `{"details":{"totalResult":"2"},"result":[{"idpId":"fixture-shared"},{"idpId":"fixture-other"}]}`, "blocked", true},
+		{"provider read failure", disabledFeature, `null`, "unavailable", true},
+		{"incomplete provider list", disabledFeature, `{"details":{"totalResult":"2"},"result":[{"idpId":"fixture-shared"}]}`, "unavailable", true},
+		{"provider list has wrong shape", disabledFeature, `{"details":{"totalResult":"0"},"result":{}}`, "unavailable", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "requests")
 			script := strings.Join([]string{
 				harness,
 				producerFunction(t, "instance_login_default_org"),
+				producerFunction(t, "instance_login_providers"),
+				producerFunction(t, "shared_login_provider_list_allowed"),
 				producerFunction(t, "report_shared_login_activation_readiness"),
-				"report_shared_login_activation_readiness",
+				"report_shared_login_activation_readiness fixture-shared",
 			}, "\n")
-			cmd := exec.Command("bash", "-c", script, "fixture", tc.response, marker)
+			cmd := exec.Command("bash", "-c", script, "fixture", tc.feature, tc.providers, marker)
 			output, err := cmd.Output()
 			want := "Shared portal login activation readiness: " + tc.want + "\n"
 			if err != nil || string(output) != want {
 				t.Fatalf("activation readiness=%q err=%v, want %q", output, err, want)
 			}
 			reads, err := os.ReadFile(marker)
-			if err != nil || string(reads) != "zitadel.feature.v2.FeatureService/GetInstanceFeatures\n" {
-				t.Fatalf("expected exactly one native feature read, got %q (%v)", reads, err)
+			wantReads := "zitadel.feature.v2.FeatureService/GetInstanceFeatures\n"
+			if tc.readProviders {
+				wantReads += "/admin/v1/policies/login/idps/_search\n"
+			}
+			if err != nil || string(reads) != wantReads {
+				t.Fatalf("native reads=%q err=%v, want %q", reads, err, wantReads)
 			}
 		})
 	}
@@ -578,6 +599,7 @@ func TestSharedInstanceLoginRestoresPreviousSettings(t *testing.T) {
 	script := strings.Join([]string{
 		producerFunction(t, "instance_login_providers"),
 		producerFunction(t, "instance_login_default_org"),
+		producerFunction(t, "shared_login_provider_list_allowed"),
 		producerFunction(t, "reconcile_shared_instance_login"),
 	}, "\n")
 	for _, mode := range []string{"round-trip", "previous-member", "inherited-disabled", "inherited-enabled",

@@ -1145,9 +1145,10 @@ spec:
 
                   instance_login_providers() {
                     api POST /admin/v1/policies/login/idps/_search '{"query":{"limit":100}}' |
-                      jq -ce '(.result // []) as $rows |
+                      jq -ce 'select(.result == null or (.result | type) == "array") |
+                        (.result // []) as $rows |
                         select((.details | type) == "object" and
-                          ((.details.totalResult // "0" | tonumber) == ($rows | length))) |
+                          ((.details.totalResult | if . == null then 0 else tonumber end) == ($rows | length))) |
                         [$rows[].idpId] | select(length == (unique | length) and
                           all(.[]; type == "string" and length > 0))' ||
                       fail "could not read the complete instance login provider list"
@@ -1162,11 +1163,16 @@ spec:
                       fail "could not read the effective instance login default organization"
                   }
 
+                  shared_login_provider_list_allowed() {
+                    jq -e --arg id "$1" 'all(.[]; . == $id)' <<<"$2" >/dev/null
+                  }
+
                   report_shared_login_activation_readiness() {
-                    local feature status
-                    if ! feature=$(instance_login_default_org); then
+                    local shared=$1 feature providers status
+                    if ! feature=$(instance_login_default_org) || ! providers=$(instance_login_providers); then
                       status=unavailable
-                    elif jq -e '.enabled == false or .source == "SOURCE_INSTANCE"' <<<"$feature" >/dev/null; then
+                    elif shared_login_provider_list_allowed "$shared" "$providers" &&
+                      jq -e '.enabled == false or .source == "SOURCE_INSTANCE"' <<<"$feature" >/dev/null; then
                       status=ready
                     else
                       status=blocked
@@ -1189,7 +1195,7 @@ spec:
                     membership=$(jq -c --arg id "$shared" 'index($id) != null' <<<"$providers")
                     feature=$(instance_login_default_org)
                     if [[ $mode == on ]]; then
-                      jq -e --arg id "$shared" 'all(.[]; . == $id)' <<<"$providers" >/dev/null ||
+                      shared_login_provider_list_allowed "$shared" "$providers" ||
                         fail "the instance login has an unexpected identity provider"
                       # Setting an inherited true flag would create an override that this API cannot remove.
                       jq -e '.enabled == false or .source == "SOURCE_INSTANCE"' <<<"$feature" >/dev/null ||
@@ -1361,7 +1367,7 @@ spec:
                   if [[ $customer_github == on ]]; then
                     reconcile_portal_github
                     if [[ $shared_portal_setup == off ]]; then
-                      report_shared_login_activation_readiness
+                      report_shared_login_activation_readiness "$shared_customer_idp"
                     fi
                   fi
 
