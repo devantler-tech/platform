@@ -14,10 +14,12 @@ resources:
   # Its DNS-only host, mail.devantler.tech.
   - dns-endpoint.yaml
   # Inputs for the one-time mailbox history copy from the existing provider
-  # (#5481), read through their own scoped OpenBao role.
+  # (#5481): its sign-in through a scoped OpenBao role, and the domain's
+  # address inventory as an encrypted Secret. Removed with the importer.
   - service-account-history-import.yaml
   - secret-store-history-import.yaml
   - external-secret-history-import.yaml
+  - secret-history-import-addresses.enc.yaml
 patches:
   # Production has retained credential custody. Never infer a fresh installation
   # from missing records while an older backup is being restored.
