@@ -44,7 +44,7 @@ require (
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.48.0
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.10
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.115.0
 	github.com/emersion/go-imap v1.2.1
 	github.com/google/go-github/v88 v88.0.0
 	k8s.io/apimachinery v0.37.2
