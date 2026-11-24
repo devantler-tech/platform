@@ -14,7 +14,10 @@ trap 'rm -rf "${work}"' EXIT
 # The tree as committed passes, and the guard examined its policies.
 bash "${guard}" "${root_dir}" >"${work}/committed"
 committed="$(find "${root_dir}/.github/chainguard" -name '*.sts.yaml' -type f | wc -l | tr -d ' ')"
-((committed > 0)) || { echo 'FAIL: expected at least one committed trust policy' >&2; exit 1; }
+((committed > 0)) || {
+  echo 'FAIL: expected at least one committed trust policy' >&2
+  exit 1
+}
 grep -qx "PASS: ${committed} broker trust policies accept only devantler-tech callers" "${work}/committed"
 
 # A policy built from an issuer line and an owner line, so each case changes
@@ -55,11 +58,17 @@ expect 1 'any owner' "$(policy "${issuer}" '  repository_owner_id: ".*"')"
 expect 1 'an owner ID that is not a string' "$(policy "${issuer}" '  repository_owner_id: 178524219')"
 expect 1 'an issuer pattern' "$(policy 'issuer_pattern: https://.*' "${owner}")"
 grep -q 'uses issuer_pattern' "${work}/result"
-expect 1 'an issuer pattern beside the issuer' "$(policy "${issuer}" "${owner}"; echo 'issuer_pattern: https://.*')"
+expect 1 'an issuer pattern beside the issuer' "$(
+  policy "${issuer}" "${owner}"
+  echo 'issuer_pattern: https://.*'
+)"
 expect 1 'another issuer' "$(policy 'issuer: https://issuer.example.com' "${owner}")"
 grep -q 'must accept exactly the GitHub Actions issuer' "${work}/result"
 expect 1 'no issuer' "$(policy '' "${owner}")"
-expect 1 'a second document' "$(policy "${issuer}" "${owner}"; policy 'issuer: https://issuer.example.com' '')"
+expect 1 'a second document' "$(
+  policy "${issuer}" "${owner}"
+  policy 'issuer: https://issuer.example.com' ''
+)"
 grep -q 'holds 2 YAML documents' "${work}/result"
 expect 1 'invalid YAML' 'issuer: [unclosed'
 grep -q 'is not valid YAML' "${work}/result"
@@ -67,6 +76,9 @@ grep -q 'is not valid YAML' "${work}/result"
 # A missing root is UNKNOWN, never a pass.
 status=0
 bash "${guard}" "${work}/missing" >/dev/null 2>&1 || status=$?
-[[ "${status}" == 2 ]] || { echo "FAIL: a missing root: expected exit 2, got ${status}" >&2; exit 1; }
+[[ "${status}" == 2 ]] || {
+  echo "FAIL: a missing root: expected exit 2, got ${status}" >&2
+  exit 1
+}
 
 echo 'PASS: test-github-broker-policies'
