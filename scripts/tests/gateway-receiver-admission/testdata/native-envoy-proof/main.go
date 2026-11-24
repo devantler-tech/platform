@@ -53,7 +53,7 @@ func main() {
 		check(network.Flags&net.FlagUp == 0 || network.Flags&net.FlagLoopback != 0, "fixture-network-not-isolated")
 	}
 	version, err := exec.Command(os.Args[1], "--version").CombinedOutput()
-	check(err == nil && bytes.Contains(version, []byte("/1.39.5/")), "proxy-version")
+	check(err == nil && bytes.Contains(version, []byte("/1.39.6/")), "proxy-version")
 	work := "/tmp/email-proxy-native"
 	check(os.Mkdir(work, 0700) == nil, "workspace")
 	defer os.RemoveAll(work)
@@ -244,5 +244,5 @@ func main() {
 		ok, status, seen = attempt("127.0.0.1", "198.51.100.10", "mail.example.test", 2)
 		check(ok && status == 200 && seen == "198.51.100.10", "restored-peer-after-refusal")
 	})
-	fmt.Println("NATIVE_ENVOY_PEER=PASS image=1.39.5 admitted=TRUE allowed=PASS forged_v1_v2=REFUSED sni_fallback=FENCED ipv6_client=PASS header_required=TRUE unfenced_control=PASS restored=PASS")
+	fmt.Println("NATIVE_ENVOY_PEER=PASS image=1.39.6 admitted=TRUE allowed=PASS forged_v1_v2=REFUSED sni_fallback=FENCED ipv6_client=PASS header_required=TRUE unfenced_control=PASS restored=PASS")
 }

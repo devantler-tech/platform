@@ -205,7 +205,7 @@ fixture. CI enables this proof explicitly; missing container capability fails it
 This checks the proxy boundary, while live controller attachment, provider state
 and recovery convergence retain their separate acceptance gates.
 
-References: [Envoy's physical peer match](https://www.envoyproxy.io/docs/envoy/v1.39.5/api-v3/config/listener/v3/listener_components.proto),
+References: [Envoy's physical peer match](https://www.envoyproxy.io/docs/envoy/v1.39.6/api-v3/config/listener/v3/listener_components.proto),
 [native Kubernetes mutation policies](https://kubernetes.io/docs/reference/access-authn-authz/mutating-admission-policy/),
-[the pinned Cilium Gateway translator](https://github.com/cilium/cilium/blob/v1.20.4/operator/pkg/model/translation/envoy_listener.go),
+[the pinned Cilium Gateway translator](https://github.com/cilium/cilium/blob/v1.20.5/operator/pkg/model/translation/envoy_listener.go),
 [the provider controller's status construction](https://github.com/hetznercloud/hcloud-cloud-controller-manager/blob/v1.39.1/hcloud/load_balancers.go).

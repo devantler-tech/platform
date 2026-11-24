@@ -15,9 +15,9 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// This public multi-platform image is the default in Cilium's reviewed 1.20.4
+// This public multi-platform image is the default in Cilium's reviewed 1.20.5
 // chart. Audit the image and HCM defaults again when that chart changes.
-const nativeEnvoyImage = "quay.io/cilium/cilium-envoy@sha256:547ab45f6092f681d9f54f3be9fa8fb1e705c9c5dc2df388efe3a52aa6965629"
+const nativeEnvoyImage = "quay.io/cilium/cilium-envoy@sha256:bdef13043ebaa7b9dcd8e3a86be41080bb5369e017cd759a12daf89e2b8fafe7"
 
 func verifyNativeEnvoyProfile(t *testing.T) {
 	t.Helper()
@@ -50,7 +50,7 @@ func verifyNativeEnvoyProfile(t *testing.T) {
 		if object.Kind != "HelmRelease" || object.Metadata.Name != "cilium" {
 			continue
 		}
-		if found || object.Metadata.Namespace != "kube-system" || object.Spec.Chart.Spec.Version != "1.20.4" {
+		if found || object.Metadata.Namespace != "kube-system" || object.Spec.Chart.Spec.Version != "1.20.5" {
 			t.Fatal("audit the native proxy image for the rendered Cilium chart")
 		}
 		found = true
