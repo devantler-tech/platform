@@ -1,0 +1,14 @@
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: business-site-dev
+  namespace: flux-system
+spec:
+  name: business-site
+  externalDns: false
+  webApp: false
+  sops: false
+  resourceQuota:
+    enabled: true
+  source:
+    reconcileApplication: false

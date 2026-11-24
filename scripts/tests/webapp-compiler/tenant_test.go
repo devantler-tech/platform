@@ -208,10 +208,21 @@ func TestCommittedTenant(t *testing.T) {
 		if err := admit(&prod); err != nil {
 			t.Fatal(err)
 		}
-		preview := prod.DeepCopy()
-		preview.SetName("business-site-dev")
-		preview.SetUID("")
-		preview.SetResourceVersion("")
+		var preview unstructured.Unstructured
+		readYAML(t, filepath.Join(root, "k8s/providers/hetzner/apps/business-site/tenant-preview.yaml"), &preview)
+		preview.SetNamespace("default")
+		if err := admit(&preview); err != nil {
+			t.Fatal(err)
+		}
+		previewChildren, _ := desiredTenant(t, engine, &definition, &preview)
+		for _, id := range []string{"tenantNamespace", "defaultDeny", "resourceQuota", "ociRepository"} {
+			if previewChildren[id] == nil {
+				t.Fatalf("missing child for the committed preview Tenant: %s", id)
+			}
+		}
+		if len(previewChildren) != 4 {
+			t.Fatal("the committed preview Tenant must provision only its namespace, isolation, quota and signed source")
+		}
 		productChildren, _ := desiredTenant(t, engine, &definition, &prod)
 		for _, sops := range []bool{false, true} {
 			input := preview.DeepCopy()
@@ -455,10 +466,12 @@ func TestCommittedTenant(t *testing.T) {
 		for _, committed := range tenants {
 			name, _, _ := unstructured.NestedString(committed.Object, "spec", "name")
 			for _, mode := range []string{"as-committed", "unpinned"} {
-				t.Run(name+"/"+mode, func(t *testing.T) {
+				t.Run(committed.GetName()+"/"+mode, func(t *testing.T) {
 					input := committed.DeepCopy()
 					input.SetNamespace("default")
-					input.SetName(name + "-" + mode)
+					if input.GetName() != name+"-dev" {
+						input.SetName(name + "-" + mode)
+					}
 					if mode == "unpinned" {
 						unstructured.RemoveNestedField(input.Object, "spec", "source")
 					}

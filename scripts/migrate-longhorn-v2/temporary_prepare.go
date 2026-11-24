@@ -59,8 +59,21 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 	}
 	if p.j.Phase == "reset-requested" {
 		var checkErr error
+		restoreAttempted := false
 		if err := waitReady(ctx, func(ctx context.Context) error {
-			_, checkErr = p.unusedPostState(ctx)
+			var recovered object
+			recovered, checkErr = p.unusedPostState(ctx)
+			if checkErr == replacedStagingLayout {
+				if restoreAttempted {
+					return errors.Join(errReadinessTerminal, checkErr)
+				}
+				restoreAttempted = true
+				if err := p.restoreRebuiltStagingLayout(ctx, recovered); err != nil {
+					checkErr = nil
+					return errors.Join(errReadinessTerminal, err)
+				}
+				_, checkErr = p.unusedPostState(ctx)
+			}
 			return checkErr
 		}); err != nil {
 			var gate temporaryRecoveryGate
@@ -490,9 +503,6 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	if err != nil || actualBoot != boot {
 		return nil, temporaryRecoveryGate("the native boot identity matching Kubernetes")
 	}
-	if err = p.verifyUnusedLayout(ctx, address); err != nil {
-		return nil, temporaryRecoveryGate("the reviewed staged volume configuration")
-	}
 	raw, err := p.c.talosVolume(ctx, address, "r-longhorn")
 	if err != nil {
 		return nil, temporaryRecoveryGate("readable raw volume status")
@@ -523,7 +533,7 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	if !unusedStorageFenced(lh) {
 		return nil, temporaryRecoveryGate("the empty fenced Longhorn node")
 	}
-	return n, nil
+	return n, p.verifyRecoveredLayout(ctx, address)
 }
 
 // unusedStorageFenced accepts only an empty Longhorn node whose scheduling is

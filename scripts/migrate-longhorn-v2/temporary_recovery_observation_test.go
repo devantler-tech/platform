@@ -64,7 +64,7 @@ func TestObserveTemporaryRecoveryPreservesTheOriginalJournalAndCordon(t *testing
 		return f.run(ctx, input, tool, args...)
 	}
 	if err := p.observeRecovery(t.Context()); err == nil ||
-		!strings.Contains(err.Error(), "reviewed staged volume configuration") ||
+		!strings.Contains(err.Error(), "readable Talos volume configuration") ||
 		strings.Contains(err.Error(), "private volume diagnostics") {
 		t.Fatalf("expected the qualified stage without native diagnostics: %v", err)
 	}
