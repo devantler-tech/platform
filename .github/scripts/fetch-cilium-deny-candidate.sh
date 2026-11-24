@@ -14,7 +14,7 @@ readonly candidate="${RUNNER_TEMP}/cilium-deny-candidate"
 pr="$(gh api "repos/devantler-tech/platform/pulls/${CANDIDATE_PR}")" || fail 'cannot verify candidate PR'
 verify_pr() {
   # Exact login match; reviewer identities and branch names cannot extend trust.
-  jq -e --arg head "$CANDIDATE_HEAD" '.state == "open" and .head.sha == $head and .head.repo.full_name == "devantler-tech/platform" and (.user.login as $author | ["devantler","ksail-bot","dependabot[bot]","github-actions[bot]","renovate[bot]"] | index($author) != null)' <<<"$1" >/dev/null
+  jq -e --arg head "$CANDIDATE_HEAD" '.state == "open" and .head.sha == $head and .head.repo.full_name == "devantler-tech/platform" and (.user.login as $author | ["devantler","botantler-1[bot]","botantler-2[bot]","dependabot[bot]","github-actions[bot]","renovate[bot]"] | index($author) != null)' <<<"$1" >/dev/null
 }
 verify_pr "$pr" || fail 'candidate is not an open, exact-head, trusted same-repo PR'
 mkdir "$candidate"
