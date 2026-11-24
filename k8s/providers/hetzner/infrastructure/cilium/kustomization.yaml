@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - cilium-clusterwide-network-policy-deny-gateway-to-business-site-preview.yaml
+  - business-site-preview/cilium-clusterwide-network-policy.yaml
   - cilium-clusterwide-network-policy-deny-instance-metadata-egress.yaml
   - gateway-receiver
 components:
