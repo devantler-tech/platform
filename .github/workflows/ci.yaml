@@ -819,6 +819,12 @@ jobs:
               - 'talos-local/**'
               - 'scripts/reconcile-talos-kernel-args/**'
               - 'scripts/tests/test-talos-render-kernel-args.sh'
+              - 'scripts/tests/test-talos-storage-pool-preview.sh'
+              - 'scripts/render-talos-storage-pool-layout.sh'
+              - 'scripts/preview-prod-talos-pool-layout.sh'
+              - 'scripts/migrate-longhorn-v2/staging-layout.yaml'
+              - 'scripts/migrate-longhorn-v2/retained-staging-layout.yaml'
+              - '.github/workflows/observe-talos-storage-pool-layout.yaml'
               - 'scripts/register-talos-factory-schematic.sh'
               - 'scripts/verify-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-factory-schematic-registration.sh'
@@ -3763,6 +3769,11 @@ jobs:
         run: |
           shellcheck scripts/tests/test-talos-render-kernel-args.sh
           bash scripts/tests/test-talos-render-kernel-args.sh
+
+      - name: Prove temporary storage layouts and read-only preview
+        run: |
+          shellcheck scripts/render-talos-storage-pool-layout.sh scripts/preview-prod-talos-pool-layout.sh scripts/tests/test-talos-storage-pool-preview.sh
+          bash scripts/tests/test-talos-storage-pool-preview.sh
 
       - name: ✅ Render + validate patched machine configs
         run: |
