@@ -35,9 +35,9 @@ for name in success botantler_1 botantler_2 author retired_ksail_bot bare_botant
     bash "${root}/.github/scripts/fetch-cilium-deny-candidate.sh" >"${work}/${name}/output" 2>&1 || result=$?
   expected=1
   case "$name" in
-    success) expected=0 want_author=devantler;;
-    botantler_1) expected=0 want_author='botantler-1[bot]';;
-    botantler_2) expected=0 want_author='botantler-2[bot]';;
+    success) expected=0 want_author=devantler ;;
+    botantler_1) expected=0 want_author='botantler-1[bot]' ;;
+    botantler_2) expected=0 want_author='botantler-2[bot]' ;;
   esac
   if [[ "$result" != "$expected" ]]; then
     echo "FAIL $name: expected $expected, got $result"
