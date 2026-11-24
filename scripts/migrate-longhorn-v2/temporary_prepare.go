@@ -18,6 +18,13 @@ type temporaryPreparation struct {
 	staging bool
 }
 
+// temporaryRecoveryGate carries only source-defined descriptions, so the
+// readiness timeout can report the last failed check without native diagnostics.
+type temporaryRecoveryGate string
+
+func (g temporaryRecoveryGate) Error() string { return "temporary recovery waiting for " + string(g) }
+func (g temporaryRecoveryGate) Unwrap() error { return errInventory }
+
 // prepare advances the separately journaled unused-worker profile, recording reset
 // intent before its single request and accepting recovery only after native proof.
 // A resumed reset request observes recovery without issuing another reset.
@@ -51,7 +58,15 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 		}
 	}
 	if p.j.Phase == "reset-requested" {
-		if err := waitReady(ctx, func(ctx context.Context) error { _, err := p.unusedPostState(ctx); return err }); err != nil {
+		var checkErr error
+		if err := waitReady(ctx, func(ctx context.Context) error {
+			_, checkErr = p.unusedPostState(ctx)
+			return checkErr
+		}); err != nil {
+			var gate temporaryRecoveryGate
+			if errors.As(checkErr, &gate) {
+				return errors.Join(err, gate)
+			}
 			return err
 		}
 		var stagedUUID string
@@ -433,27 +448,27 @@ func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object, err error) {
 	n, address, err := p.node(ctx, true)
 	if err != nil {
-		return nil, err
+		return nil, temporaryRecoveryGate("the original worker and hardware identity")
 	}
 	status := valueObject(n, "status")
 	boot := text(n, "status", "nodeInfo", "bootID")
 	if !ready(status) || !hugepagesReady(n) || !inventoryBoot.MatchString(boot) || boot == p.j.OriginalBootID {
-		return nil, errInventory
+		return nil, temporaryRecoveryGate("a ready worker with huge pages and a new boot")
 	}
 	if p.retainsRaw() {
 		if _, err = p.readRetainedRecovery(ctx, address, boot, false); err != nil && p.j.Phase == "reset-requested" {
 			_, err = p.readRetainedRecovery(ctx, address, boot, true)
 		}
 		if err != nil {
-			return nil, err
+			return nil, temporaryRecoveryGate("the retained raw partition and staged layout")
 		}
 		lh, err := p.storageNode(ctx)
 		if err != nil || !unusedStorageFenced(lh) {
-			return nil, errInventory
+			return nil, temporaryRecoveryGate("the empty fenced Longhorn node")
 		}
 		current, currentAddress, err := p.node(ctx, true)
 		if err != nil || currentAddress != address || text(current, "status", "nodeInfo", "bootID") != boot {
-			return nil, errInventory
+			return nil, temporaryRecoveryGate("a stable worker identity and boot")
 		}
 		return current, nil
 	}
@@ -463,50 +478,50 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	}
 	reader, closeReader, err := factory(ctx, address)
 	if err != nil || reader == nil || closeReader == nil {
-		return nil, errInventory
+		return nil, temporaryRecoveryGate("a node-bound native reader")
 	}
 	defer func() {
 		if closeReader() != nil {
 			node = nil
-			err = errInventory
+			err = temporaryRecoveryGate("clean native reader shutdown")
 		}
 	}()
 	actualBoot, err := reader.BootID(ctx)
 	if err != nil || actualBoot != boot {
-		return nil, errInventory
+		return nil, temporaryRecoveryGate("the native boot identity matching Kubernetes")
 	}
 	if err = p.verifyUnusedLayout(ctx, address); err != nil {
-		return nil, err
+		return nil, temporaryRecoveryGate("the reviewed staged volume configuration")
 	}
 	raw, err := p.c.talosVolume(ctx, address, "r-longhorn")
 	if err != nil {
-		return nil, err
+		return nil, temporaryRecoveryGate("readable raw volume status")
 	}
 	eph, err := p.c.talosVolume(ctx, address, "EPHEMERAL")
 	if err != nil {
-		return nil, err
+		return nil, temporaryRecoveryGate("readable EPHEMERAL volume status")
 	}
 	rawGiB := uint64(permanentRawDiskGiB)
 	if p.staging {
 		rawGiB = stagingRawDiskGiB
 	}
 	if err = verifyEncryptedRawDisk(raw, eph, rawGiB); err != nil {
-		return nil, err
+		return nil, temporaryRecoveryGate("the expected encrypted partition geometry")
 	}
 	uuid, err := recoveredEphemeralUUID(ctx, address, eph, factory)
 	if err != nil || p.j.EphemeralUUID == "" || strings.EqualFold(uuid, p.j.EphemeralUUID) {
-		return nil, errInventory
+		return nil, temporaryRecoveryGate("the new encrypted EPHEMERAL identity")
 	}
 	recheckedBoot, err := reader.BootID(ctx)
 	if err != nil || recheckedBoot != actualBoot {
-		return nil, errInventory
+		return nil, temporaryRecoveryGate("the same native boot after reading storage")
 	}
 	lh, err := p.storageNode(ctx)
 	if err != nil {
-		return nil, err
+		return nil, temporaryRecoveryGate("the original Longhorn node identity")
 	}
 	if !unusedStorageFenced(lh) {
-		return nil, errInventory
+		return nil, temporaryRecoveryGate("the empty fenced Longhorn node")
 	}
 	return n, nil
 }
