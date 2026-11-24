@@ -10,9 +10,9 @@ COSIGN_VERSION="3.1.4"
 # cosign_checksums.txt: cosign-linux-amd64
 COSIGN_SHA256="424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
 # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-SYFT_VERSION="1.57.1"
-# syft_1.57.1_checksums.txt: syft_1.57.1_linux_amd64.tar.gz
-SYFT_SHA256="bf52519eb57f675d47c07d43213cb6dff6449f3d6d1147ff6701ed91f44eef0c"
+SYFT_VERSION="1.57.2"
+# syft_1.57.2_checksums.txt: syft_1.57.2_linux_amd64.tar.gz
+SYFT_SHA256="ad92bd3ec1b94a3df01d4d0aec199afa9c42b72e86da436ff5f837914d32706b"
 # Not tracked by Renovate: this Trivy runs the paired scanner-exception checks,
 # so it must be the release MegaLinter runs in CI (CI_TRIVY_VERSION in
 # scripts/megalinter-scan-counts.sh; scripts/tests/test-setup-supply-chain-tools.sh
