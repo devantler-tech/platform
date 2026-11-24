@@ -50,19 +50,20 @@ func validateJournal(j journal, target string) error {
 	if j.Schema == 3 {
 		return validateRetainedPreparation(j)
 	}
-	if j.RetainedRawUUID != "" || j.RetainedExtentDigest != "" || j.PreparedRawUUID != "" {
+	if j.RetainedRawUUID != "" || j.RetainedExtentDigest != "" {
 		return errors.New("retained extent proof belongs to a different preparation profile")
 	}
 	if j.Schema == 2 {
 		if !regexp.MustCompile(`^autoscale-longhorn-v1-[0-9a-f]{16}$`).MatchString(target) ||
 			(j.TemporarySelection != "temporary-v1-1" && j.TemporarySelection != "temporary-v1-2") ||
 			!regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(j.NativeEmptyDigest) || !inventoryBoot.MatchString(j.OriginalBootID) ||
+			j.PreparedRawUUID != "" && (!j.StagingLayout || j.Phase != "prepared" || !inventoryBoot.MatchString(strings.ToLower(j.PreparedRawUUID))) ||
 			!j.RawVolumeAbsent || j.OriginalDisks == nil || len(j.OriginalDisks) != 0 {
 			return errors.New("temporary preparation lacks its separate empty-storage identity proof")
 		}
 		return nil
 	}
-	if j.Schema != 1 || !inventoryTarget.MatchString(target) || j.TemporarySelection != "" || j.NativeEmptyDigest != "" || j.OriginalBootID != "" || j.RawVolumeAbsent || j.StagingLayout {
+	if j.Schema != 1 || !inventoryTarget.MatchString(target) || j.TemporarySelection != "" || j.NativeEmptyDigest != "" || j.OriginalBootID != "" || j.RawVolumeAbsent || j.StagingLayout || j.PreparedRawUUID != "" {
 		return errors.New("journal schema and preparation scope do not match")
 	}
 	if len(j.OriginalDisks) != 1 {

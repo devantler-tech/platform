@@ -210,9 +210,17 @@ The journal `longhorn-v2-temporary-activation` binds each temporary selection to
 the node, provider, hardware, boot, encrypted EPHEMERAL and raw GPT partition
 identities. Complete native reads bracket the partition observations. Each rebuilt
 worker also binds its completed preparation journal UID and the successful
-first-attempt main workflow that produced it. A prepared-looking disk without that
-record, a replaced journal or a failed preparation workflow cannot authorize
-registration. The third worker needs a completed preservation receipt and a new
+first-attempt main workflow that produced it. The raw GPT identity must match
+the one recorded during preparation. For older V1-worker preparation journals
+that lack this field, supply `legacy_preparation_receipts` once during initial
+registration. Use a comma-separated list of `selection:digest` values, with
+each SHA-256 computed from five newline-separated fields with no final newline.
+Use the selected profile, original preparation source SHA, successful run ID,
+original native-empty digest, and lowercase raw GPT UUID from the independently
+retained post-preparation readback. Re-reading the disk immediately before
+activation cannot establish that historical identity. The registration journal
+preserves the accepted binding for later verification. The third worker needs
+a completed preservation receipt and a new
 encrypted staging partition with a GPT identity distinct from its original raw
 partition. Each conditional Longhorn Node update registers the selected worker's
 reviewed mapper and adds the journal UID as its ownership annotation. Matching

@@ -216,7 +216,12 @@ func main() {
 		os.Exit(1)
 	}
 	if operation == "register-temporary-v2-storage" {
-		activation := temporaryV2Activation{c: client{run: execute, context: "admin@prod", inventoryPools: pools}, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}
+		legacyReceipts, err := parseLegacyPreparationReceipts(os.Getenv("LONGHORN_V2_LEGACY_PREPARATION_RECEIPTS"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		activation := temporaryV2Activation{c: client{run: execute, context: "admin@prod", inventoryPools: pools}, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools, legacyReceipts: legacyReceipts}
 		if err = activation.run(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "Temporary V2 registration held:", err)
 			fmt.Fprintln(os.Stderr, "Preserve its identity journal and any partial registration for explicit recovery.")

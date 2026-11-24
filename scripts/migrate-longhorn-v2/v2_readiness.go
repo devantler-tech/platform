@@ -57,12 +57,17 @@ func verifyV2Runtime(s inventory, managers []object, pools map[string]migrationP
 			!ready(status) || len(diskStatus) != 1 || !ready(disk) || id == "" || diskIDs[id] {
 			return errors.New("three distinct ready canonical raw disks are not proven")
 		}
-		if override := value(lh, "spec", "instanceManagerCPURequest"); override != nil && override != float64(0) {
+		if !noInstanceManagerCPUOverride(lh) {
 			return errors.New("a node CPU override supersedes the reviewed V2 reservation")
 		}
 		diskIDs[id] = true
 	}
 	return verifyV2ClientPods(s, managers, workers, expectedManagerImage)
+}
+
+func noInstanceManagerCPUOverride(node object) bool {
+	override := value(node, "spec", "instanceManagerCPURequest")
+	return override == nil || override == float64(0)
 }
 
 // verifyV2Clients qualifies the effective clients before any raw disk is
@@ -165,7 +170,7 @@ func verifyV2ClientPods(s inventory, managers []object, workers map[string]bool,
 			if !ok {
 				return errors.New("V2 workload arguments are malformed")
 			}
-			for _, flag := range []string{"--spdk-cpumask", "--spdk-core-number", "--spdk-memory-size", "--enable-spdk", "--spdk-enabled", "--enable-irq-affinity", "--enable-workqueue-affinity", "--enable-rps", "--spdk-no-hugepage", "--spdk-interrupt-mode"} {
+			for _, flag := range []string{"-m", "-c", "--spdk-cpumask", "--spdk-core-number", "--spdk-memory-size", "--longhorn-control-path", "--enable-spdk", "--spdk-enabled", "--enable-irq-affinity", "--enable-workqueue-affinity", "--enable-rps", "--spdk-no-hugepage", "--spdk-interrupt-mode"} {
 				if strings.HasPrefix(a, flag+"=") {
 					return errors.New("V2 workload overrides a reviewed flag using an assignment")
 				}
@@ -186,6 +191,7 @@ func verifyV2ClientPods(s inventory, managers []object, workers map[string]bool,
 			return count == 1
 		}
 		if !paired("--spdk-cpumask", "0x3") || !paired("--spdk-core-number", "0") || !paired("--spdk-memory-size", "2048") ||
+			!paired("--longhorn-control-path", "/var/lib/longhorn") || flags["-m"] != 0 || flags["-c"] != 0 ||
 			flags["start-spdk-tgt"] != 1 || flags["daemon"] != 1 || flags["--enable-spdk"] != 1 || flags["--spdk-enabled"] != 1 ||
 			positions["--enable-spdk"] >= positions["daemon"] || positions["--spdk-enabled"] <= positions["daemon"] ||
 			flags["--enable-irq-affinity"] != 1 || flags["--enable-workqueue-affinity"] != 1 || flags["--enable-rps"] != 1 || flags["--spdk-no-hugepage"] != 0 || flags["--spdk-interrupt-mode"] != 0 {

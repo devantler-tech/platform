@@ -78,6 +78,9 @@ name: Prepare Longhorn V2 Migration
         description: "Type the exact confirmation documented for the selected operation"
         required: true
         type: string
+      legacy_preparation_receipts:
+        description: Optional SHA-256 proof of already prepared temporary V1 hosts for registration
+        type: string
 
 permissions: {}
 
@@ -126,6 +129,7 @@ jobs:
       LONGHORN_V2_DATABASE: ${{ inputs.database }}
       LONGHORN_V2_OPERATION: ${{ inputs.operation }}
       LONGHORN_V2_CONFIRM: ${{ inputs.confirm }}
+      LONGHORN_V2_LEGACY_PREPARATION_RECEIPTS: ${{ inputs.legacy_preparation_receipts }}
     steps:
       - name: Require confirmed first attempt on main
         shell: bash

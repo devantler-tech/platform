@@ -51,7 +51,7 @@ func v2ReadinessFixtureForRoute(legacy bool) (inventory, []object) {
 		p["metadata"].(object)["namespace"] = "longhorn-system"
 		p["metadata"].(object)["ownerReferences"] = []any{object{"apiVersion": "longhorn.io/v1beta2", "kind": "InstanceManager", "name": text(im, "metadata", "name"), "uid": text(im, "metadata", "uid"), "controller": true}}
 		p["spec"] = object{"nodeName": text(n, "metadata", "name"), "containers": []any{object{"name": "instance-manager", "image": text(im, "spec", "image"),
-			"args":      []any{"start-spdk-tgt", "--spdk-cpumask", "0x3", "--spdk-core-number", "0", "--spdk-memory-size", "2048", "--enable-spdk", "daemon", "--spdk-enabled", "--enable-irq-affinity", "--enable-workqueue-affinity", "--enable-rps"},
+			"args":      []any{"start-spdk-tgt", "--spdk-cpumask", "0x3", "--spdk-core-number", "0", "--spdk-memory-size", "2048", "--longhorn-control-path", "/var/lib/longhorn", "--enable-spdk", "daemon", "--spdk-enabled", "--enable-irq-affinity", "--enable-workqueue-affinity", "--enable-rps"},
 			"resources": object{"requests": object{"cpu": "2"}, "limits": object{"cpu": "4", "hugepages-2Mi": "2Gi"}}}}}
 		p["status"] = object{"phase": "Running", "conditions": readyConditions()}
 		s.pods = append(s.pods, p)
@@ -160,6 +160,38 @@ func TestV2RuntimeRequiresRealRawDisksAndReservedReactors(t *testing.T) {
 			change(&s, &m)
 			if verifyV2Runtime(s, m, pools, "longhornio/longhorn-instance-manager:v1.13.0") == nil {
 				t.Fatal("V2 canary admitted without its real runtime prerequisites")
+			}
+		})
+	}
+}
+
+func TestV2ClientsRejectOverridesToTheVerifiedIsolation(t *testing.T) {
+	pools, err := configuredMigrationPools(poolConfigFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, suffix := range map[string][]any{
+		"mask alias":              {"-m", "0xf"},
+		"core count alias":        {"-c", "4"},
+		"control path assignment": {"--longhorn-control-path=/other"},
+		"second control path":     {"--longhorn-control-path", "/other"},
+		"missing control path":    nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, managers := v2ReadinessFixture()
+			container := value(s.pods[0], "spec", "containers").([]any)[0].(object)
+			args := container["args"].([]any)
+			if suffix == nil {
+				for i, arg := range args {
+					if arg == "--longhorn-control-path" {
+						args = append(args[:i], args[i+2:]...)
+						break
+					}
+				}
+			}
+			container["args"] = append(args, suffix...)
+			if err := verifyV2Clients(s, managers, pools, v2ManagerImage); err == nil {
+				t.Fatal("a client with an unqualified CPU isolation configuration was accepted")
 			}
 		})
 	}

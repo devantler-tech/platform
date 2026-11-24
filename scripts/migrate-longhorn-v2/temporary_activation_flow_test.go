@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 )
 
 type activationAPI struct {
@@ -22,6 +26,8 @@ type activationAPI struct {
 	priorLive           bool
 	preparations        map[string]object
 	preparationFailed   bool
+	storageBeforeGet    func(object)
+	storageBeforeList   func()
 }
 
 // newActivationAPI models complete fixed-roster reads and successful native
@@ -155,6 +161,9 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 	if args[0] == "get" {
 		kind := args[1]
 		if args[2] == "--output=json" {
+			if kind == "nodes.longhorn.io" && f.storageBeforeList != nil {
+				f.storageBeforeList()
+			}
 			collections := map[string][]object{"nodes": f.s.nodes, "nodes.longhorn.io": f.s.storageNodes, "volumes.longhorn.io": f.s.volumes, "replicas.longhorn.io": f.s.replicas, "engines.longhorn.io": f.s.engines, "orphans.longhorn.io": f.s.orphans, "pods": f.s.pods, "instancemanagers.longhorn.io": f.managers, "clusters.postgresql.cnpg.io": f.databases}
 			items, ok := collections[kind]
 			if !ok {
@@ -197,6 +206,9 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 		}
 		for _, o := range append(append([]object{}, f.s.nodes...), f.s.storageNodes...) {
 			if text(o, "metadata", "name") == name && (kind == "node" && text(o, "metadata", "namespace") == "" || kind == "nodes.longhorn.io" && text(o, "metadata", "namespace") == "longhorn-system") {
+				if kind == "nodes.longhorn.io" && f.storageBeforeGet != nil {
+					f.storageBeforeGet(o)
+				}
 				return json.Marshal(o)
 			}
 		}
@@ -215,6 +227,9 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 		return json.Marshal(created)
 	}
 	if args[0] == "patch" {
+		if !slices.Contains(args[3:], "--namespace=longhorn-system") {
+			f.t.Fatal("activation patch escaped the storage namespace")
+		}
 		var target object
 		if args[1] == "configmap" && args[2] == temporaryActivationJournal {
 			target = f.record
@@ -230,14 +245,24 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 		if target == nil || json.Unmarshal(input, &changes) != nil || len(changes) < 3 || !reflect.DeepEqual(changes[:2], identityTests(target)) {
 			f.t.Fatal("activation write lost its exact native identity or exceeded temporary scope")
 		}
-		for _, change := range changes[2:] {
-			parts := strings.Split(strings.TrimPrefix(text(change, "path"), "/"), "/")
-			parent := target
-			for _, part := range parts[:len(parts)-1] {
-				parent = parent[part].(object)
-			}
-			parent[strings.ReplaceAll(parts[len(parts)-1], "~1", "/")] = change["value"]
+		before, err := json.Marshal(target)
+		if err != nil {
+			f.t.Fatal(err)
 		}
+		patch, err := jsonpatch.DecodePatch(input)
+		if err != nil {
+			return nil, err
+		}
+		after, err := patch.Apply(before)
+		if err != nil {
+			return nil, err
+		}
+		var updated object
+		if err = json.Unmarshal(after, &updated); err != nil {
+			f.t.Fatal(err)
+		}
+		clear(target)
+		maps.Copy(target, updated)
 		version, _ := strconv.Atoi(text(target, "metadata", "resourceVersion"))
 		target["metadata"].(object)["resourceVersion"] = strconv.Itoa(version + 1)
 		if args[1] == "nodes.longhorn.io" {
@@ -314,11 +339,25 @@ func TestTemporaryActivationResumesItsUncertainWriteWithoutAdoptingForeignStorag
 	if err := a.run(t.Context()); err != nil || f.writes != 3 {
 		t.Fatal("owned partial activation could not safely resume:", err)
 	}
-	f, a = newActivationAPI(t)
-	f.s.storageNodes[3]["metadata"].(object)["annotations"] = object{temporaryActivationOwner: "foreign"}
-	if a.run(t.Context()) == nil || f.writes != 0 {
+	name := activationFixtureTarget(t, f, a, "temporary-v1-1")
+	for _, lh := range f.s.storageNodes {
+		if text(lh, "metadata", "name") == name {
+			valueObject(lh, "metadata")["annotations"] = object{temporaryActivationOwner: "foreign"}
+			break
+		}
+	}
+	if a.run(t.Context()) == nil || f.writes != 3 {
 		t.Fatal("unowned storage was adopted")
 	}
+}
+
+func activationFixtureTarget(t *testing.T, f *activationAPI, a temporaryV2Activation, selection string) string {
+	t.Helper()
+	name, _, err := resolveTemporaryInventoryTarget(selection, f.s.nodes, a.pools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return name
 }
 
 // Completed and interrupted registration survive a normal host reboot without
@@ -365,8 +404,66 @@ func TestTemporaryActivationRejectsUnqualifiedClientsBeforeRegisteringDisks(t *t
 	value(f.s.pods[0], "spec", "containers").([]any)[0].(object)["image"] = "example.invalid/unreviewed:latest"
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if a.run(ctx) == nil || f.writes != 0 {
+	if a.run(ctx) == nil || f.writes != 0 || f.record != nil {
 		t.Fatal("unqualified V2 clients reached raw-disk registration")
+	}
+}
+
+func TestTemporaryActivationRejectsUnqualifiedStorageBeforePatch(t *testing.T) {
+	for _, mode := range []string{"initial override", "fresh override", "fresh deletion"} {
+		t.Run(mode, func(t *testing.T) {
+			f, a := newActivationAPI(t)
+			name := activationFixtureTarget(t, f, a, "temporary-v1-1")
+			if mode == "initial override" {
+				for _, lh := range f.s.storageNodes {
+					if text(lh, "metadata", "name") == name {
+						valueObject(lh, "spec")["instanceManagerCPURequest"] = float64(480)
+					}
+				}
+			} else {
+				f.storageBeforeGet = func(lh object) {
+					if text(lh, "metadata", "name") != name {
+						return
+					}
+					if mode == "fresh deletion" {
+						valueObject(lh, "metadata")["deletionTimestamp"] = "2026-01-01T00:00:00Z"
+					} else {
+						valueObject(lh, "spec")["instanceManagerCPURequest"] = float64(480)
+					}
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			if a.run(ctx) == nil || f.writes != 0 || (mode == "initial override" && f.record != nil) {
+				t.Fatal("activation crossed a failing storage precondition")
+			}
+		})
+	}
+}
+
+func TestTemporaryActivationRejectsOwnerLossOnTheReadinessSnapshot(t *testing.T) {
+	f, a := newActivationAPI(t)
+	name := activationFixtureTarget(t, f, a, "temporary-v1-1")
+	readsAfterRegistration := 0
+	f.storageBeforeList = func() {
+		if f.writes != 3 {
+			return
+		}
+		readsAfterRegistration++
+		if readsAfterRegistration == 2 {
+			for _, lh := range f.s.storageNodes {
+				if text(lh, "metadata", "name") == name {
+					delete(valueObject(lh, "metadata"), "annotations")
+				}
+			}
+		}
+	}
+	if err := a.run(t.Context()); err == nil || f.writes != 3 || f.record == nil {
+		t.Fatal("activation accepted a disk without ownership on the readiness snapshot")
+	}
+	_, record, err := a.read(t.Context())
+	if err != nil || record.Completed {
+		t.Fatal("activation wrote completion after losing storage ownership", err)
 	}
 }
 

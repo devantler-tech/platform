@@ -132,8 +132,11 @@ func (a temporaryV2Activation) targets(ctx context.Context, s inventory, journal
 		if err != nil {
 			return nil, errTemporaryActivation
 		}
-		binding, err = a.prepared(ctx, binding)
-		if err != nil || expected != nil && !expected[selection].SameStorageIdentity(binding) {
+		binding, err = a.prepared(ctx, binding, expected[selection])
+		if err != nil {
+			return nil, err
+		}
+		if expected != nil && !expected[selection].SameStorageIdentity(binding) {
 			return nil, errTemporaryActivation
 		}
 		result[selection] = binding
@@ -231,15 +234,17 @@ func (a temporaryV2Activation) run(ctx context.Context) error {
 		if _, err := a.owned(ctx, uid, record); err != nil {
 			return errors.Join(errReadinessTerminal, err)
 		}
-		s, err := a.environment(ctx)
+		if _, err := a.environment(ctx); err != nil {
+			return err
+		}
+		s, err := v2Environment(ctx, a.c, a.pools)
 		if err != nil {
 			return err
 		}
-		if _, err = a.targets(ctx, s, uid, record.Targets); err != nil {
+		if err = a.ownedRegistrations(ctx, s, uid, record.Targets); err != nil {
 			return errors.Join(errReadinessTerminal, err)
 		}
-		_, err = v2Environment(ctx, a.c, a.pools)
-		return err
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -266,19 +271,27 @@ func (a temporaryV2Activation) accepted(ctx context.Context) error {
 	if err != nil || cm == nil || !record.Completed || previousRunCompleted(ctx, a.c, record.OwnerRun, record.Source) != nil {
 		return errTemporaryActivation
 	}
-	s, err := a.environment(ctx)
+	if _, err = a.environment(ctx); err != nil {
+		return err
+	}
+	s, err := v2Environment(ctx, a.c, a.pools)
 	if err != nil {
 		return err
 	}
-	uid := text(cm, "metadata", "uid")
-	if _, err = a.targets(ctx, s, uid, record.Targets); err != nil {
+	return a.ownedRegistrations(ctx, s, text(cm, "metadata", "uid"), record.Targets)
+}
+
+// Revalidate storage ownership and native bindings on the snapshot that proved
+// disk readiness, so a later observation cannot borrow an earlier owner.
+func (a temporaryV2Activation) ownedRegistrations(ctx context.Context, s inventory, uid string, expected map[string]temporaryV2Binding) error {
+	if _, err := a.targets(ctx, s, uid, expected); err != nil {
 		return err
 	}
 	storage, err := indexed(s.storageNodes)
 	if err != nil {
 		return err
 	}
-	for _, binding := range record.Targets {
+	for _, binding := range expected {
 		registered, err := temporaryRegistrationState(storage[binding.Name], uid, binding.Selection)
 		if err != nil || !registered {
 			return errTemporaryActivation

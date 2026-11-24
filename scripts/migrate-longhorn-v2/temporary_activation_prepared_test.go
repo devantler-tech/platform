@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -14,11 +16,11 @@ func temporaryPreparedFixture(t *testing.T, binding temporaryV2Binding) object {
 		NodeUID: binding.NodeUID, ProviderID: binding.ProviderID, MachineUUID: binding.MachineUUID, LonghornUID: binding.LonghornUID,
 		EphemeralUUID: "original-ephemeral", OriginalDisks: object{}, TemporarySelection: binding.Selection,
 		NativeEmptyDigest: strings.Repeat("c", 64), OriginalBootID: "12345678-1234-4234-8234-000000000099", RawVolumeAbsent: true, StagingLayout: true}
+	j.PreparedRawUUID = binding.RawPartitionUUID
 	if binding.Selection == "temporary-v2-1" {
 		j.Schema, j.RawVolumeAbsent = 3, false
 		j.RetainedExtentDigest = strings.Repeat("f", 64)
 		j.RetainedRawUUID = "12345678-1234-4234-8234-000000000089"
-		j.PreparedRawUUID = binding.RawPartitionUUID
 	}
 	data, err := json.Marshal(j)
 	if err != nil {
@@ -55,6 +57,9 @@ func TestTemporaryActivationRequiresTheCompletedPreparationIdentity(t *testing.T
 		"replaced worker": func(cm object) {
 			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), binding.NodeUID, "other-node", 1)
 		},
+		"substituted raw partition": func(cm object) {
+			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), binding.RawPartitionUUID, "12345678-1234-4234-8234-000000000089", 1)
+		},
 		"unchanged boot": func(cm object) {
 			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), "12345678-1234-4234-8234-000000000099", binding.BootID, 1)
 		},
@@ -72,6 +77,80 @@ func TestTemporaryActivationRequiresTheCompletedPreparationIdentity(t *testing.T
 				t.Fatal("incomplete or foreign preparation authorized raw storage")
 			}
 		})
+	}
+}
+
+func TestTemporaryActivationRequiresIndependentEvidenceForOlderPreparation(t *testing.T) {
+	f, a := newActivationAPI(t)
+	ctx := t.Context()
+	s, err := a.environment(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm := f.preparations["temporary-v1-1"]
+	var record journal
+	if err := json.Unmarshal([]byte(text(cm, "data", "record")), &record); err != nil {
+		t.Fatal(err)
+	}
+	qualified := record.PreparedRawUUID
+	record.PreparedRawUUID = ""
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm["data"] = object{"record": string(data)}
+	identity := strings.Join([]string{record.TemporarySelection, record.Source, record.OwnerRun, record.NativeEmptyDigest, strings.ToLower(qualified)}, "\n")
+	for _, tc := range []struct {
+		name, supplied string
+		want           bool
+	}{
+		{name: "unqualified"},
+		{name: "wrong partition", supplied: strings.Repeat("b", 64)},
+		{name: "original protected readback", supplied: fmt.Sprintf("%x", sha256.Sum256([]byte(identity))), want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a.legacyReceipts = map[string]string{record.TemporarySelection: tc.supplied}
+			if _, err := a.targets(ctx, s, "", nil); (err == nil) != tc.want {
+				t.Fatalf("unexpected verdict for older preparation: %v", err)
+			}
+			if f.record != nil || f.writes != 0 {
+				t.Fatal("requalifying the readback must be read-only")
+			}
+		})
+	}
+	a.legacyReceipts = nil
+	if err := a.run(ctx); err == nil || f.record != nil || f.writes != 0 {
+		t.Fatal("missing historical evidence allowed registration")
+	}
+	a.legacyReceipts = map[string]string{record.TemporarySelection: fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))}
+	if err := a.run(ctx); err != nil || f.record == nil || f.writes != 3 {
+		t.Fatal("protected readback failed to bind older preparation", err)
+	}
+	a.legacyReceipts = nil
+	if err := a.accepted(ctx); err != nil {
+		t.Fatal("the accepted journal failed to preserve the earlier disk binding", err)
+	}
+}
+
+func TestLegacyPreparationReceiptsUseOnlyTheTwoRebuiltSelections(t *testing.T) {
+	first := "temporary-v1-1:" + strings.Repeat("a", 64)
+	second := "temporary-v1-2:" + strings.Repeat("b", 64)
+	for _, tc := range []struct {
+		input string
+		count int
+	}{
+		{"", 0},
+		{first, 1},
+		{first + "," + second, 2},
+		{first + "," + first, -1},
+		{"temporary-v2-1:" + strings.Repeat("a", 64), -1},
+		{"temporary-v1-1:invalid", -1},
+		{first + ",", -1},
+	} {
+		actual, err := parseLegacyPreparationReceipts(tc.input)
+		if tc.count < 0 && err == nil || tc.count >= 0 && (err != nil || len(actual) != tc.count) {
+			t.Fatalf("unexpected receipt parser result for %q: %v", tc.input, err)
+		}
 	}
 }
 

@@ -27,10 +27,11 @@ func authorizeTemporaryActivation(getenv func(string) string) error {
 }
 
 type temporaryV2Activation struct {
-	c             client
-	source, owner string
-	pools         map[string]migrationPool
-	reader        inventoryReaderFactory
+	c              client
+	source, owner  string
+	pools          map[string]migrationPool
+	reader         inventoryReaderFactory
+	legacyReceipts map[string]string
 }
 
 func temporaryRawID(selection string) string {
@@ -107,6 +108,9 @@ func (a temporaryV2Activation) readBinding(ctx context.Context, selection string
 // temporaryRegistrationState accepts an empty fence or this journal's exact
 // partial activation. A matching disk path without the journal UID is not owned.
 func temporaryRegistrationState(storage object, journalUID, selection string) (bool, error) {
+	if value(storage, "metadata", "deletionTimestamp") != nil || !noInstanceManagerCPUOverride(storage) {
+		return false, errTemporaryActivation
+	}
 	owner := text(storage, "metadata", "annotations", temporaryActivationOwner)
 	if owner == "" && unusedStorageFenced(storage) {
 		return false, nil
