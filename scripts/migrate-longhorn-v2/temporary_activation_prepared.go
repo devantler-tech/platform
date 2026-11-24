@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -48,11 +47,8 @@ func (a temporaryV2Activation) prepared(ctx context.Context, binding temporaryV2
 	if err != nil {
 		return temporaryV2Binding{}, err
 	}
-	data, err := a.c.run(ctx, nil, "gh", "api", "repos/devantler-tech/platform/actions/runs/"+record.OwnerRun+"/attempts/1")
-	var run object
-	if err != nil || json.Unmarshal(data, &run) != nil || text(run, "status") != "completed" || text(run, "conclusion") != "success" ||
-		text(run, "head_sha") != record.Source || text(run, "head_branch") != "main" || text(run, "event") != "workflow_dispatch" ||
-		value(run, "run_attempt") != float64(1) || !reviewedWorkflowPath(text(run, "path")) {
+	run, err := previousMigrationRun(ctx, a.c, record.OwnerRun, record.Source)
+	if err != nil || text(run, "conclusion") != "success" {
 		return temporaryV2Binding{}, errTemporaryActivation
 	}
 	binding.PreparationUID = text(cm, "metadata", "uid")

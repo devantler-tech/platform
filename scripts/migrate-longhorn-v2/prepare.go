@@ -344,7 +344,10 @@ func (p *preparation) finish(ctx context.Context) error {
 	return p.advance(ctx, "prepared")
 }
 
-func (p preparation) verifyPrepared(ctx context.Context) error {
+// Physical preparation does not assess volume redundancy. The original
+// preparation completion below still requires both; a restore executor must
+// check production redundancy separately from its newly created canary.
+func (p preparation) verifyPreparedPhysical(ctx context.Context) error {
 	if err := p.rebuilt(ctx); err != nil {
 		return err
 	}
@@ -355,6 +358,13 @@ func (p preparation) verifyPrepared(ctx context.Context) error {
 	lh, err := p.storageNode(ctx)
 	if err != nil || !reviewedBlockDisks(value(lh, "spec", "disks")) || value(lh, "spec", "allowScheduling") != true || value(lh, "spec", "evictionRequested") != false {
 		return errors.New("prepared raw-disk configuration drifted")
+	}
+	return nil
+}
+
+func (p preparation) verifyPrepared(ctx context.Context) error {
+	if err := p.verifyPreparedPhysical(ctx); err != nil {
+		return err
 	}
 	s, err := p.c.snapshot(ctx)
 	if err != nil {

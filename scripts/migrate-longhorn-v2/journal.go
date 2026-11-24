@@ -250,15 +250,20 @@ func (p *preparation) advanceWithStage(ctx context.Context, phase, stagedUUID st
 
 // previousRunCompleted proves an earlier first-attempt main dispatch of this workflow has finished.
 func previousRunCompleted(ctx context.Context, c client, runID, source string) error {
+	_, err := previousMigrationRun(ctx, c, runID, source)
+	return err
+}
+
+func previousMigrationRun(ctx context.Context, c client, runID, source string) (object, error) {
 	b, err := c.run(ctx, nil, "gh", "api", "repos/devantler-tech/platform/actions/runs/"+runID+"/attempts/1")
 	if err != nil {
-		return errors.New("previous workflow attempt cannot be verified")
+		return nil, errors.New("previous workflow attempt cannot be verified")
 	}
 	var run object
 	if json.Unmarshal(b, &run) != nil || text(run, "status") != "completed" || text(run, "head_sha") != source ||
 		text(run, "head_branch") != "main" || text(run, "event") != "workflow_dispatch" || value(run, "run_attempt") != float64(1) ||
 		!reviewedWorkflowPath(text(run, "path")) {
-		return errors.New("previous workflow is live, unknown or outside the reviewed procedure")
+		return nil, errors.New("previous workflow is live, unknown or outside the reviewed procedure")
 	}
-	return nil
+	return run, nil
 }
