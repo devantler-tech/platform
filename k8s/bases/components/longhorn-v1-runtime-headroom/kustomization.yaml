@@ -17,8 +17,18 @@ patches:
       spec:
         values:
           kubevuln:
-            nodeSelector:
-              kubernetes.io/hostname: prod-worker-1
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: kubernetes.io/hostname
+                          operator: In
+                          values: [prod-worker-1]
+                    - matchExpressions:
+                        - key: storage.platform.devantler.tech/migration-pool
+                          operator: In
+                          values: [v2]
   - target:
       group: helm.toolkit.fluxcd.io
       version: v2

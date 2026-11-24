@@ -8,7 +8,9 @@ NoSchedule toleration. The policy-reporting UI uses workers 1 and 2 or the V2
 migration worker through its production patch. Its three eligible hosts allow
 two replicas and a rolling surge to remain on separate nodes. Kustomize's two controllers
 use worker 1 or the migration workers; the Coroot security-progress collector
-uses worker 1 or the V2 migration worker.
+and the vulnerability scanner use worker 1 or the V2 migration worker. The
+scanner's memory request follows its autoscaler recommendation, so a single
+eligible host can leave it unschedulable once that host fills up.
 CSI and Reloader require separate hosts across revisions so their rolling surges
 cannot concentrate controller requests. Their replicas, resource requests,
 disruption budgets, security settings and other spreading rules remain
