@@ -92,8 +92,8 @@ provider="${filters}[] | select(.name == \"envoy.filters.http.jwt_authn\") | .ty
   fail "the gate must fetch GitHub's published signing keys"
 tls='.static_resources.clusters[] | select(.name == "github_oidc") | .transport_socket.typed_config'
 [[ "$(yq "${tls} | .sni" "${work}/shipped.yaml")" == token.actions.githubusercontent.com &&
-  "$(yq "${tls} | .common_tls_context.validation_context.trusted_ca.filename" "${work}/shipped.yaml")" == /etc/ssl/certs/ca-certificates.crt &&
-  "$(yq -o=json -I=0 "${tls} | .common_tls_context.validation_context.match_typed_subject_alt_names" "${work}/shipped.yaml")" == '[{"san_type":"DNS","matcher":{"exact":"token.actions.githubusercontent.com"}}]' ]] ||
+"$(yq "${tls} | .common_tls_context.validation_context.trusted_ca.filename" "${work}/shipped.yaml")" == /etc/ssl/certs/ca-certificates.crt &&
+"$(yq -o=json -I=0 "${tls} | .common_tls_context.validation_context.match_typed_subject_alt_names" "${work}/shipped.yaml")" == '[{"san_type":"DNS","matcher":{"exact":"token.actions.githubusercontent.com"}}]' ]] ||
   fail "GitHub's signing keys must be fetched over TLS verified for token.actions.githubusercontent.com"
 
 rbac="${filters}[] | select(.name == \"envoy.filters.http.rbac\") | .typed_config.rules"
