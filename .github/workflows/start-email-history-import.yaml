@@ -24,8 +24,10 @@ jobs:
     # The self-repository form ($/) fails the pinned actionlint 1.7.12.
     uses: ./.github/workflows/prod-operation.yaml # zizmor: ignore[self-repository]
     # The prod environment secrets reach the called job only when named here.
+    # HCLOUD_TOKEN is dropped before the program runs (no hcloud-token input).
     secrets:
       KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
     with:
       operation: start-email-history-import
       confirm: ${{ inputs.confirm }}
