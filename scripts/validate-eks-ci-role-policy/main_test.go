@@ -344,6 +344,10 @@ func TestValidateUnifiReleaseSource(t *testing.T) {
 			matcher := spec["verify"].(map[string]any)["matchOIDCIdentity"].([]any)[0].(map[string]any)
 			matcher["subject"] = `^https://github\.com/devantler-tech/unifi/\.github/workflows/.+$`
 		}},
+		{"any workflow of unifi on a release tag", func(spec map[string]any) {
+			matcher := spec["verify"].(map[string]any)["matchOIDCIdentity"].([]any)[0].(map[string]any)
+			matcher["subject"] = publishSubjectHost + "unifi" + `/\.github/workflows/[^/]+\.ya?ml` + ownReleaseTagRef + "$"
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
