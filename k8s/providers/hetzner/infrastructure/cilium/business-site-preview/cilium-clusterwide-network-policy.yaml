@@ -1,0 +1,15 @@
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: deny-gateway-to-business-site-preview
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s:io.kubernetes.pod.namespace: business-site-dev
+  # The Gateway forwards with Cilium's ingress identity. The maintainer
+  # authentication proxy uses its own workload identity on the upstream hop.
+  enableDefaultDeny:
+    ingress: false
+  ingressDeny:
+    - fromEntities:
+        - ingress
