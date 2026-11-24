@@ -46,6 +46,112 @@ patches:
       group: helm.toolkit.fluxcd.io
       version: v2
       kind: HelmRelease
+      name: cloudnative-pg
+      namespace: cnpg-system
+    patch: |-
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: cloudnative-pg
+      spec:
+        values:
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: kubernetes.io/hostname
+                        operator: NotIn
+                        values: [prod-worker-1, prod-worker-3]
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  preference:
+                    matchExpressions:
+                      - key: storage.platform.devantler.tech/migration-pool
+                        operator: In
+                        values: [v2]
+          updateStrategy:
+            type: RollingUpdate
+            rollingUpdate:
+              maxSurge: 1
+              maxUnavailable: 0
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: external-secrets
+      namespace: external-secrets
+    patch: |-
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: external-secrets
+      spec:
+        values:
+          affinity: &secretsPlacement
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: kubernetes.io/hostname
+                        operator: NotIn
+                        values: [prod-worker-2]
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  preference:
+                    matchExpressions:
+                      - key: storage.platform.devantler.tech/migration-pool
+                        operator: In
+                        values: [v2]
+          strategy: &secretsStrategy
+            type: RollingUpdate
+            rollingUpdate:
+              maxSurge: 1
+              maxUnavailable: 0
+          certController:
+            affinity: *secretsPlacement
+            strategy: *secretsStrategy
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: cert-manager
+      namespace: cert-manager
+    patch: |-
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: cert-manager
+      spec:
+        values:
+          cainjector:
+            tolerations:
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
+                effect: NoSchedule
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node-role.kubernetes.io/control-plane
+                          operator: Exists
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - topologyKey: kubernetes.io/hostname
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: cainjector
+                        app.kubernetes.io/instance: cert-manager
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 1
+                maxUnavailable: 0
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
       name: kubescape
       namespace: kubescape
     patch: |-

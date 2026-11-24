@@ -57,11 +57,26 @@ assert_workload_headroom() {
        preferredDuringSchedulingIgnoredDuringExecution:[{weight:100,preference:migration_terms[0]}]};
     def rolling_strategy:
       {type:"RollingUpdate",rollingUpdate:{maxSurge:1,maxUnavailable:0}};
+    def client_headroom_affinity($hosts):
+      {nodeAffinity:{
+        requiredDuringSchedulingIgnoredDuringExecution:{nodeSelectorTerms:[
+          {matchExpressions:[{key:"kubernetes.io/hostname",operator:"NotIn",values:$hosts}]}]},
+        preferredDuringSchedulingIgnoredDuringExecution:[{weight:100,preference:{
+          matchExpressions:[{key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v2"]}]}}]}};
+    def cainjector_affinity:
+      {nodeAffinity:{requiredDuringSchedulingIgnoredDuringExecution:{nodeSelectorTerms:[
+        {matchExpressions:[{key:"node-role.kubernetes.io/control-plane",operator:"Exists"}]}]}},
+       podAntiAffinity:{requiredDuringSchedulingIgnoredDuringExecution:[
+        {topologyKey:"kubernetes.io/hostname",labelSelector:{matchLabels:{
+          "app.kubernetes.io/name":"cainjector","app.kubernetes.io/instance":"cert-manager"}}}]}};
     workload("HelmRelease";"kubescape";"kubescape") as $kubescape |
     workload("Deployment";"observability";"crossplane-sync-exporter") as $exporter |
     workload("HelmRelease";"policy-reporter";"policy-reporter") as $reporter |
     workload("HelmRelease";"kube-system";"cilium").spec.values.hubble.ui as $hubble |
     workload("HelmRelease";"velero";"velero").spec.values.affinity.nodeAffinity as $veleroAffinity |
+    workload("HelmRelease";"cnpg-system";"cloudnative-pg").spec.values as $cnpg |
+    workload("HelmRelease";"external-secrets";"external-secrets").spec.values as $secrets |
+    workload("HelmRelease";"cert-manager";"cert-manager").spec.values as $certificates |
     workload("Deployment";"data-product-controller";"data-product-controller-contract-probe") as $probe |
     workload("PodDisruptionBudget";"data-product-controller";"data-product-controller-contract-probe") as $probeBudget |
     $kubescape.spec.values.kubevuln.nodeSelector["kubernetes.io/hostname"] as $scannerHost |
@@ -95,10 +110,27 @@ assert_workload_headroom() {
     (if $scanner_enabled then
       $hubbleAffinity == maintenance_affinity and
       $veleroAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms == migration_terms and
-      $hubble.updateStrategy == rolling_strategy
+      $hubble.updateStrategy == rolling_strategy and
+      $cnpg.affinity == client_headroom_affinity(["prod-worker-1","prod-worker-3"]) and
+      $cnpg.updateStrategy == rolling_strategy and
+      $secrets.affinity == client_headroom_affinity(["prod-worker-2"]) and
+      $secrets.certController.affinity == $secrets.affinity and
+      $secrets.strategy == rolling_strategy and
+      $secrets.certController.strategy == rolling_strategy and
+      $certificates.cainjector.affinity == cainjector_affinity and
+      $certificates.cainjector.tolerations ==
+        [{key:"node-role.kubernetes.io/control-plane",operator:"Exists",effect:"NoSchedule"}] and
+      $certificates.cainjector.strategy == rolling_strategy and
+      $certificates.cainjector.podDisruptionBudget == {enabled:true,minAvailable:1}
     else
-      $hubbleAffinity == null and $veleroAffinity.requiredDuringSchedulingIgnoredDuringExecution == null
+      $hubbleAffinity == null and $veleroAffinity.requiredDuringSchedulingIgnoredDuringExecution == null and
+      $cnpg.affinity == null and $cnpg.updateStrategy.rollingUpdate == {maxSurge:0,maxUnavailable:1} and
+      $secrets.affinity == null and $secrets.certController.affinity == null and
+      $secrets.strategy == null and $secrets.certController.strategy == null and
+      $certificates.cainjector.affinity == null and $certificates.cainjector.tolerations == null and
+      $certificates.cainjector.strategy.rollingUpdate == {maxSurge:0,maxUnavailable:1}
     end) and
+    $secrets.webhook.affinity == null and $secrets.webhook.strategy == null and
     $probe.spec.replicas == 2 and $probeBudget.spec.maxUnavailable == 1 and
     (if $probe_enabled then
       $probe.spec.strategy == rolling_strategy and
