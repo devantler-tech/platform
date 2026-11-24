@@ -17,16 +17,16 @@ func nativeRestoreV2ManagerIdentityFixture() (nativeRestoreTarget, object, objec
 func nativeRestoreManagerObjects(target nativeRestoreTarget, name, managerUID, podUID, containerHex string) (object, object) {
 	labels := func() object {
 		return object{"longhorn.io/managed-by": "longhorn-manager", "longhorn.io/component": "instance-manager", "longhorn.io/node": target.Name,
-			"longhorn.io/instance-manager-type": "aio", "longhorn.io/data-engine": "v2", "longhorn.io/instance-manager-image": "imi-326dadd9"}
+			"longhorn.io/instance-manager-type": "aio", "longhorn.io/data-engine": "v2", "longhorn.io/instance-manager-image": "imi-2bdbe6d9"}
 	}
 	im := object{"apiVersion": "longhorn.io/v1beta2", "kind": "InstanceManager", "metadata": object{"name": name, "namespace": "longhorn-system", "uid": managerUID, "resourceVersion": "7", "labels": labels(),
 		"ownerReferences": []any{object{"apiVersion": "longhorn.io/v1beta2", "kind": "Node", "name": target.Name, "uid": target.Preparation.LonghornUID, "blockOwnerDeletion": true}}},
-		"spec": object{"nodeID": target.Name, "image": benchmarkRetirementImage, "type": "aio", "dataEngine": "v2"}, "status": object{"currentState": "running", "ownerID": target.Name}}
+		"spec": object{"nodeID": target.Name, "image": runtimeStockImage, "type": "aio", "dataEngine": "v2"}, "status": object{"currentState": "running", "ownerID": target.Name}}
 	pod := object{"apiVersion": "v1", "kind": "Pod", "metadata": object{"name": name, "namespace": "longhorn-system", "uid": podUID, "resourceVersion": "9", "labels": labels(),
 		"ownerReferences": []any{object{"apiVersion": "longhorn.io/v1beta2", "kind": "InstanceManager", "name": name, "uid": managerUID, "controller": true, "blockOwnerDeletion": true}}},
-		"spec": object{"nodeName": target.Name, "serviceAccountName": "longhorn-service-account", "restartPolicy": "Never", "containers": []any{object{"name": "instance-manager", "image": benchmarkRetirementImage, "securityContext": object{"privileged": true}}}},
+		"spec": object{"nodeName": target.Name, "serviceAccountName": "longhorn-service-account", "restartPolicy": "Never", "containers": []any{object{"name": "instance-manager", "image": runtimeStockImage, "securityContext": object{"privileged": true}}}},
 		"status": object{"phase": "Running", "conditions": []any{object{"type": "Ready", "status": "True"}}, "containerStatuses": []any{object{"name": "instance-manager", "ready": true, "started": true, "restartCount": float64(0),
-			"imageID": benchmarkRetirementRepository + "@" + benchmarkRetirementImageDigest, "containerID": "containerd://" + strings.Repeat(containerHex, 64), "state": object{"running": object{"startedAt": "2026-11-16T12:00:00Z"}}}}}}
+			"imageID": "docker.io/longhornio/longhorn-instance-manager@sha256:fc9e1c15e81988b04c146866ce7010b6df3a70f88302809bf53e19b27d1658a3", "containerID": "containerd://" + strings.Repeat(containerHex, 64), "state": object{"running": object{"startedAt": "2026-11-16T12:00:00Z"}}}}}}
 	return im, pod
 }
 
@@ -43,8 +43,18 @@ func TestNativeRestoreV2ManagerIdentityBindsOwnedNativeProcess(t *testing.T) {
 	}
 }
 
+func TestNativeRestoreV2ManagerIdentityAcceptsDockerHubShorthand(t *testing.T) {
+	target, lh, manager, pod := nativeRestoreV2ManagerIdentityFixture()
+	valueObject(manager, "spec")["image"] = "longhornio/longhorn-instance-manager:v1.13.0"
+	valueObject(manager, "metadata", "labels")["longhorn.io/instance-manager-image"] = "imi-351d003b"
+	valueObject(pod, "metadata", "labels")["longhorn.io/instance-manager-image"] = "imi-351d003b"
+	if _, err := qualifyNativeRestoreV2ManagerIdentity(target, lh, manager, pod); err != nil {
+		t.Fatal("the Docker Hub shorthand names the same reviewed instance manager:", err)
+	}
+}
+
 func TestNativeRestoreV2ManagerIdentityRejectsUnownedOrAmbiguousProcesses(t *testing.T) {
-	for _, fault := range []string{"node owner uid", "node owner controller", "pod owner uid", "pod owner deletion", "manager image", "pod image", "image id", "image label", "pod label", "manager mode", "manager state", "manager owner", "pod node", "pod namespace", "pod revision", "manager deleting", "pod deleting", "identity alias", "service account", "restart policy", "host pid", "sidecar", "init", "ephemeral", "not ready", "status count", "not started", "restart", "missing restart", "container id", "future process", "waiting process"} {
+	for _, fault := range []string{"node owner uid", "node owner controller", "pod owner uid", "pod owner deletion", "manager image", "pod image", "image id", "different digest", "different digest repository", "retirement image", "image label", "pod label", "manager mode", "manager state", "manager owner", "pod node", "pod namespace", "pod revision", "manager deleting", "pod deleting", "identity alias", "service account", "restart policy", "host pid", "sidecar", "init", "ephemeral", "not ready", "status count", "not started", "restart", "missing restart", "container id", "future process", "waiting process"} {
 		t.Run(fault, func(t *testing.T) {
 			target, lh, im, pod := nativeRestoreV2ManagerIdentityFixture()
 			status := value(pod, "status", "containerStatuses").([]any)[0].(object)
@@ -63,6 +73,16 @@ func TestNativeRestoreV2ManagerIdentityRejectsUnownedOrAmbiguousProcesses(t *tes
 				value(pod, "spec", "containers").([]any)[0].(object)["image"] = "unreviewed"
 			case "image id":
 				status["imageID"] = "unreviewed"
+			case "different digest":
+				status["imageID"] = "docker.io/longhornio/longhorn-instance-manager@sha256:" + strings.Repeat("a", 64)
+			case "different digest repository":
+				status["imageID"] = strings.Replace(text(status, "imageID"), "longhornio/", "foreign/", 1)
+			case "retirement image":
+				valueObject(im, "spec")["image"] = benchmarkRetirementImage
+				value(pod, "spec", "containers").([]any)[0].(object)["image"] = benchmarkRetirementImage
+				status["imageID"] = benchmarkRetirementRepository + "@" + benchmarkRetirementImageDigest
+				valueObject(im, "metadata", "labels")["longhorn.io/instance-manager-image"] = "imi-326dadd9"
+				valueObject(pod, "metadata", "labels")["longhorn.io/instance-manager-image"] = "imi-326dadd9"
 			case "image label":
 				valueObject(im, "metadata", "labels")["longhorn.io/instance-manager-image"] = "imi-wrong"
 			case "pod label":

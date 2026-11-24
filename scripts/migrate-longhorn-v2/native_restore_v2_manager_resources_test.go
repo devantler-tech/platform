@@ -5,22 +5,22 @@ import (
 	"testing"
 )
 
-// Pinned manager 20d9c079 requests 128Mi ordinary memory and 2048Mi
-// hugepages; native LimitRanger adds the 2-core CPU limit. The mask does
-// not determine the request: 8000m allocatable at 6% is 480m.
+// The stock manager requests 128Mi ordinary memory and 2048Mi
+// hugepages; native LimitRanger adds the four-core CPU limit. With a
+// 6% reservation, 8000m allocatable gives a 480m CPU request.
 func nativeRestoreV2ManagerResourcesFixture() (nativeRestoreTarget, object, object, object, object, []object, []object) {
 	target, storage, manager, pod := nativeRestoreV2ManagerIdentityFixture()
 	_, nodes, _ := nativeRestoreTargetsFixture()
 	node := nodes[1]
 	valueObject(node, "status", "allocatable")["cpu"] = "8"
 	container := value(pod, "spec", "containers").([]any)[0].(object)
-	container["resources"] = object{"requests": object{"cpu": "480m", "memory": "128Mi", "hugepages-2Mi": "2Gi"}, "limits": object{"cpu": "2", "hugepages-2Mi": "2Gi"}}
+	container["resources"] = object{"requests": object{"cpu": "480m", "memory": "128Mi", "hugepages-2Mi": "2Gi"}, "limits": object{"cpu": "4", "hugepages-2Mi": "2Gi"}}
 	settings := []object{}
 	for _, entry := range [][2]string{{"guaranteed-instance-manager-cpu", `{"v1":"6","v2":"6"}`}, {"data-engine-number-of-cpu-cores", `{"v2":"0"}`}, {"data-engine-memory-size", `{"v2":"2048"}`}, {"data-engine-hugepage-enabled", `{"v2":"true"}`}} {
 		settings = append(settings, object{"apiVersion": "longhorn.io/v1beta2", "kind": "Setting", "metadata": object{"name": entry[0], "namespace": "longhorn-system", "uid": "setting-" + entry[0], "resourceVersion": "3"}, "value": entry[1]})
 	}
 	limits := []object{{"apiVersion": "v1", "kind": "LimitRange", "metadata": object{"name": "default-limitrange", "namespace": "longhorn-system", "uid": "limitrange-uid", "resourceVersion": "4"},
-		"spec": object{"limits": []any{object{"type": "Container", "default": object{"cpu": "2"}, "defaultRequest": object{"cpu": "15m", "memory": "128Mi"}}}}}}
+		"spec": object{"limits": []any{object{"type": "Container", "default": object{"cpu": "4"}, "defaultRequest": object{"cpu": "15m", "memory": "128Mi"}}}}}}
 	return target, node, storage, manager, pod, settings, limits
 }
 
@@ -34,11 +34,11 @@ func TestNativeRestoreV2ManagerResourcesMeasureProducerAndAdmission(t *testing.T
 	resources := valueObject(value(pod, "spec", "containers").([]any)[0].(object), "resources")
 	valueObject(resources, "requests")["memory"] = "134217728"
 	valueObject(resources, "requests")["hugepages-2Mi"] = "2048Mi"
-	valueObject(resources, "limits")["cpu"] = "2000m"
+	valueObject(resources, "limits")["cpu"] = "4000m"
 	// Native allocation fields are optional and may report only some resources.
 	// A zero retained request is safe because the declared request is counted.
 	for _, status := range []object{valueObject(pod, "status"), value(pod, "status", "containerStatuses").([]any)[0].(object)} {
-		status["resources"] = object{"requests": object{"memory": "0"}, "limits": object{"cpu": "2000m"}}
+		status["resources"] = object{"requests": object{"memory": "0"}, "limits": object{"cpu": "4000m"}}
 		status["allocatedResources"] = object{"cpu": "0", "hugepages-2Mi": "2048Mi"}
 	}
 	after, err := qualifyNativeRestoreV2ManagerResources(target, node, storage, manager, pod, settings, limits, nil)
@@ -54,6 +54,19 @@ func TestNativeRestoreV2ManagerResourcesRoundTheNativeCPURequest(t *testing.T) {
 	got, err := qualifyNativeRestoreV2ManagerResources(target, node, storage, manager, pod, settings, limits, nil)
 	if err != nil || got.CPUMilli != 482 {
 		t.Fatal("481.5m must round to 482m as the producer does:", got, err)
+	}
+}
+
+func TestNativeRestoreV2ManagerResourcesAcceptCurrentProductionAdmission(t *testing.T) {
+	target, node, storage, manager, pod, settings, limits := nativeRestoreV2ManagerResourcesFixture()
+	settings[0]["value"] = `{"v1":"6","v2":"25"}`
+	resources := valueObject(value(pod, "spec", "containers").([]any)[0].(object), "resources")
+	valueObject(resources, "requests")["cpu"] = "2"
+	valueObject(resources, "limits")["cpu"] = "4"
+	valueObject(value(limits[0], "spec", "limits").([]any)[0].(object), "default")["cpu"] = "4"
+	got, err := qualifyNativeRestoreV2ManagerResources(target, node, storage, manager, pod, settings, limits, nil)
+	if err != nil || got.CPUMilli != 2000 {
+		t.Fatal("the declared 25% CPU reservation and four-core production limit were refused:", got, err)
 	}
 }
 

@@ -6,7 +6,8 @@ import (
 	"strings"
 )
 
-const runtimeStockImage = "docker.io/longhornio/longhorn-instance-manager:v1.13.0"
+const runtimeStockRepository = "docker.io/longhornio/longhorn-instance-manager"
+const runtimeStockImage = runtimeStockRepository + ":v1.13.0"
 
 var errRuntimePublication = errors.New("longhorn runtime publication lacks its required capacity evidence")
 

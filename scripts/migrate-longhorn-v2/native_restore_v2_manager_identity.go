@@ -13,6 +13,9 @@ type nativeRestoreV2ManagerIdentity struct {
 	StartedAt                                  time.Time
 }
 
+// The staging clients expose the Docker Hub v1.13.0 index digest as their image ID.
+const nativeRestoreStockImageID = runtimeStockRepository + "@sha256:fc9e1c15e81988b04c146866ce7010b6df3a70f88302809bf53e19b27d1658a3"
+
 // Bind only the native ownership and serving-process identity. This is not a
 // runtime or capacity clearance: the caller must also qualify the complete
 // cohort, settings, argv, mounts, admission, physical hosts and storage graph.
@@ -47,9 +50,10 @@ func qualifyNativeRestoreV2ManagerIdentity(target nativeRestoreTarget, storage, 
 	}
 	managerOwner := []any{object{"apiVersion": "longhorn.io/v1beta2", "kind": "Node", "name": target.Name, "uid": target.Preparation.LonghornUID, "blockOwnerDeletion": true}}
 	podOwner := []any{object{"apiVersion": "longhorn.io/v1beta2", "kind": "InstanceManager", "name": name, "uid": text(manager, "metadata", "uid"), "controller": true, "blockOwnerDeletion": true}}
+	image := text(manager, "spec", "image")
 	if text(storage, "metadata", "name") != target.Name || text(storage, "metadata", "uid") != target.Preparation.LonghornUID ||
 		!strings.HasPrefix(name, "instance-manager-") || safeKubeRequest("pod", "longhorn-system", name, false) != nil || text(pod, "metadata", "name") != name ||
-		text(manager, "spec", "nodeID") != target.Name || text(manager, "spec", "image") != benchmarkRetirementImage ||
+		text(manager, "spec", "nodeID") != target.Name || !nativeRestoreStockImage(image) ||
 		text(manager, "spec", "type") != "aio" || text(manager, "spec", "dataEngine") != "v2" ||
 		text(manager, "status", "currentState") != "running" || text(manager, "status", "ownerID") != target.Name ||
 		!reflect.DeepEqual(value(manager, "metadata", "ownerReferences"), managerOwner) || !reflect.DeepEqual(value(pod, "metadata", "ownerReferences"), podOwner) ||
@@ -57,7 +61,7 @@ func qualifyNativeRestoreV2ManagerIdentity(target nativeRestoreTarget, storage, 
 		text(pod, "status", "phase") != "Running" || !conditionsTrue(valueObject(pod, "status"), "Ready") {
 		return fail()
 	}
-	digest := sha512.Sum512([]byte(strings.TrimSpace(strings.NewReplacer(":", "-", "/", "-").Replace(benchmarkRetirementImage))))
+	digest := sha512.Sum512([]byte(strings.NewReplacer(":", "-", "/", "-").Replace(image)))
 	labels := object{"longhorn.io/managed-by": "longhorn-manager", "longhorn.io/component": "instance-manager", "longhorn.io/node": target.Name,
 		"longhorn.io/instance-manager-type": "aio", "longhorn.io/data-engine": "v2", "longhorn.io/instance-manager-image": "imi-" + hex.EncodeToString(digest[:])[:8]}
 	for key, want := range labels {
@@ -87,10 +91,10 @@ func qualifyNativeRestoreV2ManagerIdentity(target nativeRestoreTarget, storage, 
 	}
 	container, _ := containers[0].(object)
 	process, _ := statuses[0].(object)
-	if text(container, "name") != "instance-manager" || text(container, "image") != benchmarkRetirementImage || value(container, "securityContext", "privileged") != true ||
+	if text(container, "name") != "instance-manager" || !nativeRestoreStockImage(text(container, "image")) || value(container, "securityContext", "privileged") != true ||
 		!nativeRestoreV2EmptyList(value(container, "command")) || text(process, "name") != "instance-manager" ||
 		value(process, "ready") != true || value(process, "started") != true || value(process, "restartCount") != float64(0) ||
-		benchmarkRetirementDigest(strings.TrimPrefix(text(process, "imageID"), "docker-pullable://")) != benchmarkRetirementImageDigest ||
+		strings.TrimPrefix(text(process, "imageID"), "docker-pullable://") != nativeRestoreStockImageID ||
 		!benchmarkContainerID.MatchString(text(process, "containerID")) || value(process, "state", "waiting") != nil || value(process, "state", "terminated") != nil {
 		return fail()
 	}
@@ -100,6 +104,10 @@ func qualifyNativeRestoreV2ManagerIdentity(target nativeRestoreTarget, storage, 
 	}
 	return nativeRestoreV2ManagerIdentity{Pod: text(pod, "metadata", "name"), PodUID: text(pod, "metadata", "uid"), ManagerUID: text(manager, "metadata", "uid"), Node: target.Name,
 		ContainerID: text(process, "containerID"), StartedAt: started}, nil
+}
+
+func nativeRestoreStockImage(image string) bool {
+	return image == runtimeStockImage || image == strings.TrimPrefix(runtimeStockImage, "docker.io/")
 }
 
 func nativeRestoreV2EmptyList(raw any) bool {

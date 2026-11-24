@@ -82,15 +82,17 @@ func qualifyNativeRestoreV2ManagerResources(target nativeRestoreTarget, node, st
 		return fail()
 	}
 	rule, ok := rules[0].(object)
+	// The production Longhorn LimitRange caps each container at four cores.
+	const cpuLimit = "4"
 	if !ok || !runtimeOnlyKeys(rule, "type", "default", "defaultRequest") || text(rule, "type") != "Container" ||
-		!nativeRestoreV2ResourceEqual(rule["default"], object{"cpu": "2"}) || !nativeRestoreV2ResourceEqual(rule["defaultRequest"], object{"cpu": "15m", "memory": "128Mi"}) {
+		!nativeRestoreV2ResourceEqual(rule["default"], object{"cpu": cpuLimit}) || !nativeRestoreV2ResourceEqual(rule["defaultRequest"], object{"cpu": "15m", "memory": "128Mi"}) {
 		return fail()
 	}
 	result.LimitRange, result.Versions[5] = benchmarkIdentity(limit), text(limit, "metadata", "resourceVersion")
 	container := value(pod, "spec", "containers").([]any)[0].(object)
 	resources, ok := container["resources"].(object)
 	requests := object{"cpu": strconv.FormatInt(result.CPUMilli, 10) + "m", "memory": "128Mi", "hugepages-2Mi": "2Gi"}
-	limits := object{"cpu": "2", "hugepages-2Mi": "2Gi"}
+	limits := object{"cpu": cpuLimit, "hugepages-2Mi": "2Gi"}
 	if !ok || !runtimeOnlyKeys(resources, "requests", "limits") || !nativeRestoreV2ResourceEqual(resources["requests"], requests) || !nativeRestoreV2ResourceEqual(resources["limits"], limits) ||
 		value(pod, "spec", "resources") != nil || value(pod, "spec", "overhead") != nil || podAllocationUnqualified(pod) {
 		return fail()
