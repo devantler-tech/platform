@@ -126,6 +126,38 @@ func newInventoryReader(ctx context.Context, address string) (nativeReplicaReade
 	return openInventoryReader(ctx, address, "")
 }
 
+// Talos can omit the container UUID from a freshly provisioned VolumeStatus.
+// In that case require a separate, stable discovery of the same GPT partition.
+func recoveredEphemeralUUID(ctx context.Context, address string, ephemeral object, open inventoryReaderFactory) (uuid string, err error) {
+	if uuid := text(ephemeral, "spec", "uuid"); uuid != "" {
+		return uuid, nil
+	}
+	partitionUUID := text(ephemeral, "spec", "partitionUUID")
+	if !inventoryBoot.MatchString(partitionUUID) {
+		return "", errInventory
+	}
+	reader, closeReader, err := open(ctx, address)
+	if err != nil || reader == nil || closeReader == nil {
+		return "", errInventory
+	}
+	defer func() {
+		if closeReader() != nil || !commandContextActive(ctx) {
+			uuid, err = "", errInventory
+		}
+	}()
+	native, ok := reader.(interface {
+		RebuiltEphemeralUUID(context.Context, string) (string, error)
+	})
+	if !ok {
+		return "", errInventory
+	}
+	uuid, err = native.RebuiltEphemeralUUID(ctx, partitionUUID)
+	if err != nil || !inventoryBoot.MatchString(uuid) {
+		return "", errInventory
+	}
+	return uuid, nil
+}
+
 // openInventoryReader opens a node-bound native client using the protected
 // workflow's memory-backed credentials and bounded block API. The unused-worker
 // profile additionally verifies its original partition before directory reads.

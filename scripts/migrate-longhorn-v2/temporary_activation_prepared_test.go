@@ -34,7 +34,7 @@ func temporaryPreparedFixture(t *testing.T, binding temporaryV2Binding) object {
 // raw disk, and completion must prove the original filesystem was replaced.
 func TestTemporaryActivationRequiresTheCompletedPreparationIdentity(t *testing.T) {
 	n, lh, raw, eph, pool := temporaryRawBindingFixture()
-	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"))
+	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"), text(eph, "spec", "uuid"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestTemporaryActivationRequiresTheCompletedPreparationIdentity(t *testing.T
 
 func TestTemporaryActivationRequiresThePreservingPreparationIdentity(t *testing.T) {
 	n, lh, raw, eph, pool := temporaryRawBindingFixture()
-	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"))
+	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"), text(eph, "spec", "uuid"))
 	if err != nil {
 		t.Fatal(err)
 	}

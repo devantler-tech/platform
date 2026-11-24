@@ -1,0 +1,54 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-tenant-previews
+  annotations:
+    policies.kyverno.io/title: Reserve Source-Only Tenant Previews
+    policies.kyverno.io/category: Security, Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Tenant
+    policies.kyverno.io/minversion: 1.19.1
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["kro.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["tenants", "tenants/status"]
+  variables:
+    - name: repository
+      expression: "object.spec.?name.orValue('')"
+    - name: preview
+      expression: "object.metadata.name.endsWith('-dev')"
+    - name: flux
+      expression: "request.userInfo.username == 'system:serviceaccount:flux-system:kustomize-controller'"
+    - name: kroMaintenance
+      expression: >-
+        request.operation == 'UPDATE' &&
+        request.userInfo.username == 'system:serviceaccount:kro-system:kro' &&
+        object.spec == oldObject.spec
+  validations:
+    - expression: "variables.repository != '' && !variables.repository.endsWith('-dev')"
+      message: The dev namespace suffix is reserved for isolated previews.
+    - expression: >-
+        !variables.preview ||
+        (variables.repository == 'business-site' &&
+         object.metadata.name == variables.repository + '-dev' &&
+         object.metadata.namespace == 'flux-system' &&
+         (variables.flux || variables.kroMaintenance) &&
+         !object.spec.?externalDns.orValue(false) &&
+         !object.spec.?webApp.orValue(false) &&
+         object.spec.?resourceQuota.?enabled.orValue(false) &&
+         !object.spec.?source.?reconcileApplication.orValue(true) &&
+         (request.operation == 'CREATE' || object.spec.name == oldObject.spec.name))
+      message: The Business Site preview must use a platform-managed source with a quota.
+    - expression: >-
+        !variables.preview || request.operation != 'CREATE' ||
+        !dyn(resource.List('v1', 'namespaces', '',
+          {'kubernetes.io/metadata.name': object.metadata.name}).items).exists(n, n.metadata.name == object.metadata.name)
+      message: A preview Tenant cannot adopt an existing namespace.

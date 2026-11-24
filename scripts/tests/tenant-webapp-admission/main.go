@@ -55,6 +55,7 @@ var lookupKinds = map[schema.GroupVersionKind]schema.GroupVersionResource{
 type fixtureContext struct {
 	libs.Context
 	failure string
+	lookups []*unstructured.Unstructured
 }
 
 // GetResource answers resource lookups from the fixture. "forbidden" and
@@ -72,6 +73,29 @@ func (c fixtureContext) GetResource(apiVersion, resource, namespace, name string
 		return nil, apierrors.NewInternalError(errors.New("fictional server failure"))
 	}
 	return c.Context.GetResource(apiVersion, resource, namespace, name)
+}
+
+func (c fixtureContext) ListResources(apiVersion, resource, namespace string, labels map[string]string) (*unstructured.UnstructuredList, error) {
+	if apiVersion != "v1" || resource != "namespaces" || namespace != "" {
+		return c.Context.ListResources(apiVersion, resource, namespace, labels)
+	}
+	name, ok := labels["kubernetes.io/metadata.name"]
+	if !ok || len(labels) != 1 || name == "" {
+		return nil, fmt.Errorf("expected an exact namespace selector")
+	}
+	switch c.failure {
+	case "forbidden":
+		return nil, apierrors.NewForbidden(schema.GroupResource{Resource: resource}, name, errors.New("fictional read refusal"))
+	case "servererror":
+		return nil, apierrors.NewInternalError(errors.New("fictional server failure"))
+	}
+	result := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{}}
+	for _, item := range c.lookups {
+		if item.GetAPIVersion() == apiVersion && item.GetKind() == "Namespace" && item.GetName() == name {
+			result.Items = append(result.Items, *item)
+		}
+	}
+	return result, nil
 }
 
 func main() {
@@ -144,7 +168,7 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 	if target == nil {
 		target = f.OldObject
 	}
-	resources := map[string]string{"CiliumNetworkPolicy": "ciliumnetworkpolicies", "WebApp": "webapps", "Deployment": "deployments", "Service": "services", "HTTPRoute": "httproutes", "ExternalSecret": "externalsecrets", "SecretStore": "secretstores", "PushSecret": "pushsecrets", "ConfigMap": "configmaps", "Team": "teams", "TeamRepository": "teamrepositories", "TeamMembership": "teammemberships",
+	resources := map[string]string{"CiliumNetworkPolicy": "ciliumnetworkpolicies", "Tenant": "tenants", "WebApp": "webapps", "Deployment": "deployments", "Service": "services", "HTTPRoute": "httproutes", "ExternalSecret": "externalsecrets", "SecretStore": "secretstores", "PushSecret": "pushsecrets", "ConfigMap": "configmaps", "Team": "teams", "TeamRepository": "teamrepositories", "TeamMembership": "teammemberships",
 		"HelmRelease": "helmreleases", "AutoscalingRunnerSet": "autoscalingrunnersets", "AutoscalingListener": "autoscalinglisteners", "Pod": "pods", "Secret": "secrets", "Namespace": "namespaces"}
 	gvk := target.GroupVersionKind()
 	resource, ok := resources[gvk.Kind]
@@ -186,7 +210,7 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 	// Resource-library functions capture this context at compilation time in
 	// Kyverno 1.19.1. Compile after loading each independent fixture, as the CLI
 	// does; passing only request.Context would silently use an empty lookup.
-	libraryContext := fixtureContext{Context: contextProvider, failure: f.LookupFailure}
+	libraryContext := fixtureContext{Context: contextProvider, failure: f.LookupFailure, lookups: f.Lookups}
 	libs.LibraryContext = libraryContext
 	provider, err := vpolengine.NewProvider(compiler.NewCompiler(), []policiesv1beta1.ValidatingPolicyLike{policy}, nil)
 	if err != nil {

@@ -12,7 +12,7 @@ import (
 func temporaryActivationRecordFixture(t *testing.T) temporaryActivationRecord {
 	t.Helper()
 	n, lh, raw, eph, pool := temporaryRawBindingFixture()
-	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"))
+	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"), text(eph, "spec", "uuid"))
 	if err != nil {
 		t.Fatal(err)
 	}

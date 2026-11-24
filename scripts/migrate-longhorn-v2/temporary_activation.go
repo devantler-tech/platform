@@ -79,7 +79,11 @@ func (a temporaryV2Activation) readBinding(ctx context.Context, selection string
 		if ephemeralErr != nil {
 			return temporaryV2Binding{}, errTemporaryActivation
 		}
-		return projectTemporaryV2Binding(selection, worker, storage, raw, ephemeral, pool, boot)
+		ephemeralUUID, err := recoveredEphemeralUUID(ctx, address, ephemeral, factory)
+		if err != nil {
+			return temporaryV2Binding{}, errTemporaryActivation
+		}
+		return projectTemporaryV2Binding(selection, worker, storage, raw, ephemeral, pool, boot, ephemeralUUID)
 	}
 	before, err := observe(node)
 	if err != nil {
@@ -118,16 +122,17 @@ func temporaryRegistrationState(storage object, journalUID, selection string) (b
 // projectTemporaryV2Binding binds a fixed temporary selection to its pinned
 // hardware and native encrypted partitions. Both legacy pool roles receive raw
 // V2 storage; this profile never selects an original data-bearing worker.
-func projectTemporaryV2Binding(selection string, node, storage, raw, ephemeral object, pool migrationPool, nativeBoot string) (temporaryV2Binding, error) {
+func projectTemporaryV2Binding(selection string, node, storage, raw, ephemeral object, pool migrationPool, nativeBoot, ephemeralUUID string) (temporaryV2Binding, error) {
 	b := temporaryV2Binding{Selection: selection, Name: text(node, "metadata", "name"), NodeUID: text(node, "metadata", "uid"),
 		ProviderID: text(node, "spec", "providerID"), MachineUUID: text(node, "status", "nodeInfo", "systemUUID"),
 		BootID: text(node, "status", "nodeInfo", "bootID"), OSImage: text(node, "status", "nodeInfo", "osImage"),
-		LonghornUID: text(storage, "metadata", "uid"), EphemeralUUID: text(ephemeral, "spec", "uuid"), RawPartitionUUID: text(raw, "spec", "partitionUUID")}
+		LonghornUID: text(storage, "metadata", "uid"), EphemeralUUID: ephemeralUUID, RawPartitionUUID: text(raw, "spec", "partitionUUID")}
 	if !inventoryTemporarySelection.MatchString(selection) || !strings.HasPrefix(selection, "temporary-"+pool.role+"-") ||
 		!inventoryTemporaryNode.MatchString(b.Name) || verifyMigrationNode(node, pool) != nil ||
 		verifyNamedEncryptedRawDisk(raw, ephemeral, temporaryRawID(selection), stagingRawDiskGiB) != nil ||
 		b.NodeUID == "" || !regexp.MustCompile(`^hcloud://[1-9][0-9]*$`).MatchString(b.ProviderID) || b.MachineUUID == "" || b.OSImage == "" ||
-		!inventoryBoot.MatchString(b.BootID) || nativeBoot != b.BootID || !inventoryBoot.MatchString(strings.ToLower(b.RawPartitionUUID)) || b.RawPartitionUUID == b.EphemeralUUID ||
+		!inventoryBoot.MatchString(b.BootID) || nativeBoot != b.BootID || !inventoryBoot.MatchString(strings.ToLower(b.RawPartitionUUID)) ||
+		b.EphemeralUUID == "" || strings.EqualFold(b.RawPartitionUUID, b.EphemeralUUID) ||
 		text(node, "status", "nodeInfo", "architecture") != "amd64" || !hugepagesReady(node) || text(node, "status", "allocatable", "cpu") != "8" ||
 		value(node, "spec", "unschedulable") == true || text(node, "metadata", "annotations", fenceAnnotation) != "" ||
 		text(node, "metadata", "annotations", capacityOwnerAnnotation) != capacityOwnerValue || text(node, "metadata", "annotations", scaleDownDisabled) != "true" ||

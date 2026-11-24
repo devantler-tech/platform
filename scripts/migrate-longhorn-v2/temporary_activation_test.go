@@ -23,7 +23,7 @@ func temporaryRawBindingFixture() (object, object, object, object, migrationPool
 // native partition observation from becoming registration evidence.
 func TestTemporaryRawRegistrationBindsTheNativePartitionsAndPoolMember(t *testing.T) {
 	n, lh, raw, eph, pool := temporaryRawBindingFixture()
-	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"))
+	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"), text(eph, "spec", "uuid"))
 	if err != nil || binding.Name != text(n, "metadata", "name") || binding.RawPartitionUUID != text(raw, "spec", "partitionUUID") || binding.EphemeralUUID != text(eph, "spec", "uuid") {
 		t.Fatal("qualified temporary raw storage was not bound to its native identities:", err)
 	}
@@ -44,15 +44,15 @@ func TestTemporaryRawRegistrationBindsTheNativePartitionsAndPoolMember(t *testin
 		t.Run(name, func(t *testing.T) {
 			n, lh, raw, eph, pool := temporaryRawBindingFixture()
 			change(n, lh, raw, eph)
-			if _, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID")); err == nil {
+			if _, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"), text(eph, "spec", "uuid")); err == nil {
 				t.Fatal("unproven temporary registration binding was accepted")
 			}
 		})
 	}
-	if _, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, "12345678-1234-4234-8234-000000000099"); err == nil {
+	if _, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, "12345678-1234-4234-8234-000000000099", text(eph, "spec", "uuid")); err == nil {
 		t.Fatal("a native boot mismatch was accepted")
 	}
-	if _, err := projectTemporaryV2Binding("temporary-v2-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID")); err == nil {
+	if _, err := projectTemporaryV2Binding("temporary-v2-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"), text(eph, "spec", "uuid")); err == nil {
 		t.Fatal("a selection from another pool was accepted")
 	}
 }

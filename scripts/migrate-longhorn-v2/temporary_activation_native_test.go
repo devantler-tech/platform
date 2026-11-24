@@ -10,9 +10,13 @@ import (
 
 type activationBootReader struct {
 	nativeReplicaReader
-	before, after string
-	reads         int
+	before, after        string
+	reads, identityReads int
+	changedIdentity      bool
 }
+
+const activationEphemeralGPT = "12345678-1234-4234-8234-000000000045"
+const activationEphemeralLUKS = "12345678-1234-4234-8234-000000000046"
 
 // BootID supplies independently selected observations on the two bracket sides.
 func (r *activationBootReader) BootID(context.Context) (string, error) {
@@ -23,15 +27,37 @@ func (r *activationBootReader) BootID(context.Context) (string, error) {
 	return r.after, nil
 }
 
+func (r *activationBootReader) RebuiltEphemeralUUID(_ context.Context, expectedGPT string) (string, error) {
+	r.identityReads++
+	if expectedGPT != activationEphemeralGPT {
+		return "", errors.New("native GPT identity does not match")
+	}
+	if r.changedIdentity && r.identityReads > 1 {
+		return "12345678-1234-4234-8234-000000000047", nil
+	}
+	return activationEphemeralLUKS, nil
+}
+
 // A binding requires matching native boot, hardware and API identities plus a
 // successful reader close; durable identity comparison cannot waive this bracket.
 func TestTemporaryRawBindingBracketsNativeReadsAndClosesItsReader(t *testing.T) {
-	for _, mode := range []string{"valid", "boot changed", "hardware changed", "node changed", "partition unreadable", "partition changed", "close failed"} {
+	for _, mode := range []string{"valid", "boot changed", "hardware changed", "node changed", "partition unreadable",
+		"partition changed", "close failed", "newly provisioned", "native header changed", "unrelated GPT"} {
 		t.Run(mode, func(t *testing.T) {
 			n, storage, raw, eph, pool := temporaryRawBindingFixture()
 			n["status"].(object)["addresses"] = []any{object{"type": "InternalIP", "address": "10.0.99.10"}}
 			boot := text(n, "status", "nodeInfo", "bootID")
 			reader := &activationBootReader{before: boot, after: boot}
+			discoveryRequired := mode == "newly provisioned" || mode == "native header changed" || mode == "unrelated GPT"
+			if discoveryRequired {
+				spec := valueObject(eph, "spec")
+				delete(spec, "uuid")
+				spec["partitionUUID"] = activationEphemeralGPT
+				reader.changedIdentity = mode == "native header changed"
+				if mode == "unrelated GPT" {
+					spec["partitionUUID"] = "12345678-1234-4234-8234-000000000048"
+				}
+			}
 			if mode == "boot changed" {
 				reader.after = "12345678-1234-4234-8234-000000000099"
 			}
@@ -78,11 +104,15 @@ func TestTemporaryRawBindingBracketsNativeReadsAndClosesItsReader(t *testing.T) 
 				return nil, nil
 			}}
 			binding, err := activation.readBinding(t.Context(), "temporary-v1-1", n, storage, pool)
-			if (err == nil) != (mode == "valid") {
+			if (err == nil) != (mode == "valid" || mode == "newly provisioned") {
 				t.Fatal("native binding validity did not match its complete identity bracket:", err)
 			}
 			if mode == "valid" && (closed != 1 || reader.reads != 2 || volumes != 4 || binding.BootID != boot) {
 				t.Fatal("successful binding omitted a native read or close")
+			}
+			if mode == "newly provisioned" && (closed != 3 || reader.reads != 2 || reader.identityReads != 2 ||
+				binding.EphemeralUUID != activationEphemeralLUKS || binding.BootID != boot) {
+				t.Fatal("newly provisioned volume lacked its native identity bracket")
 			}
 		})
 	}

@@ -131,18 +131,23 @@ spec:
       resourceQuota: TenantResourceQuota
       limitRange: TenantLimitRange
   resources:
-    # --- Core skeleton (always rendered) ---------------------------------
+    # Admission reserves the preview name and prevents it from adopting a
+    # namespace. The preview can fetch its signed source without application
+    # or DNS authority while its private routing is prepared.
+    # --- Core skeleton --------------------------------------------------
     - id: tenantNamespace
       template:
         apiVersion: v1
         kind: Namespace
         metadata:
-          name: ${schema.spec.name}
+          name: "${schema.metadata.name == schema.spec.name + '-dev' ? schema.metadata.name : schema.spec.name}"
           labels:
             app.kubernetes.io/managed-by: kro
             pod-security.kubernetes.io/enforce: restricted
             pod-security.kubernetes.io/enforce-version: latest
     - id: serviceAccount
+      includeWhen:
+        - ${schema.metadata.name != schema.spec.name + '-dev'}
       template:
         apiVersion: v1
         kind: ServiceAccount
@@ -153,6 +158,8 @@ spec:
             app.kubernetes.io/managed-by: kro
         automountServiceAccountToken: false
     - id: roleBinding
+      includeWhen:
+        - ${schema.metadata.name != schema.spec.name + '-dev'}
       template:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
@@ -174,7 +181,7 @@ spec:
             namespace: ${tenantNamespace.metadata.name}
     - id: webAppBinding
       includeWhen:
-        - ${schema.spec.webApp}
+        - ${schema.spec.webApp && schema.metadata.name != schema.spec.name + '-dev'}
       template:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
@@ -286,11 +293,11 @@ spec:
               # on `main`. The repository is the tenant name because the
               # artifact URL above is oci://ghcr.io/devantler-tech/<name>/…: a
               # tenant publishes from the repository its package is named
-              # after. The name is regex-escaped (`.` and `-`). It is also the
-              # tenant's Namespace and this object's name, so the API server
-              # bounds it to a DNS label and no other regex metacharacter can
-              # reach the subject. Another repository, the shared publisher, a
-              # branch or a non-release tag does not match. cosign's keyless
+              # after. The name is regex-escaped (`.` and `-`). It is also this
+              # object's name, and the Tenant API bounds it to a DNS label so
+              # no other regex metacharacter can reach the subject. Another
+              # repository, the shared publisher, a branch or a non-release
+              # tag does not match. cosign's keyless
               # verification rejects MULTIPLE identity entries outright, so any
               # future alternation must stay inside one subject regex.
               - issuer: '^https://token\.actions\.githubusercontent\.com$'
@@ -303,7 +310,7 @@ spec:
     # on a tenant with no `sops-age` Secret would wedge reconciliation.
     - id: kustomization
       includeWhen:
-        - ${schema.spec.source.reconcileApplication && !schema.spec.sops}
+        - ${schema.spec.source.reconcileApplication && !schema.spec.sops && schema.metadata.name != schema.spec.name + '-dev'}
       template:
         apiVersion: kustomize.toolkit.fluxcd.io/v1
         kind: Kustomization
@@ -340,7 +347,7 @@ spec:
           targetNamespace: ${tenantNamespace.metadata.name}
     - id: kustomizationSops
       includeWhen:
-        - ${schema.spec.source.reconcileApplication && schema.spec.sops}
+        - ${schema.spec.source.reconcileApplication && schema.spec.sops && schema.metadata.name != schema.spec.name + '-dev'}
       template:
         apiVersion: kustomize.toolkit.fluxcd.io/v1
         kind: Kustomization
@@ -388,7 +395,7 @@ spec:
     # itself in its own artifact; only these bindings are platform territory.
     - id: externalDnsHttproutes
       includeWhen:
-        - ${schema.spec.externalDns}
+        - ${schema.spec.externalDns && schema.metadata.name != schema.spec.name + '-dev'}
       template:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
@@ -407,7 +414,7 @@ spec:
             namespace: ${tenantNamespace.metadata.name}
     - id: externalDnsGateway
       includeWhen:
-        - ${schema.spec.externalDns}
+        - ${schema.spec.externalDns && schema.metadata.name != schema.spec.name + '-dev'}
       template:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
@@ -426,7 +433,7 @@ spec:
             namespace: ${tenantNamespace.metadata.name}
     - id: externalDnsNamespaces
       includeWhen:
-        - ${schema.spec.externalDns}
+        - ${schema.spec.externalDns && schema.metadata.name != schema.spec.name + '-dev'}
       template:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: ClusterRoleBinding
