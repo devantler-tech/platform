@@ -88,21 +88,27 @@ func TestInventoryRefusesIncompleteForeignOrAmbiguousLists(t *testing.T) {
 		settings, addresses string
 		mode                os.FileMode
 	}{
-		"missing maintainer":      {addressSettings, "former-a@example.test", 0600},
-		"maintainer twice":        {addressSettings, "maintainer@example.test,Maintainer@example.test", 0600},
-		"foreign domain":          {addressSettings, "maintainer@example.test,former-a@other.test", 0600},
-		"subdomain":               {addressSettings, "maintainer@example.test,former-a@sub.example.test", 0600},
-		"not an address":          {addressSettings, "maintainer@example.test,former-a", 0600},
-		"empty local part":        {addressSettings, "maintainer@example.test,@example.test", 0600},
-		"empty entry":             {addressSettings, "maintainer@example.test,,former-a@example.test", 0600},
-		"duplicate alias":         {addressSettings, "maintainer@example.test,former-a@example.test,former-a@example.test", 0600},
-		"agent address":           {addressSettings, "maintainer@example.test,agents@example.test", 0600},
-		"administrator address":   {addressSettings, "maintainer@example.test,operator@example.test", 0600},
-		"invalid local part":      {addressSettings, "maintainer@example.test,a..b@example.test", 0600},
-		"multiline":               {addressSettings, "maintainer@example.test\nformer-a@example.test", 0600},
-		"empty file":              {addressSettings, "", 0600},
-		"publicly readable":       {addressSettings, "maintainer@example.test", 0644},
-		"also listed in settings": {aliasesSettings, "maintainer@example.test,former-a@example.test", 0600},
+		"missing maintainer":    {addressSettings, "former-a@example.test", 0600},
+		"maintainer twice":      {addressSettings, "maintainer@example.test,Maintainer@example.test", 0600},
+		"foreign domain":        {addressSettings, "maintainer@example.test,former-a@other.test", 0600},
+		"subdomain":             {addressSettings, "maintainer@example.test,former-a@sub.example.test", 0600},
+		"not an address":        {addressSettings, "maintainer@example.test,former-a", 0600},
+		"empty local part":      {addressSettings, "maintainer@example.test,@example.test", 0600},
+		"empty entry":           {addressSettings, "maintainer@example.test,,former-a@example.test", 0600},
+		"duplicate alias":       {addressSettings, "maintainer@example.test,former-a@example.test,former-a@example.test", 0600},
+		"agent address":         {addressSettings, "maintainer@example.test,agents@example.test", 0600},
+		"administrator address": {addressSettings, "maintainer@example.test,operator@example.test", 0600},
+		"invalid local part":    {addressSettings, "maintainer@example.test,a..b@example.test", 0600},
+		"multiline":             {addressSettings, "maintainer@example.test\nformer-a@example.test", 0600},
+		"empty file":            {addressSettings, "", 0600},
+		"publicly readable":     {addressSettings, "maintainer@example.test", 0644},
+		"settings plus inventory too many": {aliasesSettings, "maintainer@example.test," + strings.Join(func() []string {
+			var many []string
+			for _, c := range "abcdefghijklmno" {
+				many = append(many, string(c)+"@example.test")
+			}
+			return many
+		}(), ","), 0600},
 		"too many": {addressSettings, "maintainer@example.test," + strings.Join(func() []string {
 			var many []string
 			for _, c := range "abcdefghijklmnopq" {
@@ -123,6 +129,38 @@ func TestInventoryRefusesIncompleteForeignOrAmbiguousLists(t *testing.T) {
 				t.Fatal("refused inventory produced a plan")
 			}
 		})
+	}
+}
+
+// Production's settings already approve aliases. Adopting the inventory keeps
+// them, adds every other inventory address, and counts an address in both once.
+func TestInventoryKeepsSettingsAliasesAndAddsTheRest(t *testing.T) {
+	input, output := addressInputs(t, aliasesSettings, "former-b@example.test,maintainer@example.test,later@example.test", 0600)
+	var log bytes.Buffer
+	if command([]string{"--input-dir", input, "--output-file", output}, &log) != 0 {
+		t.Fatalf("settings and inventory together refused: %s", &log)
+	}
+	aliases, ok := maintainerAliasesInPlan(t, output)
+	want := map[string]any{
+		"0": map[string]any{"name": "former-a", "domainId": "#domain", "enabled": true, "description": nil},
+		"1": map[string]any{"name": "former-b", "domainId": "#domain", "enabled": true, "description": nil},
+		"2": map[string]any{"name": "later", "domainId": "#domain", "enabled": true, "description": nil},
+	}
+	if !ok || !reflect.DeepEqual(aliases, want) {
+		t.Fatalf("combined aliases = %v", aliases)
+	}
+	if strings.Contains(log.String(), "former-") || strings.Contains(log.String(), "later") {
+		t.Fatal("private inventory leaked")
+	}
+}
+
+func TestUnionAliasesKeepsOrderAndDropsRepeats(t *testing.T) {
+	got := unionAliases([]string{"b", "a"}, []string{"a", "c", "b", "d"})
+	if !reflect.DeepEqual(got, []string{"b", "a", "c", "d"}) {
+		t.Fatalf("union = %v", got)
+	}
+	if got := unionAliases(nil, []string{}); got == nil || len(got) != 0 {
+		t.Fatalf("an empty union must stay a managed empty set, got %#v", got)
 	}
 }
 

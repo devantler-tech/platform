@@ -134,11 +134,14 @@ func loadInputs(dir string) (inputs, error) {
 		return fail()
 	}
 	aliases, present, err := maintainerAddressAliases(dir, v.Domain, v.Maintainer)
-	if err != nil || present && seen["maintainerAliases"] {
+	if err != nil {
 		return fail()
 	}
 	if present {
-		v.MaintainerAliases = aliases
+		// Aliases already approved in the settings are kept; the inventory
+		// adds every other address. An address in both is one alias, so
+		// adopting the inventory can neither drop nor duplicate an alias.
+		v.MaintainerAliases = unionAliases(v.MaintainerAliases, aliases)
 	}
 	if _, err = render(v); err != nil {
 		return fail()
@@ -146,14 +149,29 @@ func loadInputs(dir string) (inputs, error) {
 	return v, nil
 }
 
+// unionAliases returns the settings' aliases in their order, followed by each
+// inventory alias not already present.
+func unionAliases(settings, inventory []string) []string {
+	union := make([]string, 0, len(settings)+len(inventory))
+	seen := make(map[string]bool, len(settings)+len(inventory))
+	for _, name := range append(append([]string{}, settings...), inventory...) {
+		if !seen[name] {
+			seen[name] = true
+			union = append(union, name)
+		}
+	}
+	return union
+}
+
 // maintainerAddressAliases reads the maintainer's complete address inventory
 // from the optional `maintainer-addresses` input: the same comma-separated
 // list the mailbox history copy uses (#5481), so the maintainer keeps it in
 // one place. Every other address on the domain becomes a receiving alias of
-// the maintainer's mailbox. The inventory must name the maintainer's own
-// address, so a wrong or truncated file cannot pass as complete, and it may not
-// be combined with aliases in the settings. Alias names are validated with the
-// settings' own rules when rendered.
+// the maintainer's mailbox, alongside any aliases the settings already
+// approve. The inventory must name the maintainer's own address exactly once
+// and no address twice, so a wrong, truncated or hand-merged file cannot pass
+// as complete. Alias names are validated with the settings' own rules when
+// rendered.
 func maintainerAddressAliases(dir, domain, maintainer string) ([]string, bool, error) {
 	if _, err := os.Lstat(filepath.Join(dir, "maintainer-addresses")); errors.Is(err, fs.ErrNotExist) {
 		return nil, false, nil
@@ -165,11 +183,13 @@ func maintainerAddressAliases(dir, domain, maintainer string) ([]string, bool, e
 	}
 	aliases := []string{}
 	own := 0
+	listed := map[string]bool{}
 	for _, item := range strings.Split(line, ",") {
 		local, host, ok := strings.Cut(strings.ToLower(strings.TrimSpace(item)), "@")
-		if !ok || local == "" || host != domain || strings.Contains(host, "@") {
+		if !ok || local == "" || host != domain || strings.Contains(host, "@") || listed[local] {
 			return nil, true, errConfiguration
 		}
+		listed[local] = true
 		if local == maintainer {
 			own++
 			continue
