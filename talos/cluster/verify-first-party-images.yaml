@@ -254,8 +254,9 @@ rules:
   # a first-party repository's own release workflow on a release tag (ADR 0017,
   # #6265). The shared reusable publishers are no longer accepted at any revision
   # (#6266). Only the workflow a product releases from is trusted (#6306): by
-  # convention `cd.yaml`, and business-site's runtime `publish-runtime.yaml` by
-  # name. One repository path segment in the organisation's naming rule
+  # convention `cd.yaml`, business-site's runtime `publish-runtime.yaml` and
+  # bookkeeper's `publish.yaml` by name. One repository path segment in the
+  # organisation's naming rule
   # (lowercase letters, digits and hyphens), so `.github`, which hosts reusable
   # workflows, is excluded; and the same strict OCI-semver tag grammar as the
   # ksail rule above. The deleted publisher's commit-pinned identities stay
@@ -263,4 +264,4 @@ rules:
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/([a-z0-9][a-z0-9-]*/\.github/workflows/cd\.yaml|business-site/\.github/workflows/publish-runtime\.yaml)@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
+      subjectRegex: ^https://github\.com/devantler-tech/([a-z0-9][a-z0-9-]*/\.github/workflows/cd\.yaml|business-site/\.github/workflows/publish-runtime\.yaml|bookkeeper/\.github/workflows/publish\.yaml)@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$

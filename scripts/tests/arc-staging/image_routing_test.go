@@ -35,7 +35,8 @@ var deletedPublishers = []string{
 // The publishapp attestor accepts a valid one for every ordinary first-party
 // image: one repository segment in the organisation's naming rule (lowercase
 // letters, digits and hyphens), the workflow a product releases from (`cd.yaml`
-// by convention, `publish-runtime.yaml` for business-site only, #6306), and a
+// by convention, `publish-runtime.yaml` for business-site and `publish.yaml`
+// for bookkeeper only, #6306), and a
 // strict semver release tag. Every other attestor refuses them all. Any other
 // workflow file is refused even on a release tag. A repository named `actions`
 // would be a first-party repository like any other, so its `cd.yaml` release
@@ -48,6 +49,9 @@ var ownReleaseSigners = []struct {
 	{"https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@refs/tags/v1.2.3", true},
 	{"https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/cd.yaml@refs/tags/v1.2.3-rc.1", true},
 	{"https://github.com/devantler-tech/business-site/.github/workflows/publish-runtime.yaml@refs/tags/v3.18.2", true},
+	{"https://github.com/devantler-tech/bookkeeper/.github/workflows/publish.yaml@refs/tags/v1.0.0", true},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/publish.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/bookkeeper/.github/workflows/publish-runtime.yaml@refs/tags/v1.0.0", false},
 	{"https://github.com/devantler-tech/wedding-app/.github/workflows/publish-runtime.yaml@refs/tags/v1.2.3", false},
 	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
 	{"https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/cd.yml@refs/tags/v1.2.3-rc.1", false},
