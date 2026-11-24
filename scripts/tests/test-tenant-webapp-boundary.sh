@@ -16,6 +16,18 @@ deletion="$policy_dir/restrict-webapp-child-deletion.yaml"
 preview_parent="$policy_dir/restrict-tenant-previews.yaml"
 preview_namespace="$policy_dir/restrict-business-site-preview-namespace.yaml"
 role="$root/k8s/bases/infrastructure/cluster-roles/tenant-webapp-edit.yaml"
+
+# The production layer must deny the Gateway identity at the preview pods.
+# This deny must leave the authenticated proxy eligible for a later allow rule.
+kubectl kustomize "$root/k8s/providers/hetzner/infrastructure" >"$scratch/production.yaml" || fail 'production infrastructure must render'
+yq -o=json -I=0 'select(.kind == "CiliumClusterwideNetworkPolicy" and .metadata.name == "deny-gateway-to-business-site-preview")' "$scratch/production.yaml" | jq -es '
+  length == 1 and .[0].spec == {
+    endpointSelector: {matchLabels: {"k8s:io.kubernetes.pod.namespace": "business-site-dev"}},
+    enableDefaultDeny: {ingress: false},
+    ingressDeny: [{fromEntities: ["ingress"]}]
+  }
+' >/dev/null || fail 'preview pods must deny direct Gateway ingress in the production render'
+
 GITHUB_OUTPUT="$scratch/version" bash "$root/.github/scripts/kyverno-version.sh"
 engine_version="$(cd "$root/scripts/tests/tenant-webapp-admission" && go list -m -f '{{.Version}}' github.com/kyverno/kyverno)"
 [[ "$(<"$scratch/version")" == "release=$engine_version" ]] || fail 'the admission engine must match the reviewed Kyverno CLI pin'
