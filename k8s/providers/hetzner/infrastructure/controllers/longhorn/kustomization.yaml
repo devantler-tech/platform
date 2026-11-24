@@ -14,6 +14,7 @@ resources:
   - storage-class-longhorn-backup.yaml
   - cilium-network-policy.yaml
   - http-route.yaml
+  - pod-disruption-budget-ui.yaml
   # Default off: no benchmark namespace currently carries the opt-in label.
   # Recovery must prove native admission coverage before enabling this guard.
   - validating-admission-policy-benchmark-delete.yaml

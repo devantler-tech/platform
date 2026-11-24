@@ -41,6 +41,39 @@ func TestUnusedStagingPreparationRequiresTheLargerNativeLayout(t *testing.T) {
 	}
 }
 
+func TestResetRecoveryReportsTheLastSafeReadinessGate(t *testing.T) {
+	f, p := unusedPreparationAPI(t)
+	p.staging = true
+	initial, cancelInitial := context.WithCancel(t.Context())
+	defer cancelInitial()
+	f.afterReset = cancelInitial
+	if err := p.prepare(initial); !errors.Is(err, context.Canceled) || f.base.resets != 1 || p.j.Phase != "reset-requested" {
+		t.Fatalf("need the interrupted, journaled reset: phase=%s resets=%d err=%v", p.j.Phase, f.base.resets, err)
+	}
+
+	recovery, cancelRecovery := context.WithCancel(t.Context())
+	defer cancelRecovery()
+	const privateDiagnostic = "private native command details"
+	witnessed := false
+	p.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+		if program == "talosctl" && len(args) == 5 && args[2] == "volumestatus" && args[3] == "r-longhorn" {
+			witnessed = true
+			cancelRecovery()
+			return nil, errors.New(privateDiagnostic)
+		}
+		return f.run(ctx, input, program, args...)
+	}
+	err := p.prepare(recovery)
+	if !witnessed || !errors.Is(err, context.Canceled) ||
+		!strings.Contains(err.Error(), "temporary recovery waiting for readable raw volume status") ||
+		strings.Contains(err.Error(), privateDiagnostic) {
+		t.Fatalf("interrupted recovery did not report its safe failed gate: %v", err)
+	}
+	if f.base.resets != 1 || p.j.Phase != "reset-requested" || value(f.base.node, "spec", "unschedulable") != true {
+		t.Fatalf("recovery gate failure mutated its worker: phase=%s resets=%d", p.j.Phase, f.base.resets)
+	}
+}
+
 func TestResetRecoveryUsesMatchingNativeEphemeralIdentityWhenStatusOmitsUUID(t *testing.T) {
 	const originalUUID = "12345678-1234-4234-8234-000000000047"
 	for _, mode := range []string{"new", "original", "wrong partition", "missing"} {

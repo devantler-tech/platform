@@ -19,7 +19,8 @@ import (
 // commit: the deleted legacy repository (#6264) and the retired `.github`
 // revisions (#6266). A release tag under the `actions` repository name is a
 // different identity: the publishapp attestor accepts any first-party
-// repository's release workflow on a release tag except `.github`, see
+// repository's release workflow (`cd.yaml`, or business-site's
+// `publish-runtime.yaml`) on a release tag except `.github`, see
 // ownReleaseSigners.
 const appPublisher = "https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@refs/tags/v1.2.3"
 
@@ -32,32 +33,47 @@ var deletedPublishers = []string{
 
 // ownReleaseSigners are first-party release-workflow identities (#6265, ADR 0017).
 // The publishapp attestor accepts a valid one for every ordinary first-party
-// image: one repository segment that starts with a letter or digit, one workflow
-// file directly in .github/workflows/, and a strict semver release tag. Every
-// other attestor refuses them all. A repository named `actions` would be a
-// first-party repository like any other, so its release tags are accepted;
-// `.github` hosts reusable workflows other repositories call, so its tags are
-// refused.
+// image: one repository segment in the organisation's naming rule (lowercase
+// letters, digits and hyphens), the workflow a product releases from (`cd.yaml`
+// by convention, `publish-runtime.yaml` for business-site and `publish.yaml`
+// for bookkeeper only, #6306), and a
+// strict semver release tag. Every other attestor refuses them all. Any other
+// workflow file is refused even on a release tag. A repository named `actions`
+// would be a first-party repository like any other, so its `cd.yaml` release
+// tags are accepted; `.github` hosts reusable workflows other repositories call,
+// so its tags are refused.
 var ownReleaseSigners = []struct {
 	subject string
 	valid   bool
 }{
-	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3", true},
-	{"https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/cd.yml@refs/tags/v1.2.3-rc.1", true},
-	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/heads/main", false},
-	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@" + strings.Repeat("c", 40), false},
-	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2", false},
-	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/latest", false},
-	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3/../evil", false},
-	{"https://github.com/devantler-tech/wedding-app/.github/workflows/nested/release.yaml@refs/tags/v1.2.3", false},
-	{"https://github.com/devantler-tech/wedding-app/sub/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@refs/tags/v1.2.3", true},
+	{"https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/cd.yaml@refs/tags/v1.2.3-rc.1", true},
+	{"https://github.com/devantler-tech/business-site/.github/workflows/publish-runtime.yaml@refs/tags/v3.18.2", true},
+	{"https://github.com/devantler-tech/bookkeeper/.github/workflows/publish.yaml@refs/tags/v1.0.0", true},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/publish.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/bookkeeper/.github/workflows/publish-runtime.yaml@refs/tags/v1.0.0", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/publish-runtime.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/ascoachingogvaner/.github/workflows/cd.yml@refs/tags/v1.2.3-rc.1", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/lint.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/business-site/.github/workflows/publish-identity.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/Wedding-App/.github/workflows/cd.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/wedding_app/.github/workflows/cd.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/wedding.app/.github/workflows/cd.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@refs/heads/main", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@" + strings.Repeat("c", 40), false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@refs/tags/v1.2", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@refs/tags/latest", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/cd.yaml@refs/tags/v1.2.3/../evil", false},
+	{"https://github.com/devantler-tech/wedding-app/.github/workflows/nested/cd.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/wedding-app/sub/.github/workflows/cd.yaml@refs/tags/v1.2.3", false},
 	{"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v21.3.4", false},
-	{"https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@refs/tags/v1.2.3", false},
-	{"https://github.com/devantler-tech/.github/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
-	{"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3", true},
-	{"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0", true},
+	{"https://github.com/devantler-tech/.github/.github/workflows/cd.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/actions/.github/workflows/cd.yaml@refs/tags/v1.2.3", true},
+	{"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@refs/tags/v5.4.0", false},
 	{"https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328", false},
-	{"https://github.com/other-owner/wedding-app/.github/workflows/release.yaml@refs/tags/v1.2.3", false},
+	{"https://github.com/other-owner/wedding-app/.github/workflows/cd.yaml@refs/tags/v1.2.3", false},
 }
 
 // Evaluate the committed CEL unchanged. Only the remote cryptographic lookup
@@ -132,10 +148,13 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 						{"customer identity signer", identityPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcustomeridentity"},
 						{"app release signer", appPublisher, githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
 						{"identity wrong workflow", strings.Replace(identityPublisher, "publish-identity.yaml", "publish-runtime.yaml", 1), githubIssuer, fixture.attestor == ""},
-						// The business-site repository's workflow on a release tag is a
-						// first-party release identity (#6265), so it satisfies only the
-						// generic app attestor, never the dedicated identity attestor.
-						{"identity tag ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/tags/v4.20.0", 1), githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
+						// The identity workflow on a release tag is not the workflow
+						// business-site releases from (#6306), so no attestor accepts it.
+						// Its release workflow on a release tag is a first-party release
+						// identity (#6265) and satisfies only the generic app attestor,
+						// never the dedicated identity attestor.
+						{"identity tag ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/tags/v4.20.0", 1), githubIssuer, fixture.attestor == ""},
+						{"business-site release tag", strings.Replace(identityPublisher, "publish-identity.yaml@refs/heads/main", "publish-runtime.yaml@refs/tags/v4.20.0", 1), githubIssuer, fixture.attestor == "" || fixture.attestor == "publishapp"},
 						{"identity pull request ref", strings.Replace(identityPublisher, "refs/heads/main", "refs/pull/1/merge", 1), githubIssuer, fixture.attestor == ""},
 						{"identity lookalike branch", identityPublisher + "-other", githubIssuer, fixture.attestor == ""},
 						{"checkpoint signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcorootcheckpoint"},

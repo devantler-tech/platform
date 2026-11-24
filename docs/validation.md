@@ -114,8 +114,8 @@ KSail `cd.yaml` rule:
 
 `scripts/guard-oci-repository-verify.sh` requires every devantler-tech
 `OCIRepository` subject to name one first-party repository's own workflow: a
-literal repository (never `actions`, and in `.github` only `cd.yaml`), a literal
-workflow file or `[^/]+\.ya?ml`, and a literal branch or tag ref or one of the
+literal repository (never `actions`, and in `.github` only `cd.yaml`), one literal
+workflow file (never `[^/]+\.ya?ml`, #6306), and a literal branch or tag ref or one of the
 exact release-tag patterns the sources use. It runs on pull requests, the merge
 queue, the merge-queue heal, direct pushes to `main`, the manual CD route and the
 DR rebuild. The offline

@@ -16,10 +16,14 @@ func authorize(getenv func(string) string, target string) error {
 }
 
 func authorizeWorkflow(getenv func(string) string, confirmation string) error {
+	return authorizeWorkflowRef(getenv, confirmation, ".github/workflows/prepare-longhorn-v2-node.yaml")
+}
+
+func authorizeWorkflowRef(getenv func(string) string, confirmation, path string) error {
 	for key, expected := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
 		"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted",
-		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/prepare-longhorn-v2-node.yaml@refs/heads/main",
+		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/" + path + "@refs/heads/main",
 		"LONGHORN_V2_CONFIRM": confirmation,
 	} {
 		if getenv(key) != expected {

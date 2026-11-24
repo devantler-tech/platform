@@ -1,0 +1,21 @@
+# Allow the platform sign-in proxy to attach the preview route.
+- op: add
+  path: /spec/listeners/-
+  value:
+    name: https-dev-devantler-tech
+    hostname: dev.devantler.tech
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - name: business-site-preview-tls
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector:
+          matchLabels:
+            kubernetes.io/metadata.name: oauth2-proxy
+      kinds:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute

@@ -63,16 +63,19 @@ spec:
           # (ADR 0017, #6265): the products sign with a composite action from
           # their own workflow, so the Fulcio subject names their repository.
           # The shared reusable publishers are no longer accepted at any
-          # revision (#6266). The repository is one path segment (no `/`) that
-          # starts with a letter or digit, so the `.github` repository is
-          # excluded: it hosts reusable workflows, and a reusable workflow
-          # carries its host's identity whoever calls it. The workflow file
-          # sits directly in .github/workflows/, and the tag is the same strict
-          # OCI-semver grammar as the ksail cd.yaml identity below (pre-releases
-          # included, nothing after it). Every other first-party name matches,
-          # `actions` included: a repository created under that name would be a
-          # first-party repository like any other, and the deleted publisher's
-          # commit-pinned identities stay refused.
+          # revision (#6266). Only the workflow a product releases from is
+          # trusted (#6306): by convention `cd.yaml`, and business-site's
+          # runtime, which releases from `publish-runtime.yaml`, and
+          # bookkeeper, which releases from `publish.yaml`, by name. A
+          # product that releases from another workflow is added here by name
+          # when it is onboarded. The repository is one path segment in the
+          # organisation's naming rule, lowercase letters, digits and hyphens,
+          # so the `.github` repository is excluded: it hosts reusable
+          # workflows, and a reusable workflow carries its host's identity
+          # whoever calls it. The tag is the same strict OCI-semver grammar as
+          # the ksail cd.yaml identity below (pre-releases included, nothing
+          # after it). The deleted publisher's commit-pinned identities stay
+          # refused.
           # This verifier binds a signature to the first-party organisation,
           # not to one product: the per-tenant manifest source binds each
           # product to its own repository, and its signed manifests pin the
@@ -88,7 +91,7 @@ spec:
           # form as an alternation inside this one regex.
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/[A-Za-z0-9][A-Za-z0-9_.-]*/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
+              subjectRegExp: ^https://github\.com/devantler-tech/([a-z0-9][a-z0-9-]*/\.github/workflows/cd\.yaml|business-site/\.github/workflows/publish-runtime\.yaml|bookkeeper/\.github/workflows/publish\.yaml)@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
     # The Kubescape storage compatibility image is produced inside this
     # repository rather than by a product release workflow: its publisher
     # checks out one immutable upstream storage commit, applies the reviewed

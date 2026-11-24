@@ -46,6 +46,7 @@ resources:
   # bootstrap dependency chain. Not bootstrap-critical: existing DNS records
   # keep serving while it waits for the token.
   - external-dns/
+  - business-site-preview/
   - vault-seed/
   # Retain replacement snapshot storage before any Job starts consuming it.
   # The original claim remains intact throughout recovery (#5376).
@@ -312,6 +313,12 @@ patches:
   # Adds HTTPS listeners for the business-site public and portal names; see the
   # file header.
   - path: patches/add-devantler-tech-listeners.yaml
+    target:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: platform
+      namespace: kube-system
+  - path: patches/add-business-site-preview-listener.yaml
     target:
       group: gateway.networking.k8s.io
       kind: Gateway
