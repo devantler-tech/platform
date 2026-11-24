@@ -35,12 +35,14 @@ for policy in "$parent" "$children" "$deletion" "$preview_parent" "$preview_name
   [[ "$(yq -r '.spec.failurePolicy' "$policy")" == Fail ]] || fail 'admission lookup/evaluation failures must fail closed'
 done
 yq -o=json '.spec.values.admissionController.rbac.clusterRole.extraResources' "$root/k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml" | jq -e 'map(select(.apiGroups == ["kro.run"])) == [{apiGroups:["kro.run"],resources:["webapps"],verbs:["get"]}]' >/dev/null || fail 'admission may read only the owning WebApp'
-# Deletion authorization assumes no live-parent pruning: all three children
-# exist until the parent is finalized. A future optional/collection graph must
-# review that authorization explicitly rather than inherit this assumption.
-yq -o=json '.spec.resources' "$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml" | jq -e '
-  map(.id) == ["deployment","service","httpRoute"] and all(.[]; (.includeWhen // [] | length) == 0 and .forEach == null)
-' >/dev/null || fail 'review deletion authorization before adding conditional WebApp children'
+# KRO may delete a child only while its owning WebApp is being deleted. The
+# preview route condition uses the admitted immutable target, so it cannot
+# prune a child from a live parent. Keep mutable and collection conditions out.
+route_gate="\${schema.spec.name != 'business-site-dev'}"
+yq -o=json '.spec.resources' "$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml" | jq -e --arg gate "$route_gate" '
+  map(.id) == ["deployment","service","httpRoute"] and
+  all(.[]; .forEach == null and ((.includeWhen // []) == (if .id == "httpRoute" then [$gate] else [] end)))
+' >/dev/null || fail 'WebApp children must be fixed for the life of their parent'
 
 [[ "$(yq -r '.spec.schema.spec.webApp' "$graph")" == 'boolean | default=false' ]] || fail 'the optional capability must default false'
 role_filter='
@@ -83,6 +85,10 @@ check missing-target "$parent" "$(jq 'del(.spec.name)' <<<"$app")" null "$tenant
 check foreign-target "$parent" "$(jq '.spec.name="foreign"' <<<"$app")" null "$tenant" CREATE fail
 check colliding-parent "$parent" "$(jq '.metadata.name="second-parent"' <<<"$app")" null "$tenant" CREATE fail
 check retarget "$parent" "$(jq '.spec.name="foreign"' <<<"$app")" "$app" "$tenant" UPDATE fail
+preview_app="$(jq '.metadata={name:"business-site-dev",namespace:"business-site-dev"}|.spec.name="business-site-dev"|.spec.host="dev.devantler.tech"' <<<"$app")"
+check reserved-preview-webapp "$parent" "$preview_app" null "$flux" CREATE pass
+check preview-webapp-cannot-retarget "$parent" "$(jq '.spec.name="business-site"' <<<"$preview_app")" "$preview_app" "$flux" UPDATE fail
+check ordinary-webapp-cannot-target-preview "$parent" "$(jq '.spec.name="business-site-dev"' <<<"$app")" "$app" "$tenant" UPDATE fail
 check kro-metadata "$parent" "$(jq '.metadata.finalizers=["kro.run/finalizer"]|.metadata.labels={"applyset.kubernetes.io/parent":"fixture"}' <<<"$app")" "$app" "$kro" UPDATE pass
 check kro-spec-change "$parent" "$(jq '.spec.image="example.invalid/fixture:v2"' <<<"$app")" "$app" "$kro" UPDATE fail
 check kro-status "$parent" "$(jq '.status={state:"ACTIVE"}' <<<"$app")" "$app" "$kro" UPDATE pass status
