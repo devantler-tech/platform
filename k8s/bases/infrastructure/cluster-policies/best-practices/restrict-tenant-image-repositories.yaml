@@ -100,7 +100,7 @@ spec:
       expression: >-
         '^([a-z]+://)?ghcr\\.io\\.?(:[0-9]+)?/devantler-tech/'
         + object.metadata.namespace + '([/:@]|$)'
-    # Keep the one approved identity equal to the source emitted by the Tenant graph.
+    # Require the Tenant graph's exact keyless identity and Flux's default Sigstore trust roots.
     - name: previewReleaseIdentity
       expression: >-
         [{'issuer': '^https://token\\.actions\\.githubusercontent\\.com$',
@@ -117,7 +117,9 @@ spec:
                   && object.metadata.name == 'business-site'
                   && r == 'oci://ghcr.io/devantler-tech/business-site/manifests'
                   && object.spec.?verify.?provider.orValue('') == 'cosign'
-                  && object.spec.?verify.?matchOIDCIdentity.orValue([]) == variables.previewReleaseIdentity))
+                  && object.spec.?verify.?matchOIDCIdentity.orValue([]) == variables.previewReleaseIdentity
+                  && !has(object.spec.verify.secretRef)
+                  && !has(object.spec.verify.trustedRootSecretRef)))
             : !r.lowerAscii().matches(variables.own)))
   validations:
     - expression: "size(variables.foreign) == 0"
