@@ -8,6 +8,7 @@ import (
 )
 
 const stagingRawDiskGiB = 144
+const replacedStagingLayout = temporaryRecoveryGate("staged configuration after rollback to the standard layout")
 
 //go:embed staging-layout.yaml
 var stagingLayoutPatch string
@@ -45,9 +46,13 @@ func (p temporaryPreparation) installStagingLayout(ctx context.Context, address 
 	if err = p.checkOwner(ctx); err != nil {
 		return err
 	}
+	return p.applyStagingLayout(ctx, address)
+}
+
+func (p temporaryPreparation) applyStagingLayout(ctx context.Context, address string) error {
 	applyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if _, err = p.c.run(applyCtx, nil, "talosctl", "--nodes="+address, "patch", "machineconfig", "--mode=no-reboot", "--patch="+stagingLayoutPatch); err != nil {
+	if _, err := p.c.run(applyCtx, nil, "talosctl", "--nodes="+address, "patch", "machineconfig", "--mode=no-reboot", "--patch="+stagingLayoutPatch); err != nil {
 		return errors.New("the temporary worker layout change could not be confirmed")
 	}
 	return waitReadyWithin(ctx, time.Minute, func(ctx context.Context) error {
@@ -64,4 +69,53 @@ func (p temporaryPreparation) verifyUnusedLayout(ctx context.Context, address st
 		return err
 	}
 	return verifyStagingLayout(raw, ephemeral)
+}
+
+func (p temporaryPreparation) verifyRecoveredLayout(ctx context.Context, address string) error {
+	raw, ephemeral, err := p.readDesiredLayout(ctx, address)
+	if err != nil {
+		return temporaryRecoveryGate("readable Talos volume configuration")
+	}
+	if !p.staging && verifyDesiredLayout(raw, ephemeral) == nil || p.staging && verifyStagingLayout(raw, ephemeral) == nil {
+		return nil
+	}
+	if p.staging && verifyDesiredLayout(raw, ephemeral) == nil {
+		return replacedStagingLayout
+	}
+	return temporaryRecoveryGate("the reviewed volume configuration")
+}
+
+// Restore only a known configuration rollback after the native recovery read
+// has already proven the new boot and both encrypted partitions. Recheck
+// workload safety and the owner before changing configuration in place.
+func (p temporaryPreparation) restoreRebuiltStagingLayout(ctx context.Context, recovered object) error {
+	if !p.staging || !p.j.StagingLayout || !p.j.RawVolumeAbsent || p.j.Phase != "reset-requested" || p.retainsRaw() {
+		return errInventory
+	}
+	s, err := p.c.snapshot(ctx)
+	if err != nil || verifyStagingBudget(s) != nil || verifyEvacuated(p.target, s) != nil {
+		return temporaryRecoveryGate("owned capacity and storage evacuation before restoring the layout")
+	}
+	if _, err = resolveTemporaryResetRecovery(p.temporarySelection, s.nodes, p.pools, p.j); err != nil {
+		return temporaryRecoveryGate("the original migration pool member before restoring the layout")
+	}
+	previousAddress, err := workerPrivateAddress(recovered)
+	if err != nil {
+		return err
+	}
+	current, address, err := p.node(ctx, true)
+	if err != nil || address != previousAddress || !ready(valueObject(current, "status")) ||
+		text(current, "status", "nodeInfo", "bootID") != text(recovered, "status", "nodeInfo", "bootID") ||
+		value(current, "spec", "unschedulable") != true || text(current, "metadata", "annotations", fenceAnnotation) != p.name ||
+		text(current, "metadata", "annotations", capacityOwnerAnnotation) != capacityOwnerValue ||
+		text(current, "metadata", "annotations", scaleDownDisabled) != "true" {
+		return temporaryRecoveryGate("the recovered worker with its owned cordon and capacity pin")
+	}
+	if err = p.verifyRecoveredLayout(ctx, address); err != replacedStagingLayout {
+		return err
+	}
+	if err = p.checkOwner(ctx); err != nil {
+		return err
+	}
+	return p.applyStagingLayout(ctx, address)
 }
