@@ -16,11 +16,11 @@
 
 # kubectl, from the image the platform's own jobs and the cluster-reader proxy
 # run, pinned by digest.
-FROM docker.io/alpine/k8s:1.37.2@sha256:dcb7185e112a453aa72f426754849a97357727ef8f40168fb208c8cf59952042 AS kubectl
+FROM docker.io/alpine/k8s:1.37.2@sha256:7a82aeefea3d554a43a8676b137f2b88bae6c1fe11c13862b191b3a086cc28c0 AS kubectl
 
 # Go's own release, pinned by digest; Renovate moves it. It must be at least
 # the highest `go` line of devantler-tech/monorepo's Go guards (1.26.11 today).
-FROM docker.io/library/golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS go
+FROM docker.io/library/golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS go
 
 # The plugin, fetched by its exact commit. Renovate moves the commit to the
 # head of agent-plugins' main (.github/renovate.json), which only reviewed pull

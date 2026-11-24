@@ -215,14 +215,15 @@ func TestCommittedTenant(t *testing.T) {
 			t.Fatal(err)
 		}
 		previewChildren, _ := desiredTenant(t, engine, &definition, &preview)
-		for _, id := range []string{"tenantNamespace", "defaultDeny", "resourceQuota", "ociRepository"} {
+		for _, id := range []string{"tenantNamespace", "defaultDeny", "ociRepository"} {
 			if previewChildren[id] == nil {
 				t.Fatalf("missing child for the committed preview Tenant: %s", id)
 			}
 		}
-		if len(previewChildren) != 4 {
-			t.Fatal("the committed preview Tenant must provision only its namespace, isolation, quota and signed source")
+		if len(previewChildren) != 3 {
+			t.Fatal("the committed preview Tenant must provision only its namespace, default deny and signed source; the platform generates the standard namespace quota")
 		}
+		assertPreviewSourceVerifier(t, root, previewChildren["ociRepository"])
 		productChildren, _ := desiredTenant(t, engine, &definition, &prod)
 		for _, sops := range []bool{false, true} {
 			input := preview.DeepCopy()
@@ -854,6 +855,38 @@ func committedTenants(t *testing.T, root string) []*unstructured.Unstructured {
 		t.Fatal(err)
 	}
 	return tenants
+}
+
+// The positive admission fixture must use the exact trust emitted by KRO.
+func assertPreviewSourceVerifier(t *testing.T, root string, source *unstructured.Unstructured) {
+	t.Helper()
+	path := filepath.Join(root, "tests/restrict-tenant-image-repositories/resources.yaml")
+	data, err := os.ReadFile(path) //nolint:gosec // Repository-owned admission fixtures.
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, found, err := unstructured.NestedMap(source.Object, "spec", "verify")
+	if err != nil || !found {
+		t.Fatalf("compiled preview source does not declare verification: %v", err)
+	}
+	matches := 0
+	for _, document := range regexp.MustCompile("(?m)^---[ \t]*$").Split(string(data), -1) {
+		var fixture unstructured.Unstructured
+		if err := yaml.Unmarshal([]byte(document), &fixture.Object); err != nil {
+			t.Fatal(err)
+		}
+		if fixture.GetKind() != "OCIRepository" || fixture.GetName() != source.GetName() || fixture.GetNamespace() != source.GetNamespace() {
+			continue
+		}
+		matches++
+		expected, found, err := unstructured.NestedMap(fixture.Object, "spec", "verify")
+		if err != nil || !found || !reflect.DeepEqual(expected, actual) {
+			t.Fatalf("the preview source fixture must admit the exact compiled release verifier: %v", err)
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("expected one admission fixture for the compiled preview source, got %d", matches)
+	}
 }
 
 // compiledSubject returns the one compiled source subject as the regex Flux

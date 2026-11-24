@@ -72,7 +72,7 @@ func TestProductionOutcomeMutations(t *testing.T) {
 	outcomeStep := "      - name: 🧾 Record whether production was left untouched"
 	jobAnchor := "    # `true` only when the queue preflight refused"
 	stepsAnchor := "stopped_before_production }}\n    steps:\n      - name: 📑 Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n"
-	setupAnchor := stepsAnchor + "          persist-credentials: false\n          fetch-depth: 0\n\n      - name: ⚙️ Setup Go\n        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0\n        with:\n"
+	setupAnchor := stepsAnchor + "          persist-credentials: false\n          fetch-depth: 0\n\n      - name: ⚙️ Setup Go\n        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0\n        with:\n"
 	receiptLine := "          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}\n"
 	checkLine := "        run: go run ./scripts/verify-merge-group-queued check\n"
 	for _, tc := range []struct{ name, from, to string }{

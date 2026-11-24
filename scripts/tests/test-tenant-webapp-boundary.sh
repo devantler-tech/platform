@@ -28,6 +28,16 @@ yq -o=json -I=0 'select(.kind == "CiliumClusterwideNetworkPolicy" and .metadata.
   }
 ' >/dev/null || fail 'preview pods must deny direct Gateway ingress in the production render'
 
+yq -o=json -I=0 'select(.kind == "ClusterPolicy" and .metadata.name == "add-ns-quota")' "$scratch/production.yaml" | jq -es '
+  length == 1 and any(.[0].spec.rules[];
+    .name == "generate-resourcequota" and
+    .match == {any:[{resources:{kinds:["Namespace"]}}]} and
+    all(.exclude.any[]?; ((.resources.names // []) | index("business-site-dev")) == null) and
+    .generate.kind == "ResourceQuota" and .generate.name == "default-resourcequota" and
+    .generate.namespace == "{{request.object.metadata.name}}" and .generate.synchronize == true and
+    (.generate.data.spec.hard | has("requests.cpu") and has("requests.memory")))
+' >/dev/null || fail 'the platform quota generator must cover the preview namespace'
+
 GITHUB_OUTPUT="$scratch/version" bash "$root/.github/scripts/kyverno-version.sh"
 engine_version="$(cd "$root/scripts/tests/tenant-webapp-admission" && go list -m -f '{{.Version}}' github.com/kyverno/kyverno)"
 [[ "$(<"$scratch/version")" == "release=$engine_version" ]] || fail 'the admission engine must match the reviewed Kyverno CLI pin'
@@ -200,7 +210,9 @@ check preview-outside-platform "$preview_parent" "$(jq '.metadata.namespace="ten
 check another-preview "$preview_parent" "$(jq '.metadata.name="other-dev" | .spec.name="other"' <<<"$preview_tenant")" null "$flux" CREATE fail
 check preview-kro-status "$preview_parent" "$(jq '.status.state="ACTIVE"' <<<"$preview_tenant")" "$preview_tenant" "$kro" UPDATE pass status
 check preview-kro-spec "$preview_parent" "$(jq '.spec.resourceQuota.pods="100"' <<<"$preview_tenant")" "$preview_tenant" "$kro" UPDATE fail
-check preview-without-quota "$preview_parent" "$(jq 'del(.spec.resourceQuota)' <<<"$preview_tenant")" null "$flux" CREATE fail
+preview_with_extra_quota="$(jq '.spec.resourceQuota.enabled=true' <<<"$preview_tenant")"
+check preview-with-extra-quota "$preview_parent" "$preview_with_extra_quota" null "$flux" CREATE fail
+check preview-return-to-standard-quota "$preview_parent" "$preview_tenant" "$preview_with_extra_quota" "$flux" UPDATE pass
 check preview-without-source-hold "$preview_parent" "$(jq 'del(.spec.source)' <<<"$preview_tenant")" null "$flux" CREATE fail
 check preview-with-webapp "$preview_parent" "$(jq '.spec.webApp=true' <<<"$preview_tenant")" null "$flux" CREATE fail
 check preview-with-external-dns "$preview_parent" "$(jq '.spec.externalDns=true' <<<"$preview_tenant")" null "$flux" CREATE fail

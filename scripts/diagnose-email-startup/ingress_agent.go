@@ -8,8 +8,8 @@ import (
 	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
-const approvedCiliumAgentImage = "quay.io/cilium/cilium:v1.20.4@sha256:20fe92e4c86641233a450098c158d2d29085f3419931ab6bf681d2485dedf16e"
-const approvedCiliumAgentID = "quay.io/cilium/cilium@sha256:20fe92e4c86641233a450098c158d2d29085f3419931ab6bf681d2485dedf16e"
+const approvedCiliumAgentImage = "quay.io/cilium/cilium:v1.20.5@sha256:aa72499f075ad729947ea91b026218aceba24f1a8e4534bf36b8368c7c561526"
+const approvedCiliumAgentID = "quay.io/cilium/cilium@sha256:aa72499f075ad729947ea91b026218aceba24f1a8e4534bf36b8368c7c561526"
 
 type ingressAgent struct {
 	Name, UID, Node, ContainerID, ImageID, StartedAt string

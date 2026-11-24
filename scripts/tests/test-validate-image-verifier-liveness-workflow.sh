@@ -125,7 +125,7 @@ check() {
     }
 
   # T6 — the complete policy parser uses the repository's reviewed Go pin.
-  [ "$(yq -r ".jobs[\"${fleet_job}\"].steps | map(select(.uses == \"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e\" and .with.\"go-version-file\" == \"go.mod\")) | length" "$f")" = '1' ] ||
+  [ "$(yq -r ".jobs[\"${fleet_job}\"].steps | map(select(.uses == \"actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5\" and .with.\"go-version-file\" == \"go.mod\")) | length" "$f")" = '1' ] ||
     {
       printf 'VIOLATION T6: missing pinned Go setup for complete policy comparison\n'
       return 1
@@ -185,9 +185,9 @@ ablate T4 'schedule-skipping guard on the inventory job' \
   ".jobs[\"${inventory_job}\"].if = \"github.event_name != 'schedule'\""
 ablate T5 'fleet job lost environment prod' "del(.jobs[\"${fleet_job}\"].environment)"
 ablate T5 'inventory job in another environment' ".jobs[\"${inventory_job}\"].environment = \"staging\""
-ablate T6 'Go setup removed' ".jobs[\"${fleet_job}\"].steps |= map(select(.uses != \"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e\"))"
-ablate T6 'Go setup uses a floating version' "(.jobs[\"${fleet_job}\"].steps[] | select(.uses == \"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e\").uses) = \"actions/setup-go@v7\""
-ablate T6 'Go setup lost repository version pin' "del(.jobs[\"${fleet_job}\"].steps[] | select(.uses == \"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e\").with.\"go-version-file\")"
+ablate T6 'Go setup removed' ".jobs[\"${fleet_job}\"].steps |= map(select(.uses != \"actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5\"))"
+ablate T6 'Go setup uses a floating version' "(.jobs[\"${fleet_job}\"].steps[] | select(.uses == \"actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5\").uses) = \"actions/setup-go@v7\""
+ablate T6 'Go setup lost repository version pin' "del(.jobs[\"${fleet_job}\"].steps[] | select(.uses == \"actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5\").with.\"go-version-file\")"
 ablate T7 'actual fleet checker removed' "(.jobs[\"${fleet_job}\"].steps[] | select(.run == \"./scripts/validate-image-verifier-liveness.sh\").run) = \"true\""
 
 printf 'test-validate-image-verifier-liveness-workflow: 1 control + %d ablations passed\n' "${ablations}"

@@ -35,6 +35,7 @@ spec:
   validations:
     - expression: "variables.repository != '' && !variables.repository.endsWith('-dev')"
       message: The dev namespace suffix is reserved for isolated previews.
+    # The add-ns-quota policy generates the quota for this reserved namespace.
     - expression: >-
         !variables.preview ||
         (variables.repository == 'business-site' &&
@@ -43,10 +44,10 @@ spec:
          (variables.flux || variables.kroMaintenance) &&
          !object.spec.?externalDns.orValue(false) &&
          !object.spec.?webApp.orValue(false) &&
-         object.spec.?resourceQuota.?enabled.orValue(false) &&
+         !object.spec.?resourceQuota.?enabled.orValue(false) &&
          !object.spec.?source.?reconcileApplication.orValue(true) &&
          (request.operation == 'CREATE' || object.spec.name == oldObject.spec.name))
-      message: The Business Site preview must use a platform-managed source with a quota.
+      message: The Business Site preview must use a platform-managed source and the standard namespace quota.
     - expression: >-
         !variables.preview || request.operation != 'CREATE' ||
         !dyn(resource.List('v1', 'namespaces', '',

@@ -13,6 +13,8 @@
 # world-at-ruin) all pull only from their own repository on 2026-11-12. A tenant
 # whose namespace does not match its repository name is denied every
 # first-party reference rather than inheriting another tenant's.
+# The reserved Business Site preview shares the product's release. It may
+# pull the digest-pinned product image and its named, verified manifest source.
 # Third-party images (any other registry or organisation) are unaffected.
 #
 # Covered objects: Pods (containers, initContainers, ephemeralContainers — the
@@ -56,8 +58,9 @@ metadata:
     policies.kyverno.io/description: >-
       Allows a tenant namespace to reference only its own first-party image
       repositories (ghcr.io/devantler-tech/<namespace>/...) from Pods and from
-      Flux OCIRepository and HelmRepository sources. The nodes authenticate
-      every first-party pull, so this admission rule is what keeps one tenant
+      Flux OCIRepository and HelmRepository sources. The reserved Business Site
+      preview uses that product's digest-pinned image and verified release
+      source. This admission rule keeps one tenant
       from running another tenant's private images. Third-party images and
       non-tenant namespaces are unaffected.
 spec:
@@ -97,15 +100,33 @@ spec:
       expression: >-
         '^([a-z]+://)?ghcr\\.io\\.?(:[0-9]+)?/devantler-tech/'
         + object.metadata.namespace + '([/:@]|$)'
+    # Require the Tenant graph's exact keyless identity and Flux's default Sigstore trust roots.
+    - name: previewReleaseIdentity
+      expression: >-
+        [{'issuer': '^https://token\\.actions\\.githubusercontent\\.com$',
+          'subject': '^https://github\\.com/devantler-tech/business\\-site/\\.github/workflows/publish-runtime\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'}]
     - name: foreign
       expression: >-
         variables.refs.filter(r,
           r.lowerAscii().matches(variables.firstParty)
-          && !r.lowerAscii().matches(variables.own))
+          && (object.metadata.namespace == 'business-site-dev'
+            ? !(
+                (object.kind == 'Pod'
+                  && r.matches('^ghcr\\.io/devantler-tech/business-site@sha256:[0-9a-f]{64}$'))
+                || (object.kind == 'OCIRepository'
+                  && object.metadata.name == 'business-site'
+                  && r == 'oci://ghcr.io/devantler-tech/business-site/manifests'
+                  && object.spec.?verify.?provider.orValue('') == 'cosign'
+                  && object.spec.?verify.?matchOIDCIdentity.orValue([]) == variables.previewReleaseIdentity
+                  && !has(object.spec.verify.secretRef)
+                  && !has(object.spec.verify.trustedRootSecretRef)))
+            : !r.lowerAscii().matches(variables.own)))
   validations:
     - expression: "size(variables.foreign) == 0"
       messageExpression: >-
-        'Tenant namespace ' + object.metadata.namespace + ' may only use its own
-        first-party repositories (ghcr.io/devantler-tech/' +
-        object.metadata.namespace + '/...); found: ' +
+        'Tenant namespace ' + object.metadata.namespace +
+        (object.metadata.namespace == 'business-site-dev'
+          ? ' may only use the digest-pinned Business Site image and verified manifest source; found: '
+          : ' may only use its own first-party repositories (ghcr.io/devantler-tech/' +
+            object.metadata.namespace + '/...); found: ') +
         variables.foreign.join(', ')
