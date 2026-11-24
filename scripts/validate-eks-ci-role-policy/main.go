@@ -117,8 +117,9 @@ const (
 	// identity signs on.
 	ownReleaseTagRef = `@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?`
 	// ownReleaseTail follows the repository of an own release workflow (#6265):
-	// one workflow file on a strict OCI-semver release tag.
-	ownReleaseTail = `/\.github/workflows/[^/]+\.ya?ml` + ownReleaseTagRef
+	// the one workflow a product releases from, cd.yaml, on a strict OCI-semver
+	// release tag (#6306).
+	ownReleaseTail = `/\.github/workflows/cd\.yaml` + ownReleaseTagRef
 	// unifiReleaseSubject is unifi's own release workflow on a strict release tag,
 	// in the same grammar as every tenant's own-release alternative (#6265).
 	unifiReleaseSubject = publishSubjectHost + "unifi" + ownReleaseTail + "$"

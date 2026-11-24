@@ -23,11 +23,11 @@ spec:
   verify:
     provider: cosign
     matchOIDCIdentity:
-      # Keyless-signed by a workflow directly in .github/workflows/ of KHoist's
-      # OWN repository on a strict OCI-semver release tag (ADR 0017, ADR 0019):
-      # the same grammar as the Tenant graph. Release tags cannot be moved or
+      # Keyless-signed by KHoist's OWN release workflow, cd.yaml, on a strict
+      # OCI-semver release tag (ADR 0017, ADR 0019, #6306): the same grammar as
+      # the Tenant graph. Release tags cannot be moved or
       # deleted, and the publish action signs only tags on `main`. The shared
-      # publisher, another repository, a branch or a non-release tag does not
-      # match.
+      # publisher, another workflow or repository, a branch or a non-release tag
+      # does not match.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/khoist/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+        subject: '^https://github\.com/devantler-tech/khoist/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'

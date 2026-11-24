@@ -7,10 +7,10 @@ trap 'rm -rf "$work"' EXIT
 kubectl kustomize "$repo_root/k8s/providers/hetzner/apps/khoist-documentation" >"$work/resources.yaml"
 yq -o=json -I=0 '.' "$work/resources.yaml" | jq -s '.' >"$work/resources.json"
 # The source follows KHoist's own stable releases (ADR 0019) and trusts only its
-# own release workflow on a release tag: the Tenant graph's grammar, literally.
+# own release workflow, cd.yaml, on a release tag (#6306).
 readonly stable='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 readonly issuer='^https://token\.actions\.githubusercontent\.com$'
-readonly subject='^https://github\.com/devantler-tech/khoist/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+readonly subject='^https://github\.com/devantler-tech/khoist/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
 validate() {
   jq -e --arg stable "$stable" --arg issuer "$issuer" --arg subject "$subject" '
     length==5 and all(.[]; .metadata.name=="khoist-documentation" and .metadata.namespace=="data-product-controller") and
@@ -53,6 +53,7 @@ for mutation in \
   'map(if .kind=="OCIRepository" then .spec.ref|=del(.semverFilter) else . end)' \
   'map(if .kind=="OCIRepository" then .spec.verify.matchOIDCIdentity[0].subject="^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812$" else . end)' \
   'map(if .kind=="OCIRepository" then .spec.verify.matchOIDCIdentity[0].subject="^https://github\\.com/devantler-tech/[^/]+/\\.github/workflows/[^/]+\\.ya?ml@refs/tags/v.*$" else . end)' \
+  'map(if .kind=="OCIRepository" then .spec.verify.matchOIDCIdentity[0].subject|=sub("cd\\\\\\.yaml"; "[^/]+\\.ya?ml") else . end)' \
   'map(if .kind=="OCIRepository" then .spec.verify.matchOIDCIdentity+=[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:".*"}] else . end)' \
   'map(if .kind=="Role" then .rules[0].resources=["secrets"] else . end)' \
   'map(if .kind=="RoleBinding" then .roleRef.kind="ClusterRole" else . end)' \
