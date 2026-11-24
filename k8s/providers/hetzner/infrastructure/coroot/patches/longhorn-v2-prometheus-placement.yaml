@@ -1,0 +1,32 @@
+---
+apiVersion: coroot.com/v1
+kind: Coroot
+metadata:
+  name: coroot
+  namespace: observability
+spec:
+  prometheus:
+    # Move the existing collector and its provider-backed claim together.
+    # Prefer the pinned migration pool and retain a baseline fallback.
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: storage.platform.devantler.tech/migration-pool
+                  operator: In
+                  values: [v2]
+            - matchExpressions:
+                - key: platform.devantler.tech/baseline-worker
+                  operator: In
+                  values: ["true"]
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values: [prod-worker-2]
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: storage.platform.devantler.tech/migration-pool
+                  operator: In
+                  values: [v2]
