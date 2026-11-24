@@ -3,14 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // privateInput reads a bounded input without including its contents in errors.
@@ -133,53 +130,10 @@ func loadInputs(dir string) (inputs, error) {
 	if seen["runtimeVersion"] && v.RuntimeVersion == "" {
 		return fail()
 	}
-	aliases, present, err := maintainerAddressAliases(dir, v.Domain, v.Maintainer)
-	if err != nil || present && seen["maintainerAliases"] {
-		return fail()
-	}
-	if present {
-		v.MaintainerAliases = aliases
-	}
 	if _, err = render(v); err != nil {
 		return fail()
 	}
 	return v, nil
-}
-
-// maintainerAddressAliases reads the maintainer's complete address inventory
-// from the optional `maintainer-addresses` input: the same comma-separated
-// list the mailbox history copy uses (#5481), so the maintainer keeps it in
-// one place. Every other address on the domain becomes a receiving alias of
-// the maintainer's mailbox. The inventory must name the maintainer's own
-// address, so a wrong or truncated file cannot pass as complete, and it may not
-// be combined with aliases in the settings. Alias names are validated with the
-// settings' own rules when rendered.
-func maintainerAddressAliases(dir, domain, maintainer string) ([]string, bool, error) {
-	if _, err := os.Lstat(filepath.Join(dir, "maintainer-addresses")); errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
-	}
-	b, err := privateInput(dir, "maintainer-addresses", 4096)
-	line := strings.TrimSuffix(string(b), "\n")
-	if err != nil || line == "" || strings.ContainsAny(line, "\r\n\x00") {
-		return nil, true, errConfiguration
-	}
-	aliases := []string{}
-	own := 0
-	for _, item := range strings.Split(line, ",") {
-		local, host, ok := strings.Cut(strings.ToLower(strings.TrimSpace(item)), "@")
-		if !ok || local == "" || host != domain || strings.Contains(host, "@") {
-			return nil, true, errConfiguration
-		}
-		if local == maintainer {
-			own++
-			continue
-		}
-		aliases = append(aliases, local)
-	}
-	if own != 1 {
-		return nil, true, errConfiguration
-	}
-	return aliases, true, nil
 }
 
 // command handles the Email configuration CLI without echoing private input values.
