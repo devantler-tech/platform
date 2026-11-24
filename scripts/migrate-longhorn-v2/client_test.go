@@ -26,7 +26,8 @@ func TestListRequiresCompleteDistinctResourceIdentities(t *testing.T) {
 func rawFixture() (object, object) {
 	raw := object{"metadata": object{"id": "r-longhorn"}, "spec": object{
 		"phase": "ready", "type": "partition", "size": float64(96 * 1024 * 1024 * 1024),
-		"location": "/dev/sda6", "mountLocation": "/dev/dm-2", "parentLocation": "/dev/sda",
+		"partitionUUID": "12345678-1234-4234-8234-000000000078",
+		"location":      "/dev/sda6", "mountLocation": "/dev/dm-2", "parentLocation": "/dev/sda",
 		"encryptionProvider": "luks2", "configuredEncryptionKeys": []any{"nodeID"}, "encryptionLockedToState": true,
 	}}
 	ephemeral := object{"metadata": object{"id": "EPHEMERAL"}, "spec": object{
