@@ -1194,6 +1194,22 @@ spec:
               }
               POLICY
 
+              # The existing mail provider's sign-in and the domain's address
+              # inventory, which the maintainer keeps for the one-time mailbox
+              # history copy (#5481). Exact key read only, the same shape as
+              # the storage key reader above.
+              bao policy write infra-icloud-readonly - <<'POLICY'
+              path "secret/data/infrastructure/icloud" {
+                capabilities = ["read"]
+              }
+              path "auth/token/lookup-self" {
+                capabilities = ["read"]
+              }
+              path "auth/token/revoke-self" {
+                capabilities = ["update"]
+              }
+              POLICY
+
               # Read-only replacement preflight (#5836): the Raft membership the
               # quorum judge decides on, and revoking its own token when done.
               # Health needs no token, so it is not granted here.
@@ -1564,6 +1580,20 @@ spec:
                 "token_max_ttl": 3600
               }
               EMAIL_STORAGE_ROLE
+
+              # The one-time mailbox history copy's own identity (#5481). Like
+              # the storage role, it neither seeds a key nor widens the shared
+              # External Secrets role.
+              bao write auth/kubernetes/role/email-history-import - <<'EMAIL_HISTORY_ROLE'
+              {
+                "bound_service_account_names": ["email-history-import"],
+                "bound_service_account_namespaces": ["private-mail"],
+                "token_policies": ["infra-icloud-readonly"],
+                "token_no_default_policy": true,
+                "token_ttl": 3600,
+                "token_max_ttl": 3600
+              }
+              EMAIL_HISTORY_ROLE
 
               # The source-owned SecretStore uses only this namespaced identity.
               # Explicit JSON preserves array/boolean types; no default policy is
