@@ -27,7 +27,11 @@ metadata:
     app.kubernetes.io/name: github-broker
     app.kubernetes.io/instance: github-broker
 spec:
-  replicas: 2
+  # 0 until the one-off seed-github-broker-apps workflow has loaded both Apps'
+  # credentials into OpenBao: octo-sts refuses to start on the placeholders,
+  # and zero replicas keep the apps deploy healthy meanwhile. A follow-up
+  # raises this to 2 after seeding.
+  replicas: 0
   strategy:
     type: RollingUpdate
     rollingUpdate:
