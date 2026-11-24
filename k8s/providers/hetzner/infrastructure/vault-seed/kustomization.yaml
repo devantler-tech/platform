@@ -3,3 +3,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - push-secret.yaml
+  - password-business-site-preview-oidc.yaml
+  - external-secret-generated-business-site-preview-oidc.yaml
+  - push-secret-business-site-preview-oidc.yaml
+  - password-business-site-preview-db-migrator.yaml
+  - external-secret-generated-business-site-preview-db-migrator.yaml
+  - push-secret-business-site-preview-db-migrator.yaml
+  - password-business-site-preview-db-web.yaml
+  - external-secret-generated-business-site-preview-db-web.yaml
+  - push-secret-business-site-preview-db-web.yaml

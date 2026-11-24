@@ -10,6 +10,7 @@ resources:
   - khoist-documentation/
   # Fetch/verify the exact reviewed publication only; no tenant application.
   - business-site/
+  - business-site-preview/
   # Customer sign-in for the business-site portal (ZITADEL, business-site#302).
   - customer-identity/
   # Prod-only tenant: the UniFi network managed declaratively through Crossplane

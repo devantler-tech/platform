@@ -1,0 +1,47 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: portal-preview-db
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie
+  instances: 1
+  # The fictional workspace can go offline while its only pod drains.
+  enablePDB: false
+  enableSuperuserAccess: false
+  storage:
+    size: 2Gi
+    storageClass: longhorn-wffc
+  certificates:
+    serverAltDNSNames:
+      - portal-preview-db-rw.business-site-dev.svc.cluster.local
+  bootstrap:
+    initdb:
+      database: portal_preview
+      owner: portal_preview_migrator
+      secret:
+        name: portal-preview-db-migrator
+      postInitApplicationSQL:
+        - REVOKE CREATE ON SCHEMA public FROM PUBLIC
+  managed:
+    roles:
+      - name: portal_preview_migrator
+        ensure: present
+        login: true
+        passwordSecret:
+          name: portal-preview-db-migrator
+      - name: portal_preview_web
+        ensure: present
+        login: true
+        inherit: false
+        passwordSecret:
+          name: portal-preview-db-web
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

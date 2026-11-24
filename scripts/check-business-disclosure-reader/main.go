@@ -28,6 +28,31 @@ func expectedPayload(kind string) string {
 "secret/data/apps/business-site/stripe":{"capabilities":["read"]},
 "auth/token/lookup-self":{"capabilities":["read"]},
 "auth/token/revoke-self":{"capabilities":["update"]}}}`
+	case "preview-role":
+		return `{
+"bound_service_account_names":["business-site-preview-secrets"],
+"bound_service_account_namespaces":["business-site-dev"],
+"token_policies":["app-business-site-preview-readonly"],
+"token_no_default_policy":true,"token_ttl":3600,"token_max_ttl":3600}`
+	case "preview-dex-role":
+		return `{
+"bound_service_account_names":["business-site-preview-dex-secrets"],
+"bound_service_account_namespaces":["customer-identity"],
+"token_policies":["app-business-site-preview-dex-readonly"],
+"token_no_default_policy":true,"token_ttl":3600,"token_max_ttl":3600}`
+	case "preview-policy":
+		return `{"path":{
+"secret/data/apps/business-site-dev/oidc":{"capabilities":["read"]},
+"secret/data/apps/business-site-dev/portal-migrator":{"capabilities":["read"]},
+"secret/data/apps/business-site-dev/portal-web":{"capabilities":["read"]},
+"secret/data/apps/business-site-dev/portal-db-ca":{"capabilities":["read"]},
+"auth/token/lookup-self":{"capabilities":["read"]},
+"auth/token/revoke-self":{"capabilities":["update"]}}}`
+	case "preview-dex-policy":
+		return `{"path":{
+"secret/data/apps/business-site-dev/oidc":{"capabilities":["read"]},
+"auth/token/lookup-self":{"capabilities":["read"]},
+"auth/token/revoke-self":{"capabilities":["update"]}}}`
 	default:
 		return ""
 	}
@@ -35,7 +60,7 @@ func expectedPayload(kind string) string {
 
 func run(args []string, input io.Reader) error {
 	if len(args) != 1 || expectedPayload(args[0]) == "" {
-		return errors.New("expected role or policy")
+		return errors.New("expected a business site role or policy")
 	}
 	const maxBytes = 16 << 10
 	body, err := io.ReadAll(io.LimitReader(input, maxBytes+1))

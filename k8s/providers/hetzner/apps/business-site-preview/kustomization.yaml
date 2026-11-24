@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: business-site-dev
+resources:
+  - service-account-secrets.yaml
+  - secret-store.yaml
+  - external-secret-db-migrator.yaml
+  - external-secret-db-web.yaml
+  - external-secret-migration.yaml
+  - external-secret-runtime.yaml
+  - cluster.yaml
+  - push-secret-db-ca.yaml
+  - cilium-network-policy-db.yaml
+  - cilium-network-policy-migration.yaml
+  - cilium-network-policy-web.yaml

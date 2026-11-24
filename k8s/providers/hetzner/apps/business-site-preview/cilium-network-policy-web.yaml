@@ -1,0 +1,45 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: business-site-dev-portal
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: business-site-dev
+  ingress:
+    # auth-proxy forwards requests after oauth2-proxy authenticates them.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+            app: auth-proxy
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: business-site-dev
+            cnpg.io/cluster: portal-preview-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchName: portal-preview-db-rw.business-site-dev.svc.cluster.local
+              - matchName: login.devantler.tech
+    - toFQDNs:
+        - matchName: login.devantler.tech
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
