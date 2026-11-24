@@ -1199,7 +1199,7 @@ spec:
               # history copy (#5481). Exact key read only, the same shape as
               # the storage key reader above.
               bao policy write infra-icloud-readonly - <<'POLICY'
-              path "secret/data/infrastructure/icloud" {
+              path "secret/data/infrastructure/apple/icloud" {
                 capabilities = ["read"]
               }
               path "auth/token/lookup-self" {

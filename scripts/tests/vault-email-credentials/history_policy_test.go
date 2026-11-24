@@ -60,7 +60,7 @@ func TestHistoryImportPolicyReadsOnlyTheProviderSignIn(t *testing.T) {
 		}
 	}
 	want := []string{
-		`path "secret/data/infrastructure/icloud" {`,
+		`path "secret/data/infrastructure/apple/icloud" {`,
 		`capabilities = ["read"]`,
 		`}`,
 		`path "auth/token/lookup-self" {`,
@@ -91,7 +91,7 @@ func TestSharedExternalSecretsRoleCannotReadProviderSignIn(t *testing.T) {
 			t.Fatal("shared External Secrets role must not carry the provider sign-in reader")
 		}
 	}
-	if got := strings.Count(string(data), "infrastructure/icloud"); got != 1 {
+	if got := strings.Count(string(data), "infrastructure/apple/icloud"); got != 1 {
 		t.Fatalf("the provider sign-in path must appear in exactly one policy, found %d", got)
 	}
 }
