@@ -10,9 +10,9 @@ fi
 
 scratch="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/talos-pool-layout.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
-bash scripts/render-talos-storage-pool-layout.sh > "$scratch/ksail.production.yaml"
+bash scripts/render-talos-storage-pool-layout.sh >"$scratch/ksail.production.yaml"
 if ! "$1" --config "$scratch/ksail.production.yaml" cluster update --dry-run --output json \
-  > "$scratch/plan.json" 2> "$scratch/diagnostics.log"; then
+  >"$scratch/plan.json" 2>"$scratch/diagnostics.log"; then
   printf '%s\n' 'The Talos lifecycle preview did not complete.' >&2
   exit 1
 fi
