@@ -39,7 +39,7 @@ func rawFixture() (object, object) {
 
 func TestResetRequiresNewEncryptedPartitionLayout(t *testing.T) {
 	raw, ephemeral := rawFixture()
-	if err := verifyResetLayout(raw, ephemeral, "old-ephemeral"); err != nil {
+	if err := verifyResetLayout(raw, ephemeral, "old-ephemeral", text(ephemeral, "spec", "uuid")); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(object, object){
@@ -56,7 +56,7 @@ func TestResetRequiresNewEncryptedPartitionLayout(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, e := rawFixture()
 			mutate(r, e)
-			if err := verifyResetLayout(r, e, "old-ephemeral"); err == nil {
+			if err := verifyResetLayout(r, e, "old-ephemeral", text(e, "spec", "uuid")); err == nil {
 				t.Fatal("unsafe rebuilt layout accepted")
 			}
 		})
@@ -69,7 +69,7 @@ func TestFreshLargerMigrationWorkerRetainsExtraRootCapacity(t *testing.T) {
 	if err := verifyEncryptedLocalLayout(r, e); err != nil {
 		t.Fatal("fresh larger worker layout rejected:", err)
 	}
-	if err := verifyResetLayout(r, e, "old-root"); err == nil {
+	if err := verifyResetLayout(r, e, "old-root", text(e, "spec", "uuid")); err == nil {
 		t.Fatal("larger migration-worker geometry weakened the permanent-worker reset proof")
 	}
 }

@@ -293,7 +293,11 @@ func (p preparation) rebuilt(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return verifyResetLayout(raw, ephemeral, p.j.EphemeralUUID)
+	uuid, err := recoveredEphemeralUUID(ctx, address, ephemeral, newInventoryReader)
+	if err != nil {
+		return err
+	}
+	return verifyResetLayout(raw, ephemeral, p.j.EphemeralUUID, uuid)
 }
 
 func (p *preparation) finish(ctx context.Context) error {
