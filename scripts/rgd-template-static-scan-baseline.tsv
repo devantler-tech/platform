@@ -29,7 +29,7 @@
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0039	LOW	CAUSE-SHA256:2cd7a6b76d590e4bdd3d192a134e1cd560eed42fa0bd1e6cba22b2c2cc86adbb
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0040	LOW	CAUSE-SHA256:2cd7a6b76d590e4bdd3d192a134e1cd560eed42fa0bd1e6cba22b2c2cc86adbb
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/resourceQuota.yaml	KSV-0039	LOW	CAUSE-SHA256:6c734e7055af24d7df7253ea2132440b043ba4d16d969ea187f684ae1722b82c
-1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	RGD-CONTENT	SHA256	1e6eeac997228b492769016b77a028a6419887a63d9e2ec1581a705cda49796a
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	RGD-CONTENT	SHA256	d49af714b479cec8aa9a162f50361b86b412a32cce56bc7eeb8c8ff3b523a4c2
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0013	MEDIUM	CAUSE-SHA256:c801aedba500c27744aa5111215741ee7a4703a4968fb26c3e42a1fd33423767
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0014	HIGH	CAUSE-SHA256:c801aedba500c27744aa5111215741ee7a4703a4968fb26c3e42a1fd33423767
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0039	LOW	CAUSE-SHA256:795d693c989cf3ef4a5acf5509bc8be073a5010241448665622101926a0c00b3

@@ -95,9 +95,6 @@ spec:
       # Attaches to the shared wildcard `https` listener on the central gateway.
       # Required.
       host: string
-      # Private services can use a platform-managed entry point without creating
-      # a route from the tenant namespace.
-      publishRoute: boolean | default=true
       # Container port (and Service targetPort). The Service always fronts it on
       # port 80. Default 8080 (ascoachingogvaner); wedding-app overrides to 3000.
       port: integer | default=8080
@@ -242,8 +239,11 @@ spec:
               targetPort: ${schema.spec.port}
               protocol: TCP
     - id: httpRoute
+      # The reserved preview uses the platform's authenticated proxy. Admission
+      # makes the target namespace immutable, so the route is never pruned from
+      # a live parent when its configuration changes.
       includeWhen:
-        - ${!has(schema.spec.publishRoute) || schema.spec.publishRoute}
+        - ${schema.spec.name != 'business-site-dev'}
       template:
         apiVersion: gateway.networking.k8s.io/v1
         kind: HTTPRoute

@@ -279,35 +279,34 @@ func TestCommittedWebApp(t *testing.T) {
 		admit := func(input *unstructured.Unstructured) error {
 			return apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict", DryRun: []string{metav1.DryRunAll}})
 		}
-		t.Run("internal-only applications omit the tenant route", func(t *testing.T) {
+		t.Run("the reserved Business Site preview omits the tenant route", func(t *testing.T) {
 			regular := candidate()
 			if err := admit(regular); err != nil {
 				t.Fatal(err)
 			}
 			regularChildren, ignored := resolveChildren(t, engine, definition, regular)
 			if len(ignored) != 0 || regularChildren["httpRoute"] == nil {
-				t.Fatal("an existing WebApp without a route setting must keep its HTTPRoute")
+				t.Fatal("an existing WebApp must keep its HTTPRoute")
 			}
-			legacy := regular.DeepCopy()
-			unstructured.RemoveNestedField(legacy.Object, "spec", "publishRoute")
-			previousChildren, _ := resolveChildren(t, engine, installedDefinition, legacy)
-			legacyChildren, _ := resolveChildren(t, engine, definition, legacy)
-			if !reflect.DeepEqual(previousChildren, regularChildren) || !reflect.DeepEqual(legacyChildren, regularChildren) {
+			previousChildren, _ := resolveChildren(t, engine, installedDefinition, regular)
+			if !reflect.DeepEqual(previousChildren, regularChildren) {
 				t.Fatal("the upgraded graph changed resources for an existing WebApp")
 			}
 
-			internal := candidate()
-			internal.Object["spec"].(map[string]interface{})["publishRoute"] = false
-			if err := admit(internal); err != nil {
-				t.Fatalf("the API must accept an internal-only application: %v", err)
+			preview := candidate()
+			preview.SetName("business-site-dev")
+			preview.SetNamespace("business-site-dev")
+			spec := preview.Object["spec"].(map[string]interface{})
+			spec["name"] = "business-site-dev"
+			spec["host"] = "dev.devantler.tech"
+			previewChildren, ignored := resolveChildren(t, engine, definition, preview)
+			if !slices.Equal(ignored, []string{"httpRoute"}) || previewChildren["httpRoute"] != nil {
+				t.Fatal("the reserved preview must never generate a tenant HTTPRoute")
 			}
-			internalChildren, ignored := resolveChildren(t, engine, definition, internal)
-			if !slices.Equal(ignored, []string{"httpRoute"}) || internalChildren["httpRoute"] != nil {
-				t.Fatal("an internal-only WebApp must not create a tenant HTTPRoute")
-			}
-			delete(regularChildren, "httpRoute")
-			if !reflect.DeepEqual(internalChildren, regularChildren) {
-				t.Fatal("turning off the route changed the deployment or service")
+			previousPreview, _ := resolveChildren(t, engine, installedDefinition, preview)
+			delete(previousPreview, "httpRoute")
+			if !reflect.DeepEqual(previewChildren, previousPreview) {
+				t.Fatal("omitting the preview route changed the deployment or service")
 			}
 		})
 		refused := func(t *testing.T, input *unstructured.Unstructured) {
