@@ -41,6 +41,34 @@ connecting to either server. It prints only a fixed result and address count.
 The copy command requires the separate literal confirmation
 `--confirm copy-icloud-history`.
 
+## Running the copy in production
+
+The production inputs come from OpenBao. The maintainer keeps the existing
+provider's `username`, app-specific `password` and the comma-separated
+`addresses` inventory at `infrastructure/icloud`, which only the
+`email-history-import` role can read. The `email-history-import` ExternalSecret
+in `private-mail` projects them as `source-username`, `source-password` and
+`addresses`, and the destination password comes from the existing
+`private-mail-maintainer` Secret.
+
+The suspended `private-mail/email-history-import` CronJob holds the reviewed
+pod template: the signed importer digest, those inputs mounted read-only, and a
+network policy that reaches only the two fixed IMAPS endpoints. It never runs
+on a schedule. To copy:
+
+1. Check that the ExternalSecret is `SecretSynced`. A wrong key name shows up
+   in its status without revealing any value.
+2. Run **Start Email History Import** with confirmation
+   `start-email-history-import`. It creates one Job from the template and
+   returns; see [its README](../../scripts/start-email-history-import/README.md).
+3. Follow the Job read-only. Its log holds only the fixed result lines below.
+   `MAIL_HISTORY_IMPORT=COMPLETE folders=<n> messages=<n> source=PRESERVED routing=UNCHANGED`
+   is the receipt to record on #5481.
+
+A Job created this way is outside the Flux inventory, so a long copy never holds
+a deploy and a reconciliation cannot prune it. Repeat the operation to continue
+an incomplete copy; it refuses while an earlier copy is still running.
+
 ## Copy and reconciliation
 
 The driver contacts only the fixed source and destination IMAPS endpoints on

@@ -188,6 +188,7 @@ readonly longhorn_retirement_pattern='ghcr.io/devantler-tech/platform-longhorn-i
 readonly longhorn_v2_pattern='ghcr.io/devantler-tech/platform-longhorn-manager'
 readonly longhorn_fio_pattern='ghcr.io/devantler-tech/platform-longhorn-fio'
 readonly mail_submission_pattern='ghcr.io/devantler-tech/platform-mail-submission'
+readonly email_history_pattern='ghcr.io/devantler-tech/platform-email-history-import'
 readonly app_pattern='ghcr.io/devantler-tech/*'
 fixture_rules_json="$(yq -o=json '.rules' "${root_dir}/talos/cluster/verify-first-party-images.yaml" | jq '
   map({imagePattern: .image, skip: (.skip // false), deny: (.deny // false),
@@ -259,7 +260,8 @@ write_healthy_rules() {
     resource_obj 0018 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_v2_pattern}"
     resource_obj 0019 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${longhorn_fio_pattern}"
     resource_obj 0020 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_submission_pattern}"
-    resource_obj 0021 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0021 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${email_history_pattern}"
+    resource_obj 0022 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 

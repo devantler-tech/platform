@@ -1,0 +1,46 @@
+# The history copy reaches only the two fixed IMAPS endpoints it names
+# (#5481): the existing provider and this server's public mail host. Cilium
+# may deliver traffic for the load balancer's address straight to the server
+# pod, so the pod's own IMAPS port is admitted too, and the server admits this
+# pod on that port (patches/admit-history-import.yaml). Nothing reaches the
+# copy's pods.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: email-history-import
+  namespace: private-mail
+spec:
+  endpointSelector:
+    matchLabels:
+      app: email-history-import
+  ingress: []
+  egress:
+    - toFQDNs:
+        - matchName: imap.mail.me.com
+        - matchName: mail.devantler.tech
+      toPorts:
+        - ports:
+            - port: "993"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: private-mail
+            app: private-mail
+      toPorts:
+        - ports:
+            - port: "1993"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchName: imap.mail.me.com
+              - matchName: mail.devantler.tech

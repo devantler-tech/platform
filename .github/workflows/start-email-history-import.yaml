@@ -1,0 +1,33 @@
+---
+name: Start Email History Import
+
+# Starts the reviewed one-time mailbox history copy (#5481) from its suspended
+# CronJob and returns; the copy runs in the cluster. Guards, credential
+# handling and cleanup live in prod-operation.yaml. See
+# docs/operations/email-history-import.md.
+"on":
+  # checkov:skip=CKV_GHA_7:Not a build. The typed confirmation is the interlock
+  # prod-operation.yaml checks; it selects nothing but the fixed operation.
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: start-email-history-import"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  start:
+    permissions:
+      contents: read
+    # The self-repository form ($/) fails the pinned actionlint 1.7.12.
+    uses: ./.github/workflows/prod-operation.yaml # zizmor: ignore[self-repository]
+    # The prod environment secrets reach the called job only when named here.
+    secrets:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+    with:
+      operation: start-email-history-import
+      confirm: ${{ inputs.confirm }}
+      program: scripts/start-email-history-import
+      timeout-minutes: 10
