@@ -14,9 +14,16 @@ if [[ "$kubeconfig" != /* || ! -f "$kubeconfig" || ! -s "$kubeconfig" ]]; then
   exit 1
 fi
 
+talosconfig="${TALOSCONFIG:-}"
+if [[ "$talosconfig" != /* || ! -f "$talosconfig" || ! -s "$talosconfig" ]]; then
+  printf '%s\n' 'Expected one scoped Talos config file for the Talos lifecycle preview.' >&2
+  exit 1
+fi
+
 scratch="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/talos-pool-layout.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
-bash scripts/render-talos-storage-pool-layout.sh >"$scratch/ksail.production.yaml"
+bash scripts/render-talos-storage-pool-layout.sh |
+  TALOS_PREVIEW_CONFIG_PATH="$talosconfig" yq eval '.spec.cluster.talos.config = strenv(TALOS_PREVIEW_CONFIG_PATH)' - >"$scratch/ksail.production.yaml"
 status=0
 "$1" --config "$scratch/ksail.production.yaml" cluster update --kubeconfig "$kubeconfig" --dry-run --output json \
   >"$scratch/plan.json" 2>"$scratch/diagnostics.log" || status=$?
