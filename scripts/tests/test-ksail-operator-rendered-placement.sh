@@ -42,17 +42,26 @@ placement_is_scoped() {
 }
 
 assert_workload_headroom() {
-  jq -e --argjson enabled "$2" --argjson scanner_enabled "$3" '
+  jq -e --argjson enabled "$2" --argjson scanner_enabled "$3" --argjson probe_enabled "$4" '
     def workload($kind;$namespace;$name):
       [.[] | select(.kind == $kind and .metadata.namespace == $namespace and .metadata.name == $name)]
       | if length == 1 then .[0] else error("missing or duplicated workload") end;
+    def migration_terms:
+      [{matchExpressions:[{key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v1","v2"]}]}];
+    def rolling_strategy:
+      {type:"RollingUpdate",rollingUpdate:{maxSurge:1,maxUnavailable:0}};
     workload("HelmRelease";"kubescape";"kubescape") as $kubescape |
     workload("Deployment";"observability";"crossplane-sync-exporter") as $exporter |
     workload("HelmRelease";"policy-reporter";"policy-reporter") as $reporter |
+    workload("HelmRelease";"kube-system";"cilium").spec.values.hubble.ui as $hubble |
+    workload("Deployment";"data-product-controller";"data-product-controller-contract-probe") as $probe |
+    workload("PodDisruptionBudget";"data-product-controller";"data-product-controller-contract-probe") as $probeBudget |
     $kubescape.spec.values.kubevuln.nodeSelector["kubernetes.io/hostname"] as $scannerHost |
     $kubescape.spec.values.kubevuln.affinity as $scannerAffinity |
     $exporter.spec.template.spec.nodeSelector["kubernetes.io/hostname"] as $exporterHost |
     $reporter.spec.values.ui.affinity.nodeAffinity as $reporterAffinity |
+    $hubble.affinity.nodeAffinity as $hubbleAffinity |
+    $probe.spec.template.spec.affinity as $probeAffinity |
     $scannerHost == null and
     (if $scanner_enabled then
       $scannerAffinity ==
@@ -64,13 +73,30 @@ assert_workload_headroom() {
     end) and
     (if $enabled then
       $exporterHost == "prod-worker-1" and $exporter.spec.strategy.type == "Recreate" and
-      $reporterAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
-        [{matchExpressions:[{key:"kubernetes.io/hostname",operator:"In",values:["prod-worker-1","prod-worker-2"]}]},
-         {matchExpressions:[{key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v2"]}]}] and
+      $reporterAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms == migration_terms and
+      $reporter.spec.values.ui.updateStrategy == rolling_strategy and
       $reporter.spec.values.ui.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution ==
         [{labelSelector:{matchLabels:{"app.kubernetes.io/name":"policy-reporter-ui"}},topologyKey:"kubernetes.io/hostname"}]
     else
       $exporterHost == null and $reporterAffinity == null
+    end) and
+    $hubble.replicas == 2 and $hubble.podDisruptionBudget.maxUnavailable == 1 and
+    (if $scanner_enabled then
+      $hubbleAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms == migration_terms and
+      $hubble.updateStrategy == rolling_strategy
+    else
+      $hubbleAffinity == null
+    end) and
+    $probe.spec.replicas == 2 and $probeBudget.spec.maxUnavailable == 1 and
+    (if $probe_enabled then
+      $probe.spec.strategy == rolling_strategy and
+      $probeAffinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms == migration_terms and
+      $probeAffinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution ==
+        [{topologyKey:"kubernetes.io/hostname",labelSelector:{matchLabels:$probe.spec.selector.matchLabels}}] and
+      all($probe.spec.template.spec.volumes[]?; has("persistentVolumeClaim") | not) and
+      $probe.spec.template.spec.containers[0].readinessProbe.httpGet.path == "/readyz"
+    else
+      $probeAffinity == null
     end)
   ' "$1" >/dev/null || fail 'temporary migration placement is missing, widened or present without the component'
 }
@@ -78,6 +104,7 @@ assert_workload_headroom() {
 kube_version="$(yq -er '.spec.cluster.kubernetesVersion' "${root_dir}/ksail.prod.yaml")"
 component='../../../bases/components/longhorn-v1-workload-headroom'
 scanner_component='../../../../bases/components/longhorn-v1-runtime-headroom'
+probe_component='../../../bases/components/longhorn-v2-client-probe-headroom'
 for profile in prod local prod-enabled prod-disabled; do
   cluster="$profile"
   tree="${root_dir}/k8s"
@@ -88,9 +115,11 @@ for profile in prod local prod-enabled prod-disabled; do
     tree="$scratch/$profile/k8s"
     selection_file="$tree/providers/hetzner/infrastructure/kustomization.yaml"
     scanner_selection_file="$tree/providers/hetzner/infrastructure/controllers/kustomization.yaml"
+    probe_selection_file="$tree/providers/hetzner/apps/kustomization.yaml"
     if [[ "$profile" == prod-disabled ]]; then
       COMPONENT="$component" yq -i '.components |= map(select(. != strenv(COMPONENT)))' "$selection_file"
       COMPONENT="$scanner_component" yq -i '.components |= map(select(. != strenv(COMPONENT)))' "$scanner_selection_file"
+      COMPONENT="$probe_component" yq -i '.components |= map(select(. != strenv(COMPONENT)))' "$probe_selection_file"
     else
       selected="$(COMPONENT="$component" yq -r '.components | contains([strenv(COMPONENT)])' "$selection_file")"
       case "$selected" in
@@ -103,6 +132,12 @@ for profile in prod local prod-enabled prod-disabled; do
         true) ;;
         false) COMPONENT="$scanner_component" yq -i '.components += [strenv(COMPONENT)]' "$scanner_selection_file" ;;
         *) fail 'the explicit scanner opt-in is ambiguous' ;;
+      esac
+      probe_selected="$(COMPONENT="$probe_component" yq -r '.components | contains([strenv(COMPONENT)])' "$probe_selection_file")"
+      case "$probe_selected" in
+        true) ;;
+        false) COMPONENT="$probe_component" yq -i '.components += [strenv(COMPONENT)]' "$probe_selection_file" ;;
+        *) fail 'the explicit probe opt-in is ambiguous' ;;
       esac
     fi
   fi
@@ -121,7 +156,9 @@ for profile in prod local prod-enabled prod-disabled; do
   fi
   scanner_enabled="$(COMPONENT="$scanner_component" yq -r '.components | contains([strenv(COMPONENT)])' "$tree/providers/hetzner/infrastructure/controllers/kustomization.yaml")"
   [[ "$scanner_enabled" == true || "$scanner_enabled" == false ]] || fail 'the production scanner selection is ambiguous'
-  assert_workload_headroom "$work/resolved.json" "$enabled" "$scanner_enabled"
+  probe_enabled="$(COMPONENT="$probe_component" yq -r '.components | contains([strenv(COMPONENT)])' "$tree/providers/hetzner/apps/kustomization.yaml")"
+  [[ "$probe_enabled" == "$enabled" ]] || fail 'the production probe and dashboard placement must be selected together'
+  assert_workload_headroom "$work/resolved.json" "$enabled" "$scanner_enabled" "$probe_enabled"
   jq -e '[.[] | select(.kind == "HelmRelease" and .metadata.name == "ksail-operator" and .metadata.namespace == "ksail-operator")]
     | if length == 1 then .[0] else error("missing or duplicated operator release") end' "$work/resolved.json" >"$work/release.json"
   jq -e '.spec.valuesFrom == null and .spec.postRenderStrategy == "nohooks" and .spec.chartRef == {kind:"OCIRepository",name:"ksail-operator"}' "$work/release.json" >/dev/null ||
