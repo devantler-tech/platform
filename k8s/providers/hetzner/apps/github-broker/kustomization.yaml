@@ -7,7 +7,6 @@ resources:
   - service-account.yaml
   - secret-store.yaml
   - external-secret.yaml
-  - deployment.yaml
   - service.yaml
   - pod-disruption-budget.yaml
   - http-route.yaml

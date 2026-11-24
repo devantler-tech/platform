@@ -11,6 +11,7 @@ resources:
   - controller-rbac.yaml
   - delete-rbac.yaml
   - exec-into-container-rbac.yaml
+  - github-broker-gate.yaml
   - gitops-managed-cronjobs.yaml
   - health-probes.yaml
   - helm-chart-metadata.yaml

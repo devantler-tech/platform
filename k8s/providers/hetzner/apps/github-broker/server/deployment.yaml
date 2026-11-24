@@ -18,6 +18,12 @@
 # - Audit records are the pod logs. EVENT_INGRESS_URI stays unset, so no
 #   CloudEvents are sent. Prometheus metrics (including GitHub rate limits per
 #   App and installation) are served on :2112 inside the pod only.
+#
+# Callers never reach octo-sts directly. The `gate` container (Envoy, see
+# config-map-gate.yaml) takes every request, refuses any caller that is not
+# allowed before octo-sts or GitHub sees it, and forwards the rest to octo-sts
+# on the pod's loopback. The Service and the network policy admit only the
+# gate's port.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,16 +33,18 @@ metadata:
     app.kubernetes.io/name: github-broker
     app.kubernetes.io/instance: github-broker
   annotations:
-    # octo-sts reads its App keys once, at startup, so Reloader restarts the
-    # pods when External Secrets updates them. Reloader reads this annotation
-    # from the workload's own metadata, not from its pod template.
+    # octo-sts reads its App keys once, at startup, and Envoy its gate config,
+    # so Reloader restarts the pods when either changes. Reloader reads these
+    # annotations from the workload's own metadata, not from its pod template.
     secret.reloader.stakater.com/reload: github-broker-apps
+    configmap.reloader.stakater.com/reload: github-broker-gate
 spec:
-  # 0 until the one-off seed-github-broker-apps workflow has loaded both Apps'
-  # credentials into OpenBao: octo-sts refuses to start on the placeholders,
-  # and zero replicas keep the apps deploy healthy meanwhile. A follow-up
-  # raises this to 2 after seeding.
-  replicas: 0
+  # Two replicas with the PDB keep one broker serving through a node drain.
+  # Without its App keys (placeholders after a rebuild from an empty OpenBao)
+  # octo-sts cannot start; this Deployment is applied by its own Flux
+  # Kustomization (k8s/clusters/prod/flux-kustomization-github-broker.yaml) so
+  # that never gates `apps`.
+  replicas: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -70,6 +78,49 @@ spec:
               app.kubernetes.io/name: github-broker
               app.kubernetes.io/instance: github-broker
       containers:
+        - name: gate
+          image: docker.io/envoyproxy/envoy:distroless-v1.40.2@sha256:09ca6f2140a61ad8df11779a4a30d52b48433d444466328494f9188c9c35eded
+          imagePullPolicy: IfNotPresent
+          args: ["--config-path", "/etc/github-broker/gate/envoy.yaml", "--log-level", "warn"]
+          ports:
+            - name: gate
+              containerPort: 8081
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          # The listener opens only after the first fetch of GitHub's signing
+          # keys has finished.
+          readinessProbe:
+            tcpSocket:
+              port: gate
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: gate
+            periodSeconds: 30
+            failureThreshold: 3
+          volumeMounts:
+            - name: gate
+              mountPath: /etc/github-broker/gate
+              readOnly: true
         - name: octo-sts
           image: ghcr.io/octo-sts/app:0.14.4@sha256:d679133fa8b824718f828290bdb1a6353c32989718cc31418a0bb783a20781d9
           imagePullPolicy: IfNotPresent
@@ -139,3 +190,6 @@ spec:
           secret:
             secretName: github-broker-apps
             defaultMode: 0440
+        - name: gate
+          configMap:
+            name: github-broker-gate
