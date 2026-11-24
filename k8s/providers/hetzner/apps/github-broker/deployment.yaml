@@ -26,6 +26,11 @@ metadata:
   labels:
     app.kubernetes.io/name: github-broker
     app.kubernetes.io/instance: github-broker
+  annotations:
+    # octo-sts reads its App keys once, at startup, so Reloader restarts the
+    # pods when External Secrets updates them. Reloader reads this annotation
+    # from the workload's own metadata, not from its pod template.
+    secret.reloader.stakater.com/reload: github-broker-apps
 spec:
   # 0 until the one-off seed-github-broker-apps workflow has loaded both Apps'
   # credentials into OpenBao: octo-sts refuses to start on the placeholders,
@@ -46,9 +51,6 @@ spec:
       labels:
         app.kubernetes.io/name: github-broker
         app.kubernetes.io/instance: github-broker
-      annotations:
-        # octo-sts reads its App keys once, at startup.
-        secret.reloader.stakater.com/reload: github-broker-apps
     spec:
       serviceAccountName: github-broker
       automountServiceAccountToken: false
