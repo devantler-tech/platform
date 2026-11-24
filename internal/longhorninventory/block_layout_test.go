@@ -30,6 +30,11 @@ type blockLayoutFixture struct {
 	staged   bool
 }
 
+const (
+	rebuiltGPT  = "12345678-1234-4234-8234-000000000045"
+	rebuiltLUKS = "12345678-1234-4234-8234-000000000046"
+)
+
 func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, options ...state.ListOption) (resource.List, error) {
 	f.t.Helper()
 	deadline, bounded := ctx.Deadline()
@@ -75,6 +80,13 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 				EncryptionLockedToState: true, ConfiguredEncryptionKeys: []string{"nodeID"},
 			}
 		}
+		if strings.HasPrefix(f.mode, "rebuilt ") {
+			eph.TypedSpec().PartitionUUID, eph.TypedSpec().PartitionIndex = rebuiltGPT, 6
+			eph.TypedSpec().UUID = ""
+			if f.mode == "rebuilt conflicting status" {
+				eph.TypedSpec().UUID = "12345678-1234-4234-8234-000000000047"
+			}
+		}
 		result.Items = []resource.Resource{eph, raw}
 		if f.closed {
 			result.Items = []resource.Resource{eph}
@@ -104,7 +116,26 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 		}
 		v := block.NewDiscoveredVolume(block.NamespaceName, "private-device-canary")
 		*v.TypedSpec() = block.DiscoveredVolumeSpec{DevPath: "/dev/sda6", ParentDevPath: "/dev/sda", PartitionLabel: "EPHEMERAL", PartitionUUID: "private-partition-canary", Size: 150 << 30}
-		result.Items = []resource.Resource{v}
+		if strings.HasPrefix(f.mode, "rebuilt ") {
+			p := v.TypedSpec()
+			p.Name, p.Type, p.PartitionIndex, p.Offset = "luks", "partition", 6, 100<<30
+			p.UUID, p.PartitionUUID = rebuiltLUKS, rebuiltGPT
+			switch f.mode {
+			case "rebuilt different parent":
+				p.ParentDevPath = "/dev/sdb"
+			case "rebuilt missing header":
+				p.UUID = ""
+			case "rebuilt changing header":
+				if f.calls > 2 {
+					p.UUID = "12345678-1234-4234-8234-000000000047"
+				}
+			case "rebuilt duplicate label":
+				duplicate := block.NewDiscoveredVolume(block.NamespaceName, "sda7")
+				*duplicate.TypedSpec() = *p
+				result.Items = append(result.Items, duplicate)
+			}
+		}
+		result.Items = append(result.Items, v)
 		if f.retained {
 			v.TypedSpec().Type, v.TypedSpec().PartitionIndex, v.TypedSpec().Offset = "partition", 6, 100<<30
 			if f.staged {
@@ -178,6 +209,39 @@ func (f *blockLayoutFixture) List(ctx context.Context, kind resource.Kind, optio
 		return result, errors.New("private-provider-canary")
 	}
 	return result, nil
+}
+
+func TestRebuiltEphemeralRequiresStableLUKSIdentityForTheSameGPTPartition(t *testing.T) {
+	for _, mode := range []string{"stable", "conflicting status", "different parent", "missing header",
+		"changing header", "duplicate label", "wrong GPT"} {
+		t.Run(mode, func(t *testing.T) {
+			f := &blockLayoutFixture{t: t, mode: "rebuilt " + mode}
+			n := Native{API: fileAPI{}, Target: "10.0.0.8", Blocks: f}
+			match := rebuiltGPT
+			if mode == "wrong GPT" {
+				match = rebuiltLUKS
+			}
+			identity, err := n.RebuiltEphemeralUUID(context.Background(), match)
+			if mode == "stable" {
+				if err != nil || identity != rebuiltLUKS || f.calls != 4 {
+					t.Fatalf("native EPHEMERAL did not resolve: reads=%d err=%v", f.calls, err)
+				}
+				return
+			}
+			if err == nil || identity != "" {
+				t.Fatal("uncertain ephemeral identity was accepted")
+			}
+		})
+	}
+}
+
+func TestRetainedLayoutUsesTheRebuiltEphemeralHeaderWhenStatusOmitsUUID(t *testing.T) {
+	f := &blockLayoutFixture{t: t, mode: "rebuilt stable", retained: true, staged: true}
+	n := Native{API: fileAPI{}, Target: "10.0.0.8", Blocks: f}
+	_, identity, err := n.ListRetainedBlockLayout(context.Background(), false)
+	if err != nil || identity.EphemeralUUID != rebuiltLUKS || identity.StagePartitionUUID == "" || f.calls != 4 {
+		t.Fatalf("retained layout did not resolve native recovery: reads=%d err=%v", f.calls, err)
+	}
 }
 
 func TestRetainedLayoutOnlyReturnsASeparateEncryptedStagingPartition(t *testing.T) {

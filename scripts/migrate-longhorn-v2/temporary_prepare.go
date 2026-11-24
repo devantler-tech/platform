@@ -486,15 +486,20 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	if err != nil {
 		return nil, err
 	}
-	if text(eph, "spec", "uuid") == p.j.EphemeralUUID {
-		return nil, errInventory
-	}
 	rawGiB := uint64(permanentRawDiskGiB)
 	if p.staging {
 		rawGiB = stagingRawDiskGiB
 	}
 	if err = verifyEncryptedRawDisk(raw, eph, rawGiB); err != nil {
 		return nil, err
+	}
+	uuid, err := recoveredEphemeralUUID(ctx, address, eph, factory)
+	if err != nil || p.j.EphemeralUUID == "" || strings.EqualFold(uuid, p.j.EphemeralUUID) {
+		return nil, errInventory
+	}
+	recheckedBoot, err := reader.BootID(ctx)
+	if err != nil || recheckedBoot != actualBoot {
+		return nil, errInventory
 	}
 	lh, err := p.storageNode(ctx)
 	if err != nil {
