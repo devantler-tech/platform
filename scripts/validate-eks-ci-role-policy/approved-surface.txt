@@ -190,6 +190,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|ate-system|substrate-ca-reader d697d636
 
 rbac.authorization.k8s.io/v1|RoleBinding|aws|aws-managed-resources 796a59a9435a2c8f307a62d6902f64415e8a8c525de597e8db2d575fe0fe2785
 
+rbac.authorization.k8s.io/v1|RoleBinding|business-site-dev|business-site-preview-deployer ac626408fef56d7d36d9888cee3ba5b38c3f6dba5f12c42f0555ea130bc4b8fb
+
 rbac.authorization.k8s.io/v1|RoleBinding|customer-identity|customer-identity-setup cdb74be765b0e860090ec7944c455cccc020ba24ff40be66bf60d9a4d770e7fe
 
 rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|data-product-readiness-observer 8e38d2c37d82c5a104de264719f135c7003425dd8816c546dc6f30de9530ab04
@@ -247,6 +249,8 @@ rbac.authorization.k8s.io/v1|Role|agentic-engineer|lane-store-reader a8dd0204b0c
 rbac.authorization.k8s.io/v1|Role|ate-system|substrate-ca-reader 0657a89b6fd41deb65ff544553cc7fbd71e82adbea828acd7256e4f187ea7883
 
 rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources b74f7e1cb0c59aeb25fcf7a322973a62cec4805aa612a42afbd4b6a31b5d59f6
+
+rbac.authorization.k8s.io/v1|Role|business-site-dev|business-site-preview-deployer b207a309801e5b986d05c5165d6e8b2416cc746c06d07c71197871f664efa18e
 
 rbac.authorization.k8s.io/v1|Role|customer-identity|customer-identity-setup 01be2b59329444dcaf4a2752f95569b06d3d1a9681f4d2de8f092359f5cfa3a4
 
