@@ -1,12 +1,13 @@
 # V1 runtime rollout headroom
 
 The Hetzner controllers overlay enables this temporary placement for the V1 runtime
-rollout in #6073: Velero's server uses the temporary V2 migration pool, Hetzner CSI
+rollout in #6073: Velero's server can use either temporary migration pool, Hetzner CSI
 uses the three existing migration workers, and Reloader and the Flux Helm
 controller use the existing control-plane nodes with a narrow control-plane
 NoSchedule toleration. The policy-reporting UI, Hubble UI and the data product
-contract probe use the three migration workers to free memory for V2 managers
-on the permanent workers. Their rollouts keep both replicas available.
+contract probe prefer the migration workers to free memory for V2 managers
+on the permanent workers. They can use permanent compute workers during
+maintenance. Their rollouts keep both replicas available.
 Kustomize's two controllers
 use worker 1 or the migration workers; the Coroot security-progress collector
 and the vulnerability scanner use worker 1 or the V2 migration worker. The
@@ -39,11 +40,12 @@ attachment to remain healthy. Re-run the complete native runtime census.
 Placement itself proves neither overlap capacity nor adoption of the approved
 instance-manager image. A remaining HOLD still blocks adoption.
 
-The dashboards and contract probe need three Ready, schedulable migration hosts
-for their replicas and rolling surge. Before taking any of those hosts out of
-service, replace the temporary placement through review. Verify the replacement
-hosts' request and resident-memory budgets and wait for both replicas of each
-workload to become Ready before starting host maintenance.
+Before taking a migration worker out of service, verify at least three other
+eligible Ready, schedulable workers for the dashboards and contract probe,
+including their rolling surge. Verify those workers' request and resident-memory
+budgets, check both replicas of each workload and confirm Velero can schedule
+in a remaining migration pool. Wait for active backup and restore operations
+to finish before starting host maintenance.
 
 After the migration's runtime and backup checks pass, remove the temporary
 controller and dashboard placements, the FluxInstance patches and the contract

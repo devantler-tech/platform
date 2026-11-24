@@ -29,6 +29,18 @@ patches:
                         - key: storage.platform.devantler.tech/migration-pool
                           operator: In
                           values: [v1, v2]
+                    - matchExpressions:
+                        - key: node-role.kubernetes.io/control-plane
+                          operator: DoesNotExist
+                        - key: ksail.io/autoscaled
+                          operator: DoesNotExist
+                preferredDuringSchedulingIgnoredDuringExecution:
+                  - weight: 100
+                    preference:
+                      matchExpressions:
+                        - key: storage.platform.devantler.tech/migration-pool
+                          operator: In
+                          values: [v1, v2]
               podAntiAffinity:
                 requiredDuringSchedulingIgnoredDuringExecution:
                   - topologyKey: kubernetes.io/hostname
