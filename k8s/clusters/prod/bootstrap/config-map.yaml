@@ -125,14 +125,10 @@ data:
   longhorn_csi_attacher_replicas: "2"
   longhorn_csi_provisioner_replicas: "2"
   longhorn_csi_resizer_replicas: "2"
-  # The longhorn-ui (longhorn-frontend) is the web dashboard only — it is NOT in
-  # the storage data path (longhorn-manager, the CSI sidecars, and the
-  # instance-managers run the data plane and never touch the UI). Static single
-  # replica (always on); auto-vpa right-sizes it at idle. It used to be parked at
-  # 0 behind KEDA scale-to-zero; with the HTTPScaledObject removed, 0 would mean
-  # permanently down, so it is pinned to 1 (single-by-design admin UI — see
-  # validate-replica-floor).
-  longhorn_ui_replicas: "1"
+  # Keep a ready dashboard endpoint while one worker is drained. The chart
+  # prefers different workers and the Longhorn UI disruption budget guards
+  # voluntary evictions.
+  longhorn_ui_replicas: "2"
   # --- Non-essential services scaled to 0 ---
   # Origin CA issuer requests 1 CPU (50% of worker allocatable) for a simple
   # cert controller. Disabled until we actually need Cloudflare Origin certs.
