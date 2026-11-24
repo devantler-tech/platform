@@ -97,7 +97,7 @@ jobs:
           printf '%s' "${KUBE_CONFIG}" >"${KUBECONFIG}"
           printf '%s' "${TALOS_CONFIG}" >"${TALOSCONFIG}"
           unset KUBE_CONFIG TALOS_CONFIG
-          if ! ./scripts/use-prod-stable-api-endpoint.sh >"${credential_dir}/endpoint.log" 2>&1; then
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
             printf '%s\n' 'TEMPORARY_WORKER_RECOVERY=UNVERIFIED stable endpoint unavailable'
             exit 2
           fi
