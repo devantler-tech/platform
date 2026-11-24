@@ -307,6 +307,7 @@ expected_globs="$(printf '%s\n' \
   'ghcr.io/devantler-tech/platform-longhorn-manager' \
   'ghcr.io/devantler-tech/platform-longhorn-fio' \
   'ghcr.io/devantler-tech/platform-mail-submission' \
+  'ghcr.io/devantler-tech/platform-email-history-import' \
   'ghcr.io/devantler-tech/*')"
 if [ "$real_globs" != "$expected_globs" ]; then
   echo "FAIL  the real image routes differ from the expected order"
