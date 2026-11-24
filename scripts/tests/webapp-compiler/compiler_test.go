@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	kroapi "github.com/kubernetes-sigs/kro/api/v1alpha1"
 	"github.com/kubernetes-sigs/kro/pkg/features"
 	"github.com/kubernetes-sigs/kro/pkg/graph"
+	crdcompat "github.com/kubernetes-sigs/kro/pkg/graph/crd/compat"
 	gecompiler "github.com/kubernetes-sigs/kro/pkg/graphengine/compiler"
 	appsv1 "k8s.io/api/apps/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -145,6 +147,31 @@ func TestCommittedWebApp(t *testing.T) {
 		t.Helper()
 		return builder.NewResourceGraphDefinition(input, graph.Config{MaxCollectionDimensionSize: 5})
 	}
+	installedDefinition := readGraph(t, os.Getenv("WEBAPP_BASE_RGD"))
+	if installedDefinition.Name != definition.Name {
+		t.Fatal("expected the installed WebApp graph")
+	}
+	installedDefinition.Name = "installed." + definition.Name
+	if err := apiClient.Create(ctx, installedDefinition, client.DryRunAll); err != nil {
+		t.Fatalf("default the installed WebApp graph: %v", err)
+	}
+	t.Run("installed API accepts the change without breaking existing WebApps", func(t *testing.T) {
+		installed, err := compile(t, installedDefinition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		desired, err := compile(t, definition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := uninstalledAPIChange(installed.CRD, desired.CRD); err != nil {
+			t.Fatal(err)
+		}
+		report, err := crdcompat.CompareVersions(installed.CRD.Spec.Versions, desired.CRD.Spec.Versions)
+		if err != nil || !report.IsCompatible() {
+			t.Fatalf("the controller would refuse the WebApp API update: %v\n%+v", err, report)
+		}
+	})
 	t.Run("committed graph includes all three children and namespaced schema", func(t *testing.T) {
 		got, err := compile(t, definition)
 		if err != nil {
@@ -252,6 +279,37 @@ func TestCommittedWebApp(t *testing.T) {
 		admit := func(input *unstructured.Unstructured) error {
 			return apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict", DryRun: []string{metav1.DryRunAll}})
 		}
+		t.Run("internal-only applications omit the tenant route", func(t *testing.T) {
+			regular := candidate()
+			if err := admit(regular); err != nil {
+				t.Fatal(err)
+			}
+			regularChildren, ignored := resolveChildren(t, engine, definition, regular)
+			if len(ignored) != 0 || regularChildren["httpRoute"] == nil {
+				t.Fatal("an existing WebApp without a route setting must keep its HTTPRoute")
+			}
+			legacy := regular.DeepCopy()
+			unstructured.RemoveNestedField(legacy.Object, "spec", "publishRoute")
+			previousChildren, _ := resolveChildren(t, engine, installedDefinition, legacy)
+			legacyChildren, _ := resolveChildren(t, engine, definition, legacy)
+			if !reflect.DeepEqual(previousChildren, regularChildren) || !reflect.DeepEqual(legacyChildren, regularChildren) {
+				t.Fatal("the upgraded graph changed resources for an existing WebApp")
+			}
+
+			internal := candidate()
+			internal.Object["spec"].(map[string]interface{})["publishRoute"] = false
+			if err := admit(internal); err != nil {
+				t.Fatalf("the API must accept an internal-only application: %v", err)
+			}
+			internalChildren, ignored := resolveChildren(t, engine, definition, internal)
+			if !slices.Equal(ignored, []string{"httpRoute"}) || internalChildren["httpRoute"] != nil {
+				t.Fatal("an internal-only WebApp must not create a tenant HTTPRoute")
+			}
+			delete(regularChildren, "httpRoute")
+			if !reflect.DeepEqual(internalChildren, regularChildren) {
+				t.Fatal("turning off the route changed the deployment or service")
+			}
+		})
 		refused := func(t *testing.T, input *unstructured.Unstructured) {
 			t.Helper()
 			err := admit(input)
