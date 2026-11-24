@@ -50,9 +50,18 @@ assert_workload_headroom() {
     workload("Deployment";"observability";"crossplane-sync-exporter") as $exporter |
     workload("HelmRelease";"policy-reporter";"policy-reporter") as $reporter |
     $kubescape.spec.values.kubevuln.nodeSelector["kubernetes.io/hostname"] as $scannerHost |
+    $kubescape.spec.values.kubevuln.affinity as $scannerAffinity |
     $exporter.spec.template.spec.nodeSelector["kubernetes.io/hostname"] as $exporterHost |
     $reporter.spec.values.ui.affinity.nodeAffinity as $reporterAffinity |
-    ($scannerHost == (if $scanner_enabled then "prod-worker-1" else null end)) and
+    $scannerHost == null and
+    (if $scanner_enabled then
+      $scannerAffinity ==
+        {nodeAffinity:{requiredDuringSchedulingIgnoredDuringExecution:{nodeSelectorTerms:
+          [{matchExpressions:[{key:"kubernetes.io/hostname",operator:"In",values:["prod-worker-1"]}]},
+           {matchExpressions:[{key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v2"]}]}]}}}
+    else
+      $scannerAffinity == null
+    end) and
     (if $enabled then
       $exporterHost == "prod-worker-1" and $exporter.spec.strategy.type == "Recreate" and
       $reporterAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
