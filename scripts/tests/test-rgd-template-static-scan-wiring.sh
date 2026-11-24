@@ -45,7 +45,7 @@ check_scanner_go() {
     .jobs[$job].steps as $steps
     | [$steps | to_entries[] | select(.value.run == $behavior_run) | .key] as $scans
     | [$steps | to_entries[] | select(
-        .value.uses == "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+        .value.uses == "actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5"
         and .value.with["go-version-file"] == $module
         and (.value.with | has("go-version") | not)
         and (.value | has("if") | not)
