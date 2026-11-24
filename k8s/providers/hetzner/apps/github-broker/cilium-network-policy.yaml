@@ -1,11 +1,9 @@
 # The broker takes requests only from the Gateway, and reaches only:
 # - GitHub's API, to read trust policies and mint installation tokens;
-# - GitHub Actions' OIDC issuer, for its discovery document and keys;
-# - the Kubernetes API server on 6443, for the cluster service-account
-#   issuer's discovery document and keys. The issuer URL is a control-plane
-#   node address, which Cilium identifies as host or remote-node rather than
-#   kube-apiserver, so all three entities are listed, on this port only.
+# - GitHub Actions' OIDC issuer, for its discovery document and keys.
 # DNS carries an L7 rule so the toFQDNs rule can learn GitHub's addresses.
+# Service-account callers, and the API-server egress their issuer needs,
+# arrive with platform#6606.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -30,14 +28,6 @@ spec:
       toPorts:
         - ports:
             - port: "443"
-              protocol: TCP
-    - toEntities:
-        - kube-apiserver
-        - host
-        - remote-node
-      toPorts:
-        - ports:
-            - port: "6443"
               protocol: TCP
     - toEndpoints:
         - matchLabels:

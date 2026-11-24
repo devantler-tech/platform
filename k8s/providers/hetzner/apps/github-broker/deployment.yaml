@@ -6,16 +6,13 @@
 #   only tokens whose audience is this domain.
 # - APP_CONFIG_FILE names both Apps (see external-secret.yaml).
 # - OCTOSTS_ALLOWED_ISSUERS: exchanges are refused before any OIDC discovery
-#   unless the token's issuer is one of these, exactly:
-#     1. GitHub Actions.
-#     2. This cluster's service-account issuer, as the API server reports it:
-#          kubectl get --raw /.well-known/openid-configuration
-#        It changes when the cluster is rebuilt; update it here when it does.
-# - OCTOSTS_OIDC_BLOCK_PRIVATE_IPS stays false: the cluster issuer's
-#   jwks_uri is a node's private address.
-# - The cluster issuer is served by the API server under the cluster CA, so
-#   SSL_CERT_DIR adds that CA (the namespace's kube-root-ca.crt ConfigMap) to
-#   Go's roots. The image's SSL_CERT_FILE keeps the system roots for GitHub.
+#   unless the token's issuer is exactly GitHub Actions'. This first phase
+#   serves GitHub Actions callers only. Service-account callers arrive with
+#   platform#6606, which needs a stable service-account issuer and an API
+#   server authentication config that allows anonymous reads of only the two
+#   issuer discovery paths, tested on a local KSail cluster first.
+# - OCTOSTS_OIDC_BLOCK_PRIVATE_IPS: OIDC discovery and key fetches never
+#   connect to private addresses; the one allowed issuer is public.
 # - No sticky store is configured, so a trust policy that grants
 #   `checks: write` should pin one App.
 # - Audit records are the pod logs. EVENT_INGRESS_URI stays unset, so no
@@ -78,11 +75,9 @@ spec:
             - name: APP_CONFIG_FILE
               value: /etc/github-broker/apps/config.yaml
             - name: OCTOSTS_ALLOWED_ISSUERS
-              value: https://token.actions.githubusercontent.com,https://5.75.215.250:6443
+              value: https://token.actions.githubusercontent.com
             - name: OCTOSTS_OIDC_BLOCK_PRIVATE_IPS
-              value: "false"
-            - name: SSL_CERT_DIR
-              value: /etc/github-broker/kubernetes-ca
+              value: "true"
             - name: OTEL_TRACES_EXPORTER
               value: none
           ports:
@@ -133,17 +128,8 @@ spec:
             - name: apps
               mountPath: /etc/github-broker/apps
               readOnly: true
-            - name: kubernetes-ca
-              mountPath: /etc/github-broker/kubernetes-ca
-              readOnly: true
       volumes:
         - name: apps
           secret:
             secretName: github-broker-apps
             defaultMode: 0440
-        - name: kubernetes-ca
-          configMap:
-            name: kube-root-ca.crt
-            items:
-              - key: ca.crt
-                path: ca.crt

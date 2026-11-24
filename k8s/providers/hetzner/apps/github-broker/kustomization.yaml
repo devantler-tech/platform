@@ -13,4 +13,3 @@ resources:
   - http-route.yaml
   - network-policy.yaml
   - cilium-network-policy.yaml
-  - cluster-role-binding.yaml
