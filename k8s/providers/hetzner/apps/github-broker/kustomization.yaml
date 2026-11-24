@@ -1,0 +1,15 @@
+# The GitHub token broker (devantler-tech/monorepo ADR 0020): octo-sts serving
+# both botantler Apps. Production only, as a third-party app (ADR 0016).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - service-account.yaml
+  - secret-store.yaml
+  - external-secret.yaml
+  - deployment.yaml
+  - service.yaml
+  - pod-disruption-budget.yaml
+  - http-route.yaml
+  - network-policy.yaml
+  - cilium-network-policy.yaml

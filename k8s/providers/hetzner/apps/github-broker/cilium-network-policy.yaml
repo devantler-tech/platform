@@ -1,0 +1,44 @@
+# The broker takes requests only from the Gateway, and reaches only:
+# - GitHub's API, to read trust policies and mint installation tokens;
+# - GitHub Actions' OIDC issuer, for its discovery document and keys.
+# DNS carries an L7 rule so the toFQDNs rule can learn GitHub's addresses.
+# Service-account callers, and the API-server egress their issuer needs,
+# arrive with platform#6606.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-github-broker
+  namespace: github-broker
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/name: github-broker
+      k8s:app.kubernetes.io/instance: github-broker
+  ingress:
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+  egress:
+    - toFQDNs:
+        - matchName: api.github.com
+        - matchName: token.actions.githubusercontent.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

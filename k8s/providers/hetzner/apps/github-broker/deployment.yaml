@@ -1,0 +1,141 @@
+# octo-sts, the GitHub token broker (devantler-tech/monorepo ADR 0020).
+#
+# Configuration, verified against the octo-sts source at v0.14.4
+# (pkg/envconfig, pkg/appconfig, pkg/provider, cmd/app):
+# - STS_DOMAIN is the public hostname. A trust policy with no audience accepts
+#   only tokens whose audience is this domain.
+# - APP_CONFIG_FILE names both Apps (see external-secret.yaml).
+# - OCTOSTS_ALLOWED_ISSUERS: exchanges are refused before any OIDC discovery
+#   unless the token's issuer is exactly GitHub Actions'. This first phase
+#   serves GitHub Actions callers only. Service-account callers arrive with
+#   platform#6606, which needs a stable service-account issuer and an API
+#   server authentication config that allows anonymous reads of only the two
+#   issuer discovery paths, tested on a local KSail cluster first.
+# - OCTOSTS_OIDC_BLOCK_PRIVATE_IPS: OIDC discovery and key fetches never
+#   connect to private addresses; the one allowed issuer is public.
+# - No sticky store is configured, so a trust policy that grants
+#   `checks: write` should pin one App.
+# - Audit records are the pod logs. EVENT_INGRESS_URI stays unset, so no
+#   CloudEvents are sent. Prometheus metrics (including GitHub rate limits per
+#   App and installation) are served on :2112 inside the pod only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-broker
+  namespace: github-broker
+  labels:
+    app.kubernetes.io/name: github-broker
+    app.kubernetes.io/instance: github-broker
+  annotations:
+    # octo-sts reads its App keys once, at startup, so Reloader restarts the
+    # pods when External Secrets updates them. Reloader reads this annotation
+    # from the workload's own metadata, not from its pod template.
+    secret.reloader.stakater.com/reload: github-broker-apps
+spec:
+  # 0 until the one-off seed-github-broker-apps workflow has loaded both Apps'
+  # credentials into OpenBao: octo-sts refuses to start on the placeholders,
+  # and zero replicas keep the apps deploy healthy meanwhile. A follow-up
+  # raises this to 2 after seeding.
+  replicas: 0
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: github-broker
+      app.kubernetes.io/instance: github-broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: github-broker
+        app.kubernetes.io/instance: github-broker
+    spec:
+      serviceAccountName: github-broker
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: github-broker
+              app.kubernetes.io/instance: github-broker
+      containers:
+        - name: octo-sts
+          image: ghcr.io/octo-sts/app:0.14.4@sha256:d679133fa8b824718f828290bdb1a6353c32989718cc31418a0bb783a20781d9
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PORT
+              value: "8080"
+            - name: STS_DOMAIN
+              value: sts.${domain}
+            - name: APP_CONFIG_FILE
+              value: /etc/github-broker/apps/config.yaml
+            - name: OCTOSTS_ALLOWED_ISSUERS
+              value: https://token.actions.githubusercontent.com
+            - name: OCTOSTS_OIDC_BLOCK_PRIVATE_IPS
+              value: "true"
+            - name: OTEL_TRACES_EXPORTER
+              value: none
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 2112
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 48Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          # GET / is octo-sts's own usage response; it answers once the server
+          # is listening, which happens only after both App keys loaded.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+              scheme: HTTP
+            timeoutSeconds: 2
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+              scheme: HTTP
+            timeoutSeconds: 2
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: apps
+              mountPath: /etc/github-broker/apps
+              readOnly: true
+      volumes:
+        - name: apps
+          secret:
+            secretName: github-broker-apps
+            defaultMode: 0440
