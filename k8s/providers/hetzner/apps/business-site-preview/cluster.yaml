@@ -22,6 +22,17 @@ spec:
   certificates:
     serverAltDNSNames:
       - portal-preview-db-rw.business-site-dev.svc.cluster.local
+  inheritedMetadata:
+    annotations:
+      coroot.com/postgres-scrape: "true"
+      coroot.com/postgres-scrape-port: "5432"
+      coroot.com/postgres-scrape-credentials-secret-name: portal-preview-db-coroot-monitor
+      coroot.com/postgres-scrape-credentials-secret-username-key: username
+      coroot.com/postgres-scrape-credentials-secret-password-key: password
+      coroot.com/postgres-scrape-param-sslmode: require
+  postgresql:
+    parameters:
+      pg_stat_statements.track: all
   bootstrap:
     initdb:
       database: portal_preview
@@ -43,6 +54,13 @@ spec:
         inherit: false
         passwordSecret:
           name: portal-preview-db-web
+      - name: coroot_monitor
+        ensure: present
+        login: true
+        inRoles:
+          - pg_monitor
+        passwordSecret:
+          name: portal-preview-db-coroot-monitor
   resources:
     requests:
       cpu: 50m

@@ -8,7 +8,10 @@ resources:
   - external-secret-migration.yaml
   - external-secret-runtime.yaml
   - cluster.yaml
+  - password-db-coroot-monitor.yaml
+  - external-secret-db-coroot-monitor.yaml
   - push-secret-db-ca.yaml
   - cilium-network-policy-db.yaml
+  - cilium-network-policy-db-coroot.yaml
   - cilium-network-policy-migration.yaml
   - cilium-network-policy-web.yaml

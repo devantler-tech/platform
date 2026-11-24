@@ -165,7 +165,9 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
       .bootstrap.initdb.owner=="portal_preview_migrator" and
       .managed.roles==[
         {name:"portal_preview_migrator",ensure:"present",login:true,passwordSecret:{name:"portal-preview-db-migrator"}},
-        {name:"portal_preview_web",ensure:"present",login:true,inherit:false,passwordSecret:{name:"portal-preview-db-web"}}] and
+        {name:"portal_preview_web",ensure:"present",login:true,inherit:false,passwordSecret:{name:"portal-preview-db-web"}},
+        {name:"coroot_monitor",ensure:"present",login:true,inRoles:["pg_monitor"],
+          passwordSecret:{name:"portal-preview-db-coroot-monitor"}}] and
       .certificates.serverAltDNSNames==["portal-preview-db-rw.business-site-dev.svc.cluster.local"]) and
     (spec("PushSecret";"portal-preview-db-ca")|
       .selector.secret.name=="portal-preview-db-ca" and
