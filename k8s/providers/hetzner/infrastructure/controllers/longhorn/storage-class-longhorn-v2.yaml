@@ -1,0 +1,19 @@
+---
+# Opt-in migration destination. The V1 default and existing claims remain until
+# each application's recovered bytes and service behavior have been verified.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-v2
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  numberOfReplicas: "3"
+  staleReplicaTimeout: "30"
+  fsType: ext4
+  dataLocality: disabled
+  unmapMarkSnapChainRemoved: disabled
+  dataEngine: v2
+  backupTargetName: default

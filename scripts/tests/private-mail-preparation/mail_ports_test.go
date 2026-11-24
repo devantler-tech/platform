@@ -32,10 +32,19 @@ func TestProductionAdmitsMailPortsFromItsLoadBalancerOnly(t *testing.T) {
 		return found
 	}
 
-	admitted := 0
+	admitted, importer := 0, 0
 	for _, item := range sequence(t, policy["ingress"]) {
 		rule := mapping(t, item)
 		switch {
+		// The one-time mailbox history copy (#5481) may reach IMAPS alone, from
+		// its own pod label in this namespace, for Cilium's in-cluster delivery
+		// to the load balancer address.
+		case rule["fromEndpoints"] != nil:
+			importer++
+			want := []any{map[string]any{"matchLabels": map[string]any{"app": "email-history-import", "k8s:io.kubernetes.pod.namespace": "private-mail"}}}
+			if !reflect.DeepEqual(rule["fromEndpoints"], want) || !reflect.DeepEqual(ports(rule), map[any]bool{"1993": true}) {
+				t.Fatalf("only the history copy's pods may reach IMAPS in-cluster, got %v", rule)
+			}
 		case rule["fromEntities"] != nil:
 			if !reflect.DeepEqual(rule["fromEntities"], []any{"ingress"}) || !reflect.DeepEqual(ports(rule), map[any]bool{"8081": true}) {
 				t.Fatal("only the gateway identity may reach the administration adapter")
@@ -52,8 +61,8 @@ func TestProductionAdmitsMailPortsFromItsLoadBalancerOnly(t *testing.T) {
 			t.Fatalf("unexpected ingress source: %v", rule)
 		}
 	}
-	if admitted != 1 {
-		t.Fatalf("want exactly one load-balancer rule, got %d", admitted)
+	if admitted != 1 || importer > 1 {
+		t.Fatalf("want exactly one load-balancer rule and at most one history-copy rule, got %d and %d", admitted, importer)
 	}
 
 	denied := map[any]bool{}

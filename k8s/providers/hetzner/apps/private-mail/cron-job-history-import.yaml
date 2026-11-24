@@ -1,0 +1,106 @@
+# The reviewed pod template for the one-time mailbox history copy (#5481).
+#
+# It never runs on a schedule: `suspend` stays true, and the dispatched
+# `Start Email History Import` operation creates one Job from it. A Job created
+# that way is not part of the Flux inventory, so a copy that takes hours never
+# holds the `apps` health wait, and a later reconciliation cannot prune it
+# mid-copy. Repeating the operation continues an incomplete copy
+# incrementally; the importer never deletes or rewrites mail on either side.
+#
+# Inputs: the existing provider's sign-in and the address inventory from the
+# email-history-import ExternalSecret, and the destination mailbox password
+# from the existing private-mail-maintainer Secret. Only aggregate counts reach
+# the log (docs/operations/email-history-import.md).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: email-history-import
+  namespace: private-mail
+spec:
+  # Never due on its own; `suspend` is what keeps it from running.
+  schedule: "0 0 31 2 *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app: email-history-import
+    spec:
+      # A failed copy is repeated deliberately, never retried blindly.
+      backoffLimit: 0
+      # The importer stops itself after three hours.
+      activeDeadlineSeconds: 11700
+      template:
+        metadata:
+          labels:
+            app: email-history-import
+        spec:
+          serviceAccountName: email-history-import
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            fsGroup: 65532
+            runAsGroup: 65532
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: import
+              image: ghcr.io/devantler-tech/platform-email-history-import@sha256:a2069b6fd5b053d0d94cf117834f6c81709a70550ec051269a377dd58db67049
+              args:
+                - --input-dir
+                - /private/inputs
+                - --confirm
+                - copy-icloud-history
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                privileged: false
+                readOnlyRootFilesystem: true
+                runAsGroup: 65532
+                runAsNonRoot: true
+                runAsUser: 65532
+                seccompProfile:
+                  type: RuntimeDefault
+              volumeMounts:
+                - name: inputs
+                  mountPath: /private/inputs
+                  readOnly: true
+                - name: work
+                  mountPath: /tmp
+          volumes:
+            # Group-readable by the importer only (0440 with fsGroup); the
+            # importer refuses any input that others can read.
+            - name: inputs
+              projected:
+                defaultMode: 0400
+                sources:
+                  - secret:
+                      name: email-history-import
+                      items:
+                        - key: source-username
+                          path: source-username
+                        - key: source-password
+                          path: source-password
+                        - key: addresses
+                          path: addresses
+                  - secret:
+                      name: private-mail-maintainer
+                      items:
+                        - key: password
+                          path: destination-password
+            - name: work
+              emptyDir:
+                sizeLimit: 1Gi

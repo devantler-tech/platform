@@ -33,11 +33,27 @@ func TestUnusedStagingPreparationRequiresTheLargerNativeLayout(t *testing.T) {
 	if err := p.prepare(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if f.layoutWrites != 1 || f.base.resets != 1 || p.j.Phase != "prepared" {
+	if f.layoutWrites != 1 || f.base.resets != 1 || p.j.Phase != "prepared" ||
+		p.j.PreparedRawUUID != "12345678-1234-4234-8234-000000000078" {
 		t.Fatal("larger capacity did not use one verified layout change and one guarded reset")
 	}
 	if err := p.prepare(context.Background()); err != nil || f.layoutWrites != 1 || f.base.resets != 1 {
 		t.Fatal("completed staging preparation repeated a mutation", err)
+	}
+	p.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+		data, err := f.run(ctx, input, program, args...)
+		if err != nil || program != "talosctl" || len(args) != 5 || args[2] != "volumestatus" || args[3] != "r-longhorn" {
+			return data, err
+		}
+		var changed object
+		if err = json.Unmarshal(data, &changed); err != nil {
+			t.Fatal(err)
+		}
+		valueObject(changed, "spec")["partitionUUID"] = "12345678-1234-4234-8234-000000000079"
+		return json.Marshal(changed)
+	}
+	if _, err := p.unusedPostState(t.Context()); err == nil || f.base.resets != 1 {
+		t.Fatal("staging readback accepted a replacement after binding the prepared partition")
 	}
 }
 
