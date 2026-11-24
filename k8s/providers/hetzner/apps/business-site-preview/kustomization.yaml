@@ -15,5 +15,3 @@ resources:
   - cilium-network-policy-db-coroot.yaml
   - cilium-network-policy-migration.yaml
   - cilium-network-policy-web.yaml
-  - job-migration.yaml
-  - web-app.yaml
