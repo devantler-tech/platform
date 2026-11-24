@@ -45,7 +45,7 @@ The copy command requires the separate literal confirmation
 
 The production inputs come from OpenBao. The maintainer keeps the existing
 provider's `username`, app-specific `password` and the comma-separated
-`addresses` inventory at `infrastructure/icloud`, which only the
+`addresses` inventory at `infrastructure/apple/icloud`, which only the
 `email-history-import` role can read. The `email-history-import` ExternalSecret
 in `private-mail` projects them as `source-username`, `source-password` and
 `addresses`, and the destination password comes from the existing
