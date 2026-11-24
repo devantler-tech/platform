@@ -1,0 +1,79 @@
+---
+name: GitHub Broker Smoke Test
+# Proves the GitHub token broker (octo-sts, ADR 0020 in devantler-tech/monorepo,
+# #6605) end to end, daily and on demand. It is the broker's health check: a
+# failed run means workflows cannot get tokens through it.
+#
+# - A workflow exchanges its Actions OIDC token for a token on this repository,
+#   through the reviewed policy .github/chainguard/github-broker-smoke.sts.yaml,
+#   and uses it for what that policy grants (reading this repository).
+# - The token reaches nothing else: a private repository the policy does not
+#   name must stay invisible to it.
+# - An identity with no policy is refused.
+#
+# It holds no credential and writes nothing. The action's post step revokes the
+# token. It is not part of any deploy or recovery path, which
+# scripts/guard-github-broker-independence.sh keeps off the broker.
+"on":
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * *"
+permissions: {}
+concurrency:
+  group: github-broker-smoke
+  cancel-in-progress: false
+jobs:
+  smoke:
+    name: Exchange a workflow identity for a scoped token
+    if: github.repository == 'devantler-tech/platform' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - name: Exchange the workflow identity through the broker
+        id: broker
+        uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
+        with:
+          domain: sts.platform.devantler.tech
+          scope: devantler-tech/platform
+          identity: github-broker-smoke
+
+      - name: Use the token for exactly what the policy grants
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.broker.outputs.token }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN}" ]] || { echo '::error::the broker returned no token'; exit 1; }
+          name="$(gh api repos/devantler-tech/platform --jq .full_name)"
+          [[ "${name}" == devantler-tech/platform ]] || { echo '::error::the token cannot read this repository'; exit 1; }
+          # A private repository the policy does not name must stay invisible.
+          if gh api repos/devantler-tech/ascoachingogvaner --silent 2>/dev/null; then
+            echo '::error::the token reaches a repository its policy does not name'
+            exit 1
+          fi
+          echo 'GITHUB_BROKER_SMOKE=PASS scope=repository'
+
+      - name: Ask for an identity that has no policy
+        id: unmatched
+        continue-on-error: true
+        uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
+        with:
+          domain: sts.platform.devantler.tech
+          scope: devantler-tech/platform
+          identity: github-broker-smoke-unmatched
+
+      - name: Require the broker to refuse it
+        shell: bash
+        env:
+          UNMATCHED_OUTCOME: ${{ steps.unmatched.outcome }}
+        run: |
+          set -euo pipefail
+          [[ "${UNMATCHED_OUTCOME}" == failure ]] || { echo '::error::the broker issued a token without a policy'; exit 1; }
+          echo 'GITHUB_BROKER_SMOKE=PASS refusal=unmatched'
