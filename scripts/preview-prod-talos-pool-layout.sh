@@ -65,12 +65,22 @@ jq -es '
   def change_list: type == "array" and all(.[]; type == "object" and
     (.field | type == "string" and length > 0) and
     (.category | type == "string" and length > 0));
+  def in_place_scope:
+    if .field == "autoscalerWorkerTemplate" then "autoscalerWorkerTemplate"
+    elif (.field | startswith("autoscaler")) then "autoscaler"
+    elif (.field | startswith("machine.")) then "machine"
+    elif (.field | startswith("cluster.")) then "cluster"
+    elif (.field | IN("controlPlanes","workers","serverType","location","floatingIPEnabled")) then "infrastructure"
+    elif (.field | IN("kubernetesVersion","talosVersion")) then "version"
+    elif (.field | IN("metricsServer","certManager","cni","gitOpsEngine","olm")) then "components"
+    else "other" end;
   if length != 1 then error("expected one KSail update plan") else .[0] end |
   if (.totalChanges | type == "number") and (.requiresConfirmation | type == "boolean") and
       all([.inPlaceChanges,.rebootRequired,.recreateRequired,.rollingRecreate,.wipeRequired,.unknownBaseline][]; change_list) and
       .totalChanges == ([.inPlaceChanges,.rebootRequired,.recreateRequired,.rollingRecreate,.wipeRequired] | map(length) | add)
     then {
       inPlace:(.inPlaceChanges|length),
+      inPlaceScopes:(.inPlaceChanges|group_by(in_place_scope)|map({key:(.[0]|in_place_scope),value:length})|from_entries),
       reboot:(.rebootRequired|length),
       recreate:(.recreateRequired|length),
       rollingRecreate:(.rollingRecreate|length),
