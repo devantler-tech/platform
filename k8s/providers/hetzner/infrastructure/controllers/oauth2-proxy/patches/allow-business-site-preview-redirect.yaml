@@ -1,0 +1,5 @@
+- op: add
+  path: /spec/values/extraEnv
+  value:
+    - name: OAUTH2_PROXY_WHITELIST_DOMAINS
+      value: "${domain},.${domain},dev.devantler.tech"

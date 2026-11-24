@@ -182,6 +182,20 @@ patches:
       kind: HelmRelease
       name: dex
       namespace: dex
+  - path: dex/patches/allow-business-site-preview-sign-in.yaml
+    target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: dex
+      namespace: dex
+  - path: oauth2-proxy/patches/allow-business-site-preview-redirect.yaml
+    target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: oauth2-proxy
+      namespace: oauth2-proxy
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
   # Require relay replicas to use separate nodes in prod; local retains soft spread.
