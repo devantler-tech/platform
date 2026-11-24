@@ -85,7 +85,9 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 300
+      # A provider switch plans and verifies the directory. Keep that run inside
+      # one schedule interval. Steady-state repair does not walk the directory.
+      activeDeadlineSeconds: 840
       ttlSecondsAfterFinished: 86400
       template:
         metadata:
@@ -147,7 +149,8 @@ spec:
                   out=/run/setup-token/token
                   audience="${ZITADEL_AUDIENCE:?}"
                   user="${ZITADEL_SYSTEM_USER:?}"
-                  lifetime="${TOKEN_LIFETIME_SECONDS:-600}"
+                  # Cover the Job deadline with up to 60 seconds for startup.
+                  lifetime=900
 
                   b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 
@@ -187,6 +190,9 @@ spec:
                 # Customers organization's GitHub provider removed on purpose.
                 - name: CUSTOMER_GITHUB_SIGNIN
                   value: "on"
+                - name: SHARED_PORTAL_LOGIN_SETUP
+                  # Install both reconciliation paths before enabling shared sign-in.
+                  value: "off"
                 - name: ADMIN_EMAIL
                   value: ned@devantler.tech
               volumeMounts:
@@ -757,13 +763,13 @@ spec:
                     allowDomainDiscovery: (.allowDomainDiscovery // false), disableLoginWithEmail: (.disableLoginWithEmail // false),
                     disableLoginWithPhone: (.disableLoginWithPhone // false)}'
                   ensure_login_policy() {
-                    local org=$1 desired=$2 idp=$3 current policy_idps
+                    local org=$1 desired=$2 idp=$3 owner_type=${4:-IDP_OWNER_TYPE_ORG} current policy_idps
                     jq -e 'type == "object" and length > 0' <<<"$desired" >/dev/null 2>&1 || fail "empty declared settings for $(org_label "$org")"
                     current=$(api_org=$org api GET /management/v1/policies/login | jq -c '.policy')
                     if [[ $(jq -r '.isDefault // false' <<<"$current") == true ]]; then
-                      api_org=$org api POST /management/v1/policies/login "$(jq -c --argjson p "$instance_policy" --arg i "$idp" \
+                      api_org=$org api POST /management/v1/policies/login "$(jq -c --argjson p "$instance_policy" --arg i "$idp" --arg t "$owner_type" \
                         '. + {secondFactors: ($p.secondFactors // []), multiFactors: ($p.multiFactors // []),
-                          idps: [{idpId: $i, ownerType: "IDP_OWNER_TYPE_ORG"}]}' <<<"$desired")" >/dev/null
+                          idps: [{idpId: $i, ownerType: $t}]}' <<<"$desired")" >/dev/null
                       changes+=("set the login policy of $(org_label "$org")")
                     elif [[ $(jq -cS "$normalise_policy" <<<"$current") != "$(jq -cS . <<<"$desired")" ]]; then
                       api_org=$org api PUT /management/v1/policies/login "$desired" >/dev/null
@@ -773,7 +779,8 @@ spec:
                       fail "the login policy of $(org_label "$org") still differs from its declared settings"
                     policy_idps=$(api_org=$org api POST /management/v1/policies/login/idps/_search | jq -c '[.result // [] | .[].idpId]')
                     if [[ $policy_idps == '[]' ]]; then
-                      api_org=$org api POST /management/v1/policies/login/idps "$(jq -nc --arg i "$idp" '{idpId: $i, ownerType: "IDP_OWNER_TYPE_ORG"}')" >/dev/null
+                      api_org=$org api POST /management/v1/policies/login/idps \
+                        "$(jq -nc --arg i "$idp" --arg t "$owner_type" '{idpId:$i,ownerType:$t}')" >/dev/null
                       changes+=("allowed the GitHub identity provider in $(org_label "$org")")
                     elif [[ $policy_idps != "$(jq -nc --arg i "$idp" '[$i]')" ]]; then
                       fail "$(org_label "$org") allows identity providers other than the declared one; remove them on purpose"
@@ -837,6 +844,12 @@ spec:
                   # is off, the run refuses a GitHub provider left in the Customers organization,
                   # so turning it off again is a deliberate removal, not a silent leftover.
                   customer_github=${CUSTOMER_GITHUB_SIGNIN:-off}
+                  shared_portal_setup=${SHARED_PORTAL_LOGIN_SETUP:-off}
+                  case $shared_portal_setup in
+                    off) ;;
+                    on) [[ $customer_github == on ]] || fail "shared portal login requires customer GitHub sign-in" ;;
+                    *) fail "SHARED_PORTAL_LOGIN_SETUP must be on or off" ;;
+                  esac
                   case $customer_github in
                     on)
                       [[ -s $github_oauth_dir/client-id && -s $github_oauth_dir/client-secret ]] ||
@@ -847,9 +860,12 @@ spec:
                         clientId: $c, scopes: ["read:user", "user:email"],
                         providerOptions: {isLinkingAllowed: true, isCreationAllowed: false, isAutoCreation: false, isAutoUpdate: false,
                           autoLinking: "AUTO_LINKING_OPTION_EMAIL"}}')
-                      ensure_idp "$customers_org_id" github "$idp_name" "$customer_idp" "$github_client_secret" "$github_annotation"
+                      if [[ $shared_portal_setup == on ]]; then
+                        # Keep existing sign-ins available while closing new links to the old provider.
+                        customer_idp=$(jq -c '.providerOptions.isLinkingAllowed=false |
+                          .providerOptions.autoLinking="AUTO_LINKING_OPTION_UNSPECIFIED"' <<<"$customer_idp")
+                      fi
                       customer_policy=$(policy_from_instance '{}')
-                      ensure_login_policy "$customers_org_id" "$customer_policy" "$idp_id"
                       ;;
                     off)
                       customer_idps=$(api_org=$customers_org_id api POST /management/v1/idps/templates/_search "$(jq -nc --arg n "$idp_name" \
@@ -861,6 +877,389 @@ spec:
                       ;;
                     *) fail "CUSTOMER_GITHUB_SIGNIN must be on or off" ;;
                   esac
+
+                  customer_github_link_page() {
+                    local subject=$1 response
+                    response=$(connect zitadel.user.v2.UserService/ListIDPLinks \
+                      "$(jq -nc --arg u "$subject" '{userId:$u,query:{limit:100}}')")
+                    jq -ce '
+                      (.result // []) as $rows | select((.details | type) == "object" and
+                        ($rows | type) == "array" and
+                        ((.details.totalResult // "0" | tonumber) == ($rows | length))) |
+                      {links:$rows,stamp:{sequence:(.details.processedSequence // "0"),timestamp:.details.timestamp}} |
+                      select((.stamp.sequence | type == "string" and test("\\A[0-9]{1,20}\\z")) and
+                        (.stamp.timestamp == null or (.stamp.timestamp | type) == "string") and
+                        ((.links | length) == 0 or .stamp.sequence != "0"))' <<<"$response" ||
+                      fail "could not read the complete customer identity links"
+                  }
+
+                  customer_github_links() {
+                    customer_github_link_page "$1" | jq -c '.links'
+                  }
+
+                  customer_directory_page() {
+                    local offset=$1 limit=$2 response
+                    # With no sorting column, ZITADEL orders by its unique user ID.
+                    response=$(connect zitadel.user.v2.UserService/ListUsers "$(jq -nc \
+                      --arg o "$customers_org_id" --arg offset "$offset" --argjson limit "$limit" \
+                      '{query:{offset:$offset,limit:$limit,asc:true},
+                        queries:[{typeQuery:{type:"TYPE_HUMAN"}},{organizationIdQuery:{organizationId:$o}}]}')")
+                    jq -ce --arg o "$customers_org_id" '
+                      (.result // []) as $rows |
+                      select((.details | type) == "object" and ($rows | type) == "array" and
+                        all($rows[]; .details.resourceOwner == $o and (.human | type) == "object" and
+                          (.userId | type == "string" and test("\\A[A-Za-z0-9-]+\\z")))) |
+                      {total:(.details.totalResult // "0"), sequence:(.details.processedSequence // "0"),
+                        timestamp:.details.timestamp, subjects:[$rows[].userId]} |
+                      select((.total | type == "string" and test("\\A(0|[1-9][0-9]{0,14})\\z")) and
+                        (.sequence | type == "string" and test("\\A[0-9]{1,20}\\z")) and
+                        (.timestamp == null or (.timestamp | type) == "string") and
+                        (.total == "0" or .sequence != "0"))' <<<"$response" ||
+                      fail "could not read a valid customer directory page"
+                  }
+
+                  customer_directory_stamp() {
+                    jq -c '{total,sequence,timestamp}'
+                  }
+
+                  read_customer_subjects() {
+                    local subjects=$1 offset=0 limit=100 page snapshot count total duplicates
+                    : >"$subjects"
+                    # ListUsers reads the rows before it reads the projection state. Establish
+                    # the state in an earlier request, whose rows do not enter the migration.
+                    snapshot=$(customer_directory_page 0 1 | customer_directory_stamp)
+                    while :; do
+                      page=$(customer_directory_page "$offset" "$limit")
+                      [[ $snapshot == "$(customer_directory_stamp <<<"$page")" ]] ||
+                        fail "the customer directory changed during pagination"
+                      total=$(jq -r '.total' <<<"$page")
+                      count=$(jq '.subjects | length' <<<"$page")
+                      (( count <= limit && offset + count <= total && (count > 0 || offset == total) )) ||
+                        fail "could not read the complete customer directory"
+                      jq -r '.subjects[]' <<<"$page" >>"$subjects"
+                      offset=$((offset + count))
+                      if (( offset == total )); then
+                        break
+                      fi
+                    done
+                    duplicates=$(LC_ALL=C sort "$subjects" | LC_ALL=C uniq -d)
+                    [[ -z $duplicates ]] || fail "the customer directory contains duplicate subjects"
+                    printf '%s\n' "$snapshot"
+                  }
+
+                  customer_github_link_change() {
+                    local previous=$1 shared=$2 subject=$3 links=$4 authority=${5:-strict}
+                    jq -ce --arg a "$previous" --arg b "$shared" --arg s "$subject" --arg authority "$authority" '
+                      def numeric_id: type == "string" and test("\\A[0-9]+\\z");
+                      map(select(.idpId == $a)) as $old | map(select(.idpId == $b)) as $new |
+                      select(($old | length) <= 1 and ($new | length) <= 1) |
+                      if ($old | length) == 0 then
+                        if ($new | length) == 0 then {}
+                        else $new[0] | select(.userId | numeric_id) |
+                          {operation:"remove",userId:$s,idpLink:{idpId:$b,userId}}
+                        end
+                      else $old[0] | select((.userId | numeric_id) and (.userName | type == "string" and length > 0)) |
+                        .userId as $id |
+                        {operation:"add",userId:$s,idpLink:{idpId:$b,userId:$id,userName}} as $copy |
+                        if ($new | length) == 0 then $copy
+                        elif $new[0].userId == $id then {}
+                        elif $authority == "authoritative" and ($new[0].userId | numeric_id) then
+                          $copy + {operation:"replace",inactiveUserId:$new[0].userId}
+                        else empty end
+                      end' <<<"$links" || fail "a customer GitHub link could not be matched without ambiguity"
+                  }
+
+                  verify_customer_github_links() {
+                    local previous=$1 shared=$2 subjects=$3 verification=${4:-exact} first subject stamp page links candidate
+                    [[ -r $subjects ]] || fail "could not read the customer directory for final verification"
+                    [[ -s $subjects ]] || return 0
+                    IFS= read -r first <"$subjects" || fail "could not read the first customer subject"
+                    # ZITADEL reads link rows and their shared projection state separately.
+                    # Fence the entire verification, including subjects absent from the plan.
+                    stamp=$(customer_github_link_page "$first" | jq -c '.stamp')
+                    while IFS= read -r subject; do
+                      page=$(customer_github_link_page "$subject")
+                      links=$(jq -ce --argjson stamp "$stamp" 'select(.stamp == $stamp) | .links' <<<"$page") ||
+                        fail "customer GitHub links changed during final verification"
+                      candidate=$(customer_github_link_change "$previous" "$shared" "$subject" "$links")
+                      if [[ $verification == preserve-destination ]]; then
+                        [[ $candidate == '{}' || $(jq -r '.operation' <<<"$candidate") == remove ]] ||
+                          fail "selecting one provider would orphan a customer GitHub link"
+                      else
+                        [[ $candidate == '{}' ]] || fail "customer GitHub links no longer match before activating the provider"
+                      fi
+                    done <"$subjects"
+                    [[ $stamp == "$(customer_github_link_page "$first" | jq -c '.stamp')" ]] ||
+                      fail "customer GitHub links changed during final verification"
+                  }
+
+                  reconcile_customer_github_links() {
+                    local previous=$1 shared=$2 authority=${3:-strict} subject links candidate record snapshot operation expected
+                    local plan=$work/shared-github-links subjects=$work/customer-subjects
+                    [[ -n $previous && -n $shared && $previous != "$shared" ]] ||
+                      fail "the old and shared GitHub identities must name distinct providers"
+                    snapshot=$(read_customer_subjects "$subjects")
+                    : >"$plan"
+                    while IFS= read -r subject; do
+                      links=$(customer_github_links "$subject")
+                      candidate=$(customer_github_link_change "$previous" "$shared" "$subject" "$links" "$authority")
+                      [[ $candidate == '{}' ]] || printf '%s\n' "$candidate" >>"$plan"
+                    done <"$subjects"
+
+                    jq -es 'map(select(.operation != "remove") | .idpLink.userId) | length == (unique | length)' "$plan" >/dev/null ||
+                      fail "more than one customer names the same GitHub identity"
+                    [[ $snapshot == "$(customer_directory_page 0 1 | customer_directory_stamp)" ]] ||
+                      fail "the customer directory changed while verifying GitHub links"
+                    # A revoked link to the inactive provider must not regain authority on rollback.
+                    # Clear stale bindings before copying approved links to the destination.
+                    jq -cs '(.[] | select(.operation != "add")),
+                      (.[] | select(.operation != "remove") | .operation = "add" | del(.inactiveUserId))' \
+                      "$plan" >"$work/customer-link-actions"
+                    while IFS= read -r record; do
+                      subject=$(jq -er '.userId' <<<"$record")
+                      links=$(customer_github_links "$subject")
+                      [[ $(customer_github_link_change "$previous" "$shared" "$subject" "$links" "$authority") == "$record" ]] ||
+                        fail "a customer GitHub link changed while preparing the provider switch"
+                      operation=$(jq -er '.operation' <<<"$record")
+                      expected='{}'
+                      if [[ $operation != add ]]; then
+                        connect zitadel.user.v2.UserService/RemoveIDPLink "$(jq -c \
+                          '{userId,idpId:.idpLink.idpId,linkedUserId:(.inactiveUserId // .idpLink.userId)}' <<<"$record")" >/dev/null
+                        if [[ $operation == replace ]]; then
+                          expected=$(jq -c '.operation = "add" | del(.inactiveUserId)' <<<"$record")
+                        fi
+                      else
+                        connect zitadel.user.v2.UserService/AddIDPLink "$(jq -c 'del(.operation)' <<<"$record")" >/dev/null
+                      fi
+                      links=$(customer_github_links "$subject")
+                      [[ $(customer_github_link_change "$previous" "$shared" "$subject" "$links" "$authority") == "$expected" ]] ||
+                        fail "could not verify a migrated customer GitHub link"
+                    done <"$work/customer-link-actions"
+                    verify_customer_github_links "$previous" "$shared" "$subjects"
+                    [[ $snapshot == "$(customer_directory_page 0 1 | customer_directory_stamp)" ]] ||
+                      fail "the customer directory changed before activating the provider"
+                    [[ ! -s $plan ]] || changes+=("reconciled customer GitHub links for the provider switch")
+                  }
+
+                  customer_migration_state() {
+                    secret_json "$portal_token_secret" | jq -c '
+                      .metadata.annotations["platform.devantler.tech/customer-github-migration"] |
+                      if . == null then null
+                      else fromjson | if .version == 1 and (.phase == "prepared" or .phase == "applied") and
+                        (.from | type == "string" and length > 0) and (.to | type == "string" and length > 0) and .from != .to
+                        then . else error("invalid customer GitHub migration state") end
+                      end'
+                  }
+
+                  save_customer_migration() {
+                    local phase=$1 from=$2 to=$3 record
+                    record=$(jq -nc --arg phase "$phase" --arg from "$from" --arg to "$to" \
+                      '{version:1,phase:$phase,from:$from,to:$to}')
+                    patch_secret "$(jq -nc --arg state "$record" \
+                      '{metadata:{annotations:{"platform.devantler.tech/customer-github-migration":$state}}}')" "$portal_token_secret"
+                    [[ $(customer_migration_state) == "$record" ]] ||
+                      fail "could not verify the customer GitHub migration state"
+                  }
+
+                  # The active provider is authoritative. Only a change of provider copies
+                  # links, so reconciliation never restores a link later revoked by an operator.
+                  reconcile_customer_login_provider() {
+                    local previous=$1 desired=$2 owner_type=$3 org=$customers_org_id policy linked='[]' state phase current
+                    local replacement authority subjects snapshot
+                    replacement=$(jq -nc --arg id "$desired" '[$id]')
+                    state=$(customer_migration_state)
+                    jq -e --arg old "$previous" --arg new "$desired" '
+                      . == null or ([.from,.to] | sort) == ([$old,$new] | sort)' <<<"$state" >/dev/null ||
+                      fail "customer GitHub migration state names different providers"
+                    phase=$(jq -r '.phase // ""' <<<"$state")
+                    current=$(jq -r --arg initial "$legacy_customer_idp" '.to // $initial' <<<"$state")
+                    policy=$(api_org=$org api GET /management/v1/policies/login |
+                      jq -ce '.policy | select(type == "object")')
+                    if [[ $(jq -r '.isDefault // false' <<<"$policy") == false ]]; then
+                      linked=$(api_org=$org api POST /management/v1/policies/login/idps/_search |
+                        jq -c '[.result // [] | .[].idpId]')
+                      jq -e --arg old "$previous" --arg new "$desired" \
+                        'all(.[]; . == $old or . == $new) and length == (unique | length)' <<<"$linked" >/dev/null ||
+                        fail "the customer login policy has an unexpected identity provider"
+                    fi
+                    case $(jq length <<<"$linked") in
+                      0)
+                        # Without an advertised destination, cancellation restores the source
+                        # policy and leaves its links authoritative. A retry in the original
+                        # direction rechecks links before making the destination visible.
+                        if [[ $phase == prepared && $current == "$desired" ||
+                              $phase != prepared && $current != "$desired" ]]; then
+                          reconcile_customer_github_links "$previous" "$desired"
+                          save_customer_migration prepared "$previous" "$desired"
+                        fi
+                        ;;
+                      1)
+                        if [[ $linked != "$replacement" ]]; then
+                          [[ $phase != applied || $current != "$desired" ]] ||
+                            fail "the visible customer provider differs from the applied migration"
+                          # The old provider still owns sign-in, even if a previous job
+                          # prepared the destination but stopped before advertising it.
+                          # A known change and a single visible source prove which
+                          # provider can replace a stale copy.
+                          authority=strict
+                          [[ -z $phase ]] || authority=authoritative
+                          reconcile_customer_github_links "$previous" "$desired" "$authority"
+                          save_customer_migration prepared "$previous" "$desired"
+                        fi
+                        ;;
+                      2)
+                        [[ $phase == prepared ]] ||
+                          fail "two customer login providers are visible without a matching prepared change"
+                        # Both providers can accept an independently approved link while
+                        # advertised. Preserve links on the retained provider and refuse
+                        # to remove the other one if that would orphan an approved link.
+                        subjects=$work/overlap-customer-subjects
+                        snapshot=$(read_customer_subjects "$subjects")
+                        verify_customer_github_links "$previous" "$desired" "$subjects" preserve-destination
+                        [[ $snapshot == "$(customer_directory_page 0 1 | customer_directory_stamp)" ]] ||
+                          fail "the customer directory changed before selecting the remaining provider"
+                        ;;
+                    esac
+                    if jq -e --arg old "$previous" 'index($old) != null' <<<"$linked" >/dev/null; then
+                      if jq -e --arg new "$desired" 'index($new) == null' <<<"$linked" >/dev/null; then
+                        api_org=$org api POST /management/v1/policies/login/idps \
+                          "$(jq -nc --arg i "$desired" --arg t "$owner_type" '{idpId:$i,ownerType:$t}')" >/dev/null
+                        linked=$(api_org=$org api POST /management/v1/policies/login/idps/_search |
+                          jq -c '[.result // [] | .[].idpId]')
+                        jq -e --arg old "$previous" --arg new "$desired" \
+                          'sort == ([$old, $new] | sort)' <<<"$linked" >/dev/null ||
+                          fail "the replacement customer identity provider was not confirmed"
+                      fi
+                      api_org=$org api DELETE "/management/v1/policies/login/idps/$previous" >/dev/null
+                    fi
+                    ensure_login_policy "$org" "$customer_policy" "$desired" "$owner_type"
+                    linked=$(api_org=$org api POST /management/v1/policies/login/idps/_search |
+                      jq -c '[.result // [] | .[].idpId]')
+                    [[ $linked == "$replacement" ]] ||
+                      fail "the customer login does not list the declared GitHub provider"
+                    # Keep the last applied direction during a future policy reset.
+                    if [[ $phase != applied || $current != "$desired" ]]; then
+                      save_customer_migration applied "$previous" "$desired"
+                    fi
+                  }
+
+                  instance_login_providers() {
+                    api POST /admin/v1/policies/login/idps/_search '{"query":{"limit":100}}' |
+                      jq -ce 'select(.result == null or (.result | type) == "array") |
+                        (.result // []) as $rows |
+                        select((.details | type) == "object" and
+                          ((.details.totalResult | if . == null then 0 else tonumber end) == ($rows | length))) |
+                        [$rows[].idpId] | select(length == (unique | length) and
+                          all(.[]; type == "string" and length > 0))' ||
+                      fail "could not read the complete instance login provider list"
+                  }
+
+                  instance_login_default_org() {
+                    connect zitadel.feature.v2.FeatureService/GetInstanceFeatures '{"inheritance":true}' |
+                      jq -ce '.loginDefaultOrg | select(type == "object") |
+                        {enabled:(.enabled // false),source:(.source // "SOURCE_UNSPECIFIED")} |
+                        select((.enabled | type) == "boolean" and
+                          (.source == "SOURCE_SYSTEM" or .source == "SOURCE_INSTANCE" or .source == "SOURCE_UNSPECIFIED"))' ||
+                      fail "could not read the effective instance login default organization"
+                  }
+
+                  shared_login_provider_list_allowed() {
+                    jq -e --arg id "$1" 'all(.[]; . == $id)' <<<"$2" >/dev/null
+                  }
+
+                  report_shared_login_activation_readiness() {
+                    local shared=$1 feature providers status
+                    if ! feature=$(instance_login_default_org) || ! providers=$(instance_login_providers); then
+                      status=unavailable
+                    elif shared_login_provider_list_allowed "$shared" "$providers" &&
+                      jq -e '.enabled == false or .source == "SOURCE_INSTANCE"' <<<"$feature" >/dev/null; then
+                      status=ready
+                    else
+                      status=blocked
+                    fi
+                    printf 'Shared portal login activation readiness: %s\n' "$status"
+                  }
+
+                  reconcile_shared_instance_login() {
+                    local mode=$1 shared=$2 phase=${3:-apply}
+                    local baseline current providers feature membership target feature_target desired observed
+                    local annotation=platform.devantler.tech/shared-portal-login-baseline
+                    local read_baseline='.metadata.annotations[$key] | if . == null then null else fromjson end'
+                    local flags='{allowUsernamePassword,allowRegister,allowExternalIdp,forceMfa}'
+                    baseline=$(secret_json "$portal_token_secret" | jq -c --arg key "$annotation" "$read_baseline")
+                    if [[ $mode == off && $baseline == null ]]; then
+                      return
+                    fi
+                    current=$(api GET /admin/v1/policies/login | jq -ce ".policy | select(type == \"object\") | $normalise_policy")
+                    providers=$(instance_login_providers)
+                    membership=$(jq -c --arg id "$shared" 'index($id) != null' <<<"$providers")
+                    feature=$(instance_login_default_org)
+                    if [[ $mode == on ]]; then
+                      shared_login_provider_list_allowed "$shared" "$providers" ||
+                        fail "the instance login has an unexpected identity provider"
+                      # Setting an inherited true flag would create an override that this API cannot remove.
+                      jq -e '.enabled == false or .source == "SOURCE_INSTANCE"' <<<"$feature" >/dev/null ||
+                        fail "shared login requires an instance-managed or disabled login default organization"
+                      if [[ $baseline == null ]]; then
+                        baseline=$(jq -c --arg id "$shared" --argjson member "$membership" --argjson feature "$feature" \
+                          "{version:1,providerID:\$id,member:\$member,feature:\$feature,flags:$flags}" <<<"$current")
+                        patch_secret "$(jq -nc --arg key "$annotation" --arg value "$baseline" \
+                          '{metadata:{annotations:{($key):$value}}}')" "$portal_token_secret"
+                        [[ $(secret_json "$portal_token_secret" | jq -c --arg key "$annotation" "$read_baseline") == "$baseline" ]] ||
+                          fail "could not verify the shared login rollback settings"
+                      fi
+                    fi
+                    jq -e --arg id "$shared" '
+                      .version == 1 and .providerID == $id and (.member | type) == "boolean" and
+                      (.feature.enabled | type) == "boolean" and
+                      (.feature.source == "SOURCE_INSTANCE" or (.feature.enabled == false and
+                        (.feature.source == "SOURCE_SYSTEM" or .feature.source == "SOURCE_UNSPECIFIED"))) and
+                      (.flags | keys) == ["allowExternalIdp","allowRegister","allowUsernamePassword","forceMfa"] and
+                      all(.flags[]; type == "boolean")' <<<"$baseline" >/dev/null ||
+                      fail "the shared login rollback settings do not match this provider"
+                    target=$baseline
+                    if [[ $mode == on ]]; then
+                      target=$(jq -c '.member=true | .feature.enabled=false |
+                        .flags={allowUsernamePassword:true,allowRegister:false,allowExternalIdp:true,forceMfa:true}' <<<"$baseline")
+                    fi
+                    feature_target=$(jq -c '.feature' <<<"$target")
+                    local feature_source target_source
+                    feature_source=$(jq -r '.source' <<<"$feature")
+                    target_source=$(jq -r '.source' <<<"$feature_target")
+                    [[ $feature_source == "$target_source" ]] ||
+                      fail "the source of the instance login default organization changed"
+                    [[ $feature == "$feature_target" || $feature_source == SOURCE_INSTANCE ]] ||
+                      fail "could not safely restore an inherited login default organization"
+                    [[ $phase != preflight ]] || return 0
+                    desired=$(jq -cS --argjson target "$target" '. + $target.flags' <<<"$current")
+                    if [[ $desired != "$(jq -cS . <<<"$current")" ]]; then
+                      api PUT /admin/v1/policies/login "$desired" >/dev/null
+                    fi
+                    if [[ $membership != "$(jq -r '.member' <<<"$target")" ]]; then
+                      if [[ $membership == true ]]; then
+                        api DELETE "/admin/v1/policies/login/idps/$shared" >/dev/null
+                      else
+                        api POST /admin/v1/policies/login/idps "$(jq -nc --arg id "$shared" '{idpId:$id}')" >/dev/null
+                      fi
+                    fi
+                    if [[ $feature != "$feature_target" ]]; then
+                      connect zitadel.feature.v2.FeatureService/SetInstanceFeatures \
+                        "$(jq -c '{loginDefaultOrg:.enabled}' <<<"$feature_target")" >/dev/null
+                    fi
+                    [[ $(api GET /admin/v1/policies/login | jq -cS ".policy | $normalise_policy") == "$desired" ]] ||
+                      fail "could not verify the instance login policy"
+                    observed=$(instance_login_providers)
+                    jq -e --arg id "$shared" --argjson target "$target" --argjson previous "$providers" '
+                      sort == (($previous - [$id]) + (if $target.member then [$id] else [] end) | sort)' \
+                      <<<"$observed" >/dev/null || fail "could not verify the instance login providers"
+                    [[ $(instance_login_default_org) == "$feature_target" ]] ||
+                      fail "could not verify the instance login default organization"
+                    if [[ $mode == off ]]; then
+                      patch_secret "$(jq -nc --arg key "$annotation" '{metadata:{annotations:{($key):null}}}')" "$portal_token_secret"
+                      [[ $(secret_json "$portal_token_secret" | jq -c --arg key "$annotation" "$read_baseline") == null ]] ||
+                        fail "could not clear the verified shared login rollback settings"
+                    fi
+                  }
 
                   prepare_portal_operator() {
                     local idp=$1 orgs operator_org query users profile response links
@@ -910,13 +1309,66 @@ spec:
                       fail "the portal operator GitHub link does not match the declared identity"
                   }
 
-                  if [[ $customer_github == on ]]; then
-                    shared_idp=$(jq -nc --arg c "$github_client_id" '{
+                  ensure_portal_shared_github() {
+                    local config
+                    config=$(jq -nc --arg c "$github_client_id" '{
                       clientId:$c, scopes:["read:user","user:email"],
                       providerOptions:{isLinkingAllowed:true,isCreationAllowed:false,isAutoCreation:false,isAutoUpdate:false,
                         autoLinking:"AUTO_LINKING_OPTION_UNSPECIFIED"}}')
-                    ensure_idp "" github "$idp_name" "$shared_idp" "$github_client_secret" "$shared_github_annotation"
-                    prepare_portal_operator "$idp_id"
+                    ensure_idp "" github "$idp_name" "$config" "$github_client_secret" "$shared_github_annotation"
+                    shared_customer_idp=$idp_id
+                  }
+
+                  find_shared_github_for_rollback() {
+                    local state=$1 shared response
+                    shared=$(jq -er --arg legacy "$legacy_customer_idp" '
+                      if .from == $legacy then .to
+                      elif .to == $legacy then .from
+                      else empty end' <<<"$state") ||
+                      fail "customer GitHub migration state does not name the legacy provider"
+                    response=$(api POST /admin/v1/idps/templates/_search "$(jq -nc --arg n "$idp_name" \
+                      '{queries: [{idpNameQuery: {name: $n, method: "TEXT_QUERY_METHOD_EQUALS"}}]}')")
+                    jq -er --arg id "$shared" --arg name "$idp_name" '
+                      [.result[]? | select(.id == $id and .name == $name and
+                        .owner == "IDP_OWNER_TYPE_SYSTEM" and (.config.github | type) == "object")] |
+                      select(length == 1) | .[0].id' <<<"$response" ||
+                      fail "could not verify the recorded shared GitHub provider for rollback"
+                  }
+
+                  reconcile_portal_github() {
+                    local migration
+                    migration=$(customer_migration_state)
+                    if [[ $shared_portal_setup == on ]]; then
+                      ensure_portal_shared_github
+                      prepare_portal_operator "$shared_customer_idp"
+                      reconcile_shared_instance_login on "$shared_customer_idp" preflight
+                    fi
+                    ensure_idp "$customers_org_id" github "$idp_name" "$customer_idp" "$github_client_secret" "$github_annotation"
+                    legacy_customer_idp=$idp_id
+                    if [[ $shared_portal_setup == on ]]; then
+                      reconcile_customer_login_provider "$legacy_customer_idp" "$shared_customer_idp" IDP_OWNER_TYPE_SYSTEM
+                      reconcile_shared_instance_login on "$shared_customer_idp"
+                    else
+                      if [[ $migration == null ]]; then
+                        # The normal legacy repair must work before checking the future operator.
+                        ensure_login_policy "$customers_org_id" "$customer_policy" "$legacy_customer_idp"
+                        ensure_portal_shared_github
+                        reconcile_shared_instance_login off "$shared_customer_idp"
+                      else
+                        shared_customer_idp=$(find_shared_github_for_rollback "$migration")
+                        reconcile_customer_login_provider "$shared_customer_idp" "$legacy_customer_idp" IDP_OWNER_TYPE_ORG
+                        reconcile_shared_instance_login off "$shared_customer_idp"
+                        ensure_portal_shared_github
+                      fi
+                      prepare_portal_operator "$shared_customer_idp"
+                    fi
+                  }
+
+                  if [[ $customer_github == on ]]; then
+                    reconcile_portal_github
+                    if [[ $shared_portal_setup == off ]]; then
+                      report_shared_login_activation_readiness "$shared_customer_idp"
+                    fi
                   fi
 
                   # --- The maintainer's administration roles ---------------------------------------
@@ -1066,6 +1518,27 @@ spec:
                     desired_privacy=$(jq -c 'del(.details,.isDefault) | .helpLink="https://devantler.tech/"' <<<"$privacy")
                     api_org=$customers_org_id api "$privacy_method" /management/v1/policies/privacy "$desired_privacy" >/dev/null
                     changes+=("set the website link of $(org_label "$customers_org_id")")
+                  fi
+                  if [[ ${shared_portal_setup:-off} == on ]]; then
+                    shared_text=$(api GET /admin/v1/text/login/en | jq -ce '
+                      .customText | select(type == "object") | del(.details,.isDefault,.language)') ||
+                      fail "cannot read the shared sign-in text"
+                    desired_shared_text=$(jq -c '.loginText.title="Sign in to Devantler Tech" |
+                      .footerText.help="Back to website (opens in a new tab)"' <<<"$shared_text")
+                    if [[ $shared_text != "$desired_shared_text" ]]; then
+                      api PUT /admin/v1/text/login/en "$desired_shared_text" >/dev/null
+                      changes+=("set the shared sign-in text")
+                    fi
+                    shared_privacy=$(api GET /admin/v1/policies/privacy |
+                      jq -ce '.policy | select(type == "object") |
+                        select([.tosLink,.privacyLink,.helpLink,.supportEmail,.docsLink,.customLink,.customLinkText]
+                          | all(. == null or type == "string")) | del(.details,.isDefault)') ||
+                      fail "cannot read the shared sign-in footer settings"
+                    if [[ $(jq -r '.helpLink // ""' <<<"$shared_privacy") != https://devantler.tech/ ]]; then
+                      desired_shared_privacy=$(jq -c '.helpLink="https://devantler.tech/"' <<<"$shared_privacy")
+                      api PUT /admin/v1/policies/privacy "$desired_shared_privacy" >/dev/null
+                      changes+=("kept the website link on the shared sign-in")
+                    fi
                   fi
 
                   # --- The portal's service account ------------------------------------------------

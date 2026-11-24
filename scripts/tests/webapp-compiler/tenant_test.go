@@ -201,6 +201,64 @@ func TestCommittedTenant(t *testing.T) {
 	admit := func(input *unstructured.Unstructured) error {
 		return apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict", DryRun: []string{metav1.DryRunAll}})
 	}
+	t.Run("preview-isolated-and-source-only", func(t *testing.T) {
+		var prod unstructured.Unstructured
+		readYAML(t, filepath.Join(root, "k8s/providers/hetzner/apps/business-site/tenant.yaml"), &prod)
+		prod.SetNamespace("default")
+		if err := admit(&prod); err != nil {
+			t.Fatal(err)
+		}
+		preview := prod.DeepCopy()
+		preview.SetName("business-site-dev")
+		preview.SetUID("")
+		preview.SetResourceVersion("")
+		productChildren, _ := desiredTenant(t, engine, &definition, &prod)
+		for _, sops := range []bool{false, true} {
+			input := preview.DeepCopy()
+			// Even an admitted object that asks for these capabilities must render only
+			// the isolated source. The admission policy also rejects those requests.
+			for _, field := range [][]string{{"source", "reconcileApplication"}, {"externalDns"}, {"webApp"}, {"resourceQuota", "enabled"}} {
+				if err := unstructured.SetNestedField(input.Object, true, append([]string{"spec"}, field...)...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := unstructured.SetNestedField(input.Object, sops, "spec", "sops"); err != nil {
+				t.Fatal(err)
+			}
+			if err := admit(input); err != nil {
+				t.Fatal(err)
+			}
+			children, _ := desiredTenant(t, engine, &definition, input)
+			namespace := children["tenantNamespace"]
+			if namespace == nil || namespace.GetName() != "business-site-dev" {
+				t.Fatalf("preview and production share a namespace: %v", namespace)
+			}
+			for id, child := range children {
+				switch id {
+				case "tenantNamespace":
+					continue
+				case "defaultDeny", "resourceQuota", "limitRange", "ociRepository":
+					if child.GetNamespace() != namespace.GetName() {
+						t.Fatalf("preview child %s left the preview namespace", id)
+					}
+				default:
+					t.Fatalf("source-only preview rendered %s", id)
+				}
+			}
+			for _, id := range []string{"defaultDeny", "resourceQuota", "ociRepository"} {
+				if children[id] == nil {
+					t.Fatalf("missing preview child %s", id)
+				}
+			}
+			for _, field := range []string{"url", "ref", "verify"} {
+				production, present, err := unstructured.NestedFieldNoCopy(productChildren["ociRepository"].Object, "spec", field)
+				value, found, valueErr := unstructured.NestedFieldNoCopy(children["ociRepository"].Object, "spec", field)
+				if err != nil || valueErr != nil || !present || !found || !reflect.DeepEqual(production, value) {
+					t.Fatalf("preview changed the signed release source %s", field)
+				}
+			}
+		}
+	})
 	// The tenant name is also the repository the release signature must come from,
 	// so the graph validates it as a DNS label itself (#6306) rather than relying on
 	// the Namespace it later names.

@@ -10,6 +10,8 @@
   "disallow-floating-image-tags": "Audit",
   "restrict-homepage-service-groups": "Enforce",
   "require-homepage-href-for-non-root-routes": "Enforce",
+  "restrict-business-site-preview-namespace": "Enforce",
+  "restrict-tenant-previews": "Enforce",
   "restrict-tenant-image-repositories": "Enforce",
   "restrict-tenant-issuer-refs": "Enforce",
   "restrict-tenant-route-hostnames": "Enforce",
