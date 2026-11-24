@@ -1,0 +1,197 @@
+# The GitHub token broker's caller gate (devantler-tech/monorepo ADR 0020).
+#
+# octo-sts reads a trust policy from GitHub before it checks who is asking, and
+# any GitHub repository in the world can get an Actions OIDC token for the
+# broker's audience. So without a gate, anyone could make the broker spend the
+# botantler Apps' shared hourly API quota on lookups of made-up identities.
+# This Envoy, in front of octo-sts in the same pod, refuses every request whose
+# token is not from an allowed caller, before octo-sts or GitHub sees it:
+# - a GitHub Actions token, verified against GitHub's keys, for this broker's
+#   audience, from the devantler-tech organization (repository_owner_id
+#   178524219, which survives renames and cannot be re-registered).
+#
+# Admitted requests then go through octo-sts's own trust policy check, and are
+# limited per pod so a runaway caller cannot drain the quota either.
+#
+# Adding a caller means adding a policy below, reviewed here:
+# - a customer repository: a `sourced_metadata` principal on
+#   repository_id under a new policy;
+# - a platform workload: a second provider for the cluster's service-account
+#   issuer, with principals on its exact `sub` (platform#6606).
+#
+# scripts/tests/test-github-broker-gate.sh runs this config in Envoy with
+# signed test tokens and checks each rule.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: github-broker-gate
+  namespace: github-broker
+data:
+  envoy.yaml: |
+    node:
+      id: github-broker-gate
+      cluster: github-broker
+    overload_manager:
+      resource_monitors:
+        - name: envoy.resource_monitors.global_downstream_max_connections
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig
+            max_active_downstream_connections: 1000
+    static_resources:
+      listeners:
+        - name: gate
+          address:
+            socket_address:
+              address: 0.0.0.0
+              port_value: 8081
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: gate
+                    codec_type: AUTO
+                    # Paths are normalized before any rule matches, so an
+                    # encoded or doubled path cannot reach octo-sts unmatched.
+                    normalize_path: true
+                    merge_slashes: true
+                    path_with_escaped_slashes_action: REJECT_REQUEST
+                    max_request_headers_kb: 16
+                    request_headers_timeout: 10s
+                    request_timeout: 30s
+                    stream_idle_timeout: 30s
+                    common_http_protocol_options:
+                      idle_timeout: 60s
+                      headers_with_underscores_action: REJECT_REQUEST
+                    route_config:
+                      name: broker
+                      virtual_hosts:
+                        - name: broker
+                          domains: ["*"]
+                          routes:
+                            # octo-sts's only exchange endpoint.
+                            - match:
+                                path: /sts/exchange
+                              route:
+                                cluster: octo_sts
+                                timeout: 30s
+                            - match:
+                                prefix: /
+                              direct_response:
+                                status: 404
+                    http_filters:
+                      # 1. Every request carries a GitHub Actions token for this
+                      #    broker, verified against GitHub's published keys.
+                      - name: envoy.filters.http.jwt_authn
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+                          providers:
+                            github_actions:
+                              issuer: https://token.actions.githubusercontent.com
+                              audiences:
+                                - sts.${domain}
+                              require_expiration: true
+                              from_headers:
+                                - name: Authorization
+                                  value_prefix: "Bearer "
+                              # octo-sts verifies the token again itself.
+                              forward: true
+                              payload_in_metadata: github_actions
+                              remote_jwks:
+                                http_uri:
+                                  uri: https://token.actions.githubusercontent.com/.well-known/jwks
+                                  cluster: github_oidc
+                                  timeout: 5s
+                                cache_duration: 600s
+                                async_fetch:
+                                  failed_refetch_duration: 30s
+                                retry_policy:
+                                  num_retries: 3
+                          rules:
+                            - match:
+                                prefix: /
+                              requires:
+                                provider_name: github_actions
+                      # 2. Only allowed callers pass. Everything else gets 403.
+                      - name: envoy.filters.http.rbac
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                          rules:
+                            action: ALLOW
+                            policies:
+                              devantler-tech-workflows:
+                                permissions:
+                                  - any: true
+                                principals:
+                                  - sourced_metadata:
+                                      metadata_source: DYNAMIC
+                                      metadata_matcher:
+                                        filter: envoy.filters.http.jwt_authn
+                                        path:
+                                          - key: github_actions
+                                          - key: repository_owner_id
+                                        value:
+                                          string_match:
+                                            exact: "178524219"
+                      # 3. Admitted callers share a per-pod budget, so even an
+                      #    allowed caller in a loop cannot drain the Apps' quota.
+                      - name: envoy.filters.http.local_ratelimit
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                          stat_prefix: admitted
+                          token_bucket:
+                            max_tokens: 60
+                            tokens_per_fill: 60
+                            fill_interval: 60s
+                          filter_enabled:
+                            default_value:
+                              numerator: 100
+                              denominator: HUNDRED
+                          filter_enforced:
+                            default_value:
+                              numerator: 100
+                              denominator: HUNDRED
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+      clusters:
+        - name: octo_sts
+          type: STATIC
+          connect_timeout: 1s
+          load_assignment:
+            cluster_name: octo_sts
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: 127.0.0.1
+                          port_value: 8080
+        # GitHub's token signing keys, fetched over verified TLS: a forged key
+        # set would let anyone mint an admitted token.
+        - name: github_oidc
+          type: LOGICAL_DNS
+          dns_lookup_family: V4_ONLY
+          connect_timeout: 5s
+          load_assignment:
+            cluster_name: github_oidc
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: token.actions.githubusercontent.com
+                          port_value: 443
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: token.actions.githubusercontent.com
+              common_tls_context:
+                validation_context:
+                  trusted_ca:
+                    filename: /etc/ssl/certs/ca-certificates.crt
+                  match_typed_subject_alt_names:
+                    - san_type: DNS
+                      matcher:
+                        exact: token.actions.githubusercontent.com

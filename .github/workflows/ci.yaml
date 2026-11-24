@@ -660,6 +660,7 @@ jobs:
               - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
               - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
+              - 'scripts/tests/test-github-broker-gate.sh'
               - 'scripts/select-velero-rebuild-backups.jq'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-cancellation-release.sh'
@@ -2774,6 +2775,15 @@ jobs:
         run: |
           shellcheck scripts/tests/test-anthropic-proxy-envoy-config.sh
           bash scripts/tests/test-anthropic-proxy-envoy-config.sh
+
+      - name: 🔑 Validate the GitHub token broker's caller gate
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the gate's Envoy config in its pinned image with signed test
+        # tokens: only devantler-tech callers pass, refusals come before the
+        # rate limit, and no traffic can go around the gate (ADR 0020).
+        run: |
+          shellcheck scripts/tests/test-github-broker-gate.sh
+          bash scripts/tests/test-github-broker-gate.sh
 
       - name: 💾 Validate the Velero maintenance OOM alert
         if: needs.changes.outputs.k8s == 'true'
