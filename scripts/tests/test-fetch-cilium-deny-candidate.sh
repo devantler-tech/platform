@@ -14,7 +14,8 @@ echo "$endpoint" >>"${FAKE_STATE}/requests"
 if [[ "$endpoint" == repos/devantler-tech/platform/pulls/4381 ]]; then
   author=devantler; repo=devantler-tech/platform; head=01e40ecf795a3eaf6c0e30ba461a7253afb36462; state=open
   case "$FAKE_CASE" in
-    author) author=untrusted;; fork) repo=external/fork;; moved) head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;; closed) state=closed;; read_error) exit 1;;
+    author) author=untrusted;; botantler_1) author='botantler-1[bot]';; botantler_2) author='botantler-2[bot]';;
+    retired_ksail_bot) author=ksail-bot;; bare_botantler) author=botantler-1;; fork) repo=external/fork;; moved) head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;; closed) state=closed;; read_error) exit 1;;
     after_read) if grep -Fq /contents/ "${FAKE_STATE}/requests"; then head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; fi;;
     reread_error) if grep -Fq /contents/ "${FAKE_STATE}/requests"; then exit 1; fi;;
   esac
@@ -26,30 +27,34 @@ else exit 90; fi
 STUB
 chmod +x "${work}/bin/gh"
 failures=0
-for name in success author fork moved closed read_error after_read reread_error; do
+for name in success botantler_1 botantler_2 author retired_ksail_bot bare_botantler fork moved closed read_error after_read reread_error; do
   mkdir -p "${work}/${name}/temp"
   result=0
   PATH="${work}/bin:${PATH}" TEST_ROOT="$root" FAKE_STATE="${work}/${name}" FAKE_CASE="$name" \
     RUNNER_TEMP="${work}/${name}/temp" CANDIDATE_PR=4381 CANDIDATE_HEAD=01e40ecf795a3eaf6c0e30ba461a7253afb36462 \
     bash "${root}/.github/scripts/fetch-cilium-deny-candidate.sh" >"${work}/${name}/output" 2>&1 || result=$?
   expected=1
-  [[ "$name" != success ]] || expected=0
+  case "$name" in
+    success) expected=0 want_author=devantler ;;
+    botantler_1) expected=0 want_author='botantler-1[bot]' ;;
+    botantler_2) expected=0 want_author='botantler-2[bot]' ;;
+  esac
   if [[ "$result" != "$expected" ]]; then
     echo "FAIL $name: expected $expected, got $result"
     cat "${work}/${name}/output"
     failures=$((failures + 1))
   fi
-  if [[ "$name" == success ]]; then
+  if [[ "$expected" == 0 ]]; then
     receipt="${work}/${name}/temp/cilium-deny-candidate/candidate.json"
-    if ! jq -e '.head == "01e40ecf795a3eaf6c0e30ba461a7253afb36462" and .author == "devantler" and (.generator_sha256|length)==64 and (.flux_copy_sha256|length)==64' "$receipt" >/dev/null; then
-      echo 'FAIL candidate receipt'
+    if ! jq -e --arg author "$want_author" '.head == "01e40ecf795a3eaf6c0e30ba461a7253afb36462" and .author == $author and (.generator_sha256|length)==64 and (.flux_copy_sha256|length)==64' "$receipt" >/dev/null 2>&1; then
+      echo "FAIL $name: candidate receipt"
       failures=$((failures + 1))
     fi
   elif [[ "$name" != after_read && "$name" != reread_error && -f "${work}/${name}/requests" ]] && grep -Fq '/contents/' "${work}/${name}/requests"; then
     echo "FAIL $name: fetched before trust/head gate"
     failures=$((failures + 1))
   fi
-  if [[ "$name" != success && -f "${work}/${name}/temp/cilium-deny-candidate/candidate.json" ]]; then
+  if [[ "$expected" != 0 && -f "${work}/${name}/temp/cilium-deny-candidate/candidate.json" ]]; then
     echo "FAIL $name: rejected candidate got a receipt"
     failures=$((failures + 1))
   fi
