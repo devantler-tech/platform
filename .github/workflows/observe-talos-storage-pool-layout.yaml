@@ -70,5 +70,8 @@ jobs:
           printf '%s' "${KUBE_CONFIG}" >"${KUBECONFIG}"
           printf '%s' "${TALOS_CONFIG}" >"${TALOSCONFIG}"
           unset KUBE_CONFIG TALOS_CONFIG
-          ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+            printf '%s\n' 'Talos storage layout preview could not select the stable endpoint.'
+            exit 2
+          fi
           bash scripts/preview-prod-talos-pool-layout.sh /usr/local/bin/ksail

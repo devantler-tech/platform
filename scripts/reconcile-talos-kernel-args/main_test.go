@@ -28,7 +28,7 @@ var workflowPinFixtures = []string{
 
 func writeWorkflowPins(t *testing.T, version string) {
 	t.Helper()
-	for _, path := range workflowPinFixtures {
+	for _, path := range append([]string{".github/workflows/observe-talos-storage-pool-layout.yaml"}, workflowPinFixtures...) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -184,6 +184,15 @@ func TestCurrentWorkflowPinInventoryIsComplete(t *testing.T) {
 		t.Fatalf("independent Cilium proof profile changed: %s, %v", version, err)
 	}
 	delete(seen, ciliumProof)
+	const storagePreview = ".github/workflows/observe-talos-storage-pool-layout.yaml"
+	data, err = os.ReadFile(filepath.Join(root, storagePreview))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyPins(data); err != nil || !seen[storagePreview] {
+		t.Fatalf("read-only storage preview profile is unqualified: %v", err)
+	}
+	delete(seen, storagePreview)
 	if len(seen) != len(workflowPinFixtures) {
 		t.Fatalf("actual caller inventory differs from exercised fixtures: %v", seen)
 	}
@@ -862,6 +871,15 @@ func TestCheckPinsDecidesOnTheSourceItRead(t *testing.T) {
 	git("tag", "v1.3.0")
 	if err := checkPinsAt(t, "1.3.0", dir); err == nil || !strings.Contains(err.Error(), "fold input(s) go.mod since the set audited at 1.2.3") {
 		t.Fatalf("changed module file at the next release: %v", err)
+	}
+	writeWorkflowPins(t, "1.2.3")
+	if err := os.WriteFile(".github/workflows/observe-talos-storage-pool-layout.yaml", pin("1.3.0"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"--check-pins"}); err == nil ||
+		!strings.Contains(err.Error(), "KSail 1.3.0 changes fold input(s) go.mod") ||
+		!strings.Contains(err.Error(), "requires a new source audit") {
+		t.Fatalf("unaudited storage preview release accepted: %v", err)
 	}
 }
 

@@ -14,6 +14,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const storagePoolPreviewWorkflow = ".github/workflows/observe-talos-storage-pool-layout.yaml"
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -43,13 +45,27 @@ func run(args []string) error {
 	if len(args) == 1 {
 		// Only this mode reads the KSail source. The fold mode below stays
 		// offline and relies on this unconditional check having passed.
-		audit, err := verifyFoldInputs(version, func(version string) (map[string]string, error) {
-			return resolveFoldInputs(ksailRepository, version)
-		})
+		preview, err := os.ReadFile(storagePoolPreviewWorkflow)
 		if err != nil {
-			return err
+			return fmt.Errorf("read storage pool preview pin: %w", err)
 		}
-		fmt.Printf("KSail %s fold inputs match the set audited at %s\n", version, audit)
+		previewVersion, err := verifyPins(preview)
+		if err != nil {
+			return fmt.Errorf("invalid storage pool preview pin: %w", err)
+		}
+		versions := []string{version}
+		if previewVersion != version {
+			versions = append(versions, previewVersion)
+		}
+		for _, pinned := range versions {
+			audit, err := verifyFoldInputs(pinned, func(version string) (map[string]string, error) {
+				return resolveFoldInputs(ksailRepository, version)
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("KSail %s fold inputs match the set audited at %s\n", pinned, audit)
+		}
 		return nil
 	}
 	if args[1] == args[2] {
