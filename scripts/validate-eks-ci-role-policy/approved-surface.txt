@@ -64,6 +64,8 @@ kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run f358d769962c19f75350648
 
 kro.run/v1alpha1|Tenant|flux-system|business-site ad1555d8a09c4cd1d7c766b86c7f85d3f2ec08e6e9536b43ecc425eb38c64682
 
+kro.run/v1alpha1|Tenant|flux-system|business-site-dev 66cdd023aafe850177c6777cdb267f781a91285b29ae8a2a5491c057dfc31e92
+
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps 6ab22c8a1703a8bfa1755b55c4ceccdf26b94af4ed510ba48251e673b95fefb9
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 9f1a9d875f4c26786c23c805bfce054f5fe7b12614c07afc9efaeb9019dd6232
