@@ -191,8 +191,8 @@ spec:
                 - name: CUSTOMER_GITHUB_SIGNIN
                   value: "on"
                 - name: SHARED_PORTAL_LOGIN_SETUP
-                  # Install both reconciliation paths before enabling shared sign-in.
-                  value: "off"
+                  # Apply the shared identity policy before changing portal routing.
+                  value: "on"
                 - name: ADMIN_EMAIL
                   value: ned@devantler.tech
               volumeMounts:
