@@ -43,7 +43,16 @@ all of them.
 
 Before MX moves, the spam filter also needs its rules. They download from an
 unpinned upstream URL that egress blocks, and without rules every score is zero.
-Vendoring a pinned rules file restores scoring and the sender-domain blocklist.
+Stalwart 0.16.27 can import a copy pinned into the image instead, because
+`spamFilterRulesUrl` accepts a `file://` path, and spam-filter v3.0.2 is the
+last release in its rule format. That release also brings 17 DNS blocklists and
+a check that requests shortened links found in received mail. Egress allows DNS,
+so the blocklists would send sender addresses, the domains a message names and
+hashed sender addresses to their operators. Egress denies the link requests, so
+each such link would wait out a five-second timeout. 0.16.27 cannot import the
+rules with either turned off, so the import waits for a decision: accept both,
+or import a reviewed copy with the blocklists disabled and the link list left
+out (#5387).
 
 ## Not declared
 
