@@ -115,19 +115,35 @@ func TestHistorySnapshotAcceptsAnExamineWithoutTheReadOnlyCodeOnlyFromTheSource(
 	}
 }
 
-func TestHistorySnapshotRefusesAnExamineClaimingReadWrite(t *testing.T) {
+// The destination must never claim [READ-WRITE] for an EXAMINE. The source,
+// iCloud, does, so its observer reads the folder anyway and, as always, sends
+// only read commands.
+func TestHistorySnapshotReadWriteClaimRefusedOnlyWhereConfirmationIsRequired(t *testing.T) {
 	for name, server := range map[string]struct{ code, untagged string }{
 		"tagged":   {"READ-WRITE", examineStatus},
 		"untagged": {"", examineStatus + "* OK [READ-WRITE] opened\r\n"},
 	} {
-		for _, confirm := range []bool{false, true} {
-			t.Run(name, func(t *testing.T) {
-				address, roots, _ := scriptedIMAPServer(t, server.code, server.untagged)
-				if _, err := readHistorySnapshotWith(context.Background(), address, "example.com", "username", "password", roots, confirm); err == nil || err.Error() != "read-only" {
-					t.Fatalf("an EXAMINE claiming READ-WRITE was reported as %v", err)
+		t.Run(name+"/destination", func(t *testing.T) {
+			address, roots, _ := scriptedIMAPServer(t, server.code, server.untagged)
+			if _, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots); err == nil || err.Error() != "read-only" {
+				t.Fatalf("the destination observer accepted an EXAMINE claiming READ-WRITE: %v", err)
+			}
+		})
+		t.Run(name+"/source", func(t *testing.T) {
+			address, roots, verbs := scriptedIMAPServer(t, server.code, server.untagged)
+			got, err := readHistorySnapshotWith(context.Background(), address, "example.com", "username", "password", roots, false)
+			if err != nil {
+				t.Fatalf("the source observer refused iCloud's reply code as %v", err)
+			}
+			if got["INBOX"] != (historyFolder{messages: 2, uidNext: 5, uidValidity: 9}) {
+				t.Fatalf("wrong inventory %#v", got)
+			}
+			for _, verb := range verbs() {
+				if verb == "SELECT" || verb == "STORE" || verb == "EXPUNGE" || verb == "CLOSE" || verb == "FETCH" || verb == "COPY" || verb == "APPEND" {
+					t.Fatalf("observer sent %s", verb)
 				}
-			})
-		}
+			}
+		})
 	}
 }
 

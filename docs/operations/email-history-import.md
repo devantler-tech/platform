@@ -82,7 +82,7 @@ list, and no server reply, folder name or credential ever appears:
 | `delimiter` | A folder uses a hierarchy separator other than `/`. |
 | `folders` | An empty, oversized, duplicate or malformed folder list. |
 | `examine` | A read-only folder open failed, or its reply gave no message count (`* N EXISTS`), which would otherwise count the folder as empty. |
-| `read-only` | The server claimed a read-only open (EXAMINE) was read-write, in the tagged or an untagged reply, or the destination did not confirm the open with `[READ-ONLY]`. The source may omit that code, because iCloud does; the destination is this deployment's own server, which sends it. |
+| `read-only` | Destination only: the read-only open (EXAMINE) was not confirmed with `[READ-ONLY]`, or was claimed read-write in a tagged or untagged reply. The destination is this deployment's own server, which sends the code. The source's code is not checked: iCloud answers EXAMINE with a code other than `[READ-ONLY]`, and the observer sends only read commands. |
 | `uids` | A folder lacks UIDNEXT or UIDVALIDITY. |
 | `inbox` | No INBOX was listed. |
 
