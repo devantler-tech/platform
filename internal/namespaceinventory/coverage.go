@@ -79,7 +79,9 @@ func (r *reader) nativeCoverage(ctx context.Context, resources discovery) ([]ser
 		if remote && (item.Spec.Service.Name == "" || item.Spec.Service.Namespace == "") {
 			return nil, errors.New("aggregated API service binding is incomplete")
 		}
-		if remote && required[gv] {
+		// An Email recovery namespace is removed by its own invocation, not
+		// guarded by admission. Kubescape's derived scan records may go with it.
+		if remote && required[gv] && (!r.scanRecords || !scanStorage(item)) {
 			return nil, errors.New("namespace deletion admission is unverified for a remote API backend")
 		}
 		result = append(result, serviceRegistration{item.Metadata.Name, item.Metadata.UID, gv, item.Metadata.ResourceVersion, remote})

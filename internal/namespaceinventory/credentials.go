@@ -66,6 +66,41 @@ func LoadProtectedClient(getenv func(string) string) (*http.Client, *url.URL, er
 	return newProductionClient(config)
 }
 
+var emailRecoveryCredentialPath = regexp.MustCompile(`^/dev/shm/email-data-recovery\.[A-Za-z0-9]+/kubeconfig$`)
+
+// LoadEmailRecoveryClient reads only the private memory-backed credential of
+// the confirmed first-attempt Email recovery dispatch. It shares credential
+// validation, never authorization, with the benchmark observer.
+func LoadEmailRecoveryClient(getenv func(string) string) (*http.Client, *url.URL, error) {
+	for key, want := range map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
+		"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted",
+		"GITHUB_ACTOR":                "devantler",
+		"GITHUB_WORKFLOW_REF":         "devantler-tech/platform/.github/workflows/verify-email-data-recovery.yaml@refs/heads/main",
+		"EMAIL_DATA_RECOVERY_CONFIRM": "verify-email-data-recovery",
+	} {
+		if getenv(key) != want {
+			return nil, nil, errors.New("protected Email recovery dispatch is unverified")
+		}
+	}
+	if !sourcePattern.MatchString(getenv("GITHUB_SHA")) || !runPattern.MatchString(getenv("GITHUB_RUN_ID")) {
+		return nil, nil, errors.New("email recovery source and run are required")
+	}
+	path := getenv("KUBECONFIG")
+	if !emailRecoveryCredentialPath.MatchString(path) || filepath.Clean(path) != path {
+		return nil, nil, errors.New("fixed private Email recovery kubeconfig is required")
+	}
+	raw, err := readPrivateKubeconfig(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	config, err := clientcmd.Load(raw)
+	if err != nil {
+		return nil, nil, errors.New("protected Email recovery kubeconfig could not be decoded")
+	}
+	return newProductionClient(config)
+}
+
 // LoadBenchmarkAdmissionClient admits the protected V1 benchmark, native seed,
 // or the explicitly confirmed recovery of originalRun. The caller must first
 // join the selected address to its serving process and verified Hetzner server.

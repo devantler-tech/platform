@@ -55,6 +55,11 @@ func (d *recoveryDriver) preflight(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Disposal needs the complete inventory; without its credential no
+	// recovery starts, rather than leaving a copy that cannot be removed.
+	if err = d.useCompleteInventory(d.env); err != nil {
+		return "", err
+	}
 	velero, found, err := d.lookup(ctx, "Deployment", "velero", "velero")
 	if err != nil || !found {
 		return "", errors.New("backup-controller")

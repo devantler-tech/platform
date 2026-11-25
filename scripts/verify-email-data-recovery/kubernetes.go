@@ -71,6 +71,7 @@ func veleroReadResource(kind string) string {
 type recoveryDriver struct {
 	i                          invocation
 	k                          kubernetes
+	env                        func(string) string
 	refs                       map[string]ownedReference
 	uncertain                  bool
 	started                    bool
@@ -81,6 +82,9 @@ type recoveryDriver struct {
 	source                     sourceIdentity
 	namespacePolicies          map[string]namespacePolicy
 	completeNamespaceInventory func(context.Context) error
+	// created holds the UID of every object this invocation created, including
+	// those it has since removed, so reports about them stay attributable.
+	created map[string]bool
 	// protection is set only for disposal of a retained copy; see verifyProtection.
 	protection protectionPoint
 }
@@ -146,6 +150,10 @@ func (d *recoveryDriver) create(ctx context.Context, o object) (ownedReference, 
 		return ref, errors.New("create-identity")
 	}
 	d.refs[ref.key()] = ref
+	if d.created == nil {
+		d.created = map[string]bool{}
+	}
+	d.created[ref.uid] = true
 	if !admittedRecoveryObject(o, actual) {
 		d.uncertain = true
 		return ref, errors.New("admission")

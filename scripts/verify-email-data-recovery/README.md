@@ -42,6 +42,25 @@ Cleanup recognizes only the four platform-generated network policies whose
 specs match this checkout and whose Kyverno labels name the created namespace
 UID and expected rule. Standard and Cilium policies are both inventoried;
 unknown policies or changed specs retain the namespace and recovery key.
+It also recognizes what the platform adds to every namespace: Kyverno's
+`default-limitrange` and `default-resourcequota`, bound by their generate
+labels to the created namespace UID and to the `add-default-limitrange` and
+`add-ns-quota` rules, and trust-manager's `cloudflare-origin-ca` ConfigMap,
+bound to its controlling Bundle's UID with its single CA key.
+
+Before every disposal step that could remove the namespace, the driver also
+reads its complete inventory: every namespaced, deletable resource of every
+served API version, metadata only, through the dispatch's private credential.
+Each object must be one this invocation created, with its created UID, or one
+of the platform objects above. Runtime records about those objects are
+accepted by exact kind and served resource: Events, Kyverno policy and
+ephemeral reports named after a known object's UID, and Cilium's endpoint for
+the created reader. Kubescape's storage is a remote aggregated API; only its
+exact `v1beta1.spdx.softwarecomposition.kubescape.io` registration, backed by
+`kubescape/storage`, and its workload scan-record kinds are accepted, and only
+for this invocation's namespace. Any other object, kind, registration or failed
+read retains the namespace and its key. Without the private credential no
+recovery starts.
 
 Any failed, ambiguous or interrupted operation is unverified. The driver retains
 uncertain resources and keys for inspection instead of retrying, adopting a

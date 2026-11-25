@@ -32,7 +32,7 @@ func (a *cleanupAPI) call(_ context.Context, input []byte, args ...string) ([]by
 		}
 		if strings.Contains(kind, ",") {
 			out := []any{}
-			resourceNames := map[string]string{"Pod": "pods", "PersistentVolumeClaim": "persistentvolumeclaims", "Secret": "secrets", "ConfigMap": "configmaps", "Service": "services", "ServiceAccount": "serviceaccounts", "Deployment": "deployments.apps", "StatefulSet": "statefulsets.apps", "DaemonSet": "daemonsets.apps", "Job": "jobs.batch", "CronJob": "cronjobs.batch", "CiliumNetworkPolicy": "ciliumnetworkpolicies.cilium.io", "NetworkPolicy": "networkpolicies.networking.k8s.io"}
+			resourceNames := map[string]string{"Pod": "pods", "PersistentVolumeClaim": "persistentvolumeclaims", "Secret": "secrets", "ConfigMap": "configmaps", "Service": "services", "ServiceAccount": "serviceaccounts", "Deployment": "deployments.apps", "StatefulSet": "statefulsets.apps", "DaemonSet": "daemonsets.apps", "Job": "jobs.batch", "CronJob": "cronjobs.batch", "CiliumNetworkPolicy": "ciliumnetworkpolicies.cilium.io", "NetworkPolicy": "networkpolicies.networking.k8s.io", "LimitRange": "limitranges", "ResourceQuota": "resourcequotas"}
 			for _, o := range a.objects {
 				if resource, known := resourceNames[text(o, "kind")]; known && text(child(o, "metadata"), "namespace") == ns && strings.Contains(","+kind+",", ","+resource+",") {
 					out = append(out, o)

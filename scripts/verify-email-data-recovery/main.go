@@ -33,7 +33,7 @@ func runRecovery(ctx context.Context, env func(string) string, k kubernetes, out
 		_, _ = fmt.Fprintln(output, "EMAIL_DATA_RECOVERY=UNVERIFIED stage=dispatch cleanup=NOT_STARTED")
 		return 2
 	}
-	d := &recoveryDriver{i: i, k: k, refs: map[string]ownedReference{}, stage: "preflight"}
+	d := &recoveryDriver{i: i, k: k, env: env, refs: map[string]ownedReference{}, stage: "preflight"}
 	runCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	if err = d.execute(runCtx); err != nil {
