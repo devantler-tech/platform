@@ -1,0 +1,32 @@
+# Bulwark's admin config directory, mounted read-only (ADMIN_CONFIG_READONLY),
+# so nothing changes it but a reviewed commit. Settings Bulwark also reads from
+# the environment live in deployment.yaml.
+#
+# config.json: the setup wizard counts as done, so it never opens.
+#
+# policy.json: the maintainer's session limits (#6662), in the schema of
+# Bulwark 1.22.0 (lib/admin/organisation-policy.ts; bulwarkmail.org
+# docs/guides/organisation/sessions): signed out after 15 minutes without
+# activity and 12 hours after signing in, with the default 60-second warning.
+# The browser enforces both; the server also refuses to restore or renew a
+# session older than 12 hours. Every other policy key keeps its default.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bulwark-admin-config
+  namespace: bulwark
+data:
+  config.json: |
+    {
+      "setupComplete": true
+    }
+  policy.json: |
+    {
+      "organisation": {
+        "session": {
+          "idleMinutes": 15,
+          "maxHours": 12,
+          "warnSeconds": 60
+        }
+      }
+    }

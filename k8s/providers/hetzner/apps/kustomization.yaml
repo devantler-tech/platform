@@ -5,6 +5,9 @@ resources:
   - ../../../bases/apps/
   # Platform-owned administration; public mail remains separately gated.
   - private-mail/
+  # Bulwark, the company mailbox's webmail (#6662): a third-party app, so
+  # production only (ADR 0016), and launched dark, with no route yet.
+  - bulwark/
   # The product owns deploy/documentation; this production-only tenant registers
   # the signed source and an identity limited to its DNS endpoint resources.
   - khoist-documentation/

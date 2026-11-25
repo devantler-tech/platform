@@ -1,0 +1,9 @@
+# Bulwark, the webmail for the company mailbox (#6662). A third-party app,
+# so production only (ADR 0016). See docs/operations/bulwark.md.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bulwark
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

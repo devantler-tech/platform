@@ -1,0 +1,17 @@
+# Nothing routes here yet: the route behind GitHub SSO arrives with #6662's
+# swap step, together with the ingress rule that admits it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bulwark
+  namespace: bulwark
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: bulwark
+    app.kubernetes.io/instance: bulwark
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
