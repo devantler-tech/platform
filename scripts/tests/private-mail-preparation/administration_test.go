@@ -83,6 +83,7 @@ func TestAdministrationSeparatesInitializationAuthority(t *testing.T) {
 		"settings.json": "private-mail-settings", "administrator-password": "private-mail-admin",
 		"maintainer-password": "private-mail-maintainer", "agent-password": "private-mail-agent",
 		"relay-username": "private-mail-relay", "relay-password": "private-mail-relay",
+		"maintainer-aliases": "private-mail-aliases",
 	}) {
 		t.Fatal("initialization must consume the durable read-back credentials, never a replaceable generator cache")
 	}

@@ -20,7 +20,8 @@ patches:
   - path: patches/isolate-administration.yaml
 images:
   - name: ghcr.io/devantler-tech/platform-private-mail-bootstrap
-    # Signed main publication b4253e8d38dc with the secure Stalwart defaults
-    # (#6261). Its only change from b9aeb4ed74a2, the SES relay route, is the
-    # declared defaults and their read-back (docs/operations/email-secure-defaults.md).
-    digest: sha256:05ce801246615043ecd613c082f7b79216131f49831462a83e5c2afff237d9c1
+    # Signed main publication 441f8e038378 (Stalwart 0.16.27). It reads the
+    # maintainer's receiving aliases from their OpenBao source (#6635). It
+    # also carries the inert history importer subcommand (#6435) and Caddy
+    # 2.11.9 for the client proxy (#6565).
+    digest: sha256:40dd263d202a4f2077d274b8c7adff74d85f7eaeb5c55493c84f5d177610bde2
