@@ -218,6 +218,8 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
         endswith("@portal-preview-db-rw.business-site-dev.svc.cluster.local:5432/portal_preview?sslmode=verify-full&sslrootcert=/run/portal-migration/ca.crt"))) and
     (spec("ExternalSecret";"business-site-dev-runtime")|
       paths==["apps/business-site-dev/oidc","apps/business-site-dev/portal-db-ca","apps/business-site-dev/portal-web"] and
+      (.target.template.data["company-disclosure"]=="Preview only\nFictional company address" or
+        error("the preview runtime requires a two-line fictional company disclosure")) and
       .refreshInterval=="10m" and .target.template.data["portal-client-secret"]=="{{ .client_secret }}" and
       ([.data[]|select(.secretKey=="client_secret")]==[
         {secretKey:"client_secret",remoteRef:{key:"apps/business-site-dev/oidc",property:"client-secret",version:"1"}}
