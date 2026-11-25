@@ -129,7 +129,7 @@ docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
     test -x /usr/local/share/licenses/caddy || { echo IMAGE_ASSET_FAILURE=proxy-license-directory >&2; exit 1; }
     test -r /usr/local/share/licenses/caddy/LICENSE || { echo IMAGE_ASSET_FAILURE=proxy-license >&2; exit 1; }
     test -s /usr/local/share/stalwart/spam-filter-rules-v3.0.2.json || { echo IMAGE_ASSET_FAILURE=spam-rules >&2; exit 1; }
-    test ! -w /usr/local/share/stalwart/spam-filter-rules-v3.0.2.json || { echo IMAGE_ASSET_FAILURE=spam-rules-writable >&2; exit 1; }
+    [ "$(stat -c "%a %u" /usr/local/share/stalwart/spam-filter-rules-v3.0.2.json)" = "444 0" ] || { echo IMAGE_ASSET_FAILURE=spam-rules-mode >&2; exit 1; }
     test -r /usr/local/share/licenses/stalwart-spam-filter/LICENSE-MIT || { echo IMAGE_ASSET_FAILURE=spam-rules-license >&2; exit 1; }
   ' >"$scratch/image-assets.txt"
 [ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
