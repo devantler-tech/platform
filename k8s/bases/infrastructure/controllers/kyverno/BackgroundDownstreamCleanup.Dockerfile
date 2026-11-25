@@ -25,9 +25,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
        else test "$?" -eq 1; fi
 # The findings pipeline below must fail when any of its stages fails, not only the last one.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-# Only these exact module records are accepted. The three Kyverno v1.19.2 records have the same
-# adjudication and removal as scripts/tests/tenant-webapp-admission/.govulncheck-allow.txt
-# (platform#5154). GO-2026-5932 names x/crypto/openpgp and has no fixed version; the symbol check
+# Only these exact module records are accepted. GO-2025-3615 is the Kyverno v1.19.2 record with the
+# same adjudication and removal as scripts/tests/tenant-webapp-admission/.govulncheck-allow.txt
+# (platform#5154); Go corrected the ranges of GO-2026-5337 and GO-2026-5594 on 2026-11-23. GO-2026-5932 names x/crypto/openpgp and has no fixed version; the symbol check
 # above fails the build if that package is ever compiled in. The list must match exactly: another
 # advisory fails the build, and so does an empty list, because that means the report was not read
 # or a record needs removing here.
@@ -39,7 +39,7 @@ RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
     && grep -Eq '"pkgSymbols": *\[[^]]+\]' /tmp/binary-extract.json \
     && grep -Eo '"osv": *"[^"]+"' /tmp/binary-scan.json | grep -Eo 'GO-[0-9]+-[0-9]+' | sort -u > /tmp/binary-findings \
     && cat /tmp/binary-findings \
-    && test "$(tr '\n' ' ' < /tmp/binary-findings)" = 'GO-2025-3615 GO-2026-5337 GO-2026-5594 GO-2026-5932 '
+    && test "$(tr '\n' ' ' < /tmp/binary-findings)" = 'GO-2025-3615 GO-2026-5932 '
 
 FROM reg.kyverno.io/kyverno/background-controller:v1.19.2@sha256:c46e124f21ef8a6bb4b48de57106808b1007edcd5ddd4ff7df5d23b9efa60ce2
 COPY --from=builder --chmod=0755 /out/background-controller /ko-app/background-controller

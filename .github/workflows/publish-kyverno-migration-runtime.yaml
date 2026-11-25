@@ -24,7 +24,7 @@ concurrency:
 
 env:
   SOURCE_COMMIT: e63308f1e16c05cd009ac4864be6ec25c66b49be
-  PATCHED_SOURCE_TREE: a21cf56e1e85e371753d0a6d4ca3e0a65e235dd2
+  PATCHED_SOURCE_TREE: 9c65359098649af23e56fbf9ed0938f3d16cd982
   IMAGE: ghcr.io/devantler-tech/platform-kyverno-migrate
   IMAGE_TAG: v1.19.2-migration.1-${{ github.sha }}
 
