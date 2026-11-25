@@ -201,9 +201,16 @@ for provider in "${providers[@]}"; do
   fi
   # The reads fail the test when they fail; a grep that finds nothing is the
   # expected case, so only the greps may come back empty.
-  # The chart ignores config.configFile when config.existingConfig is set or
-  # alphaConfig is enabled, and envFrom can bring OAUTH2_PROXY_COOKIE_* in from
-  # a ConfigMap or Secret this test cannot read, so none of those may be used.
+  # These checks hold the cookie to the HelmRelease's own spec.values, so
+  # everything else that could change what the pod reads is refused: the chart
+  # ignores config.configFile when config.existingConfig is set, alphaConfig is
+  # enabled or a --config/--alpha-config flag names another file; envFrom can
+  # bring OAUTH2_PROXY_COOKIE_* in from a ConfigMap or Secret; and Flux merges
+  # spec.valuesFrom over the values and applies spec.postRenderers to the
+  # rendered Deployment.
+  o2p_release="$(yq eval -N 'select(.kind == "HelmRelease" and .metadata.name == "oauth2-proxy" and .metadata.namespace == "oauth2-proxy") | .spec' "${rendered}")"
+  o2p_values_from_count="$(yq eval -N '(.valuesFrom // []) | length' - <<<"${o2p_release}")"
+  o2p_post_renderer_count="$(yq eval -N '(.postRenderers // []) | length' - <<<"${o2p_release}")"
   o2p_cookie_name_value="$(yq eval -N '.config.cookieName // ""' - <<<"${o2p}")"
   o2p_existing_config="$(yq eval -N '.config.existingConfig // ""' - <<<"${o2p}")"
   o2p_alpha_config="$(yq eval -N '.alphaConfig.enabled // false' - <<<"${o2p}")"
@@ -215,6 +222,9 @@ for provider in "${providers[@]}"; do
     [[ -z "${o2p_existing_config}" ]] || echo config.existingConfig
     [[ "${o2p_alpha_config}" == false ]] || echo alphaConfig.enabled
     [[ "${o2p_env_from_count}" == 0 ]] || echo envFrom
+    [[ "${o2p_values_from_count}" == 0 ]] || echo spec.valuesFrom
+    [[ "${o2p_post_renderer_count}" == 0 ]] || echo spec.postRenderers
+    { grep -Eo '(^|[^[:alnum:]_])(alpha-)?config([[:space:]]*:|=)' <<<"${o2p_args}" || true; } | sed 's/.*/extraArgs --config or --alpha-config/'
     { grep -Eo 'cookie[-_](name|secure|domains?|path)' <<<"${o2p_args}" || true; } | sed 's/^/extraArgs /'
     { grep -E '^OAUTH2_PROXY_COOKIE_(NAME|SECURE|DOMAINS?|PATH)$' <<<"${o2p_env_names}" || true; } | sed 's/^/extraEnv /'
   )"
