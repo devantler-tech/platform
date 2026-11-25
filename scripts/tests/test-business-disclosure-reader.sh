@@ -209,6 +209,8 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
         {name:"coroot_monitor",ensure:"present",login:true,inRoles:["pg_monitor"],
           passwordSecret:{name:"portal-preview-db-coroot-monitor"}}] and
       .certificates.serverAltDNSNames==["portal-preview-db-rw.business-site-dev.svc.cluster.local"]) and
+    (spec("ExternalSecret";"business-site-dev-runtime").target.template.data["company-disclosure"] ==
+      "Preview address\nFictional locality") and
     (spec("PushSecret";"portal-preview-db-ca")|
       .selector.secret.name=="portal-preview-db-ca" and
       .data==[{match:{secretKey:"ca.crt",remoteRef:{remoteKey:"apps/business-site-dev/portal-db-ca",property:"ca"}}}]) and
