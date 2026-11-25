@@ -14,8 +14,7 @@ import (
 
 // scriptedIMAPServer answers a fixed conversation over TLS: one INBOX whose
 // EXAMINE reply sends the given untagged lines and ends with the given tagged
-// response code ("" for none, as iCloud sends). It records every command verb
-// it receives.
+// response code ("" for none). It records every command verb it receives.
 func scriptedIMAPServer(t *testing.T, examineCode string, untagged string) (string, *x509.CertPool, func() []string) {
 	t.Helper()
 	certificate := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -85,8 +84,23 @@ func scriptedIMAPServer(t *testing.T, examineCode string, untagged string) (stri
 // examineStatus is the untagged part of a complete EXAMINE reply.
 const examineStatus = "* 2 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n"
 
-// The source, iCloud, omits the [READ-ONLY] code, so its observer accepts a
-// reply without it. The destination's observer requires the code.
+// assertOnlyReadCommands requires that the observer sent nothing but the
+// commands it needs to read folder status: an allowlist, so a new verb (a UID
+// command, MOVE, DELETE and so on) fails instead of slipping past a blocklist.
+// On the source this is the guarantee, since its reply code is not checked.
+func assertOnlyReadCommands(t *testing.T, verbs []string) {
+	t.Helper()
+	for _, verb := range verbs {
+		switch verb {
+		case "CAPABILITY", "LOGIN", "LIST", "EXAMINE", "LOGOUT":
+		default:
+			t.Fatalf("observer sent %s", verb)
+		}
+	}
+}
+
+// The source, iCloud, does not confirm EXAMINE with [READ-ONLY], so its
+// observer accepts a reply without it. The destination's observer requires it.
 func TestHistorySnapshotAcceptsAnExamineWithoutTheReadOnlyCodeOnlyFromTheSource(t *testing.T) {
 	address, roots, _ := scriptedIMAPServer(t, "", examineStatus)
 	if _, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots); err == nil || err.Error() != "read-only" {
@@ -106,28 +120,38 @@ func TestHistorySnapshotAcceptsAnExamineWithoutTheReadOnlyCodeOnlyFromTheSource(
 			if got["INBOX"] != (historyFolder{messages: 2, uidNext: 5, uidValidity: 9}) {
 				t.Fatalf("wrong inventory %#v", got)
 			}
-			for _, verb := range verbs() {
-				if verb == "SELECT" || verb == "STORE" || verb == "EXPUNGE" || verb == "CLOSE" || verb == "FETCH" {
-					t.Fatalf("observer sent %s", verb)
-				}
-			}
+			assertOnlyReadCommands(t, verbs())
 		})
 	}
 }
 
-func TestHistorySnapshotRefusesAnExamineClaimingReadWrite(t *testing.T) {
+// The destination must never claim [READ-WRITE] for an EXAMINE. The source,
+// iCloud, does, so its observer reads the folder anyway and, as always, sends
+// only read commands.
+func TestHistorySnapshotReadWriteClaimRefusedOnlyWhereConfirmationIsRequired(t *testing.T) {
 	for name, server := range map[string]struct{ code, untagged string }{
 		"tagged":   {"READ-WRITE", examineStatus},
 		"untagged": {"", examineStatus + "* OK [READ-WRITE] opened\r\n"},
+		// A confirmed open does not excuse an untagged read-write claim.
+		"untagged with a tagged confirmation": {"READ-ONLY", examineStatus + "* OK [READ-WRITE] opened\r\n"},
 	} {
-		for _, confirm := range []bool{false, true} {
-			t.Run(name, func(t *testing.T) {
-				address, roots, _ := scriptedIMAPServer(t, server.code, server.untagged)
-				if _, err := readHistorySnapshotWith(context.Background(), address, "example.com", "username", "password", roots, confirm); err == nil || err.Error() != "read-only" {
-					t.Fatalf("an EXAMINE claiming READ-WRITE was reported as %v", err)
-				}
-			})
-		}
+		t.Run(name+"/destination", func(t *testing.T) {
+			address, roots, _ := scriptedIMAPServer(t, server.code, server.untagged)
+			if _, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots); err == nil || err.Error() != "read-only" {
+				t.Fatalf("the destination observer accepted an EXAMINE claiming READ-WRITE: %v", err)
+			}
+		})
+		t.Run(name+"/source", func(t *testing.T) {
+			address, roots, verbs := scriptedIMAPServer(t, server.code, server.untagged)
+			got, err := readHistorySnapshotWith(context.Background(), address, "example.com", "username", "password", roots, false)
+			if err != nil {
+				t.Fatalf("the source observer refused iCloud's reply code as %v", err)
+			}
+			if got["INBOX"] != (historyFolder{messages: 2, uidNext: 5, uidValidity: 9}) {
+				t.Fatalf("wrong inventory %#v", got)
+			}
+			assertOnlyReadCommands(t, verbs())
+		})
 	}
 }
 
