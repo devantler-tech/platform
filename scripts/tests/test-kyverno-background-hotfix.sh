@@ -19,7 +19,7 @@ fail() {
 [[ "$(yq -r '.jobs.publish.if' "$workflow")" == "github.event_name == 'push' && github.ref == 'refs/heads/main'" &&
 "$(yq -r '.jobs.publish.needs' "$workflow")" == verify ]] || fail 'publish only tested main pushes'
 [[ "$(yq -r '.env.SOURCE_COMMIT' "$workflow")" == e63308f1e16c05cd009ac4864be6ec25c66b49be &&
-"$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == a9fcf39f19241ac127b2a9d8a70eadae54c22de8 &&
+"$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == 416df7484bb9024cebda4ea29f80b60f3f14b536 &&
 "$(yq -r '.env.IMAGE' "$workflow")" == ghcr.io/devantler-tech/platform-kyverno-background ]] || fail 'source or destination changed'
 # This expression belongs to GitHub, not the shell.
 # shellcheck disable=SC2016
@@ -82,7 +82,7 @@ grep -Fq "grep -Eq '\"scan_level\": *\"symbol\"' /tmp/binary-scan.json" "$docker
 grep -Fq 'timeout 300s govulncheck -mode=extract /out/background-controller > /tmp/binary-extract.json' "$dockerfile" || fail 'symbol extraction proof missing'
 grep -Fq "grep -Eq '\"pkgSymbols\": *\\[[^]]+\\]' /tmp/binary-extract.json" "$dockerfile" || fail 'non-empty symbol proof missing'
 # shellcheck disable=SC2016
-grep -Fq "test \"\$(tr '\\n' ' ' < /tmp/binary-findings)\" = 'GO-2025-3615 GO-2026-5337 GO-2026-5594 GO-2026-5932 '" "$dockerfile" || fail 'accepted advisories changed'
+grep -Fq "test \"\$(tr '\\n' ' ' < /tmp/binary-findings)\" = 'GO-2025-3615 GO-2026-5932 '" "$dockerfile" || fail 'accepted advisories changed'
 grep -Fq 'FROM reg.kyverno.io/kyverno/background-controller:v1.19.2@sha256:c46e124f21ef8a6bb4b48de57106808b1007edcd5ddd4ff7df5d23b9efa60ce2' "$dockerfile" || fail 'runtime release pin changed'
 grep -Fq 'RUN ["/ko-app/background-controller", "--help"]' "$dockerfile" || fail 'real executable check missing'
 grep -Fq 'scripts/tests/test-kyverno-background-hotfix.sh' "$root/.github/workflows/ci.yaml" || fail 'required CI does not run this guard'

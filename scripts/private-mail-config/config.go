@@ -36,6 +36,31 @@ type inputs struct {
 	mailProxySource string
 }
 
+// senderAuth declares the inbound sender checks. SPF and reverse-IP judge the
+// client address, which the inbound listener takes from its load balancer's
+// PROXY header only when the deployment names that load balancer. Without it the
+// address could be the load balancer's own, so those checks stay off and DMARC
+// stays relaxed rather than refusing mail on a judgement of the wrong host. With
+// it, SPF and reverse-IP stay relaxed (strict refuses a domain without SPF and a
+// host without matching reverse DNS), and strict DMARC refuses a failing message
+// only when its domain publishes reject.
+func senderAuth(inbound func(value, otherwise string) map[string]any, realClientAddress bool) map[string]any {
+	// Upstream keys these on local port 25, so even "off" is declared.
+	off := func() map[string]any { return map[string]any{"match": map[string]any{}, "else": "disable"} }
+	checks := map[string]any{
+		"dkimVerify": inbound("relaxed", "disable"), "dmarcVerify": inbound("relaxed", "disable"),
+		"arcVerify": inbound("relaxed", "disable"), "dkimStrict": true,
+		"spfEhloVerify": off(), "spfFromVerify": off(), "reverseIpVerify": off(),
+	}
+	if realClientAddress {
+		checks["dmarcVerify"] = inbound("strict", "disable")
+		checks["spfEhloVerify"] = inbound("relaxed", "disable")
+		checks["spfFromVerify"] = inbound("relaxed", "disable")
+		checks["reverseIpVerify"] = inbound("relaxed", "disable")
+	}
+	return checks
+}
+
 var domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 var localPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,31}$`)
 var passwordPattern = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
@@ -259,12 +284,8 @@ func render(v inputs) ([]byte, error) {
 		update("MtaStageEhlo", map[string]any{"rejectNonFqdn": inbound("true", "false")}),
 		update("MtaExtensions", map[string]any{"vrfy": expression("false"), "expn": expression("false")}),
 		// Verification takes bare constants: a quoted value is ignored and the
-		// server falls back to relaxed on every listener. SPF and reverse-IP
-		// checks wait for the real client address on the inbound listener.
-		update("SenderAuth", map[string]any{
-			"dkimVerify": inbound("relaxed", "disable"), "dmarcVerify": inbound("relaxed", "disable"),
-			"arcVerify": inbound("relaxed", "disable"), "dkimStrict": true,
-		}),
+		// server falls back to relaxed on every listener.
+		update("SenderAuth", senderAuth(inbound, v.mailProxySource != "")),
 		// Bans expire after a day; upstream bans never expire.
 		update("Security", map[string]any{"authBanPeriod": day, "abuseBanPeriod": day, "loiterBanPeriod": day, "scanBanPeriod": day}),
 		// Without egress Pyzor lookups only time out, and they would also send
@@ -306,6 +327,17 @@ func render(v inputs) ([]byte, error) {
 		}),
 		update("Imap", map[string]any{"allowPlainTextAuth": false}),
 	}...)
+	// The spam filter imports the image's copy of the pinned rules, not the
+	// unpinned upstream release that egress blocks. The copy is in the 0.16
+	// rule format, so the 1.x candidate declares its own upstream default
+	// instead. This only keeps an update-rules task on a migrated store from
+	// reading the 0.16 copy again. Rules it already stores stay until the
+	// candidate pins spam-filter v3.0.4 and runs that task.
+	spamRulesURL := "file://" + spamRulesPath
+	if profile.v1 {
+		spamRulesURL = upstreamSpamRulesURL
+	}
+	operations = append(operations, update("SpamSettings", map[string]any{"spamFilterRulesUrl": spamRulesURL}))
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
 	encoder.SetEscapeHTML(false)

@@ -67,6 +67,25 @@ on a schedule. To copy:
    `MAIL_HISTORY_IMPORT=COMPLETE folders=<n> messages=<n> source=PRESERVED routing=UNCHANGED`
    is the receipt to record on #5481.
 
+A failed folder check reports which step refused, as
+`MAIL_HISTORY_IMPORT=INCOMPLETE stage=<side>-<step>`. The side is `source` (the
+existing provider) or `destination` (this server). The step is one of a fixed
+list, and no server reply, folder name or credential ever appears:
+
+| Step | Meaning |
+| --- | --- |
+| `connect` | No TCP connection: name resolution or the network policy. |
+| `tls` | The handshake failed: certificate trust, host name or a stalled peer. |
+| `greeting` | The server's IMAP greeting was unusable. |
+| `login` | The server refused the sign-in: check the username (for iCloud, the `@icloud.com` address) and the app-specific password. |
+| `list` | The folder listing failed. |
+| `delimiter` | A folder uses a hierarchy separator other than `/`. |
+| `folders` | An empty, oversized, duplicate or malformed folder list. |
+| `examine` | A read-only folder open failed, or its reply gave no message count (`* N EXISTS`), which would otherwise count the folder as empty. |
+| `read-only` | Destination only: the read-only open (EXAMINE) was not confirmed with `[READ-ONLY]`, or was claimed read-write in a tagged or untagged reply. The destination is this deployment's own server, which sends the code. The source's code is not checked: iCloud answers EXAMINE with a code other than `[READ-ONLY]`, and the observer sends only read commands. |
+| `uids` | A folder lacks UIDNEXT or UIDVALIDITY. |
+| `inbox` | No INBOX was listed. |
+
 A Job created this way is outside the Flux inventory, so a long copy never holds
 a deploy and a reconciliation cannot prune it. Repeat the operation to continue
 an incomplete copy; it refuses while an earlier copy is still running.
@@ -81,7 +100,9 @@ files and are never placed in subprocess arguments.
 The operation proceeds in this order:
 
 1. Independently read every selectable folder's message count, UID validity and
-   next UID on the source and destination, using read-only `EXAMINE` commands.
+   next UID on the source and destination, using `EXAMINE`, the read-only open.
+   The destination must confirm each open as read-only; the source's reply code
+   is not checked (iCloud does not confirm it).
 2. Copy all folders and messages with imapsync. Source and destination expunges,
    deletion, ACL changes and updates of existing destination flags are disabled.
    A copied message's pending-deletion flag is removed so it remains readable.
@@ -122,6 +143,6 @@ receives the mailbox data.
 
 The independent inventory client is the MIT-licensed
 [`go-imap` v1.2.1](https://github.com/emersion/go-imap/tree/v1.2.1). It sends only
-login, folder listing, read-only selection and logout; it neither fetches bodies
-nor sends mailbox mutation commands. Its connections have an absolute deadline,
+login, folder listing, `EXAMINE` and logout; it neither fetches bodies nor sends
+mailbox mutation commands, and the tests require exactly that list of commands. Its connections have an absolute deadline,
 including while waiting for a server greeting.

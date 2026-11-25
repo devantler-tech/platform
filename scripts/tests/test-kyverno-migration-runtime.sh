@@ -19,7 +19,7 @@ fail() {
 [[ "$(yq -r '.jobs.publish.if' "$workflow")" == "github.event_name == 'push' && github.ref == 'refs/heads/main'" &&
 "$(yq -r '.jobs.publish.needs' "$workflow")" == verify ]] || fail 'only tested main pushes may publish'
 [[ "$(yq -r '.env.SOURCE_COMMIT' "$workflow")" == e63308f1e16c05cd009ac4864be6ec25c66b49be &&
-"$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == a21cf56e1e85e371753d0a6d4ca3e0a65e235dd2 &&
+"$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == 9c65359098649af23e56fbf9ed0938f3d16cd982 &&
 "$(yq -r '.env.IMAGE' "$workflow")" == ghcr.io/devantler-tech/platform-kyverno-migrate ]] || fail 'source or destination changed'
 # shellcheck disable=SC2016
 [[ "$(yq -r '.env.IMAGE_TAG' "$workflow")" == 'v1.19.2-migration.1-${{ github.sha }}' ]] || fail 'immutable image tag missing'
@@ -63,7 +63,7 @@ grep -Fq "grep -Eq '\"scan_level\": *\"symbol\"' /tmp/binary-scan.json" "$docker
 grep -Fq 'timeout 120s govulncheck -mode=extract /out/kubectl-kyverno > /tmp/binary-extract.json' "$dockerfile" || fail 'symbol extraction proof missing'
 grep -Fq "grep -Eq '\"pkgSymbols\": *\\[[^]]+\\]' /tmp/binary-extract.json" "$dockerfile" || fail 'non-empty symbol proof missing'
 # shellcheck disable=SC2016
-grep -Fq "test \"\$(tr '\\n' ' ' < /tmp/binary-findings)\" = 'GO-2025-3615 GO-2026-5337 GO-2026-5594 '" "$dockerfile" || fail 'accepted advisories changed'
+grep -Fq "test \"\$(tr '\\n' ' ' < /tmp/binary-findings)\" = 'GO-2025-3615 '" "$dockerfile" || fail 'accepted advisories changed'
 # shellcheck disable=SC2016
 grep -Fq 'test "$(go version /out/kubectl-kyverno)" = "/out/kubectl-kyverno: go1.26.11"' "$dockerfile" || fail 'actual compiler proof missing'
 # shellcheck disable=SC2016

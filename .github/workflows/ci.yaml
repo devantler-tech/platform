@@ -171,7 +171,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
-    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@cd371c6003deca3a3b417b783da73e05b4bf690f # v22.0.0
+    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@f6b200f553bdd94e269c3ee60a93a09c2ad415e4 # v22.5.0
     with:
       apply-signed-fixes: false
       # Same measured eight-slot bound as the helper regression job above;
@@ -183,6 +183,7 @@ jobs:
       issues: write
       pull-requests: write
       code-quality: write
+      id-token: write # lets the shared Go validation (its signed-fix jobs) prove its identity to the GitHub token broker (ADR 0020)
 
   changes:
     name: 🔍 Detect Changes
@@ -860,7 +861,7 @@ jobs:
     permissions: {}
     steps:
       - name: "\U0001F6E1️ Harden runner"
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - name: "\U0001F4D1 Download immutable recovery source"
@@ -3702,7 +3703,7 @@ jobs:
       contents: read # checkout repository
     steps:
       - name: 🛡️ Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -3713,7 +3714,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@cd371c6003deca3a3b417b783da73e05b4bf690f # v22.0.0
+        uses: devantler-tech/.github/actions/validate-naming@f6b200f553bdd94e269c3ee60a93a09c2ad415e4 # v22.5.0
 
       - name: Confirm naming validation completed
         env:
@@ -4842,7 +4843,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@cd371c6003deca3a3b417b783da73e05b4bf690f # v22.0.0
+        uses: devantler-tech/.github/actions/aggregate-job-checks@f6b200f553bdd94e269c3ee60a93a09c2ad415e4 # v22.5.0
         with:
           check-workflow-startup: "true"
           job-results: >-
