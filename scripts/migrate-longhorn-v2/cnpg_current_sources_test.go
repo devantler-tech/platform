@@ -104,10 +104,11 @@ func TestCurrentDatabaseWorkflowUsesFixedChoicesAndNativeMainGuard(t *testing.T)
 		}
 		choices[choice] = true
 	}
-	if len(choices) != len(cnpgSources()) {
+	sources := cnpgSources()
+	if len(choices) != len(sources) {
 		t.Fatal("workflow choices differ from the database observation roster")
 	}
-	for _, source := range cnpgSources() {
+	for _, source := range sources {
 		if !choices[source.Name] {
 			t.Fatal("workflow omits a compiled owner", source.Name)
 		}
