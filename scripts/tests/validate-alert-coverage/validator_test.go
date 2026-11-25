@@ -173,24 +173,39 @@ spec: {}
 	}
 }
 
-// A kro Tenant generates its OCIRepository at reconcile time in the namespace
-// its spec.name gives, so that namespace needs watching although no
-// OCIRepository is rendered there; a Tenant without that name fails closed.
+// KRO generates a Tenant's OCIRepository in the namespace selected by the
+// Tenant graph at reconcile time. An instance named for a preview selects a
+// separate namespace, and an instance missing spec.name fails validation.
 func TestKroTenantDeclaresItsOCIRepositoryNamespace(t *testing.T) {
 	tests := []struct {
-		name   string
-		tenant string
-		want   string
+		name         string
+		resourceName string
+		tenant       string
+		want         string
 	}{
 		{
-			name:   "named",
-			tenant: "spec:\n  name: tenant-c\n",
-			want:   "- kind: OCIRepository\n      name: \"*\"\n      namespace: tenant-c",
+			name:         "named",
+			resourceName: "tenant-c",
+			tenant:       "spec:\n  name: tenant-c\n",
+			want:         "- kind: OCIRepository\n      name: \"*\"\n      namespace: tenant-c\n",
 		},
 		{
-			name:   "unnamed",
-			tenant: "spec: {}\n",
-			want:   "have no spec.name",
+			name:         "preview",
+			resourceName: "tenant-c-dev",
+			tenant:       "spec:\n  name: tenant-c\n  source:\n    reconcileApplication: false\n",
+			want:         "- kind: OCIRepository\n      name: \"*\"\n      namespace: tenant-c-dev\n",
+		},
+		{
+			name:         "different instance name",
+			resourceName: "tenant-c-alias",
+			tenant:       "spec:\n  name: tenant-c\n",
+			want:         "- kind: OCIRepository\n      name: \"*\"\n      namespace: tenant-c\n",
+		},
+		{
+			name:         "unnamed",
+			resourceName: "tenant-c",
+			tenant:       "spec: {}\n",
+			want:         "have no spec.name",
 		},
 	}
 	for _, tt := range tests {
@@ -201,7 +216,7 @@ func TestKroTenantDeclaresItsOCIRepositoryNamespace(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read resource fixture: %v", err)
 			}
-			resources = append(resources, []byte("---\napiVersion: kro.run/v1alpha1\nkind: Tenant\nmetadata:\n  name: tenant-c\n  namespace: flux-system\n"+tt.tenant)...)
+			resources = append(resources, []byte("---\napiVersion: kro.run/v1alpha1\nkind: Tenant\nmetadata:\n  name: "+tt.resourceName+"\n  namespace: flux-system\n"+tt.tenant)...)
 			writeFile(t, resourcePath, string(resources), 0o600)
 
 			result := fixture.runValidator(t, nil)

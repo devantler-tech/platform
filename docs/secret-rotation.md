@@ -27,8 +27,8 @@ reviewed PR.
     fleetdm DB/redis/license, actual-budget OIDC, cloudflare token, R2.
   - **SOPS → Flux postBuild substitution**: `${dex_client_secret}`,
     `${flux_web_client_secret}`, `${oauth2_proxy_cookie_secret}` etc. are still
-    read from `k8s/clusters/*/bootstrap/secret.enc.yaml`. **Dex
-    (the OIDC provider) and oauth2-proxy read from here, not OpenBao.**
+    read from `k8s/clusters/*/bootstrap/secret.enc.yaml`. Platform Dex and
+    oauth2-proxy use these entries. Customer Dex's preview client uses OpenBao.
 
 ### Validated finding — `refreshInterval` does **not** rotate generators
 
@@ -50,6 +50,32 @@ been unchanged for days and there are no live `GeneratorState` instances.
 | **Shared OIDC** | `dex_client_secret`, `flux_web_client_secret` | ❌ no native engine | Unify Dex + clients on OpenBao first; coordinated rotation (short consumer refresh) to avoid auth-mismatch skew |
 | **Provider tokens** | cloudflare, hcloud, github, R2 | ❌ external system-of-record | Scheduled job calling provider API → write OpenBao; mostly out of scope |
 | **Roots** | SOPS Age key, OpenBao unseal/root | ❌ | Manual runbook + calendar reminder |
+
+## Business Site preview OIDC rotation
+
+The preview client uses a create-only OpenBao entry. Dex and the portal pin the
+same KV version. Dex loads its immutable Secret at startup. The portal's other
+runtime inputs can refresh on schedule while the OIDC credential stays pinned.
+The initial pinned rollout creates a separate immutable Secret and keeps the
+existing preview credential projection through rollout and sign-in verification.
+Retire the original projection in a later reviewed change after the rollback
+window closes and no workload references it.
+
+1. Provision a successor client ID and a new OpenBao entry with the declarative
+   password generator. Give only the preview readers access to the successor
+   entry and create a new immutable Dex Secret pinned to its create-only
+   version. Keep the active client and its inputs in place.
+2. Add the successor to Dex with the existing preview callback. Roll Dex through
+   protected GitOps and verify all replicas are Ready with the successor
+   configured before changing the portal.
+3. In a subsequent rollout, update the preview portal's client ID and pinned
+   credential reference together in its runtime ExternalSecret. Complete an
+   authorized preview sign-in while the previous client remains available.
+   Rollback switches both portal inputs back to the previous pair.
+4. After the rollback window closes and in-flight sign-ins finish, remove the
+   previous Dex registration and its matching `envVars` entry. Verify all Dex
+   replicas become Ready before retiring the previous Secret and its
+   ExternalSecret in a separate rollout.
 
 ## OpenBao-native rotation (chosen mechanism)
 

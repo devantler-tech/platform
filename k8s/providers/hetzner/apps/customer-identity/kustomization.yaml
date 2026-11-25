@@ -30,6 +30,7 @@ resources:
   - database-dex.yaml
   - external-secret-dex-portal-client.yaml
   - external-secret-dex-preview-client.yaml
+  - external-secret-dex-preview-client-v1.yaml
   - secret-store-preview-dex.yaml
   - service-account-preview-dex-secrets.yaml
   - helm-repository-dex.yaml

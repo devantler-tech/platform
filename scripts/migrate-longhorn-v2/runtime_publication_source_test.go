@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -22,6 +25,24 @@ func runtimePublicationSourceFixture(t *testing.T) ([]byte, []byte) {
 		stream = append(stream, encoded...)
 	}
 	return config, stream
+}
+
+func TestRuntimePublicationBindsRenderedProductionRoots(t *testing.T) {
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skip("kubectl is required to render the production roots")
+	}
+	root := filepath.Join("..", "..")
+	config, err := os.ReadFile(filepath.Join(root, "ksail.prod.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrappers, err := inventoryExecuteCommand(t.Context(), "kubectl", "kustomize", filepath.Join(root, "k8s", "clusters", "prod"))
+	if err != nil {
+		t.Fatalf("render production roots: %v", err)
+	}
+	if err := runtimePublicationSource(config, wrappers); err != nil {
+		t.Fatalf("publication guard rejected the rendered production roots: %v", err)
+	}
 }
 
 func TestRuntimePublicationUsesActualProducerAndFluxLayers(t *testing.T) {
