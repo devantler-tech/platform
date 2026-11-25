@@ -22,8 +22,11 @@ patches:
   - path: patches/isolate-administration.yaml
 images:
   - name: ghcr.io/devantler-tech/platform-private-mail-bootstrap
-    # Signed main publication 441f8e038378 (Stalwart 0.16.27). It reads the
-    # maintainer's receiving aliases from their OpenBao source (#6635). It
-    # also carries the inert history importer subcommand (#6435) and Caddy
-    # 2.11.9 for the client proxy (#6565).
-    digest: sha256:40dd263d202a4f2077d274b8c7adff74d85f7eaeb5c55493c84f5d177610bde2
+    # Signed main publication cec94ffd08af (Stalwart 0.16.27). Since the
+    # serving b4253e8d38dc image it reads the maintainer's receiving aliases
+    # from their OpenBao source (#6635); verifies SPF and reverse IP and
+    # enforces DMARC on inbound SMTP behind the named load balancer (#6647);
+    # and imports the pinned spam filter rules from the image, without the
+    # shortened-link check (#6651). It also carries the inert history
+    # importer subcommand (#6435) and Caddy 2.11.9 for the client proxy (#6565).
+    digest: sha256:c00cd848d47cab10f60301facba02387cf34832f7d560cfaf206a008ed9e0ff9
