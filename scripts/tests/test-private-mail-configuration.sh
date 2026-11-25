@@ -545,11 +545,15 @@ echo 'PASS: remote mail is routed through the SES relay with required, verified 
 # The first normal start imports the spam filter rules from the image's derived
 # copy, with no network. Wait for the import, then require every rule, tag, file
 # extension, DNS blocklist and HTTP list, and the lookup keys without the
-# shortened-link list. A failed request is retried like an unfinished import.
+# shortened-link list. A failed request is retried like an unfinished import,
+# and the whole wait, requests included, ends 60 seconds after it starts.
 printf '%s' '{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":[["x:SpamRule/query",{"limit":1,"calculateTotal":true},"rules"],["x:SpamTag/query",{"limit":1,"calculateTotal":true},"tags"],["x:SpamFileExtension/query",{"limit":1,"calculateTotal":true},"extensions"],["x:SpamDnsblServer/query",{"limit":1,"calculateTotal":true},"blocklists"],["x:HttpLookup/query",{"limit":1,"calculateTotal":true},"lists"],["x:MemoryLookupKey/query",{"limit":1,"calculateTotal":true},"keys"]]}' >"$scratch/spam-rules-request.json"
 spam_rules_imported=0
-for ((attempt = 0; attempt < 60; attempt++)); do
-  if protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+spam_rules_deadline=$((SECONDS + 60))
+while ((SECONDS < spam_rules_deadline)); do
+  spam_rules_budget=$((spam_rules_deadline - SECONDS))
+  ((spam_rules_budget <= 10)) || spam_rules_budget=10
+  if protocol_curl --fail --silent --show-error --max-time "$spam_rules_budget" --config /proof/administrator.curl \
     --header 'Content-Type: application/json' --data-binary @/proof/spam-rules-request.json "http://$name:8080/jmap" >"$scratch/spam-rules-readback.json" &&
     jq -e '[.methodResponses[][1].total] == [66, 403, 132, 18, 4, 1008]' "$scratch/spam-rules-readback.json" >/dev/null; then
     spam_rules_imported=1
