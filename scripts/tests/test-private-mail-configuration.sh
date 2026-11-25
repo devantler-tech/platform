@@ -982,4 +982,27 @@ for proxy_enabled in true false; do
   docker rm -fv "$proxy_name" >/dev/null
   proxy_started=0
 done
+
+# Production names its mail load balancer, and only then does the plan turn on
+# SPF and reverse-IP verification and strict DMARC on smtp-inbound. Every run
+# above names none, so prove here that the real server stores the production
+# checks and that the bootstrap's policy readback accepts them. 10.255.255.250 is
+# a private address no fixture container holds, so no connection is trusted.
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+run_bootstrap --mail-proxy-source=10.255.255.250
+start_server serving
+jq -cn '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[
+  ["x:SenderAuth/get",{ids:["singleton"],properties:["dmarcVerify","spfEhloVerify","spfFromVerify","reverseIpVerify"]},"sender-auth"]]}' >"$scratch/sender-auth-request.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/sender-auth-request.json "http://$name:8080/jmap" >"$scratch/sender-auth.json"
+jq -e '.methodResponses[0][1].list as $auth | ($auth|length)==1 and
+  ([$auth[0].dmarcVerify, $auth[0].spfEhloVerify, $auth[0].spfFromVerify, $auth[0].reverseIpVerify] |
+    map({then: .match["0"].then, if: .match["0"].if, else: .else})) ==
+  ([{then:"strict"},{then:"relaxed"},{then:"relaxed"},{then:"relaxed"}] | map(. + {if:"listener == '"'"'smtp-inbound'"'"'", else:"disable"}))
+' "$scratch/sender-auth.json" >/dev/null || {
+  echo 'FAIL: the production inbound sender checks were not stored' >&2
+  exit 1
+}
+echo 'PASS: the production inbound sender checks are stored and read back'
 echo 'PASS: native mail configuration, receiving continuity, ownership refusal, cached UI upgrade, replay, TLS, account restrictions, per-client proxy bans and explicit rollback'

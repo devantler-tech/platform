@@ -10,10 +10,24 @@ import (
 	"testing"
 )
 
-// planObjects renders the fixture plan and returns each operation by object.
+// productionFixture is the fixture as production deploys it: the inbound
+// listener trusts its load balancer's PROXY header for the client address.
+func productionFixture() inputs {
+	v := fixture()
+	v.mailProxySource = "10.0.1.250"
+	return v
+}
+
+// planObjects renders the production fixture's plan and returns each operation
+// by object.
 func planObjects(t *testing.T) map[string]operation {
 	t.Helper()
-	plan, err := render(fixture())
+	return planObjectsFor(t, productionFixture())
+}
+
+func planObjectsFor(t *testing.T, v inputs) map[string]operation {
+	t.Helper()
+	plan, err := render(v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,8 +60,10 @@ func TestSecureDefaultsAreDeclared(t *testing.T) {
 	day := float64(24 * 60 * 60 * 1000)
 	for object, want := range map[string]map[string]any{
 		"SenderAuth": {
-			"dkimVerify": inboundOnly("relaxed", "disable"), "dmarcVerify": inboundOnly("relaxed", "disable"),
+			"dkimVerify": inboundOnly("relaxed", "disable"), "dmarcVerify": inboundOnly("strict", "disable"),
 			"arcVerify": inboundOnly("relaxed", "disable"), "dkimStrict": true,
+			"spfEhloVerify": inboundOnly("relaxed", "disable"), "spfFromVerify": inboundOnly("relaxed", "disable"),
+			"reverseIpVerify": inboundOnly("relaxed", "disable"),
 		},
 		"MtaStageData": {
 			"addAuthResultsHeader": inboundOnly("true", "false"), "addReceivedHeader": inboundOnly("true", "false"),
@@ -75,11 +91,14 @@ func TestSecureDefaultsAreDeclared(t *testing.T) {
 	}
 }
 
+// senderVerification names every SenderAuth verification expression.
+var senderVerification = []string{"dkimVerify", "dmarcVerify", "arcVerify", "spfEhloVerify", "spfFromVerify", "reverseIpVerify"}
+
 // TestVerificationValuesAreBareConstants keeps verification values unquoted.
 // The server ignores a quoted string and verifies relaxed on every listener.
 func TestVerificationValuesAreBareConstants(t *testing.T) {
 	op := planObjects(t)["SenderAuth"]
-	for _, field := range []string{"dkimVerify", "dmarcVerify", "arcVerify"} {
+	for _, field := range senderVerification {
 		expression, _ := op.Value[field].(map[string]any)
 		values := []any{expression["else"]}
 		branches, _ := expression["match"].(map[string]any)
@@ -92,6 +111,125 @@ func TestVerificationValuesAreBareConstants(t *testing.T) {
 				t.Fatalf("%s uses %v, not a bare verification constant", field, value)
 			}
 		}
+	}
+}
+
+// singletonReadback serves one stored singleton, answering only the requested
+// properties as the server does, and verifies the operation against it.
+func singletonReadback(t *testing.T, op operation, stored map[string]any) error {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var call struct {
+			Methods [][]json.RawMessage `json:"methodCalls"`
+		}
+		var args struct {
+			IDs        []string `json:"ids"`
+			Properties []string `json:"properties"`
+		}
+		var method, tag string
+		if json.NewDecoder(r.Body).Decode(&call) != nil || len(call.Methods) != 1 || len(call.Methods[0]) != 3 ||
+			json.Unmarshal(call.Methods[0][0], &method) != nil || method != "x:"+op.Object+"/get" ||
+			json.Unmarshal(call.Methods[0][1], &args) != nil || json.Unmarshal(call.Methods[0][2], &tag) != nil ||
+			!reflect.DeepEqual(args.IDs, []string{"singleton"}) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		item := map[string]any{}
+		for _, property := range args.Properties {
+			if value, ok := stored[property]; ok {
+				item[property] = value
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"methodResponses": []any{[]any{method, map[string]any{"list": []any{item}, "notFound": []any{}}, tag}}})
+	}))
+	defer server.Close()
+	raw, err := json.Marshal(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := management{client: server.Client(), url: server.URL, password: "synthetic-test-only"}
+	return m.verify(context.Background(), append(raw, '\n'))
+}
+
+// TestSenderAuthReadbackRefusesWeakerVerification reads the inbound checks back,
+// so a stored upstream default (keyed on local port 25, which no listener here
+// uses) or a DMARC check that no longer enforces policy is reported as drift.
+func TestSenderAuthReadbackRefusesWeakerVerification(t *testing.T) {
+	op := planObjects(t)["SenderAuth"]
+	portKeyed := map[string]any{"match": map[string]any{"0": map[string]any{"if": "local_port == 25", "then": "relaxed"}}, "else": "disable"}
+	for _, tc := range []struct {
+		name, field string
+		value       any
+		valid       bool
+	}{
+		{"stored as declared", "", nil, true},
+		{"SPF on EHLO keyed on port 25", "spfEhloVerify", portKeyed, false},
+		{"SPF on MAIL FROM keyed on port 25", "spfFromVerify", portKeyed, false},
+		{"reverse IP keyed on port 25", "reverseIpVerify", portKeyed, false},
+		{"reverse IP disabled", "reverseIpVerify", map[string]any{"match": map[string]any{}, "else": "disable"}, false},
+		{"DMARC relaxed", "dmarcVerify", inboundOnly("relaxed", "disable"), false},
+		{"DMARC strict on every listener", "dmarcVerify", map[string]any{"match": map[string]any{}, "else": "strict"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stored := map[string]any{"id": "singleton"}
+			for field, value := range op.Value {
+				stored[field] = value
+			}
+			if tc.field != "" {
+				stored[tc.field] = tc.value
+			}
+			if (singletonReadback(t, op, stored) == nil) != tc.valid {
+				t.Fatal("inbound verification readback accepted a weaker check or rejected the declared one")
+			}
+		})
+	}
+}
+
+// TestSenderAuthIsTheSameOnTheCandidateSchema keeps the 1.x candidate's inbound
+// checks equal: v1.0.3 names these fields and constants as v0.16.27 does.
+func TestSenderAuthIsTheSameOnTheCandidateSchema(t *testing.T) {
+	want := planObjects(t)["SenderAuth"]
+	v := productionFixture()
+	v.RuntimeVersion = "1.0.3"
+	plan, err := render(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops, err := planOperations(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range ops {
+		if op.Object == "SenderAuth" {
+			if !reflect.DeepEqual(op, want) {
+				t.Fatalf("candidate inbound checks differ: %v", op.Value)
+			}
+			return
+		}
+	}
+	t.Fatal("candidate plan declares no inbound checks")
+}
+
+// TestSenderChecksNeedTheRealClientAddress keeps SPF and reverse-IP off, and
+// DMARC relaxed, when the deployment names no load balancer whose PROXY header
+// the inbound listener trusts: the address they would judge could be the load
+// balancer's own, and strict DMARC would then refuse mail on that judgement.
+func TestSenderChecksNeedTheRealClientAddress(t *testing.T) {
+	off := map[string]any{"match": map[string]any{}, "else": "disable"}
+	want := map[string]any{
+		"dkimVerify": inboundOnly("relaxed", "disable"), "dmarcVerify": inboundOnly("relaxed", "disable"),
+		"arcVerify": inboundOnly("relaxed", "disable"), "dkimStrict": true,
+		"spfEhloVerify": off, "spfFromVerify": off, "reverseIpVerify": off,
+	}
+	for _, version := range []string{"", "1.0.3"} {
+		v := fixture()
+		v.RuntimeVersion = version
+		if got := planObjectsFor(t, v)["SenderAuth"].Value; !reflect.DeepEqual(got, want) {
+			t.Fatalf("runtime %q without the load balancer's address declares inbound checks %v", version, got)
+		}
+	}
+	if got := planObjects(t)["SenderAuth"].Value; reflect.DeepEqual(got, want) {
+		t.Fatal("the production plan does not turn the sender checks on")
 	}
 }
 
