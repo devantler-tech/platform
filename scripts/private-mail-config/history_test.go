@@ -164,7 +164,7 @@ func containsHistoryArg(args []string, wanted string) bool {
 }
 
 func TestHistoryNeverCompletesAnIncompleteCopy(t *testing.T) {
-	for _, broken := range []string{"copy-failure", "verification-failure", "unidentified", "missing-summary", "partial-summary", "reported-error", "missing-folder", "missing-message", "removed-destination", "source-changed", "read-failed"} {
+	for _, broken := range []string{"copy-failure", "verification-failure", "unidentified", "missing-summary", "partial-summary", "reported-error", "missing-folder", "missing-message", "removed-destination", "source-changed", "source-shrank", "source-revalidated", "source-folder-gone", "source-overgrew", "read-failed"} {
 		t.Run(broken, func(t *testing.T) {
 			v, err := loadHistoryInputs(historyInputs(t))
 			if err != nil {
@@ -177,8 +177,20 @@ func TestHistoryNeverCompletesAnIncompleteCopy(t *testing.T) {
 					return nil, errors.New("private-server-error-canary")
 				}
 				if side == "source" {
-					if broken == "source-changed" && observations > 2 {
-						return historySnapshot{"INBOX": {messages: 2, uidNext: 8, uidValidity: 1}}, nil
+					if observations > 2 {
+						// Each case changes the source in a way growth cannot explain.
+						switch broken {
+						case "source-changed": // its next UID went back
+							return historySnapshot{"INBOX": {messages: 2, uidNext: 6, uidValidity: 1}}, nil
+						case "source-shrank":
+							return historySnapshot{"INBOX": {messages: 1, uidNext: 7, uidValidity: 1}}, nil
+						case "source-revalidated":
+							return historySnapshot{"INBOX": {messages: 2, uidNext: 7, uidValidity: 2}}, nil
+						case "source-folder-gone":
+							return historySnapshot{"Other": {messages: 2, uidNext: 7, uidValidity: 1}}, nil
+						case "source-overgrew": // more new messages than new UIDs
+							return historySnapshot{"INBOX": {messages: 4, uidNext: 8, uidValidity: 1}}, nil
+						}
 					}
 					return historySnapshot{"INBOX": {messages: 2, uidNext: 7, uidValidity: 1}}, nil
 				}
@@ -216,12 +228,49 @@ func TestHistoryNeverCompletesAnIncompleteCopy(t *testing.T) {
 				return err
 			}
 			var receipt bytes.Buffer
-			if err := importHistory(context.Background(), v, observe, execute, &receipt); err == nil {
+			err = importHistory(context.Background(), v, observe, execute, &receipt)
+			if err == nil {
 				t.Fatal("incomplete copy reported success")
+			}
+			if strings.HasPrefix(broken, "source-") && err.Error() != "source-change" {
+				t.Fatalf("a source change was reported as %v", err)
 			}
 			if receipt.Len() != 0 {
 				t.Fatalf("failure wrote a completion receipt: %q", &receipt)
 			}
 		})
+	}
+}
+
+// Until MX moves the source keeps receiving mail, so a copy must still complete
+// when the source only grew while it ran: more messages, higher next UIDs and a
+// new folder. The receipt counts the messages observed at the start.
+func TestHistoryCompletesWhileTheSourceKeepsReceivingMail(t *testing.T) {
+	v, err := loadHistoryInputs(historyInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceReads := 0
+	observe := func(_ context.Context, side string, _ historyConfig) (historySnapshot, error) {
+		if side == "source" {
+			sourceReads++
+			if sourceReads > 1 {
+				// One message arrived and a rule filed another into a new folder.
+				return historySnapshot{"INBOX": {messages: 3, uidNext: 9, uidValidity: 1}, "Receipts": {messages: 1, uidNext: 2, uidValidity: 5}}, nil
+			}
+			return historySnapshot{"INBOX": {messages: 2, uidNext: 7, uidValidity: 1}}, nil
+		}
+		return historySnapshot{"INBOX": {messages: 3}}, nil
+	}
+	execute := func(_ context.Context, _ []string, output io.Writer) error {
+		_, err := io.WriteString(output, "The sync looks good, all 3 identified messages in host1 are on host2.\nThere is no unidentified message on host1.\nDetected 0 errors\n")
+		return err
+	}
+	var receipt bytes.Buffer
+	if err := importHistory(context.Background(), v, observe, execute, &receipt); err != nil {
+		t.Fatalf("a copy of a growing source was refused as %v", err)
+	}
+	if receipt.String() != "MAIL_HISTORY_IMPORT=COMPLETE folders=1 messages=2 source=PRESERVED routing=UNCHANGED\n" {
+		t.Fatalf("unexpected receipt %q", &receipt)
 	}
 }

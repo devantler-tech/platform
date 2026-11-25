@@ -7,7 +7,6 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -107,6 +106,27 @@ func executeHistory(ctx context.Context, args []string, output io.Writer) error 
 	return cmd.Run()
 }
 
+// historySourceOnlyGrew reports whether the source kept every folder it had,
+// with the same UID validity, and only gained messages: no folder lost one or
+// had its next UID go back, and no folder gained more messages than new UIDs.
+// New mail, and new folders, are expected while the domain's MX still points at
+// the source; the copy after MX moves picks them up. A folder that vanished,
+// was recreated or shrank means the source changed in a way the copy cannot
+// vouch for.
+func historySourceOnlyGrew(before, after historySnapshot) bool {
+	if len(after) < len(before) {
+		return false
+	}
+	for name, was := range before {
+		now, found := after[name]
+		if !found || now.uidValidity != was.uidValidity || now.messages < was.messages || now.uidNext < was.uidNext ||
+			now.messages-was.messages > now.uidNext-was.uidNext {
+			return false
+		}
+	}
+	return true
+}
+
 func importHistory(ctx context.Context, v historyConfig, observe historyObserver, execute historyExecutor, receipt io.Writer) error {
 	fail := func(stage string) error { return errors.New(stage) }
 	// An observation names its failed step only from a fixed list, so no server
@@ -129,9 +149,12 @@ func importHistory(ctx context.Context, v historyConfig, observe historyObserver
 	for _, box := range source {
 		total += uint64(box.messages)
 	}
+	// The source keeps receiving mail until MX moves, which needs this copy
+	// first, so it may grow while the copy runs. The tool must still find at
+	// least every message observed at the start, all of them on the destination.
 	for _, dry := range []bool{false, true} {
 		var result historyReport
-		if execute(ctx, historyArgs(v, dry), &result) != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || result.messages != total) {
+		if execute(ctx, historyArgs(v, dry), &result) != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || result.messages < total) {
 			if dry {
 				return fail("verification")
 			}
@@ -139,7 +162,7 @@ func importHistory(ctx context.Context, v historyConfig, observe historyObserver
 		}
 	}
 	currentSource, err := observe(ctx, "source", v)
-	if err != nil || !reflect.DeepEqual(source, currentSource) {
+	if err != nil || !historySourceOnlyGrew(source, currentSource) {
 		return fail("source-change")
 	}
 	currentDestination, err := observe(ctx, "destination", v)

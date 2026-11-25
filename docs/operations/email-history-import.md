@@ -105,11 +105,17 @@ The operation proceeds in this order:
    deletion, ACL changes and updates of existing destination flags are disabled.
    A copied message's pending-deletion flag is removed so it remains readable.
 3. Run imapsync again in dry-run mode. Both passes must report no missing
-   identified messages, no unidentified source messages and zero errors.
+   identified messages, no unidentified source messages and zero errors, and
+   must identify at least the messages counted in step 1.
 4. Independently read the folders again. Every source folder must exist on the
    destination with at least its source message count; existing destination
-   folders and message counts must be preserved. The source's complete folder
-   inventory, message counts, UID validity and next UID must be unchanged.
+   folders and message counts must be preserved. The source may only have grown,
+   because it keeps receiving the domain's mail until MX moves, and MX moves only
+   after this copy. Every folder from step 1 must still exist with the same UID
+   validity, no fewer messages and no lower next UID, and must not have gained
+   more messages than new UIDs. New folders are allowed. Anything else fails as
+   `source-change`. The copy repeated after MX moves picks up mail that arrived
+   meanwhile.
 
 The driver refuses unsupported folder separators, more than 1,000 selectable
 folders, unknown UIDs, interrupted observations, and incomplete tool reports.
