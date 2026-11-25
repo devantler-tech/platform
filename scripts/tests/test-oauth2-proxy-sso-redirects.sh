@@ -178,7 +178,8 @@ for provider in "${providers[@]}"; do
     grep -Eq 'redirect[-_]url' <<<"$(yq eval -N '.extraArgs // ""' - <<<"${o2p}")"; then
     fail "${provider}: oauth2-proxy sets a fixed redirect_url, so every login finishes on one host and returns the user to a path on a host that serves no app. Remove it from k8s/bases/infrastructure/controllers/oauth2-proxy/helm-release.yaml; oauth2-proxy then finishes each login on the host it started from"
   fi
-  grep -Eq '^[[:space:]]*cookie_secure[[:space:]]*=[[:space:]]*true[[:space:]]*$' <<<"${o2p_config}" ||
+  value_end='[[:space:]]*(#.*)?$'
+  grep -Eq "^[[:space:]]*cookie_secure[[:space:]]*=[[:space:]]*true${value_end}" <<<"${o2p_config}" ||
     fail "${provider}: oauth2-proxy must set cookie_secure = true: it is what makes the login callback it derives https, the only scheme Dex has registered"
 
   # The SSO cookies stay host-only, and the __Host- prefix makes the browser
@@ -188,7 +189,6 @@ for provider in "${providers[@]}"; do
   # config.cookieName value (rendered as a flag), from extraArgs flags and from
   # OAUTH2_PROXY_COOKIE_* variables, all of which win over the config file, so
   # none of them may set one.
-  value_end='[[:space:]]*(#.*)?$'
   grep -Eq "^[[:space:]]*cookie_name[[:space:]]*=[[:space:]]*(\"__Host-[^\"]+\"|'__Host-[^']+')${value_end}" <<<"${o2p_config}" ||
     fail "${provider}: oauth2-proxy's cookie_name must start with __Host-, so the browser keeps the SSO cookies to the host that set them and refuses one planted by another host under the same site"
   if grep -Eq '^[[:space:]]*cookie_path[[:space:]]*=' <<<"${o2p_config}" &&
@@ -201,11 +201,20 @@ for provider in "${providers[@]}"; do
   fi
   # The reads fail the test when they fail; a grep that finds nothing is the
   # expected case, so only the greps may come back empty.
+  # The chart ignores config.configFile when config.existingConfig is set or
+  # alphaConfig is enabled, and envFrom can bring OAUTH2_PROXY_COOKIE_* in from
+  # a ConfigMap or Secret this test cannot read, so none of those may be used.
   o2p_cookie_name_value="$(yq eval -N '.config.cookieName // ""' - <<<"${o2p}")"
+  o2p_existing_config="$(yq eval -N '.config.existingConfig // ""' - <<<"${o2p}")"
+  o2p_alpha_config="$(yq eval -N '.alphaConfig.enabled // false' - <<<"${o2p}")"
+  o2p_env_from_count="$(yq eval -N '(.envFrom // []) | length' - <<<"${o2p}")"
   o2p_args="$(yq eval -N '.extraArgs // ""' - <<<"${o2p}")"
   o2p_env_names="$(yq eval -N '.extraEnv[]?.name // ""' - <<<"${o2p}")"
   cookie_overrides="$(
     [[ -z "${o2p_cookie_name_value}" ]] || echo config.cookieName
+    [[ -z "${o2p_existing_config}" ]] || echo config.existingConfig
+    [[ "${o2p_alpha_config}" == false ]] || echo alphaConfig.enabled
+    [[ "${o2p_env_from_count}" == 0 ]] || echo envFrom
     { grep -Eo 'cookie[-_](name|secure|domains?|path)' <<<"${o2p_args}" || true; } | sed 's/^/extraArgs /'
     { grep -E '^OAUTH2_PROXY_COOKIE_(NAME|SECURE|DOMAINS?|PATH)$' <<<"${o2p_env_names}" || true; } | sed 's/^/extraEnv /'
   )"

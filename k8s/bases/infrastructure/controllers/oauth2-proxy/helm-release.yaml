@@ -137,10 +137,10 @@ spec:
         #
         # Changing the name signs everyone out once: a cookie under an earlier
         # name is ignored rather than read, and the next visit issues a fresh
-        # one. While the pods roll, a sign-in that starts on an old pod and
-        # returns to a new one can fail once with a CSRF error; signing in
-        # again works. whitelist_domains (the redirect allowlist) keeps both
-        # forms of ${domain} intentionally.
+        # one. While the two pods roll, requests can alternate between a pod that reads the old name and one that
+        # reads the new, so a sign-in can repeat or fail with a CSRF error
+        # until the rollout ends; after that, signing in works. whitelist_domains
+        # (the redirect allowlist) keeps both forms of ${domain} intentionally.
         cookie_name = "__Host-oauth2_proxy"
         whitelist_domains = ["${domain}", ".${domain}"]
         # No redirect_url, deliberately: oauth2-proxy then finishes each login at
