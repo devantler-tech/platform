@@ -71,7 +71,8 @@ spec:
         - matchName: "tuf-repo-cdn.sigstore.dev"
         # Vuln scan: kubevuln builds an SBOM per workload image, so it pulls
         # manifests + layer blobs from every registry the cluster runs images
-        # from (docker.io, quay.io, ghcr.io, registry.k8s.io, reg.kyverno.io).
+        # from (docker.io, quay.io, ghcr.io, registry.k8s.io, reg.kyverno.io,
+        # xpkg.upbound.io).
         # Without these every image fails with "creating SBOM, skipping scan:
         # ... i/o timeout" and vulnerabilityScan reports nothing. Each registry
         # serves blobs from its own CDN, so the API host alone is not enough.
@@ -100,6 +101,12 @@ spec:
         - matchPattern: "prod-registry-k8s-io-*.s3.dualstack.*.amazonaws.com"
         # reg.kyverno.io — Kyverno's image registry:
         - matchName: "reg.kyverno.io"
+        # xpkg.upbound.io — the Upbound registry the Crossplane provider runtimes
+        # come from. It serves the /v2 API and manifests itself and redirects
+        # layer blobs to its CloudFront distribution (same pair as Crossplane's
+        # own egress policy):
+        - matchName: "xpkg.upbound.io"
+        - matchName: "d3qrbvrml4iuq4.cloudfront.net"
       toPorts:
         - ports:
             - port: "443"
