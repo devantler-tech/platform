@@ -27,7 +27,7 @@ Mount these files read-only in one private input directory:
 | --- | --- |
 | `source-username` | The existing provider's account login. |
 | `source-password` | A temporary, app-specific source password. |
-| `destination-password` | The existing destination mailbox password. |
+| `destination-password` | An app password for the destination mailbox. The account has two-factor sign-in, so its own password cannot sign in over IMAP. |
 | `addresses` | The complete approved domain-address inventory, separated by commas. |
 
 The driver rejects missing, empty, multiline or publicly readable credentials,
@@ -49,9 +49,12 @@ The maintainer keeps the existing provider's `username` and app-specific
 in `private-mail` projects them as `source-username` and `source-password`.
 The domain's address inventory is not a provider credential: it is the
 SOPS-encrypted `email-history-import-addresses` Secret, removed with the
-importer. The server's own aliases stay declared in the encrypted mail
-settings. The destination password comes from the existing
-`private-mail-maintainer` Secret.
+importer. The server's own aliases come from OpenBao
+`infrastructure/email/aliases`. The destination sign-in is an app password the
+maintainer created for this copy and keeps at
+`infrastructure/email/history-import` (key `password`). The same role reads it,
+and the ExternalSecret projects it as `destination-password`. Revoke the app
+password once the copy after the MX move is complete.
 
 The suspended `private-mail/email-history-import` CronJob holds the reviewed
 pod template: the signed importer digest, those inputs mounted read-only, and a

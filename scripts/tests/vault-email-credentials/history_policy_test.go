@@ -51,7 +51,9 @@ func TestHistoryImportRoleHasOneNamespacedReader(t *testing.T) {
 	}
 }
 
-func TestHistoryImportPolicyReadsOnlyTheProviderSignIn(t *testing.T) {
+// The copy reads the provider sign-in and the app password it signs in to the
+// new mailbox with, and nothing else.
+func TestHistoryImportPolicyReadsOnlyItsTwoSignIns(t *testing.T) {
 	policy, _ := historyImportPolicy(t)
 	var lines []string
 	for _, line := range strings.Split(policy, "\n") {
@@ -63,6 +65,9 @@ func TestHistoryImportPolicyReadsOnlyTheProviderSignIn(t *testing.T) {
 		`path "secret/data/infrastructure/apple/icloud" {`,
 		`capabilities = ["read"]`,
 		`}`,
+		`path "secret/data/infrastructure/email/history-import" {`,
+		`capabilities = ["read"]`,
+		`}`,
 		`path "auth/token/lookup-self" {`,
 		`capabilities = ["read"]`,
 		`}`,
@@ -71,12 +76,12 @@ func TestHistoryImportPolicyReadsOnlyTheProviderSignIn(t *testing.T) {
 		`}`,
 	}
 	if !reflect.DeepEqual(lines, want) {
-		t.Fatalf("history import policy must read exactly the provider sign-in; got %q", lines)
+		t.Fatalf("history import policy must read exactly its two sign-ins; got %q", lines)
 	}
 }
 
-// The shared External Secrets role must not gain the provider sign-in: only
-// the scoped role above may read it.
+// The shared External Secrets role must not gain either sign-in: only the
+// scoped role above may read them.
 func TestSharedExternalSecretsRoleCannotReadProviderSignIn(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(), "k8s/bases/infrastructure/vault-config/job.yaml"))
 	if err != nil {
@@ -91,7 +96,9 @@ func TestSharedExternalSecretsRoleCannotReadProviderSignIn(t *testing.T) {
 			t.Fatal("shared External Secrets role must not carry the provider sign-in reader")
 		}
 	}
-	if got := strings.Count(string(data), "infrastructure/apple/icloud"); got != 1 {
-		t.Fatalf("the provider sign-in path must appear in exactly one policy, found %d", got)
+	for _, path := range []string{"infrastructure/apple/icloud", "infrastructure/email/history-import"} {
+		if got := strings.Count(string(data), path); got != 1 {
+			t.Fatalf("the sign-in path %s must appear in exactly one policy, found %d", path, got)
+		}
 	}
 }

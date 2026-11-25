@@ -7,11 +7,10 @@
 # mid-copy. Repeating the operation continues an incomplete copy
 # incrementally; the importer never deletes or rewrites mail on either side.
 #
-# Inputs: the existing provider's sign-in from the email-history-import
-# ExternalSecret, the domain's address inventory from the encrypted
-# email-history-import-addresses Secret, and the destination mailbox password
-# from the existing private-mail-maintainer Secret. Only aggregate counts reach
-# the log (docs/operations/email-history-import.md).
+# Inputs: the existing provider's sign-in and the new mailbox's app password
+# from the email-history-import ExternalSecret, and the domain's address
+# inventory from the encrypted email-history-import-addresses Secret. Only
+# aggregate counts reach the log (docs/operations/email-history-import.md).
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -95,16 +94,13 @@ spec:
                           path: source-username
                         - key: source-password
                           path: source-password
+                        - key: destination-password
+                          path: destination-password
                   - secret:
                       name: email-history-import-addresses
                       items:
                         - key: addresses
                           path: addresses
-                  - secret:
-                      name: private-mail-maintainer
-                      items:
-                        - key: password
-                          path: destination-password
             - name: work
               emptyDir:
                 sizeLimit: 1Gi
