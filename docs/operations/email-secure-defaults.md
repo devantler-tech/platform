@@ -11,8 +11,8 @@ was checked against the Stalwart v0.16.27 source.
 | Area | Setting | Value | Why |
 | --- | --- | --- | --- |
 | Inbound checks | DKIM and ARC verification | relaxed on `smtp-inbound`, off elsewhere | Upstream keys every verification on local port 25, and the inbound listener is 1025. The server ignores a quoted value and falls back to relaxed on every listener, so each verification value is a bare constant. |
-| Inbound checks | SPF verification of the EHLO name and MAIL FROM; reverse-IP verification | relaxed on `smtp-inbound`, off elsewhere | The listener takes the client address from its load balancer's PROXY header, so these judge the sender, not the load balancer. Relaxed records the result for DMARC, the spam filter and the Authentication-Results header. Strict would refuse every sender whose domain publishes no SPF record and every host without matching reverse DNS. |
-| Inbound checks | DMARC verification | strict on `smtp-inbound`, off elsewhere | Strict applies the sender's published policy. A message that fails DMARC is refused when its domain publishes `p=reject`, and deferred when that result is a temporary error. A domain without a record, `p=none` or `p=quarantine` is accepted, and so is a message whose policy could not be read. Quarantine only adds to the spam score, which stays zero until the spam filter has rules (below). |
+| Inbound checks | SPF verification of the EHLO name and MAIL FROM; reverse-IP verification | relaxed on `smtp-inbound` when the deployment names its mail load balancer (`--mail-proxy-source`, which production sets); off otherwise | The listener then takes the client address from that load balancer's PROXY header, so these judge the sender. Without it the address could be the load balancer's own, so they stay off. Relaxed records each result in the Authentication-Results header and for the spam filter. The MAIL FROM result, or the EHLO result when MAIL FROM is empty, also feeds DMARC; reverse IP never does. Strict would refuse every sender whose domain publishes no SPF record and every host without matching reverse DNS. |
+| Inbound checks | DMARC verification | strict on `smtp-inbound` when the deployment names its mail load balancer, relaxed there otherwise; off elsewhere | Strict applies the sender's published policy. A message that fails DMARC is refused when its domain publishes `p=reject`, and deferred when that result is a temporary error. A domain without a record, `p=none` or `p=quarantine` is accepted, and so is a message whose policy could not be read. Quarantine only adds to the spam score. A mailing list or forwarder that passes on mail from a `p=reject` domain and breaks its DKIM signature makes that mail fail DMARC, so it is refused: the refusal does not consider the ARC result. Without the load balancer's address SPF is off, so strict would judge on DKIM alone. |
 | Inbound checks | Non-FQDN HELO rejection; Received and Return-Path headers | on `smtp-inbound` only | The same port-25 keying left them off. |
 | Inbound checks | Authentication-Results header | on `smtp-inbound` only | Outbound mail no longer carries this server's verdicts. |
 | SMTP | VRFY and EXPN | off | Address enumeration. |
@@ -35,9 +35,11 @@ made in the web interface is reported before the next start reverts it.
 
 ## Before public SMTP and IMAP
 
-This needs the real client address on the public SMTP and IMAP listeners first.
-Without it every client shares one address, so a single ban or throttle blocks
-all of them.
+The public SMTP and IMAP listeners take the real client address from the mail
+load balancer's PROXY header only when the deployment names that load balancer
+(`--mail-proxy-source`, which production sets). Without it every client shares
+one address, so a single ban or throttle would block all of them. Still to be
+declared on those listeners:
 
 - Bans and the sender IP throttle on the SMTP and IMAP listeners.
 

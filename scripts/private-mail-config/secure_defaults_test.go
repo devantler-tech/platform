@@ -10,10 +10,24 @@ import (
 	"testing"
 )
 
-// planObjects renders the fixture plan and returns each operation by object.
+// productionFixture is the fixture as production deploys it: the inbound
+// listener trusts its load balancer's PROXY header for the client address.
+func productionFixture() inputs {
+	v := fixture()
+	v.mailProxySource = "10.0.1.250"
+	return v
+}
+
+// planObjects renders the production fixture's plan and returns each operation
+// by object.
 func planObjects(t *testing.T) map[string]operation {
 	t.Helper()
-	plan, err := render(fixture())
+	return planObjectsFor(t, productionFixture())
+}
+
+func planObjectsFor(t *testing.T, v inputs) map[string]operation {
+	t.Helper()
+	plan, err := render(v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +189,7 @@ func TestSenderAuthReadbackRefusesWeakerVerification(t *testing.T) {
 // checks equal: v1.0.3 names these fields and constants as v0.16.27 does.
 func TestSenderAuthIsTheSameOnTheCandidateSchema(t *testing.T) {
 	want := planObjects(t)["SenderAuth"]
-	v := fixture()
+	v := productionFixture()
 	v.RuntimeVersion = "1.0.3"
 	plan, err := render(v)
 	if err != nil {
@@ -194,6 +208,29 @@ func TestSenderAuthIsTheSameOnTheCandidateSchema(t *testing.T) {
 		}
 	}
 	t.Fatal("candidate plan declares no inbound checks")
+}
+
+// TestSenderChecksNeedTheRealClientAddress keeps SPF and reverse-IP off, and
+// DMARC relaxed, when the deployment names no load balancer whose PROXY header
+// the inbound listener trusts: the address they would judge could be the load
+// balancer's own, and strict DMARC would then refuse mail on that judgement.
+func TestSenderChecksNeedTheRealClientAddress(t *testing.T) {
+	off := map[string]any{"match": map[string]any{}, "else": "disable"}
+	want := map[string]any{
+		"dkimVerify": inboundOnly("relaxed", "disable"), "dmarcVerify": inboundOnly("relaxed", "disable"),
+		"arcVerify": inboundOnly("relaxed", "disable"), "dkimStrict": true,
+		"spfEhloVerify": off, "spfFromVerify": off, "reverseIpVerify": off,
+	}
+	for _, version := range []string{"", "1.0.3"} {
+		v := fixture()
+		v.RuntimeVersion = version
+		if got := planObjectsFor(t, v)["SenderAuth"].Value; !reflect.DeepEqual(got, want) {
+			t.Fatalf("runtime %q without the load balancer's address declares inbound checks %v", version, got)
+		}
+	}
+	if got := planObjects(t)["SenderAuth"].Value; reflect.DeepEqual(got, want) {
+		t.Fatal("the production plan does not turn the sender checks on")
+	}
 }
 
 // TestAuthenticationUpdateKeepsOnlyDefaultValues keeps the native role defaults.
