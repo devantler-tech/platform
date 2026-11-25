@@ -30,8 +30,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only this exact whole-module record for Kyverno v1.19.2 is accepted, with the same
 # adjudication and removal as scripts/tests/tenant-webapp-admission/.govulncheck-allow.txt
-# (platform#5154). Go corrected the ranges of GO-2026-5337 and GO-2026-5594 on 2026-11-23. The list must match exactly: another advisory fails the build, and so does
-# an empty list, because that means the report was not read or the record needs removing here.
+# (platform#5154). Go corrected the ranges of GO-2026-5337 and GO-2026-5594 on 2026-11-23.
+# The list must match exactly: another advisory fails the build, and so does an empty list,
+# because that means the report was not read or the record needs removing here.
 RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
     && timeout 300s govulncheck ./cmd/platform-migrate \
     && timeout 120s govulncheck -mode=binary -format json /out/kubectl-kyverno > /tmp/binary-scan.json \

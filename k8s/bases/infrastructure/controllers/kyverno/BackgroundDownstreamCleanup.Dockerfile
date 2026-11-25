@@ -25,10 +25,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
        else test "$?" -eq 1; fi
 # The findings pipeline below must fail when any of its stages fails, not only the last one.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-# Only these exact module records are accepted. GO-2025-3615 is the Kyverno v1.19.2 record with the
-# same adjudication and removal as scripts/tests/tenant-webapp-admission/.govulncheck-allow.txt
-# (platform#5154); Go corrected the ranges of GO-2026-5337 and GO-2026-5594 on 2026-11-23. GO-2026-5932 names x/crypto/openpgp and has no fixed version; the symbol check
-# above fails the build if that package is ever compiled in. The list must match exactly: another
+# Only these exact module records are accepted. GO-2025-3615 is the Kyverno v1.19.2 record with
+# the same adjudication and removal as scripts/tests/tenant-webapp-admission/.govulncheck-allow.txt
+# (platform#5154); Go corrected the ranges of GO-2026-5337 and GO-2026-5594 on 2026-11-23.
+# GO-2026-5932 names x/crypto/openpgp and has no fixed version; the symbol check above fails
+# the build if that package is ever compiled in. The list must match exactly: another
 # advisory fails the build, and so does an empty list, because that means the report was not read
 # or a record needs removing here.
 RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
