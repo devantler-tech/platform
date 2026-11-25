@@ -140,6 +140,29 @@ func receivingObjects(methods [][]json.RawMessage, object, tag string) ([]map[st
 	return get.List, nil
 }
 
+// receivingAliasesWithin reports whether every alias the maintainer's account
+// already holds is one the configuration wants, in exactly the desired form:
+// on the mailbox domain, enabled and undescribed. The plan then sets the
+// complete desired set, so an approved set can grow (for example when the
+// maintainer adds an address to the OpenBao list) and is read back exactly. A
+// live alias outside the desired set would be dropped, so it is still refused.
+func receivingAliasesWithin(existing []receivingAlias, desired []string, domain, enabledField string) bool {
+	want, err := canonicalReceivingAliasesFor(receivingAliasesFor(desired, domain, enabledField), enabledField)
+	if err != nil {
+		return false
+	}
+	allowed := make(map[receivingAlias]bool, len(want))
+	for _, alias := range want {
+		allowed[alias] = true
+	}
+	for _, alias := range existing {
+		if !allowed[alias] {
+			return false
+		}
+	}
+	return true
+}
+
 // This is called on the fresh census from the exclusively owned recovery
 // child, before the first native apply. A standalone plan is only a snapshot;
 // the native CLI offers no plan-level revision/ifInState precondition.
@@ -223,7 +246,7 @@ func validateRecipientOwnership(raw []byte, v inputs) error {
 			}
 			if retained {
 				maintainerSeen = true
-				if len(aliases) > 0 && !receivingAliasesMatch(receivingAliasesFor(v.MaintainerAliases, target, profile.aliasEnabled), owner["aliases"]) {
+				if len(aliases) > 0 && !receivingAliasesWithin(aliases, v.MaintainerAliases, target, profile.aliasEnabled) {
 					return errConfiguration
 				}
 			} else {
