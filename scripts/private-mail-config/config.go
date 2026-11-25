@@ -259,11 +259,16 @@ func render(v inputs) ([]byte, error) {
 		update("MtaStageEhlo", map[string]any{"rejectNonFqdn": inbound("true", "false")}),
 		update("MtaExtensions", map[string]any{"vrfy": expression("false"), "expn": expression("false")}),
 		// Verification takes bare constants: a quoted value is ignored and the
-		// server falls back to relaxed on every listener. SPF and reverse-IP
-		// checks wait for the real client address on the inbound listener.
+		// server falls back to relaxed on every listener. The inbound listener
+		// takes the client address from its load balancer's PROXY header, so SPF
+		// and reverse-IP judge the sender. They stay relaxed: strict refuses a
+		// domain without SPF and a host without matching reverse DNS. Strict
+		// DMARC refuses a failing message only when its domain publishes reject.
 		update("SenderAuth", map[string]any{
-			"dkimVerify": inbound("relaxed", "disable"), "dmarcVerify": inbound("relaxed", "disable"),
+			"dkimVerify": inbound("relaxed", "disable"), "dmarcVerify": inbound("strict", "disable"),
 			"arcVerify": inbound("relaxed", "disable"), "dkimStrict": true,
+			"spfEhloVerify": inbound("relaxed", "disable"), "spfFromVerify": inbound("relaxed", "disable"),
+			"reverseIpVerify": inbound("relaxed", "disable"),
 		}),
 		// Bans expire after a day; upstream bans never expire.
 		update("Security", map[string]any{"authBanPeriod": day, "abuseBanPeriod": day, "loiterBanPeriod": day, "scanBanPeriod": day}),
