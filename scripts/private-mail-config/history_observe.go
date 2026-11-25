@@ -15,14 +15,25 @@ import (
 	"github.com/emersion/go-imap/responses"
 )
 
+// errNoMessageCount reports an EXAMINE reply without a parseable `* N EXISTS`.
+// RFC 3501 requires that line, and a folder without it would otherwise count as
+// empty, so the copy would be judged against zero messages.
+var errNoMessageCount = errors.New("examine reply has no message count")
+
 // examineHandler collects an EXAMINE reply. The client tracks the message count
-// (`* N EXISTS`) only for a mailbox it selected itself, so it is read here.
+// (`* N EXISTS`) only for a mailbox it selected itself, so it is read here, and
+// so is an untagged [READ-WRITE] code, which the client would otherwise drop.
 type examineHandler struct {
-	selected *responses.Select
-	mailbox  *imap.MailboxStatus
+	selected  *responses.Select
+	mailbox   *imap.MailboxStatus
+	counted   bool
+	readWrite bool
 }
 
 func (h *examineHandler) Handle(resp imap.Resp) error {
+	if status, ok := resp.(*imap.StatusResp); ok && status.Tag == "*" && status.Code == imap.CodeReadWrite {
+		h.readWrite = true
+	}
 	if err := h.selected.Handle(resp); err != responses.ErrUnhandled {
 		return err
 	}
@@ -30,6 +41,7 @@ func (h *examineHandler) Handle(resp imap.Resp) error {
 		if name, fields, ok := imap.ParseNamedResp(data); ok && name == "EXISTS" && len(fields) > 0 {
 			if messages, err := imap.ParseNumber(fields[0]); err == nil {
 				h.mailbox.Messages = messages
+				h.counted = true
 				return nil
 			}
 		}
@@ -37,18 +49,27 @@ func (h *examineHandler) Handle(resp imap.Resp) error {
 	return responses.ErrUnhandled
 }
 
-// examineFolder opens a folder with EXAMINE and returns its status with the
-// tagged reply's response code, which the client's Select reduces to a flag.
-func examineFolder(c *client.Client, name string) (*imap.MailboxStatus, imap.StatusRespCode, error) {
+// examineFolder opens a folder with EXAMINE and returns its status, and whether
+// the server claimed the open was read-write, in the tagged reply's code (which
+// the client's Select reduces to a flag) or in an untagged one.
+//
+// client.Execute bypasses the client's state tracking, so the client never
+// considers a mailbox selected: no selected-state call (Fetch, Check, Close)
+// may follow, and none must, because the observer only reads folder status.
+func examineFolder(c *client.Client, name string) (*imap.MailboxStatus, bool, error) {
 	mailbox := &imap.MailboxStatus{Name: name, Items: make(map[imap.StatusItem]interface{})}
-	status, err := c.Execute(&commands.Select{Mailbox: name, ReadOnly: true}, &examineHandler{selected: &responses.Select{Mailbox: mailbox}, mailbox: mailbox})
+	handler := &examineHandler{selected: &responses.Select{Mailbox: mailbox}, mailbox: mailbox}
+	status, err := c.Execute(&commands.Select{Mailbox: name, ReadOnly: true}, handler)
 	if err != nil {
-		return nil, "", err
+		return nil, false, err
 	}
 	if err := status.Err(); err != nil {
-		return nil, "", err
+		return nil, false, err
 	}
-	return mailbox, status.Code, nil
+	if !handler.counted {
+		return nil, false, errNoMessageCount
+	}
+	return mailbox, handler.readWrite || status.Code == imap.CodeReadWrite, nil
 }
 
 func observeHistory(ctx context.Context, side string, v historyConfig) (historySnapshot, error) {
@@ -137,15 +158,15 @@ func readHistorySnapshot(ctx context.Context, address, serverName, username, pas
 		if _, exists := result[name]; exists {
 			return fail("folders")
 		}
-		status, code, err := examineFolder(c, name)
+		status, readWrite, err := examineFolder(c, name)
 		if err != nil {
 			return fail("examine")
 		}
 		// EXAMINE never permits changes, whatever the reply says. RFC 3501
 		// asks servers to confirm it with [READ-ONLY]; iCloud omits the code.
 		// A server that explicitly claims [READ-WRITE] for an EXAMINE is
-		// still refused.
-		if code == imap.CodeReadWrite {
+		// still refused. The same rule applies to the source and destination.
+		if readWrite {
 			return fail("read-only")
 		}
 		if status.UidNext == 0 || status.UidValidity == 0 {

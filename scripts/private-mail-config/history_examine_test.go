@@ -13,9 +13,10 @@ import (
 )
 
 // scriptedIMAPServer answers a fixed conversation over TLS: one INBOX whose
-// EXAMINE reply ends with the given tagged response code ("" for none, as
-// iCloud sends). It records every command verb it receives.
-func scriptedIMAPServer(t *testing.T, examineCode string) (string, *x509.CertPool, func() []string) {
+// EXAMINE reply sends the given untagged lines and ends with the given tagged
+// response code ("" for none, as iCloud sends). It records every command verb
+// it receives.
+func scriptedIMAPServer(t *testing.T, examineCode string, untagged string) (string, *x509.CertPool, func() []string) {
 	t.Helper()
 	certificate := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	configuration := certificate.TLS.Clone()
@@ -64,7 +65,7 @@ func scriptedIMAPServer(t *testing.T, examineCode string) (string, *x509.CertPoo
 				if examineCode != "" {
 					reply = tag + " OK [" + examineCode + "] EXAMINE completed\r\n"
 				}
-				write("* 2 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n" + reply)
+				write(untagged + reply)
 			case "LOGOUT":
 				write("* BYE\r\n" + tag + " OK bye\r\n")
 				return
@@ -81,10 +82,13 @@ func scriptedIMAPServer(t *testing.T, examineCode string) (string, *x509.CertPoo
 	}
 }
 
+// examineStatus is the untagged part of a complete EXAMINE reply.
+const examineStatus = "* 2 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n"
+
 func TestHistorySnapshotAcceptsAnExamineWithoutTheReadOnlyCode(t *testing.T) {
 	for _, code := range []string{"", "READ-ONLY"} {
 		t.Run("code="+code, func(t *testing.T) {
-			address, roots, verbs := scriptedIMAPServer(t, code)
+			address, roots, verbs := scriptedIMAPServer(t, code, examineStatus)
 			got, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots)
 			if err != nil {
 				t.Fatalf("EXAMINE reply %q refused as %v", code, err)
@@ -102,8 +106,31 @@ func TestHistorySnapshotAcceptsAnExamineWithoutTheReadOnlyCode(t *testing.T) {
 }
 
 func TestHistorySnapshotRefusesAnExamineClaimingReadWrite(t *testing.T) {
-	address, roots, _ := scriptedIMAPServer(t, "READ-WRITE")
-	if _, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots); err == nil || err.Error() != "read-only" {
-		t.Fatalf("an EXAMINE claiming READ-WRITE was reported as %v", err)
+	for name, server := range map[string]struct{ code, untagged string }{
+		"tagged":   {"READ-WRITE", examineStatus},
+		"untagged": {"", examineStatus + "* OK [READ-WRITE] opened\r\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			address, roots, _ := scriptedIMAPServer(t, server.code, server.untagged)
+			if _, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots); err == nil || err.Error() != "read-only" {
+				t.Fatalf("an EXAMINE claiming READ-WRITE was reported as %v", err)
+			}
+		})
+	}
+}
+
+// A folder whose message count is missing must not be read as empty: the copy
+// would then be judged against zero messages and could never be shown short.
+func TestHistorySnapshotRefusesAnExamineWithoutAMessageCount(t *testing.T) {
+	for name, untagged := range map[string]string{
+		"missing":     "* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n",
+		"unparseable": "* x EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			address, roots, _ := scriptedIMAPServer(t, "READ-ONLY", untagged)
+			if _, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots); err == nil || err.Error() != "examine" {
+				t.Fatalf("an EXAMINE without a message count was reported as %v", err)
+			}
+		})
 	}
 }
