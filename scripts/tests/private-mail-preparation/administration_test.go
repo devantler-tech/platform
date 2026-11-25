@@ -208,14 +208,64 @@ func TestAdministrationExposesOnlyNormalManagement(t *testing.T) {
 	route := object(t, objects, "HTTPRoute", "private-mail")
 	meta := mapping(t, route["metadata"])
 	annotations := mapping(t, meta["annotations"])
-	if annotations["gethomepage.dev/enabled"] != "true" || annotations["gethomepage.dev/name"] != "Stalwart" || annotations["gethomepage.dev/href"] != "https://mail.${domain}/admin" {
-		t.Fatal("the serving route must register a usable Stalwart Homepage entry")
+	if annotations["gethomepage.dev/enabled"] != "true" || annotations["gethomepage.dev/name"] != "Stalwart" || annotations["gethomepage.dev/href"] != "https://stalwart.${domain}/admin" {
+		t.Fatal("the serving route must register a usable Stalwart Homepage entry on Stalwart's own hostname")
 	}
-	if !reflect.DeepEqual(mapping(t, route["spec"])["hostnames"], []any{"mail.${domain}"}) {
-		t.Fatal("administration and its Homepage link must use the same hostname")
+	// Stalwart's web side moves to stalwart.${domain}; mail.${domain} keeps
+	// serving it until Bulwark takes that name (#6662).
+	if !reflect.DeepEqual(mapping(t, route["spec"])["hostnames"], []any{"mail.${domain}", "stalwart.${domain}"}) {
+		t.Fatal("administration must answer on its current and its new hostname, and its Homepage link must use one of them")
 	}
 	certificate := mapping(t, object(t, objects, "Certificate", "private-mail")["spec"])
 	if certificate["secretName"] != "private-mail-tls" || !reflect.DeepEqual(certificate["dnsNames"], []any{"mail.${domain}"}) {
 		t.Fatal("the native server's TLS files must cover its configured hostname")
+	}
+}
+
+// Bulwark calls Stalwart's JMAP and OAuth endpoints from its own origin
+// (#6662). The route answers those calls with CORS headers that name that one
+// origin and allow no credentials; Stalwart's own permissive CORS stays off.
+// A wildcard origin, an allowed credential or a dropped header would widen or
+// break that, so the whole response policy is pinned in the base and in the
+// production render, where the route must also stay DNS-only on both names.
+func TestAdministrationRouteAllowsOnlyBulwarkOrigin(t *testing.T) {
+	want := map[string]any{
+		"type": "ResponseHeaderModifier",
+		"responseHeaderModifier": map[string]any{
+			"set": []any{
+				map[string]any{"name": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload"},
+				map[string]any{"name": "Access-Control-Allow-Origin", "value": "https://mail.${domain}"},
+				map[string]any{"name": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS"},
+				map[string]any{"name": "Access-Control-Allow-Headers", "value": "Authorization, Content-Type, Accept, X-Requested-With"},
+				map[string]any{"name": "Access-Control-Max-Age", "value": "600"},
+			},
+			"add": []any{
+				map[string]any{"name": "Vary", "value": "Origin"},
+			},
+		},
+	}
+	for _, path := range []string{"k8s/bases/apps/private-mail-administration", "k8s/providers/hetzner/apps"} {
+		route := object(t, render(t, path), "HTTPRoute", "private-mail")
+		spec := mapping(t, route["spec"])
+		if !reflect.DeepEqual(spec["hostnames"], []any{"mail.${domain}", "stalwart.${domain}"}) {
+			t.Fatalf("%s: the route must serve Stalwart on both hostnames", path)
+		}
+		var responses []any
+		for _, rule := range sequence(t, spec["rules"]) {
+			for _, filter := range sequence(t, mapping(t, rule)["filters"]) {
+				if mapping(t, filter)["type"] == "ResponseHeaderModifier" {
+					responses = append(responses, filter)
+				}
+			}
+		}
+		if len(responses) != 1 || !reflect.DeepEqual(responses[0], want) {
+			t.Fatalf("%s: the response policy must be exactly HSTS and CORS for Bulwark's origin, got %v", path, responses)
+		}
+		if path == "k8s/providers/hetzner/apps" {
+			annotations := mapping(t, mapping(t, route["metadata"])["annotations"])
+			if annotations["external-dns.kubernetes.io/cloudflare-proxied"] != "false" {
+				t.Fatal("both hostnames must be published DNS-only, like the mail host")
+			}
+		}
 	}
 }
