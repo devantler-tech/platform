@@ -330,8 +330,9 @@ func render(v inputs) ([]byte, error) {
 	// The spam filter imports the image's copy of the pinned rules, not the
 	// unpinned upstream release that egress blocks. The copy is in the 0.16
 	// rule format, so the 1.x candidate declares its own upstream default
-	// instead: a store migrated from 0.16 would otherwise keep the stored
-	// file URL and import 0.16 rules. The candidate pins its own rules later.
+	// instead. This only keeps an update-rules task on a migrated store from
+	// reading the 0.16 copy again. Rules it already stores stay until the
+	// candidate pins spam-filter v3.0.4 and runs that task.
 	spamRulesURL := "file://" + spamRulesPath
 	if profile.v1 {
 		spamRulesURL = upstreamSpamRulesURL

@@ -67,10 +67,11 @@ that ever imported the upstream rules keeps those keys until their
 them, because egress blocks the upstream download, so it has none. After a
 restart, check that the lookup's key count is the derived 1,008 and that the
 `url-redirectors` namespace has none. The 1.x candidate declares the upstream
-default URL. That also resets a store migrated from 0.16, which would otherwise
-keep the file URL and import 0.16 rules from the candidate image. The candidate
-needs spam-filter v3.0.4, which is pinned separately when that runtime is
-adopted.
+default URL, so an update-rules task on a store migrated from 0.16 cannot read
+the 0.16 copy again from the candidate image. It does not replace the rules such
+a store already holds: the server imports only into an empty store. Adopting
+that runtime therefore also pins spam-filter v3.0.4 and runs the update-rules
+task, with the same review of stored tags and of any `url-redirectors` keys.
 
 ## Before public SMTP and IMAP
 
