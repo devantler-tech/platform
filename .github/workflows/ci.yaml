@@ -183,6 +183,7 @@ jobs:
       issues: write
       pull-requests: write
       code-quality: write
+      id-token: write # lets the shared Go validation (its signed-fix jobs) prove its identity to the GitHub token broker (ADR 0020)
 
   changes:
     name: 🔍 Detect Changes
