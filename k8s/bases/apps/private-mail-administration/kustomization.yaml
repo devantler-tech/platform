@@ -12,6 +12,8 @@ resources:
   - push-secret-agent.yaml
   - external-secret-agent.yaml
   - external-secret-relay.yaml
+  # The receiving aliases, from their single OpenBao source (#5481).
+  - external-secret-aliases.yaml
   - certificate.yaml
   - http-route.yaml
 patches:
