@@ -226,9 +226,11 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
       ]) and
       (.target.template.data["portal-settings"]|split("\n")|map(select(length>0)) as $settings |
         ($settings|map(split("=")[0])|sort)==[
-          "PORTAL_CALLBACK_URL","PORTAL_CLIENT_SECRET_PROJECTION_FILE","PORTAL_DATABASE_URL","PORTAL_IDENTITY_PROFILE",
-          "PORTAL_OIDC_CLIENT_ID","PORTAL_OIDC_ISSUER","PORTAL_OPERATOR_SUBJECTS"] and
+          "PORTAL_CALLBACK_URL","PORTAL_CLIENT_SECRET_PROJECTION_FILE","PORTAL_DATABASE_URL","PORTAL_IDENTITY_FLAG",
+          "PORTAL_IDENTITY_PROFILE","PORTAL_OIDC_CLIENT_ID","PORTAL_OIDC_ISSUER","PORTAL_OPERATOR_SUBJECTS"] and
         any($settings[]; .=="PORTAL_IDENTITY_PROFILE=preview") and
+        (any($settings[]; .=="PORTAL_IDENTITY_FLAG={\"defaultVariant\":\"on\",\"variants\":[{\"name\":\"on\",\"value\":true}]}") or
+          error("the named preview identity profile refuses to start without an enabled identity flag")) and
         any($settings[]; .=="PORTAL_CALLBACK_URL=https://dev.devantler.tech/callback") and
         any($settings[]; .=="PORTAL_OIDC_CLIENT_ID=business-site-preview") and
         any($settings[]; startswith("PORTAL_DATABASE_URL=postgres://portal_preview_web:") and
