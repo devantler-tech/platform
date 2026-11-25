@@ -100,7 +100,9 @@ files and are never placed in subprocess arguments.
 The operation proceeds in this order:
 
 1. Independently read every selectable folder's message count, UID validity and
-   next UID on the source and destination, using read-only `EXAMINE` commands.
+   next UID on the source and destination, using `EXAMINE`, the read-only open.
+   The destination must confirm each open as read-only; the source's reply code
+   is not checked (iCloud does not confirm it).
 2. Copy all folders and messages with imapsync. Source and destination expunges,
    deletion, ACL changes and updates of existing destination flags are disabled.
    A copied message's pending-deletion flag is removed so it remains readable.
@@ -141,6 +143,6 @@ receives the mailbox data.
 
 The independent inventory client is the MIT-licensed
 [`go-imap` v1.2.1](https://github.com/emersion/go-imap/tree/v1.2.1). It sends only
-login, folder listing, read-only selection and logout; it neither fetches bodies
-nor sends mailbox mutation commands. Its connections have an absolute deadline,
+login, folder listing, `EXAMINE` and logout; it neither fetches bodies nor sends
+mailbox mutation commands, and the tests require exactly that list of commands. Its connections have an absolute deadline,
 including while waiting for a server greeting.
