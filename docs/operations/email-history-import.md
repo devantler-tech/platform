@@ -67,6 +67,25 @@ on a schedule. To copy:
    `MAIL_HISTORY_IMPORT=COMPLETE folders=<n> messages=<n> source=PRESERVED routing=UNCHANGED`
    is the receipt to record on #5481.
 
+A failed folder check reports which step refused, as
+`MAIL_HISTORY_IMPORT=INCOMPLETE stage=<side>-<step>`. The side is `source` (the
+existing provider) or `destination` (this server). The step is one of a fixed
+list, and no server reply, folder name or credential ever appears:
+
+| Step | Meaning |
+| --- | --- |
+| `connect` | No TCP connection: name resolution or the network policy. |
+| `tls` | The handshake failed: certificate trust, host name or a stalled peer. |
+| `greeting` | The server's IMAP greeting was unusable. |
+| `login` | The server refused the sign-in: check the username (for iCloud, the `@icloud.com` address) and the app-specific password. |
+| `list` | The folder listing failed. |
+| `delimiter` | A folder uses a hierarchy separator other than `/`. |
+| `folders` | An empty, oversized, duplicate or malformed folder list. |
+| `examine` | A read-only folder open failed. |
+| `read-only` | The server did not confirm the read-only open. |
+| `uids` | A folder lacks UIDNEXT or UIDVALIDITY. |
+| `inbox` | No INBOX was listed. |
+
 A Job created this way is outside the Flux inventory, so a long copy never holds
 a deploy and a reconciliation cannot prune it. Repeat the operation to continue
 an incomplete copy; it refuses while an earlier copy is still running.

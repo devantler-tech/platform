@@ -109,13 +109,21 @@ func executeHistory(ctx context.Context, args []string, output io.Writer) error 
 
 func importHistory(ctx context.Context, v historyConfig, observe historyObserver, execute historyExecutor, receipt io.Writer) error {
 	fail := func(stage string) error { return errors.New(stage) }
+	// An observation names its failed step only from a fixed list, so no server
+	// reply or private value can reach the receipt.
+	observed := func(side string, err error) error {
+		if err != nil && historyObservationSteps[err.Error()] {
+			return fail(side + "-" + err.Error())
+		}
+		return fail(side)
+	}
 	source, err := observe(ctx, "source", v)
 	if err != nil || len(source) == 0 || len(source) > 1000 {
-		return fail("source")
+		return observed("source", err)
 	}
 	destination, err := observe(ctx, "destination", v)
 	if err != nil {
-		return fail("destination")
+		return observed("destination", err)
 	}
 	var total uint64
 	for _, box := range source {
