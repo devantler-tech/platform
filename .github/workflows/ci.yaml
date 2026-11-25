@@ -1016,6 +1016,12 @@ jobs:
           shellcheck scripts/guard-github-broker-independence.sh scripts/tests/test-github-broker-independence.sh
           bash scripts/tests/test-github-broker-independence.sh
 
+      # Every broker trust policy here admits only devantler-tech callers.
+      - name: 🧭 Validate GitHub token broker trust policies
+        run: |
+          shellcheck scripts/guard-github-broker-policies.sh scripts/tests/test-github-broker-policies.sh
+          bash scripts/tests/test-github-broker-policies.sh
+
       - name: 🚩 Validate runtime flag definitions
         run: |
           go test ./scripts/validate-feature-flags
