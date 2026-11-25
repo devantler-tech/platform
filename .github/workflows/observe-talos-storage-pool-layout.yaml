@@ -63,7 +63,7 @@ jobs:
       - name: Install the verified KSail lifecycle client
         shell: bash
         env:
-          KSAIL_VERSION: "7.216.21"
+          KSAIL_VERSION: "7.213.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

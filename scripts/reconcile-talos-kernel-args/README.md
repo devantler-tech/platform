@@ -658,6 +658,16 @@ only module change moves `github.com/cilium/cilium` from v1.20.3 to v1.20.4 and
 its two checksum lines. Talos machinery and its YAML encoders keep their
 versions. This audit changes no cluster configuration or vulnerability exception.
 
+**7.213.0**, commit `8694dec9a313c4520af8b0f7ccd68ff74cdc9d2c`, is audited
+against 7.212.20. The configuration manager and Talos generator are
+byte-identical. The API and chart add the per-pool patch field and preserve
+the extension and schematic ID fields. The release promotes its existing
+containerd libraries to direct dependencies and updates vCluster while
+keeping the Talos machinery and YAML encoder versions. The Hetzner lifecycle
+applies pool patches after the shared worker template and before preserving
+node-managed configuration. The platform uses that path to retain prepared
+disk profiles during ordinary updates and when provisioning pool members.
+
 **7.216.21**, commit `78677a11b150ec5efd5dd57124b4b201cb02a611`, is audited
 for the read-only storage pool preview. The cluster API and chart add the
 per-pool patch input while keeping the extension and schematic ID fields. The

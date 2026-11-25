@@ -8,16 +8,7 @@ trap 'rm -rf -- "$scratch"' EXIT
 cd -- "$root"
 
 bash scripts/render-talos-storage-pool-layout.sh >"$scratch/rendered.yaml"
-yq -o=json -I0 '.' ksail.prod.yaml >"$scratch/original.json"
-yq -o=json -I0 'del(.spec.cluster.autoscaler.node.pools[].talosPatches)' "$scratch/rendered.yaml" >"$scratch/without-patches.json"
-cmp "$scratch/original.json" "$scratch/without-patches.json"
-yq -o=json -I0 '.spec.cluster.autoscaler.node.pools' "$scratch/rendered.yaml" |
-  jq -e --rawfile rebuilt scripts/migrate-longhorn-v2/staging-layout.yaml \
-    --rawfile retained scripts/migrate-longhorn-v2/retained-staging-layout.yaml '
-    all(.[]; if .name == "autoscale-longhorn-v1" then .talosPatches == [$rebuilt]
-      elif .name == "autoscale-longhorn-v2" then .talosPatches == [$retained]
-      else has("talosPatches") | not end)
-  ' >/dev/null
+cmp ksail.prod.yaml "$scratch/rendered.yaml"
 
 mkdir -p "$scratch/invalid/scripts/migrate-longhorn-v2"
 cp scripts/migrate-longhorn-v2/{staging-layout.yaml,retained-staging-layout.yaml} "$scratch/invalid/scripts/migrate-longhorn-v2/"
@@ -25,6 +16,13 @@ yq '(.spec.cluster.autoscaler.node.pools[] | select(.name == "autoscale-longhorn
   ksail.prod.yaml >"$scratch/invalid/ksail.prod.yaml"
 if (cd -- "$scratch/invalid" && bash "$root/scripts/render-talos-storage-pool-layout.sh") >"$scratch/invalid.out" 2>/dev/null; then
   printf '%s\n' 'A duplicated migration pool unexpectedly rendered.' >&2
+  exit 1
+fi
+test ! -s "$scratch/invalid.out"
+yq 'del(.spec.cluster.autoscaler.node.pools[] | select(.name == "autoscale-longhorn-v2") | .talosPatches)' \
+  ksail.prod.yaml >"$scratch/invalid/ksail.prod.yaml"
+if (cd -- "$scratch/invalid" && bash "$root/scripts/render-talos-storage-pool-layout.sh") >"$scratch/invalid.out" 2>/dev/null; then
+  printf '%s\n' 'A missing production migration pool profile unexpectedly rendered.' >&2
   exit 1
 fi
 test ! -s "$scratch/invalid.out"
