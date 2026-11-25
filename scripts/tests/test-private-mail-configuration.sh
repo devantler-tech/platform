@@ -1015,13 +1015,17 @@ docker rm "$name" >/dev/null
 run_bootstrap --mail-proxy-source=10.255.255.250
 start_server serving
 jq -cn '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[
-  ["x:SenderAuth/get",{ids:["singleton"],properties:["dmarcVerify","spfEhloVerify","spfFromVerify","reverseIpVerify"]},"sender-auth"]]}' >"$scratch/sender-auth-request.json"
+  ["x:SenderAuth/get",{ids:["singleton"],properties:["dkimVerify","dmarcVerify","arcVerify","spfEhloVerify","spfFromVerify","reverseIpVerify"]},"sender-auth"]]}' >"$scratch/sender-auth-request.json"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
   --header 'Content-Type: application/json' --data-binary @/proof/sender-auth-request.json "http://$name:8080/jmap" >"$scratch/sender-auth.json"
-jq -e '.methodResponses[0][1].list as $auth | ($auth|length)==1 and
-  ([$auth[0].dmarcVerify, $auth[0].spfEhloVerify, $auth[0].spfFromVerify, $auth[0].reverseIpVerify] |
-    map({then: .match["0"].then, if: .match["0"].if, else: .else})) ==
-  ([{then:"strict"},{then:"relaxed"},{then:"relaxed"},{then:"relaxed"}] | map(. + {if:"listener == '"'"'smtp-inbound'"'"'", else:"disable"}))
+# Each whole stored expression must equal the declared one: one smtp-inbound
+# branch with the expected constant, and disable everywhere else.
+jq -e '
+  def inbound($value): {match: {"0": {if: "listener == '"'"'smtp-inbound'"'"'", then: $value}}, else: "disable"};
+  .methodResponses[0][1].list as $auth | ($auth|length)==1 and
+  ($auth[0] | {dkimVerify, dmarcVerify, arcVerify, spfEhloVerify, spfFromVerify, reverseIpVerify}) ==
+  {dkimVerify: inbound("relaxed"), dmarcVerify: inbound("strict"), arcVerify: inbound("relaxed"),
+   spfEhloVerify: inbound("relaxed"), spfFromVerify: inbound("relaxed"), reverseIpVerify: inbound("relaxed")}
 ' "$scratch/sender-auth.json" >/dev/null || {
   echo 'FAIL: the production inbound sender checks were not stored' >&2
   exit 1
