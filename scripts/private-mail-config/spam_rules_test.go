@@ -239,14 +239,12 @@ func TestSpamRulesLoadFromTheImageCopy(t *testing.T) {
 	if ops := planObjects(t); !reflect.DeepEqual(ops["SpamSettings"].Value, map[string]any{"spamFilterRulesUrl": "file://" + spamRulesPath}) {
 		t.Fatal("the audited schema does not load the image copy")
 	}
+	// A store migrated from 0.16 holds the file URL, and the candidate image
+	// carries the 0.16 file, so the 1.x plan must reset it to its own default.
 	v := fixture()
 	v.RuntimeVersion = "1.0.3"
-	plan, err := render(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(plan, []byte(`"SpamSettings"`)) {
-		t.Fatal("the 1.x candidate loads 0.16-format rules")
+	if ops := planObjectsFor(t, v); !reflect.DeepEqual(ops["SpamSettings"].Value, map[string]any{"spamFilterRulesUrl": upstreamSpamRulesURL}) {
+		t.Fatalf("the 1.x candidate does not reset its rules source: %v", ops["SpamSettings"].Value)
 	}
 }
 

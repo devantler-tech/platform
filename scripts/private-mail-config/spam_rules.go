@@ -20,8 +20,11 @@ import (
 // stalwartlabs/spam-filter v3.0.2 release, the last in the 0.16 rule format,
 // so the server never fetches the unpinned upstream URL that egress blocks.
 const (
-	spamRulesPath   = "/usr/local/share/stalwart/spam-filter-rules-v3.0.2.json"
-	spamRulesSHA256 = "1d3a66f6fa9a32f711c5b3a73853663eff27c994a46e8f6a0db64a9b2a580f52"
+	// upstreamSpamRulesURL is the server's own default rules source, in both
+	// v0.16.27 and v1.0.3 (registry/src/schema/structs_impl.rs).
+	upstreamSpamRulesURL = "https://github.com/stalwartlabs/spam-filter/releases/latest/download/spam-filter-rules.json.gz"
+	spamRulesPath        = "/usr/local/share/stalwart/spam-filter-rules-v3.0.2.json"
+	spamRulesSHA256      = "1d3a66f6fa9a32f711c5b3a73853663eff27c994a46e8f6a0db64a9b2a580f52"
 )
 
 // The reviewed object counts of the pinned release, per type and per lookup.

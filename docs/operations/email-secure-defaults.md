@@ -66,7 +66,9 @@ that ever imported the upstream rules keeps those keys until their
 `MemoryLookupKey` objects are destroyed. The production store never imported
 them, because egress blocks the upstream download, so it has none. After a
 restart, check that the lookup's key count is the derived 1,008 and that the
-`url-redirectors` namespace has none. The 1.x candidate keeps the upstream default: it
+`url-redirectors` namespace has none. The 1.x candidate declares the upstream
+default URL. That also resets a store migrated from 0.16, which would otherwise
+keep the file URL and import 0.16 rules from the candidate image. The candidate
 needs spam-filter v3.0.4, which is pinned separately when that runtime is
 adopted.
 
