@@ -143,6 +143,9 @@ receives the mailbox data.
 
 The independent inventory client is the MIT-licensed
 [`go-imap` v1.2.1](https://github.com/emersion/go-imap/tree/v1.2.1). It sends only
-login, folder listing, `EXAMINE` and logout; it neither fetches bodies nor sends
-mailbox mutation commands, and the tests require exactly that list of commands. Its connections have an absolute deadline,
-including while waiting for a server greeting.
+`CAPABILITY`, `LOGIN`, `LIST`, `EXAMINE` and `LOGOUT`; it neither fetches bodies
+nor sends mailbox mutation commands, and the tests refuse any other command.
+iCloud answers `EXAMINE` with `[READ-WRITE]`, so the observer's opens of the
+source may clear its session `\Recent` flags; the copy's source checks cover
+folders, message counts, UID validity and next UID, not flags. Its connections
+have an absolute deadline, including while waiting for a server greeting.
