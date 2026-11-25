@@ -1,4 +1,6 @@
-# The broker takes requests only from the Gateway, and reaches only:
+# The broker takes requests only from the Gateway, and only on the caller
+# gate's port (8081); octo-sts's own port (8080) is reachable only from the
+# gate, over the pod's loopback. It reaches only:
 # - GitHub's API, to read trust policies and mint installation tokens;
 # - GitHub Actions' OIDC issuer, for its discovery document and keys.
 # DNS carries an L7 rule so the toFQDNs rule can learn GitHub's addresses.
@@ -19,7 +21,7 @@ spec:
         - ingress
       toPorts:
         - ports:
-            - port: "8080"
+            - port: "8081"
               protocol: TCP
   egress:
     - toFQDNs:

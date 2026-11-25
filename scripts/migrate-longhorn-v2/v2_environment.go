@@ -10,7 +10,7 @@ import (
 
 // v2ManagerImage is qualified against the reviewed Longhorn 1.13.0 chart;
 // matching unreviewed live declarations cannot establish image provenance.
-const v2ManagerImage = "longhornio/longhorn-instance-manager:v1.13.0"
+const v2ManagerImage = runtimeStockImage
 
 // verifyV2Settings binds coexistence and effective SPDK configuration to the
 // reviewed profile before either registration or subsequent storage acceptance.

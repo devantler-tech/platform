@@ -54,20 +54,17 @@ func render(t *testing.T, source string) string {
 	return output.String()
 }
 
-func TestRuntimeSettingsRemainCompatibleUntilExplicitActivation(t *testing.T) {
+func TestRuntimeSettingsEnableTheCustomerDirectory(t *testing.T) {
 	doc := manifest(t, "k8s/providers/hetzner/apps/business-site/external-secret-runtime.yaml")
 	source, ok := field(t, doc, "spec", "target", "template", "data", "portal-settings").(string)
 	if !ok {
 		t.Fatal("missing runtime settings template")
 	}
-	if strings.Contains(render(t, source), "PORTAL_ZITADEL_") {
-		t.Fatal("directory inputs reached the current application before activation")
+	const activation = "$portalCustomerDirectoryEnabled := true"
+	if strings.Count(source, activation) != 1 {
+		t.Fatal("the customer directory is disabled in production")
 	}
-	const disabled = "$portalCustomerDirectoryEnabled := false"
-	if strings.Count(source, disabled) != 1 {
-		t.Fatal("missing single explicit directory activation control")
-	}
-	enabled := render(t, strings.Replace(source, disabled, "$portalCustomerDirectoryEnabled := true", 1))
+	enabled := render(t, source)
 	for _, expected := range []string{
 		"PORTAL_ZITADEL_URL=https://accounts.devantler.tech\n",
 		"PORTAL_ZITADEL_ORG_ID=123456789\n",
@@ -79,6 +76,9 @@ func TestRuntimeSettingsRemainCompatibleUntilExplicitActivation(t *testing.T) {
 	}
 	if !strings.Contains(enabled, "PORTAL_OIDC_CLIENT_ID=business-portal\n") {
 		t.Fatal("directory activation removed existing sign-in configuration")
+	}
+	if strings.Contains(render(t, strings.Replace(source, activation, "$portalCustomerDirectoryEnabled := false", 1)), "PORTAL_ZITADEL_") {
+		t.Fatal("disabling the directory must remove all three settings")
 	}
 }
 

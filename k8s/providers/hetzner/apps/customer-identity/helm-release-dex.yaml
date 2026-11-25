@@ -124,6 +124,11 @@ spec:
           secretKeyRef:
             name: customer-dex-portal-client
             key: client-secret
+      - name: CUSTOMER_PREVIEW_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: customer-dex-preview-client-v1
+            key: client-secret
       # The platform Dex's shared client, for the operator connector below
       # (external-secret-platform-dex-client.yaml, also ZITADEL's).
       - name: PLATFORM_DEX_CLIENT_SECRET
@@ -224,3 +229,8 @@ spec:
           # The portal is served at the root of its own host.
           redirectURIs:
             - https://portal.devantler.tech/callback
+        - id: business-site-preview
+          name: Devantler Tech preview
+          secretEnv: CUSTOMER_PREVIEW_CLIENT_SECRET
+          redirectURIs:
+            - https://dev.devantler.tech/callback

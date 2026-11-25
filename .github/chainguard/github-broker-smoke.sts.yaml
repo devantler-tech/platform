@@ -1,0 +1,15 @@
+---
+# Trust policy for the GitHub token broker's smoke test (#6605, ADR 0020 in
+# devantler-tech/monorepo). The broker (octo-sts, sts.platform.devantler.tech)
+# reads it from this repository's default branch. Only the smoke workflow, on
+# main, may exchange its Actions OIDC token for a token on this repository, and
+# only with read access to its contents. repository_owner_id pins the caller to
+# the devantler-tech organization by its numeric ID, which
+# scripts/guard-github-broker-policies.sh requires of every policy here.
+issuer: https://token.actions.githubusercontent.com
+subject: repo:devantler-tech/platform:ref:refs/heads/main
+claim_pattern:
+  repository_owner_id: "178524219"
+  job_workflow_ref: devantler-tech/platform/\.github/workflows/github-broker-smoke\.yaml@refs/heads/main
+permissions:
+  contents: read

@@ -250,6 +250,12 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-mail-submission\.yaml@refs/heads/main$
+  # The one-time mailbox history importer has its own exact main-only
+  # publisher (#5481).
+  - image: ghcr.io/devantler-tech/platform-email-history-import
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-email-history-import\.yaml@refs/heads/main$
   # First-party APP images accept exactly what the app admission policy accepts:
   # a first-party repository's own release workflow on a release tag (ADR 0017,
   # #6265). The shared reusable publishers are no longer accepted at any revision

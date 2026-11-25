@@ -21,8 +21,8 @@ metadata:
       each product's own release workflow for app images, the platform's
       dedicated compatibility-image publishers, each Crossplane provider's own
       package workflow, KSail's publish-ksail-analysis-runner.yaml workflow, the mail bootstrap publisher,
-      the dedicated customer identity, Dex, kagent controller, automated mail sender and Longhorn
-      migration publishers,
+      the dedicated customer identity, Dex, kagent controller, automated mail sender,
+      mailbox history importer and Longhorn migration publishers,
       and KSail's release workflow.
       Each class is verified only against its own identity;
       third-party images admit unverified.
@@ -219,6 +219,14 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-mail-submission\.yaml@refs/heads/main$
+    # The one-time mailbox history importer has its own main-only publisher.
+    # Its signature cannot satisfy any other image class (platform#5481).
+    - name: publishemailhistory
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-email-history-import\.yaml@refs/heads/main$
     # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
     # reusable publish workflow they use cannot sign, so each provider repo
     # attaches the keyless signature in its own publish-provider-package.yml
@@ -329,6 +337,9 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-mail-submission' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-mail-submission:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-mail-submission@') &&
+          image != 'ghcr.io/devantler-tech/platform-email-history-import' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-email-history-import:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-email-history-import@') &&
           image != 'ghcr.io/devantler-tech/ksail-analysis-runner' &&
           !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:') &&
           !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@'))
@@ -394,6 +405,17 @@ spec:
       message: >-
         automated mail sender image is not signed by its main-only publisher;
         other first-party images retain their existing signer.
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-email-history-import' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-email-history-import:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-email-history-import@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishemailhistory]))
+        .all(e, e > 0)
+      message: >-
+        mailbox history importer image is not signed by its main-only
+        publisher; other first-party images retain their existing signer.
     - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,

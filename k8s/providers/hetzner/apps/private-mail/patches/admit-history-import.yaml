@@ -1,0 +1,17 @@
+# The one-time history copy writes into the maintainer's mailbox over IMAPS
+# (#5481). When Cilium delivers its connection to the load balancer's address
+# straight to this pod, the connection comes from the copy's pod rather than
+# the load balancer, so admit that one pod label on the IMAPS port only. The
+# server expects PROXY headers only from the load balancer's address, so this
+# connection is plain TLS.
+- op: add
+  path: /spec/ingress/-
+  value:
+    fromEndpoints:
+      - matchLabels:
+          k8s:io.kubernetes.pod.namespace: private-mail
+          app: email-history-import
+    toPorts:
+      - ports:
+          - port: "1993"
+            protocol: TCP

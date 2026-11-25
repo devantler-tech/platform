@@ -3,8 +3,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../base
+  - flux-kustomization-business-site-preview.yaml
   # Production-only leaf health signal; nothing depends on it (platform#6269).
   - flux-kustomization-platform-health.yaml
+  # Production-only leaf that applies the GitHub token broker's pods, so a
+  # broker without its keys never gates `apps` (#6605).
+  - flux-kustomization-github-broker.yaml
 
 # Template inputs for this cluster. cluster-meta drives the replacements
 # below; it is annotated local-config and never applied to the cluster.

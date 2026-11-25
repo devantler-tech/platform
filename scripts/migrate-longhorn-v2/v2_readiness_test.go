@@ -44,7 +44,7 @@ func v2ReadinessFixtureForRoute(legacy bool) (inventory, []object) {
 	for i, n := range s.nodes[:6] {
 		im := resource(fmt.Sprintf("im-%d", i))
 		im["metadata"].(object)["namespace"] = "longhorn-system"
-		im["spec"] = object{"nodeID": text(n, "metadata", "name"), "dataEngine": "v2", "type": "aio", "image": "longhornio/longhorn-instance-manager:v1.13.0"}
+		im["spec"] = object{"nodeID": text(n, "metadata", "name"), "dataEngine": "v2", "type": "aio", "image": runtimeStockImage}
 		im["status"] = object{"currentState": "running"}
 		managers = append(managers, im)
 		p := resource(text(im, "metadata", "name"))
@@ -66,7 +66,7 @@ func TestV2RuntimeRejectsTheEarlierRebuiltPermanentWorkerRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, managers := v2ReadinessFixtureForRoute(true)
-	if verifyV2Runtime(s, managers, pools, "longhornio/longhorn-instance-manager:v1.13.0") == nil {
+	if verifyV2Runtime(s, managers, pools, runtimeStockImage) == nil {
 		t.Fatal("the temporary-only route accepted raw storage on original workers")
 	}
 }
@@ -79,7 +79,7 @@ func TestV2RuntimeRequiresRealRawDisksAndReservedReactors(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, managers := v2ReadinessFixture()
-	if err = verifyV2Runtime(s, managers, pools, "longhornio/longhorn-instance-manager:v1.13.0"); err != nil {
+	if err = verifyV2Runtime(s, managers, pools, runtimeStockImage); err != nil {
 		t.Fatal(err)
 	}
 	for name, change := range map[string]func(*inventory, *[]object){
@@ -158,10 +158,30 @@ func TestV2RuntimeRequiresRealRawDisksAndReservedReactors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, m := v2ReadinessFixture()
 			change(&s, &m)
-			if verifyV2Runtime(s, m, pools, "longhornio/longhorn-instance-manager:v1.13.0") == nil {
+			if verifyV2Runtime(s, m, pools, runtimeStockImage) == nil {
 				t.Fatal("V2 canary admitted without its real runtime prerequisites")
 			}
 		})
+	}
+}
+
+func TestV2ClientsAcceptTheEquivalentStockImageReferences(t *testing.T) {
+	pools, err := configuredMigrationPools(poolConfigFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const unqualified = "longhornio/longhorn-instance-manager:v1.13.0"
+	for _, images := range []struct{ manager, pod string }{
+		{unqualified, unqualified},
+		{runtimeStockImage, unqualified},
+		{unqualified, runtimeStockImage},
+	} {
+		s, managers := v2ReadinessFixture()
+		valueObject(managers[0], "spec")["image"] = images.manager
+		value(s.pods[0], "spec", "containers").([]any)[0].(object)["image"] = images.pod
+		if err := verifyV2Clients(s, managers, pools, v2ManagerImage); err != nil {
+			t.Errorf("stock manager %q and pod %q: %v", images.manager, images.pod, err)
+		}
 	}
 }
 

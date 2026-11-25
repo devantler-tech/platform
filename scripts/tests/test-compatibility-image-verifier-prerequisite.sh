@@ -66,6 +66,7 @@ ghcr.io/devantler-tech/platform-longhorn-instance-manager|publishlonghornretirem
 ghcr.io/devantler-tech/platform-longhorn-manager|publishlonghornv2|publish-longhorn-v2-only
 ghcr.io/devantler-tech/platform-longhorn-fio|publishlonghornfio|publish-longhorn-fio
 ghcr.io/devantler-tech/platform-mail-submission|publishmailsubmission|publish-mail-submission
+ghcr.io/devantler-tech/platform-email-history-import|publishemailhistory|publish-email-history-import
 ROUTES
 
 printf 'Compatibility-image verifier prerequisites are valid.\n'

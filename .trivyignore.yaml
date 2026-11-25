@@ -869,6 +869,13 @@ misconfigurations:
     statement: >-
       The ConfigMap is generated from reviewed scripts and dashboards; Trivy matches jq identifiers
       named key, not credential values.
+  - id: KSV-01010
+    paths:
+      - k8s/providers/hetzner/apps/github-broker/server/config-map-gate.yaml
+    statement: >-
+      The ConfigMap is the GitHub token broker's Envoy caller-gate configuration; Trivy matches the
+      key segments of the metadata path the gate reads verified token claims from, not credential
+      values. Callers present their own short-lived OIDC tokens per request.
   - id: KSV-0109
     paths:
       - k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml

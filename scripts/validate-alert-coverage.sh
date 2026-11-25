@@ -115,8 +115,9 @@ for kind in HelmRelease Kustomization OCIRepository GitRepository; do
   " "${rendered}" >"${declared_raw}"
 
   # A kro Tenant is not rendered as its children: the tenant ResourceGraphDefinition
-  # generates the Tenant's OCIRepository at reconcile time, in the namespace named by
-  # spec.name. Count that namespace too, and refuse a Tenant without one.
+  # generates the Tenant's OCIRepository at reconcile time. The graph uses
+  # spec.name for the namespace, unless the instance name is spec.name + "-dev".
+  # Count that namespace too, and refuse a Tenant without spec.name.
   if [[ "${kind}" == OCIRepository ]]; then
     unnamed_tenants="$(yq ea -r '
       select(.kind == "Tenant" and (.apiVersion | test("^kro\\.run/")))
@@ -129,7 +130,10 @@ for kind in HelmRelease Kustomization OCIRepository GitRepository; do
     fi
     yq ea -r '
       select(.kind == "Tenant" and (.apiVersion | test("^kro\\.run/")))
-      | .spec.name
+      | (
+          (select(.metadata.name == (.spec.name + "-dev")) | .metadata.name),
+          (select(.metadata.name != (.spec.name + "-dev")) | .spec.name)
+        )
     ' "${rendered}" >>"${declared_raw}"
   fi
   awk 'NF && $0 != "---"' "${declared_raw}" |

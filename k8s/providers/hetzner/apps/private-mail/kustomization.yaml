@@ -5,10 +5,21 @@ resources:
   # The mail store is encrypted at rest; its key comes from OpenBao (#5387).
   - ../../../../bases/apps/email-encrypted-storage
   - secret-settings.enc.yaml
+  # The one-time mailbox history copy (#5481): a suspended template the
+  # dispatched operation starts, and the only endpoints it may reach.
+  - cron-job-history-import.yaml
+  - cilium-network-policy-history-import.yaml
   # The mail server's own load balancer for SMTP, submission and IMAPS (#5481).
   - service.yaml
   # Its DNS-only host, mail.devantler.tech.
   - dns-endpoint.yaml
+  # Inputs for the one-time mailbox history copy from the existing provider
+  # (#5481): its sign-in through a scoped OpenBao role, and the domain's
+  # address inventory as an encrypted Secret. Removed with the importer.
+  - service-account-history-import.yaml
+  - secret-store-history-import.yaml
+  - external-secret-history-import.yaml
+  - secret-history-import-addresses.enc.yaml
 patches:
   # Production has retained credential custody. Never infer a fresh installation
   # from missing records while an older backup is being restored.
@@ -51,6 +62,14 @@ patches:
       name: private-mail
       namespace: private-mail
     path: patches/admit-mail-load-balancer.yaml
+  # The one-time history copy writes into the mailbox over IMAPS (#5481).
+  - target:
+      group: cilium.io
+      version: v2
+      kind: CiliumNetworkPolicy
+      name: private-mail
+      namespace: private-mail
+    path: patches/admit-history-import.yaml
   # The public mail hostname, for submission and IMAPS clients (#5481).
   - target:
       group: cert-manager.io

@@ -660,6 +660,7 @@ jobs:
               - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
               - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
+              - 'scripts/tests/test-github-broker-gate.sh'
               - 'scripts/select-velero-rebuild-backups.jq'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-cancellation-release.sh'
@@ -1014,6 +1015,12 @@ jobs:
         run: |
           shellcheck scripts/guard-github-broker-independence.sh scripts/tests/test-github-broker-independence.sh
           bash scripts/tests/test-github-broker-independence.sh
+
+      # Every broker trust policy here admits only devantler-tech callers.
+      - name: 🧭 Validate GitHub token broker trust policies
+        run: |
+          shellcheck scripts/guard-github-broker-policies.sh scripts/tests/test-github-broker-policies.sh
+          bash scripts/tests/test-github-broker-policies.sh
 
       - name: 🚩 Validate runtime flag definitions
         run: |
@@ -1806,7 +1813,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.20"
+          KSAIL_VERSION: "7.213.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2775,6 +2782,15 @@ jobs:
           shellcheck scripts/tests/test-anthropic-proxy-envoy-config.sh
           bash scripts/tests/test-anthropic-proxy-envoy-config.sh
 
+      - name: 🔑 Validate the GitHub token broker's caller gate
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the gate's Envoy config in its pinned image with signed test
+        # tokens: only devantler-tech callers pass, refusals come before the
+        # rate limit, and no traffic can go around the gate (ADR 0020).
+        run: |
+          shellcheck scripts/tests/test-github-broker-gate.sh
+          bash scripts/tests/test-github-broker-gate.sh
+
       - name: 💾 Validate the Velero maintenance OOM alert
         if: needs.changes.outputs.k8s == 'true'
         # Replays an OOMKilled attempt plus a later successful retry against the
@@ -3104,7 +3120,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.20"
+          KSAIL_VERSION: "7.213.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3538,7 +3554,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.20"
+          KSAIL_VERSION: "7.213.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -4613,7 +4629,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.212.20"
+          KSAIL_VERSION: "7.213.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

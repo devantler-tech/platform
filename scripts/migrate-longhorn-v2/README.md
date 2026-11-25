@@ -49,11 +49,12 @@ or runtime adoption. Serving-image adoption, resident memory, rollout health and
 benchmark/scratch retirement remain separate acceptance checks.
 
 `observe-database` is a protected, read-only PostgreSQL observation for
-platform#5842. Select one of the seven fixed databases with `database`, leave
+platform#5842. Select one of the eight fixed databases with `database`, leave
 `node` empty, and confirm with `observe-longhorn-v2-database-<database>`.
-It requires all reviewed healthy, owned instances with stable primary and archive
-state. Fixed SQL reads physical database identity, timeline and WAL positions;
-the primary's captured flush position must be replayed by every standby. The
+It checks all expected healthy, owned instances, the stable primary, and the
+operator health conditions. The preview database has one expected instance.
+Fixed SQL reads physical database identity, timeline and WAL positions. Each
+standby must have replayed the primary's captured flush position. The
 client uses the Pod's fixed local socket with a cleared connection environment
 and fixed executable search path, rather than inheriting libpq overrides.
 It qualifies PostgreSQL built-ins explicitly and fixes catalog lookup and

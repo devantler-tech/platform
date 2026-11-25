@@ -5,7 +5,7 @@
 #
 # WHY THIS EXISTS
 # KSV-01010 "ConfigMap with sensitive content" matches key and value TEXT, so it cannot tell a
-# public ACME contact address from a credential. Five ConfigMaps are dispositioned (#3240):
+# public ACME contact address from a credential. Six ConfigMaps are dispositioned (#3240):
 #
 #   k8s/clusters/{prod,local}/bootstrap/config-map.yaml  — matched on admin_email, the ACME
 #                                                          registration contact the cluster issuer
@@ -17,6 +17,9 @@
 #                                                          heading in the dashboard layout.
 #   .../coroot/components/security-progress/config-map.yaml — generated from reviewed scripts;
 #                                                          matched on jq identifiers named key.
+#   .../github-broker/server/config-map-gate.yaml      — the token broker's Envoy caller gate;
+#                                                          matched on the key segments of the
+#                                                          path to the verified token's claims.
 #
 # The premise is that the EXCEPTION IS THE PATH, not the content. If the scoping ever stopped
 # deciding — a glob widened to k8s/**, the id skipped outright — then a genuinely secret-bearing
@@ -109,7 +112,8 @@ readonly EXPECTED_PATHS="k8s/bases/apps/actual-budget/config-map.yaml
 k8s/bases/apps/homepage/config-map.yaml
 k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml
 k8s/clusters/local/bootstrap/config-map.yaml
-k8s/clusters/prod/bootstrap/config-map.yaml"
+k8s/clusters/prod/bootstrap/config-map.yaml
+k8s/providers/hetzner/apps/github-broker/server/config-map-gate.yaml"
 
 entry_count="$(yq "[.misconfigurations[] | select(.id == \"$CHECK_ID\")] | length" "$IGNOREFILE" 2>/dev/null || printf '0')"
 [ "$entry_count" -gt 0 ] || fail \
@@ -120,10 +124,10 @@ instead, delete this test with them"
 while IFS= read -r n; do
   [ "$n" -gt 0 ] || fail \
     "a $CHECK_ID entry has no paths key, so the check is skipped repository-wide rather than \
-scoped to the five reviewed ConfigMaps"
+scoped to the six reviewed ConfigMaps"
 done < <(yq ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // []) | length" "$IGNOREFILE")
 
-# The scoped set must be exactly the five reviewed files. A widened glob (k8s/**) or a new path
+# The scoped set must be exactly the six reviewed files. A widened glob (k8s/**) or a new path
 # added without review both land here.
 actual_paths="$(yq -r ".misconfigurations[] | select(.id == \"$CHECK_ID\") | .paths[]" "$IGNOREFILE" | sort)"
 if [ "$actual_paths" != "$EXPECTED_PATHS" ]; then
@@ -135,7 +139,7 @@ actual:
 $actual_paths"
 fi
 
-echo "PASS(structural): $CHECK_ID is path-scoped to exactly the 5 reviewed ConfigMaps."
+echo "PASS(structural): $CHECK_ID is path-scoped to exactly the 6 reviewed ConfigMaps."
 
 # --- Layer 1b: content premises. Path scoping decides WHICH files are excepted; it says nothing
 # --- about what those files may later contain. A credential added to one of them would be
@@ -391,6 +395,7 @@ readonly REVIEWED_KEYS_actual="const secretKey,enablebanking_secretKey"
 readonly REVIEWED_KEYS_homepage='Email'
 # shellcheck disable=SC2016
 readonly REVIEWED_KEYS_progress='def scope_key,|  key,| ( def index_of($list),| ($input.vulnerability | list | map(key,| group_by(.key) | map( key'
+readonly REVIEWED_KEYS_gate='- key'
 
 # Extract the brace-delimited key list trivy reports for one target, normalise it, and join.
 matched_keys_at() {
@@ -451,7 +456,8 @@ assert_reviewed_key_sets "$CHECK_ID" \
   "k8s/clusters/local/bootstrap/config-map.yaml:$REVIEWED_KEYS_local" \
   "k8s/bases/apps/actual-budget/config-map.yaml:$REVIEWED_KEYS_actual" \
   "k8s/bases/apps/homepage/config-map.yaml:$REVIEWED_KEYS_homepage" \
-  "k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml:$REVIEWED_KEYS_progress"
+  "k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml:$REVIEWED_KEYS_progress" \
+  "k8s/providers/hetzner/apps/github-broker/server/config-map-gate.yaml:$REVIEWED_KEYS_gate"
 
 # --- The KSV-0109 dispositions' content premises. ---
 # KSV-0109 "ConfigMap stores secrets" is the other ConfigMap check, and it is the one that matches

@@ -96,6 +96,10 @@ func verifyV2Clients(s inventory, managers []object, pools map[string]migrationP
 	return verifyV2ClientPods(s, managers, workers, expectedManagerImage)
 }
 
+func matchesV2ManagerImage(image, expected string) bool {
+	return image == expected || expected == runtimeStockImage && image == strings.TrimPrefix(runtimeStockImage, "docker.io/")
+}
+
 // verifyV2ClientPods binds each client to its controller and reviewed image,
 // reservations, reactor arguments and isolation on the already checked roster.
 func verifyV2ClientPods(s inventory, managers []object, workers map[string]bool, expectedManagerImage string) error {
@@ -153,10 +157,15 @@ func verifyV2ClientPods(s inventory, managers []object, workers map[string]bool,
 				return errors.New("V2 workload overrides the reviewed image entrypoint")
 			}
 		}
+		if text(container, "name") != "instance-manager" ||
+			!matchesV2ManagerImage(text(container, "image"), expectedManagerImage) ||
+			!matchesV2ManagerImage(text(im, "spec", "image"), expectedManagerImage) {
+			return errors.New("V2 instance-manager image differs from the reviewed reference")
+		}
 		cpu := text(container, "resources", "requests", "cpu")
 		cpuLimit := text(container, "resources", "limits", "cpu")
 		hugepages := text(container, "resources", "limits", "hugepages-2Mi")
-		if text(container, "name") != "instance-manager" || text(container, "image") != expectedManagerImage || text(container, "image") != text(im, "spec", "image") || (cpu != "2" && cpu != "2000m") || (cpuLimit != "4" && cpuLimit != "4000m") || (hugepages != "2Gi" && hugepages != "2048Mi") {
+		if (cpu != "2" && cpu != "2000m") || (cpuLimit != "4" && cpuLimit != "4000m") || (hugepages != "2Gi" && hugepages != "2048Mi") {
 			return errors.New("V2 workload lacks its effective two-core and two-GiB huge-page reservation")
 		}
 		args, _ := value(container, "args").([]any)

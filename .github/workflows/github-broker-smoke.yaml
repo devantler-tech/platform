@@ -1,0 +1,103 @@
+---
+name: GitHub Broker Smoke Test
+# Proves the GitHub token broker (octo-sts, ADR 0020 in devantler-tech/monorepo,
+# #6605) end to end, daily and on demand. It is the broker's health check: a
+# failed run means workflows cannot get tokens through it.
+#
+# - A workflow exchanges its Actions OIDC token for a token on this repository,
+#   through the reviewed policy .github/chainguard/github-broker-smoke.sts.yaml,
+#   and reads the policy back with it, as upstream's own prober does.
+# - The token gets no more than the policy grants. GitHub must list this
+#   repository, and only this one, as its reach, and must refuse it a
+#   permission the policy does not name.
+# - The broker refuses an identity with no policy with its missing-policy
+#   answer. Any other failure fails the run instead of counting as a refusal.
+#
+# It holds no credential and writes nothing. The action's post step revokes the
+# token. It is not part of any deploy or recovery path, which
+# scripts/guard-github-broker-independence.sh keeps off the broker.
+"on":
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * *"
+permissions: {}
+concurrency:
+  group: github-broker-smoke
+  cancel-in-progress: false
+jobs:
+  smoke:
+    name: Exchange a workflow identity for a scoped token
+    if: github.repository == 'devantler-tech/platform' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - name: Exchange the workflow identity through the broker
+        id: broker
+        uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
+        with:
+          domain: sts.platform.devantler.tech
+          scope: devantler-tech/platform
+          identity: github-broker-smoke
+
+      - name: Require the token to get no more than the policy grants
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.broker.outputs.token }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN}" ]] || { echo '::error::the broker returned no token'; exit 1; }
+          # This repository is public, and GitHub serves a public repository's
+          # contents to any token, so this read proves the token works, not
+          # that it holds contents: read. The checks after it bound the token.
+          policy=.github/chainguard/github-broker-smoke.sts.yaml
+          read="$(gh api "repos/devantler-tech/platform/contents/${policy}" --jq .path)"
+          [[ "${read}" == "${policy}" ]] || { echo '::error::the token cannot read its own policy'; exit 1; }
+          # GitHub lists the repositories an installation token may reach. The
+          # Apps are installed on every repository, so anything beyond this one
+          # means the broker widened the scope its policy asked for.
+          reach="$(gh api installation/repositories --jq '[.repositories[].full_name] | sort | join(",")')"
+          [[ "${reach}" == devantler-tech/platform ]] || { echo "::error::the token reaches more than this repository: ${reach}"; exit 1; }
+          # Reading the Actions secrets key needs `secrets: read`, which the
+          # policy does not grant, so GitHub must answer 403. A network error
+          # fails the step.
+          code="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/devantler-tech/platform/actions/secrets/public-key)"
+          [[ "${code}" == 403 ]] || { echo "::error::a permission outside the policy was not refused (HTTP ${code})"; exit 1; }
+          echo 'GITHUB_BROKER_SMOKE=PASS scope=policy'
+
+      - name: Require the broker to refuse an identity with no policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Call the broker directly rather than through the action, which fails
+          # the same way for every error. Only octo-sts's missing-policy answer
+          # (gRPC NotFound, HTTP 404) counts as a refusal. An OIDC, network or
+          # server failure fails this step.
+          oidc="$(curl -fsS --retry 3 -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.platform.devantler.tech" | jq -r '.value // empty')"
+          [[ -n "${oidc}" ]] || { echo '::error::GitHub issued no OIDC token'; exit 1; }
+          echo "::add-mask::${oidc}"
+          body="${RUNNER_TEMP}/github-broker-unmatched.json"
+          code="$(curl -sS -o "${body}" -w '%{http_code}' -H "Authorization: Bearer ${oidc}" \
+            'https://sts.platform.devantler.tech/sts/exchange?scope=devantler-tech/platform&identity=github-broker-smoke-unmatched')"
+          if [[ "${code}" == 200 ]]; then
+            token="$(jq -r '.token // empty' "${body}")"
+            if [[ -n "${token}" ]]; then
+              echo "::add-mask::${token}"
+              curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer ${token}" https://api.github.com/installation/token || true
+            fi
+            echo '::error::the broker issued a token without a policy'
+            exit 1
+          fi
+          [[ "${code}" == 404 ]] || { echo "::error::expected the broker's missing-policy refusal (HTTP 404), got HTTP ${code}"; exit 1; }
+          message="$(jq -r '.message // empty' "${body}")"
+          [[ "${message}" == 'unable to find trust policy for '* ]] || { echo "::error::unexpected refusal: ${message}"; exit 1; }
+          echo 'GITHUB_BROKER_SMOKE=PASS refusal=unmatched'
