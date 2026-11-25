@@ -11,8 +11,8 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func TestCurrentMigrationDatabaseRosterIncludesIdentityAndPortal(t *testing.T) {
-	want := map[cnpgSource]bool{{"observability", "coroot-db"}: true, {"umami", "umami-db"}: true, {"wedding-app", "wedding-db"}: true, {"ate-system", "substrate-db"}: true, {"kagent", "kagent-db"}: true, {"customer-identity", "customer-identity-db"}: true, {"business-site", "business-site-portal-db"}: true}
+func TestCurrentMigrationDatabaseRoster(t *testing.T) {
+	want := map[cnpgSource]bool{{"observability", "coroot-db"}: true, {"umami", "umami-db"}: true, {"wedding-app", "wedding-db"}: true, {"ate-system", "substrate-db"}: true, {"kagent", "kagent-db"}: true, {"customer-identity", "customer-identity-db"}: true, {"business-site", "business-site-portal-db"}: true, {"business-site-dev", "portal-preview-db"}: true}
 	for _, source := range cnpgSources() {
 		if !want[source] {
 			t.Fatal("unexpected or duplicated database owner", source)
@@ -104,10 +104,11 @@ func TestCurrentDatabaseWorkflowUsesFixedChoicesAndNativeMainGuard(t *testing.T)
 		}
 		choices[choice] = true
 	}
-	if len(choices) != 7 {
-		t.Fatal("workflow does not expose exactly seven database owners")
+	sources := cnpgSources()
+	if len(choices) != len(sources) {
+		t.Fatal("workflow choices differ from the database observation roster")
 	}
-	for _, source := range cnpgSources() {
+	for _, source := range sources {
 		if !choices[source.Name] {
 			t.Fatal("workflow omits a compiled owner", source.Name)
 		}
@@ -121,7 +122,7 @@ func TestCurrentDatabaseWorkflowUsesFixedChoicesAndNativeMainGuard(t *testing.T)
 	if script == "" {
 		t.Fatal("native workflow guard is missing")
 	}
-	for _, name := range []string{"customer-identity-db", "business-site-portal-db"} {
+	for _, name := range []string{"customer-identity-db", "business-site-portal-db", "portal-preview-db"} {
 		for _, fault := range []string{"", "other database", "other node", "other ref", "later attempt", "wrong confirmation"} {
 			env := map[string]string{"PATH": os.Getenv("PATH"), "DISPATCH_REF": "refs/heads/main", "GITHUB_RUN_ATTEMPT": "1", "LONGHORN_V2_OPERATION": "observe-database", "LONGHORN_V2_NODE": "", "LONGHORN_V2_DATABASE": name, "LONGHORN_V2_CONFIRM": "observe-longhorn-v2-database-" + name}
 			switch fault {

@@ -57,10 +57,13 @@ func cnpgInstanceID(name, cluster string) (uint64, error) {
 func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 	primary := text(cluster, "status", "currentPrimary")
 	name, ns := text(cluster, "metadata", "name"), text(cluster, "metadata", "namespace")
-	profile, selected := hostDatabases[ns+"/"+name]
-	if !selected || text(cluster, "metadata", "uid") == "" || text(cluster, "metadata", "resourceVersion") == "" || value(cluster, "metadata", "deletionTimestamp") != nil ||
-		value(cluster, "spec", "instances") != profile.instances || value(cluster, "status", "instances") != profile.instances || value(cluster, "status", "readyInstances") != profile.instances || !cnpgCondition(cluster, "Ready") || !cnpgCondition(cluster, "ContinuousArchiving") || primary == "" || primary != text(cluster, "status", "targetPrimary") {
-		return nil, errors.New("the selected database is not stable, archived and ready")
+	expectedInstances := hostDatabases[ns+"/"+name].instances
+	if ns == previewCNPGNamespace && name == previewCNPGName {
+		expectedInstances = 1
+	}
+	if expectedInstances == 0 || text(cluster, "metadata", "uid") == "" || text(cluster, "metadata", "resourceVersion") == "" || value(cluster, "metadata", "deletionTimestamp") != nil ||
+		value(cluster, "spec", "instances") != expectedInstances || value(cluster, "status", "instances") != expectedInstances || value(cluster, "status", "readyInstances") != expectedInstances || !cnpgCondition(cluster, "Ready") || !cnpgCondition(cluster, "ContinuousArchiving") || primary == "" || primary != text(cluster, "status", "targetPrimary") {
+		return nil, errors.New("database instance health, operator conditions or primary identity are unverified")
 	}
 	if fence := text(cluster, "metadata", "annotations", "cnpg.io/fencedInstances"); fence != "" && fence != "[]" {
 		return nil, errors.New("database already has a maintenance fence")
@@ -77,7 +80,7 @@ func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 		}
 		known[instance] = true
 	}
-	if len(known) != int(profile.instances) || !known[primary] {
+	if len(known) != int(expectedInstances) || !known[primary] {
 		return nil, errors.New("all reviewed healthy database instances are required")
 	}
 	pods := []object{}
