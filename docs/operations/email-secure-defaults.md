@@ -60,7 +60,13 @@ maintenance task of type update rules; a new file alone changes nothing on a
 store that already holds rules. That task only adds objects and replaces changed
 ones. It never changes a stored tag, so a release's new tag scores need a manual
 review and update; it keeps each HTTP list's enable flag, and it removes nothing
-the new release dropped. The 1.x candidate keeps the upstream default: it
+the new release dropped. For the same reason this copy turns the shortened-link
+check off only on a store that holds no upstream `url-redirectors` keys. A store
+that ever imported the upstream rules keeps those keys until their
+`MemoryLookupKey` objects are destroyed. The production store never imported
+them, because egress blocks the upstream download, so it has none. After a
+restart, check that the lookup's key count is the derived 1,008 and that the
+`url-redirectors` namespace has none. The 1.x candidate keeps the upstream default: it
 needs spam-filter v3.0.4, which is pinned separately when that runtime is
 adopted.
 
