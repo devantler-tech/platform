@@ -57,7 +57,10 @@ maintainer chose this set (#5387):
 The server imports the rules only at a normal start that finds none stored. A
 later release therefore needs a new derived copy and a manual spam filter
 maintenance task of type update rules; a new file alone changes nothing on a
-store that already holds rules. The 1.x candidate keeps the upstream default: it
+store that already holds rules. That task only adds objects and replaces changed
+ones. It never changes a stored tag, so a release's new tag scores need a manual
+review and update; it keeps each HTTP list's enable flag, and it removes nothing
+the new release dropped. The 1.x candidate keeps the upstream default: it
 needs spam-filter v3.0.4, which is pinned separately when that runtime is
 adopted.
 
