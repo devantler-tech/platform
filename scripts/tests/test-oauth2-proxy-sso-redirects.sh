@@ -184,13 +184,33 @@ for provider in "${providers[@]}"; do
   # The SSO cookies stay host-only, and the __Host- prefix makes the browser
   # enforce it: no other host under the same site can plant one. The browser
   # refuses a __Host- cookie unless it is Secure (above), has Path=/ and has
-  # no Domain, so neither a cookie domain nor a cookie path may be set.
-  grep -Eq '^[[:space:]]*cookie_name[[:space:]]*=[[:space:]]*"__Host-[^"]+"[[:space:]]*$' <<<"${o2p_config}" ||
+  # no Domain. oauth2-proxy also reads cookie settings from the chart's
+  # config.cookieName value (rendered as a flag), from extraArgs flags and from
+  # OAUTH2_PROXY_COOKIE_* variables, all of which win over the config file, so
+  # none of them may set one.
+  value_end='[[:space:]]*(#.*)?$'
+  grep -Eq "^[[:space:]]*cookie_name[[:space:]]*=[[:space:]]*(\"__Host-[^\"]+\"|'__Host-[^']+')${value_end}" <<<"${o2p_config}" ||
     fail "${provider}: oauth2-proxy's cookie_name must start with __Host-, so the browser keeps the SSO cookies to the host that set them and refuses one planted by another host under the same site"
-  if grep -Eq '^[[:space:]]*cookie_(domains?|path)[[:space:]]*=' <<<"${o2p_config}" ||
-    grep -Eq 'cookie[-_](domains?|path)' <<<"$(yq eval -N '.extraArgs // ""' - <<<"${o2p}")"; then
-    fail "${provider}: oauth2-proxy sets a cookie domain or path; the browser drops a __Host- cookie that carries a Domain or a path other than /, so nobody could stay signed in"
+  if grep -Eq '^[[:space:]]*cookie_path[[:space:]]*=' <<<"${o2p_config}" &&
+    ! grep -Eq "^[[:space:]]*cookie_path[[:space:]]*=[[:space:]]*(\"/\"|'/')${value_end}" <<<"${o2p_config}"; then
+    fail "${provider}: oauth2-proxy sets a cookie_path other than /; the browser drops a __Host- cookie with any other path, so nobody could stay signed in"
   fi
+  if grep -Eq '^[[:space:]]*cookie_domains?[[:space:]]*=' <<<"${o2p_config}" &&
+    ! grep -Eq "^[[:space:]]*cookie_domains[[:space:]]*=[[:space:]]*\[[[:space:]]*\]${value_end}" <<<"${o2p_config}"; then
+    fail "${provider}: oauth2-proxy sets a cookie domain; the browser drops a __Host- cookie that carries a Domain, so nobody could stay signed in"
+  fi
+  # The reads fail the test when they fail; a grep that finds nothing is the
+  # expected case, so only the greps may come back empty.
+  o2p_cookie_name_value="$(yq eval -N '.config.cookieName // ""' - <<<"${o2p}")"
+  o2p_args="$(yq eval -N '.extraArgs // ""' - <<<"${o2p}")"
+  o2p_env_names="$(yq eval -N '.extraEnv[]?.name // ""' - <<<"${o2p}")"
+  cookie_overrides="$(
+    [[ -z "${o2p_cookie_name_value}" ]] || echo config.cookieName
+    { grep -Eo 'cookie[-_](name|secure|domains?|path)' <<<"${o2p_args}" || true; } | sed 's/^/extraArgs /'
+    { grep -E '^OAUTH2_PROXY_COOKIE_(NAME|SECURE|DOMAINS?|PATH)$' <<<"${o2p_env_names}" || true; } | sed 's/^/extraEnv /'
+  )"
+  [[ -z "${cookie_overrides}" ]] ||
+    fail "${provider}: oauth2-proxy's cookie settings are overridden outside its config file, where this test cannot hold them to the __Host- rules: ${cookie_overrides//$'\n'/, }"
 
   registered="$(yq eval -N 'select(.kind == "HelmRelease" and .metadata.name == "dex" and .metadata.namespace == "dex") | .spec.values.config.staticClients[] | select(.id == "public-client") | .redirectURIs[]' "${rendered}")"
   [[ -n "${registered}" ]] ||
