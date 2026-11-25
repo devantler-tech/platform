@@ -7,8 +7,9 @@
 # mid-copy. Repeating the operation continues an incomplete copy
 # incrementally; the importer never deletes or rewrites mail on either side.
 #
-# Inputs: the existing provider's sign-in and the address inventory from the
-# email-history-import ExternalSecret, and the destination mailbox password
+# Inputs: the existing provider's sign-in from the email-history-import
+# ExternalSecret, the domain's address inventory from the encrypted
+# email-history-import-addresses Secret, and the destination mailbox password
 # from the existing private-mail-maintainer Secret. Only aggregate counts reach
 # the log (docs/operations/email-history-import.md).
 apiVersion: batch/v1
@@ -94,6 +95,9 @@ spec:
                           path: source-username
                         - key: source-password
                           path: source-password
+                  - secret:
+                      name: email-history-import-addresses
+                      items:
                         - key: addresses
                           path: addresses
                   - secret:

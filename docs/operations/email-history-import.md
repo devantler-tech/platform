@@ -43,12 +43,14 @@ The copy command requires the separate literal confirmation
 
 ## Running the copy in production
 
-The production inputs come from OpenBao. The maintainer keeps the existing
-provider's `username`, app-specific `password` and the comma-separated
-`addresses` inventory at `infrastructure/apple/icloud`, which only the
+The maintainer keeps the existing provider's `username` and app-specific
+`password` in OpenBao at `infrastructure/apple/icloud`, which only the
 `email-history-import` role can read. The `email-history-import` ExternalSecret
-in `private-mail` projects them as `source-username`, `source-password` and
-`addresses`, and the destination password comes from the existing
+in `private-mail` projects them as `source-username` and `source-password`.
+The domain's address inventory is not a provider credential: it is the
+SOPS-encrypted `email-history-import-addresses` Secret, removed with the
+importer. The server's own aliases stay declared in the encrypted mail
+settings. The destination password comes from the existing
 `private-mail-maintainer` Secret.
 
 The suspended `private-mail/email-history-import` CronJob holds the reviewed
