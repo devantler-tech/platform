@@ -82,7 +82,7 @@ list, and no server reply, folder name or credential ever appears:
 | `delimiter` | A folder uses a hierarchy separator other than `/`. |
 | `folders` | An empty, oversized, duplicate or malformed folder list. |
 | `examine` | A read-only folder open failed. |
-| `read-only` | The server did not confirm the read-only open. |
+| `read-only` | The server claimed a read-only open (EXAMINE) was read-write. A missing confirmation code is accepted, because iCloud omits it. |
 | `uids` | A folder lacks UIDNEXT or UIDVALIDITY. |
 | `inbox` | No INBOX was listed. |
 

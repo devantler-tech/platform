@@ -11,7 +11,45 @@ import (
 
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
+	"github.com/emersion/go-imap/commands"
+	"github.com/emersion/go-imap/responses"
 )
+
+// examineHandler collects an EXAMINE reply. The client tracks the message count
+// (`* N EXISTS`) only for a mailbox it selected itself, so it is read here.
+type examineHandler struct {
+	selected *responses.Select
+	mailbox  *imap.MailboxStatus
+}
+
+func (h *examineHandler) Handle(resp imap.Resp) error {
+	if err := h.selected.Handle(resp); err != responses.ErrUnhandled {
+		return err
+	}
+	if data, ok := resp.(*imap.DataResp); ok {
+		if name, fields, ok := imap.ParseNamedResp(data); ok && name == "EXISTS" && len(fields) > 0 {
+			if messages, err := imap.ParseNumber(fields[0]); err == nil {
+				h.mailbox.Messages = messages
+				return nil
+			}
+		}
+	}
+	return responses.ErrUnhandled
+}
+
+// examineFolder opens a folder with EXAMINE and returns its status with the
+// tagged reply's response code, which the client's Select reduces to a flag.
+func examineFolder(c *client.Client, name string) (*imap.MailboxStatus, imap.StatusRespCode, error) {
+	mailbox := &imap.MailboxStatus{Name: name, Items: make(map[imap.StatusItem]interface{})}
+	status, err := c.Execute(&commands.Select{Mailbox: name, ReadOnly: true}, &examineHandler{selected: &responses.Select{Mailbox: mailbox}, mailbox: mailbox})
+	if err != nil {
+		return nil, "", err
+	}
+	if err := status.Err(); err != nil {
+		return nil, "", err
+	}
+	return mailbox, status.Code, nil
+}
 
 func observeHistory(ctx context.Context, side string, v historyConfig) (historySnapshot, error) {
 	switch side {
@@ -99,11 +137,15 @@ func readHistorySnapshot(ctx context.Context, address, serverName, username, pas
 		if _, exists := result[name]; exists {
 			return fail("folders")
 		}
-		status, err := c.Select(name, true)
+		status, code, err := examineFolder(c, name)
 		if err != nil {
 			return fail("examine")
 		}
-		if !status.ReadOnly {
+		// EXAMINE never permits changes, whatever the reply says. RFC 3501
+		// asks servers to confirm it with [READ-ONLY]; iCloud omits the code.
+		// A server that explicitly claims [READ-WRITE] for an EXAMINE is
+		// still refused.
+		if code == imap.CodeReadWrite {
 			return fail("read-only")
 		}
 		if status.UidNext == 0 || status.UidValidity == 0 {
