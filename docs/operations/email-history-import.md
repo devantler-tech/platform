@@ -81,8 +81,8 @@ list, and no server reply, folder name or credential ever appears:
 | `list` | The folder listing failed. |
 | `delimiter` | A folder uses a hierarchy separator other than `/`. |
 | `folders` | An empty, oversized, duplicate or malformed folder list. |
-| `examine` | A read-only folder open failed. |
-| `read-only` | The server did not confirm the read-only open. |
+| `examine` | A read-only folder open failed, or its reply gave no message count (`* N EXISTS`), which would otherwise count the folder as empty. |
+| `read-only` | The server claimed a read-only open (EXAMINE) was read-write, in the tagged or an untagged reply, or the destination did not confirm the open with `[READ-ONLY]`. The source may omit that code, because iCloud does; the destination is this deployment's own server, which sends it. |
 | `uids` | A folder lacks UIDNEXT or UIDVALIDITY. |
 | `inbox` | No INBOX was listed. |
 
