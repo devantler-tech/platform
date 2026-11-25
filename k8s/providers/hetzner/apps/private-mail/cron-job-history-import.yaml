@@ -50,7 +50,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: import
-              image: ghcr.io/devantler-tech/platform-email-history-import@sha256:17a1b5163a731b3adbae0231dc3ff403b1873111b7aa30b5e072daec061d88d8
+              image: ghcr.io/devantler-tech/platform-email-history-import@sha256:551000010b8066295ae9c28ce72e63d0ebbc2ed786a1f7c0a520aebed9478bc0
               args:
                 - --input-dir
                 - /private/inputs
