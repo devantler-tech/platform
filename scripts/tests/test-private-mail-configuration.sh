@@ -128,6 +128,9 @@ docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
     test -r /usr/local/share/licenses/stalwart-webui/SOURCE || { echo IMAGE_ASSET_FAILURE=webui-source >&2; exit 1; }
     test -x /usr/local/share/licenses/caddy || { echo IMAGE_ASSET_FAILURE=proxy-license-directory >&2; exit 1; }
     test -r /usr/local/share/licenses/caddy/LICENSE || { echo IMAGE_ASSET_FAILURE=proxy-license >&2; exit 1; }
+    test -s /usr/local/share/stalwart/spam-filter-rules-v3.0.2.json || { echo IMAGE_ASSET_FAILURE=spam-rules >&2; exit 1; }
+    test ! -w /usr/local/share/stalwart/spam-filter-rules-v3.0.2.json || { echo IMAGE_ASSET_FAILURE=spam-rules-writable >&2; exit 1; }
+    test -r /usr/local/share/licenses/stalwart-spam-filter/LICENSE-MIT || { echo IMAGE_ASSET_FAILURE=spam-rules-license >&2; exit 1; }
   ' >"$scratch/image-assets.txt"
 [ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
 docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
@@ -539,6 +542,25 @@ jq -e --rawfile user "$scratch/inputs/relay-username" --arg local "'local'" --ar
   exit 1
 }
 echo 'PASS: remote mail is routed through the SES relay with required, verified TLS'
+# The first normal start imports the spam filter rules from the image's derived
+# copy, with no network. Wait for the import, then require every rule, DNS
+# blocklist and HTTP list, and the lookup keys without the shortened-link list.
+printf '%s' '{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":[["x:SpamRule/query",{"limit":1,"calculateTotal":true},"rules"],["x:SpamDnsblServer/query",{"limit":1,"calculateTotal":true},"blocklists"],["x:HttpLookup/query",{"limit":1,"calculateTotal":true},"lists"],["x:MemoryLookupKey/query",{"limit":1,"calculateTotal":true},"keys"]]}' >"$scratch/spam-rules-request.json"
+spam_rules_imported=0
+for ((attempt = 0; attempt < 60; attempt++)); do
+  protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+    --header 'Content-Type: application/json' --data-binary @/proof/spam-rules-request.json "http://$name:8080/jmap" >"$scratch/spam-rules-readback.json"
+  if jq -e '[.methodResponses[][1].total] == [66, 18, 4, 1008]' "$scratch/spam-rules-readback.json" >/dev/null; then
+    spam_rules_imported=1
+    break
+  fi
+  sleep 1
+done
+[ "$spam_rules_imported" = 1 ] || {
+  echo 'FAIL: the serving process did not import the derived spam filter rules' >&2
+  exit 1
+}
+echo 'PASS: the spam filter imported the pinned rules without the shortened-link list'
 # The scheduled drift check reads the serving configuration back as the managed
 # administrator and never writes. A setting changed by hand must fail it.
 run_check() {

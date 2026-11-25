@@ -20,6 +20,7 @@ was checked against the Stalwart v0.16.27 source.
 | Logging | Bans and blocked addresses | logged | They name only an address. Sign-in and mail activity stay out of the console log (#5416). |
 | Spam | Pyzor lookups | off | Egress allows only DNS and the relay, so they only time out, and they would also send message digests to a third party. |
 | Spam | Classifier training samples | kept 30 days | Samples are private message data. |
+| Spam | Filter rules | spam-filter v3.0.2 from the image, without the shortened-link list | The upstream default downloads the latest release, which egress blocks, so every score was zero. See [Spam filter rules](#spam-filter-rules). |
 | Reports | DMARC, DKIM and SPF failure reports | off | They carry message content to whoever a sender's domain names. Aggregate DMARC and TLS reports stay on. |
 | Retention | Trash and Junk expunge | 30 days | Pins the upstream default. |
 | Throttles | Sender IP, sender-to-recipient, and submission per account | 5 per second, 25 per hour, 100 per hour | The server seeds the first two only into an empty collection, so all three are declared. |
@@ -33,6 +34,33 @@ setting changed by hand, an unexpected listener or account, or a setting it
 could not read) and 2 when it could not run. A scheduled Job runs it so a change
 made in the web interface is reported before the next start reverts it.
 
+## Spam filter rules
+
+The image fetches the stalwartlabs/spam-filter v3.0.2 release by its digest.
+That release, built from tag commit `3d2eea7f`, is the last in the rule format
+of Stalwart 0.16.27. The initializer derives the image's copy from it at build
+time and refuses any other bytes or object counts. `spamFilterRulesUrl` names
+that copy as a `file://` path, so the server never downloads rules. The
+maintainer chose this set (#5387):
+
+- **DNS blocklists on.** All 18 stay as upstream ships them, 17 of them
+  enabled. The mail pod's DNS reaches any name, so they send sender IP addresses,
+  the domains a message names and hashed sender email addresses to their operators.
+- **Shortened-link check off.** For a link through one of the 1,076 hosts in
+  the `url-redirectors` lookup, the filter requests the link to read where it
+  leads. Egress denies those requests, so each link would wait five seconds.
+  The copy leaves those keys out, and the check runs only for a listed host.
+- **Remote lists unchanged.** The four lists the rules download over HTTPS
+  (two phishing feeds, disposable and free-mail domains) are denied by egress,
+  so they stay empty and the rules that use them never match.
+
+The server imports the rules only at a normal start that finds none stored. A
+later release therefore needs a new derived copy and a manual spam filter
+maintenance task of type update rules; a new file alone changes nothing on a
+store that already holds rules. The 1.x candidate keeps the upstream default: it
+needs spam-filter v3.0.4, which is pinned separately when that runtime is
+adopted.
+
 ## Before public SMTP and IMAP
 
 The public SMTP and IMAP listeners take the real client address from the mail
@@ -42,19 +70,6 @@ one address, so a single ban or throttle would block all of them. Still to be
 declared on those listeners:
 
 - Bans and the sender IP throttle on the SMTP and IMAP listeners.
-
-Before MX moves, the spam filter also needs its rules. They download from an
-unpinned upstream URL that egress blocks, and without rules every score is zero.
-Stalwart 0.16.27 can import a copy pinned into the image instead, because
-`spamFilterRulesUrl` accepts a `file://` path, and spam-filter v3.0.2 is the
-last release in its rule format. That release also brings 17 DNS blocklists and
-a check that requests shortened links found in received mail. Egress allows DNS,
-so the blocklists would send sender addresses, the domains a message names and
-hashed sender addresses to their operators. Egress denies the link requests, so
-each such link would wait out a five-second timeout. 0.16.27 cannot import the
-rules with either turned off, so the import waits for a decision: accept both,
-or import a reviewed copy with the blocklists disabled and the link list left
-out (#5387).
 
 ## Not declared
 

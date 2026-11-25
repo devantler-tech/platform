@@ -74,6 +74,7 @@ func TestSecureDefaultsAreDeclared(t *testing.T) {
 		"Security":            {"authBanPeriod": day, "abuseBanPeriod": day, "loiterBanPeriod": day, "scanBanPeriod": day},
 		"SpamPyzor":           {"enable": false},
 		"SpamClassifier":      {"holdSamplesFor": 30 * day},
+		"SpamSettings":        {"spamFilterRulesUrl": "file://" + spamRulesPath},
 		"DmarcReportSettings": {"failureSendFrequency": map[string]any{"match": map[string]any{}, "else": "false"}},
 		"DkimReportSettings":  {"sendFrequency": map[string]any{"match": map[string]any{}, "else": "false"}},
 		"SpfReportSettings":   {"sendFrequency": map[string]any{"match": map[string]any{}, "else": "false"}},
