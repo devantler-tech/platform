@@ -197,6 +197,9 @@ func command(args []string, log io.Writer) int {
 	if len(args) > 0 && args[0] == "bootstrap" {
 		return bootstrapCommand(args[1:], log)
 	}
+	if len(args) > 0 && args[0] == "spam-rules" {
+		return spamRulesCommand(args[1:], log)
+	}
 	if len(args) > 0 && args[0] == "check" {
 		return checkCommand(args[1:], log)
 	}

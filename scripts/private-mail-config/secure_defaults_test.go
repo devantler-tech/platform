@@ -74,6 +74,7 @@ func TestSecureDefaultsAreDeclared(t *testing.T) {
 		"Security":            {"authBanPeriod": day, "abuseBanPeriod": day, "loiterBanPeriod": day, "scanBanPeriod": day},
 		"SpamPyzor":           {"enable": false},
 		"SpamClassifier":      {"holdSamplesFor": 30 * day},
+		"SpamSettings":        {"spamFilterRulesUrl": "file://" + spamRulesPath},
 		"DmarcReportSettings": {"failureSendFrequency": map[string]any{"match": map[string]any{}, "else": "false"}},
 		"DkimReportSettings":  {"sendFrequency": map[string]any{"match": map[string]any{}, "else": "false"}},
 		"SpfReportSettings":   {"sendFrequency": map[string]any{"match": map[string]any{}, "else": "false"}},
@@ -186,7 +187,9 @@ func TestSenderAuthReadbackRefusesWeakerVerification(t *testing.T) {
 }
 
 // TestSenderAuthIsTheSameOnTheCandidateSchema keeps the 1.x candidate's inbound
-// checks equal: v1.0.3 names these fields and constants as v0.16.27 does.
+// checks equal to 0.16.27's. That v1.0.3 names these fields and constants the
+// same way was checked against its source (crates/registry/src/schema/
+// structs.rs); this test only keeps the plans equal and cannot detect a rename.
 func TestSenderAuthIsTheSameOnTheCandidateSchema(t *testing.T) {
 	want := planObjects(t)["SenderAuth"]
 	v := productionFixture()
