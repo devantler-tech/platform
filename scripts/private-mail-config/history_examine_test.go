@@ -85,11 +85,21 @@ func scriptedIMAPServer(t *testing.T, examineCode string, untagged string) (stri
 // examineStatus is the untagged part of a complete EXAMINE reply.
 const examineStatus = "* 2 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n"
 
-func TestHistorySnapshotAcceptsAnExamineWithoutTheReadOnlyCode(t *testing.T) {
+// The source, iCloud, omits the [READ-ONLY] code, so its observer accepts a
+// reply without it. The destination's observer requires the code.
+func TestHistorySnapshotAcceptsAnExamineWithoutTheReadOnlyCodeOnlyFromTheSource(t *testing.T) {
+	address, roots, _ := scriptedIMAPServer(t, "", examineStatus)
+	if _, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots); err == nil || err.Error() != "read-only" {
+		t.Fatalf("the destination observer accepted an EXAMINE without [READ-ONLY]: %v", err)
+	}
+	address, roots, _ = scriptedIMAPServer(t, "READ-ONLY", examineStatus)
+	if _, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots); err != nil {
+		t.Fatalf("the destination observer refused a confirmed EXAMINE as %v", err)
+	}
 	for _, code := range []string{"", "READ-ONLY"} {
 		t.Run("code="+code, func(t *testing.T) {
 			address, roots, verbs := scriptedIMAPServer(t, code, examineStatus)
-			got, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots)
+			got, err := readHistorySnapshotWith(context.Background(), address, "example.com", "username", "password", roots, false)
 			if err != nil {
 				t.Fatalf("EXAMINE reply %q refused as %v", code, err)
 			}
@@ -110,12 +120,14 @@ func TestHistorySnapshotRefusesAnExamineClaimingReadWrite(t *testing.T) {
 		"tagged":   {"READ-WRITE", examineStatus},
 		"untagged": {"", examineStatus + "* OK [READ-WRITE] opened\r\n"},
 	} {
-		t.Run(name, func(t *testing.T) {
-			address, roots, _ := scriptedIMAPServer(t, server.code, server.untagged)
-			if _, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots); err == nil || err.Error() != "read-only" {
-				t.Fatalf("an EXAMINE claiming READ-WRITE was reported as %v", err)
-			}
-		})
+		for _, confirm := range []bool{false, true} {
+			t.Run(name, func(t *testing.T) {
+				address, roots, _ := scriptedIMAPServer(t, server.code, server.untagged)
+				if _, err := readHistorySnapshotWith(context.Background(), address, "example.com", "username", "password", roots, confirm); err == nil || err.Error() != "read-only" {
+					t.Fatalf("an EXAMINE claiming READ-WRITE was reported as %v", err)
+				}
+			})
+		}
 	}
 }
 
@@ -123,12 +135,15 @@ func TestHistorySnapshotRefusesAnExamineClaimingReadWrite(t *testing.T) {
 // would then be judged against zero messages and could never be shown short.
 func TestHistorySnapshotRefusesAnExamineWithoutAMessageCount(t *testing.T) {
 	for name, untagged := range map[string]string{
-		"missing":     "* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n",
-		"unparseable": "* x EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n",
+		"missing": "* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n",
+		// go-imap reads `* x EXISTS` as a response named X, not EXISTS.
+		"not a count": "* x EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n",
+		// It reads `* EXISTS x` as EXISTS with a field that is not a number.
+		"unparseable": "* EXISTS x\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 9] valid\r\n* OK [UIDNEXT 5] next\r\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			address, roots, _ := scriptedIMAPServer(t, "READ-ONLY", untagged)
-			if _, err := readHistorySnapshot(context.Background(), address, "example.com", "username", "password", roots); err == nil || err.Error() != "examine" {
+			if _, err := readHistorySnapshotWith(context.Background(), address, "example.com", "username", "password", roots, false); err == nil || err.Error() != "examine" {
 				t.Fatalf("an EXAMINE without a message count was reported as %v", err)
 			}
 		})

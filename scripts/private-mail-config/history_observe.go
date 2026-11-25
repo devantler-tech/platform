@@ -49,33 +49,44 @@ func (h *examineHandler) Handle(resp imap.Resp) error {
 	return responses.ErrUnhandled
 }
 
-// examineFolder opens a folder with EXAMINE and returns its status, and whether
-// the server claimed the open was read-write, in the tagged reply's code (which
-// the client's Select reduces to a flag) or in an untagged one.
+// examineReply is what an EXAMINE reply says about the open, beyond status.
+type examineReply struct {
+	// readWrite: the server claimed the open was read-write, in the tagged
+	// reply's code (which the client's Select reduces to a flag) or an untagged one.
+	readWrite bool
+	// confirmed: the tagged reply carried the [READ-ONLY] code RFC 3501 asks for.
+	confirmed bool
+}
+
+// examineFolder opens a folder with EXAMINE and returns its status and what the
+// reply said about the open.
 //
 // client.Execute bypasses the client's state tracking, so the client never
 // considers a mailbox selected: no selected-state call (Fetch, Check, Close)
 // may follow, and none must, because the observer only reads folder status.
-func examineFolder(c *client.Client, name string) (*imap.MailboxStatus, bool, error) {
+func examineFolder(c *client.Client, name string) (*imap.MailboxStatus, examineReply, error) {
 	mailbox := &imap.MailboxStatus{Name: name, Items: make(map[imap.StatusItem]interface{})}
 	handler := &examineHandler{selected: &responses.Select{Mailbox: mailbox}, mailbox: mailbox}
 	status, err := c.Execute(&commands.Select{Mailbox: name, ReadOnly: true}, handler)
 	if err != nil {
-		return nil, false, err
+		return nil, examineReply{}, err
 	}
 	if err := status.Err(); err != nil {
-		return nil, false, err
+		return nil, examineReply{}, err
 	}
 	if !handler.counted {
-		return nil, false, errNoMessageCount
+		return nil, examineReply{}, errNoMessageCount
 	}
-	return mailbox, handler.readWrite || status.Code == imap.CodeReadWrite, nil
+	return mailbox, examineReply{readWrite: handler.readWrite || status.Code == imap.CodeReadWrite, confirmed: status.Code == imap.CodeReadOnly}, nil
 }
 
+// The source, iCloud, omits the [READ-ONLY] code on EXAMINE, so a missing code
+// is accepted there. The destination is this deployment's own server, which
+// sends the code, so it must confirm every read-only open.
 func observeHistory(ctx context.Context, side string, v historyConfig) (historySnapshot, error) {
 	switch side {
 	case "source":
-		return readHistorySnapshot(ctx, "imap.mail.me.com:993", "imap.mail.me.com", v.username, v.sourcePassword, nil)
+		return readHistorySnapshotWith(ctx, "imap.mail.me.com:993", "imap.mail.me.com", v.username, v.sourcePassword, nil, false)
 	case "destination":
 		return readHistorySnapshot(ctx, "mail.devantler.tech:993", "mail.devantler.tech", historyDestination, v.destinationPassword, nil)
 	default:
@@ -83,10 +94,17 @@ func observeHistory(ctx context.Context, side string, v historyConfig) (historyS
 	}
 }
 
-// readHistorySnapshot fails with one of the fixed step names in
-// historyObservationSteps, so an operator can tell which step refused without
-// any server reply, folder name or credential reaching the log.
+// readHistorySnapshot observes a server that must confirm every read-only open.
 func readHistorySnapshot(ctx context.Context, address, serverName, username, password string, roots *x509.CertPool) (historySnapshot, error) {
+	return readHistorySnapshotWith(ctx, address, serverName, username, password, roots, true)
+}
+
+// readHistorySnapshotWith fails with one of the fixed step names in
+// historyObservationSteps, so an operator can tell which step refused without
+// any server reply, folder name or credential reaching the log. Without
+// requireConfirmation, an EXAMINE reply without the [READ-ONLY] code is
+// accepted; a reply claiming [READ-WRITE] is refused either way.
+func readHistorySnapshotWith(ctx context.Context, address, serverName, username, password string, roots *x509.CertPool, requireConfirmation bool) (historySnapshot, error) {
 	fail := func(step string) (historySnapshot, error) { return nil, errors.New(step) }
 	deadline := time.Now().Add(60 * time.Second)
 	if end, ok := ctx.Deadline(); ok && end.Before(deadline) {
@@ -158,15 +176,15 @@ func readHistorySnapshot(ctx context.Context, address, serverName, username, pas
 		if _, exists := result[name]; exists {
 			return fail("folders")
 		}
-		status, readWrite, err := examineFolder(c, name)
+		status, reply, err := examineFolder(c, name)
 		if err != nil {
 			return fail("examine")
 		}
 		// EXAMINE never permits changes, whatever the reply says. RFC 3501
 		// asks servers to confirm it with [READ-ONLY]; iCloud omits the code.
 		// A server that explicitly claims [READ-WRITE] for an EXAMINE is
-		// still refused. The same rule applies to the source and destination.
-		if readWrite {
+		// always refused.
+		if reply.readWrite || requireConfirmation && !reply.confirmed {
 			return fail("read-only")
 		}
 		if status.UidNext == 0 || status.UidValidity == 0 {
