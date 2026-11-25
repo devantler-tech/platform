@@ -22,7 +22,11 @@ patches:
   - path: patches/isolate-administration.yaml
 images:
   - name: ghcr.io/devantler-tech/platform-private-mail-bootstrap
-    # Signed main publication b4253e8d38dc with the secure Stalwart defaults
-    # (#6261). Its only change from b9aeb4ed74a2, the SES relay route, is the
-    # declared defaults and their read-back (docs/operations/email-secure-defaults.md).
-    digest: sha256:05ce801246615043ecd613c082f7b79216131f49831462a83e5c2afff237d9c1
+    # Signed main publication cec94ffd08af (Stalwart 0.16.27). Since the
+    # serving b4253e8d38dc image it reads the maintainer's receiving aliases
+    # from their OpenBao source (#6635); verifies SPF and reverse IP and
+    # enforces DMARC on inbound SMTP behind the named load balancer (#6647);
+    # and imports the pinned spam filter rules from the image, without the
+    # shortened-link check (#6651). It also carries the inert history
+    # importer subcommand (#6435) and Caddy 2.11.9 for the client proxy (#6565).
+    digest: sha256:c00cd848d47cab10f60301facba02387cf34832f7d560cfaf206a008ed9e0ff9

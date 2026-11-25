@@ -196,6 +196,13 @@ spec:
                       path: relay-username
                     - key: password
                       path: relay-password
+              # The receiving aliases from their single OpenBao source (#5481);
+              # they replace any aliases the settings still carry.
+              - secret:
+                  name: private-mail-aliases
+                  items:
+                    - key: aliases
+                      path: maintainer-aliases
         - name: tls
           secret:
             secretName: private-mail-tls
