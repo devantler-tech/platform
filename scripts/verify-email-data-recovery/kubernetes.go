@@ -85,6 +85,8 @@ type recoveryDriver struct {
 	// created holds the UID of every object this invocation created, including
 	// those it has since removed, so reports about them stay attributable.
 	created map[string]bool
+	// verdicts are the closed census results of a verified restore.
+	verdicts map[string]string
 	// protection is set only for disposal of a retained copy; see verifyProtection.
 	protection protectionPoint
 }

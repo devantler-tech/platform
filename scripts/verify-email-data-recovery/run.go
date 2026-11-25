@@ -131,6 +131,11 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	d.stage = "source-census"
+	sourceBefore, err := original.census(ctx)
+	if err != nil {
+		return err
+	}
 	d.stage = "backup"
 	backup, err := d.create(ctx, backupManifest(d.i))
 	if err != nil {
@@ -168,6 +173,11 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 		return err
 	}
 	if err = d.sourceRetained(ctx); err != nil {
+		return err
+	}
+	d.stage = "source-census"
+	sourceAfter, err := original.census(ctx)
+	if err != nil {
 		return err
 	}
 	d.stage = "isolated-storage"
@@ -262,6 +272,14 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 	}
 	d.stage = "reader-message"
 	if _, err = recovered.verifyMessage(ctx, marker.identity); err != nil {
+		return err
+	}
+	d.stage = "reader-census"
+	restored, err := recovered.census(ctx)
+	if err != nil {
+		return err
+	}
+	if d.verdicts, err = censusVerdicts(sourceBefore, sourceAfter, restored); err != nil {
 		return err
 	}
 	d.stage = "source-retention"
