@@ -5,7 +5,8 @@
 # main, may exchange its Actions OIDC token for a token on this repository, and
 # only with read access to its contents. repository_owner_id pins the caller to
 # the devantler-tech organization by its numeric ID, which
-# scripts/guard-github-broker-policies.sh requires of every policy here.
+# devantler-tech/.github's organization-required check-github-broker-policies.yaml
+# requires of every policy in every repository.
 issuer: https://token.actions.githubusercontent.com
 subject: repo:devantler-tech/platform:ref:refs/heads/main
 claim_pattern:
