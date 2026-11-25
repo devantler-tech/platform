@@ -1174,6 +1174,16 @@ spec:
               }
               POLICY
 
+              # The company mail server's receiving aliases, which the
+              # maintainer keeps in OpenBao as their single source (#5481).
+              # Read only: the shared External Secrets role projects them into
+              # private-mail and never writes them.
+              bao policy write infra-email-aliases-readonly - <<'POLICY'
+              path "secret/data/infrastructure/email/aliases" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               # Dedicated node-storage key reader; neither account credentials
               # nor metadata enumeration or writes belong to this identity. Its
               # role adds no default policy, so the two token paths External
@@ -1482,7 +1492,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-kagent-readonly,app-customer-identity-readonly,app-actual-budget-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-kagent-readonly,app-customer-identity-readonly,app-actual-budget-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,infra-email-aliases-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
