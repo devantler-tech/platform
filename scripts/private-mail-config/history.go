@@ -92,13 +92,25 @@ func historyCommand(args []string, log io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Hour)
 	defer cancel()
 	if err := importHistory(ctx, v, observeHistory, executeHistory, log); err != nil {
-		stage := "unknown"
-		switch err.Error() {
-		case "source", "destination", "copy", "verification", "source-change", "readback", "reconciliation":
-			stage = err.Error()
-		}
-		_, _ = fmt.Fprintf(log, "MAIL_HISTORY_IMPORT=INCOMPLETE stage=%s\n", stage)
+		_, _ = fmt.Fprintf(log, "MAIL_HISTORY_IMPORT=INCOMPLETE stage=%s\n", historyStage(err))
 		return 3
 	}
 	return 0
+}
+
+// historyStage names the failed stage for the public receipt from a fixed
+// vocabulary only: a known stage, or a side and one of the fixed observation
+// steps. Anything else is "unknown".
+func historyStage(err error) string {
+	switch name := err.Error(); name {
+	case "source", "destination", "copy", "verification", "source-change", "readback", "reconciliation":
+		return name
+	default:
+		for _, side := range []string{"source-", "destination-"} {
+			if step, ok := strings.CutPrefix(name, side); ok && historyObservationSteps[step] {
+				return name
+			}
+		}
+	}
+	return "unknown"
 }
