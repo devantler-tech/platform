@@ -47,7 +47,7 @@ func (o observationReadOnly) call(ctx context.Context, input []byte, args ...str
 	if o.parity {
 		allowedReads = append(allowedReads,
 			[]string{"get", "Pod", "private-mail-0", "--ignore-not-found=true", "-o=json", "--namespace=private-mail"},
-			[]string{"get", "PersistentVolumeClaim", "private-mail-data", "--ignore-not-found=true", "-o=json", "--namespace=private-mail"},
+			[]string{"get", "PersistentVolumeClaim", servingClaim, "--ignore-not-found=true", "-o=json", "--namespace=private-mail"},
 			[]string{"get", "PersistentVolumeClaim", "data", "--ignore-not-found=true", "-o=json", "--namespace=" + target.namespace},
 		)
 		if o.servingVolume != "" {
@@ -252,7 +252,7 @@ func bindObservationParity(ctx context.Context, d *recoveryDriver, reads observa
 	if _, err = d.owned(ctx, ref); err != nil {
 		return "reader-claim"
 	}
-	claim, found, err = d.lookup(ctx, "PersistentVolumeClaim", "private-mail-data", "private-mail")
+	claim, found, err = d.lookup(ctx, "PersistentVolumeClaim", servingClaim, "private-mail")
 	reads.servingVolume = text(child(claim, "spec"), "volumeName")
 	if err != nil || !found || !kubernetesName.MatchString(reads.servingVolume) {
 		return "source-identity"

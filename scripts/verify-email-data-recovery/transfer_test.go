@@ -39,7 +39,7 @@ func TestRestoredStorageMustBeSeparateEncryptedAndBoundToCreatedClaim(t *testing
 		t.Fatal("plaintext restored storage was accepted")
 	}
 	child(volume, "spec")["encrypted"] = true
-	child(pv, "spec")["claimRef"] = object{"namespace": "private-mail", "name": "private-mail-data", "uid": "source-claim-uid"}
+	child(pv, "spec")["claimRef"] = object{"namespace": "private-mail", "name": servingClaim, "uid": "source-claim-uid"}
 	if proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume", false) == nil {
 		t.Fatal("serving volume was accepted as isolated storage")
 	}

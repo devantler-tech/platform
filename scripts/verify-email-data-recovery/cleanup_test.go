@@ -131,7 +131,7 @@ func cleanupFixture(t *testing.T, blocked bool) (*recoveryDriver, *cleanupAPI, c
 		t.Fatal(err)
 	}
 	a.objects[cleanupKey("Pod", "private-mail", "private-mail-0")] = pod
-	a.objects[cleanupKey("PersistentVolumeClaim", "private-mail", "private-mail-data")] = sourcePVC
+	a.objects[cleanupKey("PersistentVolumeClaim", "private-mail", servingClaim)] = sourcePVC
 	a.objects[cleanupKey("PersistentVolume", "", d.source.pv)] = pv
 	for path, key := range map[string]string{
 		"/api/v1/namespaces/" + i.namespace + "/pods/reader":                                    cleanupKey("Pod", i.namespace, "reader"),

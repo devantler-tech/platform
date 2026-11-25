@@ -7,12 +7,50 @@ import (
 	"time"
 )
 
+// servingFixture is the production shape since the encrypted-storage cutover:
+// the data volume is the encrypted claim and the original claim stays mounted
+// read-only as the rollback.
 func servingFixture() (object, object, object) {
-	pod := object{"metadata": object{"name": "private-mail-0", "namespace": "private-mail", "uid": "serving-pod-uid", "labels": object{"statefulset.kubernetes.io/pod-name": "private-mail-0"}, "ownerReferences": []any{object{"kind": "StatefulSet", "name": "private-mail", "uid": "statefulset-uid", "controller": true}}}, "spec": object{"containers": []any{object{"name": "private-mail", "image": fixtureImage}}, "volumes": []any{object{"name": "data", "persistentVolumeClaim": object{"claimName": "private-mail-data"}}}}, "status": object{"phase": "Running", "conditions": []any{object{"type": "Ready", "status": "True"}}}}
+	pod := object{"metadata": object{"name": "private-mail-0", "namespace": "private-mail", "uid": "serving-pod-uid", "labels": object{"statefulset.kubernetes.io/pod-name": "private-mail-0"}, "ownerReferences": []any{object{"kind": "StatefulSet", "name": "private-mail", "uid": "statefulset-uid", "controller": true}}}, "spec": object{"containers": []any{object{"name": "private-mail", "image": fixtureImage}}, "volumes": []any{object{"name": "data", "persistentVolumeClaim": object{"claimName": "email-data-encrypted"}}, object{"name": "legacy-data", "persistentVolumeClaim": object{"claimName": "private-mail-data", "readOnly": true}}}}, "status": object{"phase": "Running", "conditions": []any{object{"type": "Ready", "status": "True"}}}}
 	child(pod, "status")["containerStatuses"] = []any{object{"name": "private-mail", "imageID": "runtime-mail", "ready": true, "restartCount": float64(0)}}
-	pvc := object{"metadata": object{"name": "private-mail-data", "namespace": "private-mail", "uid": "serving-claim-uid"}, "spec": object{"volumeName": "serving-volume", "storageClassName": "longhorn-wffc", "resources": object{"requests": object{"storage": "2Gi"}}}, "status": object{"phase": "Bound"}}
-	pv := object{"metadata": object{"name": "serving-volume", "uid": "serving-pv-uid"}, "spec": object{"claimRef": object{"namespace": "private-mail", "name": "private-mail-data", "uid": "serving-claim-uid"}, "persistentVolumeReclaimPolicy": "Delete", "csi": object{"driver": "driver.longhorn.io", "volumeHandle": "serving-volume"}}, "status": object{"phase": "Bound"}}
+	pvc := object{"metadata": object{"name": "email-data-encrypted", "namespace": "private-mail", "uid": "serving-claim-uid"}, "spec": object{"volumeName": "serving-volume", "storageClassName": "email-encrypted", "resources": object{"requests": object{"storage": "2Gi"}}}, "status": object{"phase": "Bound"}}
+	pv := object{"metadata": object{"name": "serving-volume", "uid": "serving-pv-uid"}, "spec": object{"claimRef": object{"namespace": "private-mail", "name": "email-data-encrypted", "uid": "serving-claim-uid"}, "persistentVolumeReclaimPolicy": "Retain", "csi": object{"driver": "driver.longhorn.io", "volumeHandle": "serving-volume"}}, "status": object{"phase": "Bound"}}
 	return pod, pvc, pv
+}
+
+// The store moved to the encrypted claim on the cutover. The pre-cutover shape,
+// a read-only data mount and the rollback claim are not the serving store.
+func TestTheEncryptedClaimIsTheServingSource(t *testing.T) {
+	pod, pvc, pv := servingFixture()
+	if _, err := proveServingSource(pod, pvc, pv, fixtureImage); err != nil {
+		t.Fatal("the encrypted serving store was refused:", err)
+	}
+	mutations := map[string]func(object, object, object){
+		"pre-cutover-claim": func(p, c, v object) {
+			child(items(child(p, "spec"), "volumes")[0], "persistentVolumeClaim")["claimName"] = "private-mail-data"
+			child(c, "metadata")["name"] = "private-mail-data"
+			child(c, "spec")["storageClassName"] = "longhorn-wffc"
+			child(child(v, "spec"), "claimRef")["name"] = "private-mail-data"
+		},
+		"unencrypted-class": func(_, c, _ object) { child(c, "spec")["storageClassName"] = "longhorn-wffc" },
+		"rollback-as-data": func(p, _, _ object) {
+			volumes := child(p, "spec")["volumes"].([]any)
+			volumes[0], volumes[1] = object{"name": "data", "persistentVolumeClaim": object{"claimName": "private-mail-data", "readOnly": true}}, object{"name": "legacy-data", "persistentVolumeClaim": object{"claimName": "email-data-encrypted"}}
+		},
+		"read-only-data": func(p, _, _ object) {
+			child(items(child(p, "spec"), "volumes")[0], "persistentVolumeClaim")["readOnly"] = true
+		},
+		"volume-of-another-claim": func(_, _, v object) { child(child(v, "spec"), "claimRef")["name"] = "private-mail-data" },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			p, c, v := servingFixture()
+			mutate(p, c, v)
+			if _, err := proveServingSource(p, c, v, fixtureImage); err == nil {
+				t.Fatal("a store other than the encrypted serving claim was accepted")
+			}
+		})
+	}
 }
 
 func proxyServingFixture() (object, object, object) {
@@ -122,7 +160,7 @@ func TestServingSourceLiveReadOnly(t *testing.T) {
 func TestServingSourceIsBoundAcrossPodClaimAndBackend(t *testing.T) {
 	pod, pvc, pv := servingFixture()
 	source, err := proveServingSource(pod, pvc, pv, fixtureImage)
-	if err != nil || source.podUID != "serving-pod-uid" || source.claimUID != "serving-claim-uid" || source.pv != "serving-volume" || source.pvUID != "serving-pv-uid" || source.reclaim != "Delete" {
+	if err != nil || source.podUID != "serving-pod-uid" || source.claimUID != "serving-claim-uid" || source.pv != "serving-volume" || source.pvUID != "serving-pv-uid" || source.reclaim != "Retain" {
 		t.Fatal("serving source identity was not preserved")
 	}
 }
