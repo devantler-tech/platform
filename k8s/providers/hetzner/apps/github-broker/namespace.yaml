@@ -1,0 +1,11 @@
+# The GitHub token broker (devantler-tech/monorepo ADR 0020, #6605): octo-sts
+# exchanges a caller's OIDC token for a short-lived, policy-scoped GitHub App
+# installation token. Production only, because it is a third-party app
+# (ADR 0016).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: github-broker
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

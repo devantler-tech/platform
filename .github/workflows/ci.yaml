@@ -660,6 +660,7 @@ jobs:
               - 'scripts/tests/test-kagent-claude-harness-wrapper.sh'
               - 'scripts/kagent-claude-harness/**'
               - 'scripts/tests/test-anthropic-proxy-envoy-config.sh'
+              - 'scripts/tests/test-github-broker-gate.sh'
               - 'scripts/select-velero-rebuild-backups.jq'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-cancellation-release.sh'
@@ -819,6 +820,12 @@ jobs:
               - 'talos-local/**'
               - 'scripts/reconcile-talos-kernel-args/**'
               - 'scripts/tests/test-talos-render-kernel-args.sh'
+              - 'scripts/tests/test-talos-storage-pool-preview.sh'
+              - 'scripts/render-talos-storage-pool-layout.sh'
+              - 'scripts/preview-prod-talos-pool-layout.sh'
+              - 'scripts/migrate-longhorn-v2/staging-layout.yaml'
+              - 'scripts/migrate-longhorn-v2/retained-staging-layout.yaml'
+              - '.github/workflows/observe-talos-storage-pool-layout.yaml'
               - 'scripts/register-talos-factory-schematic.sh'
               - 'scripts/verify-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-factory-schematic-registration.sh'
@@ -1001,6 +1008,13 @@ jobs:
           shellcheck scripts/guard-github-bootstrap-isolation.sh scripts/tests/test-github-bootstrap-isolation.sh
           bash scripts/tests/test-github-bootstrap-isolation.sh
           bash scripts/tests/test-crossplane-sync-alerter.sh
+
+      # The platform's deploy and recovery paths must never need the GitHub
+      # token broker the platform hosts (devantler-tech/monorepo ADR 0020).
+      - name: 🧭 Validate deploy independence from the GitHub token broker
+        run: |
+          shellcheck scripts/guard-github-broker-independence.sh scripts/tests/test-github-broker-independence.sh
+          bash scripts/tests/test-github-broker-independence.sh
 
       - name: 🚩 Validate runtime flag definitions
         run: |
@@ -2762,6 +2776,15 @@ jobs:
           shellcheck scripts/tests/test-anthropic-proxy-envoy-config.sh
           bash scripts/tests/test-anthropic-proxy-envoy-config.sh
 
+      - name: 🔑 Validate the GitHub token broker's caller gate
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the gate's Envoy config in its pinned image with signed test
+        # tokens: only devantler-tech callers pass, refusals come before the
+        # rate limit, and no traffic can go around the gate (ADR 0020).
+        run: |
+          shellcheck scripts/tests/test-github-broker-gate.sh
+          bash scripts/tests/test-github-broker-gate.sh
+
       - name: 💾 Validate the Velero maintenance OOM alert
         if: needs.changes.outputs.k8s == 'true'
         # Replays an OOMKilled attempt plus a later successful retry against the
@@ -3763,6 +3786,11 @@ jobs:
         run: |
           shellcheck scripts/tests/test-talos-render-kernel-args.sh
           bash scripts/tests/test-talos-render-kernel-args.sh
+
+      - name: Prove temporary storage layouts and read-only preview
+        run: |
+          shellcheck scripts/render-talos-storage-pool-layout.sh scripts/preview-prod-talos-pool-layout.sh scripts/tests/test-talos-storage-pool-preview.sh
+          bash scripts/tests/test-talos-storage-pool-preview.sh
 
       - name: ✅ Render + validate patched machine configs
         run: |

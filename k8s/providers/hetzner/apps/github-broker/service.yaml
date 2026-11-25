@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-broker
+  namespace: github-broker
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: github-broker
+    app.kubernetes.io/instance: github-broker
+  ports:
+    - name: http
+      port: 80
+      # The caller gate (server/config-map-gate.yaml), never octo-sts itself.
+      targetPort: gate
+      protocol: TCP

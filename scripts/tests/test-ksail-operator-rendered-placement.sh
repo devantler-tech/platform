@@ -48,12 +48,35 @@ assert_workload_headroom() {
       | if length == 1 then .[0] else error("missing or duplicated workload") end;
     def migration_terms:
       [{matchExpressions:[{key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v1","v2"]}]}];
+    def maintenance_affinity:
+      {requiredDuringSchedulingIgnoredDuringExecution:{nodeSelectorTerms:
+        (migration_terms + [{matchExpressions:[
+          {key:"node-role.kubernetes.io/control-plane",operator:"DoesNotExist"},
+          {key:"ksail.io/autoscaled",operator:"DoesNotExist"}
+        ]}])},
+       preferredDuringSchedulingIgnoredDuringExecution:[{weight:100,preference:migration_terms[0]}]};
     def rolling_strategy:
       {type:"RollingUpdate",rollingUpdate:{maxSurge:1,maxUnavailable:0}};
+    def client_headroom_affinity($hosts):
+      {nodeAffinity:{
+        requiredDuringSchedulingIgnoredDuringExecution:{nodeSelectorTerms:[
+          {matchExpressions:[{key:"kubernetes.io/hostname",operator:"NotIn",values:$hosts}]}]},
+        preferredDuringSchedulingIgnoredDuringExecution:[{weight:100,preference:{
+          matchExpressions:[{key:"storage.platform.devantler.tech/migration-pool",operator:"In",values:["v2"]}]}}]}};
+    def certificate_affinity($name):
+      {nodeAffinity:{requiredDuringSchedulingIgnoredDuringExecution:{nodeSelectorTerms:[
+        {matchExpressions:[{key:"node-role.kubernetes.io/control-plane",operator:"Exists"}]}]}},
+       podAntiAffinity:{requiredDuringSchedulingIgnoredDuringExecution:[
+        {topologyKey:"kubernetes.io/hostname",labelSelector:{matchLabels:{
+          "app.kubernetes.io/name":$name,"app.kubernetes.io/instance":"cert-manager"}}}]}};
     workload("HelmRelease";"kubescape";"kubescape") as $kubescape |
     workload("Deployment";"observability";"crossplane-sync-exporter") as $exporter |
     workload("HelmRelease";"policy-reporter";"policy-reporter") as $reporter |
     workload("HelmRelease";"kube-system";"cilium").spec.values.hubble.ui as $hubble |
+    workload("HelmRelease";"velero";"velero").spec.values.affinity.nodeAffinity as $veleroAffinity |
+    workload("HelmRelease";"cnpg-system";"cloudnative-pg").spec.values as $cnpg |
+    workload("HelmRelease";"external-secrets";"external-secrets").spec.values as $secrets |
+    workload("HelmRelease";"cert-manager";"cert-manager").spec.values as $certificates |
     workload("Deployment";"data-product-controller";"data-product-controller-contract-probe") as $probe |
     workload("PodDisruptionBudget";"data-product-controller";"data-product-controller-contract-probe") as $probeBudget |
     $kubescape.spec.values.kubevuln.nodeSelector["kubernetes.io/hostname"] as $scannerHost |
@@ -73,7 +96,7 @@ assert_workload_headroom() {
     end) and
     (if $enabled then
       $exporterHost == "prod-worker-1" and $exporter.spec.strategy.type == "Recreate" and
-      $reporterAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms == migration_terms and
+      $reporterAffinity == maintenance_affinity and
       $reporter.spec.values.ui.updateStrategy == rolling_strategy and
       $reporter.spec.values.ui.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution ==
         [{labelSelector:{matchLabels:{"app.kubernetes.io/name":"policy-reporter-ui"}},topologyKey:"kubernetes.io/hostname"}]
@@ -81,16 +104,44 @@ assert_workload_headroom() {
       $exporterHost == null and $reporterAffinity == null
     end) and
     $hubble.replicas == 2 and $hubble.podDisruptionBudget.maxUnavailable == 1 and
+    any($hubble.topologySpreadConstraints[]?;
+      .topologyKey == "kubernetes.io/hostname" and .minDomains == 2 and .maxSkew == 1 and
+      .whenUnsatisfiable == "DoNotSchedule" and .labelSelector.matchLabels["k8s-app"] == "hubble-ui") and
     (if $scanner_enabled then
-      $hubbleAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms == migration_terms and
-      $hubble.updateStrategy == rolling_strategy
+      $hubbleAffinity == maintenance_affinity and
+      $veleroAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms == migration_terms and
+      $hubble.updateStrategy == rolling_strategy and
+      $cnpg.affinity == client_headroom_affinity(["prod-worker-1","prod-worker-3"]) and
+      $cnpg.updateStrategy == rolling_strategy and
+      $secrets.affinity == client_headroom_affinity(["prod-worker-2"]) and
+      $secrets.certController.affinity == $secrets.affinity and
+      $secrets.strategy == rolling_strategy and
+      $secrets.certController.strategy == rolling_strategy and
+      $certificates.cainjector.affinity == certificate_affinity("cainjector") and
+      $certificates.cainjector.tolerations ==
+        [{key:"node-role.kubernetes.io/control-plane",operator:"Exists",effect:"NoSchedule"}] and
+      $certificates.cainjector.strategy == rolling_strategy and
+      $certificates.cainjector.podDisruptionBudget == {enabled:true,minAvailable:1} and
+      $certificates.affinity == certificate_affinity("cert-manager") and
+      $certificates.webhook.affinity == certificate_affinity("webhook") and
+      all([$certificates,$certificates.webhook][];
+        .tolerations == $certificates.cainjector.tolerations and
+        .strategy == rolling_strategy and
+        .podDisruptionBudget == {enabled:true,minAvailable:1})
     else
-      $hubbleAffinity == null
+      $hubbleAffinity == null and $veleroAffinity.requiredDuringSchedulingIgnoredDuringExecution == null and
+      $cnpg.affinity == null and $cnpg.updateStrategy.rollingUpdate == {maxSurge:0,maxUnavailable:1} and
+      $secrets.affinity == null and $secrets.certController.affinity == null and
+      $secrets.strategy == null and $secrets.certController.strategy == null and
+      all([$certificates,$certificates.webhook,$certificates.cainjector][];
+        .affinity == null and .tolerations == null and
+        .strategy.rollingUpdate == {maxSurge:0,maxUnavailable:1})
     end) and
+    $secrets.webhook.affinity == null and $secrets.webhook.strategy == null and
     $probe.spec.replicas == 2 and $probeBudget.spec.maxUnavailable == 1 and
     (if $probe_enabled then
       $probe.spec.strategy == rolling_strategy and
-      $probeAffinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms == migration_terms and
+      $probeAffinity.nodeAffinity == maintenance_affinity and
       $probeAffinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution ==
         [{topologyKey:"kubernetes.io/hostname",labelSelector:{matchLabels:$probe.spec.selector.matchLabels}}] and
       all($probe.spec.template.spec.volumes[]?; has("persistentVolumeClaim") | not) and
@@ -98,7 +149,7 @@ assert_workload_headroom() {
     else
       $probeAffinity == null
     end)
-  ' "$1" >/dev/null || fail 'temporary migration placement is missing, widened or present without the component'
+  ' "$1" >/dev/null || fail 'the production placement does not allow a maintenance drain with the reviewed worker fallback'
 }
 
 kube_version="$(yq -er '.spec.cluster.kubernetesVersion' "${root_dir}/ksail.prod.yaml")"

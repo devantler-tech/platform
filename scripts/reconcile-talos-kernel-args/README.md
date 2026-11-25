@@ -30,7 +30,9 @@ explicit release versions and must all agree.
 The disposable, non-Talos Cilium default-deny proof keeps its separately audited
 KSail 7.193.8 / Cilium image pairing. The caller inventory accounts for that
 independent profile without treating it as a deployment renderer.
-It then fetches that release's tag from the public KSail repository, reads the
+The protected read-only storage pool preview has a separate explicit pin. It
+uses the same source audit and leaves the five deployment pins in agreement.
+The check fetches the relevant release tags from the public KSail repository, reads the
 git object ID of each input, and passes only when all six equal one set
 recorded in [`audited_inputs.go`](audited_inputs.go). A git tree ID covers every
 file below it, so equal IDs mean equal content.
@@ -655,6 +657,15 @@ trigger, both-role output and explicit schematic-ID boundary are unchanged. The
 only module change moves `github.com/cilium/cilium` from v1.20.3 to v1.20.4 and
 its two checksum lines. Talos machinery and its YAML encoders keep their
 versions. This audit changes no cluster configuration or vulnerability exception.
+
+**7.216.21**, commit `78677a11b150ec5efd5dd57124b4b201cb02a611`, is audited
+for the read-only storage pool preview. The cluster API and chart add the
+per-pool patch input while keeping the extension and schematic ID fields. The
+Talos generator remains byte-identical and the explicit schematic ID still
+prevents the extension fold. The updated Talos machinery preserves the
+installer fields and folded kernel arguments on both roles in the release's
+native tests. The platform's pinned Talos client independently validates the
+normal and staged layouts.
 
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins

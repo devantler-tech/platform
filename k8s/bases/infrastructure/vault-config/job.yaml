@@ -688,6 +688,32 @@ spec:
                 echo "GitHub App credentials already present at secret/infrastructure/github/app (leaving as-is)."
               fi
 
+              # --- 1b2. Seed placeholder GitHub token broker App credentials (only if absent) ---
+              # The GitHub token broker (octo-sts, providers/hetzner/apps/github-broker)
+              # serves both botantler Apps. Each App's ID and private key live at
+              # secret/infrastructure/github/apps/<app>, reachable only through the
+              # broker's namespaced SecretStore (role `github-broker`). Seeded as
+              # PLACEHOLDERS only when absent (an OpenBao rebuilt from empty), so
+              # the broker's ExternalSecret still syncs and `apps` stays healthy;
+              # the broker's pods stay down until the real values are restored
+              # (from the OpenBao backup, or by the maintainer with
+              # `bao kv put ... app_id=<id> pem=@<key file>`). Their Deployment's
+              # own Flux Kustomization keeps that from gating any deploy. A later
+              # Job re-run leaves existing values as-is. The live values were
+              # loaded once from the organization's App secrets (#6609); nothing
+              # writes these paths through External Secrets any more, so the
+              # placeholders no longer carry its managed-by mark.
+              for broker_app in botantler-1 botantler-2; do
+                if ! bao kv get -mount=secret "infrastructure/github/apps/$broker_app" >/dev/null 2>&1; then
+                  echo "Seeding placeholder broker App credentials at secret/infrastructure/github/apps/$broker_app..."
+                  bao kv put -mount=secret "infrastructure/github/apps/$broker_app" \
+                    app_id="REPLACE_WITH_GITHUB_APP_ID" \
+                    pem="REPLACE_WITH_GITHUB_APP_PRIVATE_KEY_PEM"
+                else
+                  echo "Broker App credentials already present at secret/infrastructure/github/apps/$broker_app (leaving as-is)."
+                fi
+              done
+
               # --- 1c. Seed placeholder UniFi controller credentials (only if absent) ---
               # The `unifi` tenant's Crossplane provider (provider-upjet-unifi) reads
               # the UniFi credentials from secret/infrastructure/unifi/controller via
@@ -856,8 +882,33 @@ spec:
               # namespace via the `external-secrets` ClusterSecretStore role;
               # seeded from variables-cluster by the seed-github-app PushSecret
               # (see k8s/bases/apps/github-config/).
+              # The GitHub token broker's App keys under
+              # infrastructure/github/apps/ are denied here: they belong to the
+              # broker alone. The longer, more specific path takes precedence
+              # over the glob above it.
               bao policy write infra-github-readonly - <<'POLICY'
               path "secret/data/infrastructure/github/*" {
+                capabilities = ["read"]
+              }
+              path "secret/data/infrastructure/github/apps/*" {
+                capabilities = ["deny"]
+              }
+              POLICY
+
+              # The GitHub token broker (providers/hetzner/apps/github-broker)
+              # reads its two App credentials and nothing else. Read on the two
+              # data paths is all its ExternalSecret needs: External Secrets'
+              # Vault provider (v2.15.0, providers/v1/vault/client_get.go) reads
+              # a key's metadata only for `metadataPolicy: Fetch`, which it does
+              # not set. The one-off seeding write is gone with its workflow, and
+              # `bao policy write` replaces the whole policy, so the next Job run
+              # removes it. The shared `external-secrets` role (vault-seed-write)
+              # never reaches these paths.
+              bao policy write infra-github-broker - <<'POLICY'
+              path "secret/data/infrastructure/github/apps/botantler-1" {
+                capabilities = ["read"]
+              }
+              path "secret/data/infrastructure/github/apps/botantler-2" {
                 capabilities = ["read"]
               }
               POLICY
@@ -1129,6 +1180,22 @@ spec:
               # Secrets uses to validate the store and end the session are here.
               bao policy write infra-email-storage-readonly - <<'POLICY'
               path "secret/data/infrastructure/email/storage" {
+                capabilities = ["read"]
+              }
+              path "auth/token/lookup-self" {
+                capabilities = ["read"]
+              }
+              path "auth/token/revoke-self" {
+                capabilities = ["update"]
+              }
+              POLICY
+
+              # The existing mail provider's sign-in and the domain's address
+              # inventory, which the maintainer keeps for the one-time mailbox
+              # history copy (#5481). Exact key read only, the same shape as
+              # the storage key reader above.
+              bao policy write infra-icloud-readonly - <<'POLICY'
+              path "secret/data/infrastructure/apple/icloud" {
                 capabilities = ["read"]
               }
               path "auth/token/lookup-self" {
@@ -1442,13 +1509,25 @@ spec:
               # own `github-config` ServiceAccount (used by its namespaced
               # SecretStore, k8s/bases/apps/github-config/secret-store.yaml) and
               # carries ONLY `infra-github-readonly` (read on
-              # secret/data/infrastructure/github/*) — never the broad
+              # secret/data/infrastructure/github/*, except the broker's
+              # infrastructure/github/apps/ subtree) — never the broad
               # `external-secrets` bundle — so the tenant can read the GitHub App
               # credential and nothing else.
               bao write auth/kubernetes/role/github-config \
                 bound_service_account_names=github-config \
                 bound_service_account_namespaces=github-config \
                 policies=infra-github-readonly \
+                ttl=1h
+
+              # Dedicated role for the GitHub token broker. Authenticates the
+              # broker's own `github-broker` ServiceAccount (used by its
+              # namespaced SecretStore, providers/hetzner/apps/github-broker/)
+              # and carries ONLY `infra-github-broker`. Inert where the broker is
+              # not deployed.
+              bao write auth/kubernetes/role/github-broker \
+                bound_service_account_names=github-broker \
+                bound_service_account_namespaces=github-broker \
+                policies=infra-github-broker \
                 ttl=1h
 
               # Inert until the opt-in ARC component creates this service
@@ -1497,6 +1576,20 @@ spec:
                 "token_max_ttl": 3600
               }
               EMAIL_STORAGE_ROLE
+
+              # The one-time mailbox history copy's own identity (#5481). Like
+              # the storage role, it neither seeds a key nor widens the shared
+              # External Secrets role.
+              bao write auth/kubernetes/role/email-history-import - <<'EMAIL_HISTORY_ROLE'
+              {
+                "bound_service_account_names": ["email-history-import"],
+                "bound_service_account_namespaces": ["private-mail"],
+                "token_policies": ["infra-icloud-readonly"],
+                "token_no_default_policy": true,
+                "token_ttl": 3600,
+                "token_max_ttl": 3600
+              }
+              EMAIL_HISTORY_ROLE
 
               # The source-owned SecretStore uses only this namespaced identity.
               # Explicit JSON preserves array/boolean types; no default policy is

@@ -12,6 +12,10 @@ import (
 // main admits explicit migration operations through their distinct confirmations
 // and protected workflow identities before constructing any production client.
 func main() {
+	if len(os.Args) > 1 {
+		fmt.Fprintln(os.Stderr, "Migration operations accept no command-line arguments.")
+		os.Exit(1)
+	}
 	operation := os.Getenv("LONGHORN_V2_OPERATION")
 	if operation == runtimePublicationCaptureOperation || operation == runtimePublicationCheckOperation {
 		if err := runRuntimePublication(context.Background(), os.Getenv); err != nil {
@@ -37,6 +41,8 @@ func main() {
 		authorization = authorizeUnstartedV1Recovery(os.Getenv)
 	case recoverBoundV1Operation:
 		authorization = authorizeBoundV1Recovery(os.Getenv)
+	case "register-temporary-v2-storage":
+		authorization = authorizeTemporaryActivation(os.Getenv)
 	case nativeSeedOperation:
 		authorization = authorizeNativeSeed(os.Getenv)
 	case "inventory-replicas":
@@ -208,6 +214,20 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == "register-temporary-v2-storage" {
+		legacyReceipts, err := parseLegacyPreparationReceipts(os.Getenv("LONGHORN_V2_LEGACY_PREPARATION_RECEIPTS"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		activation := temporaryV2Activation{c: client{run: execute, context: "admin@prod", inventoryPools: pools}, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools, legacyReceipts: legacyReceipts}
+		if err = activation.run(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "Temporary V2 registration held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve its identity journal and any partial registration for explicit recovery.")
+			os.Exit(1)
+		}
+		return
 	}
 	if operation == "prepare-unused-temporary-worker" || operation == "prepare-retained-temporary-worker" || operation == observeTemporaryRecoveryOperation {
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}

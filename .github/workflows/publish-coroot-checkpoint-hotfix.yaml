@@ -109,8 +109,7 @@ jobs:
 
   # The server patch changes which ClickHouse partitions Coroot's space manager drops. Unit tests
   # model system.parts; this job runs the real cleanup path (the parts query, the per-disk
-  # decision and DROP PARTITION) against ClickHouse 25.11.2, the release the Coroot operator
-  # ran in production when this job was added (read from the live shard Pods on 2026-11-12).
+  # decision and DROP PARTITION) against the Coroot operator's production ClickHouse image.
   integration:
     name: Verify server space manager against ClickHouse
     runs-on: ubuntu-latest
@@ -118,7 +117,7 @@ jobs:
     permissions:
       contents: read
     env:
-      CLICKHOUSE_IMAGE: docker.io/clickhouse/clickhouse-server:25.11.2.24@sha256:dcd74ae94f16bee4bb61a44ab0fc4ff973d5bb42180e52fc82c4fe68cfe70cf6
+      CLICKHOUSE_IMAGE: ghcr.io/coroot/clickhouse:26.10.3-ubi9-0@sha256:7a7bced745cb7975ce8b249da1e08192faf8adbcc24aae45060ccc6d7c9187a3
       CLICKHOUSE_CONTAINER: coroot-space-manager-it-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Harden runner

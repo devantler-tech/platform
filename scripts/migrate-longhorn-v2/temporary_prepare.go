@@ -61,14 +61,14 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 		var checkErr error
 		restoreAttempted := false
 		if err := waitReady(ctx, func(ctx context.Context) error {
-			var recovered object
+			var recovered unusedTemporaryPostState
 			recovered, checkErr = p.unusedPostState(ctx)
 			if checkErr == replacedStagingLayout {
 				if restoreAttempted {
 					return errors.Join(errReadinessTerminal, checkErr)
 				}
 				restoreAttempted = true
-				if err := p.restoreRebuiltStagingLayout(ctx, recovered); err != nil {
+				if err := p.restoreRebuiltStagingLayout(ctx, recovered.node); err != nil {
 					checkErr = nil
 					return errors.Join(errReadinessTerminal, err)
 				}
@@ -90,9 +90,13 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 				return err
 			}
 		}
-		n, err := p.unusedPostState(ctx)
+		observed, err := p.unusedPostState(ctx)
 		if err != nil {
 			return err
+		}
+		n := observed.node
+		if p.staging && !p.retainsRaw() {
+			stagedUUID = observed.rawUUID
 		}
 		fence := text(n, "metadata", "annotations", fenceAnnotation)
 		if fence == p.name && value(n, "spec", "unschedulable") == true {
@@ -109,8 +113,8 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 	if p.j.Phase != "prepared" {
 		return errInventory
 	}
-	n, err := p.unusedPostState(ctx)
-	if err != nil || value(n, "spec", "unschedulable") == true || text(n, "metadata", "annotations", fenceAnnotation) != "" {
+	observed, err := p.unusedPostState(ctx)
+	if err != nil || value(observed.node, "spec", "unschedulable") == true || text(observed.node, "metadata", "annotations", fenceAnnotation) != "" {
 		return errInventory
 	}
 	s, err := p.c.snapshot(ctx)
@@ -455,35 +459,40 @@ func (p *temporaryPreparation) resetUnused(ctx context.Context) error {
 	return nil
 }
 
+type unusedTemporaryPostState struct {
+	node    object
+	rawUUID string
+}
+
 // unusedPostState requires the original node identity with a new boot, a replaced
 // encrypted EPHEMERAL partition and the separately encrypted raw volume. It also
 // verifies advertised hugepages and that Longhorn storage remains unregistered.
-func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object, err error) {
+func (p temporaryPreparation) unusedPostState(ctx context.Context) (observed unusedTemporaryPostState, err error) {
 	n, address, err := p.node(ctx, true)
 	if err != nil {
-		return nil, temporaryRecoveryGate("the original worker and hardware identity")
+		return observed, temporaryRecoveryGate("the original worker and hardware identity")
 	}
 	status := valueObject(n, "status")
 	boot := text(n, "status", "nodeInfo", "bootID")
 	if !ready(status) || !hugepagesReady(n) || !inventoryBoot.MatchString(boot) || boot == p.j.OriginalBootID {
-		return nil, temporaryRecoveryGate("a ready worker with huge pages and a new boot")
+		return observed, temporaryRecoveryGate("a ready worker with huge pages and a new boot")
 	}
 	if p.retainsRaw() {
 		if _, err = p.readRetainedRecovery(ctx, address, boot, false); err != nil && p.j.Phase == "reset-requested" {
 			_, err = p.readRetainedRecovery(ctx, address, boot, true)
 		}
 		if err != nil {
-			return nil, temporaryRecoveryGate("the retained raw partition and staged layout")
+			return observed, temporaryRecoveryGate("the retained raw partition and staged layout")
 		}
 		lh, err := p.storageNode(ctx)
 		if err != nil || !unusedStorageFenced(lh) {
-			return nil, temporaryRecoveryGate("the empty fenced Longhorn node")
+			return observed, temporaryRecoveryGate("the empty fenced Longhorn node")
 		}
 		current, currentAddress, err := p.node(ctx, true)
 		if err != nil || currentAddress != address || text(current, "status", "nodeInfo", "bootID") != boot {
-			return nil, temporaryRecoveryGate("a stable worker identity and boot")
+			return observed, temporaryRecoveryGate("a stable worker identity and boot")
 		}
-		return current, nil
+		return unusedTemporaryPostState{node: current}, nil
 	}
 	factory := p.reader
 	if factory == nil {
@@ -491,49 +500,54 @@ func (p temporaryPreparation) unusedPostState(ctx context.Context) (node object,
 	}
 	reader, closeReader, err := factory(ctx, address)
 	if err != nil || reader == nil || closeReader == nil {
-		return nil, temporaryRecoveryGate("a node-bound native reader")
+		return observed, temporaryRecoveryGate("a node-bound native reader")
 	}
 	defer func() {
 		if closeReader() != nil {
-			node = nil
+			observed = unusedTemporaryPostState{}
 			err = temporaryRecoveryGate("clean native reader shutdown")
 		}
 	}()
 	actualBoot, err := reader.BootID(ctx)
 	if err != nil || actualBoot != boot {
-		return nil, temporaryRecoveryGate("the native boot identity matching Kubernetes")
+		return observed, temporaryRecoveryGate("the native boot identity matching Kubernetes")
 	}
 	raw, err := p.c.talosVolume(ctx, address, "r-longhorn")
 	if err != nil {
-		return nil, temporaryRecoveryGate("readable raw volume status")
+		return observed, temporaryRecoveryGate("readable raw volume status")
 	}
 	eph, err := p.c.talosVolume(ctx, address, "EPHEMERAL")
 	if err != nil {
-		return nil, temporaryRecoveryGate("readable EPHEMERAL volume status")
+		return observed, temporaryRecoveryGate("readable EPHEMERAL volume status")
 	}
 	rawGiB := uint64(permanentRawDiskGiB)
 	if p.staging {
 		rawGiB = stagingRawDiskGiB
 	}
 	if err = verifyEncryptedRawDisk(raw, eph, rawGiB); err != nil {
-		return nil, temporaryRecoveryGate("the expected encrypted partition geometry")
+		return observed, temporaryRecoveryGate("the expected encrypted partition geometry")
 	}
 	uuid, err := recoveredEphemeralUUID(ctx, address, eph, factory)
 	if err != nil || p.j.EphemeralUUID == "" || strings.EqualFold(uuid, p.j.EphemeralUUID) {
-		return nil, temporaryRecoveryGate("the new encrypted EPHEMERAL identity")
+		return observed, temporaryRecoveryGate("the new encrypted EPHEMERAL identity")
+	}
+	rawUUID := strings.ToLower(text(raw, "spec", "partitionUUID"))
+	if p.staging && (!inventoryBoot.MatchString(rawUUID) || strings.EqualFold(rawUUID, uuid) ||
+		p.j.PreparedRawUUID != "" && !strings.EqualFold(p.j.PreparedRawUUID, rawUUID)) {
+		return observed, temporaryRecoveryGate("the expected distinct raw GPT partition")
 	}
 	recheckedBoot, err := reader.BootID(ctx)
 	if err != nil || recheckedBoot != actualBoot {
-		return nil, temporaryRecoveryGate("the same native boot after reading storage")
+		return observed, temporaryRecoveryGate("the same native boot after reading storage")
 	}
 	lh, err := p.storageNode(ctx)
 	if err != nil {
-		return nil, temporaryRecoveryGate("the original Longhorn node identity")
+		return observed, temporaryRecoveryGate("the original Longhorn node identity")
 	}
 	if !unusedStorageFenced(lh) {
-		return nil, temporaryRecoveryGate("the empty fenced Longhorn node")
+		return observed, temporaryRecoveryGate("the empty fenced Longhorn node")
 	}
-	return n, p.verifyRecoveredLayout(ctx, address)
+	return unusedTemporaryPostState{node: n, rawUUID: rawUUID}, p.verifyRecoveredLayout(ctx, address)
 }
 
 // unusedStorageFenced accepts only an empty Longhorn node whose scheduling is

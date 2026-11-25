@@ -1,0 +1,28 @@
+---
+apiVersion: coroot.com/v1
+kind: Coroot
+metadata:
+  name: coroot
+  namespace: observability
+spec:
+  prometheus:
+    # Keep the provider-backed collector on baseline compute. The separate
+    # security exporter placement opens space on the preferred worker.
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: platform.devantler.tech/baseline-worker
+                  operator: In
+                  values: ["true"]
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values: [prod-worker-2]
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: In
+                  values: [prod-worker-1]

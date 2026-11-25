@@ -51,7 +51,11 @@ func verifyEncryptedLocalLayout(raw, ephemeral object) error {
 }
 
 func verifyEncryptedRawDisk(raw, ephemeral object, rawGiB uint64) error {
-	if text(raw, "metadata", "id") != "r-longhorn" || text(ephemeral, "metadata", "id") != "EPHEMERAL" {
+	return verifyNamedEncryptedRawDisk(raw, ephemeral, "r-longhorn", rawGiB)
+}
+
+func verifyNamedEncryptedRawDisk(raw, ephemeral object, rawID string, rawGiB uint64) error {
+	if text(raw, "metadata", "id") != rawID || text(ephemeral, "metadata", "id") != "EPHEMERAL" {
 		return errors.New("encrypted local partition identities are missing")
 	}
 	for _, volume := range []object{raw, ephemeral} {

@@ -1,0 +1,98 @@
+---
+name: Observe Talos Storage Pool Layout
+
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type observe-talos-storage-pool-layout
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the confirmed first attempt on main
+        shell: bash
+        env:
+          STORAGE_LAYOUT_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == devantler-tech/platform &&
+             "${GITHUB_EVENT_NAME}" == workflow_dispatch &&
+             "${GITHUB_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 &&
+             "${STORAGE_LAYOUT_CONFIRM}" == observe-talos-storage-pool-layout ]]
+
+      - name: Check out the reviewed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Compile the Talos profile reader
+        shell: bash
+        run: go test -c -o "${RUNNER_TEMP}/observe-talos-profiles" ./scripts/migrate-longhorn-v2
+
+      - name: Install the verified Talos client
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-talosctl.sh
+
+      - name: Install the verified KSail lifecycle client
+        shell: bash
+        env:
+          KSAIL_VERSION: "7.216.21"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-ksail.sh
+
+      - name: Observe the Talos disk profiles and native update plan
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          WG_SERVER_PRIVATE_KEY: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
+          LONGHORN_V2_TALOS_PROFILE_READBACK: prod
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ -n "${KUBE_CONFIG}" && -n "${TALOS_CONFIG}" && -n "${HCLOUD_TOKEN}" && -n "${WG_SERVER_PRIVATE_KEY}" ]]
+          credential_dir="$(mktemp -d /dev/shm/talos-pool-layout.XXXXXXXX)"
+          trap 'rm -rf -- "${credential_dir}"' EXIT
+          export KUBECONFIG="${credential_dir}/kubeconfig" TALOSCONFIG="${credential_dir}/talosconfig"
+          printf '%s' "${KUBE_CONFIG}" >"${KUBECONFIG}"
+          printf '%s' "${TALOS_CONFIG}" >"${TALOSCONFIG}"
+          unset KUBE_CONFIG TALOS_CONFIG
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+            printf '%s\n' 'Talos storage layout preview could not select the stable endpoint.'
+            exit 2
+          fi
+          (
+            cd scripts/migrate-longhorn-v2
+            env -u HCLOUD_TOKEN -u WG_SERVER_PRIVATE_KEY "${RUNNER_TEMP}/observe-talos-profiles" \
+              -test.count=1 -test.run '^TestObserveProductionPreparedTalosProfiles$' -test.v
+          )
+          bash scripts/preview-prod-talos-pool-layout.sh /usr/local/bin/ksail

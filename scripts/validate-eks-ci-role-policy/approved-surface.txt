@@ -68,6 +68,8 @@ kro.run/v1alpha1|Tenant|flux-system|business-site-dev 6c7a1242cd144a9947c331b4b3
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps 6ab22c8a1703a8bfa1755b55c4ceccdf26b94af4ed510ba48251e673b95fefb9
 
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|github-broker 26741fcf9237efdc46c073ae66141af20d6e1f417ba18ba48d0cf0be17f3c8a1
+
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 9f1a9d875f4c26786c23c805bfce054f5fe7b12614c07afc9efaeb9019dd6232
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers 0bca289c996db852fce22f61296381ff9c120a0f7630e2427314de27fc773294
