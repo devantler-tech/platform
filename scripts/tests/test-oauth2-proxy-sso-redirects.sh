@@ -181,6 +181,17 @@ for provider in "${providers[@]}"; do
   grep -Eq '^[[:space:]]*cookie_secure[[:space:]]*=[[:space:]]*true[[:space:]]*$' <<<"${o2p_config}" ||
     fail "${provider}: oauth2-proxy must set cookie_secure = true: it is what makes the login callback it derives https, the only scheme Dex has registered"
 
+  # The SSO cookies stay host-only, and the __Host- prefix makes the browser
+  # enforce it: no other host under the same site can plant one. The browser
+  # refuses a __Host- cookie unless it is Secure (above), has Path=/ and has
+  # no Domain, so neither a cookie domain nor a cookie path may be set.
+  grep -Eq '^[[:space:]]*cookie_name[[:space:]]*=[[:space:]]*"__Host-[^"]+"[[:space:]]*$' <<<"${o2p_config}" ||
+    fail "${provider}: oauth2-proxy's cookie_name must start with __Host-, so the browser keeps the SSO cookies to the host that set them and refuses one planted by another host under the same site"
+  if grep -Eq '^[[:space:]]*cookie_(domains?|path)[[:space:]]*=' <<<"${o2p_config}" ||
+    grep -Eq 'cookie[-_](domains?|path)' <<<"$(yq eval -N '.extraArgs // ""' - <<<"${o2p}")"; then
+    fail "${provider}: oauth2-proxy sets a cookie domain or path; the browser drops a __Host- cookie that carries a Domain or a path other than /, so nobody could stay signed in"
+  fi
+
   registered="$(yq eval -N 'select(.kind == "HelmRelease" and .metadata.name == "dex" and .metadata.namespace == "dex") | .spec.values.config.staticClients[] | select(.id == "public-client") | .redirectURIs[]' "${rendered}")"
   [[ -n "${registered}" ]] ||
     fail "${provider}: no Dex public-client redirectURIs were rendered; the Dex client moved or was renamed, so this test is checking nothing"

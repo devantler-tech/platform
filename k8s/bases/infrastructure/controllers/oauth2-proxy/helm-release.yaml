@@ -125,12 +125,21 @@ spec:
         # /oauth2/callback (see redirect_url below), and Dex's own session makes
         # that a silent redirect after the first sign-in.
         #
-        # The cookie name is distinct from oauth2-proxy's default
-        # (_oauth2_proxy), so a session cookie a browser still holds under the
-        # default name is ignored rather than read, and every host issues a
-        # fresh host-only one. whitelist_domains (the redirect allowlist) keeps
-        # both forms of ${domain} intentionally.
-        cookie_name = "_oauth2_proxy_host"
+        # The __Host- prefix makes the browser enforce that scope. Every host
+        # under ${domain} is one site, so without it a sibling host could
+        # plant a cookie of the same name, with a Domain attribute, that the
+        # browser sends here too (cookie tossing, RFC 6265 section 8.6). A
+        # browser accepts a __Host- cookie only with Secure, Path=/ and no
+        # Domain, which are oauth2-proxy's settings here (cookie_path defaults
+        # to /), so no other host can set one. The per-request CSRF cookies
+        # take the same prefix and attributes: they are named
+        # <cookie_name>_<state>_csrf.
+        #
+        # Changing the name signs everyone out once: a cookie under an earlier
+        # name is ignored rather than read, and the next visit issues a fresh
+        # one. whitelist_domains (the redirect allowlist) keeps both forms of
+        # ${domain} intentionally.
+        cookie_name = "__Host-oauth2_proxy"
         whitelist_domains = ["${domain}", ".${domain}"]
         # No redirect_url, deliberately: oauth2-proxy then finishes each login at
         # /oauth2/callback on the host the user started from (https, because
