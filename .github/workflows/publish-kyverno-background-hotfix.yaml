@@ -24,7 +24,7 @@ concurrency:
 
 env:
   SOURCE_COMMIT: e63308f1e16c05cd009ac4864be6ec25c66b49be
-  PATCHED_SOURCE_TREE: a9fcf39f19241ac127b2a9d8a70eadae54c22de8
+  PATCHED_SOURCE_TREE: 416df7484bb9024cebda4ea29f80b60f3f14b536
   IMAGE: ghcr.io/devantler-tech/platform-kyverno-background
   IMAGE_TAG: v1.19.2-downstream-cleanup.1-${{ github.sha }}
 
