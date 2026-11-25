@@ -1200,12 +1200,16 @@ spec:
               }
               POLICY
 
-              # The existing mail provider's sign-in and the domain's address
-              # inventory, which the maintainer keeps for the one-time mailbox
-              # history copy (#5481). Exact key read only, the same shape as
-              # the storage key reader above.
+              # The one-time mailbox history copy (#5481): the existing mail
+              # provider's sign-in, and the app password it signs in to the new
+              # mailbox with (the account has two-factor sign-in, so its own
+              # password cannot sign in over IMAP). Exact keys read only, the
+              # same shape as the storage key reader above.
               bao policy write infra-icloud-readonly - <<'POLICY'
               path "secret/data/infrastructure/apple/icloud" {
+                capabilities = ["read"]
+              }
+              path "secret/data/infrastructure/email/history-import" {
                 capabilities = ["read"]
               }
               path "auth/token/lookup-self" {
