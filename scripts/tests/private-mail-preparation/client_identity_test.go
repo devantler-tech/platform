@@ -22,8 +22,10 @@ func TestClientIdentityBundleReplacesUntrustedForwardingHeaders(t *testing.T) {
 	if response["type"] != "ResponseHeaderModifier" {
 		t.Fatal("client identity must preserve the existing response security policy")
 	}
+	// The same filter also carries the CORS headers for Bulwark's origin,
+	// which TestAdministrationRouteAllowsOnlyBulwarkOrigin pins.
 	responseSet := sequence(t, mapping(t, response["responseHeaderModifier"])["set"])
-	if len(responseSet) != 1 || mapping(t, responseSet[0])["name"] != "Strict-Transport-Security" || mapping(t, responseSet[0])["value"] != "max-age=63072000; includeSubDomains; preload" {
+	if mapping(t, responseSet[0])["name"] != "Strict-Transport-Security" || mapping(t, responseSet[0])["value"] != "max-age=63072000; includeSubDomains; preload" {
 		t.Fatal("client identity must preserve strict transport security")
 	}
 	filter := mapping(t, filters[1])
