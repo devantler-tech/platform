@@ -3,11 +3,15 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 )
 
 // privateInput reads a bounded input without including its contents in errors.
@@ -130,10 +134,59 @@ func loadInputs(dir string) (inputs, error) {
 	if seen["runtimeVersion"] && v.RuntimeVersion == "" {
 		return fail()
 	}
+	aliases, present, err := maintainerAliasesInput(dir, v.Domain, v.Maintainer)
+	if err != nil {
+		return fail()
+	}
+	if present {
+		// The maintainer keeps the domain's aliases in OpenBao (#5481). When
+		// that list is mounted it is the single source and replaces any
+		// aliases the settings still carry.
+		v.MaintainerAliases = aliases
+	}
 	if _, err = render(v); err != nil {
 		return fail()
 	}
 	return v, nil
+}
+
+// maintainerAliasesInput reads the optional `maintainer-aliases` input: the
+// maintainer's other addresses on the domain, exactly as kept in OpenBao, as
+// either a JSON array of strings or a list separated by commas or whitespace.
+// Every entry must be a full address on the mailbox domain, and no address may
+// repeat. The maintainer's own address, if listed, is not an alias and is
+// skipped. An empty list manages an empty alias set. Alias names are validated
+// with the settings' rules when rendered.
+func maintainerAliasesInput(dir, domain, maintainer string) ([]string, bool, error) {
+	if _, err := os.Lstat(filepath.Join(dir, "maintainer-aliases")); errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	b, err := privateInput(dir, "maintainer-aliases", 4096)
+	if err != nil || bytes.ContainsRune(b, 0) {
+		return nil, true, errConfiguration
+	}
+	text := strings.TrimSpace(string(b))
+	var items []string
+	if strings.HasPrefix(text, "[") {
+		if json.Unmarshal([]byte(text), &items) != nil {
+			return nil, true, errConfiguration
+		}
+	} else {
+		items = strings.FieldsFunc(text, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+	}
+	aliases := []string{}
+	listed := map[string]bool{}
+	for _, item := range items {
+		local, host, ok := strings.Cut(strings.ToLower(strings.TrimSpace(item)), "@")
+		if !ok || local == "" || host != domain || listed[local] {
+			return nil, true, errConfiguration
+		}
+		listed[local] = true
+		if local != maintainer {
+			aliases = append(aliases, local)
+		}
+	}
+	return aliases, true, nil
 }
 
 // command handles the Email configuration CLI without echoing private input values.
