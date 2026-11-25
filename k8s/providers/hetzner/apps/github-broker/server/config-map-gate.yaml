@@ -13,11 +13,10 @@
 # Admitted requests then go through octo-sts's own trust policy check, and are
 # limited per pod so a runaway caller cannot drain the quota either.
 #
-# Adding a caller means adding a policy below, reviewed here:
-# - a customer repository: a `sourced_metadata` principal on
-#   repository_id under a new policy;
-# - a platform workload: a second provider for the cluster's service-account
-#   issuer, with principals on its exact `sub` (platform#6606).
+# Only the maintainer's own systems are callers (ADR 0020): never a customer,
+# not even for its own repositories. Adding a platform workload means adding a
+# second provider for the cluster's service-account issuer, with principals on
+# its exact `sub` (platform#6606), reviewed here.
 #
 # scripts/tests/test-github-broker-gate.sh runs this config in Envoy with
 # signed test tokens and checks each rule.
