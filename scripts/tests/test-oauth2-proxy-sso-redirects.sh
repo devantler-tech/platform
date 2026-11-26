@@ -114,53 +114,30 @@ for provider in "${providers[@]}"; do
     printf '\n---\n' >>"${rendered}"
   done
 
-  # The private preview has its own listener and can reach only the sign-in proxy.
-  yq eval -N -o=json '.' "${rendered}" | jq -es --arg provider "${provider}" '
+  # Client preview is an operator mode in the regular portal.
+  yq eval -N -o=json '.' "${rendered}" | jq -es '
     def host: "dev.devantler.tech";
     def listener: "https-dev-devantler-tech";
     def tlsSecret: "business-site-preview-tls";
-    [.[] | select(.kind == "HTTPRoute" and any(.spec.hostnames[]?; . == host))] as $routes |
-    [.[] | select(.kind == "Gateway") | .metadata as $gateway |
-      .spec.listeners[]? | select(.hostname == host) | {gateway:$gateway, listener:.}] as $listeners |
-    if $provider == "hetzner" then
-      ($routes | length == 1) and ($listeners | length == 1) and
-      ($routes[0] | .metadata.namespace == "oauth2-proxy" and .spec.hostnames == [host] and
-        .spec.parentRefs == [{name:"platform", namespace:"kube-system", sectionName:listener}] and
-        (.spec.rules | length == 1) and .spec.rules[0].backendRefs == [{name:"oauth2-proxy", port:80}] and
-        .spec.rules[0].filters == [{type:"ResponseHeaderModifier", responseHeaderModifier:{set:[
-          {name:"Strict-Transport-Security", value:"max-age=63072000; includeSubDomains; preload"}]}}]) and
-      ($listeners[0].gateway | .name == "platform" and .namespace == "kube-system") and
-      ($listeners[0].listener | .name == listener and .protocol == "HTTPS" and .port == 443 and
-        .tls == {mode:"Terminate", certificateRefs:[{name:tlsSecret}]} and
-        .allowedRoutes == {namespaces:{from:"Selector", selector:{matchLabels:{"kubernetes.io/metadata.name":"oauth2-proxy"}}},
-          kinds:[{group:"gateway.networking.k8s.io", kind:"HTTPRoute"}]}) and
-      ([.[] | select(.kind == "Certificate" and .metadata.namespace == "kube-system" and
-        .spec.secretName == tlsSecret and .spec.dnsNames == [host])] | length == 1) and
-      ([.[] | select(.kind == "HelmRelease" and .metadata.name == "oauth2-proxy" and .metadata.namespace == "oauth2-proxy") |
-        .spec.values.extraEnv[]? | select(.name == "OAUTH2_PROXY_WHITELIST_DOMAINS")] | length == 1 and
-          .[0].value == ("${domain},.${domain}," + host))
-    else
-      ($routes == [] and $listeners == [])
-    end' >/dev/null || fail "${provider}: the private preview must use its dedicated HTTPS listener and only the sign-in proxy"
+    all(.[]; if .kind == "HTTPRoute" then all(.spec.hostnames[]?; . != host)
+      elif .kind == "Gateway" then all(.spec.listeners[]?; .hostname != host and .name != listener)
+      elif .kind == "Certificate" then .spec.secretName != tlsSecret and all(.spec.dnsNames[]?; . != host)
+      elif .kind == "HelmRelease" and .metadata.name == "oauth2-proxy" then
+        all(.spec.values.extraEnv[]?; .name != "OAUTH2_PROXY_WHITELIST_DOMAINS" or (.value | split(",") | index(host)) == null)
+      else true end)
+  ' >/dev/null || fail "${provider}: the retired preview host still has ingress or a sign-in redirect"
 
   preview_forwarder="$(yq eval -N -r '
     select(.kind == "ConfigMap" and .metadata.name == "auth-proxy-config" and .metadata.namespace == "oauth2-proxy") |
     .data."dynamic.yaml"
   ' "${rendered}")"
   yq eval -o=json '.' - <<<"$preview_forwarder" | jq -e '
-    .http.routers["business-site-preview"]=={
-      rule:"Host(`dev.devantler.tech`)",entryPoints:["web"],middlewares:["forwarded-proto-https"],service:"business-site-preview"
-    } and .http.services["business-site-preview"].loadBalancer=={
-      passHostHeader:true,servers:[{url:"http://business-site-dev.business-site-dev.svc.cluster.local:80"}]
-    }' >/dev/null || fail "${provider}: the authenticated forwarder must preserve the exact preview host"
-  yq eval -N -o=json '.' "${rendered}" | jq -es --arg provider "$provider" '
-    [.[]|select(.kind=="CiliumNetworkPolicy" and .metadata.name=="allow-auth-proxy") |
-      .spec.egress[]|select(any(.toEndpoints[]?; .matchLabels["k8s:io.kubernetes.pod.namespace"]=="business-site-dev"))] as $grants |
-    $grants==(if $provider=="hetzner" then [{
-      toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site-dev","app.kubernetes.io/name":"business-site-dev"}}],
-      toPorts:[{ports:[{port:"8080",protocol:"TCP"}]}]
-    }] else [] end)
-  ' >/dev/null || fail "${provider}: only the production forwarder can reach the private preview application"
+    .http.routers["business-site-preview"]==null and .http.services["business-site-preview"]==null
+  ' >/dev/null || fail "${provider}: the authenticated forwarder still exposes the retired preview application"
+  yq eval -N -o=json '.' "${rendered}" | jq -es '
+    all(.[] | select(.kind=="CiliumNetworkPolicy" and .metadata.name=="allow-auth-proxy") |
+      .spec.egress[].toEndpoints[]?; .matchLabels["k8s:io.kubernetes.pod.namespace"]!="business-site-dev")
+  ' >/dev/null || fail "${provider}: the forwarder still reaches the preview namespace"
 
   # A route that names no hostname inherits the listener's, so this test cannot
   # tell which callback it needs. Refuse it rather than skip it.
