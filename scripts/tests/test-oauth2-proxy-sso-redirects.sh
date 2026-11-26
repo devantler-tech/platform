@@ -143,6 +143,25 @@ for provider in "${providers[@]}"; do
       ($routes == [] and $listeners == [])
     end' >/dev/null || fail "${provider}: the private preview must use its dedicated HTTPS listener and only the sign-in proxy"
 
+  preview_forwarder="$(yq eval -N -r '
+    select(.kind == "ConfigMap" and .metadata.name == "auth-proxy-config" and .metadata.namespace == "oauth2-proxy") |
+    .data."dynamic.yaml"
+  ' "${rendered}")"
+  yq eval -o=json '.' - <<<"$preview_forwarder" | jq -e '
+    .http.routers["business-site-preview"]=={
+      rule:"Host(`dev.devantler.tech`)",entryPoints:["web"],middlewares:["forwarded-proto-https"],service:"business-site-preview"
+    } and .http.services["business-site-preview"].loadBalancer=={
+      passHostHeader:true,servers:[{url:"http://business-site-dev.business-site-dev.svc.cluster.local:80"}]
+    }' >/dev/null || fail "${provider}: the authenticated forwarder must preserve the exact preview host"
+  yq eval -N -o=json '.' "${rendered}" | jq -es --arg provider "$provider" '
+    [.[]|select(.kind=="CiliumNetworkPolicy" and .metadata.name=="allow-auth-proxy") |
+      .spec.egress[]|select(any(.toEndpoints[]?; .matchLabels["k8s:io.kubernetes.pod.namespace"]=="business-site-dev"))] as $grants |
+    $grants==(if $provider=="hetzner" then [{
+      toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site-dev","app.kubernetes.io/name":"business-site-dev"}}],
+      toPorts:[{ports:[{port:"8080",protocol:"TCP"}]}]
+    }] else [] end)
+  ' >/dev/null || fail "${provider}: only the production forwarder can reach the private preview application"
+
   # A route that names no hostname inherits the listener's, so this test cannot
   # tell which callback it needs. Refuse it rather than skip it.
   unnamed="$(yq eval -N "${fronted_routes} | select((.spec.hostnames // []) | length == 0) | .metadata.namespace + \"/\" + .metadata.name" "${rendered}")"

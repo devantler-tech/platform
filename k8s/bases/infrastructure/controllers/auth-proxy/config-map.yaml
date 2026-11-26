@@ -97,6 +97,12 @@ data:
           rule: "Host(`data-products.${domain}`)"
           entryPoints: ["web"]
           service: data-products
+        # Only the production preview listener sends this host through SSO.
+        business-site-preview:
+          rule: "Host(`dev.devantler.tech`)"
+          entryPoints: ["web"]
+          middlewares: ["forwarded-proto-https"]
+          service: business-site-preview
       middlewares:
         longhorn-read-only-headers:
           headers:
@@ -165,3 +171,8 @@ data:
           loadBalancer:
             servers:
               - url: "http://data-product-controller.data-product-controller.svc.cluster.local:80"
+        business-site-preview:
+          loadBalancer:
+            passHostHeader: true
+            servers:
+              - url: "http://business-site-dev.business-site-dev.svc.cluster.local:80"
