@@ -42,25 +42,8 @@ func observeActualBudgetStaging(ctx context.Context, c client) (actualBudgetStag
 }
 
 func verifyActualBudgetStagingCapacity(ctx context.Context, c client) error {
-	if err := verifyV1ReservationSettings(ctx, c); err != nil {
-		return err
-	}
-	uploads, err := c.list(ctx, "datauploads.velero.io", "velero")
+	s, err := observeV1BackupStagingInventory(ctx, c)
 	if err != nil {
-		return errors.New("existing Velero uploads cannot be verified")
-	}
-	for _, upload := range uploads {
-		switch text(upload, "status", "phase") {
-		case "Completed", "Failed", "Canceled":
-		default:
-			return errors.New("an existing Velero upload is active or unverified")
-		}
-	}
-	s, err := c.snapshot(ctx)
-	if err != nil {
-		return err
-	}
-	if err = verifyRedundancy(s); err != nil {
 		return err
 	}
 	nodes, err := indexed(s.nodes)
@@ -85,13 +68,50 @@ func verifyActualBudgetStagingCapacity(ctx context.Context, c client) error {
 	return errors.New("no stable V1 disk can stage one 10 GiB snapshot while retaining the physical floor and margin")
 }
 
+func observeV1BackupStagingInventory(ctx context.Context, c client) (inventory, error) {
+	if err := verifyV1ReservationSettings(ctx, c); err != nil {
+		return inventory{}, err
+	}
+	uploads, err := c.list(ctx, "datauploads.velero.io", "velero")
+	if err != nil {
+		return inventory{}, errors.New("existing Velero uploads cannot be verified")
+	}
+	for _, upload := range uploads {
+		switch text(upload, "status", "phase") {
+		case "Completed", "Failed", "Canceled":
+		default:
+			return inventory{}, errors.New("an existing Velero upload is active or unverified")
+		}
+	}
+	s, err := c.snapshot(ctx)
+	if err != nil {
+		return inventory{}, err
+	}
+	if err = verifyRedundancy(s); err != nil {
+		return inventory{}, err
+	}
+	return s, nil
+}
+
 func fitsActualBudgetSnapshot(disk object, reserved int64, replicas []object, worker string) bool {
+	target, ok := actualBudgetRequiredReservation(disk, reserved, replicas, worker)
+	return ok && target == reserved
+}
+
+// Open only the measured logical gap for one disposable clone. The physical
+// floor and margin continue to apply to the full clone size.
+func actualBudgetRequiredReservation(disk object, reserved int64, replicas []object, worker string) (int64, bool) {
 	maximum, maxOK := v1CapacityBytes(disk["storageMaximum"])
 	available, availOK := v1CapacityBytes(disk["storageAvailable"])
 	scheduled, schedOK := v1CapacityBytes(disk["storageScheduled"])
 	const margin = int64(4 << 30)
-	return maxOK && availOK && schedOK && maximum > 0 && available <= maximum &&
-		maximum-reserved-scheduled >= v1BackupScratchBytes &&
-		available-v1BackupScratchBytes > maximum/4+margin &&
-		v1DiskLedgerMatches(replicas, worker, disk, maximum, scheduled)
+	const qualifiedShortfall = int64(2 << 30)
+	target := min(reserved, maximum-scheduled-v1BackupScratchBytes)
+	if !maxOK || !availOK || !schedOK || reserved <= 0 || maximum <= 0 || available > maximum ||
+		target <= 0 || reserved-target > qualifiedShortfall ||
+		available-v1BackupScratchBytes <= maximum/4+margin ||
+		!v1DiskLedgerMatches(replicas, worker, disk, maximum, scheduled) {
+		return 0, false
+	}
+	return target, true
 }

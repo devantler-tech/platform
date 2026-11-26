@@ -71,6 +71,8 @@ func main() {
 		authorization = authorizeV1ScratchHeadroom(os.Getenv, target)
 	case "reserve-v1-backup-scratch":
 		authorization = authorizeV1BackupHeadroom(os.Getenv)
+	case prepareActualBudgetScratch, retireActualBudgetScratch:
+		_, authorization = authorizeActualBudgetScratch(os.Getenv)
 	case actualBudgetBackupOperation:
 		authorization = authorizeActualBudgetBackup(os.Getenv)
 	case retainV1SourceOperation:
@@ -94,6 +96,19 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == prepareActualBudgetScratch || operation == retireActualBudgetScratch {
+		confirmation, err := authorizeActualBudgetScratch(os.Getenv)
+		if err == nil {
+			err = runActualBudgetScratch(ctx, client{run: execute, context: "admin@prod"}, operation,
+				os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), confirmation)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Actual Budget staging reservation held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("ACTUAL_BUDGET_BACKUP_SCRATCH=VERIFIED")
+		return
+	}
 	if operation == actualBudgetBackupOperation {
 		digest := os.Getenv("LONGHORN_V2_CONFIRM")[len(actualBudgetBackupOperation)+1:]
 		if err := runActualBudgetBackup(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), digest); err != nil {
