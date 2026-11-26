@@ -5,7 +5,7 @@ metadata:
   name: vault-snapshots-recovery-v2
   namespace: openbao
   labels:
-    platform.devantler.tech/storage-stage: prepared
+    backup.platform.devantler.tech/volume-data: independently-mirrored
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
