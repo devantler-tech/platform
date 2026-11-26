@@ -47,6 +47,19 @@ func object(t *testing.T, objects []map[string]any, kind, name string) map[strin
 	return nil
 }
 
+func TestProductionRecoveryRetiresCopyBeforeWriterCutover(t *testing.T) {
+	for _, resource := range render(t, "k8s/providers/hetzner/infrastructure") {
+		metadata := resource["metadata"].(map[string]any)
+		if metadata["namespace"] != "openbao" {
+			continue
+		}
+		if metadata["name"] == "copy-openbao-snapshots-to-v2" ||
+			metadata["name"] == "isolate-openbao-snapshot-copy" {
+			t.Fatal("production must stop reconciling the completed archive copy before changing the writer")
+		}
+	}
+}
+
 // TestCutoverPreservesOldStorageAndUsesRetainedReplacement fences the storage handoff.
 func TestCutoverPreservesOldStorageAndUsesRetainedReplacement(t *testing.T) {
 	production := render(t, "k8s/providers/hetzner/infrastructure")
