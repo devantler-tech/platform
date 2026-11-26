@@ -55,7 +55,11 @@ func nativeRestoreReattachPod(record benchmarkRecord, seed canarySeedState, requ
 	if err != nil {
 		return nil, err
 	}
-	assets, err := benchmarkResources("v2", request.Run, benchmarkNamespace)
+	return nativeRestoreReaderPod(request.Run, request.Target, verify+nativeReattachWait)
+}
+
+func nativeRestoreReaderPod(run, node, script string) (object, error) {
+	assets, err := benchmarkResources("v2", run, benchmarkNamespace)
 	if err != nil {
 		return nil, err
 	}
@@ -64,9 +68,9 @@ func nativeRestoreReattachPod(record benchmarkRecord, seed canarySeedState, requ
 			continue
 		}
 		spec := value(asset, "spec").(object)
-		spec["nodeSelector"] = object{"kubernetes.io/hostname": request.Target}
+		spec["nodeSelector"] = object{"kubernetes.io/hostname": node}
 		spec["activeDeadlineSeconds"] = 2700
-		value(spec, "containers").([]any)[0].(object)["args"] = []any{verify + nativeReattachWait}
+		value(spec, "containers").([]any)[0].(object)["args"] = []any{script}
 		value(spec, "containers").([]any)[0].(object)["env"] = nativeRestorePodUIDEnvironment()
 		return asset, nil
 	}

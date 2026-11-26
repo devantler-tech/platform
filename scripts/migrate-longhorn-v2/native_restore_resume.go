@@ -88,6 +88,13 @@ func resumeNativeRestore(ctx context.Context, c client, config []byte) error {
 	if err != nil {
 		return err
 	}
+	pod, err := c.get(ctx, "pods", benchmarkNamespace, "fio", false)
+	if err != nil {
+		return err
+	}
+	if nativeRestorePodExpired(pod) {
+		return r.resumeExpired(ctx, pod, executor, velero)
+	}
 	if _, _, err := r.readSeedTransfer(ctx, velero); err != nil {
 		return errors.Join(errors.New("the original completed transfer and healthy first attachment are required"), err)
 	}

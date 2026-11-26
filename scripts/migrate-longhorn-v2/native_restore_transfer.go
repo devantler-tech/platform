@@ -15,6 +15,13 @@ type nativeRestoreTransferReceipt struct {
 // storage, targets and source absence, qualify the executable Pod, and read
 // the original payload checksum before advancing its restoration journal.
 func verifyNativeRestoreTransfer(record benchmarkRecord, seed canarySeedState, state nativeRestoreState, restore, pod object, transfers, repositories []object) (nativeRestoreTransferReceipt, error) {
+	if text(pod, "status", "phase") != "Running" || !ready(valueObject(pod, "status")) {
+		return nativeRestoreTransferReceipt{}, errNativeRestoreEvidence
+	}
+	return verifyNativeRestoreTransferData(record, seed, state, restore, pod, transfers, repositories)
+}
+
+func verifyNativeRestoreTransferData(record benchmarkRecord, seed canarySeedState, state nativeRestoreState, restore, pod object, transfers, repositories []object) (nativeRestoreTransferReceipt, error) {
 	fail := func() (nativeRestoreTransferReceipt, error) {
 		return nativeRestoreTransferReceipt{}, errNativeRestoreEvidence
 	}
@@ -56,7 +63,7 @@ func verifyNativeRestoreTransfer(record benchmarkRecord, seed canarySeedState, s
 	if text(pod, "apiVersion") != "v1" || text(pod, "kind") != "Pod" || identity.Name != "fio" || identity.Namespace != benchmarkNamespace ||
 		!nativeRestoreUID(identity.UID) || text(pod, "metadata", "resourceVersion") == "" || value(pod, "metadata", "deletionTimestamp") != nil ||
 		text(pod, "metadata", "labels", "storage.platform.devantler.tech/benchmark-run") != state.Run || text(pod, "metadata", "labels", "velero.io/restore-name") != state.Resources["Restore"].Name ||
-		text(pod, "spec", "nodeName") != first || text(pod, "status", "phase") != "Running" || !ready(valueObject(pod, "status")) {
+		text(pod, "spec", "nodeName") != first {
 		return fail()
 	}
 	if !nativeRestoreChildIdentity(record, seed, state, "FirstPod", identity) {

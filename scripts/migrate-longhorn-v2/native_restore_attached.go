@@ -126,6 +126,9 @@ func nativeRestoreReceiptUIDs(record benchmarkRecord, seed canarySeedState, stat
 	for _, target := range state.Targets {
 		used[target.UID], used[target.Preparation.LonghornUID], used[target.Preparation.Journal.UID] = true, true, true
 	}
+	if state.Expired != nil {
+		used[state.Expired.Pod.UID], used[state.Expired.Transfer.UID] = true, true
+	}
 	return used
 }
 

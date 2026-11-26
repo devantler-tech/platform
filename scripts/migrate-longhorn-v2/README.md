@@ -502,6 +502,12 @@ and first consumer. It records one continuation on the original journal, then
 verifies the payload and reattachment. Preserve both journals and the canary
 if the continuation stops.
 
+If the original Pod reached its deadline after the completed transfer, the
+same continuation can replace that disposable Pod after proving the original
+V2 volume is detached. It retains the original Velero transfer and Pod
+identities and verifies the recovered bytes on the replacement before moving
+the same claim to a different worker.
+
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes
