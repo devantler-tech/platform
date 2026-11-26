@@ -53,15 +53,7 @@ func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
 			lh["status"] = object{"diskStatus": object{}}
 		}
 	}
-	f := &activationAPI{t: t, s: s, managers: managers, baseline: unusedBaselineFixture(t, s)}
-	for key, profile := range hostDatabases {
-		namespace, name, _ := strings.Cut(key, "/")
-		db := resource(name)
-		db["metadata"].(object)["namespace"] = namespace
-		db["spec"] = object{"instances": profile.instances}
-		db["status"] = object{"readyInstances": profile.instances, "systemID": "123456789", "phase": "Cluster in healthy state"}
-		f.databases = append(f.databases, db)
-	}
+	f := &activationAPI{t: t, s: s, managers: managers, databases: hostMaintenanceDatabaseFixtures(), baseline: unusedBaselineFixture(t, s)}
 	for _, volume := range s.volumes {
 		valueObject(volume, "spec")["size"] = "1073741824"
 		valueObject(volume, "status")["actualSize"] = float64(1 << 20)

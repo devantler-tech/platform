@@ -93,7 +93,7 @@ func (a temporaryV2Activation) environment(ctx context.Context) (inventory, erro
 		}
 	}
 	if _, err = (hostMemoryReboot{c: a.c}).databases(ctx, nil); err != nil {
-		return inventory{}, err
+		return inventory{}, fmt.Errorf("temporary raw registration held [stage=database-health]: %w", err)
 	}
 	if err = requireBenchmarkBaseline(ctx, a.c, s.nodes); err != nil {
 		return inventory{}, err
