@@ -18,7 +18,7 @@ func TestMailRollbackSelectsExactlyOnePersistentStore(t *testing.T) {
 	sts := object(t, production, "StatefulSet", "private-mail")
 	pod := mapping(t, mapping(t, mapping(t, sts["spec"])["template"])["spec"])
 	initializers := sequence(t, pod["initContainers"])
-	selector := mapping(t, initializers[0])
+	selector := mapping(t, initializers[1])
 	if selector["name"] != "select-mail-store" {
 		t.Fatal("the rollback artifact must select the store before any application writer starts")
 	}

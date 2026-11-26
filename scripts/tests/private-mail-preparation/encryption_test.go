@@ -174,7 +174,7 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 				(mounts["v2-data"]["readOnly"] == true) != selecting {
 				t.Fatalf("%s does not use the shared fenced storage route", name)
 			}
-			if selecting && (index != 0 || position != 0 || container["image"] != server) {
+			if selecting && (index != 0 || position != 1 || container["image"] != server) {
 				t.Fatal("the selector must run before setup with the server's signed image")
 			}
 		}
