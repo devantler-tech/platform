@@ -63,19 +63,16 @@ func (p *cnpgProofRun) createOwned(ctx context.Context, desired object) (object,
 	return p.c.create(ctx, owner.Source, desired)
 }
 
-// claimCNPGProofResume changes only the executor at completed checkpoints.
+// claimCNPGProofResume changes only the executor of the journal the caller confirmed.
 // Umami's existing namespace and policy must still be empty and qualified.
-func claimCNPGProofResume(ctx context.Context, c client, target, source, run string) (*cnpgProofRun, error) {
+func claimCNPGProofResume(ctx context.Context, c client, cm object, record cnpgProofRecord, source, run string) (*cnpgProofRun, error) {
 	refused := errors.New("database proof continuation is not qualified")
-	if !validBenchmarkOwner(run, source) || c.context != "admin@prod" {
+	if !validBenchmarkOwner(run, source) || c.context != "admin@prod" || record.Run == run || !cnpgResumeCheckpointEligible(record) {
 		return nil, refused
 	}
-	cm, record, err := readCNPGProof(ctx, c, target)
-	if err != nil || record.Run == run || !cnpgResumeCheckpointEligible(record) {
-		return nil, refused
-	}
+	target := record.Target
 	want := cnpgProofExecutor{Source: source, Run: run, JournalUID: text(cm, "metadata", "uid")}
-	if err = qualifyCNPGResumeOwners(ctx, c, record, want); err != nil {
+	if err := qualifyCNPGResumeOwners(ctx, c, record, want); err != nil {
 		return nil, err
 	}
 	if record.Phase == "policy-created" {
@@ -84,13 +81,13 @@ func claimCNPGProofResume(ctx context.Context, c client, target, source, run str
 			return nil, err
 		}
 	}
-	if err = qualifyCNPGResumeCheckpoint(ctx, c, record, source); err != nil {
+	if err := qualifyCNPGResumeCheckpoint(ctx, c, record, source); err != nil {
 		return nil, err
 	}
-	if err = qualifyCNPGResumeOwners(ctx, c, record, want); err != nil {
+	if err := qualifyCNPGResumeOwners(ctx, c, record, want); err != nil {
 		return nil, err
 	}
-	if err = sourceCurrent(ctx, c.run, source); err != nil {
+	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return nil, err
 	}
 	currentCM, current, err := readCNPGProof(ctx, c, target)

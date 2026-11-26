@@ -38,7 +38,7 @@ func resumeUmamiArchiveIsolation(ctx context.Context, c client) error {
 	if err := verifyReclaimedNativeRestore(ctx, c, run); err != nil {
 		return errors.New("database archive continuation requires the verified V2 restore and retired test volume")
 	}
-	_, record, err := readCNPGProof(ctx, c, target)
+	cm, record, err := readCNPGProof(ctx, c, target)
 	if err != nil || record.Run != previous || record.Phase != "policy-created" || !cnpgResumeCheckpointEligible(record) {
 		return errors.New("the confirmed original proof is outside its empty isolation checkpoint")
 	}
@@ -46,7 +46,7 @@ func resumeUmamiArchiveIsolation(ctx context.Context, c client) error {
 	if err != nil || initial.Attempt != 1 || initial.Conclusion != "failure" {
 		return errors.New("the original isolated recovery run has no verified first-attempt failure")
 	}
-	p, err := claimCNPGProofResume(ctx, c, target, source, run)
+	p, err := claimCNPGProofResume(ctx, c, cm, record, source, run)
 	if err != nil {
 		return fmt.Errorf("archive continuation held at the retained Umami isolation checkpoint: %w", err)
 	}
