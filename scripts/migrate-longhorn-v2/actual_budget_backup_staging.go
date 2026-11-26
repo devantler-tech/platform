@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 )
 
 // Budget staging uses Velero's disposable CSI clone. The running application
@@ -46,6 +47,10 @@ func verifyActualBudgetStagingCapacity(ctx context.Context, c client) error {
 	if err != nil {
 		return err
 	}
+	return verifyActualBudgetStagingPlacement(s)
+}
+
+func verifyActualBudgetStagingPlacement(s inventory) error {
 	nodes, err := indexed(s.nodes)
 	if err != nil {
 		return err
@@ -54,18 +59,43 @@ func verifyActualBudgetStagingCapacity(ctx context.Context, c client) error {
 	if err != nil {
 		return err
 	}
-	for _, worker := range v1BackupWorkers {
-		node := nodes[worker]
-		if !ready(valueObject(node, "status")) || value(node, "spec", "unschedulable") == true ||
-			text(node, "metadata", "annotations", fenceAnnotation) != "" {
+	// The staging class has no placement selector. An additional V1 disk
+	// could receive the clone even when the three expected disks are healthy.
+	for worker, node := range storage {
+		if slices.Contains(v1BackupWorkers[:], worker) {
 			continue
 		}
-		_, reserved, disk, ok := v1RepairDisk(storage[worker])
-		if ok && fitsActualBudgetSnapshot(disk, reserved, s.replicas, worker) {
-			return nil
+		for _, raw := range valueObject(node, "spec", "disks") {
+			disk, _ := raw.(object)
+			if text(disk, "diskType") != "block" {
+				return errors.New("an unqualified Longhorn disk could receive the V1 staging replica")
+			}
 		}
 	}
-	return errors.New("no stable V1 disk can stage one 10 GiB snapshot while retaining the physical floor and margin")
+	eligible := 0
+	for _, worker := range v1BackupWorkers {
+		_, reserve, disk, ok := actualBudgetScratchDisk(nodes[worker], storage[worker])
+		maximum, maxOK := v1CapacityBytes(disk["storageMaximum"])
+		scheduled, scheduledOK := v1CapacityBytes(disk["storageScheduled"])
+		if !ok || !maxOK || !scheduledOK || maximum <= 0 || reserve > maximum ||
+			!v1DiskLedgerMatches(s.replicas, worker, disk, maximum, scheduled) {
+			return errors.New("the V1 disk allocation is unverified")
+		}
+		// With the verified 100% setting, a disk outside Longhorn's logical
+		// limit cannot receive this 10 GiB clone. Include every other disk
+		// regardless of preference, and charge the full clone's physical size.
+		if maximum-reserve-scheduled < v1BackupScratchBytes {
+			continue
+		}
+		if !fitsActualBudgetSnapshot(disk, reserve, s.replicas, worker) {
+			return errors.New("an eligible V1 disk cannot preserve the physical floor and margin")
+		}
+		eligible++
+	}
+	if eligible == 0 {
+		return errors.New("no stable V1 disk can stage one 10 GiB snapshot while retaining the physical floor and margin")
+	}
+	return nil
 }
 
 func observeV1BackupStagingInventory(ctx context.Context, c client) (inventory, error) {

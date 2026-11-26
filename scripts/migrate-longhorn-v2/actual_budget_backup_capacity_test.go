@@ -4,9 +4,61 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
+
+func TestActualBudgetStagingChecksEveryPossibleReplicaPlacement(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		change    func(*inventory)
+		wantError string
+	}{
+		{"all eligible disks have the margin", func(*inventory) {}, ""},
+		{"second eligible disk is below the margin", func(s *inventory) {
+			valueObject(s.storageNodes[1], "status", "diskStatus", "default-disk")["storageAvailable"] = float64(50 * v1FixtureGiB)
+		}, "an eligible V1 disk cannot preserve the physical floor and margin"},
+		{"a disk below the margin cannot fit the requested size", func(s *inventory) {
+			valueObject(s.storageNodes[1], "status", "diskStatus", "default-disk")["storageAvailable"] = float64(50 * v1FixtureGiB)
+			valueObject(s.storageNodes[1], "spec", "disks", "default-disk")["storageReserved"] = float64(24 * v1FixtureGiB)
+		}, ""},
+		{"a second disk has an unknown allocation ledger", func(s *inventory) {
+			delete(valueObject(s.storageNodes[1], "status", "diskStatus", "default-disk"), "scheduledReplica")
+		}, "the V1 disk allocation is unverified"},
+		{"an unregistered filesystem disk could receive the clone", func(s *inventory) {
+			node := resource("unregistered-storage")
+			node["spec"] = object{"allowScheduling": true, "disks": object{"other": object{
+				"diskType": "filesystem", "allowScheduling": true,
+			}}}
+			s.storageNodes = append(s.storageNodes, node)
+		}, "an unqualified Longhorn disk could receive the V1 staging replica"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, p := newPreparationAPI(t, "draining")
+			f.s = v1ReservationFixture(true)
+			for i, node := range f.s.nodes {
+				valueObject(node, "metadata")["uid"] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
+				valueObject(f.s.storageNodes[i], "metadata")["uid"] = fmt.Sprintf("00000000-0000-4000-8001-%012d", i+1)
+			}
+			test.change(&f.s)
+			p.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+				if program == "kubectl" && len(args) > 3 && args[2] == "get" && args[3] == "datauploads.velero.io" {
+					return f.encode(object{"items": []object{}})
+				}
+				return f.run(ctx, input, program, args...)
+			}
+			err := verifyActualBudgetStagingCapacity(t.Context(), p.c)
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || err.Error() != test.wantError {
+				t.Fatalf("error = %v, want %q", err, test.wantError)
+			}
+		})
+	}
+}
 
 func TestActualBudgetReservationOpensOnlyTheObservedShortfall(t *testing.T) {
 	const gib = int64(1 << 30)
