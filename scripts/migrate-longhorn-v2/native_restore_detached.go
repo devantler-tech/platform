@@ -13,13 +13,14 @@ type nativeRestoreDetachedObservation struct {
 }
 
 func observeNativeRestoreDetached(ctx context.Context, c client, record benchmarkRecord, seed canarySeedState, state nativeRestoreState) error {
-	if !commandContextActive(ctx) || c.run == nil || c.context != "admin@prod" || c.nativeSeed || authorizeNativeRestore(os.Getenv) != nil ||
-		state.Source != os.Getenv("GITHUB_SHA") || state.Run != os.Getenv("GITHUB_RUN_ID") || state.validate(record, seed) != nil || !nativeRestoreDetachPhase(state.Phase) {
+	source, _, err := nativeRestoreGrant(os.Getenv, state)
+	if !commandContextActive(ctx) || c.run == nil || c.context != "admin@prod" || c.nativeSeed || err != nil ||
+		state.validate(record, seed) != nil || !nativeRestoreDetachPhase(state.Phase) {
 		return errNativeRestoreEvidence
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if sourceCurrent(ctx, c.run, state.Source) != nil {
+	if sourceCurrent(ctx, c.run, source) != nil {
 		return errNativeRestoreEvidence
 	}
 	for range 2 {
@@ -28,7 +29,7 @@ func observeNativeRestoreDetached(ctx context.Context, c client, record benchmar
 			return errNativeRestoreEvidence
 		}
 	}
-	if sourceCurrent(ctx, c.run, state.Source) != nil || !commandContextActive(ctx) {
+	if sourceCurrent(ctx, c.run, source) != nil || !commandContextActive(ctx) {
 		return errNativeRestoreEvidence
 	}
 	return nil

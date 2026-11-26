@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"reflect"
 )
 
@@ -13,6 +14,7 @@ type nativeRestoreRun struct {
 	config     []byte
 	plan       nativeRestoreAdmission
 	state      nativeRestoreState
+	source     string
 	journalUID string
 }
 
@@ -51,15 +53,19 @@ func (r *nativeRestoreRun) provision(ctx context.Context) error {
 }
 
 func (r *nativeRestoreRun) guard(ctx context.Context) error {
+	source, executor, err := nativeRestoreGrant(os.Getenv, r.state)
+	if err != nil || source != r.source {
+		return errNativeRestoreEvidence
+	}
 	journal, record, seed, state, err := readNativeRestoreJournal(ctx, r.c)
 	if err != nil || text(journal, "metadata", "uid") != r.journalUID || !reflect.DeepEqual(state, r.state) ||
-		!reflect.DeepEqual(record, r.plan.Seed.Record) || seed != r.plan.Seed.Seed {
+		!reflect.DeepEqual(record, r.plan.Seed.Record) || seed != r.plan.Seed.Seed || !nativeRestoreExecutorMatches(journal, executor) {
 		return errNativeRestoreEvidence
 	}
 	if err := r.checkActivation(ctx); err != nil {
 		return err
 	}
-	return sourceCurrent(ctx, r.c.run, r.state.Source)
+	return sourceCurrent(ctx, r.c.run, source)
 }
 
 func (r *nativeRestoreRun) checkActivation(ctx context.Context) error {
@@ -154,7 +160,7 @@ func (r *nativeRestoreRun) createAsset(ctx context.Context, kind, phase string) 
 	if err := r.guard(ctx); err != nil {
 		return err
 	}
-	created, err := r.c.create(ctx, r.state.Source, desired)
+	created, err := r.c.create(ctx, r.source, desired)
 	if err != nil {
 		return fmt.Errorf("%s creation could not be confirmed: %w", kind, err)
 	}

@@ -1,6 +1,9 @@
 package main
 
-import "reflect"
+import (
+	"reflect"
+	"slices"
+)
 
 type nativeRestoreTransferReceipt struct {
 	Pod, Transfer benchmarkResource
@@ -34,7 +37,11 @@ func verifyNativeRestoreTransfer(record benchmarkRecord, seed canarySeedState, s
 			continue
 		}
 		for key, expected := range valueObject(asset, "spec") {
-			if !reflect.DeepEqual(value(restore, "spec", key), expected) {
+			actual := value(restore, "spec", key)
+			if key == "excludedResources" && restoredResourceExclusionsMatch(actual, expected) {
+				continue
+			}
+			if !reflect.DeepEqual(actual, expected) {
 				return fail()
 			}
 		}
@@ -96,6 +103,20 @@ func verifyNativeRestoreTransfer(record benchmarkRecord, seed canarySeedState, s
 		}
 	}
 	return fail()
+}
+
+func restoredResourceExclusionsMatch(actual, expected any) bool {
+	original, ok := expected.([]any)
+	if !ok {
+		return false
+	}
+	// Velero v1.18.4 appends its nonRestorableResources in this order during
+	// restore reconciliation. Keep the two requested exclusions and reject
+	// any mutation other than that published controller default.
+	defaulted := append(slices.Clone(original), "nodes", "events", "events.events.k8s.io", "backups.velero.io",
+		"restores.velero.io", "resticrepositories.velero.io", "csinodes.storage.k8s.io",
+		"volumeattachments.storage.k8s.io", "backuprepositories.velero.io")
+	return reflect.DeepEqual(actual, defaulted)
 }
 
 func nativeRestoreChildIdentity(record benchmarkRecord, seed canarySeedState, state nativeRestoreState, kind string, identity benchmarkResource) bool {

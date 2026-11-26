@@ -148,7 +148,8 @@ func TestCreateNativeRestoreJournalRequiresTheOriginalSeedAndNeverAdoptsAWrite(t
 }
 
 func TestNativeRestoreProgressKeepsBothOriginalJournalsAndNeverRetries(t *testing.T) {
-	for _, fault := range []string{"", "wrong grant", "wrong owner", "other journal", "changed phase", "changed seed UID", "stale source", "conflict", "lost response", "replacement readback", "changed seed readback", "unchanged readback"} {
+	for _, fault := range []string{"", "wrong grant", "wrong owner", "other journal", "changed phase", "changed seed UID", "stale source", "conflict", "lost response", "replacement readback", "changed seed readback", "unchanged readback",
+		"resumed", "missing executor", "foreign executor", "changed executor readback"} {
 		t.Run(fault, func(t *testing.T) {
 			record, seed, before := nativeRestoreStateFixture(t, "write-requested")
 			_, _, after := nativeRestoreStateFixture(t, "write-verified")
@@ -161,6 +162,15 @@ func TestNativeRestoreProgressKeepsBothOriginalJournalsAndNeverRetries(t *testin
 			if fault == "wrong owner" {
 				t.Setenv("GITHUB_RUN_ID", "9999")
 			}
+			resumed := fault == "resumed" || fault == "missing executor" || fault == "foreign executor" || fault == "changed executor readback"
+			workflowSource := before.Source
+			if resumed {
+				workflowSource = strings.Repeat("a", 40)
+				t.Setenv("GITHUB_SHA", workflowSource)
+				t.Setenv("GITHUB_RUN_ID", "9876")
+				t.Setenv("LONGHORN_V2_OPERATION", nativeRestoreResumeOperation)
+				t.Setenv("LONGHORN_V2_CONFIRM", nativeRestoreResumeConfirmation+before.Run)
+			}
 			stored := before
 			if fault == "changed phase" {
 				stored = after
@@ -172,7 +182,7 @@ func TestNativeRestoreProgressKeepsBothOriginalJournalsAndNeverRetries(t *testin
 					if input != nil || strings.Join(args, " ") != "ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main" {
 						t.Fatal("the restore write did not rebind reviewed main")
 					}
-					sha := before.Source
+					sha := workflowSource
 					if fault == "stale source" {
 						sha = strings.Repeat("f", 40)
 					}
@@ -226,6 +236,13 @@ func TestNativeRestoreProgressKeepsBothOriginalJournalsAndNeverRetries(t *testin
 					cm["data"] = object{"record": string(raw), "seed": string(body)}
 				} else {
 					meta["uid"] = "restore-journal-uid"
+					if resumed && fault != "missing executor" {
+						executor := workflowSource + ":9876"
+						if fault == "foreign executor" || patches > 0 && fault == "changed executor readback" {
+							executor = before.Source + ":9999"
+						}
+						meta["annotations"] = object{nativeRestoreExecutorAnnotation: executor}
+					}
 					if fault == "other journal" || patches > 0 && fault == "replacement readback" {
 						meta["uid"] = "replacement-restore-journal"
 					}
@@ -238,7 +255,7 @@ func TestNativeRestoreProgressKeepsBothOriginalJournalsAndNeverRetries(t *testin
 				return json.Marshal(cm)
 			}}
 			err := saveNativeRestoreState(t.Context(), c, "restore-journal-uid", before, after)
-			if (err == nil) != (fault == "") {
+			if (err == nil) != (fault == "" || fault == "resumed") {
 				t.Fatal("unconfirmed or foreign restore progress was accepted", fault, err)
 			}
 			wantPatches, wantReads, wantSourceReads := 0, 2, 0
@@ -249,7 +266,7 @@ func TestNativeRestoreProgressKeepsBothOriginalJournalsAndNeverRetries(t *testin
 				wantSourceReads = 1
 			case "conflict", "lost response":
 				wantPatches, wantSourceReads = 1, 1
-			case "", "replacement readback", "changed seed readback", "unchanged readback":
+			case "", "replacement readback", "changed seed readback", "unchanged readback", "resumed", "changed executor readback":
 				wantPatches, wantReads, wantSourceReads = 1, 4, 1
 			}
 			if patches != wantPatches || reads != wantReads || sourceReads != wantSourceReads {

@@ -47,6 +47,8 @@ func main() {
 		authorization = authorizeNativeSeed(os.Getenv)
 	case nativeRestoreOperation:
 		authorization = authorizeNativeRestore(os.Getenv)
+	case nativeRestoreResumeOperation:
+		_, authorization = nativeRestoreResumeRun(os.Getenv)
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":
@@ -212,8 +214,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Reviewed capacity configuration is unreadable.")
 		os.Exit(1)
 	}
-	if operation == nativeRestoreOperation {
-		if err := runNativeRestore(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), config); err != nil {
+	if operation == nativeRestoreOperation || operation == nativeRestoreResumeOperation {
+		c := client{run: execute, context: "admin@prod"}
+		if operation == nativeRestoreResumeOperation {
+			err = resumeNativeRestore(ctx, c, config)
+		} else {
+			err = runNativeRestore(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), config)
+		}
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "Disposable V2 restore held:", err)
 			fmt.Fprintln(os.Stderr, "Preserve the seed, restore journal and its assets for explicit recovery.")
 			os.Exit(1)
