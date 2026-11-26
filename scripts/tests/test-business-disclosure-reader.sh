@@ -135,26 +135,10 @@ check_preview_seed business-site-preview-db-web portal-web password
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps/customer-identity" |
   yq -o=json -I=0 '.' |
   jq -es '
-    def resource($kind; $name):
-      [.[]|select(.kind==$kind and .metadata.name==$name and .metadata.namespace=="customer-identity")] |
-      if length==1 then .[0] else error("expected exactly one preview Dex resource") end;
-    (resource("ServiceAccount"; "business-site-preview-dex-secrets")|.automountServiceAccountToken==false) and
-    (resource("SecretStore"; "business-site-preview-dex")|.spec.provider.vault=={
-      server:"http://openbao-active.openbao.svc.cluster.local:8200",path:"secret",version:"v2",
-      auth:{kubernetes:{mountPath:"kubernetes",role:"business-site-preview-dex",
-        serviceAccountRef:{name:"business-site-preview-dex-secrets"}}}
-    }) and
-    (resource("ExternalSecret"; "customer-dex-preview-client")|.spec=={
-      refreshInterval:"1h",secretStoreRef:{kind:"SecretStore",name:"business-site-preview-dex"},
-      target:{creationPolicy:"Owner",name:"customer-dex-preview-client"},
-      data:[{secretKey:"client-secret",remoteRef:{key:"apps/business-site-dev/oidc",property:"client-secret"}}]
-    }) and
-    (resource("ExternalSecret"; "customer-dex-preview-client-v1")|.spec=={
-      refreshPolicy:"CreatedOnce",secretStoreRef:{kind:"SecretStore",name:"business-site-preview-dex"},
-      target:{creationPolicy:"Owner",name:"customer-dex-preview-client-v1",immutable:true},
-      data:[{secretKey:"client-secret",remoteRef:{key:"apps/business-site-dev/oidc",property:"client-secret",version:"1"}}]
-    })
-  ' >/dev/null || fail 'the pinned preview Dex credential must have a new target and preserve the legacy projection during rollout'
+    all(.[]; .metadata.namespace!="customer-identity" or
+      (.metadata.name!="business-site-preview-dex" and .metadata.name!="business-site-preview-dex-secrets" and
+       .metadata.name!="customer-dex-preview-client" and .metadata.name!="customer-dex-preview-client-v1"))
+  ' >/dev/null || fail 'the retired preview client still has a credential projection'
 
 kubectl kustomize "${root_dir}/k8s/clusters/prod" |
   yq -o=json -I=0 'select(.apiVersion == "kustomize.toolkit.fluxcd.io/v1" and .kind == "Kustomization")' |
@@ -176,19 +160,14 @@ kubectl kustomize "${root_dir}/k8s/clusters/prod" |
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/business-site-preview-workload" |
   yq -o=json -I=0 '.' |
   jq -es '
-    length==2 and all(.[]; .metadata.namespace=="business-site-dev") and
-    ([.[]|select(.kind=="WebApp")]|length==1 and .[0].metadata.name=="business-site-dev") and
-    ([.[]|select(.kind=="Job")]|length==1 and .[0].metadata.name=="business-site-dev-migration") and
-    ([.[]|select(.kind=="WebApp")][0].spec as $preview |
-      $preview.host=="dev.devantler.tech" and $preview.replicas==1 and $preview.name=="business-site-dev" and
-      ($preview.image|test("^ghcr[.]io/devantler-tech/business-site@sha256:[0-9a-f]{64}$")) and
-      ($preview.secretProjections|map(.secretName))==["business-site-dev-runtime"] and
-      ([.[]|select(.kind=="Job")][0].spec.template.spec |
+    length==1 and (.[0] | .kind=="Job" and .metadata.namespace=="business-site-dev" and
+      .metadata.name=="business-site-dev-migration" and (.spec.template.spec |
         .automountServiceAccountToken==false and .serviceAccountName==null and
-        (.containers|map({name,image}))==[{name:"migrate",image:$preview.image}] and
+        (.containers|length)==1 and .containers[0].name=="migrate" and
+        (.containers[0].image|test("^ghcr[.]io/devantler-tech/business-site@sha256:[0-9a-f]{64}$")) and
         any(.containers[0].args[]; .=="portal_preview_web") and
         ([.volumes[].secret.secretName | select(.!=null)])==["business-site-dev-migration"]))
-  ' >/dev/null || fail 'the separately ordered preview app and migration must share one pinned image and scoped inputs'
+  ' >/dev/null || fail 'the isolated preview workload must contain only the pinned database migration'
 
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
   yq -o=json -I=0 'select(.metadata.namespace == "business-site-dev")' |
@@ -216,25 +195,7 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
       paths==["apps/business-site-dev/portal-db-ca","apps/business-site-dev/portal-migrator"] and
       (.target.template.data["database-url"]|startswith("postgres://portal_preview_migrator:") and
         endswith("@portal-preview-db-rw.business-site-dev.svc.cluster.local:5432/portal_preview?sslmode=verify-full&sslrootcert=/run/portal-migration/ca.crt"))) and
-    (spec("ExternalSecret";"business-site-dev-runtime")|
-      paths==["apps/business-site-dev/oidc","apps/business-site-dev/portal-db-ca","apps/business-site-dev/portal-web"] and
-      (.target.template.data["company-disclosure"]=="Preview only\nFictional company address" or
-        error("the preview runtime requires a two-line fictional company disclosure")) and
-      .refreshInterval=="10m" and .target.template.data["portal-client-secret"]=="{{ .client_secret }}" and
-      ([.data[]|select(.secretKey=="client_secret")]==[
-        {secretKey:"client_secret",remoteRef:{key:"apps/business-site-dev/oidc",property:"client-secret",version:"1"}}
-      ]) and
-      (.target.template.data["portal-settings"]|split("\n")|map(select(length>0)) as $settings |
-        (any($settings[]; .=="PORTAL_IDENTITY_FLAG={\"defaultVariant\":\"on\",\"variants\":[{\"name\":\"on\",\"value\":true}]}") or
-          error("the named preview identity profile refuses to start without an enabled identity flag")) and
-        ($settings|map(split("=")[0])|sort)==[
-          "PORTAL_CALLBACK_URL","PORTAL_CLIENT_SECRET_PROJECTION_FILE","PORTAL_DATABASE_URL","PORTAL_IDENTITY_FLAG",
-          "PORTAL_IDENTITY_PROFILE","PORTAL_OIDC_CLIENT_ID","PORTAL_OIDC_ISSUER","PORTAL_OPERATOR_SUBJECTS"] and
-        any($settings[]; .=="PORTAL_IDENTITY_PROFILE=preview") and
-        any($settings[]; .=="PORTAL_CALLBACK_URL=https://dev.devantler.tech/callback") and
-        any($settings[]; .=="PORTAL_OIDC_CLIENT_ID=business-site-preview") and
-        any($settings[]; startswith("PORTAL_DATABASE_URL=postgres://portal_preview_web:") and
-          endswith("@portal-preview-db-rw.business-site-dev.svc.cluster.local:5432/portal_preview?sslmode=verify-full&sslrootcert=/run/webapp-inputs/portal-database-ca"))))
+    all(.[];.metadata.name!="business-site-dev-runtime" and .metadata.name!="business-site-dev-portal")
   ' >/dev/null || fail 'the preview database and projected inputs must stay isolated'
 
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
@@ -262,21 +223,15 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
     (resource("business-site-dev";"CiliumNetworkPolicy";"portal-preview-db")|.spec|
       .endpointSelector.matchLabels=={"cnpg.io/cluster":"portal-preview-db"} and
       [.ingress[]|select(any(.fromEndpoints[]?;.matchLabels["k8s:io.kubernetes.pod.namespace"]=="business-site"))]==[
-        {fromEndpoints:[{matchLabels:{"app.kubernetes.io/name":"business-site-dev"}},
-                        {matchLabels:{"app.kubernetes.io/name":"business-site-dev-migration"}},
+        {fromEndpoints:[{matchLabels:{"app.kubernetes.io/name":"business-site-dev-migration"}},
                         {matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site","app.kubernetes.io/name":"business-site"}}],
          toPorts:[{ports:[{port:"5432",protocol:"TCP"}]}]}
       ]) and
     (resource("customer-identity";"HelmRelease";"customer-dex")|.spec.values|
-      ([.envVars[]|select(.name=="CUSTOMER_PREVIEW_CLIENT_SECRET")]==[{
-        name:"CUSTOMER_PREVIEW_CLIENT_SECRET",
-        valueFrom:{secretKeyRef:{name:"customer-dex-preview-client-v1",key:"client-secret"}}
-      }]) and
-      ([.config.staticClients[]|select(.id=="business-site-preview")]==[{
-        id:"business-site-preview",name:"Devantler Tech preview",secretEnv:"CUSTOMER_PREVIEW_CLIENT_SECRET",
-        redirectURIs:["https://dev.devantler.tech/callback"]
-      }]))
-  ' >/dev/null || fail 'preview credentials, database path and legacy Dex callback must remain scoped through cutover'
+      all(.envVars[]; .name!="CUSTOMER_PREVIEW_CLIENT_SECRET") and
+      all(.config.staticClients[]; .id!="business-site-preview") and
+      ([.config.staticClients[]|select(.id=="business-portal")|.redirectURIs]==[["https://portal.devantler.tech/callback"]]))
+  ' >/dev/null || fail 'only the regular portal may use the preview database and sign-in'
 
 grep -Fq "'scripts/tests/test-business-disclosure-reader.sh'" "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must select changes to this contract'
