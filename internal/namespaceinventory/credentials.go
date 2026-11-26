@@ -120,7 +120,8 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 	if err != nil {
 		return nil, nil, errors.New("protected benchmark kubeconfig could not be decoded")
 	}
-	return newProductionClientAt(config, directIP)
+	reclaimAliases := operation == "reclaim-native-v2-seed" || operation == "resume-native-v2-reclaim"
+	return newProductionClientAt(config, directIP, reclaimAliases)
 }
 
 func readPrivateKubeconfig(path string) (raw []byte, err error) {
@@ -161,10 +162,10 @@ func readPrivateKubeconfig(path string) (raw []byte, err error) {
 }
 
 func newProductionClient(raw *clientcmdapi.Config) (*http.Client, *url.URL, error) {
-	return newProductionClientAt(raw, netip.Addr{})
+	return newProductionClientAt(raw, netip.Addr{}, false)
 }
 
-func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr) (*http.Client, *url.URL, error) {
+func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr, reclaimAliases bool) (*http.Client, *url.URL, error) {
 	if raw == nil || raw.Contexts["admin@prod"] == nil {
 		return nil, nil, errors.New("fixed production context is missing")
 	}
@@ -209,14 +210,15 @@ func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr) (*http
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if directIP.IsValid() {
-		client.Transport = directAPIPeer{host: endpoint.Host, transport: client.Transport}
+		client.Transport = directAPIPeer{host: endpoint.Host, transport: client.Transport, reclaimAliasDryRun: reclaimAliases}
 	}
 	return client, endpoint, nil
 }
 
 type directAPIPeer struct {
-	host      string
-	transport http.RoundTripper
+	host               string
+	transport          http.RoundTripper
+	reclaimAliasDryRun bool
 }
 
 func (peer directAPIPeer) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -224,7 +226,12 @@ func (peer directAPIPeer) RoundTrip(req *http.Request) (*http.Response, error) {
 		(req.Host != "" && req.Host != peer.host) {
 		return nil, errors.New("direct API request addressed another peer")
 	}
-	if req.Method != http.MethodGet && (req.Method != http.MethodPatch || req.URL.RawQuery != "dryRun=All") {
+	// Reclaim proves both guards reject a second reference to the canary.
+	reclaimAlias := peer.reclaimAliasDryRun && req.Method == http.MethodPost &&
+		req.URL.RawPath == "" && req.Header.Get("Content-Type") == "application/json" &&
+		(req.URL.Path == "/api/v1/persistentvolumes" ||
+			req.URL.Path == "/api/v1/namespaces/longhorn-benchmark/persistentvolumeclaims")
+	if req.Method != http.MethodGet && (req.URL.RawQuery != "dryRun=All" || (req.Method != http.MethodPatch && !reclaimAlias)) {
 		return nil, errors.New("direct API client permits only observations and server dry-runs")
 	}
 	return peer.transport.RoundTrip(req)
