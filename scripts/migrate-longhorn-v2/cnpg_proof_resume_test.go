@@ -20,6 +20,38 @@ type cnpgResumeFixture struct {
 	namespace        object
 }
 
+func TestUmamiCanContinueTheExactEmptyIsolationCheckpoint(t *testing.T) {
+	for _, fault := range []string{"", "other database", "foreign namespace", "foreign policy", "extra asset", "credential admitted", "policy not confirmed", "missing plan"} {
+		t.Run(fault, func(t *testing.T) {
+			f := newCNPGResumeFixture(t, "restore-planned")
+			record := f.record
+			record.Phase = "policy-created"
+			namespace := "longhorn-db-proof-umami-db-" + record.Run
+			record.Resources["Namespace"] = benchmarkResource{Name: namespace, UID: "b8124a86-8b4e-4fec-9037-eb0520648124"}
+			record.Resources["Policy"] = benchmarkResource{Name: "restore-isolation", Namespace: namespace, UID: "9c10fc63-d4f6-422c-a09c-64f19d376553"}
+			switch fault {
+			case "other database":
+				record.Target = "coroot-db"
+			case "foreign namespace":
+				record.Resources["Namespace"] = benchmarkResource{Name: "foreign", UID: record.Resources["Namespace"].UID}
+			case "foreign policy":
+				record.Resources["Policy"] = benchmarkResource{Name: "restore-isolation", Namespace: "other", UID: record.Resources["Policy"].UID}
+			case "extra asset":
+				record.Resources["Secret"] = benchmarkResource{Name: "archive-read"}
+			case "credential admitted":
+				record.Credential = &cnpgCredentialBinding{}
+			case "policy not confirmed":
+				record.Phase = "policy-requested"
+			case "missing plan":
+				record.Plan = nil
+			}
+			if got := cnpgResumeCheckpointEligible(record); got != (fault == "") {
+				t.Fatalf("unexpected eligibility for %q: %t", fault, got)
+			}
+		})
+	}
+}
+
 func TestDatabaseResumeValidatesTheRetainedBarrier(t *testing.T) {
 	for _, scenario := range []string{"system identity", "pre-backup target", "unarchived target"} {
 		t.Run(scenario, func(t *testing.T) {
