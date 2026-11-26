@@ -46,7 +46,13 @@ patches:
     patch: |-
       - op: remove
         path: /metadata/labels/platform.devantler.tech~1storage-stage
-  - path: patches/route-serving-storage.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+    path: patches/route-serving-storage.yaml
   - target:
       group: apps
       version: v1
