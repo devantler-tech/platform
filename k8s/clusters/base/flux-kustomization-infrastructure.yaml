@@ -36,13 +36,21 @@ spec:
   # KRO reports readiness via `status.state: Active|Inactive`, so teach Flux to
   # health-check RGDs by that field via a CEL expression.
   healthCheckExprs:
-    # Active snapshot storage must bind. The preparation-only Pending allowance
-    # is retired with the first consumers of its main-owned retained claim.
+    # The prepared V2 snapshot claim waits for its first consumer. Once a
+    # consumer selects a node or the preparation label is removed, it must bind.
     - apiVersion: v1
       kind: PersistentVolumeClaim
       failed: has(status.phase) && status.phase == 'Lost'
       current: >-
-        !has(metadata.deletionTimestamp) && has(status.phase) && status.phase == 'Bound'
+        !has(metadata.deletionTimestamp) && has(status.phase) &&
+        (status.phase == 'Bound' ||
+          (status.phase == 'Pending' && metadata.namespace == 'openbao' &&
+           metadata.name == 'vault-snapshots-recovery-v2' &&
+           has(spec.storageClassName) && spec.storageClassName == 'longhorn-v2' &&
+           has(metadata.labels) && 'platform.devantler.tech/storage-stage' in metadata.labels &&
+           metadata.labels['platform.devantler.tech/storage-stage'] == 'prepared' &&
+           !has(spec.volumeName) &&
+           (!has(metadata.annotations) || !('volume.kubernetes.io/selected-node' in metadata.annotations))))
     # `Active` alone stays true from the previous generation while kro is still
     # regenerating the instance CRD from a changed graph. Wait until kro reports
     # Ready for THIS generation, so `apps` never applies an instance against the
