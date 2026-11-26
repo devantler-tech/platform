@@ -45,6 +45,7 @@ name: Prepare Longhorn V2 Migration
             inspect-host-memory,
             reboot-host-for-hugepages,
             observe-database,
+            prove-database-v2-archive,
             register-temporary-v2-storage,
             repair-v1-reservation,
             reserve-v1-scratch,
@@ -118,7 +119,8 @@ jobs:
       - name: Test queued read-only source selection
         run: bash scripts/tests/test-longhorn-runtime-inventory-source.sh
       - name: Test complete observations and interrupted recovery
-        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory
+        # The native admission and database restore fixtures share this bounded test job.
+        run: go test -race -count=1 -timeout=7m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory
 
   prepare:
     name: Run the selected guarded migration step
@@ -170,6 +172,10 @@ jobs:
               ;;
             observe-database)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db|customer-identity-db|business-site-portal-db|portal-preview-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
+              ;;
+            prove-database-v2-archive)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|customer-identity-db|business-site-portal-db)$ &&
+                 "${LONGHORN_V2_CONFIRM}" == "prove-longhorn-v2-database-archive-${LONGHORN_V2_DATABASE}" ]]
               ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]

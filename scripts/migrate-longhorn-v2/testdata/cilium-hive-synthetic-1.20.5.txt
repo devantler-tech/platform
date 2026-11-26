@@ -1,0 +1,11 @@
+Cells:
+
+  ⚙️ (types.PolicyConfig) {
+      PolicyDefaultLocalCluster: (bool) true
+  }
+
+
+Start hooks:
+
+
+Stop hooks:

@@ -1,0 +1,56 @@
+[
+  {
+    "id": 2718,
+    "status": {
+      "external-identifiers": {
+        "cni-attachment-id": "synthetic-opaque-cni-attachment:eth0"
+      },
+      "identity": {
+        "id": 1234,
+        "labels": [
+          "k8s:cnpg.io/cluster=restore",
+          "k8s:io.cilium.k8s.policy.cluster=default",
+          "k8s:io.kubernetes.pod.namespace=longhorn-db-proof-umami-db-1234"
+        ]
+      },
+      "networking": {
+        "addressing": [
+          {
+            "ipv4": "192.0.2.17"
+          }
+        ],
+        "container-interface-name": "eth0"
+      },
+      "policy": {
+        "proxy-statistics": [],
+        "realized": {
+          "allowed-egress-identities": null,
+          "allowed-ingress-identities": null,
+          "build": 817,
+          "denied-egress-identities": null,
+          "denied-ingress-identities": null,
+          "id": 1234,
+          "policy-enabled": "both",
+          "policy-revision": 817
+        },
+        "spec": {
+          "allowed-egress-identities": null,
+          "allowed-ingress-identities": null,
+          "build": 817,
+          "denied-egress-identities": null,
+          "denied-ingress-identities": null,
+          "id": 1234,
+          "policy-enabled": "both",
+          "policy-revision": 817
+        }
+      },
+      "realized": {
+        "options": {
+          "DropNotification": "Enabled",
+          "PolicyAuditMode": "Disabled"
+        }
+      },
+      "state": "ready"
+    }
+  }
+]

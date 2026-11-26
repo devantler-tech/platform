@@ -233,11 +233,10 @@ Completion requires three independent ready raw disks and all qualified clients;
 it grants no application cutover or original-disk reset authority.
 
 The two rebuilt workers retain their original `migration-pool=v1` allocation
-label. The shared publication and replica-exclusion checks recognize their raw
-disks and the third worker's distinct staging mapper only with the completed
-activation journal, its matching ownership UID, and the unchanged Kubernetes,
-provider, hardware and Longhorn node identities.
-An ordinary later reboot or OS upgrade does not revoke this registration.
+label. Production's replica-exclusion policy keeps other autoscaled workers
+fenced. Before the V2 restore canary, the protected migration check verifies
+the three raw disks against the completed activation journal, its ownership UID
+and the current Kubernetes, provider, hardware and Longhorn node identities.
 
 The journal retains the original boot and OS observations for audit. Later
 registration recovery and acceptance compare its durable worker, partition and

@@ -40,6 +40,7 @@ schemas/
 # below import.
 go.mod
 go.sum
+internal/hubblepolicy/
 internal/longhornmigration/
 internal/longhorninventory/
 internal/namespaceinventory/
