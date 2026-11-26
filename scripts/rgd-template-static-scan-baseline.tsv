@@ -42,4 +42,4 @@
 1	k8s/providers/docker/apps/web-app-wedding-app.yaml	INSTANCE-CONTENT	SHA256	3d42027c7e549014cad1e717876a6eb72e0a6641f3bf181f7a0e1a70d94306d6
 1	k8s/providers/hetzner/apps/business-site/tenant-preview.yaml	INSTANCE-CONTENT	SHA256	25698bc683b09953dcf1be1bc6cad474ed47bd8e5ab96f42091ab5b05cbf0f5e
 1	k8s/providers/hetzner/apps/business-site/tenant.yaml	INSTANCE-CONTENT	SHA256	ab1b5e300ea26c3e5ff7aba8a7de251acf1eb500691b24764cc9872121e44c27
-1	k8s/providers/hetzner/business-site-preview-workload/web-app.yaml	INSTANCE-CONTENT	SHA256	bc9e62503a87767471e1449677f5c910c80ee82b5c6ac10457a017e5172c6402
+1	k8s/providers/hetzner/business-site-preview-workload/web-app.yaml	INSTANCE-CONTENT	SHA256	88c9229df27a328c427acf371ae13b5bf4f53065e59caf82f91eb226fd0d515e
