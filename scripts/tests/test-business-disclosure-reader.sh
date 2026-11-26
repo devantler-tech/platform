@@ -243,6 +243,30 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
     def resource($namespace; $kind; $name):
       [.[]|select(.kind==$kind and .metadata.name==$name and .metadata.namespace==$namespace)] |
       if length==1 then .[0] else error("expected exactly one preview application resource") end;
+    (resource("business-site";"ExternalSecret";"business-site-runtime")|.spec|
+      ([.data[]|select((.remoteRef.key//"")|startswith("apps/business-site-dev/"))])==[
+        {secretKey:"portal_preview_web_password",sourceRef:{storeRef:{name:"openbao",kind:"ClusterSecretStore"}},remoteRef:{key:"apps/business-site-dev/portal-web",property:"password"}},
+        {secretKey:"portal_preview_database_ca",sourceRef:{storeRef:{name:"openbao",kind:"ClusterSecretStore"}},remoteRef:{key:"apps/business-site-dev/portal-db-ca",property:"ca"}}
+      ] and
+      .target.template.data["portal-database-ca"]=="{{ .portal_database_ca }}" and
+      (.target.template.data["portal-settings"]|split("\n")|map(select(startswith("PORTAL_CLIENT_PREVIEW_"))))==[
+        "PORTAL_CLIENT_PREVIEW_DATABASE_URL=postgres://portal_preview_web:{{ .portal_preview_web_password | urlquery }}@portal-preview-db-rw.business-site-dev.svc.cluster.local:5432/portal_preview?sslmode=verify-full",
+        "PORTAL_CLIENT_PREVIEW_DATABASE_CA={{ .portal_preview_database_ca | b64enc }}"
+      ]) and
+    (resource("business-site";"CiliumNetworkPolicy";"business-site-portal-egress")|.spec|
+      .endpointSelector.matchLabels=={"app.kubernetes.io/name":"business-site"} and
+      [.egress[]|select(any(.toEndpoints[]?;.matchLabels["k8s:io.kubernetes.pod.namespace"]=="business-site-dev"))]==[
+        {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site-dev","cnpg.io/cluster":"portal-preview-db"}}],
+         toPorts:[{ports:[{port:"5432",protocol:"TCP"}]}]}
+      ]) and
+    (resource("business-site-dev";"CiliumNetworkPolicy";"portal-preview-db")|.spec|
+      .endpointSelector.matchLabels=={"cnpg.io/cluster":"portal-preview-db"} and
+      [.ingress[]|select(any(.fromEndpoints[]?;.matchLabels["k8s:io.kubernetes.pod.namespace"]=="business-site"))]==[
+        {fromEndpoints:[{matchLabels:{"app.kubernetes.io/name":"business-site-dev"}},
+                        {matchLabels:{"app.kubernetes.io/name":"business-site-dev-migration"}},
+                        {matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site","app.kubernetes.io/name":"business-site"}}],
+         toPorts:[{ports:[{port:"5432",protocol:"TCP"}]}]}
+      ]) and
     (resource("customer-identity";"HelmRelease";"customer-dex")|.spec.values|
       ([.envVars[]|select(.name=="CUSTOMER_PREVIEW_CLIENT_SECRET")]==[{
         name:"CUSTOMER_PREVIEW_CLIENT_SECRET",
@@ -252,7 +276,7 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
         id:"business-site-preview",name:"Devantler Tech preview",secretEnv:"CUSTOMER_PREVIEW_CLIENT_SECRET",
         redirectURIs:["https://dev.devantler.tech/callback"]
       }]))
-  ' >/dev/null || fail 'Dex must register the preview callback with its dedicated client credential'
+  ' >/dev/null || fail 'preview credentials, database path and legacy Dex callback must remain scoped through cutover'
 
 grep -Fq "'scripts/tests/test-business-disclosure-reader.sh'" "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must select changes to this contract'
