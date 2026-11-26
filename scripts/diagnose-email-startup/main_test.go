@@ -6,9 +6,68 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
+
+func TestBindPodRecognizesOnlyReviewedFencedStorageProducer(t *testing.T) {
+	const routedImage = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:c00cd848d47cab10f60301facba02387cf34832f7d560cfaf206a008ed9e0ff9"
+	raw, err := os.ReadFile("../../k8s/providers/hetzner/apps/private-mail/patches/select-mail-store.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var patch []struct{ Value map[string]any }
+	if err := yaml.Unmarshal(raw, &patch); err != nil || len(patch) != 1 {
+		t.Fatal("invalid reviewed route selector")
+	}
+	routed := changePod(t, fixturePod(t), func(p map[string]any) {
+		spec := p["spec"].(map[string]any)
+		main := spec["containers"].([]any)[0].(map[string]any)
+		main["image"] = routedImage
+		main["volumeMounts"].([]any)[0].(map[string]any)["name"] = "serving-storage"
+		spec["volumes"] = append(spec["volumes"].([]any), map[string]any{
+			"name": "serving-storage", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "1Mi"},
+		})
+		patch[0].Value["image"] = routedImage
+		spec["initContainers"] = []any{patch[0].Value}
+		p["status"].(map[string]any)["initContainerStatuses"] = []any{map[string]any{
+			"name": "select-mail-store", "imageID": "sha256:selector", "containerID": "containerd://selector",
+			"state": map[string]any{"terminated": map[string]any{"exitCode": 0}},
+		}}
+	})
+	if _, running, ready, err := bindPod(routed); err != nil || !running || !ready {
+		t.Fatalf("reviewed fenced route refused: running=%t ready=%t err=%v", running, ready, err)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{"foreign template", func(p map[string]any) {
+			p["spec"].(map[string]any)["volumes"].([]any)[0].(map[string]any)["configMap"].(map[string]any)["name"] = "foreign-template"
+		}},
+		{"changed selector", func(p map[string]any) {
+			p["spec"].(map[string]any)["initContainers"].([]any)[0].(map[string]any)["args"] = []string{"unexpected"}
+		}},
+		{"unfinished selector", func(p map[string]any) {
+			delete(p["status"].(map[string]any), "initContainerStatuses")
+		}},
+		{"other initializer can write the route", func(p map[string]any) {
+			spec := p["spec"].(map[string]any)
+			spec["initContainers"] = append(spec["initContainers"].([]any), map[string]any{
+				"name": "other", "volumeMounts": []any{map[string]any{"name": "serving-storage", "mountPath": "/other"}},
+			})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, _, err := bindPod(changePod(t, routed, tc.change)); err == nil {
+				t.Fatal("unqualified route producer was accepted")
+			}
+		})
+	}
+}
 
 // goodMeasurement supplies one complete synthetic healthy observation.
 func goodMeasurement() measurement {
