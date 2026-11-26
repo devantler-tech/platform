@@ -114,17 +114,18 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 	if mapping(t, object(t, production, "StorageClass", "email-encrypted-v2")["parameters"])["encrypted"] != "true" {
 		t.Fatal("the V2 migration destination must encrypt at rest")
 	}
-	prepared := object(t, production, "PersistentVolumeClaim", "email-data-encrypted-v2")
-	metadata := mapping(t, prepared["metadata"])
-	spec := mapping(t, prepared["spec"])
+	destination := object(t, production, "PersistentVolumeClaim", "email-data-encrypted-v2")
+	metadata := mapping(t, destination["metadata"])
+	spec := mapping(t, destination["spec"])
+	labels, _ := metadata["labels"].(map[string]any)
 	if metadata["namespace"] != "private-mail" ||
 		mapping(t, metadata["annotations"])["kustomize.toolkit.fluxcd.io/prune"] != "disabled" ||
-		mapping(t, metadata["labels"])["platform.devantler.tech/storage-stage"] != "prepared" ||
+		labels["platform.devantler.tech/storage-stage"] != nil ||
 		spec["storageClassName"] != "email-encrypted-v2" || spec["volumeMode"] != "Filesystem" ||
 		!reflect.DeepEqual(spec["accessModes"], []any{"ReadWriteOnce"}) ||
 		mapping(t, mapping(t, spec["resources"])["requests"])["storage"] != "2Gi" ||
 		spec["volumeName"] != nil || spec["dataSource"] != nil || spec["dataSourceRef"] != nil {
-		t.Fatal("the V2 destination must be a distinct, retained, unbound 2 GiB filesystem claim")
+		t.Fatal("the V2 destination must be a distinct, retained 2 GiB filesystem claim that waits for binding")
 	}
 	pod := mapping(t, mapping(t, mapping(t, object(t, production, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
 	volumes := map[string]map[string]any{}
@@ -135,8 +136,8 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 		}
 	}
 	if len(volumes) != 2 || volumes["data"]["claimName"] != "email-data-encrypted" || volumes["data"]["readOnly"] == true ||
-		volumes["legacy-data"]["claimName"] != "private-mail-data" || volumes["legacy-data"]["readOnly"] != true {
-		t.Fatal("the server must store data on the encrypted claim and see the original only read-only")
+		volumes["v2-data"]["claimName"] != "email-data-encrypted-v2" || volumes["v2-data"]["readOnly"] == true {
+		t.Fatal("both encrypted claims must be available to the rollback-safe selector")
 	}
 	server := ""
 	for _, item := range sequence(t, pod["containers"]) {
@@ -145,30 +146,40 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 			server = stringField(t, container, "image")
 		}
 	}
-	copySteps, sourceMounts := 0, 0
+	expected := map[string]bool{"select-mail-store": true, "configure": true, "private-mail": true}
 	for index, group := range []string{"initContainers", "containers"} {
 		for position, item := range sequence(t, pod[group]) {
 			container := mapping(t, item)
 			name := stringField(t, container, "name")
+			if !expected[name] {
+				continue
+			}
+			delete(expected, name)
+			mounts := map[string]map[string]any{}
 			for _, mountItem := range sequence(t, container["volumeMounts"]) {
 				mount := mapping(t, mountItem)
-				if mount["name"] != "legacy-data" {
-					continue
+				mounts[stringField(t, mount, "name")] = mount
+				if mount["name"] == "legacy-data" {
+					t.Fatal("the retired plaintext claim must not mount in the rollback artifact")
 				}
-				if index != 0 || position != 0 || name != "migrate-storage" || mount["readOnly"] != true {
-					t.Fatal("only the first initializer, the copy step, may mount the original claim, and only read-only")
-				}
-				sourceMounts++
 			}
-			if name == "migrate-storage" {
-				copySteps++
-				if index != 0 || position != 0 || container["image"] != server {
-					t.Fatal("the copy must run first, before setup, with the server's signed image")
-				}
+			selecting := name == "select-mail-store"
+			routeMount := "/etc/stalwart/config.json"
+			if selecting {
+				routeMount = "/store-selection"
+			}
+			if mounts["serving-storage"]["mountPath"] != routeMount || (mounts["serving-storage"]["readOnly"] == true) == selecting ||
+				!selecting && mounts["serving-storage"]["subPath"] != "config.json" ||
+				mounts["data"]["mountPath"] != "/var/lib/stalwart" || mounts["v2-data"]["mountPath"] != "/var/lib/stalwart-v2" ||
+				(mounts["v2-data"]["readOnly"] == true) != selecting {
+				t.Fatalf("%s does not use the shared fenced storage route", name)
+			}
+			if selecting && (index != 0 || position != 0 || container["image"] != server) {
+				t.Fatal("the selector must run before setup with the server's signed image")
 			}
 		}
 	}
-	if copySteps != 1 || sourceMounts != 1 {
-		t.Fatal("exactly one copy step must mount the original claim exactly once")
+	if len(expected) != 0 {
+		t.Fatalf("missing storage consumers: %v", expected)
 	}
 }
