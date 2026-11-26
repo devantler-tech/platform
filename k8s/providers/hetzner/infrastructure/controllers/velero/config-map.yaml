@@ -34,16 +34,14 @@ data:
             backup.platform.devantler.tech/volume-data: independently-mirrored
         action:
           type: skip
-      # Longhorn PVCs → CSI snapshot. The base schedule's snapshotMoveData:true
-      # makes Velero's data mover (Kopia, via the node-agent) copy the snapshot
-      # to the R2 BackupStorageLocation, so it is restorable on another cluster/
-      # provider. The longhorn-snapshot-vsc VolumeSnapshotClass (labelled
-      # velero.io/csi-volumesnapshot-class) is auto-selected for this driver.
+      # Back up mounted PVCs on the immediate V1 class directly to R2 with
+      # Kopia. The CSI data mover needs a separate V1 volume for each snapshot
+      # upload, and those temporary replicas cannot schedule during migration.
       - conditions:
           storageClass:
             - longhorn
         action:
-          type: snapshot
+          type: fs-backup
       # emptyDir pod volumes → skip. emptyDir never survives pod recreation, so
       # backing it up has zero restore value — yet defaultVolumesToFsBackup was
       # spawning a VGDP micro-pod for every agent scratch dir (kubescape

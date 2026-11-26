@@ -108,6 +108,15 @@ readonly unsafe_hcloud_skip_rules
 [[ "${unsafe_hcloud_skip_rules}" == '0' ]] ||
   fail "every hcloud skip rule must require the independently mirrored PVC label; found ${unsafe_hcloud_skip_rules} unsafe rule(s)"
 
+if ! yq -N -o=json -I0 '
+  .data["policy.yaml"] | from_yaml | .volumePolicies
+' "${volume_policy}" | jq -e '
+  map(select((.conditions.storageClass // []) | index("longhorn"))) ==
+    [{conditions:{storageClass:["longhorn"]},action:{type:"fs-backup"}}]
+' >/dev/null; then
+  fail 'the immediate Longhorn V1 class must use filesystem backup without a snapshot staging claim'
+fi
+
 rendered_infrastructure="$(mktemp)"
 readonly rendered_infrastructure
 rendered_controllers="$(mktemp)"
@@ -375,21 +384,6 @@ readonly controller_opt_outs
 
 [[ -z "${controller_opt_outs}" ]] ||
   fail 'a controller-created hcloud PVC declaration must not opt out of Velero volume-data backup'
-
-longhorn_snapshot_rules="$(yq -er '
-  .data["policy.yaml"] | from_yaml |
-  [.volumePolicies[] |
-    select(
-      .conditions.storageClass[0] == "longhorn" and
-      (.conditions.storageClass | length) == 1 and
-      .action.type == "snapshot"
-    )
-  ] | length
-' "${volume_policy}")" || fail 'the production Velero volume policy is invalid'
-readonly longhorn_snapshot_rules
-
-[[ "${longhorn_snapshot_rules}" == '1' ]] ||
-  fail "the production Velero policy must retain exactly one Longhorn snapshot rule; found ${longhorn_snapshot_rules}"
 
 empty_dir_skip_rules="$(yq -er '
   .data["policy.yaml"] | from_yaml |
