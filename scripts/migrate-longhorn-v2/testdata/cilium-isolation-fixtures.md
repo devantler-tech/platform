@@ -63,26 +63,15 @@ separately. No policy labels or expected effects are inferred from live output.
 
 ## Runtime configuration fixture
 
-`cilium-hive-synthetic-1.20.5.txt` is a separate synthetic native Hive rendering.
-Its generator instantiates only `types.PolicyConfig` with local-cluster policy
-normalization enabled. It does not connect to an agent. Reproduce it from the
-same verified Cilium checkout with the generator below. The generator removes
-trailing horizontal whitespace and extra terminal blank lines; native struct
-content and indentation are preserved.
-
-```sh
-rtk proxy env GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local \
-  go run -mod=vendor /absolute/path/to/testdata/cilium-runtime-fixture-generator.go \
-  > /tmp/cilium-hive-synthetic-1.20.5.txt
-```
-
-The runtime payload parser consumes the native `config --all -o json`,
-`version -o json`, and `shell hive` results. The JSON test inputs exercise the
-root field names verified in Cilium's `config.go` and `version.go`; they are
-synthetic inputs, not captured agent responses. The PolicyConfig cell is absent
-from the JSON config API, so the complete native Hive struct is required.
-Neither payload parser proves continuity between separate reads. A reviewed
-workflow must bind the actual agent Pod/container process before and after them.
+The runtime parser reads `config --all -o json`, `version -o json` and
+`policy get -o json` from the same bound agent. The repository check requires the
+exact imported policy at its observed revision. Cilium's config API omits
+`PolicyDefaultLocalCluster`. For this policy, the scoped peers acquire the
+local-cluster selector when Cilium imports it with local normalization.
+Re-running the policy fixture generator with the second argument `false`
+omits those selectors and the resulting entries fail the import check.
+The runtime config and version test inputs are synthetic. The protected
+workflow binds the agent Pod and container identity around both observations.
 
 ## Endpoint serialization fixtures
 
