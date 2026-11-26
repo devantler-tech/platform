@@ -4,36 +4,91 @@
   "metadata": {
     "name": "restore",
     "namespace": "longhorn-db-proof-umami-db-1234",
-    "labels": {"storage.platform.devantler.tech/recovery-run": "1234", "app.kubernetes.io/managed-by": "github-actions"}
+    "labels": {
+      "storage.platform.devantler.tech/recovery-run": "1234",
+      "app.kubernetes.io/managed-by": "github-actions"
+    }
   },
   "spec": {
     "instances": 1,
     "imageName": "ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:f7e00138159bb45d70b624ba25e446924cb3ed1bf366d13e936c3f81b914064e",
     "enableSuperuserAccess": false,
     "enablePDB": false,
-    "plugins": [{"name": "barman-cloud.cloudnative-pg.io", "enabled": false, "isWALArchiver": false}],
-    "storage": {"size": "5Gi", "storageClass": "longhorn-v2", "resizeInUseVolumes": true},
-    "resources": {"requests": {"cpu": "50m", "memory": "256Mi"}, "limits": {"cpu": "1", "memory": "1Gi"}},
-    "bootstrap": {"recovery": {"source": "archive", "recoveryTarget": {"backupID": "20261101T060000", "targetTLI": "7", "targetLSN": "2/100"}, "database": "app", "owner": "app"}},
-    "externalClusters": [{"name": "archive", "plugin": {"name": "barman-cloud.cloudnative-pg.io", "enabled": true, "isWALArchiver": false, "parameters": {"barmanObjectName": "restore-source", "serverName": "umami-db"}}}],
-    "affinity": {"nodeSelector": {"kubernetes.io/hostname": "qualified-worker"}, "podAntiAffinityType": "preferred"},
+    "plugins": [
+      {
+        "name": "barman-cloud.cloudnative-pg.io",
+        "enabled": false,
+        "isWALArchiver": false
+      }
+    ],
+    "storage": {
+      "size": "5Gi",
+      "storageClass": "longhorn-v2",
+      "resizeInUseVolumes": true
+    },
+    "resources": {
+      "requests": { "cpu": "50m", "memory": "256Mi" },
+      "limits": { "cpu": "1", "memory": "1Gi" }
+    },
+    "bootstrap": {
+      "recovery": {
+        "source": "archive",
+        "recoveryTarget": {
+          "backupID": "20261101T060000",
+          "targetTLI": "7",
+          "targetLSN": "2/100"
+        },
+        "database": "app",
+        "owner": "app"
+      }
+    },
+    "externalClusters": [
+      {
+        "name": "archive",
+        "plugin": {
+          "name": "barman-cloud.cloudnative-pg.io",
+          "enabled": true,
+          "isWALArchiver": false,
+          "parameters": {
+            "barmanObjectName": "restore-source",
+            "serverName": "umami-db"
+          }
+        }
+      }
+    ],
+    "affinity": {
+      "nodeSelector": { "kubernetes.io/hostname": "qualified-worker" },
+      "podAntiAffinityType": "preferred"
+    },
     "failoverDelay": 0,
     "logLevel": "info",
     "maxSyncReplicas": 0,
     "minSyncReplicas": 0,
-    "monitoring": {"disableDefaultQueries": false, "enablePodMonitor": false},
+    "monitoring": { "disableDefaultQueries": false, "enablePodMonitor": false },
     "postgresGID": 26,
     "postgresUID": 26,
     "primaryUpdateMethod": "restart",
     "primaryUpdateStrategy": "unsupervised",
-    "probes": {"liveness": {"isolationCheck": {"enabled": true, "requestTimeout": 1000, "connectionTimeout": 1000}}},
-    "replicationSlots": {"highAvailability": {"enabled": true, "slotPrefix": "_cnpg_"}, "synchronizeReplicas": {"enabled": true}, "updateInterval": 30},
+    "probes": {
+      "liveness": {
+        "isolationCheck": {
+          "enabled": true,
+          "requestTimeout": 1000,
+          "connectionTimeout": 1000
+        }
+      }
+    },
+    "replicationSlots": {
+      "highAvailability": { "enabled": true, "slotPrefix": "_cnpg_" },
+      "synchronizeReplicas": { "enabled": true },
+      "updateInterval": 30
+    },
     "smartShutdownTimeout": 180,
     "startDelay": 3600,
     "stopDelay": 1800,
     "switchoverDelay": 3600,
     "postgresql": {
-      "syncReplicaElectionConstraint": {"enabled": false},
+      "syncReplicaElectionConstraint": { "enabled": false },
       "parameters": {
         "archive_mode": "on",
         "archive_timeout": "5min",

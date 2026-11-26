@@ -14,9 +14,7 @@
   "spec": {
     "egress": [
       {
-        "toEntities": [
-          "kube-apiserver"
-        ]
+        "toEntities": ["kube-apiserver"]
       },
       {
         "toEndpoints": [
