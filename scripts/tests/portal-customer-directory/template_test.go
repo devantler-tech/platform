@@ -2,6 +2,8 @@ package portaldirectory
 
 import (
 	"bytes"
+	"encoding/base64"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,20 +41,30 @@ func field(t *testing.T, doc map[string]any, keys ...string) any {
 
 func render(t *testing.T, source string) string {
 	t.Helper()
-	tpl, err := template.New("runtime").Option("missingkey=error").Parse(source)
+	funcs := template.FuncMap{
+		"b64enc": func(value string) string { return base64.StdEncoding.EncodeToString([]byte(value)) },
+	}
+	tpl, err := template.New("runtime").Funcs(funcs).Option("missingkey=error").Parse(source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
 	if err := tpl.Execute(&output, map[string]string{
-		"portal_web_password":   "synthetic-password",
-		"portal_zitadel_org_id": "123456789",
-		"portal_zitadel_token":  "synthetic-token",
+		"portal_web_password":         "synthetic-password",
+		"portal_zitadel_org_id":       "123456789",
+		"portal_zitadel_token":        "synthetic-token",
+		"portal_preview_web_password": previewFixturePassword,
+		"portal_preview_database_ca":  previewFixtureCA,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	return output.String()
 }
+
+const (
+	previewFixturePassword = "fictional+password"
+	previewFixtureCA       = "Fictional preview certificate\nSecond line\n"
+)
 
 func TestRuntimeSettingsEnableTheCustomerDirectory(t *testing.T) {
 	doc := manifest(t, "k8s/providers/hetzner/apps/business-site/external-secret-runtime.yaml")
@@ -69,10 +81,24 @@ func TestRuntimeSettingsEnableTheCustomerDirectory(t *testing.T) {
 		"PORTAL_ZITADEL_URL=https://accounts.devantler.tech\n",
 		"PORTAL_ZITADEL_ORG_ID=123456789\n",
 		"PORTAL_ZITADEL_TOKEN_PROJECTION_FILE=/run/webapp-inputs/portal-zitadel-token\n",
+		"PORTAL_CLIENT_PREVIEW_DATABASE_CA=" + base64.StdEncoding.EncodeToString([]byte(previewFixtureCA)) + "\n",
 	} {
 		if !strings.Contains(enabled, expected) {
 			t.Errorf("activated settings omitted %q", expected)
 		}
+	}
+	_, previewSettings, found := strings.Cut(enabled, "\nPORTAL_CLIENT_PREVIEW_DATABASE_URL=")
+	rawURL, _, _ := strings.Cut(previewSettings, "\n")
+	previewURL, err := url.Parse(rawURL)
+	if !found || err != nil || previewURL.User == nil {
+		t.Fatal("rendering omitted the isolated preview database URL")
+	}
+	password, hasPassword := previewURL.User.Password()
+	if previewURL.Scheme != "postgres" || previewURL.User.Username() != "portal_preview_web" ||
+		!hasPassword || password != previewFixturePassword ||
+		previewURL.Host != "portal-preview-db-rw.business-site-dev.svc.cluster.local:5432" ||
+		previewURL.Path != "/portal_preview" || previewURL.RawQuery != "sslmode=verify-full" {
+		t.Fatal("rendering changed the isolated preview database inputs")
 	}
 	if !strings.Contains(enabled, "PORTAL_OIDC_CLIENT_ID=business-portal\n") {
 		t.Fatal("directory activation removed existing sign-in configuration")
