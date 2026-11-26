@@ -69,6 +69,8 @@ func main() {
 		authorization = authorizeV1ScratchHeadroom(os.Getenv, target)
 	case "reserve-v1-backup-scratch":
 		authorization = authorizeV1BackupHeadroom(os.Getenv)
+	case actualBudgetBackupOperation:
+		authorization = authorizeActualBudgetBackup(os.Getenv)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
 	case retainProviderSourceOperation:
@@ -90,6 +92,15 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == actualBudgetBackupOperation {
+		digest := os.Getenv("LONGHORN_V2_CONFIRM")[len(actualBudgetBackupOperation)+1:]
+		if err := runActualBudgetBackup(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), digest); err != nil {
+			fmt.Fprintln(os.Stderr, "Actual Budget archive held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("ACTUAL_BUDGET_V1_BACKUP=VERIFIED transfer=KOPIA sourceBinding=UNCHANGED restore=UNVERIFIED")
+		return
+	}
 	if operation == nativeSeedOperation {
 		if err := runNativeSeed(ctx, client{run: execute, context: "admin@prod", nativeSeed: true}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
 			fmt.Fprintln(os.Stderr, "Disposable canary source held:", err)

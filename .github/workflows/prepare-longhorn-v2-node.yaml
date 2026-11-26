@@ -50,6 +50,7 @@ name: Prepare Longhorn V2 Migration
             repair-v1-reservation,
             reserve-v1-scratch,
             reserve-v1-backup-scratch,
+            backup-actual-budget-v1,
             retain-v1-source,
             retain-provider-source,
           ]
@@ -203,6 +204,10 @@ jobs:
               ;;
             reserve-v1-backup-scratch)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == reserve-longhorn-v1-backup-scratch ]]
+              ;;
+            backup-actual-budget-v1)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^backup-actual-budget-v1:[0-9a-f]{64}$ ]]
               ;;
             retain-v1-source)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-longhorn-v1-source:[a-z0-9][-a-z0-9]*/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
