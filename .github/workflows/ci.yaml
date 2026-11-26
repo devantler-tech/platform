@@ -323,6 +323,7 @@ jobs:
               - 'scripts/tests/openbao-health-native/**'
               - 'scripts/judge-openbao-health/**'
               - 'internal/strictjson/**'
+              - 'internal/hubblepolicy/**'
               - 'scripts/tests/test-kyverno-auth-reviews.sh'
               - 'scripts/tests/kyverno-auth-reviews/**'
               - 'scripts/tests/test-tenant-webapp-boundary.sh'
@@ -1140,7 +1141,7 @@ jobs:
             | sha256sum --check
           tar --extract --gzip --file "$native_hubble/hubble.tar.gz" --directory "$native_hubble"
           export HUBBLE_TEST_BIN="$native_hubble/hubble"
-          go test -race ./scripts/verify-arc-transport ./scripts/diagnose-email-startup
+          go test -race ./internal/hubblepolicy ./scripts/verify-arc-transport ./scripts/diagnose-email-startup
           shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
           bash scripts/tests/test-verify-arc-transport.sh
 

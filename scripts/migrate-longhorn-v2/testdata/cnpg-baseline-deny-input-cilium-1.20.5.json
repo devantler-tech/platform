@@ -1,0 +1,22 @@
+{
+  "apiVersion": "cilium.io/v2",
+  "kind": "CiliumNetworkPolicy",
+  "metadata": {
+    "name": "default-deny",
+    "namespace": "longhorn-db-proof-umami-db-1234",
+    "uid": "22222222-2222-4222-8222-222222222222"
+  },
+  "spec": {
+    "endpointSelector": {},
+    "ingress": [
+      {}
+    ],
+    "egress": [
+      {}
+    ],
+    "enableDefaultDeny": {
+      "ingress": true,
+      "egress": true
+    }
+  }
+}

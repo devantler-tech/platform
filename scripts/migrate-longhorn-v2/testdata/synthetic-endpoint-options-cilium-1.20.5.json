@@ -1,0 +1,9 @@
+{
+  "realized": {
+    "label-configuration": {},
+    "options": {
+      "DropNotification": "Enabled",
+      "PolicyAuditMode": "Disabled"
+    }
+  }
+}

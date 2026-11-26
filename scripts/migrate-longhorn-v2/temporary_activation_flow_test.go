@@ -37,7 +37,7 @@ func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
 	t.Helper()
 	s, managers := v2ReadinessFixture()
 	for i, node := range s.nodes {
-		node["metadata"].(object)["uid"] = fmt.Sprintf("node-%d", i)
+		node["metadata"].(object)["uid"] = fmt.Sprintf("12345678-3333-4234-8234-%012x", i+1)
 		if strings.HasPrefix(text(node, "metadata", "name"), "prod-worker-") {
 			node["metadata"].(object)["labels"].(object)["node.kubernetes.io/instance-type"] = "cx43"
 		}
