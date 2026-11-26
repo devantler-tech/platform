@@ -1,0 +1,13 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: isolate-openbao-snapshot-copy
+  namespace: openbao
+spec:
+  endpointSelector:
+    matchLabels:
+      app: openbao-snapshot-storage-copy
+  ingressDeny:
+    - fromEntities: [all]
+  egressDeny:
+    - toEntities: [all]

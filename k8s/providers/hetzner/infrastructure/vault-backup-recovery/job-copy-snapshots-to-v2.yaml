@@ -1,0 +1,117 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: copy-openbao-snapshots-to-v2
+  namespace: openbao
+spec:
+  activeDeadlineSeconds: 1800
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: openbao-snapshot-storage-copy
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: source
+          persistentVolumeClaim:
+            claimName: vault-snapshots-recovery
+            readOnly: true
+        - name: destination
+          persistentVolumeClaim:
+            claimName: vault-snapshots-recovery-v2
+        - name: proof
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+      containers:
+        - name: copy
+          image: docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6
+          imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 32Mi
+            limits:
+              cpu: "1"
+              memory: 128Mi
+          volumeMounts:
+            - name: source
+              mountPath: /original
+              readOnly: true
+            - name: destination
+              mountPath: /replacement
+            - name: proof
+              mountPath: /scratch
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              umask 027
+              export LC_ALL=C
+              refuse() { echo "OpenBao archive copy refused: $1." >&2; exit 1; }
+              inventory() {
+                directory=$1
+                for path in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
+                  [ -e "$path" ] || [ -L "$path" ] || continue
+                  [ ! -L "$path" ] || refuse "unexpected symbolic link"
+                  file=$(basename "$path")
+                  if [ "$file" = lost+found ] && [ -d "$path" ]; then
+                    continue
+                  fi
+                  if [ "$(printf '%s' "$file" | wc -c)" -ne 28 ] ||
+                    ! printf '%s\n' "$file" | grep -Eq '^openbao-[0-9]{8}-[0-9]{6}\.snap$'; then
+                    refuse "archive contains unrecognized entries"
+                  fi
+                  [ -f "$path" ] && [ -s "$path" ] || refuse "snapshot is incomplete"
+                  digest=$(sha256sum <"$path")
+                  printf '%.64s %s\n' "$digest" "$file"
+                done
+              }
+              inventory /original >/scratch/source
+              inventory /replacement >/scratch/initial-target
+              count=$(wc -l </scratch/source)
+              [ "$count" -ge 1 ] && [ "$count" -le 14 ] || refuse "snapshot inventory is outside retention bounds"
+              while read -r checksum file; do
+                grep -Fxq "$checksum $file" /scratch/source || refuse "target already contains other data"
+              done </scratch/initial-target
+              temporary=
+              trap 'if [ -n "$temporary" ]; then rm -f -- "$temporary"; fi' EXIT
+              while read -r checksum file; do
+                if [ -f "/replacement/$file" ]; then
+                  continue
+                fi
+                temporary=$(mktemp /replacement/.copy-openbao.XXXXXX)
+                cp "/original/$file" "$temporary"
+                touch -r "/original/$file" "$temporary"
+                chgrp 1000 "$temporary"
+                chmod 0640 "$temporary"
+                digest=$(sha256sum <"$temporary")
+                [ "$(printf '%.64s' "$digest")" = "$checksum" ] || refuse "source changed during copy"
+                sync
+                ln -- "$temporary" "/replacement/$file"
+                rm -- "$temporary"
+                temporary=
+              done </scratch/source
+              sync
+              inventory /replacement >/scratch/final-target
+              inventory /original >/scratch/final-source
+              if ! cmp -s /scratch/source /scratch/final-target || ! cmp -s /scratch/source /scratch/final-source; then
+                refuse "the frozen archive and copied data differ"
+              fi
+              printf 'OPENBAO_V2_ARCHIVE_COPY=VERIFIED count=%s\n' "$((count))"
