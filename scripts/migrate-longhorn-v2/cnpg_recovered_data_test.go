@@ -187,6 +187,14 @@ func TestRecoveredDataBracketsTheFilesystemWithHistoryAndThreeV2Copies(t *testin
 				err.Error() != "recovered database data observation held: phase=cilium-after") {
 				t.Fatalf("realized policy drift was not detected across the completed data check: %v", err)
 			}
+			denialStage := map[string]string{
+				"database port reachable": "probe-reachable",
+				"missing egress denial":   "hubble-empty",
+				"source address changed":  "source-after",
+			}[scenario]
+			if denialStage != "" && err.Error() != "recovered database data observation held: phase=network-denial/"+denialStage {
+				t.Fatalf("unexpected network evidence failure: %v", err)
+			}
 			if p.record.RestoreVerified || p.record.Cleaned || p.record.Phase != "cluster-created" {
 				t.Fatal("read-only evidence changed recovery acceptance")
 			}

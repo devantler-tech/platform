@@ -1,6 +1,7 @@
 package hubblepolicy
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -37,5 +38,12 @@ func TestDatabaseDenialRequiresEgressFromTheRecoveredIdentity(t *testing.T) {
 				t.Fatalf("unexpected isolated database flow verdict: %v", err)
 			}
 		})
+	}
+	withoutDestination := strings.Replace(correct, `"destination":{"namespace":"umami","pod_name":"umami-db-1"}`,
+		`"destination":{}`, 1)
+	err := VerifyTCPDenial(strings.NewReader(native("EGRESS", peer.Source.Namespace, "10.1.1.12")+withoutDestination), peer)
+	var failure DenialFailure
+	if !errors.As(err, &failure) || failure != "pod-identity" {
+		t.Fatalf("expected bounded evidence failure for the matching connection without its destination Pod: %v", err)
 	}
 }
