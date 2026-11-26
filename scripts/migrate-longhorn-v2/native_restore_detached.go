@@ -115,6 +115,10 @@ func verifyNativeRestoreDetached(record benchmarkRecord, seed canarySeedState, s
 	if !nativeRestoreDetachPhase(state.Phase) {
 		return errNativeRestoreEvidence
 	}
+	return verifyNativeRestoreQuiescence(record, seed, state, observed)
+}
+
+func verifyNativeRestoreQuiescence(record benchmarkRecord, seed canarySeedState, state nativeRestoreState, observed nativeRestoreDetachedObservation) error {
 	s := observed.Inventory
 	volumes, err := indexed(s.volumes)
 	if err != nil {

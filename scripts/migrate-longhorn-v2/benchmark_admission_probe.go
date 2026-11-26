@@ -49,7 +49,14 @@ func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, re
 }
 
 func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, record benchmarkRecord, policy object, receipt benchmarkFenceReceipt, probe func(context.Context, *http.Client, *url.URL) error) error {
-	source := record.mutationSource()
+	originalRun := ""
+	if record.Recovery != nil {
+		originalRun = record.Run
+	}
+	return proveReferenceFenceOnServingAPIs(ctx, c, record.mutationSource(), originalRun, policy, receipt, probe)
+}
+
+func proveReferenceFenceOnServingAPIs(ctx context.Context, c client, source, originalRun string, policy object, receipt benchmarkFenceReceipt, probe func(context.Context, *http.Client, *url.URL) error) error {
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
@@ -63,10 +70,6 @@ func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, record benc
 	}
 	if err := verifyBenchmarkProviderEndpoints(ctx, os.Getenv("HCLOUD_TOKEN"), roster); err != nil {
 		return err
-	}
-	originalRun := ""
-	if record.Recovery != nil {
-		originalRun = record.Run
 	}
 	for _, endpoint := range roster {
 		direct, address, err := namespaceinventory.LoadBenchmarkAdmissionClient(os.Getenv, endpoint.ExternalIP, originalRun)
@@ -182,22 +185,26 @@ func probeBenchmarkDetachedBackendAdmission(ctx context.Context, client *http.Cl
 // Keep the native response in bounded memory. The caller accepts only its
 // fixed object or admission-policy status and never emits the response.
 func benchmarkAdmissionDryRun(ctx context.Context, client *http.Client, endpoint *url.URL, path string, operations []object) (int, []byte, error) {
+	return benchmarkAdmissionRequest(ctx, client, endpoint, path, http.MethodPatch, "application/json-patch+json", operations)
+}
+
+func benchmarkAdmissionRequest(ctx context.Context, client *http.Client, endpoint *url.URL, path, method, contentType string, body any) (int, []byte, error) {
 	const limit = 2 << 20
 	unverified := errors.New("native admission dry-run did not return a bounded response")
 	if client == nil || endpoint == nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
 		return 0, nil, unverified
 	}
 	destination := url.URL{Scheme: "https", Host: endpoint.Host, Path: path, RawQuery: "dryRun=All"}
-	payload, err := json.Marshal(operations)
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return 0, nil, unverified
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, destination.String(), bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, destination.String(), bytes.NewReader(payload))
 	if err != nil {
 		return 0, nil, unverified
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json-patch+json")
+	req.Header.Set("Content-Type", contentType)
 	res, err := client.Do(req)
 	if err != nil {
 		return 0, nil, unverified
