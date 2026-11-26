@@ -1,0 +1,145 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: copy-openbao-snapshots-to-v2
+  namespace: openbao
+spec:
+  activeDeadlineSeconds: 1800
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: openbao-snapshot-storage-copy
+    spec:
+      nodeSelector:
+        platform.devantler.tech/baseline-worker: "true"
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: source
+          persistentVolumeClaim:
+            claimName: vault-snapshots-recovery
+            readOnly: true
+        - name: destination
+          persistentVolumeClaim:
+            claimName: vault-snapshots-recovery-v2
+        - name: proof
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+      containers:
+        - name: copy
+          image: docker.io/library/busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6
+          imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 32Mi
+            limits:
+              cpu: "1"
+              memory: 128Mi
+          volumeMounts:
+            - name: source
+              mountPath: /original
+              readOnly: true
+            - name: destination
+              mountPath: /replacement
+            - name: proof
+              mountPath: /scratch
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              umask 027
+              export LC_ALL=C
+              refuse() { echo "OpenBao archive copy refused: $1." >&2; exit 1; }
+              exists() { [ -e "$1" ] || [ -L "$1" ]; }
+              stage=/replacement/.openbao-v2-copy
+              owner="$stage/openbao-v2-archive-copy"
+              clear_stage() {
+                exists "$stage" || return 0
+                [ -d "$stage" ] && [ ! -L "$stage" ] || refuse "unknown staging path"
+                for item in "$stage"/* "$stage"/.[!.]* "$stage"/..?*; do
+                  exists "$item" || continue
+                  case "$item" in
+                    "$owner"|"$stage/snapshot")
+                      [ -f "$item" ] && [ ! -L "$item" ] || refuse "unknown staging entry"
+                      ;;
+                    *) refuse "unknown staging entry" ;;
+                  esac
+                done
+                if exists "$owner" || exists "$stage/snapshot"; then
+                  [ -f "$owner" ] && [ ! -s "$owner" ] || refuse "staging ownership is unverified"
+                  rm -f -- "$stage/snapshot"
+                  sync
+                  rm -- "$owner"
+                fi
+                rmdir -- "$stage"
+              }
+              inventory() {
+                directory=$1
+                prefix_bytes=$(printf '%s/' "$directory" | wc -c)
+                for path in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
+                  exists "$path" || continue
+                  [ ! -L "$path" ] || refuse "unexpected symbolic link"
+                  if [ "$path" = "$directory/lost+found" ] && [ -d "$path" ]; then
+                    continue
+                  fi
+                  path_bytes=$(printf '%s' "$path" | wc -c)
+                  [ "$((path_bytes - prefix_bytes))" -eq 28 ] || refuse "archive contains unrecognized entries"
+                  file=$(basename "$path")
+                  printf '%s\n' "$file" | grep -Eq '^openbao-[0-9]{8}-[0-9]{6}\.snap$' ||
+                    refuse "archive contains unrecognized entries"
+                  [ -f "$path" ] && [ -s "$path" ] || refuse "snapshot is incomplete"
+                  digest=$(sha256sum <"$path")
+                  printf '%.64s %s\n' "$digest" "$file"
+                done
+              }
+              inventory /original >/scratch/source
+              count=$(wc -l </scratch/source)
+              [ "$count" -ge 1 ] && [ "$count" -le 14 ] || refuse "snapshot inventory is outside retention bounds"
+              clear_stage
+              inventory /replacement >/scratch/initial-target
+              while read -r checksum file; do
+                grep -Fxq "$checksum $file" /scratch/source || refuse "target already contains other data"
+              done </scratch/initial-target
+              mkdir -m 0700 -- "$stage"
+              (set -C; : >"$owner")
+              sync
+              temporary="$stage/snapshot"
+              while read -r checksum file; do
+                if [ -f "/replacement/$file" ]; then
+                  continue
+                fi
+                cp "/original/$file" "$temporary"
+                touch -r "/original/$file" "$temporary"
+                chgrp 1000 "$temporary"
+                chmod 0640 "$temporary"
+                digest=$(sha256sum <"$temporary")
+                [ "$(printf '%.64s' "$digest")" = "$checksum" ] || refuse "source changed during copy"
+                sync
+                ln -- "$temporary" "/replacement/$file"
+                rm -- "$temporary"
+              done </scratch/source
+              clear_stage
+              sync
+              inventory /replacement >/scratch/final-target
+              inventory /original >/scratch/final-source
+              if ! cmp -s /scratch/source /scratch/final-target || ! cmp -s /scratch/source /scratch/final-source; then
+                refuse "the frozen archive and copied data differ"
+              fi
+              printf 'OPENBAO_V2_ARCHIVE_COPY=VERIFIED count=%s\n' "$((count))"
