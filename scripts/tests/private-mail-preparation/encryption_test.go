@@ -9,8 +9,8 @@ import (
 // boundary rather than inferring encryption from a claim or class name.
 func TestEncryptedReplacementKeepsKeysOutsideTheWorkload(t *testing.T) {
 	objects := render(t, "k8s/bases/apps/email-encrypted-storage")
-	if len(objects) != 5 {
-		t.Fatal("storage preparation must contain its scoped store, key binding, two classes and one replacement claim")
+	if len(objects) != 6 {
+		t.Fatal("storage preparation must contain its scoped store, key binding, two classes and their claims")
 	}
 	for name, engine := range map[string]string{"email-encrypted": "v1", "email-encrypted-v2": "v2"} {
 		class := object(t, objects, "StorageClass", name)
@@ -88,7 +88,7 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 	for _, path := range []string{"k8s/bases/apps", "k8s/providers/docker/apps"} {
 		for _, o := range render(t, path) {
 			metadata := mapping(t, o["metadata"])
-			for _, name := range []string{"email-storage", "email-storage-key", "email-encrypted", "email-encrypted-v2", "email-data-encrypted"} {
+			for _, name := range []string{"email-storage", "email-storage-key", "email-encrypted", "email-encrypted-v2", "email-data-encrypted", "email-data-encrypted-v2"} {
 				if metadata["name"] == name {
 					t.Fatalf("only production holds the storage key, so only production selects encrypted storage: %s", path)
 				}
@@ -113,6 +113,18 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 	}
 	if mapping(t, object(t, production, "StorageClass", "email-encrypted-v2")["parameters"])["encrypted"] != "true" {
 		t.Fatal("the V2 migration destination must encrypt at rest")
+	}
+	prepared := object(t, production, "PersistentVolumeClaim", "email-data-encrypted-v2")
+	metadata := mapping(t, prepared["metadata"])
+	spec := mapping(t, prepared["spec"])
+	if metadata["namespace"] != "private-mail" ||
+		mapping(t, metadata["annotations"])["kustomize.toolkit.fluxcd.io/prune"] != "disabled" ||
+		mapping(t, metadata["labels"])["platform.devantler.tech/storage-stage"] != "prepared" ||
+		spec["storageClassName"] != "email-encrypted-v2" || spec["volumeMode"] != "Filesystem" ||
+		!reflect.DeepEqual(spec["accessModes"], []any{"ReadWriteOnce"}) ||
+		mapping(t, mapping(t, spec["resources"])["requests"])["storage"] != "2Gi" ||
+		spec["volumeName"] != nil || spec["dataSource"] != nil || spec["dataSourceRef"] != nil {
+		t.Fatal("the V2 destination must be a distinct, retained, unbound 2 GiB filesystem claim")
 	}
 	pod := mapping(t, mapping(t, mapping(t, object(t, production, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
 	volumes := map[string]map[string]any{}

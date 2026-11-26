@@ -8,3 +8,4 @@ resources:
   - storage-class.yaml
   - storage-class-v2.yaml
   - persistent-volume-claim.yaml
+  - persistent-volume-claim-v2.yaml
