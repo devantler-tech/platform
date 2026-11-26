@@ -26,6 +26,14 @@ func verifyRecoveryPolicyAllowances(entries, expected []object, namespace string
 				body[key] = value
 			}
 		}
+		// Kubernetes NetworkPolicy has nil peers and ports where a Cilium
+		// NetworkPolicy default-deny has empty lists. Both grant no traffic.
+		// Retain the explicit field presence and match all other fields.
+		peers, hasPeers := body["L3"]
+		ports, hasPorts := body["L4"]
+		if body["DefaultDeny"] == true && hasPeers && peers == nil && hasPorts && ports == nil {
+			body["L3"], body["L4"] = []any{}, []any{}
+		}
 		raw, err := json.Marshal(body)
 		if err != nil {
 			return ""

@@ -50,6 +50,18 @@ func object(t *testing.T, objects []map[string]any, kind, name string) map[strin
 // TestCutoverPreservesOldStorageAndUsesRetainedReplacement fences the storage handoff.
 func TestCutoverPreservesOldStorageAndUsesRetainedReplacement(t *testing.T) {
 	production := render(t, "k8s/providers/hetzner/infrastructure")
+	prepared := object(t, production, "PersistentVolumeClaim", "vault-snapshots-recovery-v2")
+	preparedMetadata := prepared["metadata"].(map[string]any)
+	preparedSpec := prepared["spec"].(map[string]any)
+	if preparedMetadata["namespace"] != "openbao" || preparedMetadata["annotations"].(map[string]any)["kustomize.toolkit.fluxcd.io/prune"] != "disabled" ||
+		preparedMetadata["labels"].(map[string]any)["platform.devantler.tech/storage-stage"] != "prepared" ||
+		preparedSpec["storageClassName"] != "longhorn-v2" || preparedSpec["volumeName"] != nil ||
+		preparedSpec["volumeMode"] != "Filesystem" || preparedSpec["resources"].(map[string]any)["requests"].(map[string]any)["storage"] != "10Gi" {
+		t.Fatal("the new claim must remain an unbound and retained V2 staging claim with the original capacity")
+	}
+	if modes := preparedSpec["accessModes"].([]any); len(modes) != 1 || modes[0] != "ReadWriteOnce" {
+		t.Fatal("the V2 claim must preserve single-writer access")
+	}
 	for _, name := range []string{"vault-snapshots", "vault-snapshots-recovery"} {
 		claim := object(t, production, "PersistentVolumeClaim", name)
 		metadata := claim["metadata"].(map[string]any)
@@ -170,12 +182,26 @@ func TestActiveSnapshotStorageRequiresBinding(t *testing.T) {
 	ready, lost := compile(current), compile(failed)
 	for _, tt := range []struct {
 		name, phase string
+		claim       string
 		mutate      func(map[string]any, map[string]any)
 		want        bool
 		wantFailed  bool
 	}{
 		{name: "old prepared marker cannot bypass binding", phase: "Pending", mutate: func(m, _ map[string]any) {
 			m["labels"] = map[string]any{"platform.devantler.tech/storage-stage": "prepared"}
+		}},
+		{name: "prepared V2 claim waits without a first consumer", phase: "Pending", claim: "vault-snapshots-recovery-v2", want: true},
+		{name: "a selected V2 consumer must bind", phase: "Pending", claim: "vault-snapshots-recovery-v2", mutate: func(m, _ map[string]any) {
+			m["annotations"].(map[string]any)["volume.kubernetes.io/selected-node"] = "worker"
+		}},
+		{name: "the V2 claim must bind after serving starts", phase: "Pending", claim: "vault-snapshots-recovery-v2", mutate: func(m, _ map[string]any) {
+			delete(m, "labels")
+		}},
+		{name: "V2 preparation requires the exact namespace", phase: "Pending", claim: "vault-snapshots-recovery-v2", mutate: func(m, _ map[string]any) {
+			m["namespace"] = "other"
+		}},
+		{name: "V2 preparation requires the exact class", phase: "Pending", claim: "vault-snapshots-recovery-v2", mutate: func(_, s map[string]any) {
+			s["storageClassName"] = "hcloud"
 		}},
 		{name: "bound claim", phase: "Bound", want: true},
 		{name: "lost claim", phase: "Lost", wantFailed: true},
@@ -195,7 +221,11 @@ func TestActiveSnapshotStorageRequiresBinding(t *testing.T) {
 		{name: "terminating bound claim", phase: "Bound", mutate: func(m, _ map[string]any) { m["deletionTimestamp"] = "2026-10-26T00:00:00Z" }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			claim := object(t, render(t, "k8s/providers/hetzner/infrastructure/vault-backup-recovery"), "PersistentVolumeClaim", "vault-snapshots-recovery")
+			name := tt.claim
+			if name == "" {
+				name = "vault-snapshots-recovery"
+			}
+			claim := object(t, render(t, "k8s/providers/hetzner/infrastructure/vault-backup-recovery"), "PersistentVolumeClaim", name)
 			metadata, spec := claim["metadata"].(map[string]any), claim["spec"].(map[string]any)
 			if tt.mutate != nil {
 				tt.mutate(metadata, spec)
