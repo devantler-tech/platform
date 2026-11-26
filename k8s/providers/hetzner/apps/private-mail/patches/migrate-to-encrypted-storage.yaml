@@ -66,7 +66,7 @@
         [ "$(sha256sum </tmp/original.entries)" = "$(sha256sum </tmp/encrypted.entries)" ] || refuse "the copied entries differ"
         [ "$(sha256sum </tmp/original.sums)" = "$(sha256sum </tmp/encrypted.sums)" ] || refuse "the copied files differ"
         digest=$(sha256sum </tmp/encrypted.sums)
-        (set -C; printf '%s %s\n' "$protocol" "${digest%% *}" >"$receipt.tmp")
+        (set -C; printf '%s %.64s\n' "$protocol" "$digest" >"$receipt.tmp")
         sync
         mv -- "$receipt.tmp" "$receipt"
         sync

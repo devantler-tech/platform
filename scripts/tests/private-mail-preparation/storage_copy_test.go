@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -18,6 +19,9 @@ func TestMailV2CopyUsesItsOwnCompletionMarker(t *testing.T) {
 	pod := mapping(t, mapping(t, mapping(t, object(t, production, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
 	copyInit := mapping(t, sequence(t, pod["initContainers"])[0])
 	script := sequence(t, copyInit["args"])[0].(string)
+	if strings.Contains(script, "${") {
+		t.Fatal("the copy script is literal content and must survive Flux's strict post-build substitution")
+	}
 	for _, tc := range []struct {
 		name, state string
 		success     bool
@@ -64,8 +68,9 @@ func TestMailV2CopyUsesItsOwnCompletionMarker(t *testing.T) {
 			assertCopyFixture(t, filepath.Join(source, "data", "mail"), "original mailbox")
 			assertCopyFixture(t, filepath.Join(target, "data", "mail"), "original mailbox")
 			assertCopyFixture(t, filepath.Join(target, oldMarker), "original V1 receipt")
-			if _, err := os.Stat(filepath.Join(target, complete)); err != nil {
-				t.Fatal("the verified copy did not write its own receipt")
+			receipt, err := os.ReadFile(filepath.Join(target, complete))
+			if err != nil || !regexp.MustCompile("^"+protocol+" [0-9a-f]{64}\n$").Match(receipt) {
+				t.Fatal("the verified copy did not write a complete V2 receipt")
 			}
 			if _, err := os.Stat(filepath.Join(target, progress)); !os.IsNotExist(err) {
 				t.Fatal("the completed copy retained permission to wipe scratch")
