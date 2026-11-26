@@ -13,6 +13,7 @@ const nativeRestoreReclaimJournal = "longhorn-v2-native-reclaim"
 type nativeRestoreReclaimProgress struct {
 	Source, Run, OriginalRun, RestoreJournalUID, Phase string
 	RestoreExecutor                                    string `json:",omitempty"`
+	PreviousAttempt                                    string `json:",omitempty"`
 	Fences                                             map[string]benchmarkFenceReceipt
 }
 
@@ -24,7 +25,8 @@ type nativeRestoreReclaim struct {
 }
 
 func beginNativeRestoreReclaim(ctx context.Context, c client, inputs nativeRestoreReclaimInputs) (nativeRestoreReclaim, error) {
-	if owner, err := authorizedNativeRestoreReclaimRun(os.Getenv); err != nil || owner != inputs.state.Run || inputs.rebind(ctx, c) != nil {
+	if owner, err := authorizedNativeRestoreReclaimRun(os.Getenv); err != nil || os.Getenv("LONGHORN_V2_OPERATION") != nativeRestoreReclaimOperation ||
+		owner != inputs.state.Run || inputs.rebind(ctx, c) != nil {
 		return nativeRestoreReclaim{}, errNativeRestoreEvidence
 	}
 	old, err := c.get(ctx, "configmap", "longhorn-system", nativeRestoreReclaimJournal, true)

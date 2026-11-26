@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
@@ -27,14 +28,14 @@ func probeNativeRestoreReclaimPV(ctx context.Context, direct *http.Client, endpo
 	spec := maps.Clone(valueObject(pv, "spec"))
 	spec["persistentVolumeReclaimPolicy"] = "Delete"
 	if err != nil || !nativeReclaimAdmitted(status, response, id, spec) {
-		return errNativeRestoreEvidence
+		return nativeReclaimProbeFailure("pv-original-update", status)
 	}
 	name := "lh-reclaim-probe-" + state.Run
 	alias := object{"apiVersion": "v1", "kind": "PersistentVolume", "metadata": object{"name": name}, "spec": spec}
 	status, response, err = benchmarkAdmissionRequest(ctx, direct, endpoint, collection, http.MethodPost, "application/json", alias)
 	policyName := text(policy, "metadata", "name")
 	if err != nil || !benchmarkDenialMatches(status, response, "", "persistentvolumes", name, policyName, policyName, benchmarkReferenceFenceMessage) {
-		return errNativeRestoreEvidence
+		return nativeReclaimProbeFailure("pv-alias-create", status)
 	}
 	return nil
 }
@@ -54,7 +55,7 @@ func probeNativeRestoreReclaimClaim(ctx context.Context, direct *http.Client, en
 	status, response, err := benchmarkAdmissionDryRun(ctx, direct, endpoint, collection+"/"+id.Name, operations)
 	spec := valueObject(claim, "spec")
 	if err != nil || !nativeReclaimAdmitted(status, response, id, spec) {
-		return errNativeRestoreEvidence
+		return nativeReclaimProbeFailure("pvc-original-update", status)
 	}
 	name := "lh-reclaim-probe-" + state.Run
 	alias := object{"apiVersion": "v1", "kind": "PersistentVolumeClaim",
@@ -62,9 +63,15 @@ func probeNativeRestoreReclaimClaim(ctx context.Context, direct *http.Client, en
 	status, response, err = benchmarkAdmissionRequest(ctx, direct, endpoint, collection, http.MethodPost, "application/json", alias)
 	policyName := text(policy, "metadata", "name")
 	if err != nil || !benchmarkDenialMatches(status, response, "", "persistentvolumeclaims", name, policyName, policyName, benchmarkReferenceFenceMessage) {
-		return errNativeRestoreEvidence
+		return nativeReclaimProbeFailure("pvc-alias-create", status)
 	}
 	return nil
+}
+
+// The production runner may report the failed operation and status code, never
+// the API response, reference identity, or direct control-plane endpoint.
+func nativeReclaimProbeFailure(phase string, status int) error {
+	return fmt.Errorf("native reclaim admission was unverified: phase=%s http=%d", phase, status)
 }
 
 func nativeReclaimAdmitted(status int, raw []byte, id benchmarkResource, spec object) bool {

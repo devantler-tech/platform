@@ -27,22 +27,40 @@ func TestNativeRestoreReclaimRefusesAReplayBeforeAccessingProduction(t *testing.
 func TestNativeRestoreReclaimDispatchSharesProductionSerialization(t *testing.T) {
 	workflow := migrationDispatchWorkflow(t)
 	choices, _ := value(workflow, "on", "workflow_dispatch", "inputs", "operation", "options").([]any)
-	offered := 0
+	offered := map[string]int{}
 	for _, choice := range choices {
-		if choice == nativeRestoreReclaimOperation {
-			offered++
+		if name, ok := choice.(string); ok {
+			offered[name]++
 		}
 	}
 	job := valueObject(workflow, "jobs", "prepare")
 	require := migrationDispatchStep(t, job, "Require confirmed first attempt on main")
 	run := migrationDispatchStep(t, job, "Reclaim the verified disposable V2 restoration")
 	ordinary := migrationDispatchStep(t, job, "Run the confirmed migration preparation")
-	if offered != 1 || !strings.Contains(text(require, "run"), nativeRestoreReclaimOperation+")") ||
+	if offered[nativeRestoreReclaimOperation] != 1 || offered[nativeRestoreReclaimResume] != 1 ||
+		!strings.Contains(text(require, "run"), nativeRestoreReclaimOperation+")") ||
+		!strings.Contains(text(require, "run"), nativeRestoreReclaimResume+")") ||
 		!strings.Contains(text(require, "run"), nativeRestoreReclaimConfirmation+"[1-9][0-9]{0,18}$") ||
-		text(run, "if") != "${{ inputs.operation == 'reclaim-native-v2-seed' }}" ||
+		!strings.Contains(text(require, "run"), nativeRestoreReclaimResumeConfirmation+"[1-9][0-9]{0,18}:[1-9][0-9]{0,18}$") ||
+		text(run, "if") != "${{ inputs.operation == 'reclaim-native-v2-seed' || inputs.operation == 'resume-native-v2-reclaim' }}" ||
 		!strings.Contains(text(ordinary, "if"), "inputs.operation != 'reclaim-native-v2-seed'") ||
+		!strings.Contains(text(ordinary, "if"), "inputs.operation != 'resume-native-v2-reclaim'") ||
 		!strings.Contains(text(workflow, "concurrency", "group"), "'prod-deploy'") {
 		t.Fatal("reclaim lost its fixed-run confirmation, unique runner step or production lock")
+	}
+}
+
+func TestReclaimContinuationDispatchRequiresASeparateFailedRun(t *testing.T) {
+	_, _, original := nativeRestoreStateFixture(t, "completed")
+	for _, failed := range []string{"6789", "", "0001", original.Run, "9876", "6789:8890"} {
+		env := nativeRestoreDispatch(original)
+		env["GITHUB_RUN_ID"] = "9876"
+		env["LONGHORN_V2_OPERATION"] = nativeRestoreReclaimResume
+		env["LONGHORN_V2_CONFIRM"] = nativeRestoreReclaimResumeConfirmation + original.Run + ":" + failed
+		owner, err := authorizedNativeRestoreReclaimRun(func(key string) string { return env[key] })
+		if (err == nil) != (failed == "6789") || err == nil && owner != original.Run {
+			t.Fatalf("unexpected failed-run authorization for %q: %v", failed, err)
+		}
 	}
 }
 

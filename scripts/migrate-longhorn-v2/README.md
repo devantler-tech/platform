@@ -533,6 +533,14 @@ the object-store restore logs provide the audit record. If any action cannot be
 confirmed, inspect the reclaim journal and the exact recorded resources before
 recovering it.
 
+If cleanup stopped after binding both admission policies, confirm the previous
+run failed on its first attempt and the original claim remains detached and
+Retain-protected. Select `resume-native-v2-reclaim` with
+`resume-longhorn-native-v2-reclaim:<original restore run ID>:<failed cleanup run ID>`.
+The continuation retains the two recorded policies and bindings. It verifies
+fresh admission on each serving API before taking ownership of the existing
+journal. It can proceed only from the recorded two-fence checkpoint.
+
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes

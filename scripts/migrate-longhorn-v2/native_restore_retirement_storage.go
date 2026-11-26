@@ -10,7 +10,7 @@ import (
 
 const csiReclaimFinalizer = "external-provisioner.volume.kubernetes.io/finalizer"
 
-func (r *nativeRestoreReclaim) reclaimStorage(ctx context.Context, policies []object) error {
+func (r nativeRestoreReclaim) qualifyStorageReclaim(ctx context.Context, policies []object) (nativeRestoreDetachedObservation, nativeRestoreFenceProof, error) {
 	var detached nativeRestoreDetachedObservation
 	if err := waitReady(ctx, func(ctx context.Context) error {
 		actual, err := r.inputs.detached(ctx, r.c)
@@ -19,12 +19,19 @@ func (r *nativeRestoreReclaim) reclaimStorage(ctx context.Context, policies []ob
 		}
 		return err
 	}); err != nil {
-		return err
+		return detached, nativeRestoreFenceProof{}, err
 	}
 	proof, err := r.proveFences(ctx, policies, detached)
 	if err != nil {
-		return err
+		return detached, proof, err
 	}
+	if err := r.inputs.retainedSeed(ctx, r.c); err != nil {
+		return detached, proof, err
+	}
+	return detached, proof, nil
+}
+
+func (r *nativeRestoreReclaim) reclaimStorage(ctx context.Context, policies []object, detached nativeRestoreDetachedObservation, proof nativeRestoreFenceProof) error {
 	if err := r.inputs.retainedSeed(ctx, r.c); err != nil {
 		return err
 	}
