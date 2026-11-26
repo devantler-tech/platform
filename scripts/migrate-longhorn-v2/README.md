@@ -494,6 +494,14 @@ worker and verifies both payloads. It retains the backup, journal and canary
 resources for readback. An uncertain write holds the run for explicit recovery.
 Application cutover and performance measurement have their own acceptance steps.
 
+When a restore stops at `restore-owned` after a complete Velero transfer, use
+`resume-native-v2-seed-restore` with `resume-longhorn-native-v2-seed:<original run ID>`
+and leave `node` and `database` empty. The protected main workflow requires the
+original failed first attempt, the retained backup, and the same healthy V2 claim
+and first consumer. It records one continuation on the original journal, then
+verifies the payload and reattachment. Preserve both journals and the canary
+if the continuation stops.
+
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes

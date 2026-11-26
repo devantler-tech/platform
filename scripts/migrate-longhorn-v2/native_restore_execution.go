@@ -11,7 +11,7 @@ import (
 )
 
 func (r *nativeRestoreRun) restoreFromSeed(ctx context.Context) (nativeRestoreVeleroEpoch, error) {
-	velero, err := captureNativeRestoreVelero(ctx, r.c, r.state.Source)
+	velero, err := captureNativeRestoreVelero(ctx, r.c, r.source)
 	if err != nil {
 		return nativeRestoreVeleroEpoch{}, err
 	}
@@ -21,8 +21,12 @@ func (r *nativeRestoreRun) restoreFromSeed(ctx context.Context) (nativeRestoreVe
 	if err := r.createAsset(ctx, "Restore", "restore"); err != nil {
 		return nativeRestoreVeleroEpoch{}, err
 	}
+	return velero, r.verifySeedTransfer(ctx, velero)
+}
+
+func (r *nativeRestoreRun) verifySeedTransfer(ctx context.Context, velero nativeRestoreVeleroEpoch) error {
 	var transfer nativeRestoreTransferReceipt
-	err = waitReady(ctx, func(ctx context.Context) error {
+	err := waitReady(ctx, func(ctx context.Context) error {
 		observed, err := r.observeSeedTransfer(ctx, velero)
 		if err == nil {
 			transfer = observed
@@ -30,20 +34,36 @@ func (r *nativeRestoreRun) restoreFromSeed(ctx context.Context) (nativeRestoreVe
 		return err
 	})
 	if err != nil {
-		return nativeRestoreVeleroEpoch{}, err
+		return err
 	}
-	err = r.advance(ctx, "restore-verified", func(next *nativeRestoreState) {
+	return r.advance(ctx, "restore-verified", func(next *nativeRestoreState) {
 		next.Resources["FirstPod"], next.Resources["PodVolumeRestore"], next.FirstNode = transfer.Pod, transfer.Transfer, transfer.Node
 	})
-	return velero, err
 }
 
 func (r *nativeRestoreRun) observeSeedTransfer(ctx context.Context, velero nativeRestoreVeleroEpoch) (nativeRestoreTransferReceipt, error) {
-	fail := func() (nativeRestoreTransferReceipt, error) {
-		return nativeRestoreTransferReceipt{}, errNativeRestoreEvidence
-	}
 	if err := r.guard(ctx); err != nil {
 		return nativeRestoreTransferReceipt{}, errors.Join(errReadinessTerminal, err)
+	}
+	receipt, observed, err := r.readSeedTransfer(ctx, velero)
+	if err != nil {
+		return nativeRestoreTransferReceipt{}, err
+	}
+	if err := r.requireVeleroEpoch(ctx, velero); err != nil {
+		return nativeRestoreTransferReceipt{}, errors.Join(errReadinessTerminal, err)
+	}
+	payload := r.plan.Seed.Seed.PayloadSHA256
+	output, err := r.execNativeRestorePod(ctx, observed, velero.Digest, nativeRestoreOriginalCheck(payload))
+	digest := strings.Fields(string(output))
+	if err != nil || len(digest) != 2 || digest[0] != payload || digest[1] != "payload.bin" {
+		return nativeRestoreTransferReceipt{}, errNativeRestoreEvidence
+	}
+	return receipt, nil
+}
+
+func (r *nativeRestoreRun) readSeedTransfer(ctx context.Context, velero nativeRestoreVeleroEpoch) (nativeRestoreTransferReceipt, nativeRestoreState, error) {
+	fail := func() (nativeRestoreTransferReceipt, nativeRestoreState, error) {
+		return nativeRestoreTransferReceipt{}, nativeRestoreState{}, errNativeRestoreEvidence
 	}
 	restoreID := r.state.Resources["Restore"]
 	restore, err := r.c.get(ctx, "restores.velero.io", restoreID.Namespace, restoreID.Name, false)
@@ -51,7 +71,7 @@ func (r *nativeRestoreRun) observeSeedTransfer(ctx context.Context, velero nativ
 		return fail()
 	}
 	if err := nativeRestoreTerminalFailure(restore); err != nil {
-		return nativeRestoreTransferReceipt{}, err
+		return nativeRestoreTransferReceipt{}, nativeRestoreState{}, err
 	}
 	pod, err := r.c.get(ctx, "pods", benchmarkNamespace, "fio", false)
 	if err != nil {
@@ -77,15 +97,7 @@ func (r *nativeRestoreRun) observeSeedTransfer(ctx context.Context, velero nativ
 	if _, err := observeNativeRestoreAttached(ctx, r.c, source.Record, source.Seed, observed, r.config, velero.Digest, r.plan.Managers); err != nil {
 		return fail()
 	}
-	if err := r.requireVeleroEpoch(ctx, velero); err != nil {
-		return nativeRestoreTransferReceipt{}, errors.Join(errReadinessTerminal, err)
-	}
-	output, err := r.execNativeRestorePod(ctx, observed, velero.Digest, nativeRestoreOriginalCheck(source.Seed.PayloadSHA256))
-	digest := strings.Fields(string(output))
-	if err != nil || len(digest) != 2 || digest[0] != source.Seed.PayloadSHA256 || digest[1] != "payload.bin" {
-		return fail()
-	}
-	return receipt, nil
+	return receipt, observed, nil
 }
 
 func nativeRestoreTerminalFailure(restore object) error {
@@ -98,7 +110,7 @@ func nativeRestoreTerminalFailure(restore object) error {
 }
 
 func (r *nativeRestoreRun) requireVeleroEpoch(ctx context.Context, expected nativeRestoreVeleroEpoch) error {
-	actual, err := captureNativeRestoreVelero(ctx, r.c, r.state.Source)
+	actual, err := captureNativeRestoreVelero(ctx, r.c, r.source)
 	if err != nil || actual != expected {
 		return errNativeRestoreEvidence
 	}
@@ -163,7 +175,7 @@ func (r *nativeRestoreRun) reattach(ctx context.Context, velero nativeRestoreVel
 	if err != nil || verifyNativeRestoreConsumer(source.Record, source.Seed, previous, first, velero.Digest) != nil {
 		return errNativeRestoreEvidence
 	}
-	if err := r.c.deleteObserved(ctx, r.state.Source, "/api/v1/namespaces/"+benchmarkNamespace+"/pods/fio", first); err != nil {
+	if err := r.c.deleteObserved(ctx, r.source, "/api/v1/namespaces/"+benchmarkNamespace+"/pods/fio", first); err != nil {
 		return errors.New("the original restore consumer deletion could not be confirmed")
 	}
 	if err := waitReady(ctx, r.observeDetached); err != nil {
@@ -189,7 +201,7 @@ func (r *nativeRestoreRun) reattach(ctx context.Context, velero nativeRestoreVel
 	if err := r.observeDetached(ctx); err != nil {
 		return err
 	}
-	created, err := r.c.create(ctx, r.state.Source, asset)
+	created, err := r.c.create(ctx, r.source, asset)
 	if err != nil {
 		return errors.New("the reattachment consumer creation could not be confirmed")
 	}
@@ -241,7 +253,7 @@ func runNativeRestore(ctx context.Context, c client, source, run string, config 
 	if err != nil {
 		return err
 	}
-	restore := nativeRestoreRun{c: c, config: config, plan: plan}
+	restore := nativeRestoreRun{c: c, config: config, plan: plan, source: source}
 	if err := restore.provision(ctx); err != nil {
 		return err
 	}
@@ -249,8 +261,12 @@ func runNativeRestore(ctx context.Context, c client, source, run string, config 
 	if err != nil {
 		return err
 	}
-	if err := restore.writeReattachmentToken(ctx, velero); err != nil {
+	return restore.verifyReattachment(ctx, velero)
+}
+
+func (r *nativeRestoreRun) verifyReattachment(ctx context.Context, velero nativeRestoreVeleroEpoch) error {
+	if err := r.writeReattachmentToken(ctx, velero); err != nil {
 		return err
 	}
-	return restore.reattach(ctx, velero)
+	return r.reattach(ctx, velero)
 }

@@ -20,6 +20,10 @@ func observeNativeRestoreSeed(ctx context.Context, c client, source, run string)
 		source != os.Getenv("GITHUB_SHA") || run != os.Getenv("GITHUB_RUN_ID") {
 		return nativeRestoreSeedReceipt{}, errNativeRestoreEvidence
 	}
+	return readNativeRestoreSeed(ctx, c, source, run)
+}
+
+func readNativeRestoreSeed(ctx context.Context, c client, source, run string) (nativeRestoreSeedReceipt, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	if sourceCurrent(ctx, c.run, source) != nil {

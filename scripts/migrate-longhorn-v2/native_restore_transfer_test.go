@@ -1,6 +1,35 @@
 package main
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+func TestNativeRestoreTransferAcceptsOnlyPublishedVeleroExclusions(t *testing.T) {
+	defaults := []any{"nodes", "events", "events.events.k8s.io", "backups.velero.io", "restores.velero.io",
+		"resticrepositories.velero.io", "csinodes.storage.k8s.io", "volumeattachments.storage.k8s.io", "backuprepositories.velero.io"}
+	expected := append([]any{"persistentvolumeclaims", "persistentvolumes"}, defaults...)
+	for _, tc := range []struct {
+		name string
+		val  []any
+		pass bool
+	}{
+		{"released controller defaults", expected, true},
+		{"unrequested exclusion", append(slices.Clone(expected), "pods"), false},
+		{"missing PVC exclusion", expected[1:], false},
+		{"missing controller default", expected[:len(expected)-1], false},
+		{"duplicate exclusion", append(slices.Clone(expected), "nodes"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record, seed, state, restore, pod, transfer, repository := nativeRestoreTransferFixture(t)
+			valueObject(restore, "spec")["excludedResources"] = tc.val
+			_, err := verifyNativeRestoreTransfer(record, seed, state, restore, pod, []object{transfer}, []object{repository})
+			if (err == nil) != tc.pass {
+				t.Fatalf("restore exclusion verdict = %v, want pass %t", err, tc.pass)
+			}
+		})
+	}
+}
 
 func nativeRestoreTransferFixture(t *testing.T) (benchmarkRecord, canarySeedState, nativeRestoreState, object, object, object, object) {
 	t.Helper()

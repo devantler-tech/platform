@@ -10,8 +10,8 @@ import (
 	"github.com/devantler-tech/platform/internal/longhornmigration"
 )
 
-func observeNativeRestorePreparedTargets(ctx context.Context, a temporaryV2Activation) ([]nativeRestoreTarget, map[string]hostMemoryReport, error) {
-	activation, err := a.accepted(ctx)
+func observeNativeRestorePreparedTargets(ctx context.Context, a temporaryV2Activation, canary benchmarkResource) ([]nativeRestoreTarget, map[string]hostMemoryReport, error) {
+	activation, err := a.readAcceptedRegistration(ctx, canary)
 	if err != nil {
 		return nil, nil, errNativeRestoreEvidence
 	}

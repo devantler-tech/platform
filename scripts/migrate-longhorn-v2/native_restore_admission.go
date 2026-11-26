@@ -1,6 +1,9 @@
 package main
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 type nativeRestoreAdmission struct {
 	Seed     nativeRestoreSeedReceipt
@@ -17,35 +20,12 @@ func observeNativeRestoreAdmission(ctx context.Context, c client, source, run st
 	if err != nil {
 		return nativeRestoreAdmission{}, err
 	}
-	pools, err := configuredMigrationPools(config)
-	if err != nil {
-		return nativeRestoreAdmission{}, err
-	}
-	targets, memory, err := observeNativeRestorePreparedTargets(ctx, temporaryV2Activation{c: c, pools: pools})
-	if err != nil {
-		return nativeRestoreAdmission{}, err
-	}
-	s, err := v2Environment(ctx, c, pools)
-	if err != nil {
-		return nativeRestoreAdmission{}, err
-	}
-	if verifyRedundancy(s) != nil || verifyBudgetSettings(ctx, c) != nil {
-		return nativeRestoreAdmission{}, errNativeRestoreEvidence
-	}
-	tag := "longhorn-native-v2-" + run
-	if _, err := planNativeRestoreDiskBudget(s, targets, tag, false, config); err != nil {
-		return nativeRestoreAdmission{}, err
-	}
-	managers, err := observeNativeRestoreManagers(ctx, c, targets, s)
+	targets, managers, err := observeNativeRestorePool(ctx, c, config, run, nil)
 	if err != nil {
 		return nativeRestoreAdmission{}, err
 	}
 	uids := make(map[string]string, len(targets))
 	for _, target := range targets {
-		report := memory[target.Name]
-		if report.PageSizeKiB != 2048 || report.PersistentPages < 1024 || report.TotalPages < 1024 || report.AvailableKiB < 512<<10 {
-			return nativeRestoreAdmission{}, errNativeRestoreEvidence
-		}
 		uids[target.Name] = target.UID
 	}
 	digest, err := nativeRestoreSeedDigest(seed.Record, seed.Seed)
@@ -64,6 +44,43 @@ func observeNativeRestoreAdmission(ctx context.Context, c client, source, run st
 		return nativeRestoreAdmission{}, errNativeRestoreEvidence
 	}
 	return nativeRestoreAdmission{Seed: seed, State: state, Assets: assets, Managers: managers}, nil
+}
+
+func observeNativeRestorePool(ctx context.Context, c client, config []byte, run string, prior *nativeRestoreState) ([]nativeRestoreTarget, map[string]nativeRestoreV2ManagerIdentity, error) {
+	pools, err := configuredMigrationPools(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	var canary benchmarkResource
+	if prior != nil {
+		canary = prior.Resources["LonghornVolume"]
+	}
+	targets, memory, err := observeNativeRestorePreparedTargets(ctx, temporaryV2Activation{c: c, pools: pools}, canary)
+	if err != nil {
+		return nil, nil, err
+	}
+	if prior != nil && !slices.Equal(targets, prior.Targets) {
+		return nil, nil, errNativeRestoreEvidence
+	}
+	s, err := v2Environment(ctx, c, pools)
+	if err != nil {
+		return nil, nil, err
+	}
+	if verifyTemporaryRegistrationVolumes(s.volumes, canary) != nil || verifyRedundancy(s) != nil || verifyBudgetSettings(ctx, c) != nil {
+		return nil, nil, errNativeRestoreEvidence
+	}
+	tag := "longhorn-native-v2-" + run
+	if _, err := planNativeRestoreDiskBudget(s, targets, tag, prior != nil, config); err != nil {
+		return nil, nil, err
+	}
+	for _, target := range targets {
+		report := memory[target.Name]
+		if report.PageSizeKiB != 2048 || report.PersistentPages < 1024 || report.TotalPages < 1024 || report.AvailableKiB < 512<<10 {
+			return nil, nil, errNativeRestoreEvidence
+		}
+	}
+	managers, err := observeNativeRestoreManagers(ctx, c, targets, s)
+	return targets, managers, err
 }
 
 // Only a single healthy V2 manager may serve each registered restore target.

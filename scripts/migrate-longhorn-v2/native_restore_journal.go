@@ -56,7 +56,7 @@ func createNativeRestoreJournal(ctx context.Context, c client, seed nativeRestor
 	}
 	actual, afterRecord, afterSeed, saved, err := readNativeRestoreJournal(ctx, c)
 	if err != nil || benchmarkIdentity(actual) != id || !reflect.DeepEqual(saved, state) ||
-		!reflect.DeepEqual(afterRecord, record) || afterSeed != checkedSeed {
+		!reflect.DeepEqual(afterRecord, record) || afterSeed != checkedSeed || !nativeRestoreExecutorMatches(actual, "") {
 		return "", errors.New("the native restore journal readback changed; preserve both journals")
 	}
 	return id.UID, nil
@@ -87,26 +87,28 @@ func readNativeRestoreJournal(ctx context.Context, c client) (object, benchmarkR
 // restore journal. Never PATCH the seed journal, retry a write, or adopt a
 // replaced object or a response whose outcome cannot be confirmed.
 func saveNativeRestoreState(ctx context.Context, c client, journalUID string, before, after nativeRestoreState) error {
-	if c.context != "admin@prod" || authorizeNativeRestore(os.Getenv) != nil || !nativeRestoreUID(journalUID) ||
-		before.Source != os.Getenv("GITHUB_SHA") || before.Run != os.Getenv("GITHUB_RUN_ID") {
+	source, executor, err := nativeRestoreGrant(os.Getenv, before)
+	if c.context != "admin@prod" || err != nil || !nativeRestoreUID(journalUID) {
 		return errNativeRestoreEvidence
 	}
 	cm, record, seed, actual, err := readNativeRestoreJournal(ctx, c)
-	if err != nil || text(cm, "metadata", "uid") != journalUID || !reflect.DeepEqual(actual, before) || validateNativeRestoreTransition(before, after, record, seed) != nil {
+	if err != nil || text(cm, "metadata", "uid") != journalUID || !reflect.DeepEqual(actual, before) ||
+		!nativeRestoreExecutorMatches(cm, executor) || validateNativeRestoreTransition(before, after, record, seed) != nil {
 		return errNativeRestoreEvidence
 	}
 	body, err := json.Marshal(after)
 	if err != nil {
 		return errNativeRestoreEvidence
 	}
-	if err = sourceCurrent(ctx, c.run, before.Source); err != nil {
+	if err = sourceCurrent(ctx, c.run, source); err != nil {
 		return errors.New("the reviewed source changed before native restore progress")
 	}
 	if err = c.patch(ctx, "configmap", "longhorn-system", cm, object{"op": "replace", "path": "/data/restore", "value": string(body)}); err != nil {
 		return errors.New("native restore progress could not be confirmed; preserve both original journals")
 	}
 	checked, currentRecord, currentSeed, saved, err := readNativeRestoreJournal(ctx, c)
-	if err != nil || text(checked, "metadata", "uid") != journalUID || !reflect.DeepEqual(saved, after) || !reflect.DeepEqual(currentRecord, record) || currentSeed != seed {
+	if err != nil || text(checked, "metadata", "uid") != journalUID || !reflect.DeepEqual(saved, after) ||
+		!reflect.DeepEqual(currentRecord, record) || currentSeed != seed || !nativeRestoreExecutorMatches(checked, executor) {
 		return errors.New("native restore progress readback changed; preserve both original journals")
 	}
 	return nil
