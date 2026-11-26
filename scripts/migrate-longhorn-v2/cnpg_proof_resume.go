@@ -63,28 +63,31 @@ func (p *cnpgProofRun) createOwned(ctx context.Context, desired object) (object,
 	return p.c.create(ctx, owner.Source, desired)
 }
 
-// claimCNPGProofResume changes only the executor at completed, allocation-free
-// checkpoints. Uncertain writes and allocated environments require other recovery.
-func claimCNPGProofResume(ctx context.Context, c client, target, source, run string) (*cnpgProofRun, error) {
+// claimCNPGProofResume changes only the executor of the journal the caller confirmed.
+// Umami's existing namespace and policy must still be empty and qualified.
+func claimCNPGProofResume(ctx context.Context, c client, cm object, record cnpgProofRecord, source, run string) (*cnpgProofRun, error) {
 	refused := errors.New("database proof continuation is not qualified")
-	if !validBenchmarkOwner(run, source) || c.context != "admin@prod" {
+	if !validBenchmarkOwner(run, source) || c.context != "admin@prod" || record.Run == run || !cnpgResumeCheckpointEligible(record) {
 		return nil, refused
 	}
-	cm, record, err := readCNPGProof(ctx, c, target)
-	if err != nil || record.Run == run || record.Cleaned || record.RestoreVerified || len(record.Resources) != 0 || record.Preparation != nil || record.Credential != nil || record.Admission != nil || record.Storage != nil || (record.Phase != "backup-created" && record.Phase != "restore-planned") || (record.Phase == "backup-created") != (record.Plan == nil) {
-		return nil, refused
-	}
+	target := record.Target
 	want := cnpgProofExecutor{Source: source, Run: run, JournalUID: text(cm, "metadata", "uid")}
-	if err = qualifyCNPGResumeOwners(ctx, c, record, want); err != nil {
+	if err := qualifyCNPGResumeOwners(ctx, c, record, want); err != nil {
 		return nil, err
 	}
-	if err = qualifyCNPGResumeCheckpoint(ctx, c, record, source); err != nil {
+	if record.Phase == "policy-created" {
+		pending := cnpgProofRun{c: c, record: record}
+		if _, err := pending.readRecoveryIsolation(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if err := qualifyCNPGResumeCheckpoint(ctx, c, record, source); err != nil {
 		return nil, err
 	}
-	if err = qualifyCNPGResumeOwners(ctx, c, record, want); err != nil {
+	if err := qualifyCNPGResumeOwners(ctx, c, record, want); err != nil {
 		return nil, err
 	}
-	if err = sourceCurrent(ctx, c.run, source); err != nil {
+	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return nil, err
 	}
 	currentCM, current, err := readCNPGProof(ctx, c, target)
@@ -106,6 +109,28 @@ func claimCNPGProofResume(ctx context.Context, c client, target, source, run str
 		return nil, refused
 	}
 	return &cnpgProofRun{c: c, record: checked, journalUID: want.JournalUID, executing: want, storage: temporaryV2Activation{c: c, source: source, owner: run, pools: c.inventoryPools}}, nil
+}
+
+func cnpgResumeCheckpointEligible(record cnpgProofRecord) bool {
+	if record.Cleaned || record.RestoreVerified || record.Preparation != nil || record.Credential != nil ||
+		record.Admission != nil || record.Storage != nil || record.RestoreReceipt != nil {
+		return false
+	}
+	switch record.Phase {
+	case "backup-created":
+		return len(record.Resources) == 0 && record.Plan == nil
+	case "restore-planned":
+		return len(record.Resources) == 0 && record.Plan != nil
+	case "policy-created":
+		namespace, policy := record.Resources["Namespace"], record.Resources["Policy"]
+		return record.Target == "umami-db" && record.Plan != nil && len(record.Plan.Resources) == 4 &&
+			len(record.Resources) == 2 && namespace.Name == "longhorn-db-proof-"+record.Target+"-"+record.Run &&
+			namespace.Namespace == "" && isolationUID.MatchString(namespace.UID) &&
+			policy.Name == "restore-isolation" && policy.Namespace == namespace.Name &&
+			isolationUID.MatchString(policy.UID) && policy.UID != namespace.UID
+	default:
+		return false
+	}
 }
 
 func qualifyCNPGResumeOwners(ctx context.Context, c client, record cnpgProofRecord, want cnpgProofExecutor) error {

@@ -63,3 +63,62 @@ func TestCNPGArchiveProofEntryPointUsesTheProtectedMainDispatch(t *testing.T) {
 		t.Fatalf("confirmed archive proof did not enter the configuration loader: %v: %s", err, output)
 	}
 }
+
+func TestUmamiArchiveIsolationResumeBindsTheFailedRunAndExactWorkflow(t *testing.T) {
+	for _, tc := range []struct {
+		field, value string
+	}{
+		{},
+		{field: "LONGHORN_V2_CONFIRM", value: "resume-umami-archive-isolation:01234"},
+		{field: "LONGHORN_V2_CONFIRM", value: "resume-umami-archive-isolation:1234:5678"},
+		{field: "GITHUB_RUN_ID", value: "1234"},
+		{field: "GITHUB_RUN_ATTEMPT", value: "2"},
+		{field: "GITHUB_REF", value: "refs/heads/other"},
+		{field: "LONGHORN_V2_DATABASE", value: "coroot-db"},
+		{field: "LONGHORN_V2_NODE", value: "temporary-v2-1"},
+	} {
+		env := umamiIsolationResumeDispatch()
+		if tc.field != "" {
+			env[tc.field] = tc.value
+		}
+		run, err := authorizeUmamiArchiveIsolationResume(func(key string) string { return env[key] })
+		if tc.field == "" && (err != nil || run != "1234") {
+			t.Fatalf("confirmed isolation checkpoint was refused: %v", err)
+		}
+		if tc.field != "" && (err == nil || run != "") {
+			t.Fatalf("invalid %s=%q selected the isolation checkpoint", tc.field, tc.value)
+		}
+	}
+}
+
+func TestUmamiArchiveIsolationResumeRegistration(t *testing.T) {
+	const helper = "PLATFORM_TEST_UMAMI_ARCHIVE_ISOLATION_MAIN"
+	if os.Getenv(helper) == "1" {
+		os.Args = os.Args[:1]
+		main()
+		return
+	}
+	workflow := migrationDispatchWorkflow(t)
+	choices, _ := value(workflow, "on", "workflow_dispatch", "inputs", "operation", "options").([]any)
+	if !slices.Contains(choices, umamiArchiveIsolationResumeOperation) {
+		t.Fatal("the protected workflow cannot resume the retained isolation checkpoint")
+	}
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestUmamiArchiveIsolationResumeRegistration$")
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(), helper+"=1")
+	for key, val := range umamiIsolationResumeDispatch() {
+		cmd.Env = append(cmd.Env, key+"="+val)
+	}
+	output, err := cmd.CombinedOutput()
+	if err == nil || strings.TrimSpace(string(output)) != "Reviewed capacity configuration is unreadable." {
+		t.Fatalf("confirmed continuation did not enter the guarded configuration loader: %v: %s", err, output)
+	}
+}
+
+func umamiIsolationResumeDispatch() map[string]string {
+	env := dispatchFixture()
+	env["GITHUB_RUN_ID"], env["LONGHORN_V2_NODE"] = "5678", ""
+	env["LONGHORN_V2_OPERATION"], env["LONGHORN_V2_DATABASE"] = umamiArchiveIsolationResumeOperation, "umami-db"
+	env["LONGHORN_V2_CONFIRM"] = "resume-umami-archive-isolation:1234"
+	return env
+}

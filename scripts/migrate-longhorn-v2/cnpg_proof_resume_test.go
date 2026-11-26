@@ -20,6 +20,50 @@ type cnpgResumeFixture struct {
 	namespace        object
 }
 
+func TestDatabaseResumeRefusesAReplacementOfTheConfirmedJournal(t *testing.T) {
+	f := newCNPGResumeFixture(t, "restore-planned")
+	cm, record, err := readCNPGProof(t.Context(), f.c, "umami-db")
+	if err != nil || text(cm, "metadata", "uid") == "" || record.Run != "1234" {
+		t.Fatalf("cannot bind the original checkpoint: %v", err)
+	}
+	f.cm["metadata"].(object)["uid"] = "83fd0407-9c4e-4e21-8231-ebdb471e8018"
+	if _, err := claimCNPGProofResume(t.Context(), f.c, cm, record, f.currentSource, "5678"); err == nil || f.patches != 0 || f.creates != 0 {
+		t.Fatal("a replacement of the confirmed journal reached an executor write")
+	}
+}
+
+func TestUmamiCanContinueTheExactEmptyIsolationCheckpoint(t *testing.T) {
+	for _, fault := range []string{"", "other database", "foreign namespace", "foreign policy", "extra asset", "credential admitted", "policy not confirmed", "missing plan"} {
+		t.Run(fault, func(t *testing.T) {
+			f := newCNPGResumeFixture(t, "restore-planned")
+			record := f.record
+			record.Phase = "policy-created"
+			namespace := "longhorn-db-proof-umami-db-" + record.Run
+			record.Resources["Namespace"] = benchmarkResource{Name: namespace, UID: "b8124a86-8b4e-4fec-9037-eb0520648124"}
+			record.Resources["Policy"] = benchmarkResource{Name: "restore-isolation", Namespace: namespace, UID: "9c10fc63-d4f6-422c-a09c-64f19d376553"}
+			switch fault {
+			case "other database":
+				record.Target = "coroot-db"
+			case "foreign namespace":
+				record.Resources["Namespace"] = benchmarkResource{Name: "foreign", UID: record.Resources["Namespace"].UID}
+			case "foreign policy":
+				record.Resources["Policy"] = benchmarkResource{Name: "restore-isolation", Namespace: "other", UID: record.Resources["Policy"].UID}
+			case "extra asset":
+				record.Resources["Secret"] = benchmarkResource{Name: "archive-read"}
+			case "credential admitted":
+				record.Credential = &cnpgCredentialBinding{}
+			case "policy not confirmed":
+				record.Phase = "policy-requested"
+			case "missing plan":
+				record.Plan = nil
+			}
+			if got := cnpgResumeCheckpointEligible(record); got != (fault == "") {
+				t.Fatalf("unexpected eligibility for %q: %t", fault, got)
+			}
+		})
+	}
+}
+
 func TestDatabaseResumeValidatesTheRetainedBarrier(t *testing.T) {
 	for _, scenario := range []string{"system identity", "pre-backup target", "unarchived target"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -54,7 +98,7 @@ func TestDatabaseResumeValidatesTheRetainedBarrier(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
 			defer cancel()
-			if _, err := claimCNPGProofResume(ctx, f.c, "umami-db", f.currentSource, "5678"); err == nil || f.patches != 0 || f.creates != 0 {
+			if _, err := f.claim(ctx, f.currentSource, "5678"); err == nil || f.patches != 0 || f.creates != 0 {
 				t.Fatal("unverified retained recovery target acquired an executor")
 			}
 		})
@@ -76,11 +120,19 @@ func TestDatabaseResumeRefreshesWorkflowAdmissionAfterQualification(t *testing.T
 				}
 				return delegate(ctx, input, program, args...)
 			}
-			if _, err := claimCNPGProofResume(t.Context(), f.c, "umami-db", f.currentSource, "5678"); err == nil || f.patches != 0 || f.creates != 0 {
+			if _, err := f.claim(t.Context(), f.currentSource, "5678"); err == nil || f.patches != 0 || f.creates != 0 {
 				t.Fatal("outdated workflow admission reached a claim write")
 			}
 		})
 	}
+}
+
+func (f *cnpgResumeFixture) claim(ctx context.Context, source, run string) (*cnpgProofRun, error) {
+	cm, record, err := readCNPGProof(ctx, f.c, "umami-db")
+	if err != nil {
+		return nil, err
+	}
+	return claimCNPGProofResume(ctx, f.c, cm, record, source, run)
 }
 
 func newCNPGResumeFixture(t *testing.T, phase string) *cnpgResumeFixture {
@@ -176,7 +228,7 @@ func TestDatabaseResumeKeepsCreationIdentityUnderTheCurrentExecutor(t *testing.T
 	for _, phase := range []string{"backup-created", "restore-planned"} {
 		t.Run(phase, func(t *testing.T) {
 			f := newCNPGResumeFixture(t, phase)
-			p, err := claimCNPGProofResume(t.Context(), f.c, "umami-db", strings.Repeat("b", 40), "5678")
+			p, err := f.claim(t.Context(), strings.Repeat("b", 40), "5678")
 			if err != nil {
 				t.Fatal("completed checkpoint could not continue:", err)
 			}
@@ -240,7 +292,7 @@ func TestDatabaseResumeRejectsLiveOwnersAndUnsupportedCheckpoints(t *testing.T) 
 				t.Fatal(err)
 			}
 			f.cm["data"].(object)["record"] = body
-			if _, err := claimCNPGProofResume(t.Context(), f.c, "umami-db", strings.Repeat("b", 40), "5678"); err == nil || f.patches != 0 || f.creates != 0 {
+			if _, err := f.claim(t.Context(), strings.Repeat("b", 40), "5678"); err == nil || f.patches != 0 || f.creates != 0 {
 				t.Fatalf("unqualified continuation reached a write: err=%v patches=%d creates=%d", err, f.patches, f.creates)
 			}
 		})
@@ -249,12 +301,12 @@ func TestDatabaseResumeRejectsLiveOwnersAndUnsupportedCheckpoints(t *testing.T) 
 
 func TestDatabaseResumeFencesAReplacedExecutorAtTheSameSource(t *testing.T) {
 	f := newCNPGResumeFixture(t, "restore-planned")
-	first, err := claimCNPGProofResume(t.Context(), f.c, "umami-db", f.currentSource, "5678")
+	first, err := f.claim(t.Context(), f.currentSource, "5678")
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.runs["5678"]["status"] = "completed"
-	second, err := claimCNPGProofResume(t.Context(), f.c, "umami-db", f.currentSource, "6789")
+	second, err := f.claim(t.Context(), f.currentSource, "6789")
 	if err != nil {
 		t.Fatal("terminal executor could not be replaced:", err)
 	}
@@ -274,24 +326,24 @@ func TestDatabaseResumeRechecksItsOwnerAndIdempotentClaim(t *testing.T) {
 	for _, scenario := range []string{"same owner", "finished owner", "live displaced owner", "retried displaced owner", "unadmitted executor"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newCNPGResumeFixture(t, "restore-planned")
-			p, err := claimCNPGProofResume(t.Context(), f.c, "umami-db", f.currentSource, "5678")
+			p, err := f.claim(t.Context(), f.currentSource, "5678")
 			if err != nil {
 				t.Fatal(err)
 			}
 			before := f.patches
 			switch scenario {
 			case "same owner":
-				if _, err = claimCNPGProofResume(t.Context(), f.c, "umami-db", f.currentSource, "5678"); err != nil || f.patches != before {
+				if _, err = f.claim(t.Context(), f.currentSource, "5678"); err != nil || f.patches != before {
 					t.Fatal("qualified idempotent claim rewrote its checkpoint:", err)
 				}
 				return
 			case "finished owner":
 				f.runs["5678"]["status"] = "completed"
 			case "live displaced owner":
-				_, err = claimCNPGProofResume(t.Context(), f.c, "umami-db", f.currentSource, "6789")
+				_, err = f.claim(t.Context(), f.currentSource, "6789")
 			case "retried displaced owner":
 				f.runs["5678"]["run_attempt"] = 2
-				_, err = claimCNPGProofResume(t.Context(), f.c, "umami-db", f.currentSource, "6789")
+				_, err = f.claim(t.Context(), f.currentSource, "6789")
 			case "unadmitted executor":
 				p.executing = cnpgProofExecutor{}
 			}
@@ -345,7 +397,7 @@ func TestDatabaseResumePreservesUncertainClaimWrites(t *testing.T) {
 				}
 				return delegate(ctx, input, program, args...)
 			}
-			if _, err := claimCNPGProofResume(t.Context(), f.c, "umami-db", f.currentSource, "5678"); err == nil || f.creates != 0 {
+			if _, err := f.claim(t.Context(), f.currentSource, "5678"); err == nil || f.creates != 0 {
 				t.Fatal("unconfirmed claim was accepted or advanced a resource")
 			}
 			wantAttempts := 1

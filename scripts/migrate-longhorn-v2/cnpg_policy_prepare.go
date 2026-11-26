@@ -21,7 +21,7 @@ func (c client) observeRecoveryPolicyPreparation(ctx context.Context, input reco
 	defer func() {
 		if err != nil {
 			result = recoveryPolicyPreparation{}
-			err = fmt.Errorf("recovery policy preparation held: phase=%s", phase)
+			err = fmt.Errorf("recovery policy preparation held: phase=%s: %w", phase, err)
 		}
 	}()
 	refused := errors.New("pre-creation policy or its native process changed")
@@ -72,19 +72,22 @@ func (c client) observeRecoveryPolicyPreparation(ctx context.Context, input reco
 	}
 	var first recoveryPolicyPreparation
 	for pass := range 2 {
-		phase = "runtime"
+		phase = "runtime-config"
 		configuration, e := native("config", "--all", "-o", "json")
 		if e != nil {
 			return result, e
 		}
+		phase = "runtime-version"
 		version, e := native("version", "-o", "json")
 		if e != nil {
 			return result, e
 		}
+		phase = "runtime-hive"
 		hive, e := native("shell", "hive")
 		if e != nil {
 			return result, e
 		}
+		phase = "runtime-interpretation"
 		runtime, e := readRecoveryCiliumRuntime(configuration, version, hive)
 		if e != nil {
 			return result, e
