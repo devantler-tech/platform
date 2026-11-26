@@ -7,6 +7,7 @@ import (
 )
 
 func TestDatabaseRecoveryIsIsolatedV2AndPinsItsOriginalArchiveAndWAL(t *testing.T) {
+	productionSources := cnpgSources()
 	for _, reviewed := range cnpgArchiveSources() {
 		c, store, backup := recoverySourceFixture(reviewed.Name)
 		source, err := bindCNPGRecoverySource(c, store, backup, text(backup, "metadata", "uid"), archiveBindingFixture(c, store))
@@ -43,10 +44,10 @@ func TestDatabaseRecoveryIsIsolatedV2AndPinsItsOriginalArchiveAndWAL(t *testing.
 		}
 		ingress := value(policy, "spec", "ingress").([]any)
 		denied := value(policy, "spec", "egressDeny").([]any)
-		if value(policy, "spec", "enableDefaultDeny", "ingress") != true || value(policy, "spec", "enableDefaultDeny", "egress") != true || len(ingress) != 1 || len(denied) != len(cnpgSources()) {
+		if value(policy, "spec", "enableDefaultDeny", "ingress") != true || value(policy, "spec", "enableDefaultDeny", "egress") != true || len(ingress) != 1 || len(denied) != len(productionSources) {
 			t.Fatal("recovery omitted explicit default deny or a production database namespace fence")
 		}
-		for i, production := range cnpgSources() {
+		for i, production := range productionSources {
 			peers := value(denied[i].(object), "toEndpoints").([]any)
 			if len(peers) != 1 || text(peers[0].(object), "matchLabels", "k8s:io.kubernetes.pod.namespace") != production.Namespace {
 				t.Fatal("recovery omitted a production database namespace")

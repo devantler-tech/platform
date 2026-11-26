@@ -10,11 +10,13 @@ import (
 	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
+// Endpoint identifies a Pod in a Hubble policy decision.
 type Endpoint struct {
 	Namespace string `json:"namespace"`
 	Pod       string `json:"pod_name"`
 }
 
+// Denial describes the exact flow that must have been blocked by policy.
 type Denial struct {
 	Source, Destination           Endpoint
 	SourceIP, DestinationIP, Node string
