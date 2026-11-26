@@ -52,6 +52,17 @@ resolver-only UDP/TCP port-53 allowance. The latter is an existing platform
 allowance, including its absence of DNS-layer restrictions. The owned recovery
 policy retains its DNS proxy rule for archive FQDN resolution.
 
+The same admission policy generates a Kubernetes `NetworkPolicy` named
+`default-deny` with an empty Pod selector and both policy directions.
+`cnpg-baseline-knp-entries-cilium-1.20.5.json` is the v1.20.5
+`pkg/k8s.ParseNetworkPolicy` output for that policy with synthetic namespace
+`longhorn-db-proof-umami-db-1234` and UID
+`44444444-4444-4444-8444-444444444444`. Its two entries have explicit null
+peers and ports, which grant no traffic just like the empty lists on the
+Cilium default-deny entries. Only these paired, empty, enforced directions
+normalize in the allowance comparison. A missing field or a wildcard peer
+still fails.
+
 The repository-wide check examines all potentially applicable allowances,
 including entries without the owned CNP's labels. Apart from identity labels
 and the separately validated subject selector, their complete effect must
@@ -63,26 +74,15 @@ separately. No policy labels or expected effects are inferred from live output.
 
 ## Runtime configuration fixture
 
-`cilium-hive-synthetic-1.20.5.txt` is a separate synthetic native Hive rendering.
-Its generator instantiates only `types.PolicyConfig` with local-cluster policy
-normalization enabled. It does not connect to an agent. Reproduce it from the
-same verified Cilium checkout with the generator below. The generator removes
-trailing horizontal whitespace and extra terminal blank lines; native struct
-content and indentation are preserved.
-
-```sh
-rtk proxy env GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local \
-  go run -mod=vendor /absolute/path/to/testdata/cilium-runtime-fixture-generator.go \
-  > /tmp/cilium-hive-synthetic-1.20.5.txt
-```
-
-The runtime payload parser consumes the native `config --all -o json`,
-`version -o json`, and `shell hive` results. The JSON test inputs exercise the
-root field names verified in Cilium's `config.go` and `version.go`; they are
-synthetic inputs, not captured agent responses. The PolicyConfig cell is absent
-from the JSON config API, so the complete native Hive struct is required.
-Neither payload parser proves continuity between separate reads. A reviewed
-workflow must bind the actual agent Pod/container process before and after them.
+The runtime parser reads `config --all -o json`, `version -o json` and
+`policy get -o json` from the same bound agent. The repository check requires the
+exact imported policy at its observed revision. Cilium's config API omits
+`PolicyDefaultLocalCluster`. For this policy, the scoped peers acquire the
+local-cluster selector when Cilium imports it with local normalization.
+Re-running the policy fixture generator with the second argument `false`
+omits those selectors and the resulting entries fail the import check.
+The runtime config and version test inputs are synthetic. The protected
+workflow binds the agent Pod and container identity around both observations.
 
 ## Endpoint serialization fixtures
 

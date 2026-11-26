@@ -82,22 +82,13 @@ func (c client) observeRecoveryPolicyPreparation(ctx context.Context, input reco
 		if e != nil {
 			return result, e
 		}
-		phase = "runtime-hive"
-		hive, e := native("shell", "hive")
-		if e != nil {
-			return result, e
-		}
-		phase = "runtime-interpretation"
-		runtime, e := readRecoveryCiliumRuntime(configuration, version, hive)
-		if e != nil {
-			return result, e
-		}
-		phase = "policy-import"
+		phase = "policy-repository"
 		raw, e := native("policy", "get", "-o", "json")
 		if e != nil {
 			return result, e
 		}
-		revision, e := verifyCNPGIsolationImport(raw, input.Policy, input.ArchiveEndpoint, runtime)
+		phase = "runtime-policy-binding"
+		runtime, revision, e := readRecoveryCiliumRuntime(configuration, version, raw, input.Policy, input.ArchiveEndpoint)
 		if e != nil {
 			return result, e
 		}
