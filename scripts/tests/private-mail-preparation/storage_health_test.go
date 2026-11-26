@@ -139,7 +139,9 @@ func TestEncryptedMailStorageHealthAcrossServing(t *testing.T) {
 		wantFailed               bool
 	}{
 		{name: "prepared encrypted storage", phase: "Pending", want: true},
-		{name: "prepared encrypted V2 claim", phase: "Pending", path: "k8s/providers/hetzner/apps", claim: "email-data-encrypted-v2", want: true},
+		{name: "prepared encrypted V2 claim", phase: "Pending", claim: "email-data-encrypted-v2", want: true},
+		{name: "production serving V2 must bind", phase: "Pending", path: "k8s/providers/hetzner/apps", claim: "email-data-encrypted-v2"},
+		{name: "production serving V2 bound", phase: "Bound", path: "k8s/providers/hetzner/apps", claim: "email-data-encrypted-v2", want: true},
 		{name: "encrypted V2 with the older class", phase: "Pending", claim: "email-data-encrypted-v2",
 			mutate: func(_, s map[string]any) { s["storageClassName"] = "email-encrypted" }},
 		{name: "encrypted V1 with the V2 class", phase: "Pending",
