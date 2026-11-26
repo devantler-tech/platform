@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -80,29 +82,9 @@ func prepareActualBudgetReservation(ctx context.Context, c client, source, run, 
 			return errors.New("the existing backup scratch reservation requires explicit retirement")
 		}
 	}
-	var selected object
-	var reservation actualBudgetScratchReservation
-	for _, worker := range v1BackupWorkers {
-		lh := storage[worker]
-		key, current, disk, ok := actualBudgetScratchDisk(nodes[worker], lh)
-		if !ok {
-			continue
-		}
-		target, fit := actualBudgetRequiredReservation(disk, current, s.replicas, worker)
-		if !fit {
-			continue
-		}
-		if target == current {
-			return nil
-		}
-		if selected == nil || current-target < reservation.Original-reservation.Temporary {
-			selected, reservation = lh, actualBudgetScratchReservation{Source: source, Run: run,
-				NodeUID: text(nodes[worker], "metadata", "uid"), StorageUID: text(lh, "metadata", "uid"),
-				DiskUUID: text(disk, "diskUUID"), Disk: key, Original: current, Temporary: target}
-		}
-	}
-	if selected == nil {
-		return errors.New("no qualified original disk can open the measured snapshot-copy shortfall")
+	selected, reservation, err := planActualBudgetReservation(s, nodes, storage, source, run)
+	if err != nil || selected == nil {
+		return err
 	}
 	annotation, err := json.Marshal(reservation)
 	if err != nil {
@@ -113,6 +95,54 @@ func prepareActualBudgetReservation(ctx context.Context, c client, source, run, 
 		marker = object{"op": "add", "path": "/metadata/annotations", "value": object{actualBudgetScratchOwner: string(annotation)}}
 	}
 	return updateActualBudgetScratch(ctx, c, source, selected, reservation.Disk, reservation.Temporary, marker, string(annotation))
+}
+
+func planActualBudgetReservation(s inventory, nodes, storage map[string]object, source, run string) (object, actualBudgetScratchReservation, error) {
+	if verifyActualBudgetStagingPlacement(s) == nil {
+		return nil, actualBudgetScratchReservation{}, nil
+	}
+	var selected object
+	var reservation actualBudgetScratchReservation
+	for _, worker := range v1BackupWorkers {
+		lh := storage[worker]
+		key, current, disk, ok := actualBudgetScratchDisk(nodes[worker], lh)
+		if !ok {
+			continue
+		}
+		target, fit := actualBudgetRequiredReservation(disk, current, s.replicas, worker)
+		if !fit || target == current || !actualBudgetProjectedPlacement(s, worker, key, target) {
+			continue
+		}
+		if selected == nil || current-target < reservation.Original-reservation.Temporary {
+			selected, reservation = lh, actualBudgetScratchReservation{Source: source, Run: run,
+				NodeUID: text(nodes[worker], "metadata", "uid"), StorageUID: text(lh, "metadata", "uid"),
+				DiskUUID: text(disk, "diskUUID"), Disk: key, Original: current, Temporary: target}
+		}
+	}
+	if selected == nil {
+		return nil, actualBudgetScratchReservation{}, errors.New("no single reservation change can qualify all possible V1 staging placements")
+	}
+	return selected, reservation, nil
+}
+
+func actualBudgetProjectedPlacement(s inventory, worker, key string, target int64) bool {
+	s.storageNodes = slices.Clone(s.storageNodes)
+	for i, original := range s.storageNodes {
+		if text(original, "metadata", "name") != worker {
+			continue
+		}
+		node := maps.Clone(original)
+		spec := maps.Clone(valueObject(original, "spec"))
+		disks := maps.Clone(valueObject(spec, "disks"))
+		disk := maps.Clone(valueObject(disks, key))
+		disk["storageReserved"] = float64(target)
+		disks[key] = disk
+		spec["disks"] = disks
+		node["spec"] = spec
+		s.storageNodes[i] = node
+		return verifyActualBudgetStagingPlacement(s) == nil
+	}
+	return false
 }
 
 func retireActualBudgetReservation(ctx context.Context, c client, source, originalRun string) error {
@@ -146,12 +176,21 @@ func retireActualBudgetReservation(ctx context.Context, c client, source, origin
 	if selected == nil {
 		return errors.New("the confirmed backup reservation is absent")
 	}
-	previous, err := readFinishedMigrationRun(ctx, c, reservation.Run, reservation.Source)
-	if err != nil || previous.Attempt != 1 {
-		return errors.New("the original reservation workflow has no terminal first attempt")
+	if err := verifyActualBudgetReservationRun(ctx, c, reservation); err != nil {
+		return err
 	}
 	marker := object{"op": "remove", "path": actualBudgetScratchPath}
 	return updateActualBudgetScratch(ctx, c, source, selected, reservation.Disk, reservation.Original, marker, "")
+}
+
+func verifyActualBudgetReservationRun(ctx context.Context, c client, reservation actualBudgetScratchReservation) error {
+	if _, err := readFinishedMigrationRun(ctx, c, reservation.Run, reservation.Source); err != nil {
+		return errors.New("the latest reservation workflow attempt is active or unverified")
+	}
+	if err := previousRunCompleted(ctx, c, reservation.Run, reservation.Source); err != nil {
+		return errors.New("the original reservation workflow has no terminal first attempt")
+	}
+	return nil
 }
 
 func decodeActualBudgetScratchReservation(raw string, reservation *actualBudgetScratchReservation) bool {

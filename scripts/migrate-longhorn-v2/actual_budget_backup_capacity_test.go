@@ -75,6 +75,7 @@ func TestActualBudgetReservationOpensOnlyTheObservedShortfall(t *testing.T) {
 	}{
 		{"two GiB shortfall", 53 * gib, 19 * gib, 17 * gib, true},
 		{"already has room", 53 * gib, 16 * gib, 16 * gib, true},
+		{"already has room with zero reserve", 53 * gib, 0, 0, true},
 		{"more than the qualified shortfall", 53 * gib, 20 * gib, 0, false},
 		{"physical margin exhausted", 50 * gib, 19 * gib, 0, false},
 	} {
@@ -85,6 +86,89 @@ func TestActualBudgetReservationOpensOnlyTheObservedShortfall(t *testing.T) {
 			reserve, fit := actualBudgetRequiredReservation(disk, tt.reserved, []object{replica}, worker)
 			if fit != tt.wantFit || reserve != tt.wantReserve {
 				t.Fatalf("reserve=%d fit=%t, want %d %t", reserve, fit, tt.wantReserve, tt.wantFit)
+			}
+		})
+	}
+}
+
+func TestActualBudgetReservationAdmitsOnlyAQualifiedProjectedPlacement(t *testing.T) {
+	for _, mode := range []string{"fits already", "one safe adjustment", "unsafe eligible peer"} {
+		t.Run(mode, func(t *testing.T) {
+			s := v1ReservationFixture(true)
+			for i, node := range s.nodes {
+				valueObject(node, "metadata")["uid"] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
+				valueObject(s.storageNodes[i], "metadata")["uid"] = fmt.Sprintf("00000000-0000-4000-8001-%012d", i+1)
+			}
+			first := valueObject(s.storageNodes[0], "spec", "disks", "default-disk-fixture")
+			first["storageReserved"] = float64(25 * v1FixtureGiB)
+			if mode != "fits already" {
+				valueObject(s.storageNodes[1], "status", "diskStatus", "default-disk")["storageAvailable"] = float64(50 * v1FixtureGiB)
+				valueObject(s.storageNodes[2], "spec", "disks", "default-disk")["storageReserved"] = float64(26 * v1FixtureGiB)
+			}
+			if mode == "one safe adjustment" {
+				valueObject(s.storageNodes[1], "spec", "disks", "default-disk")["storageReserved"] = float64(24 * v1FixtureGiB)
+			}
+			nodes, err := indexed(s.nodes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			storage, err := indexed(s.storageNodes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected, plan, err := planActualBudgetReservation(s, nodes, storage, strings.Repeat("a", 40), "1234")
+			switch mode {
+			case "fits already":
+				if err != nil || selected != nil {
+					t.Fatalf("existing capacity must remain unchanged: %v", err)
+				}
+			case "one safe adjustment":
+				if err != nil || text(selected, "metadata", "name") != "prod-worker-1" ||
+					plan.Original-plan.Temporary != 2*v1FixtureGiB || first["storageReserved"] != float64(25*v1FixtureGiB) {
+					t.Fatalf("the qualified projection modified its observed source or did not bind the existing disk: %v", err)
+				}
+			case "unsafe eligible peer":
+				if err == nil || selected != nil {
+					t.Fatal("preparation admitted a peer whose physical margin cannot support the clone")
+				}
+			}
+		})
+	}
+}
+
+func TestActualBudgetReservationRetirementBindsFirstAndLatestAttempts(t *testing.T) {
+	const run = "1234"
+	const source = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const path = ".github/workflows/prepare-longhorn-v2-node.yaml"
+	for _, mode := range []string{"completed later attempt", "active later attempt", "invalid original attempt"} {
+		t.Run(mode, func(t *testing.T) {
+			var reads []string
+			c := client{run: func(_ context.Context, _ []byte, program string, args ...string) ([]byte, error) {
+				if program != "gh" || len(args) != 2 || args[0] != "api" {
+					t.Fatal("reservation run preflight requested an unexpected command")
+				}
+				reads = append(reads, args[1])
+				status, revision, attempt := "completed", source, 2
+				switch args[1] {
+				case "repos/devantler-tech/platform/actions/runs/" + run:
+					if mode == "active later attempt" {
+						status = "in_progress"
+					}
+				case "repos/devantler-tech/platform/actions/runs/" + run + "/attempts/1":
+					attempt = 1
+					if mode == "invalid original attempt" {
+						revision = strings.Repeat("b", 40)
+					}
+				default:
+					t.Fatal("reservation retirement requested an unrelated workflow receipt")
+				}
+				return json.Marshal(object{"id": 1234, "status": status, "head_sha": revision, "head_branch": "main",
+					"event": "workflow_dispatch", "run_attempt": attempt, "path": path, "conclusion": "failure"})
+			}}
+			err := verifyActualBudgetReservationRun(t.Context(), c, actualBudgetScratchReservation{Run: run, Source: source})
+			if (err == nil) != (mode == "completed later attempt") ||
+				len(reads) != map[bool]int{true: 1, false: 2}[mode == "active later attempt"] {
+				t.Fatalf("reservation run proof: reads=%d err=%v", len(reads), err)
 			}
 		})
 	}
@@ -143,10 +227,10 @@ func TestActualBudgetReservationWritesItsOwnerAndReserveTogether(t *testing.T) {
 					writes++
 					var patch []object
 					if err := json.Unmarshal(data, &patch); err != nil || len(patch) != 4 ||
-						text(patch[0], "path") != "/metadata/uid" || text(patch[0], "value") != "original-storage-uid" ||
-						text(patch[1], "path") != "/metadata/resourceVersion" || text(patch[1], "value") != "100" ||
-						text(patch[2], "path") != "/spec/disks/default-disk/storageReserved" || value(patch[2], "value") != float64(17<<30) ||
-						text(patch[3], "path") != actualBudgetScratchPath || text(patch[3], "value") != reservation {
+						text(patch[0], "op") != "test" || text(patch[0], "path") != "/metadata/uid" || text(patch[0], "value") != "original-storage-uid" ||
+						text(patch[1], "op") != "test" || text(patch[1], "path") != "/metadata/resourceVersion" || text(patch[1], "value") != "100" ||
+						text(patch[2], "op") != "replace" || text(patch[2], "path") != "/spec/disks/default-disk/storageReserved" || value(patch[2], "value") != float64(17<<30) ||
+						text(patch[3], "op") != "add" || text(patch[3], "path") != actualBudgetScratchPath || text(patch[3], "value") != reservation {
 						t.Fatal("the reserve and its owner must be protected by one exact CAS")
 					}
 					if outcome == "lost reply" {

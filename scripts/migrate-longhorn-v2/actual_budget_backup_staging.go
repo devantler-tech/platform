@@ -137,8 +137,8 @@ func actualBudgetRequiredReservation(disk object, reserved int64, replicas []obj
 	const margin = int64(4 << 30)
 	const qualifiedShortfall = int64(2 << 30)
 	target := min(reserved, maximum-scheduled-v1BackupScratchBytes)
-	if !maxOK || !availOK || !schedOK || reserved <= 0 || maximum <= 0 || available > maximum ||
-		target <= 0 || reserved-target > qualifiedShortfall ||
+	if !maxOK || !availOK || !schedOK || reserved < 0 || maximum <= 0 || available > maximum ||
+		target < 0 || target == 0 && reserved > 0 || reserved-target > qualifiedShortfall ||
 		available-v1BackupScratchBytes <= maximum/4+margin ||
 		!v1DiskLedgerMatches(replicas, worker, disk, maximum, scheduled) {
 		return 0, false

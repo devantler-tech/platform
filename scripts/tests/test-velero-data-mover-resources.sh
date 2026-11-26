@@ -254,11 +254,11 @@ for mode in unset production longhorn wffc both; do
     fail "the ${mode} backup storage configuration did not substitute"
   actual_longhorn="$(yq -N -er '
     select(.kind == "ConfigMap" and .metadata.namespace == "velero" and .metadata.name == "node-agent-config") |
-    .data["node-agent-config.json"] | from_json | .backupPVC.longhorn.storageClass // "longhorn"
+    .data["node-agent-config.json"] | from_json | .backupPVC.longhorn.storageClass
   ' "${rendered_effective}")" || fail 'the Longhorn snapshot copy mapping is invalid'
   actual_wffc="$(yq -N -er '
     select(.kind == "ConfigMap" and .metadata.namespace == "velero" and .metadata.name == "node-agent-config") |
-    .data["node-agent-config.json"] | from_json | .backupPVC["longhorn-wffc"].storageClass // "longhorn-wffc"
+    .data["node-agent-config.json"] | from_json | .backupPVC["longhorn-wffc"].storageClass
   ' "${rendered_effective}")" || fail 'the WFFC snapshot copy mapping is invalid'
   [[ "${actual_longhorn}" == "${expected_longhorn}" ]] ||
     fail "${mode}: Longhorn copies need ${expected_longhorn}; found ${actual_longhorn}"
