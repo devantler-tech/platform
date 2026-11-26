@@ -161,6 +161,10 @@ spec:
       limits:
         cpu: "2"
         memory: 512Mi
+    podSecurityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
     # Harden against Kubescape C-0017 (immutable container filesystem). The chart
     # renders the container securityContext with `toYaml .Values.securityContext`,
     # so this block REPLACES the chart default in full — it repeats the chart's

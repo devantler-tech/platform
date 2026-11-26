@@ -120,3 +120,17 @@ spec:
                   rollingUpdate:
                     maxSurge: 25%
                     maxUnavailable: 25%
+          - target:
+              kind: Deployment
+              name: flagger
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: flagger
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      seccompProfile:
+                        type: RuntimeDefault

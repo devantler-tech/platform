@@ -19,6 +19,8 @@ spec:
         name: cloudnative-pg
   # https://github.com/cloudnative-pg/charts/blob/main/charts/cloudnative-pg/values.yaml
   values:
+    containerSecurityContext:
+      runAsNonRoot: true
     replicaCount: ${cloudnative_pg_replicas:=2}
     updateStrategy:
       type: RollingUpdate

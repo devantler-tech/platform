@@ -49,6 +49,8 @@ spec:
   # cluster-policies/best-practices/validate-replica-floor.yaml), not a label.
   # The maxUnavailable: 1 PDB keeps the node drainable at one replica.
   values:
+    containerSecurityContext:
+      runAsNonRoot: true
     # Reviewed v0.16.0 release. Update the recovery guard with both image digests.
     image:
       tag: v0.16.0@sha256:6404a416718bd7aad943c67a25a7bb20d0558b43edfeab0bf167f013ca435882
