@@ -16,6 +16,7 @@ const (
 	actualBudgetNamespace       = "actual-budget"
 	actualBudgetClaim           = "actual-budget-actualbudget-data"
 	v1BackupPolicy              = "velero-volume-policies"
+	v1BackupStagingClass        = "longhorn-backup"
 )
 
 var errActualBudgetBackup = errors.New("the exact Actual Budget recovery copy is unverified")
@@ -38,7 +39,7 @@ func actualBudgetBackup(run string) object {
 			"labels": object{"storage.platform.devantler.tech/benchmark-run": run}},
 		"spec": object{
 			"includedNamespaces": []any{actualBudgetNamespace}, "includedResources": []any{"pods", "persistentvolumeclaims"},
-			"includeClusterResources": false, "storageLocation": "default", "snapshotVolumes": false, "snapshotMoveData": false,
+			"includeClusterResources": false, "storageLocation": "default", "snapshotVolumes": true, "snapshotMoveData": true,
 			"defaultVolumesToFsBackup": false, "ttl": "168h0m0s", "itemOperationTimeout": "20m0s",
 			"labelSelector":  object{"matchLabels": object{"app.kubernetes.io/name": "actualbudget", "app.kubernetes.io/instance": actualBudgetNamespace}},
 			"resourcePolicy": object{"kind": "configmap", "name": v1BackupPolicy},
@@ -50,7 +51,7 @@ func actualBudgetBackup(run string) object {
 func observeActualBudgetBackupSource(ctx context.Context, c client, digest string) (object, string, error) {
 	pv, err := c.observeRetainedSource(ctx, retentionTarget{actualBudgetNamespace, actualBudgetClaim, digest})
 	if err != nil || text(pv, "spec", "persistentVolumeReclaimPolicy") != "Retain" ||
-		text(pv, "spec", "storageClassName") != "longhorn" || !providerRWOFilesystem(pv) {
+		text(pv, "spec", "storageClassName") != "longhorn" || text(pv, "spec", "capacity", "storage") != "10Gi" || !providerRWOFilesystem(pv) {
 		return nil, "", errActualBudgetBackup
 	}
 	pods, err := c.list(ctx, "pods", actualBudgetNamespace)
@@ -107,7 +108,7 @@ func validateActualBudgetBackupPolicy(cm object) error {
 			object{"conditions": object{"storageClass": []any{"hcloud"}, "pvcLabels": object{
 				"backup.platform.devantler.tech/volume-data": "independently-mirrored",
 			}}, "action": object{"type": "skip"}},
-			object{"conditions": object{"storageClass": []any{"longhorn"}}, "action": object{"type": "fs-backup"}},
+			object{"conditions": object{"storageClass": []any{"longhorn"}}, "action": object{"type": "snapshot"}},
 			object{"conditions": object{"volumeTypes": []any{"emptyDir"}}, "action": object{"type": "skip"}},
 		},
 	}
@@ -117,16 +118,21 @@ func validateActualBudgetBackupPolicy(cm object) error {
 	return nil
 }
 
-func actualBudgetTransfer(proof, backup, pod object, claimUID string) bool {
+func actualBudgetTransfer(proof, backup object, claimUID string) bool {
 	done, goodDone := nativeObservationUint(value(proof, "status", "progress", "bytesDone"))
 	total, goodTotal := nativeObservationUint(value(proof, "status", "progress", "totalBytes"))
 	return nativeRestoreUID(claimUID) && seedVeleroIdentity(proof) &&
-		text(proof, "apiVersion") == "velero.io/v1" && text(proof, "kind") == "PodVolumeBackup" &&
+		text(proof, "apiVersion") == "velero.io/v2alpha1" && text(proof, "kind") == "DataUpload" &&
 		controlledBy(proof, backup) && text(proof, "metadata", "labels", "velero.io/pvc-uid") == claimUID &&
-		text(proof, "spec", "pod", "uid") == text(pod, "metadata", "uid") &&
-		text(proof, "spec", "pod", "name") == text(pod, "metadata", "name") && text(proof, "spec", "pod", "namespace") == actualBudgetNamespace &&
-		text(proof, "spec", "volume") == "data" && text(proof, "spec", "backupStorageLocation") == "default" &&
-		text(proof, "spec", "uploaderType") == "kopia" && goodDone && goodTotal && done > 0 && total == done &&
+		text(proof, "metadata", "labels", "velero.io/backup-uid") == text(backup, "metadata", "uid") &&
+		text(proof, "metadata", "labels", "velero.io/backup-name") == text(backup, "metadata", "name") &&
+		text(proof, "spec", "sourceNamespace") == actualBudgetNamespace && text(proof, "spec", "sourcePVC") == actualBudgetClaim &&
+		text(proof, "spec", "backupStorageLocation") == "default" && text(proof, "spec", "snapshotType") == "CSI" &&
+		text(proof, "spec", "csiSnapshot", "driver") == "driver.longhorn.io" &&
+		text(proof, "spec", "csiSnapshot", "snapshotClass") == "longhorn-snapshot-vsc" &&
+		text(proof, "spec", "csiSnapshot", "storageClass") == "longhorn" &&
+		kubeName.MatchString(text(proof, "spec", "csiSnapshot", "volumeSnapshot")) &&
+		goodDone && goodTotal && done > 0 && total == done &&
 		text(proof, "status", "snapshotID") != "" && cleanVeleroResult(proof) == nil
 }
 
@@ -148,7 +154,11 @@ func runActualBudgetBackup(ctx context.Context, c client, source, run, digest st
 	}
 	policy, err := c.get(ctx, "configmap", "velero", v1BackupPolicy, false)
 	if err != nil || validateActualBudgetBackupPolicy(policy) != nil {
-		return errors.New("the reviewed production filesystem backup policy has not been observed")
+		return errors.New("the reviewed production CSI backup policy has not been observed")
+	}
+	staging, err := observeActualBudgetStaging(ctx, c)
+	if err != nil {
+		return err
 	}
 	pod, claimUID, err := observeActualBudgetBackupSource(ctx, c, digest)
 	if err != nil {
@@ -157,6 +167,9 @@ func runActualBudgetBackup(ctx context.Context, c client, source, run, digest st
 	backups, err := c.list(ctx, "backups.velero.io", "velero")
 	if err != nil || !settledActualBudgetBackupWindow(backups) {
 		return errors.New("a Velero backup is unfinished or unverified")
+	}
+	if err = verifyActualBudgetStagingCapacity(ctx, c); err != nil {
+		return err
 	}
 	desired := actualBudgetBackup(run)
 	created, err := c.create(ctx, source, desired)
@@ -177,14 +190,14 @@ func runActualBudgetBackup(ctx context.Context, c client, source, run, digest st
 			return errActualBudgetBackup
 		}
 
-		transfers, err := c.list(ctx, "podvolumebackups.velero.io", "velero")
+		transfers, err := c.list(ctx, "datauploads.velero.io", "velero")
 		if err != nil {
 			return errActualBudgetBackup
 		}
 		matched := 0
 		for _, transfer := range transfers {
 			if controlledBy(transfer, backup) {
-				if !actualBudgetTransfer(transfer, backup, pod, claimUID) {
+				if !actualBudgetTransfer(transfer, backup, claimUID) {
 					return errors.Join(errReadinessTerminal, errActualBudgetBackup)
 				}
 				matched++
@@ -197,6 +210,10 @@ func runActualBudgetBackup(ctx context.Context, c client, source, run, digest st
 		currentPolicy, err := c.get(ctx, "configmap", "velero", v1BackupPolicy, false)
 		if err != nil || benchmarkIdentity(currentPolicy) != benchmarkIdentity(policy) ||
 			text(currentPolicy, "metadata", "resourceVersion") != text(policy, "metadata", "resourceVersion") {
+			return errors.Join(errReadinessTerminal, errActualBudgetBackup)
+		}
+		currentStaging, err := observeActualBudgetStaging(ctx, c)
+		if err != nil || currentStaging != staging {
 			return errors.Join(errReadinessTerminal, errActualBudgetBackup)
 		}
 		currentLocation, err := c.get(ctx, "backupstoragelocations.velero.io", "velero", "default", false)
