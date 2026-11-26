@@ -117,6 +117,20 @@ func TestHostRebootRecordsEveryDeclaredDatabase(t *testing.T) {
 	if err != nil || r.Version != 4 || len(r.Databases) != 8 {
 		t.Fatalf("current database roster was not bound: version=%d databases=%d err=%v", r.Version, len(r.Databases), err)
 	}
+	preview := valueObject(f.databases[7], "status")
+	delete(preview, "readyInstances")
+	if _, err = h.databases(context.Background(), r.Databases); !errors.Is(err, errHostDatabasesRecovering) {
+		t.Fatal("CNPG omits zero ready instances for a recovering singleton", err)
+	}
+	preview["readyInstances"] = nil
+	if _, err = h.databases(context.Background(), r.Databases); !errors.Is(err, errHostDatabaseRoster) {
+		t.Fatal("a malformed ready instance count was accepted", err)
+	}
+	preview["readyInstances"] = float64(1)
+	delete(valueObject(f.databases[4], "status"), "readyInstances")
+	if _, err = h.databases(context.Background(), r.Databases); !errors.Is(err, errHostDatabaseRoster) {
+		t.Fatal("a two-instance cluster without ready replicas entered the recovery wait", err)
+	}
 	f.databases[4]["status"].(object)["readyInstances"] = float64(1)
 	if _, err = h.databases(context.Background(), r.Databases); !errors.Is(err, errHostDatabasesRecovering) {
 		t.Fatal("a recovering two-instance cluster cleared the reboot gate", err)

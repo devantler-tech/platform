@@ -249,7 +249,11 @@ func (h hostMemoryReboot) databases(ctx context.Context, expected map[string]hos
 			return nil, errHostDatabaseRoster
 		}
 		result[key] = hostDatabaseIdentity{UID: text(db, "metadata", "uid"), SystemID: text(db, "status", "systemID")}
-		ready := value(db, "status", "readyInstances")
+		ready, reported := valueObject(db, "status")["readyInstances"]
+		if !reported {
+			// The CNPG Cluster status omits zero ready instances.
+			ready = float64(0)
+		}
 		phase := text(db, "status", "phase")
 		if (ready != profile.instances-1 && ready != profile.instances) || phase == "" {
 			return nil, errHostDatabaseRoster
