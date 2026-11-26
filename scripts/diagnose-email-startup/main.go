@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"reflect"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -54,8 +55,8 @@ type container struct {
 	Command, Args []string
 	Env, EnvFrom  []json.RawMessage
 	VolumeMounts  []struct {
-		Name, MountPath, SubPath string
-		ReadOnly                 bool
+		Name, MountPath, SubPath, SubPathExpr string
+		ReadOnly                              bool
 	}
 }
 type pod struct {
@@ -67,8 +68,12 @@ type pod struct {
 		InitContainers        []container
 		Volumes               []struct {
 			Name      string
-			ConfigMap *struct{ Name string }
-			EmptyDir  *struct{ Medium, SizeLimit string }
+			ConfigMap *struct {
+				Name     string
+				Items    []json.RawMessage
+				Optional bool
+			}
+			EmptyDir *struct{ Medium, SizeLimit string }
 		}
 	}
 	Status struct {
@@ -259,7 +264,7 @@ func bindPod(b []byte) (binding, bool, bool, error) {
 
 func bindDatastoreMount(p pod, c container) (string, bool) {
 	for _, mount := range c.VolumeMounts {
-		if mount.MountPath != "/etc/stalwart/config.json" || mount.SubPath != "config.json" || !mount.ReadOnly {
+		if mount.MountPath != "/etc/stalwart/config.json" || mount.SubPath != "config.json" || mount.SubPathExpr != "" || !mount.ReadOnly {
 			continue
 		}
 		for _, volume := range p.Spec.Volumes {
@@ -288,9 +293,9 @@ func bindStorageSelector(p pod) (string, bool) {
 				continue
 			}
 			if init.Name != "select-mail-store" || init.Image != approvedRoutedImage || mount.MountPath != "/store-selection" ||
-				mount.SubPath != "" || len(init.Env) != 0 || len(init.EnvFrom) != 0 ||
+				mount.SubPath != "" || mount.SubPathExpr != "" || len(init.Env) != 0 || len(init.EnvFrom) != 0 ||
 				!reflect.DeepEqual(init.Command, []string{"/usr/bin/sh", "-c"}) || len(init.Args) != 1 ||
-				hashBytes([]byte(init.Args[0])) != approvedStorageSelectorSHA {
+				hashBytes([]byte(init.Args[0])) != approvedStorageSelectorSHA || !bindStorageTemplate(p, init) {
 				return "", false
 			}
 			writers++
@@ -312,6 +317,33 @@ func bindStorageSelector(p pod) (string, bool) {
 		selector = status.ContainerID
 	}
 	return selector, selector != ""
+}
+
+func bindStorageTemplate(p pod, init container) bool {
+	const path = "/etc/private-mail-datastore"
+	matches := 0
+	for _, mount := range init.VolumeMounts {
+		if strings.HasPrefix(mount.MountPath, path+"/") {
+			return false
+		}
+		if mount.MountPath != path {
+			continue
+		}
+		if mount.Name != "datastore" || !mount.ReadOnly || mount.SubPath != "" || mount.SubPathExpr != "" {
+			return false
+		}
+		matches++
+	}
+	if matches != 1 {
+		return false
+	}
+	for _, volume := range p.Spec.Volumes {
+		if volume.Name == "datastore" {
+			source := volume.ConfigMap
+			return source != nil && source.Name == "private-mail-datastore" && len(source.Items) == 0 && !source.Optional
+		}
+	}
+	return false
 }
 
 // statusFor refuses duplicate identities, independent of Kubernetes list ordering.

@@ -45,6 +45,9 @@ func TestBindPodRecognizesOnlyReviewedFencedStorageProducer(t *testing.T) {
 		name   string
 		change func(map[string]any)
 	}{
+		{"foreign template", func(p map[string]any) {
+			p["spec"].(map[string]any)["volumes"].([]any)[0].(map[string]any)["configMap"].(map[string]any)["name"] = "foreign-template"
+		}},
 		{"changed selector", func(p map[string]any) {
 			p["spec"].(map[string]any)["initContainers"].([]any)[0].(map[string]any)["args"] = []string{"unexpected"}
 		}},
