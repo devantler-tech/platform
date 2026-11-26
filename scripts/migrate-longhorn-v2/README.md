@@ -508,6 +508,14 @@ V2 volume is detached. It retains the original Velero transfer and Pod
 identities and verifies the recovered bytes on the replacement before moving
 the same claim to a different worker.
 
+The workflow checks memory headroom when choosing the reattachment worker.
+If the recorded second Pod remains unassigned because of insufficient memory
+and its first workflow attempt fails, use `resume-native-v2-reattach` with
+`resume-longhorn-native-v2-reattach:<original run ID>:<failed continuation run ID>`.
+Leave `node` and `database` empty. The protected operation verifies the failed
+executor and the never-started Pod, replaces that test Pod and checks the
+original payload and previously written marker on the remaining qualified worker.
+
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes

@@ -129,6 +129,9 @@ func nativeRestoreReceiptUIDs(record benchmarkRecord, seed canarySeedState, stat
 	if state.Expired != nil {
 		used[state.Expired.Pod.UID], used[state.Expired.Transfer.UID] = true, true
 	}
+	if state.Reattachment != nil {
+		used[state.Reattachment.UnscheduledPod.UID] = true
+	}
 	return used
 }
 

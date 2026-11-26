@@ -75,6 +75,9 @@ func readNativeRestoreDetached(ctx context.Context, c client, state nativeRestor
 }
 
 func nativeRestoreDetachPhase(phase string) bool {
+	if stage := nativeReattachmentStage(phase); stage > 0 {
+		return stage < nativeReattachmentStage(nativeReattachmentReplacement)
+	}
 	if stage := nativeRestoreExpiredStage(phase); stage > 0 {
 		return stage < nativeRestoreExpiredStage(nativeExpiredReplacement)
 	}

@@ -49,6 +49,8 @@ func main() {
 		authorization = authorizeNativeRestore(os.Getenv)
 	case nativeRestoreResumeOperation:
 		_, authorization = nativeRestoreResumeRun(os.Getenv)
+	case nativeReattachmentOperation:
+		_, _, authorization = authorizeNativeReattachment(os.Getenv)
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":
@@ -214,11 +216,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Reviewed capacity configuration is unreadable.")
 		os.Exit(1)
 	}
-	if operation == nativeRestoreOperation || operation == nativeRestoreResumeOperation {
+	if operation == nativeRestoreOperation || operation == nativeRestoreResumeOperation || operation == nativeReattachmentOperation {
 		c := client{run: execute, context: "admin@prod"}
-		if operation == nativeRestoreResumeOperation {
+		switch operation {
+		case nativeReattachmentOperation:
+			err = resumeNativeReattachment(ctx, c, config)
+		case nativeRestoreResumeOperation:
 			err = resumeNativeRestore(ctx, c, config)
-		} else {
+		default:
 			err = runNativeRestore(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), config)
 		}
 		if err != nil {
