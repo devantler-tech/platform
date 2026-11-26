@@ -64,7 +64,8 @@ spec:
            metadata.labels['platform.devantler.tech/storage-stage'] == 'prepared' &&
            has(spec.storageClassName) &&
            ((metadata.name == 'private-mail-data' && spec.storageClassName == 'longhorn-wffc') ||
-            (metadata.name == 'email-data-encrypted' && spec.storageClassName == 'email-encrypted')) &&
+            (metadata.name == 'email-data-encrypted' && spec.storageClassName == 'email-encrypted') ||
+            (metadata.name == 'email-data-encrypted-v2' && spec.storageClassName == 'email-encrypted-v2')) &&
            !has(spec.volumeName) &&
            (!has(metadata.annotations) || !('volume.kubernetes.io/selected-node' in metadata.annotations))))
     - apiVersion: postgresql.cnpg.io/v1

@@ -44,6 +44,26 @@ func runCNPGArchiveProof(ctx context.Context, c client) error {
 			return err
 		}
 	}
+	for _, step := range []struct {
+		name string
+		run  func(context.Context) error
+	}{
+		{"fresh source backup", p.freshBackup},
+		{"archived recovery target", func(ctx context.Context) error { return p.prepareRecovery(ctx, hostname) }},
+		{"isolated namespace creation", env("Namespace")},
+		{"isolation policy creation", env("Policy")},
+	} {
+		if err := step.run(ctx); err != nil {
+			return fmt.Errorf("database archive proof held at %s", step.name)
+		}
+	}
+	if err := p.prepareIsolation(ctx); err != nil {
+		return fmt.Errorf("database archive proof held at native isolation import: %w", err)
+	}
+	return finishCNPGArchiveProof(ctx, p)
+}
+
+func finishCNPGArchiveProof(ctx context.Context, p *cnpgProofRun) error {
 	database := func(kind string) func(context.Context) error {
 		return func(ctx context.Context) error {
 			_, err := p.createDatabaseResource(ctx, kind)
@@ -54,11 +74,6 @@ func runCNPGArchiveProof(ctx context.Context, c client) error {
 		name string
 		run  func(context.Context) error
 	}{
-		{"fresh source backup", p.freshBackup},
-		{"archived recovery target", func(ctx context.Context) error { return p.prepareRecovery(ctx, hostname) }},
-		{"isolated namespace creation", env("Namespace")},
-		{"isolation policy creation", env("Policy")},
-		{"native isolation import", p.prepareIsolation},
 		{"archive credential binding", p.copySourceCredential},
 		{"read-only archive configuration", database("ObjectStore")},
 		{"isolated V2 database creation", database("Cluster")},

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -18,31 +19,44 @@ func (p *cnpgProofRun) prepareIsolation(ctx context.Context) error {
 	if _, err := p.currentExecution(ctx); err != nil {
 		return err
 	}
-	if err := p.emptyRecoveryNamespace(ctx); err != nil {
+	bound, err := p.readRecoveryIsolation(ctx)
+	if err != nil {
 		return err
+	}
+	p.record.Preparation, p.record.Phase = &bound, "isolation-prepared"
+	return p.save(ctx)
+}
+
+// readRecoveryIsolation performs only native reads. The owned environment must
+// stay empty across the policy observation so no data or credentials are admitted.
+func (p *cnpgProofRun) readRecoveryIsolation(ctx context.Context) (recoveryPolicyPreparation, error) {
+	var empty recoveryPolicyPreparation
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	if err := p.emptyRecoveryNamespace(ctx); err != nil {
+		return empty, fmt.Errorf("preparation namespace before policy read: %w", err)
 	}
 	input, err := p.recoveryPolicyInput(ctx)
 	if err != nil {
-		return err
+		return empty, fmt.Errorf("preparation policy identity: %w", err)
 	}
 	bound, err := p.c.observeRecoveryPolicyPreparation(ctx, input)
 	if err != nil {
-		return err
+		return empty, err
 	}
 	if err = p.emptyRecoveryNamespace(ctx); err != nil {
-		return err
+		return empty, fmt.Errorf("preparation namespace after policy read: %w", err)
 	}
 	after, err := p.recoveryPolicyInput(ctx)
 	if err != nil {
-		return err
+		return empty, fmt.Errorf("preparation policy identity after the native read: %w", err)
 	}
 	agent, err := bindRecoveryCiliumAgent(after.Agent, after.DaemonSet, after.Node)
 	generation, ok := nativeObservationUint(value(after.Policy, "metadata", "generation"))
 	if err != nil || agent != bound.Agent || !ok || generation != bound.Generation || text(after.Policy, "metadata", "uid") != bound.PolicyUID || !commandContextActive(ctx) {
-		return refused
+		return empty, errors.New("native recovery policy or agent changed during observation")
 	}
-	p.record.Preparation, p.record.Phase = &bound, "isolation-prepared"
-	return p.save(ctx)
+	return bound, nil
 }
 
 // emptyRecoveryNamespace uses complete inventories, never a selector that could
@@ -65,8 +79,11 @@ func (p *cnpgProofRun) emptyRecoveryNamespace(ctx context.Context) error {
 	}
 	for _, kind := range []string{"pods", "jobs", "deployments", "statefulsets", "daemonsets", "cronjobs", "replicasets", "persistentvolumeclaims", "secrets", "clusters.postgresql.cnpg.io", "objectstores.barmancloud.cnpg.io"} {
 		objects, err := p.c.list(ctx, kind, identity.Name)
-		if err != nil || len(objects) != 0 {
-			return refused
+		if err != nil {
+			return fmt.Errorf("the recovery namespace %s inventory is unreadable", kind)
+		}
+		if len(objects) != 0 {
+			return fmt.Errorf("the recovery namespace contains unexpected %s", kind)
 		}
 	}
 	return readNamespace()
