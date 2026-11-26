@@ -21,16 +21,12 @@ import (
 )
 
 func TestNativeRestoreReclaimReferenceDecisions(t *testing.T) {
-	path := os.Getenv("LONGHORN_RESTORE_RECLAIM_FENCE_PATH")
-	if path == "" {
+	raw := os.Getenv("LONGHORN_RESTORE_RECLAIM_FENCE_FIXTURE")
+	if raw == "" {
 		t.Skip("native restore reclaim fixture is run by its parent test")
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var policies []v1.ValidatingAdmissionPolicy
-	if err := json.Unmarshal(raw, &policies); err != nil || len(policies) != 2 {
+	if err := json.Unmarshal([]byte(raw), &policies); err != nil || len(policies) != 2 {
 		t.Fatalf("complete reclaim policy fixture required: %v", err)
 	}
 	const workspace = "longhorn-benchmark"
@@ -48,6 +44,11 @@ func TestNativeRestoreReclaimReferenceDecisions(t *testing.T) {
 
 	changed := pv.DeepCopy()
 	changed.Spec.PersistentVolumeReclaimPolicy = corev1.PersistentVolumeReclaimDelete
+	changed.Status.Phase = corev1.VolumeBound
+	finalized := changed.DeepCopy()
+	finalized.Finalizers = []string{"external-provisioner.volume.kubernetes.io/finalizer"}
+	released := finalized.DeepCopy()
+	released.Status.Phase = corev1.VolumeReleased
 	aliased := pv.DeepCopy()
 	aliased.Name, aliased.UID = "different-backend-reference", ""
 	foreign := aliased.DeepCopy()
@@ -58,7 +59,8 @@ func TestNativeRestoreReclaimReferenceDecisions(t *testing.T) {
 	rebound.Spec.ClaimRef.UID = "replacement-claim"
 	verifyReclaimDecisions(t, policies[0], "PersistentVolume", "persistentvolumes", "", []decisionCase{
 		{name: "allow ordinary reclaim", old: pv, current: changed, operation: admission.Update, selected: true, allowed: true},
-		{name: "allow native finalizers and status", old: changed, current: changed.DeepCopy(), operation: admission.Update, selected: true, allowed: true},
+		{name: "allow installing CSI finalizer", old: changed, current: finalized, operation: admission.Update, selected: true, allowed: true},
+		{name: "allow PV status update", old: finalized, current: released, operation: admission.Update, subresource: "status", selected: true, allowed: true},
 		{name: "deny clearing reclaim intent", old: changed, current: pv, operation: admission.Update, selected: true},
 		{name: "deny alias PV", current: aliased, operation: admission.Create, selected: true},
 		{name: "deny another PV with the same storage class", current: foreign, operation: admission.Create, selected: true},
@@ -72,8 +74,11 @@ func TestNativeRestoreReclaimReferenceDecisions(t *testing.T) {
 	remote.Namespace = "different-namespace"
 	other := remote.DeepCopy()
 	other.Spec.VolumeName, other.Spec.StorageClassName = "different-pv", nil
+	claim.Status.Phase = corev1.ClaimPending
+	bound := claim.DeepCopy()
+	bound.Status.Phase = corev1.ClaimBound
 	verifyReclaimDecisions(t, policies[1], "PersistentVolumeClaim", "persistentvolumeclaims", workspace, []decisionCase{
-		{name: "allow native claim status", old: claim, current: claim.DeepCopy(), operation: admission.Update, selected: true, allowed: true},
+		{name: "allow PVC status update", old: claim, current: bound, operation: admission.Update, subresource: "status", selected: true, allowed: true},
 		{name: "deny replacement same name", current: newClaim, operation: admission.Create, selected: true},
 		{name: "deny alias in another namespace", resource: remote.Namespace, current: remote, operation: admission.Create, selected: true},
 		{name: "ignore unrelated claim", resource: other.Namespace, current: other, operation: admission.Create},
@@ -118,7 +123,7 @@ func verifyReclaimDecisions(t *testing.T, policy v1.ValidatingAdmissionPolicy, k
 				if tc.operation == admission.Create {
 					options = &metav1.CreateOptions{}
 				}
-				attr := admission.NewAttributesRecord(tc.current, tc.old, gvk, requestNamespace, "", gvr, "", tc.operation, options, false, nil)
+				attr := admission.NewAttributesRecord(tc.current, tc.old, gvk, requestNamespace, "", gvr, tc.subresource, tc.operation, options, false, nil)
 				versioned := &admission.VersionedAttributes{Attributes: attr, VersionedObject: admission.NewLazyObject(tc.current),
 					VersionedOldObject: admission.NewLazyObject(tc.old), VersionedKind: gvk}
 				result := validator.Validate(context.Background(), gvr, versioned, nil, nil, celconfig.RuntimeCELCostBudget, nil)
@@ -133,7 +138,8 @@ func verifyReclaimDecisions(t *testing.T, policy v1.ValidatingAdmissionPolicy, k
 				}
 				decision := result.Decisions[0]
 				allowed := decision.Action == validating.ActionAdmit && decision.Evaluation == validating.EvalAdmit
-				if allowed != tc.allowed {
+				denied := decision.Action == validating.ActionDeny && decision.Evaluation == validating.EvalDeny
+				if tc.allowed && !allowed || !tc.allowed && !denied {
 					t.Fatalf("allow=%v want=%v: %+v", allowed, tc.allowed, decision)
 				}
 			})

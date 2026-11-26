@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestNativeRestoreReclaimRequiresTheOriginalBoundClaimAndCSIFinalizer(t *testing.T) {
-	for _, fault := range []string{"", "wrong PV UID", "changed claim", "wrong policy", "no CSI finalizer", "unbound", "changed capacity"} {
+	for _, fault := range []string{"", "new claim observation", "wrong PV UID", "changed claim spec", "wrong policy", "no CSI finalizer", "unbound", "changed capacity"} {
 		t.Run(fault, func(t *testing.T) {
 			_, _, _, before := nativeRestoreDetachedFixture(t)
 			_, _, _, after := nativeRestoreDetachedFixture(t)
@@ -13,8 +13,10 @@ func TestNativeRestoreReclaimRequiresTheOriginalBoundClaimAndCSIFinalizer(t *tes
 			switch fault {
 			case "wrong PV UID":
 				valueObject(after.PV, "metadata")["uid"] = "different"
-			case "changed claim":
+			case "new claim observation":
 				valueObject(after.Claim, "metadata")["resourceVersion"] = "different"
+			case "changed claim spec":
+				valueObject(after.Claim, "spec")["volumeName"] = "another-volume"
 			case "wrong policy":
 				valueObject(after.PV, "spec")["persistentVolumeReclaimPolicy"] = "Retain"
 			case "no CSI finalizer":
@@ -24,7 +26,7 @@ func TestNativeRestoreReclaimRequiresTheOriginalBoundClaimAndCSIFinalizer(t *tes
 			case "changed capacity":
 				valueObject(after.PV, "spec", "capacity")["storage"] = "8Gi"
 			}
-			if got := nativeRestoreCSIReclaimReady(before, after); got != (fault == "") {
+			if got := nativeRestoreCSIReclaimReady(before, after); got != (fault == "" || fault == "new claim observation") {
 				t.Fatalf("reclaim readiness for %q: %v", fault, got)
 			}
 		})

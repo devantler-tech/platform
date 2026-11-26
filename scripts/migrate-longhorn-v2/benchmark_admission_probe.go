@@ -57,40 +57,55 @@ func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, record benc
 }
 
 func proveReferenceFenceOnServingAPIs(ctx context.Context, c client, source, originalRun string, policy object, receipt benchmarkFenceReceipt, probe func(context.Context, *http.Client, *url.URL) error) error {
+	_, err := proveReferenceFenceForRoster(ctx, c, source, originalRun, policy, receipt, nil, probe)
+	return err
+}
+
+func proveReferenceFenceForRoster(ctx context.Context, c client, source, originalRun string, policy object, receipt benchmarkFenceReceipt, expected []benchmarkAPIServer, probe func(context.Context, *http.Client, *url.URL) error) (benchmarkAdmissionEpoch, error) {
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
-		return err
+		return benchmarkAdmissionEpoch{}, err
 	}
 	before, err := observeBenchmarkReferenceFence(ctx, c, policy, receipt)
 	if err != nil {
-		return err
+		return benchmarkAdmissionEpoch{}, err
 	}
 	roster, err := observeBenchmarkAPIServers(ctx, c)
 	if err != nil {
-		return err
+		return benchmarkAdmissionEpoch{}, err
+	}
+	if expected != nil && !slices.Equal(expected, roster) {
+		return benchmarkAdmissionEpoch{}, errors.New("serving API processes changed between admission proofs")
 	}
 	if err := verifyBenchmarkProviderEndpoints(ctx, os.Getenv("HCLOUD_TOKEN"), roster); err != nil {
-		return err
+		return benchmarkAdmissionEpoch{}, err
 	}
 	for _, endpoint := range roster {
 		direct, address, err := namespaceinventory.LoadBenchmarkAdmissionClient(os.Getenv, endpoint.ExternalIP, originalRun)
 		if err != nil {
-			return err
+			return benchmarkAdmissionEpoch{}, err
 		}
 		proof := probe(ctx, direct, address)
 		direct.CloseIdleConnections()
 		if proof != nil {
-			return proof
+			return benchmarkAdmissionEpoch{}, proof
 		}
 	}
-	after, err := observeBenchmarkAPIServers(ctx, c)
-	if err != nil || !slices.Equal(roster, after) {
-		return errors.New("serving API processes changed during benchmark admission proof")
+	if err := rebindBenchmarkAPIServers(ctx, c, roster); err != nil {
+		return benchmarkAdmissionEpoch{}, err
 	}
 	bound, err := observeBenchmarkReferenceFence(ctx, c, policy, receipt)
 	if err != nil || before != bound {
-		return errors.New("the benchmark reference fence changed during native admission proof")
+		return benchmarkAdmissionEpoch{}, errors.New("the benchmark reference fence changed during native admission proof")
 	}
-	return sourceCurrent(ctx, c.run, source)
+	return before, sourceCurrent(ctx, c.run, source)
+}
+
+func rebindBenchmarkAPIServers(ctx context.Context, c client, expected []benchmarkAPIServer) error {
+	actual, err := observeBenchmarkAPIServers(ctx, c)
+	if err != nil || len(expected) != benchmarkControlPlaneCount || !slices.Equal(expected, actual) {
+		return errors.New("serving API processes changed during benchmark admission proof")
+	}
+	return nil
 }
 
 func observeBenchmarkReferenceFence(ctx context.Context, c client, desired object, receipt benchmarkFenceReceipt) (benchmarkAdmissionEpoch, error) {

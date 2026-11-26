@@ -97,13 +97,17 @@ func (inputs nativeRestoreReclaimInputs) detached(ctx context.Context, c client)
 	if err != nil {
 		return actual, err
 	}
+	return actual, inputs.verifyDetachedReferences(ctx, c, actual)
+}
+
+func (inputs nativeRestoreReclaimInputs) verifyDetachedReferences(ctx context.Context, c client, actual nativeRestoreDetachedObservation) error {
 	pvs, err := c.list(ctx, "persistentvolumes", "")
 	if err != nil {
-		return actual, err
+		return err
 	}
 	claims, err := c.list(ctx, "persistentvolumeclaims", "*")
 	if err != nil {
-		return actual, err
+		return err
 	}
-	return actual, verifyNativeRestoreReclaim(inputs.record, inputs.seed, inputs.state, actual, pvs, claims)
+	return verifyNativeRestoreReclaim(inputs.record, inputs.seed, inputs.state, actual, pvs, claims)
 }

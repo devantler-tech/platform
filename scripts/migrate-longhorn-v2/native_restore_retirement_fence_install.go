@@ -40,28 +40,46 @@ func (r *nativeRestoreReclaim) installReclaimFence(ctx context.Context, desired 
 	return err
 }
 
-func (r nativeRestoreReclaim) proveFences(ctx context.Context, policies []object, detached nativeRestoreDetachedObservation) error {
+type nativeRestoreFenceProof struct {
+	roster []benchmarkAPIServer
+	epochs map[string]benchmarkAdmissionEpoch
+}
+
+func (r nativeRestoreReclaim) proveFences(ctx context.Context, policies []object, detached nativeRestoreDetachedObservation) (nativeRestoreFenceProof, error) {
+	roster, err := observeBenchmarkAPIServers(ctx, r.c)
+	if err != nil {
+		return nativeRestoreFenceProof{}, err
+	}
+	proof := nativeRestoreFenceProof{roster: roster, epochs: map[string]benchmarkAdmissionEpoch{}}
 	state := r.inputs.state
 	for i, policy := range policies {
-		receipt := r.progress.Fences[text(policy, "metadata", "name")]
+		name := text(policy, "metadata", "name")
+		receipt := r.progress.Fences[name]
 		probe := func(ctx context.Context, direct *http.Client, endpoint *url.URL) error {
 			if i == 0 {
 				return probeNativeRestoreReclaimPV(ctx, direct, endpoint, state, detached.PV, policy)
 			}
 			return probeNativeRestoreReclaimClaim(ctx, direct, endpoint, state, detached.Claim, policy)
 		}
-		if err := proveReferenceFenceOnServingAPIs(ctx, r.c, r.progress.Source, state.Run, policy, receipt, probe); err != nil {
-			return err
+		epoch, err := proveReferenceFenceForRoster(ctx, r.c, r.progress.Source, state.Run, policy, receipt, roster, probe)
+		if err != nil {
+			return nativeRestoreFenceProof{}, err
 		}
+		proof.epochs[name] = epoch
 	}
-	return nil
+	return proof, r.rebindFences(ctx, policies, proof)
 }
 
-func (r nativeRestoreReclaim) rebindFences(ctx context.Context, policies []object) error {
+func (r nativeRestoreReclaim) rebindFences(ctx context.Context, policies []object, proof nativeRestoreFenceProof) error {
+	if len(policies) != 2 || len(proof.epochs) != len(policies) {
+		return errNativeRestoreEvidence
+	}
 	for _, policy := range policies {
-		if _, err := observeBenchmarkReferenceFence(ctx, r.c, policy, r.progress.Fences[text(policy, "metadata", "name")]); err != nil {
-			return err
+		name := text(policy, "metadata", "name")
+		observed, err := observeBenchmarkReferenceFence(ctx, r.c, policy, r.progress.Fences[name])
+		if err != nil || observed != proof.epochs[name] {
+			return errNativeRestoreEvidence
 		}
 	}
-	return nil
+	return rebindBenchmarkAPIServers(ctx, r.c, proof.roster)
 }

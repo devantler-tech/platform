@@ -25,6 +25,15 @@ func runNativeRestoreReclaim(ctx context.Context, c client, config []byte) error
 	if _, err := qualifyNativeRestoreTargets(state.Targets, current.nodes, current.storageNodes, tag, true, config); err != nil {
 		return err
 	}
+	pod, err := inputs.readConsumer(ctx, c)
+	if err != nil {
+		return err
+	}
+	if value(pod, "metadata", "deletionTimestamp") != nil {
+		if err := inputs.waitConsumerGone(ctx, c); err != nil {
+			return err
+		}
+	}
 	r, err := beginNativeRestoreReclaim(ctx, c, inputs)
 	if err != nil {
 		return err
@@ -66,20 +75,15 @@ func runNativeRestoreReclaim(ctx context.Context, c client, config []byte) error
 }
 
 func (r *nativeRestoreReclaim) removeConsumer(ctx context.Context) error {
-	state := r.inputs.state
-	consumer := state.Resources["SecondPod"]
-	pod, err := r.c.get(ctx, "pod", consumer.Namespace, consumer.Name, true)
+	pod, err := r.inputs.readConsumer(ctx, r.c)
 	if err != nil {
 		return err
 	}
 	if pod == nil {
 		return nil
 	}
-	if benchmarkIdentity(pod) != consumer || text(pod, "apiVersion") != "v1" || text(pod, "kind") != "Pod" ||
-		text(pod, "metadata", "labels", "storage.platform.devantler.tech/benchmark-run") != state.Run ||
-		text(pod, "spec", "nodeName") != state.SecondNode || value(pod, "metadata", "deletionTimestamp") != nil ||
-		value(pod, "metadata", "ownerReferences") != nil {
-		return errNativeRestoreEvidence
+	if value(pod, "metadata", "deletionTimestamp") != nil {
+		return r.inputs.waitConsumerGone(ctx, r.c)
 	}
 	if err := r.advance(ctx, "consumer-removal-requested", "", benchmarkFenceReceipt{}); err != nil {
 		return err
@@ -88,6 +92,33 @@ func (r *nativeRestoreReclaim) removeConsumer(ctx context.Context) error {
 		return err
 	}
 	return r.advance(ctx, "consumer-removed", "", benchmarkFenceReceipt{})
+}
+
+func (inputs nativeRestoreReclaimInputs) readConsumer(ctx context.Context, c client) (object, error) {
+	consumer := inputs.state.Resources["SecondPod"]
+	pod, err := c.get(ctx, "pod", consumer.Namespace, consumer.Name, true)
+	if err != nil || pod == nil {
+		return pod, err
+	}
+	if benchmarkIdentity(pod) != consumer || text(pod, "apiVersion") != "v1" || text(pod, "kind") != "Pod" ||
+		text(pod, "metadata", "labels", "storage.platform.devantler.tech/benchmark-run") != inputs.state.Run ||
+		text(pod, "spec", "nodeName") != inputs.state.SecondNode || value(pod, "metadata", "ownerReferences") != nil {
+		return nil, errNativeRestoreEvidence
+	}
+	return pod, nil
+}
+
+func (inputs nativeRestoreReclaimInputs) waitConsumerGone(ctx context.Context, c client) error {
+	return waitReady(ctx, func(ctx context.Context) error {
+		pod, err := inputs.readConsumer(ctx, c)
+		if err != nil {
+			return errors.Join(errReadinessTerminal, err)
+		}
+		if pod != nil {
+			return errNativeRestoreEvidence
+		}
+		return nil
+	})
 }
 
 func (r nativeRestoreReclaim) resourcesRetired(ctx context.Context) error {
