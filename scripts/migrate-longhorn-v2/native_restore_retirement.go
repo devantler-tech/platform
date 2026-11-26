@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 )
@@ -34,19 +35,37 @@ func runNativeRestoreReclaim(ctx context.Context, c client, config []byte) error
 			return err
 		}
 	}
-	r, err := beginNativeRestoreReclaim(ctx, c, inputs)
+	var r nativeRestoreReclaim
+	var prior object
+	if os.Getenv("LONGHORN_V2_OPERATION") == nativeRestoreReclaimResume {
+		r, prior, err = observeNativeRestoreReclaimContinuation(ctx, c, inputs)
+		if err != nil {
+			return err
+		}
+	} else {
+		r, err = beginNativeRestoreReclaim(ctx, c, inputs)
+		if err != nil {
+			return err
+		}
+		if err := r.removeConsumer(ctx); err != nil {
+			return err
+		}
+		for _, policy := range policies {
+			if err := r.installReclaimFence(ctx, policy); err != nil {
+				return err
+			}
+		}
+	}
+	detached, proof, err := r.qualifyStorageReclaim(ctx, policies)
 	if err != nil {
 		return err
 	}
-	if err := r.removeConsumer(ctx); err != nil {
-		return err
-	}
-	for _, policy := range policies {
-		if err := r.installReclaimFence(ctx, policy); err != nil {
+	if prior != nil {
+		if err := r.adoptBoundFences(ctx, prior); err != nil {
 			return err
 		}
 	}
-	if err := r.reclaimStorage(ctx, policies); err != nil {
+	if err := r.reclaimStorage(ctx, policies, detached, proof); err != nil {
 		return err
 	}
 	if err := waitReady(ctx, func(ctx context.Context) error { return r.resourcesRetired(ctx) }); err != nil {

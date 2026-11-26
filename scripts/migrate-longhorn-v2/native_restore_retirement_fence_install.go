@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
+	"reflect"
 )
 
 const reclaimPolicyKind = "validatingadmissionpolicies.admissionregistration.k8s.io"
@@ -57,9 +59,17 @@ func (r nativeRestoreReclaim) proveFences(ctx context.Context, policies []object
 		receipt := r.progress.Fences[name]
 		probe := func(ctx context.Context, direct *http.Client, endpoint *url.URL) error {
 			if i == 0 {
-				return probeNativeRestoreReclaimPV(ctx, direct, endpoint, state, detached.PV, policy)
+				pv, err := r.rebindProbeReference(ctx, "persistentvolume", detached.PV)
+				if err != nil {
+					return err
+				}
+				return probeNativeRestoreReclaimPV(ctx, direct, endpoint, state, pv, policy)
 			}
-			return probeNativeRestoreReclaimClaim(ctx, direct, endpoint, state, detached.Claim, policy)
+			claim, err := r.rebindProbeReference(ctx, "persistentvolumeclaim", detached.Claim)
+			if err != nil {
+				return err
+			}
+			return probeNativeRestoreReclaimClaim(ctx, direct, endpoint, state, claim, policy)
 		}
 		epoch, err := proveReferenceFenceForRoster(ctx, r.c, r.progress.Source, state.Run, policy, receipt, roster, probe)
 		if err != nil {
@@ -82,4 +92,14 @@ func (r nativeRestoreReclaim) rebindFences(ctx context.Context, policies []objec
 		}
 	}
 	return rebindBenchmarkAPIServers(ctx, r.c, proof.roster)
+}
+
+func (r nativeRestoreReclaim) rebindProbeReference(ctx context.Context, kind string, original object) (object, error) {
+	id := benchmarkIdentity(original)
+	fresh, err := r.c.get(ctx, kind, id.Namespace, id.Name, false)
+	if err != nil || benchmarkIdentity(fresh) != id || value(fresh, "metadata", "deletionTimestamp") != nil ||
+		text(fresh, "metadata", "resourceVersion") == "" || !reflect.DeepEqual(value(fresh, "spec"), value(original, "spec")) {
+		return nil, errors.New("the detached reference changed before the native admission check")
+	}
+	return fresh, nil
 }
