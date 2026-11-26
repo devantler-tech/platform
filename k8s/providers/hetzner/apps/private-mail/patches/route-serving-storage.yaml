@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: private-mail
+  namespace: private-mail
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: configure
+          volumeMounts:
+            - name: serving-storage
+              mountPath: /etc/stalwart/config.json
+              subPath: config.json
+              readOnly: true
+            - name: v2-data
+              mountPath: /var/lib/stalwart-v2
+      containers:
+        - name: private-mail
+          volumeMounts:
+            - name: serving-storage
+              mountPath: /etc/stalwart/config.json
+              subPath: config.json
+              readOnly: true
+            - name: v2-data
+              mountPath: /var/lib/stalwart-v2
+      volumes:
+        - name: legacy-data
+          $patch: delete
+        - name: serving-storage
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: v2-data
+          persistentVolumeClaim:
+            claimName: email-data-encrypted-v2
