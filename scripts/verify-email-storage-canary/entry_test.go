@@ -80,6 +80,12 @@ func TestWorkflowProtectsDispatchAndPrivateInputs(t *testing.T) {
 			t.Fatal("missing pre-credential dispatch guard:", guard)
 		}
 	}
+	build := text(steps[3], "run")
+	if !strings.Contains(build, "verify-email-storage-v2-canary") ||
+		!strings.Contains(build, `./scripts/verify-prod-recovery-source.sh "$GITHUB_SHA"`) ||
+		child(steps[3], "env")["KUBE_CONFIG"] != nil {
+		t.Fatal("the V2 canary must bind current main before it receives cluster credentials")
+	}
 	runtime := text(steps[5], "run")
 	for _, required := range []string{"/dev/shm", "umask 077", "unset KUBE_CONFIG", "unset HCLOUD_TOKEN", "use-prod-stable-api-endpoint.sh", "trap 'rm -rf"} {
 		if !strings.Contains(runtime, required) {

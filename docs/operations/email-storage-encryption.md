@@ -113,6 +113,12 @@ node-side key references. Its test class deliberately uses `Delete`, so cleanup
 can remove the synthetic volume. The retained Email class remains `Retain`.
 No serving claim, OpenBao record or operational encryption key is selected.
 
+Use `verify-email-storage-canary` for the V1 canary or
+`verify-email-storage-v2-canary` for the V2 canary. Before the V2 run, verify
+three registered raw disks have capacity for the disposable claim. The V2 proof
+requires the enabled data engine and three running replicas of the same
+encrypted volume on distinct nodes and disks.
+
 The test writes ordinary synthetic content, proves the actual CSI claim and
 Longhorn encrypted-volume identities, and reads the same content after detach
 and remount. It then removes the test key and requires a specific missing-key
