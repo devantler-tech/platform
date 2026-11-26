@@ -80,10 +80,8 @@ func TestEncryptedReplacementKeepsKeysOutsideTheWorkload(t *testing.T) {
 	}
 }
 
-// TestProductionServesTheMailStoreFromEncryptedStorage pins the maintainer's
-// copy-based cutover (#5387): production serves from the encrypted claim after
-// a verified one-time copy, and the original claim stays unchanged, declared
-// and mounted read-only only by that copy step, as the rollback.
+// TestProductionServesTheMailStoreFromEncryptedStorage pins the verified V2
+// cutover, the read-only encrypted V1 source and the original retained claim.
 func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 	for _, path := range []string{"k8s/bases/apps", "k8s/providers/docker/apps"} {
 		for _, o := range render(t, path) {
@@ -103,7 +101,7 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 	}
 	encrypted := object(t, production, "PersistentVolumeClaim", "email-data-encrypted")
 	if mapping(t, encrypted["spec"])["storageClassName"] != "email-encrypted" || mapping(t, mapping(t, encrypted["metadata"])["annotations"])["kustomize.toolkit.fluxcd.io/prune"] != "disabled" {
-		t.Fatal("the serving claim must use the encrypted class and survive a failed deployment")
+		t.Fatal("the encrypted V1 source must keep its class and retention settings")
 	}
 	if labels, _ := mapping(t, encrypted["metadata"])["labels"].(map[string]any); labels["platform.devantler.tech/storage-stage"] != nil {
 		t.Fatal("the serving claim must leave the prepared-storage health exception and wait for binding")
@@ -114,17 +112,22 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 	if mapping(t, object(t, production, "StorageClass", "email-encrypted-v2")["parameters"])["encrypted"] != "true" {
 		t.Fatal("the V2 migration destination must encrypt at rest")
 	}
-	prepared := object(t, production, "PersistentVolumeClaim", "email-data-encrypted-v2")
-	metadata := mapping(t, prepared["metadata"])
-	spec := mapping(t, prepared["spec"])
+	v2 := object(t, production, "PersistentVolumeClaim", "email-data-encrypted-v2")
+	metadata := mapping(t, v2["metadata"])
+	spec := mapping(t, v2["spec"])
+	labels, _ := metadata["labels"].(map[string]any)
 	if metadata["namespace"] != "private-mail" ||
 		mapping(t, metadata["annotations"])["kustomize.toolkit.fluxcd.io/prune"] != "disabled" ||
-		mapping(t, metadata["labels"])["platform.devantler.tech/storage-stage"] != "prepared" ||
+		labels["platform.devantler.tech/storage-stage"] != nil ||
 		spec["storageClassName"] != "email-encrypted-v2" || spec["volumeMode"] != "Filesystem" ||
 		!reflect.DeepEqual(spec["accessModes"], []any{"ReadWriteOnce"}) ||
 		mapping(t, mapping(t, spec["resources"])["requests"])["storage"] != "2Gi" ||
 		spec["volumeName"] != nil || spec["dataSource"] != nil || spec["dataSourceRef"] != nil {
-		t.Fatal("the V2 destination must be a distinct, retained, unbound 2 GiB filesystem claim")
+		t.Fatal("the serving 2 GiB V2 claim must retain its data and wait for binding")
+	}
+	workload := object(t, production, "StatefulSet", "private-mail")
+	if mapping(t, workload["spec"])["replicas"] != 1 {
+		t.Fatal("the one-time copy requires a single mailbox writer")
 	}
 	pod := mapping(t, mapping(t, mapping(t, object(t, production, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
 	volumes := map[string]map[string]any{}
@@ -134,9 +137,9 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 			volumes[stringField(t, volume, "name")] = claim
 		}
 	}
-	if len(volumes) != 2 || volumes["data"]["claimName"] != "email-data-encrypted" || volumes["data"]["readOnly"] == true ||
-		volumes["legacy-data"]["claimName"] != "private-mail-data" || volumes["legacy-data"]["readOnly"] != true {
-		t.Fatal("the server must store data on the encrypted claim and see the original only read-only")
+	if len(volumes) != 2 || volumes["data"]["claimName"] != "email-data-encrypted-v2" || volumes["data"]["readOnly"] == true ||
+		volumes["legacy-data"]["claimName"] != "email-data-encrypted" || volumes["legacy-data"]["readOnly"] != true {
+		t.Fatal("the server must write to the encrypted V2 claim and mount the V1 source read-only")
 	}
 	server := ""
 	for _, item := range sequence(t, pod["containers"]) {
