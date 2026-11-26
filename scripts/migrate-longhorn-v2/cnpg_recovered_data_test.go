@@ -183,7 +183,8 @@ func TestRecoveredDataBracketsTheFilesystemWithHistoryAndThreeV2Copies(t *testin
 			} else if err == nil || len(got.storage.Replicas) > 0 || got.history.SystemID != "" || got.filesystem.Device != 0 {
 				t.Fatalf("unstable data observation escaped: %+v %v", got, err)
 			}
-			if scenario == "policy changed during data check" && (historyReads != 2 || err == nil || err.Error() != "realized recovery isolation changed during the data observation") {
+			if scenario == "policy changed during data check" && (historyReads != 2 || err == nil ||
+				err.Error() != "recovered database data observation held: phase=cilium-after") {
 				t.Fatalf("realized policy drift was not detected across the completed data check: %v", err)
 			}
 			if p.record.RestoreVerified || p.record.Cleaned || p.record.Phase != "cluster-created" {

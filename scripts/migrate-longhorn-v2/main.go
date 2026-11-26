@@ -65,6 +65,8 @@ func main() {
 		authorization = authorizeCNPGArchiveProof(os.Getenv)
 	case umamiArchiveIsolationResumeOperation:
 		_, authorization = authorizeUmamiArchiveIsolationResume(os.Getenv)
+	case umamiArchiveDataResumeOperation:
+		_, authorization = authorizeUmamiArchiveDataResume(os.Getenv)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
 	case "reserve-v1-scratch":
@@ -254,10 +256,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if operation == cnpgArchiveProofOperation || operation == umamiArchiveIsolationResumeOperation {
+	if operation == cnpgArchiveProofOperation || operation == umamiArchiveIsolationResumeOperation || operation == umamiArchiveDataResumeOperation {
 		runProof := runCNPGArchiveProof
-		if operation == umamiArchiveIsolationResumeOperation {
+		switch operation {
+		case umamiArchiveIsolationResumeOperation:
 			runProof = resumeUmamiArchiveIsolation
+		case umamiArchiveDataResumeOperation:
+			runProof = resumeUmamiArchiveData
 		}
 		if err := runProof(ctx, client{run: execute, context: "admin@prod", inventoryPools: pools}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
