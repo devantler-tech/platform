@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"reflect"
 	"slices"
 	"strings"
@@ -54,6 +56,31 @@ func TestNativeRestoreResumeRequiresItsOwnWorkflowConfirmation(t *testing.T) {
 	if !slices.Contains(choices, nativeRestoreResumeOperation) || !migrationDispatchMustRun(gate) ||
 		!strings.Contains(strings.Join(strings.Fields(text(gate, "run")), " "), want) {
 		t.Fatal("resume requires its explicit first-attempt main workflow and original run ID")
+	}
+}
+
+func TestNativeRestoreResumeMainEntryPoint(t *testing.T) {
+	const helper = "PLATFORM_TEST_RESTORE_RESUME_MAIN"
+	if os.Getenv(helper) == "1" {
+		os.Args = os.Args[:1]
+		main()
+		return
+	}
+	_, _, state := nativeRestoreStateFixture(t, "restore-owned")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestNativeRestoreResumeMainEntryPoint$")
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(), helper+"=1")
+	env := nativeRestoreDispatch(state)
+	env["LONGHORN_V2_OPERATION"], env["LONGHORN_V2_CONFIRM"] = nativeRestoreResumeOperation, nativeRestoreResumeConfirmation+state.Run
+	env["GITHUB_SHA"], env["GITHUB_RUN_ID"] = strings.Repeat("a", 40), "9876"
+	for key, val := range env {
+		cmd.Env = append(cmd.Env, key+"="+val)
+	}
+	output, err := cmd.CombinedOutput()
+	// The isolated working directory prevents the executable from reaching a
+	// cluster. A valid dispatch must pass the entry point's authorization.
+	if err == nil || strings.TrimSpace(string(output)) != "Reviewed capacity configuration is unreadable." {
+		t.Fatalf("confirmed continuation did not reach the configuration loader: %v: %s", err, output)
 	}
 }
 

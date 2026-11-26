@@ -47,6 +47,8 @@ func main() {
 		authorization = authorizeNativeSeed(os.Getenv)
 	case nativeRestoreOperation:
 		authorization = authorizeNativeRestore(os.Getenv)
+	case nativeRestoreResumeOperation:
+		_, authorization = nativeRestoreResumeRun(os.Getenv)
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":

@@ -14,6 +14,18 @@ const (
 	nativeRestoreExecutorAnnotation = "storage.platform.devantler.tech/native-restore-executor"
 )
 
+func nativeRestoreResumeRun(getenv func(string) string) (string, error) {
+	original := strings.TrimPrefix(getenv("LONGHORN_V2_CONFIRM"), nativeRestoreResumeConfirmation)
+	source, run := getenv("GITHUB_SHA"), getenv("GITHUB_RUN_ID")
+	if getenv("LONGHORN_V2_OPERATION") != nativeRestoreResumeOperation ||
+		getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != "" ||
+		!validBenchmarkOwner(original, source) || !validBenchmarkOwner(run, source) || original == run ||
+		authorizeWorkflow(getenv, nativeRestoreResumeConfirmation+original) != nil {
+		return "", errNativeRestoreEvidence
+	}
+	return original, nil
+}
+
 // The original run remains the owner of the names, backup and identities in
 // the journal. Only the revision and run allowed to execute writes change.
 func nativeRestoreGrant(getenv func(string) string, state nativeRestoreState) (source, executor string, err error) {
@@ -21,11 +33,9 @@ func nativeRestoreGrant(getenv func(string) string, state nativeRestoreState) (s
 	if source == state.Source && run == state.Run && authorizeNativeRestore(getenv) == nil {
 		return source, "", nil
 	}
-	if getenv("LONGHORN_V2_OPERATION") != nativeRestoreResumeOperation ||
-		getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != "" ||
-		!validBenchmarkOwner(run, source) || !validBenchmarkOwner(state.Run, state.Source) ||
-		source == state.Source || run == state.Run || nativeRestorePhaseIndex(state.Phase) < nativeRestorePhaseIndex("restore-owned") ||
-		authorizeWorkflow(getenv, nativeRestoreResumeConfirmation+state.Run) != nil {
+	original, err := nativeRestoreResumeRun(getenv)
+	if err != nil || original != state.Run || !validBenchmarkOwner(state.Run, state.Source) || source == state.Source ||
+		nativeRestorePhaseIndex(state.Phase) < nativeRestorePhaseIndex("restore-owned") {
 		return "", "", errNativeRestoreEvidence
 	}
 	return source, source + ":" + run, nil
@@ -48,14 +58,9 @@ func verifyNativeRestoreResumeOwner(ctx context.Context, c client, state nativeR
 }
 
 func resumeNativeRestore(ctx context.Context, c client, config []byte) error {
-	confirm := os.Getenv("LONGHORN_V2_CONFIRM")
-	original := strings.TrimPrefix(confirm, nativeRestoreResumeConfirmation)
 	// Authorize the dispatch before making any external call.
-	if c.context != "admin@prod" || c.nativeSeed || c.run == nil || !commandContextActive(ctx) ||
-		os.Getenv("LONGHORN_V2_OPERATION") != nativeRestoreResumeOperation ||
-		os.Getenv("LONGHORN_V2_NODE") != "" || os.Getenv("LONGHORN_V2_DATABASE") != "" ||
-		!validBenchmarkOwner(original, os.Getenv("GITHUB_SHA")) || original == os.Getenv("GITHUB_RUN_ID") ||
-		authorizeWorkflow(os.Getenv, nativeRestoreResumeConfirmation+original) != nil {
+	_, err := nativeRestoreResumeRun(os.Getenv)
+	if err != nil || c.context != "admin@prod" || c.nativeSeed || c.run == nil || !commandContextActive(ctx) {
 		return errNativeRestoreEvidence
 	}
 	journal, record, seed, state, err := readNativeRestoreJournal(ctx, c)
