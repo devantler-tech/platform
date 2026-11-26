@@ -28,6 +28,71 @@ func TestNativeRestoreOutcomeCanBeObservedWithoutReclaimAuthority(t *testing.T) 
 	}
 }
 
+func TestReclaimBindsAllThreeRestoreAttempts(t *testing.T) {
+	for _, fault := range []string{"", "missing continuation", "prior succeeded", "prior rerun", "unrelated prior source", "aliased executor"} {
+		t.Run(fault, func(t *testing.T) {
+			_, _, state := testPendingReattachState(t)
+			state.Phase = "completed"
+			const previousRun, resumedRun = "6789", "9876"
+			previous, resumed := strings.Repeat("a", 40), strings.Repeat("b", 40)
+			executor := resumed + ":" + resumedRun
+			state.Reattachment = &nativeReattachmentRecovery{PreviousExecutor: previous + ":" + previousRun}
+			if fault == "missing continuation" {
+				executor = ""
+			}
+			if fault == "aliased executor" {
+				state.Reattachment.PreviousExecutor = executor
+			}
+			var reads []string
+			c := client{context: "oidc@prod", run: func(_ context.Context, input []byte, binary string, args ...string) ([]byte, error) {
+				if input != nil || binary != "gh" || len(args) != 2 || args[0] != "api" {
+					t.Fatal("the receipt check left the Actions reader")
+				}
+				run, ok := strings.CutPrefix(args[1], "repos/devantler-tech/platform/actions/runs/")
+				if !ok {
+					t.Fatal("the receipt check called an unrelated API")
+				}
+				reads = append(reads, run)
+				id, err := strconv.Atoi(run)
+				if err != nil {
+					t.Fatal(err)
+				}
+				result := object{"id": id, "head_branch": "main", "event": "workflow_dispatch", "status": "completed",
+					"conclusion": "failure", "run_attempt": 1, "path": ".github/workflows/prepare-longhorn-v2-node.yaml"}
+				switch run {
+				case state.Run:
+					result["head_sha"] = state.Source
+				case previousRun:
+					result["head_sha"] = previous
+					switch fault {
+					case "prior succeeded":
+						result["conclusion"] = "success"
+					case "prior rerun":
+						result["run_attempt"] = 2
+					case "unrelated prior source":
+						result["head_sha"] = strings.Repeat("c", 40)
+					}
+				case resumedRun:
+					result["head_sha"], result["conclusion"] = resumed, "success"
+				default:
+					t.Fatal("unrelated Actions run", run)
+				}
+				return json.Marshal(result)
+			}}
+			err := verifyNativeRestoreSuccess(t.Context(), c, state, executor, "8888")
+			if (err == nil) != (fault == "") {
+				t.Fatalf("unexpected verdict for the three restore attempts: %v", err)
+			}
+			if err == nil && !slices.Equal(reads, []string{state.Run, previousRun, resumedRun}) {
+				t.Fatalf("missed one of the recorded attempts: %v", reads)
+			}
+			if err != nil && slices.Contains(reads, resumedRun) {
+				t.Fatalf("continued after a missing or invalid prior attempt: %v", reads)
+			}
+		})
+	}
+}
+
 func TestNativeRestoreReclaimChecksTheOriginalSuccessfulFirstAttempt(t *testing.T) {
 	for _, fault := range []string{"", "unexpected run", "changed source", "wrong path", "other branch", "other event", "live run", "failed run", "second attempt"} {
 		t.Run(fault, func(t *testing.T) {

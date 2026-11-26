@@ -17,7 +17,8 @@ func nativeRestoreReclaimOwnerSucceeded(ctx context.Context, c client, state nat
 
 // Verify the Actions receipts without acquiring any restore or reclaim rights.
 func verifyNativeRestoreSuccess(ctx context.Context, c client, state nativeRestoreState, executor, currentRun string) error {
-	if !commandContextActive(ctx) || c.run == nil || state.Phase != "completed" || state.Run == currentRun {
+	if !commandContextActive(ctx) || c.run == nil || state.Phase != "completed" || state.Run == currentRun ||
+		(state.Reattachment != nil && executor == "") {
 		return errNativeRestoreEvidence
 	}
 	run, source := state.Run, state.Source
@@ -26,6 +27,17 @@ func verifyNativeRestoreSuccess(ctx context.Context, c client, state nativeResto
 		source, run, ok = strings.Cut(executor, ":")
 		if !ok || !validBenchmarkOwner(run, source) || run == state.Run || source == state.Source ||
 			run == currentRun || verifyNativeRestoreResumeOwner(ctx, c, state) != nil {
+			return errNativeRestoreEvidence
+		}
+	}
+	if state.Reattachment != nil {
+		previousSource, previousRun, ok := strings.Cut(state.Reattachment.PreviousExecutor, ":")
+		if !ok || !validBenchmarkOwner(previousRun, previousSource) || previousRun == state.Run ||
+			previousRun == run || previousRun == currentRun || previousSource == state.Source || previousSource == source {
+			return errNativeRestoreEvidence
+		}
+		previous, err := readFinishedMigrationRun(ctx, c, previousRun, previousSource)
+		if err != nil || previous.Attempt != 1 || previous.Conclusion != "failure" {
 			return errNativeRestoreEvidence
 		}
 	}
