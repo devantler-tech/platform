@@ -308,9 +308,10 @@ spec:
             - velero
             # Disposable storage trials use their own explicitly owned backup.
             - longhorn-benchmark
-          # If the production policy selects a CSI snapshot, move its data to
-          # R2. Filesystem backups use Kopia directly from the mounted volume.
-          # Local has no CSI snapshot support.
+          # snapshotMoveData makes Velero's data mover upload CSI snapshots to
+          # the R2 BSL. No-op on base/local (no CSI — everything uses FSB);
+          # active in prod, where the hetzner overlay sets features: EnableCSI
+          # and a volume policy routes Longhorn PVCs to the snapshot path.
           snapshotMoveData: true
           defaultVolumesToFsBackup: true
 
