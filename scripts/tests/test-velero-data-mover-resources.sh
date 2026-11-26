@@ -220,8 +220,8 @@ yq -o=json -I=0 '.spec.template.spec.initContainers' "${vault_config}" |
      ["DR_SNAPSHOT_SHA256", "dr-openbao-snapshot-selection", "sha256", true]])' >/dev/null ||
   fail 'both restore containers must consume the same exact snapshot selection'
 
-# Production and an unset setting must keep the source class until runtime
-# backup and restore validation explicitly opts into the disposable copy.
+# The production validation selects the disposable copy for the immediate
+# Longhorn class. Unset and the WFFC production path keep their source class.
 production_backup_class="$(yq -er '.data.velero_backup_pvc_storage_class // "longhorn"' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" ||
   fail 'the production backup storage setting could not be read'
 readonly production_backup_class
@@ -239,6 +239,7 @@ for mode in unset production longhorn wffc both; do
     production)
       printf 'velero_backup_pvc_storage_class\t%s\nvelero_backup_wffc_pvc_storage_class\t%s\n' \
         "${production_backup_class}" "${production_wffc_backup_class}" >"${substitution_variables}"
+      expected_longhorn='longhorn-backup'
       ;;
     longhorn | both)
       printf 'velero_backup_pvc_storage_class\tlonghorn-backup\n' >>"${substitution_variables}"
