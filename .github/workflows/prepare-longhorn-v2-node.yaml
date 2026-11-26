@@ -34,6 +34,7 @@ name: Prepare Longhorn V2 Migration
             prepare-native-v1-seed,
             restore-native-v2-seed,
             resume-native-v2-seed-restore,
+            resume-native-v2-reattach,
             inventory-replicas,
             inventory-storage-root,
             inventory-storage-layout,
@@ -151,6 +152,10 @@ jobs:
             resume-native-v2-seed-restore)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^resume-longhorn-native-v2-seed:[1-9][0-9]{0,18}$ ]]
+              ;;
+            resume-native-v2-reattach)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-longhorn-native-v2-reattach:[1-9][0-9]{0,18}:[1-9][0-9]{0,18}$ ]]
               ;;
             inventory-v1-runtime)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == inventory-v1-runtime ]]

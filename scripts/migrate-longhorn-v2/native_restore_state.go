@@ -27,6 +27,7 @@ type nativeRestoreState struct {
 	Targets                                                                   []nativeRestoreTarget
 	Resources                                                                 map[string]benchmarkResource
 	Expired                                                                   *nativeRestoreExpiredReceipt `json:",omitempty"`
+	Reattachment                                                              *nativeReattachmentRecovery  `json:",omitempty"`
 }
 
 // Every direct CREATE/DELETE and the non-replayable write has its own intent.
@@ -68,6 +69,9 @@ var errNativeRestoreEvidence = errors.New("the native restore lacks its original
 func nativeRestorePhaseIndex(phase string) int {
 	if nativeRestoreExpiredStage(phase) > 0 {
 		phase = "restore-owned"
+	}
+	if nativeReattachmentStage(phase) > 0 {
+		phase = "reattach-owned"
 	}
 	for i, step := range nativeRestorePhases {
 		if step.name == phase {
@@ -166,7 +170,7 @@ func (s nativeRestoreState) validate(record benchmarkRecord, seed canarySeedStat
 		}
 		seen[identity.UID] = true
 	}
-	if !validNativeRestoreExpiredReceipt(s, seen) {
+	if !validNativeRestoreExpiredReceipt(s, seen) || !validNativeReattachmentRecovery(s, seen) {
 		return errNativeRestoreEvidence
 	}
 	if rank < nativeRestorePhaseIndex("restore-verified") && s.FirstNode != "" || rank >= nativeRestorePhaseIndex("restore-verified") && !nodes[s.FirstNode] ||
@@ -197,6 +201,9 @@ func validateNativeRestoreTransition(before, after nativeRestoreState, record be
 		return errNativeRestoreEvidence
 	}
 	for kind, original := range before.Resources {
+		if kind == "SecondPod" && after.Phase == nativeReattachmentReplacement && before.Phase == nativeReattachmentCreateRequested {
+			continue
+		}
 		if after.Resources[kind] != original {
 			return errNativeRestoreEvidence
 		}
@@ -207,7 +214,7 @@ func validateNativeRestoreTransition(before, after nativeRestoreState, record be
 func decodeNativeRestoreState(raw string, record benchmarkRecord, seed canarySeedState) (nativeRestoreState, error) {
 	var state nativeRestoreState
 	fields := map[string][]string{
-		"":                                 {"Version", "Source", "Run", "Phase", "SeedDigest", "Token", "FirstNode", "SecondNode", "CompletedAt", "SeedJournal", "Targets", "Resources", "Expired"},
+		"":                                 {"Version", "Source", "Run", "Phase", "SeedDigest", "Token", "FirstNode", "SecondNode", "CompletedAt", "SeedJournal", "Targets", "Resources", "Expired", "Reattachment"},
 		"SeedJournal":                      {"Name", "Namespace", "UID"},
 		"Targets[]":                        {"Name", "UID", "Preparation"},
 		"Targets[].Preparation":            {"Profile", "JournalSHA256", "BootID", "RawPartitionUUID", "Journal", "ProviderID", "MachineUUID", "LonghornUID", "DiskUUID", "Activation", "ActivationSHA256"},
@@ -217,6 +224,8 @@ func decodeNativeRestoreState(raw string, record benchmarkRecord, seed canarySee
 		"Expired.Pod":                      {"Name", "Namespace", "UID"},
 		"Expired.Transfer":                 {"Name", "Namespace", "UID"},
 		"Expired.Replacement":              {"Name", "Namespace", "UID"},
+		"Reattachment":                     {"PreviousExecutor", "UnscheduledPod"},
+		"Reattachment.UnscheduledPod":      {"Name", "Namespace", "UID"},
 	}
 	for _, step := range nativeRestorePhases {
 		for _, kind := range step.resources {

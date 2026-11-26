@@ -55,6 +55,22 @@ func validNativeRestoreExpiredReceipt(state nativeRestoreState, seen map[string]
 }
 
 func validNativeRestorePhaseTransition(before, after nativeRestoreState) bool {
+	if nativeReattachmentStage(after.Phase) > 0 {
+		if !reflect.DeepEqual(before.Expired, after.Expired) {
+			return false
+		}
+		if after.Phase == nativeReattachmentDeleteRequested {
+			return before.Phase == "reattach-owned" && before.Reattachment == nil && after.Reattachment != nil
+		}
+		return nativeReattachmentStage(after.Phase) == nativeReattachmentStage(before.Phase)+1 &&
+			reflect.DeepEqual(before.Reattachment, after.Reattachment)
+	}
+	if !reflect.DeepEqual(before.Reattachment, after.Reattachment) {
+		return false
+	}
+	if stage := nativeReattachmentStage(before.Phase); stage > 0 && stage != nativeReattachmentStage(nativeReattachmentReplacement) {
+		return false
+	}
 	oldStage, nextStage := nativeRestoreExpiredStage(before.Phase), nativeRestoreExpiredStage(after.Phase)
 	if nextStage == 1 {
 		return before.Phase == "restore-owned" && before.Expired == nil

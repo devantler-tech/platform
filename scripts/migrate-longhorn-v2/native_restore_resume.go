@@ -33,6 +33,13 @@ func nativeRestoreGrant(getenv func(string) string, state nativeRestoreState) (s
 	if source == state.Source && run == state.Run && authorizeNativeRestore(getenv) == nil {
 		return source, "", nil
 	}
+	if original, prior, err := authorizeNativeReattachment(getenv); err == nil {
+		if original != state.Run || source == state.Source || nativeRestorePhaseIndex(state.Phase) < nativeRestorePhaseIndex("reattach-owned") ||
+			state.Reattachment != nil && !strings.HasSuffix(state.Reattachment.PreviousExecutor, ":"+prior) {
+			return "", "", errNativeRestoreEvidence
+		}
+		return source, source + ":" + run, nil
+	}
 	original, err := nativeRestoreResumeRun(getenv)
 	if err != nil || original != state.Run || !validBenchmarkOwner(state.Run, state.Source) || source == state.Source ||
 		nativeRestorePhaseIndex(state.Phase) < nativeRestorePhaseIndex("restore-owned") {

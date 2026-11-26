@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"maps"
 	"slices"
 )
@@ -56,6 +57,33 @@ func nativeRestoreReattachPod(record benchmarkRecord, seed canarySeedState, requ
 		return nil, err
 	}
 	return nativeRestoreReaderPod(request.Run, request.Target, verify+nativeReattachWait)
+}
+
+func selectReattachmentConsumer(record benchmarkRecord, seed canarySeedState, state nativeRestoreState, current inventory, excluded string) (object, error) {
+	nodes, err := indexed(current.nodes)
+	if err != nil {
+		return nil, err
+	}
+	targets := make(map[string]string, len(state.Targets))
+	for _, target := range state.Targets {
+		targets[target.Name] = target.UID
+	}
+	for _, target := range state.Targets {
+		if target.Name == state.FirstNode || target.Name == excluded ||
+			text(nodes[target.Name], "metadata", "uid") != target.UID {
+			continue
+		}
+		pod, err := nativeRestoreReattachPod(record, seed, nativeReattachRequest{
+			Run: state.Run, Token: state.Token, FirstNode: state.FirstNode, Target: target.Name, Targets: targets,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if verifyBenchmarkClientMemory(current, pod) == nil {
+			return pod, nil
+		}
+	}
+	return nil, errors.New("no qualified second worker can admit the canary")
 }
 
 func nativeRestoreReaderPod(run, node, script string) (object, error) {

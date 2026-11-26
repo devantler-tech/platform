@@ -179,13 +179,22 @@ func (r *nativeRestoreRun) writeReattachmentToken(ctx context.Context, velero na
 
 func (r *nativeRestoreRun) reattach(ctx context.Context, velero nativeRestoreVeleroEpoch) error {
 	previous := r.state
+	source := r.plan.Seed
+	live, err := r.c.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	asset, err := selectReattachmentConsumer(source.Record, source.Seed, previous, live, "")
+	if err != nil {
+		return err
+	}
+	node := text(asset, "spec", "nodeSelector", "kubernetes.io/hostname")
 	if err := r.advance(ctx, "first-pod-delete-requested", nil); err != nil {
 		return err
 	}
 	if err := r.guard(ctx); err != nil {
 		return err
 	}
-	source := r.plan.Seed
 	first, err := r.c.get(ctx, "pods", benchmarkNamespace, "fio", false)
 	if err != nil || verifyNativeRestoreConsumer(source.Record, source.Seed, previous, first, velero.Digest) != nil {
 		return errNativeRestoreEvidence
@@ -197,17 +206,6 @@ func (r *nativeRestoreRun) reattach(ctx context.Context, velero nativeRestoreVel
 		return err
 	}
 	if err := r.advance(ctx, "first-pod-deleted", nil); err != nil {
-		return err
-	}
-	targets := make(map[string]string, len(r.state.Targets))
-	for _, target := range r.state.Targets {
-		targets[target.Name] = target.UID
-	}
-	node := r.state.Targets[1].Name
-	asset, err := nativeRestoreReattachPod(source.Record, source.Seed, nativeReattachRequest{
-		Run: r.state.Run, Token: r.state.Token, FirstNode: r.state.FirstNode, Target: node, Targets: targets,
-	})
-	if err != nil {
 		return err
 	}
 	if err := r.advance(ctx, "reattach-create-requested", nil); err != nil {
@@ -228,12 +226,23 @@ func (r *nativeRestoreRun) reattach(ctx context.Context, velero nativeRestoreVel
 	if err = r.advance(ctx, "reattach-owned", func(next *nativeRestoreState) { next.Resources["SecondPod"] = id }); err != nil {
 		return err
 	}
+	return r.finishReattachment(ctx, node)
+}
+
+func (r *nativeRestoreRun) finishReattachment(ctx context.Context, node string) error {
+	source := r.plan.Seed
 	if err := waitReady(ctx, func(ctx context.Context) error {
 		if err := r.guard(ctx); err != nil {
 			return errors.Join(errReadinessTerminal, err)
 		}
-		_, err := observeNativeRestoreAttached(ctx, r.c, source.Record, source.Seed, r.state, r.config, "", r.plan.Managers)
-		return err
+		receipt, err := observeNativeRestoreAttached(ctx, r.c, source.Record, source.Seed, r.state, r.config, "", r.plan.Managers)
+		if err != nil {
+			return err
+		}
+		if receipt.ConsumerNode != node {
+			return errors.Join(errReadinessTerminal, errNativeRestoreEvidence)
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -245,8 +254,9 @@ func (r *nativeRestoreRun) reattach(ctx context.Context, velero nativeRestoreVel
 	if err != nil || verifyNativeRestorePayload(string(output), source.Seed.PayloadSHA256, r.state.Token) != nil {
 		return errNativeRestoreEvidence
 	}
-	if _, err := observeNativeRestoreAttached(ctx, r.c, source.Record, source.Seed, r.state, r.config, "", r.plan.Managers); err != nil {
-		return err
+	receipt, err := observeNativeRestoreAttached(ctx, r.c, source.Record, source.Seed, r.state, r.config, "", r.plan.Managers)
+	if err != nil || receipt.ConsumerNode != node {
+		return errNativeRestoreEvidence
 	}
 	if err := r.advance(ctx, "reattach-verified", func(next *nativeRestoreState) { next.SecondNode = node }); err != nil {
 		return err
