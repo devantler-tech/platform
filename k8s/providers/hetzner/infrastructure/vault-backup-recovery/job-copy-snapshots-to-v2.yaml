@@ -11,6 +11,8 @@ spec:
       labels:
         app: openbao-snapshot-storage-copy
     spec:
+      nodeSelector:
+        platform.devantler.tech/baseline-worker: "true"
       automountServiceAccountToken: false
       restartPolicy: Never
       securityContext:

@@ -14,6 +14,10 @@ func TestV2ArchiveCopyPreservesOpenBaoSnapshots(t *testing.T) {
 	objects := render(t, "k8s/providers/hetzner/infrastructure")
 	job := object(t, objects, "Job", "copy-openbao-snapshots-to-v2")
 	pod := job["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	placement, _ := pod["nodeSelector"].(map[string]any)
+	if placement["platform.devantler.tech/baseline-worker"] != "true" {
+		t.Fatal("the copy must mount its retained Hetzner volume on a baseline worker")
+	}
 	if pod["automountServiceAccountToken"] != false {
 		t.Fatal("copy must run without a Kubernetes credential")
 	}
