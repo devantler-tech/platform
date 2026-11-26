@@ -65,38 +65,64 @@ spec:
               umask 027
               export LC_ALL=C
               refuse() { echo "OpenBao archive copy refused: $1." >&2; exit 1; }
+              exists() { [ -e "$1" ] || [ -L "$1" ]; }
+              stage=/replacement/.openbao-v2-copy
+              owner="$stage/openbao-v2-archive-copy"
+              clear_stage() {
+                exists "$stage" || return 0
+                [ -d "$stage" ] && [ ! -L "$stage" ] || refuse "unknown staging path"
+                for item in "$stage"/* "$stage"/.[!.]* "$stage"/..?*; do
+                  exists "$item" || continue
+                  case "$item" in
+                    "$owner"|"$stage/snapshot")
+                      [ -f "$item" ] && [ ! -L "$item" ] || refuse "unknown staging entry"
+                      ;;
+                    *) refuse "unknown staging entry" ;;
+                  esac
+                done
+                if exists "$owner" || exists "$stage/snapshot"; then
+                  [ -f "$owner" ] && [ ! -s "$owner" ] || refuse "staging ownership is unverified"
+                  rm -f -- "$stage/snapshot"
+                  sync
+                  rm -- "$owner"
+                fi
+                rmdir -- "$stage"
+              }
               inventory() {
                 directory=$1
+                prefix_bytes=$(printf '%s/' "$directory" | wc -c)
                 for path in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
-                  [ -e "$path" ] || [ -L "$path" ] || continue
+                  exists "$path" || continue
                   [ ! -L "$path" ] || refuse "unexpected symbolic link"
-                  file=$(basename "$path")
-                  if [ "$file" = lost+found ] && [ -d "$path" ]; then
+                  if [ "$path" = "$directory/lost+found" ] && [ -d "$path" ]; then
                     continue
                   fi
-                  if [ "$(printf '%s' "$file" | wc -c)" -ne 28 ] ||
-                    ! printf '%s\n' "$file" | grep -Eq '^openbao-[0-9]{8}-[0-9]{6}\.snap$'; then
+                  path_bytes=$(printf '%s' "$path" | wc -c)
+                  [ "$((path_bytes - prefix_bytes))" -eq 28 ] || refuse "archive contains unrecognized entries"
+                  file=$(basename "$path")
+                  printf '%s\n' "$file" | grep -Eq '^openbao-[0-9]{8}-[0-9]{6}\.snap$' ||
                     refuse "archive contains unrecognized entries"
-                  fi
                   [ -f "$path" ] && [ -s "$path" ] || refuse "snapshot is incomplete"
                   digest=$(sha256sum <"$path")
                   printf '%.64s %s\n' "$digest" "$file"
                 done
               }
               inventory /original >/scratch/source
-              inventory /replacement >/scratch/initial-target
               count=$(wc -l </scratch/source)
               [ "$count" -ge 1 ] && [ "$count" -le 14 ] || refuse "snapshot inventory is outside retention bounds"
+              clear_stage
+              inventory /replacement >/scratch/initial-target
               while read -r checksum file; do
                 grep -Fxq "$checksum $file" /scratch/source || refuse "target already contains other data"
               done </scratch/initial-target
-              temporary=
-              trap 'if [ -n "$temporary" ]; then rm -f -- "$temporary"; fi' EXIT
+              mkdir -m 0700 -- "$stage"
+              (set -C; : >"$owner")
+              sync
+              temporary="$stage/snapshot"
               while read -r checksum file; do
                 if [ -f "/replacement/$file" ]; then
                   continue
                 fi
-                temporary=$(mktemp /replacement/.copy-openbao.XXXXXX)
                 cp "/original/$file" "$temporary"
                 touch -r "/original/$file" "$temporary"
                 chgrp 1000 "$temporary"
@@ -106,8 +132,8 @@ spec:
                 sync
                 ln -- "$temporary" "/replacement/$file"
                 rm -- "$temporary"
-                temporary=
               done </scratch/source
+              clear_stage
               sync
               inventory /replacement >/scratch/final-target
               inventory /original >/scratch/final-source

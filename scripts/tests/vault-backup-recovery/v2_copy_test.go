@@ -31,12 +31,16 @@ func TestV2ArchiveCopyPreservesOpenBaoSnapshots(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name, sourceFile, destinationData string
+		staging                           string
 		success                           bool
 	}{
 		{name: "first copy", sourceFile: name, success: true},
 		{name: "retry identical retained bytes", sourceFile: name, destinationData: "verified snapshot", success: true},
 		{name: "refuse unrecognized data", sourceFile: "unexpected.bin"},
 		{name: "refuse newline in a snapshot filename", sourceFile: name + "\n"},
+		{name: "refuse malformed source with an identical destination", sourceFile: name + "\n", destinationData: "verified snapshot"},
+		{name: "resume an owned interrupted staging file", sourceFile: name, staging: "owned", success: true},
+		{name: "refuse unowned staging files", sourceFile: name, staging: "unknown"},
 		{name: "refuse empty source"},
 		{name: "refuse replacing different destination data", sourceFile: name, destinationData: "unexpected destination"},
 	} {
@@ -60,6 +64,16 @@ func TestV2ArchiveCopyPreservesOpenBaoSnapshots(t *testing.T) {
 			if tc.destinationData != "" {
 				write(filepath.Join(target, name), tc.destinationData)
 			}
+			stage := filepath.Join(target, ".openbao-v2-copy")
+			if tc.staging != "" {
+				if err := os.Mkdir(stage, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if tc.staging == "owned" {
+					write(filepath.Join(stage, "openbao-v2-archive-copy"), "")
+				}
+				write(filepath.Join(stage, "snapshot"), "interrupted copy")
+			}
 			command := strings.NewReplacer("/original", source, "/replacement", target, "/scratch", scratch,
 				"chgrp 1000", "chgrp "+strconv.Itoa(os.Getegid())).Replace(script)
 			output, err := exec.CommandContext(t.Context(), "/bin/sh", "-ec", command).CombinedOutput()
@@ -68,6 +82,17 @@ func TestV2ArchiveCopyPreservesOpenBaoSnapshots(t *testing.T) {
 			}
 			if tc.success && !strings.Contains(string(output), "OPENBAO_V2_ARCHIVE_COPY=VERIFIED count=1") {
 				t.Fatalf("missing complete copy verdict: %s", output)
+			}
+			if tc.staging == "unknown" {
+				content, err := os.ReadFile(filepath.Join(stage, "snapshot"))
+				if err != nil || string(content) != "interrupted copy" {
+					t.Fatal("copy changed an unowned staging file")
+				}
+			}
+			if tc.success {
+				if _, err := os.Lstat(stage); !os.IsNotExist(err) {
+					t.Fatal("the successful copy left staging files in the destination")
+				}
 			}
 			want := tc.destinationData
 			if tc.success {
