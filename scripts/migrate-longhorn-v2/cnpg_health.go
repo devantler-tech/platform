@@ -58,9 +58,6 @@ func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 	primary := text(cluster, "status", "currentPrimary")
 	name, ns := text(cluster, "metadata", "name"), text(cluster, "metadata", "namespace")
 	expectedInstances := hostDatabases[ns+"/"+name].instances
-	if ns == previewCNPGNamespace && name == previewCNPGName {
-		expectedInstances = 1
-	}
 	if expectedInstances == 0 || text(cluster, "metadata", "uid") == "" || text(cluster, "metadata", "resourceVersion") == "" || value(cluster, "metadata", "deletionTimestamp") != nil ||
 		value(cluster, "spec", "instances") != expectedInstances || value(cluster, "status", "instances") != expectedInstances || value(cluster, "status", "readyInstances") != expectedInstances || !cnpgCondition(cluster, "Ready") || !cnpgCondition(cluster, "ContinuousArchiving") || primary == "" || primary != text(cluster, "status", "targetPrimary") {
 		return nil, errors.New("database instance health, operator conditions or primary identity are unverified")

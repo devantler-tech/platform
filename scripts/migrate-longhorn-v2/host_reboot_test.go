@@ -71,20 +71,7 @@ func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
 	pod["spec"] = object{"nodeName": "prod-worker-1"}
 	pod["status"] = object{"phase": "Running", "conditions": readyConditions()}
 	b.s.pods = append(b.s.pods, pod)
-	for i, selected := range []struct {
-		namespace, name string
-		instances       float64
-	}{
-		{"observability", "coroot-db", 3}, {"umami", "umami-db", 3}, {"wedding-app", "wedding-db", 3},
-		{"ate-system", "substrate-db", 2}, {"kagent", "kagent-db", 2},
-		{"customer-identity", "customer-identity-db", 2}, {"business-site", "business-site-portal-db", 2},
-	} {
-		db := resource(selected.name)
-		db["metadata"].(object)["namespace"] = selected.namespace
-		db["spec"] = object{"instances": selected.instances}
-		db["status"] = object{"readyInstances": selected.instances, "systemID": fmt.Sprintf("1234567%d", i), "phase": "Cluster in healthy state"}
-		f.databases = append(f.databases, db)
-	}
+	f.databases = hostMaintenanceDatabaseFixtures()
 	h := hostMemoryReboot{c: client{context: "admin@prod", run: f.run}, target: "prod-worker-1", source: old.source, owner: old.owner, pools: old.pools}
 	if err := verifyCapacityRoster(b.s.nodes, h.pools, false); err != nil {
 		t.Fatal("invalid initial capacity fixture:", err)
@@ -102,12 +89,32 @@ func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
 	return f, h
 }
 
+func hostMaintenanceDatabaseFixtures() []object {
+	databases := make([]object, 0, 8)
+	for i, selected := range []struct {
+		namespace, name string
+		instances       float64
+	}{
+		{"observability", "coroot-db", 3}, {"umami", "umami-db", 3}, {"wedding-app", "wedding-db", 3},
+		{"ate-system", "substrate-db", 2}, {"kagent", "kagent-db", 2},
+		{"customer-identity", "customer-identity-db", 2}, {"business-site", "business-site-portal-db", 2},
+		{"business-site-dev", "portal-preview-db", 1},
+	} {
+		db := resource(selected.name)
+		db["metadata"].(object)["namespace"] = selected.namespace
+		db["spec"] = object{"instances": selected.instances}
+		db["status"] = object{"readyInstances": selected.instances, "systemID": fmt.Sprintf("1234567%d", i), "phase": "Cluster in healthy state"}
+		databases = append(databases, db)
+	}
+	return databases
+}
+
 // TestHostRebootRecordsEveryDeclaredDatabase checks that a fresh journal binds
-// all seven clusters and refuses a recovering or replaced two-instance cluster.
+// all active clusters and refuses a recovering or replaced cluster.
 func TestHostRebootRecordsEveryDeclaredDatabase(t *testing.T) {
 	f, h := hostRebootAPI(t)
 	r, err := h.initialize(context.Background())
-	if err != nil || r.Version != 3 || len(r.Databases) != 7 {
+	if err != nil || r.Version != 4 || len(r.Databases) != 8 {
 		t.Fatalf("current database roster was not bound: version=%d databases=%d err=%v", r.Version, len(r.Databases), err)
 	}
 	f.databases[4]["status"].(object)["readyInstances"] = float64(1)
@@ -134,6 +141,7 @@ func TestLegacyPreRebootJournalBindsNewDatabasesBeforeMovingTheWorker(t *testing
 	delete(r.Databases, "kagent/kagent-db")
 	delete(r.Databases, "customer-identity/customer-identity-db")
 	delete(r.Databases, "business-site/business-site-portal-db")
+	delete(r.Databases, "business-site-dev/portal-preview-db")
 	encoded, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +149,7 @@ func TestLegacyPreRebootJournalBindsNewDatabasesBeforeMovingTheWorker(t *testing
 	valueObject(f.base.cm, "data")["record"] = string(encoded)
 	f.afterDrain = func() {
 		var current hostRebootRecord
-		if json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &current) != nil || current.Version != 3 || len(current.Databases) != 7 {
+		if json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &current) != nil || current.Version != 4 || len(current.Databases) != 8 {
 			t.Fatal("the worker drained before the journal bound the current database roster")
 		}
 	}

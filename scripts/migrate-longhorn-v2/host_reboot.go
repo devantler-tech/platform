@@ -53,19 +53,21 @@ var hostDatabases = map[string]struct {
 	instances    float64
 	sinceVersion int
 }{
-	"observability/coroot-db":                {instances: 3, sinceVersion: 1},
-	"umami/umami-db":                         {instances: 3, sinceVersion: 1},
-	"wedding-app/wedding-db":                 {instances: 3, sinceVersion: 1},
-	"ate-system/substrate-db":                {instances: 2, sinceVersion: 2},
-	"kagent/kagent-db":                       {instances: 2, sinceVersion: 2},
-	"customer-identity/customer-identity-db": {instances: 2, sinceVersion: 3},
-	"business-site/business-site-portal-db":  {instances: 2, sinceVersion: 3},
+	"observability/coroot-db":                    {instances: 3, sinceVersion: 1},
+	"umami/umami-db":                             {instances: 3, sinceVersion: 1},
+	"wedding-app/wedding-db":                     {instances: 3, sinceVersion: 1},
+	"ate-system/substrate-db":                    {instances: 2, sinceVersion: 2},
+	"kagent/kagent-db":                           {instances: 2, sinceVersion: 2},
+	"customer-identity/customer-identity-db":     {instances: 2, sinceVersion: 3},
+	"business-site/business-site-portal-db":      {instances: 2, sinceVersion: 3},
+	previewCNPGNamespace + "/" + previewCNPGName: {instances: 1, sinceVersion: 4},
 }
 
-const hostRebootRecordVersion = 3
+const hostRebootRecordVersion = 4
 
 var hostSystemID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
+var errHostDatabaseRoster = errors.New("database roster or identity differs from the reviewed profile")
 var errHostDatabasesRecovering = errors.New("the original database quorum is still recovering after eviction")
 
 // identity supplies the existing worker validator with immutable bindings; the
@@ -234,7 +236,7 @@ func (h hostMemoryReboot) owned(ctx context.Context, expected hostRebootRecord) 
 func (h hostMemoryReboot) databases(ctx context.Context, expected map[string]hostDatabaseIdentity) (map[string]hostDatabaseIdentity, error) {
 	items, err := h.c.list(ctx, "clusters.postgresql.cnpg.io", "*")
 	if err != nil || len(items) != len(hostDatabases) {
-		return nil, errHostMemory
+		return nil, errHostDatabaseRoster
 	}
 	result := map[string]hostDatabaseIdentity{}
 	recovering := false
@@ -244,19 +246,19 @@ func (h hostMemoryReboot) databases(ctx context.Context, expected map[string]hos
 		if !known || result[key].UID != "" ||
 			text(db, "metadata", "uid") == "" || text(db, "metadata", "resourceVersion") == "" || value(db, "metadata", "deletionTimestamp") != nil ||
 			value(db, "spec", "instances") != profile.instances || !hostSystemID.MatchString(text(db, "status", "systemID")) {
-			return nil, errHostMemory
+			return nil, errHostDatabaseRoster
 		}
 		result[key] = hostDatabaseIdentity{UID: text(db, "metadata", "uid"), SystemID: text(db, "status", "systemID")}
 		ready := value(db, "status", "readyInstances")
 		phase := text(db, "status", "phase")
 		if (ready != profile.instances-1 && ready != profile.instances) || phase == "" {
-			return nil, errHostMemory
+			return nil, errHostDatabaseRoster
 		}
 		recovering = recovering || ready != profile.instances || phase != "Cluster in healthy state"
 	}
 	for key, identity := range expected {
 		if result[key] != identity {
-			return nil, errHostMemory
+			return nil, errHostDatabaseRoster
 		}
 	}
 	if recovering {
