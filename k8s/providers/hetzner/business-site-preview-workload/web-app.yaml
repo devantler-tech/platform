@@ -1,5 +1,5 @@
-# Business Site v3.19.0 preview overlay (source 5f6913e40811e6d9b6ac3d8e92e87002a9b8a6eb).
-# Verified manifests package: sha256:791059e07d91311b6a900e2687f56e67bdc70b718e8766041a70fe8eb5866d13. Update both workloads together.
+# Business Site v3.21.0 preview overlay (source bdbb0d3fc52de0491ca53462a607a794717a17c3).
+# Verified manifests package: sha256:892773128c6a2d18aded9f0cd8997790362b7567d1ba7839fc60c2d8d737cf14. Update both workloads together.
 apiVersion: kro.run/v1alpha1
 kind: WebApp
 metadata:
@@ -22,7 +22,7 @@ spec:
   cpuLimit: 500m
   cpuRequest: 10m
   host: dev.devantler.tech
-  image: ghcr.io/devantler-tech/business-site@sha256:5db6b9151405cf68b493414d3c6c5f18810de8e799a780e6a256bc47552ca31a
+  image: ghcr.io/devantler-tech/business-site@sha256:213e54051c764b86e5feeffdc919d6d427af758add01f9c94e137708a9b15f4e
   memoryLimit: 256Mi
   memoryRequest: 64Mi
   name: business-site-dev
