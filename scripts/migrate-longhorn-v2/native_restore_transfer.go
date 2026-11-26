@@ -27,36 +27,12 @@ func verifyNativeRestoreTransferData(record benchmarkRecord, seed canarySeedStat
 	}
 	rank := nativeRestorePhaseIndex(state.Phase)
 	if state.validate(record, seed) != nil || rank < nativeRestorePhaseIndex("restore-owned") || rank > nativeRestorePhaseIndex("write-verified") ||
-		benchmarkIdentity(restore) != state.Resources["Restore"] || text(restore, "apiVersion") != "velero.io/v1" || text(restore, "kind") != "Restore" ||
-		!seedVeleroIdentity(restore) || cleanVeleroResult(restore) != nil || transfers == nil || repositories == nil {
+		transfers == nil || repositories == nil {
 		return fail()
 	}
-	targets := map[string]string{}
-	for _, target := range state.Targets {
-		targets[target.Name] = target.UID
-	}
-	assets, err := nativeRestoreAssets(record, seed, state.Run, targets)
-	if err != nil {
+	assets, err := nativeRestoreRecordedAssets(record, seed, state)
+	if err != nil || verifyNativeRestoreResult(state, restore, assets) != nil {
 		return fail()
-	}
-	for _, asset := range assets {
-		if text(asset, "kind") != "Restore" {
-			continue
-		}
-		for key, expected := range valueObject(asset, "spec") {
-			actual := value(restore, "spec", key)
-			if key == "excludedResources" && restoredResourceExclusionsMatch(actual, expected) {
-				continue
-			}
-			if !reflect.DeepEqual(actual, expected) {
-				return fail()
-			}
-		}
-	}
-	for _, key := range []string{"namespaceMapping", "hooks", "orLabelSelectors", "restoreStatus"} {
-		if value(restore, "spec", key) != nil {
-			return fail()
-		}
 	}
 	first := state.Targets[0].Name
 	identity := benchmarkIdentity(pod)
@@ -83,33 +59,77 @@ func verifyNativeRestoreTransferData(record benchmarkRecord, seed canarySeedStat
 	if !valid || !seen["data"] {
 		return fail()
 	}
+	transfer, err := originalNativeRestoreTransfer(record, seed, state, restore, pod, transfers, repositories)
+	if err != nil {
+		return fail()
+	}
+	return nativeRestoreTransferReceipt{Pod: identity, Transfer: benchmarkIdentity(transfer), Node: first}, nil
+}
+
+func nativeRestoreRecordedAssets(record benchmarkRecord, seed canarySeedState, state nativeRestoreState) ([]object, error) {
+	targets := make(map[string]string, len(state.Targets))
+	for _, target := range state.Targets {
+		targets[target.Name] = target.UID
+	}
+	return nativeRestoreAssets(record, seed, state.Run, targets)
+}
+
+func verifyNativeRestoreResult(state nativeRestoreState, restore object, assets []object) error {
+	if benchmarkIdentity(restore) != state.Resources["Restore"] || text(restore, "apiVersion") != "velero.io/v1" ||
+		text(restore, "kind") != "Restore" || !seedVeleroIdentity(restore) || cleanVeleroResult(restore) != nil {
+		return errNativeRestoreEvidence
+	}
+	for _, key := range []string{"namespaceMapping", "hooks", "orLabelSelectors", "restoreStatus"} {
+		if value(restore, "spec", key) != nil {
+			return errNativeRestoreEvidence
+		}
+	}
+	for _, asset := range assets {
+		if text(asset, "kind") != "Restore" {
+			continue
+		}
+		for key, expected := range valueObject(asset, "spec") {
+			actual := value(restore, "spec", key)
+			if key == "excludedResources" && restoredResourceExclusionsMatch(actual, expected) {
+				continue
+			}
+			if !reflect.DeepEqual(actual, expected) {
+				return errNativeRestoreEvidence
+			}
+		}
+		return nil
+	}
+	return errNativeRestoreEvidence
+}
+
+func originalNativeRestoreTransfer(record benchmarkRecord, seed canarySeedState, state nativeRestoreState, restore, pod object, transfers, repositories []object) (object, error) {
 	var repository object
 	for _, candidate := range repositories {
 		if benchmarkIdentity(candidate) == seed.Repository {
 			digest, err := seedSpecDigest(candidate)
 			if err != nil || digest != seed.RepositorySpec || repository != nil {
-				return fail()
+				return nil, errNativeRestoreEvidence
 			}
 			repository = candidate
 		}
 	}
 	proof := canaryRun{kopiaRepository: repository}
 	if repository == nil {
-		return fail()
+		return nil, errNativeRestoreEvidence
 	}
 	if _, err := proof.verifyFilesystemTransfer(repositories, transfers, restore, pod, seed.Snapshot, benchmarkNamespace); err != nil {
-		return fail()
+		return nil, errNativeRestoreEvidence
 	}
 	for _, transfer := range transfers {
 		if controlledBy(transfer, restore) {
 			id := benchmarkIdentity(transfer)
-			if id.UID == identity.UID || !nativeRestoreChildIdentity(record, seed, state, "PodVolumeRestore", id) {
-				return fail()
+			if id.UID == benchmarkIdentity(pod).UID || !nativeRestoreChildIdentity(record, seed, state, "PodVolumeRestore", id) {
+				return nil, errNativeRestoreEvidence
 			}
-			return nativeRestoreTransferReceipt{Pod: identity, Transfer: id, Node: first}, nil
+			return transfer, nil
 		}
 	}
-	return fail()
+	return nil, errNativeRestoreEvidence
 }
 
 func restoredResourceExclusionsMatch(actual, expected any) bool {

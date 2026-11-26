@@ -94,6 +94,35 @@ func TestBenchmarkAdmissionRequiresEveryServingAPIServer(t *testing.T) {
 	}
 }
 
+func TestBenchmarkAdmissionRebindRejectsAReplacedServingProcess(t *testing.T) {
+	nodes, pods, endpoints := benchmarkAdmissionFixture()
+	expected, err := qualifyBenchmarkAPIServers(nodes, pods, endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, changed := range []bool{false, true} {
+		nodes, pods, endpoints := benchmarkAdmissionFixture()
+		if changed {
+			status := value(pods[0], "status", "containerStatuses").([]any)[0].(object)
+			status["containerID"] = "containerd://" + strings.Repeat("a", 64)
+		}
+		calls := 0
+		c := client{context: "admin@prod", run: func(_ context.Context, input []byte, binary string, args ...string) ([]byte, error) {
+			if input != nil || binary != "kubectl" || len(args) != 4 || args[2] != "get" || calls >= 3 {
+				t.Fatal("the serving roster check left its read-only scope")
+			}
+			api := []string{"v1", "v1", "discovery.k8s.io/v1"}[calls]
+			kind := []string{"NodeList", "PodList", "EndpointSliceList"}[calls]
+			items := [][]object{nodes, pods, endpoints}[calls]
+			calls++
+			return json.Marshal(object{"apiVersion": api, "kind": kind, "metadata": object{"resourceVersion": "150"}, "items": items})
+		}}
+		if err := rebindBenchmarkAPIServers(t.Context(), c, expected); (err != nil) != changed || calls != 3 {
+			t.Fatalf("serving API rebind with changed process=%t returned %v after %d reads", changed, err, calls)
+		}
+	}
+}
+
 func benchmarkAdmissionFixture() (nodes, pods, slices []object) {
 	endpoints := make([]any, 0, 3)
 	for i := 1; i <= 3; i++ {

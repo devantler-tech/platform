@@ -49,45 +49,63 @@ func proveBenchmarkReferenceFenceOnServingAPIs(ctx context.Context, c client, re
 }
 
 func proveBenchmarkFenceOnServingAPIs(ctx context.Context, c client, record benchmarkRecord, policy object, receipt benchmarkFenceReceipt, probe func(context.Context, *http.Client, *url.URL) error) error {
-	source := record.mutationSource()
-	if err := sourceCurrent(ctx, c.run, source); err != nil {
-		return err
-	}
-	before, err := observeBenchmarkReferenceFence(ctx, c, policy, receipt)
-	if err != nil {
-		return err
-	}
-	roster, err := observeBenchmarkAPIServers(ctx, c)
-	if err != nil {
-		return err
-	}
-	if err := verifyBenchmarkProviderEndpoints(ctx, os.Getenv("HCLOUD_TOKEN"), roster); err != nil {
-		return err
-	}
 	originalRun := ""
 	if record.Recovery != nil {
 		originalRun = record.Run
 	}
+	return proveReferenceFenceOnServingAPIs(ctx, c, record.mutationSource(), originalRun, policy, receipt, probe)
+}
+
+func proveReferenceFenceOnServingAPIs(ctx context.Context, c client, source, originalRun string, policy object, receipt benchmarkFenceReceipt, probe func(context.Context, *http.Client, *url.URL) error) error {
+	_, err := proveReferenceFenceForRoster(ctx, c, source, originalRun, policy, receipt, nil, probe)
+	return err
+}
+
+func proveReferenceFenceForRoster(ctx context.Context, c client, source, originalRun string, policy object, receipt benchmarkFenceReceipt, expected []benchmarkAPIServer, probe func(context.Context, *http.Client, *url.URL) error) (benchmarkAdmissionEpoch, error) {
+	if err := sourceCurrent(ctx, c.run, source); err != nil {
+		return benchmarkAdmissionEpoch{}, err
+	}
+	before, err := observeBenchmarkReferenceFence(ctx, c, policy, receipt)
+	if err != nil {
+		return benchmarkAdmissionEpoch{}, err
+	}
+	roster, err := observeBenchmarkAPIServers(ctx, c)
+	if err != nil {
+		return benchmarkAdmissionEpoch{}, err
+	}
+	if expected != nil && !slices.Equal(expected, roster) {
+		return benchmarkAdmissionEpoch{}, errors.New("serving API processes changed between admission proofs")
+	}
+	if err := verifyBenchmarkProviderEndpoints(ctx, os.Getenv("HCLOUD_TOKEN"), roster); err != nil {
+		return benchmarkAdmissionEpoch{}, err
+	}
 	for _, endpoint := range roster {
 		direct, address, err := namespaceinventory.LoadBenchmarkAdmissionClient(os.Getenv, endpoint.ExternalIP, originalRun)
 		if err != nil {
-			return err
+			return benchmarkAdmissionEpoch{}, err
 		}
 		proof := probe(ctx, direct, address)
 		direct.CloseIdleConnections()
 		if proof != nil {
-			return proof
+			return benchmarkAdmissionEpoch{}, proof
 		}
 	}
-	after, err := observeBenchmarkAPIServers(ctx, c)
-	if err != nil || !slices.Equal(roster, after) {
-		return errors.New("serving API processes changed during benchmark admission proof")
+	if err := rebindBenchmarkAPIServers(ctx, c, roster); err != nil {
+		return benchmarkAdmissionEpoch{}, err
 	}
 	bound, err := observeBenchmarkReferenceFence(ctx, c, policy, receipt)
 	if err != nil || before != bound {
-		return errors.New("the benchmark reference fence changed during native admission proof")
+		return benchmarkAdmissionEpoch{}, errors.New("the benchmark reference fence changed during native admission proof")
 	}
-	return sourceCurrent(ctx, c.run, source)
+	return before, sourceCurrent(ctx, c.run, source)
+}
+
+func rebindBenchmarkAPIServers(ctx context.Context, c client, expected []benchmarkAPIServer) error {
+	actual, err := observeBenchmarkAPIServers(ctx, c)
+	if err != nil || len(expected) != benchmarkControlPlaneCount || !slices.Equal(expected, actual) {
+		return errors.New("serving API processes changed during benchmark admission proof")
+	}
+	return nil
 }
 
 func observeBenchmarkReferenceFence(ctx context.Context, c client, desired object, receipt benchmarkFenceReceipt) (benchmarkAdmissionEpoch, error) {
@@ -182,22 +200,26 @@ func probeBenchmarkDetachedBackendAdmission(ctx context.Context, client *http.Cl
 // Keep the native response in bounded memory. The caller accepts only its
 // fixed object or admission-policy status and never emits the response.
 func benchmarkAdmissionDryRun(ctx context.Context, client *http.Client, endpoint *url.URL, path string, operations []object) (int, []byte, error) {
+	return benchmarkAdmissionRequest(ctx, client, endpoint, path, http.MethodPatch, "application/json-patch+json", operations)
+}
+
+func benchmarkAdmissionRequest(ctx context.Context, client *http.Client, endpoint *url.URL, path, method, contentType string, body any) (int, []byte, error) {
 	const limit = 2 << 20
 	unverified := errors.New("native admission dry-run did not return a bounded response")
 	if client == nil || endpoint == nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
 		return 0, nil, unverified
 	}
 	destination := url.URL{Scheme: "https", Host: endpoint.Host, Path: path, RawQuery: "dryRun=All"}
-	payload, err := json.Marshal(operations)
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return 0, nil, unverified
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, destination.String(), bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, destination.String(), bytes.NewReader(payload))
 	if err != nil {
 		return 0, nil, unverified
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json-patch+json")
+	req.Header.Set("Content-Type", contentType)
 	res, err := client.Do(req)
 	if err != nil {
 		return 0, nil, unverified

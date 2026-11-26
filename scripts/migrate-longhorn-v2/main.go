@@ -51,6 +51,8 @@ func main() {
 		_, authorization = nativeRestoreResumeRun(os.Getenv)
 	case nativeReattachmentOperation:
 		_, _, authorization = authorizeNativeReattachment(os.Getenv)
+	case nativeRestoreReclaimOperation:
+		_, authorization = authorizedNativeRestoreReclaimRun(os.Getenv)
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":
@@ -232,6 +234,15 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("LONGHORN_NATIVE_RESTORE=VERIFIED transfer=KOPIA engine=v2 reattachment=VERIFIED migration=UNVERIFIED")
+		return
+	}
+	if operation == nativeRestoreReclaimOperation {
+		if err := runNativeRestoreReclaim(ctx, client{run: execute, context: "admin@prod"}, config); err != nil {
+			fmt.Fprintln(os.Stderr, "Disposable V2 reclaim held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve the reclaim journal and any confirmed admission policies for explicit recovery.")
+			os.Exit(1)
+		}
+		fmt.Println("LONGHORN_NATIVE_RESTORE_RECLAIM=COMPLETE engine=v2 sourceBackup=RETAINED")
 		return
 	}
 	pools, err := configuredMigrationPools(config)

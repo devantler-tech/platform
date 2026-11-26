@@ -274,6 +274,7 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 		{operation: "benchmark-v1", confirmation: "benchmark-longhorn-storage"},
 		{operation: "prepare-native-v1-seed", confirmation: "prepare-longhorn-native-v1-seed"},
 		{operation: "recover-bound-v1-benchmark", confirmation: "recover-bound-longhorn-v1-benchmark:99", originalRun: "99"},
+		{operation: "reclaim-native-v2-seed", confirmation: "reclaim-longhorn-native-v2-seed:99", originalRun: "99"},
 	} {
 		valid := nativeSeedAdmissionDispatch()
 		valid["LONGHORN_V2_OPERATION"], valid["LONGHORN_V2_CONFIRM"] = dispatch.operation, dispatch.confirmation

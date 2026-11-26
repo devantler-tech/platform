@@ -67,12 +67,19 @@ var nativeRestoreSourceQueries = []struct{ resource, namespace, association stri
 // API observations. This check admits no writes and proves neither physical
 // process absence nor restoration: those require their own native evidence.
 func verifyNativeRestoreSourceAbsent(record benchmarkRecord, seed canarySeedState, groups map[string][]object) error {
-	if seed.validate(record) != nil || seed.Phase != "source-cleaned" || len(groups) != len(nativeRestoreSourceQueries) {
+	if seed.validate(record) != nil || seed.Phase != "source-cleaned" {
 		return errNativeRestoreEvidence
 	}
-	backend, pv := record.Resources["LonghornVolume"], record.Resources["PersistentVolume"]
+	return verifyNativeRestoreStorageAbsent(record.Resources, groups)
+}
+
+func verifyNativeRestoreStorageAbsent(resources map[string]benchmarkResource, groups map[string][]object) error {
+	backend, pv := resources["LonghornVolume"], resources["PersistentVolume"]
+	if !nativeRestoreUID(backend.UID) || !nativeRestoreUID(pv.UID) || backend.Name == "" || pv.Name == "" || len(groups) != len(nativeRestoreSourceQueries) {
+		return errNativeRestoreEvidence
+	}
 	seen := map[string]bool{}
-	for _, identity := range record.Resources {
+	for _, identity := range resources {
 		seen[identity.UID] = true
 	}
 	for _, query := range nativeRestoreSourceQueries {
@@ -132,13 +139,21 @@ func observeNativeRestoreSourceAbsent(ctx context.Context, c client, record benc
 	if seed.validate(record) != nil || seed.Phase != "source-cleaned" {
 		return errNativeRestoreEvidence
 	}
+	groups, err := readNativeRestoreStorageGraph(ctx, c)
+	if err != nil {
+		return err
+	}
+	return verifyNativeRestoreStorageAbsent(record.Resources, groups)
+}
+
+func readNativeRestoreStorageGraph(ctx context.Context, c client) (map[string][]object, error) {
 	groups := map[string][]object{}
 	for _, query := range nativeRestoreSourceQueries {
 		items, err := c.list(ctx, query.resource, query.namespace)
 		if err != nil {
-			return errNativeRestoreEvidence
+			return nil, errNativeRestoreEvidence
 		}
 		groups[query.resource] = items
 	}
-	return verifyNativeRestoreSourceAbsent(record, seed, groups)
+	return groups, nil
 }

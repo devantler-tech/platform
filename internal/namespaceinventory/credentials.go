@@ -77,6 +77,9 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 			return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
 		}
 		operation, confirmation = "recover-bound-v1-benchmark", "recover-bound-longhorn-v1-benchmark:"+originalRun
+		if getenv("LONGHORN_V2_OPERATION") == "reclaim-native-v2-seed" {
+			operation, confirmation = "reclaim-native-v2-seed", "reclaim-longhorn-native-v2-seed:"+originalRun
+		}
 	case getenv("LONGHORN_V2_OPERATION") == "prepare-native-v1-seed":
 		operation, confirmation = "prepare-native-v1-seed", "prepare-longhorn-native-v1-seed"
 	}
