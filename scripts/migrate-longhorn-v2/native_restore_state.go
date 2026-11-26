@@ -26,6 +26,7 @@ type nativeRestoreState struct {
 	SeedJournal                                                               benchmarkResource
 	Targets                                                                   []nativeRestoreTarget
 	Resources                                                                 map[string]benchmarkResource
+	Expired                                                                   *nativeRestoreExpiredReceipt `json:",omitempty"`
 }
 
 // Every direct CREATE/DELETE and the non-replayable write has its own intent.
@@ -65,6 +66,9 @@ var nativeRestorePhases = []struct {
 var errNativeRestoreEvidence = errors.New("the native restore lacks its original seed, target or consumer receipts")
 
 func nativeRestorePhaseIndex(phase string) int {
+	if nativeRestoreExpiredStage(phase) > 0 {
+		phase = "restore-owned"
+	}
 	for i, step := range nativeRestorePhases {
 		if step.name == phase {
 			return i
@@ -162,6 +166,9 @@ func (s nativeRestoreState) validate(record benchmarkRecord, seed canarySeedStat
 		}
 		seen[identity.UID] = true
 	}
+	if !validNativeRestoreExpiredReceipt(s, seen) {
+		return errNativeRestoreEvidence
+	}
 	if rank < nativeRestorePhaseIndex("restore-verified") && s.FirstNode != "" || rank >= nativeRestorePhaseIndex("restore-verified") && !nodes[s.FirstNode] ||
 		rank < nativeRestorePhaseIndex("write-requested") && s.Token != "" || rank >= nativeRestorePhaseIndex("write-requested") && !seedSHA256.MatchString(s.Token) ||
 		rank < nativeRestorePhaseIndex("reattach-verified") && s.SecondNode != "" || rank >= nativeRestorePhaseIndex("reattach-verified") && (!nodes[s.SecondNode] || s.FirstNode == s.SecondNode) {
@@ -182,7 +189,7 @@ func (s nativeRestoreState) validate(record benchmarkRecord, seed canarySeedStat
 }
 
 func validateNativeRestoreTransition(before, after nativeRestoreState, record benchmarkRecord, seed canarySeedState) error {
-	if before.validate(record, seed) != nil || after.validate(record, seed) != nil || nativeRestorePhaseIndex(after.Phase) != nativeRestorePhaseIndex(before.Phase)+1 ||
+	if before.validate(record, seed) != nil || after.validate(record, seed) != nil || !validNativeRestorePhaseTransition(before, after) ||
 		before.Version != after.Version || before.Source != after.Source || before.Run != after.Run || before.SeedDigest != after.SeedDigest || before.SeedJournal != after.SeedJournal ||
 		!reflect.DeepEqual(before.Targets, after.Targets) || before.Token != "" && before.Token != after.Token ||
 		before.FirstNode != "" && before.FirstNode != after.FirstNode || before.SecondNode != "" && before.SecondNode != after.SecondNode ||
@@ -200,12 +207,16 @@ func validateNativeRestoreTransition(before, after nativeRestoreState, record be
 func decodeNativeRestoreState(raw string, record benchmarkRecord, seed canarySeedState) (nativeRestoreState, error) {
 	var state nativeRestoreState
 	fields := map[string][]string{
-		"":                                 {"Version", "Source", "Run", "Phase", "SeedDigest", "Token", "FirstNode", "SecondNode", "CompletedAt", "SeedJournal", "Targets", "Resources"},
+		"":                                 {"Version", "Source", "Run", "Phase", "SeedDigest", "Token", "FirstNode", "SecondNode", "CompletedAt", "SeedJournal", "Targets", "Resources", "Expired"},
 		"SeedJournal":                      {"Name", "Namespace", "UID"},
 		"Targets[]":                        {"Name", "UID", "Preparation"},
 		"Targets[].Preparation":            {"Profile", "JournalSHA256", "BootID", "RawPartitionUUID", "Journal", "ProviderID", "MachineUUID", "LonghornUID", "DiskUUID", "Activation", "ActivationSHA256"},
 		"Targets[].Preparation.Journal":    {"Name", "Namespace", "UID"},
 		"Targets[].Preparation.Activation": {"Name", "Namespace", "UID"},
+		"Expired":                          {"Pod", "Transfer", "Replacement"},
+		"Expired.Pod":                      {"Name", "Namespace", "UID"},
+		"Expired.Transfer":                 {"Name", "Namespace", "UID"},
+		"Expired.Replacement":              {"Name", "Namespace", "UID"},
 	}
 	for _, step := range nativeRestorePhases {
 		for _, kind := range step.resources {

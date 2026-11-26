@@ -52,36 +52,31 @@ func (r *nativeRestoreRun) observeSeedTransfer(ctx context.Context, velero nativ
 	if err := r.requireVeleroEpoch(ctx, velero); err != nil {
 		return nativeRestoreTransferReceipt{}, errors.Join(errReadinessTerminal, err)
 	}
-	payload := r.plan.Seed.Seed.PayloadSHA256
-	output, err := r.execNativeRestorePod(ctx, observed, velero.Digest, nativeRestoreOriginalCheck(payload))
-	digest := strings.Fields(string(output))
-	if err != nil || len(digest) != 2 || digest[0] != payload || digest[1] != "payload.bin" {
-		return nativeRestoreTransferReceipt{}, errNativeRestoreEvidence
+	if err := r.verifyOriginalPayload(ctx, observed, velero.Digest); err != nil {
+		return nativeRestoreTransferReceipt{}, err
 	}
 	return receipt, nil
+}
+
+func (r *nativeRestoreRun) verifyOriginalPayload(ctx context.Context, observed nativeRestoreState, helperDigest string) error {
+	payload := r.plan.Seed.Seed.PayloadSHA256
+	output, err := r.execNativeRestorePod(ctx, observed, helperDigest, nativeRestoreOriginalCheck(payload))
+	digest := strings.Fields(string(output))
+	if err != nil || len(digest) != 2 || digest[0] != payload || digest[1] != "payload.bin" {
+		return errNativeRestoreEvidence
+	}
+	return nil
 }
 
 func (r *nativeRestoreRun) readSeedTransfer(ctx context.Context, velero nativeRestoreVeleroEpoch) (nativeRestoreTransferReceipt, nativeRestoreState, error) {
 	fail := func() (nativeRestoreTransferReceipt, nativeRestoreState, error) {
 		return nativeRestoreTransferReceipt{}, nativeRestoreState{}, errNativeRestoreEvidence
 	}
-	restoreID := r.state.Resources["Restore"]
-	restore, err := r.c.get(ctx, "restores.velero.io", restoreID.Namespace, restoreID.Name, false)
-	if err != nil || benchmarkIdentity(restore) != restoreID {
-		return fail()
-	}
-	if err := nativeRestoreTerminalFailure(restore); err != nil {
+	restore, transfers, repositories, err := r.readRestoreTransferObjects(ctx)
+	if err != nil {
 		return nativeRestoreTransferReceipt{}, nativeRestoreState{}, err
 	}
 	pod, err := r.c.get(ctx, "pods", benchmarkNamespace, "fio", false)
-	if err != nil {
-		return fail()
-	}
-	transfers, err := r.c.list(ctx, "podvolumerestores.velero.io", "velero")
-	if err != nil {
-		return fail()
-	}
-	repositories, err := r.c.list(ctx, "backuprepositories.velero.io", "velero")
 	if err != nil {
 		return fail()
 	}
@@ -98,6 +93,26 @@ func (r *nativeRestoreRun) readSeedTransfer(ctx context.Context, velero nativeRe
 		return fail()
 	}
 	return receipt, observed, nil
+}
+
+func (r *nativeRestoreRun) readRestoreTransferObjects(ctx context.Context) (object, []object, []object, error) {
+	restoreID := r.state.Resources["Restore"]
+	restore, err := r.c.get(ctx, "restores.velero.io", restoreID.Namespace, restoreID.Name, false)
+	if err != nil || benchmarkIdentity(restore) != restoreID {
+		return nil, nil, nil, errNativeRestoreEvidence
+	}
+	if err := nativeRestoreTerminalFailure(restore); err != nil {
+		return nil, nil, nil, err
+	}
+	transfers, err := r.c.list(ctx, "podvolumerestores.velero.io", "velero")
+	if err != nil {
+		return nil, nil, nil, errNativeRestoreEvidence
+	}
+	repositories, err := r.c.list(ctx, "backuprepositories.velero.io", "velero")
+	if err != nil {
+		return nil, nil, nil, errNativeRestoreEvidence
+	}
+	return restore, transfers, repositories, nil
 }
 
 func nativeRestoreTerminalFailure(restore object) error {
