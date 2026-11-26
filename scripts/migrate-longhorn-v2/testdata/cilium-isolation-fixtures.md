@@ -52,6 +52,17 @@ resolver-only UDP/TCP port-53 allowance. The latter is an existing platform
 allowance, including its absence of DNS-layer restrictions. The owned recovery
 policy retains its DNS proxy rule for archive FQDN resolution.
 
+The same admission policy generates a Kubernetes `NetworkPolicy` named
+`default-deny` with an empty Pod selector and both policy directions.
+`cnpg-baseline-knp-entries-cilium-1.20.5.json` is the v1.20.5
+`pkg/k8s.ParseNetworkPolicy` output for that policy with synthetic namespace
+`longhorn-db-proof-umami-db-1234` and UID
+`44444444-4444-4444-8444-444444444444`. Its two entries have explicit null
+peers and ports, which grant no traffic just like the empty lists on the
+Cilium default-deny entries. Only these paired, empty, enforced directions
+normalize in the allowance comparison. A missing field or a wildcard peer
+still fails.
+
 The repository-wide check examines all potentially applicable allowances,
 including entries without the owned CNP's labels. Apart from identity labels
 and the separately validated subject selector, their complete effect must

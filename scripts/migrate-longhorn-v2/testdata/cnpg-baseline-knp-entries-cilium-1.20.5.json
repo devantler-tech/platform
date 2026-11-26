@@ -1,0 +1,80 @@
+[
+  {
+    "Tier": 200,
+    "Priority": 0,
+    "Authentication": null,
+    "Log": {},
+    "Subject": {
+      "matchLabels": {
+        "k8s:io.kubernetes.pod.namespace": "longhorn-db-proof-umami-db-1234"
+      }
+    },
+    "L3": null,
+    "L4": null,
+    "Labels": [
+      {
+        "key": "io.cilium.k8s.policy.derived-from",
+        "value": "NetworkPolicy",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.name",
+        "value": "default-deny",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.namespace",
+        "value": "longhorn-db-proof-umami-db-1234",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.uid",
+        "value": "44444444-4444-4444-8444-444444444444",
+        "source": "k8s"
+      }
+    ],
+    "DefaultDeny": true,
+    "Verdict": 0,
+    "Ingress": true,
+    "Node": false
+  },
+  {
+    "Tier": 200,
+    "Priority": 0,
+    "Authentication": null,
+    "Log": {},
+    "Subject": {
+      "matchLabels": {
+        "k8s:io.kubernetes.pod.namespace": "longhorn-db-proof-umami-db-1234"
+      }
+    },
+    "L3": null,
+    "L4": null,
+    "Labels": [
+      {
+        "key": "io.cilium.k8s.policy.derived-from",
+        "value": "NetworkPolicy",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.name",
+        "value": "default-deny",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.namespace",
+        "value": "longhorn-db-proof-umami-db-1234",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.uid",
+        "value": "44444444-4444-4444-8444-444444444444",
+        "source": "k8s"
+      }
+    ],
+    "DefaultDeny": true,
+    "Verdict": 0,
+    "Ingress": false,
+    "Node": false
+  }
+]
