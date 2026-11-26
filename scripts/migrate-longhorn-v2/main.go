@@ -61,6 +61,10 @@ func main() {
 		authorization = authorizeHostReboot(os.Getenv, target)
 	case "observe-database":
 		authorization = authorizeCNPGObservation(os.Getenv)
+	case cnpgArchiveProofOperation:
+		authorization = authorizeCNPGArchiveProof(os.Getenv)
+	case umamiArchiveIsolationResumeOperation:
+		_, authorization = authorizeUmamiArchiveIsolationResume(os.Getenv)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
 	case "reserve-v1-scratch":
@@ -249,6 +253,18 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == cnpgArchiveProofOperation || operation == umamiArchiveIsolationResumeOperation {
+		runProof := runCNPGArchiveProof
+		if operation == umamiArchiveIsolationResumeOperation {
+			runProof = resumeUmamiArchiveIsolation
+		}
+		if err := runProof(ctx, client{run: execute, context: "admin@prod", inventoryPools: pools}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("CNPG_ARCHIVE_PROOF=RESTORED engine=v2 physicalHistory=VERIFIED networkIsolation=VERIFIED archiveCredential=RETIRED storageCleanup=REQUIRED migration=UNVERIFIED")
+		return
 	}
 	if operation == "register-temporary-v2-storage" {
 		legacyReceipts, err := parseLegacyPreparationReceipts(os.Getenv("LONGHORN_V2_LEGACY_PREPARATION_RECEIPTS"))
