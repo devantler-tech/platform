@@ -62,6 +62,10 @@ func (p *cnpgProofRun) observeRecoveredDatabaseData(ctx context.Context) (result
 	}
 	phase = "network-denial"
 	if err := p.observeRecoveredNetworkDenial(ctx, before.cluster, before.pod, datapath); err != nil {
+		var stage recoveredNetworkDenialStage
+		if errors.As(err, &stage) {
+			phase += "/" + string(stage)
+		}
 		return empty, err
 	}
 	phase = "history-after"
