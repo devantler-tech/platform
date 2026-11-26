@@ -12,12 +12,20 @@ func nativeRestoreReclaimOwnerSucceeded(ctx context.Context, c client, state nat
 		state.Phase != "completed" || owner != state.Run {
 		return errNativeRestoreEvidence
 	}
+	return verifyNativeRestoreSuccess(ctx, c, state, executor, os.Getenv("GITHUB_RUN_ID"))
+}
+
+// Verify the Actions receipts without acquiring any restore or reclaim rights.
+func verifyNativeRestoreSuccess(ctx context.Context, c client, state nativeRestoreState, executor, currentRun string) error {
+	if !commandContextActive(ctx) || c.run == nil || state.Phase != "completed" || state.Run == currentRun {
+		return errNativeRestoreEvidence
+	}
 	run, source := state.Run, state.Source
 	if executor != "" {
 		var ok bool
 		source, run, ok = strings.Cut(executor, ":")
 		if !ok || !validBenchmarkOwner(run, source) || run == state.Run || source == state.Source ||
-			run == os.Getenv("GITHUB_RUN_ID") || verifyNativeRestoreResumeOwner(ctx, c, state) != nil {
+			run == currentRun || verifyNativeRestoreResumeOwner(ctx, c, state) != nil {
 			return errNativeRestoreEvidence
 		}
 	}

@@ -9,6 +9,25 @@ import (
 	"testing"
 )
 
+func TestNativeRestoreOutcomeCanBeObservedWithoutReclaimAuthority(t *testing.T) {
+	_, _, state := nativeRestoreStateFixture(t, "completed")
+	reads := 0
+	c := client{context: "oidc@prod", run: func(_ context.Context, input []byte, binary string, args ...string) ([]byte, error) {
+		if input != nil || binary != "gh" || !slices.Equal(args, []string{"api", "repos/devantler-tech/platform/actions/runs/" + state.Run}) {
+			t.Fatal("read-only ownership check attempted an unrelated command")
+		}
+		reads++
+		return json.Marshal(object{"id": 5678, "head_sha": state.Source, "head_branch": "main", "event": "workflow_dispatch",
+			"status": "completed", "conclusion": "success", "run_attempt": 1, "path": ".github/workflows/prepare-longhorn-v2-node.yaml"})
+	}}
+	if err := verifyNativeRestoreSuccess(t.Context(), c, state, "", ""); err != nil || reads != 1 {
+		t.Fatal("the original success could not be read without reclaim authority", err)
+	}
+	if err := nativeRestoreReclaimOwnerSucceeded(t.Context(), c, state, ""); err == nil || reads != 1 {
+		t.Fatal("read access conferred reclaim authority")
+	}
+}
+
 func TestNativeRestoreReclaimChecksTheOriginalSuccessfulFirstAttempt(t *testing.T) {
 	for _, fault := range []string{"", "unexpected run", "changed source", "wrong path", "other branch", "other event", "live run", "failed run", "second attempt"} {
 		t.Run(fault, func(t *testing.T) {
