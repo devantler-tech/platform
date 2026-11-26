@@ -16,10 +16,10 @@ var errIngressEvidence = errors.New("inconclusive ingress evidence")
 
 // decodeIngressFlows accepts complete jsonpb observations of new connections
 // delivered to the bound application endpoint. It never returns partial proof.
-func decodeIngressFlows(data []byte, destination netip.Addr, node string, since, until time.Time) ([]netip.Addr, error) {
+func decodeIngressFlows(data []byte, destination netip.Addr, port uint16, node string, since, until time.Time) ([]netip.Addr, error) {
 	refuse := func() ([]netip.Addr, error) { return nil, errIngressEvidence }
 	if len(data) == 0 || len(data) > maxAPIOutput || !destination.IsGlobalUnicast() || destination.Is4In6() ||
-		node == "" || since.IsZero() || !until.After(since) || until.Sub(since) > 45*time.Second {
+		port == 0 || node == "" || since.IsZero() || !until.After(since) || until.Sub(since) > 45*time.Second {
 		return refuse()
 	}
 	fields := map[string][]string{
@@ -97,7 +97,7 @@ func decodeIngressFlows(data []byte, destination netip.Addr, node string, since,
 		if flow.Verdict != "FORWARDED" || (flow.Direction != "INGRESS" && flow.Direction != "EGRESS") || flow.Point != "TO_ENDPOINT" ||
 			flow.Node != node || (flow.Reply != nil && *flow.Reply) || flow.Source.Identity != 8 || !slices.Contains(flow.Source.Labels, "reserved:ingress") ||
 			flow.Destination.Namespace != "private-mail" || flow.Destination.Pod != "private-mail-0" || flow.IP.Destination != destination.String() ||
-			flow.L4.TCP.Port != 8080 || !flow.L4.TCP.Flags.SYN || flow.L4.TCP.Flags.ACK {
+			flow.L4.TCP.Port != port || !flow.L4.TCP.Flags.SYN || flow.L4.TCP.Flags.ACK {
 			return refuse()
 		}
 		original, err := netip.ParseAddr(flow.IP.Source)
