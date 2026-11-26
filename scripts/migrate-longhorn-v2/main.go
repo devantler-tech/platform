@@ -45,6 +45,8 @@ func main() {
 		authorization = authorizeTemporaryActivation(os.Getenv)
 	case nativeSeedOperation:
 		authorization = authorizeNativeSeed(os.Getenv)
+	case nativeRestoreOperation:
+		authorization = authorizeNativeRestore(os.Getenv)
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":
@@ -209,6 +211,15 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Reviewed capacity configuration is unreadable.")
 		os.Exit(1)
+	}
+	if operation == nativeRestoreOperation {
+		if err := runNativeRestore(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), config); err != nil {
+			fmt.Fprintln(os.Stderr, "Disposable V2 restore held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve the seed, restore journal and its assets for explicit recovery.")
+			os.Exit(1)
+		}
+		fmt.Println("LONGHORN_NATIVE_RESTORE=VERIFIED transfer=KOPIA engine=v2 reattachment=VERIFIED migration=UNVERIFIED")
+		return
 	}
 	pools, err := configuredMigrationPools(config)
 	if err != nil {

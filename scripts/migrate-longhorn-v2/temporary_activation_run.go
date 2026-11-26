@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -241,7 +242,7 @@ func (a temporaryV2Activation) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err = a.ownedRegistrations(ctx, s, uid, record.Targets); err != nil {
+		if _, err = a.ownedRegistrations(ctx, s, uid, record.Targets); err != nil {
 			return errors.Join(errReadinessTerminal, err)
 		}
 		return nil
@@ -262,40 +263,83 @@ func (a temporaryV2Activation) run(ctx context.Context) error {
 	return nil
 }
 
-// accepted is a read-only registration acceptance check. The completed journal must
-// come from a terminated protected workflow and still match all three native
-// partitions and journal-owned registrations; its cached completion bit alone
-// never authorizes IO.
-func (a temporaryV2Activation) accepted(ctx context.Context) error {
+type temporaryActivationReceipt struct {
+	Journal      benchmarkResource
+	RecordSHA256 string
+	Targets      map[string]temporaryV2Binding
+	DiskUUIDs    map[string]string
+}
+
+// accepted binds the canary targets to a successful protected registration and
+// three distinct currently schedulable raw disks.
+func (a temporaryV2Activation) accepted(ctx context.Context) (temporaryActivationReceipt, error) {
 	cm, record, err := a.read(ctx)
-	if err != nil || cm == nil || !record.Completed || previousRunCompleted(ctx, a.c, record.OwnerRun, record.Source) != nil {
-		return errTemporaryActivation
+	if err != nil || cm == nil || !record.Completed {
+		return temporaryActivationReceipt{}, errTemporaryActivation
+	}
+	run, err := previousMigrationRun(ctx, a.c, record.OwnerRun, record.Source)
+	if err != nil || text(run, "conclusion") != "success" {
+		return temporaryActivationReceipt{}, errTemporaryActivation
 	}
 	if _, err = a.environment(ctx); err != nil {
-		return err
+		return temporaryActivationReceipt{}, err
 	}
 	s, err := v2Environment(ctx, a.c, a.pools)
 	if err != nil {
-		return err
+		return temporaryActivationReceipt{}, err
 	}
-	return a.ownedRegistrations(ctx, s, text(cm, "metadata", "uid"), record.Targets)
-}
-
-// Revalidate storage ownership and native bindings on the snapshot that proved
-// disk readiness, so a later observation cannot borrow an earlier owner.
-func (a temporaryV2Activation) ownedRegistrations(ctx context.Context, s inventory, uid string, expected map[string]temporaryV2Binding) error {
-	if _, err := a.targets(ctx, s, uid, expected); err != nil {
-		return err
+	uid := text(cm, "metadata", "uid")
+	targets, err := a.ownedRegistrations(ctx, s, uid, record.Targets)
+	if err != nil {
+		return temporaryActivationReceipt{}, err
 	}
 	storage, err := indexed(s.storageNodes)
 	if err != nil {
-		return err
+		return temporaryActivationReceipt{}, err
 	}
-	for _, binding := range expected {
+	diskUUIDs := make(map[string]string, len(targets))
+	disks := make(map[string]bool, len(targets))
+	for _, binding := range targets {
+		node := storage[binding.Name]
+		disk := valueObject(node, "status", "diskStatus", "longhorn-v2")
+		diskUUID := text(disk, "diskUUID")
+		if !nativeRestoreDiskIdentityUsable(node, disk) || diskUUID == "" || disks[diskUUID] {
+			return temporaryActivationReceipt{}, errTemporaryActivation
+		}
+		disks[diskUUID], diskUUIDs[binding.Selection] = true, diskUUID
+	}
+	after, afterRecord, err := a.read(ctx)
+	if err != nil || !reflect.DeepEqual(cm, after) || !reflect.DeepEqual(record, afterRecord) {
+		return temporaryActivationReceipt{}, errTemporaryActivation
+	}
+	return temporaryActivationReceipt{
+		Journal: benchmarkIdentity(cm), RecordSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(text(cm, "data", "record")))),
+		Targets: targets, DiskUUIDs: diskUUIDs,
+	}, nil
+}
+
+// Revalidate ownership and native bindings using the same storage objects
+// that proved readiness.
+func (a temporaryV2Activation) ownedRegistrations(ctx context.Context, s inventory, uid string, expected map[string]temporaryV2Binding) (map[string]temporaryV2Binding, error) {
+	targets, err := a.targets(ctx, s, uid, expected)
+	if err != nil {
+		return nil, err
+	}
+	storage, err := indexed(s.storageNodes)
+	if err != nil {
+		return nil, err
+	}
+	for _, binding := range targets {
 		registered, err := temporaryRegistrationState(storage[binding.Name], uid, binding.Selection)
 		if err != nil || !registered {
-			return errTemporaryActivation
+			return nil, errTemporaryActivation
 		}
 	}
-	return nil
+	return targets, nil
+}
+
+func nativeRestoreDiskIdentityUsable(storage, disk object) bool {
+	return len(valueObject(storage, "status", "diskStatus")) == 1 &&
+		conditionsTrue(valueObject(storage, "status"), "Ready", "Schedulable") &&
+		conditionsTrue(disk, "Ready", "Schedulable")
 }

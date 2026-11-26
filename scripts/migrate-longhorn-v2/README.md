@@ -480,11 +480,19 @@ runtime, serving-API fences and physical retirement proof, then removes the run'
 replica tags. It leaves the remote backup and workspace intact. An interrupted
 run preserves its journal and assets for a separately reviewed recovery path.
 
-`SOURCE_CLEANED` accepts no V2 restore, reattachment, benchmark measurement or
-application migration. A separate V2 phase must restore the original snapshot to
-new storage, verify the original bytes, persist a new write, reattach on another
-qualified worker and verify both again. Encrypted storage and application-specific
-recovery still require their own proofs.
+`SOURCE_CLEANED` confirms the retained V1 backup and retirement of its source.
+After temporary V2 registration completes, run `restore-native-v2-seed` with
+the confirmation `restore-longhorn-native-v2-seed`. Leave `node` and
+`database` empty. The first-attempt main workflow binds the three registered
+raw disks to their original preparation and activation records and provisions
+a fresh V2 claim.
+
+Velero restores the original Kopia filesystem snapshot to that claim. The
+workflow verifies the original payload checksum, writes a fresh token, and
+detaches the first consumer. It reattaches the same claim on a second qualified
+worker and verifies both payloads. It retains the backup, journal and canary
+resources for readback. An uncertain write holds the run for explicit recovery.
+Application cutover and performance measurement have their own acceptance steps.
 
 ## Prepare a permanent worker
 
