@@ -79,25 +79,6 @@ func (c client) observeRecoveryCilium(ctx context.Context, input recoveryCiliumO
 		}
 		return b, nil
 	}
-	readRuntime := func() (recoveryCiliumConfig, error) {
-		config, e := native("config", "--all", "-o", "json")
-		if e != nil {
-			return recoveryCiliumConfig{}, refused
-		}
-		version, e := native("version", "-o", "json")
-		if e != nil {
-			return recoveryCiliumConfig{}, refused
-		}
-		hive, e := native("shell", "hive")
-		if e != nil {
-			return recoveryCiliumConfig{}, refused
-		}
-		cfg, e := readRecoveryCiliumRuntime(config, version, hive)
-		if e != nil {
-			return recoveryCiliumConfig{}, refused
-		}
-		return cfg, nil
-	}
 	stage = "binding-before"
 	before, policy, err := readBindings()
 	if err != nil {
@@ -119,21 +100,27 @@ func (c client) observeRecoveryCilium(ctx context.Context, input recoveryCiliumO
 		if phase == 1 {
 			suffix = "after"
 		}
-		stage = "runtime-" + suffix
-		cfg, e := readRuntime()
-		if e != nil || phase == 1 && cfg != runtime {
+		stage = "runtime-config-" + suffix
+		config, e := native("config", "--all", "-o", "json")
+		if e != nil {
 			return result, refused
 		}
-		runtime = cfg
-		stage = "policy-import-" + suffix
+		stage = "runtime-version-" + suffix
+		version, e := native("version", "-o", "json")
+		if e != nil {
+			return result, refused
+		}
+		stage = "policy-repository-" + suffix
 		raw, e := native("policy", "get", "-o", "json")
 		if e != nil {
 			return result, refused
 		}
-		revision, e := verifyCNPGIsolationImport(raw, policy, input.ArchiveEndpoint, cfg)
-		if e != nil || phase == 1 && revision != firstRevision {
+		stage = "runtime-policy-binding-" + suffix
+		cfg, revision, e := readRecoveryCiliumRuntime(config, version, raw, policy, input.ArchiveEndpoint)
+		if e != nil || phase == 1 && (cfg != runtime || revision != firstRevision) {
 			return result, refused
 		}
+		runtime = cfg
 		stage = "endpoint-read-" + suffix
 		raw, e = native("endpoint", "get", identifier, "-o", "json")
 		if e != nil {

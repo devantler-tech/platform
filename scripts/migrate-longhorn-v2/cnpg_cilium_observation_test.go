@@ -22,10 +22,6 @@ func recoveryObservationFixture(t *testing.T, change func(string, int, object)) 
 	input := recoveryCiliumObservation{Agent: agent, DaemonSet: ds, Node: node, Pod: pod, Policy: policy, ArchiveEndpoint: "https://" + strings.Repeat("a", 32) + ".r2.cloudflarestorage.com"}
 	config := []byte(`{"ClusterName":"default","EnableNonDefaultDenyPolicies":true,"EnableL7Proxy":true,"RestoreState":true,"policy-enforcement":"default"}`)
 	version := []byte(`{"Client":{"Version":"1.20.5","Revision":"15012141"},"Daemon":{"Version":"1.20.5","Revision":"15012141"}}`)
-	hive, err := os.ReadFile("testdata/cilium-hive-synthetic-1.20.5.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
 	endpoint, err := os.ReadFile("testdata/synthetic-endpoint-get-cilium-1.20.5.json")
 	if err != nil {
 		t.Fatal(err)
@@ -65,8 +61,6 @@ func recoveryObservationFixture(t *testing.T, change func(string, int, object)) 
 			return config, nil
 		case "version -o json":
 			return version, nil
-		case "shell hive":
-			return hive, nil
 		case "policy get -o json":
 			return isolationResponse(t, entries, 817), nil
 		case "endpoint get ipv4:192.0.2.17 -o json":

@@ -9,30 +9,27 @@ import (
 const recoveryCiliumSourceCommit = "150121410c147fad575ac5dcbce6de923be69042"
 
 var recoveryCiliumRevision = regexp.MustCompile(`^[0-9a-f]{8,40}$`)
-var recoveryPolicyConfigMarker = regexp.MustCompile(`(?m)^.*⚙️ \(types\.PolicyConfig\).*$`)
-var recoveryPolicyConfigBlock = regexp.MustCompile(`(?m)^([\t ]*)⚙️ \(types\.PolicyConfig\) \{\r?\n([\t ]+)PolicyDefaultLocalCluster: \(bool\) (true|false)\r?\n([\t ]*)\}\r?$`)
 
-// Inputs come from fixed read-only native commands in the same bound agent
-// process: config --all -o json, version -o json, and shell hive. ConfigMap
-// contents and default values cannot establish this runtime observation.
-// The caller must still prove agent Pod/container continuity around the reads.
-func readRecoveryCiliumRuntime(configJSON, versionJSON, hiveText []byte) (recoveryCiliumConfig, error) {
+// Bind the fixed native configuration and version reads to the same agent's
+// imported, identified policy at one repository revision. The caller must
+// prove Pod and container continuity around these reads.
+func readRecoveryCiliumRuntime(configJSON, versionJSON, repository []byte, policy object, archiveEndpoint string) (recoveryCiliumConfig, uint64, error) {
 	var cfg recoveryCiliumConfig
-	for _, raw := range [][]byte{configJSON, versionJSON, hiveText} {
+	for _, raw := range [][]byte{configJSON, versionJSON} {
 		if len(raw) == 0 || len(raw) > 32<<20 {
-			return cfg, errors.New("native Cilium runtime evidence is empty or exceeds its bound")
+			return recoveryCiliumConfig{}, 0, errors.New("native Cilium runtime evidence is empty or exceeds its bound")
 		}
 	}
 	var config, version object
 	if decodeIsolationJSON(configJSON, &config) != nil || decodeIsolationJSON(versionJSON, &version) != nil {
-		return cfg, errors.New("native Cilium runtime JSON is malformed")
+		return recoveryCiliumConfig{}, 0, errors.New("native Cilium runtime JSON is malformed")
 	}
 	cfg.Version = text(version, "Daemon", "Version")
-	revision, clientRevision := text(version, "Daemon", "Revision"), text(version, "Client", "Revision")
+	daemonRevision, clientRevision := text(version, "Daemon", "Revision"), text(version, "Client", "Revision")
 	// The native version command can return success with an empty Daemon object.
 	// A matching CLI version by itself never establishes a running daemon.
-	if cfg.Version != "1.20.5" || text(version, "Client", "Version") != cfg.Version || revision != clientRevision || !recoveryCiliumRevision.MatchString(revision) || !strings.HasPrefix(recoveryCiliumSourceCommit, revision) {
-		return cfg, errors.New("native Cilium daemon or client does not identify the reviewed build")
+	if cfg.Version != "1.20.5" || text(version, "Client", "Version") != cfg.Version || daemonRevision != clientRevision || !recoveryCiliumRevision.MatchString(daemonRevision) || !strings.HasPrefix(recoveryCiliumSourceCommit, daemonRevision) {
+		return recoveryCiliumConfig{}, 0, errors.New("native Cilium daemon or client does not identify the reviewed build")
 	}
 	cfg.Cluster = text(config, "ClusterName")
 	cfg.Enforcement = text(config, "policy-enforcement")
@@ -42,17 +39,17 @@ func readRecoveryCiliumRuntime(configJSON, versionJSON, hiveText []byte) (recove
 	// Endpoint creation's startup-cache barrier depends on the actual restore
 	// option, exposed as RestoreState by the native running-config API.
 	cfg.RestoreState, restoreOK = value(config, "RestoreState").(bool)
-	// PolicyDefaultLocalCluster is a separate live Hive cell, absent from the
-	// JSON config API. Match its complete native struct, not a similarly named
-	// field or an arbitrary occurrence of 'true' elsewhere in the diagnostic.
-	markers := recoveryPolicyConfigMarker.FindAll(hiveText, -1)
-	blocks := recoveryPolicyConfigBlock.FindAllSubmatch(hiveText, -1)
-	if len(markers) != 1 || len(blocks) != 1 || string(blocks[0][1]) != string(blocks[0][4]) || !strings.HasPrefix(string(blocks[0][2]), string(blocks[0][1])) || len(blocks[0][2]) <= len(blocks[0][1]) || string(blocks[0][3]) != "true" || !nonDefaultOK || !l7OK || !restoreOK {
-		return cfg, errors.New("native Cilium policy configuration is missing, ambiguous or changed")
-	}
+	// Cilium's config API omits PolicyDefaultLocalCluster. The policy has no
+	// explicit cluster selectors, so Cilium adds the reviewed local-cluster
+	// constraints to its peers only when importing with local normalization.
+	// The candidate flag becomes evidence after the complete import matches.
 	cfg.DefaultLocalCluster = true
-	if !supportedRecoveryCiliumConfig(cfg) {
-		return cfg, errors.New("native Cilium runtime configuration differs from the reviewed recovery binding")
+	if !nonDefaultOK || !l7OK || !restoreOK || !supportedRecoveryCiliumConfig(cfg) {
+		return recoveryCiliumConfig{}, 0, errors.New("native Cilium runtime configuration differs from the reviewed recovery binding")
 	}
-	return cfg, nil
+	revision, err := verifyCNPGIsolationImport(repository, policy, archiveEndpoint, cfg)
+	if err != nil {
+		return recoveryCiliumConfig{}, 0, err
+	}
+	return cfg, revision, nil
 }
