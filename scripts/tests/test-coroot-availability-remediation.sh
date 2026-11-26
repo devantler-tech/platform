@@ -45,13 +45,17 @@ yq e -e '
 ' "${umami_release}" >/dev/null ||
   fail 'Umami serving replicas need one hostname spread across every primary revision, counting only nodes they can run on'
 
-umami_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "umami-umami") | .patch' "${umami_release}")"
-printf '%s\n' "${umami_patch}" | yq e -e '
-  [.[] | select(.op == "add" and .path == "/spec/strategy" and
+# Parse each patch on its own so a separate workload security patch does not
+# change how the rolling strategy is checked.
+yq e -e '
+  [.spec.postRenderers[].kustomize.patches[] |
+    select(.target.kind == "Deployment" and .target.name == "umami-umami") |
+    .patch | from_yaml | select(kind == "seq") | .[] |
+    select(.op == "add" and .path == "/spec/strategy" and
     .value.type == "RollingUpdate" and
     .value.rollingUpdate.maxSurge == 0 and
     .value.rollingUpdate.maxUnavailable == 1)] | length == 1
-' - >/dev/null ||
+' "${umami_release}" >/dev/null ||
   fail 'Umami primary rollout must retire one old pod before placing its replacement'
 
 yq e -e '
