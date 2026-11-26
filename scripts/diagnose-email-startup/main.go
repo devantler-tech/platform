@@ -73,7 +73,11 @@ type pod struct {
 				Items    []json.RawMessage
 				Optional bool
 			}
-			EmptyDir *struct{ Medium, SizeLimit string }
+			EmptyDir              *struct{ Medium, SizeLimit string }
+			PersistentVolumeClaim *struct {
+				ClaimName string
+				ReadOnly  bool
+			}
 		}
 	}
 	Status struct {
@@ -96,6 +100,7 @@ type binding struct {
 	ProxyConfig, ProxyContainerID, ProxyImageID, ProxyStartedAt string
 	ProxyRestarts                                               int
 	StorageSelectorID                                           string
+	OriginalStoreBound                                          bool
 }
 type configMap struct {
 	Metadata metadata
@@ -245,6 +250,9 @@ func bindPod(b []byte) (binding, bool, bool, error) {
 	}
 	id := binding{UID: p.Metadata.UID, Node: p.Spec.NodeName, ContainerID: s.ContainerID, ImageID: s.ImageID,
 		Restarts: s.RestartCount, StorageSelectorID: selector}
+	if selector != "" {
+		id.OriginalStoreBound = bindOriginalStore(p, c)
+	}
 	if s.State.Running == nil {
 		return id, false, s.Ready, nil
 	}
@@ -260,6 +268,35 @@ func bindPod(b []byte) (binding, bool, bool, error) {
 		return binding{}, false, false, invalid
 	}
 	return id, proxyRunning, s.Ready && proxyReady, nil
+}
+
+// The startup probe measures the original RocksDB lock, so a routed pod must
+// mount the original claim at that full path without a shadowing mount.
+func bindOriginalStore(p pod, c container) bool {
+	const root = "/var/lib/stalwart"
+	matches := 0
+	for _, mount := range c.VolumeMounts {
+		if strings.HasPrefix(mount.MountPath, root+"/") {
+			return false
+		}
+		if mount.MountPath != root {
+			continue
+		}
+		if mount.Name != "data" || mount.ReadOnly || mount.SubPath != "" || mount.SubPathExpr != "" {
+			return false
+		}
+		matches++
+	}
+	if matches != 1 {
+		return false
+	}
+	for _, volume := range p.Spec.Volumes {
+		if volume.Name == "data" {
+			claim := volume.PersistentVolumeClaim
+			return claim != nil && claim.ClaimName == "email-data-encrypted" && !claim.ReadOnly
+		}
+	}
+	return false
 }
 
 func bindDatastoreMount(p pod, c container) (string, bool) {
@@ -461,7 +498,7 @@ func collect(ctx context.Context, run executor, pause func(context.Context) erro
 			return unknown()
 		}
 		id, running, _, e := bindPod(raw)
-		if e != nil || id.StorageSelectorID != "" {
+		if e != nil || (id.StorageSelectorID != "" && !id.OriginalStoreBound) {
 			return unknown()
 		}
 		if running {
