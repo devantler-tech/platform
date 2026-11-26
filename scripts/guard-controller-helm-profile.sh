@@ -3,7 +3,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ "$#" -eq 0 ]; then
-  [[ "$(yq -er '.spec.ref.tag' "$root/k8s/bases/infrastructure/controllers/flux-operator/oci-repository.yaml")" == 0.63.1 ]] || {
+  [[ "$(yq -er '.spec.ref.tag' "$root/k8s/bases/infrastructure/controllers/flux-operator/oci-repository.yaml")" == 0.64.0 ]] || {
     echo 'guard-controller-helm-profile: the operator composition must be re-audited' >&2
     exit 2
   }

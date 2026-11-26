@@ -1,5 +1,5 @@
 # Business Site v3.21.0 preview overlay (source bdbb0d3fc52de0491ca53462a607a794717a17c3).
-# Verified manifests package: sha256:892773128c6a2d18aded9f0cd8997790362b7567d1ba7839fc60c2d8d737cf14. Update both workloads together.
+# Verified manifests package: sha256:892773128c6a2d18aded9f0cd8997790362b7567d1ba7839fc60c2d8d737cf14.
 apiVersion: batch/v1
 kind: Job
 metadata:

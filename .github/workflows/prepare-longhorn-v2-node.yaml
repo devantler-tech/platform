@@ -35,6 +35,8 @@ name: Prepare Longhorn V2 Migration
             restore-native-v2-seed,
             resume-native-v2-seed-restore,
             resume-native-v2-reattach,
+            reclaim-native-v2-seed,
+            resume-native-v2-reclaim,
             inventory-replicas,
             inventory-storage-root,
             inventory-storage-layout,
@@ -156,6 +158,12 @@ jobs:
             resume-native-v2-reattach)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^resume-longhorn-native-v2-reattach:[1-9][0-9]{0,18}:[1-9][0-9]{0,18}$ ]]
+              ;;
+            reclaim-native-v2-seed)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" =~ ^reclaim-longhorn-native-v2-seed:[1-9][0-9]{0,18}$ ]]
+              ;;
+            resume-native-v2-reclaim)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" =~ ^resume-longhorn-native-v2-reclaim:[1-9][0-9]{0,18}:[1-9][0-9]{0,18}$ ]]
               ;;
             inventory-v1-runtime)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == inventory-v1-runtime ]]
@@ -282,7 +290,7 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh
       - name: Run the confirmed migration preparation
-        if: ${{ inputs.operation != 'benchmark-v1' && inputs.operation != 'recover-bound-v1-benchmark' && inputs.operation != 'prepare-native-v1-seed' }}
+        if: ${{ inputs.operation != 'benchmark-v1' && inputs.operation != 'recover-bound-v1-benchmark' && inputs.operation != 'prepare-native-v1-seed' && inputs.operation != 'reclaim-native-v2-seed' && inputs.operation != 'resume-native-v2-reclaim' }}
         env:
           GH_TOKEN: ${{ github.token }}
           LONGHORN_RUNTIME_INVENTORY_SOURCE: ${{ steps.recovery-source.outputs.sha }}
@@ -295,6 +303,12 @@ jobs:
         run: go run ./scripts/migrate-longhorn-v2
       - name: Recover the confirmed bound V1 benchmark scratch
         if: ${{ inputs.operation == 'recover-bound-v1-benchmark' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Reclaim the verified disposable V2 restoration
+        if: ${{ inputs.operation == 'reclaim-native-v2-seed' || inputs.operation == 'resume-native-v2-reclaim' }}
         env:
           GH_TOKEN: ${{ github.token }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

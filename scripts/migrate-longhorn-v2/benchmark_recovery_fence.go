@@ -74,23 +74,25 @@ func benchmarkRetirementFences(record benchmarkRecord) ([]object, error) {
 		empty("object.status.kubernetesStatus.pvName"),
 		"("+empty("object.status.kubernetesStatus.pvcName")+" || (has(object.status.kubernetesStatus.lastPVCRefAt) && object.status.kubernetesStatus.lastPVCRefAt != \"\"))",
 	)
-	policy := func(name, group, version, scope string, resources []any, match, invariant string) object {
-		return object{
-			"apiVersion": "admissionregistration.k8s.io/v1", "kind": "ValidatingAdmissionPolicy",
-			"metadata": object{"name": name + "-" + record.Phase + "-" + record.Run},
-			"spec": object{
-				"failurePolicy": "Fail",
-				"matchConstraints": object{
-					"matchPolicy": "Equivalent", "namespaceSelector": object{}, "objectSelector": object{},
-					"resourceRules": []any{object{"apiGroups": []any{group}, "apiVersions": []any{version}, "resources": resources, "operations": []any{"CREATE", "UPDATE"}, "scope": scope}},
-				},
-				"matchConditions": []any{object{"name": "references-original-benchmark", "expression": match}},
-				"validations":     []any{object{"expression": invariant, "reason": "Forbidden", "message": benchmarkReferenceFenceMessage}},
-			},
-		}
-	}
+	suffix := "-" + record.Phase + "-" + record.Run
 	return []object{
-		policy("lh-benchmark-retire-pv", "", "v1", "Cluster", []any{"persistentvolumes", "persistentvolumes/status"}, pvMatch, pvInvariant),
-		policy("lh-benchmark-retire-backend", "longhorn.io", "v1beta2", "Namespaced", []any{"volumes", "volumes/status"}, backendMatch, strings.Join(backendTerms, " && ")),
+		benchmarkReferencePolicy("lh-benchmark-retire-pv"+suffix, "", "v1", "Cluster", []any{"persistentvolumes", "persistentvolumes/status"}, pvMatch, pvInvariant),
+		benchmarkReferencePolicy("lh-benchmark-retire-backend"+suffix, "longhorn.io", "v1beta2", "Namespaced", []any{"volumes", "volumes/status"}, backendMatch, strings.Join(backendTerms, " && ")),
 	}, nil
+}
+
+func benchmarkReferencePolicy(name, group, version, scope string, resources []any, match, invariant string) object {
+	return object{
+		"apiVersion": benchmarkAdmissionAPI, "kind": "ValidatingAdmissionPolicy",
+		"metadata": object{"name": name},
+		"spec": object{
+			"failurePolicy": "Fail",
+			"matchConstraints": object{
+				"matchPolicy": "Equivalent", "namespaceSelector": object{}, "objectSelector": object{},
+				"resourceRules": []any{object{"apiGroups": []any{group}, "apiVersions": []any{version}, "resources": resources, "operations": []any{"CREATE", "UPDATE"}, "scope": scope}},
+			},
+			"matchConditions": []any{object{"name": "references-original-benchmark", "expression": match}},
+			"validations":     []any{object{"expression": invariant, "reason": "Forbidden", "message": benchmarkReferenceFenceMessage}},
+		},
+	}
 }

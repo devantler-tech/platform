@@ -516,6 +516,31 @@ Leave `node` and `database` empty. The protected operation verifies the failed
 executor and the never-started Pod, replaces that test Pod and checks the
 original payload and previously written marker on the remaining qualified worker.
 
+After independently verifying the successful restore and reattachment, select
+`reclaim-native-v2-seed` and confirm it with
+`reclaim-longhorn-native-v2-seed:<original restore run ID>`. Leave the node and
+database fields empty. The operation binds the original off-cluster seed and
+the successful first attempt of the restore or its recorded continuation. It
+waits for the canary consumer to leave and for the backend to detach. It verifies
+admission on every serving API before changing the bound disposable PV's reclaim
+policy.
+
+The original claim is removed only after the CSI provisioner has installed its
+deletion finalizer. Verify the PV, backend, replicas and attachment references
+have retired. The operation removes the canary's policies, class and workload
+tags and verifies the seed backup again. The restore and reclaim journals and
+the object-store restore logs provide the audit record. If any action cannot be
+confirmed, inspect the reclaim journal and the exact recorded resources before
+recovering it.
+
+If cleanup stopped after binding both admission policies, confirm the previous
+run failed on its first attempt and the original claim remains detached and
+Retain-protected. Select `resume-native-v2-reclaim` with
+`resume-longhorn-native-v2-reclaim:<original restore run ID>:<failed cleanup run ID>`.
+The continuation retains the two recorded policies and bindings. It verifies
+fresh admission on each serving API before taking ownership of the existing
+journal. It can proceed only from the recorded two-fence checkpoint.
+
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes
