@@ -72,22 +72,21 @@ func TestRuntimeSettingsEnableTheCustomerDirectory(t *testing.T) {
 	if !ok {
 		t.Fatal("missing runtime settings template")
 	}
-	const activation = "$portalCustomerDirectoryEnabled := true"
-	if strings.Count(source, activation) != 1 {
-		t.Fatal("the customer directory is disabled in production")
+	if strings.Contains(source, "portalCustomerDirectoryEnabled") {
+		t.Fatal("production settings still contain the temporary customer directory switch")
 	}
-	enabled := render(t, source)
+	settings := render(t, source)
 	for _, expected := range []string{
 		"PORTAL_ZITADEL_URL=https://accounts.devantler.tech\n",
 		"PORTAL_ZITADEL_ORG_ID=123456789\n",
 		"PORTAL_ZITADEL_TOKEN_PROJECTION_FILE=/run/webapp-inputs/portal-zitadel-token\n",
 		"PORTAL_CLIENT_PREVIEW_DATABASE_CA=" + base64.StdEncoding.EncodeToString([]byte(previewFixtureCA)) + "\n",
 	} {
-		if !strings.Contains(enabled, expected) {
-			t.Errorf("activated settings omitted %q", expected)
+		if !strings.Contains(settings, expected) {
+			t.Errorf("production settings omitted %q", expected)
 		}
 	}
-	_, previewSettings, found := strings.Cut(enabled, "\nPORTAL_CLIENT_PREVIEW_DATABASE_URL=")
+	_, previewSettings, found := strings.Cut(settings, "\nPORTAL_CLIENT_PREVIEW_DATABASE_URL=")
 	rawURL, _, _ := strings.Cut(previewSettings, "\n")
 	previewURL, err := url.Parse(rawURL)
 	if !found || err != nil || previewURL.User == nil {
@@ -100,11 +99,8 @@ func TestRuntimeSettingsEnableTheCustomerDirectory(t *testing.T) {
 		previewURL.Path != "/portal_preview" || previewURL.RawQuery != "sslmode=verify-full" {
 		t.Fatal("rendering changed the isolated preview database inputs")
 	}
-	if !strings.Contains(enabled, "PORTAL_OIDC_CLIENT_ID=business-portal\n") {
-		t.Fatal("directory activation removed existing sign-in configuration")
-	}
-	if strings.Contains(render(t, strings.Replace(source, activation, "$portalCustomerDirectoryEnabled := false", 1)), "PORTAL_ZITADEL_") {
-		t.Fatal("disabling the directory must remove all three settings")
+	if !strings.Contains(settings, "PORTAL_OIDC_CLIENT_ID=business-portal\n") {
+		t.Fatal("production settings omitted existing sign-in configuration")
 	}
 }
 
