@@ -75,7 +75,35 @@ func readNativeRestoreDetached(ctx context.Context, c client, state nativeRestor
 }
 
 func nativeRestoreDetachPhase(phase string) bool {
+	if stage := nativeRestoreExpiredStage(phase); stage > 0 {
+		return stage < nativeRestoreExpiredStage(nativeExpiredReplacement)
+	}
 	return phase == "first-pod-delete-requested" || phase == "first-pod-deleted" || phase == "reattach-create-requested"
+}
+
+// The very first expired-consumer check proves detachment while the exact
+// terminal Pod object still exists. All subsequent detach checks require it gone.
+func verifyNativeRestoreExpiredDetached(record benchmarkRecord, seed canarySeedState, state nativeRestoreState, observed nativeRestoreDetachedObservation) error {
+	if state.Phase != nativeExpiredDeleteRequested || state.Expired == nil || observed.Inventory.pods == nil {
+		return errNativeRestoreEvidence
+	}
+	found := false
+	pods := make([]object, 0, len(observed.Inventory.pods))
+	for _, pod := range observed.Inventory.pods {
+		if benchmarkIdentity(pod) != state.Expired.Pod {
+			pods = append(pods, pod)
+			continue
+		}
+		if found || !nativeRestorePodExpired(pod) {
+			return errNativeRestoreEvidence
+		}
+		found = true
+	}
+	if !found {
+		return errNativeRestoreEvidence
+	}
+	observed.Inventory.pods = pods
+	return verifyNativeRestoreDetached(record, seed, state, observed)
 }
 
 // Reattachment may reuse the claim only after the old consumer and all

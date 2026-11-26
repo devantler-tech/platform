@@ -21,11 +21,17 @@ func verifyNativeRestoreConsumer(record benchmarkRecord, seed canarySeedState, s
 	var init *nativeRestoreInitProof
 	switch {
 	case rank >= nativeRestorePhaseIndex("restore-verified") && rank <= nativeRestorePhaseIndex("write-verified"):
-		if node != state.Targets[0].Name || !seedSHA256.MatchString(helperDigest) ||
-			text(pod, "metadata", "labels", "velero.io/restore-name") != state.Resources["Restore"].Name {
+		if node != state.Targets[0].Name {
 			return errNativeRestoreEvidence
 		}
-		init = &nativeRestoreInitProof{RestoreUID: state.Resources["Restore"].UID, ImageDigest: helperDigest}
+		if state.Expired == nil {
+			if !seedSHA256.MatchString(helperDigest) || text(pod, "metadata", "labels", "velero.io/restore-name") != state.Resources["Restore"].Name {
+				return errNativeRestoreEvidence
+			}
+			init = &nativeRestoreInitProof{RestoreUID: state.Resources["Restore"].UID, ImageDigest: helperDigest}
+		} else if text(pod, "metadata", "labels", "velero.io/restore-name") != "" {
+			return errNativeRestoreEvidence
+		}
 	case rank >= nativeRestorePhaseIndex("reattach-owned"):
 		kind, node = "SecondPod", text(pod, "spec", "nodeName")
 		known := false
