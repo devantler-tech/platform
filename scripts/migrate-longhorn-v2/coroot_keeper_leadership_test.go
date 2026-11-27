@@ -7,7 +7,7 @@ import (
 
 func TestCorootKeeperLeadershipRequiresTwoV2MembersAndTheRetainedProviderDigest(t *testing.T) {
 	digest := strings.Repeat("a", 64)
-	for _, fault := range []string{"", "target on provider", "other member still on provider", "stale provider", "dual leaders", "no leader"} {
+	for _, fault := range []string{"", "target on provider", "other member still on provider", "shared V2 claim", "stale provider", "dual leaders", "no leader"} {
 		t.Run(fault, func(t *testing.T) {
 			before := corootKeeperQuorumReceipt{
 				Members: [3]corootKeeperMember{{Pod: "keeper-0", UID: "a", Leader: true}, {Pod: "keeper-1", UID: "b"}, {Pod: "keeper-2", UID: "c"}},
@@ -23,6 +23,8 @@ func TestCorootKeeperLeadershipRequiresTwoV2MembersAndTheRetainedProviderDigest(
 			case "other member still on provider":
 				before.V2Claims[2] = benchmarkResource{}
 				before.Disks[2].Digest = strings.Repeat("b", 64)
+			case "shared V2 claim":
+				before.V2Claims[2] = before.V2Claims[1]
 			case "stale provider":
 				input.Digest = strings.Repeat("b", 64)
 			case "dual leaders":

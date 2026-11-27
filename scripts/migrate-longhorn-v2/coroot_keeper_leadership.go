@@ -19,6 +19,7 @@ func bindCorootKeeperLeadership(receipt corootKeeperQuorumReceipt, input corootK
 	if input.Ordinal < 0 || input.Ordinal >= len(receipt.Members) || !retentionDigest.MatchString(input.Digest) {
 		return -1, -1, errCorootKeeperStorage
 	}
+	v2UID := ""
 	for i, member := range receipt.Members {
 		if member.Leader {
 			if leader != -1 {
@@ -27,9 +28,10 @@ func bindCorootKeeperLeadership(receipt corootKeeperQuorumReceipt, input corootK
 			leader = i
 		}
 		if receipt.V2Claims[i].UID != "" {
-			if receipt.Disks[i] != (corootKeeperProviderDisk{}) {
+			if receipt.Disks[i] != (corootKeeperProviderDisk{}) || v2UID == receipt.V2Claims[i].UID {
 				return -1, -1, errCorootKeeperStorage
 			}
+			v2UID = receipt.V2Claims[i].UID
 			continue
 		}
 		if remaining != -1 || receipt.Disks[i].Digest != input.Digest {
@@ -81,6 +83,9 @@ func runCorootKeeperLeadershipTransfer(ctx context.Context, c client, source, ru
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
+	if err := recheckCorootKeeperLeadershipTarget(ctx, c, latest.Controller, target, input.Ordinal); err != nil {
+		return err
+	}
 	// Only the authenticated, selected V2 member can request leadership.
 	// Read back the majority and leader even when the command times out.
 	out, callErr := c.kubectl(ctx, nil, "exec", target.Pod, "--namespace="+corootKeeperNamespace,
@@ -101,6 +106,22 @@ func runCorootKeeperLeadershipTransfer(ctx context.Context, c client, source, ru
 			return errors.Join(err, errors.New("the Keeper leadership request was not acknowledged"))
 		}
 		return err
+	}
+	return nil
+}
+
+func recheckCorootKeeperLeadershipTarget(ctx context.Context, c client, controller benchmarkResource, target corootKeeperMember, ordinal int) error {
+	stateful, err := c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
+	if err != nil || benchmarkIdentity(stateful) != controller {
+		return errCorootKeeperQuorum
+	}
+	pod, err := c.get(ctx, "pod", corootKeeperNamespace, target.Pod, false)
+	if err != nil {
+		return errCorootKeeperQuorum
+	}
+	current, err := bindCorootKeeperMember(pod, stateful, ordinal)
+	if err != nil || current != target {
+		return errCorootKeeperQuorum
 	}
 	return nil
 }
