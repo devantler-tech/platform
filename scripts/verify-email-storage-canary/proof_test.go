@@ -2,14 +2,23 @@ package main
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestDispatchAuthorization(t *testing.T) {
 	valid := map[string]string{"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "40783170105", "GITHUB_SHA": strings.Repeat("a", 40), "EMAIL_CANARY_CONFIRM": "verify-email-storage-canary", "RUNNER_ENVIRONMENT": "github-hosted"}
-	if _, err := authorize(func(k string) string { return valid[k] }); err != nil {
-		t.Fatal(err)
+	if run, engine, err := authorize(func(k string) string { return valid[k] }); err != nil || run != valid["GITHUB_RUN_ID"] || engine != "v1" {
+		t.Fatal("the original dispatch lost its V1 profile", err)
+	}
+	if run, engine, err := authorize(func(k string) string {
+		if k == "EMAIL_CANARY_CONFIRM" {
+			return "verify-email-storage-v2-canary"
+		}
+		return valid[k]
+	}); err != nil || run != valid["GITHUB_RUN_ID"] || engine != "v2" {
+		t.Fatal("the explicit V2 canary dispatch was refused:", err)
 	}
 	for key, bad := range map[string]string{"GITHUB_REPOSITORY": "other/platform", "GITHUB_REF": "refs/pull/1/merge", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_RUN_ID": "1/../../private-mail", "GITHUB_SHA": "main", "EMAIL_CANARY_CONFIRM": "yes", "RUNNER_ENVIRONMENT": "self-hosted"} {
 		t.Run(key, func(t *testing.T) {
@@ -18,7 +27,7 @@ func TestDispatchAuthorization(t *testing.T) {
 				clone[k] = v
 			}
 			clone[key] = bad
-			if _, err := authorize(func(k string) string { return clone[k] }); err == nil {
+			if _, _, err := authorize(func(k string) string { return clone[k] }); err == nil {
 				t.Fatal("unsafe dispatch accepted")
 			}
 		})
@@ -30,8 +39,15 @@ func validVolume() object {
 }
 func TestVolumeProofCannotSubstituteDesiredConfiguration(t *testing.T) {
 	good := validVolume()
-	if err := checkVolume(good, "pvc-test", "volume-uid", true); err != nil {
+	if err := checkVolume(good, "pvc-test", "volume-uid", "v1", true); err != nil {
 		t.Fatal(err)
+	}
+	child(good, "spec")["dataEngine"] = "v2"
+	if err := checkVolume(good, "pvc-test", "volume-uid", "v2", true); err != nil {
+		t.Fatal(err)
+	}
+	if checkVolume(validVolume(), "pvc-test", "volume-uid", "v2", true) == nil {
+		t.Fatal("a V1 backend satisfied the V2 proof")
 	}
 	for _, test := range []struct {
 		name   string
@@ -48,8 +64,48 @@ func TestVolumeProofCannotSubstituteDesiredConfiguration(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			o := validVolume()
 			test.mutate(o)
-			if checkVolume(o, "pvc-test", "volume-uid", true) == nil {
+			if checkVolume(o, "pvc-test", "volume-uid", "v1", true) == nil {
 				t.Fatal("unproven encrypted detach accepted")
+			}
+		})
+	}
+}
+
+func TestV2ReplicaQuorumRequiresThreeIndependentNativeCopies(t *testing.T) {
+	volume := validVolume()
+	newReplicas := func() []object {
+		var replicas []object
+		for i := range 3 {
+			suffix := strconv.Itoa(i)
+			owners := []any{object{"apiVersion": "longhorn.io/v1beta2", "kind": "Volume", "name": "pvc-test", "uid": "volume-uid"}}
+			replicas = append(replicas, object{
+				"metadata": object{"uid": "replica-" + suffix, "namespace": "longhorn-system", "ownerReferences": owners},
+				"spec": object{"volumeName": "pvc-test", "dataEngine": "v2", "nodeID": "node-" + suffix,
+					"diskID": "disk-" + suffix, "healthyAt": "2026-11-26T10:00:00Z"},
+				"status": object{"currentState": "running"},
+			})
+		}
+		return replicas
+	}
+	if replicas := newReplicas(); !v2ReplicaQuorum(volume, replicas) || v2ReplicaQuorum(volume, replicas[:2]) {
+		t.Fatal("expected exactly three healthy copies")
+	}
+	for _, test := range []struct {
+		name   string
+		change func(object)
+	}{
+		{"shared node", func(o object) { child(o, "spec")["nodeID"] = "node-1" }},
+		{"shared disk", func(o object) { child(o, "spec")["diskID"] = "disk-1" }},
+		{"wrong owner", func(o object) { items(child(o, "metadata"), "ownerReferences")[0]["uid"] = "replacement" }},
+		{"wrong engine", func(o object) { child(o, "spec")["dataEngine"] = "v1" }},
+		{"failed", func(o object) { child(o, "spec")["failedAt"] = "2026-11-26T10:01:00Z" }},
+		{"inactive", func(o object) { child(o, "status")["currentState"] = "stopped" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			replicas := newReplicas()
+			test.change(replicas[0])
+			if v2ReplicaQuorum(volume, replicas) {
+				t.Fatal("unproven replica quorum accepted")
 			}
 		})
 	}

@@ -148,3 +148,42 @@ spec:
 		t.Fatal("an UPDATE without its old object must be refused")
 	}
 }
+
+func TestAdapterMatchesBatchWorkloads(t *testing.T) {
+	var policy policiesv1beta1.ValidatingPolicy
+	if err := yaml.UnmarshalStrict([]byte(`apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata: {name: batch-control}
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [jobs, cronjobs]
+  validations:
+    - expression: "object.metadata.name == 'allowed'"
+      message: only the positive fixture is admitted
+`), &policy); err != nil {
+		t.Fatal(err)
+	}
+	policies := map[string]*policiesv1beta1.ValidatingPolicy{"batch-control": &policy}
+	for _, kind := range []string{"Job", "CronJob"} {
+		t.Run(kind, func(t *testing.T) {
+			object := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "batch/v1", "kind": kind,
+				"metadata": map[string]any{"name": "allowed", "namespace": "fixture"},
+			}}
+			f := fixture{Label: kind, Policy: "batch-control", Actor: "fixture", Object: object, Operation: "CREATE", Expected: "pass"}
+			if err := evaluate(f, policies); err != nil {
+				t.Fatal(err)
+			}
+			f.Object.SetName("denied")
+			f.Expected = "fail"
+			if err := evaluate(f, policies); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

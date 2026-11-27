@@ -29,6 +29,19 @@ func TestBenchmarkAdmissionCredentialsRequireTheConfirmedOriginalRun(t *testing.
 			t.Fatalf("ordinary benchmark did not reach the private credential check: %v", err)
 		}
 	})
+	t.Run("native restore reclaim", func(t *testing.T) {
+		values := maps.Clone(env)
+		values["LONGHORN_V2_OPERATION"] = "reclaim-native-v2-seed"
+		values["LONGHORN_V2_CONFIRM"] = "reclaim-longhorn-native-v2-seed:1234"
+		getenv := func(key string) string { return values[key] }
+		if _, _, err := LoadBenchmarkAdmissionClient(getenv, peer, "1234"); err == nil || err.Error() != "credential directory is not private" {
+			t.Fatalf("confirmed reclaim did not reach the private credential check: %v", err)
+		}
+		values["LONGHORN_V2_CONFIRM"] = env["LONGHORN_V2_CONFIRM"]
+		if _, _, err := LoadBenchmarkAdmissionClient(getenv, peer, "1234"); err == nil || err.Error() != "protected benchmark admission dispatch is unverified" {
+			t.Fatalf("borrowed V1 confirmation reached reclaim credentials: %v", err)
+		}
+	})
 	for _, tc := range []struct {
 		name, original, key, value, want string
 	}{

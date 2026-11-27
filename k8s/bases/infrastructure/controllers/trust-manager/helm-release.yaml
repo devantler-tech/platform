@@ -39,13 +39,16 @@ spec:
     # cert-manager is excluded from add-security-context's pod and container
     # rules, and the scan reads the stored Deployment template rather than the
     # mutated pod (#3239). Helm merges these maps into the chart defaults, so
-    # runAsNonRoot, the RuntimeDefault seccomp profile and the dropped
-    # capabilities are kept. OnRootMismatch only skips a recursive ownership
+    # runAsNonRoot, the container RuntimeDefault profiles and the dropped
+    # capabilities are kept. Set the pod profile explicitly for the controller
+    # template. OnRootMismatch only skips a recursive ownership
     # change when a volume root already matches, and the empty seLinuxOptions
     # object leaves SELinux type and MCS category selection to the runtime. The
     # default-package init container carries the same container field.
     podSecurityContext:
       fsGroupChangePolicy: OnRootMismatch
+      seccompProfile:
+        type: RuntimeDefault
     app:
       securityContext:
         seLinuxOptions: {}

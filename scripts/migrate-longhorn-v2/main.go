@@ -45,6 +45,14 @@ func main() {
 		authorization = authorizeTemporaryActivation(os.Getenv)
 	case nativeSeedOperation:
 		authorization = authorizeNativeSeed(os.Getenv)
+	case nativeRestoreOperation:
+		authorization = authorizeNativeRestore(os.Getenv)
+	case nativeRestoreResumeOperation:
+		_, authorization = nativeRestoreResumeRun(os.Getenv)
+	case nativeReattachmentOperation:
+		_, _, authorization = authorizeNativeReattachment(os.Getenv)
+	case nativeRestoreReclaimOperation, nativeRestoreReclaimResume:
+		_, authorization = authorizedNativeRestoreReclaimRun(os.Getenv)
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
 	case "inspect-host-memory":
@@ -53,12 +61,22 @@ func main() {
 		authorization = authorizeHostReboot(os.Getenv, target)
 	case "observe-database":
 		authorization = authorizeCNPGObservation(os.Getenv)
+	case cnpgArchiveProofOperation:
+		authorization = authorizeCNPGArchiveProof(os.Getenv)
+	case umamiArchiveIsolationResumeOperation:
+		_, authorization = authorizeUmamiArchiveIsolationResume(os.Getenv)
+	case umamiArchiveDataResumeOperation:
+		_, authorization = authorizeUmamiArchiveDataResume(os.Getenv)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
 	case "reserve-v1-scratch":
 		authorization = authorizeV1ScratchHeadroom(os.Getenv, target)
 	case "reserve-v1-backup-scratch":
 		authorization = authorizeV1BackupHeadroom(os.Getenv)
+	case prepareActualBudgetScratch, retireActualBudgetScratch:
+		_, authorization = authorizeActualBudgetScratch(os.Getenv)
+	case actualBudgetBackupOperation:
+		authorization = authorizeActualBudgetBackup(os.Getenv)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
 	case retainProviderSourceOperation:
@@ -80,6 +98,28 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == prepareActualBudgetScratch || operation == retireActualBudgetScratch {
+		confirmation, err := authorizeActualBudgetScratch(os.Getenv)
+		if err == nil {
+			err = runActualBudgetScratch(ctx, client{run: execute, context: "admin@prod"}, operation,
+				os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), confirmation)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Actual Budget staging reservation held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("ACTUAL_BUDGET_BACKUP_SCRATCH=VERIFIED")
+		return
+	}
+	if operation == actualBudgetBackupOperation {
+		digest := os.Getenv("LONGHORN_V2_CONFIRM")[len(actualBudgetBackupOperation)+1:]
+		if err := runActualBudgetBackup(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), digest); err != nil {
+			fmt.Fprintln(os.Stderr, "Actual Budget archive held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("ACTUAL_BUDGET_V1_BACKUP=VERIFIED transfer=KOPIA sourceBinding=UNCHANGED restore=UNVERIFIED")
+		return
+	}
 	if operation == nativeSeedOperation {
 		if err := runNativeSeed(ctx, client{run: execute, context: "admin@prod", nativeSeed: true}, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
 			fmt.Fprintln(os.Stderr, "Disposable canary source held:", err)
@@ -210,10 +250,52 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Reviewed capacity configuration is unreadable.")
 		os.Exit(1)
 	}
+	if operation == nativeRestoreOperation || operation == nativeRestoreResumeOperation || operation == nativeReattachmentOperation {
+		c := client{run: execute, context: "admin@prod"}
+		switch operation {
+		case nativeReattachmentOperation:
+			err = resumeNativeReattachment(ctx, c, config)
+		case nativeRestoreResumeOperation:
+			err = resumeNativeRestore(ctx, c, config)
+		default:
+			err = runNativeRestore(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), config)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Disposable V2 restore held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve the seed, restore journal and its assets for explicit recovery.")
+			os.Exit(1)
+		}
+		fmt.Println("LONGHORN_NATIVE_RESTORE=VERIFIED transfer=KOPIA engine=v2 reattachment=VERIFIED migration=UNVERIFIED")
+		return
+	}
+	if operation == nativeRestoreReclaimOperation || operation == nativeRestoreReclaimResume {
+		if err := runNativeRestoreReclaim(ctx, client{run: execute, context: "admin@prod"}, config); err != nil {
+			fmt.Fprintln(os.Stderr, "Disposable V2 reclaim held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve the reclaim journal and any confirmed admission policies for explicit recovery.")
+			os.Exit(1)
+		}
+		fmt.Println("LONGHORN_NATIVE_RESTORE_RECLAIM=COMPLETE engine=v2 sourceBackup=RETAINED")
+		return
+	}
 	pools, err := configuredMigrationPools(config)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == cnpgArchiveProofOperation || operation == umamiArchiveIsolationResumeOperation || operation == umamiArchiveDataResumeOperation {
+		runProof := runCNPGArchiveProof
+		switch operation {
+		case umamiArchiveIsolationResumeOperation:
+			runProof = resumeUmamiArchiveIsolation
+		case umamiArchiveDataResumeOperation:
+			runProof = resumeUmamiArchiveData
+		}
+		if err := runProof(ctx, client{run: execute, context: "admin@prod", inventoryPools: pools}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("CNPG_ARCHIVE_PROOF=RESTORED engine=v2 physicalHistory=VERIFIED networkIsolation=VERIFIED archiveCredential=RETIRED storageCleanup=REQUIRED migration=UNVERIFIED")
+		return
 	}
 	if operation == "register-temporary-v2-storage" {
 		legacyReceipts, err := parseLegacyPreparationReceipts(os.Getenv("LONGHORN_V2_LEGACY_PREPARATION_RECEIPTS"))

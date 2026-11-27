@@ -8,7 +8,7 @@
   value: vault-snapshots
 - op: replace
   path: /spec/jobTemplate/spec/template/spec/volumes/0/persistentVolumeClaim/claimName
-  value: vault-snapshots-recovery
+  value: vault-snapshots-recovery-v2
 - op: test
   path: /spec/jobTemplate/spec/template/spec/containers/0/name
   value: mirror

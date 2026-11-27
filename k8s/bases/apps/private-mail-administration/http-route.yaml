@@ -9,22 +9,47 @@ metadata:
     gethomepage.dev/description: Company email administration with Stalwart.
     gethomepage.dev/group: Email
     gethomepage.dev/icon: stalwart.svg
-    gethomepage.dev/href: https://mail.${domain}/admin
+    gethomepage.dev/href: https://stalwart.${domain}/admin
     gethomepage.dev/pod-selector: app=private-mail
 spec:
   parentRefs:
     - name: platform
       namespace: kube-system
       sectionName: https
+  # Stalwart's web side moves to stalwart.${domain}, so that the Bulwark
+  # webmail can take mail.${domain} (#6662). Both names serve it until the
+  # swap; the gateway's wildcard certificate covers both.
   hostnames:
     - mail.${domain}
+    - stalwart.${domain}
   rules:
     - backendRefs:
         - name: private-mail
           port: 8080
       filters:
+        # The Gateway API allows one ResponseHeaderModifier per rule, so the
+        # CORS headers share this filter with HSTS.
+        #
+        # CORS: browsers may call Stalwart's JMAP and OAuth endpoints from
+        # Bulwark's origin only. Bulwark sends its token in the Authorization
+        # header and never cookies, so credentials are not allowed. Stalwart
+        # answers a preflight with 204 and no CORS headers of its own; `set`
+        # adds these to that answer and overrides the wildcard origin Stalwart
+        # puts on its OAuth metadata. Vary is added, not set, so that a Vary
+        # the server sends is kept.
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
               - name: Strict-Transport-Security
                 value: max-age=63072000; includeSubDomains; preload
+              - name: Access-Control-Allow-Origin
+                value: https://mail.${domain}
+              - name: Access-Control-Allow-Methods
+                value: GET, POST, PUT, DELETE, OPTIONS
+              - name: Access-Control-Allow-Headers
+                value: Authorization, Content-Type, Accept, X-Requested-With
+              - name: Access-Control-Max-Age
+                value: "600"
+            add:
+              - name: Vary
+                value: Origin

@@ -47,9 +47,38 @@ func object(t *testing.T, objects []map[string]any, kind, name string) map[strin
 	return nil
 }
 
-// TestCutoverPreservesOldStorageAndUsesRetainedReplacement fences the storage handoff.
-func TestCutoverPreservesOldStorageAndUsesRetainedReplacement(t *testing.T) {
+func TestProductionRecoveryRetiresCopyBeforeWriterCutover(t *testing.T) {
+	for _, resource := range render(t, "k8s/providers/hetzner/infrastructure") {
+		metadata := resource["metadata"].(map[string]any)
+		if metadata["namespace"] != "openbao" {
+			continue
+		}
+		if metadata["name"] == "copy-openbao-snapshots-to-v2" ||
+			metadata["name"] == "isolate-openbao-snapshot-copy" {
+			t.Fatal("production must stop reconciling the completed archive copy before changing the writer")
+		}
+	}
+}
+
+// TestCutoverMovesTheBackupWriterToV2 fences the storage handoff.
+func TestCutoverMovesTheBackupWriterToV2(t *testing.T) {
 	production := render(t, "k8s/providers/hetzner/infrastructure")
+	replacement := object(t, production, "PersistentVolumeClaim", "vault-snapshots-recovery-v2")
+	replacementMetadata := replacement["metadata"].(map[string]any)
+	replacementSpec := replacement["spec"].(map[string]any)
+	if replacementMetadata["namespace"] != "openbao" || replacementMetadata["annotations"].(map[string]any)["kustomize.toolkit.fluxcd.io/prune"] != "disabled" ||
+		replacementSpec["storageClassName"] != "longhorn-v2" || replacementSpec["volumeName"] != nil ||
+		replacementSpec["volumeMode"] != "Filesystem" || replacementSpec["resources"].(map[string]any)["requests"].(map[string]any)["storage"] != "10Gi" {
+		t.Fatal("the V2 claim must retain its original capacity and controller-managed binding")
+	}
+	labels, _ := replacementMetadata["labels"].(map[string]any)
+	if labels["platform.devantler.tech/storage-stage"] != nil ||
+		labels["backup.platform.devantler.tech/volume-data"] != nil {
+		t.Fatal("serving V2 must bind for health checks and preserve ordinary Velero eligibility")
+	}
+	if modes := replacementSpec["accessModes"].([]any); len(modes) != 1 || modes[0] != "ReadWriteOnce" {
+		t.Fatal("the V2 claim must preserve single-writer access")
+	}
 	for _, name := range []string{"vault-snapshots", "vault-snapshots-recovery"} {
 		claim := object(t, production, "PersistentVolumeClaim", name)
 		metadata := claim["metadata"].(map[string]any)
@@ -70,7 +99,7 @@ func TestCutoverPreservesOldStorageAndUsesRetainedReplacement(t *testing.T) {
 		if name == "vault-snapshots-recovery" {
 			labels, _ := metadata["labels"].(map[string]any)
 			if labels["backup.platform.devantler.tech/volume-data"] != "independently-mirrored" {
-				t.Fatal("active snapshot storage must use the existing independently mirrored backup route")
+				t.Fatal("the retained Hetzner source must preserve its independent mirror classification")
 			}
 			if _, marked := labels["platform.devantler.tech/storage-stage"]; marked {
 				t.Fatal("active recovery storage must leave the prepared-only health exemption")
@@ -89,10 +118,10 @@ func TestCutoverPreservesOldStorageAndUsesRetainedReplacement(t *testing.T) {
 			if !ok {
 				continue
 			}
-			if claim["claimName"] == "vault-snapshots" {
-				t.Fatalf("%s must stop mounting the missing provider volume", workload.name)
+			if claim["claimName"] == "vault-snapshots" || claim["claimName"] == "vault-snapshots-recovery" {
+				t.Fatalf("%s must stop mounting both old provider claim names", workload.name)
 			}
-			found = found || claim["claimName"] == "vault-snapshots-recovery"
+			found = found || claim["claimName"] == "vault-snapshots-recovery-v2"
 		}
 		if !found {
 			t.Fatalf("%s must mount the main-owned retained replacement", workload.name)
@@ -111,6 +140,11 @@ func TestCutoverPreservesOldStorageAndUsesRetainedReplacement(t *testing.T) {
 		if !strictMirror {
 			t.Fatal("production snapshots must not succeed without their off-cluster mirror")
 		}
+	}
+	initial := object(t, production, "Job", "vault-snapshot-init")
+	annotations := initial["metadata"].(map[string]any)["annotations"].(map[string]any)
+	if annotations["kustomize.toolkit.fluxcd.io/force"] != "enabled" {
+		t.Fatal("Flux must be able to replace this immutable snapshot Job on the storage switch")
 	}
 	// Bootstrap reads the offsite mirror into scratch space. Keep it independent
 	// of both the failed RWO claim and its retained replacement.
@@ -170,6 +204,7 @@ func TestActiveSnapshotStorageRequiresBinding(t *testing.T) {
 	ready, lost := compile(current), compile(failed)
 	for _, tt := range []struct {
 		name, phase string
+		claim       string
 		mutate      func(map[string]any, map[string]any)
 		want        bool
 		wantFailed  bool
@@ -177,6 +212,16 @@ func TestActiveSnapshotStorageRequiresBinding(t *testing.T) {
 		{name: "old prepared marker cannot bypass binding", phase: "Pending", mutate: func(m, _ map[string]any) {
 			m["labels"] = map[string]any{"platform.devantler.tech/storage-stage": "prepared"}
 		}},
+		{name: "a stale preparation label cannot bypass V2 binding", phase: "Pending", claim: "vault-snapshots-recovery-v2", mutate: func(m, _ map[string]any) {
+			m["labels"] = map[string]any{"platform.devantler.tech/storage-stage": "prepared"}
+		}},
+		{name: "a selected V2 consumer must bind", phase: "Pending", claim: "vault-snapshots-recovery-v2", mutate: func(m, _ map[string]any) {
+			m["annotations"].(map[string]any)["volume.kubernetes.io/selected-node"] = "worker"
+		}},
+		{name: "the V2 claim must bind after serving starts", phase: "Pending", claim: "vault-snapshots-recovery-v2", mutate: func(m, _ map[string]any) {
+			delete(m, "labels")
+		}},
+		{name: "bound V2 claim", phase: "Bound", claim: "vault-snapshots-recovery-v2", want: true},
 		{name: "bound claim", phase: "Bound", want: true},
 		{name: "lost claim", phase: "Lost", wantFailed: true},
 		{name: "unobserved status"},
@@ -195,7 +240,11 @@ func TestActiveSnapshotStorageRequiresBinding(t *testing.T) {
 		{name: "terminating bound claim", phase: "Bound", mutate: func(m, _ map[string]any) { m["deletionTimestamp"] = "2026-10-26T00:00:00Z" }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			claim := object(t, render(t, "k8s/providers/hetzner/infrastructure/vault-backup-recovery"), "PersistentVolumeClaim", "vault-snapshots-recovery")
+			name := tt.claim
+			if name == "" {
+				name = "vault-snapshots-recovery"
+			}
+			claim := object(t, render(t, "k8s/providers/hetzner/infrastructure/vault-backup-recovery"), "PersistentVolumeClaim", name)
 			metadata, spec := claim["metadata"].(map[string]any), claim["spec"].(map[string]any)
 			if tt.mutate != nil {
 				tt.mutate(metadata, spec)

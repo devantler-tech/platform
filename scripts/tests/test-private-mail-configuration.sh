@@ -128,6 +128,9 @@ docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
     test -r /usr/local/share/licenses/stalwart-webui/SOURCE || { echo IMAGE_ASSET_FAILURE=webui-source >&2; exit 1; }
     test -x /usr/local/share/licenses/caddy || { echo IMAGE_ASSET_FAILURE=proxy-license-directory >&2; exit 1; }
     test -r /usr/local/share/licenses/caddy/LICENSE || { echo IMAGE_ASSET_FAILURE=proxy-license >&2; exit 1; }
+    test -s /usr/local/share/stalwart/spam-filter-rules-v3.0.2.json || { echo IMAGE_ASSET_FAILURE=spam-rules >&2; exit 1; }
+    [ "$(stat -c "%a %u" /usr/local/share/stalwart/spam-filter-rules-v3.0.2.json)" = "444 0" ] || { echo IMAGE_ASSET_FAILURE=spam-rules-mode >&2; exit 1; }
+    test -r /usr/local/share/licenses/stalwart-spam-filter/LICENSE-MIT || { echo IMAGE_ASSET_FAILURE=spam-rules-license >&2; exit 1; }
   ' >"$scratch/image-assets.txt"
 [ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
 docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
@@ -539,6 +542,33 @@ jq -e --rawfile user "$scratch/inputs/relay-username" --arg local "'local'" --ar
   exit 1
 }
 echo 'PASS: remote mail is routed through the SES relay with required, verified TLS'
+# The first normal start imports the spam filter rules from the image's derived
+# copy, with no network. Wait for the import, then require every rule, tag, file
+# extension, DNS blocklist and HTTP list, and the lookup keys without the
+# shortened-link list. A failed request is retried like an unfinished import.
+# The wait ends 60 seconds after it starts: each request's curl gets only the
+# time left, and a response that arrives after the deadline is refused. Only
+# the last request's container start can run past it.
+printf '%s' '{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":[["x:SpamRule/query",{"limit":1,"calculateTotal":true},"rules"],["x:SpamTag/query",{"limit":1,"calculateTotal":true},"tags"],["x:SpamFileExtension/query",{"limit":1,"calculateTotal":true},"extensions"],["x:SpamDnsblServer/query",{"limit":1,"calculateTotal":true},"blocklists"],["x:HttpLookup/query",{"limit":1,"calculateTotal":true},"lists"],["x:MemoryLookupKey/query",{"limit":1,"calculateTotal":true},"keys"]]}' >"$scratch/spam-rules-request.json"
+spam_rules_imported=0
+spam_rules_deadline=$((SECONDS + 60))
+while ((SECONDS < spam_rules_deadline)); do
+  spam_rules_budget=$((spam_rules_deadline - SECONDS))
+  ((spam_rules_budget <= 10)) || spam_rules_budget=10
+  if protocol_curl --fail --silent --show-error --max-time "$spam_rules_budget" --config /proof/administrator.curl \
+    --header 'Content-Type: application/json' --data-binary @/proof/spam-rules-request.json "http://$name:8080/jmap" >"$scratch/spam-rules-readback.json" &&
+    ((SECONDS <= spam_rules_deadline)) &&
+    jq -e '[.methodResponses[][1].total] == [66, 403, 132, 18, 4, 1008]' "$scratch/spam-rules-readback.json" >/dev/null; then
+    spam_rules_imported=1
+    break
+  fi
+  sleep 1
+done
+[ "$spam_rules_imported" = 1 ] || {
+  echo 'FAIL: the serving process did not import the derived spam filter rules' >&2
+  exit 1
+}
+echo 'PASS: the spam filter imported the pinned rules without the shortened-link list'
 # The scheduled drift check reads the serving configuration back as the managed
 # administrator and never writes. A setting changed by hand must fail it.
 run_check() {
@@ -982,4 +1012,31 @@ for proxy_enabled in true false; do
   docker rm -fv "$proxy_name" >/dev/null
   proxy_started=0
 done
+
+# Production names its mail load balancer, and only then does the plan turn on
+# SPF and reverse-IP verification and strict DMARC on smtp-inbound. Every run
+# above names none, so prove here that the real server stores the production
+# checks and that the bootstrap's policy readback accepts them. 10.255.255.250 is
+# a private address no fixture container holds, so no connection is trusted.
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+run_bootstrap --mail-proxy-source=10.255.255.250
+start_server serving
+jq -cn '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[
+  ["x:SenderAuth/get",{ids:["singleton"],properties:["dkimVerify","dmarcVerify","arcVerify","spfEhloVerify","spfFromVerify","reverseIpVerify"]},"sender-auth"]]}' >"$scratch/sender-auth-request.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/sender-auth-request.json "http://$name:8080/jmap" >"$scratch/sender-auth.json"
+# Each whole stored expression must equal the declared one: one smtp-inbound
+# branch with the expected constant, and disable everywhere else.
+jq -e '
+  def inbound($value): {match: {"0": {if: "listener == '"'"'smtp-inbound'"'"'", then: $value}}, else: "disable"};
+  .methodResponses[0][1].list as $auth | ($auth|length)==1 and
+  ($auth[0] | {dkimVerify, dmarcVerify, arcVerify, spfEhloVerify, spfFromVerify, reverseIpVerify}) ==
+  {dkimVerify: inbound("relaxed"), dmarcVerify: inbound("strict"), arcVerify: inbound("relaxed"),
+   spfEhloVerify: inbound("relaxed"), spfFromVerify: inbound("relaxed"), reverseIpVerify: inbound("relaxed")}
+' "$scratch/sender-auth.json" >/dev/null || {
+  echo 'FAIL: the production inbound sender checks were not stored' >&2
+  exit 1
+}
+echo 'PASS: the production inbound sender checks are stored and read back'
 echo 'PASS: native mail configuration, receiving continuity, ownership refusal, cached UI upgrade, replay, TLS, account restrictions, per-client proxy bans and explicit rollback'

@@ -1,9 +1,0 @@
-- op: test
-  path: /spec/values/config/staticClients/0/id
-  value: public-client
-- op: add
-  path: /spec/values/config/staticClients/0/redirectURIs/-
-  value: https://dev.devantler.tech/oauth2/callback
-- op: add
-  path: /spec/values/config/staticClients/0/redirectURIs/-
-  value: https://dev.devantler.tech:443/oauth2/callback

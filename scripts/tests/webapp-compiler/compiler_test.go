@@ -222,6 +222,9 @@ func TestCommittedWebApp(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if source := os.Getenv("WEBAPP_ADMISSION_INPUT"); source != "" {
+			renderWebAppAdmissionChildren(ctx, t, apiClient, engine, definition, source, os.Getenv("WEBAPP_ADMISSION_OUTPUT"))
+		}
 		instance := &unstructured.Unstructured{Object: map[string]interface{}{
 			"apiVersion": "kro.run/v1alpha1", "kind": "WebApp",
 			"metadata": map[string]interface{}{"name": "runtime-fixture", "namespace": "default"},
@@ -239,6 +242,14 @@ func TestCommittedWebApp(t *testing.T) {
 		if err := apiClient.Create(ctx, instance, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 			t.Fatal(err)
 		}
+		t.Run("exports the admitted workload with controller ownership", func(t *testing.T) {
+			input := instance.DeepCopy()
+			input.Object["metadata"] = map[string]any{"name": "admission-fixture", "namespace": "admission-fixture"}
+			if err := unstructured.SetNestedField(input.Object, "admission-fixture", "spec", "name"); err != nil {
+				t.Fatal(err)
+			}
+			verifyWebAppAdmissionExport(ctx, t, apiClient, engine, definition, input)
+		})
 		deployment := desiredDeployment(t, engine, definition, instance)
 		writeDesiredFixture(t, "enabled", deployment)
 		if deployment.Annotations["reloader.stakater.com/auto"] != "true" {

@@ -41,7 +41,7 @@ func (b ActivationBinding) SameStorageIdentity(other ActivationBinding) bool {
 	return b == other
 }
 
-// ActivationRecord is shared by the registering writer and publication readers.
+// ActivationRecord binds registration and canary acceptance to the same plan.
 type ActivationRecord struct {
 	Version   int                          `json:"version"`
 	Source    string                       `json:"source"`

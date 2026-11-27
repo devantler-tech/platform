@@ -53,6 +53,22 @@ spec:
       # ManagedResourceActivationPolicy in
       # providers/hetzner/infrastructure/crossplane/.
       defaultActivations: []
+    # Admission validates stored controller templates before Pod-only defaults.
+    # Merge these fields with the chart's existing 65532:65532 image identity.
+    securityContextCrossplane:
+      runAsNonRoot: true
+      capabilities:
+        drop: [ALL]
+    securityContextRBACManager:
+      runAsNonRoot: true
+      capabilities:
+        drop: [ALL]
+    podSecurityContextCrossplane:
+      seccompProfile:
+        type: RuntimeDefault
+    podSecurityContextRBACManager:
+      seccompProfile:
+        type: RuntimeDefault
     resourcesCrossplane:
       requests:
         cpu: 25m

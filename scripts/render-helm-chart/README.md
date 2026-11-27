@@ -33,7 +33,7 @@ guarded signed image override and generated CRD operations. The post-render guar
 checks the effective FluxInstance in each rendered cluster, so stock Flux 2.9.6
 (helm-controller 1.6.5 / Helm 4.2.4) cannot use the 4.3.1 rendering verdict.
 `scripts/tests/test-controller-helm-profile.sh` composes the committed instances
-with released operator 0.63.1 and the pinned Flux distribution artifact, checks the full
+with released operator 0.64.0 and the pinned Flux distribution artifact, checks the full
 upstream 1.7.1 CRD spec, and retains replicas and the identity/RBAC boundary.
 WebApp schema fixtures use the unchanged 1.9.6 source/kustomize controllers.
 

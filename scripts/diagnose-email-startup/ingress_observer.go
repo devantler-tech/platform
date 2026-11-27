@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/netip"
+	"strconv"
 	"time"
 
 	"github.com/devantler-tech/platform/internal/strictjson"
@@ -16,6 +17,11 @@ type ingressObservation struct {
 }
 
 type ingressCluster struct{ UID, Revision, Name string }
+
+const (
+	ingressManagementPort uint16 = 8080
+	ingressProxyPort      uint16 = 8081
+)
 
 func bindIngressCluster(raw []byte) (ingressCluster, error) {
 	fields := map[string][]string{"": {"apiVersion", "kind", "metadata", "data"}, "metadata": {"name", "namespace", "uid", "resourceVersion", "deletionTimestamp"}, "data": {"cluster-name", "enable-hubble"}}
@@ -33,14 +39,14 @@ func bindIngressCluster(raw []byte) (ingressCluster, error) {
 	return ingressCluster{UID: object.Metadata.UID, Revision: object.Metadata.ResourceVersion, Name: object.Data["cluster-name"]}, nil
 }
 
-func ingressFlowFilter(destination netip.Addr) ([]byte, error) {
+func ingressFlowFilter(destination netip.Addr, port uint16) ([]byte, error) {
 	// Cilium v1.20.3 monitor API: trace type 4, to-endpoint subtype 0.
 	// Native TCP flag filters require the listed bits; a false ACK bit would
 	// not exclude ACK packets. SYN, reply direction and the receiver port are
 	// constrained here; the strict wire parser independently refuses SYN+ACK.
 	return json.Marshal(map[string]any{
 		"destination_ip": []string{destination.String()}, "destination_pod": []string{"private-mail/private-mail-0"},
-		"destination_port": []string{"8080"}, "protocol": []string{"tcp"}, "source_identity": []uint32{8},
+		"destination_port": []string{strconv.FormatUint(uint64(port), 10)}, "protocol": []string{"tcp"}, "source_identity": []uint32{8},
 		"tcp_flags": []map[string]bool{{"SYN": true}}, "reply": []bool{false},
 		"verdict": []string{"FORWARDED"}, "traffic_direction": []string{"INGRESS", "EGRESS"},
 		"event_type": []map[string]any{{"type": 4, "match_sub_type": true, "sub_type": 0}},
@@ -135,7 +141,12 @@ func observeIngressSources(ctx context.Context, run executor, app binding, addre
 		return refuse()
 	}
 	stage = "flow_filter"
-	filter, err := ingressFlowFilter(addresses.Pod)
+	port := ingressManagementPort
+	// Hubble observes the receiving pod port after Service translation.
+	if app.ProxyConfig != "" {
+		port = ingressProxyPort
+	}
+	filter, err := ingressFlowFilter(addresses.Pod, port)
 	if err != nil {
 		return refuse()
 	}
@@ -154,7 +165,7 @@ func observeIngressSources(ctx context.Context, run executor, app binding, addre
 		flowNode = cluster.Name + "/" + app.Node
 	}
 	stage = "flow_decode"
-	sources, err := decodeIngressFlows(raw, addresses.Pod, flowNode, since, until)
+	sources, err := decodeIngressFlows(raw, addresses.Pod, port, flowNode, since, until)
 	if err != nil {
 		return refuse()
 	}

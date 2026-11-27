@@ -15,15 +15,25 @@ import (
 // serves JMAP only behind the Gateway route private-mail/private-mail and names
 // that route's host in its session. The mail server's own load balancer
 // (private-mail/mail-server) carries SMTP, submission and IMAPS, never HTTPS.
-// So the collector's URL, its egress grant and the route must name one host.
+// The collector's URL and egress grant must name the pinned JMAP host even
+// when the route also serves an alias.
 func TestCollectorReadsMailThroughTheGatewayRoute(t *testing.T) {
 	apps := render(t)
 	route := object(t, apps, "HTTPRoute", "private-mail", "private-mail")
 	hostnames, _ := field(t, route, "spec", "hostnames").([]any)
-	if len(hostnames) != 1 {
-		t.Fatalf("the mail route must serve exactly one host, got %v", hostnames)
+	const jmapHost = "mail.platform.devantler.tech"
+	domain := productionDomain(t)
+	host := ""
+	for _, name := range hostnames {
+		candidate, _ := name.(string)
+		if strings.ReplaceAll(candidate, "${domain}", domain) == jmapHost {
+			host = candidate
+			break
+		}
 	}
-	host, _ := hostnames[0].(string)
+	if host == "" {
+		t.Fatalf("the mail route must serve the pinned JMAP host %s, got %v", jmapHost, hostnames)
+	}
 	if !reflect.DeepEqual(field(t, route, "spec", "parentRefs"), []any{map[string]any{
 		"name": "platform", "namespace": "kube-system", "sectionName": "https",
 	}}) {
@@ -48,11 +58,6 @@ func TestCollectorReadsMailThroughTheGatewayRoute(t *testing.T) {
 		}
 	}
 
-	// Pin the production host: Stalwart's live session named it on 2026-11-25.
-	resolved := strings.ReplaceAll(host, "${domain}", productionDomain(t))
-	if resolved != "mail.platform.devantler.tech" {
-		t.Fatalf("the production JMAP host moved to %q; confirm Stalwart's session names it first", resolved)
-	}
 	for _, item := range apps {
 		if item["kind"] != "DNSEndpoint" {
 			continue
@@ -60,8 +65,8 @@ func TestCollectorReadsMailThroughTheGatewayRoute(t *testing.T) {
 		endpoints, _ := field(t, item, "spec", "endpoints").([]any)
 		for _, entry := range endpoints {
 			endpoint, _ := entry.(map[string]any)
-			if endpoint["dnsName"] == resolved {
-				t.Fatalf("%s is a load balancer name, which carries no JMAP", resolved)
+			if endpoint["dnsName"] == jmapHost {
+				t.Fatalf("%s is a load balancer name, which carries no JMAP", jmapHost)
 			}
 		}
 	}

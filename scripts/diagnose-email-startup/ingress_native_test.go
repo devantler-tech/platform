@@ -16,7 +16,7 @@ func TestIngressNativeFilter(t *testing.T) {
 	if binary == "" {
 		t.Skip("native Hubble parser runs in the hosted transport gate")
 	}
-	filter, err := ingressFlowFilter(netip.MustParseAddr("192.0.2.20"))
+	filter, err := ingressFlowFilter(netip.MustParseAddr("192.0.2.20"), ingressProxyPort)
 	if err != nil {
 		t.Fatal(err)
 	}

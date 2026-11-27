@@ -677,6 +677,15 @@ installer fields and folded kernel arguments on both roles in the release's
 native tests. The platform's pinned Talos client independently validates the
 normal and staged layouts.
 
+**7.216.43**, commit `de5221fa90d6ba41905e12e1421f0ac0d2f5edd1`, keeps the Talos
+generator byte for byte. The configuration manager updates the default Talos
+and vCluster Kubernetes versions. Production pins its versions in
+`ksail.prod.yaml`. The API and chart add `requireStorageHealth`; it defaults to
+false and is consulted by the Talos upgrade path. The installer schematic and
+kernel-argument fields stay compatible. The dependency updates cover CEL,
+Cilium, Flux and the Kubernetes utility module. The Talos machinery and YAML
+encoder versions stay the same.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

@@ -11,6 +11,13 @@ spec:
   suspend: true
   interval: 10m
   timeout: 10m
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
   chartRef:
     kind: OCIRepository
     name: platform-runners

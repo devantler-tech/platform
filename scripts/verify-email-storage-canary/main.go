@@ -95,6 +95,7 @@ func (r reference) path() (string, error) {
 type runner struct {
 	k                                   kubernetes
 	run, namespace, storageClass, stage string
+	engine                              string
 	refs                                map[string]reference
 	ambiguous                           bool
 	volumeName, volumeUID               string
@@ -232,6 +233,12 @@ func (r *runner) preflight(ctx context.Context) error {
 	if !ready {
 		return errors.New("storage-readiness")
 	}
+	if r.engine == "v2" {
+		setting, found, err := r.lookup(ctx, "settings.longhorn.io", "v2-data-engine", "longhorn-system")
+		if err != nil || !found || text(setting, "value") != "true" {
+			return errors.New("v2-engine-readiness")
+		}
+	}
 	raw, err := r.k.call(ctx, nil, "get", "nodes", "-o=json")
 	if err != nil {
 		return err
@@ -304,11 +311,22 @@ func (r *runner) bindVolume(ctx context.Context, claim reference) error {
 		if r.volumeUID != "" && (r.volumeUID != uid || r.volumeName != name) {
 			return false, errors.New("native-volume-replaced")
 		}
-		if err = checkVolume(volume, name, uid, false); err != nil {
+		if err = checkVolume(volume, name, uid, r.engine, false); err != nil {
 			return false, err
 		}
 		r.volumeName, r.volumeUID = name, uid
-		return text(child(volume, "status"), "robustness") == "healthy", nil
+		if text(child(volume, "status"), "robustness") != "healthy" {
+			return false, nil
+		}
+		if r.engine == "v1" {
+			return true, nil
+		}
+		raw, err := r.k.call(ctx, nil, "get", "replicas.longhorn.io", "--namespace=longhorn-system", "-o=json")
+		var replicas object
+		if err != nil || json.Unmarshal(raw, &replicas) != nil {
+			return false, errors.New("replica-response")
+		}
+		return v2ReplicaQuorum(volume, items(replicas, "items")), nil
 	})
 }
 func (r *runner) detached(ctx context.Context) error {
@@ -320,10 +338,10 @@ func (r *runner) detached(ctx context.Context) error {
 		if err != nil || !found {
 			return false, errors.New("native-volume")
 		}
-		if checkVolume(volume, r.volumeName, r.volumeUID, false) != nil {
+		if checkVolume(volume, r.volumeName, r.volumeUID, r.engine, false) != nil {
 			return false, errors.New("native-volume-binding")
 		}
-		if checkVolume(volume, r.volumeName, r.volumeUID, true) != nil {
+		if checkVolume(volume, r.volumeName, r.volumeUID, r.engine, true) != nil {
 			return false, nil
 		}
 		raw, err := r.k.call(ctx, nil, "get", "volumeattachments.storage.k8s.io", "-o=json")
@@ -430,7 +448,7 @@ func (r *runner) execute(ctx context.Context) error {
 		return errors.New("entropy")
 	}
 	r.stage = "create-test-resources"
-	for _, o := range []object{namespaceManifest(r.namespace, r.run), policyManifest(r.namespace, r.run), storageClassManifest(r.storageClass, r.namespace, r.run)} {
+	for _, o := range []object{namespaceManifest(r.namespace, r.run), policyManifest(r.namespace, r.run), storageClassManifest(r.storageClass, r.namespace, r.run, r.engine)} {
 		if _, err = r.create(ctx, o); err != nil {
 			return err
 		}
@@ -555,12 +573,12 @@ func (r *runner) cleanup(ctx context.Context) error {
 	return nil
 }
 func main() {
-	run, err := authorize(os.Getenv)
+	run, engine, err := authorize(os.Getenv)
 	if err != nil || len(os.Args) != 1 {
 		fmt.Fprintln(os.Stderr, "EMAIL_STORAGE_CANARY=UNVERIFIED stage=dispatch cleanup=NOT_STARTED")
 		os.Exit(2)
 	}
-	r := runner{k: kubectl{}, run: run, namespace: "email-storage-canary-" + run, storageClass: "email-storage-canary-" + run, refs: map[string]reference{}}
+	r := runner{k: kubectl{}, run: run, engine: engine, namespace: "email-storage-canary-" + run, storageClass: "email-storage-canary-" + run, refs: map[string]reference{}}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	err = r.execute(ctx)
 	cancel()
@@ -575,7 +593,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "EMAIL_STORAGE_CANARY=UNVERIFIED stage=%s cleanup=%s run=%s\n", r.stage, status, run)
 		os.Exit(2)
 	}
-	fmt.Println("EMAIL_STORAGE_CANARY=PASS storage=1.13.0 os=1.13.12 write=true remount=true missing_key_refused=true wrong_key_refused=true recovered=true cleanup=VERIFIED")
+	receipt := "EMAIL_STORAGE_CANARY=PASS storage=1.13.0 os=1.13.12 write=true remount=true missing_key_refused=true wrong_key_refused=true recovered=true cleanup=VERIFIED"
+	if engine == "v2" {
+		receipt += " engine=v2 replicas=3"
+	}
+	fmt.Println(receipt)
 }
 
 // Admission defaults are allowed; changing the executable, data path or access is not.

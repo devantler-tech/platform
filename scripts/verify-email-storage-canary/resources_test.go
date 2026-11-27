@@ -8,7 +8,7 @@ import (
 
 func TestCanaryHasNoOperationalKeyOrMailboxReference(t *testing.T) {
 	ns, run := "email-storage-canary-123", "123"
-	sc := storageClassManifest(ns, ns, run)
+	sc := storageClassManifest(ns, ns, run, "v1")
 	if sc["provisioner"] != "driver.longhorn.io" || sc["reclaimPolicy"] != "Delete" || child(sc, "parameters")["encrypted"] != "true" {
 		t.Fatal("synthetic volume lost encrypted provisioning and explicit disposable lifecycle")
 	}
@@ -31,6 +31,23 @@ func TestCanaryHasNoOperationalKeyOrMailboxReference(t *testing.T) {
 	}
 	if text(items(spec, "containers")[0], "image") != probeImage {
 		t.Fatal("probe image is not pinned")
+	}
+}
+
+func TestV2StorageClassPreservesSyntheticKeyScope(t *testing.T) {
+	ns := "email-storage-canary-123"
+	sc := storageClassManifest(ns, ns, "123", "v2")
+	p := child(sc, "parameters")
+	if p["dataEngine"] != "v2" || p["encrypted"] != "true" || p["numberOfReplicas"] != "3" ||
+		p["disableRevisionCounter"] != nil || p["unmapMarkSnapChainRemoved"] != "disabled" ||
+		sc["reclaimPolicy"] != "Delete" || sc["volumeBindingMode"] != "WaitForFirstConsumer" {
+		t.Fatal("incorrect disposable V2 class")
+	}
+	for _, stage := range []string{"stage", "publish", "expand"} {
+		prefix := "csi.storage.k8s.io/node-" + stage + "-secret-"
+		if p[prefix+"namespace"] != ns || p[prefix+"name"] != "encryption-key" {
+			t.Fatal("the V2 class must bind only its own test key")
+		}
 	}
 }
 

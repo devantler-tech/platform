@@ -13,3 +13,18 @@ func cnpgSources() [8]cnpgSource {
 		{"ate-system", "substrate-db"}, {"kagent", "kagent-db"}, {"customer-identity", "customer-identity-db"},
 		{"business-site", "business-site-portal-db"}, {previewCNPGNamespace, previewCNPGName}}
 }
+
+// cnpgArchiveSources contains only sources with a reviewed Barman archive.
+func cnpgArchiveSources() [5]cnpgSource {
+	return [5]cnpgSource{{"observability", "coroot-db"}, {"umami", "umami-db"}, {"wedding-app", "wedding-db"},
+		{"customer-identity", "customer-identity-db"}, {"business-site", "business-site-portal-db"}}
+}
+
+func knownCNPGArchiveSource(namespace, name string) bool {
+	for _, source := range cnpgArchiveSources() {
+		if namespace == source.Namespace && name == source.Name {
+			return true
+		}
+	}
+	return false
+}

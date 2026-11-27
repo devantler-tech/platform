@@ -1,0 +1,111 @@
+# Copies the retained encrypted mail store onto Longhorn V2 before setup starts.
+# The StatefulSet stops the old server before mounting its store read-only.
+- op: add
+  path: /spec/template/spec/initContainers/0
+  value:
+    name: migrate-storage
+    image: ghcr.io/devantler-tech/platform-private-mail-bootstrap
+    imagePullPolicy: IfNotPresent
+    command: ["/usr/bin/sh", "-c"]
+    args:
+      - |
+        set -eu
+        source=/var/lib/private-mail-original
+        target=/var/lib/stalwart
+        protocol=private-mail-longhorn-v2
+        progress_name=.private-mail-v2-copy-in-progress
+        receipt_name=.private-mail-v2-copy-complete
+        progress="$target/$progress_name"
+        receipt="$target/$receipt_name"
+        fence="$source/.private-mail-v1-fenced"
+        refuse() { echo "Email V2 storage migration refused: $1." >&2; exit 1; }
+        exists() { [ -e "$1" ] || [ -L "$1" ]; }
+        owned_progress() {
+          [ -f "$progress" ] && [ ! -L "$progress" ] && [ "$(cat "$progress")" = "$protocol" ]
+        }
+        valid_receipt() {
+          [ -f "$1" ] && [ ! -L "$1" ] && lines=$(wc -l 2>/dev/null <"$1") && [ "$lines" -eq 1 ] &&
+            grep -Exq "$protocol [0-9a-f]{64}" "$1"
+        }
+        if exists "$receipt"; then
+          valid_receipt "$receipt" || refuse "unverified V2 completion receipt"
+          [ -d "$target/data" ] && [ ! -L "$target/data" ] || refuse "the V2 store is missing"
+          for stamp in "$fence" "$fence.tmp"; do
+            if exists "$stamp"; then
+              valid_receipt "$stamp" && cmp -s "$stamp" "$receipt" ||
+                refuse "the V1 fence and V2 receipt disagree"
+            fi
+          done
+          if exists "$progress"; then
+            owned_progress || refuse "unverified V2 progress receipt"
+            rm -- "$progress"
+            sync
+          fi
+          echo "Email V2 storage copy was already verified."
+          exit 0
+        fi
+        if exists "$fence" || exists "$fence.tmp"; then
+          refuse "V1 was fenced and its V2 completion receipt is missing"
+        fi
+        [ -d "$source/data" ] && [ ! -L "$source/data" ] || refuse "the source holds no store"
+        for name in "$progress_name" "$receipt_name" "$receipt_name.tmp"; do
+          if exists "$source/$name"; then
+            refuse "the source uses a reserved V2 receipt path"
+          fi
+        done
+        if exists "$progress"; then
+          owned_progress || refuse "unverified V2 progress receipt"
+          find "$target" -mindepth 1 -maxdepth 1 ! -name lost+found ! -name "$progress_name" -exec rm -rf -- {} +
+        else
+          present=$(find "$target" -mindepth 1 -maxdepth 1 ! -name lost+found -print -quit)
+          [ -z "$present" ] ||
+            refuse "the target already contains data without a V2 receipt"
+          (set -C; printf '%s\n' "$protocol" >"$progress")
+          sync
+        fi
+        find "$source" -mindepth 1 -maxdepth 1 ! -name lost+found -exec cp -a -t "$target" {} +
+        # Directory sizes are excluded: ext4 never shrinks a directory.
+        inventory() {
+          (cd "$1" && find . \( -path ./lost+found -o -path "./$progress_name" \) -prune -o ! -name . -printf '%y %m %U %G %p %l\0') >"$2.entries"
+          (cd "$1" && find . \( -path ./lost+found -o -path "./$progress_name" \) -prune -o -type f -print0) >"$2.files"
+          LC_ALL=C sort -z -o "$2.entries" "$2.entries"
+          LC_ALL=C sort -z -o "$2.files" "$2.files"
+          (cd "$1" && xargs -0r sha256sum <"$2.files") >"$2.sums"
+        }
+        inventory "$source" /tmp/original
+        inventory "$target" /tmp/encrypted
+        [ -s /tmp/original.sums ] || refuse "the original store has no files"
+        [ "$(sha256sum </tmp/original.entries)" = "$(sha256sum </tmp/encrypted.entries)" ] || refuse "the copied entries differ"
+        [ "$(sha256sum </tmp/original.sums)" = "$(sha256sum </tmp/encrypted.sums)" ] || refuse "the copied files differ"
+        digest=$(sha256sum </tmp/encrypted.sums)
+        (set -C; printf '%s %.64s\n' "$protocol" "$digest" >"$receipt.tmp")
+        sync
+        mv -- "$receipt.tmp" "$receipt"
+        sync
+        rm -- "$progress"
+        sync
+        echo "Email storage copied onto Longhorn V2 and verified."
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: "1"
+        memory: 256Mi
+    securityContext:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+      seLinuxOptions: {}
+    volumeMounts:
+      - name: v2-data
+        mountPath: /var/lib/stalwart
+      - name: data
+        mountPath: /var/lib/private-mail-original
+        readOnly: true
+      - name: initialization-temporary
+        mountPath: /tmp
