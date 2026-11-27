@@ -71,6 +71,8 @@ func main() {
 		_, _, authorization = authorizeUmamiStandbyObservation(os.Getenv)
 	case umamiStandbyReplacementOperation:
 		_, _, authorization = authorizeUmamiStandbyTarget(os.Getenv, umamiStandbyReplacementOperation)
+	case resumeUmamiStandbyOperation:
+		_, authorization = authorizeUmamiStandbyResume(os.Getenv)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
 	case "reserve-v1-scratch":
@@ -301,16 +303,11 @@ func main() {
 		fmt.Println("CNPG_ARCHIVE_PROOF=RESTORED engine=v2 physicalHistory=VERIFIED networkIsolation=VERIFIED archiveCredential=RETIRED storageCleanup=REQUIRED migration=UNVERIFIED")
 		return
 	}
-	if operation == umamiStandbyReplacementOperation {
-		target, spare, err := authorizeUmamiStandbyTarget(os.Getenv, operation)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+	if operation == umamiStandbyReplacementOperation || operation == resumeUmamiStandbyOperation {
 		replacementContext, stop := context.WithTimeout(ctx, 40*time.Minute)
 		defer stop()
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
-		if err := runUmamiStandbyReplacement(replacementContext, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), target, spare); err != nil {
+		if err := executeUmamiStandbyReplacement(replacementContext, c, operation); err != nil {
 			fmt.Fprintln(os.Stderr, "Umami standby replacement held:", err)
 			os.Exit(1)
 		}

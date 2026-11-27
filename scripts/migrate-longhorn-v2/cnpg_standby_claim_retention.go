@@ -58,19 +58,23 @@ func verifyUmamiStandbyClaimRetention(original, retained object) error {
 	return nil
 }
 
+func umamiRetainedClaimMetadata(claim object, name string) bool {
+	owners := value(claim, "metadata", "ownerReferences")
+	return text(claim, "metadata", "labels", "cnpg.io/instanceName") == name &&
+		text(claim, "metadata", "annotations", "cnpg.io/pvcStatus") == "detached" &&
+		(owners == nil || reflect.DeepEqual(owners, []any{}))
+}
+
 // verifyUmamiStandbyDetached accepts the old backend only when its original
 // claim still protects it and neither a Pod nor a CSI attachment can use it.
 func verifyUmamiStandbyDetached(witness cnpgStandbyCutover, claim, pv, volume object, pods, attachments []object) error {
 	refused := errors.New("the retained standby storage is not demonstrably detached")
 	name := witness.Consumer.Name
-	owners := value(claim, "metadata", "ownerReferences")
 	robustness := text(volume, "status", "robustness")
 	if pods == nil || attachments == nil ||
 		benchmarkIdentity(claim) != witness.Claim || benchmarkIdentity(pv) != witness.PV ||
 		benchmarkIdentity(volume) != witness.Volume || !verifyUmamiOriginalClaimBinding(claim, pv, volume) ||
-		text(claim, "metadata", "labels", "cnpg.io/instanceName") != name ||
-		text(claim, "metadata", "annotations", "cnpg.io/pvcStatus") != "detached" ||
-		(owners != nil && !reflect.DeepEqual(owners, []any{})) ||
+		!umamiRetainedClaimMetadata(claim, name) ||
 		text(volume, "status", "state") != "detached" || text(volume, "status", "currentNodeID") != "" ||
 		text(volume, "spec", "nodeID") != "" || (robustness != "unknown" && robustness != "healthy") {
 		return refused

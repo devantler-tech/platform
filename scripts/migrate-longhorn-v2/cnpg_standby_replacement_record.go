@@ -22,20 +22,34 @@ type umamiStandbyReplacementRecord struct {
 	Primary            benchmarkResource
 	Original           cnpgStandbyCutover
 	OtherPods          map[string]benchmarkResource
-	Replacement        *cnpgRecoveredStorage `json:",omitempty"`
+	Replacement        *cnpgRecoveredStorage  `json:",omitempty"`
+	Continuation       *umamiReplacementOwner `json:",omitempty"`
 }
 
 const umamiStandbyJournalNamespace = "longhorn-system"
+
+type umamiReplacementOwner struct {
+	Source, Run string
+}
 
 type umamiStandbyReplacementJournal struct {
 	c      client
 	uid    string
 	record umamiStandbyReplacementRecord
+	resume *umamiReplacementOwner
+}
+
+func (j umamiStandbyReplacementJournal) executor() umamiReplacementOwner {
+	if j.resume != nil {
+		return *j.resume
+	}
+	return umamiReplacementOwner{Source: j.record.Source, Run: j.record.Run}
 }
 
 func beginUmamiStandbyReplacement(ctx context.Context, c client, record umamiStandbyReplacementRecord) (umamiStandbyReplacementJournal, error) {
 	var journal umamiStandbyReplacementJournal
-	if c.context != "admin@prod" || record.Phase != umamiReplacementPlanned || record.Replacement != nil || !validUmamiOriginalReplacement(record) {
+	if c.context != "admin@prod" || record.Phase != umamiReplacementPlanned || record.Replacement != nil ||
+		record.Continuation != nil || !validUmamiOriginalReplacement(record) {
 		return journal, errors.New("the original Umami standby replacement witness is incomplete")
 	}
 	name := umamiStandbyJournalName(record)
@@ -67,6 +81,9 @@ func beginUmamiStandbyReplacement(ctx context.Context, c client, record umamiSta
 }
 
 func (j *umamiStandbyReplacementJournal) transition(ctx context.Context, next umamiStandbyReplacementRecord) error {
+	if next.Phase == umamiReplacementEvictionPending {
+		next.Continuation = j.resume
+	}
 	if err := verifyUmamiReplacementTransition(j.record, next); err != nil {
 		return err
 	}
@@ -78,7 +95,7 @@ func (j *umamiStandbyReplacementJournal) transition(ctx context.Context, next um
 	if err != nil {
 		return err
 	}
-	if err = sourceCurrent(ctx, j.c.run, j.record.Source); err != nil {
+	if err = sourceCurrent(ctx, j.c.run, j.executor().Source); err != nil {
 		return err
 	}
 	if err = j.c.patch(ctx, "configmap", umamiStandbyJournalNamespace, current, object{
@@ -177,6 +194,15 @@ func verifyUmamiReplacementTransition(previous, next umamiStandbyReplacementReco
 		return refused
 	}
 	if next.Phase != expected {
+		return refused
+	}
+	if next.Continuation != nil && previous.Phase == umamiReplacementClaimRetained {
+		owner := next.Continuation
+		if previous.Continuation != nil || !validBenchmarkOwner(owner.Run, owner.Source) ||
+			owner.Run == previous.Run || owner.Source == previous.Source {
+			return refused
+		}
+	} else if !reflect.DeepEqual(next.Continuation, previous.Continuation) {
 		return refused
 	}
 	if next.Phase == umamiReplacementStandbyRebuilt {
