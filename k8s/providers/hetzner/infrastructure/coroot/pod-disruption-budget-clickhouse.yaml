@@ -1,0 +1,13 @@
+# Keep one serving ClickHouse replica during each voluntary disruption.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: coroot-clickhouse
+  namespace: observability
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: coroot-operator
+      app.kubernetes.io/part-of: coroot
+      app.kubernetes.io/component: clickhouse
