@@ -1,9 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"reflect"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 func TestActualBudgetRestoreCopiesOnlyTheArchivedClaim(t *testing.T) {
@@ -33,25 +34,33 @@ func TestActualBudgetRestoreCopiesOnlyTheArchivedClaim(t *testing.T) {
 		text(restore, "spec", "resourceModifier", "name") != text(modifiers, "metadata", "name") {
 		t.Fatal("the mover must restore only the archived claim into the exact V2 diagnostic namespace")
 	}
+	// Velero v1.18 decodes the resource modifier strictly and translates
+	// operation to op only when constructing the RFC 6902 patch.
+	type modifierPatch struct {
+		Operation string `json:"operation"`
+		Path      string `json:"path"`
+		Value     string `json:"value"`
+	}
 	var document struct {
-		Rules []struct {
-			Conditions object   `json:"conditions"`
-			Patches    []object `json:"patches"`
+		Version string `json:"version"`
+		Rules   []struct {
+			Conditions object          `json:"conditions"`
+			Patches    []modifierPatch `json:"patches"`
 		} `json:"resourceModifierRules"`
 	}
-	if err := json.Unmarshal([]byte(text(modifiers, "data", "modifiers.json")), &document); err != nil {
-		t.Fatal("invalid claim modifier", err)
+	if err := yaml.UnmarshalStrict([]byte(text(modifiers, "data", "modifiers.json")), &document); err != nil {
+		t.Fatalf("Velero would reject the claim modifier: %v", err)
 	}
 	rules := document.Rules
-	if len(rules) != 1 || text(rules[0].Conditions, "groupResource") != "persistentvolumeclaims" ||
+	if document.Version != "v1" || len(rules) != 1 || text(rules[0].Conditions, "groupResource") != "persistentvolumeclaims" ||
 		text(rules[0].Conditions, "resourceNameRegex") != "^"+actualBudgetClaim+"$" {
 		t.Fatal("the modifier must select only the backed up claim")
 	}
-	patches := rules[0].Patches
-	if len(patches) != 2 || text(patches[0], "op") != "replace" ||
-		text(patches[0], "path") != "/spec/storageClassName" || text(patches[0], "value") != "longhorn-v2" ||
-		text(patches[1], "op") != "add" || text(patches[1], "path") != "/metadata/annotations/volume.kubernetes.io~1selected-node" ||
-		text(patches[1], "value") != "restore-worker" {
+	wantPatches := []modifierPatch{
+		{Operation: "replace", Path: "/spec/storageClassName", Value: "longhorn-v2"},
+		{Operation: "add", Path: "/metadata/annotations/volume.kubernetes.io~1selected-node", Value: "restore-worker"},
+	}
+	if !reflect.DeepEqual(rules[0].Patches, wantPatches) {
 		t.Fatal("the modifier must keep Velero's binding selector and select the verified WFFC restore node")
 	}
 }
