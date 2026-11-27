@@ -1,0 +1,59 @@
+package main
+
+import (
+	"errors"
+	"maps"
+	"reflect"
+)
+
+// umamiStandbyClaimRetentionChanges prepares the metadata change used by
+// CloudNativePG's keep-PVC operation. The caller must apply it through the
+// existing UID and resource-version patch fence, then verify the retained
+// claim before asking the eviction API to stop the original consumer.
+func umamiStandbyClaimRetentionChanges(witness cnpgStandbyCutover, cluster, pod, claim, pv, volume object) ([]object, error) {
+	const (
+		statusAnnotation = "cnpg.io/pvcStatus"
+		statusPath       = "/metadata/annotations/cnpg.io~1pvcStatus"
+		instanceLabel    = "cnpg.io/instanceName"
+	)
+	name := witness.Consumer.Name
+	owners, _ := value(claim, "metadata", "ownerReferences").([]any)
+	if benchmarkIdentity(cluster) != witness.Database || !umamiV2Transition(cluster) ||
+		text(cluster, "status", "currentPrimary") == name || text(pod, "metadata", "labels", "cnpg.io/instanceRole") != "replica" ||
+		benchmarkIdentity(pod) != witness.Consumer || text(pod, "metadata", "resourceVersion") != witness.ConsumerVersion ||
+		benchmarkIdentity(claim) != witness.Claim || benchmarkIdentity(pv) != witness.PV ||
+		benchmarkIdentity(volume) != witness.Volume || !umamiV1StorageRetained(cluster, pod, claim, pv, volume) ||
+		len(owners) != 1 || text(claim, "metadata", "annotations", statusAnnotation) != "ready" ||
+		text(claim, "metadata", "labels", instanceLabel) != name {
+		return nil, errors.New("the original standby claim changed before retention")
+	}
+	return []object{
+		{"op": "test", "path": "/metadata/ownerReferences", "value": owners},
+		{"op": "test", "path": statusPath, "value": "ready"},
+		{"op": "replace", "path": statusPath, "value": "detached"},
+		{"op": "remove", "path": "/metadata/ownerReferences/0"},
+	}, nil
+}
+
+func verifyUmamiStandbyClaimRetention(original, retained object) error {
+	wantAnnotations := maps.Clone(valueObject(original, "metadata", "annotations"))
+	if wantAnnotations["cnpg.io/pvcStatus"] != "ready" {
+		return errors.New("original standby claim readiness is unverified")
+	}
+	wantAnnotations["cnpg.io/pvcStatus"] = "detached"
+	owners := value(retained, "metadata", "ownerReferences")
+	if owners != nil && !reflect.DeepEqual(owners, []any{}) {
+		return errors.New("retained standby claim still has an owner")
+	}
+	if !recoveredNativeObject(retained, "v1", "PersistentVolumeClaim", "umami") ||
+		benchmarkIdentity(retained) != benchmarkIdentity(original) ||
+		text(retained, "metadata", "resourceVersion") == text(original, "metadata", "resourceVersion") ||
+		!reflect.DeepEqual(wantAnnotations, value(retained, "metadata", "annotations")) ||
+		!reflect.DeepEqual(value(retained, "metadata", "labels"), value(original, "metadata", "labels")) ||
+		!reflect.DeepEqual(value(retained, "metadata", "finalizers"), value(original, "metadata", "finalizers")) ||
+		!reflect.DeepEqual(value(retained, "spec"), value(original, "spec")) ||
+		text(retained, "status", "phase") != "Bound" {
+		return errors.New("the retained standby claim could not be verified")
+	}
+	return nil
+}
