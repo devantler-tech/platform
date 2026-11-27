@@ -136,7 +136,10 @@ func verifyUmamiSpareBeforeRetirement(ctx context.Context, journal *umamiStandby
 	}
 	spare := journal.record.Original.Spare
 	current, err := readUmamiV2Standby(ctx, journal.c, observation, spare.Pod.Name, qualified.Disks)
-	if err != nil || !reflect.DeepEqual(current, spare) {
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(current, spare) {
 		return errors.New("the witnessed Umami V2 spare changed before eviction")
 	}
 	return nil

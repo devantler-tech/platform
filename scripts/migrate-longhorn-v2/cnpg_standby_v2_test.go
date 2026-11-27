@@ -5,7 +5,7 @@ import "testing"
 func TestUmamiV2StandbyBindsLivePhysicalReplayAndCopies(t *testing.T) {
 	const standby = "umami-db-4"
 	storage := newRecoveredStorageFixture(t)
-	for _, fault := range []string{"", "old engine", "incomplete copies", "behind", "primary", "wrong mount"} {
+	for _, fault := range []string{"", "retained peer", "missing healthy peer", "missing retention witness", "retained peer behind", "old engine", "incomplete copies", "behind", "primary", "wrong mount"} {
 		t.Run(fault, func(t *testing.T) {
 			f := storage.copyBindingObjects(t)
 			obs := umamiV2TransitionObservation(t)
@@ -24,11 +24,22 @@ func TestUmamiV2StandbyBindsLivePhysicalReplayAndCopies(t *testing.T) {
 			volumeRef["pvcName"], volumeRef["namespace"] = standby, "umami"
 
 			switch fault {
+			case "retained peer", "missing healthy peer", "missing retention witness", "retained peer behind":
+				obs.retainedStandby = "umami-db-2"
+				status := valueObject(obs.Cluster, "status")
+				status["instances"] = float64(3)
+				status["healthyPVC"] = []any{"umami-db-1", "umami-db-3", standby}
+			}
+			switch fault {
+			case "missing healthy peer":
+				valueObject(obs.Cluster, "status")["healthyPVC"] = []any{"umami-db-1", obs.retainedStandby, standby}
+			case "missing retention witness":
+				obs.retainedStandby = ""
 			case "old engine":
 				valueObject(f.engine, "spec")["dataEngine"] = "v1"
 			case "incomplete copies":
 				f.replicas = f.replicas[:2]
-			case "behind":
+			case "behind", "retained peer behind":
 				state := obs.States[standby]
 				state.ReplayLSN = "2/FF"
 				obs.States[standby] = state
@@ -38,7 +49,7 @@ func TestUmamiV2StandbyBindsLivePhysicalReplayAndCopies(t *testing.T) {
 				value(pod, "spec", "volumes").([]any)[0].(object)["persistentVolumeClaim"] = object{"claimName": "another-claim"}
 			}
 			got, err := bindUmamiV2Standby(obs, f.claim, f.pv, f.volume, f.engine, f.replicas, f.p.record.Storage.Disks)
-			if fault == "" {
+			if fault == "" || fault == "retained peer" {
 				if err != nil || got.Pod != benchmarkIdentity(pod) || got.Claim != benchmarkIdentity(f.claim) || len(got.Replicas) != 3 {
 					t.Fatalf("V2 standby did not qualify: %+v, %v", got, err)
 				}
