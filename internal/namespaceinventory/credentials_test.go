@@ -375,19 +375,27 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 		operation    string
 		confirmation string
 		originalRun  string
+		database     string
 	}{
 		{operation: "benchmark-v1", confirmation: "benchmark-longhorn-storage"},
 		{operation: "prepare-native-v1-seed", confirmation: "prepare-longhorn-native-v1-seed"},
 		{operation: "recover-bound-v1-benchmark", confirmation: "recover-bound-longhorn-v1-benchmark:99", originalRun: "99"},
 		{operation: "reclaim-native-v2-seed", confirmation: "reclaim-longhorn-native-v2-seed:99", originalRun: "99"},
 		{operation: "resume-native-v2-reclaim", confirmation: "resume-longhorn-native-v2-reclaim:99:98", originalRun: "99"},
+		{operation: "recover-wedding-standby-name", confirmation: "recover-wedding-standby-name:wedding-db-1:99:" +
+			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000001:99:" +
+			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000002:98", originalRun: "99", database: "wedding-db"},
 	} {
 		valid := nativeSeedAdmissionDispatch()
 		valid["LONGHORN_V2_OPERATION"], valid["LONGHORN_V2_CONFIRM"] = dispatch.operation, dispatch.confirmation
+		valid["LONGHORN_V2_DATABASE"] = dispatch.database
 		valid["KUBECONFIG"], valid["LONGHORN_V2_CREDENTIAL_DIR"] = path, directory
 		client, endpoint, err := LoadBenchmarkAdmissionClient(func(key string) string { return valid[key] }, netip.MustParseAddr("203.0.113.10"), dispatch.originalRun)
 		if err != nil || client == nil || endpoint == nil || endpoint.String() != "https://203.0.113.10:6443" || client.Timeout != 20*time.Second {
 			t.Fatal("confirmed operation could not construct its fixed client:", dispatch.operation, err)
+		}
+		if dispatch.database == "wedding-db" && client.Transport.(directAPIPeer).createScope != directWeddingCreate {
+			t.Fatal("confirmed Wedding recovery did not receive its dry-run scope")
 		}
 		response, err := client.Get(server.URL + "/version")
 		if response != nil {
@@ -400,7 +408,7 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 	}
 }
 
-func TestDirectAPIAllowsOnlyScopedUmamiCreateDryRuns(t *testing.T) {
+func TestDirectAPIAllowsOnlyScopedCNPGCreateDryRuns(t *testing.T) {
 	const dry = "?dryRun=All"
 	const pods = "/api/v1/namespaces/umami/pods"
 	const claims = "/api/v1/namespaces/umami/persistentvolumeclaims"
@@ -423,6 +431,13 @@ func TestDirectAPIAllowsOnlyScopedUmamiCreateDryRuns(t *testing.T) {
 		{http.MethodPost, pods, dry, "application/json", directReclaimCreate, false},
 		{http.MethodPost, pods, dry, "application/json", "", false},
 		{http.MethodPatch, pods + "/named", dry, "application/json-patch+json", directUmamiCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/wedding-app/pods", dry, "application/json", directWeddingCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/wedding-app/persistentvolumeclaims", dry, "application/json", directWeddingCreate, true},
+		{http.MethodPost, "/apis/batch/v1/namespaces/wedding-app/jobs", dry, "application/json", directWeddingCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/wedding-app/pods", "", "application/json", directWeddingCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/wedding-app/pods", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, pods, dry, "application/json", directWeddingCreate, false},
+		{http.MethodPatch, "/api/v1/namespaces/wedding-app/pods/named", dry, "application/json-patch+json", directWeddingCreate, false},
 	} {
 		const host = "203.0.113.10:6443"
 		calls := 0
