@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,6 +24,11 @@ import (
 const approvedImage = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:05ce801246615043ecd613c082f7b79216131f49831462a83e5c2afff237d9c1"
 const approvedRoutedImage = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:c00cd848d47cab10f60301facba02387cf34832f7d560cfaf206a008ed9e0ff9"
 const approvedStorageSelectorSHA = "d11ea321157b321f3e5a6c6b96dc7ab4eccb116157edada63cade186df1ffb9e"
+const approvedV2StorageSelectorSHA = "1daa574207dd56b87e6df55ecf41115dc97a34bcff373938d53319a537512898"
+const originalStoreRoot = "/var/lib/stalwart"
+const v2StoreRoot = "/var/lib/stalwart-v2"
+const v2Volume = "v2-data"
+const v2Claim = "email-data-encrypted-v2"
 const approvedProxyMap = "email-client-proxy-kkm788c4m9"
 const approvedProxyConfigSHA = "400a77329e2fcda3fea17c821593ef18f7ad2ca8f1fa32acfbf3b5f36aa6fb4c"
 const maxOutput = 16384
@@ -100,7 +106,11 @@ type binding struct {
 	ProxyConfig, ProxyContainerID, ProxyImageID, ProxyStartedAt string
 	ProxyRestarts                                               int
 	StorageSelectorID                                           string
-	OriginalStoreBound                                          bool
+	StorageMountBound, V2Store                                  bool
+}
+type storageSelection struct {
+	containerID string
+	v2          bool
 }
 type configMap struct {
 	Metadata metadata
@@ -249,9 +259,19 @@ func bindPod(b []byte) (binding, bool, bool, error) {
 		return binding{}, false, false, invalid
 	}
 	id := binding{UID: p.Metadata.UID, Node: p.Spec.NodeName, ContainerID: s.ContainerID, ImageID: s.ImageID,
-		Restarts: s.RestartCount, StorageSelectorID: selector}
-	if selector != "" {
-		id.OriginalStoreBound = bindOriginalStore(p, c)
+		Restarts: s.RestartCount, StorageSelectorID: selector.containerID, V2Store: selector.v2}
+	if selector.v2 {
+		if !bindStoreMount(p, c, v2StoreRoot, v2Volume, v2Claim, false) {
+			return binding{}, false, false, invalid
+		}
+		for _, volume := range p.Spec.Volumes {
+			if volume.PersistentVolumeClaim != nil && volume.Name != v2Volume {
+				return binding{}, false, false, invalid
+			}
+		}
+		id.StorageMountBound = true
+	} else if selector.containerID != "" {
+		id.StorageMountBound = bindStoreMount(p, c, originalStoreRoot, "data", "email-data-encrypted", false)
 	}
 	if s.State.Running == nil {
 		return id, false, s.Ready, nil
@@ -270,10 +290,8 @@ func bindPod(b []byte) (binding, bool, bool, error) {
 	return id, proxyRunning, s.Ready && proxyReady, nil
 }
 
-// The startup probe measures the original RocksDB lock, so a routed pod must
-// mount the original claim at that full path without a shadowing mount.
-func bindOriginalStore(p pod, c container) bool {
-	const root = "/var/lib/stalwart"
+// The startup probe measures the RocksDB lock on the exact claimed mount.
+func bindStoreMount(p pod, c container, root, name, claim string, readOnly bool) bool {
 	matches := 0
 	for _, mount := range c.VolumeMounts {
 		if strings.HasPrefix(mount.MountPath, root+"/") {
@@ -282,7 +300,7 @@ func bindOriginalStore(p pod, c container) bool {
 		if mount.MountPath != root {
 			continue
 		}
-		if mount.Name != "data" || mount.ReadOnly || mount.SubPath != "" || mount.SubPathExpr != "" {
+		if mount.Name != name || mount.ReadOnly != readOnly || mount.SubPath != "" || mount.SubPathExpr != "" {
 			return false
 		}
 		matches++
@@ -290,16 +308,20 @@ func bindOriginalStore(p pod, c container) bool {
 	if matches != 1 {
 		return false
 	}
+	claims := 0
 	for _, volume := range p.Spec.Volumes {
-		if volume.Name == "data" {
-			claim := volume.PersistentVolumeClaim
-			return claim != nil && claim.ClaimName == "email-data-encrypted" && !claim.ReadOnly
+		if volume.Name == name {
+			pvc := volume.PersistentVolumeClaim
+			if pvc == nil || pvc.ClaimName != claim || pvc.ReadOnly {
+				return false
+			}
+			claims++
 		}
 	}
-	return false
+	return claims == 1
 }
 
-func bindDatastoreMount(p pod, c container) (string, bool) {
+func bindDatastoreMount(p pod, c container) (storageSelection, bool) {
 	for _, mount := range c.VolumeMounts {
 		if mount.MountPath != "/etc/stalwart/config.json" || mount.SubPath != "config.json" || mount.SubPathExpr != "" || !mount.ReadOnly {
 			continue
@@ -310,7 +332,7 @@ func bindDatastoreMount(p pod, c container) (string, bool) {
 			}
 			switch c.Image {
 			case approvedImage:
-				return "", volume.ConfigMap != nil && volume.ConfigMap.Name == "private-mail-datastore"
+				return storageSelection{}, volume.ConfigMap != nil && volume.ConfigMap.Name == "private-mail-datastore"
 			case approvedRoutedImage:
 				if volume.Name == "serving-storage" && volume.EmptyDir != nil &&
 					volume.EmptyDir.Medium == "Memory" && volume.EmptyDir.SizeLimit == "1Mi" {
@@ -319,11 +341,12 @@ func bindDatastoreMount(p pod, c container) (string, bool) {
 			}
 		}
 	}
-	return "", false
+	return storageSelection{}, false
 }
 
-func bindStorageSelector(p pod) (string, bool) {
+func bindStorageSelector(p pod) (storageSelection, bool) {
 	writers := 0
+	var selector storageSelection
 	for _, init := range p.Spec.InitContainers {
 		for _, mount := range init.VolumeMounts {
 			if mount.Name != "serving-storage" || mount.ReadOnly {
@@ -331,29 +354,37 @@ func bindStorageSelector(p pod) (string, bool) {
 			}
 			if init.Name != "select-mail-store" || init.Image != approvedRoutedImage || mount.MountPath != "/store-selection" ||
 				mount.SubPath != "" || mount.SubPathExpr != "" || len(init.Env) != 0 || len(init.EnvFrom) != 0 ||
-				!reflect.DeepEqual(init.Command, []string{"/usr/bin/sh", "-c"}) || len(init.Args) != 1 ||
-				hashBytes([]byte(init.Args[0])) != approvedStorageSelectorSHA || !bindStorageTemplate(p, init) {
-				return "", false
+				!reflect.DeepEqual(init.Command, []string{"/usr/bin/sh", "-c"}) || len(init.Args) != 1 || !bindStorageTemplate(p, init) {
+				return storageSelection{}, false
+			}
+			switch hashBytes([]byte(init.Args[0])) {
+			case approvedStorageSelectorSHA:
+			case approvedV2StorageSelectorSHA:
+				if !bindStoreMount(p, init, v2StoreRoot, v2Volume, v2Claim, true) {
+					return storageSelection{}, false
+				}
+				selector.v2 = true
+			default:
+				return storageSelection{}, false
 			}
 			writers++
 		}
 	}
 	if writers != 1 {
-		return "", false
+		return storageSelection{}, false
 	}
-	selector := ""
 	for _, status := range p.Status.InitContainerStatuses {
 		if status.Name != "select-mail-store" {
 			continue
 		}
 		state := status.State.Terminated
-		if selector != "" || status.ContainerID == "" || status.ImageID == "" || state == nil ||
+		if selector.containerID != "" || status.ContainerID == "" || status.ImageID == "" || state == nil ||
 			state.ExitCode == nil || *state.ExitCode != 0 {
-			return "", false
+			return storageSelection{}, false
 		}
-		selector = status.ContainerID
+		selector.containerID = status.ContainerID
 	}
-	return selector, selector != ""
+	return selector, selector.containerID != ""
 }
 
 func bindStorageTemplate(p pod, init container) bool {
@@ -498,7 +529,7 @@ func collect(ctx context.Context, run executor, pause func(context.Context) erro
 			return unknown()
 		}
 		id, running, _, e := bindPod(raw)
-		if e != nil || (id.StorageSelectorID != "" && !id.OriginalStoreBound) {
+		if e != nil || (id.StorageSelectorID != "" && !id.StorageMountBound) {
 			return unknown()
 		}
 		if running {
@@ -521,11 +552,23 @@ func collect(ctx context.Context, run executor, pause func(context.Context) erro
 	if e != nil {
 		return unknown()
 	}
+	probe := podProbe
+	expectedConfig := cm.Data["config.json"]
+	if before.V2Store {
+		originalPath := originalStoreRoot + "/data"
+		v2Path := v2StoreRoot + "/data"
+		originalValue := strconv.Quote(originalPath)
+		if strings.Count(expectedConfig, originalValue) != 1 {
+			return unknown()
+		}
+		expectedConfig = strings.Replace(expectedConfig, originalValue, strconv.Quote(v2Path), 1)
+		probe = strings.ReplaceAll(podProbe, originalPath, v2Path)
+	}
 	proxyBefore, e := proxyConfiguration(ctx, run, before)
 	if e != nil {
 		return unknown()
 	}
-	raw, e = request(ctx, run, "exec", "-n", "private-mail", "private-mail-0", "-c", "private-mail", "--", "/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", podProbe)
+	raw, e = request(ctx, run, "exec", "-n", "private-mail", "private-mail-0", "-c", "private-mail", "--", "/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", probe)
 	if e != nil {
 		return unknown()
 	}
@@ -553,7 +596,7 @@ func collect(ctx context.Context, run executor, pause func(context.Context) erro
 	if e != nil || proxyAfter != proxyBefore {
 		return unknown()
 	}
-	verdict := classify(observed, observed.ConfigSHA256 == hashBytes([]byte(cm.Data["config.json"])), ready)
+	verdict := classify(observed, observed.ConfigSHA256 == hashBytes([]byte(expectedConfig)), ready)
 	if verdict == "OBSERVED_HEALTHY_SAMPLE" {
 		return verdict, 0
 	}

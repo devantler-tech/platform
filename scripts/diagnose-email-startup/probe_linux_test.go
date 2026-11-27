@@ -24,7 +24,7 @@ func TestNativeLinuxLockObservation(t *testing.T) {
 				t.Error(e)
 			}
 		}
-	}, 200, false)
+	}, 200, false, originalStoreRoot)
 	if got := classify(m, true, true); got != "OBSERVED_HEALTHY_SAMPLE" {
 		t.Fatalf("native lock was not observed: %s", got)
 	}
