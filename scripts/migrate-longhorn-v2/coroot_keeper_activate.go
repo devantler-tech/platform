@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -37,6 +38,9 @@ func (j *corootKeeperJournal) rebindAndResume(ctx context.Context, fences coroot
 	if r.Phase != "member-released" {
 		return errCorootKeeperReceipt
 	}
+	if err := j.requeueMissingKeeperMember(ctx, r, fences.pod); err != nil {
+		return err
+	}
 	if err := waitReadyWithin(ctx, 5*time.Minute, func(ctx context.Context) error {
 		return j.verifyRejoined(ctx, r, disks, j.source())
 	}); err != nil {
@@ -50,6 +54,51 @@ func (j *corootKeeperJournal) rebindAndResume(ctx context.Context, fences coroot
 	}
 	r.Phase = "replacement-verified"
 	return j.advance(ctx, r)
+}
+
+// Removing an admission fence does not notify the StatefulSet controller. A
+// metadata update requeues the same controller without changing its template
+// or waiting through failed-create backoff. The claim UID makes the update
+// idempotent when a verified rebind resumes.
+func (j *corootKeeperJournal) requeueMissingKeeperMember(ctx context.Context, r corootKeeperCutoverRecord, podFence object) error {
+	const annotation = "storage.platform.devantler.tech/keeper-rebind-claim"
+	member := corootKeeperName + "-" + strconv.Itoa(r.Input.Ordinal)
+	if r.NewClaim.Name != "data-"+member {
+		return errCorootKeeperReceipt
+	}
+	pod, err := j.c.get(ctx, "pod", corootKeeperNamespace, member, true)
+	if err != nil || pod != nil {
+		return err
+	}
+	for _, kind := range []string{keeperBindingKind, keeperPolicyKind} {
+		fence, err := j.c.get(ctx, kind, "", text(podFence, "metadata", "name"), true)
+		if err != nil || fence != nil {
+			return errCorootKeeperReceipt
+		}
+	}
+	if err := j.verifyNewClaimBound(ctx, r); err != nil {
+		return err
+	}
+	set, err := j.c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
+	if err != nil || !recoveredNativeObject(set, "apps/v1", "StatefulSet", corootKeeperNamespace) ||
+		benchmarkIdentity(set) != r.Before.Controller || value(set, "spec", "replicas") != float64(3) {
+		return errCorootKeeperQuorum
+	}
+	prior := text(set, "metadata", "annotations", annotation)
+	if prior == r.NewClaim.UID {
+		return nil
+	}
+	if prior != "" && !isolationUID.MatchString(prior) {
+		return errCorootKeeperReceipt
+	}
+	change := object{"op": "add", "path": "/metadata/annotations/storage.platform.devantler.tech~1keeper-rebind-claim", "value": r.NewClaim.UID}
+	if value(set, "metadata", "annotations") == nil {
+		change["path"], change["value"] = "/metadata/annotations", object{annotation: r.NewClaim.UID}
+	}
+	if err := sourceCurrent(ctx, j.c.run, j.source()); err != nil {
+		return err
+	}
+	return j.c.patch(ctx, "statefulset", corootKeeperNamespace, set, change)
 }
 
 func (j *corootKeeperJournal) requireKeeperFences(ctx context.Context, fences corootKeeperFences) error {
