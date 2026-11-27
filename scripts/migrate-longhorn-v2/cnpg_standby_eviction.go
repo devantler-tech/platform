@@ -9,8 +9,12 @@ import (
 // Ask the Kubernetes Eviction API to exercise admission and its PDB checks for
 // the exact observed standby with persistence disabled at both API boundaries.
 func verifyUmamiStandbyEvictionAdmission(ctx context.Context, c client, source string, witness cnpgStandbyCutover) error {
-	if !validUmamiEvictionTarget(c, witness) {
-		return errors.New("the Umami eviction target is unverified")
+	return verifyCNPGStandbyEvictionAdmission(ctx, c, source, cnpgSource{Namespace: "umami", Name: "umami-db"}, witness)
+}
+
+func verifyCNPGStandbyEvictionAdmission(ctx context.Context, c client, source string, database cnpgSource, witness cnpgStandbyCutover) error {
+	if !validCNPGStandbyEvictionTarget(c, database, witness) {
+		return errors.New("the database eviction target is unverified")
 	}
 	if err := recheckUmamiStandbyAdmission(ctx, c, witness); err != nil {
 		return err
@@ -18,7 +22,7 @@ func verifyUmamiStandbyEvictionAdmission(ctx context.Context, c client, source s
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
-	if err := requestUmamiStandbyEviction(ctx, c, witness, true); err != nil {
+	if err := requestCNPGStandbyEviction(ctx, c, database, witness, true); err != nil {
 		return err
 	}
 	if err := recheckUmamiStandbyAdmission(ctx, c, witness); err != nil {
@@ -27,11 +31,11 @@ func verifyUmamiStandbyEvictionAdmission(ctx context.Context, c client, source s
 	return sourceCurrent(ctx, c.run, source)
 }
 
-func requestUmamiStandbyEviction(ctx context.Context, c client, witness cnpgStandbyCutover, dryRun bool) error {
-	const namespace = "umami"
+func requestCNPGStandbyEviction(ctx context.Context, c client, database cnpgSource, witness cnpgStandbyCutover, dryRun bool) error {
+	namespace := database.Namespace
 	pod := witness.Consumer
 	refused := errors.New("the exact standby did not pass Kubernetes eviction admission")
-	if !validUmamiEvictionTarget(c, witness) {
+	if !validCNPGStandbyEvictionTarget(c, database, witness) {
 		return refused
 	}
 	path := "/api/v1/namespaces/" + namespace + "/pods/" + pod.Name + "/eviction"
@@ -55,10 +59,11 @@ func requestUmamiStandbyEviction(ctx context.Context, c client, witness cnpgStan
 	return nil
 }
 
-func validUmamiEvictionTarget(c client, witness cnpgStandbyCutover) bool {
+func validCNPGStandbyEvictionTarget(c client, database cnpgSource, witness cnpgStandbyCutover) bool {
 	pod := witness.Consumer
-	_, err := cnpgInstanceID(pod.Name, "umami-db")
-	return err == nil && pod.Namespace == "umami" && nativeRestoreUID(pod.UID) &&
+	_, admitted := cnpgStandbyProfileForSource(database)
+	_, err := cnpgInstanceID(pod.Name, database.Name)
+	return admitted && err == nil && pod.Namespace == database.Namespace && nativeRestoreUID(pod.UID) &&
 		witness.ConsumerVersion != "" && witness.BudgetVersion != "" && c.context == "admin@prod" && c.run != nil
 }
 
@@ -69,7 +74,8 @@ func recheckUmamiStandbyAdmission(ctx context.Context, c client, witness cnpgSta
 	if err != nil {
 		return err
 	}
-	if !umamiV1StorageRetained(actual.cluster, actual.pod, actual.claim, actual.pv, actual.volume) {
+	profile, admitted := cnpgStandbyTransition(actual.cluster)
+	if !admitted || !cnpgV1StorageRetained(profile, actual.cluster, actual.pod, actual.claim, actual.pv, actual.volume) {
 		return errors.New("the original standby storage changed during admission")
 	}
 	return nil
@@ -99,16 +105,17 @@ func readUmamiStandbyAdmission(ctx context.Context, c client, witness cnpgStandb
 		}
 		*resource.dest = current
 	}
-	pods, err := c.list(ctx, "pods", "umami")
+	pods, err := c.list(ctx, "pods", witness.Database.Namespace)
 	actual.pod = cnpgRecoveryPodByName(pods, witness.Consumer.Name)
 	pod, cluster, budget := actual.pod, actual.cluster, actual.budget
-	if err != nil || benchmarkIdentity(pod) != witness.Consumer ||
+	profile, admitted := cnpgStandbyTransition(cluster)
+	if err != nil || !admitted || benchmarkIdentity(pod) != witness.Consumer ||
 		text(pod, "metadata", "resourceVersion") != witness.ConsumerVersion ||
 		text(budget, "metadata", "resourceVersion") != witness.BudgetVersion ||
-		!umamiV2Transition(cluster) || text(cluster, "status", "currentPrimary") == witness.Consumer.Name ||
+		text(cluster, "status", "currentPrimary") == witness.Consumer.Name ||
 		verifyPostgresPod(pod, pod, cluster) != nil || text(pod, "metadata", "labels", "cnpg.io/instanceRole") != "replica" ||
 		!recoveredPostgresMount(pod, actual.claim) || !onlyCNPGStandbyUsesClaim(pods, pod, witness.Claim.Name, witness.Consumer.Namespace) ||
-		!umamiStandbyDisruptionAllowed(budget, cluster) {
+		!cnpgTransitionDisruptionAllowed(budget, cluster, profile) {
 		return umamiStandbyAdmission{}, refused
 	}
 	return actual, nil

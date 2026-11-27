@@ -85,9 +85,18 @@ func TestUmamiReleasedVolumeRetainsOriginalClaimIdentity(t *testing.T) {
 const freshTestUID = "ac005841-f999-4999-8999-000000000999"
 
 func TestUmamiNameFenceCoversOnlyTheRetiredMember(t *testing.T) {
-	const target = "umami-db-1"
+	for _, row := range []struct{ namespace, other, target string }{
+		{"umami", "wedding-app", "umami-db-1"},
+		{"wedding-app", "umami", "wedding-db-1"},
+	} {
+		t.Run(row.namespace, func(t *testing.T) { testStandbyNameFenceScope(t, row.namespace, row.other, row.target) })
+	}
+}
+
+func testStandbyNameFenceScope(t *testing.T, namespace, other, target string) {
+	t.Helper()
 	record := umamiStandbyReplacementRecord{
-		Original:    cnpgStandbyCutover{Claim: benchmarkResource{Name: target}},
+		Original:    cnpgStandbyCutover{Claim: benchmarkResource{Name: target, Namespace: namespace}},
 		NameRelease: &umamiStandbyNameRelease{Owner: umamiReplacementOwner{Run: "1234567"}},
 	}
 	policy := umamiNameFencePolicy(record)
@@ -112,18 +121,19 @@ func TestUmamiNameFenceCoversOnlyTheRetiredMember(t *testing.T) {
 		spec                      map[string]any
 		admit                     bool
 	}{
-		{"pods", "umami", target, nil, false},
-		{"pods", "umami", "foreign-pod", mount, false},
-		{"pods", "umami", "", mount, false},
-		{"pods", "umami", "", map[string]any{"volumes": []any{map[string]any{"emptyDir": map[string]any{}}}}, true},
-		{"pods", "umami", "umami-db-2", nil, true},
+		{"pods", namespace, target, nil, false},
+		{"pods", namespace, "foreign-pod", mount, false},
+		{"pods", namespace, "", mount, false},
+		{"pods", namespace, "", map[string]any{"volumes": []any{map[string]any{"emptyDir": map[string]any{}}}}, true},
+		{"pods", namespace, "unaffected-standby", nil, true},
 		{"pods", "elsewhere", target, mount, true},
-		{"jobs", "umami", target + "-join", nil, false},
-		{"jobs", "umami", target + "-restore", nil, false},
-		{"jobs", "umami", "foreign-job", map[string]any{"template": map[string]any{"spec": mount}}, false},
-		{"jobs", "umami", "umami-db-2-join", map[string]any{"template": map[string]any{"spec": map[string]any{}}}, true},
-		{"persistentvolumeclaims", "umami", target, nil, false},
-		{"persistentvolumeclaims", "umami", "umami-db-2", nil, true},
+		{"jobs", namespace, target + "-join", nil, false},
+		{"jobs", namespace, target + "-restore", nil, false},
+		{"jobs", namespace, "foreign-job", map[string]any{"template": map[string]any{"spec": mount}}, false},
+		{"jobs", namespace, "unaffected-standby-join", map[string]any{"template": map[string]any{"spec": map[string]any{}}}, true},
+		{"persistentvolumeclaims", namespace, target, nil, false},
+		{"persistentvolumeclaims", namespace, "unaffected-standby", nil, true},
+		{"pods", other, target, mount, true},
 	} {
 		metadata := map[string]any{}
 		if check.name != "" {

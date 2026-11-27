@@ -108,10 +108,11 @@ func verifiedUmamiStandbyRoster(observation cnpgObservation) ([]object, error) {
 	if observation.umamiRecoveryPeers == nil {
 		return healthyCNPGPodsWithRetention(cluster, observation.Pods, observation.retainedStandby)
 	}
-	const surviving = 3
-	refused := errors.New("the three surviving Umami members do not match the recovery journal")
+	profile, admitted := cnpgStandbyTransition(cluster)
+	surviving := profile.Instances - 1
+	refused := errors.New("the surviving database members do not match the recovery journal")
 	primary := text(cluster, "status", "currentPrimary")
-	if observation.retainedStandby != "" || !umamiV2Transition(cluster) || len(observation.Pods) != surviving ||
+	if observation.retainedStandby != "" || !admitted || len(observation.Pods) != surviving ||
 		len(observation.umamiRecoveryPeers) != surviving || value(cluster, "status", "readyInstances") != float64(surviving) ||
 		primary == "" || text(cluster, "status", "targetPrimary") != primary || !cnpgCondition(cluster, "ContinuousArchiving") {
 		return nil, refused

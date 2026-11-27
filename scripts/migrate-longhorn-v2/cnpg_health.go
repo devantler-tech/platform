@@ -68,8 +68,8 @@ func healthyCNPGPodsWithRetention(cluster object, allPods []object, retainedStan
 	}
 	expectedClaimCount := expectedInstances
 	if retainedStandby != "" {
-		if !umamiV2Transition(cluster) || retainedStandby == primary {
-			return nil, errors.New("the retained claim must belong to an Umami standby")
+		if !transitioning || retainedStandby == primary {
+			return nil, errors.New("the retained claim must belong to a standby in the selected V2 transition")
 		}
 		expectedClaimCount--
 	}

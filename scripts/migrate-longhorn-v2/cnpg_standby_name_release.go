@@ -39,17 +39,21 @@ type umamiStandbyNameRecovery struct {
 }
 
 func authorizeUmamiStandbyNameRecovery(getenv func(string) string) (umamiStandbyNameRecovery, error) {
+	return authorizeCNPGStandbyNameRecovery(getenv, recoverUmamiStandbyNameOperation, "umami-db")
+}
+
+func authorizeCNPGStandbyNameRecovery(getenv func(string) string, operation, database string) (umamiStandbyNameRecovery, error) {
 	confirmation := getenv("LONGHORN_V2_CONFIRM")
 	parts := strings.Split(confirmation, ":")
-	refused := errors.New("name recovery requires the exact Umami journal, terminal eviction and completed join job")
-	if (len(parts) != 8 && len(parts) != 9) || parts[0] != recoverUmamiStandbyNameOperation ||
-		getenv("LONGHORN_V2_OPERATION") != recoverUmamiStandbyNameOperation ||
-		getenv("LONGHORN_V2_DATABASE") != "umami-db" || getenv("LONGHORN_V2_NODE") != "" ||
+	refused := errors.New("name recovery requires the exact database journal, terminal eviction and completed join job")
+	if (len(parts) != 8 && len(parts) != 9) || parts[0] != operation ||
+		getenv("LONGHORN_V2_OPERATION") != operation ||
+		getenv("LONGHORN_V2_DATABASE") != database || getenv("LONGHORN_V2_NODE") != "" ||
 		!validBenchmarkOwner(parts[2], parts[3]) || !isolationUID.MatchString(parts[4]) ||
 		!validBenchmarkOwner(parts[5], parts[6]) || !isolationUID.MatchString(parts[7]) {
 		return umamiStandbyNameRecovery{}, refused
 	}
-	if _, err := cnpgInstanceID(parts[1], "umami-db"); err != nil {
+	if _, err := cnpgInstanceID(parts[1], database); err != nil {
 		return umamiStandbyNameRecovery{}, refused
 	}
 	if err := authorizeWorkflow(getenv, confirmation); err != nil {
@@ -77,7 +81,7 @@ func bindUmamiNameRecovery(cm object, input umamiStandbyNameRecovery, owner umam
 		!validUmamiOriginalReplacement(record) || record.Original.Consumer.Name != prior.target ||
 		record.Run != prior.run || record.Source != prior.source ||
 		!validBenchmarkOwner(owner.Run, owner.Source) || owner.Run == prior.run || owner.Run == input.eviction.Run ||
-		owner.Source == prior.source || owner.Source == input.eviction.Source {
+		(record.Original.Database.Name == "umami-db" && (owner.Source == prior.source || owner.Source == input.eviction.Source)) {
 		return record, refused
 	}
 	eviction := umamiReplacementOwner{Run: record.Run, Source: record.Source}
@@ -115,10 +119,11 @@ func umamiNameReleaseCanResume(record umamiStandbyReplacementRecord) bool {
 func validUmamiNameReleaseProgress(previous, next umamiStandbyReplacementRecord) bool {
 	release := next.NameRelease
 	name := next.Original.Consumer.Name
+	umami := next.Original.Database.Name == "umami-db"
 	if release == nil || !validBenchmarkOwner(release.Owner.Run, release.Owner.Source) ||
-		release.Owner.Run == next.Run || release.Owner.Source == next.Source ||
-		(next.Continuation != nil && (release.Owner.Run == next.Continuation.Run || release.Owner.Source == next.Continuation.Source)) ||
-		release.Join.Namespace != "umami" || release.Join.Name != name+"-join" ||
+		release.Owner.Run == next.Run || umami && release.Owner.Source == next.Source ||
+		(next.Continuation != nil && (release.Owner.Run == next.Continuation.Run || umami && release.Owner.Source == next.Continuation.Source)) ||
+		release.Join.Namespace != next.Original.Consumer.Namespace || release.Join.Name != name+"-join" ||
 		!isolationUID.MatchString(release.Join.UID) {
 		return false
 	}

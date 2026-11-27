@@ -9,8 +9,7 @@ type cnpgStandbyProfile struct {
 	SizeBytes string
 }
 
-func cnpgStandbyTransition(cluster object) (cnpgStandbyProfile, bool) {
-	source := cnpgSource{Namespace: text(cluster, "metadata", "namespace"), Name: text(cluster, "metadata", "name")}
+func cnpgStandbyProfileForSource(source cnpgSource) (cnpgStandbyProfile, bool) {
 	profile := cnpgStandbyProfile{Source: source, Instances: 4}
 	switch source {
 	case cnpgSource{Namespace: "umami", Name: "umami-db"}:
@@ -20,7 +19,13 @@ func cnpgStandbyTransition(cluster object) (cnpgStandbyProfile, bool) {
 	default:
 		return cnpgStandbyProfile{}, false
 	}
-	if value(cluster, "spec", "instances") != float64(profile.Instances) ||
+	return profile, true
+}
+
+func cnpgStandbyTransition(cluster object) (cnpgStandbyProfile, bool) {
+	source := cnpgSource{Namespace: text(cluster, "metadata", "namespace"), Name: text(cluster, "metadata", "name")}
+	profile, ok := cnpgStandbyProfileForSource(source)
+	if !ok || value(cluster, "spec", "instances") != float64(profile.Instances) ||
 		text(cluster, "spec", "storage", "storageClass") != "longhorn-v2" ||
 		text(cluster, "spec", "storage", "size") != profile.Size ||
 		value(cluster, "spec", "storage", "resizeInUseVolumes") != false ||

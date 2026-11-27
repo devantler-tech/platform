@@ -15,10 +15,13 @@ func authorizeUmamiStandbyObservation(getenv func(string) string) (string, strin
 }
 
 func authorizeUmamiStandbyTarget(getenv func(string) string, operation string) (string, string, error) {
-	const database = "umami-db"
+	return authorizeCNPGStandbyTarget(getenv, operation, "umami-db")
+}
+
+func authorizeCNPGStandbyTarget(getenv func(string) string, operation, database string) (string, string, error) {
 	if getenv("LONGHORN_V2_OPERATION") != operation || getenv("LONGHORN_V2_DATABASE") != database ||
 		getenv("LONGHORN_V2_NODE") != "" {
-		return "", "", errors.New("the exact Umami standby observation is required")
+		return "", "", errors.New("the exact database standby observation is required")
 	}
 	confirmation := getenv("LONGHORN_V2_CONFIRM")
 	items := strings.Split(confirmation, ":")
@@ -37,18 +40,22 @@ func authorizeUmamiStandbyTarget(getenv func(string) string, operation string) (
 }
 
 func observeUmamiStandbyCutover(ctx context.Context, c client, source, target, spare string) (cnpgStandbyCutover, error) {
-	const name, namespace = "umami-db", "umami"
+	return observeCNPGStandbyCutover(ctx, c, source, cnpgSource{Namespace: "umami", Name: "umami-db"}, target, spare)
+}
+
+func observeCNPGStandbyCutover(ctx context.Context, c client, source string, database cnpgSource, target, spare string) (cnpgStandbyCutover, error) {
+	name, namespace := database.Name, database.Namespace
 	if _, err := cnpgInstanceID(target, name); err != nil {
 		return cnpgStandbyCutover{}, err
 	}
 	if _, err := cnpgInstanceID(spare, name); err != nil || spare == target {
-		return cnpgStandbyCutover{}, errors.New("the selected standby and spare must be distinct Umami instances")
+		return cnpgStandbyCutover{}, errors.New("the selected standby and spare must be distinct database instances")
 	}
 	before, err := observeCNPGMigration(ctx, c, name, source)
 	if err != nil {
 		return cnpgStandbyCutover{}, err
 	}
-	archive, err := rebindUmamiArchiveProof(ctx, c, before)
+	archive, err := rebindCNPGStandbyArchiveProof(ctx, c, database, before)
 	if err != nil {
 		return cnpgStandbyCutover{}, err
 	}
@@ -57,7 +64,7 @@ func observeUmamiStandbyCutover(ctx context.Context, c client, source, target, s
 	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
 		return cnpgStandbyCutover{}, errors.New("the raw storage qualified during backup recovery is unverified")
 	}
-	spareBefore, err := readUmamiV2Standby(ctx, c, before, spare, qualified.Disks)
+	spareBefore, err := readCNPGV2Standby(ctx, c, before, spare, qualified.Disks)
 	if err != nil {
 		return cnpgStandbyCutover{}, err
 	}
@@ -92,11 +99,11 @@ func observeUmamiStandbyCutover(ctx context.Context, c client, source, target, s
 	if err := validateCNPGObservation(before, after); err != nil {
 		return cnpgStandbyCutover{}, err
 	}
-	spareAfter, err := readUmamiV2Standby(ctx, c, after, spare, qualified.Disks)
+	spareAfter, err := readCNPGV2Standby(ctx, c, after, spare, qualified.Disks)
 	if err != nil || !reflect.DeepEqual(spareBefore, spareAfter) {
 		return cnpgStandbyCutover{}, errors.New("the qualified V2 spare changed during observation")
 	}
-	result, err := bindUmamiStandbyCutover(after, pods, target, claim, pv, volume, budget)
+	result, err := bindCNPGStandbyCutover(after, pods, target, claim, pv, volume, budget)
 	if err != nil {
 		return cnpgStandbyCutover{}, err
 	}

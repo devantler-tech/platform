@@ -75,6 +75,8 @@ func main() {
 		_, authorization = authorizeUmamiStandbyResume(os.Getenv)
 	case recoverUmamiStandbyNameOperation:
 		_, authorization = authorizeUmamiStandbyNameRecovery(os.Getenv)
+	case replaceWeddingStandbyOperation, resumeWeddingStandbyOperation, recoverWeddingStandbyOperation:
+		_, authorization = authorizeWeddingStandbyOperation(os.Getenv, operation)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
 	case "reserve-v1-scratch":
@@ -329,6 +331,17 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("UMAMI_V2_STANDBY_REPLACEMENT=VERIFIED originalStorage=RETAINED replicas=3 physicalReplay=VERIFIED")
+		return
+	}
+	if operation == replaceWeddingStandbyOperation || operation == resumeWeddingStandbyOperation || operation == recoverWeddingStandbyOperation {
+		replacementContext, stop := context.WithTimeout(ctx, 30*time.Minute)
+		defer stop()
+		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		if err := runWeddingStandbyOperation(replacementContext, c, os.Getenv, operation); err != nil {
+			fmt.Fprintln(os.Stderr, "Wedding standby replacement held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("WEDDING_V2_STANDBY_REPLACEMENT=VERIFIED originalStorage=RETAINED replicas=3 physicalReplay=VERIFIED")
 		return
 	}
 	if operation == umamiV2SwitchoverOperation {

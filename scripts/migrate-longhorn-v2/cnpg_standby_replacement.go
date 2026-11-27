@@ -33,16 +33,21 @@ func executeUmamiStandbyReplacement(ctx context.Context, c client, operation str
 }
 
 func runUmamiStandbyReplacement(ctx context.Context, c client, source, run, target, spare string) error {
-	witness, err := observeUmamiStandbyCutover(ctx, c, source, target, spare)
+	return runCNPGStandbyReplacement(ctx, c, source, run, cnpgSource{Namespace: "umami", Name: "umami-db"}, target, spare)
+}
+
+func runCNPGStandbyReplacement(ctx context.Context, c client, source, run string, database cnpgSource, target, spare string) error {
+	witness, err := observeCNPGStandbyCutover(ctx, c, source, database, target, spare)
 	if err != nil {
 		return err
 	}
-	if err = verifyUmamiStandbyEvictionAdmission(ctx, c, source, witness); err != nil {
+	if err = verifyCNPGStandbyEvictionAdmission(ctx, c, source, database, witness); err != nil {
 		return err
 	}
-	current, err := c.readCNPGObservation(ctx, cnpgSource{Namespace: "umami", Name: "umami-db"})
-	if err != nil || benchmarkIdentity(current.Cluster) != witness.Database || len(current.Pods) != 4 {
-		return errors.New("the witnessed Umami members changed before replacement")
+	current, err := c.readCNPGObservation(ctx, database)
+	profile, admitted := cnpgStandbyTransition(current.Cluster)
+	if err != nil || !admitted || benchmarkIdentity(current.Cluster) != witness.Database || len(current.Pods) != profile.Instances {
+		return errors.New("the witnessed database members changed before replacement")
 	}
 	peers := map[string]benchmarkResource{}
 	for _, pod := range current.Pods {
@@ -153,14 +158,15 @@ func observeUmamiOriginalDetached(ctx context.Context, journal *umamiStandbyRepl
 }
 
 func readUmamiReplacementStorage(ctx context.Context, journal *umamiStandbyReplacementJournal) (cnpgRecoveredStorage, error) {
-	const target = "umami-db"
 	c, record := journal.c, journal.record
+	database := cnpgSource{Namespace: record.Original.Database.Namespace, Name: record.Original.Database.Name}
 	executor := journal.executor()
-	observation, err := observeCNPGMigration(ctx, c, target, executor.Source)
+	observation, err := observeCNPGMigration(ctx, c, database.Name, executor.Source)
 	if err != nil {
 		return cnpgRecoveredStorage{}, err
 	}
-	if benchmarkIdentity(observation.Cluster) != record.Original.Database {
+	profile, admitted := cnpgStandbyTransition(observation.Cluster)
+	if !admitted || benchmarkIdentity(observation.Cluster) != record.Original.Database {
 		return cnpgRecoveredStorage{}, errors.Join(errReadinessTerminal, errors.New("the database changed after the original member was detached"))
 	}
 	if err = verifyUmamiReplacementPrimary(ctx, c, observation.Cluster, record.Primary); err != nil {
@@ -179,15 +185,15 @@ func readUmamiReplacementStorage(ctx context.Context, journal *umamiStandbyRepla
 		}
 		replacement = identity.Name
 	}
-	if replacement == "" || len(observation.Pods) != 4 {
-		return cnpgRecoveredStorage{}, errors.New("the new Umami standby is not ready")
+	if replacement == "" || len(observation.Pods) != profile.Instances {
+		return cnpgRecoveredStorage{}, errors.New("the new database standby is not ready")
 	}
 	if record.NameRelease != nil && replacement != record.Original.Consumer.Name {
 		if err = observeUmamiReleasedOriginal(ctx, journal, true); err != nil {
 			return cnpgRecoveredStorage{}, err
 		}
 	}
-	archive, err := rebindUmamiArchiveProof(ctx, c, observation)
+	archive, err := rebindCNPGStandbyArchiveProof(ctx, c, database, observation)
 	if err != nil {
 		return cnpgRecoveredStorage{}, err
 	}
@@ -196,5 +202,5 @@ func readUmamiReplacementStorage(ctx context.Context, journal *umamiStandbyRepla
 	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
 		return cnpgRecoveredStorage{}, errors.New("the new standby raw storage is unverified")
 	}
-	return readUmamiV2Standby(ctx, c, observation, replacement, qualified.Disks)
+	return readCNPGV2Standby(ctx, c, observation, replacement, qualified.Disks)
 }
