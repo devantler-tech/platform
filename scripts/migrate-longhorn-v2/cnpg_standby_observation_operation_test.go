@@ -63,6 +63,29 @@ func TestUmamiStandbyObservationEntryPointUsesTheProtectedMainDispatch(t *testin
 	}
 }
 
+func TestUmamiStandbyReplacementRequiresItsOwnConfirmation(t *testing.T) {
+	workflow := migrationDispatchWorkflow(t)
+	choices, _ := value(workflow, "on", "workflow_dispatch", "inputs", "operation", "options").([]any)
+	if !slices.Contains(choices, umamiStandbyReplacementOperation) {
+		t.Fatal("the production workflow cannot run the standby replacement")
+	}
+	env := umamiStandbyDispatch()
+	env["LONGHORN_V2_OPERATION"] = umamiStandbyReplacementOperation
+	lookup := func(key string) string { return env[key] }
+	if _, _, err := authorizeUmamiStandbyTarget(lookup, umamiStandbyReplacementOperation); err == nil {
+		t.Fatal("a read-only confirmation authorized replacement")
+	}
+	env["LONGHORN_V2_CONFIRM"] = "replace-umami-v2-standby:umami-db-1:umami-db-4"
+	if old, spare, err := authorizeUmamiStandbyTarget(lookup, umamiStandbyReplacementOperation); err != nil ||
+		old != "umami-db-1" || spare != "umami-db-4" {
+		t.Fatalf("the confirmed old standby and spare were refused: %v", err)
+	}
+	env["GITHUB_REF"] = "refs/heads/other"
+	if _, _, err := authorizeUmamiStandbyTarget(lookup, umamiStandbyReplacementOperation); err == nil {
+		t.Fatal("a branch dispatch authorized replacement")
+	}
+}
+
 func umamiStandbyDispatch() map[string]string {
 	env := dispatchFixture()
 	env["LONGHORN_V2_OPERATION"], env["LONGHORN_V2_NODE"] = umamiStandbyObservationOperation, ""

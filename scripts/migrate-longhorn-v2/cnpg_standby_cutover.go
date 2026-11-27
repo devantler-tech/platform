@@ -74,11 +74,14 @@ func umamiStandbyDisruptionAllowed(budget, cluster object) bool {
 }
 
 func umamiV1StorageRetained(cluster, pod, claim, pv, volume object) bool {
-	node := text(pod, "spec", "nodeName")
 	return cnpgOwned(claim, cluster) && text(claim, "metadata", "name") == text(pod, "metadata", "name") &&
-		verifyUmamiOriginalClaimBinding(claim, pv, volume) &&
-		node != "" && text(volume, "status", "currentNodeID") == node && text(volume, "status", "state") == "attached" &&
-		text(volume, "status", "robustness") == "healthy"
+		verifyUmamiOriginalClaimBinding(claim, pv, volume) && umamiOriginalVolumeAttached(pod, volume)
+}
+
+func umamiOriginalVolumeAttached(pod, volume object) bool {
+	node := text(pod, "spec", "nodeName")
+	return node != "" && text(volume, "status", "currentNodeID") == node &&
+		text(volume, "status", "state") == "attached" && text(volume, "status", "robustness") == "healthy"
 }
 
 func verifyUmamiOriginalClaimBinding(claim, pv, volume object) bool {
