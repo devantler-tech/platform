@@ -49,6 +49,7 @@ name: Prepare Longhorn V2 Migration
             resume-umami-archive-isolation,
             resume-umami-archive-data,
             observe-umami-v2-standby,
+            replace-umami-v2-standby,
             register-temporary-v2-storage,
             repair-v1-reservation,
             reserve-v1-scratch,
@@ -196,6 +197,10 @@ jobs:
             observe-umami-v2-standby)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^observe-umami-v2-standby:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
+              ;;
+            replace-umami-v2-standby)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^replace-umami-v2-standby:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
               ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
