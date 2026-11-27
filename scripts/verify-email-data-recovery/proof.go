@@ -73,7 +73,12 @@ func proveBackup(b, p object, s sourceIdentity, i invocation, uid string, after 
 	if uid == "" || s.podUID == "" || text(bm, "uid") != uid || text(bm, "name") != i.namespace+"-backup" || text(bm, "namespace") != "velero" || text(child(bm, "labels"), recoveryLabel) != i.run || text(bs, "phase") != "Completed" || (bs["errors"] != nil && bs["errors"] != float64(0)) {
 		return fail()
 	}
-	owners := items(child(p, "metadata"), "ownerReferences")
+	meta := child(p, "metadata")
+	labels := child(meta, "labels")
+	if s.claimUID == "" || text(labels, "velero.io/pvc-uid") != s.claimUID || text(labels, "velero.io/backup-uid") != uid {
+		return fail()
+	}
+	owners := items(meta, "ownerReferences")
 	if len(owners) != 1 || text(owners[0], "apiVersion") != "velero.io/v1" || text(owners[0], "kind") != "Backup" || text(owners[0], "name") != i.namespace+"-backup" || text(owners[0], "uid") != uid || owners[0]["controller"] != true {
 		return fail()
 	}

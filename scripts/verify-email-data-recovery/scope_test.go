@@ -77,6 +77,7 @@ func TestRecoveryWritesAreLimitedToTheirOwnResources(t *testing.T) {
 	}
 	for _, ref := range [][3]string{
 		{"PersistentVolumeClaim", "private-mail", "private-mail-data"},
+		{"PersistentVolumeClaim", "private-mail", servingClaim},
 		{"Pod", "private-mail", "private-mail-0"},
 		{"Secret", "private-mail", "private-mail-admin"},
 		{"Secret", "velero", "velero-repo-credentials"},

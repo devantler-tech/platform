@@ -232,7 +232,7 @@ func (d *recoveryDriver) namespaceInventory(ctx context.Context) error {
 			return err
 		}
 	}
-	resources, err := d.list(ctx, "pods,persistentvolumeclaims,secrets,configmaps,services,serviceaccounts,deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch,cronjobs.batch,ciliumnetworkpolicies.cilium.io,networkpolicies.networking.k8s.io", d.i.namespace, "")
+	resources, err := d.list(ctx, "pods,persistentvolumeclaims,secrets,configmaps,services,serviceaccounts,deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch,cronjobs.batch,ciliumnetworkpolicies.cilium.io,networkpolicies.networking.k8s.io,limitranges,resourcequotas", d.i.namespace, "")
 	if err != nil {
 		return err
 	}
@@ -247,6 +247,15 @@ func (d *recoveryDriver) namespaceInventory(ctx context.Context) error {
 		}
 		if policy, ok := d.namespacePolicies[kind+"/"+name]; ok && policy.matches(o, namespace.uid) {
 			continue
+		}
+		if generatedLimit(o, namespace.uid) {
+			continue
+		}
+		if kind == "ConfigMap" && name == trustBundle {
+			bundle, found, e := d.lookup(ctx, "bundles.trust.cert-manager.io", trustBundle, "")
+			if e == nil && found && text(child(bundle, "metadata"), "name") == trustBundle && trustBundleConfigMap(o, text(child(bundle, "metadata"), "uid")) {
+				continue
+			}
 		}
 		ref, e := d.ref(kind, name, d.i.namespace)
 		if e != nil || text(m, "uid") != ref.uid || text(child(m, "labels"), recoveryLabel) != d.i.run {

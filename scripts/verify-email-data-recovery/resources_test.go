@@ -42,6 +42,13 @@ func TestRecoveryGraphNeverReplaysBackedUpWorkloadOrCredentials(t *testing.T) {
 		}
 		seen[kind+"/"+name] = true
 		switch kind {
+		case "StorageClass":
+			params := child(o, "parameters")
+			if text(params, "dataEngine") != "v2" || text(params, "encrypted") != "true" ||
+				text(params, "numberOfReplicas") != "3" || text(params, "csi.storage.k8s.io/node-stage-secret-namespace") != i.namespace ||
+				text(o, "reclaimPolicy") != "Delete" || text(o, "volumeBindingMode") != "WaitForFirstConsumer" {
+				t.Fatal("fresh restoration did not request scoped, three-copy encrypted V2 storage")
+			}
 		case "CiliumNetworkPolicy":
 			spec := child(o, "spec")
 			if len(items(spec, "ingressDeny")) != 1 || len(items(spec, "egressDeny")) != 1 || len(child(spec, "endpointSelector")) != 0 {

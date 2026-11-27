@@ -91,6 +91,7 @@ func protectedCleanupFixture(t *testing.T) (*recoveryDriver, *protectedAPI, cont
 		protectedVolumeFixture("protection-uid", "private-mail", "private-mail-0", "serving-pod-uid", d.source.claimUID),
 		protectedVolumeFixture("protection-uid", d.i.namespace, "reader", readerUID, claimUID),
 	}}
+	child(a.volumes[0].(object), "spec")["volume"] = d.source.volume
 	d.k = a
 	return d, a, ctx
 }

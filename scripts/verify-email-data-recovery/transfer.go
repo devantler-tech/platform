@@ -30,7 +30,18 @@ func proveRestoredStorage(pvc, pv, volume object, i invocation, claimUID, source
 		return errors.New("restored-storage-identity")
 	}
 	spec := child(volume, "spec")
-	if spec["encrypted"] != true || spec["numberOfReplicas"] != float64(3) || text(spec, "dataEngine") != "v1" {
+	engine := "v2"
+	if i == retainedRecovery || i == freshRetainedRecovery {
+		engine = "v1"
+	} else {
+		for _, stage := range []string{"nodeStageSecretRef", "nodePublishSecretRef", "nodeExpandSecretRef"} {
+			key := child(csi, stage)
+			if text(key, "name") != "storage-key" || text(key, "namespace") != i.namespace {
+				return errors.New("restored-storage-key")
+			}
+		}
+	}
+	if spec["encrypted"] != true || spec["numberOfReplicas"] != float64(3) || text(spec, "dataEngine") != engine {
 		return errors.New("restored-storage-encryption")
 	}
 	return nil

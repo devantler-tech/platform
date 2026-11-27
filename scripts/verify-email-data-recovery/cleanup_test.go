@@ -32,7 +32,7 @@ func (a *cleanupAPI) call(_ context.Context, input []byte, args ...string) ([]by
 		}
 		if strings.Contains(kind, ",") {
 			out := []any{}
-			resourceNames := map[string]string{"Pod": "pods", "PersistentVolumeClaim": "persistentvolumeclaims", "Secret": "secrets", "ConfigMap": "configmaps", "Service": "services", "ServiceAccount": "serviceaccounts", "Deployment": "deployments.apps", "StatefulSet": "statefulsets.apps", "DaemonSet": "daemonsets.apps", "Job": "jobs.batch", "CronJob": "cronjobs.batch", "CiliumNetworkPolicy": "ciliumnetworkpolicies.cilium.io", "NetworkPolicy": "networkpolicies.networking.k8s.io"}
+			resourceNames := map[string]string{"Pod": "pods", "PersistentVolumeClaim": "persistentvolumeclaims", "Secret": "secrets", "ConfigMap": "configmaps", "Service": "services", "ServiceAccount": "serviceaccounts", "Deployment": "deployments.apps", "StatefulSet": "statefulsets.apps", "DaemonSet": "daemonsets.apps", "Job": "jobs.batch", "CronJob": "cronjobs.batch", "CiliumNetworkPolicy": "ciliumnetworkpolicies.cilium.io", "NetworkPolicy": "networkpolicies.networking.k8s.io", "LimitRange": "limitranges", "ResourceQuota": "resourcequotas"}
 			for _, o := range a.objects {
 				if resource, known := resourceNames[text(o, "kind")]; known && text(child(o, "metadata"), "namespace") == ns && strings.Contains(","+kind+",", ","+resource+",") {
 					out = append(out, o)
@@ -122,7 +122,8 @@ func cleanupFixture(t *testing.T, blocked bool) (*recoveryDriver, *cleanupAPI, c
 	child(pvc, "spec")["volumeName"] = d.volumeName
 	pvc["status"] = object{"phase": "Bound"}
 	a.objects[cleanupKey("PersistentVolume", "", d.volumeName)] = object{"metadata": object{"name": d.volumeName, "uid": d.pvUID}, "spec": object{"claimRef": object{"namespace": i.namespace, "name": "data", "uid": claimUID}, "persistentVolumeReclaimPolicy": "Delete", "csi": object{"driver": "driver.longhorn.io", "volumeHandle": d.volumeName}}}
-	a.objects[cleanupKey("volumes.longhorn.io", "longhorn-system", d.volumeName)] = object{"metadata": object{"name": d.volumeName, "uid": d.volumeUID}, "spec": object{"encrypted": true, "numberOfReplicas": float64(3), "dataEngine": "v1"}}
+	setScratchKeyRefs(child(child(a.objects[cleanupKey("PersistentVolume", "", d.volumeName)], "spec"), "csi"), i.namespace)
+	a.objects[cleanupKey("volumes.longhorn.io", "longhorn-system", d.volumeName)] = object{"metadata": object{"name": d.volumeName, "uid": d.volumeUID}, "spec": object{"encrypted": true, "numberOfReplicas": float64(3), "dataEngine": "v2"}}
 	a.objects[cleanupKey("DataDownload", "velero", i.namespace+"-download")]["status"] = object{"phase": "Completed"}
 	a.objects[cleanupKey("Backup", "velero", i.namespace+"-backup")]["status"] = object{"phase": "Completed", "expiration": time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)}
 	pod, sourcePVC, pv := servingFixture()
@@ -131,7 +132,7 @@ func cleanupFixture(t *testing.T, blocked bool) (*recoveryDriver, *cleanupAPI, c
 		t.Fatal(err)
 	}
 	a.objects[cleanupKey("Pod", "private-mail", "private-mail-0")] = pod
-	a.objects[cleanupKey("PersistentVolumeClaim", "private-mail", "private-mail-data")] = sourcePVC
+	a.objects[cleanupKey("PersistentVolumeClaim", "private-mail", servingClaim)] = sourcePVC
 	a.objects[cleanupKey("PersistentVolume", "", d.source.pv)] = pv
 	for path, key := range map[string]string{
 		"/api/v1/namespaces/" + i.namespace + "/pods/reader":                                    cleanupKey("Pod", i.namespace, "reader"),

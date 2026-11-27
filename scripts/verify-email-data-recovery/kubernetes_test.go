@@ -80,7 +80,7 @@ func newBoundaryDriver() (*recoveryDriver, *boundaryAPI) {
 
 func TestServingAndForeignResourcesAreRefusedBeforeKubernetesWrite(t *testing.T) {
 	d, a := newBoundaryDriver()
-	for _, o := range []object{{"kind": "PersistentVolumeClaim", "metadata": object{"name": "private-mail-data", "namespace": "private-mail"}}, {"kind": "Secret", "metadata": object{"name": "storage-key", "namespace": "another"}}} {
+	for _, o := range []object{{"kind": "PersistentVolumeClaim", "metadata": object{"name": "private-mail-data", "namespace": "private-mail"}}, {"kind": "PersistentVolumeClaim", "metadata": object{"name": servingClaim, "namespace": "private-mail"}}, {"kind": "Secret", "metadata": object{"name": "storage-key", "namespace": "another"}}} {
 		if _, err := d.create(context.Background(), o); err == nil {
 			t.Fatal("foreign mutation was allowed")
 		}
