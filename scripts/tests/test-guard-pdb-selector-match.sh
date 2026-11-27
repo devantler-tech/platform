@@ -326,6 +326,59 @@ both='{matchLabels: {app.kubernetes.io/name: web, app.kubernetes.io/instance: we
 instance='{matchLabels: {app.kubernetes.io/instance: web}}'
 web_labels='{app.kubernetes.io/name: web, app.kubernetes.io/instance: web}'
 
+echo "== Coroot operator pod labels are derived from the pinned producer =="
+cp -R "$scratch/charts/web" "$scratch/charts/coroot-operator"
+yq -i '.name = "coroot-operator"' "$scratch/charts/coroot-operator/Chart.yaml"
+coroot_producer() { # <chart version> <Coroot spec as flow YAML>
+  add <<EOF
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: coroot, namespace: observability}
+spec: {url: "https://coroot.github.io/helm-charts"}
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: coroot-operator, namespace: observability}
+spec:
+  chart:
+    spec:
+      chart: coroot-operator
+      version: "$1"
+      sourceRef: {kind: HelmRepository, name: coroot}
+---
+apiVersion: coroot.com/v1
+kind: Coroot
+metadata: {name: coroot, namespace: observability}
+spec: $2
+EOF
+}
+keeper_selector='{matchLabels: {app.kubernetes.io/managed-by: coroot-operator, app.kubernetes.io/part-of: coroot, app.kubernetes.io/component: clickhouse-keeper}}'
+new_tree
+coroot_producer 0.10.8 '{}'
+pdb observability coroot-clickhouse-keeper "$keeper_selector"
+run_guard "$TREE"
+assert_rc 'a Keeper budget matches the pinned operator output' 0
+assert_contains 'names the actual owner and StatefulSet' 'selects StatefulSet coroot-clickhouse-keeper (Coroot operator 0.10.8)'
+assert_pulls 'the derived Keeper workload needs no chart pull' 0
+
+new_tree
+coroot_producer 0.10.8 '{}'
+pdb observability coroot-clickhouse-keeper '{matchLabels: {app.kubernetes.io/managed-by: coroot-operator, app.kubernetes.io/part-of: coroot, app.kubernetes.io/component: keeper}}'
+run_guard "$TREE"
+assert_rc 'a wrong Keeper label does not match the derived workload' 1
+
+new_tree
+coroot_producer 0.10.9 '{}'
+pdb observability coroot-clickhouse-keeper "$keeper_selector"
+run_guard "$TREE"
+assert_rc 'an unreviewed operator version does not derive Keeper' 1
+
+new_tree
+coroot_producer 0.10.8 '{externalClickhouse: {host: "example.invalid"}}'
+pdb observability coroot-clickhouse-keeper "$keeper_selector"
+run_guard "$TREE"
+assert_rc 'external ClickHouse does not create the internal Keeper' 1
+
 echo "== a budget selecting a rendered manifest passes, and its perturbed selector fails =="
 new_tree
 pdb demo web "$both"
