@@ -21,7 +21,7 @@ mkdir -m 700 -- "$staged"
 chmod g-s -- "$staged"
 cp -a --one-file-system -- "$original/coordination" "$staged/"
 digest() {
-	tar --format=ustar --sort=name --numeric-owner --one-file-system -C "$1" -cf - coordination | sha256sum | cut -d ' ' -f1
+  tar --format=ustar --sort=name --numeric-owner --one-file-system -C "$1" -cf - coordination | sha256sum | cut -d ' ' -f1
 }
 before=$(digest "$original")
 after=$(digest "$staged")

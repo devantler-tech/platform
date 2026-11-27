@@ -10,9 +10,7 @@
         "k8s:io.kubernetes.pod.namespace": "storage-copy-fixture"
       }
     },
-    "L3": [
-      {}
-    ],
+    "L3": [{}],
     "L4": [],
     "Labels": [
       {
@@ -52,9 +50,7 @@
         "k8s:io.kubernetes.pod.namespace": "storage-copy-fixture"
       }
     },
-    "L3": [
-      {}
-    ],
+    "L3": [{}],
     "L4": [],
     "Labels": [
       {
