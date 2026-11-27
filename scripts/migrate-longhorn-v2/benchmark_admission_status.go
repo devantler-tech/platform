@@ -14,7 +14,12 @@ import (
 // A generic Forbidden is insufficient: the native admission dispatcher
 // identifies both the policy and its binding in a structured Status cause.
 func benchmarkDenialMatches(code int, raw []byte, group, resource, name, policy, binding, message string) bool {
-	if code != http.StatusForbidden || len(raw) > 64<<10 || strictjson.Validate(raw, map[string][]string{
+	return code == http.StatusForbidden &&
+		nativePolicyDenialMatches(code, raw, metav1.StatusReasonForbidden, group, resource, name, policy, binding, message)
+}
+
+func nativePolicyDenialMatches(code int, raw []byte, reason metav1.StatusReason, group, resource, name, policy, binding, message string) bool {
+	if len(raw) > 64<<10 || strictjson.Validate(raw, map[string][]string{
 		"":                 {"apiVersion", "kind", "status", "reason", "code", "message", "details"},
 		"details":          {"name", "group", "kind", "causes"},
 		"details.causes[]": {"message", "reason", "field"},
@@ -23,8 +28,8 @@ func benchmarkDenialMatches(code int, raw []byte, group, resource, name, policy,
 	}
 	var status metav1.Status
 	if json.Unmarshal(raw, &status) != nil || status.APIVersion != "v1" || status.Kind != "Status" ||
-		status.Status != metav1.StatusFailure || status.Reason != metav1.StatusReasonForbidden ||
-		status.Code != http.StatusForbidden || status.Details == nil ||
+		status.Status != metav1.StatusFailure || status.Reason != reason ||
+		status.Code != int32(code) || status.Details == nil ||
 		status.Details.Group != group || status.Details.Kind != resource || status.Details.Name != name ||
 		len(status.Details.Causes) != 1 {
 		return false

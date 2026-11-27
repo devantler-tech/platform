@@ -143,9 +143,17 @@ func ciliumPodAddresses(cep, pod object) (map[string]bool, error) {
 // import, then re-read Pod/CEP/endpoint identities around live network probes.
 // A CEP's compressed ready state never substitutes for native datapath state.
 func bindRecoveryCiliumEndpoint(raw []byte, cep, pod object, importedRevision uint64) (recoveryCiliumEndpoint, error) {
+	ns := text(pod, "metadata", "namespace")
+	if !isolationNamespace.MatchString(ns) {
+		return recoveryCiliumEndpoint{}, errors.New("recovery endpoint does not belong to the reviewed recovery namespace")
+	}
+	return bindCiliumEndpoint(raw, cep, pod, importedRevision, ns, "Running")
+}
+
+func bindCiliumEndpoint(raw []byte, cep, pod object, importedRevision uint64, namespace, phase string) (recoveryCiliumEndpoint, error) {
 	var proof recoveryCiliumEndpoint
 	ns, name := text(pod, "metadata", "namespace"), text(pod, "metadata", "name")
-	if importedRevision == 0 || importedRevision > 1<<63-1 || len(raw) == 0 || len(raw) > 1<<20 || !isolationNamespace.MatchString(ns) || name == "" || !isolationUID.MatchString(text(pod, "metadata", "uid")) || text(pod, "status", "phase") != "Running" || text(pod, "spec", "nodeName") == "" || value(pod, "spec", "hostNetwork") == true || value(pod, "metadata", "deletionTimestamp") != nil {
+	if importedRevision == 0 || importedRevision > 1<<63-1 || len(raw) == 0 || len(raw) > 1<<20 || ns != namespace || !kubeNamespace.MatchString(namespace) || name == "" || !isolationUID.MatchString(text(pod, "metadata", "uid")) || text(pod, "status", "phase") != phase || text(pod, "spec", "nodeName") == "" || value(pod, "spec", "hostNetwork") == true || value(pod, "metadata", "deletionTimestamp") != nil {
 		return proof, errors.New("recovery endpoint lacks an import revision or exact running Pod")
 	}
 	if err := verifyCiliumPodCEPOwnership(cep, pod); err != nil {

@@ -92,13 +92,29 @@ func TestCurrentDatabaseWorkflowUsesFixedChoicesAndNativeMainGuard(t *testing.T)
 	var workflow struct {
 		On struct {
 			WorkflowDispatch struct {
-				Inputs map[string]struct{ Options []string } `json:"inputs"`
+				Inputs map[string]struct {
+					Type, Default string
+					Options       []string
+				} `json:"inputs"`
 			} `json:"workflow_dispatch"`
 		} `json:"on"`
-		Jobs map[string]struct{ Steps []struct{ Name, Run string } }
+		Jobs map[string]struct {
+			Env   map[string]string
+			Steps []struct{ Name, Run string }
+		}
 	}
 	if err = yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatal(err)
+	}
+	for input, env := range map[string]string{"node": "LONGHORN_V2_NODE", "database": "LONGHORN_V2_DATABASE"} {
+		dispatch := workflow.On.WorkflowDispatch.Inputs[input]
+		if dispatch.Type != "choice" || dispatch.Default != "no-target" || len(dispatch.Options) == 0 || dispatch.Options[0] != "no-target" {
+			t.Fatalf("%s must allow the form to omit a target", input)
+		}
+		expected := "${{ fromJSON(inputs." + input + " == 'no-target' && '\"\"' || toJSON(inputs." + input + " || '')) }}"
+		if workflow.Jobs["prepare"].Env[env] != expected {
+			t.Fatalf("%s should normalize only the unselected target", input)
+		}
 	}
 	choices := map[string]bool{}
 	for _, choice := range workflow.On.WorkflowDispatch.Inputs["database"].Options {
@@ -108,6 +124,7 @@ func TestCurrentDatabaseWorkflowUsesFixedChoicesAndNativeMainGuard(t *testing.T)
 		choices[choice] = true
 	}
 	sources := cnpgSources()
+	delete(choices, "no-target")
 	if len(choices) != len(sources) {
 		t.Fatal("workflow choices differ from the database observation roster")
 	}

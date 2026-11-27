@@ -14,16 +14,20 @@ type umamiStandbyResume struct {
 }
 
 func authorizeUmamiStandbyResume(getenv func(string) string) (umamiStandbyResume, error) {
+	return authorizeCNPGStandbyResume(getenv, resumeUmamiStandbyOperation, "umami-db")
+}
+
+func authorizeCNPGStandbyResume(getenv func(string) string, operation, database string) (umamiStandbyResume, error) {
 	confirmation := getenv("LONGHORN_V2_CONFIRM")
 	parts := strings.Split(confirmation, ":")
-	refused := errors.New("the exact retained Umami standby, original run, source and journal UID are required")
-	if len(parts) != 5 || parts[0] != resumeUmamiStandbyOperation ||
-		getenv("LONGHORN_V2_OPERATION") != resumeUmamiStandbyOperation ||
-		getenv("LONGHORN_V2_DATABASE") != "umami-db" || getenv("LONGHORN_V2_NODE") != "" ||
+	refused := errors.New("the exact retained database standby, original run, source and journal UID are required")
+	if len(parts) != 5 || parts[0] != operation ||
+		getenv("LONGHORN_V2_OPERATION") != operation ||
+		getenv("LONGHORN_V2_DATABASE") != database || getenv("LONGHORN_V2_NODE") != "" ||
 		!validBenchmarkOwner(parts[2], parts[3]) || !isolationUID.MatchString(parts[4]) {
 		return umamiStandbyResume{}, refused
 	}
-	if _, err := cnpgInstanceID(parts[1], "umami-db"); err != nil {
+	if _, err := cnpgInstanceID(parts[1], database); err != nil {
 		return umamiStandbyResume{}, refused
 	}
 	if err := authorizeWorkflow(getenv, confirmation); err != nil {
@@ -33,7 +37,11 @@ func authorizeUmamiStandbyResume(getenv func(string) string) (umamiStandbyResume
 }
 
 func resumeUmamiStandbyReplacement(ctx context.Context, c client, next umamiReplacementOwner, prior umamiStandbyResume) error {
-	journal, err := readResumableUmamiStandby(ctx, c, next, prior)
+	return resumeCNPGStandbyReplacement(ctx, c, next, prior, "umami-db")
+}
+
+func resumeCNPGStandbyReplacement(ctx context.Context, c client, next umamiReplacementOwner, prior umamiStandbyResume, database string) error {
+	journal, err := readResumableCNPGStandby(ctx, c, next, prior, database)
 	if err != nil {
 		return err
 	}
@@ -45,12 +53,12 @@ func resumeUmamiStandbyReplacement(ctx context.Context, c client, next umamiRepl
 
 // Claim-retained is the last checkpoint before eviction intent, so a request
 // from the terminal original run cannot be in flight.
-func readResumableUmamiStandby(ctx context.Context, c client, next umamiReplacementOwner, prior umamiStandbyResume) (umamiStandbyReplacementJournal, error) {
+func readResumableCNPGStandby(ctx context.Context, c client, next umamiReplacementOwner, prior umamiStandbyResume, database string) (umamiStandbyReplacementJournal, error) {
 	refused := errors.New("the exact interrupted Umami standby retention is unverified")
-	_, targetErr := cnpgInstanceID(prior.target, "umami-db")
+	_, targetErr := cnpgInstanceID(prior.target, database)
 	if c.context != "admin@prod" || targetErr != nil || !validBenchmarkOwner(prior.run, prior.source) ||
 		!isolationUID.MatchString(prior.uid) || !validBenchmarkOwner(next.Run, next.Source) ||
-		next.Run == prior.run || next.Source == prior.source {
+		next.Run == prior.run || database == "umami-db" && next.Source == prior.source {
 		return umamiStandbyReplacementJournal{}, refused
 	}
 	name := "longhorn-v2-standby-replacement-" + prior.target
@@ -59,8 +67,8 @@ func readResumableUmamiStandby(ctx context.Context, c client, next umamiReplacem
 		return umamiStandbyReplacementJournal{}, err
 	}
 	record, err := bindRetainedUmamiStandby(cm, name, prior)
-	if err != nil {
-		return umamiStandbyReplacementJournal{}, err
+	if err != nil || record.Original.Database.Name != database {
+		return umamiStandbyReplacementJournal{}, refused
 	}
 	run, err := readFinishedMigrationRun(ctx, c, prior.run, prior.source)
 	if err != nil || run.Attempt != 1 || run.Conclusion != "failure" {
@@ -86,7 +94,7 @@ func bindRetainedUmamiStandby(cm object, name string, prior umamiStandbyResume) 
 		text(cm, "metadata", "labels", "storage.platform.devantler.tech/recovery-run") != prior.run ||
 		len(raw) > 65536 || json.Unmarshal([]byte(raw), &record) != nil ||
 		record.Run != prior.run || record.Source != prior.source || record.Original.Consumer.Name != prior.target ||
-		record.Continuation != nil || record.Replacement != nil || record.Phase != umamiReplacementClaimRetained ||
+		record.Continuation != nil || record.Replacement != nil || record.NameRelease != nil || record.Phase != umamiReplacementClaimRetained ||
 		!validUmamiOriginalReplacement(record) {
 		return umamiStandbyReplacementRecord{}, refused
 	}

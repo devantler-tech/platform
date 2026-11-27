@@ -5,7 +5,8 @@ import "testing"
 func TestUmamiV2StandbyBindsLivePhysicalReplayAndCopies(t *testing.T) {
 	const standby = "umami-db-4"
 	storage := newRecoveredStorageFixture(t)
-	for _, fault := range []string{"", "retained peer", "missing healthy peer", "missing retention witness", "retained peer behind", "old engine", "incomplete copies", "behind", "primary", "wrong mount"} {
+	for _, fault := range []string{"", "retained peer", "recovery roster", "recovery replaced peer", "unwitnessed recovery roster",
+		"missing healthy peer", "missing retention witness", "retained peer behind", "old engine", "incomplete copies", "behind", "primary", "wrong mount"} {
 		t.Run(fault, func(t *testing.T) {
 			f := storage.copyBindingObjects(t)
 			obs := umamiV2TransitionObservation(t)
@@ -24,6 +25,21 @@ func TestUmamiV2StandbyBindsLivePhysicalReplayAndCopies(t *testing.T) {
 			volumeRef["pvcName"], volumeRef["namespace"] = standby, "umami"
 
 			switch fault {
+			case "recovery roster", "recovery replaced peer", "unwitnessed recovery roster":
+				obs.Pods = []object{obs.Pods[0], obs.Pods[2], obs.Pods[3]}
+				status := valueObject(obs.Cluster, "status")
+				status["readyInstances"] = float64(3)
+				status["conditions"] = []any{object{"type": "ContinuousArchiving", "status": "True"}}
+				if fault != "unwitnessed recovery roster" {
+					obs.umamiRecoveryPeers = map[string]benchmarkResource{}
+					for _, peer := range obs.Pods {
+						identity := benchmarkIdentity(peer)
+						obs.umamiRecoveryPeers[identity.Name] = identity
+					}
+				}
+				if fault == "recovery replaced peer" {
+					valueObject(obs.Pods[1], "metadata")["uid"] = "ac005841-c004-4004-8004-000000000004"
+				}
 			case "retained peer", "missing healthy peer", "missing retention witness", "retained peer behind":
 				obs.retainedStandby = "umami-db-2"
 				status := valueObject(obs.Cluster, "status")
@@ -48,8 +64,8 @@ func TestUmamiV2StandbyBindsLivePhysicalReplayAndCopies(t *testing.T) {
 			case "wrong mount":
 				value(pod, "spec", "volumes").([]any)[0].(object)["persistentVolumeClaim"] = object{"claimName": "another-claim"}
 			}
-			got, err := bindUmamiV2Standby(obs, f.claim, f.pv, f.volume, f.engine, f.replicas, f.p.record.Storage.Disks)
-			if fault == "" || fault == "retained peer" {
+			got, err := bindCNPGV2Standby(obs, f.claim, f.pv, f.volume, f.engine, f.replicas, f.p.record.Storage.Disks)
+			if fault == "" || fault == "retained peer" || fault == "recovery roster" {
 				if err != nil || got.Pod != benchmarkIdentity(pod) || got.Claim != benchmarkIdentity(f.claim) || len(got.Replicas) != 3 {
 					t.Fatalf("V2 standby did not qualify: %+v, %v", got, err)
 				}

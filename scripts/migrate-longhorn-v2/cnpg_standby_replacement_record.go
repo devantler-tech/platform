@@ -22,8 +22,9 @@ type umamiStandbyReplacementRecord struct {
 	Primary            benchmarkResource
 	Original           cnpgStandbyCutover
 	OtherPods          map[string]benchmarkResource
-	Replacement        *cnpgRecoveredStorage  `json:",omitempty"`
-	Continuation       *umamiReplacementOwner `json:",omitempty"`
+	Replacement        *cnpgRecoveredStorage    `json:",omitempty"`
+	Continuation       *umamiReplacementOwner   `json:",omitempty"`
+	NameRelease        *umamiStandbyNameRelease `json:",omitempty"`
 }
 
 const umamiStandbyJournalNamespace = "longhorn-system"
@@ -49,7 +50,7 @@ func (j umamiStandbyReplacementJournal) executor() umamiReplacementOwner {
 func beginUmamiStandbyReplacement(ctx context.Context, c client, record umamiStandbyReplacementRecord) (umamiStandbyReplacementJournal, error) {
 	var journal umamiStandbyReplacementJournal
 	if c.context != "admin@prod" || record.Phase != umamiReplacementPlanned || record.Replacement != nil ||
-		record.Continuation != nil || !validUmamiOriginalReplacement(record) {
+		record.Continuation != nil || record.NameRelease != nil || !validUmamiOriginalReplacement(record) {
 		return journal, errors.New("the original Umami standby replacement witness is incomplete")
 	}
 	name := umamiStandbyJournalName(record)
@@ -132,23 +133,24 @@ func umamiStandbyJournalName(record umamiStandbyReplacementRecord) string {
 
 func validUmamiOriginalReplacement(record umamiStandbyReplacementRecord) bool {
 	witness := record.Original
+	profile, admitted := cnpgStandbyProfileForSource(cnpgSource{Namespace: witness.Database.Namespace, Name: witness.Database.Name})
+	namespace, database := profile.Source.Namespace, profile.Source.Name
 	name := witness.Consumer.Name
-	if record.Version != 1 || !validBenchmarkOwner(record.Run, record.Source) ||
-		witness.Database.Name != "umami-db" || witness.Database.Namespace != "umami" ||
+	if !admitted || record.Version != 1 || !validBenchmarkOwner(record.Run, record.Source) ||
 		record.Primary.Name == name || record.Primary.Name == witness.Spare.Pod.Name ||
-		witness.Consumer.Namespace != "umami" || record.Primary.Namespace != "umami" ||
-		witness.Claim.Name != name || witness.Claim.Namespace != "umami" ||
+		witness.Consumer.Namespace != namespace || record.Primary.Namespace != namespace ||
+		witness.Claim.Name != name || witness.Claim.Namespace != namespace ||
 		witness.PV.Name != "pvc-"+witness.Claim.UID || witness.PV.Namespace != "" ||
 		witness.Volume.Name != witness.PV.Name || witness.Volume.Namespace != "longhorn-system" ||
-		witness.Budget.Name != "umami-db" || witness.Budget.Namespace != "umami" ||
+		witness.Budget.Name != database || witness.Budget.Namespace != namespace ||
 		witness.ConsumerVersion == "" || witness.BudgetVersion == "" ||
-		len(record.OtherPods) != 3 || record.OtherPods[record.Primary.Name] != record.Primary ||
+		len(record.OtherPods) != profile.Instances-1 || record.OtherPods[record.Primary.Name] != record.Primary ||
 		record.OtherPods[witness.Spare.Pod.Name] != witness.Spare.Pod ||
-		witness.Spare.Cluster != witness.Database || witness.Spare.Pod.Namespace != "umami" || witness.Spare.Pod.Name == name {
+		witness.Spare.Cluster != witness.Database || witness.Spare.Pod.Namespace != namespace || witness.Spare.Pod.Name == name {
 		return false
 	}
 	for _, instance := range []string{name, record.Primary.Name, witness.Spare.Pod.Name} {
-		if _, err := cnpgInstanceID(instance, "umami-db"); err != nil {
+		if _, err := cnpgInstanceID(instance, database); err != nil {
 			return false
 		}
 	}
@@ -159,7 +161,7 @@ func validUmamiOriginalReplacement(record umamiStandbyReplacementRecord) bool {
 	}
 	seen := map[string]bool{witness.Consumer.UID: true}
 	for name, pod := range record.OtherPods {
-		if _, err := cnpgInstanceID(name, "umami-db"); err != nil || pod.Name != name || pod.Namespace != "umami" ||
+		if _, err := cnpgInstanceID(name, database); err != nil || pod.Name != name || pod.Namespace != namespace ||
 			!isolationUID.MatchString(pod.UID) || name == witness.Consumer.Name || seen[pod.UID] {
 			return false
 		}
@@ -190,23 +192,23 @@ func verifyUmamiReplacementTransition(previous, next umamiStandbyReplacementReco
 		expected = umamiReplacementOriginalDetached
 	case umamiReplacementOriginalDetached:
 		expected = umamiReplacementStandbyRebuilt
-	default:
-		return refused
 	}
-	if next.Phase != expected {
+	if !validUmamiNameReleaseProgress(previous, next) && (expected == "" || next.Phase != expected ||
+		!reflect.DeepEqual(previous.NameRelease, next.NameRelease) ||
+		previous.NameRelease != nil && previous.Phase != umamiReplacementOriginalDetached) {
 		return refused
 	}
 	if next.Continuation != nil && previous.Phase == umamiReplacementClaimRetained {
 		owner := next.Continuation
 		if previous.Continuation != nil || !validBenchmarkOwner(owner.Run, owner.Source) ||
-			owner.Run == previous.Run || owner.Source == previous.Source {
+			owner.Run == previous.Run || previous.Original.Database.Name == "umami-db" && owner.Source == previous.Source {
 			return refused
 		}
 	} else if !reflect.DeepEqual(next.Continuation, previous.Continuation) {
 		return refused
 	}
 	if next.Phase == umamiReplacementStandbyRebuilt {
-		if next.Replacement == nil || !independentUmamiReplacement(next.Original, *next.Replacement) {
+		if next.Replacement == nil || !validUmamiReplacementStorage(next, *next.Replacement) {
 			return refused
 		}
 	} else if next.Replacement != nil {
@@ -216,13 +218,24 @@ func verifyUmamiReplacementTransition(previous, next umamiStandbyReplacementReco
 }
 
 func independentUmamiReplacement(original cnpgStandbyCutover, replacement cnpgRecoveredStorage) bool {
+	return independentUmamiReplacementAfterRelease(original, replacement, false)
+}
+
+func validUmamiReplacementStorage(record umamiStandbyReplacementRecord, replacement cnpgRecoveredStorage) bool {
+	if record.NameRelease == nil {
+		return independentUmamiReplacement(record.Original, replacement)
+	}
+	return independentUmamiReplacementAfterRelease(record.Original, replacement, true)
+}
+
+func independentUmamiReplacementAfterRelease(original cnpgStandbyCutover, replacement cnpgRecoveredStorage, released bool) bool {
 	pvName := "pvc-" + replacement.Claim.UID
 	if replacement.Cluster != original.Database || replacement.Pod.Namespace != original.Consumer.Namespace ||
 		replacement.Claim.Namespace != replacement.Pod.Namespace || replacement.Claim.Name != replacement.Pod.Name ||
 		replacement.PV.Namespace != "" || replacement.PV.Name != pvName ||
 		replacement.Volume.Namespace != "longhorn-system" || replacement.Volume.Name != pvName ||
 		replacement.Engine.Namespace != "longhorn-system" || replacement.Engine.UID == original.Spare.Engine.UID ||
-		replacement.Pod.UID == original.Consumer.UID || replacement.Pod.Name == original.Consumer.Name ||
+		replacement.Pod.UID == original.Consumer.UID || (replacement.Pod.Name == original.Consumer.Name && !released) ||
 		replacement.Pod.UID == original.Spare.Pod.UID || replacement.Pod.Name == original.Spare.Pod.Name ||
 		replacement.Claim.UID == original.Claim.UID || replacement.Claim.UID == original.Spare.Claim.UID ||
 		replacement.PV.UID == original.PV.UID || replacement.PV.UID == original.Spare.PV.UID ||
@@ -230,7 +243,7 @@ func independentUmamiReplacement(original cnpgStandbyCutover, replacement cnpgRe
 		len(replacement.Replicas) != 3 {
 		return false
 	}
-	if _, err := cnpgInstanceID(replacement.Pod.Name, "umami-db"); err != nil {
+	if _, err := cnpgInstanceID(replacement.Pod.Name, original.Database.Name); err != nil {
 		return false
 	}
 	for _, resource := range []benchmarkResource{replacement.Pod, replacement.Claim, replacement.PV, replacement.Volume, replacement.Engine} {

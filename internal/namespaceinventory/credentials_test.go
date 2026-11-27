@@ -202,7 +202,7 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 	raw := fixtureConfig(server)
 	raw.Clusters["prod"].TLSServerName = "old-dns-name.invalid"
 	direct := netip.MustParseAddr("203.0.113.10")
-	client, endpoint, err := newProductionClientAt(raw, direct, false)
+	client, endpoint, err := newProductionClientAt(raw, direct, "")
 	if err != nil || endpoint.String() != "https://203.0.113.10:6443" {
 		t.Fatalf("direct endpoint is not pinned: %v", err)
 	}
@@ -260,7 +260,11 @@ func TestDirectAPIAllowsOnlyScopedReclaimAliasDryRuns(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			const host = "203.0.113.10:6443"
 			calls := 0
-			peer := directAPIPeer{host: host, reclaimAliasDryRun: test.granted, transport: transportFunc(func(*http.Request) (*http.Response, error) {
+			var scope directCreateScope
+			if test.granted {
+				scope = directReclaimCreate
+			}
+			peer := directAPIPeer{host: host, createScope: scope, transport: transportFunc(func(*http.Request) (*http.Response, error) {
 				calls++
 				return &http.Response{StatusCode: http.StatusForbidden}, nil
 			})}
@@ -371,19 +375,29 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 		operation    string
 		confirmation string
 		originalRun  string
+		database     string
+		createScope  directCreateScope
 	}{
 		{operation: "benchmark-v1", confirmation: "benchmark-longhorn-storage"},
 		{operation: "prepare-native-v1-seed", confirmation: "prepare-longhorn-native-v1-seed"},
 		{operation: "recover-bound-v1-benchmark", confirmation: "recover-bound-longhorn-v1-benchmark:99", originalRun: "99"},
 		{operation: "reclaim-native-v2-seed", confirmation: "reclaim-longhorn-native-v2-seed:99", originalRun: "99"},
 		{operation: "resume-native-v2-reclaim", confirmation: "resume-longhorn-native-v2-reclaim:99:98", originalRun: "99"},
+		{operation: "recover-wedding-standby-name", confirmation: "recover-wedding-standby-name:wedding-db-1:99:" +
+			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000001:99:" +
+			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000002:98", originalRun: "99", database: "wedding-db", createScope: directWeddingCreate},
+		{operation: "migrate-coroot-keeper-v2", confirmation: "migrate-coroot-keeper-v2:1:" + strings.Repeat("1", 64), createScope: directKeeperCreate},
 	} {
 		valid := nativeSeedAdmissionDispatch()
 		valid["LONGHORN_V2_OPERATION"], valid["LONGHORN_V2_CONFIRM"] = dispatch.operation, dispatch.confirmation
+		valid["LONGHORN_V2_DATABASE"] = dispatch.database
 		valid["KUBECONFIG"], valid["LONGHORN_V2_CREDENTIAL_DIR"] = path, directory
 		client, endpoint, err := LoadBenchmarkAdmissionClient(func(key string) string { return valid[key] }, netip.MustParseAddr("203.0.113.10"), dispatch.originalRun)
 		if err != nil || client == nil || endpoint == nil || endpoint.String() != "https://203.0.113.10:6443" || client.Timeout != 20*time.Second {
 			t.Fatal("confirmed operation could not construct its fixed client:", dispatch.operation, err)
+		}
+		if dispatch.createScope != "" && client.Transport.(directAPIPeer).createScope != dispatch.createScope {
+			t.Fatal("confirmed recovery did not receive its dry-run scope:", dispatch.operation)
 		}
 		response, err := client.Get(server.URL + "/version")
 		if response != nil {
@@ -393,5 +407,62 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 			t.Fatal("loaded client addressed a different peer")
 		}
 		client.CloseIdleConnections()
+	}
+}
+
+func TestDirectAPIAllowsOnlyScopedCNPGCreateDryRuns(t *testing.T) {
+	const dry = "?dryRun=All"
+	const pods = "/api/v1/namespaces/umami/pods"
+	const claims = "/api/v1/namespaces/umami/persistentvolumeclaims"
+	const jobs = "/apis/batch/v1/namespaces/umami/jobs"
+	for _, test := range []struct {
+		method, path, query, contentType string
+		scope                            directCreateScope
+		want                             bool
+	}{
+		{http.MethodPost, pods, dry, "application/json", directUmamiCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/observability/pods", dry, "application/json", directKeeperCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/observability/persistentvolumeclaims", dry, "application/json", directKeeperCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/observability/pods", "", "application/json", directKeeperCreate, false},
+		{http.MethodPost, pods, dry, "application/json", directKeeperCreate, false},
+		{http.MethodPost, "/apis/batch/v1/namespaces/observability/jobs", dry, "application/json", directKeeperCreate, false},
+		{http.MethodPatch, "/api/v1/namespaces/observability/pods/keeper", dry, "application/json-patch+json", directKeeperCreate, false},
+		{http.MethodPost, claims, dry, "application/json", directUmamiCreate, true},
+		{http.MethodPost, jobs, dry, "application/json", directUmamiCreate, true},
+		{http.MethodPost, pods, "", "application/json", directUmamiCreate, false},
+		{http.MethodPost, pods, "?dryRun=All&dryRun=", "application/json", directUmamiCreate, false},
+		{http.MethodPost, pods, dry, "application/yaml", directUmamiCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/%75mami/pods", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, pods + "/named", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/other/pods", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, "/api/v1/persistentvolumes", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, pods, dry, "application/json", directReclaimCreate, false},
+		{http.MethodPost, pods, dry, "application/json", "", false},
+		{http.MethodPatch, pods + "/named", dry, "application/json-patch+json", directUmamiCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/wedding-app/pods", dry, "application/json", directWeddingCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/wedding-app/persistentvolumeclaims", dry, "application/json", directWeddingCreate, true},
+		{http.MethodPost, "/apis/batch/v1/namespaces/wedding-app/jobs", dry, "application/json", directWeddingCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/wedding-app/pods", "", "application/json", directWeddingCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/wedding-app/pods", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/wedding-app/pods", dry, "application/json", directKeeperCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/observability/pods", dry, "application/json", directWeddingCreate, false},
+		{http.MethodPost, pods, dry, "application/json", directWeddingCreate, false},
+		{http.MethodPatch, "/api/v1/namespaces/wedding-app/pods/named", dry, "application/json-patch+json", directWeddingCreate, false},
+	} {
+		const host = "203.0.113.10:6443"
+		calls := 0
+		peer := directAPIPeer{host: host, createScope: test.scope, transport: transportFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: http.StatusForbidden}, nil
+		})}
+		req, err := http.NewRequestWithContext(t.Context(), test.method, "https://"+host+test.path+test.query, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", test.contentType)
+		_, err = peer.RoundTrip(req)
+		if (err == nil) != test.want || (calls == 1) != test.want {
+			t.Errorf("%s %s %s: calls=%d, error=%v", test.method, test.path, test.query, calls, err)
+		}
 	}
 }
