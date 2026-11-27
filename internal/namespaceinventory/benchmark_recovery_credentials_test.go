@@ -8,6 +8,37 @@ import (
 	"testing"
 )
 
+func TestWeddingNameRecoveryRequiresItsOwnDispatch(t *testing.T) {
+	const uid = "b286e4f7-51db-4bc1-aa4d-000000000001"
+	source := strings.Repeat("1", 40)
+	confirmation := "recover-wedding-standby-name:wedding-db-1:1234:" + source + ":" + uid + ":1234:" + source + ":" + uid
+	directory := "/dev/shm/longhorn-v2." + filepath.Base(filepath.Dir(t.TempDir()))
+	peer := netip.MustParseAddr("203.0.113.10")
+	for _, tc := range []struct {
+		name, original, operation, target, confirm, want string
+	}{
+		{"first recovery", "1234", "recover-wedding-standby-name", "wedding-db", confirmation, "credential directory is not private"},
+		{"interrupted recovery", "1234", "recover-wedding-standby-name", "wedding-db", confirmation + ":4321", "credential directory is not private"},
+		{"foreign original run", "4321", "recover-wedding-standby-name", "wedding-db", confirmation, ""},
+		{"foreign database", "1234", "recover-wedding-standby-name", "umami-db", confirmation, ""},
+		{"foreign claim", "1234", "recover-wedding-standby-name", "wedding-db", strings.Replace(confirmation, ":wedding-db-1:", ":umami-db-1:", 1), ""},
+		{"borrowed confirmation", "1234", "recover-umami-standby-name", "umami-db", confirmation, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := nativeSeedAdmissionDispatch()
+			env["GITHUB_RUN_ID"] = "5678"
+			env["LONGHORN_V2_OPERATION"], env["LONGHORN_V2_DATABASE"], env["LONGHORN_V2_CONFIRM"] = tc.operation, tc.target, tc.confirm
+			env["KUBECONFIG"], env["LONGHORN_V2_CREDENTIAL_DIR"] = directory+"/kubeconfig", directory
+			client, address, err := LoadBenchmarkAdmissionClient(func(key string) string { return env[key] }, peer, tc.original)
+			if client != nil || address != nil || err == nil ||
+				(tc.want != "" && err.Error() != tc.want) ||
+				(tc.want == "" && !strings.HasSuffix(err.Error(), "dispatch is unverified")) {
+				t.Fatalf("unexpected credential boundary result: %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestBenchmarkAdmissionCredentialsRequireTheConfirmedOriginalRun(t *testing.T) {
 	// The directory is deliberately absent. Reaching the private-file check
 	// proves dispatch admission without loading any production credential.
