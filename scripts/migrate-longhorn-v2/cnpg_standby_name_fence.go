@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -51,7 +54,18 @@ func installUmamiNameFence(ctx context.Context, j *umamiStandbyReplacementJourna
 	if err := recordUmamiNameFence(ctx, j); err != nil {
 		return err
 	}
-	return waitReadyWithin(ctx, 2*time.Minute, func(ctx context.Context) error { return proveUmamiNameFence(ctx, j) })
+	var lastProof error
+	err := waitReadyWithin(ctx, 2*time.Minute, func(ctx context.Context) error {
+		proof := proveUmamiNameFence(ctx, j)
+		if ctx.Err() == nil {
+			lastProof = proof
+		}
+		return proof
+	})
+	if err != nil {
+		return errors.Join(err, lastProof)
+	}
+	return nil
 }
 
 func recordUmamiNameFence(ctx context.Context, j *umamiStandbyReplacementJournal) error {
@@ -148,8 +162,14 @@ func probeUmamiNameFence(ctx context.Context, client *http.Client, endpoint *url
 	}
 	for _, probe := range probes {
 		code, raw, err := benchmarkAdmissionRequest(ctx, client, endpoint, probe.path, http.MethodPost, "application/json", probe.body)
-		if err != nil || !benchmarkDenialMatches(code, raw, probe.group, probe.resource, probe.name, policy, policy, umamiNameFenceMessage) {
-			return errors.New("a serving API did not prove the exact Umami " + probe.resource + " fence")
+		if err != nil {
+			return fmt.Errorf("a serving API did not return the Umami %s dry-run response: %w", probe.resource, err)
+		}
+		// The installed policy omits validation.reason. Kubernetes attributes
+		// the denial to the same policy and binding but returns Invalid (422).
+		if code != http.StatusUnprocessableEntity ||
+			!nativePolicyDenialMatches(code, raw, metav1.StatusReasonInvalid, probe.group, probe.resource, probe.name, policy, policy, umamiNameFenceMessage) {
+			return fmt.Errorf("a serving API did not prove the exact Umami %s fence (HTTP %d)", probe.resource, code)
 		}
 	}
 	return nil
