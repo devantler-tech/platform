@@ -38,6 +38,9 @@
 #      target's `spec.selector.matchLabels` holds; the default list is modelled (flagger v1.45.0,
 #      cmd/flagger/main.go), and a flagger HelmRelease that sets `selectorLabels` is cannot-check.
 #
+#   4. Coroot. The pinned operator creates the server, Keeper and ClickHouse StatefulSets from
+#      the Coroot resource. Derive their pod labels from its reviewed reconciliation paths.
+#
 # ⚠️ REPLICAS ARE NOT JUDGED. A budget over a workload deliberately scaled to zero still selects
 # it, so `replicas: 0` (origin-ca-issuer) is no finding. The one zero-replica workload this refuses
 # to count is a Flagger target, because the pods that serve carry different labels.
@@ -252,6 +255,44 @@ workloads='[ .[] | select(.kind as $k | ["Deployment", "StatefulSet", "DaemonSet
       labels: ((.spec.template.metadata.labels // {}) | with_entries(.value |= tostring)),
       selector: ((.spec.selector.matchLabels? // {}) | with_entries(.value |= tostring)),
       origin: $origin, mode: $mode } ]'
+
+# Operator v1.10.8, controller/controller.go Labels and Reconcile, and the three
+# StatefulSet constructors. Unknown operator versions and external ClickHouse
+# do not qualify a budget based on an assumed runtime workload.
+# shellcheck disable=SC2016 # jq variables, not shell expansions
+coroot_workloads='
+  . as $all
+  | [ .[] | select(.apiVersion == "coroot.com/v1" and .kind == "Coroot" and
+                  .metadata.namespace == "observability" and .metadata.name == "coroot") ]
+  | if length == 0 then [] elif length > 1 then error("duplicate Coroot producers") else
+    .[0] as $cr
+    | [ $all[] | select(.kind == "HelmRelease" and .metadata.namespace == $cr.metadata.namespace and
+                        .metadata.name == "coroot-operator") ] as $releases
+    | [ $all[] | select(.kind == "HelmRepository" and .metadata.namespace == $cr.metadata.namespace and
+                        .metadata.name == "coroot") ] as $repositories
+    | if ($releases|length) != 1 or ($repositories|length) != 1 then [] else
+      $releases[0].spec as $release
+      | if $release.suspend == true or ($release.targetNamespace // "observability") != "observability" or
+           $release.chart.spec.chart != "coroot-operator" or $release.chart.spec.version != "0.10.8" or
+           $release.chart.spec.sourceRef.kind != "HelmRepository" or $release.chart.spec.sourceRef.name != "coroot" or
+           ($release.chart.spec.sourceRef.namespace // "observability") != "observability" or
+           $repositories[0].spec.url != "https://coroot.github.io/helm-charts" or
+           (($release.valuesFrom // [])|length) != 0 or (($release.postRenderers // [])|length) != 0 or
+           $release.values.image != null or $cr.spec.agentsOnly != null then []
+        else
+          def member($component; $name):
+            {"app.kubernetes.io/managed-by":"coroot-operator","app.kubernetes.io/part-of":$cr.metadata.name,
+             "app.kubernetes.io/component":$component} as $labels
+            | {namespace:$cr.metadata.namespace, kind:"StatefulSet",name:$name,labels:$labels,selector:$labels,
+               origin:"Coroot operator 0.10.8",mode:"any"};
+          [member("coroot"; "coroot-coroot"),
+           (if $cr.spec.externalClickhouse == null then
+              member("clickhouse-keeper"; "coroot-clickhouse-keeper"),
+              member("clickhouse"; "coroot-clickhouse-shard-0")
+            else empty end)]
+        end
+      end
+    end'
 
 # One HelmRelease, with the chart source it names and the ConfigMap values it merges, looked up
 # among everything the same cluster renders.
@@ -532,7 +573,11 @@ read_cluster() { # <tree> <overlay> <work>
   [ "$pdbs" -gt 0 ] || return 0
 
   jq -c --arg namespace '' --arg origin 'a rendered manifest' --arg mode any "$workloads" "$work/resolved.json" \
-    >"$work/manifest-workloads.json" || die "cannot read the workloads cluster '$cluster' renders"
+    >"$work/rendered-workloads.json" || die "cannot read the workloads cluster '$cluster' renders"
+  jq -c "$coroot_workloads" "$work/resolved.json" >"$work/coroot-workloads.json" ||
+    die "cannot derive the Coroot workloads in cluster '$cluster'"
+  jq -c -s 'add' "$work/rendered-workloads.json" "$work/coroot-workloads.json" >"$work/manifest-workloads.json" ||
+    die "cannot assemble pod templates in cluster '$cluster'"
   jq -c --slurpfile pdbs "$work/pdbs.json" --arg namespace '' --arg origin 'a rendered manifest' --arg mode any \
     "$canaries" "$work/resolved.json" >"$work/canaries.json" || die "cannot read the Canaries cluster '$cluster' renders"
   jq -c '[ .[] | select(.kind != null and .metadata.name != null) | "\(.kind)/\(.metadata.namespace // "")/\(.metadata.name)" ]' \

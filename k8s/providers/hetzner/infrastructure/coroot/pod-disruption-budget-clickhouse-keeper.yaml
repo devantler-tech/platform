@@ -1,0 +1,13 @@
+# Keep a majority of the three Keeper members available during storage moves.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: coroot-clickhouse-keeper
+  namespace: observability
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: coroot-operator
+      app.kubernetes.io/part-of: coroot
+      app.kubernetes.io/component: clickhouse-keeper
