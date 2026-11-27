@@ -55,14 +55,25 @@ func cnpgInstanceID(name, cluster string) (uint64, error) {
 // healthyCNPGPods binds the required stable owned instances from a complete Pod
 // inventory. It establishes neither maintenance exclusivity nor storage clearance.
 func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
+	return healthyCNPGPodsWithRetention(cluster, allPods, "")
+}
+
+func healthyCNPGPodsWithRetention(cluster object, allPods []object, retainedStandby string) ([]object, error) {
 	primary := text(cluster, "status", "currentPrimary")
 	name, ns := text(cluster, "metadata", "name"), text(cluster, "metadata", "namespace")
 	expectedInstances := hostDatabases[ns+"/"+name].instances
 	if umamiV2Transition(cluster) {
 		expectedInstances = 4
 	}
+	expectedClaimCount := expectedInstances
+	if retainedStandby != "" {
+		if !umamiV2Transition(cluster) || retainedStandby == primary {
+			return nil, errors.New("the retained claim must belong to an Umami standby")
+		}
+		expectedClaimCount--
+	}
 	if expectedInstances == 0 || text(cluster, "metadata", "uid") == "" || text(cluster, "metadata", "resourceVersion") == "" || value(cluster, "metadata", "deletionTimestamp") != nil ||
-		value(cluster, "spec", "instances") != expectedInstances || value(cluster, "status", "instances") != expectedInstances || value(cluster, "status", "readyInstances") != expectedInstances || !cnpgCondition(cluster, "Ready") || !cnpgCondition(cluster, "ContinuousArchiving") || primary == "" || primary != text(cluster, "status", "targetPrimary") {
+		value(cluster, "spec", "instances") != expectedInstances || value(cluster, "status", "instances") != expectedClaimCount || value(cluster, "status", "readyInstances") != expectedInstances || !cnpgCondition(cluster, "Ready") || !cnpgCondition(cluster, "ContinuousArchiving") || primary == "" || primary != text(cluster, "status", "targetPrimary") {
 		return nil, errors.New("database instance health, operator conditions or primary identity are unverified")
 	}
 	if fence := text(cluster, "metadata", "annotations", "cnpg.io/fencedInstances"); fence != "" && fence != "[]" {
@@ -82,6 +93,9 @@ func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 	}
 	if len(known) != int(expectedInstances) || !known[primary] {
 		return nil, errors.New("all reviewed healthy database instances are required")
+	}
+	if retainedStandby != "" && !umamiHealthyClaimsExcludeOnly(cluster, known, retainedStandby) {
+		return nil, errors.New("the retained standby must be the only missing healthy claim")
 	}
 	pods := []object{}
 	for _, pod := range allPods {
@@ -133,6 +147,24 @@ func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 		ordered = append(ordered, pod)
 	}
 	return ordered, nil
+}
+
+// CNPG stops counting a detached claim immediately, even while its exact
+// standby still runs. All other claims and all four processes must be healthy.
+func umamiHealthyClaimsExcludeOnly(cluster object, instances map[string]bool, retainedStandby string) bool {
+	claims, _ := value(cluster, "status", "healthyPVC").([]any)
+	if !instances[retainedStandby] || len(claims) != len(instances)-1 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, entry := range claims {
+		name, ok := entry.(string)
+		if !ok || !instances[name] || name == retainedStandby || seen[name] {
+			return false
+		}
+		seen[name] = true
+	}
+	return true
 }
 
 // Requiring the four-instance V2 shape lets the physical observer verify the

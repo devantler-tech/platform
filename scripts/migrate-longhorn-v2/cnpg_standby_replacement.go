@@ -3,10 +3,27 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 )
 
 const umamiStandbyReplacementOperation = "replace-umami-v2-standby"
+
+func executeUmamiStandbyReplacement(ctx context.Context, c client, operation string) error {
+	executor := umamiReplacementOwner{Source: os.Getenv("GITHUB_SHA"), Run: os.Getenv("GITHUB_RUN_ID")}
+	if operation == resumeUmamiStandbyOperation {
+		prior, err := authorizeUmamiStandbyResume(os.Getenv)
+		if err != nil {
+			return err
+		}
+		return resumeUmamiStandbyReplacement(ctx, c, executor, prior)
+	}
+	target, spare, err := authorizeUmamiStandbyTarget(os.Getenv, operation)
+	if err != nil {
+		return err
+	}
+	return runUmamiStandbyReplacement(ctx, c, executor.Source, executor.Run, target, spare)
+}
 
 func runUmamiStandbyReplacement(ctx context.Context, c client, source, run, target, spare string) error {
 	witness, err := observeUmamiStandbyCutover(ctx, c, source, target, spare)
@@ -36,11 +53,10 @@ func runUmamiStandbyReplacement(ctx context.Context, c client, source, run, targ
 	if err != nil {
 		return err
 	}
-	original, err := retainUmamiOriginalStandby(ctx, &journal)
-	if err != nil {
+	if err = retainUmamiOriginalStandby(ctx, &journal); err != nil {
 		return err
 	}
-	if err = evictUmamiRetainedStandby(ctx, &journal, original); err != nil {
+	if err = evictUmamiRetainedStandby(ctx, &journal); err != nil {
 		return err
 	}
 	return observeUmamiStandbyRebuild(ctx, &journal)
@@ -119,7 +135,8 @@ func observeUmamiOriginalDetached(ctx context.Context, journal *umamiStandbyRepl
 func readUmamiReplacementStorage(ctx context.Context, journal *umamiStandbyReplacementJournal) (cnpgRecoveredStorage, error) {
 	const target = "umami-db"
 	c, record := journal.c, journal.record
-	observation, err := observeCNPGMigration(ctx, c, target, record.Source)
+	executor := journal.executor()
+	observation, err := observeCNPGMigration(ctx, c, target, executor.Source)
 	if err != nil {
 		return cnpgRecoveredStorage{}, err
 	}
@@ -147,7 +164,7 @@ func readUmamiReplacementStorage(ctx context.Context, journal *umamiStandbyRepla
 	if err != nil {
 		return cnpgRecoveredStorage{}, err
 	}
-	activation := temporaryV2Activation{c: c, source: record.Source, owner: record.Run, pools: c.inventoryPools}
+	activation := temporaryV2Activation{c: c, source: executor.Source, owner: executor.Run, pools: c.inventoryPools}
 	qualified, err := activation.recoveryStorage(ctx, archive.Plan.Source)
 	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
 		return cnpgRecoveredStorage{}, errors.New("the new standby raw storage is unverified")

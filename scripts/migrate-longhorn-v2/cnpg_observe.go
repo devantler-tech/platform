@@ -7,6 +7,10 @@ import (
 
 // observeCNPGMigration is a protected read-only step, not cutover clearance.
 func observeCNPGMigration(ctx context.Context, c client, target, source string) (cnpgObservation, error) {
+	return observeCNPGMigrationWithRetention(ctx, c, target, source, "")
+}
+
+func observeCNPGMigrationWithRetention(ctx context.Context, c client, target, source, retainedStandby string) (cnpgObservation, error) {
 	var selected cnpgSource
 	for _, candidate := range cnpgSources() {
 		if candidate.Name == target {
@@ -19,14 +23,14 @@ func observeCNPGMigration(ctx context.Context, c client, target, source string) 
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return cnpgObservation{}, err
 	}
-	before, err := c.readCNPGObservation(ctx, selected)
+	before, err := c.readCNPGObservationWithRetention(ctx, selected, retainedStandby)
 	if err != nil {
 		return cnpgObservation{}, err
 	}
 	if err = c.readCNPGPhysicalState(ctx, &before); err != nil {
 		return cnpgObservation{}, err
 	}
-	after, err := c.readCNPGObservation(ctx, selected)
+	after, err := c.readCNPGObservationWithRetention(ctx, selected, retainedStandby)
 	if err != nil {
 		return cnpgObservation{}, err
 	}
@@ -35,7 +39,7 @@ func observeCNPGMigration(ctx context.Context, c client, target, source string) 
 	}
 	// The final whole-cluster read follows the final SQL process bracket. A
 	// switchover during the last command must not escape through an older read.
-	final, err := c.readCNPGObservation(ctx, selected)
+	final, err := c.readCNPGObservationWithRetention(ctx, selected, retainedStandby)
 	if err != nil {
 		return cnpgObservation{}, err
 	}
@@ -51,6 +55,10 @@ func observeCNPGMigration(ctx context.Context, c client, target, source string) 
 
 // readCNPGObservation obtains an unfiltered complete namespace Pod inventory.
 func (c client) readCNPGObservation(ctx context.Context, selected cnpgSource) (cnpgObservation, error) {
+	return c.readCNPGObservationWithRetention(ctx, selected, "")
+}
+
+func (c client) readCNPGObservationWithRetention(ctx context.Context, selected cnpgSource, retainedStandby string) (cnpgObservation, error) {
 	cluster, err := c.get(ctx, "cluster.postgresql.cnpg.io", selected.Namespace, selected.Name, false)
 	if err != nil {
 		return cnpgObservation{}, err
@@ -63,11 +71,11 @@ func (c client) readCNPGObservation(ctx context.Context, selected cnpgSource) (c
 	if err != nil {
 		return cnpgObservation{}, err
 	}
-	owned, err := healthyCNPGPods(cluster, pods)
+	owned, err := healthyCNPGPodsWithRetention(cluster, pods, retainedStandby)
 	if err != nil {
 		return cnpgObservation{}, err
 	}
-	return cnpgObservation{Cluster: cluster, Pods: owned, States: map[string]postgresState{}}, nil
+	return cnpgObservation{Cluster: cluster, Pods: owned, States: map[string]postgresState{}, retainedStandby: retainedStandby}, nil
 }
 
 // readCNPGPhysicalState captures the primary barrier before the standbys.
