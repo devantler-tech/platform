@@ -313,7 +313,7 @@ func main() {
 		if binding.State.InRecovery {
 			role = "standby"
 		}
-		fmt.Printf("CNPG_STREAM_SOURCE=VERIFIED role=%s tls=BOUND walSenders=AVAILABLE storage=BOUND writes=0\n", role)
+		fmt.Printf("CNPG_STREAM_SOURCE=VERIFIED role=%s tlsRefs=BOUND tlsHandshake=UNVERIFIED walSenders=AVAILABLE storage=BOUND writes=0\n", role)
 		return
 	}
 	if operation == observeCorootKeeperOperation {
