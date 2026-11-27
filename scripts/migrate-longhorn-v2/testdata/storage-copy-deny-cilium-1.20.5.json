@@ -1,0 +1,86 @@
+[
+  {
+    "Tier": 200,
+    "Priority": 0,
+    "Authentication": null,
+    "Log": {},
+    "Subject": {
+      "matchLabels": {
+        "any:storage.platform.devantler.tech/copy-run-fixture": "1234",
+        "k8s:io.kubernetes.pod.namespace": "storage-copy-fixture"
+      }
+    },
+    "L3": [
+      {}
+    ],
+    "L4": [],
+    "Labels": [
+      {
+        "key": "io.cilium.k8s.policy.derived-from",
+        "value": "CiliumNetworkPolicy",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.name",
+        "value": "storage-copy-isolation-1234",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.namespace",
+        "value": "storage-copy-fixture",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.uid",
+        "value": "11111111-1111-4111-8111-111111111111",
+        "source": "k8s"
+      }
+    ],
+    "DefaultDeny": true,
+    "Verdict": 1,
+    "Ingress": true,
+    "Node": false
+  },
+  {
+    "Tier": 200,
+    "Priority": 0,
+    "Authentication": null,
+    "Log": {},
+    "Subject": {
+      "matchLabels": {
+        "any:storage.platform.devantler.tech/copy-run-fixture": "1234",
+        "k8s:io.kubernetes.pod.namespace": "storage-copy-fixture"
+      }
+    },
+    "L3": [
+      {}
+    ],
+    "L4": [],
+    "Labels": [
+      {
+        "key": "io.cilium.k8s.policy.derived-from",
+        "value": "CiliumNetworkPolicy",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.name",
+        "value": "storage-copy-isolation-1234",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.namespace",
+        "value": "storage-copy-fixture",
+        "source": "k8s"
+      },
+      {
+        "key": "io.cilium.k8s.policy.uid",
+        "value": "11111111-1111-4111-8111-111111111111",
+        "source": "k8s"
+      }
+    ],
+    "DefaultDeny": true,
+    "Verdict": 1,
+    "Ingress": false,
+    "Node": false
+  }
+]

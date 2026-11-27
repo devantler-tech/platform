@@ -10,6 +10,9 @@ import (
 )
 
 const (
+	corootKeeperProbe = "curl -fsS --max-time 4 http://127.0.0.1:9182/ready >/dev/null; " +
+		"exec 3<>/dev/tcp/127.0.0.1/9181; printf mntr >&3; timeout 6 cat <&3"
+
 	observeCorootKeeperOperation = "observe-coroot-v2-keeper"
 	corootKeeperNamespace        = "observability"
 	corootKeeperName             = "coroot-clickhouse-keeper"
@@ -33,7 +36,7 @@ func authorizeCorootKeeperObservation(getenv func(string) string) error {
 	return authorizeWorkflow(getenv, observeCorootKeeperOperation)
 }
 
-func observedKeeperLeader(raw []byte) (leader bool, err error) {
+func observedKeeperLeader(raw []byte, expectedFollowers int) (leader bool, err error) {
 	if len(raw) == 0 || len(raw) > 16<<10 || !strings.HasSuffix(string(raw), "\n") {
 		return false, errCorootKeeperQuorum
 	}
@@ -47,7 +50,7 @@ func observedKeeperLeader(raw []byte) (leader bool, err error) {
 	}
 	switch values["zk_server_state"] {
 	case "leader":
-		if values["zk_followers"] != "2" || values["zk_synced_followers"] != "2" {
+		if values["zk_followers"] != strconv.Itoa(expectedFollowers) || values["zk_synced_followers"] != strconv.Itoa(expectedFollowers) {
 			return false, errCorootKeeperQuorum
 		}
 		return true, nil
@@ -147,57 +150,69 @@ func bindCorootKeeperMember(pod, stateful object, ordinal int) (corootKeeperMemb
 	return corootKeeperMember{Pod: name, UID: text(pod, "metadata", "uid"), Node: text(pod, "spec", "nodeName"), ContainerID: containerID}, nil
 }
 
+type corootKeeperQuorumReceipt struct {
+	Controller, Budget benchmarkResource
+	Members            [3]corootKeeperMember
+	Disks              [3]corootKeeperProviderDisk
+	V2Claims           [3]benchmarkResource
+}
+
 func observeCorootKeeperQuorum(ctx context.Context, c client, source string) error {
+	_, err := readCorootKeeperQuorum(ctx, c, source, nil)
+	return err
+}
+
+func readCorootKeeperQuorum(ctx context.Context, c client, source string, qualified []cnpgRecoveryDiskBinding) (corootKeeperQuorumReceipt, error) {
 	if c.context != "admin@prod" {
-		return errCorootKeeperQuorum
+		return corootKeeperQuorumReceipt{}, errCorootKeeperQuorum
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
-		return err
+		return corootKeeperQuorumReceipt{}, err
 	}
 	// Both endpoints are read-only and are bound to the same reviewed process.
-	const probe = "curl -fsS --max-time 4 http://127.0.0.1:9182/ready >/dev/null; " +
-		"exec 3<>/dev/tcp/127.0.0.1/9181; printf mntr >&3; timeout 6 cat <&3"
 	var previous [3]corootKeeperMember
 	var previousDisks [3]corootKeeperProviderDisk
+	var previousV2 [3]benchmarkResource
 	var controllers [2]benchmarkResource
 	for pass := range 2 {
 		var current [3]corootKeeperMember
 		var disks [3]corootKeeperProviderDisk
+		var v2 [3]benchmarkResource
 		stateful, err := c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
 		if err != nil {
-			return err
+			return corootKeeperQuorumReceipt{}, err
 		}
 		budget, err := c.get(ctx, "poddisruptionbudget", corootKeeperNamespace, corootKeeperName, false)
 		if err != nil || !corootKeeperControllerReady(stateful, budget) {
-			return errCorootKeeperQuorum
+			return corootKeeperQuorumReceipt{}, errCorootKeeperQuorum
 		}
 		ids := [2]benchmarkResource{benchmarkIdentity(stateful), benchmarkIdentity(budget)}
 		if pass == 1 && controllers != ids {
-			return errCorootKeeperQuorum
+			return corootKeeperQuorumReceipt{}, errCorootKeeperQuorum
 		}
 		controllers = ids
 		pods, err := c.list(ctx, "pods", corootKeeperNamespace)
 		if err != nil {
-			return err
+			return corootKeeperQuorumReceipt{}, err
 		}
 		selected := map[string]object{}
 		for _, pod := range pods {
 			if corootKeeperSelected(pod) {
 				name := text(pod, "metadata", "name")
 				if selected[name] != nil {
-					return errCorootKeeperQuorum
+					return corootKeeperQuorumReceipt{}, errCorootKeeperQuorum
 				}
 				selected[name] = pod
 			}
 		}
 		if len(selected) != len(current) {
-			return errCorootKeeperQuorum
+			return corootKeeperQuorumReceipt{}, errCorootKeeperQuorum
 		}
 		attachments, err := c.list(ctx, "volumeattachments.storage.k8s.io", "")
 		if err != nil {
-			return err
+			return corootKeeperQuorumReceipt{}, err
 		}
 		nodes := map[string]bool{}
 		handles := map[string]bool{}
@@ -206,46 +221,46 @@ func observeCorootKeeperQuorum(ctx context.Context, c client, source string) err
 			name := corootKeeperName + "-" + strconv.Itoa(id)
 			member, err := bindCorootKeeperMember(selected[name], stateful, id)
 			if err != nil || nodes[member.Node] {
-				return errCorootKeeperQuorum
+				return corootKeeperQuorumReceipt{}, errCorootKeeperQuorum
 			}
 			nodes[member.Node] = true
 			claim, err := c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, "data-"+name, false)
 			if err != nil {
-				return err
+				return corootKeeperQuorumReceipt{}, err
 			}
-			pv, err := c.get(ctx, "persistentvolume", "", text(claim, "spec", "volumeName"), false)
+			if text(claim, "spec", "storageClassName") == "longhorn-v2" {
+				if err := verifyExistingKeeperV2Member(ctx, c, qualified, id, member, claim); err != nil {
+					return corootKeeperQuorumReceipt{}, err
+				}
+				v2[id] = benchmarkIdentity(claim)
+			} else {
+				pv, err := c.get(ctx, "persistentvolume", "", text(claim, "spec", "volumeName"), false)
+				if err != nil {
+					return corootKeeperQuorumReceipt{}, err
+				}
+				disk, err := bindCorootKeeperProviderDisk(member, stateful, claim, pv, attachments)
+				if err != nil || handles[disk.Handle] {
+					return corootKeeperQuorumReceipt{}, errCorootKeeperStorage
+				}
+				handles[disk.Handle] = true
+				disks[id] = disk
+			}
+			member.Leader, err = probeCorootKeeperMember(ctx, c, member, stateful, id, 2)
 			if err != nil {
-				return err
-			}
-			disk, err := bindCorootKeeperProviderDisk(member, stateful, claim, pv, attachments)
-			if err != nil || handles[disk.Handle] {
-				return errCorootKeeperStorage
-			}
-			handles[disk.Handle] = true
-			disks[id] = disk
-			out, err := c.kubectl(ctx, nil, "exec", name, "--namespace="+corootKeeperNamespace,
-				"--container="+corootKeeperContainer, "--pod-running-timeout=10s", "--", "bash", "-ec", probe)
-			if err != nil {
-				return err
-			}
-			latest, err := c.get(ctx, "pod", corootKeeperNamespace, name, false)
-			checked, checkErr := bindCorootKeeperMember(latest, stateful, id)
-			if err != nil || checkErr != nil || checked != member {
-				return errCorootKeeperQuorum
-			}
-			member.Leader, err = observedKeeperLeader(out)
-			if err != nil {
-				return err
+				return corootKeeperQuorumReceipt{}, err
 			}
 			if member.Leader {
 				leaders++
 			}
 			current[id] = member
 		}
-		if leaders != 1 || pass == 1 && (previous != current || previousDisks != disks) {
-			return errCorootKeeperQuorum
+		if leaders != 1 || pass == 1 && (previous != current || previousDisks != disks || previousV2 != v2) {
+			return corootKeeperQuorumReceipt{}, errCorootKeeperQuorum
 		}
-		previous, previousDisks = current, disks
+		previous, previousDisks, previousV2 = current, disks, v2
 	}
-	return sourceCurrent(ctx, c.run, source)
+	if err := sourceCurrent(ctx, c.run, source); err != nil {
+		return corootKeeperQuorumReceipt{}, err
+	}
+	return corootKeeperQuorumReceipt{Controller: controllers[0], Budget: controllers[1], Members: previous, Disks: previousDisks, V2Claims: previousV2}, nil
 }

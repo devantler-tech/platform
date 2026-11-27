@@ -15,7 +15,7 @@ func TestObserveCorootKeeperRequiresTheFullRaftQuorum(t *testing.T) {
 		{"standalone", "zk_server_state\tstandalone\n", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			leader, err := observedKeeperLeader([]byte(tc.response))
+			leader, err := observedKeeperLeader([]byte(tc.response), 2)
 			if leader != tc.leader || (err != nil) != tc.fail {
 				t.Fatalf("leader=%t err=%v, want leader=%t error=%t", leader, err, tc.leader, tc.fail)
 			}

@@ -63,6 +63,8 @@ func main() {
 		authorization = authorizeCNPGObservation(os.Getenv)
 	case observeCorootKeeperOperation:
 		authorization = authorizeCorootKeeperObservation(os.Getenv)
+	case corootKeeperCutoverOperation:
+		_, authorization = authorizeCorootKeeperCutover(os.Getenv)
 	case cnpgArchiveProofOperation:
 		authorization = authorizeCNPGArchiveProof(os.Getenv)
 	case umamiArchiveIsolationResumeOperation:
@@ -299,6 +301,19 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == corootKeeperCutoverOperation {
+		input, err := authorizeCorootKeeperCutover(os.Getenv)
+		if err == nil {
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			err = runCorootKeeperCutover(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), input)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("COROOT_KEEPER_REPLACEMENT=VERIFIED originalStorage=RETAINED engine=v2 replicas=3 raft=SYNCED")
+		return
 	}
 	if operation == actualBudgetRestoreOperation || operation == actualBudgetRestoreResume {
 		confirmation, err := authorizeActualBudgetRestore(os.Getenv)
