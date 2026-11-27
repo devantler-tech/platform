@@ -52,6 +52,7 @@ name: Prepare Longhorn V2 Migration
             replace-umami-v2-standby,
             resume-retained-umami-v2-standby,
             switch-umami-primary-to-v2,
+            recover-umami-standby-name,
             register-temporary-v2-storage,
             repair-v1-reservation,
             reserve-v1-scratch,
@@ -59,6 +60,8 @@ name: Prepare Longhorn V2 Migration
             prepare-actual-budget-backup-scratch,
             retire-actual-budget-backup-scratch,
             backup-actual-budget-v1,
+            restore-actual-budget-v2,
+            resume-unstarted-actual-budget-v2,
             retain-v1-source,
             retain-provider-source,
           ]
@@ -210,6 +213,12 @@ jobs:
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^switch-umami-primary-to-v2:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
               ;;
+            recover-umami-standby-name)
+              run_re='[1-9][0-9]{0,18}'
+              uid_re='[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^recover-umami-standby-name:umami-db-[1-9][0-9]*:${run_re}:[0-9a-f]{40}:${uid_re}:${run_re}:[0-9a-f]{40}:${uid_re}(:${run_re})?$ ]]
+              ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
               ;;
@@ -248,6 +257,14 @@ jobs:
             backup-actual-budget-v1)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^backup-actual-budget-v1:[0-9a-f]{64}$ ]]
+              ;;
+            restore-actual-budget-v2)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^restore-actual-budget-v2:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{64}$ ]]
+              ;;
+            resume-unstarted-actual-budget-v2)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-unstarted-actual-budget-v2:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{64}:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
               ;;
             retain-v1-source)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-longhorn-v1-source:[a-z0-9][-a-z0-9]*/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
@@ -341,7 +358,7 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh
       - name: Run the confirmed migration preparation
-        if: ${{ inputs.operation != 'benchmark-v1' && inputs.operation != 'recover-bound-v1-benchmark' && inputs.operation != 'prepare-native-v1-seed' && inputs.operation != 'reclaim-native-v2-seed' && inputs.operation != 'resume-native-v2-reclaim' }}
+        if: ${{ inputs.operation != 'benchmark-v1' && inputs.operation != 'recover-bound-v1-benchmark' && inputs.operation != 'prepare-native-v1-seed' && inputs.operation != 'reclaim-native-v2-seed' && inputs.operation != 'resume-native-v2-reclaim' && inputs.operation != 'recover-umami-standby-name' }}
         env:
           GH_TOKEN: ${{ github.token }}
           LONGHORN_RUNTIME_INVENTORY_SOURCE: ${{ steps.recovery-source.outputs.sha }}
@@ -360,6 +377,12 @@ jobs:
         run: go run ./scripts/migrate-longhorn-v2
       - name: Reclaim the verified disposable V2 restoration
         if: ${{ inputs.operation == 'reclaim-native-v2-seed' || inputs.operation == 'resume-native-v2-reclaim' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Recover the confirmed Umami standby claim name
+        if: ${{ inputs.operation == 'recover-umami-standby-name' }}
         env:
           GH_TOKEN: ${{ github.token }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

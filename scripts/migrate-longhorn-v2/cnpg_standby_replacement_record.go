@@ -22,8 +22,9 @@ type umamiStandbyReplacementRecord struct {
 	Primary            benchmarkResource
 	Original           cnpgStandbyCutover
 	OtherPods          map[string]benchmarkResource
-	Replacement        *cnpgRecoveredStorage  `json:",omitempty"`
-	Continuation       *umamiReplacementOwner `json:",omitempty"`
+	Replacement        *cnpgRecoveredStorage    `json:",omitempty"`
+	Continuation       *umamiReplacementOwner   `json:",omitempty"`
+	NameRelease        *umamiStandbyNameRelease `json:",omitempty"`
 }
 
 const umamiStandbyJournalNamespace = "longhorn-system"
@@ -49,7 +50,7 @@ func (j umamiStandbyReplacementJournal) executor() umamiReplacementOwner {
 func beginUmamiStandbyReplacement(ctx context.Context, c client, record umamiStandbyReplacementRecord) (umamiStandbyReplacementJournal, error) {
 	var journal umamiStandbyReplacementJournal
 	if c.context != "admin@prod" || record.Phase != umamiReplacementPlanned || record.Replacement != nil ||
-		record.Continuation != nil || !validUmamiOriginalReplacement(record) {
+		record.Continuation != nil || record.NameRelease != nil || !validUmamiOriginalReplacement(record) {
 		return journal, errors.New("the original Umami standby replacement witness is incomplete")
 	}
 	name := umamiStandbyJournalName(record)
@@ -190,10 +191,10 @@ func verifyUmamiReplacementTransition(previous, next umamiStandbyReplacementReco
 		expected = umamiReplacementOriginalDetached
 	case umamiReplacementOriginalDetached:
 		expected = umamiReplacementStandbyRebuilt
-	default:
-		return refused
 	}
-	if next.Phase != expected {
+	if !validUmamiNameReleaseProgress(previous, next) && (expected == "" || next.Phase != expected ||
+		!reflect.DeepEqual(previous.NameRelease, next.NameRelease) ||
+		previous.NameRelease != nil && previous.Phase != umamiReplacementOriginalDetached) {
 		return refused
 	}
 	if next.Continuation != nil && previous.Phase == umamiReplacementClaimRetained {
@@ -206,7 +207,7 @@ func verifyUmamiReplacementTransition(previous, next umamiStandbyReplacementReco
 		return refused
 	}
 	if next.Phase == umamiReplacementStandbyRebuilt {
-		if next.Replacement == nil || !independentUmamiReplacement(next.Original, *next.Replacement) {
+		if next.Replacement == nil || !validUmamiReplacementStorage(next, *next.Replacement) {
 			return refused
 		}
 	} else if next.Replacement != nil {
@@ -216,13 +217,24 @@ func verifyUmamiReplacementTransition(previous, next umamiStandbyReplacementReco
 }
 
 func independentUmamiReplacement(original cnpgStandbyCutover, replacement cnpgRecoveredStorage) bool {
+	return independentUmamiReplacementAfterRelease(original, replacement, false)
+}
+
+func validUmamiReplacementStorage(record umamiStandbyReplacementRecord, replacement cnpgRecoveredStorage) bool {
+	if record.NameRelease == nil {
+		return independentUmamiReplacement(record.Original, replacement)
+	}
+	return independentUmamiReplacementAfterRelease(record.Original, replacement, true)
+}
+
+func independentUmamiReplacementAfterRelease(original cnpgStandbyCutover, replacement cnpgRecoveredStorage, released bool) bool {
 	pvName := "pvc-" + replacement.Claim.UID
 	if replacement.Cluster != original.Database || replacement.Pod.Namespace != original.Consumer.Namespace ||
 		replacement.Claim.Namespace != replacement.Pod.Namespace || replacement.Claim.Name != replacement.Pod.Name ||
 		replacement.PV.Namespace != "" || replacement.PV.Name != pvName ||
 		replacement.Volume.Namespace != "longhorn-system" || replacement.Volume.Name != pvName ||
 		replacement.Engine.Namespace != "longhorn-system" || replacement.Engine.UID == original.Spare.Engine.UID ||
-		replacement.Pod.UID == original.Consumer.UID || replacement.Pod.Name == original.Consumer.Name ||
+		replacement.Pod.UID == original.Consumer.UID || (replacement.Pod.Name == original.Consumer.Name && !released) ||
 		replacement.Pod.UID == original.Spare.Pod.UID || replacement.Pod.Name == original.Spare.Pod.Name ||
 		replacement.Claim.UID == original.Claim.UID || replacement.Claim.UID == original.Spare.Claim.UID ||
 		replacement.PV.UID == original.PV.UID || replacement.PV.UID == original.Spare.PV.UID ||

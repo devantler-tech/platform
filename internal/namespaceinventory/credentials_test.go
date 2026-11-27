@@ -202,7 +202,7 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 	raw := fixtureConfig(server)
 	raw.Clusters["prod"].TLSServerName = "old-dns-name.invalid"
 	direct := netip.MustParseAddr("203.0.113.10")
-	client, endpoint, err := newProductionClientAt(raw, direct, false)
+	client, endpoint, err := newProductionClientAt(raw, direct, "")
 	if err != nil || endpoint.String() != "https://203.0.113.10:6443" {
 		t.Fatalf("direct endpoint is not pinned: %v", err)
 	}
@@ -260,7 +260,11 @@ func TestDirectAPIAllowsOnlyScopedReclaimAliasDryRuns(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			const host = "203.0.113.10:6443"
 			calls := 0
-			peer := directAPIPeer{host: host, reclaimAliasDryRun: test.granted, transport: transportFunc(func(*http.Request) (*http.Response, error) {
+			var scope directCreateScope
+			if test.granted {
+				scope = directReclaimCreate
+			}
+			peer := directAPIPeer{host: host, createScope: scope, transport: transportFunc(func(*http.Request) (*http.Response, error) {
 				calls++
 				return &http.Response{StatusCode: http.StatusForbidden}, nil
 			})}
@@ -393,5 +397,47 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 			t.Fatal("loaded client addressed a different peer")
 		}
 		client.CloseIdleConnections()
+	}
+}
+
+func TestDirectAPIAllowsOnlyScopedUmamiCreateDryRuns(t *testing.T) {
+	const dry = "?dryRun=All"
+	const pods = "/api/v1/namespaces/umami/pods"
+	const claims = "/api/v1/namespaces/umami/persistentvolumeclaims"
+	const jobs = "/apis/batch/v1/namespaces/umami/jobs"
+	for _, test := range []struct {
+		method, path, query, contentType string
+		scope                            directCreateScope
+		want                             bool
+	}{
+		{http.MethodPost, pods, dry, "application/json", directUmamiCreate, true},
+		{http.MethodPost, claims, dry, "application/json", directUmamiCreate, true},
+		{http.MethodPost, jobs, dry, "application/json", directUmamiCreate, true},
+		{http.MethodPost, pods, "", "application/json", directUmamiCreate, false},
+		{http.MethodPost, pods, "?dryRun=All&dryRun=", "application/json", directUmamiCreate, false},
+		{http.MethodPost, pods, dry, "application/yaml", directUmamiCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/%75mami/pods", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, pods + "/named", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/other/pods", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, "/api/v1/persistentvolumes", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, pods, dry, "application/json", directReclaimCreate, false},
+		{http.MethodPost, pods, dry, "application/json", "", false},
+		{http.MethodPatch, pods + "/named", dry, "application/json-patch+json", directUmamiCreate, false},
+	} {
+		const host = "203.0.113.10:6443"
+		calls := 0
+		peer := directAPIPeer{host: host, createScope: test.scope, transport: transportFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: http.StatusForbidden}, nil
+		})}
+		req, err := http.NewRequestWithContext(t.Context(), test.method, "https://"+host+test.path+test.query, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", test.contentType)
+		_, err = peer.RoundTrip(req)
+		if (err == nil) != test.want || (calls == 1) != test.want {
+			t.Errorf("%s %s %s: calls=%d, error=%v", test.method, test.path, test.query, calls, err)
+		}
 	}
 }
