@@ -71,10 +71,10 @@ func TestCutoverMovesTheBackupWriterToV2(t *testing.T) {
 		replacementSpec["volumeMode"] != "Filesystem" || replacementSpec["resources"].(map[string]any)["requests"].(map[string]any)["storage"] != "10Gi" {
 		t.Fatal("the V2 claim must retain its original capacity and controller-managed binding")
 	}
-	labels := replacementMetadata["labels"].(map[string]any)
+	labels, _ := replacementMetadata["labels"].(map[string]any)
 	if labels["platform.devantler.tech/storage-stage"] != nil ||
-		labels["backup.platform.devantler.tech/volume-data"] != "independently-mirrored" {
-		t.Fatal("serving V2 must bind for health checks and keep the offsite mirror route")
+		labels["backup.platform.devantler.tech/volume-data"] != nil {
+		t.Fatal("serving V2 must bind for health checks and preserve ordinary Velero eligibility")
 	}
 	if modes := replacementSpec["accessModes"].([]any); len(modes) != 1 || modes[0] != "ReadWriteOnce" {
 		t.Fatal("the V2 claim must preserve single-writer access")
@@ -99,7 +99,7 @@ func TestCutoverMovesTheBackupWriterToV2(t *testing.T) {
 		if name == "vault-snapshots-recovery" {
 			labels, _ := metadata["labels"].(map[string]any)
 			if labels["backup.platform.devantler.tech/volume-data"] != "independently-mirrored" {
-				t.Fatal("active snapshot storage must use the existing independently mirrored backup route")
+				t.Fatal("the retained Hetzner source must preserve its independent mirror classification")
 			}
 			if _, marked := labels["platform.devantler.tech/storage-stage"]; marked {
 				t.Fatal("active recovery storage must leave the prepared-only health exemption")
