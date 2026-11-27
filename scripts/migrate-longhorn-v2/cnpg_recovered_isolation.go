@@ -12,7 +12,7 @@ import (
 	"github.com/devantler-tech/platform/internal/hubblepolicy"
 )
 
-const cnpgRecoveryPortCheck = `pg_isready -q -h "$1" -p 5432 -t 3
+const cnpgRecoveryPortCheck = `/usr/lib/postgresql/18/bin/pg_isready -q -h "$1" -p 5432 -t 3
 printf 'POSTGRES_PROBE=%s\n' "$?"`
 
 type recoveredNetworkDenialStage string
@@ -125,8 +125,9 @@ func sameCNPGRecoveryProbePod(current, before, cluster object) bool {
 
 func (c client) probeRecoveryPostgresPort(ctx context.Context, from object, destinationIP string) ([]byte, error) {
 	id := benchmarkIdentity(from)
+	// libpq's environment can override the destination even when -h is explicit.
 	return c.kubectl(ctx, nil, "exec", id.Name, "--namespace="+id.Namespace, "--container=postgres",
-		"--pod-running-timeout=10s", "--", "/bin/sh", "-c", cnpgRecoveryPortCheck, "restore-port-check", destinationIP)
+		"--pod-running-timeout=10s", "--", "/usr/bin/env", "-i", "/bin/sh", "-c", cnpgRecoveryPortCheck, "restore-port-check", destinationIP)
 }
 
 func (p *cnpgProofRun) verifyRecoveredNetworkControl(ctx context.Context, before cnpgObservation, primary object, recoveredIP, primaryIP string) (object, error) {

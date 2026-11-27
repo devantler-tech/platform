@@ -3,10 +3,45 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 )
+
+func TestRecoveredPortProbeDiscardsInheritedConnectionSettings(t *testing.T) {
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "pg_isready")
+	const fixture = `#!/bin/sh
+if [ "${PGHOSTADDR+x}${PGSERVICE+x}${PGPORT+x}" != "" ] ||
+   [ "$*" != "-q -h 192.0.2.23 -p 5432 -t 3" ]; then
+  exit 2
+fi
+`
+	if err := os.WriteFile(executable, []byte(fixture), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := client{context: "synthetic", run: func(ctx context.Context, _ []byte, program string, args ...string) ([]byte, error) {
+		start := slices.Index(args, "--") + 1
+		script := slices.Index(args, cnpgRecoveryPortCheck)
+		if program != "kubectl" || start == 0 || script <= start {
+			t.Fatal("port probe did not use the fixed client command")
+		}
+		command := slices.Clone(args[start:])
+		command[script-start] = strings.Replace(command[script-start], "/usr/lib/postgresql/18/bin/pg_isready", strconv.Quote(executable), 1)
+		process := exec.CommandContext(ctx, command[0], command[1:]...)
+		process.Env = []string{"PATH=" + dir, "PGHOSTADDR=192.0.2.99", "PGSERVICE=other-server", "PGPORT=5433"}
+		return process.Output()
+	}}
+	_, pods, _, _ := cnpgFixture("longhorn-wffc", "longhorn-wffc", "longhorn-wffc")
+	result, err := c.probeRecoveryPostgresPort(t.Context(), pods[1], "192.0.2.23")
+	if err != nil || string(result) != "POSTGRES_PROBE=0\n" {
+		t.Fatalf("connection environment could change the destination: %q, %v", result, err)
+	}
+}
 
 func recoveredDataCiliumFixture(t *testing.T, p *cnpgProofRun, pod object, scenario string) {
 	t.Helper()
