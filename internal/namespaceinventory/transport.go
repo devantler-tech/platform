@@ -16,7 +16,11 @@ const metadataObjectAccept = "application/json;as=PartialObjectMetadata;g=meta.k
 const metadataListAccept = "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1"
 const responseLimit = 1024 * 1024
 const totalLimit = 16 * 1024 * 1024
-const requestLimit = 512
+
+// requestLimit bounds one observation. Production needed 576 reads on
+// 2026-11-25: two discovery passes over 128 served versions (130 reads each),
+// 312 namespaced collections, and four namespace and APIService reads.
+const requestLimit = 1024
 
 var namespacePattern = regexp.MustCompile(`^longhorn-benchmark-(v1|v2)-[1-9][0-9]{0,18}$`)
 var namePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)
@@ -28,6 +32,8 @@ type reader struct {
 	endpoint        *url.URL
 	namespace, uid  string
 	requests, bytes int
+	// scanRecords admits Kubescape's storage registration and its records.
+	scanRecords bool
 }
 
 func observationActive(ctx context.Context) error {

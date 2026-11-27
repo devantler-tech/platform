@@ -29,7 +29,7 @@ func freshGraphFixture(w *freshRecoveryWitness) freshGraphAPI {
 	child(backup, "status")["completionTimestamp"] = "2026-11-10T12:45:40Z"
 	owner := items(child(snapshot, "metadata"), "ownerReferences")[0]
 	owner["name"], owner["uid"] = i.namespace+"-backup", w.Backup.UID
-	child(snapshot, "metadata")["labels"] = object{"velero.io/pvc-uid": source.claimUID}
+	child(snapshot, "metadata")["labels"] = object{"velero.io/pvc-uid": source.claimUID, "velero.io/backup-uid": w.Backup.UID}
 	child(snapshot, "status")["completionTimestamp"] = "2026-11-10T12:45:30Z"
 	download := downloadManifest(i, text(child(snapshot, "status"), "snapshotID"))
 	child(download, "metadata")["uid"] = w.Download.UID

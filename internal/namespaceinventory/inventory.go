@@ -19,8 +19,12 @@ type Binding struct{ Name, Namespace, UID, Kind, Resource string }
 
 // Inventory holds the observed bindings. They remain private until a caller
 // explicitly copies them into its private journal. Default JSON serialization
-// never publishes object identities.
-type Inventory struct{ bindings map[string]Binding }
+// never publishes object identities. Accepted Kubescape scan records are kept
+// apart by resource and name, since the storage omits some of their UIDs.
+type Inventory struct {
+	bindings    map[string]Binding
+	scanRecords map[string]string
+}
 
 // Bindings returns a copy of the observed bindings ordered by UID.
 func (i Inventory) Bindings() []Binding {
@@ -101,24 +105,27 @@ func CalibrateLonghornSystem(ctx context.Context, client *http.Client, endpoint 
 	return result, nil
 }
 
-// ObserveRetainedEmailRecovery inventories only the fixed retained diagnostic
-// copy. A complete inventory alone never authorizes removing any resource.
-func ObserveRetainedEmailRecovery(ctx context.Context, client *http.Client, endpoint *url.URL, uid string) (Inventory, error) {
-	return observeNamespace(ctx, client, endpoint, "email-data-recovery-41561215415", uid)
-}
-
-// ObserveFreshRetainedEmailRecovery inventories the fixed fresh restore with
-// its separately witnessed namespace identity.
-func ObserveFreshRetainedEmailRecovery(ctx context.Context, client *http.Client, endpoint *url.URL, uid string) (Inventory, error) {
-	return observeNamespace(ctx, client, endpoint, "email-data-recovery-42818236850", uid)
+// ObserveEmailRecovery inventories one fresh Email recovery namespace. It also
+// reads the scan records Kubescape's aggregated storage keeps there, accepting
+// only the exact registration and record kinds in scan_records.go. A complete
+// inventory alone never authorizes removing any resource.
+func ObserveEmailRecovery(ctx context.Context, client *http.Client, endpoint *url.URL, namespace, uid string) (Inventory, error) {
+	if !emailRecoveryPattern.MatchString(namespace) {
+		return Inventory{}, errors.New("a fresh Email recovery namespace is required")
+	}
+	return observeNamespaceWith(ctx, client, endpoint, namespace, uid, true)
 }
 
 func observeNamespace(ctx context.Context, client *http.Client, endpoint *url.URL, namespace, uid string) (Inventory, error) {
+	return observeNamespaceWith(ctx, client, endpoint, namespace, uid, false)
+}
+
+func observeNamespaceWith(ctx context.Context, client *http.Client, endpoint *url.URL, namespace, uid string, scanRecords bool) (Inventory, error) {
 	if endpoint == nil {
 		return Inventory{}, errors.New("authenticated API root is required")
 	}
 	root := *endpoint
-	fixed := namespace == "longhorn-system" || namespace == "email-data-recovery-41561215415" || namespace == "email-data-recovery-42818236850"
+	fixed := namespace == "longhorn-system" || (scanRecords && emailRecoveryPattern.MatchString(namespace))
 	if client == nil || root.Scheme != "https" || root.Host == "" || root.Opaque != "" || root.ForceQuery || root.User != nil || root.RawQuery != "" || root.Fragment != "" || (root.Path != "" && root.Path != "/") || (!namespacePattern.MatchString(namespace) && !fixed) || len(namespace) > 63 || uid == "" || len(uid) > 128 {
 		return Inventory{}, errors.New("fixed benchmark namespace and authenticated API root are required")
 	}
@@ -127,7 +134,7 @@ func observeNamespace(ctx context.Context, client *http.Client, endpoint *url.UR
 	if err := observationActive(ctx); err != nil {
 		return Inventory{}, err
 	}
-	r := reader{client: *client, endpoint: &root, namespace: namespace, uid: uid}
+	r := reader{client: *client, endpoint: &root, namespace: namespace, uid: uid, scanRecords: scanRecords}
 	r.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if r.client.Timeout == 0 || r.client.Timeout > 20*time.Second {
 		r.client.Timeout = 20 * time.Second
@@ -143,14 +150,17 @@ func observeNamespace(ctx context.Context, client *http.Client, endpoint *url.UR
 	if err != nil {
 		return Inventory{}, err
 	}
-	result := Inventory{bindings: map[string]Binding{}}
+	result := Inventory{bindings: map[string]Binding{}, scanRecords: map[string]string{}}
 	for _, resource := range resources.resources {
 		raw, err := r.get(ctx, resource.prefix+"/namespaces/"+namespace+"/"+resource.name, metadataListAccept)
 		if err != nil {
 			return Inventory{}, err
 		}
+		// Kubescape's storage sets no list resourceVersion; a continuation or
+		// remainder still marks its collection as partial.
+		records := r.scanRecords && resource.prefix == "/apis/"+scanGroupVersion
 		var actual partialList
-		if decode(raw, &actual, metadataFields) != nil || actual.APIVersion != "meta.k8s.io/v1" || actual.Kind != "PartialObjectMetadataList" || actual.Metadata.ResourceVersion == "" || actual.Metadata.Continue != "" || actual.Metadata.Remaining != nil && *actual.Metadata.Remaining != 0 || actual.Items == nil {
+		if decode(raw, &actual, metadataFields) != nil || actual.APIVersion != "meta.k8s.io/v1" || actual.Kind != "PartialObjectMetadataList" || (actual.Metadata.ResourceVersion == "" && !records) || actual.Metadata.Continue != "" || actual.Metadata.Remaining != nil && *actual.Metadata.Remaining != 0 || actual.Items == nil {
 			return Inventory{}, errors.New("namespace collection is partial or not metadata-only")
 		}
 		// The native metadata converter leaves Items nil for a complete empty
@@ -158,6 +168,12 @@ func observeNamespace(ctx context.Context, client *http.Client, endpoint *url.UR
 		var items []partialObject
 		if json.Unmarshal(actual.Items, &items) != nil {
 			return Inventory{}, errors.New("namespace collection items are malformed")
+		}
+		if records {
+			if err := scanRecordList(resource, namespace, items, result.scanRecords); err != nil {
+				return Inventory{}, err
+			}
+			continue
 		}
 		seenItems := map[string]bool{}
 		for _, item := range items {
@@ -184,6 +200,9 @@ func observeNamespace(ctx context.Context, client *http.Client, endpoint *url.UR
 			}
 			result.bindings[m.UID] = binding
 		}
+	}
+	if err := scanRecordsComplete(result.scanRecords); err != nil {
+		return Inventory{}, err
 	}
 	checked, err := r.discovery(ctx)
 	if err != nil || !reflect.DeepEqual(checked, resources) {

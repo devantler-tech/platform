@@ -131,6 +131,69 @@ func TestCredentialLoaderRefusesOutsideProtectedDispatch(t *testing.T) {
 	}
 }
 
+func emailRecoveryDispatch() map[string]string {
+	return map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
+		"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted",
+		"GITHUB_ACTOR":                "devantler",
+		"GITHUB_WORKFLOW_REF":         "devantler-tech/platform/.github/workflows/verify-email-data-recovery.yaml@refs/heads/main",
+		"EMAIL_DATA_RECOVERY_CONFIRM": "verify-email-data-recovery",
+		"GITHUB_SHA":                  "0123456789abcdef0123456789abcdef01234567", "GITHUB_RUN_ID": "45123456789",
+		"KUBECONFIG": "/dev/shm/email-data-recovery.Ab12Cd34/kubeconfig",
+	}
+}
+
+// The Email loader admits only its own confirmed dispatch and private path;
+// every refusal happens before a credential file is read.
+func TestEmailRecoveryLoaderRefusesOutsideItsConfirmedDispatch(t *testing.T) {
+	for _, change := range []struct{ key, value string }{
+		{"GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/observe-longhorn-namespace-inventory.yaml@refs/heads/main"},
+		{"GITHUB_ACTOR", "another"},
+		{"GITHUB_RUN_ATTEMPT", "2"},
+		{"EMAIL_DATA_RECOVERY_CONFIRM", "observe-email-data-recovery"},
+		{"GITHUB_SHA", "main"},
+		{"KUBECONFIG", "/dev/shm/longhorn-namespace-inventory.Ab12Cd34/kubeconfig"},
+		{"KUBECONFIG", "/dev/shm/email-data-recovery.Ab12Cd34/../kubeconfig"},
+	} {
+		env := emailRecoveryDispatch()
+		env[change.key] = change.value
+		if client, _, err := LoadEmailRecoveryClient(func(key string) string { return env[key] }); err == nil || client != nil {
+			t.Fatalf("Email loader admitted %s=%s", change.key, change.value)
+		}
+	}
+}
+
+func TestEmailRecoveryLoaderBuildsTheFixedClient(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the protected credential directory is Linux memory-backed storage")
+	}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("loader contacted an API") }))
+	t.Cleanup(server.Close)
+	directory, err := os.MkdirTemp("/dev/shm", "email-data-recovery.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(directory); err != nil {
+			t.Error(err)
+		}
+	})
+	raw, err := clientcmd.Write(*fixtureConfig(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "kubeconfig")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	env := emailRecoveryDispatch()
+	env["KUBECONFIG"] = path
+	client, endpoint, err := LoadEmailRecoveryClient(func(key string) string { return env[key] })
+	if err != nil || client == nil || endpoint == nil || endpoint.String() != server.URL {
+		t.Fatal("confirmed Email dispatch could not construct its fixed client:", err)
+	}
+}
+
 func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Error("the old endpoint must not receive direct-client credentials")

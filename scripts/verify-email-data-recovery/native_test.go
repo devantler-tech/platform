@@ -76,6 +76,19 @@ func TestNativeRecoveryMarkerLifecycle(t *testing.T) {
 	if _, err = client.verifyMessage(ctx, marker.identity); err != nil {
 		t.Fatalf("native marker read: %s", err)
 	}
+	// The pinned server answers every census method; a repeated census of an
+	// unchanged store is identical and verifies against itself.
+	census, err := client.census(ctx)
+	if err != nil {
+		t.Fatalf("native store census: %s", err)
+	}
+	repeated, err := client.census(ctx)
+	if err != nil || repeated != census {
+		t.Fatal("native store census changed without a write")
+	}
+	if _, err = censusVerdicts(census, census, repeated); err != nil {
+		t.Fatalf("native store census verdicts: %s", err)
+	}
 	reader, err := newRetainedMailboxClientInWindow(client.endpoint, password, window)
 	if err != nil {
 		t.Fatal("native read-only fixture endpoint refused")

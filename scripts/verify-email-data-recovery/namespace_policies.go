@@ -71,8 +71,14 @@ func loadNamespacePolicies() (map[string]namespacePolicy, error) {
 }
 
 func (p namespacePolicy) matches(o object, namespaceUID string) bool {
+	return reflect.DeepEqual(child(o, "spec"), p.spec) && kyvernoGenerated(o, p.api, "add-default-deny", p.rule, namespaceUID)
+}
+
+// kyvernoGenerated binds an unowned object to the Kyverno rule that generated
+// it for exactly this namespace, by the generate labels Kyverno writes.
+func kyvernoGenerated(o object, api, policy, rule, namespaceUID string) bool {
 	m := child(o, "metadata")
-	if namespaceUID == "" || text(m, "uid") == "" || text(o, "apiVersion") != p.api || m["deletionTimestamp"] != nil || len(items(m, "ownerReferences")) != 0 || !reflect.DeepEqual(child(o, "spec"), p.spec) {
+	if namespaceUID == "" || text(m, "uid") == "" || text(o, "apiVersion") != api || m["deletionTimestamp"] != nil || len(items(m, "ownerReferences")) != 0 {
 		return false
 	}
 	for key := range o {
@@ -81,11 +87,54 @@ func (p namespacePolicy) matches(o object, namespaceUID string) bool {
 		}
 	}
 	labels := child(m, "labels")
-	for key, expected := range map[string]string{"app.kubernetes.io/managed-by": "kyverno", "generate.kyverno.io/policy-name": "add-default-deny", "generate.kyverno.io/policy-namespace": "", "generate.kyverno.io/rule-name": p.rule, "generate.kyverno.io/trigger-group": "", "generate.kyverno.io/trigger-kind": "Namespace", "generate.kyverno.io/trigger-namespace": "", "generate.kyverno.io/trigger-uid": namespaceUID, "generate.kyverno.io/trigger-version": "v1"} {
+	for key, expected := range map[string]string{"app.kubernetes.io/managed-by": "kyverno", "generate.kyverno.io/policy-name": policy, "generate.kyverno.io/policy-namespace": "", "generate.kyverno.io/rule-name": rule, "generate.kyverno.io/trigger-group": "", "generate.kyverno.io/trigger-kind": "Namespace", "generate.kyverno.io/trigger-namespace": "", "generate.kyverno.io/trigger-uid": namespaceUID, "generate.kyverno.io/trigger-version": "v1"} {
 		actual, ok := labels[key].(string)
 		if !ok || actual != expected {
 			return false
 		}
 	}
 	return true
+}
+
+// Kyverno also generates one LimitRange and one ResourceQuota in every
+// namespace (add-default-limitrange and add-ns-quota). They hold no data and
+// constrain only this namespace, so they are recognised by exact kind, name and
+// generate labels; TestGeneratedLimitsMatchTheirDeclaredPolicies keeps this
+// table equal to those policies.
+var generatedLimits = map[string][2]string{
+	"LimitRange/default-limitrange":       {"add-default-limitrange", "generate-limitrange"},
+	"ResourceQuota/default-resourcequota": {"add-ns-quota", "generate-resourcequota"},
+}
+
+func generatedLimit(o object, namespaceUID string) bool {
+	rule, ok := generatedLimits[text(o, "kind")+"/"+text(child(o, "metadata"), "name")]
+	return ok && kyvernoGenerated(o, "v1", rule[0], rule[1], namespaceUID)
+}
+
+// trust-manager distributes the platform CA bundle to every namespace as one
+// ConfigMap owned by its cluster-scoped Bundle. It holds only public CA
+// certificates under its single target key.
+const trustBundle = "cloudflare-origin-ca"
+
+func trustBundleConfigMap(o object, bundleUID string) bool {
+	m := child(o, "metadata")
+	owners := items(m, "ownerReferences")
+	if bundleUID == "" || text(o, "apiVersion") != "v1" || text(o, "kind") != "ConfigMap" || text(m, "name") != trustBundle || text(m, "uid") == "" || m["deletionTimestamp"] != nil || len(owners) != 1 {
+		return false
+	}
+	owner := owners[0]
+	if text(owner, "apiVersion") != "trust.cert-manager.io/v1alpha1" || text(owner, "kind") != "Bundle" || text(owner, "name") != trustBundle || text(owner, "uid") != bundleUID || owner["controller"] != true {
+		return false
+	}
+	if labels := child(m, "labels"); len(labels) != 1 || labels["trust.cert-manager.io/bundle"] != trustBundle {
+		return false
+	}
+	for key := range o {
+		if key != "apiVersion" && key != "kind" && key != "metadata" && key != "data" {
+			return false
+		}
+	}
+	data := child(o, "data")
+	_, certificates := data["ca-certificates.crt"].(string)
+	return len(data) == 1 && certificates
 }

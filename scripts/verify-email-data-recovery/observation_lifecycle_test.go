@@ -75,7 +75,7 @@ func (a *observedReaderAPI) call(_ context.Context, input []byte, args ...string
 		}
 		return json.Marshal(a.pod)
 	case "PersistentVolumeClaim":
-		if args[2] == "private-mail-data" && a.servingClaim != nil {
+		if args[2] == servingClaim && a.servingClaim != nil {
 			return json.Marshal(a.servingClaim)
 		}
 		if args[2] == "data" && a.readerClaim != nil {

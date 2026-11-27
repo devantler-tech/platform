@@ -21,7 +21,7 @@ func recoveryResources(i invocation, key, auth string) []object {
 	sc["provisioner"] = "driver.longhorn.io"
 	sc["reclaimPolicy"] = "Delete"
 	sc["volumeBindingMode"] = "WaitForFirstConsumer"
-	params := object{"encrypted": "true", "numberOfReplicas": "3", "staleReplicaTimeout": "30", "fromBackup": "", "fsType": "ext4", "dataLocality": "disabled", "unmapMarkSnapChainRemoved": "ignored", "disableRevisionCounter": "true", "dataEngine": "v1", "backupTargetName": "default"}
+	params := object{"encrypted": "true", "numberOfReplicas": "3", "staleReplicaTimeout": "30", "fsType": "ext4", "dataLocality": "disabled", "unmapMarkSnapChainRemoved": "disabled", "dataEngine": "v2", "backupTargetName": "default"}
 	for _, stage := range []string{"stage", "publish", "expand"} {
 		params["csi.storage.k8s.io/node-"+stage+"-secret-name"] = "storage-key"
 		params["csi.storage.k8s.io/node-"+stage+"-secret-namespace"] = i.namespace

@@ -12,6 +12,7 @@ func backupProofFixture() (object, object, sourceIdentity, invocation) {
 	source := sourceIdentity{podUID: "source-pod-uid", claimUID: "source-claim-uid", volume: "data", pv: "source-volume", claimSize: "2Gi"}
 	backup := object{"metadata": object{"name": i.namespace + "-backup", "namespace": "velero", "uid": "owned-backup-uid", "labels": object{recoveryLabel: i.run}}, "status": object{"phase": "Completed", "completionTimestamp": "2026-10-29T10:01:00Z", "errors": float64(0)}}
 	pvb := object{"metadata": object{"namespace": "velero", "uid": "volume-backup-uid", "ownerReferences": []any{object{"apiVersion": "velero.io/v1", "kind": "Backup", "name": i.namespace + "-backup", "uid": "owned-backup-uid", "controller": true}}}, "spec": object{"pod": object{"name": "private-mail-0", "namespace": "private-mail", "uid": "source-pod-uid"}, "volume": "data", "backupStorageLocation": "default", "uploaderType": "kopia"}, "status": object{"phase": "Completed", "snapshotID": "0123456789abcdef0123456789abcdef", "completionTimestamp": "2026-10-29T10:00:59Z", "progress": object{"totalBytes": float64(4000), "bytesDone": float64(4000)}}}
+	child(pvb, "metadata")["labels"] = object{"velero.io/backup-uid": "owned-backup-uid", "velero.io/pvc-uid": source.claimUID}
 	return backup, pvb, source, i
 }
 
@@ -52,8 +53,11 @@ func TestMailboxSnapshotSelectionIgnoresScratchButRequiresUniqueData(t *testing.
 // of these foreign, stale, incomplete or empty backups as recovery evidence.
 func TestUnboundOrIncompleteBackupCannotBecomeRestoreInput(t *testing.T) {
 	mutations := map[string]func(object, object){
-		"foreign-backup":  func(b, _ object) { child(b, "metadata")["uid"] = "replacement" },
-		"wrong-owner":     func(_, p object) { items(child(p, "metadata"), "ownerReferences")[0]["uid"] = "another-backup" },
+		"foreign-backup": func(b, _ object) { child(b, "metadata")["uid"] = "replacement" },
+		"wrong-owner":    func(_, p object) { items(child(p, "metadata"), "ownerReferences")[0]["uid"] = "another-backup" },
+		"wrong-claim": func(_, p object) {
+			child(child(p, "metadata"), "labels")["velero.io/pvc-uid"] = "replacement-claim"
+		},
 		"wrong-pod":       func(_, p object) { child(child(p, "spec"), "pod")["uid"] = "replacement-pod" },
 		"wrong-namespace": func(_, p object) { child(child(p, "spec"), "pod")["namespace"] = "other" },
 		"wrong-volume":    func(_, p object) { child(p, "spec")["volume"] = "another" },

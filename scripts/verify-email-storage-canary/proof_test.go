@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/devantler-tech/platform/internal/longhorninventory"
 )
 
 func TestDispatchAuthorization(t *testing.T) {
@@ -87,7 +89,7 @@ func TestV2ReplicaQuorumRequiresThreeIndependentNativeCopies(t *testing.T) {
 		}
 		return replicas
 	}
-	if replicas := newReplicas(); !v2ReplicaQuorum(volume, replicas) || v2ReplicaQuorum(volume, replicas[:2]) {
+	if replicas := newReplicas(); !longhorninventory.V2ReplicaQuorum(volume, replicas) || longhorninventory.V2ReplicaQuorum(volume, replicas[:2]) {
 		t.Fatal("expected exactly three healthy copies")
 	}
 	for _, test := range []struct {
@@ -104,7 +106,7 @@ func TestV2ReplicaQuorumRequiresThreeIndependentNativeCopies(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			replicas := newReplicas()
 			test.change(replicas[0])
-			if v2ReplicaQuorum(volume, replicas) {
+			if longhorninventory.V2ReplicaQuorum(volume, replicas) {
 				t.Fatal("unproven replica quorum accepted")
 			}
 		})
