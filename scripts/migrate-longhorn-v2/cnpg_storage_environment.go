@@ -15,16 +15,23 @@ type cnpgStorageEnvironment struct {
 }
 
 // recoveryStorage qualifies registered disks while healthy V2 volumes coexist with retained V1 data.
-func (a temporaryV2Activation) recoveryStorage(ctx context.Context, source cnpgRecoverySource) (result cnpgStorageEnvironment, err error) {
+func (a temporaryV2Activation) recoveryStorage(ctx context.Context, source cnpgRecoverySource) (cnpgStorageEnvironment, error) {
+	if !knownCNPGArchiveSource(source.Namespace, source.Cluster) {
+		return cnpgStorageEnvironment{}, errors.New("database recovery source is unreviewed")
+	}
+	return a.recoveryClaimStorage(ctx, source.Size)
+}
+
+func (a temporaryV2Activation) recoveryClaimStorage(ctx context.Context, size string) (result cnpgStorageEnvironment, err error) {
 	phase := "input"
 	defer func() {
 		if err != nil {
 			result = cnpgStorageEnvironment{}
-			err = fmt.Errorf("database recovery storage held: phase=%s", phase)
+			err = fmt.Errorf("recovery storage held: phase=%s", phase)
 		}
 	}()
 	refused := errors.New("registered recovery storage is incomplete or changed")
-	if a.c.context != "admin@prod" || !knownCNPGArchiveSource(source.Namespace, source.Cluster) || !commandContextActive(ctx) {
+	if a.c.context != "admin@prod" || !commandContextActive(ctx) {
 		return result, refused
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -138,7 +145,7 @@ func (a temporaryV2Activation) recoveryStorage(ctx context.Context, source cnpgR
 	if err != nil || len(groups) != 0 {
 		return result, refused
 	}
-	if err = verifyCNPGRecoveryCapacity(source, s.storageNodes, s.replicas, backing, shards, result.Disks); err != nil {
+	if err = verifyRecoveryClaimCapacity(size, s.storageNodes, s.replicas, backing, shards, result.Disks); err != nil {
 		return result, err
 	}
 	phase = "continuity"
