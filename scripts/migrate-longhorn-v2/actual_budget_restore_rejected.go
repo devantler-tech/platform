@@ -10,10 +10,26 @@ type actualBudgetRejectedRestore struct {
 	restoreUID string
 }
 
+func parseActualBudgetRejectedRestore(fields []string, backupRun, currentRun string) *actualBudgetRejectedRestore {
+	if len(fields) != 4 || !validBenchmarkOwner(fields[0], fields[1]) || !nativeRestoreUID(fields[2]) ||
+		!nativeRestoreUID(fields[3]) || fields[2] == fields[3] || fields[0] == backupRun || fields[0] == currentRun {
+		return nil
+	}
+	return &actualBudgetRejectedRestore{
+		prior:      actualBudgetPriorRestore{run: fields[0], source: fields[1], namespaceUID: fields[2]},
+		restoreUID: fields[3],
+	}
+}
+
+func (rejected actualBudgetRejectedRestore) distinctFrom(prepared *actualBudgetPriorRestore) bool {
+	return prepared == nil || prepared.run != rejected.prior.run &&
+		prepared.namespaceUID != rejected.prior.namespaceUID && prepared.namespaceUID != rejected.restoreUID
+}
+
 func observeActualBudgetRejectedRestore(ctx context.Context, c client, opts actualBudgetRestoreConfirmation, run, node string, backup object) (benchmarkResource, error) {
 	refused := errors.New("the previous Actual Budget restore was not verified as rejected before allocation")
 	rejected := opts.rejected
-	if rejected == nil || opts.prior != nil || !nativeRestoreUID(rejected.restoreUID) {
+	if rejected == nil || !rejected.distinctFrom(opts.prior) || !nativeRestoreUID(rejected.restoreUID) {
 		return benchmarkResource{}, refused
 	}
 	prior := rejected.prior

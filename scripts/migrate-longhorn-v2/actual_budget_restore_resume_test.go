@@ -12,7 +12,7 @@ func TestActualBudgetUnstartedRestoreReusesOnlyItsOriginalPreparedScope(t *testi
 	const run = "91022"
 	const source = "23494e7388b3b1a7fc27da52f9ef5799cfb6ef10"
 	const namespaceUID = "cd426368-13da-451d-b61a-e50781ec7932"
-	for _, scenario := range []string{"namespace only", "prepared policy", "replaced namespace", "changed owner", "existing Restore", "existing claim", "foreign policy", "earlier download", "changed modifier"} {
+	for _, scenario := range []string{"namespace only", "prepared policy", "verified rejected namespace", "unverified rejected namespace", "replaced namespace", "changed owner", "existing Restore", "existing claim", "foreign policy", "earlier download", "changed modifier"} {
 		t.Run(scenario, func(t *testing.T) {
 			assets, err := actualBudgetRestoreAssets(run, "90718", "restore-worker")
 			if err != nil {
@@ -23,7 +23,16 @@ func TestActualBudgetUnstartedRestoreReusesOnlyItsOriginalPreparedScope(t *testi
 			currentNamespace := cloneActualBudgetPreparation(t, assets[0])
 			valueObject(currentNamespace, "metadata")["uid"] = namespaceUID
 			currentNamespace["status"] = object{"phase": "Active"}
+			namespaces := []any{currentNamespace}
+			var permitted []benchmarkResource
 			switch scenario {
+			case "verified rejected namespace", "unverified rejected namespace":
+				rejected := cloneActualBudgetPreparation(t, assets[0])
+				valueObject(rejected, "metadata")["name"] = actualBudgetRestorePrefix + "91021"
+				namespaces = append(namespaces, rejected)
+				if scenario == "verified rejected namespace" {
+					permitted = append(permitted, benchmarkIdentity(rejected))
+				}
 			case "replaced namespace":
 				valueObject(currentNamespace, "metadata")["uid"] = "3d426368-13da-451d-b61a-e50781ec7932"
 			case "changed owner":
@@ -57,7 +66,7 @@ func TestActualBudgetUnstartedRestoreReusesOnlyItsOriginalPreparedScope(t *testi
 					if len(args) > 4 && args[4] == ns {
 						return json.Marshal(currentNamespace)
 					}
-					return json.Marshal(object{"items": []any{currentNamespace}})
+					return json.Marshal(object{"items": namespaces})
 				case "persistentvolumes":
 					return json.Marshal(object{"items": []any{object{"metadata": object{"name": "serving", "uid": "existing-pv"}}}})
 				case "restores.velero.io":
@@ -96,9 +105,9 @@ func TestActualBudgetUnstartedRestoreReusesOnlyItsOriginalPreparedScope(t *testi
 				}
 				return json.Marshal(object{"items": []any{}})
 			}}
-			_, err = prepareActualBudgetRestoreScope(t.Context(), c, source, &actualBudgetPriorRestore{run, source, namespaceUID}, assets)
+			_, err = prepareActualBudgetRestoreScope(t.Context(), c, source, &actualBudgetPriorRestore{run, source, namespaceUID}, assets, permitted...)
 			switch scenario {
-			case "namespace only":
+			case "namespace only", "verified rejected namespace":
 				if err != nil || strings.Join(created, ",") != "CiliumNetworkPolicy,ConfigMap" {
 					t.Fatalf("the namespace-only interruption did not resume: %v", err)
 				}

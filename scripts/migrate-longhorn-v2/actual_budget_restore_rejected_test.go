@@ -56,3 +56,43 @@ func TestActualBudgetRetryDispatchRequiresBothExactUIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestActualBudgetResumeCanBindTheRetainedRejectedScope(t *testing.T) {
+	env := dispatchFixture()
+	const resumedNamespace = "4bd77aa9-0fd6-4343-a799-75e7f0117380"
+	const rejectedNamespace = "7bd77aa9-0fd6-4343-a799-75e7f0117380"
+	backupSource := strings.Repeat("a", 40)
+	resumedSource := strings.Repeat("c", 40)
+	rejectedSource := strings.Repeat("d", 40)
+	env["GITHUB_RUN_ID"], env["LONGHORN_V2_NODE"] = "104", ""
+	env["LONGHORN_V2_OPERATION"] = actualBudgetRestoreResume
+	base := actualBudgetRestoreResume + ":101:" + backupSource + ":" +
+		strings.Repeat("b", 64) + ":103:" + resumedSource + ":" + resumedNamespace
+	for _, test := range []struct {
+		name, suffix string
+		valid        bool
+	}{
+		{name: "ordinary resume", valid: true},
+		{name: "retained rejection", suffix: ":102:" + rejectedSource + ":" + rejectedNamespace + ":" + rejectedRestoreTestUID, valid: true},
+		{name: "only the rejected namespace", suffix: ":102:" + rejectedSource + ":" + rejectedNamespace},
+		{name: "same workflow", suffix: ":103:" + rejectedSource + ":" + rejectedNamespace + ":" + rejectedRestoreTestUID},
+		{name: "same namespace", suffix: ":102:" + rejectedSource + ":" + resumedNamespace + ":" + rejectedRestoreTestUID},
+		{name: "same object", suffix: ":102:" + rejectedSource + ":" + rejectedNamespace + ":" + resumedNamespace},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env["LONGHORN_V2_CONFIRM"] = base + test.suffix
+			got, err := authorizeActualBudgetRestore(func(key string) string { return env[key] })
+			if (err == nil) != test.valid {
+				t.Fatalf("unexpected restore resume authorization: %v", err)
+			}
+			if test.valid && (got.prior == nil || got.prior.namespaceUID != resumedNamespace) {
+				t.Fatal("the already-prepared restore namespace was not bound")
+			}
+			if test.valid && test.suffix != "" && (got.rejected == nil || got.rejected.prior.run != "102" ||
+				got.rejected.prior.source != rejectedSource || got.rejected.prior.namespaceUID != rejectedNamespace ||
+				got.rejected.restoreUID != rejectedRestoreTestUID) {
+				t.Fatal("the rejected namespace and Restore were not bound")
+			}
+		})
+	}
+}

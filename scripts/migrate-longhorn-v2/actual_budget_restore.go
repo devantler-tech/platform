@@ -40,19 +40,21 @@ func authorizeActualBudgetRestore(getenv func(string) string) (actualBudgetResto
 			return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
 		}
 	case actualBudgetRestoreResume:
-		if len(fields) != 7 || !validBenchmarkOwner(fields[4], fields[5]) || !nativeRestoreUID(fields[6]) ||
+		if (len(fields) != 7 && len(fields) != 11) || !validBenchmarkOwner(fields[4], fields[5]) || !nativeRestoreUID(fields[6]) ||
 			fields[4] == fields[1] || fields[4] == getenv("GITHUB_RUN_ID") {
 			return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
 		}
 		opts.prior = &actualBudgetPriorRestore{run: fields[4], source: fields[5], namespaceUID: fields[6]}
-	case actualBudgetRestoreRetry:
-		if len(fields) != 8 || !validBenchmarkOwner(fields[4], fields[5]) || !nativeRestoreUID(fields[6]) ||
-			!nativeRestoreUID(fields[7]) || fields[6] == fields[7] || fields[4] == fields[1] || fields[4] == getenv("GITHUB_RUN_ID") {
-			return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
+		if len(fields) == 11 {
+			opts.rejected = parseActualBudgetRejectedRestore(fields[7:], opts.backupRun, getenv("GITHUB_RUN_ID"))
+			if opts.rejected == nil || !opts.rejected.distinctFrom(opts.prior) {
+				return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
+			}
 		}
-		opts.rejected = &actualBudgetRejectedRestore{
-			prior:      actualBudgetPriorRestore{run: fields[4], source: fields[5], namespaceUID: fields[6]},
-			restoreUID: fields[7],
+	case actualBudgetRestoreRetry:
+		opts.rejected = parseActualBudgetRejectedRestore(fields[4:], opts.backupRun, getenv("GITHUB_RUN_ID"))
+		if opts.rejected == nil {
+			return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
 		}
 	default:
 		return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
@@ -203,23 +205,22 @@ func runActualBudgetRestore(ctx context.Context, c client, source, run string, o
 		return errors.New("the V2 storage class or isolated restore scope is unverified")
 	}
 	scopeRun := run
-	var permitted []benchmarkResource
 	if opts.prior != nil {
 		if err := verifyUnstartedActualBudgetOwner(ctx, c, opts, run); err != nil {
 			return err
 		}
 		scopeRun = opts.prior.run
-	} else {
-		if opts.rejected != nil {
-			prior, err := observeActualBudgetRejectedRestore(ctx, c, opts, run, storage.Disks[0].Node, backup)
-			if err != nil {
-				return err
-			}
-			permitted = append(permitted, prior)
+	}
+	var permitted []benchmarkResource
+	if opts.rejected != nil {
+		rejected, err := observeActualBudgetRejectedRestore(ctx, c, opts, run, storage.Disks[0].Node, backup)
+		if err != nil {
+			return err
 		}
-		if !actualBudgetRestoreScopeClear(ctx, c, permitted...) {
-			return errors.New("an isolated restore scope is already active")
-		}
+		permitted = append(permitted, rejected)
+	}
+	if opts.prior == nil && !actualBudgetRestoreScopeClear(ctx, c, permitted...) {
+		return errors.New("an isolated restore scope is already active")
 	}
 	assets, err := actualBudgetRestoreAssets(scopeRun, opts.backupRun, storage.Disks[0].Node)
 	if err != nil {
@@ -240,6 +241,12 @@ func runActualBudgetRestore(ctx context.Context, c client, source, run string, o
 	current, err := activation.recoveryClaimStorage(ctx, actualBudgetRestoreSize)
 	if err != nil || !recoveryJSONEqual(storage, current) {
 		return errors.New("the qualified V2 copy capacity changed before allocation")
+	}
+	if opts.rejected != nil {
+		rejected, err := observeActualBudgetRejectedRestore(ctx, c, opts, run, current.Disks[0].Node, backup)
+		if err != nil || rejected != permitted[0] {
+			return errors.New("the retained rejected Actual Budget restore changed before allocation")
+		}
 	}
 	if err = verifyUnstartedActualBudgetRestore(ctx, c, namespace, permitted...); err != nil {
 		return err
