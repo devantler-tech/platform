@@ -1,6 +1,4 @@
-# The mail store is served from the encrypted claim (#5387). The original,
-# unencrypted claim stays declared and is mounted read-only only by the copy
-# step, so it is never written again and remains the rollback.
+# Serve the encrypted Longhorn V2 store. The original claims stay declared.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -18,8 +16,4 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: email-data-encrypted
-        - name: legacy-data
-          persistentVolumeClaim:
-            claimName: private-mail-data
-            readOnly: true
+            claimName: email-data-encrypted-v2

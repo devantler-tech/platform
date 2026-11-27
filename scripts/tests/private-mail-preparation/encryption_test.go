@@ -135,9 +135,8 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 			volumes[stringField(t, volume, "name")] = claim
 		}
 	}
-	if len(volumes) != 2 || volumes["data"]["claimName"] != "email-data-encrypted" || volumes["data"]["readOnly"] == true ||
-		volumes["v2-data"]["claimName"] != "email-data-encrypted-v2" || volumes["v2-data"]["readOnly"] == true {
-		t.Fatal("both encrypted claims must be available to the rollback-safe selector")
+	if len(volumes) != 1 || volumes["v2-data"]["claimName"] != "email-data-encrypted-v2" || volumes["v2-data"]["readOnly"] == true {
+		t.Fatal("the server must mount only the verified V2 claim")
 	}
 	server := ""
 	for _, item := range sequence(t, pod["containers"]) {
@@ -159,8 +158,8 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 			for _, mountItem := range sequence(t, container["volumeMounts"]) {
 				mount := mapping(t, mountItem)
 				mounts[stringField(t, mount, "name")] = mount
-				if mount["name"] == "legacy-data" {
-					t.Fatal("the retired plaintext claim must not mount in the rollback artifact")
+				if mount["name"] == "legacy-data" || mount["name"] == "data" {
+					t.Fatal("the retained original claims must not mount")
 				}
 			}
 			selecting := name == "select-mail-store"
@@ -170,11 +169,11 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 			}
 			if mounts["serving-storage"]["mountPath"] != routeMount || (mounts["serving-storage"]["readOnly"] == true) == selecting ||
 				!selecting && mounts["serving-storage"]["subPath"] != "config.json" ||
-				mounts["data"]["mountPath"] != "/var/lib/stalwart" || mounts["v2-data"]["mountPath"] != "/var/lib/stalwart-v2" ||
+				mounts["v2-data"]["mountPath"] != "/var/lib/stalwart-v2" ||
 				(mounts["v2-data"]["readOnly"] == true) != selecting {
 				t.Fatalf("%s does not use the shared fenced storage route", name)
 			}
-			if selecting && (index != 0 || position != 1 || container["image"] != server) {
+			if selecting && (index != 0 || position != 0 || container["image"] != server) {
 				t.Fatal("the selector must run before setup with the server's signed image")
 			}
 		}

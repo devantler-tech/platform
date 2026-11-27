@@ -1,4 +1,4 @@
-# Keep the selected config mount, and both encrypted stores, on setup and serving.
+# Keep the verified configuration and the original mount path of the V2 store.
 - op: test
   path: /spec/template/spec/initContainers/0/name
   value: configure
@@ -20,21 +20,31 @@
 - op: replace
   path: /spec/template/spec/containers/0/volumeMounts/0/name
   value: serving-storage
-- op: add
+- op: test
+  path: /spec/template/spec/initContainers/0/volumeMounts/1/name
+  value: data
+- op: replace
   path: /spec/template/spec/initContainers/0/volumeMounts/1
   value:
     name: v2-data
     mountPath: /var/lib/stalwart-v2
-- op: add
+- op: test
+  path: /spec/template/spec/containers/0/volumeMounts/1/name
+  value: data
+- op: replace
   path: /spec/template/spec/containers/0/volumeMounts/1
   value:
     name: v2-data
     mountPath: /var/lib/stalwart-v2
 - op: test
-  path: /spec/template/spec/volumes/1/name
-  value: legacy-data
-- op: remove
-  path: /spec/template/spec/volumes/1
+  path: /spec/template/spec/volumes/0/name
+  value: data
+- op: test
+  path: /spec/template/spec/volumes/0/persistentVolumeClaim/claimName
+  value: email-data-encrypted-v2
+- op: replace
+  path: /spec/template/spec/volumes/0/name
+  value: v2-data
 - op: add
   path: /spec/template/spec/volumes/0
   value:
@@ -42,9 +52,3 @@
     emptyDir:
       medium: Memory
       sizeLimit: 1Mi
-- op: add
-  path: /spec/template/spec/volumes/1
-  value:
-    name: v2-data
-    persistentVolumeClaim:
-      claimName: email-data-encrypted-v2
