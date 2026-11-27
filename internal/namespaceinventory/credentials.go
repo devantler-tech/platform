@@ -76,13 +76,16 @@ func LoadEmailRecoveryClient(getenv func(string) string) (*http.Client, *url.URL
 	for key, want := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
 		"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted",
-		"GITHUB_ACTOR":                "devantler",
-		"GITHUB_WORKFLOW_REF":         "devantler-tech/platform/.github/workflows/verify-email-data-recovery.yaml@refs/heads/main",
-		"EMAIL_DATA_RECOVERY_CONFIRM": "verify-email-data-recovery",
+		"GITHUB_ACTOR":        "devantler",
+		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/verify-email-data-recovery.yaml@refs/heads/main",
 	} {
 		if getenv(key) != want {
 			return nil, nil, errors.New("protected Email recovery dispatch is unverified")
 		}
+	}
+	confirm := getenv("EMAIL_DATA_RECOVERY_CONFIRM")
+	if confirm != "verify-email-data-recovery" && confirm != "verify-email-data-recovery-preflight" {
+		return nil, nil, errors.New("protected Email recovery dispatch is unverified")
 	}
 	if !sourcePattern.MatchString(getenv("GITHUB_SHA")) || !runPattern.MatchString(getenv("GITHUB_RUN_ID")) {
 		return nil, nil, errors.New("email recovery source and run are required")

@@ -27,7 +27,7 @@ func TestConfirmedRecoveryStartsWithReadOnlyPreflightAndClosedFailure(t *testing
 	env := confirmedInvocation()
 	k := &refusedAPI{}
 	var output bytes.Buffer
-	if runRecovery(context.Background(), func(s string) string { return env[s] }, k, &output) != 2 || k.calls != 1 || output.String() != "EMAIL_DATA_RECOVERY=UNVERIFIED stage=preflight cleanup=NOT_STARTED\n" || strings.Contains(output.String(), "private-provider") {
+	if runRecovery(context.Background(), func(s string) string { return env[s] }, k, &output) != 2 || k.calls != 1 || output.String() != "EMAIL_DATA_RECOVERY=UNVERIFIED stage=serving-source cleanup=NOT_STARTED\n" || strings.Contains(output.String(), "private-provider") {
 		t.Fatal("confirmed recovery skipped preflight or exposed provider data")
 	}
 }
