@@ -352,7 +352,7 @@ assert_generated_policy_contract() {
     cd "${generator_dir}"
     # shellcheck disable=SC2016 # $index is a yq variable.
     yq e -N -s '($index | tostring) + "-" + .metadata.name + ".yaml"' \
-    'select(
+      'select(
       ((.apiVersion // "") | test("^kyverno\\.io/")) and
       (.kind == "ClusterPolicy" or .kind == "Policy") and
       ([.spec.rules[] |
@@ -504,7 +504,7 @@ assert_generated_policy_contract() {
     cd "${mutation_dir}"
     # shellcheck disable=SC2016 # $index is a yq variable.
     yq e -N -s '($index | tostring) + "-" + .metadata.name + ".yaml"' \
-    'select(
+      'select(
       ((.apiVersion // "") | test("^kyverno\\.io/")) and
       (.kind == "ClusterPolicy" or .kind == "Policy") and
       ([.spec.rules[] | select(.mutate != null)] | length > 0)
@@ -572,7 +572,7 @@ assert_generated_policy_contract "${effective_policy_render}"
 # Deployment marker to establish that it inspected the Crossplane chart.
 if ! helm_validation="$(
   cd "${root_dir}" &&
-  ksail --config ksail.prod.yaml workload validate --rules "${helm_policy_rules}" 2>&1
+    ksail --config ksail.prod.yaml workload validate --rules "${helm_policy_rules}" 2>&1
 )"; then
   printf '%s\n' "${helm_validation}" >&2
   fail 'Helm-rendered Crossplane resources must satisfy the egress-policy contract'
