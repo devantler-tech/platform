@@ -1,10 +1,91 @@
 package main
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
 )
+
+func TestUmamiSwitchoverReadbackBindsTheRecordedPromotion(t *testing.T) {
+	const old, target = "umami-db-11", "umami-db-12"
+	for _, fault := range []string{"", "wrong owner", "different target", "wrong ordinal", "changed record"} {
+		t.Run(fault, func(t *testing.T) {
+			record := umamiV2PromotionRecord{
+				Source: "45f385ab8aaff40c04aaa2b6c0bba23ac55706d4", Run: "42", Target: target,
+				Witness: umamiV2Promotion{
+					Database: benchmarkResource{Name: "umami-db", Namespace: "umami"},
+					Previous: benchmarkResource{Name: old, Namespace: "umami"},
+					Standbys: map[string]cnpgRecoveredStorage{
+						target:       {Pod: benchmarkResource{Name: target, Namespace: "umami"}},
+						"umami-db-2": {Pod: benchmarkResource{Name: "umami-db-2", Namespace: "umami"}},
+						"umami-db-3": {Pod: benchmarkResource{Name: "umami-db-3", Namespace: "umami"}},
+					},
+					PreviousState: postgresState{SystemID: "7560127483245078101", Timeline: "7", FlushLSN: "0/400"},
+				},
+			}
+			data, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := record.Run
+			requestedPrevious, requestedTarget := old, target
+			switch fault {
+			case "wrong owner":
+				owner = "43"
+			case "different target":
+				requestedTarget = "umami-db-2"
+			case "wrong ordinal":
+				requestedPrevious = "umami-db-3"
+			case "changed record":
+				data = append(data, ' ')
+			}
+			journal := object{"apiVersion": "v1", "kind": "ConfigMap", "metadata": object{
+				"name": umamiV2SwitchoverJournal, "namespace": umamiV2SwitchoverNamespace, "resourceVersion": "12",
+				"uid":    "c6339ec2-6239-4e3f-85fd-fa778d6d761d",
+				"labels": object{"app.kubernetes.io/managed-by": "github-actions", "storage.platform.devantler.tech/recovery-run": owner}},
+				"data": object{"record": string(data)}}
+			if _, err := bindUmamiPromotionRecord(journal, requestedPrevious, requestedTarget); (err == nil) != (fault == "") {
+				t.Fatalf("unexpected journal readback: %v", err)
+			}
+		})
+	}
+}
+
+func TestUmamiSwitchoverWriterRouteRejectsTheOldWriter(t *testing.T) {
+	const serviceUID = "c6339ec2-6239-4e3f-85fd-fa778d6d761d"
+	const writerUID = "4d48bfc9-7352-4fc4-a982-086078e144c9"
+	const writerName = "umami-db-12"
+	for _, fault := range []string{"", "stale writer", "stale slice owner", "draining endpoint", "missing route", "both writers"} {
+		t.Run(fault, func(t *testing.T) {
+			controller := object{"apiVersion": "v1", "kind": "Service", "name": "umami-db-rw", "uid": serviceUID, "controller": true}
+			target := object{"kind": "Pod", "name": writerName, "uid": writerUID, "namespace": "umami"}
+			state := object{"ready": true, "serving": true, "terminating": false}
+			endpoints := []any{object{"conditions": state, "targetRef": target}}
+			switch fault {
+			case "stale writer":
+				target["uid"] = "1aa817ea-b284-4aa9-a9b8-cbcadf4c9c2e"
+			case "stale slice owner":
+				controller["uid"] = "022b6c1a-129a-4d25-a0ac-aa434b186c1b"
+			case "draining endpoint":
+				state["terminating"] = true
+			case "missing route":
+				endpoints = []any{}
+			case "both writers":
+				endpoints = append(endpoints, object{"conditions": state, "targetRef": object{
+					"kind": "Pod", "namespace": "umami", "name": "umami-db-11", "uid": "1aa817ea-b284-4aa9-a9b8-cbcadf4c9c2e"}})
+			}
+			slice := object{"apiVersion": "discovery.k8s.io/v1", "kind": "EndpointSlice", "metadata": object{
+				"name": "umami-db-rw-q8kvt", "namespace": "umami", "uid": "5010f302-ded4-48cb-8ce3-2dcfdf37055b", "resourceVersion": "17",
+				"labels": object{"kubernetes.io/service-name": "umami-db-rw"}, "ownerReferences": []any{controller}}, "endpoints": endpoints}
+			service := object{"metadata": object{"uid": serviceUID}}
+			writer := object{"metadata": object{"name": writerName, "uid": writerUID}}
+			if err := bindUmamiWriterEndpoints(service, writer, []object{slice}); (err == nil) != (fault == "") {
+				t.Fatalf("unexpected writer route proof: %v", err)
+			}
+		})
+	}
+}
 
 func TestUmamiSwitchoverChangesOnlyTheWitnessedCNPGStatus(t *testing.T) {
 	for _, fault := range []string{"", "pending promotion", "stale readiness", "wrong owner", "same target", "fenced pod"} {
