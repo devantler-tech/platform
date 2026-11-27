@@ -296,7 +296,7 @@ rbac.authorization.k8s.io/v1|Role|world-at-ruin|world-at-ruin-zone-trial-operato
 
 v1|ConfigMap|flux-system|variables-base 3ad340acc55739177ebb22a26bf2c20116c66a818a77793646c4fd54b4c3c8b1
 
-v1|ConfigMap|flux-system|variables-cluster 13fbf84f40dd1aebcb27df20a6f91c9edac10de879a9de1d382747d3fc75d0b6
+v1|ConfigMap|flux-system|variables-cluster 5b3066af14bb077ea4d764ef0a18031fcf0dbcd965eb9d8281e79f7ddd39bb14
 
 v1|Secret|flux-system|variables-cluster 03c1c8eb598a7d2fe2a7c0670282d90139b91fb86e5bff534cd5d748976d19f5
 

@@ -13,9 +13,9 @@ data:
   issuer_name: letsencrypt-prod
   # Per-env prefixes inside the shared R2 bucket.
   r2_prefix_velero: velero/prod
-  # Keep single-replica backup staging off until backup/restore validation.
-  # An explicit validation rollout selects longhorn-backup for both classes.
-  velero_backup_pvc_storage_class: longhorn
+  # Exercise the disposable single-copy class for the immediate V1 snapshot
+  # uploads in #6320. The WFFC uploads retain their existing staging class.
+  velero_backup_pvc_storage_class: longhorn-backup
   velero_backup_wffc_pvc_storage_class: longhorn-wffc
   # --- Critical controllers (2 replicas for HA; the require-replica-floor minimum) ---
   # With VPA updateMode=InPlaceOrRecreate, single-replica services get 502s during
