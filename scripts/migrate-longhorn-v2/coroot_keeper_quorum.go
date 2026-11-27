@@ -160,9 +160,11 @@ func observeCorootKeeperQuorum(ctx context.Context, c client, source string) err
 	const probe = "curl -fsS --max-time 4 http://127.0.0.1:9182/ready >/dev/null; " +
 		"exec 3<>/dev/tcp/127.0.0.1/9181; printf mntr >&3; timeout 6 cat <&3"
 	var previous [3]corootKeeperMember
+	var previousDisks [3]corootKeeperProviderDisk
 	var controllers [2]benchmarkResource
 	for pass := range 2 {
 		var current [3]corootKeeperMember
+		var disks [3]corootKeeperProviderDisk
 		stateful, err := c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
 		if err != nil {
 			return err
@@ -193,7 +195,12 @@ func observeCorootKeeperQuorum(ctx context.Context, c client, source string) err
 		if len(selected) != len(current) {
 			return errCorootKeeperQuorum
 		}
+		attachments, err := c.list(ctx, "volumeattachments.storage.k8s.io", "")
+		if err != nil {
+			return err
+		}
 		nodes := map[string]bool{}
+		handles := map[string]bool{}
 		leaders := 0
 		for id := range current {
 			name := corootKeeperName + "-" + strconv.Itoa(id)
@@ -202,6 +209,20 @@ func observeCorootKeeperQuorum(ctx context.Context, c client, source string) err
 				return errCorootKeeperQuorum
 			}
 			nodes[member.Node] = true
+			claim, err := c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, "data-"+name, false)
+			if err != nil {
+				return err
+			}
+			pv, err := c.get(ctx, "persistentvolume", "", text(claim, "spec", "volumeName"), false)
+			if err != nil {
+				return err
+			}
+			disk, err := bindCorootKeeperProviderDisk(member, stateful, claim, pv, attachments)
+			if err != nil || handles[disk.Handle] {
+				return errCorootKeeperStorage
+			}
+			handles[disk.Handle] = true
+			disks[id] = disk
 			out, err := c.kubectl(ctx, nil, "exec", name, "--namespace="+corootKeeperNamespace,
 				"--container="+corootKeeperContainer, "--pod-running-timeout=10s", "--", "bash", "-ec", probe)
 			if err != nil {
@@ -221,10 +242,10 @@ func observeCorootKeeperQuorum(ctx context.Context, c client, source string) err
 			}
 			current[id] = member
 		}
-		if leaders != 1 || pass == 1 && previous != current {
+		if leaders != 1 || pass == 1 && (previous != current || previousDisks != disks) {
 			return errCorootKeeperQuorum
 		}
-		previous = current
+		previous, previousDisks = current, disks
 	}
 	return sourceCurrent(ctx, c.run, source)
 }
