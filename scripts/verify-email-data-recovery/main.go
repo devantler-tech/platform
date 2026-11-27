@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -33,7 +34,21 @@ func runRecovery(ctx context.Context, env func(string) string, k kubernetes, out
 		_, _ = fmt.Fprintln(output, "EMAIL_DATA_RECOVERY=UNVERIFIED stage=dispatch cleanup=NOT_STARTED")
 		return 2
 	}
-	d := &recoveryDriver{i: i, k: k, refs: map[string]ownedReference{}, stage: "preflight"}
+	d := &recoveryDriver{i: i, k: k, env: env, refs: map[string]ownedReference{}, stage: "preflight"}
+	if i.readOnly {
+		checkCtx, stop := context.WithTimeout(ctx, 3*time.Minute)
+		defer stop()
+		_, closeSource, err := d.openSource(checkCtx)
+		if err != nil {
+			_, _ = fmt.Fprintf(output, "EMAIL_DATA_RECOVERY_PREFLIGHT=UNVERIFIED stage=%s writes=0\n", d.stage)
+			return 2
+		}
+		closeSource()
+		if _, err = fmt.Fprintln(output, "EMAIL_DATA_RECOVERY_PREFLIGHT=PASS source-session=VERIFIED writes=0"); err != nil {
+			return 2
+		}
+		return 0
+	}
 	runCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	if err = d.execute(runCtx); err != nil {
@@ -53,8 +68,29 @@ func runRecovery(ctx context.Context, env func(string) string, k kubernetes, out
 		_, _ = fmt.Fprintln(output, "EMAIL_DATA_RECOVERY=UNVERIFIED stage=cleanup cleanup=RETAINED")
 		return 2
 	}
-	if _, err := fmt.Fprintln(output, "EMAIL_DATA_RECOVERY=PASS messages=VERIFIED storage=ENCRYPTED source=RETAINED restore_cleanup=VERIFIED backup=RETAINED_24H"); err != nil {
+	receipt, err := recoveryReceipt(d.verdicts)
+	if err != nil {
+		_, _ = fmt.Fprintln(output, "EMAIL_DATA_RECOVERY=UNVERIFIED stage=receipt cleanup=VERIFIED")
+		return 2
+	}
+	if _, err := fmt.Fprintln(output, receipt); err != nil {
 		return 2
 	}
 	return 0
+}
+
+// recoveryReceipt names each census category with a closed verdict only.
+func recoveryReceipt(verdicts map[string]string) (string, error) {
+	receipt := "EMAIL_DATA_RECOVERY=PASS"
+	for _, category := range []string{"messages", "mailboxes", "calendars", "tasks", "settings"} {
+		verdict := verdicts[category]
+		if verdict != "VERIFIED" && (verdict != "EMPTY" || category == "messages" || category == "mailboxes" || category == "settings") {
+			return "", errors.New("receipt")
+		}
+		receipt += " " + category + "=" + verdict
+	}
+	if len(verdicts) != 5 {
+		return "", errors.New("receipt")
+	}
+	return receipt + " storage=ENCRYPTED source=RETAINED restore_cleanup=VERIFIED backup=RETAINED_24H", nil
 }

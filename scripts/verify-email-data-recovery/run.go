@@ -9,6 +9,8 @@ import (
 	"errors"
 	"regexp"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/longhorninventory"
 )
 
 func randomRecoveryValue() (string, error) {
@@ -32,7 +34,7 @@ func (d *recoveryDriver) list(ctx context.Context, kind, ns, selector string) ([
 		return nil, err
 	}
 	var o object
-	if json.Unmarshal(data, &o) != nil {
+	if json.Unmarshal(data, &o) != nil || text(child(o, "metadata"), "continue") != "" || child(o, "metadata")["remainingItemCount"] != nil {
 		return nil, errors.New("list-response")
 	}
 	raw, ok := o["items"].([]any)
@@ -47,14 +49,23 @@ func (d *recoveryDriver) list(ctx context.Context, kind, ns, selector string) ([
 }
 func (d *recoveryDriver) preflight(ctx context.Context) (string, error) {
 	var err error
+	d.stage = "serving-source"
 	d.source, err = d.readSource(ctx)
 	if err != nil {
 		return "", err
 	}
+	d.stage = "namespace-policy-source"
 	d.namespacePolicies, err = loadNamespacePolicies()
 	if err != nil {
 		return "", err
 	}
+	// Disposal needs the complete inventory; without its credential no
+	// recovery starts, rather than leaving a copy that cannot be removed.
+	d.stage = "inventory-credential"
+	if err = d.useCompleteInventory(d.env); err != nil {
+		return "", err
+	}
+	d.stage = "backup-controller"
 	velero, found, err := d.lookup(ctx, "Deployment", "velero", "velero")
 	if err != nil || !found {
 		return "", errors.New("backup-controller")
@@ -68,19 +79,23 @@ func (d *recoveryDriver) preflight(ctx context.Context) (string, error) {
 	if !versionOK {
 		return "", errors.New("backup-controller-version")
 	}
+	d.stage = "backup-location"
 	location, found, err := d.lookup(ctx, "BackupStorageLocation", "default", "velero")
 	if err != nil || !found || text(child(location, "status"), "phase") != "Available" || (text(child(location, "spec"), "accessMode") != "" && text(child(location, "spec"), "accessMode") != "ReadWrite") {
 		return "", errors.New("backup-location")
 	}
+	d.stage = "backup-repository"
 	repo, found, err := d.lookup(ctx, "BackupRepository", "private-mail-default-kopia", "velero")
 	if err != nil || !found || text(child(repo, "spec"), "volumeNamespace") != "private-mail" || text(child(repo, "spec"), "backupStorageLocation") != "default" || text(child(repo, "spec"), "repositoryType") != "kopia" || text(child(repo, "status"), "phase") != "Ready" {
 		return "", errors.New("backup-repository")
 	}
+	d.stage = "invocation-collision"
 	for _, ref := range []ownedReference{{kind: "Namespace", name: d.i.namespace}, {kind: "StorageClass", name: d.i.namespace}, {kind: "Backup", name: d.i.namespace + "-backup", namespace: "velero"}, {kind: "DataDownload", name: d.i.namespace + "-download", namespace: "velero"}} {
 		if _, exists, err := d.lookup(ctx, ref.kind, ref.name, ref.namespace); err != nil || exists {
 			return "", errors.New("invocation-collision")
 		}
 	}
+	d.stage = "mailbox-credential"
 	secret, found, err := d.lookup(ctx, "Secret", "private-mail-maintainer", "private-mail")
 	if err != nil || !found {
 		return "", errors.New("mailbox-credential")
@@ -98,23 +113,34 @@ func (d *recoveryDriver) ref(kind, name, ns string) (ownedReference, error) {
 	}
 	return ref, nil
 }
-func (d *recoveryDriver) execute(ctx context.Context) error {
+func (d *recoveryDriver) openSource(ctx context.Context) (*mailboxClient, func(), error) {
 	password, err := d.preflight(ctx)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
+	d.stage = "source-forward"
 	endpoint, stopSource, err := d.forward(ctx, "private-mail", "private-mail-0", d.source.podUID)
+	if err != nil {
+		return nil, nil, err
+	}
+	d.stage = "source-session"
+	original, err := newMailboxClient(endpoint, password)
+	if err == nil {
+		err = original.session(ctx)
+	}
+	if err != nil {
+		stopSource()
+		return nil, nil, err
+	}
+	return original, stopSource, nil
+}
+
+func (d *recoveryDriver) execute(ctx context.Context) error {
+	original, stopSource, err := d.openSource(ctx)
 	if err != nil {
 		return err
 	}
 	defer stopSource()
-	original, err := newMailboxClient(endpoint, password)
-	if err != nil {
-		return err
-	}
-	if err = original.session(ctx); err != nil {
-		return err
-	}
 	d.stage = "source-marker"
 	nonce, err := randomRecoveryValue()
 	if err != nil {
@@ -123,6 +149,11 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 	after := time.Now().UTC().Truncate(time.Second)
 	d.started = true
 	marker, err := original.createMarker(ctx, nonce)
+	if err != nil {
+		return err
+	}
+	d.stage = "source-census"
+	sourceBefore, err := original.census(ctx)
 	if err != nil {
 		return err
 	}
@@ -163,6 +194,11 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 		return err
 	}
 	if err = d.sourceRetained(ctx); err != nil {
+		return err
+	}
+	d.stage = "source-census"
+	sourceAfter, err := original.census(ctx)
+	if err != nil {
 		return err
 	}
 	d.stage = "isolated-storage"
@@ -246,7 +282,7 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 		return err
 	}
 	defer stopReader()
-	recovered, err := newMailboxClient(endpoint, password)
+	recovered, err := newMailboxClient(endpoint, original.password)
 	if err != nil {
 		return err
 	}
@@ -257,6 +293,18 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 	}
 	d.stage = "reader-message"
 	if _, err = recovered.verifyMessage(ctx, marker.identity); err != nil {
+		return err
+	}
+	d.stage = "reader-census"
+	restored, err := recovered.census(ctx)
+	if err != nil {
+		return err
+	}
+	if d.verdicts, err = censusVerdicts(sourceBefore, sourceAfter, restored); err != nil {
+		return err
+	}
+	d.stage = "restore-replica-proof"
+	if err = d.verifyRestoredReplicaHealth(ctx); err != nil {
 		return err
 	}
 	d.stage = "source-retention"
@@ -271,6 +319,25 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 		return err
 	}
 	return d.sourceRetained(ctx)
+}
+
+func (d *recoveryDriver) verifyRestoredReplicaHealth(ctx context.Context) error {
+	return waitRecovery(ctx, 90*time.Second, func() (bool, error) {
+		volume, found, err := d.lookup(ctx, "volumes.longhorn.io", d.volumeName, "longhorn-system")
+		meta := child(volume, "metadata")
+		if err != nil || !found || text(meta, "uid") != d.volumeUID || text(meta, "name") != d.volumeName || meta["deletionTimestamp"] != nil {
+			return false, errors.New("restore-volume-identity")
+		}
+		status := child(volume, "status")
+		if text(status, "state") != "attached" || text(status, "robustness") != "healthy" {
+			return false, nil
+		}
+		replicas, err := d.list(ctx, "replicas.longhorn.io", "longhorn-system", "")
+		if err != nil {
+			return false, err
+		}
+		return longhorninventory.V2ReplicaQuorum(volume, replicas), nil
+	})
 }
 func (d *recoveryDriver) observeRestoredStorage(ctx context.Context) error {
 	claim, err := d.ref("PersistentVolumeClaim", "data", d.i.namespace)

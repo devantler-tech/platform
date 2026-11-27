@@ -100,6 +100,19 @@ func TestRecoveredDatabaseStorageBindsTheCreatedGraphAndThreeCopies(t *testing.T
 	}
 }
 
+func TestRecoveredDatabaseStorageRechecksTheRetainedArchiveCopy(t *testing.T) {
+	f := newRecoveredStorageFixture(t)
+	f.p.record = recoveredArchiveReceiptFixture(t)
+	f.p.record.Phase = cnpgArchiveCredentialRetired
+	if _, err := f.bind(); err != nil {
+		t.Fatalf("verified retained archive copy did not qualify: %v", err)
+	}
+	f.p.record.RestoreReceipt.Consumer.UID = "67891234-1111-4111-8111-111111111111"
+	if _, err := f.bind(); err == nil {
+		t.Fatal("a different restore Pod must not stand in for the verified archive copy")
+	}
+}
+
 func TestRecoveredDatabaseStorageRefusesSubstitutionAndPartialCopies(t *testing.T) {
 	baseline := newRecoveredStorageFixture(t)
 	for _, scenario := range []string{"cluster replaced", "changed admission", "foreign pod", "pod restart image", "wrong host", "foreign claim", "claim replaced", "wrong driver", "wrong handle", "V1 backend", "unhealthy backend", "missing copy", "duplicate disk", "stopped copy", "unhealthy copy", "copy rebuilding", "wrong manager", "shadowed data", "different mount", "extra claim mount", "foreign engine", "foreign replica", "unretained PV", "ephemeral claim", "contradictory owner", "contradictory engine"} {

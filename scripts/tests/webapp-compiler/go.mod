@@ -86,3 +86,6 @@ require (
 	sigs.k8s.io/release-utils v0.12.5 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 )
+
+// Fetch the same release from the repository that still serves its Git tag.
+replace github.com/google/cel-go v0.31.0 => github.com/cel-expr/cel-go v0.31.0

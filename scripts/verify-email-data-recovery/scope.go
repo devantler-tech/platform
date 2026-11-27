@@ -7,7 +7,10 @@ import (
 
 type invocation struct {
 	run, revision, namespace string
+	readOnly                 bool
 }
+
+const recoveryPreflightConfirm = "verify-email-data-recovery-preflight"
 
 var (
 	recoveryRunPattern      = regexp.MustCompile(`^[1-9][0-9]{6,19}$`)
@@ -15,7 +18,7 @@ var (
 )
 
 func (i invocation) permitsMutation(kind, namespace, name string) bool {
-	if !recoveryRunPattern.MatchString(i.run) || !recoveryRevisionPattern.MatchString(i.revision) || i.namespace != "email-data-recovery-"+i.run {
+	if i.readOnly || !recoveryRunPattern.MatchString(i.run) || !recoveryRevisionPattern.MatchString(i.revision) || i.namespace != "email-data-recovery-"+i.run {
 		return false
 	}
 	if namespace == "" {
@@ -48,22 +51,23 @@ func (i invocation) permitsMutation(kind, namespace, name string) bool {
 
 func authorizeDataRecovery(env func(string) string) (invocation, error) {
 	for key, expected := range map[string]string{
-		"GITHUB_EVENT_NAME":           "workflow_dispatch",
-		"GITHUB_REF":                  "refs/heads/main",
-		"GITHUB_REPOSITORY":           "devantler-tech/platform",
-		"GITHUB_WORKFLOW_REF":         "devantler-tech/platform/.github/workflows/verify-email-data-recovery.yaml@refs/heads/main",
-		"GITHUB_ACTOR":                "devantler",
-		"GITHUB_RUN_ATTEMPT":          "1",
-		"RUNNER_ENVIRONMENT":          "github-hosted",
-		"EMAIL_DATA_RECOVERY_CONFIRM": "verify-email-data-recovery",
+		"GITHUB_EVENT_NAME":   "workflow_dispatch",
+		"GITHUB_REF":          "refs/heads/main",
+		"GITHUB_REPOSITORY":   "devantler-tech/platform",
+		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/verify-email-data-recovery.yaml@refs/heads/main",
+		"GITHUB_ACTOR":        "devantler",
+		"GITHUB_RUN_ATTEMPT":  "1",
+		"RUNNER_ENVIRONMENT":  "github-hosted",
 	} {
 		if env(key) != expected {
 			return invocation{}, errors.New("dispatch")
 		}
 	}
 	run, revision := env("GITHUB_RUN_ID"), env("GITHUB_SHA")
-	if !recoveryRunPattern.MatchString(run) || !recoveryRevisionPattern.MatchString(revision) {
+	confirm := env("EMAIL_DATA_RECOVERY_CONFIRM")
+	if (confirm != "verify-email-data-recovery" && confirm != recoveryPreflightConfirm) ||
+		!recoveryRunPattern.MatchString(run) || !recoveryRevisionPattern.MatchString(revision) {
 		return invocation{}, errors.New("dispatch")
 	}
-	return invocation{run: run, revision: revision, namespace: "email-data-recovery-" + run}, nil
+	return invocation{run: run, revision: revision, namespace: "email-data-recovery-" + run, readOnly: confirm == recoveryPreflightConfirm}, nil
 }

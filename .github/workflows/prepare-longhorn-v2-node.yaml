@@ -45,9 +45,20 @@ name: Prepare Longhorn V2 Migration
             inspect-host-memory,
             reboot-host-for-hugepages,
             observe-database,
+            observe-coroot-v2-keeper,
+            migrate-coroot-keeper-v2,
             prove-database-v2-archive,
             resume-umami-archive-isolation,
             resume-umami-archive-data,
+            observe-umami-v2-standby,
+            replace-umami-v2-standby,
+            resume-retained-umami-v2-standby,
+            switch-umami-primary-to-v2,
+            recover-umami-standby-name,
+            replace-wedding-v2-standby,
+            resume-retained-wedding-v2-standby,
+            recover-wedding-standby-name,
+            switch-wedding-primary-to-v2,
             register-temporary-v2-storage,
             repair-v1-reservation,
             reserve-v1-scratch,
@@ -55,6 +66,8 @@ name: Prepare Longhorn V2 Migration
             prepare-actual-budget-backup-scratch,
             retire-actual-budget-backup-scratch,
             backup-actual-budget-v1,
+            restore-actual-budget-v2,
+            resume-unstarted-actual-budget-v2,
             retain-v1-source,
             retain-provider-source,
           ]
@@ -62,8 +75,10 @@ name: Prepare Longhorn V2 Migration
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
         required: false
         type: choice
+        default: no-target
         options:
           [
+            no-target,
             prod-worker-1,
             prod-worker-2,
             prod-worker-3,
@@ -72,11 +87,13 @@ name: Prepare Longhorn V2 Migration
             temporary-v2-1,
           ]
       database:
-        description: Fixed database for a read-only migration observation; leave node empty
+        description: Fixed database for an archive recovery or migration observation; leave node unselected
         required: false
         type: choice
+        default: no-target
         options:
           [
+            no-target,
             coroot-db,
             umami-db,
             wedding-db,
@@ -138,8 +155,8 @@ jobs:
       contents: read
       actions: read
     env:
-      LONGHORN_V2_NODE: ${{ inputs.node }}
-      LONGHORN_V2_DATABASE: ${{ inputs.database }}
+      LONGHORN_V2_NODE: ${{ fromJSON(inputs.node == 'no-target' && '""' || toJSON(inputs.node || '')) }}
+      LONGHORN_V2_DATABASE: ${{ fromJSON(inputs.database == 'no-target' && '""' || toJSON(inputs.database || '')) }}
       LONGHORN_V2_OPERATION: ${{ inputs.operation }}
       LONGHORN_V2_CONFIRM: ${{ inputs.confirm }}
       LONGHORN_V2_LEGACY_PREPARATION_RECEIPTS: ${{ inputs.legacy_preparation_receipts }}
@@ -178,6 +195,13 @@ jobs:
             observe-database)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db|customer-identity-db|business-site-portal-db|portal-preview-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
               ;;
+            observe-coroot-v2-keeper)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == observe-coroot-v2-keeper ]]
+              ;;
+            migrate-coroot-keeper-v2)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^migrate-coroot-keeper-v2:[0-2]:[a-f0-9]{64}$ ]]
+              ;;
             prove-database-v2-archive)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|customer-identity-db|business-site-portal-db)$ &&
                  "${LONGHORN_V2_CONFIRM}" == "prove-longhorn-v2-database-archive-${LONGHORN_V2_DATABASE}" ]]
@@ -189,6 +213,46 @@ jobs:
             resume-umami-archive-data)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^resume-umami-archive-data:[1-9][0-9]{0,18}:[0-9a-f]{64}$ ]]
+              ;;
+            observe-umami-v2-standby)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^observe-umami-v2-standby:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
+              ;;
+            replace-umami-v2-standby)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^replace-umami-v2-standby:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
+              ;;
+            resume-retained-umami-v2-standby)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-retained-umami-v2-standby:umami-db-[1-9][0-9]*:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+              ;;
+            switch-umami-primary-to-v2)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^switch-umami-primary-to-v2:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
+              ;;
+            switch-wedding-primary-to-v2)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == wedding-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^switch-wedding-primary-to-v2:wedding-db-[1-9][0-9]*:wedding-db-[1-9][0-9]*$ ]]
+              ;;
+            recover-umami-standby-name)
+              run_re='[1-9][0-9]{0,18}'
+              uid_re='[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^recover-umami-standby-name:umami-db-[1-9][0-9]*:${run_re}:[0-9a-f]{40}:${uid_re}:${run_re}:[0-9a-f]{40}:${uid_re}(:${run_re})?$ ]]
+              ;;
+            replace-wedding-v2-standby)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == wedding-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^replace-wedding-v2-standby:wedding-db-[1-9][0-9]*:wedding-db-[1-9][0-9]*$ ]]
+              ;;
+            resume-retained-wedding-v2-standby)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == wedding-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-retained-wedding-v2-standby:wedding-db-[1-9][0-9]*:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+              ;;
+            recover-wedding-standby-name)
+              run_re='[1-9][0-9]{0,18}'
+              uid_re='[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == wedding-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^recover-wedding-standby-name:wedding-db-[1-9][0-9]*:${run_re}:[0-9a-f]{40}:${uid_re}:${run_re}:[0-9a-f]{40}:${uid_re}(:${run_re})?$ ]]
               ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
@@ -228,6 +292,14 @@ jobs:
             backup-actual-budget-v1)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^backup-actual-budget-v1:[0-9a-f]{64}$ ]]
+              ;;
+            restore-actual-budget-v2)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^restore-actual-budget-v2:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{64}$ ]]
+              ;;
+            resume-unstarted-actual-budget-v2)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-unstarted-actual-budget-v2:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{64}:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
               ;;
             retain-v1-source)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-longhorn-v1-source:[a-z0-9][-a-z0-9]*/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
@@ -321,10 +393,20 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh
       - name: Run the confirmed migration preparation
-        if: ${{ inputs.operation != 'benchmark-v1' && inputs.operation != 'recover-bound-v1-benchmark' && inputs.operation != 'prepare-native-v1-seed' && inputs.operation != 'reclaim-native-v2-seed' && inputs.operation != 'resume-native-v2-reclaim' }}
+        if: >-
+          ${{ inputs.operation != 'benchmark-v1' && inputs.operation != 'recover-bound-v1-benchmark' &&
+              inputs.operation != 'prepare-native-v1-seed' && inputs.operation != 'reclaim-native-v2-seed' &&
+              inputs.operation != 'resume-native-v2-reclaim' && inputs.operation != 'recover-umami-standby-name' &&
+              inputs.operation != 'recover-wedding-standby-name' && inputs.operation != 'migrate-coroot-keeper-v2' }}
         env:
           GH_TOKEN: ${{ github.token }}
           LONGHORN_RUNTIME_INVENTORY_SOURCE: ${{ steps.recovery-source.outputs.sha }}
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Migrate the confirmed Coroot Keeper follower
+        if: ${{ inputs.operation == 'migrate-coroot-keeper-v2' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: go run ./scripts/migrate-longhorn-v2
       - name: Run the confirmed V1 scratch operation
         if: ${{ inputs.operation == 'benchmark-v1' || inputs.operation == 'prepare-native-v1-seed' }}
@@ -340,6 +422,12 @@ jobs:
         run: go run ./scripts/migrate-longhorn-v2
       - name: Reclaim the verified disposable V2 restoration
         if: ${{ inputs.operation == 'reclaim-native-v2-seed' || inputs.operation == 'resume-native-v2-reclaim' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Recover the confirmed database standby claim name
+        if: ${{ inputs.operation == 'recover-umami-standby-name' || inputs.operation == 'recover-wedding-standby-name' }}
         env:
           GH_TOKEN: ${{ github.token }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

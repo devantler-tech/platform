@@ -22,6 +22,7 @@ var credentialPath = regexp.MustCompile(`^/dev/shm/longhorn-namespace-inventory\
 var benchmarkCredentialPath = regexp.MustCompile(`^/dev/shm/longhorn-v2\.[A-Za-z0-9]+/kubeconfig$`)
 var sourcePattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var runPattern = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
+var cnpgNameRecoveryPattern = regexp.MustCompile(`^(recover-(?:umami|wedding)-standby-name):((?:umami|wedding)-db)-[1-9][0-9]*:([1-9][0-9]{0,18}):[0-9a-f]{40}:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?::[1-9][0-9]{0,18})?$`)
 
 // Dispatch is the verified source commit and run of a protected observation.
 type Dispatch struct{ Source, Run string }
@@ -67,11 +68,50 @@ func LoadProtectedClient(getenv func(string) string) (*http.Client, *url.URL, er
 	return newProductionClient(config)
 }
 
-// LoadBenchmarkAdmissionClient admits the protected V1 benchmark, native seed,
-// or the explicitly confirmed recovery of originalRun. The caller must first
-// join the selected address to its serving process and verified Hetzner server.
+var emailRecoveryCredentialPath = regexp.MustCompile(`^/dev/shm/email-data-recovery\.[A-Za-z0-9]+/kubeconfig$`)
+
+// LoadEmailRecoveryClient reads only the private memory-backed credential of
+// the confirmed first-attempt Email recovery dispatch. It shares credential
+// validation, never authorization, with the benchmark observer.
+func LoadEmailRecoveryClient(getenv func(string) string) (*http.Client, *url.URL, error) {
+	for key, want := range map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
+		"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted",
+		"GITHUB_ACTOR":        "devantler",
+		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/verify-email-data-recovery.yaml@refs/heads/main",
+	} {
+		if getenv(key) != want {
+			return nil, nil, errors.New("protected Email recovery dispatch is unverified")
+		}
+	}
+	confirm := getenv("EMAIL_DATA_RECOVERY_CONFIRM")
+	if confirm != "verify-email-data-recovery" && confirm != "verify-email-data-recovery-preflight" {
+		return nil, nil, errors.New("protected Email recovery dispatch is unverified")
+	}
+	if !sourcePattern.MatchString(getenv("GITHUB_SHA")) || !runPattern.MatchString(getenv("GITHUB_RUN_ID")) {
+		return nil, nil, errors.New("email recovery source and run are required")
+	}
+	path := getenv("KUBECONFIG")
+	if !emailRecoveryCredentialPath.MatchString(path) || filepath.Clean(path) != path {
+		return nil, nil, errors.New("fixed private Email recovery kubeconfig is required")
+	}
+	raw, err := readPrivateKubeconfig(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	config, err := clientcmd.Load(raw)
+	if err != nil {
+		return nil, nil, errors.New("protected Email recovery kubeconfig could not be decoded")
+	}
+	return newProductionClient(config)
+}
+
+// LoadBenchmarkAdmissionClient admits the protected benchmark, restore or
+// explicitly confirmed CNPG name recovery. The caller must first join the
+// selected address to its serving process and verified Hetzner server.
 func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Addr, originalRun string) (*http.Client, *url.URL, error) {
 	operation, confirmation := "benchmark-v1", "benchmark-longhorn-storage"
+	database := ""
 	switch {
 	case originalRun != "":
 		if !runPattern.MatchString(originalRun) || originalRun == getenv("GITHUB_RUN_ID") {
@@ -88,11 +128,24 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 				return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
 			}
 			operation, confirmation = "resume-native-v2-reclaim", prefix+prior
+		case "recover-umami-standby-name", "recover-wedding-standby-name":
+			operation = getenv("LONGHORN_V2_OPERATION")
+			database = strings.TrimSuffix(strings.TrimPrefix(operation, "recover-"), "-standby-name") + "-db"
+			confirmation = getenv("LONGHORN_V2_CONFIRM")
+			fields := cnpgNameRecoveryPattern.FindStringSubmatch(confirmation)
+			if fields == nil || fields[1] != operation || fields[2] != database || fields[3] != originalRun {
+				return nil, nil, errors.New("protected CNPG name recovery dispatch is unverified")
+			}
 		}
 	case getenv("LONGHORN_V2_OPERATION") == "prepare-native-v1-seed":
 		operation, confirmation = "prepare-native-v1-seed", "prepare-longhorn-native-v1-seed"
+	case getenv("LONGHORN_V2_OPERATION") == "migrate-coroot-keeper-v2":
+		operation, confirmation = "migrate-coroot-keeper-v2", getenv("LONGHORN_V2_CONFIRM")
+		if !corootKeeperCutoverConfirm.MatchString(confirmation) {
+			return nil, nil, errors.New("protected Keeper admission dispatch is unverified")
+		}
 	}
-	if operation != "benchmark-v1" && (getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != "") {
+	if operation != "benchmark-v1" && (getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != database) {
 		return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
 	}
 	for key, want := range map[string]string{
@@ -120,8 +173,18 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 	if err != nil {
 		return nil, nil, errors.New("protected benchmark kubeconfig could not be decoded")
 	}
-	reclaimAliases := operation == "reclaim-native-v2-seed" || operation == "resume-native-v2-reclaim"
-	return newProductionClientAt(config, directIP, reclaimAliases)
+	var scope directCreateScope
+	switch operation {
+	case "reclaim-native-v2-seed", "resume-native-v2-reclaim":
+		scope = directReclaimCreate
+	case "recover-umami-standby-name":
+		scope = directUmamiCreate
+	case "recover-wedding-standby-name":
+		scope = directWeddingCreate
+	case "migrate-coroot-keeper-v2":
+		scope = directKeeperCreate
+	}
+	return newProductionClientAt(config, directIP, scope)
 }
 
 func readPrivateKubeconfig(path string) (raw []byte, err error) {
@@ -162,10 +225,21 @@ func readPrivateKubeconfig(path string) (raw []byte, err error) {
 }
 
 func newProductionClient(raw *clientcmdapi.Config) (*http.Client, *url.URL, error) {
-	return newProductionClientAt(raw, netip.Addr{}, false)
+	return newProductionClientAt(raw, netip.Addr{}, "")
 }
 
-func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr, reclaimAliases bool) (*http.Client, *url.URL, error) {
+type directCreateScope string
+
+const (
+	directReclaimCreate directCreateScope = "reclaim"
+	directUmamiCreate   directCreateScope = "umami"
+	directWeddingCreate directCreateScope = "wedding-app"
+	directKeeperCreate  directCreateScope = "keeper"
+)
+
+var corootKeeperCutoverConfirm = regexp.MustCompile(`^migrate-coroot-keeper-v2:[0-2]:[a-f0-9]{64}$`)
+
+func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr, scope directCreateScope) (*http.Client, *url.URL, error) {
 	if raw == nil || raw.Contexts["admin@prod"] == nil {
 		return nil, nil, errors.New("fixed production context is missing")
 	}
@@ -210,15 +284,15 @@ func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr, reclai
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if directIP.IsValid() {
-		client.Transport = directAPIPeer{host: endpoint.Host, transport: client.Transport, reclaimAliasDryRun: reclaimAliases}
+		client.Transport = directAPIPeer{host: endpoint.Host, transport: client.Transport, createScope: scope}
 	}
 	return client, endpoint, nil
 }
 
 type directAPIPeer struct {
-	host               string
-	transport          http.RoundTripper
-	reclaimAliasDryRun bool
+	host        string
+	transport   http.RoundTripper
+	createScope directCreateScope
 }
 
 func (peer directAPIPeer) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -226,15 +300,27 @@ func (peer directAPIPeer) RoundTrip(req *http.Request) (*http.Response, error) {
 		(req.Host != "" && req.Host != peer.host) {
 		return nil, errors.New("direct API request addressed another peer")
 	}
-	// Reclaim proves both guards reject a second reference to the canary.
-	reclaimAlias := peer.reclaimAliasDryRun && req.Method == http.MethodPost &&
-		req.URL.RawPath == "" && req.Header.Get("Content-Type") == "application/json" &&
-		(req.URL.Path == "/api/v1/persistentvolumes" ||
-			req.URL.Path == "/api/v1/namespaces/longhorn-benchmark/persistentvolumeclaims")
-	if req.Method != http.MethodGet && (req.URL.RawQuery != "dryRun=All" || (req.Method != http.MethodPatch && !reclaimAlias)) {
+	create := req.Method == http.MethodPost && req.URL.RawPath == "" &&
+		req.Header.Get("Content-Type") == "application/json" && peer.createScope.permits(req.URL.Path)
+	patch := req.Method == http.MethodPatch && peer.createScope != directUmamiCreate && peer.createScope != directWeddingCreate && peer.createScope != directKeeperCreate
+	if req.Method != http.MethodGet && (req.URL.RawQuery != "dryRun=All" || (!patch && !create)) {
 		return nil, errors.New("direct API client permits only observations and server dry-runs")
 	}
 	return peer.transport.RoundTrip(req)
+}
+
+func (scope directCreateScope) permits(path string) bool {
+	switch scope {
+	case directReclaimCreate:
+		return path == "/api/v1/persistentvolumes" || path == "/api/v1/namespaces/longhorn-benchmark/persistentvolumeclaims"
+	case directUmamiCreate, directWeddingCreate:
+		base := "/api/v1/namespaces/" + string(scope)
+		return path == base+"/pods" || path == base+"/persistentvolumeclaims" || path == "/apis/batch/v1/namespaces/"+string(scope)+"/jobs"
+	case directKeeperCreate:
+		return path == "/api/v1/namespaces/observability/pods" || path == "/api/v1/namespaces/observability/persistentvolumeclaims"
+	default:
+		return false
+	}
 }
 
 func (peer directAPIPeer) CloseIdleConnections() {

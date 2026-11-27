@@ -18,6 +18,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/longhorninventory"
 )
 
 type kubernetes interface {
@@ -326,7 +328,7 @@ func (r *runner) bindVolume(ctx context.Context, claim reference) error {
 		if err != nil || json.Unmarshal(raw, &replicas) != nil {
 			return false, errors.New("replica-response")
 		}
-		return v2ReplicaQuorum(volume, items(replicas, "items")), nil
+		return longhorninventory.V2ReplicaQuorum(volume, items(replicas, "items")), nil
 	})
 }
 func (r *runner) detached(ctx context.Context) error {

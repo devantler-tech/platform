@@ -9,16 +9,22 @@ type cnpgObservation struct {
 	Cluster object
 	Pods    []object
 	States  map[string]postgresState
+
+	retainedStandby    string
+	umamiRecoveryPeers map[string]benchmarkResource
 }
 
 // validateCNPGObservation requires physical replay and stable process identities.
 func validateCNPGObservation(before, after cnpgObservation) error {
 	refused := errors.New("database identity, process or physical replication changed during observation")
-	original, err := healthyCNPGPods(before.Cluster, before.Pods)
+	if before.retainedStandby != after.retainedStandby {
+		return refused
+	}
+	original, err := healthyCNPGPodsWithRetention(before.Cluster, before.Pods, before.retainedStandby)
 	if err != nil {
 		return err
 	}
-	current, err := healthyCNPGPods(after.Cluster, after.Pods)
+	current, err := healthyCNPGPodsWithRetention(after.Cluster, after.Pods, after.retainedStandby)
 	if err != nil {
 		return err
 	}

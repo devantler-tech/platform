@@ -95,6 +95,17 @@ func TestRecoveryStorageRequalifiesActiveV2WithoutRepeatingRegistration(t *testi
 	}
 }
 
+func TestRecoveryStorageChecksActualBudgetClaimCapacity(t *testing.T) {
+	f, a := recoveryStorageAPI(t)
+	got, err := a.recoveryClaimStorage(t.Context(), "10Gi")
+	if err != nil || len(got.Disks) != 3 || f.writes != 0 {
+		t.Fatalf("qualified 10 GiB claim refused: %v", err)
+	}
+	if _, err := a.recoveryStorage(t.Context(), cnpgRecoverySource{Namespace: "unreviewed", Cluster: "umami-db", Size: "5Gi"}); err == nil {
+		t.Fatal("a database in the wrong namespace was accepted")
+	}
+}
+
 // TestRecoveryStorageRefusesLostOwnershipOrCapacity prevents trusting an old activation completion bit.
 func TestRecoveryStorageRefusesLostOwnershipOrCapacity(t *testing.T) {
 	for _, scenario := range []string{"capacity lost", "registration replaced", "partition changed", "unfinished activation", "foreign V1 allocation"} {

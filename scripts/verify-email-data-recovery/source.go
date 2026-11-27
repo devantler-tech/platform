@@ -3,11 +3,19 @@ package main
 import (
 	"context"
 	"errors"
+	"path"
 	"regexp"
 	"strings"
 )
 
 var kubernetesName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+const (
+	servingClaim        = "email-data-encrypted-v2"
+	servingStorageClass = "email-encrypted-v2"
+	servingVolume       = "v2-data"
+	servingStorePath    = "/var/lib/stalwart-v2"
+)
 
 // Both serving profiles use the reviewed bundle. Bind runtime identities in a
 // fixed name order so source retention detects replacement and restart drift.
@@ -52,7 +60,7 @@ func servingProfile(pod object, expectedImage string) ([2]sourceContainer, error
 func proveServingSource(pod, pvc, pv object, expectedImage string) (sourceIdentity, error) {
 	pm, cm, vm := child(pod, "metadata"), child(pvc, "metadata"), child(pv, "metadata")
 	fail := func() (sourceIdentity, error) { return sourceIdentity{}, errors.New("serving-source") }
-	if text(pm, "name") != "private-mail-0" || text(pm, "namespace") != "private-mail" || text(pm, "uid") == "" || pm["deletionTimestamp"] != nil || text(cm, "name") != "private-mail-data" || text(cm, "namespace") != "private-mail" || text(cm, "uid") == "" || cm["deletionTimestamp"] != nil || text(vm, "uid") == "" || vm["deletionTimestamp"] != nil {
+	if text(pm, "name") != "private-mail-0" || text(pm, "namespace") != "private-mail" || text(pm, "uid") == "" || pm["deletionTimestamp"] != nil || text(cm, "name") != servingClaim || text(cm, "namespace") != "private-mail" || text(cm, "uid") == "" || cm["deletionTimestamp"] != nil || text(vm, "uid") == "" || vm["deletionTimestamp"] != nil {
 		return fail()
 	}
 	if text(child(pm, "labels"), "statefulset.kubernetes.io/pod-name") != "private-mail-0" {
@@ -79,21 +87,61 @@ func proveServingSource(pod, pvc, pv object, expectedImage string) (sourceIdenti
 	}
 	found := false
 	for _, volume := range items(child(pod, "spec"), "volumes") {
-		if text(volume, "name") == "data" && text(child(volume, "persistentVolumeClaim"), "claimName") == "private-mail-data" {
-			found = true
+		if volume["persistentVolumeClaim"] == nil {
+			continue
 		}
+		claim := child(volume, "persistentVolumeClaim")
+		if found || text(volume, "name") != servingVolume || text(claim, "claimName") != servingClaim ||
+			(claim["readOnly"] != nil && claim["readOnly"] != false) {
+			return fail()
+		}
+		found = true
 	}
 	cs, vs := child(pvc, "spec"), child(pv, "spec")
 	name := text(cs, "volumeName")
 	claimRef, csi := child(vs, "claimRef"), child(vs, "csi")
-	if !found || !kubernetesName.MatchString(name) || text(cs, "storageClassName") != "longhorn-wffc" || text(child(child(cs, "resources"), "requests"), "storage") != "2Gi" || text(child(pvc, "status"), "phase") != "Bound" || text(vm, "name") != name || text(child(pv, "status"), "phase") != "Bound" || text(claimRef, "uid") != text(cm, "uid") || text(claimRef, "namespace") != "private-mail" || text(claimRef, "name") != "private-mail-data" || text(csi, "driver") != "driver.longhorn.io" || text(csi, "volumeHandle") != name {
+	if !found || !privateMailServingMount(pod) || !kubernetesName.MatchString(name) || text(cs, "storageClassName") != servingStorageClass ||
+		text(vs, "storageClassName") != servingStorageClass || text(child(child(cs, "resources"), "requests"), "storage") != "2Gi" ||
+		text(child(pvc, "status"), "phase") != "Bound" || text(vm, "name") != name || text(child(pv, "status"), "phase") != "Bound" ||
+		text(claimRef, "uid") != text(cm, "uid") || text(claimRef, "namespace") != "private-mail" || text(claimRef, "name") != servingClaim ||
+		text(csi, "driver") != "driver.longhorn.io" || text(csi, "volumeHandle") != name {
 		return fail()
 	}
 	reclaim := text(vs, "persistentVolumeReclaimPolicy")
-	if reclaim != "Retain" && reclaim != "Delete" {
+	attributes := child(csi, "volumeAttributes")
+	if reclaim != "Retain" || text(attributes, "dataEngine") != "v2" || text(attributes, "encrypted") != "true" ||
+		text(attributes, "numberOfReplicas") != "3" {
 		return fail()
 	}
-	return sourceIdentity{podUID: text(pm, "uid"), claimUID: text(cm, "uid"), volume: "data", pv: name, claimSize: "2Gi", pvUID: text(vm, "uid"), reclaim: reclaim, containers: containers}, nil
+	return sourceIdentity{podUID: text(pm, "uid"), claimUID: text(cm, "uid"), volume: servingVolume, pv: name,
+		claimSize: "2Gi", pvUID: text(vm, "uid"), reclaim: reclaim, containers: containers}, nil
+}
+
+func privateMailServingMount(pod object) bool {
+	for _, server := range items(child(pod, "spec"), "containers") {
+		if text(server, "name") != "private-mail" {
+			continue
+		}
+		found := false
+		for _, mount := range items(server, "volumeMounts") {
+			location := text(mount, "mountPath")
+			if !strings.HasPrefix(location, "/") || path.Clean(location) != location {
+				return false
+			}
+			if text(mount, "name") == servingVolume {
+				if found || location != servingStorePath || (mount["readOnly"] != nil && mount["readOnly"] != false) ||
+					mount["subPath"] != nil || mount["subPathExpr"] != nil {
+					return false
+				}
+				found = true
+			} else if location == "/" || location == servingStorePath ||
+				strings.HasPrefix(location, servingStorePath+"/") || strings.HasPrefix(servingStorePath, location+"/") {
+				return false
+			}
+		}
+		return found
+	}
+	return false
 }
 func (d *recoveryDriver) readSource(ctx context.Context) (sourceIdentity, error) {
 	pod, found, err := d.lookup(ctx, "Pod", "private-mail-0", "private-mail")
@@ -106,7 +154,7 @@ func (d *recoveryDriver) readSource(ctx context.Context) (sourceIdentity, error)
 			return sourceIdentity{}, err
 		}
 	}
-	pvc, found, err := d.lookup(ctx, "PersistentVolumeClaim", "private-mail-data", "private-mail")
+	pvc, found, err := d.lookup(ctx, "PersistentVolumeClaim", servingClaim, "private-mail")
 	if err != nil || !found {
 		return sourceIdentity{}, errors.New("source-claim")
 	}
