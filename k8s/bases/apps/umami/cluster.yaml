@@ -5,9 +5,8 @@
 # `umami-db-app`, keys: username/password/dbname/host/port/uri). The Umami
 # HelmRelease consumes that Secret via `database.external.existingSecret`.
 #
-# longhorn-wffc is hardcoded because Umami is a prod-only app (it is excluded from the
-# local/docker overlay, which has no CNPG operator or longhorn — same as the
-# wedding-app and ascoachingogvaner tenants).
+# Umami is a production-only app. Each replacement database instance uses the
+# Longhorn V2 class after its existing storage has been preserved for rollback.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -32,7 +31,7 @@ spec:
   # prevent automatic replacement and garbage collection of this Cluster.
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie
-  # Run 3 instances (1 primary + 2 streaming replicas) for high availability.
+  # Normally run 3 instances (1 primary + 2 streaming replicas) for high availability.
   # A single-instance Cluster makes CNPG create a `<cluster>-primary`
   # PodDisruptionBudget with minAvailable=1 on the only pod, which BLOCKS every
   # voluntary eviction — a node drain (Talos roll, autoscaler scale-down) hangs
@@ -43,7 +42,9 @@ spec:
   # away. Three lands one instance on each of the 3 static Longhorn storage
   # workers via CNPG's default (preferred) pod anti-affinity, keeping a
   # primary+replica quorum even while one node is under maintenance.
-  instances: 3
+  # Keep a fourth instance during the storage transition so a V2 standby can
+  # replay WAL before the first existing claim is detached.
+  instances: 4
   # Expose the postgres superuser so OpenBao's Database secrets engine has a
   # stable admin to rotate the `umami` application role's password (the engine
   # cannot rotate a role using that same role's credentials, so it needs a
@@ -52,7 +53,8 @@ spec:
   enableSuperuserAccess: true
   storage:
     size: 5Gi
-    storageClass: longhorn-wffc
+    storageClass: longhorn-v2
+    resizeInUseVolumes: false
   # Quorum-based SYNCHRONOUS replication so a failover can never strand the old
   # primary. Background: on 2026-06-19 the longhorn instance-manager on a storage
   # worker was replaced; the CNPG primaries pinned to that node lost their RWO
