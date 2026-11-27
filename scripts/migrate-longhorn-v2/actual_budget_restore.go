@@ -12,6 +12,7 @@ import (
 const (
 	actualBudgetRestoreOperation = "restore-actual-budget-v2"
 	actualBudgetRestoreResume    = "resume-unstarted-actual-budget-v2"
+	actualBudgetRestoreRetry     = "retry-rejected-actual-budget-v2"
 	actualBudgetRestoreSize      = "10Gi"
 	actualBudgetRestoreBytes     = "10737418240"
 	actualBudgetRestorePrefix    = "actual-budget-recovery-"
@@ -20,6 +21,7 @@ const (
 type actualBudgetRestoreConfirmation struct {
 	backupRun, backupSource, sourceClaimDigest string
 	prior                                      *actualBudgetPriorRestore
+	rejected                                   *actualBudgetRejectedRestore
 }
 
 func authorizeActualBudgetRestore(getenv func(string) string) (actualBudgetRestoreConfirmation, error) {
@@ -43,6 +45,15 @@ func authorizeActualBudgetRestore(getenv func(string) string) (actualBudgetResto
 			return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
 		}
 		opts.prior = &actualBudgetPriorRestore{run: fields[4], source: fields[5], namespaceUID: fields[6]}
+	case actualBudgetRestoreRetry:
+		if len(fields) != 8 || !validBenchmarkOwner(fields[4], fields[5]) || !nativeRestoreUID(fields[6]) ||
+			!nativeRestoreUID(fields[7]) || fields[6] == fields[7] || fields[4] == fields[1] || fields[4] == getenv("GITHUB_RUN_ID") {
+			return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
+		}
+		opts.rejected = &actualBudgetRejectedRestore{
+			prior:      actualBudgetPriorRestore{run: fields[4], source: fields[5], namespaceUID: fields[6]},
+			restoreUID: fields[7],
+		}
 	default:
 		return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
 	}
@@ -80,25 +91,30 @@ func readActualBudgetRestoreSeed(ctx context.Context, c client, backupRun, claim
 	return backup, upload, nil
 }
 
-func actualBudgetRestoreScopeClear(ctx context.Context, c client, permitted benchmarkResource) bool {
+func actualBudgetRestoreScopeClear(ctx context.Context, c client, permitted ...benchmarkResource) bool {
 	namespaces, err := c.list(ctx, "namespace", "")
 	if err != nil || len(namespaces) == 0 {
 		return false
 	}
-	matched := false
+	expected := map[string]benchmarkResource{}
+	for _, resource := range permitted {
+		if resource.Name != "" {
+			expected[resource.Name] = resource
+		}
+	}
 	for _, namespace := range namespaces {
 		name := text(namespace, "metadata", "name")
 		if name == "" {
 			return false
 		}
 		if strings.HasPrefix(name, actualBudgetRestorePrefix) {
-			if matched || benchmarkIdentity(namespace) != permitted {
+			if benchmarkIdentity(namespace) != expected[name] {
 				return false
 			}
-			matched = true
+			delete(expected, name)
 		}
 	}
-	if (permitted.Name != "") != matched {
+	if len(expected) != 0 {
 		return false
 	}
 	volumes, err := c.list(ctx, "persistentvolumes", "")
@@ -187,13 +203,23 @@ func runActualBudgetRestore(ctx context.Context, c client, source, run string, o
 		return errors.New("the V2 storage class or isolated restore scope is unverified")
 	}
 	scopeRun := run
+	var permitted []benchmarkResource
 	if opts.prior != nil {
 		if err := verifyUnstartedActualBudgetOwner(ctx, c, opts, run); err != nil {
 			return err
 		}
 		scopeRun = opts.prior.run
-	} else if !actualBudgetRestoreScopeClear(ctx, c, benchmarkResource{}) {
-		return errors.New("an isolated restore scope is already active")
+	} else {
+		if opts.rejected != nil {
+			prior, err := observeActualBudgetRejectedRestore(ctx, c, opts, run, storage.Disks[0].Node, backup)
+			if err != nil {
+				return err
+			}
+			permitted = append(permitted, prior)
+		}
+		if !actualBudgetRestoreScopeClear(ctx, c, permitted...) {
+			return errors.New("an isolated restore scope is already active")
+		}
 	}
 	assets, err := actualBudgetRestoreAssets(scopeRun, opts.backupRun, storage.Disks[0].Node)
 	if err != nil {
@@ -207,7 +233,7 @@ func runActualBudgetRestore(ctx context.Context, c client, source, run string, o
 		"storage.platform.devantler.tech/recovery-source": creatorSource,
 		"storage.platform.devantler.tech/backup-uid":      text(backup, "metadata", "uid"),
 	}
-	namespace, err := prepareActualBudgetRestoreScope(ctx, c, source, opts.prior, assets)
+	namespace, err := prepareActualBudgetRestoreScope(ctx, c, source, opts.prior, assets, permitted...)
 	if err != nil {
 		return err
 	}
@@ -215,7 +241,7 @@ func runActualBudgetRestore(ctx context.Context, c client, source, run string, o
 	if err != nil || !recoveryJSONEqual(storage, current) {
 		return errors.New("the qualified V2 copy capacity changed before allocation")
 	}
-	if err = verifyUnstartedActualBudgetRestore(ctx, c, namespace); err != nil {
+	if err = verifyUnstartedActualBudgetRestore(ctx, c, namespace, permitted...); err != nil {
 		return err
 	}
 	if err = verifyActualBudgetPreparationAssets(ctx, c, source, assets[1], assets[2], false); err != nil {

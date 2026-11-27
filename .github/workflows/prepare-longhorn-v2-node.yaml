@@ -60,6 +60,7 @@ name: Prepare Longhorn V2 Migration
             backup-actual-budget-v1,
             restore-actual-budget-v2,
             resume-unstarted-actual-budget-v2,
+            retry-rejected-actual-budget-v2,
             retain-v1-source,
             retain-provider-source,
           ]
@@ -253,6 +254,12 @@ jobs:
             resume-unstarted-actual-budget-v2)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^resume-unstarted-actual-budget-v2:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{64}:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+              ;;
+            retry-rejected-actual-budget-v2)
+              run_re='[1-9][0-9]{0,18}'
+              uid_re='[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^retry-rejected-actual-budget-v2:${run_re}:[0-9a-f]{40}:[0-9a-f]{64}:${run_re}:[0-9a-f]{40}:${uid_re}:${uid_re}$ ]]
               ;;
             retain-v1-source)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-longhorn-v1-source:[a-z0-9][-a-z0-9]*/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
