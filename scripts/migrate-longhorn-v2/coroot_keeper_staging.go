@@ -37,7 +37,7 @@ func (j *corootKeeperJournal) prepareVolume(ctx context.Context, diskBindings []
 	r = j.record
 	err = waitReadyWithin(ctx, 4*time.Minute, func(ctx context.Context) error {
 		p, err := j.c.get(ctx, "pod", corootKeeperNamespace, r.StagePod.Name, false)
-		if err != nil || !matchCorootKeeperVolumePod(p, pod, desiredPod) || text(p, "spec", "nodeName") != member.Node ||
+		if err != nil || !j.c.matchBoundKeeperVolumePod(ctx, p, pod, desiredPod, member.Node) || text(p, "spec", "nodeName") != member.Node ||
 			text(p, "status", "phase") != "Running" || !ready(valueObject(p, "status")) {
 			return errCorootKeeperStaging
 		}

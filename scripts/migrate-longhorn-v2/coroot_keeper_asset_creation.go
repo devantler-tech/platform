@@ -106,6 +106,14 @@ func (j *corootKeeperJournal) reconcileKeeperCreation(ctx context.Context, prior
 }
 
 func (j *corootKeeperJournal) recordKeeperAsset(ctx context.Context, asset keeperAssetCreation, current object) error {
+	if asset.kind == "pod" {
+		var err error
+		host := j.record.Before.Members[j.record.Input.Ordinal].Node
+		asset.body, err = j.c.expectedCopyPodTopology(ctx, current, asset.body, host)
+		if err != nil {
+			return err
+		}
+	}
 	next, err := keeperAssetReceipt(j.record, asset, current)
 	if err != nil {
 		return err
