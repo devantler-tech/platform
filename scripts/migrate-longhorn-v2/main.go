@@ -67,6 +67,10 @@ func main() {
 		_, authorization = authorizeUmamiArchiveIsolationResume(os.Getenv)
 	case umamiArchiveDataResumeOperation:
 		_, authorization = authorizeUmamiArchiveDataResume(os.Getenv)
+	case umamiStandbyObservationOperation:
+		_, _, authorization = authorizeUmamiStandbyObservation(os.Getenv)
+	case umamiStandbyReplacementOperation:
+		_, _, authorization = authorizeUmamiStandbyTarget(os.Getenv, umamiStandbyReplacementOperation)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
 	case "reserve-v1-scratch":
@@ -295,6 +299,44 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("CNPG_ARCHIVE_PROOF=RESTORED engine=v2 physicalHistory=VERIFIED networkIsolation=VERIFIED archiveCredential=RETIRED storageCleanup=REQUIRED migration=UNVERIFIED")
+		return
+	}
+	if operation == umamiStandbyReplacementOperation {
+		target, spare, err := authorizeUmamiStandbyTarget(os.Getenv, operation)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		replacementContext, stop := context.WithTimeout(ctx, 40*time.Minute)
+		defer stop()
+		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		if err := runUmamiStandbyReplacement(replacementContext, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), target, spare); err != nil {
+			fmt.Fprintln(os.Stderr, "Umami standby replacement held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("UMAMI_V2_STANDBY_REPLACEMENT=VERIFIED originalStorage=RETAINED replicas=3 physicalReplay=VERIFIED")
+		return
+	}
+	if operation == umamiStandbyObservationOperation {
+		target, spare, err := authorizeUmamiStandbyObservation(os.Getenv)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		observationContext, stop := context.WithTimeout(ctx, 10*time.Minute)
+		defer stop()
+		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		source := os.Getenv("GITHUB_SHA")
+		witness, err := observeUmamiStandbyCutover(observationContext, c, source, target, spare)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Umami standby observation held:", err)
+			os.Exit(1)
+		}
+		if err := verifyUmamiStandbyEvictionAdmission(observationContext, c, source, witness); err != nil {
+			fmt.Fprintln(os.Stderr, "Umami standby admission held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("UMAMI_V2_STANDBY=VERIFIED replicas=3 originalStorage=RETAINED physicalReplay=VERIFIED evictionAdmission=VERIFIED writes=0")
 		return
 	}
 	if operation == "register-temporary-v2-storage" {

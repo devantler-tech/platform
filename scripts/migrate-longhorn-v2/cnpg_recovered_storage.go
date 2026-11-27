@@ -21,7 +21,9 @@ type cnpgRecoveredStorage struct {
 func bindCNPGRecoveredStorage(r cnpgProofRecord, cluster, pod, claim, pv, volume, engine object, replicas []object) (cnpgRecoveredStorage, error) {
 	refused := errors.New("recovered database storage is not qualified")
 	var zero cnpgRecoveredStorage
-	if r.Version != 1 || r.Phase != "cluster-created" || r.RestoreVerified || r.Cleaned || r.Plan == nil || len(r.Plan.Resources) != 4 || r.Admission == nil || r.Storage == nil || len(r.Storage.Disks) != 3 || !validBenchmarkOwner(r.Run, r.Source) {
+	initial := r.Phase == "cluster-created" && !r.RestoreVerified && r.RestoreReceipt == nil
+	retained := r.Phase == cnpgArchiveCredentialRetired && r.RestoreVerified && validateCNPGRestoreReceipt(r) == nil
+	if r.Version != 1 || (!initial && !retained) || r.Cleaned || r.Plan == nil || len(r.Plan.Resources) != 4 || r.Admission == nil || r.Storage == nil || len(r.Storage.Disks) != 3 || !validBenchmarkOwner(r.Run, r.Source) {
 		return zero, refused
 	}
 	ns := "longhorn-db-proof-" + r.Target + "-" + r.Run
@@ -58,7 +60,15 @@ func bindCNPGRecoveredStorage(r cnpgProofRecord, cluster, pod, claim, pv, volume
 	if err != nil {
 		return zero, refused
 	}
-	return cnpgRecoveredStorage{Cluster: benchmarkIdentity(cluster), Pod: benchmarkIdentity(pod), Claim: benchmarkIdentity(claim), PV: benchmarkIdentity(pv), Volume: benchmarkIdentity(volume), Engine: benchmarkIdentity(engine), Process: process, Producer: recoveredProgramProducer(pod), Replicas: copies}, nil
+	binding := cnpgRecoveredStorage{Cluster: benchmarkIdentity(cluster), Pod: benchmarkIdentity(pod), Claim: benchmarkIdentity(claim), PV: benchmarkIdentity(pv), Volume: benchmarkIdentity(volume), Engine: benchmarkIdentity(engine), Process: process, Producer: recoveredProgramProducer(pod), Replicas: copies}
+	if retained {
+		receipt := r.RestoreReceipt
+		if binding.Cluster != receipt.Cluster || binding.Pod != receipt.Consumer || binding.Claim != receipt.Claim ||
+			binding.PV != receipt.PV || binding.Volume != receipt.Volume {
+			return zero, refused
+		}
+	}
+	return binding, nil
 }
 
 func recoveredNativeObject(o object, api, kind, namespace string) bool {

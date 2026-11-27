@@ -48,6 +48,8 @@ name: Prepare Longhorn V2 Migration
             prove-database-v2-archive,
             resume-umami-archive-isolation,
             resume-umami-archive-data,
+            observe-umami-v2-standby,
+            replace-umami-v2-standby,
             register-temporary-v2-storage,
             repair-v1-reservation,
             reserve-v1-scratch,
@@ -72,7 +74,7 @@ name: Prepare Longhorn V2 Migration
             temporary-v2-1,
           ]
       database:
-        description: Fixed database for a read-only migration observation; leave node empty
+        description: Fixed database for an archive recovery or migration observation; leave node empty
         required: false
         type: choice
         options:
@@ -189,6 +191,14 @@ jobs:
             resume-umami-archive-data)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^resume-umami-archive-data:[1-9][0-9]{0,18}:[0-9a-f]{64}$ ]]
+              ;;
+            observe-umami-v2-standby)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^observe-umami-v2-standby:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
+              ;;
+            replace-umami-v2-standby)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^replace-umami-v2-standby:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
               ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]

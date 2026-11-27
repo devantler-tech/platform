@@ -25,7 +25,7 @@ Each entry needs exactly these four fields, supplied privately:
 | Field | Required value |
 | --- | --- |
 | `mail-user` | The environment's own JMAP mailbox login. Development must use a distinct synthetic-only mailbox. |
-| `mail-password` | The credential for that mailbox, with no administrator authority. |
+| `mail-password` | An app password for that mailbox, never its own password, with no administrator authority. |
 | `numina-api-key` | The environment's own company's key with `documents:write` only; no booking authority. |
 | `since` | The owner's confirmed first day of the books in that company, as `YYYY-MM-DD`. Collection starts at midnight UTC. |
 
@@ -35,6 +35,33 @@ the collector. Missing configuration prevents Helm installation. There is no fal
 company, start date or credential. The destination API is `api.numina.app`; the mail service is the
 platform's public HTTPS JMAP endpoint. Egress allows those two destinations on 443 and their DNS
 lookups only. The chart and container are pinned to their verified v1.0.0 publication digests.
+
+The owner creates the app password signed in as that mailbox on the mail server's account page,
+`https://mail.platform.devantler.tech/account/`, names it after the collector and its environment,
+and gives it an expiry he will renew. The collector calls only `Mailbox/get`, `Email/query`,
+`Email/get`, `Email/set` for its two keywords, and attachment downloads. Leave the password's
+allowed addresses empty: the server sees the address of the node that runs the Job, not a fixed
+one, and autoscaled nodes change it. `mail-user` is the login the owner signs in with.
+
+## Mail endpoint
+
+The collector reads JMAP at `https://mail.${domain}`, which is `mail.platform.devantler.tech` in
+production: the Gateway route `private-mail/private-mail`. The route sends requests straight to the
+mail server's client adapter, not through single sign-on, so basic authentication reaches Stalwart.
+`mail.devantler.tech` is the mail server's own load balancer. It carries SMTP, submission and IMAPS,
+never HTTPS, so it cannot serve the collector.
+
+The collector refuses a JMAP session whose URLs name another host than its mail URL. Stalwart builds
+those URLs from `STALWART_PUBLIC_URL`, or else from its configured hostname, which is the route
+host today. A change to that hostname must keep the session on the route host, for example by
+setting `STALWART_PUBLIC_URL`, or collection stops with a refused session.
+
+Inside the cluster the connection still leaves through the Gateway's public load balancer. The
+Gateway accepts only PROXY traffic and its Service addresses report `ipMode: Proxy`, so Cilium does
+not deliver them locally; the collector's name-pinned egress rule admits that path. The mail
+server's policy admits the Gateway's `ingress` identity on the client adapter, so the collector
+needs no grant into `private-mail`. `scripts/tests/bookkeeper` pins the URL, the route, the egress
+rule and the absence of a direct grant together.
 
 ## Activation
 
