@@ -19,6 +19,13 @@ spec:
   values:
     server:
       enabled: true
+      statefulSet:
+        securityContext:
+          container:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
       replicas: ${openbao_replicas:=1}
       # The chart's default readinessProbe is `exec: bao status`, which
       # returns exit code 2 on a sealed server -- so the Pod stays NotReady

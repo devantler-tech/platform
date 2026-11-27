@@ -37,8 +37,14 @@ spec:
     podSecurityContext:
       runAsUser: 65534
       runAsGroup: 65534
+      seccompProfile:
+        type: RuntimeDefault
     securityContext:
       runAsUser: 65534
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
     podDisruptionBudget:
       enabled: true
       # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never deadlocks
