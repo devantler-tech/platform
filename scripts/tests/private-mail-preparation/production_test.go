@@ -11,7 +11,7 @@ func TestProductionAdministrationUsesEncryptedSettings(t *testing.T) {
 	sts := object(t, objects, "StatefulSet", "private-mail")
 	pod := mapping(t, mapping(t, mapping(t, sts["spec"])["template"])["spec"])
 	initializers := sequence(t, pod["initContainers"])
-	if len(initializers) != 3 || mapping(t, initializers[0])["name"] != "migrate-storage" || mapping(t, initializers[1])["name"] != "select-mail-store" || mapping(t, initializers[2])["name"] != "configure" || len(sequence(t, pod["containers"])) != 2 {
+	if len(initializers) != 2 || mapping(t, initializers[0])["name"] != "select-mail-store" || mapping(t, initializers[1])["name"] != "configure" || len(sequence(t, pod["containers"])) != 2 {
 		t.Fatal("production must select its store, then initialize, before serving administration through the client proxy")
 	}
 	secret := object(t, objects, "Secret", "private-mail-settings")

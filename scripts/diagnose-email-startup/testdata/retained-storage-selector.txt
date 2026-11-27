@@ -1,0 +1,45 @@
+set -eu
+old=/var/lib/stalwart
+next=/var/lib/stalwart-v2
+template=/etc/private-mail-datastore/config.json
+route=/store-selection/config.json
+fence="$old/.private-mail-v1-fenced"
+receipt="$next/.private-mail-v2-copy-complete"
+refuse() { echo "Email storage route refused: $1." >&2; exit 1; }
+exists() { [ -e "$1" ] || [ -L "$1" ]; }
+valid_receipt() {
+  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(wc -l <"$1")" -eq 1 ] &&
+    grep -Exq 'private-mail-longhorn-v2 [0-9a-f]{64}' "$1"
+}
+selected="$old"
+if exists "$receipt"; then
+  valid_receipt "$receipt" || refuse "unverified V2 completion receipt"
+  [ -d "$next/data" ] && [ ! -L "$next/data" ] || refuse "the V2 store is missing"
+  if exists "$fence"; then
+    valid_receipt "$fence" && cmp -s "$fence" "$receipt" || refuse "the V1 fence and V2 receipt disagree"
+  else
+    if exists "$fence.tmp"; then
+      valid_receipt "$fence.tmp" && cmp -s "$fence.tmp" "$receipt" || refuse "incomplete V1 fence"
+    else
+      (set -C; cat "$receipt" >"$fence.tmp")
+    fi
+    sync
+    mv -- "$fence.tmp" "$fence"
+    sync
+  fi
+  selected="$next"
+elif exists "$fence" || exists "$fence.tmp"; then
+  refuse "V1 was fenced and its V2 completion receipt is missing"
+fi
+[ -d "$selected/data" ] && [ ! -L "$selected/data" ] || refuse "the selected store is missing"
+[ "$(grep -Fc "\"$old/data\"" "$template")" -eq 1 ] || refuse "the datastore configuration path is unverified"
+tmp=$(mktemp /store-selection/.config.XXXXXX)
+trap 'rm -f -- "$tmp"' EXIT
+sed "s#\"$old/data\"#\"$selected/data\"#" "$template" >"$tmp"
+[ "$(grep -Fc "\"$selected/data\"" "$tmp")" -eq 1 ] || refuse "the selected datastore configuration is unverified"
+mv -- "$tmp" "$route"
+if [ "$selected" = "$next" ]; then
+  echo "Email storage route selected Longhorn V2."
+else
+  echo "Email storage route selected the original encrypted store."
+fi
