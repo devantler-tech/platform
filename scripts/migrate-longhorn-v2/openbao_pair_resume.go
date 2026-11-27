@@ -36,7 +36,7 @@ func runOpenBaoPairResume(ctx context.Context, c client, input openBaoPairInput,
 	var record openBaoPairRecord
 	if err != nil || json.Unmarshal([]byte(text(cm, "data", "record")), &record) != nil ||
 		!record.valid() || record.RolledBack || record.Plan.Input != input ||
-		record.Plan.Run != priorRun || record.Plan.Source != source || record.FencePending != "" || record.CopyPending != "" {
+		record.Plan.Run != priorRun || record.Plan.Source != source || record.FencePending != "" {
 		return false, errOpenBaoProviderStorage
 	}
 	j := openBaoPairJournal{client: c, id: benchmarkIdentity(cm), record: record}

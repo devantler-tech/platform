@@ -188,6 +188,9 @@ func verifyOpenBaoPairTransition(previous, next openBaoPairRecord) error {
 			}
 		case !previous.Evicting:
 			expected.Evicting = true
+		case previous.CopyPending != "" && next.CopyPending == "" && previous.CopyAssets == next.CopyAssets:
+			// Reconciliation confirmed the pending object is absent.
+			expected.CopyPending = ""
 		default:
 			index, _ := previous.copyProgress()
 			if !advanceOpenBaoAssetCreation(expected.CopyAssets[:], next.CopyAssets[:], &expected.CopyPending,

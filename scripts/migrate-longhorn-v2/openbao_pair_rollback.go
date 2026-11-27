@@ -11,9 +11,13 @@ func (j *openBaoPairJournal) resumeOriginalPair(ctx context.Context, token, rele
 	r := j.record
 	if j.client.context != "admin@prod" || !r.valid() || r.RolledBack ||
 		(r.Phase != openBaoPairPlanned && r.Phase != openBaoPairStaged && r.Phase != openBaoPairCopied) ||
-		r.StagePending != "" || r.FencePending != "" || r.CopyPending != "" {
+		r.StagePending != "" || r.FencePending != "" {
 		return errOpenBaoProviderStorage
 	}
+	if err := j.reconcilePendingCopy(ctx); err != nil {
+		return err
+	}
+	r = j.record
 	plan := r.Plan
 	for _, candidate := range []struct {
 		id      benchmarkResource

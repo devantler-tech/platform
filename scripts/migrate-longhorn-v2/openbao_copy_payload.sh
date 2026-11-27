@@ -39,18 +39,22 @@ check_destination() {
 }
 
 archive() (
-  cd "$1" || return 1
+  local root=$1
+  shift
+  cd "$root" || return 1
   find . -xdev -mindepth 1 -maxdepth 1 ! -name lost+found -print0 |
     sort -z |
     tar --create --file=- --one-file-system --sort=name --null --files-from=- \
       --format=posix --pax-option='exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime' \
-      --numeric-owner --acls --xattrs --sparse
+      --numeric-owner --acls --xattrs "$@"
 )
 
 copy_checked() {
   local source=$1 target=$2 before after
+  # Hash logical contents and metadata. Sparse transfer archives can include
+  # process-specific names and filesystem-specific hole maps.
   before=$(archive "$source" | sha256sum) || return 1
-  archive "$source" | tar --extract --file=- --directory="$target" \
+  archive "$source" --sparse | tar --extract --file=- --directory="$target" \
     --acls --xattrs --same-permissions --no-same-owner || return 1
   sync -f "$target" || return 1
   after=$(archive "$target" | sha256sum) || return 1

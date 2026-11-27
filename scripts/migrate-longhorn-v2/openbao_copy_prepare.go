@@ -56,13 +56,8 @@ func (j *openBaoPairJournal) prepareCopyAssets(ctx context.Context) (policy, gat
 		return nil, nil, nil, errOpenBaoProviderStorage
 	}
 	plan := r.Plan
-	desired := [3]object{
-		openBaoCopyIsolation.denyPolicy(plan.Run, plan.Source, openBaoCopyFenceOwner),
-		openBaoCopyGate(plan.Run, plan.Source),
-		openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node),
-	}
 	var created [3]object
-	for index, asset := range desired {
+	for index, asset := range desiredOpenBaoCopyAssets(plan) {
 		next := j.record
 		next.CopyPending = openBaoCopyAssetKinds[index]
 		if err := j.advance(ctx, next); err != nil {
@@ -79,6 +74,45 @@ func (j *openBaoPairJournal) prepareCopyAssets(ctx context.Context) (policy, gat
 		created[index] = observed
 	}
 	return created[0], created[1], created[2], nil
+}
+
+func desiredOpenBaoCopyAssets(plan openBaoPairPlan) [3]object {
+	return [3]object{
+		openBaoCopyIsolation.denyPolicy(plan.Run, plan.Source, openBaoCopyFenceOwner),
+		openBaoCopyGate(plan.Run, plan.Source),
+		openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node),
+	}
+}
+
+// Recover an interrupted create without issuing it again. A recorded Pod, if
+// present, is removed by the normal rollback path before permitting the member.
+func (j *openBaoPairJournal) reconcilePendingCopy(ctx context.Context) error {
+	r := j.record
+	if r.CopyPending == "" {
+		return nil
+	}
+	if j.client.context != "admin@prod" || r.Phase != openBaoPairStaged || !r.valid() || !r.Evicting {
+		return errOpenBaoProviderStorage
+	}
+	index, _ := r.copyProgress()
+	resource := [3]string{"ciliumnetworkpolicies.cilium.io", "configmap", "pod"}[index]
+	desired := desiredOpenBaoCopyAssets(r.Plan)[index]
+	observed, err := j.client.get(ctx, resource, openBaoNamespace, text(desired, "metadata", "name"), true)
+	if err != nil {
+		return err
+	}
+	if observed != nil {
+		matched := matchOpenBaoNewCopyAsset(index, observed, desired, r.Plan)
+		if index == 2 {
+			matched = j.client.matchBoundOpenBaoVolumePod(ctx, observed, observed, desired, r.Plan.Original.Node)
+		}
+		if !matched {
+			return errOpenBaoProviderStorage
+		}
+		r.CopyAssets[index] = benchmarkIdentity(observed)
+	}
+	r.CopyPending = ""
+	return j.advance(ctx, r)
 }
 
 func matchOpenBaoNewCopyAsset(index int, observed, desired object, plan openBaoPairPlan) bool {

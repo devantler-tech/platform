@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 )
@@ -118,6 +119,12 @@ func TestOpenBaoJournalDoesNotAllowItsCopyOrReleaseToSkipAPhase(t *testing.T) {
 		if err := verifyOpenBaoPairTransition(staged, intent); err != nil {
 			t.Fatal(err)
 		}
+		if err := verifyOpenBaoPairTransition(intent, staged); err != nil {
+			t.Errorf("a confirmed absent %s must allow the pending copy intent to clear: %v", name, err)
+		}
+		t.Run("recover "+name, func(t *testing.T) {
+			testPendingOpenBaoCopy(t, intent, i, copyAssets[i])
+		})
 		created := intent
 		created.CopyPending, created.CopyAssets[i] = "", copyAssets[i]
 		if err := verifyOpenBaoPairTransition(intent, created); err != nil {
@@ -183,6 +190,86 @@ func TestOpenBaoJournalDoesNotAllowItsCopyOrReleaseToSkipAPhase(t *testing.T) {
 	next.Phase = openBaoPairRebound
 	if err := verifyOpenBaoPairTransition(released, next); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func testPendingOpenBaoCopy(t *testing.T, intent openBaoPairRecord, index int, identity benchmarkResource) {
+	t.Helper()
+	for _, outcome := range []string{"found", "absent", "foreign", "read error"} {
+		t.Run(outcome, func(t *testing.T) {
+			plan := intent.Plan
+			desired := desiredOpenBaoCopyAssets(plan)[index]
+			metadata := valueObject(desired, "metadata")
+			metadata["uid"], metadata["resourceVersion"] = identity.UID, "21"
+			if outcome == "foreign" {
+				valueObject(metadata, "annotations")[openBaoCopyFenceOwner] = "another-run"
+			}
+			raw, err := json.Marshal(intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journalName := openBaoPairJournalName(plan.Input.Member)
+			journal := object{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"metadata": object{"name": journalName, "namespace": openBaoPairJournalNamespace,
+					"uid": "f0852bc2-9061-486f-bb48-7c21e12e30a5", "resourceVersion": "100",
+					"annotations": object{openBaoCopyFenceOwner: plan.Run + ":" + plan.Source}},
+				"data": object{"record": string(raw)},
+			}
+			pendingReads, journalPatches := 0, 0
+			c := client{context: "admin@prod", run: func(_ context.Context, body []byte, program string, args ...string) ([]byte, error) {
+				if program == "git" {
+					return []byte(plan.Source + "\trefs/heads/main\n"), nil
+				}
+				if program != "kubectl" || len(args) < 5 || args[0] != "--context=admin@prod" {
+					t.Fatalf("unexpected command %s %v", program, args)
+				}
+				switch {
+				case args[2] == "get" && args[4] == identity.Name:
+					want := [3]string{"ciliumnetworkpolicies.cilium.io", "configmap", "pod"}[index]
+					if args[3] != want || !slices.Contains(args, "--namespace="+openBaoNamespace) ||
+						!slices.Contains(args, "--ignore-not-found") {
+						t.Fatalf("the pending read was not bound: %v", args)
+					}
+					pendingReads++
+					switch outcome {
+					case "absent":
+						return nil, nil
+					case "read error":
+						return nil, errors.New("API unavailable")
+					default:
+						return json.Marshal(desired)
+					}
+				case args[2] == "get" && args[4] == journalName:
+				case args[2] == "patch" && args[4] == journalName:
+					journalPatches++
+					var patch []object
+					if err := json.Unmarshal(body, &patch); err != nil || len(patch) != 4 {
+						t.Fatalf("invalid journal CAS: %v", err)
+					}
+					valueObject(journal, "data")["record"] = text(patch[3], "value")
+				default:
+					t.Fatalf("unexpected kubectl command %v", args)
+				}
+				return json.Marshal(journal)
+			}}
+			j := openBaoPairJournal{client: c, id: benchmarkIdentity(journal), record: intent}
+			err = j.reconcilePendingCopy(t.Context())
+			if outcome == "foreign" || outcome == "read error" {
+				if err == nil || pendingReads != 1 || journalPatches != 0 || j.record != intent {
+					t.Fatalf("unverified object changed the journal: %v", err)
+				}
+				return
+			}
+			want := intent
+			want.CopyPending = ""
+			if outcome == "found" {
+				want.CopyAssets[index] = identity
+			}
+			if err != nil || pendingReads != 1 || journalPatches != 1 || j.record != want {
+				t.Fatalf("pending asset was not reconciled exactly: reads=%d patches=%d error=%v", pendingReads, journalPatches, err)
+			}
+		})
 	}
 }
 

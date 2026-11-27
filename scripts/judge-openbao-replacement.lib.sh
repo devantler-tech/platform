@@ -8,12 +8,18 @@
 # OPENBAO_BIN (default "$RUNNER_TEMP/bin"). Prints only the tools' own closed
 # status lines; the capture stays in the caller's private directory.
 
-# judge_openbao_replacement <private-dir> <servers-on-the-new-release>
+# judge_openbao_replacement <private-dir> <servers-on-the-new-release> [follower]
 # Returns 0 PROVEN, 1 HOLD or 2 UNKNOWN; UNKNOWN outranks HOLD.
 judge_openbao_replacement() {
   local private="$1" current="$2"
   local bin="${OPENBAO_BIN:-$RUNNER_TEMP/bin}"
   local health=0 quorum=0 status=0 code
+  local role=()
+  case "${3:-}" in
+    "") ;;
+    follower) role=(--require-follower) ;;
+    *) return 2 ;;
+  esac
   # Without a declared upgrade every server must already run the reviewed
   # release, so the list of servers on it adds nothing to judge.
   local rolling=()
@@ -28,7 +34,7 @@ judge_openbao_replacement() {
   "$bin/judge-openbao-health" --input "$private/health.json" \
     --expect-servers "$OPENBAO_SERVERS" --expect-version "$OPENBAO_VERSION" ${rolling[@]+"${rolling[@]}"} --max-age 5m || health=$?
   "$bin/judge-openbao-quorum" --input "$private/quorum.json" \
-    --expect-servers "$OPENBAO_SERVERS" --replace "$REPLACEMENT_SERVER" --max-age 5m || quorum=$?
+    --expect-servers "$OPENBAO_SERVERS" --replace "$REPLACEMENT_SERVER" --max-age 5m ${role[@]+"${role[@]}"} || quorum=$?
   for code in "$health" "$quorum"; do
     if ((code > 2)); then code=2; fi
     if ((code > status)); then status=$code; fi

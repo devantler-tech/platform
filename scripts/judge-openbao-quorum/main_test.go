@@ -120,6 +120,23 @@ func TestOversizedCaptureIsUnknown(t *testing.T) {
 	}
 }
 
+func TestFollowerRequirementUsesTheReportedRaftRole(t *testing.T) {
+	for _, tc := range []struct {
+		target  string
+		verdict string
+	}{
+		{"openbao-0", verdictHold},
+		{"openbao-1", verdictProven},
+	} {
+		expect := want(tc.target)
+		expect.requireFollower = true
+		got := judge(strings.NewReader(fresh(configBody(healthyMembers()...))), expect, now)
+		if got.Verdict != tc.verdict || (tc.verdict == verdictHold && !strings.Contains(reasons(got), "server is the Raft leader")) {
+			t.Fatalf("target %s: got %s, want %s (%s)", tc.target, got.Verdict, tc.verdict, reasons(got))
+		}
+	}
+}
+
 // TestReportNeverEchoesCapturedData proves that addresses and unexpected node
 // identities from the capture never reach the printed report.
 func TestReportNeverEchoesCapturedData(t *testing.T) {
@@ -183,6 +200,9 @@ func TestCommandExitCodes(t *testing.T) {
 		code int
 	}{
 		{"proven", []string{"--input", write(current), servers, "--replace", "openbao-1"}, 0},
+		{"follower required", []string{"--input", write(current), servers, "--replace", "openbao-1", "--require-follower"}, 0},
+		{"leader denied in follower-only mode", []string{"--input", write(current), servers, "--replace", "openbao-0", "--require-follower"}, 1},
+		{"follower flag twice", []string{"--input", write(current), servers, "--replace", "openbao-0", "--require-follower", "--require-follower=false"}, 2},
 		{"hold", []string{"--input", write(missing), servers, "--replace", "openbao-1"}, 1},
 		{"stale", []string{"--input", write(documentAt(stamp(-time.Hour), stamp(-time.Hour+time.Second), 200, configBody(healthyMembers()...))), servers, "--replace", "openbao-1"}, 2},
 		{"help", []string{"-h"}, 2},
