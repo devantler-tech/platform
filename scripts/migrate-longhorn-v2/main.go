@@ -73,6 +73,8 @@ func main() {
 		_, _, authorization = authorizeUmamiStandbyTarget(os.Getenv, umamiStandbyReplacementOperation)
 	case resumeUmamiStandbyOperation:
 		_, authorization = authorizeUmamiStandbyResume(os.Getenv)
+	case recoverUmamiStandbyNameOperation:
+		_, authorization = authorizeUmamiStandbyNameRecovery(os.Getenv)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
 	case "reserve-v1-scratch":
@@ -318,7 +320,7 @@ func main() {
 		fmt.Println("CNPG_ARCHIVE_PROOF=RESTORED engine=v2 physicalHistory=VERIFIED networkIsolation=VERIFIED archiveCredential=RETIRED storageCleanup=REQUIRED migration=UNVERIFIED")
 		return
 	}
-	if operation == umamiStandbyReplacementOperation || operation == resumeUmamiStandbyOperation {
+	if operation == umamiStandbyReplacementOperation || operation == resumeUmamiStandbyOperation || operation == recoverUmamiStandbyNameOperation {
 		replacementContext, stop := context.WithTimeout(ctx, 40*time.Minute)
 		defer stop()
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
