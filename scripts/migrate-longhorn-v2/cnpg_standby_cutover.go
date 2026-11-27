@@ -81,11 +81,6 @@ func cnpgTransitionDisruptionAllowed(budget, cluster object, profile cnpgStandby
 		len(valueObject(budget, "status", "disruptedPods")) == 0
 }
 
-func umamiV1StorageRetained(cluster, pod, claim, pv, volume object) bool {
-	profile, ok := cnpgStandbyTransition(cluster)
-	return ok && profile.Source == (cnpgSource{Namespace: "umami", Name: "umami-db"}) && cnpgV1StorageRetained(profile, cluster, pod, claim, pv, volume)
-}
-
 func cnpgV1StorageRetained(profile cnpgStandbyProfile, cluster, pod, claim, pv, volume object) bool {
 	return cnpgOwned(claim, cluster) && text(claim, "metadata", "name") == text(pod, "metadata", "name") &&
 		verifyOriginalV1ClaimBinding(profile, claim, pv, volume) && umamiOriginalVolumeAttached(pod, volume)

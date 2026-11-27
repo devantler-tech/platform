@@ -46,7 +46,7 @@ func TestUmamiSwitchoverReadbackBindsTheRecordedPromotion(t *testing.T) {
 				"uid":    "c6339ec2-6239-4e3f-85fd-fa778d6d761d",
 				"labels": object{"app.kubernetes.io/managed-by": "github-actions", "storage.platform.devantler.tech/recovery-run": owner}},
 				"data": object{"record": string(data)}}
-			if _, err := bindUmamiPromotionRecord(journal, requestedPrevious, requestedTarget); (err == nil) != (fault == "") {
+			if _, err := bindCNPGPromotionRecord(cnpgSource{Namespace: "umami", Name: "umami-db"}, journal, requestedPrevious, requestedTarget); (err == nil) != (fault == "") {
 				t.Fatalf("unexpected journal readback: %v", err)
 			}
 		})
@@ -91,14 +91,21 @@ func TestUmamiSwitchoverRetryRequiresAnUntouchedWriter(t *testing.T) {
 	}
 }
 
-func TestUmamiSwitchoverWriterRouteRejectsTheOldWriter(t *testing.T) {
+func TestCNPGSwitchoverWriterRouteRejectsTheOldWriter(t *testing.T) {
+	for _, database := range []cnpgSource{{Namespace: "umami", Name: "umami-db"}, weddingStandbySource} {
+		t.Run(database.Name, func(t *testing.T) { testCNPGSwitchoverWriterRoute(t, database) })
+	}
+}
+
+func testCNPGSwitchoverWriterRoute(t *testing.T, database cnpgSource) {
+	t.Helper()
 	const serviceUID = "c6339ec2-6239-4e3f-85fd-fa778d6d761d"
 	const writerUID = "4d48bfc9-7352-4fc4-a982-086078e144c9"
-	const writerName = "umami-db-12"
-	for _, fault := range []string{"", "stale writer", "stale slice owner", "draining endpoint", "missing route", "both writers", "wrong address", "wrong port"} {
+	writerName, serviceName := database.Name+"-12", database.Name+"-rw"
+	for _, fault := range []string{"", "stale writer", "stale slice owner", "draining endpoint", "missing route", "both writers", "wrong address", "wrong port", "foreign endpoint"} {
 		t.Run(fault, func(t *testing.T) {
-			controller := object{"apiVersion": "v1", "kind": "Service", "name": "umami-db-rw", "uid": serviceUID, "controller": true}
-			target := object{"kind": "Pod", "name": writerName, "uid": writerUID, "namespace": "umami"}
+			controller := object{"apiVersion": "v1", "kind": "Service", "name": serviceName, "uid": serviceUID, "controller": true}
+			target := object{"kind": "Pod", "name": writerName, "uid": writerUID, "namespace": database.Namespace}
 			state := object{"ready": true, "serving": true, "terminating": false}
 			addr := []any{"10.0.0.41"}
 			slicePort := object{"name": "postgres", "protocol": "TCP", "port": float64(5432)}
@@ -114,17 +121,19 @@ func TestUmamiSwitchoverWriterRouteRejectsTheOldWriter(t *testing.T) {
 				endpoints = []any{}
 			case "both writers":
 				endpoints = append(endpoints, object{"conditions": state, "targetRef": object{
-					"kind": "Pod", "namespace": "umami", "name": "umami-db-11", "uid": "1aa817ea-b284-4aa9-a9b8-cbcadf4c9c2e"}})
+					"kind": "Pod", "namespace": database.Namespace, "name": database.Name + "-11", "uid": "1aa817ea-b284-4aa9-a9b8-cbcadf4c9c2e"}})
 			case "wrong address":
 				addr[0] = "10.0.0.42"
 			case "wrong port":
 				slicePort["port"] = float64(5433)
+			case "foreign endpoint":
+				target["namespace"] = "unrelated-workload"
 			}
 			slice := object{"apiVersion": "discovery.k8s.io/v1", "kind": "EndpointSlice", "metadata": object{
-				"name": "umami-db-rw-q8kvt", "namespace": "umami", "uid": "5010f302-ded4-48cb-8ce3-2dcfdf37055b", "resourceVersion": "17",
-				"labels": object{"kubernetes.io/service-name": "umami-db-rw"}, "ownerReferences": []any{controller}}, "endpoints": endpoints,
+				"name": serviceName + "-q8kvt", "namespace": database.Namespace, "uid": "5010f302-ded4-48cb-8ce3-2dcfdf37055b", "resourceVersion": "17",
+				"labels": object{"kubernetes.io/service-name": serviceName}, "ownerReferences": []any{controller}}, "endpoints": endpoints,
 				"addressType": "IPv4", "ports": []any{slicePort}}
-			service := object{"metadata": object{"uid": serviceUID}, "spec": object{"ipFamilies": []any{"IPv4"},
+			service := object{"metadata": object{"uid": serviceUID, "name": serviceName, "namespace": database.Namespace}, "spec": object{"ipFamilies": []any{"IPv4"},
 				"ports": []any{object{"name": "postgres", "protocol": "TCP", "port": float64(5432), "targetPort": float64(5432)}}}}
 			writer := object{"metadata": object{"name": writerName, "uid": writerUID}, "status": object{"podIPs": []any{object{"ip": "10.0.0.41"}}}}
 			if err := bindUmamiWriterEndpoints(service, writer, []object{slice}); (err == nil) != (fault == "") {
@@ -163,7 +172,7 @@ func TestUmamiSwitchoverChangesOnlyTheWitnessedCNPGStatus(t *testing.T) {
 				valueObject(cluster, "metadata")["namespace"] = "other"
 			}
 			now := time.Date(2026, 11, 27, 6, 3, 9, 0, time.UTC)
-			patch, err := umamiV2SwitchoverPatch(cluster, old, picked, now)
+			patch, err := cnpgV2SwitchoverPatch(cnpgSource{Namespace: "umami", Name: "umami-db"}, cluster, old, picked, now)
 			if fault != "" {
 				if err == nil || len(patch) != 0 {
 					t.Fatal("unsafe promotion admitted")

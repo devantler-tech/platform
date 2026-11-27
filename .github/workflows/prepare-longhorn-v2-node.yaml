@@ -56,6 +56,7 @@ name: Prepare Longhorn V2 Migration
             replace-wedding-v2-standby,
             resume-retained-wedding-v2-standby,
             recover-wedding-standby-name,
+            switch-wedding-primary-to-v2,
             register-temporary-v2-storage,
             repair-v1-reservation,
             reserve-v1-scratch,
@@ -215,6 +216,10 @@ jobs:
             switch-umami-primary-to-v2)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^switch-umami-primary-to-v2:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
+              ;;
+            switch-wedding-primary-to-v2)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == wedding-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^switch-wedding-primary-to-v2:wedding-db-[1-9][0-9]*:wedding-db-[1-9][0-9]*$ ]]
               ;;
             recover-umami-standby-name)
               run_re='[1-9][0-9]{0,18}'

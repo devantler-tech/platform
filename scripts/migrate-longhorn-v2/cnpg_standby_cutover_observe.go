@@ -114,10 +114,6 @@ func observeCNPGStandbyCutover(ctx context.Context, c client, source string, dat
 	return result, nil
 }
 
-func rebindUmamiArchiveProof(ctx context.Context, c client, observation cnpgObservation) (cnpgProofRecord, error) {
-	return rebindCNPGStandbyArchiveProof(ctx, c, cnpgSource{Namespace: "umami", Name: "umami-db"}, observation)
-}
-
 func rebindCNPGStandbyArchiveProof(ctx context.Context, c client, database cnpgSource, observation cnpgObservation) (cnpgProofRecord, error) {
 	refused := errors.New("the completed V2 backup recovery for this database is unverified")
 	if !knownCNPGArchiveSource(database.Namespace, database.Name) ||

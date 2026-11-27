@@ -71,6 +71,8 @@ func main() {
 		_, _, authorization = authorizeUmamiStandbyObservation(os.Getenv)
 	case umamiStandbyReplacementOperation, umamiV2SwitchoverOperation:
 		_, _, authorization = authorizeUmamiStandbyTarget(os.Getenv, operation)
+	case weddingV2SwitchoverOperation:
+		_, _, authorization = authorizeCNPGStandbyTarget(os.Getenv, operation, weddingStandbySource.Name)
 	case resumeUmamiStandbyOperation:
 		_, authorization = authorizeUmamiStandbyResume(os.Getenv)
 	case recoverUmamiStandbyNameOperation:
@@ -344,8 +346,12 @@ func main() {
 		fmt.Println("WEDDING_V2_STANDBY_REPLACEMENT=VERIFIED originalStorage=RETAINED replicas=3 physicalReplay=VERIFIED")
 		return
 	}
-	if operation == umamiV2SwitchoverOperation {
-		previous, target, err := authorizeUmamiStandbyTarget(os.Getenv, operation)
+	if operation == umamiV2SwitchoverOperation || operation == weddingV2SwitchoverOperation {
+		database := cnpgSource{Namespace: "umami", Name: "umami-db"}
+		if operation == weddingV2SwitchoverOperation {
+			database = weddingStandbySource
+		}
+		previous, target, err := authorizeCNPGStandbyTarget(os.Getenv, operation, database.Name)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -353,11 +359,15 @@ func main() {
 		switchoverContext, stop := context.WithTimeout(ctx, 30*time.Minute)
 		defer stop()
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
-		if err := runUmamiV2Switchover(switchoverContext, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), previous, target); err != nil {
-			fmt.Fprintln(os.Stderr, "Umami V2 switchover held:", err)
+		if err := runCNPGV2Switchover(switchoverContext, c, database, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), previous, target); err != nil {
+			fmt.Fprintln(os.Stderr, "Database V2 switchover held:", err)
 			os.Exit(1)
 		}
-		fmt.Println("UMAMI_V2_PRIMARY=VERIFIED originalPrimary=RETAINED physicalHistory=VERIFIED")
+		if operation == weddingV2SwitchoverOperation {
+			fmt.Println("WEDDING_V2_PRIMARY=VERIFIED originalPrimary=RETAINED physicalHistory=VERIFIED")
+		} else {
+			fmt.Println("UMAMI_V2_PRIMARY=VERIFIED originalPrimary=RETAINED physicalHistory=VERIFIED")
+		}
 		return
 	}
 	if operation == umamiStandbyObservationOperation {
