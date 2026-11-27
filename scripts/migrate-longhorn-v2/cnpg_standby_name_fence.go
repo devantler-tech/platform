@@ -30,7 +30,8 @@ func umamiNameFencePolicy(record umamiStandbyReplacementRecord) object {
 	podMatch := oldName + " || " + mounts("dyn(object.spec)")
 	jobName := "(has(object.metadata.name) && object.metadata.name in [" + strconv.Quote(name+"-join") + ", " + strconv.Quote(name+"-restore") + "])"
 	jobMatch := jobName + " || (has(dyn(object.spec).template) && " + mounts("dyn(object.spec).template.spec") + ")"
-	policyName := "lh-umami-claim-release-" + record.NameRelease.Owner.Run
+	namespace := record.Original.Claim.Namespace
+	policyName := "lh-" + namespace + "-claim-release-" + record.NameRelease.Owner.Run
 	owner := record.Original.Claim.UID + ":" + record.NameRelease.Join.UID + ":" + record.NameRelease.Owner.Source
 	creates := func(group, version string, resources ...any) object {
 		return object{"apiGroups": []any{group}, "apiVersions": []any{version}, "operations": []any{"CREATE"}, "resources": resources, "scope": "Namespaced"}
@@ -42,12 +43,19 @@ func umamiNameFencePolicy(record umamiStandbyReplacementRecord) object {
 			"failurePolicy": "Fail",
 			"matchConstraints": object{"matchPolicy": "Equivalent", "namespaceSelector": object{}, "objectSelector": object{},
 				"resourceRules": []any{creates("", "v1", "pods", "persistentvolumeclaims"), creates("batch", "v1", "jobs")}},
-			"matchConditions": []any{object{"name": "umami-namespace", "expression": `request.namespace == "umami"`}},
-			"validations": []any{object{"message": umamiNameFenceMessage, "expression": `!(request.resource.resource == "pods" && (` + podMatch + `)) && ` +
+			"matchConditions": []any{object{"name": namespace + "-namespace", "expression": "request.namespace == " + strconv.Quote(namespace)}},
+			"validations": []any{object{"message": cnpgNameFenceMessage(namespace), "expression": `!(request.resource.resource == "pods" && (` + podMatch + `)) && ` +
 				`!(request.resource.resource == "jobs" && (` + jobMatch + `)) && ` +
 				`!(request.resource.resource == "persistentvolumeclaims" && ` + oldName + ")"}},
 		},
 	}
+}
+
+func cnpgNameFenceMessage(namespace string) string {
+	if namespace == "wedding-app" {
+		return "The retained Wedding claim name is being released"
+	}
+	return umamiNameFenceMessage
 }
 
 func installUmamiNameFence(ctx context.Context, j *umamiStandbyReplacementJournal) error {
@@ -132,14 +140,20 @@ func matchesUmamiNamePolicy(policy, desired object, uid string) bool {
 
 func proveUmamiNameFence(ctx context.Context, j *umamiStandbyReplacementJournal) error {
 	desired, receipt := umamiNameFencePolicy(j.record), j.record.NameRelease.Fence
+	database := cnpgSource{Namespace: j.record.Original.Database.Namespace, Name: j.record.Original.Database.Name}
+	profile, admitted := cnpgStandbyProfileForSource(database)
+	if !admitted {
+		return errors.New("the claim name fence is outside the selected database transition")
+	}
 	return proveReferenceFenceOnServingAPIs(ctx, j.c, j.executor().Source, j.record.Run, desired, receipt,
 		func(ctx context.Context, client *http.Client, endpoint *url.URL) error {
-			return probeUmamiNameFence(ctx, client, endpoint, text(desired, "metadata", "name"), j.record.Original.Claim.Name)
+			return probeCNPGNameFence(ctx, client, endpoint, profile, text(desired, "metadata", "name"), j.record.Original.Claim.Name)
 		})
 }
 
-func probeUmamiNameFence(ctx context.Context, client *http.Client, endpoint *url.URL, policy, claim string) error {
-	meta := func(name string) object { return object{"name": name, "namespace": "umami"} }
+func probeCNPGNameFence(ctx context.Context, client *http.Client, endpoint *url.URL, profile cnpgStandbyProfile, policy, claim string) error {
+	namespace := profile.Source.Namespace
+	meta := func(name string) object { return object{"name": name, "namespace": namespace} }
 	podSpec := object{
 		"restartPolicy": "Never", "automountServiceAccountToken": false,
 		"securityContext": object{"runAsNonRoot": true, "runAsUser": 65532, "seccompProfile": object{"type": "RuntimeDefault"}},
@@ -148,28 +162,28 @@ func probeUmamiNameFence(ctx context.Context, client *http.Client, endpoint *url
 		"volumes": []any{object{"name": "old-data", "persistentVolumeClaim": object{"claimName": claim}}},
 	}
 	claimSpec := object{"accessModes": []any{"ReadWriteOnce"}, "storageClassName": "longhorn-v2",
-		"resources": object{"requests": object{"storage": "5Gi"}}}
+		"resources": object{"requests": object{"storage": profile.Size}}}
 	probes := []struct {
 		group, resource, path, name string
 		body                        object
 	}{
-		{"", "pods", "/api/v1/namespaces/umami/pods", "longhorn-v2-name-fence-probe",
+		{"", "pods", "/api/v1/namespaces/" + namespace + "/pods", "longhorn-v2-name-fence-probe",
 			object{"apiVersion": "v1", "kind": "Pod", "metadata": meta("longhorn-v2-name-fence-probe"), "spec": podSpec}},
-		{"batch", "jobs", "/apis/batch/v1/namespaces/umami/jobs", claim + "-join",
+		{"batch", "jobs", "/apis/batch/v1/namespaces/" + namespace + "/jobs", claim + "-join",
 			object{"apiVersion": "batch/v1", "kind": "Job", "metadata": meta(claim + "-join"), "spec": object{"template": object{"spec": podSpec}}}},
-		{"", "persistentvolumeclaims", "/api/v1/namespaces/umami/persistentvolumeclaims", claim,
+		{"", "persistentvolumeclaims", "/api/v1/namespaces/" + namespace + "/persistentvolumeclaims", claim,
 			object{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": meta(claim), "spec": claimSpec}},
 	}
 	for _, probe := range probes {
 		code, raw, err := benchmarkAdmissionRequest(ctx, client, endpoint, probe.path, http.MethodPost, "application/json", probe.body)
 		if err != nil {
-			return fmt.Errorf("a serving API did not return the Umami %s dry-run response: %w", probe.resource, err)
+			return fmt.Errorf("a serving API did not return the %s %s dry-run response: %w", profile.Source.Name, probe.resource, err)
 		}
 		// The installed policy omits validation.reason. Kubernetes attributes
 		// the denial to the same policy and binding but returns Invalid (422).
 		if code != http.StatusUnprocessableEntity ||
-			!nativePolicyDenialMatches(code, raw, metav1.StatusReasonInvalid, probe.group, probe.resource, probe.name, policy, policy, umamiNameFenceMessage) {
-			return fmt.Errorf("a serving API did not prove the exact Umami %s fence (HTTP %d)", probe.resource, code)
+			!nativePolicyDenialMatches(code, raw, metav1.StatusReasonInvalid, probe.group, probe.resource, probe.name, policy, policy, cnpgNameFenceMessage(namespace)) {
+			return fmt.Errorf("a serving API did not prove the exact %s %s fence (HTTP %d)", profile.Source.Name, probe.resource, code)
 		}
 	}
 	return nil

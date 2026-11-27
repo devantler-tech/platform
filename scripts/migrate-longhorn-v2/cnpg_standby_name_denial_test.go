@@ -87,7 +87,8 @@ func TestUmamiNameFenceAcceptsOnlyTheNativeInvalidDenial(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = probeUmamiNameFence(context.Background(), server.Client(), endpoint, policy, claim)
+			profile, _ := cnpgStandbyProfileForSource(cnpgSource{Namespace: "umami", Name: "umami-db"})
+			err = probeCNPGNameFence(context.Background(), server.Client(), endpoint, profile, policy, claim)
 			if (err == nil) != tc.proven {
 				t.Fatalf("admission probe result = %v, want success = %t", err, tc.proven)
 			}

@@ -7,10 +7,11 @@ import (
 )
 
 func observeUmamiUnchangedPeers(ctx context.Context, j *umamiStandbyReplacementJournal) (cnpgObservation, []object, error) {
-	const namespace = "umami"
 	c, record := j.c, j.record
+	namespace := record.Original.Database.Namespace
 	cluster, err := c.get(ctx, "clusters.postgresql.cnpg.io", namespace, record.Original.Database.Name, false)
-	if err != nil || benchmarkIdentity(cluster) != record.Original.Database || !umamiV2Transition(cluster) ||
+	_, admitted := cnpgStandbyTransition(cluster)
+	if err != nil || !admitted || benchmarkIdentity(cluster) != record.Original.Database ||
 		!cnpgCondition(cluster, "ContinuousArchiving") || verifyUmamiReplacementPrimary(ctx, c, cluster, record.Primary) != nil {
 		return cnpgObservation{}, nil, errors.New("the witnessed Umami write leader and archive are unverified")
 	}
@@ -46,7 +47,8 @@ func verifyUmamiNameReleaseArchive(ctx context.Context, j *umamiStandbyReplaceme
 			}
 		}
 	}
-	archive, err := rebindUmamiArchiveProof(ctx, c, observation)
+	database := cnpgSource{Namespace: j.record.Original.Database.Namespace, Name: j.record.Original.Database.Name}
+	archive, err := rebindCNPGStandbyArchiveProof(ctx, c, database, observation)
 	if err != nil {
 		return err
 	}
@@ -55,7 +57,7 @@ func verifyUmamiNameReleaseArchive(ctx context.Context, j *umamiStandbyReplaceme
 	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
 		return errors.New("the independently restored Umami V2 archive capacity is unverified")
 	}
-	spare, err := readUmamiV2Standby(ctx, c, observation, j.record.Original.Spare.Pod.Name, qualified.Disks)
+	spare, err := readCNPGV2Standby(ctx, c, observation, j.record.Original.Spare.Pod.Name, qualified.Disks)
 	if err != nil || !recoveryJSONEqual(spare, j.record.Original.Spare) {
 		return errors.New("the original Umami V2 spare and its three replicas are unverified")
 	}
@@ -101,7 +103,8 @@ func readUmamiNameReleaseState(ctx context.Context, j *umamiStandbyReplacementJo
 	if err != nil {
 		return nil, nil, err
 	}
-	if benchmarkIdentity(claim) != original.Claim || !verifyUmamiOriginalClaimBinding(claim, pv, backend) ||
+	profile, admitted := cnpgStandbyTransition(observation.Cluster)
+	if !admitted || benchmarkIdentity(claim) != original.Claim || !verifyOriginalV1ClaimBinding(profile, claim, pv, backend) ||
 		!umamiRetainedClaimMetadata(claim, original.Consumer.Name) {
 		return nil, nil, errors.New("the original ownerless Umami claim is not bound to the witnessed Retain PV")
 	}
@@ -110,7 +113,7 @@ func readUmamiNameReleaseState(ctx context.Context, j *umamiStandbyReplacementJo
 }
 
 func completedUmamiReusedJoin(job, cluster object, original cnpgStandbyCutover, identity benchmarkResource) bool {
-	if !recoveredNativeObject(job, "batch/v1", "Job", "umami") || benchmarkIdentity(job) != identity ||
+	if !recoveredNativeObject(job, "batch/v1", "Job", original.Consumer.Namespace) || benchmarkIdentity(job) != identity ||
 		!cnpgOwned(job, cluster) || text(job, "metadata", "labels", "cnpg.io/jobRole") != "join" ||
 		text(job, "metadata", "labels", "cnpg.io/instanceName") != original.Consumer.Name ||
 		text(job, "spec", "template", "spec", "restartPolicy") != "Never" ||
@@ -184,20 +187,21 @@ func readDetachedUmamiBackend(ctx context.Context, c client, original cnpgStandb
 }
 
 func umamiReleasedVolumeMatches(original cnpgStandbyCutover, pv, backend object) bool {
+	profile, admitted := cnpgStandbyProfileForSource(cnpgSource{Namespace: original.Database.Namespace, Name: original.Database.Name})
 	originalPVC := text(backend, "status", "kubernetesStatus", "pvcName")
 	lastReference := text(backend, "status", "kubernetesStatus", "lastPVCRefAt")
 	_, historical := time.Parse(time.RFC3339, lastReference)
-	return recoveredNativeObject(pv, "v1", "PersistentVolume", "") && benchmarkIdentity(pv) == original.PV &&
+	return admitted && recoveredNativeObject(pv, "v1", "PersistentVolume", "") && benchmarkIdentity(pv) == original.PV &&
 		text(pv, "status", "phase") == "Released" && text(pv, "spec", "persistentVolumeReclaimPolicy") == "Retain" &&
 		text(pv, "spec", "claimRef", "name") == original.Claim.Name &&
 		text(pv, "spec", "claimRef", "namespace") == original.Claim.Namespace &&
 		text(pv, "spec", "claimRef", "uid") == original.Claim.UID &&
 		text(pv, "spec", "storageClassName") == "longhorn-wffc" && providerRWOFilesystem(pv) &&
-		text(pv, "spec", "capacity", "storage") == "5Gi" &&
+		text(pv, "spec", "capacity", "storage") == profile.Size &&
 		text(pv, "spec", "csi", "driver") == "driver.longhorn.io" && text(pv, "spec", "csi", "volumeHandle") == original.Volume.Name &&
 		recoveredNativeObject(backend, "longhorn.io/v1beta2", "Volume", original.Volume.Namespace) &&
 		benchmarkIdentity(backend) == original.Volume && text(backend, "spec", "dataEngine") == "v1" &&
-		text(backend, "spec", "size") == "5368709120" && verifyBenchmarkDetachedBackendState(backend) == nil &&
+		text(backend, "spec", "size") == profile.SizeBytes && verifyBenchmarkDetachedBackendState(backend) == nil &&
 		value(backend, "spec", "numberOfReplicas") == float64(3) &&
 		(text(backend, "status", "robustness") == "healthy" || text(backend, "status", "robustness") == "unknown") &&
 		text(backend, "status", "kubernetesStatus", "pvName") == original.PV.Name &&

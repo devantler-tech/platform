@@ -108,16 +108,24 @@ func TestUmamiStandbyEvictionPreflightOnlyUsesNativeDryRun(t *testing.T) {
 	}
 }
 
-func TestUmamiStandbyEvictionWritesOnlyTheExactPodSubresource(t *testing.T) {
+func TestCNPGStandbyEvictionWritesOnlyTheExactPodSubresource(t *testing.T) {
+	for _, database := range []cnpgSource{{Namespace: "umami", Name: "umami-db"}, weddingStandbySource} {
+		t.Run(database.Name, func(t *testing.T) { testCNPGStandbyEvictionSubresource(t, database) })
+	}
+}
+
+func testCNPGStandbyEvictionSubresource(t *testing.T, database cnpgSource) {
+	t.Helper()
 	witness := cnpgStandbyCutover{
-		Consumer:        benchmarkResource{"umami-db-2", "umami", "ac005841-5555-4555-8555-555555555555"},
+		Consumer:        benchmarkResource{database.Name + "-2", database.Namespace, "ac005841-5555-4555-8555-555555555555"},
 		ConsumerVersion: "23",
 		BudgetVersion:   "50",
 	}
 	calls := 0
 	c := client{context: "admin@prod", run: func(_ context.Context, input []byte, tool string, args ...string) ([]byte, error) {
 		calls++
-		want := []string{"--context=admin@prod", "--request-timeout=20s", "create", "--raw", "/api/v1/namespaces/umami/pods/umami-db-2/eviction", "-f", "-"}
+		path := "/api/v1/namespaces/" + database.Namespace + "/pods/" + witness.Consumer.Name + "/eviction"
+		want := []string{"--context=admin@prod", "--request-timeout=20s", "create", "--raw", path, "-f", "-"}
 		if tool != "kubectl" || !slices.Equal(args, want) {
 			t.Fatal("the real request did not use the exact Eviction subresource")
 		}
@@ -130,11 +138,16 @@ func TestUmamiStandbyEvictionWritesOnlyTheExactPodSubresource(t *testing.T) {
 		}
 		return json.Marshal(object{"apiVersion": "v1", "kind": "Status", "status": "Success"})
 	}}
-	if err := requestUmamiStandbyEviction(t.Context(), c, witness, false); err != nil {
+	if err := requestCNPGStandbyEviction(t.Context(), c, database, witness, false); err != nil {
 		t.Fatal(err)
 	}
+	foreign := witness
+	foreign.Consumer.Namespace = "foreign-namespace"
+	if err := requestCNPGStandbyEviction(t.Context(), c, database, foreign, false); err == nil || calls != 1 {
+		t.Fatal("a Pod in an unapproved namespace reached the real eviction endpoint")
+	}
 	witness.ConsumerVersion = ""
-	if err := requestUmamiStandbyEviction(t.Context(), c, witness, false); err == nil || calls != 1 {
+	if err := requestCNPGStandbyEviction(t.Context(), c, database, witness, false); err == nil || calls != 1 {
 		t.Fatal("an unfenced Pod reached the real eviction endpoint")
 	}
 }

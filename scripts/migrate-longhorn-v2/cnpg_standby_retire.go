@@ -48,7 +48,8 @@ func retainUmamiOriginalStandby(ctx context.Context, journal *umamiStandbyReplac
 	if err = verifyUmamiStandbyClaimRetention(actual.claim, retained.claim); err != nil {
 		return err
 	}
-	if !verifyUmamiOriginalClaimBinding(retained.claim, retained.pv, retained.volume) ||
+	profile, admitted := cnpgStandbyTransition(retained.cluster)
+	if !admitted || !verifyOriginalV1ClaimBinding(profile, retained.claim, retained.pv, retained.volume) ||
 		!umamiOriginalVolumeAttached(retained.pod, retained.volume) {
 		return errors.New("the retained Umami PVC or its attached backend changed")
 	}
@@ -67,6 +68,7 @@ func evictUmamiRetainedStandby(ctx context.Context, journal *umamiStandbyReplace
 		return errors.New("the existing Umami eviction attempt needs explicit continuation")
 	}
 	witness := journal.record.Original
+	database := cnpgSource{Namespace: witness.Database.Namespace, Name: witness.Database.Name}
 	source := journal.executor().Source
 	if err := recheckUmamiRetainedAdmission(ctx, journal); err != nil {
 		return err
@@ -80,7 +82,7 @@ func evictUmamiRetainedStandby(ctx context.Context, journal *umamiStandbyReplace
 	if err := sourceCurrent(ctx, journal.c.run, source); err != nil {
 		return err
 	}
-	if err := requestUmamiStandbyEviction(ctx, journal.c, witness, true); err != nil {
+	if err := requestCNPGStandbyEviction(ctx, journal.c, database, witness, true); err != nil {
 		return err
 	}
 	next := journal.record
@@ -91,8 +93,7 @@ func evictUmamiRetainedStandby(ctx context.Context, journal *umamiStandbyReplace
 	if err := recheckUmamiRetainedAdmission(ctx, journal); err != nil {
 		return err
 	}
-	roster, err := journal.c.readCNPGObservationWithRetention(ctx,
-		cnpgSource{Namespace: "umami", Name: "umami-db"}, witness.Consumer.Name)
+	roster, err := journal.c.readCNPGObservationWithRetention(ctx, database, witness.Consumer.Name)
 	if err != nil || !sameUmamiStandbyRoster(roster, journal.record) {
 		return errors.New("the reviewed Umami members changed at eviction")
 	}
@@ -102,15 +103,15 @@ func evictUmamiRetainedStandby(ctx context.Context, journal *umamiStandbyReplace
 	if err := sourceCurrent(ctx, journal.c.run, source); err != nil {
 		return err
 	}
-	return requestUmamiStandbyEviction(ctx, journal.c, witness, false)
+	return requestCNPGStandbyEviction(ctx, journal.c, database, witness, false)
 }
 
 func verifyUmamiSpareBeforeRetirement(ctx context.Context, journal *umamiStandbyReplacementJournal) error {
-	const target = "umami-db"
 	record, executor := journal.record, journal.executor()
+	database := cnpgSource{Namespace: record.Original.Database.Namespace, Name: record.Original.Database.Name}
 	var observation cnpgObservation
 	err := waitReadyWithin(ctx, 2*time.Minute, func(ctx context.Context) error {
-		current, err := observeCNPGMigrationWithRetention(ctx, journal.c, target, executor.Source, record.Original.Consumer.Name)
+		current, err := observeCNPGMigrationWithRetention(ctx, journal.c, database.Name, executor.Source, record.Original.Consumer.Name)
 		if err == nil {
 			observation = current
 		}
@@ -125,7 +126,7 @@ func verifyUmamiSpareBeforeRetirement(ctx context.Context, journal *umamiStandby
 	if err = verifyUmamiReplacementPrimary(ctx, journal.c, observation.Cluster, journal.record.Primary); err != nil {
 		return err
 	}
-	archive, err := rebindUmamiArchiveProof(ctx, journal.c, observation)
+	archive, err := rebindCNPGStandbyArchiveProof(ctx, journal.c, database, observation)
 	if err != nil {
 		return err
 	}
@@ -135,7 +136,7 @@ func verifyUmamiSpareBeforeRetirement(ctx context.Context, journal *umamiStandby
 		return errors.New("the Umami recovery storage changed before eviction")
 	}
 	spare := journal.record.Original.Spare
-	current, err := readUmamiV2Standby(ctx, journal.c, observation, spare.Pod.Name, qualified.Disks)
+	current, err := readCNPGV2Standby(ctx, journal.c, observation, spare.Pod.Name, qualified.Disks)
 	if err != nil {
 		return err
 	}
@@ -146,7 +147,8 @@ func verifyUmamiSpareBeforeRetirement(ctx context.Context, journal *umamiStandby
 }
 
 func sameUmamiStandbyRoster(observation cnpgObservation, record umamiStandbyReplacementRecord) bool {
-	if benchmarkIdentity(observation.Cluster) != record.Original.Database || len(observation.Pods) != 4 {
+	profile, admitted := cnpgStandbyTransition(observation.Cluster)
+	if !admitted || benchmarkIdentity(observation.Cluster) != record.Original.Database || len(observation.Pods) != profile.Instances {
 		return false
 	}
 	for _, pod := range observation.Pods {
@@ -163,8 +165,9 @@ func recheckUmamiRetainedAdmission(ctx context.Context, journal *umamiStandbyRep
 	if err != nil {
 		return err
 	}
-	if !umamiRetainedClaimMetadata(actual.claim, journal.record.Original.Consumer.Name) ||
-		!verifyUmamiOriginalClaimBinding(actual.claim, actual.pv, actual.volume) ||
+	profile, admitted := cnpgStandbyTransition(actual.cluster)
+	if !admitted || !umamiRetainedClaimMetadata(actual.claim, journal.record.Original.Consumer.Name) ||
+		!verifyOriginalV1ClaimBinding(profile, actual.claim, actual.pv, actual.volume) ||
 		!umamiOriginalVolumeAttached(actual.pod, actual.volume) {
 		return errors.New("the retained Umami backend was not stable at eviction")
 	}
@@ -173,7 +176,7 @@ func recheckUmamiRetainedAdmission(ctx context.Context, journal *umamiStandbyRep
 
 func verifyUmamiReplacementPrimary(ctx context.Context, c client, cluster object, expected benchmarkResource) error {
 	refused := errors.New("the original Umami write leader changed during replacement")
-	if expected.Namespace != "umami" || text(cluster, "status", "currentPrimary") != expected.Name ||
+	if expected.Namespace != text(cluster, "metadata", "namespace") || text(cluster, "status", "currentPrimary") != expected.Name ||
 		text(cluster, "status", "targetPrimary") != expected.Name {
 		return refused
 	}

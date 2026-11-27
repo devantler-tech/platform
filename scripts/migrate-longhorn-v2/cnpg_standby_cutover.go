@@ -16,11 +16,18 @@ type cnpgStandbyCutover struct {
 // replacement. The original PV and its V1 backend remain reserved to this
 // claim while CloudNativePG provisions a replacement from its V2 template.
 func bindUmamiStandbyCutover(observation cnpgObservation, pods []object, target string, claim, pv, volume, budget object) (cnpgStandbyCutover, error) {
+	if !umamiV2Transition(observation.Cluster) {
+		return cnpgStandbyCutover{}, errors.New("the Umami storage transition is unverified")
+	}
+	return bindCNPGStandbyCutover(observation, pods, target, claim, pv, volume, budget)
+}
+
+func bindCNPGStandbyCutover(observation cnpgObservation, pods []object, target string, claim, pv, volume, budget object) (cnpgStandbyCutover, error) {
 	cluster := observation.Cluster
-	ns := text(cluster, "metadata", "namespace")
+	profile, admitted := cnpgStandbyTransition(cluster)
 	primary := text(cluster, "status", "currentPrimary")
 	unqualified := errors.New("the selected database standby or retained storage binding is unverified")
-	if !umamiV2Transition(cluster) || target == primary || len(observation.Pods) != 4 || len(observation.States) != 4 ||
+	if !admitted || target == primary || len(observation.Pods) != profile.Instances || len(observation.States) != profile.Instances ||
 		verifyPostgresStandby(observation.States[primary], observation.States[target]) != nil {
 		return cnpgStandbyCutover{}, unqualified
 	}
@@ -30,8 +37,8 @@ func bindUmamiStandbyCutover(observation cnpgObservation, pods []object, target 
 	}
 	pod := byName[target]
 	if verifyPostgresPod(pod, pod, cluster) != nil || text(pod, "metadata", "labels", "cnpg.io/instanceRole") != "replica" ||
-		!recoveredPostgresMount(pod, claim) || !onlyCNPGStandbyUsesClaim(pods, pod, target, ns) ||
-		!umamiStandbyDisruptionAllowed(budget, cluster) || !umamiV1StorageRetained(cluster, pod, claim, pv, volume) {
+		!recoveredPostgresMount(pod, claim) || !onlyCNPGStandbyUsesClaim(pods, pod, target, profile.Source.Namespace) ||
+		!cnpgTransitionDisruptionAllowed(budget, cluster, profile) || !cnpgV1StorageRetained(profile, cluster, pod, claim, pv, volume) {
 		return cnpgStandbyCutover{}, unqualified
 	}
 	return cnpgStandbyCutover{Database: benchmarkIdentity(cluster), Consumer: benchmarkIdentity(pod),
@@ -60,22 +67,28 @@ func onlyCNPGStandbyUsesClaim(pods []object, pod object, claim, namespace string
 	return seen == 1
 }
 
-func umamiStandbyDisruptionAllowed(budget, cluster object) bool {
-	labels := object{"cnpg.io/cluster": "umami-db", "cnpg.io/instanceRole": "replica"}
+func cnpgTransitionDisruptionAllowed(budget, cluster object, profile cnpgStandbyProfile) bool {
+	labels := object{"cnpg.io/cluster": profile.Source.Name, "cnpg.io/instanceRole": "replica"}
 	generation, ok := nativeObservationUint(value(budget, "metadata", "generation"))
-	return recoveredNativeObject(budget, "policy/v1", "PodDisruptionBudget", "umami") &&
-		text(budget, "metadata", "name") == "umami-db" && cnpgOwnerReference(budget, cluster) && ok && generation > 0 &&
+	minimum, followers := float64(profile.Instances-2), float64(profile.Instances-1)
+	return recoveredNativeObject(budget, "policy/v1", "PodDisruptionBudget", profile.Source.Namespace) &&
+		text(budget, "metadata", "name") == profile.Source.Name && cnpgOwnerReference(budget, cluster) && ok && generation > 0 &&
 		reflect.DeepEqual(valueObject(budget, "spec", "selector"), object{"matchLabels": labels}) &&
-		value(budget, "spec", "minAvailable") == float64(2) && value(budget, "spec", "maxUnavailable") == nil &&
+		value(budget, "spec", "minAvailable") == minimum && value(budget, "spec", "maxUnavailable") == nil &&
 		value(budget, "metadata", "generation") == value(budget, "status", "observedGeneration") &&
-		value(budget, "status", "currentHealthy") == float64(3) && value(budget, "status", "expectedPods") == float64(3) &&
-		value(budget, "status", "desiredHealthy") == float64(2) && value(budget, "status", "disruptionsAllowed") == float64(1) &&
+		value(budget, "status", "currentHealthy") == followers && value(budget, "status", "expectedPods") == followers &&
+		value(budget, "status", "desiredHealthy") == minimum && value(budget, "status", "disruptionsAllowed") == float64(1) &&
 		len(valueObject(budget, "status", "disruptedPods")) == 0
 }
 
 func umamiV1StorageRetained(cluster, pod, claim, pv, volume object) bool {
+	profile, ok := cnpgStandbyTransition(cluster)
+	return ok && profile.Source == (cnpgSource{Namespace: "umami", Name: "umami-db"}) && cnpgV1StorageRetained(profile, cluster, pod, claim, pv, volume)
+}
+
+func cnpgV1StorageRetained(profile cnpgStandbyProfile, cluster, pod, claim, pv, volume object) bool {
 	return cnpgOwned(claim, cluster) && text(claim, "metadata", "name") == text(pod, "metadata", "name") &&
-		verifyUmamiOriginalClaimBinding(claim, pv, volume) && umamiOriginalVolumeAttached(pod, volume)
+		verifyOriginalV1ClaimBinding(profile, claim, pv, volume) && umamiOriginalVolumeAttached(pod, volume)
 }
 
 func umamiOriginalVolumeAttached(pod, volume object) bool {
@@ -84,8 +97,9 @@ func umamiOriginalVolumeAttached(pod, volume object) bool {
 		text(volume, "status", "state") == "attached" && text(volume, "status", "robustness") == "healthy"
 }
 
-func verifyUmamiOriginalClaimBinding(claim, pv, volume object) bool {
-	const namespace, class, size = "umami", "longhorn-wffc", "5Gi"
+func verifyOriginalV1ClaimBinding(profile cnpgStandbyProfile, claim, pv, volume object) bool {
+	const class = "longhorn-wffc"
+	namespace, size := profile.Source.Namespace, profile.Size
 	name := text(claim, "metadata", "name")
 	uid := text(claim, "metadata", "uid")
 	backend := "pvc-" + uid
@@ -104,7 +118,7 @@ func verifyUmamiOriginalClaimBinding(claim, pv, volume object) bool {
 		text(pv, "spec", "csi", "driver") == "driver.longhorn.io" && text(pv, "spec", "csi", "volumeHandle") == backend &&
 		recoveredNativeObject(volume, "longhorn.io/v1beta2", "Volume", "longhorn-system") &&
 		text(volume, "metadata", "name") == backend && text(volume, "spec", "dataEngine") == "v1" &&
-		text(volume, "spec", "size") == "5368709120" && value(volume, "spec", "numberOfReplicas") == float64(3) &&
+		text(volume, "spec", "size") == profile.SizeBytes && value(volume, "spec", "numberOfReplicas") == float64(3) &&
 		text(volume, "status", "kubernetesStatus", "pvName") == backend &&
 		text(volume, "status", "kubernetesStatus", "pvcName") == name && text(volume, "status", "kubernetesStatus", "namespace") == namespace
 }
