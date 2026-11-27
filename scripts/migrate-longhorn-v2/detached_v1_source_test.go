@@ -136,3 +136,15 @@ func TestDetachedV1SourceConfirmationIsTargetOnly(t *testing.T) {
 		t.Fatal("a database selector was accepted in the detached volume route")
 	}
 }
+
+func TestDetachedV1SourceReaderRejectsUnrelatedObjectsAndWrites(t *testing.T) {
+	for _, args := range [][]string{
+		{"--context=admin@prod", "--request-timeout=20s", "get", "secrets", "--output=json"},
+		{"--context=admin@prod", "--request-timeout=20s", "delete", "persistentvolume", detachedFixturePV},
+	} {
+		_, err := detachedV1SourceReadCommand(t.Context(), nil, "kubectl", args...)
+		if err == nil || err.Error() != "detached V1 qualification permits only source and Kubernetes reads" {
+			t.Fatalf("unexpected command verdict: %v", err)
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	k8sresource "k8s.io/apimachinery/pkg/api/resource"
@@ -32,7 +33,9 @@ func authorizeDetachedV1Source(getenv func(string) string) (string, error) {
 func detachedV1SourceReadCommand(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
 	sourceRead := program == "git" && runtimeObservationReadAllowed(program, args...)
 	clusterRead := program == "kubectl" && len(args) >= 5 && args[0] == "--context=admin@prod" &&
-		args[1] == "--request-timeout=20s" && args[2] == "get"
+		args[1] == "--request-timeout=20s" && args[2] == "get" &&
+		slices.Contains([]string{"persistentvolume", "persistentvolumeclaim", "pods", "volumes.longhorn.io",
+			"volumeattachments.longhorn.io", "volumeattachments.storage.k8s.io"}, args[3])
 	if input != nil || (!sourceRead && !clusterRead) || !commandContextActive(ctx) {
 		return nil, errors.New("detached V1 qualification permits only source and Kubernetes reads")
 	}
