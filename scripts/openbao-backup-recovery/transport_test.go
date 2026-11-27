@@ -13,6 +13,30 @@ import (
 	"testing"
 )
 
+func TestLiveRecoveryHealthRequiresCandidateRelease(t *testing.T) {
+	for _, test := range []struct {
+		version string
+		wantOK  bool
+	}{
+		{version: "2.7.3", wantOK: true},
+		{version: "2.7.2", wantOK: false},
+	} {
+		t.Run(test.version, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"initialized":true,"sealed":false,"version":"` + test.version + `"}`))
+			}))
+			defer server.Close()
+			client, err := newAPI(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.health(context.Background()); (err == nil) != test.wantOK {
+				t.Errorf("health accepted=%t want=%t", err == nil, test.wantOK)
+			}
+		})
+	}
+}
+
 // TestAPIRefusesExternalOriginsRedirectsAndIncompleteHealth protects recovery keys.
 func TestAPIRefusesExternalOriginsRedirectsAndIncompleteHealth(t *testing.T) {
 	for _, origin := range []string{"https://example.invalid", "http://localhost:8200", "http://127.0.0.1:8200/path", "http://user@127.0.0.1:8200", "http://127.0.0.1:8200?redirect=yes"} {
@@ -95,7 +119,7 @@ run)
     if [[ $1 == --label ]]; then printf '%s' "${2#*=}" > "$FIXTURE_DIR/nonce"; fi
     shift
   done
-  if [[ $FIXTURE_CASE == valid-result-unreadable-cleanup ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.2'; exit 0; fi
+  if [[ $FIXTURE_CASE == valid-result-unreadable-cleanup ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.7.3'; exit 0; fi
   if [[ $FIXTURE_CASE == private-output ]]; then printf '%s\n' 'PRIVATE_SYNTHETIC_PAYLOAD'; exit 0; fi
   printf '%s\n' 'PRIVATE_SYNTHETIC_ERROR' >&2
   exit 1;;
