@@ -287,6 +287,9 @@ func finishUmamiNameRecovery(ctx context.Context, j *umamiStandbyReplacementJour
 			return err
 		}
 	}
+	if err := requestUmamiReleasedStandbyReconcile(ctx, j); err != nil {
+		return err
+	}
 	return observeUmamiReplacementReady(ctx, j)
 }
 
