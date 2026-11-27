@@ -107,3 +107,34 @@ func TestUmamiStandbyEvictionPreflightOnlyUsesNativeDryRun(t *testing.T) {
 		}
 	}
 }
+
+func TestUmamiStandbyEvictionWritesOnlyTheExactPodSubresource(t *testing.T) {
+	witness := cnpgStandbyCutover{
+		Consumer:        benchmarkResource{"umami-db-2", "umami", "ac005841-5555-4555-8555-555555555555"},
+		ConsumerVersion: "23",
+		BudgetVersion:   "50",
+	}
+	calls := 0
+	c := client{context: "admin@prod", run: func(_ context.Context, input []byte, tool string, args ...string) ([]byte, error) {
+		calls++
+		want := []string{"--context=admin@prod", "--request-timeout=20s", "create", "--raw", "/api/v1/namespaces/umami/pods/umami-db-2/eviction", "-f", "-"}
+		if tool != "kubectl" || !slices.Equal(args, want) {
+			t.Fatal("the real request did not use the exact Eviction subresource")
+		}
+		var body object
+		if json.Unmarshal(input, &body) != nil || text(body, "apiVersion") != "policy/v1" || text(body, "kind") != "Eviction" ||
+			text(body, "deleteOptions", "preconditions", "uid") != witness.Consumer.UID ||
+			text(body, "deleteOptions", "preconditions", "resourceVersion") != witness.ConsumerVersion ||
+			value(body, "deleteOptions", "dryRun") != nil || value(body, "deleteOptions", "gracePeriodSeconds") != nil {
+			t.Fatal("the real eviction lost identity fencing or normal termination")
+		}
+		return json.Marshal(object{"apiVersion": "v1", "kind": "Status", "status": "Success"})
+	}}
+	if err := requestUmamiStandbyEviction(t.Context(), c, witness, false); err != nil {
+		t.Fatal(err)
+	}
+	witness.ConsumerVersion = ""
+	if err := requestUmamiStandbyEviction(t.Context(), c, witness, false); err == nil || calls != 1 {
+		t.Fatal("an unfenced Pod reached the real eviction endpoint")
+	}
+}

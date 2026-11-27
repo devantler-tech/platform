@@ -11,14 +11,18 @@ import (
 const umamiStandbyObservationOperation = "observe-umami-v2-standby"
 
 func authorizeUmamiStandbyObservation(getenv func(string) string) (string, string, error) {
+	return authorizeUmamiStandbyTarget(getenv, umamiStandbyObservationOperation)
+}
+
+func authorizeUmamiStandbyTarget(getenv func(string) string, operation string) (string, string, error) {
 	const database = "umami-db"
-	if getenv("LONGHORN_V2_OPERATION") != umamiStandbyObservationOperation || getenv("LONGHORN_V2_DATABASE") != database ||
+	if getenv("LONGHORN_V2_OPERATION") != operation || getenv("LONGHORN_V2_DATABASE") != database ||
 		getenv("LONGHORN_V2_NODE") != "" {
 		return "", "", errors.New("the exact Umami standby observation is required")
 	}
 	confirmation := getenv("LONGHORN_V2_CONFIRM")
 	items := strings.Split(confirmation, ":")
-	if len(items) != 3 || items[0] != umamiStandbyObservationOperation || items[1] == items[2] {
+	if len(items) != 3 || items[0] != operation || items[1] == items[2] {
 		return "", "", errors.New("the original and spare standby must be specified and distinct")
 	}
 	for _, name := range items[1:] {
