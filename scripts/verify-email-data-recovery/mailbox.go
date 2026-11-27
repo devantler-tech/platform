@@ -18,6 +18,15 @@ const companyMailbox = "ned@devantler.tech"
 
 var mailboxIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,512}$`)
 
+var (
+	errMailboxTransport = errors.New("mailbox-transport")
+	errMailboxResponse  = errors.New("mailbox-response")
+)
+
+type mailboxHTTPStatus int
+
+func (mailboxHTTPStatus) Error() string { return "mailbox-http" }
+
 type mailboxClient struct {
 	account, endpoint, password string
 	http                        *http.Client
@@ -47,15 +56,15 @@ func (c *mailboxClient) request(ctx context.Context, method, path, contentType s
 	}
 	response, err := c.http.Do(req)
 	if err != nil {
-		return nil, errors.New("mailbox-transport")
+		return nil, errMailboxTransport
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
-		return nil, errors.New("mailbox-http")
+		return nil, mailboxHTTPStatus(response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
 	if err != nil || len(data) > 4<<20 {
-		return nil, errors.New("mailbox-response")
+		return nil, errMailboxResponse
 	}
 	return data, nil
 }
@@ -63,7 +72,7 @@ func (c *mailboxClient) request(ctx context.Context, method, path, contentType s
 // mailboxMethods names the JMAP capability of each permitted method. Census
 // reads that can initialize defaults require an unchanged collection state.
 var mailboxMethods = map[string]string{
-	"Email/get": jmapMail, "Email/query": jmapMail, "Email/import": jmapMail, "Email/set": jmapMail,
+	"Email/get": jmapMail, "Email/query": jmapMail, "Email/set": jmapMail,
 	"Mailbox/get": jmapMail, "Mailbox/set": jmapMail, "Mailbox/query": jmapMail,
 	"Calendar/get": "urn:ietf:params:jmap:calendars", "CalendarEvent/query": "urn:ietf:params:jmap:calendars", "CalendarEvent/get": "urn:ietf:params:jmap:calendars",
 	"Calendar/changes":      "urn:ietf:params:jmap:calendars",
@@ -141,29 +150,26 @@ func (c *mailboxClient) createMarker(ctx context.Context, nonce string) (*mailbo
 		marker.uncertain = true
 		return marker, errors.New("marker-mailbox")
 	}
-	message := "From: Email recovery diagnostic <email-recovery@example.invalid>\r\nTo: email-recovery@example.invalid\r\nSubject: Email recovery verification\r\nMessage-ID: <" + marker.identity.messageID + ">\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + marker.identity.body + "\r\n"
-	data, err := c.request(ctx, http.MethodPost, "/jmap/upload/"+c.account+"/", "message/rfc822", []byte(message))
-	if err != nil {
-		return marker, err
-	}
-	var upload object
-	if json.Unmarshal(data, &upload) != nil || text(upload, "accountId") != c.account || !mailboxIDPattern.MatchString(text(upload, "blobId")) {
-		return marker, errors.New("marker-upload")
-	}
-	marker.identity.blob = text(upload, "blobId")
-	imported, err := c.call(ctx, "Email/import", object{"emails": object{"proof": object{"blobId": marker.identity.blob, "mailboxIds": object{marker.identity.mailbox: true}, "keywords": object{"$seen": true}}}})
+	// The production listener refuses blob uploads. A text-only draft stays
+	// inside the diagnostic mailbox and does not need upload or submission.
+	const partID = "verification"
+	created, err = c.call(ctx, "Email/set", object{"create": object{"proof": object{
+		"mailboxIds": object{marker.identity.mailbox: true}, "keywords": object{"$draft": true, "$seen": true},
+		"from": []any{object{"email": companyMailbox}}, "subject": "Email recovery verification",
+		"header:Message-ID:asMessageIds": []any{marker.identity.messageID},
+		"textBody":                       []any{object{"partId": partID, "type": "text/plain"}},
+		"bodyValues":                     object{partID: object{"value": marker.identity.body}},
+	}}})
 	if err != nil {
 		marker.uncertain = true
 		return marker, err
 	}
-	createdEmail := child(child(imported, "created"), "proof")
+	createdEmail := child(child(created, "created"), "proof")
 	marker.identity.email = text(createdEmail, "id")
-	// Import may normalize or relink an uploaded blob. Its returned Email
-	// identity, rather than the temporary upload identity, binds later reads.
 	marker.identity.blob = text(createdEmail, "blobId")
 	if !mailboxIDPattern.MatchString(marker.identity.email) || !mailboxIDPattern.MatchString(marker.identity.blob) {
 		marker.uncertain = true
-		return marker, errors.New("marker-import")
+		return marker, errors.New("marker-create")
 	}
 	if _, err = c.verifyMessage(ctx, marker.identity); err != nil {
 		return marker, err

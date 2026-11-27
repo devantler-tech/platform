@@ -62,3 +62,33 @@ func TestMailboxSessionMustPreserveTheOriginalAccount(t *testing.T) {
 		}
 	}
 }
+
+func TestSourceSessionFailureReportsOnlyTheApprovedCategory(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{http.StatusUnauthorized, "private provider error", "source-session-unauthorized"},
+		{http.StatusForbidden, "private provider error", "source-session-forbidden"},
+		{http.StatusNotFound, "private provider error", "source-session-not-found"},
+		{http.StatusTemporaryRedirect, "private provider error", "source-session-http"},
+		{http.StatusOK, "private provider error", "source-session-json"},
+		{http.StatusOK, `{"accounts":{}}`, "source-session-account"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			client, err := newMailboxClient(server.URL, "fixture-only")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := sourceSessionFailure(client.session(t.Context())); got != tc.want {
+				t.Fatalf("unexpected session failure category: %q", got)
+			}
+		})
+	}
+}

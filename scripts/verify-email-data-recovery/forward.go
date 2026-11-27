@@ -16,6 +16,11 @@ import (
 
 var forwardAddressPattern = regexp.MustCompile(`^Forwarding from 127\.0\.0\.1:([0-9]{1,5}) -> 8080$`)
 
+var (
+	errSessionJSON    = errors.New("session-json")
+	errSessionAccount = errors.New("session-account")
+)
+
 func forwardPort(line string) (string, bool) {
 	match := forwardAddressPattern.FindStringSubmatch(line)
 	if len(match) != 2 {
@@ -27,13 +32,13 @@ func forwardPort(line string) (string, bool) {
 func sessionAccount(data []byte, expected string) (string, error) {
 	var session object
 	if json.Unmarshal(data, &session) != nil {
-		return "", errors.New("session-json")
+		return "", errSessionJSON
 	}
 	account := text(child(session, "primaryAccounts"), "urn:ietf:params:jmap:mail")
 	accounts := child(session, "accounts")
 	entry, ok := accounts[account].(map[string]any)
 	if !mailboxIDPattern.MatchString(account) || (expected != "" && expected != account) || !ok || (entry["isReadOnly"] != nil && entry["isReadOnly"] != false) {
-		return "", errors.New("session-account")
+		return "", errSessionAccount
 	}
 	return account, nil
 }
@@ -48,6 +53,35 @@ func (c *mailboxClient) session(ctx context.Context) error {
 	}
 	c.account = account
 	return nil
+}
+
+// Report an allow-listed transport or session result. Response bodies,
+// redirects and mailbox identities never enter the workflow receipt.
+func sourceSessionFailure(err error) string {
+	switch {
+	case errors.Is(err, errMailboxTransport):
+		return "source-session-transport"
+	case errors.Is(err, errMailboxResponse):
+		return "source-session-response"
+	case errors.Is(err, errSessionJSON):
+		return "source-session-json"
+	case errors.Is(err, errSessionAccount):
+		return "source-session-account"
+	}
+	var status mailboxHTTPStatus
+	if errors.As(err, &status) {
+		switch status {
+		case http.StatusUnauthorized:
+			return "source-session-unauthorized"
+		case http.StatusForbidden:
+			return "source-session-forbidden"
+		case http.StatusNotFound:
+			return "source-session-not-found"
+		default:
+			return "source-session-http"
+		}
+	}
+	return "source-session"
 }
 
 // A connection before the reader starts listening can close kubectl's entire

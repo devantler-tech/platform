@@ -130,6 +130,7 @@ func (d *recoveryDriver) openSource(ctx context.Context) (*mailboxClient, func()
 	}
 	if err != nil {
 		stopSource()
+		d.stage = sourceSessionFailure(err)
 		return nil, nil, err
 	}
 	return original, stopSource, nil
