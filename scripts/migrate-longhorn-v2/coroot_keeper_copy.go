@@ -43,7 +43,7 @@ func (j *corootKeeperJournal) copyVolume(ctx context.Context, disks []cnpgRecove
 		if err != nil {
 			return errCorootKeeperCopy
 		}
-		if !matchCorootKeeperVolumePod(pod, created, desiredPod) {
+		if !j.c.matchBoundKeeperVolumePod(ctx, pod, created, desiredPod, member.Node) {
 			return errors.Join(errReadinessTerminal, errCorootKeeperCopy)
 		}
 		if text(pod, "status", "phase") == "Failed" {
@@ -97,7 +97,7 @@ func (j *corootKeeperJournal) releaseCopyGate(ctx context.Context, r corootKeepe
 		if err != nil {
 			return errCorootKeeperCopy
 		}
-		if !matchCorootKeeperVolumePod(pod, created, desired) {
+		if !j.c.matchBoundKeeperVolumePod(ctx, pod, created, desired, member.Node) {
 			return errors.Join(errReadinessTerminal, errCorootKeeperCopy)
 		}
 		if text(pod, "status", "phase") != "Pending" ||
@@ -113,7 +113,7 @@ func (j *corootKeeperJournal) releaseCopyGate(ctx context.Context, r corootKeepe
 			return err
 		}
 		current, err := j.c.get(ctx, "pod", corootKeeperNamespace, r.CopyPod.Name, false)
-		if err != nil || !matchCorootKeeperVolumePod(current, created, desired) ||
+		if err != nil || !j.c.matchBoundKeeperVolumePod(ctx, current, created, desired, member.Node) ||
 			text(current, "status", "podIP") != text(pod, "status", "podIP") ||
 			text(current, "spec", "nodeName") != member.Node || text(current, "status", "phase") != "Pending" {
 			return errors.Join(errReadinessTerminal, errCorootKeeperCopy)
