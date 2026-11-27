@@ -39,8 +39,8 @@ done
 	pod := corootKeeperVolumePod(run, source, corootKeeperCopyPrefix+run, hostname)
 	spec := valueObject(pod, "spec")
 	security := valueObject(spec, "securityContext")
+	// Keep the namespace's policy default without requesting a group ownership change.
 	delete(security, "fsGroup")
-	delete(security, "fsGroupChangePolicy")
 	mounts := []any{
 		object{"name": "original", "mountPath": "/original", "readOnly": true},
 		object{"name": "destination", "mountPath": "/destination"},
@@ -97,7 +97,8 @@ func corootKeeperVolumeContainer(name string, command, mounts []any) object {
 		"name": name, "image": corootKeeperImageID, "imagePullPolicy": "IfNotPresent", "command": command,
 		"securityContext": object{
 			"runAsNonRoot": true, "allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true,
-			"capabilities": object{"drop": []any{"ALL"}}, "seccompProfile": object{"type": "RuntimeDefault"},
+			"seLinuxOptions": object{},
+			"capabilities":   object{"drop": []any{"ALL"}}, "seccompProfile": object{"type": "RuntimeDefault"},
 		},
 		"volumeMounts": mounts,
 		"resources": object{

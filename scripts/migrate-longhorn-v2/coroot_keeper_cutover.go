@@ -31,7 +31,13 @@ func runCorootKeeperCutover(ctx context.Context, c client, source, run string, i
 		return err
 	}
 	if prior != nil {
-		return resumeCorootKeeperRebind(ctx, c, source, run, input, prior, capacity.Disks)
+		rollback, err := bindCorootKeeperRollback(c, prior, input)
+		if err != nil {
+			return resumeCorootKeeperRebind(ctx, c, source, run, input, prior, capacity.Disks)
+		}
+		if err := rollbackInterruptedCorootKeeper(ctx, rollback, source, run, capacity.Disks); err != nil {
+			return err
+		}
 	}
 	before, err := readCorootKeeperQuorum(ctx, c, source, capacity.Disks)
 	if err != nil {
@@ -70,7 +76,6 @@ func runCorootKeeperCutover(ctx context.Context, c client, source, run string, i
 	if err != nil {
 		return err
 	}
-	var fences corootKeeperFences
 	defer func() {
 		if result == nil {
 			return
@@ -79,14 +84,14 @@ func runCorootKeeperCutover(ctx context.Context, c client, source, run string, i
 		if mayRestoreOriginalKeeper(failedPhase) {
 			restoreCtx, stop := context.WithTimeout(context.Background(), 4*time.Minute)
 			defer stop()
-			result = errors.Join(result, journal.restoreOriginalBeforeClaimRelease(restoreCtx, fences, capacity.Disks))
+			result = errors.Join(result, journal.restoreOriginalBeforeClaimRelease(restoreCtx, capacity.Disks))
 		}
 		result = fmt.Errorf("keeper migration held in phase %s: %w", failedPhase, result)
 	}()
 	if err := journal.prepareVolume(ctx, capacity.Disks); err != nil {
 		return err
 	}
-	fences, err = journal.installFences(ctx)
+	fences, err := journal.installFences(ctx)
 	if err != nil {
 		return err
 	}
@@ -111,7 +116,7 @@ func mayRestoreOriginalKeeper(phase string) bool {
 	}
 }
 
-func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Context, fences corootKeeperFences, disks []cnpgRecoveryDiskBinding) error {
+func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Context, disks []cnpgRecoveryDiskBinding) error {
 	if _, err := j.read(ctx); err != nil {
 		return err
 	}
@@ -153,10 +158,11 @@ func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Cont
 			text(current, "metadata", "annotations", corootKeeperFenceOwner) != r.Run+":"+r.Source {
 			return errCorootKeeperReceipt
 		}
-		if err := removeScratch(ctx, j.c, r.Source, asset.kind, corootKeeperNamespace, asset.prefix+asset.id.Name, current); err != nil {
+		if err := removeScratch(ctx, j.c, j.source(), asset.kind, corootKeeperNamespace, asset.prefix+asset.id.Name, current); err != nil {
 			return err
 		}
 	}
+	fences := keeperFencesFor(r)
 	for _, fence := range []struct {
 		desired object
 		receipt benchmarkFenceReceipt
@@ -164,12 +170,15 @@ func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Cont
 		if fence.receipt.PolicyUID == "" {
 			continue
 		}
-		if err := removeCorootKeeperFence(ctx, j.c, r.Source, fence.desired, fence.receipt); err != nil {
+		if err := removeCorootKeeperFence(ctx, j.c, j.source(), fence.desired, fence.receipt); err != nil {
 			return err
 		}
 	}
+	if err := j.verifyRolledBackFencesAbsent(ctx); err != nil {
+		return err
+	}
 	if err := waitReadyWithin(ctx, 90*time.Second, func(ctx context.Context) error {
-		ready, err := readCorootKeeperQuorum(ctx, j.c, r.Source, disks)
+		ready, err := readCorootKeeperQuorum(ctx, j.c, j.source(), disks)
 		if err != nil || ready.Disks[r.Input.Ordinal].Digest != original.Digest || ready.Controller != r.Before.Controller ||
 			ready.Budget != r.Before.Budget {
 			return errCorootKeeperQuorum
@@ -178,7 +187,7 @@ func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Cont
 	}); err != nil {
 		return err
 	}
-	r.Phase = "original-claim-preserved"
+	r.Phase = keeperOriginalPreserved
 	return j.advance(ctx, r)
 }
 

@@ -86,3 +86,44 @@ func TestKeeperRebindResumeRequiresTheExactReleasedCohort(t *testing.T) {
 		}
 	}
 }
+
+func TestKeeperRollbackJournalAcceptsOnlyAnIntactOriginalBeforeRelease(t *testing.T) {
+	const uid = "b286e4f7-51db-4bc1-aa4d-65dd9cf592cb"
+	const source = "acef1536f21e1b8cf32d62c6045fc989fa8e55d6"
+	input := corootKeeperCutoverInput{Ordinal: 1, Digest: strings.Repeat("a", 64)}
+	for _, phase := range []string{"eviction-requested", "copy-permitted", "original-claim-preserved", "claim-release-requested", "unknown"} {
+		for _, fault := range []string{"", "different digest", "new claim already created", "missing original claim", "different journal owner"} {
+			t.Run(phase+"/"+fault, func(t *testing.T) {
+				record := corootKeeperCutoverRecord{Version: 1, Run: "991", Source: source, Phase: phase, Input: input, FenceUser: "fixture-admin"}
+				original := &record.Before.Disks[1]
+				original.Digest = input.Digest
+				original.Claim = benchmarkResource{Name: "keeper-original", Namespace: corootKeeperNamespace, UID: uid}
+				original.PV = benchmarkResource{Name: "keeper-original-volume", UID: uid}
+				record.Rebind.Original = *original
+				owner := record.Run + ":" + record.Source
+				switch fault {
+				case "different digest":
+					original.Digest = strings.Repeat("b", 64)
+				case "new claim already created":
+					record.NewClaim = benchmarkResource{Name: original.Claim.Name, Namespace: original.Claim.Namespace, UID: "70eaa3f7-5657-40d8-9e80-06f41925c4aa"}
+				case "missing original claim":
+					original.Claim.UID = ""
+				case "different journal owner":
+					owner = "990:" + record.Source
+				}
+				encoded, err := json.Marshal(record)
+				if err != nil {
+					t.Fatal(err)
+				}
+				doc := object{"apiVersion": "v1", "kind": "ConfigMap",
+					"metadata": object{"namespace": "longhorn-system", "name": corootKeeperJournalName(input.Ordinal), "resourceVersion": "11",
+						"uid": uid, "annotations": object{corootKeeperFenceOwner: owner}}, "data": object{"record": string(encoded)}}
+				_, err = bindCorootKeeperRollback(client{}, doc, input)
+				allowed := fault == "" && phase != "claim-release-requested" && phase != "unknown"
+				if (err == nil) != allowed {
+					t.Fatalf("unexpected rollback qualification: %v", err)
+				}
+			})
+		}
+	}
+}

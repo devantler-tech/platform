@@ -167,8 +167,10 @@ func (j *corootKeeperJournal) releaseKeeperPodFence(ctx context.Context, fences 
 	if err := verifyCorootKeeperSurvivors(ctx, j.c, r.Before, r.Input.Ordinal); err != nil {
 		// A previous attempt may have removed the fence and allowed the
 		// replacement member to return before recording member-released.
-		pod, readErr := j.c.get(ctx, keeperPolicyKind, "", text(fences.pod, "metadata", "name"), true)
-		if readErr != nil || pod != nil {
+		// A policy without a binding cannot prevent the replacement from joining.
+		// The subsequent cleanup still requires the exact owned policy UID.
+		binding, readErr := j.c.get(ctx, keeperBindingKind, "", text(fences.pod, "metadata", "name"), true)
+		if readErr != nil || binding != nil {
 			return err
 		}
 	}
