@@ -68,6 +68,13 @@ patches:
       name: private-mail
       namespace: private-mail
     path: patches/trust-mail-load-balancer.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+    path: patches/copy-mail-to-v2.yaml
   # SMTP, submission and IMAPS are reachable from their own load balancer only.
   - target:
       group: cilium.io
@@ -107,3 +114,4 @@ replacements:
           namespace: private-mail
         fieldPaths:
           - spec.template.spec.initContainers.[name=select-mail-store].image
+          - spec.template.spec.initContainers.[name=migrate-storage].image
