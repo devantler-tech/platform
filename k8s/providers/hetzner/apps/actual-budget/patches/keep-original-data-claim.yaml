@@ -1,0 +1,5 @@
+---
+- op: add
+  path: /spec/values/persistence/annotations
+  value:
+    helm.sh/resource-policy: keep

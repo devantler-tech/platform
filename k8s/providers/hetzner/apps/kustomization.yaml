@@ -3,6 +3,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/apps/
+  - actual-budget/persistent-volume-claim-v2.yaml
   # Platform-owned administration; public mail remains separately gated.
   - private-mail/
   # The product owns deploy/documentation; this production-only tenant registers
@@ -105,6 +106,13 @@ patches:
   # CNPG database pods via their cnpg.io/cluster label.
   - path: whoami/patches/enable-user-namespaces.yaml
   - path: homepage/patches/enable-user-namespaces.yaml
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: actual-budget
+      namespace: actual-budget
+    path: actual-budget/patches/keep-original-data-claim.yaml
   # Actual Budget is the one stateful workload in its own user namespace. Its
   # pilot passed (#3604) and is permanent since #3605: the namespace label pairs
   # with the authored hostUsers: false on its pod. Rolling back removes both
