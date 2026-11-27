@@ -34,7 +34,7 @@ func bindCorootKeeperResumeJournal(c client, cm object, input corootKeeperCutove
 		!recoveredNativeObject(cm, "v1", "ConfigMap", "longhorn-system") ||
 		text(cm, "metadata", "name") != corootKeeperJournalName(input.Ordinal) || len(raw) > 65536 ||
 		json.Unmarshal([]byte(raw), &record) != nil || record.Version != 1 || record.Input != input ||
-		!validCorootKeeperFenceUser(record.FenceUser) || !validBenchmarkOwner(record.Run, record.Source) ||
+		!validCorootKeeperFenceUser(record.FenceUser) || !validBenchmarkOwner(record.Run, record.Source) || !validKeeperCreationIntent(record) ||
 		text(cm, "metadata", "annotations", corootKeeperFenceOwner) != record.Run+":"+record.Source {
 		return corootKeeperJournal{}, errCorootKeeperReceipt
 	}

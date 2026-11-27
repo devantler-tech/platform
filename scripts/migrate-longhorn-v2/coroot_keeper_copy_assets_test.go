@@ -18,13 +18,20 @@ func TestCorootKeeperPodSpecsIncludeBaselineAdmissionDefaults(t *testing.T) {
 			if context["fsGroupChangePolicy"] != "OnRootMismatch" || row.copy && context["fsGroup"] != nil {
 				t.Fatal("baseline mutation or volume permission change would alter the reviewed specification")
 			}
-			for _, key := range []string{"containers", "initContainers"} {
+			expected := map[string][]string{"containers": {"verify"}, "initContainers": {}}
+			if row.copy {
+				expected["initContainers"] = []string{"copy"}
+			}
+			for key, names := range expected {
 				containers, _ := value(row.pod, "spec", key).([]any)
-				for _, item := range containers {
+				if len(containers) != len(names) {
+					t.Fatalf("the Pod has the wrong number of %s", key)
+				}
+				for i, item := range containers {
 					container, _ := item.(object)
 					options := valueObject(container, "securityContext", "seLinuxOptions")
-					if options == nil || len(options) != 0 {
-						t.Fatal("container has no empty SELinux options for the baseline admission policy")
+					if text(container, "name") != names[i] || options == nil || len(options) != 0 {
+						t.Fatal("the expected container lacks its baseline SELinux options")
 					}
 				}
 			}

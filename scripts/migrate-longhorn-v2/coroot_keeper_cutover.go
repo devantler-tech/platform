@@ -22,22 +22,26 @@ func runCorootKeeperCutover(ctx context.Context, c client, source, run string, i
 		return err
 	}
 	activation := temporaryV2Activation{c: c, source: source, owner: run, pools: c.inventoryPools}
-	capacity, err := activation.recoveryClaimStorage(ctx, corootKeeperDataSize)
-	if err != nil {
-		return err
-	}
 	prior, err := c.get(ctx, "configmap", "longhorn-system", corootKeeperJournalName(input.Ordinal), true)
 	if err != nil {
 		return err
 	}
 	if prior != nil {
-		rollback, err := bindCorootKeeperRollback(c, prior, input)
+		storage, err := activation.observeRecoveryStorage(ctx, nil)
 		if err != nil {
-			return resumeCorootKeeperRebind(ctx, c, source, run, input, prior, capacity.Disks)
-		}
-		if err := rollbackInterruptedCorootKeeper(ctx, rollback, source, run, capacity.Disks); err != nil {
 			return err
 		}
+		rollback, err := bindCorootKeeperRollback(c, prior, input)
+		if err != nil {
+			return resumeCorootKeeperRebind(ctx, c, source, run, input, prior, storage.Disks)
+		}
+		if err := rollbackInterruptedCorootKeeper(ctx, rollback, source, run, storage.Disks); err != nil {
+			return err
+		}
+	}
+	capacity, err := activation.recoveryClaimStorage(ctx, corootKeeperDataSize)
+	if err != nil {
+		return err
 	}
 	before, err := readCorootKeeperQuorum(ctx, c, source, capacity.Disks)
 	if err != nil {
@@ -47,6 +51,9 @@ func runCorootKeeperCutover(ctx context.Context, c client, source, run string, i
 	original := before.Disks[input.Ordinal]
 	if candidate.Leader || original.Digest != input.Digest || before.V2Claims[input.Ordinal].UID != "" {
 		return errCorootKeeperStorage
+	}
+	if err := verifyKeeperCopyHostname(ctx, c, candidate.Node); err != nil {
+		return err
 	}
 	owner, err := c.get(ctx, "coroots.coroot.com", corootKeeperNamespace, "coroot", false)
 	if err != nil || !recoveredNativeObject(owner, "coroot.com/v1", "Coroot", corootKeeperNamespace) {
@@ -84,7 +91,7 @@ func runCorootKeeperCutover(ctx context.Context, c client, source, run string, i
 		if mayRestoreOriginalKeeper(failedPhase) {
 			restoreCtx, stop := context.WithTimeout(context.Background(), 4*time.Minute)
 			defer stop()
-			result = errors.Join(result, journal.restoreOriginalBeforeClaimRelease(restoreCtx, capacity.Disks))
+			result = errors.Join(result, journal.restoreOriginalBeforeClaimRelease(restoreCtx, capacity.Disks, false))
 		}
 		result = fmt.Errorf("keeper migration held in phase %s: %w", failedPhase, result)
 	}()
@@ -116,8 +123,11 @@ func mayRestoreOriginalKeeper(phase string) bool {
 	}
 }
 
-func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Context, disks []cnpgRecoveryDiskBinding) error {
+func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Context, disks []cnpgRecoveryDiskBinding, priorRunFinished bool) error {
 	if _, err := j.read(ctx); err != nil {
+		return err
+	}
+	if err := j.reconcileKeeperCreation(ctx, priorRunFinished); err != nil {
 		return err
 	}
 	r := j.record
@@ -135,30 +145,43 @@ func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Cont
 	if err != nil || len(binding) != 1 || providerRetentionDigest(binding[0]) != original.Digest {
 		return errCorootKeeperRebind
 	}
+	podPath := "/api/v1/namespaces/" + corootKeeperNamespace + "/pods/"
+	for _, pod := range []benchmarkResource{r.StagePod, r.CopyPod} {
+		if err := j.removeRollbackAsset(ctx, pod, "pod", podPath); err != nil {
+			return err
+		}
+	}
+	if r.CopyPod.UID != "" {
+		// A resumed rollback may find the original member already serving.
+		podFence := keeperFencesFor(r).pod
+		binding, err := j.c.get(ctx, keeperBindingKind, "", text(podFence, "metadata", "name"), true)
+		if err != nil || (binding != nil && text(binding, "metadata", "uid") != r.PodFence.BindingUID) {
+			return errCorootKeeperReceipt
+		}
+		if binding != nil {
+			if err := j.requireNoClaimConsumers(ctx, original.Claim.Name); err != nil {
+				return err
+			}
+		}
+		if err := waitReadyWithin(ctx, 75*time.Second, func(ctx context.Context) error {
+			return verifyCorootKeeperDetach(ctx, j.c, r.Rebind, binding != nil)
+		}); err != nil {
+			return err
+		}
+	}
+	staging, err := j.observeRetainedKeeperStaging(ctx, r)
+	if err != nil {
+		return err
+	}
+	r.RollbackStaging = staging
 	for _, asset := range []struct {
 		id           benchmarkResource
 		kind, prefix string
 	}{
-		{r.StagePod, "pod", "/api/v1/namespaces/" + corootKeeperNamespace + "/pods/"},
-		{r.CopyPod, "pod", "/api/v1/namespaces/" + corootKeeperNamespace + "/pods/"},
 		{r.CopyGate, "configmap", "/api/v1/namespaces/" + corootKeeperNamespace + "/configmaps/"},
 		{r.CopyIsolation, "ciliumnetworkpolicy.cilium.io", "/apis/cilium.io/v2/namespaces/" + corootKeeperNamespace + "/ciliumnetworkpolicies/"},
 	} {
-		if asset.id.UID == "" {
-			continue
-		}
-		current, err := j.c.get(ctx, asset.kind, corootKeeperNamespace, asset.id.Name, true)
-		if err != nil {
-			return err
-		}
-		if current == nil {
-			continue
-		}
-		if benchmarkIdentity(current) != asset.id ||
-			text(current, "metadata", "annotations", corootKeeperFenceOwner) != r.Run+":"+r.Source {
-			return errCorootKeeperReceipt
-		}
-		if err := removeScratch(ctx, j.c, j.source(), asset.kind, corootKeeperNamespace, asset.prefix+asset.id.Name, current); err != nil {
+		if err := j.removeRollbackAsset(ctx, asset.id, asset.kind, asset.prefix); err != nil {
 			return err
 		}
 	}
@@ -189,6 +212,21 @@ func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Cont
 	}
 	r.Phase = keeperOriginalPreserved
 	return j.advance(ctx, r)
+}
+
+func (j *corootKeeperJournal) removeRollbackAsset(ctx context.Context, id benchmarkResource, kind, prefix string) error {
+	if id.UID == "" {
+		return nil
+	}
+	current, err := j.c.get(ctx, kind, corootKeeperNamespace, id.Name, true)
+	if err != nil || current == nil {
+		return err
+	}
+	if benchmarkIdentity(current) != id ||
+		text(current, "metadata", "annotations", corootKeeperFenceOwner) != j.record.Run+":"+j.record.Source {
+		return errCorootKeeperReceipt
+	}
+	return removeScratch(ctx, j.c, j.source(), kind, corootKeeperNamespace, prefix+id.Name, current)
 }
 
 func verifyLonghornV2RetainClass(ctx context.Context, c client) error {

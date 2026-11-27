@@ -9,6 +9,46 @@ import (
 
 const keeperOriginalPreserved = "original-claim-preserved"
 
+type corootKeeperRetainedStage struct {
+	PV, Volume benchmarkResource
+}
+
+func (j *corootKeeperJournal) observeRetainedKeeperStaging(ctx context.Context, r corootKeeperCutoverRecord) (corootKeeperRetainedStage, error) {
+	var retained corootKeeperRetainedStage
+	if r.StagedClaim.UID == "" {
+		return retained, nil
+	}
+	if err := j.requireNoClaimConsumers(ctx, r.StagedClaim.Name); err != nil {
+		return retained, err
+	}
+	claim, err := j.c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, r.StagedClaim.Name, false)
+	if err != nil || !matchCorootKeeperStageClaim(claim, corootKeeperStagingClaim(r.Run, r.Source)) ||
+		benchmarkIdentity(claim) != r.StagedClaim {
+		return retained, errCorootKeeperStaging
+	}
+	name := "pvc-" + r.StagedClaim.UID
+	phase := text(claim, "status", "phase")
+	binding := text(claim, "spec", "volumeName")
+	if phase == "Pending" && binding == "" {
+		// Archive the claim even if the external provisioner never bound it.
+		return retained, nil
+	}
+	if phase != "Bound" || binding != name {
+		return retained, errCorootKeeperStaging
+	}
+	pv, err := j.c.get(ctx, "persistentvolume", "", name, false)
+	if err != nil || text(pv, "status", "phase") != "Bound" ||
+		!keeperRetainedPVBinding(pv, benchmarkIdentity(pv), r.StagedClaim, "longhorn-v2", "driver.longhorn.io", name) {
+		return retained, errCorootKeeperStaging
+	}
+	volume, err := j.c.get(ctx, "volumes.longhorn.io", "longhorn-system", name, false)
+	if err != nil || !recoveredNativeObject(volume, "longhorn.io/v1beta2", "Volume", "longhorn-system") ||
+		text(volume, "spec", "dataEngine") != "v2" || text(volume, "spec", "size") != corootKeeperDataBytes {
+		return retained, errCorootKeeperStaging
+	}
+	return corootKeeperRetainedStage{benchmarkIdentity(pv), benchmarkIdentity(volume)}, nil
+}
+
 func bindCorootKeeperRollback(c client, cm object, input corootKeeperCutoverInput) (corootKeeperJournal, error) {
 	journal, err := bindCorootKeeperResumeJournal(c, cm, input)
 	if err != nil {
@@ -42,7 +82,7 @@ func rollbackInterruptedCorootKeeper(ctx context.Context, j corootKeeperJournal,
 		return err
 	}
 	if next.Phase != keeperOriginalPreserved {
-		if err := j.restoreOriginalBeforeClaimRelease(ctx, disks); err != nil {
+		if err := j.restoreOriginalBeforeClaimRelease(ctx, disks, true); err != nil {
 			return err
 		}
 	}
@@ -72,8 +112,11 @@ func (j *corootKeeperJournal) archivePreservedKeeperAttempt(ctx context.Context,
 		return err
 	}
 	current, err := readCorootKeeperQuorum(ctx, j.c, j.source(), disks)
+	original := r.Before.Disks[r.Input.Ordinal]
+	restored := current.Disks[r.Input.Ordinal]
 	if err != nil || current.Controller != r.Before.Controller || current.Budget != r.Before.Budget ||
-		current.Disks[r.Input.Ordinal] != r.Before.Disks[r.Input.Ordinal] || current.V2Claims[r.Input.Ordinal].UID != "" {
+		restored.Claim != original.Claim || restored.PV != original.PV || restored.Handle != original.Handle ||
+		restored.Digest != original.Digest || current.V2Claims[r.Input.Ordinal].UID != "" {
 		return errCorootKeeperQuorum
 	}
 	// Preserve the stopped attempt and its retained staged storage identities

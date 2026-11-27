@@ -42,6 +42,12 @@ func (j *corootKeeperJournal) rebindAndResume(ctx context.Context, fences coroot
 	}); err != nil {
 		return err
 	}
+	if err := removeCorootKeeperFence(ctx, j.c, j.source(), fences.claim, r.ClaimFence); err != nil {
+		return err
+	}
+	if err := j.verifyNewClaimBound(ctx, r); err != nil {
+		return err
+	}
 	r.Phase = "replacement-verified"
 	return j.advance(ctx, r)
 }
@@ -379,7 +385,7 @@ func (j *corootKeeperJournal) verifyRejoined(ctx context.Context, r corootKeeper
 			return err
 		}
 		leader, err := probeCorootKeeperMember(ctx, j.c, member, stateful, ordinal, 2)
-		if err != nil || leader != expected.Leader {
+		if err != nil {
 			return errCorootKeeperQuorum
 		}
 		if leader {

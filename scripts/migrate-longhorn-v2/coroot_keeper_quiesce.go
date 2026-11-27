@@ -46,51 +46,9 @@ func keeperFencesFor(r corootKeeperCutoverRecord) corootKeeperFences {
 }
 
 func (j *corootKeeperJournal) installFences(ctx context.Context) (corootKeeperFences, error) {
-	r := j.record
-	fences := keeperFencesFor(r)
-	owner := text(fences.pod, "metadata", "annotations", corootKeeperFenceOwner)
-	for _, item := range []struct {
-		desired object
-		phase   string
-		pod     bool
-	}{{fences.pod, "member-fenced", true}, {fences.claim, "claim-fenced", false}} {
-		policy, err := j.c.create(ctx, r.Source, item.desired)
-		if err != nil {
-			return fences, err
-		}
-		receipt := benchmarkFenceReceipt{PolicyUID: text(policy, "metadata", "uid")}
-		if !isolationUID.MatchString(receipt.PolicyUID) || !matchesOwnedBenchmarkPolicy(policy, item.desired, receipt.PolicyUID) ||
-			text(policy, "metadata", "annotations", corootKeeperFenceOwner) != owner {
-			return fences, errCorootKeeperReceipt
-		}
-		if item.pod {
-			r.PodFence = receipt
-		} else {
-			r.ClaimFence = receipt
-		}
-		r.Phase = item.phase + "-policy"
-		if err := j.advance(ctx, r); err != nil {
-			return fences, err
-		}
-		name := text(item.desired, "metadata", "name")
-		expected := benchmarkDenyBinding(name, receipt.PolicyUID)
-		valueObject(expected, "metadata")["annotations"] = object{corootKeeperFenceOwner: owner}
-		binding, err := j.c.create(ctx, r.Source, expected)
-		if err != nil {
-			return fences, err
-		}
-		receipt.BindingUID = text(binding, "metadata", "uid")
-		if !isolationUID.MatchString(receipt.BindingUID) || !matchesOwnedBenchmarkFence(policy, binding, item.desired, receipt) ||
-			text(binding, "metadata", "annotations", corootKeeperFenceOwner) != owner {
-			return fences, errCorootKeeperReceipt
-		}
-		if item.pod {
-			r.PodFence = receipt
-		} else {
-			r.ClaimFence = receipt
-		}
-		r.Phase = item.phase
-		if err := j.advance(ctx, r); err != nil {
+	fences := keeperFencesFor(j.record)
+	for _, phase := range []string{"member-fenced-policy", "member-fenced", "claim-fenced-policy", "claim-fenced"} {
+		if _, err := j.createKeeperAsset(ctx, phase); err != nil {
 			return fences, err
 		}
 	}
@@ -162,6 +120,9 @@ func (j *corootKeeperJournal) evictFollower(ctx context.Context, fences corootKe
 	if err != nil || ready != r.Before || target.Leader {
 		return errCorootKeeperQuorum
 	}
+	if err := j.verifyKeeperSourceCopyLayout(ctx, target); err != nil {
+		return err
+	}
 	if err := j.proveFences(ctx, fences); err != nil {
 		return err
 	}
@@ -188,6 +149,16 @@ func (j *corootKeeperJournal) evictFollower(ctx context.Context, fences corootKe
 		if err != nil {
 			return err
 		}
+		if !dry {
+			stateful, err := j.c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
+			if err != nil || benchmarkIdentity(stateful) != r.Before.Controller {
+				return errCorootKeeperQuorum
+			}
+			leader, err := probeCorootKeeperMember(ctx, j.c, target, stateful, r.Input.Ordinal, 2)
+			if err != nil || leader {
+				return errCorootKeeperQuorum
+			}
+		}
 		if _, err := j.c.kubectl(ctx, body, "create", "--raw="+path, "--filename=/dev/stdin"); err != nil {
 			return err
 		}
@@ -198,4 +169,61 @@ func (j *corootKeeperJournal) evictFollower(ctx context.Context, fences corootKe
 		}
 		return verifyCorootKeeperDetach(ctx, j.c, r.Rebind, true)
 	})
+}
+
+func (j *corootKeeperJournal) verifyKeeperSourceCopyLayout(ctx context.Context, member corootKeeperMember) error {
+	const path = "/var/lib/clickhouse-keeper"
+	const check = `set -euo pipefail
+test "$(id -u)" = 65534
+test "$(id -g)" = 65534
+root=$1
+test -d "$root/coordination/log"
+test -d "$root/coordination/snapshots"
+foreign=$(find "$root" -xdev -mindepth 1 -maxdepth 1 ! -name lost+found ! -name coordination -printf x -quit)
+test -z "$foreign"
+foreign=$(find "$root/coordination" -xdev \( ! -type f ! -type d -o ! -uid 65534 -o ! -gid 65534 -o -type f -links +1 \) -printf x -quit)
+test -z "$foreign"
+`
+	stateful, err := j.c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
+	if err != nil || benchmarkIdentity(stateful) != j.record.Before.Controller {
+		return errCorootKeeperCopy
+	}
+	pod, err := j.c.get(ctx, "pod", corootKeeperNamespace, member.Pod, false)
+	if err != nil {
+		return err
+	}
+	bound, err := bindCorootKeeperMember(pod, stateful, j.record.Input.Ordinal)
+	if err != nil || bound != member {
+		return errCorootKeeperCopy
+	}
+	found := 0
+	containers, _ := value(pod, "spec", "containers").([]any)
+	for _, raw := range containers {
+		c, _ := raw.(object)
+		if text(c, "name") != corootKeeperContainer {
+			continue
+		}
+		mounts, _ := value(c, "volumeMounts").([]any)
+		for _, rawMount := range mounts {
+			mount, _ := rawMount.(object)
+			if text(mount, "name") == "data" && text(mount, "mountPath") == path &&
+				absentOrEmptyString(value(mount, "subPath")) && absentOrEmptyString(value(mount, "subPathExpr")) {
+				found++
+			}
+		}
+	}
+	if found != 1 {
+		return errCorootKeeperCopy
+	}
+	raw, err := j.c.kubectl(ctx, nil, "exec", member.Pod, "--namespace="+corootKeeperNamespace,
+		"--container="+corootKeeperContainer, "--pod-running-timeout=10s", "--", "bash", "-ec", check, "keeper-layout", path)
+	if err != nil || len(raw) != 0 {
+		return errCorootKeeperCopy
+	}
+	pod, err = j.c.get(ctx, "pod", corootKeeperNamespace, member.Pod, false)
+	bound, bindErr := bindCorootKeeperMember(pod, stateful, j.record.Input.Ordinal)
+	if err != nil || bindErr != nil || bound != member {
+		return errCorootKeeperCopy
+	}
+	return nil
 }

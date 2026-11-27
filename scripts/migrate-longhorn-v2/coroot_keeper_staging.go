@@ -12,33 +12,29 @@ import (
 
 var errCorootKeeperStaging = errors.New("the staged Keeper volume or its verified three-copy attachment changed")
 
+func verifyKeeperCopyHostname(ctx context.Context, c client, name string) error {
+	node, err := c.get(ctx, "node", "", name, false)
+	if err != nil || !recoveredNativeObject(node, "v1", "Node", "") ||
+		text(node, "metadata", "name") != name || text(node, "metadata", "labels", "kubernetes.io/hostname") != name ||
+		!ready(valueObject(node, "status")) || value(node, "spec", "unschedulable") == true {
+		return errCorootKeeperStaging
+	}
+	return nil
+}
+
 func (j *corootKeeperJournal) prepareVolume(ctx context.Context, diskBindings []cnpgRecoveryDiskBinding) error {
 	r := j.record
 	member := r.Before.Members[r.Input.Ordinal]
 	desiredClaim := corootKeeperStagingClaim(r.Run, r.Source)
-	claim, err := j.c.create(ctx, r.Source, desiredClaim)
-	if err != nil {
-		return err
-	}
-	if !matchCorootKeeperStageClaim(claim, desiredClaim) {
-		return errCorootKeeperStaging
-	}
-	r.StagedClaim, r.Phase = benchmarkIdentity(claim), "staging-claim-created"
-	if err := j.advance(ctx, r); err != nil {
+	if _, err := j.createKeeperAsset(ctx, "staging-claim-created"); err != nil {
 		return err
 	}
 	desiredPod := corootKeeperStagePod(r.Run, r.Source, member.Node)
-	pod, err := j.c.create(ctx, r.Source, desiredPod)
+	pod, err := j.createKeeperAsset(ctx, "staging-pod-created")
 	if err != nil {
 		return err
 	}
-	if !matchCorootKeeperVolumePod(pod, pod, desiredPod) {
-		return errCorootKeeperStaging
-	}
-	r.StagePod, r.Phase = benchmarkIdentity(pod), "staging-pod-created"
-	if err := j.advance(ctx, r); err != nil {
-		return err
-	}
+	r = j.record
 	err = waitReadyWithin(ctx, 4*time.Minute, func(ctx context.Context) error {
 		p, err := j.c.get(ctx, "pod", corootKeeperNamespace, r.StagePod.Name, false)
 		if err != nil || !matchCorootKeeperVolumePod(p, pod, desiredPod) || text(p, "spec", "nodeName") != member.Node ||

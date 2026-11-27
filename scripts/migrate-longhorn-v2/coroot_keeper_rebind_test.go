@@ -48,11 +48,15 @@ func TestKeeperRebindOnlyChangesThePreparedPV(t *testing.T) {
 	metadata["uid"], metadata["resourceVersion"] = newUID, "81"
 	replacement["status"] = object{"phase": "Pending"}
 	patch, err := plan.rebindChanges(owner, original, staged, disk, replacement)
-	if err != nil || len(patch) != 3 || text(patch[0], "value") != stagedClaim.UID ||
-		!reflect.DeepEqual(patch[2], object{"op": "replace", "path": "/spec/claimRef", "value": object{
+	expectedPatch := []object{
+		{"op": "test", "path": "/spec/claimRef/uid", "value": stagedClaim.UID},
+		{"op": "test", "path": "/spec/persistentVolumeReclaimPolicy", "value": "Retain"},
+		{"op": "replace", "path": "/spec/claimRef", "value": object{
 			"apiVersion": "v1", "kind": "PersistentVolumeClaim", "namespace": corootKeeperNamespace,
 			"name": originalClaim.Name, "uid": newUID,
-		}}) {
+		}},
+	}
+	if err != nil || !reflect.DeepEqual(patch, expectedPatch) {
 		t.Fatalf("unexpected prepared-PV rebind patch: %v", err)
 	}
 	for _, tt := range []struct {

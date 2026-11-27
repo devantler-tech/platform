@@ -5,8 +5,10 @@ umask 077
 original=/original
 destination=/destination
 staged="$destination/.keeper-copy"
-test "$(id -u)" = 65534 && test "$(id -g)" = 65534
-test -d "$original/coordination/log" && test -d "$original/coordination/snapshots"
+test "$(id -u)" = 65534
+test "$(id -g)" = 65534
+test -d "$original/coordination/log"
+test -d "$original/coordination/snapshots"
 foreign=$(find "$original" -xdev -mindepth 1 -maxdepth 1 ! -name lost+found ! -name coordination -printf x -quit)
 test -z "$foreign"
 foreign=$(find "$original/coordination" -xdev \( ! -type f ! -type d -o ! -uid 65534 -o ! -gid 65534 -o -type f -links +1 \) -printf x -quit)

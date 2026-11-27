@@ -27,9 +27,11 @@ type corootKeeperCutoverRecord struct {
 	FenceUser          string
 	ResumeRun          string `json:",omitempty"`
 	ResumeSource       string `json:",omitempty"`
+	Creating           string `json:",omitempty"`
 	StagedClaim        benchmarkResource
 	StagePod           benchmarkResource
 	Rebind             corootKeeperRebind
+	RollbackStaging    corootKeeperRetainedStage `json:",omitzero"`
 	CopyPod            benchmarkResource
 	CopyGate           benchmarkResource
 	CopyIsolation      benchmarkResource
@@ -112,7 +114,7 @@ func (j *corootKeeperJournal) read(ctx context.Context) (object, error) {
 		!validBenchmarkOwner(run, source) || (j.record.ResumeRun == "") != (j.record.ResumeSource == "") ||
 		text(current, "metadata", "annotations", corootKeeperFenceOwner) != j.record.Run+":"+j.record.Source ||
 		json.Unmarshal([]byte(text(current, "data", "record")), &observed) != nil ||
-		observed != j.record {
+		observed != j.record || !validKeeperCreationIntent(observed) {
 		return nil, errCorootKeeperReceipt
 	}
 	return current, nil
@@ -168,7 +170,23 @@ func validCorootKeeperProgress(previous, next corootKeeperCutoverRecord) bool {
 	if phase < 0 || phase+1 >= len(keeperCutoverPhases) {
 		return false
 	}
+	if next.Creating != "" {
+		onlyIntent := previous
+		onlyIntent.Creating = next.Creating
+		return previous.Creating == "" && next == onlyIntent && validKeeperCreationIntent(next)
+	}
+	if previous.Creating != "" {
+		if !validKeeperCreationIntent(previous) {
+			return false
+		}
+		onlyClear := previous
+		onlyClear.Creating = ""
+		return next == onlyClear || (next.Phase == previous.Creating && validCorootKeeperProgress(onlyClear, next))
+	}
 	if next.Phase != keeperCutoverPhases[phase+1] && (next.Phase != "original-claim-preserved" || !mayRestoreOriginalKeeper(previous.Phase)) {
+		return false
+	}
+	if next.Phase != keeperOriginalPreserved && next.RollbackStaging != previous.RollbackStaging {
 		return false
 	}
 	for _, resources := range [][2]benchmarkResource{
@@ -190,4 +208,13 @@ func validCorootKeeperProgress(previous, next corootKeeperCutoverRecord) bool {
 		}
 	}
 	return true
+}
+
+func validKeeperCreationIntent(r corootKeeperCutoverRecord) bool {
+	if r.Creating == "" {
+		return true
+	}
+	phase := slices.Index(keeperCutoverPhases, r.Phase)
+	return phase >= 0 && phase+1 < len(keeperCutoverPhases) &&
+		r.Creating == keeperCutoverPhases[phase+1] && isKeeperAssetCreation(r.Creating)
 }

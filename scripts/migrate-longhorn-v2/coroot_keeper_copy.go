@@ -15,41 +15,20 @@ var errCorootKeeperCopy = errors.New("the isolated Keeper data copy is unverifie
 func (j *corootKeeperJournal) copyVolume(ctx context.Context, disks []cnpgRecoveryDiskBinding) error {
 	r := j.record
 	member := r.Before.Members[r.Input.Ordinal]
-	desiredPolicy := corootKeeperCopyNetworkPolicy(r.Run, r.Source)
-	policy, err := j.c.create(ctx, r.Source, desiredPolicy)
+	policy, err := j.createKeeperAsset(ctx, "copy-isolation-created")
 	if err != nil {
 		return err
 	}
-	if !recoveredNativeObject(policy, "cilium.io/v2", "CiliumNetworkPolicy", corootKeeperNamespace) ||
-		text(policy, "metadata", "name") != text(desiredPolicy, "metadata", "name") ||
-		text(policy, "metadata", "annotations", corootKeeperFenceOwner) != r.Run+":"+r.Source ||
-		!reflect.DeepEqual(value(policy, "spec"), value(desiredPolicy, "spec")) {
-		return errCorootKeeperCopy
-	}
-	r.CopyIsolation, r.Phase = benchmarkIdentity(policy), "copy-isolation-created"
-	if err := j.advance(ctx, r); err != nil {
-		return err
-	}
-	gate, err := j.c.create(ctx, r.Source, corootKeeperGate(r, "hold"))
+	gate, err := j.createKeeperAsset(ctx, "copy-gate-created")
 	if err != nil {
-		return err
-	}
-	if !verifyCorootKeeperGate(gate, r, "hold") {
-		return errCorootKeeperCopy
-	}
-	r.CopyGate, r.Phase = benchmarkIdentity(gate), "copy-gate-created"
-	if err := j.advance(ctx, r); err != nil {
 		return err
 	}
 	desiredPod := corootKeeperCopyPod(r.Run, r.Source, r.Rebind.Original.Claim.Name, member.Node)
-	created, err := j.c.create(ctx, r.Source, desiredPod)
-	if err != nil || !matchCorootKeeperVolumePod(created, created, desiredPod) {
-		return errCorootKeeperCopy
-	}
-	r.CopyPod, r.Phase = benchmarkIdentity(created), "copy-pod-created"
-	if err := j.advance(ctx, r); err != nil {
+	created, err := j.createKeeperAsset(ctx, "copy-pod-created")
+	if err != nil {
 		return err
 	}
+	r = j.record
 	proof, err := j.releaseCopyGate(ctx, r, member, created, desiredPod, policy, disks)
 	if err != nil {
 		return err

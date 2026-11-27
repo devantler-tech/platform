@@ -71,8 +71,10 @@ name: Prepare Longhorn V2 Migration
         description: Permanent worker or fixed temporary-worker selection for the chosen operation
         required: false
         type: choice
+        default: no-target
         options:
           [
+            no-target,
             prod-worker-1,
             prod-worker-2,
             prod-worker-3,
@@ -81,11 +83,13 @@ name: Prepare Longhorn V2 Migration
             temporary-v2-1,
           ]
       database:
-        description: Fixed database for an archive recovery or migration observation; leave node empty
+        description: Fixed database for an archive recovery or migration observation; leave node unselected
         required: false
         type: choice
+        default: no-target
         options:
           [
+            no-target,
             coroot-db,
             umami-db,
             wedding-db,
@@ -147,8 +151,8 @@ jobs:
       contents: read
       actions: read
     env:
-      LONGHORN_V2_NODE: ${{ inputs.node }}
-      LONGHORN_V2_DATABASE: ${{ inputs.database }}
+      LONGHORN_V2_NODE: ${{ fromJSON(inputs.node == 'no-target' && '""' || toJSON(inputs.node || '')) }}
+      LONGHORN_V2_DATABASE: ${{ fromJSON(inputs.database == 'no-target' && '""' || toJSON(inputs.database || '')) }}
       LONGHORN_V2_OPERATION: ${{ inputs.operation }}
       LONGHORN_V2_CONFIRM: ${{ inputs.confirm }}
       LONGHORN_V2_LEGACY_PREPARATION_RECEIPTS: ${{ inputs.legacy_preparation_receipts }}
