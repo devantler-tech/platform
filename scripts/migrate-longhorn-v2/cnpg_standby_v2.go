@@ -54,9 +54,9 @@ func bindUmamiV2Standby(observation cnpgObservation, claim, pv, volume, engine o
 		verifyPostgresStandby(observation.States[primary], observation.States[name]) != nil {
 		return cnpgRecoveredStorage{}, refused
 	}
-	owned, err := healthyCNPGPods(cluster, observation.Pods)
+	owned, err := healthyCNPGPodsWithRetention(cluster, observation.Pods, observation.retainedStandby)
 	if err != nil {
-		return cnpgRecoveredStorage{}, refused
+		return cnpgRecoveredStorage{}, err
 	}
 	pods, err := indexed(owned)
 	if err != nil {
