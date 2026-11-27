@@ -24,6 +24,9 @@ type corootKeeperCutoverRecord struct {
 	Input              corootKeeperCutoverInput
 	Before             corootKeeperQuorumReceipt
 	Coroot             benchmarkResource
+	FenceUser          string
+	ResumeRun          string `json:",omitempty"`
+	ResumeSource       string `json:",omitempty"`
 	StagedClaim        benchmarkResource
 	StagePod           benchmarkResource
 	Rebind             corootKeeperRebind
@@ -59,8 +62,24 @@ type corootKeeperJournal struct {
 	record   corootKeeperCutoverRecord
 }
 
+func (r corootKeeperCutoverRecord) executor() (run, source string) {
+	if r.ResumeRun != "" {
+		return r.ResumeRun, r.ResumeSource
+	}
+	return r.Run, r.Source
+}
+
+func (j *corootKeeperJournal) source() string {
+	_, source := j.record.executor()
+	return source
+}
+
+func corootKeeperJournalName(ordinal int) string {
+	return "longhorn-v2-coroot-keeper-" + strconv.Itoa(ordinal)
+}
+
 func beginCorootKeeperJournal(ctx context.Context, c client, record corootKeeperCutoverRecord) (corootKeeperJournal, error) {
-	name := "longhorn-v2-coroot-keeper-" + strconv.Itoa(record.Input.Ordinal)
+	name := corootKeeperJournalName(record.Input.Ordinal)
 	desired, err := json.Marshal(record)
 	if err != nil {
 		return corootKeeperJournal{}, err
@@ -87,8 +106,10 @@ func (j *corootKeeperJournal) read(ctx context.Context) (object, error) {
 		return nil, err
 	}
 	var observed corootKeeperCutoverRecord
+	run, source := j.record.executor()
 	if !recoveredNativeObject(current, "v1", "ConfigMap", "longhorn-system") ||
 		benchmarkIdentity(current) != j.identity || j.record.Version != 1 || !validBenchmarkOwner(j.record.Run, j.record.Source) ||
+		!validBenchmarkOwner(run, source) || (j.record.ResumeRun == "") != (j.record.ResumeSource == "") ||
 		text(current, "metadata", "annotations", corootKeeperFenceOwner) != j.record.Run+":"+j.record.Source ||
 		json.Unmarshal([]byte(text(current, "data", "record")), &observed) != nil ||
 		observed != j.record {
@@ -101,6 +122,10 @@ func (j *corootKeeperJournal) advance(ctx context.Context, next corootKeeperCuto
 	if !validCorootKeeperProgress(j.record, next) {
 		return errCorootKeeperReceipt
 	}
+	return j.write(ctx, next)
+}
+
+func (j *corootKeeperJournal) write(ctx context.Context, next corootKeeperCutoverRecord) error {
 	current, err := j.read(ctx)
 	if err != nil {
 		return err
@@ -109,7 +134,8 @@ func (j *corootKeeperJournal) advance(ctx context.Context, next corootKeeperCuto
 	if err != nil {
 		return err
 	}
-	if err := sourceCurrent(ctx, j.c.run, next.Source); err != nil {
+	_, source := next.executor()
+	if err := sourceCurrent(ctx, j.c.run, source); err != nil {
 		return err
 	}
 	if err := j.c.patch(ctx, "configmap", "longhorn-system", current,
@@ -133,6 +159,9 @@ var keeperCutoverPhases = []string{
 func validCorootKeeperProgress(previous, next corootKeeperCutoverRecord) bool {
 	if previous.Version != 1 || next.Version != previous.Version || next.Run != previous.Run ||
 		next.Source != previous.Source || next.Input != previous.Input || next.Before != previous.Before || next.Coroot != previous.Coroot {
+		return false
+	}
+	if next.FenceUser != previous.FenceUser || next.ResumeRun != previous.ResumeRun || next.ResumeSource != previous.ResumeSource {
 		return false
 	}
 	phase := slices.Index(keeperCutoverPhases, previous.Phase)

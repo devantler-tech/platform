@@ -89,9 +89,13 @@ func (r corootKeeperRebind) retainedBindings(coroot, original, staged, backend o
 }
 
 func keeperReleasedPV(observed object, identity, claim benchmarkResource, class, driver, handle string) bool {
+	return text(observed, "status", "phase") == "Released" && keeperRetainedPVBinding(observed, identity, claim, class, driver, handle)
+}
+
+func keeperRetainedPVBinding(observed object, identity, claim benchmarkResource, class, driver, handle string) bool {
 	return recoveredNativeObject(observed, "v1", "PersistentVolume", "") &&
 		benchmarkIdentity(observed) == identity && claim.Namespace == corootKeeperNamespace && isolationUID.MatchString(claim.UID) &&
-		text(observed, "status", "phase") == "Released" && text(observed, "spec", "persistentVolumeReclaimPolicy") == "Retain" &&
+		text(observed, "spec", "persistentVolumeReclaimPolicy") == "Retain" &&
 		text(observed, "spec", "storageClassName") == class && providerRWOFilesystem(observed) &&
 		text(observed, "spec", "csi", "driver") == driver && text(observed, "spec", "csi", "volumeHandle") == handle &&
 		text(observed, "spec", "claimRef", "uid") == claim.UID && text(observed, "spec", "claimRef", "name") == claim.Name &&

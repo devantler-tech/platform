@@ -7,14 +7,68 @@ import (
 )
 
 func (j *corootKeeperJournal) rebindAndResume(ctx context.Context, fences corootKeeperFences, disks []cnpgRecoveryDiskBinding) error {
+	if j.record.Phase == "copied-volumes-detached" || j.record.Phase == "claim-release-requested" {
+		if err := j.releaseClaims(ctx, fences); err != nil {
+			return err
+		}
+	}
+	if j.record.Phase == "original-and-staging-retained" {
+		if err := j.requireKeeperFences(ctx, fences); err != nil {
+			return err
+		}
+		if err := j.createDestinationClaim(ctx); err != nil {
+			return err
+		}
+	}
+	if j.record.Phase == "replacement-created" || j.record.Phase == "destination-rebind-requested" {
+		if err := j.requireKeeperFences(ctx, fences); err != nil {
+			return err
+		}
+		if err := j.bindDestination(ctx); err != nil {
+			return err
+		}
+	}
+	if j.record.Phase == "destination-bound" {
+		if err := j.releaseKeeperPodFence(ctx, fences); err != nil {
+			return err
+		}
+	}
 	r := j.record
-	if r.Phase != "copied-volumes-detached" {
+	if r.Phase != "member-released" {
 		return errCorootKeeperReceipt
 	}
-	if err := j.releaseClaims(ctx, fences); err != nil {
+	if err := waitReadyWithin(ctx, 5*time.Minute, func(ctx context.Context) error {
+		return j.verifyRejoined(ctx, r, disks, j.source())
+	}); err != nil {
 		return err
 	}
-	r = j.record
+	r.Phase = "replacement-verified"
+	return j.advance(ctx, r)
+}
+
+func (j *corootKeeperJournal) requireKeeperFences(ctx context.Context, fences corootKeeperFences) error {
+	for _, fence := range []struct {
+		desired object
+		receipt benchmarkFenceReceipt
+	}{{fences.pod, j.record.PodFence}, {fences.claim, j.record.ClaimFence}} {
+		name := text(fence.desired, "metadata", "name")
+		owner := text(fence.desired, "metadata", "annotations", corootKeeperFenceOwner)
+		policy, err := j.c.get(ctx, keeperPolicyKind, "", name, false)
+		if err != nil {
+			return err
+		}
+		binding, err := j.c.get(ctx, keeperBindingKind, "", name, false)
+		if err != nil || !matchesOwnedBenchmarkFence(policy, binding, fence.desired, fence.receipt) ||
+			text(policy, "metadata", "annotations", corootKeeperFenceOwner) != owner ||
+			text(binding, "metadata", "annotations", corootKeeperFenceOwner) != owner {
+			return errCorootKeeperReceipt
+		}
+	}
+	return nil
+}
+
+func (j *corootKeeperJournal) createDestinationClaim(ctx context.Context) error {
+	r := j.record
 	owner, original, staged, backend, err := j.readRebindAssets(ctx, r.Rebind)
 	if err != nil {
 		return err
@@ -23,46 +77,55 @@ func (j *corootKeeperJournal) rebindAndResume(ctx context.Context, fences coroot
 	if err != nil {
 		return err
 	}
-	replacement, err := j.c.create(ctx, r.Source, desired)
+	claimOwner := r.Run + ":" + r.Source
+	valueObject(desired, "metadata")["annotations"] = object{corootKeeperFenceOwner: claimOwner}
+	replacement, err := j.c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, r.Rebind.Original.Claim.Name, true)
 	if err != nil {
 		return err
 	}
+	if replacement == nil {
+		replacement, err = j.c.create(ctx, j.source(), desired)
+		if err != nil {
+			return err
+		}
+	}
 	if !recoveredNativeObject(replacement, "v1", "PersistentVolumeClaim", corootKeeperNamespace) ||
 		text(replacement, "metadata", "name") != r.Rebind.Original.Claim.Name ||
+		text(replacement, "metadata", "annotations", corootKeeperFenceOwner) != claimOwner ||
 		text(replacement, "metadata", "uid") == r.Rebind.Original.Claim.UID {
 		return errCorootKeeperRebind
 	}
 	r.NewClaim, r.Phase = benchmarkIdentity(replacement), "replacement-created"
-	if err := j.advance(ctx, r); err != nil {
+	return j.advance(ctx, r)
+}
+
+func (j *corootKeeperJournal) bindDestination(ctx context.Context) error {
+	r := j.record
+	if err := verifyCorootKeeperSurvivors(ctx, j.c, r.Before, r.Input.Ordinal); err != nil {
 		return err
 	}
-	err = waitReadyWithin(ctx, 30*time.Second, func(ctx context.Context) error {
-		current, err := j.c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, r.NewClaim.Name, false)
-		if err != nil || benchmarkIdentity(current) != r.NewClaim {
-			return errors.Join(errReadinessTerminal, errCorootKeeperRebind)
-		}
-		if text(current, "status", "phase") != "Pending" {
-			return errCorootKeeperRebind
-		}
-		replacement = current
-		return nil
-	})
+	owner, original, staged, backend, err := j.readRebindAssets(ctx, r.Rebind)
 	if err != nil {
 		return err
 	}
-	patch, err := r.Rebind.rebindChanges(owner, original, staged, backend, replacement)
-	if err != nil {
+	if err := verifyCorootKeeperDetach(ctx, j.c, r.Rebind, true); err != nil {
 		return err
 	}
-	r.Phase = "destination-rebind-requested"
-	if err := j.advance(ctx, r); err != nil {
-		return err
+	if !keeperReleasedPV(original, r.Rebind.Original.PV, r.Rebind.Original.Claim, "hcloud", hetznerCSIDriver, r.Rebind.Original.Handle) ||
+		benchmarkIdentity(staged) != r.Rebind.StagedPV ||
+		text(staged, "spec", "persistentVolumeReclaimPolicy") != "Retain" {
+		return errCorootKeeperRebind
 	}
-	if err := sourceCurrent(ctx, j.c.run, r.Source); err != nil {
-		return err
+	if r.Phase == "replacement-created" {
+		r.Phase = "destination-rebind-requested"
+		if err := j.advance(ctx, r); err != nil {
+			return err
+		}
 	}
-	if err := j.c.patch(ctx, "persistentvolume", "", staged, patch...); err != nil {
-		return err
+	if text(staged, "spec", "claimRef", "uid") != r.NewClaim.UID {
+		if err := j.patchDestinationClaimRef(ctx, r, owner, original, staged, backend); err != nil {
+			return err
+		}
 	}
 	if err := waitReadyWithin(ctx, 90*time.Second, func(ctx context.Context) error {
 		return j.verifyNewClaimBound(ctx, r)
@@ -70,25 +133,52 @@ func (j *corootKeeperJournal) rebindAndResume(ctx context.Context, fences coroot
 		return err
 	}
 	r.Phase = "destination-bound"
-	if err := j.advance(ctx, r); err != nil {
-		return err
-	}
-	if err := verifyCorootKeeperSurvivors(ctx, j.c, r.Before, r.Input.Ordinal); err != nil {
-		return err
-	}
-	if err := removeCorootKeeperFence(ctx, j.c, r.Source, fences.pod, r.PodFence); err != nil {
-		return err
-	}
-	r.Phase = "member-released"
-	if err := j.advance(ctx, r); err != nil {
-		return err
-	}
-	if err := waitReadyWithin(ctx, 5*time.Minute, func(ctx context.Context) error {
-		return j.verifyRejoined(ctx, r, disks)
+	return j.advance(ctx, r)
+}
+
+func (j *corootKeeperJournal) patchDestinationClaimRef(ctx context.Context, r corootKeeperCutoverRecord, owner, original, staged, backend object) error {
+	var replacement object
+	if err := waitReadyWithin(ctx, 30*time.Second, func(ctx context.Context) error {
+		current, err := j.c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, r.NewClaim.Name, false)
+		if err != nil || benchmarkIdentity(current) != r.NewClaim ||
+			text(current, "metadata", "annotations", corootKeeperFenceOwner) != r.Run+":"+r.Source {
+			return errors.Join(errReadinessTerminal, errCorootKeeperRebind)
+		}
+		if text(current, "status", "phase") != "Pending" {
+			return errCorootKeeperRebind
+		}
+		replacement = current
+		return nil
 	}); err != nil {
 		return err
 	}
-	r.Phase = "replacement-verified"
+	patch, err := r.Rebind.rebindChanges(owner, original, staged, backend, replacement)
+	if err != nil {
+		return err
+	}
+	if err := sourceCurrent(ctx, j.c.run, j.source()); err != nil {
+		return err
+	}
+	return j.c.patch(ctx, "persistentvolume", "", staged, patch...)
+}
+
+func (j *corootKeeperJournal) releaseKeeperPodFence(ctx context.Context, fences corootKeeperFences) error {
+	r := j.record
+	if err := verifyCorootKeeperSurvivors(ctx, j.c, r.Before, r.Input.Ordinal); err != nil {
+		// A previous attempt may have removed the fence and allowed the
+		// replacement member to return before recording member-released.
+		pod, readErr := j.c.get(ctx, keeperPolicyKind, "", text(fences.pod, "metadata", "name"), true)
+		if readErr != nil || pod != nil {
+			return err
+		}
+	}
+	if err := j.verifyNewClaimBound(ctx, r); err != nil {
+		return err
+	}
+	if err := removeCorootKeeperFence(ctx, j.c, j.source(), fences.pod, r.PodFence); err != nil {
+		return err
+	}
+	r.Phase = "member-released"
 	return j.advance(ctx, r)
 }
 
@@ -103,9 +193,11 @@ func (j *corootKeeperJournal) releaseClaims(ctx context.Context, fences corootKe
 	if err := j.proveFences(ctx, fences); err != nil {
 		return err
 	}
-	r.Phase = "claim-release-requested"
-	if err := j.advance(ctx, r); err != nil {
-		return err
+	if r.Phase == "copied-volumes-detached" {
+		r.Phase = "claim-release-requested"
+		if err := j.advance(ctx, r); err != nil {
+			return err
+		}
 	}
 	for _, row := range []struct {
 		claim, pv             benchmarkResource
@@ -115,23 +207,27 @@ func (j *corootKeeperJournal) releaseClaims(ctx context.Context, fences corootKe
 		{r.Rebind.Original.Claim, r.Rebind.Original.PV, "hcloud", hetznerCSIDriver, r.Rebind.Original.Handle},
 	} {
 		pv, err := j.c.get(ctx, "persistentvolume", "", row.pv.Name, false)
-		if err != nil || benchmarkIdentity(pv) != row.pv ||
-			text(pv, "spec", "persistentVolumeReclaimPolicy") != "Retain" ||
-			text(pv, "spec", "claimRef", "uid") != row.claim.UID ||
-			text(pv, "status", "phase") != "Bound" ||
-			text(pv, "spec", "storageClassName") != row.class ||
-			text(pv, "spec", "csi", "driver") != row.driver || text(pv, "spec", "csi", "volumeHandle") != row.handle {
+		if err != nil || !keeperRetainedPVBinding(pv, row.pv, row.claim, row.class, row.driver, row.handle) {
 			return errCorootKeeperRebind
 		}
-		claim, err := j.c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, row.claim.Name, false)
-		if err != nil || benchmarkIdentity(claim) != row.claim || text(claim, "spec", "volumeName") != row.pv.Name {
+		claim, err := j.c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, row.claim.Name, true)
+		if err != nil {
 			return errCorootKeeperRebind
 		}
 		if err := j.requireNoClaimConsumers(ctx, row.claim.Name); err != nil {
 			return err
 		}
-		if err := j.c.deleteObserved(ctx, r.Source, "/api/v1/namespaces/"+corootKeeperNamespace+"/persistentvolumeclaims/"+row.claim.Name, claim); err != nil {
-			return err
+		if claim != nil {
+			if benchmarkIdentity(claim) != row.claim || text(claim, "spec", "volumeName") != row.pv.Name ||
+				text(claim, "spec", "storageClassName") != row.class || text(pv, "status", "phase") != "Bound" {
+				return errCorootKeeperRebind
+			}
+			if value(claim, "metadata", "deletionTimestamp") == nil {
+				path := "/api/v1/namespaces/" + corootKeeperNamespace + "/persistentvolumeclaims/" + row.claim.Name
+				if err := j.c.deleteObserved(ctx, j.source(), path, claim); err != nil {
+					return err
+				}
+			}
 		}
 		err = waitReadyWithin(ctx, 90*time.Second, func(ctx context.Context) error {
 			current, err := j.c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, row.claim.Name, true)
@@ -191,14 +287,17 @@ func (j *corootKeeperJournal) readRebindAssets(ctx context.Context, binding coro
 
 func (j *corootKeeperJournal) verifyNewClaimBound(ctx context.Context, r corootKeeperCutoverRecord) error {
 	claim, err := j.c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, r.NewClaim.Name, false)
-	if err != nil || benchmarkIdentity(claim) != r.NewClaim || text(claim, "status", "phase") != "Bound" ||
-		text(claim, "spec", "storageClassName") != "longhorn-v2" || text(claim, "spec", "volumeName") != r.Rebind.StagedPV.Name {
+	if err != nil || !recoveredNativeObject(claim, "v1", "PersistentVolumeClaim", corootKeeperNamespace) ||
+		benchmarkIdentity(claim) != r.NewClaim || text(claim, "status", "phase") != "Bound" ||
+		text(claim, "metadata", "annotations", corootKeeperFenceOwner) != r.Run+":"+r.Source ||
+		text(claim, "spec", "storageClassName") != "longhorn-v2" || text(claim, "spec", "volumeName") != r.Rebind.StagedPV.Name ||
+		!providerRWOFilesystem(claim) || text(claim, "spec", "resources", "requests", "storage") != corootKeeperDataSize ||
+		value(claim, "spec", "dataSource") != nil || value(claim, "spec", "dataSourceRef") != nil {
 		return errCorootKeeperRebind
 	}
 	pv, err := j.c.get(ctx, "persistentvolume", "", r.Rebind.StagedPV.Name, false)
-	if err != nil || benchmarkIdentity(pv) != r.Rebind.StagedPV || text(pv, "status", "phase") != "Bound" ||
-		text(pv, "spec", "claimRef", "uid") != r.NewClaim.UID || text(pv, "spec", "persistentVolumeReclaimPolicy") != "Retain" ||
-		text(pv, "spec", "csi", "driver") != "driver.longhorn.io" || text(pv, "spec", "csi", "volumeHandle") != r.Rebind.StagedVolume.Name {
+	if err != nil || text(pv, "status", "phase") != "Bound" ||
+		!keeperRetainedPVBinding(pv, r.Rebind.StagedPV, r.NewClaim, "longhorn-v2", "driver.longhorn.io", r.Rebind.StagedVolume.Name) {
 		return errCorootKeeperRebind
 	}
 	return nil
@@ -207,20 +306,28 @@ func (j *corootKeeperJournal) verifyNewClaimBound(ctx context.Context, r corootK
 func removeCorootKeeperFence(ctx context.Context, c client, source string, desired object, owned benchmarkFenceReceipt) error {
 	name := text(desired, "metadata", "name")
 	owner := text(desired, "metadata", "annotations", corootKeeperFenceOwner)
-	policy, err := c.get(ctx, keeperPolicyKind, "", name, false)
-	if err != nil || !matchesOwnedBenchmarkPolicy(policy, desired, owned.PolicyUID) ||
+	if name == "" || owner == "" || !isolationUID.MatchString(owned.PolicyUID) {
+		return errCorootKeeperReceipt
+	}
+	policy, err := c.get(ctx, keeperPolicyKind, "", name, true)
+	if err != nil {
+		return err
+	}
+	binding, err := c.get(ctx, keeperBindingKind, "", name, true)
+	if err != nil {
+		return err
+	}
+	if policy == nil && binding == nil {
+		return nil
+	}
+	if !matchesOwnedBenchmarkPolicy(policy, desired, owned.PolicyUID) ||
 		text(policy, "metadata", "annotations", corootKeeperFenceOwner) != owner {
 		return errCorootKeeperReceipt
 	}
-	if owned.BindingUID == "" {
-		binding, err := c.get(ctx, keeperBindingKind, "", name, true)
-		if err != nil || binding != nil {
-			return errCorootKeeperReceipt
-		}
+	if binding == nil {
 		return removeScratch(ctx, c, source, keeperPolicyKind, "", keeperPolicyAPI+"validatingadmissionpolicies/"+name, policy)
 	}
-	binding, err := c.get(ctx, keeperBindingKind, "", name, false)
-	if err != nil || !matchesOwnedBenchmarkFence(policy, binding, desired, owned) ||
+	if !matchesOwnedBenchmarkFence(policy, binding, desired, owned) ||
 		text(binding, "metadata", "annotations", corootKeeperFenceOwner) != owner {
 		return errCorootKeeperReceipt
 	}
@@ -230,7 +337,7 @@ func removeCorootKeeperFence(ctx context.Context, c client, source string, desir
 	return removeScratch(ctx, c, source, keeperPolicyKind, "", keeperPolicyAPI+"validatingadmissionpolicies/"+name, policy)
 }
 
-func (j *corootKeeperJournal) verifyRejoined(ctx context.Context, r corootKeeperCutoverRecord, disks []cnpgRecoveryDiskBinding) error {
+func (j *corootKeeperJournal) verifyRejoined(ctx context.Context, r corootKeeperCutoverRecord, disks []cnpgRecoveryDiskBinding, source string) error {
 	stateful, err := j.c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
 	if err != nil || benchmarkIdentity(stateful) != r.Before.Controller {
 		return errCorootKeeperQuorum
@@ -291,5 +398,5 @@ func (j *corootKeeperJournal) verifyRejoined(ctx context.Context, r corootKeeper
 	if leaders != 1 {
 		return errCorootKeeperQuorum
 	}
-	return sourceCurrent(ctx, j.c.run, r.Source)
+	return sourceCurrent(ctx, j.c.run, source)
 }

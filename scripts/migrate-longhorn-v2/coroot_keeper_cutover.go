@@ -26,6 +26,13 @@ func runCorootKeeperCutover(ctx context.Context, c client, source, run string, i
 	if err != nil {
 		return err
 	}
+	prior, err := c.get(ctx, "configmap", "longhorn-system", corootKeeperJournalName(input.Ordinal), true)
+	if err != nil {
+		return err
+	}
+	if prior != nil {
+		return resumeCorootKeeperRebind(ctx, c, source, run, input, prior, capacity.Disks)
+	}
 	before, err := readCorootKeeperQuorum(ctx, c, source, capacity.Disks)
 	if err != nil {
 		return err
@@ -53,8 +60,12 @@ func runCorootKeeperCutover(ctx context.Context, c client, source, run string, i
 		value(controllerOwner, "controller") != true {
 		return errCorootKeeperReceipt
 	}
+	fenceUser, err := corootKeeperFenceUser(ctx, c)
+	if err != nil {
+		return err
+	}
 	record := corootKeeperCutoverRecord{Version: 1, Run: run, Source: source, Phase: "planned", Input: input,
-		Before: before, Coroot: benchmarkIdentity(owner)}
+		Before: before, Coroot: benchmarkIdentity(owner), FenceUser: fenceUser}
 	journal, err := beginCorootKeeperJournal(ctx, c, record)
 	if err != nil {
 		return err

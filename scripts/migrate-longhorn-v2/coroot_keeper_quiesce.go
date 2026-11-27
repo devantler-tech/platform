@@ -19,23 +19,36 @@ const (
 
 type corootKeeperFences struct{ pod, claim object }
 
-func (j *corootKeeperJournal) installFences(ctx context.Context) (corootKeeperFences, error) {
-	r := j.record
-	member := r.Before.Members[r.Input.Ordinal]
-	raw, err := j.c.kubectl(ctx, nil, "auth", "whoami", "--output=json")
+func corootKeeperFenceUser(ctx context.Context, c client) (string, error) {
+	raw, err := c.kubectl(ctx, nil, "auth", "whoami", "--output=json")
 	var actor object
 	if err != nil || json.Unmarshal(raw, &actor) != nil {
-		return corootKeeperFences{}, errCorootKeeperReceipt
+		return "", errCorootKeeperReceipt
 	}
 	user := text(actor, "status", "userInfo", "username")
-	if user == "" || len(user) > 256 || strings.ContainsAny(user, "\r\n\x00") {
-		return corootKeeperFences{}, errCorootKeeperReceipt
+	if !validCorootKeeperFenceUser(user) {
+		return "", errCorootKeeperReceipt
 	}
+	return user, nil
+}
+
+func validCorootKeeperFenceUser(user string) bool {
+	return user != "" && len(user) <= 256 && !strings.ContainsAny(user, "\r\n\x00")
+}
+
+func keeperFencesFor(r corootKeeperCutoverRecord) corootKeeperFences {
+	member := r.Before.Members[r.Input.Ordinal]
 	owner := r.Run + ":" + r.Source + ":" + r.Rebind.Original.Claim.UID
-	fences := corootKeeperFences{
-		pod:   corootKeeperPodFence("lh-keeper-pod-"+r.Run, owner, member.Pod, r.Rebind.Original.Claim.Name, corootKeeperCopyPrefix+r.Run, user),
+	return corootKeeperFences{
+		pod:   corootKeeperPodFence("lh-keeper-pod-"+r.Run, owner, member.Pod, r.Rebind.Original.Claim.Name, corootKeeperCopyPrefix+r.Run, r.FenceUser),
 		claim: corootKeeperClaimFence("lh-keeper-pvc-"+r.Run, owner, r.Rebind.Original.Claim.Name, r.Rebind.StagedPV.Name),
 	}
+}
+
+func (j *corootKeeperJournal) installFences(ctx context.Context) (corootKeeperFences, error) {
+	r := j.record
+	fences := keeperFencesFor(r)
+	owner := text(fences.pod, "metadata", "annotations", corootKeeperFenceOwner)
 	for _, item := range []struct {
 		desired object
 		phase   string
@@ -99,7 +112,7 @@ func (j *corootKeeperJournal) proveFences(ctx context.Context, fences corootKeep
 		rawPath := "/api/v1/namespaces/" + corootKeeperNamespace + "/" + witness.resource
 		var proof error
 		err := waitReadyWithin(ctx, 75*time.Second, func(ctx context.Context) error {
-			proof = proveReferenceFenceOnServingAPIs(ctx, j.c, r.Source, "", witness.policy, witness.receipt,
+			proof = proveReferenceFenceOnServingAPIs(ctx, j.c, j.source(), "", witness.policy, witness.receipt,
 				func(ctx context.Context, c *http.Client, endpoint *url.URL) error {
 					code, raw, err := benchmarkAdmissionRequest(ctx, c, endpoint, rawPath, http.MethodPost, "application/json", witness.body)
 					if err != nil {
