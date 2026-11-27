@@ -100,6 +100,35 @@ func TestRecoveredDatabaseStorageBindsTheCreatedGraphAndThreeCopies(t *testing.T
 	}
 }
 
+func TestRecoveredCopiesAllowMultipleQualifiedDisksPerHost(t *testing.T) {
+	f := newRecoveredStorageFixture(t)
+	disks := f.p.record.Storage.Disks
+	extra := disks[0]
+	extra.DiskUUID = "alternate-qualified-disk"
+	disks = append(disks, extra)
+	size := text(f.volume, "spec", "size")
+	if _, err := recoveredNativeCopies(disks, f.volume, f.engine, f.replicas, size); err != nil {
+		t.Fatalf("an extra qualified disk must leave existing three-host placement valid: %v", err)
+	}
+	spec := valueObject(f.replicas[0], "spec")
+	spec["diskID"] = extra.DiskUUID
+	if _, err := recoveredNativeCopies(disks, f.volume, f.engine, f.replicas, size); err != nil {
+		t.Fatalf("a replica on the alternate disk still spans three hosts: %v", err)
+	}
+	spec = valueObject(f.replicas[1], "spec")
+	spec["diskID"], spec["nodeID"] = disks[0].DiskUUID, disks[0].Node
+	valueObject(f.replicas[1], "status")["instanceManagerName"] = disks[0].InstanceManager
+	if _, err := recoveredNativeCopies(disks, f.volume, f.engine, f.replicas, size); err == nil {
+		t.Fatal("two replicas on different disks of the same host must fail placement")
+	}
+	spec["diskID"], spec["nodeID"] = disks[1].DiskUUID, disks[1].Node
+	valueObject(f.replicas[1], "status")["instanceManagerName"] = disks[1].InstanceManager
+	disks[len(disks)-1].NodeUID = "different-host-identity"
+	if _, err := recoveredNativeCopies(disks, f.volume, f.engine, f.replicas, size); err == nil {
+		t.Fatal("contradictory host identities must fail inventory validation")
+	}
+}
+
 func TestRecoveredDatabaseStorageRechecksTheRetainedArchiveCopy(t *testing.T) {
 	f := newRecoveredStorageFixture(t)
 	f.p.record = recoveredArchiveReceiptFixture(t)
