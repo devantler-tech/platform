@@ -94,8 +94,15 @@ func matchCorootKeeperVolumePod(observed, created, desired object) bool {
 }
 
 func matchStorageCopyVolumePod(observed, created, desired object, namespace, ownershipAnnotation string) bool {
-	if !recoveredNativeObject(observed, "v1", "Pod", namespace) ||
-		benchmarkIdentity(observed) != benchmarkIdentity(created) ||
+	return recoveredNativeObject(observed, "v1", "Pod", namespace) &&
+		benchmarkIdentity(observed) == benchmarkIdentity(created) &&
+		matchStorageCopyVolumePodShape(observed, desired, namespace, ownershipAnnotation)
+}
+
+// A CREATE dry-run can prove admission defaults but has no persisted version.
+func matchStorageCopyVolumePodShape(observed, desired object, namespace, ownershipAnnotation string) bool {
+	if text(observed, "apiVersion") != "v1" || text(observed, "kind") != "Pod" ||
+		text(observed, "metadata", "namespace") != namespace || value(observed, "metadata", "deletionTimestamp") != nil ||
 		text(observed, "metadata", "name") != text(desired, "metadata", "name") ||
 		value(observed, "metadata", "ownerReferences") != nil ||
 		!reflect.DeepEqual(value(observed, "metadata", "labels"), value(desired, "metadata", "labels")) ||

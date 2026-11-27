@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
 func (r openBaoPairRecord) admissionPolicies() ([2]object, error) {
@@ -123,9 +126,11 @@ func probeOpenBaoFence(ctx context.Context, c *http.Client, endpoint *url.URL, i
 	}
 	if index == 0 {
 		copyPod := openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node)
-		code, _, err := benchmarkAdmissionRequest(ctx, c, endpoint, api+"pods", http.MethodPost, "application/json", copyPod)
-		if err != nil || code != http.StatusCreated {
-			return fmt.Errorf("the serving API did not admit the isolated OpenBao copy in dry-run (HTTP %d)", code)
+		code, body, err := benchmarkAdmissionRequest(ctx, c, endpoint, api+"pods", http.MethodPost, "application/json", copyPod)
+		var admitted object
+		if err != nil || code != http.StatusCreated || strictjson.Validate(body, nil) != nil ||
+			json.Unmarshal(body, &admitted) != nil || !matchStorageCopyVolumePodShape(admitted, copyPod, openBaoNamespace, openBaoCopyFenceOwner) {
+			return fmt.Errorf("the serving API did not admit the required OpenBao copy pod shape in dry-run (HTTP %d)", code)
 		}
 	}
 	return nil

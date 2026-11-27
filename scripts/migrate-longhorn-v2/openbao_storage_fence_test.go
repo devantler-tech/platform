@@ -1,11 +1,69 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/google/cel-go/cel"
 )
+
+func TestOpenBaoFenceRejectsFSGroupInjectedByAdmission(t *testing.T) {
+	const policy = "openbao-copy-fence"
+	plan := openBaoPairPlan{Run: "991", Source: strings.Repeat("a", 40)}
+	plan.Input.Member = "openbao-1"
+	plan.Original.Node = "worker-1"
+	plan.Original.Disks[0].PVC.Name = "data-openbao-1"
+	plan.Original.Disks[1].PVC.Name = "audit-openbao-1"
+	for _, shape := range []string{"authored", "injected fsGroup"} {
+		t.Run(shape, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.Method != http.MethodPost || req.URL.Query().Get("dryRun") != "All" {
+					t.Error("the admission probe must be a dry-run")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				var pod object
+				if err := json.NewDecoder(req.Body).Decode(&pod); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				name := text(pod, "metadata", "name")
+				if name == "openbao-storage-fence-probe" {
+					denial := fmt.Sprintf("ValidatingAdmissionPolicy '%s' with binding '%s' denied request: %s",
+						policy, policy, openBaoCopyFenceMessage)
+					w.WriteHeader(http.StatusForbidden)
+					_ = json.NewEncoder(w).Encode(object{"apiVersion": "v1", "kind": "Status", "code": 403,
+						"status": "Failure", "reason": "Forbidden", "message": fmt.Sprintf("pods %q is forbidden: %s", name, denial),
+						"details": object{"name": name, "kind": "pods", "causes": []object{{"message": denial}}}})
+					return
+				}
+				valueObject(pod, "metadata")["uid"] = "a4f66240-e801-4624-a98a-af06d7fbfb2f"
+				if shape == "injected fsGroup" {
+					security := valueObject(pod, "spec", "securityContext")
+					security["fsGroup"], security["fsGroupChangePolicy"] = 1000, "OnRootMismatch"
+				}
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(pod)
+			}))
+			defer server.Close()
+			endpoint, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = probeOpenBaoFence(t.Context(), server.Client(), endpoint, 0, policy, plan)
+			if (err == nil) != (shape == "authored") {
+				t.Fatalf("dry-run receipt for %s: %v", shape, err)
+			}
+		})
+	}
+}
 
 func TestOpenBaoCopyFenceAdmitsOnlyItsProtectedReadOnlyPair(t *testing.T) {
 	const run = "12345"
