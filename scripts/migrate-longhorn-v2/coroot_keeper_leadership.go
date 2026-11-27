@@ -58,11 +58,11 @@ func runCorootKeeperLeadershipTransfer(ctx context.Context, c client, source, ru
 		return errCorootKeeperReceipt
 	}
 	activation := temporaryV2Activation{c: c, source: source, owner: run, pools: c.inventoryPools}
-	capacity, err := activation.recoveryClaimStorage(ctx, corootKeeperDataSize)
+	storage, err := activation.observeRecoveryStorage(ctx, nil)
 	if err != nil {
 		return err
 	}
-	before, err := readCorootKeeperQuorum(ctx, c, source, capacity.Disks)
+	before, err := readCorootKeeperQuorum(ctx, c, source, storage.Disks)
 	if err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func runCorootKeeperLeadershipTransfer(ctx context.Context, c client, source, ru
 		// migrated as a follower. Another transfer would only interrupt writes.
 		return nil
 	}
-	latest, err := readCorootKeeperQuorum(ctx, c, source, capacity.Disks)
+	latest, err := readCorootKeeperQuorum(ctx, c, source, storage.Disks)
 	if err != nil || latest != before {
 		return errors.New("the Keeper quorum changed before the leadership request")
 	}
@@ -92,7 +92,7 @@ func runCorootKeeperLeadershipTransfer(ctx context.Context, c client, source, ru
 		"--container="+corootKeeperContainer, "--pod-running-timeout=10s", "--", "bash", "-ec", corootKeeperRequestLeadership)
 	acknowledged := callErr == nil && strings.TrimSpace(string(out)) == "Sent leadership request to leader."
 	if err := waitReadyWithin(ctx, 90*time.Second, func(ctx context.Context) error {
-		current, err := readCorootKeeperQuorum(ctx, c, source, capacity.Disks)
+		current, err := readCorootKeeperQuorum(ctx, c, source, storage.Disks)
 		if err != nil {
 			return err
 		}
