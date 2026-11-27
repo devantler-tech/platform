@@ -74,7 +74,7 @@ func (s *censusStore) serve(t *testing.T) *mailboxClient {
 				_, _ = fmt.Sscanf(id.(string), "id%d", &index)
 				list = append(list, object{"id": id, "@type": s.objects[index]})
 			}
-			result = object{"state": "s1", "list": list, "notFound": []any{}}
+			result = object{"state": "q1", "list": list, "notFound": []any{}}
 		case "VacationResponse/get":
 			result = object{"state": "s1", "list": []any{}, "notFound": []any{"singleton"}}
 			if s.vacation {
@@ -115,6 +115,24 @@ func TestCensusLeavesUninitializedCollectionsUntouched(t *testing.T) {
 		case "Calendar/get", "CalendarEvent/get", "CalendarEvent/query", "Identity/get":
 			t.Fatalf("census could initialize an empty collection through %s", method)
 		}
+	}
+}
+
+func TestCensusRechecksAnEmptyCalendarEventQuery(t *testing.T) {
+	store := censusFixture()
+	store.objects = nil
+	queries := 0
+	store.mutate = func(method string, _, result object) {
+		if method != "CalendarEvent/query" {
+			return
+		}
+		queries++
+		if queries > 1 {
+			result["queryState"] = "q2"
+		}
+	}
+	if _, err := store.serve(t).census(context.Background()); err == nil || queries != 2 {
+		t.Fatal("the empty calendar event query was accepted after a state change")
 	}
 }
 
@@ -173,6 +191,11 @@ func TestCensusRefusesIncompleteOrUnknownAnswers(t *testing.T) {
 		"calendar-object-not-found": func(method string, _, result object) {
 			if method == "CalendarEvent/get" {
 				result["notFound"] = []any{"id0"}
+			}
+		},
+		"calendar-last-get-state-changed": func(method string, args, result object) {
+			if method == "CalendarEvent/get" && args["ids"].([]any)[0] == "id256" {
+				result["state"] = "q2"
 			}
 		},
 		"query-changed-between-pages": func(method string, args, result object) {

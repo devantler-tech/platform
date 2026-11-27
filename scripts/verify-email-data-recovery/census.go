@@ -107,6 +107,16 @@ func (c *mailboxClient) calendarObjects(ctx context.Context) (events, tasks int,
 		total, state = pageTotal, text(page, "queryState")
 		ids, _ := page["ids"].([]any)
 		if len(ids) == 0 {
+			if total != 0 {
+				return 0, 0, errors.New("census-calendar-total")
+			}
+			confirm, err := c.call(ctx, "CalendarEvent/query", object{"calculateTotal": true, "position": 0, "limit": 1})
+			if err != nil {
+				return 0, 0, err
+			}
+			if count, err := queryTotal(confirm); err != nil || count != 0 || text(confirm, "queryState") != state || confirm["position"] != float64(0) {
+				return 0, 0, errors.New("census-calendar-query")
+			}
 			break
 		}
 		objects, err := c.call(ctx, "CalendarEvent/get", object{"ids": ids, "properties": []any{"id", "@type"}})
@@ -114,7 +124,9 @@ func (c *mailboxClient) calendarObjects(ctx context.Context) (events, tasks int,
 			return 0, 0, err
 		}
 		list := items(objects, "list")
-		if raw, _ := objects["list"].([]any); len(list) != len(ids) || len(raw) != len(ids) || !noneMissing(objects) {
+		// The pinned Stalwart release reports the same calendar item change
+		// state in queryState and get state.
+		if raw, _ := objects["list"].([]any); text(objects, "state") != state || len(list) != len(ids) || len(raw) != len(ids) || !noneMissing(objects) {
 			return 0, 0, errors.New("census-calendar-objects")
 		}
 		requested := map[any]bool{}
