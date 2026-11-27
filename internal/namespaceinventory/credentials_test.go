@@ -376,6 +376,7 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 		confirmation string
 		originalRun  string
 		database     string
+		createScope  directCreateScope
 	}{
 		{operation: "benchmark-v1", confirmation: "benchmark-longhorn-storage"},
 		{operation: "prepare-native-v1-seed", confirmation: "prepare-longhorn-native-v1-seed"},
@@ -384,7 +385,8 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 		{operation: "resume-native-v2-reclaim", confirmation: "resume-longhorn-native-v2-reclaim:99:98", originalRun: "99"},
 		{operation: "recover-wedding-standby-name", confirmation: "recover-wedding-standby-name:wedding-db-1:99:" +
 			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000001:99:" +
-			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000002:98", originalRun: "99", database: "wedding-db"},
+			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000002:98", originalRun: "99", database: "wedding-db", createScope: directWeddingCreate},
+		{operation: "migrate-coroot-keeper-v2", confirmation: "migrate-coroot-keeper-v2:1:" + strings.Repeat("1", 64), createScope: directKeeperCreate},
 	} {
 		valid := nativeSeedAdmissionDispatch()
 		valid["LONGHORN_V2_OPERATION"], valid["LONGHORN_V2_CONFIRM"] = dispatch.operation, dispatch.confirmation
@@ -394,8 +396,8 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 		if err != nil || client == nil || endpoint == nil || endpoint.String() != "https://203.0.113.10:6443" || client.Timeout != 20*time.Second {
 			t.Fatal("confirmed operation could not construct its fixed client:", dispatch.operation, err)
 		}
-		if dispatch.database == "wedding-db" && client.Transport.(directAPIPeer).createScope != directWeddingCreate {
-			t.Fatal("confirmed Wedding recovery did not receive its dry-run scope")
+		if dispatch.createScope != "" && client.Transport.(directAPIPeer).createScope != dispatch.createScope {
+			t.Fatal("confirmed recovery did not receive its dry-run scope:", dispatch.operation)
 		}
 		response, err := client.Get(server.URL + "/version")
 		if response != nil {
@@ -419,6 +421,12 @@ func TestDirectAPIAllowsOnlyScopedCNPGCreateDryRuns(t *testing.T) {
 		want                             bool
 	}{
 		{http.MethodPost, pods, dry, "application/json", directUmamiCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/observability/pods", dry, "application/json", directKeeperCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/observability/persistentvolumeclaims", dry, "application/json", directKeeperCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/observability/pods", "", "application/json", directKeeperCreate, false},
+		{http.MethodPost, pods, dry, "application/json", directKeeperCreate, false},
+		{http.MethodPost, "/apis/batch/v1/namespaces/observability/jobs", dry, "application/json", directKeeperCreate, false},
+		{http.MethodPatch, "/api/v1/namespaces/observability/pods/keeper", dry, "application/json-patch+json", directKeeperCreate, false},
 		{http.MethodPost, claims, dry, "application/json", directUmamiCreate, true},
 		{http.MethodPost, jobs, dry, "application/json", directUmamiCreate, true},
 		{http.MethodPost, pods, "", "application/json", directUmamiCreate, false},
@@ -436,6 +444,8 @@ func TestDirectAPIAllowsOnlyScopedCNPGCreateDryRuns(t *testing.T) {
 		{http.MethodPost, "/apis/batch/v1/namespaces/wedding-app/jobs", dry, "application/json", directWeddingCreate, true},
 		{http.MethodPost, "/api/v1/namespaces/wedding-app/pods", "", "application/json", directWeddingCreate, false},
 		{http.MethodPost, "/api/v1/namespaces/wedding-app/pods", dry, "application/json", directUmamiCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/wedding-app/pods", dry, "application/json", directKeeperCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/observability/pods", dry, "application/json", directWeddingCreate, false},
 		{http.MethodPost, pods, dry, "application/json", directWeddingCreate, false},
 		{http.MethodPatch, "/api/v1/namespaces/wedding-app/pods/named", dry, "application/json-patch+json", directWeddingCreate, false},
 	} {

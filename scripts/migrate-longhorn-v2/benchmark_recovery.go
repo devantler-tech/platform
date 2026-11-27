@@ -67,18 +67,26 @@ type finishedMigrationRun struct {
 }
 
 func readFinishedMigrationRun(ctx context.Context, c client, run, source string) (finishedMigrationRun, error) {
+	return readFinishedMigrationRunAttempt(ctx, c, run, source, false)
+}
+
+func readFinishedMigrationRunAttempt(ctx context.Context, c client, run, source string, first bool) (finishedMigrationRun, error) {
 	if !validBenchmarkOwner(run, source) {
 		return finishedMigrationRun{}, errors.New("migration owner identity is invalid")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	raw, err := c.run(ctx, nil, "gh", "api", "repos/devantler-tech/platform/actions/runs/"+run)
+	endpoint := "repos/devantler-tech/platform/actions/runs/" + run
+	if first {
+		endpoint += "/attempts/1"
+	}
+	raw, err := c.run(ctx, nil, "gh", "api", endpoint)
 	if err != nil || ctx.Err() != nil || len(raw) > 1024*1024 || strictjson.Validate(raw, map[string][]string{"": {"id", "status", "conclusion", "head_sha", "head_branch", "event", "run_attempt", "path"}}) != nil {
-		return finishedMigrationRun{}, errors.New("latest migration owner attempt is unverified")
+		return finishedMigrationRun{}, errors.New("migration owner attempt is unverified")
 	}
 	var actual finishedMigrationRun
 	wantID, _ := strconv.ParseInt(run, 10, 64)
-	if json.Unmarshal(raw, &actual) != nil || actual.ID != wantID || actual.Status != "completed" || actual.Source != source || actual.Branch != "main" || actual.Event != "workflow_dispatch" || actual.Attempt == 0 || !reviewedWorkflowPath(actual.Path) {
+	if json.Unmarshal(raw, &actual) != nil || actual.ID != wantID || actual.Status != "completed" || actual.Source != source || actual.Branch != "main" || actual.Event != "workflow_dispatch" || actual.Attempt == 0 || (first && actual.Attempt != 1) || !reviewedWorkflowPath(actual.Path) {
 		return finishedMigrationRun{}, errors.New("migration owner is live, changed or outside the reviewed workflow")
 	}
 	return actual, nil

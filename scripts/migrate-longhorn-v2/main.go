@@ -61,6 +61,10 @@ func main() {
 		authorization = authorizeHostReboot(os.Getenv, target)
 	case "observe-database":
 		authorization = authorizeCNPGObservation(os.Getenv)
+	case observeCorootKeeperOperation:
+		authorization = authorizeCorootKeeperObservation(os.Getenv)
+	case corootKeeperCutoverOperation:
+		_, authorization = authorizeCorootKeeperCutover(os.Getenv)
 	case cnpgArchiveProofOperation:
 		authorization = authorizeCNPGArchiveProof(os.Getenv)
 	case umamiArchiveIsolationResumeOperation:
@@ -295,6 +299,34 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == observeCorootKeeperOperation {
+		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		receipt, err := observeCorootKeeperQuorum(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Coroot Keeper observation held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("COROOT_KEEPER_QUORUM=VERIFIED members=3 syncedFollowers=2 disruptionBudget=VERIFIED writes=0")
+		for i, member := range receipt.Members {
+			if !member.Leader && receipt.Disks[i].Digest != "" {
+				fmt.Printf("COROOT_KEEPER_FOLLOWER=QUALIFIED ordinal=%d digest=%s\n", i, receipt.Disks[i].Digest)
+			}
+		}
+		return
+	}
+	if operation == corootKeeperCutoverOperation {
+		input, err := authorizeCorootKeeperCutover(os.Getenv)
+		if err == nil {
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			err = runCorootKeeperCutover(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), input)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("COROOT_KEEPER_REPLACEMENT=VERIFIED originalStorage=RETAINED engine=v2 replicas=3 raft=SYNCED")
+		return
 	}
 	if operation == actualBudgetRestoreOperation || operation == actualBudgetRestoreResume {
 		confirmation, err := authorizeActualBudgetRestore(os.Getenv)

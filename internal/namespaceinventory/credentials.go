@@ -139,6 +139,11 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 		}
 	case getenv("LONGHORN_V2_OPERATION") == "prepare-native-v1-seed":
 		operation, confirmation = "prepare-native-v1-seed", "prepare-longhorn-native-v1-seed"
+	case getenv("LONGHORN_V2_OPERATION") == "migrate-coroot-keeper-v2":
+		operation, confirmation = "migrate-coroot-keeper-v2", getenv("LONGHORN_V2_CONFIRM")
+		if !corootKeeperCutoverConfirm.MatchString(confirmation) {
+			return nil, nil, errors.New("protected Keeper admission dispatch is unverified")
+		}
 	}
 	if operation != "benchmark-v1" && (getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != database) {
 		return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
@@ -176,6 +181,8 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 		scope = directUmamiCreate
 	case "recover-wedding-standby-name":
 		scope = directWeddingCreate
+	case "migrate-coroot-keeper-v2":
+		scope = directKeeperCreate
 	}
 	return newProductionClientAt(config, directIP, scope)
 }
@@ -227,7 +234,10 @@ const (
 	directReclaimCreate directCreateScope = "reclaim"
 	directUmamiCreate   directCreateScope = "umami"
 	directWeddingCreate directCreateScope = "wedding-app"
+	directKeeperCreate  directCreateScope = "keeper"
 )
+
+var corootKeeperCutoverConfirm = regexp.MustCompile(`^migrate-coroot-keeper-v2:[0-2]:[a-f0-9]{64}$`)
 
 func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr, scope directCreateScope) (*http.Client, *url.URL, error) {
 	if raw == nil || raw.Contexts["admin@prod"] == nil {
@@ -292,7 +302,7 @@ func (peer directAPIPeer) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	create := req.Method == http.MethodPost && req.URL.RawPath == "" &&
 		req.Header.Get("Content-Type") == "application/json" && peer.createScope.permits(req.URL.Path)
-	patch := req.Method == http.MethodPatch && peer.createScope != directUmamiCreate && peer.createScope != directWeddingCreate
+	patch := req.Method == http.MethodPatch && peer.createScope != directUmamiCreate && peer.createScope != directWeddingCreate && peer.createScope != directKeeperCreate
 	if req.Method != http.MethodGet && (req.URL.RawQuery != "dryRun=All" || (!patch && !create)) {
 		return nil, errors.New("direct API client permits only observations and server dry-runs")
 	}
@@ -306,6 +316,8 @@ func (scope directCreateScope) permits(path string) bool {
 	case directUmamiCreate, directWeddingCreate:
 		base := "/api/v1/namespaces/" + string(scope)
 		return path == base+"/pods" || path == base+"/persistentvolumeclaims" || path == "/apis/batch/v1/namespaces/"+string(scope)+"/jobs"
+	case directKeeperCreate:
+		return path == "/api/v1/namespaces/observability/pods" || path == "/api/v1/namespaces/observability/persistentvolumeclaims"
 	default:
 		return false
 	}
