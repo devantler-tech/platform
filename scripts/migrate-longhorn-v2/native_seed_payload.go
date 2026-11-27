@@ -6,23 +6,37 @@ import (
 )
 
 func verifyNativeSeedPod(pod object, uid string) error {
-	status, _ := value(pod, "status").(object)
-	containers, _ := value(pod, "spec", "containers").([]any)
+	return verifyNativeCanaryPod(pod, uid, benchmarkClientNode, nativeSeedScript, nil)
+}
+
+func verifyNativeCanaryPod(pod object, uid, node, script string, restore *nativeRestoreInitProof) error {
 	statuses, _ := value(pod, "status", "containerStatuses").([]any)
+	if err := verifyNativeCanaryPodSpec(pod, uid, script, restore); err != nil ||
+		text(pod, "spec", "nodeName") != node || text(pod, "status", "phase") != "Running" ||
+		!ready(valueObject(pod, "status")) || len(statuses) != 1 {
+		return errSeedEvidence
+	}
+	actual, _ := statuses[0].(object)
+	if text(actual, "name") != "fio" || value(actual, "ready") != true || value(actual, "restartCount") != float64(0) ||
+		value(actual, "state", "running") == nil || !strings.HasSuffix(text(actual, "imageID"), strings.Split(fioImage, "@")[1]) {
+		return errSeedEvidence
+	}
+	return nil
+}
+
+func verifyNativeCanaryPodSpec(pod object, uid, script string, restore *nativeRestoreInitProof) error {
+	containers, _ := value(pod, "spec", "containers").([]any)
 	if text(pod, "apiVersion") != "v1" || text(pod, "kind") != "Pod" || uid == "" || text(pod, "metadata", "uid") != uid ||
 		text(pod, "metadata", "name") != "fio" || text(pod, "metadata", "namespace") != benchmarkNamespace || value(pod, "metadata", "deletionTimestamp") != nil ||
-		text(pod, "spec", "nodeName") != benchmarkClientNode || text(pod, "status", "phase") != "Running" || !ready(status) ||
 		value(pod, "spec", "automountServiceAccountToken") != false || value(pod, "spec", "hostUsers") != false || value(pod, "spec", "activeDeadlineSeconds") != float64(2700) ||
 		value(pod, "spec", "hostNetwork") == true || value(pod, "spec", "hostPID") == true || value(pod, "spec", "hostIPC") == true ||
-		len(containers) != 1 || len(statuses) != 1 || value(pod, "spec", "initContainers") != nil || value(pod, "spec", "ephemeralContainers") != nil {
+		len(containers) != 1 || verifyNativeCanaryInit(pod, restore) != nil || value(pod, "spec", "ephemeralContainers") != nil {
 		return errSeedEvidence
 	}
 	container, _ := containers[0].(object)
-	actual, _ := statuses[0].(object)
 	if text(container, "name") != "fio" || text(container, "image") != fioImage || !reflect.DeepEqual(value(container, "command"), []any{"/bin/sh", "-ec"}) ||
-		!reflect.DeepEqual(value(container, "args"), []any{nativeSeedScript}) || text(actual, "name") != "fio" || value(actual, "ready") != true ||
+		!reflect.DeepEqual(value(container, "args"), []any{script}) ||
 		value(container, "env") != nil || value(container, "envFrom") != nil ||
-		value(actual, "restartCount") != float64(0) || value(actual, "state", "running") == nil || !strings.HasSuffix(text(actual, "imageID"), strings.Split(fioImage, "@")[1]) ||
 		value(container, "securityContext", "runAsNonRoot") != true || value(container, "securityContext", "runAsUser") != float64(65532) ||
 		value(container, "securityContext", "allowPrivilegeEscalation") != false || value(container, "securityContext", "readOnlyRootFilesystem") != true ||
 		value(container, "securityContext", "privileged") == true || !reflect.DeepEqual(value(container, "securityContext", "capabilities", "drop"), []any{"ALL"}) ||

@@ -10,9 +10,10 @@ spec:
   ingress:
     - fromEndpoints:
         - matchLabels:
-            app.kubernetes.io/name: business-site-dev
-        - matchLabels:
             app.kubernetes.io/name: business-site-dev-migration
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: business-site
+            app.kubernetes.io/name: business-site
       toPorts:
         - ports:
             - port: "5432"

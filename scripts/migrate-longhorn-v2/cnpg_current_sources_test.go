@@ -17,6 +17,9 @@ func TestCurrentMigrationDatabaseRoster(t *testing.T) {
 		if !want[source] {
 			t.Fatal("unexpected or duplicated database owner", source)
 		}
+		if _, ok := hostDatabases[source.Namespace+"/"+source.Name]; !ok {
+			t.Fatal("host maintenance omits a reviewed database owner", source)
+		}
 		delete(want, source)
 	}
 	if len(want) != 0 {
@@ -25,7 +28,7 @@ func TestCurrentMigrationDatabaseRoster(t *testing.T) {
 }
 
 func TestOlderPostRequestDatabaseJournalsKeepTheirOriginalScope(t *testing.T) {
-	for _, version := range []int{1, 2} {
+	for _, version := range []int{1, 2, 3} {
 		for _, phase := range []string{"reboot-requested", "returning", "recovered"} {
 			f, h := hostRebootAPI(t)
 			r, err := h.initialize(context.Background())
@@ -52,14 +55,14 @@ func TestOlderPostRequestDatabaseJournalsKeepTheirOriginalScope(t *testing.T) {
 			}
 			r.Version = hostRebootRecordVersion
 			if r.validate(h.target) == nil {
-				t.Fatal("an old receipt claimed the seven-owner protection without binding it")
+				t.Fatal("an old receipt claimed current roster protection without binding it")
 			}
 		}
 	}
 }
 
 func TestAddedDatabaseOwnersBlockDisruptionOnRecoveryOrReplacement(t *testing.T) {
-	for _, index := range []int{5, 6} {
+	for _, index := range []int{5, 6, 7} {
 		for _, fault := range []string{"recovering", "replaced cluster", "replaced system"} {
 			f, h := hostRebootAPI(t)
 			if _, err := h.initialize(context.Background()); err != nil {
@@ -68,7 +71,7 @@ func TestAddedDatabaseOwnersBlockDisruptionOnRecoveryOrReplacement(t *testing.T)
 			db := f.databases[index]
 			switch fault {
 			case "recovering":
-				valueObject(db, "status")["readyInstances"] = float64(1)
+				valueObject(db, "status")["readyInstances"] = value(db, "spec", "instances").(float64) - 1
 			case "replaced cluster":
 				valueObject(db, "metadata")["uid"] = "replacement"
 			case "replaced system":
@@ -157,6 +160,7 @@ func TestFiveDatabasePreRebootJournalBindsNewOwnersBeforeDrain(t *testing.T) {
 	r.Version = 2
 	delete(r.Databases, "customer-identity/customer-identity-db")
 	delete(r.Databases, "business-site/business-site-portal-db")
+	delete(r.Databases, "business-site-dev/portal-preview-db")
 	if r.validate(h.target) != nil || len(r.Databases) != 5 {
 		t.Fatal("the original five-owner journal cannot be read")
 	}
@@ -167,8 +171,8 @@ func TestFiveDatabasePreRebootJournalBindsNewOwnersBeforeDrain(t *testing.T) {
 	valueObject(f.base.cm, "data")["record"] = string(raw)
 	f.afterDrain = func() {
 		var current hostRebootRecord
-		if json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &current) != nil || current.Version != 3 || len(current.Databases) != 7 {
-			t.Fatal("drain began without binding both new owners")
+		if json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &current) != nil || current.Version != 4 || len(current.Databases) != 8 {
+			t.Fatal("drain began without binding the current database roster")
 		}
 		for owner, identity := range r.Databases {
 			if current.Databases[owner] != identity {

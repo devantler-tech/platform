@@ -24,6 +24,7 @@ type activationAPI struct {
 	writes              int
 	lostResponse        bool
 	priorLive           bool
+	activationFailed    bool
 	preparations        map[string]object
 	preparationFailed   bool
 	storageBeforeGet    func(object)
@@ -36,7 +37,7 @@ func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
 	t.Helper()
 	s, managers := v2ReadinessFixture()
 	for i, node := range s.nodes {
-		node["metadata"].(object)["uid"] = fmt.Sprintf("node-%d", i)
+		node["metadata"].(object)["uid"] = fmt.Sprintf("12345678-3333-4234-8234-%012x", i+1)
 		if strings.HasPrefix(text(node, "metadata", "name"), "prod-worker-") {
 			node["metadata"].(object)["labels"].(object)["node.kubernetes.io/instance-type"] = "cx43"
 		}
@@ -53,15 +54,7 @@ func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
 			lh["status"] = object{"diskStatus": object{}}
 		}
 	}
-	f := &activationAPI{t: t, s: s, managers: managers, baseline: unusedBaselineFixture(t, s)}
-	for key, profile := range hostDatabases {
-		namespace, name, _ := strings.Cut(key, "/")
-		db := resource(name)
-		db["metadata"].(object)["namespace"] = namespace
-		db["spec"] = object{"instances": profile.instances}
-		db["status"] = object{"readyInstances": profile.instances, "systemID": "123456789", "phase": "Cluster in healthy state"}
-		f.databases = append(f.databases, db)
-	}
+	f := &activationAPI{t: t, s: s, managers: managers, databases: hostMaintenanceDatabaseFixtures(), baseline: unusedBaselineFixture(t, s)}
 	for _, volume := range s.volumes {
 		valueObject(volume, "spec")["size"] = "1073741824"
 		valueObject(volume, "status")["actualSize"] = float64(1 << 20)
@@ -125,6 +118,9 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 			}
 		} else if !strings.Contains(args[1], "/5678/") {
 			source = strings.Repeat("a", 40)
+			if f.activationFailed {
+				conclusion = "failure"
+			}
 			if f.priorLive {
 				status = "in_progress"
 			}
@@ -267,7 +263,8 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 		target["metadata"].(object)["resourceVersion"] = strconv.Itoa(version + 1)
 		if args[1] == "nodes.longhorn.io" {
 			f.writes++
-			target["status"] = object{"conditions": readyConditions(), "diskStatus": object{"longhorn-v2": object{"diskUUID": "disk-" + args[2], "conditions": readyConditions()}}}
+			conditions := append(readyConditions(), object{"type": "Schedulable", "status": "True"})
+			target["status"] = object{"conditions": conditions, "diskStatus": object{"longhorn-v2": object{"diskUUID": "disk-" + args[2], "conditions": conditions}}}
 			if f.lostResponse {
 				f.lostResponse = false
 				return nil, errors.New("response lost after registration")
@@ -293,8 +290,8 @@ func TestTemporaryActivationRegistersOnlyThreeJournalOwnedRawDisks(t *testing.T)
 	if err = a.run(t.Context()); err != nil || f.writes != 3 {
 		t.Fatal("completed activation repeated a registration:", err)
 	}
-	if err := a.accepted(t.Context()); err != nil {
-		t.Fatal("the completed registration fails fresh acceptance:", err)
+	if _, err = a.accepted(t.Context()); err != nil || f.writes != 3 {
+		t.Fatal("registered storage did not pass read-only canary admission:", err)
 	}
 }
 
@@ -386,7 +383,7 @@ func TestTemporaryActivationPreservesStorageIdentityAcrossReboot(t *testing.T) {
 			if err = a.run(t.Context()); err != nil || f.writes != 3 {
 				t.Fatal("normal reboot invalidated intact prepared storage:", err)
 			}
-			if err = a.accepted(t.Context()); err != nil {
+			if _, err = a.accepted(t.Context()); err != nil {
 				t.Fatal("completed storage was not accepted after reboot:", err)
 			}
 			_, recovered, err := a.read(t.Context())
@@ -471,10 +468,10 @@ func TestTemporaryActivationRejectsOwnerLossOnTheReadinessSnapshot(t *testing.T)
 // storage identities rather than trust a cached completion bit.
 func TestCompletedTemporaryActivationRequiresCurrentOwnedStorage(t *testing.T) {
 	f, a := newActivationAPI(t)
-	if a.accepted(t.Context()) == nil || f.writes != 0 {
+	if _, err := a.accepted(t.Context()); err == nil || f.writes != 0 {
 		t.Fatal("an unregistered pool authorized the canary")
 	}
-	for _, mode := range []string{"valid", "journal replaced", "worker changed", "workflow live", "disk fenced", "preparation replaced"} {
+	for _, mode := range []string{"valid", "journal replaced", "worker changed", "workflow live", "workflow failed", "disk missing", "disk UUID aliased", "disk fenced", "disk owner changed", "preparation replaced"} {
 		t.Run(mode, func(t *testing.T) {
 			f, a := newActivationAPI(t)
 			if err := a.run(t.Context()); err != nil {
@@ -487,16 +484,36 @@ func TestCompletedTemporaryActivationRequiresCurrentOwnedStorage(t *testing.T) {
 				f.s.nodes[3]["spec"].(object)["providerID"] = "hcloud://999"
 			case "workflow live":
 				f.priorLive = true
+			case "workflow failed":
+				f.activationFailed = true
+			case "disk missing":
+				delete(valueObject(f.s.storageNodes[3], "status", "diskStatus"), "longhorn-v2")
+			case "disk UUID aliased":
+				valueObject(f.s.storageNodes[4], "status", "diskStatus", "longhorn-v2")["diskUUID"] =
+					text(f.s.storageNodes[3], "status", "diskStatus", "longhorn-v2", "diskUUID")
 			case "disk fenced":
 				f.s.storageNodes[3]["spec"].(object)["allowScheduling"] = false
+			case "disk owner changed":
+				f.s.storageNodes[3]["metadata"].(object)["annotations"].(object)[temporaryActivationOwner] = "foreign"
 			case "preparation replaced":
 				f.preparations["temporary-v1-1"]["metadata"].(object)["uid"] = "replacement-preparation"
 			}
 			before, _ := json.Marshal(f.record)
-			err := a.accepted(t.Context())
+			receipt, err := a.accepted(t.Context())
 			after, _ := json.Marshal(f.record)
 			if (err == nil) != (mode == "valid") || f.writes != 3 || string(before) != string(after) {
 				t.Fatal("canary acceptance ignored changed evidence or mutated the plan:", err)
+			}
+			if mode == "valid" {
+				if receipt.Journal != benchmarkIdentity(f.record) || !seedSHA256.MatchString(receipt.RecordSHA256) || len(receipt.Targets) != 3 || len(receipt.DiskUUIDs) != 3 {
+					t.Fatal("canary receipt does not bind its complete activation record")
+				}
+				for selection, binding := range receipt.Targets {
+					if binding.Selection != selection || binding.PreparationUID != text(f.preparations[selection], "metadata", "uid") ||
+						receipt.DiskUUIDs[selection] != "disk-"+binding.Name {
+						t.Fatal("canary receipt changed a prepared storage target")
+					}
+				}
 			}
 		})
 	}

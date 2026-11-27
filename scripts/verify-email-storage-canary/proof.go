@@ -28,27 +28,60 @@ func items(o object, key string) []object {
 	}
 	return out
 }
-func authorize(get func(string) string) (string, error) {
-	for k, want := range map[string]string{"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "EMAIL_CANARY_CONFIRM": "verify-email-storage-canary", "RUNNER_ENVIRONMENT": "github-hosted"} {
+func authorize(get func(string) string) (run, engine string, err error) {
+	for k, want := range map[string]string{"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted"} {
 		if get(k) != want {
-			return "", errors.New("dispatch")
+			return "", "", errors.New("dispatch")
 		}
 	}
-	run := get("GITHUB_RUN_ID")
-	if !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(run) || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(get("GITHUB_SHA")) {
-		return "", errors.New("identity")
+	switch get("EMAIL_CANARY_CONFIRM") {
+	case "verify-email-storage-canary":
+		engine = "v1"
+	case "verify-email-storage-v2-canary":
+		engine = "v2"
+	default:
+		return "", "", errors.New("dispatch")
 	}
-	return run, nil
+	run = get("GITHUB_RUN_ID")
+	if !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(run) || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(get("GITHUB_SHA")) {
+		return "", "", errors.New("identity")
+	}
+	return run, engine, nil
 }
-func checkVolume(o object, name, uid string, detached bool) error {
+func checkVolume(o object, name, uid, engine string, detached bool) error {
 	spec, status, meta := child(o, "spec"), child(o, "status"), child(o, "metadata")
-	if uid == "" || text(meta, "name") != name || text(meta, "uid") != uid || spec["encrypted"] != true || spec["numberOfReplicas"] != float64(3) || text(spec, "dataEngine") != "v1" {
+	if (engine != "v1" && engine != "v2") || uid == "" || text(meta, "name") != name || text(meta, "uid") != uid || spec["encrypted"] != true || spec["numberOfReplicas"] != float64(3) || text(spec, "dataEngine") != engine {
 		return errors.New("volume")
 	}
 	if detached && (text(status, "state") != "detached" || text(spec, "nodeID") != "") {
 		return errors.New("detach")
 	}
 	return nil
+}
+
+func v2ReplicaQuorum(volume object, replicas []object) bool {
+	name, uid := text(child(volume, "metadata"), "name"), text(child(volume, "metadata"), "uid")
+	if name == "" || uid == "" || replicas == nil {
+		return false
+	}
+	nodes, disks, identities := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, replica := range replicas {
+		spec, meta := child(replica, "spec"), child(replica, "metadata")
+		if text(spec, "volumeName") != name {
+			continue
+		}
+		owners := items(meta, "ownerReferences")
+		node, disk, id := text(spec, "nodeID"), text(spec, "diskID"), text(meta, "uid")
+		if len(owners) != 1 || text(owners[0], "apiVersion") != "longhorn.io/v1beta2" || text(owners[0], "kind") != "Volume" ||
+			text(owners[0], "name") != name || text(owners[0], "uid") != uid || text(meta, "namespace") != "longhorn-system" ||
+			text(spec, "dataEngine") != "v2" || text(spec, "healthyAt") == "" || text(spec, "failedAt") != "" ||
+			text(child(replica, "status"), "currentState") != "running" || meta["deletionTimestamp"] != nil ||
+			node == "" || disk == "" || id == "" || nodes[node] || disks[disk] || identities[id] {
+			return false
+		}
+		nodes[node], disks[disk], identities[id] = true, true, true
+	}
+	return len(nodes) == 3
 }
 func negativeMount(pod object, events []object, uid, volume, mode string) bool {
 	if uid == "" || text(child(pod, "metadata"), "uid") != uid || text(child(pod, "status"), "phase") != "Pending" {

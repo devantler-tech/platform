@@ -195,6 +195,8 @@ spec:
       fsGroupChangePolicy: OnRootMismatch
       runAsUser: 1001
       runAsGroup: 1001
+      seccompProfile:
+        type: RuntimeDefault
     securityContext:
       # Kubescape C-0017 (immutable container filesystem). The chart already
       # mounts the only two paths actual-server writes to — the `tmp` emptyDir at

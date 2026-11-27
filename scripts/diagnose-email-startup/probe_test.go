@@ -14,7 +14,7 @@ import (
 // probeFixture executes the embedded Bash against isolated synthetic paths.
 // Native Linux callers retain real stat/proc lock observation and hold their
 // own temporary file lock; no production path or Kubernetes client is used.
-func probeFixture(t *testing.T, native func(string) func(), health int, missingKey bool) measurement {
+func probeFixture(t *testing.T, native func(string) func(), health int, missingKey bool, storeRoot string) measurement {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "fixture with spaces")
 	if e := os.MkdirAll(root, 0700); e != nil {
@@ -30,7 +30,10 @@ func probeFixture(t *testing.T, native func(string) func(), health int, missingK
 		}
 		return p
 	}
-	config := write("startup-config", publicConfig)
+	originalPath := originalStoreRoot + "/data"
+	dataPath := storeRoot + "/data"
+	publicStoreConfig := strings.Replace(publicConfig, originalPath, dataPath, 1)
+	config := write("startup-config", publicStoreConfig)
 	certificate := write("tls.crt", "synthetic public certificate")
 	key := write("tls.key", "synthetic disposable key placeholder")
 	if missingKey {
@@ -49,11 +52,11 @@ func probeFixture(t *testing.T, native func(string) func(), health int, missingK
 	}
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 	pairs := []string{
-		"/var/lib/stalwart/data/LOCK", quote(lock), "/var/lib/stalwart/data", quote(filepath.Dir(lock)),
+		dataPath + "/LOCK", quote(lock), dataPath, quote(filepath.Dir(lock)),
 		"/etc/stalwart/config.json", quote(config), "/etc/stalwart/tls/tls.crt", quote(certificate), "/etc/stalwart/tls/tls.key", quote(key),
 		"/proc/1/comm", quote(comm), "/proc/net/tcp6", quote(tcp6), "/proc/net/tcp", quote(tcp), "/tmp", quote(temp),
 	}
-	source := podProbe
+	source := strings.ReplaceAll(podProbe, originalPath, dataPath)
 	if native == nil {
 		pairs = append(pairs, "/proc/locks", quote(locks))
 	} else {
@@ -95,7 +98,7 @@ func probeFixture(t *testing.T, native func(string) func(), health int, missingK
 	if e != nil {
 		t.Fatalf("isolated probe returned incomplete schema: %v", e)
 	}
-	if m.ConfigSHA256 != hashBytes([]byte(publicConfig)) {
+	if m.ConfigSHA256 != hashBytes([]byte(publicStoreConfig)) {
 		t.Fatal("actual file digest differs")
 	}
 	return m
@@ -114,10 +117,17 @@ func TestEmbeddedProbeExercisesRealShell(t *testing.T) {
 		{"health failure", 503, false, "LOCAL_HEALTH_NOT_READY"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := probeFixture(t, nil, tc.health, tc.missingKey)
+			m := probeFixture(t, nil, tc.health, tc.missingKey, originalStoreRoot)
 			if got := classify(m, true, true); got != tc.want {
 				t.Fatalf("got %s want %s", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestEmbeddedV2ProbeReadsTheVerifiedStore(t *testing.T) {
+	m := probeFixture(t, nil, 200, false, v2StoreRoot)
+	if got := classify(m, true, true); got != "OBSERVED_HEALTHY_SAMPLE" {
+		t.Fatalf("V2 probe got %s", got)
 	}
 }

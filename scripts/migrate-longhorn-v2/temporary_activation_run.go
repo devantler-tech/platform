@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +63,10 @@ func (a temporaryV2Activation) owned(ctx context.Context, uid string, expected t
 // raw registration. All six clients need their reserved capacity and every
 // temporary worker must retain its owned autoscaler pin.
 func (a temporaryV2Activation) environment(ctx context.Context) (inventory, error) {
+	return a.registrationEnvironment(ctx, benchmarkResource{})
+}
+
+func (a temporaryV2Activation) registrationEnvironment(ctx context.Context, canary benchmarkResource) (inventory, error) {
 	if err := verifyBudgetSettings(ctx, a.c); err != nil {
 		return inventory{}, err
 	}
@@ -87,13 +92,11 @@ func (a temporaryV2Activation) environment(ctx context.Context) (inventory, erro
 			return inventory{}, errTemporaryActivation
 		}
 	}
-	for _, volume := range s.volumes {
-		if text(volume, "spec", "dataEngine") != "v1" {
-			return inventory{}, errTemporaryActivation
-		}
+	if err := verifyTemporaryRegistrationVolumes(s.volumes, canary); err != nil {
+		return inventory{}, err
 	}
 	if _, err = (hostMemoryReboot{c: a.c}).databases(ctx, nil); err != nil {
-		return inventory{}, err
+		return inventory{}, fmt.Errorf("temporary raw registration held [stage=database-health]: %w", err)
 	}
 	if err = requireBenchmarkBaseline(ctx, a.c, s.nodes); err != nil {
 		return inventory{}, err
@@ -101,10 +104,33 @@ func (a temporaryV2Activation) environment(ctx context.Context) (inventory, erro
 	return s, nil
 }
 
+// Only the readback of completed registration may include the one V2 volume
+// already owned by the restore journal. The initial registration remains V1-only.
+func verifyTemporaryRegistrationVolumes(volumes []object, canary benchmarkResource) error {
+	found := false
+	for _, volume := range volumes {
+		if text(volume, "spec", "dataEngine") == "v1" {
+			continue
+		}
+		if found || canary.UID == "" || text(volume, "spec", "dataEngine") != "v2" || benchmarkIdentity(volume) != canary {
+			return errTemporaryActivation
+		}
+		found = true
+	}
+	if found != (canary.UID != "") {
+		return errTemporaryActivation
+	}
+	return nil
+}
+
 // targets collects all native bindings before any disk is enabled. A resumed
 // plan must still name the same physical workers and partitions, and no existing
 // replica may be assigned to a temporary member during this pre-cutover step.
 func (a temporaryV2Activation) targets(ctx context.Context, s inventory, journalUID string, expected map[string]temporaryV2Binding) (map[string]temporaryV2Binding, error) {
+	return a.registrationTargets(ctx, s, journalUID, expected, benchmarkResource{})
+}
+
+func (a temporaryV2Activation) registrationTargets(ctx context.Context, s inventory, journalUID string, expected map[string]temporaryV2Binding, canary benchmarkResource) (map[string]temporaryV2Binding, error) {
 	nodes, err := indexed(s.nodes)
 	if err != nil {
 		return nil, err
@@ -120,7 +146,7 @@ func (a temporaryV2Activation) targets(ctx context.Context, s inventory, journal
 			return nil, fmt.Errorf("temporary raw registration held [stage=pool-selection]: %w", err)
 		}
 		for _, replica := range s.replicas {
-			if text(replica, "spec", "nodeID") == name {
+			if text(replica, "spec", "nodeID") == name && !temporaryRegistrationCanaryReplica(replica, canary) {
 				return nil, errTemporaryActivation
 			}
 		}
@@ -142,6 +168,12 @@ func (a temporaryV2Activation) targets(ctx context.Context, s inventory, journal
 		result[selection] = binding
 	}
 	return result, nil
+}
+
+func temporaryRegistrationCanaryReplica(replica object, canary benchmarkResource) bool {
+	owner := []any{object{"apiVersion": "longhorn.io/v1beta2", "kind": "Volume", "name": canary.Name, "uid": canary.UID}}
+	return canary.UID != "" && text(replica, "spec", "dataEngine") == "v2" && text(replica, "spec", "volumeName") == canary.Name &&
+		reflect.DeepEqual(value(replica, "metadata", "ownerReferences"), owner)
 }
 
 // registrationChanges adds ownership and the canonical raw disk in one
@@ -241,7 +273,7 @@ func (a temporaryV2Activation) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err = a.ownedRegistrations(ctx, s, uid, record.Targets); err != nil {
+		if _, err = a.ownedRegistrations(ctx, s, uid, record.Targets); err != nil {
 			return errors.Join(errReadinessTerminal, err)
 		}
 		return nil
@@ -262,40 +294,94 @@ func (a temporaryV2Activation) run(ctx context.Context) error {
 	return nil
 }
 
-// accepted is a read-only registration acceptance check. The completed journal must
-// come from a terminated protected workflow and still match all three native
-// partitions and journal-owned registrations; its cached completion bit alone
-// never authorizes IO.
-func (a temporaryV2Activation) accepted(ctx context.Context) error {
+type temporaryActivationReceipt struct {
+	Journal      benchmarkResource
+	RecordSHA256 string
+	Targets      map[string]temporaryV2Binding
+	DiskUUIDs    map[string]string
+}
+
+// accepted binds the canary targets to a successful protected registration and
+// three distinct currently schedulable raw disks.
+func (a temporaryV2Activation) accepted(ctx context.Context) (temporaryActivationReceipt, error) {
+	return a.readAcceptedRegistration(ctx, benchmarkResource{})
+}
+
+func (a temporaryV2Activation) readAcceptedRegistration(ctx context.Context, canary benchmarkResource) (temporaryActivationReceipt, error) {
 	cm, record, err := a.read(ctx)
-	if err != nil || cm == nil || !record.Completed || previousRunCompleted(ctx, a.c, record.OwnerRun, record.Source) != nil {
-		return errTemporaryActivation
+	if err != nil || cm == nil || !record.Completed {
+		return temporaryActivationReceipt{}, errTemporaryActivation
 	}
-	if _, err = a.environment(ctx); err != nil {
-		return err
+	run, err := previousMigrationRun(ctx, a.c, record.OwnerRun, record.Source)
+	if err != nil || text(run, "conclusion") != "success" {
+		return temporaryActivationReceipt{}, errTemporaryActivation
+	}
+	if _, err = a.registrationEnvironment(ctx, canary); err != nil {
+		return temporaryActivationReceipt{}, err
 	}
 	s, err := v2Environment(ctx, a.c, a.pools)
 	if err != nil {
-		return err
+		return temporaryActivationReceipt{}, err
 	}
-	return a.ownedRegistrations(ctx, s, text(cm, "metadata", "uid"), record.Targets)
-}
-
-// Revalidate storage ownership and native bindings on the snapshot that proved
-// disk readiness, so a later observation cannot borrow an earlier owner.
-func (a temporaryV2Activation) ownedRegistrations(ctx context.Context, s inventory, uid string, expected map[string]temporaryV2Binding) error {
-	if _, err := a.targets(ctx, s, uid, expected); err != nil {
-		return err
+	uid := text(cm, "metadata", "uid")
+	if err := verifyTemporaryRegistrationVolumes(s.volumes, canary); err != nil {
+		return temporaryActivationReceipt{}, err
+	}
+	targets, err := a.registeredTargets(ctx, s, uid, record.Targets, canary)
+	if err != nil {
+		return temporaryActivationReceipt{}, err
 	}
 	storage, err := indexed(s.storageNodes)
 	if err != nil {
-		return err
+		return temporaryActivationReceipt{}, err
 	}
-	for _, binding := range expected {
+	diskUUIDs := make(map[string]string, len(targets))
+	disks := make(map[string]bool, len(targets))
+	for _, binding := range targets {
+		node := storage[binding.Name]
+		disk := valueObject(node, "status", "diskStatus", "longhorn-v2")
+		diskUUID := text(disk, "diskUUID")
+		if !nativeRestoreDiskIdentityUsable(node, disk) || diskUUID == "" || disks[diskUUID] {
+			return temporaryActivationReceipt{}, errTemporaryActivation
+		}
+		disks[diskUUID], diskUUIDs[binding.Selection] = true, diskUUID
+	}
+	after, afterRecord, err := a.read(ctx)
+	if err != nil || !reflect.DeepEqual(cm, after) || !reflect.DeepEqual(record, afterRecord) {
+		return temporaryActivationReceipt{}, errTemporaryActivation
+	}
+	return temporaryActivationReceipt{
+		Journal: benchmarkIdentity(cm), RecordSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(text(cm, "data", "record")))),
+		Targets: targets, DiskUUIDs: diskUUIDs,
+	}, nil
+}
+
+// Revalidate ownership and native bindings using the same storage objects
+// that proved readiness.
+func (a temporaryV2Activation) ownedRegistrations(ctx context.Context, s inventory, uid string, expected map[string]temporaryV2Binding) (map[string]temporaryV2Binding, error) {
+	return a.registeredTargets(ctx, s, uid, expected, benchmarkResource{})
+}
+
+func (a temporaryV2Activation) registeredTargets(ctx context.Context, s inventory, uid string, expected map[string]temporaryV2Binding, canary benchmarkResource) (map[string]temporaryV2Binding, error) {
+	targets, err := a.registrationTargets(ctx, s, uid, expected, canary)
+	if err != nil {
+		return nil, err
+	}
+	storage, err := indexed(s.storageNodes)
+	if err != nil {
+		return nil, err
+	}
+	for _, binding := range targets {
 		registered, err := temporaryRegistrationState(storage[binding.Name], uid, binding.Selection)
 		if err != nil || !registered {
-			return errTemporaryActivation
+			return nil, errTemporaryActivation
 		}
 	}
-	return nil
+	return targets, nil
+}
+
+func nativeRestoreDiskIdentityUsable(storage, disk object) bool {
+	return len(valueObject(storage, "status", "diskStatus")) == 1 &&
+		conditionsTrue(valueObject(storage, "status"), "Ready", "Schedulable") &&
+		conditionsTrue(disk, "Ready", "Schedulable")
 }

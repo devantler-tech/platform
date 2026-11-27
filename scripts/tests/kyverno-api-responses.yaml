@@ -1,0 +1,13 @@
+apiVersion: ksail.dev/v1alpha1
+kind: KyvernoAPICallResponses
+responses:
+  # Validate the opt-in runner manifests against an ordinary namespace.
+  # test-arc-retirement-fence.sh tests fenced namespaces and API errors.
+  - method: GET
+    urlPath: /api/v1/namespaces/arc-runners
+    body:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: arc-runners
+        uid: 00000000-0000-0000-0000-000000000000

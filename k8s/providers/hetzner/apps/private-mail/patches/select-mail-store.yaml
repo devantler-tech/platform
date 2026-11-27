@@ -1,0 +1,52 @@
+# Accept only the V2 store which holds the completed migration.
+- op: add
+  path: /spec/template/spec/initContainers/0
+  value:
+    name: select-mail-store
+    image: ghcr.io/devantler-tech/platform-private-mail-bootstrap
+    imagePullPolicy: IfNotPresent
+    command: ["/usr/bin/sh", "-c"]
+    args:
+      - |
+        set -eu
+        template_store=/var/lib/stalwart
+        store=/var/lib/stalwart-v2
+        template=/etc/private-mail-datastore/config.json
+        route=/store-selection/config.json
+        receipt="$store/.private-mail-v2-copy-complete"
+        refuse() { echo "Email storage route refused: $1." >&2; exit 1; }
+        [ -f "$receipt" ] && [ ! -L "$receipt" ] && [ "$(wc -l <"$receipt")" -eq 1 ] &&
+          grep -Exq 'private-mail-longhorn-v2 [0-9a-f]{64}' "$receipt" || refuse "unverified V2 completion receipt"
+        [ -d "$store/data" ] && [ ! -L "$store/data" ] || refuse "the V2 store is missing"
+        [ "$(grep -Fc "\"$template_store/data\"" "$template")" -eq 1 ] || refuse "the datastore configuration path is unverified"
+        tmp=$(mktemp /store-selection/.config.XXXXXX)
+        trap 'rm -f -- "$tmp"' EXIT
+        sed "s#\"$template_store/data\"#\"$store/data\"#" "$template" >"$tmp"
+        [ "$(grep -Fc "\"$store/data\"" "$tmp")" -eq 1 ] || refuse "the selected datastore configuration is unverified"
+        mv -- "$tmp" "$route"
+        echo "Email storage route selected Longhorn V2."
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+    securityContext:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+      seLinuxOptions: {}
+    volumeMounts:
+      - name: serving-storage
+        mountPath: /store-selection
+      - name: datastore
+        mountPath: /etc/private-mail-datastore
+        readOnly: true
+      - name: v2-data
+        mountPath: /var/lib/stalwart-v2
+        readOnly: true

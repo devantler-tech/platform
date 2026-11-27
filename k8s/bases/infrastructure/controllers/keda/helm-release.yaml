@@ -48,17 +48,26 @@ spec:
     podSecurityContext:
       operator:
         fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       metricServer:
         fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       webhooks:
         fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
     securityContext:
       operator:
         seLinuxOptions: {}
+        runAsNonRoot: true
       metricServer:
         seLinuxOptions: {}
+        runAsNonRoot: true
       webhooks:
         seLinuxOptions: {}
+        runAsNonRoot: true
     # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never deadlocks a
     # node drain regardless of replica count. The webhooks PDB matters most:
     # keda-admission-webhooks validates every ScaledObject/TriggerAuthentication

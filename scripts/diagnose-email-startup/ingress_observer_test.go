@@ -16,11 +16,15 @@ const ingressDaemonSample = `{"apiVersion":"apps/v1","kind":"DaemonSet","metadat
 // Unexpected containers, observer failures and identity changes must prevent a
 // usable result, even after the observer has returned plausible flow bytes.
 func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
-	for _, mode := range []string{"matching", "named-cluster", "cluster-churn", "unready-agent", "agent-churn", "daemon-churn", "probe-failure", "observer-failure", "empty-flow", "truncated-flow"} {
+	for _, mode := range []string{"matching", "named-cluster", "active-proxy", "native-port-while-proxied", "cluster-churn", "unready-agent", "agent-churn", "daemon-churn", "probe-failure", "observer-failure", "empty-flow", "truncated-flow"} {
 		t.Run(mode, func(t *testing.T) {
 			podReads, daemonReads, executions, probes, clockReads := 0, 0, 0, 0, 0
 			clusterReads := 0
 			start := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+			app := binding{UID: "44444444-4444-4444-4444-444444444444", Node: "worker-1"}
+			if mode == "active-proxy" || mode == "native-port-while-proxied" {
+				app.ProxyConfig = approvedProxyMap
+			}
 			run := func(_ context.Context, args ...string) ([]byte, error) {
 				switch strings.Join(args, " ") {
 				case "--context admin@prod --request-timeout=10s get configmap cilium-config -n kube-system -o json":
@@ -56,8 +60,12 @@ func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
 				if len(args) != 24 || !reflect.DeepEqual(args[:16], prefix) || args[16] != "--since" || args[17] != "2026-10-28T16:00:00Z" || args[18] != "--until" || args[19] != "2026-10-28T16:00:10Z" || args[20] != "--allowlist" || args[22] != "--output" || args[23] != "jsonpb" {
 					return nil, errors.New("unexpected native operation")
 				}
+				expectedFilter := `{"destination_ip":["10.244.2.2"],"destination_pod":["private-mail/private-mail-0"],"destination_port":["8080"],"protocol":["tcp"],"source_identity":[8],"tcp_flags":[{"SYN":true}],"reply":[false],"verdict":["FORWARDED"],"traffic_direction":["INGRESS","EGRESS"],"event_type":[{"type":4,"match_sub_type":true,"sub_type":0}]}`
+				if app.ProxyConfig != "" {
+					expectedFilter = strings.Replace(expectedFilter, `["8080"]`, `["8081"]`, 1)
+				}
 				var actual, expected any
-				if json.Unmarshal([]byte(args[21]), &actual) != nil || json.Unmarshal([]byte(`{"destination_ip":["10.244.2.2"],"destination_pod":["private-mail/private-mail-0"],"destination_port":["8080"],"protocol":["tcp"],"source_identity":[8],"tcp_flags":[{"SYN":true}],"reply":[false],"verdict":["FORWARDED"],"traffic_direction":["INGRESS","EGRESS"],"event_type":[{"type":4,"match_sub_type":true,"sub_type":0}]}`), &expected) != nil || !reflect.DeepEqual(actual, expected) {
+				if json.Unmarshal([]byte(args[21]), &actual) != nil || json.Unmarshal([]byte(expectedFilter), &expected) != nil || !reflect.DeepEqual(actual, expected) {
 					return nil, errors.New("unexpected filter")
 				}
 				executions++
@@ -68,6 +76,9 @@ func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
 					return []byte(" \n\t"), nil
 				}
 				raw := ingressFlowSample
+				if mode == "active-proxy" {
+					raw = strings.Replace(raw, `"destination_port":8080`, `"destination_port":8081`, 1)
+				}
 				if mode != "named-cluster" {
 					raw = strings.Replace(raw, `"prod/worker-1"`, `"worker-1"`, 1)
 				}
@@ -90,11 +101,12 @@ func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
 				}
 				return start.Add(10 * time.Second)
 			}
-			result, err := observeIngressSources(context.Background(), run, binding{UID: "44444444-4444-4444-4444-444444444444", Node: "worker-1"}, accessAddresses{Pod: netip.MustParseAddr("10.244.2.2")}, probe, func(context.Context) error { return nil }, now)
-			if (err == nil) != (mode == "matching" || mode == "named-cluster") {
-				t.Fatal("partial observation accepted or bound observation refused")
+			result, err := observeIngressSources(context.Background(), run, app, accessAddresses{Pod: netip.MustParseAddr("10.244.2.2")}, probe, func(context.Context) error { return nil }, now)
+			wantSuccess := mode == "matching" || mode == "named-cluster" || mode == "active-proxy"
+			if (err == nil) != wantSuccess {
+				t.Fatalf("partial observation accepted or bound observation refused at %s", ingressFailureStage(err))
 			}
-			if (mode == "matching" || mode == "named-cluster") && (len(result.Sources) != 1 || result.Sources[0] != netip.MustParseAddr("10.244.1.1") || result.Public503 != 2 || result.Public200 != 0 || clusterReads != 2) {
+			if wantSuccess && (len(result.Sources) != 1 || result.Sources[0] != netip.MustParseAddr("10.244.1.1") || result.Public503 != 2 || result.Public200 != 0 || clusterReads != 2) {
 				t.Fatal("observed peer or public response was lost")
 			}
 			if err != nil && (len(result.Sources) != 0 || strings.Contains(err.Error(), "private-")) {
@@ -104,7 +116,7 @@ func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
 				want := map[string]string{
 					"cluster-churn": "cluster_after", "unready-agent": "agent_before", "agent-churn": "agent_after",
 					"daemon-churn": "daemon_after", "probe-failure": "public_probes", "observer-failure": "flow_read",
-					"empty-flow": "flow_empty", "truncated-flow": "flow_decode",
+					"empty-flow": "flow_empty", "truncated-flow": "flow_decode", "native-port-while-proxied": "flow_decode",
 				}[mode]
 				if ingressFailureStage(err) != want {
 					t.Fatal("failed observation lost its closed failure stage")

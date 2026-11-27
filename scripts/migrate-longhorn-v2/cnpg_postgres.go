@@ -124,32 +124,60 @@ func verifyPostgresPod(current, original, cluster object) error {
 
 // observePostgres brackets the fixed bounded SQL command with native process reads.
 func (c client) observePostgres(ctx context.Context, cluster, pod object) (postgresState, error) {
+	raw, err := c.readPostgresSQL(ctx, cluster, pod, "")
+	if err != nil {
+		return postgresState{}, err
+	}
+	return parsePostgresState(raw)
+}
+
+// readPostgresSQL selects one of two fixed reads and brackets the native process.
+func (c client) readPostgresSQL(ctx context.Context, cluster, pod object, archiveTarget string) ([]byte, error) {
+	query := postgresStateSQL
+	if archiveTarget != "" {
+		var err error
+		query, err = cnpgArchiveQuery(archiveTarget)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return c.readBoundPostgresSQL(ctx, cluster, pod, query)
+}
+
+// readBoundPostgresSQL executes only the fixed reads selected by the private wrappers.
+func (c client) readBoundPostgresSQL(ctx context.Context, cluster, pod object, query string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	ns, name := text(cluster, "metadata", "namespace"), text(pod, "metadata", "name")
 	before, err := c.get(ctx, "pod", ns, name, false)
 	if err != nil {
-		return postgresState{}, err
+		return nil, err
 	}
 	if err = verifyPostgresPod(before, pod, cluster); err != nil {
-		return postgresState{}, err
+		return nil, err
+	}
+	if query == postgresRecoverySQL && !sameRecoveredProgram(before, pod) {
+		return nil, errors.New("recovered SQL lacks the original reviewed executable producer")
 	}
 	// Clear libpq service, host-address, options and executable overrides. The
 	// fixed local socket belongs to this Pod, not an environment-selected peer.
 	// Override persisted role/database lookup and write defaults as well. Types
 	// and operators resolve through the catalog alongside the qualified functions.
-	raw, err := c.kubectl(ctx, nil, "exec", name, "--namespace="+ns, "--container=postgres", "--pod-running-timeout=20s", "--", "/usr/bin/env", "-i", "PATH=/usr/lib/postgresql/18/bin:/usr/local/bin:/usr/bin:/bin", "PGCONNECT_TIMEOUT=10", "PGOPTIONS=-c search_path=pg_catalog -c default_transaction_read_only=on", "psql", "--host=/controller/run", "--port=5432", "--no-psqlrc", "--no-password", "--username=postgres", "--dbname=postgres", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align", "--quiet", "--command="+postgresStateSQL)
+	raw, err := c.kubectl(ctx, nil, "exec", name, "--namespace="+ns, "--container=postgres", "--pod-running-timeout=20s", "--", "/usr/bin/env", "-i", "PATH=/usr/lib/postgresql/18/bin:/usr/local/bin:/usr/bin:/bin", "PGCONNECT_TIMEOUT=10", "PGOPTIONS=-c search_path=pg_catalog -c default_transaction_read_only=on", "psql", "--host=/controller/run", "--port=5432", "--no-psqlrc", "--no-password", "--username=postgres", "--dbname=postgres", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align", "--quiet", "--command="+query)
 	if err != nil {
-		return postgresState{}, err
+		return nil, err
 	}
 	after, err := c.get(ctx, "pod", ns, name, false)
 	if err != nil {
-		return postgresState{}, err
+		return nil, err
 	}
 	if err = verifyPostgresPod(after, pod, cluster); err != nil {
-		return postgresState{}, err
+		return nil, err
 	}
-	return parsePostgresState(raw)
+	if query == postgresRecoverySQL && !sameRecoveredProgram(after, before) {
+		return nil, errors.New("recovered executable producer changed during SQL observation")
+	}
+	return raw, nil
 }
 
 // parsePostgresState requires an explicit recovery role in a complete JSON response.

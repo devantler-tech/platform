@@ -64,7 +64,7 @@ func validateMigrationDispatchBoundarySteps(workflow object) error {
 	tests, _ := value(workflow, "jobs", "tests", "steps").([]any)
 	required := map[string]bool{
 		"bash scripts/tests/test-longhorn-runtime-inventory-source.sh":                                                                                             false,
-		"go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory": false,
+		"go test -race -count=1 -timeout=7m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory": false,
 	}
 	for _, raw := range tests {
 		step := raw.(object)

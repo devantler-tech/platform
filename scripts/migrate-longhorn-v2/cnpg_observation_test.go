@@ -141,3 +141,39 @@ func TestCNPGObservationCoversEveryInstanceOfSmallerSources(t *testing.T) {
 		})
 	}
 }
+
+func umamiV2TransitionObservation(t *testing.T) cnpgObservation {
+	t.Helper()
+	before := cnpgObservationFixture(t)
+	valueObject(before.Cluster, "spec")["instances"] = float64(4)
+	valueObject(before.Cluster, "spec")["storage"] = object{
+		"storageClass": "longhorn-v2", "resizeInUseVolumes": false, "size": "5Gi",
+	}
+	status := valueObject(before.Cluster, "status")
+	status["instances"], status["readyInstances"] = float64(4), float64(4)
+	valueObject(status, "instancesStatus")["healthy"] = []any{"umami-db-1", "umami-db-2", "umami-db-3", "umami-db-4"}
+	fourth := cloneCNPGObservation(t, before).Pods[2]
+	valueObject(fourth, "metadata")["name"] = "umami-db-4"
+	valueObject(fourth, "metadata")["uid"] = "88888888-8888-4888-8888-888888888888"
+	value(fourth, "status", "containerStatuses").([]any)[0].(object)["containerID"] = "containerd://" + strings.Repeat("e", 64)
+	before.Pods = append(before.Pods, fourth)
+	before.States["umami-db-4"] = before.States["umami-db-3"]
+	return before
+}
+
+func TestCNPGObservationCoversFourInstancesDuringUmamiV2Transition(t *testing.T) {
+	before := umamiV2TransitionObservation(t)
+	after := cloneCNPGObservation(t, before)
+	if err := validateCNPGObservation(before, after); err != nil {
+		t.Fatal(err)
+	}
+
+	delete(after.States, "umami-db-4")
+	if validateCNPGObservation(before, after) == nil {
+		t.Fatal("an unobserved spare was accepted")
+	}
+	valueObject(before.Cluster, "spec", "storage")["storageClass"] = "longhorn-wffc"
+	if validateCNPGObservation(before, before) == nil {
+		t.Fatal("a fourth instance outside the V2 transition was accepted")
+	}
+}

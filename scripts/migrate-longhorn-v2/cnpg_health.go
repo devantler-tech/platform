@@ -58,8 +58,8 @@ func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 	primary := text(cluster, "status", "currentPrimary")
 	name, ns := text(cluster, "metadata", "name"), text(cluster, "metadata", "namespace")
 	expectedInstances := hostDatabases[ns+"/"+name].instances
-	if ns == previewCNPGNamespace && name == previewCNPGName {
-		expectedInstances = 1
+	if umamiV2Transition(cluster) {
+		expectedInstances = 4
 	}
 	if expectedInstances == 0 || text(cluster, "metadata", "uid") == "" || text(cluster, "metadata", "resourceVersion") == "" || value(cluster, "metadata", "deletionTimestamp") != nil ||
 		value(cluster, "spec", "instances") != expectedInstances || value(cluster, "status", "instances") != expectedInstances || value(cluster, "status", "readyInstances") != expectedInstances || !cnpgCondition(cluster, "Ready") || !cnpgCondition(cluster, "ContinuousArchiving") || primary == "" || primary != text(cluster, "status", "targetPrimary") {
@@ -133,4 +133,15 @@ func healthyCNPGPods(cluster object, allPods []object) ([]object, error) {
 		ordered = append(ordered, pod)
 	}
 	return ordered, nil
+}
+
+// Requiring the four-instance V2 shape lets the physical observer verify the
+// spare during migration. Host maintenance still uses the steady-state roster.
+func umamiV2Transition(cluster object) bool {
+	return text(cluster, "metadata", "namespace") == "umami" && text(cluster, "metadata", "name") == "umami-db" &&
+		value(cluster, "spec", "instances") == float64(4) &&
+		text(cluster, "spec", "storage", "storageClass") == "longhorn-v2" &&
+		text(cluster, "spec", "storage", "size") == "5Gi" &&
+		value(cluster, "spec", "storage", "resizeInUseVolumes") == false &&
+		value(cluster, "spec", "walStorage") == nil && value(cluster, "spec", "tablespaces") == nil
 }
