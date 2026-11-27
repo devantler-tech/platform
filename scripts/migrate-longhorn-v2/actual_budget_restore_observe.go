@@ -42,6 +42,7 @@ func actualBudgetRestoredClaim(ctx context.Context, c client, restore object, or
 
 func actualBudgetProbeReady(pod, initial, desired object) bool {
 	if benchmarkIdentity(pod) != benchmarkIdentity(initial) || !recoveredNativeObject(pod, "v1", "Pod", text(initial, "metadata", "namespace")) ||
+		text(pod, "metadata", "labels", "storage.platform.devantler.tech/recovery-run") != text(desired, "metadata", "labels", "storage.platform.devantler.tech/recovery-run") ||
 		text(pod, "status", "phase") != "Running" || !ready(valueObject(pod, "status")) ||
 		value(pod, "spec", "hostUsers") != false || value(pod, "spec", "automountServiceAccountToken") != false ||
 		value(pod, "spec", "initContainers") != nil || value(pod, "spec", "ephemeralContainers") != nil ||
@@ -115,10 +116,8 @@ func verifyActualBudgetRestoredPayload(ctx context.Context, c client, source, ru
 	if err != nil || len(pods) != 0 {
 		return errors.New("a foreign workload occupies the restore scope")
 	}
-	policies, err := c.list(ctx, "networkpolicies.networking.k8s.io", ns)
-	if err != nil || len(policies) != 1 || text(policies[0], "metadata", "name") != "restore-isolation" ||
-		text(policies[0], "metadata", "labels", "storage.platform.devantler.tech/recovery-run") != run ||
-		!reflect.DeepEqual(value(policies[0], "spec"), object{"podSelector": object{}, "policyTypes": []any{"Ingress", "Egress"}}) {
+	policy, err := readActualBudgetIsolation(ctx, c, ns, run)
+	if err != nil {
 		return errors.New("the content verifier namespace isolation is unverified")
 	}
 	desired := actualBudgetProofPod(ns, run)
@@ -134,6 +133,10 @@ func verifyActualBudgetRestoredPayload(ctx context.Context, c client, source, ru
 		}
 		if !actualBudgetProbeReady(pod, created, desired) {
 			return errActualBudgetBackup
+		}
+		isolation, err := readActualBudgetIsolation(ctx, c, ns, run)
+		if err != nil || benchmarkIdentity(isolation) != benchmarkIdentity(policy) {
+			return errors.Join(errActualBudgetBackup, errReadinessTerminal)
 		}
 		current, err := actualBudgetRestoredClaim(ctx, c, restore, originalClaimUID)
 		if err != nil || benchmarkIdentity(current) != benchmarkIdentity(claim) || text(current, "spec", "volumeName") != text(claim, "spec", "volumeName") {
@@ -162,4 +165,13 @@ func verifyActualBudgetRestoredPayload(ctx context.Context, c client, source, ru
 		return errors.New("the verified V2 claim was not retained after retiring the reader")
 	}
 	return nil
+}
+
+func readActualBudgetIsolation(ctx context.Context, c client, namespace, run string) (object, error) {
+	desired := actualBudgetIsolationPolicy(namespace, run)
+	policy, err := c.get(ctx, "ciliumnetworkpolicy.cilium.io", namespace, text(desired, "metadata", "name"), false)
+	if err != nil || !actualBudgetPreparationMatches(policy, desired) || !cnpgCondition(policy, "Valid") {
+		return nil, errActualBudgetBackup
+	}
+	return policy, nil
 }

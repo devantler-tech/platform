@@ -43,7 +43,7 @@ func TestActualBudgetUnstartedRestoreReusesOnlyItsOriginalPreparedScope(t *testi
 						return nil, errors.New("unexpected creation payload")
 					}
 					kind := text(desired, "kind")
-					if kind != "NetworkPolicy" && kind != "ConfigMap" {
+					if kind != "CiliumNetworkPolicy" && kind != "ConfigMap" {
 						t.Fatalf("preparation attempted to create %s", kind)
 					}
 					created = append(created, kind)
@@ -76,13 +76,14 @@ func TestActualBudgetUnstartedRestoreReusesOnlyItsOriginalPreparedScope(t *testi
 					if scenario == "existing claim" {
 						return json.Marshal(object{"items": []any{object{"metadata": object{"name": actualBudgetClaim, "uid": "existing-claim"}}}})
 					}
-				case "ciliumnetworkpolicies.cilium.io":
-					if scenario == "foreign policy" {
-						return json.Marshal(object{"items": []any{object{"metadata": object{"name": "foreign-policy", "uid": "foreign-policy-uid"}}}})
-					}
-				case "networkpolicy.networking.k8s.io":
+				case "ciliumnetworkpolicy.cilium.io":
 					if scenario == "prepared policy" {
 						return json.Marshal(cloneActualBudgetPreparation(t, assets[1]))
+					}
+					if scenario == "foreign policy" {
+						policy := cloneActualBudgetPreparation(t, assets[1])
+						valueObject(policy, "spec")["egressDeny"] = []any{}
+						return json.Marshal(policy)
 					}
 					return nil, nil
 				case "configmap":
@@ -98,7 +99,7 @@ func TestActualBudgetUnstartedRestoreReusesOnlyItsOriginalPreparedScope(t *testi
 			_, err = prepareActualBudgetRestoreScope(t.Context(), c, source, &actualBudgetPriorRestore{run, source, namespaceUID}, assets)
 			switch scenario {
 			case "namespace only":
-				if err != nil || strings.Join(created, ",") != "NetworkPolicy,ConfigMap" {
+				if err != nil || strings.Join(created, ",") != "CiliumNetworkPolicy,ConfigMap" {
 					t.Fatalf("the namespace-only interruption did not resume: %v", err)
 				}
 			case "prepared policy":

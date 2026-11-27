@@ -47,7 +47,7 @@ func actualBudgetPreparationMatches(current, desired object) bool {
 			}
 		}
 		return true
-	case "NetworkPolicy":
+	case "CiliumNetworkPolicy":
 		return reflect.DeepEqual(value(current, "spec"), value(desired, "spec"))
 	case "ConfigMap":
 		return value(current, "binaryData") == nil && reflect.DeepEqual(value(current, "data"), value(desired, "data"))
@@ -92,7 +92,7 @@ func verifyActualBudgetPreparationAssets(ctx context.Context, c client, source s
 		resource string
 		desired  object
 	}{
-		{"networkpolicy.networking.k8s.io", policy},
+		{"ciliumnetworkpolicy.cilium.io", policy},
 		{"configmap", modifier},
 	} {
 		name := text(asset.desired, "metadata", "name")
@@ -139,21 +139,6 @@ func verifyUnstartedActualBudgetRestore(ctx context.Context, c client, namespace
 		if err != nil || len(items) != 0 {
 			return refused
 		}
-	}
-	policies, err := c.list(ctx, "networkpolicies.networking.k8s.io", name)
-	if err != nil || len(policies) > 1 ||
-		(len(policies) == 1 && text(policies[0], "metadata", "name") != "restore-isolation") {
-		return refused
-	}
-	if len(policies) == 1 {
-		spec := object{"podSelector": object{}, "policyTypes": []any{"Ingress", "Egress"}}
-		if !reflect.DeepEqual(value(policies[0], "spec"), spec) {
-			return refused
-		}
-	}
-	ciliumPolicies, err := c.list(ctx, "ciliumnetworkpolicies.cilium.io", name)
-	if err != nil || len(ciliumPolicies) != 0 {
-		return refused
 	}
 	transfers, err := c.list(ctx, "datadownloads.velero.io", "velero")
 	if err != nil {

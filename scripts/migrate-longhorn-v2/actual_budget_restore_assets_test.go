@@ -12,10 +12,13 @@ func TestActualBudgetRestoreCopiesOnlyTheArchivedClaim(t *testing.T) {
 		t.Fatalf("the isolated restore assets were not built: %v", err)
 	}
 	namespace := text(assets[0], "metadata", "name")
+	policy := assets[1]
 	if namespace == actualBudgetNamespace || text(assets[0], "kind") != "Namespace" ||
-		text(assets[1], "kind") != "NetworkPolicy" || text(assets[1], "metadata", "namespace") != namespace ||
-		!reflect.DeepEqual(value(assets[1], "spec", "policyTypes"), []any{"Ingress", "Egress"}) ||
-		value(assets[1], "spec", "ingress") != nil || value(assets[1], "spec", "egress") != nil {
+		text(policy, "kind") != "CiliumNetworkPolicy" || text(policy, "metadata", "namespace") != namespace ||
+		!reflect.DeepEqual(value(policy, "spec", "endpointSelector", "matchLabels"), object{"storage.platform.devantler.tech/recovery-run": "91022"}) ||
+		!reflect.DeepEqual(value(policy, "spec", "ingressDeny"), []any{object{"fromEntities": []any{"all"}}}) ||
+		!reflect.DeepEqual(value(policy, "spec", "egressDeny"), []any{object{"toEntities": []any{"all"}}}) ||
+		value(policy, "spec", "ingress") != nil || value(policy, "spec", "egress") != nil {
 		t.Fatal("the restore requires an isolated namespace before it creates any storage")
 	}
 	modifiers, restore := assets[2], assets[3]
