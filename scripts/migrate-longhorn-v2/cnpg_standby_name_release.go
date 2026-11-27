@@ -128,6 +128,11 @@ func validUmamiNameReleaseProgress(previous, next umamiStandbyReplacementRecord)
 		return false
 	}
 	if next.Phase == previous.Phase {
+		if previous.Phase == umamiNameFencePending && before.Fence == (benchmarkFenceReceipt{}) &&
+			isolationUID.MatchString(release.Fence.PolicyUID) && release.Fence.BindingUID == "" &&
+			reflect.DeepEqual(before.Executor, release.Executor) {
+			return true
+		}
 		executor := release.executor()
 		return umamiNameReleaseCanResume(previous) && release.Executor != nil &&
 			validBenchmarkOwner(executor.Run, executor.Source) && executor.Run != before.executor().Run &&
@@ -141,6 +146,7 @@ func validUmamiNameReleaseProgress(previous, next umamiStandbyReplacementRecord)
 	switch previous.Phase {
 	case umamiNameFencePending:
 		return next.Phase == umamiNameFenced && isolationUID.MatchString(release.Fence.PolicyUID) &&
+			before.Fence.PolicyUID == release.Fence.PolicyUID && before.Fence.BindingUID == "" &&
 			isolationUID.MatchString(release.Fence.BindingUID) && release.Fence.PolicyUID != release.Fence.BindingUID
 	case umamiNameFenced:
 		return next.Phase == umamiJoinDeletePending && before.Fence == release.Fence
@@ -177,8 +183,10 @@ func runUmamiNameRecovery(ctx context.Context, c client, input umamiStandbyNameR
 			return errors.New("previous Umami eviction workflow is not a verified terminal attempt")
 		}
 	}
-	if err = verifyUmamiNameReleaseArchive(ctx, &journal); err != nil {
-		return err
+	if record.Phase != umamiNameOriginalPreserved && record.Phase != umamiReplacementOriginalDetached {
+		if err = verifyUmamiNameReleaseArchive(ctx, &journal); err != nil {
+			return err
+		}
 	}
 	if record.NameRelease != nil {
 		prior := record.NameRelease.executor()

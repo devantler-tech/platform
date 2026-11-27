@@ -10,7 +10,8 @@ type cnpgObservation struct {
 	Pods    []object
 	States  map[string]postgresState
 
-	retainedStandby string
+	retainedStandby    string
+	umamiRecoveryPeers map[string]benchmarkResource
 }
 
 // validateCNPGObservation requires physical replay and stable process identities.

@@ -13,6 +13,7 @@ const (
 	umamiNameFenceMessage = "The retained Umami claim name is being released"
 	umamiNamePolicyKind   = "validatingadmissionpolicies.admissionregistration.k8s.io"
 	umamiNameBindingKind  = "validatingadmissionpolicybindings.admissionregistration.k8s.io"
+	umamiNameFenceOwner   = "storage.platform.devantler.tech/umami-name-fence-owner"
 )
 
 func umamiNameFencePolicy(record umamiStandbyReplacementRecord) object {
@@ -27,11 +28,13 @@ func umamiNameFencePolicy(record umamiStandbyReplacementRecord) object {
 	jobName := "(has(object.metadata.name) && object.metadata.name in [" + strconv.Quote(name+"-join") + ", " + strconv.Quote(name+"-restore") + "])"
 	jobMatch := jobName + " || (has(dyn(object.spec).template) && " + mounts("dyn(object.spec).template.spec") + ")"
 	policyName := "lh-umami-claim-release-" + record.NameRelease.Owner.Run
+	owner := record.Original.Claim.UID + ":" + record.NameRelease.Join.UID + ":" + record.NameRelease.Owner.Source
 	creates := func(group, version string, resources ...any) object {
 		return object{"apiGroups": []any{group}, "apiVersions": []any{version}, "operations": []any{"CREATE"}, "resources": resources, "scope": "Namespaced"}
 	}
 	return object{
-		"apiVersion": benchmarkAdmissionAPI, "kind": "ValidatingAdmissionPolicy", "metadata": object{"name": policyName},
+		"apiVersion": benchmarkAdmissionAPI, "kind": "ValidatingAdmissionPolicy",
+		"metadata": object{"name": policyName, "annotations": object{umamiNameFenceOwner: owner}},
 		"spec": object{
 			"failurePolicy": "Fail",
 			"matchConstraints": object{"matchPolicy": "Equivalent", "namespaceSelector": object{}, "objectSelector": object{},
@@ -45,6 +48,13 @@ func umamiNameFencePolicy(record umamiStandbyReplacementRecord) object {
 }
 
 func installUmamiNameFence(ctx context.Context, j *umamiStandbyReplacementJournal) error {
+	if err := recordUmamiNameFence(ctx, j); err != nil {
+		return err
+	}
+	return waitReadyWithin(ctx, 2*time.Minute, func(ctx context.Context) error { return proveUmamiNameFence(ctx, j) })
+}
+
+func recordUmamiNameFence(ctx context.Context, j *umamiStandbyReplacementJournal) error {
 	release := *j.record.NameRelease
 	desired := umamiNameFencePolicy(j.record)
 	name := text(desired, "metadata", "name")
@@ -52,28 +62,58 @@ func installUmamiNameFence(ctx context.Context, j *umamiStandbyReplacementJourna
 	if _, err := j.read(ctx); err != nil {
 		return err
 	}
-	policy, err := j.c.create(ctx, source, desired)
+	policy, err := j.c.get(ctx, umamiNamePolicyKind, "", name, release.Fence.PolicyUID == "")
 	if err != nil {
 		return err
 	}
-	release.Fence.PolicyUID = text(policy, "metadata", "uid")
-	if !matchesOwnedBenchmarkPolicy(policy, desired, release.Fence.PolicyUID) {
+	if policy == nil {
+		policy, err = j.c.create(ctx, source, desired)
+		if err != nil {
+			return err
+		}
+	}
+	policyUID := text(policy, "metadata", "uid")
+	if !isolationUID.MatchString(policyUID) || !matchesUmamiNamePolicy(policy, desired, policyUID) ||
+		(release.Fence.PolicyUID != "" && release.Fence.PolicyUID != policyUID) {
 		return errors.New("the Umami name fence policy creation is unverified")
 	}
-	binding, err := j.c.create(ctx, source, benchmarkDenyBinding(name, release.Fence.PolicyUID))
+	if release.Fence.PolicyUID == "" {
+		release.Fence.PolicyUID = policyUID
+		next := j.record
+		checkpoint := release
+		next.NameRelease = &checkpoint
+		if err = j.transition(ctx, next); err != nil {
+			return err
+		}
+	}
+	desiredBinding := benchmarkDenyBinding(name, policyUID)
+	valueObject(desiredBinding, "metadata")["annotations"] = value(desired, "metadata", "annotations")
+	binding, err := j.c.get(ctx, umamiNameBindingKind, "", name, true)
 	if err != nil {
 		return err
 	}
+	if binding == nil {
+		binding, err = j.c.create(ctx, source, desiredBinding)
+		if err != nil {
+			return err
+		}
+	}
 	release.Fence.BindingUID = text(binding, "metadata", "uid")
-	if !matchesOwnedBenchmarkFence(policy, binding, desired, release.Fence) {
+	if !matchesOwnedBenchmarkFence(policy, binding, desired, release.Fence) || !umamiNameFenceOwned(binding, desired) {
 		return errors.New("the Umami name fence binding creation is unverified")
 	}
 	next := j.record
 	next.Phase, next.NameRelease = umamiNameFenced, &release
-	if err = j.transition(ctx, next); err != nil {
-		return err
-	}
-	return waitReadyWithin(ctx, 2*time.Minute, func(ctx context.Context) error { return proveUmamiNameFence(ctx, j) })
+	return j.transition(ctx, next)
+}
+
+func umamiNameFenceOwned(resource, desired object) bool {
+	owner := text(desired, "metadata", "annotations", umamiNameFenceOwner)
+	return owner != "" && text(resource, "metadata", "annotations", umamiNameFenceOwner) == owner
+}
+
+func matchesUmamiNamePolicy(policy, desired object, uid string) bool {
+	return umamiNameFenceOwned(policy, desired) && matchesOwnedBenchmarkPolicy(policy, desired, uid)
 }
 
 func proveUmamiNameFence(ctx context.Context, j *umamiStandbyReplacementJournal) error {
@@ -125,8 +165,8 @@ func removeUmamiNameFence(ctx context.Context, j *umamiStandbyReplacementJournal
 	}
 	receipt := j.record.NameRelease.Fence
 	binding, err := c.get(ctx, umamiNameBindingKind, "", name, true)
-	if err != nil || (policy != nil && !matchesOwnedBenchmarkPolicy(policy, desired, receipt.PolicyUID)) ||
-		(binding != nil && !matchesOwnedBenchmarkFence(policy, binding, desired, receipt)) {
+	if err != nil || (policy != nil && !matchesUmamiNamePolicy(policy, desired, receipt.PolicyUID)) ||
+		(binding != nil && (!matchesOwnedBenchmarkFence(policy, binding, desired, receipt) || !umamiNameFenceOwned(binding, desired))) {
 		return errors.New("the original Umami name fence changed before cleanup")
 	}
 	if err = observeUmamiReleasedOriginal(ctx, j, binding != nil); err != nil {

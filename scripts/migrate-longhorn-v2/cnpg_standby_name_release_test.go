@@ -159,9 +159,18 @@ func TestUmamiNameReleaseKeepsPriorEvictionAndRejectsUnprovenProgress(t *testing
 	if verifyUmamiReplacementTransition(record, next) == nil {
 		t.Fatal("the journal accepted fencing without exact receipts")
 	}
+	policy := *next.NameRelease
+	policy.Fence.PolicyUID = "ac005841-c001-4001-8001-000000000001"
+	next = record
+	next.NameRelease = &policy
+	if err := verifyUmamiReplacementTransition(record, next); err != nil {
+		t.Fatal("the journal did not checkpoint acceptance of the policy before creating the binding:", err)
+	}
+	record = next
 	fenced := *next.NameRelease
 	fenced.Fence = benchmarkFenceReceipt{PolicyUID: "ac005841-c001-4001-8001-000000000001", BindingUID: "ac005841-c002-4002-8002-000000000002"}
 	next.NameRelease = &fenced
+	next.Phase = umamiNameFenced
 	if err := verifyUmamiReplacementTransition(record, next); err != nil {
 		t.Fatal(err)
 	}

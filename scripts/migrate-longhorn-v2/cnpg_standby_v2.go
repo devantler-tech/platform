@@ -54,7 +54,7 @@ func bindUmamiV2Standby(observation cnpgObservation, claim, pv, volume, engine o
 		verifyPostgresStandby(observation.States[primary], observation.States[name]) != nil {
 		return cnpgRecoveredStorage{}, refused
 	}
-	owned, err := healthyCNPGPodsWithRetention(cluster, observation.Pods, observation.retainedStandby)
+	owned, err := verifiedUmamiStandbyRoster(observation)
 	if err != nil {
 		return cnpgRecoveredStorage{}, err
 	}
@@ -90,4 +90,29 @@ func bindUmamiV2Standby(observation cnpgObservation, claim, pv, volume, engine o
 		PV: benchmarkIdentity(pv), Volume: benchmarkIdentity(volume), Engine: benchmarkIdentity(engine),
 		Process: process, Producer: recoveredProgramProducer(pod), Replicas: copies,
 	}, nil
+}
+
+func verifiedUmamiStandbyRoster(observation cnpgObservation) ([]object, error) {
+	cluster := observation.Cluster
+	if observation.umamiRecoveryPeers == nil {
+		return healthyCNPGPodsWithRetention(cluster, observation.Pods, observation.retainedStandby)
+	}
+	const surviving = 3
+	refused := errors.New("the three surviving Umami members do not match the recovery journal")
+	primary := text(cluster, "status", "currentPrimary")
+	if observation.retainedStandby != "" || !umamiV2Transition(cluster) || len(observation.Pods) != surviving ||
+		len(observation.umamiRecoveryPeers) != surviving || value(cluster, "status", "readyInstances") != float64(surviving) ||
+		primary == "" || text(cluster, "status", "targetPrimary") != primary || !cnpgCondition(cluster, "ContinuousArchiving") {
+		return nil, refused
+	}
+	pods, err := indexed(observation.Pods)
+	if err != nil || pods[primary] == nil {
+		return nil, refused
+	}
+	for name, pod := range pods {
+		if benchmarkIdentity(pod) != observation.umamiRecoveryPeers[name] || verifyPostgresPod(pod, pod, cluster) != nil {
+			return nil, refused
+		}
+	}
+	return observation.Pods, nil
 }

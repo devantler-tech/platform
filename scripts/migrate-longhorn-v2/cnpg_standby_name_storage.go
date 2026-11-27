@@ -18,7 +18,7 @@ func observeUmamiUnchangedPeers(ctx context.Context, j *umamiStandbyReplacementJ
 	if err != nil {
 		return cnpgObservation{}, nil, err
 	}
-	observation := cnpgObservation{Cluster: cluster, States: map[string]postgresState{}}
+	observation := cnpgObservation{Cluster: cluster, States: map[string]postgresState{}, umamiRecoveryPeers: record.OtherPods}
 	for _, identity := range record.OtherPods {
 		pod := cnpgRecoveryPodByName(all, identity.Name)
 		if benchmarkIdentity(pod) != identity || verifyPostgresPod(pod, pod, cluster) != nil {

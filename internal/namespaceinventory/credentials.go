@@ -167,8 +167,14 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 	if err != nil {
 		return nil, nil, errors.New("protected benchmark kubeconfig could not be decoded")
 	}
-	reclaimAliases := operation == "reclaim-native-v2-seed" || operation == "resume-native-v2-reclaim" || operation == "recover-umami-standby-name"
-	return newProductionClientAt(config, directIP, reclaimAliases)
+	var scope directCreateScope
+	switch operation {
+	case "reclaim-native-v2-seed", "resume-native-v2-reclaim":
+		scope = directReclaimCreate
+	case "recover-umami-standby-name":
+		scope = directUmamiCreate
+	}
+	return newProductionClientAt(config, directIP, scope)
 }
 
 func readPrivateKubeconfig(path string) (raw []byte, err error) {
@@ -209,10 +215,17 @@ func readPrivateKubeconfig(path string) (raw []byte, err error) {
 }
 
 func newProductionClient(raw *clientcmdapi.Config) (*http.Client, *url.URL, error) {
-	return newProductionClientAt(raw, netip.Addr{}, false)
+	return newProductionClientAt(raw, netip.Addr{}, "")
 }
 
-func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr, reclaimAliases bool) (*http.Client, *url.URL, error) {
+type directCreateScope string
+
+const (
+	directReclaimCreate directCreateScope = "reclaim"
+	directUmamiCreate   directCreateScope = "umami"
+)
+
+func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr, scope directCreateScope) (*http.Client, *url.URL, error) {
 	if raw == nil || raw.Contexts["admin@prod"] == nil {
 		return nil, nil, errors.New("fixed production context is missing")
 	}
@@ -257,15 +270,15 @@ func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr, reclai
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if directIP.IsValid() {
-		client.Transport = directAPIPeer{host: endpoint.Host, transport: client.Transport, reclaimAliasDryRun: reclaimAliases}
+		client.Transport = directAPIPeer{host: endpoint.Host, transport: client.Transport, createScope: scope}
 	}
 	return client, endpoint, nil
 }
 
 type directAPIPeer struct {
-	host               string
-	transport          http.RoundTripper
-	reclaimAliasDryRun bool
+	host        string
+	transport   http.RoundTripper
+	createScope directCreateScope
 }
 
 func (peer directAPIPeer) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -273,15 +286,25 @@ func (peer directAPIPeer) RoundTrip(req *http.Request) (*http.Response, error) {
 		(req.Host != "" && req.Host != peer.host) {
 		return nil, errors.New("direct API request addressed another peer")
 	}
-	// Reclaim proves both guards reject a second reference to the canary.
-	reclaimAlias := peer.reclaimAliasDryRun && req.Method == http.MethodPost &&
-		req.URL.RawPath == "" && req.Header.Get("Content-Type") == "application/json" &&
-		(req.URL.Path == "/api/v1/persistentvolumes" ||
-			req.URL.Path == "/api/v1/namespaces/longhorn-benchmark/persistentvolumeclaims")
-	if req.Method != http.MethodGet && (req.URL.RawQuery != "dryRun=All" || (req.Method != http.MethodPatch && !reclaimAlias)) {
+	create := req.Method == http.MethodPost && req.URL.RawPath == "" &&
+		req.Header.Get("Content-Type") == "application/json" && peer.createScope.permits(req.URL.Path)
+	patch := req.Method == http.MethodPatch && peer.createScope != directUmamiCreate
+	if req.Method != http.MethodGet && (req.URL.RawQuery != "dryRun=All" || (!patch && !create)) {
 		return nil, errors.New("direct API client permits only observations and server dry-runs")
 	}
 	return peer.transport.RoundTrip(req)
+}
+
+func (scope directCreateScope) permits(path string) bool {
+	switch scope {
+	case directReclaimCreate:
+		return path == "/api/v1/persistentvolumes" || path == "/api/v1/namespaces/longhorn-benchmark/persistentvolumeclaims"
+	case directUmamiCreate:
+		return path == "/api/v1/namespaces/umami/pods" || path == "/api/v1/namespaces/umami/persistentvolumeclaims" ||
+			path == "/apis/batch/v1/namespaces/umami/jobs"
+	default:
+		return false
+	}
 }
 
 func (peer directAPIPeer) CloseIdleConnections() {
