@@ -61,6 +61,8 @@ func (s *censusStore) serve(t *testing.T) *mailboxClient {
 			result = query(s.scripts)
 		case "CalendarEvent/query":
 			result = query(len(s.objects))
+		case "Calendar/changes", "Identity/changes", "CalendarEvent/changes":
+			result = object{"oldState": "n", "newState": "s1", "hasMoreChanges": false, "created": []any{}, "updated": []any{}, "destroyed": []any{}}
 		case "Calendar/get":
 			result = listed(s.calendars)
 		case "Identity/get":
@@ -95,6 +97,25 @@ func (s *censusStore) serve(t *testing.T) *mailboxClient {
 	}
 	client.account = "company-account"
 	return client
+}
+
+func TestCensusLeavesUninitializedCollectionsUntouched(t *testing.T) {
+	store := censusFixture()
+	store.mutate = func(method string, _, result object) {
+		if strings.HasSuffix(method, "/changes") {
+			result["newState"] = "n"
+		}
+	}
+	census, err := store.serve(t).census(context.Background())
+	if err != nil || census.calendars != 0 || census.events != 0 || census.identities != 0 {
+		t.Fatalf("an untouched collection did not remain empty: %v", err)
+	}
+	for _, method := range store.methods {
+		switch method {
+		case "Calendar/get", "CalendarEvent/get", "CalendarEvent/query", "Identity/get":
+			t.Fatalf("census could initialize an empty collection through %s", method)
+		}
+	}
 }
 
 func censusFixture() *censusStore {
@@ -171,6 +192,21 @@ func TestCensusRefusesIncompleteOrUnknownAnswers(t *testing.T) {
 		"listed-not-found": func(method string, _, result object) {
 			if method == "Identity/get" {
 				result["notFound"] = []any{"id9"}
+			}
+		},
+		"calendar-created-during-list": func(method string, _, result object) {
+			if method == "Calendar/get" {
+				result["state"] = "s2"
+			}
+		},
+		"identity-created-during-list": func(method string, _, result object) {
+			if method == "Identity/get" {
+				result["state"] = "s2"
+			}
+		},
+		"incomplete-identity-state": func(method string, _, result object) {
+			if method == "Identity/changes" {
+				result["hasMoreChanges"] = true
 			}
 		},
 		"missing-vacation": func(method string, _, result object) {

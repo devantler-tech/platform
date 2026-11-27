@@ -65,6 +65,7 @@ func (r *reader) nativeCoverage(ctx context.Context, resources discovery) ([]ser
 	}
 	result := make([]serviceRegistration, 0, len(items))
 	seen, seenUID := map[string]bool{}, map[string]bool{}
+	scanRegistered := false
 	for _, item := range items {
 		group, version := item.Spec.Group, item.Spec.Version
 		if !versionPattern.MatchString(version) || len(version) > 63 || group != "" && (!groupPattern.MatchString(group) || len(group) > 253) || item.Metadata.Name != version+"."+group || item.Metadata.Namespace != "" || item.Metadata.UID == "" || item.Metadata.ResourceVersion == "" || seen[item.Metadata.Name] || seenUID[item.Metadata.UID] {
@@ -79,12 +80,17 @@ func (r *reader) nativeCoverage(ctx context.Context, resources discovery) ([]ser
 		if remote && (item.Spec.Service.Name == "" || item.Spec.Service.Namespace == "") {
 			return nil, errors.New("aggregated API service binding is incomplete")
 		}
-		// An Email recovery namespace is removed by its own invocation, not
-		// guarded by admission. Kubescape's derived scan records may go with it.
-		if remote && required[gv] && (!r.scanRecords || !scanStorage(item)) {
+		scanBackend := r.scanRecords && scanStorage(item)
+		scanRegistered = scanRegistered || scanBackend
+		// Only the exact Kubescape backend may supply derived records for a
+		// recovery namespace this invocation owns.
+		if remote && required[gv] && !scanBackend {
 			return nil, errors.New("namespace deletion admission is unverified for a remote API backend")
 		}
 		result = append(result, serviceRegistration{item.Metadata.Name, item.Metadata.UID, gv, item.Metadata.ResourceVersion, remote})
+	}
+	if r.scanRecords && required[scanGroupVersion] && !scanRegistered {
+		return nil, errors.New("scan storage registration is unverified")
 	}
 	sort.Slice(result, func(a, b int) bool { return result[a].Name < result[b].Name })
 	return result, nil

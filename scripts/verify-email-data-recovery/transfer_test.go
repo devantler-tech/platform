@@ -30,10 +30,22 @@ func TestRestoredStorageMustBeSeparateEncryptedAndBoundToCreatedClaim(t *testing
 	i, _ := authorizeDataRecovery(func(k string) string { return env[k] })
 	pvc := object{"metadata": object{"uid": "target-claim-uid"}, "spec": object{"storageClassName": i.namespace, "volumeName": "pvc-target-volume"}, "status": object{"phase": "Bound"}}
 	pv := object{"metadata": object{"name": "pvc-target-volume", "uid": "target-volume-uid"}, "spec": object{"claimRef": object{"namespace": i.namespace, "name": "data", "uid": "target-claim-uid"}, "persistentVolumeReclaimPolicy": "Delete", "csi": object{"driver": "driver.longhorn.io", "volumeHandle": "pvc-target-volume"}}}
-	volume := object{"metadata": object{"name": "pvc-target-volume", "uid": "target-longhorn-uid"}, "spec": object{"encrypted": true, "numberOfReplicas": float64(3), "dataEngine": "v1"}}
+	csi := child(child(pv, "spec"), "csi")
+	setScratchKeyRefs(csi, i.namespace)
+	volume := object{"metadata": object{"name": "pvc-target-volume", "uid": "target-longhorn-uid"}, "spec": object{"encrypted": true, "numberOfReplicas": float64(3), "dataEngine": "v2"}}
 	if err := proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume", false); err != nil {
-		t.Fatal("isolated encrypted restored volume was refused")
+		t.Fatal("isolated encrypted V2 restored volume was refused")
 	}
+	child(volume, "spec")["dataEngine"] = "v1"
+	if proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume", false) == nil {
+		t.Fatal("fresh recovery accepted legacy V1 storage")
+	}
+	child(volume, "spec")["dataEngine"] = "v2"
+	csi["nodePublishSecretRef"] = object{"name": "email-storage-key", "namespace": "private-mail"}
+	if proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume", false) == nil {
+		t.Fatal("restore accepted a volume bound to the live mailbox key")
+	}
+	setScratchKeyRefs(csi, i.namespace)
 	child(volume, "spec")["encrypted"] = false
 	if proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume", false) == nil {
 		t.Fatal("plaintext restored storage was accepted")
@@ -42,5 +54,11 @@ func TestRestoredStorageMustBeSeparateEncryptedAndBoundToCreatedClaim(t *testing
 	child(pv, "spec")["claimRef"] = object{"namespace": "private-mail", "name": servingClaim, "uid": "source-claim-uid"}
 	if proveRestoredStorage(pvc, pv, volume, i, "target-claim-uid", "source-volume", false) == nil {
 		t.Fatal("serving volume was accepted as isolated storage")
+	}
+}
+
+func setScratchKeyRefs(csi object, namespace string) {
+	for _, stage := range []string{"nodeStageSecretRef", "nodePublishSecretRef", "nodeExpandSecretRef"} {
+		csi[stage] = object{"name": "storage-key", "namespace": namespace}
 	}
 }

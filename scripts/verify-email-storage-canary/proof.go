@@ -59,30 +59,6 @@ func checkVolume(o object, name, uid, engine string, detached bool) error {
 	return nil
 }
 
-func v2ReplicaQuorum(volume object, replicas []object) bool {
-	name, uid := text(child(volume, "metadata"), "name"), text(child(volume, "metadata"), "uid")
-	if name == "" || uid == "" || replicas == nil {
-		return false
-	}
-	nodes, disks, identities := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	for _, replica := range replicas {
-		spec, meta := child(replica, "spec"), child(replica, "metadata")
-		if text(spec, "volumeName") != name {
-			continue
-		}
-		owners := items(meta, "ownerReferences")
-		node, disk, id := text(spec, "nodeID"), text(spec, "diskID"), text(meta, "uid")
-		if len(owners) != 1 || text(owners[0], "apiVersion") != "longhorn.io/v1beta2" || text(owners[0], "kind") != "Volume" ||
-			text(owners[0], "name") != name || text(owners[0], "uid") != uid || text(meta, "namespace") != "longhorn-system" ||
-			text(spec, "dataEngine") != "v2" || text(spec, "healthyAt") == "" || text(spec, "failedAt") != "" ||
-			text(child(replica, "status"), "currentState") != "running" || meta["deletionTimestamp"] != nil ||
-			node == "" || disk == "" || id == "" || nodes[node] || disks[disk] || identities[id] {
-			return false
-		}
-		nodes[node], disks[disk], identities[id] = true, true, true
-	}
-	return len(nodes) == 3
-}
 func negativeMount(pod object, events []object, uid, volume, mode string) bool {
 	if uid == "" || text(child(pod, "metadata"), "uid") != uid || text(child(pod, "status"), "phase") != "Pending" {
 		return false

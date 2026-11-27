@@ -5,9 +5,9 @@ immutable main revision, on its first attempt, in the protected production
 environment. It shares the production deployment lock. It does not move the
 serving claim.
 
-The server serves its store from the encrypted claim `email-data-encrypted`
-(storage class `email-encrypted`); the original `private-mail-data` claim stays
-mounted read-only as the rollback and is not the store this proof restores.
+The server uses the encrypted V2 claim `email-data-encrypted-v2`
+(storage class `email-encrypted-v2`). The previous claim is retained separately
+from the serving pod.
 The driver verifies the serving pod, claim and backend identity, then imports one
 uniquely identified diagnostic message into an unsubscribed test mailbox. JMAP
 import does not submit an outgoing message. The current account credential stays
@@ -19,10 +19,10 @@ their events, tasks, and account settings (sending identities, Sieve filter
 scripts and the vacation response). It reads identities, counts and object
 types only, never content, and keeps the counts in memory. An unchanged source
 requires equal restored counts; a source that changed while the backup ran
-bounds each restored count by its two readings. Reading calendars and
-identities makes the server create its default calendar and identity if the
-account has none; the first census runs before the backup, so the restore must
-hold them too. The receipt names each category `VERIFIED`, or `EMPTY` where
+bounds each restored count by its two readings. Calendar and identity counts
+require the state from a preceding changes query to match the list response.
+The census leaves an untouched collection empty and refuses a change during
+listing. The receipt names each category `VERIFIED`, or `EMPTY` where
 the source held none (for example, no tasks), and never a count.
 
 A fresh Velero filesystem backup selects the Email pod and includes its related
@@ -32,7 +32,9 @@ the backup's overall Completed phase. Velero reads explicitly select its API
 group so another installed Backup resource cannot shadow the recovery object.
 The restore uses the completed, source-bound Kopia snapshot as bytes;
 backed-up pods, hooks, routes and credentials are not replayed. A fixed recovery
-server reads a separate, three-replica encrypted volume with a new diagnostic key.
+server reads a separate encrypted Longhorn V2 volume with a new diagnostic
+key. The proof checks the volume's live key binding and three running replicas
+on separate nodes and disks.
 A single reviewed administration declaration supplies the exact runtime digest
 for both source validation and the recovery reader. The declared binary base must
 remain compatible with the native datastore proof; missing or changed facts stop

@@ -122,7 +122,8 @@ func cleanupFixture(t *testing.T, blocked bool) (*recoveryDriver, *cleanupAPI, c
 	child(pvc, "spec")["volumeName"] = d.volumeName
 	pvc["status"] = object{"phase": "Bound"}
 	a.objects[cleanupKey("PersistentVolume", "", d.volumeName)] = object{"metadata": object{"name": d.volumeName, "uid": d.pvUID}, "spec": object{"claimRef": object{"namespace": i.namespace, "name": "data", "uid": claimUID}, "persistentVolumeReclaimPolicy": "Delete", "csi": object{"driver": "driver.longhorn.io", "volumeHandle": d.volumeName}}}
-	a.objects[cleanupKey("volumes.longhorn.io", "longhorn-system", d.volumeName)] = object{"metadata": object{"name": d.volumeName, "uid": d.volumeUID}, "spec": object{"encrypted": true, "numberOfReplicas": float64(3), "dataEngine": "v1"}}
+	setScratchKeyRefs(child(child(a.objects[cleanupKey("PersistentVolume", "", d.volumeName)], "spec"), "csi"), i.namespace)
+	a.objects[cleanupKey("volumes.longhorn.io", "longhorn-system", d.volumeName)] = object{"metadata": object{"name": d.volumeName, "uid": d.volumeUID}, "spec": object{"encrypted": true, "numberOfReplicas": float64(3), "dataEngine": "v2"}}
 	a.objects[cleanupKey("DataDownload", "velero", i.namespace+"-download")]["status"] = object{"phase": "Completed"}
 	a.objects[cleanupKey("Backup", "velero", i.namespace+"-backup")]["status"] = object{"phase": "Completed", "expiration": time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)}
 	pod, sourcePVC, pv := servingFixture()

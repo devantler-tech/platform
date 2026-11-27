@@ -7,14 +7,19 @@ import (
 	"time"
 )
 
-// servingFixture is the production shape since the encrypted-storage cutover:
-// the data volume is the encrypted claim and the original claim stays mounted
-// read-only as the rollback.
+// servingFixture binds the only persistent volume in the V2 serving pod.
 func servingFixture() (object, object, object) {
-	pod := object{"metadata": object{"name": "private-mail-0", "namespace": "private-mail", "uid": "serving-pod-uid", "labels": object{"statefulset.kubernetes.io/pod-name": "private-mail-0"}, "ownerReferences": []any{object{"kind": "StatefulSet", "name": "private-mail", "uid": "statefulset-uid", "controller": true}}}, "spec": object{"containers": []any{object{"name": "private-mail", "image": fixtureImage}}, "volumes": []any{object{"name": "data", "persistentVolumeClaim": object{"claimName": "email-data-encrypted"}}, object{"name": "legacy-data", "persistentVolumeClaim": object{"claimName": "private-mail-data", "readOnly": true}}}}, "status": object{"phase": "Running", "conditions": []any{object{"type": "Ready", "status": "True"}}}}
+	pod := object{"metadata": object{"name": "private-mail-0", "namespace": "private-mail", "uid": "serving-pod-uid", "labels": object{"statefulset.kubernetes.io/pod-name": "private-mail-0"}, "ownerReferences": []any{object{"kind": "StatefulSet", "name": "private-mail", "uid": "statefulset-uid", "controller": true}}},
+		"spec": object{
+			"containers": []any{object{"name": "private-mail", "image": fixtureImage, "volumeMounts": []any{object{"name": "v2-data", "mountPath": "/var/lib/stalwart-v2"}}}},
+			"volumes": []any{
+				object{"name": "v2-data", "persistentVolumeClaim": object{"claimName": "email-data-encrypted-v2"}},
+				object{"name": "tmp", "emptyDir": object{}},
+			},
+		}, "status": object{"phase": "Running", "conditions": []any{object{"type": "Ready", "status": "True"}}}}
 	child(pod, "status")["containerStatuses"] = []any{object{"name": "private-mail", "imageID": "runtime-mail", "ready": true, "restartCount": float64(0)}}
-	pvc := object{"metadata": object{"name": "email-data-encrypted", "namespace": "private-mail", "uid": "serving-claim-uid"}, "spec": object{"volumeName": "serving-volume", "storageClassName": "email-encrypted", "resources": object{"requests": object{"storage": "2Gi"}}}, "status": object{"phase": "Bound"}}
-	pv := object{"metadata": object{"name": "serving-volume", "uid": "serving-pv-uid"}, "spec": object{"claimRef": object{"namespace": "private-mail", "name": "email-data-encrypted", "uid": "serving-claim-uid"}, "persistentVolumeReclaimPolicy": "Retain", "csi": object{"driver": "driver.longhorn.io", "volumeHandle": "serving-volume"}}, "status": object{"phase": "Bound"}}
+	pvc := object{"metadata": object{"name": "email-data-encrypted-v2", "namespace": "private-mail", "uid": "serving-claim-uid"}, "spec": object{"volumeName": "serving-volume", "storageClassName": "email-encrypted-v2", "resources": object{"requests": object{"storage": "2Gi"}}}, "status": object{"phase": "Bound"}}
+	pv := object{"metadata": object{"name": "serving-volume", "uid": "serving-pv-uid"}, "spec": object{"claimRef": object{"namespace": "private-mail", "name": "email-data-encrypted-v2", "uid": "serving-claim-uid"}, "storageClassName": "email-encrypted-v2", "persistentVolumeReclaimPolicy": "Retain", "csi": object{"driver": "driver.longhorn.io", "volumeHandle": "serving-volume", "volumeAttributes": object{"dataEngine": "v2", "encrypted": "true", "numberOfReplicas": "3"}}}, "status": object{"phase": "Bound"}}
 	return pod, pvc, pv
 }
 
@@ -33,9 +38,18 @@ func TestTheEncryptedClaimIsTheServingSource(t *testing.T) {
 			child(child(v, "spec"), "claimRef")["name"] = "private-mail-data"
 		},
 		"unencrypted-class": func(_, c, _ object) { child(c, "spec")["storageClassName"] = "longhorn-wffc" },
+		"v1-engine":         func(_, _, v object) { child(child(child(v, "spec"), "csi"), "volumeAttributes")["dataEngine"] = "v1" },
+		"nonretained-pv":    func(_, _, v object) { child(v, "spec")["persistentVolumeReclaimPolicy"] = "Delete" },
 		"rollback-as-data": func(p, _, _ object) {
-			volumes := child(p, "spec")["volumes"].([]any)
-			volumes[0], volumes[1] = object{"name": "data", "persistentVolumeClaim": object{"claimName": "private-mail-data", "readOnly": true}}, object{"name": "legacy-data", "persistentVolumeClaim": object{"claimName": "email-data-encrypted"}}
+			child(p, "spec")["volumes"] = []any{object{"name": "v2-data", "persistentVolumeClaim": object{"claimName": "email-data-encrypted", "readOnly": true}}}
+		},
+		"additional-persistent-store": func(p, _, _ object) {
+			spec := child(p, "spec")
+			spec["volumes"] = append(spec["volumes"].([]any), object{"name": "legacy-data", "persistentVolumeClaim": object{"claimName": "email-data-encrypted"}})
+		},
+		"shadowed-serving-path": func(p, _, _ object) {
+			server := items(child(p, "spec"), "containers")[0]
+			server["volumeMounts"] = append(server["volumeMounts"].([]any), object{"name": "config", "mountPath": "/var/lib/stalwart-v2/data"})
 		},
 		"read-only-data": func(p, _, _ object) {
 			child(items(child(p, "spec"), "volumes")[0], "persistentVolumeClaim")["readOnly"] = true

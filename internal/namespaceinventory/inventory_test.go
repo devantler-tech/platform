@@ -121,7 +121,7 @@ func TestEmailInventoryAcceptsOnlyKubescapeScanRecords(t *testing.T) {
 	if err != nil || len(result.Bindings()) != 2 || len(result.scanRecords) != 3 {
 		t.Fatalf("Kubescape scan records prevented a complete Email inventory: bindings=%d records=%d error=%v", len(result.Bindings()), len(result.scanRecords), err)
 	}
-	for _, failure := range []string{"scan records from another service", "scan records under another version", "scan image record", "scan record of a mislabelled kind", "scan continued list", "scan foreign namespace", "scan record without version", "scan duplicate record", "scan view without source"} {
+	for _, failure := range []string{"scan records from another service", "scan records under another version", "scan missing service", "scan local registration", "scan image record", "scan record of a mislabelled kind", "scan continued list", "scan foreign namespace", "scan record without version", "scan duplicate record", "scan view without source"} {
 		t.Run(failure, func(t *testing.T) {
 			result, err := observeFixtureInNamespace(t, failure, testEmailNamespace)
 			if err == nil || len(result.Bindings()) != 0 || len(result.scanRecords) != 0 {
@@ -218,12 +218,15 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 				service = `,"service":{"name":"remote","namespace":"system"}`
 			}
 			scan := ""
-			if scanFixture {
-				scanService := "storage"
-				if failure == "scan records from another service" {
-					scanService = "other"
+			if scanFixture && failure != "scan missing service" {
+				scanService := `,"service":{"name":"storage","namespace":"kubescape"}`
+				switch failure {
+				case "scan records from another service":
+					scanService = `,"service":{"name":"other","namespace":"kubescape"}`
+				case "scan local registration":
+					scanService = ""
 				}
-				scan = fmt.Sprintf(`,{"metadata":{"name":"%s.spdx.softwarecomposition.kubescape.io","uid":"scan-service","resourceVersion":"3"},"spec":{"group":"spdx.softwarecomposition.kubescape.io","version":%q,"service":{"name":%q,"namespace":"kubescape"}}}`, scanVersion, scanVersion, scanService)
+				scan = fmt.Sprintf(`,{"metadata":{"name":"%s.spdx.softwarecomposition.kubescape.io","uid":"scan-service","resourceVersion":"3"},"spec":{"group":"spdx.softwarecomposition.kubescape.io","version":%q%s}}`, scanVersion, scanVersion, scanService)
 			}
 			respond(fmt.Sprintf(`{"apiVersion":"apiregistration.k8s.io/v1","kind":"APIServiceList","metadata":{"resourceVersion":"1","continue":%q},"items":[{"metadata":{"name":"v1.example.io","uid":"api-service","resourceVersion":%q},"spec":{"group":"example.io","version":"v1"%s}}%s]}`, continuation, rv, service, scan))
 			return

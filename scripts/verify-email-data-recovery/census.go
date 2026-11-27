@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // storeCensus counts what one account's store holds, without reading any
@@ -40,14 +41,43 @@ func (c *mailboxClient) count(ctx context.Context, method string) (int, error) {
 	return queryTotal(result)
 }
 
-// listAll reads every object of one type by identity only.
-func (c *mailboxClient) listAll(ctx context.Context, method string) (int, error) {
-	result, err := c.call(ctx, method, object{"ids": nil, "properties": []any{"id"}})
+func (c *mailboxClient) collectionState(ctx context.Context, collection string) (string, error) {
+	changes, err := c.call(ctx, collection+"/changes", object{"sinceState": "n"})
+	if err != nil {
+		return "", err
+	}
+	state := text(changes, "newState")
+	if text(changes, "oldState") != "n" || state == "" || changes["hasMoreChanges"] != false {
+		return "", fmt.Errorf("census %s: incomplete change state", collection)
+	}
+	if state == "n" {
+		for _, field := range []string{"created", "updated", "destroyed"} {
+			rows, ok := changes[field].([]any)
+			if !ok || len(rows) != 0 {
+				return "", fmt.Errorf("census %s: ambiguous initial state", collection)
+			}
+		}
+	}
+	return state, nil
+}
+
+// listAll avoids initializing an untouched collection. An initialized
+// collection must retain its state while listed, so regenerated entries
+// cannot pass as restored data.
+func (c *mailboxClient) listAll(ctx context.Context, collection string) (int, error) {
+	state, err := c.collectionState(ctx, collection)
+	if err != nil || state == "n" {
+		return 0, err
+	}
+	result, err := c.call(ctx, collection+"/get", object{"ids": nil, "properties": []any{"id"}})
 	if err != nil {
 		return 0, err
 	}
 	list, ok := result["list"].([]any)
-	if !ok || len(items(result, "list")) != len(list) || text(result, "state") == "" || !noneMissing(result) {
+	if text(result, "state") != state {
+		return 0, fmt.Errorf("census %s: collection changed during listing", collection)
+	}
+	if !ok || len(items(result, "list")) != len(list) || !noneMissing(result) {
 		return 0, errors.New("census-list")
 	}
 	return len(list), nil
@@ -115,10 +145,8 @@ func (c *mailboxClient) calendarObjects(ctx context.Context) (events, tasks int,
 	return events, tasks, nil
 }
 
-// census reads the account's complete store census. Reading calendars and
-// identities makes the server create its default calendar and identity if
-// the account has none; the source census runs before the backup, so those
-// defaults are part of what the restore must hold.
+// census reads the account's store census, refusing a calendar or identity
+// collection that was changed while being counted.
 func (c *mailboxClient) census(ctx context.Context) (storeCensus, error) {
 	var s storeCensus
 	var err error
@@ -128,13 +156,17 @@ func (c *mailboxClient) census(ctx context.Context) (storeCensus, error) {
 	if s.messages, err = c.count(ctx, "Email/query"); err != nil {
 		return s, err
 	}
-	if s.calendars, err = c.listAll(ctx, "Calendar/get"); err != nil {
+	if s.calendars, err = c.listAll(ctx, "Calendar"); err != nil {
 		return s, err
 	}
-	if s.events, s.tasks, err = c.calendarObjects(ctx); err != nil {
-		return s, err
+	if s.calendars > 0 {
+		if s.events, s.tasks, err = c.calendarObjects(ctx); err != nil {
+			return s, err
+		}
+	} else if state, err := c.collectionState(ctx, "CalendarEvent"); err != nil || state != "n" {
+		return s, errors.New("census-calendar-objects-without-calendar")
 	}
-	if s.identities, err = c.listAll(ctx, "Identity/get"); err != nil {
+	if s.identities, err = c.listAll(ctx, "Identity"); err != nil {
 		return s, err
 	}
 	if s.sieveScripts, err = c.count(ctx, "SieveScript/query"); err != nil {
