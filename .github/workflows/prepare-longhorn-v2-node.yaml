@@ -53,6 +53,7 @@ name: Prepare Longhorn V2 Migration
             observe-umami-v2-standby,
             replace-umami-v2-standby,
             resume-retained-umami-v2-standby,
+            recover-umami-standby-name,
             register-temporary-v2-storage,
             repair-v1-reservation,
             reserve-v1-scratch,
@@ -216,6 +217,12 @@ jobs:
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^resume-retained-umami-v2-standby:umami-db-[1-9][0-9]*:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
               ;;
+            recover-umami-standby-name)
+              run_re='[1-9][0-9]{0,18}'
+              uid_re='[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^recover-umami-standby-name:umami-db-[1-9][0-9]*:${run_re}:[0-9a-f]{40}:${uid_re}:${run_re}:[0-9a-f]{40}:${uid_re}(:${run_re})?$ ]]
+              ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
               ;;
@@ -358,7 +365,8 @@ jobs:
         if: >-
           ${{ inputs.operation != 'benchmark-v1' && inputs.operation != 'recover-bound-v1-benchmark' &&
               inputs.operation != 'prepare-native-v1-seed' && inputs.operation != 'reclaim-native-v2-seed' &&
-              inputs.operation != 'resume-native-v2-reclaim' && inputs.operation != 'migrate-coroot-keeper-v2' }}
+              inputs.operation != 'resume-native-v2-reclaim' && inputs.operation != 'recover-umami-standby-name' &&
+              inputs.operation != 'migrate-coroot-keeper-v2' }}
         env:
           GH_TOKEN: ${{ github.token }}
           LONGHORN_RUNTIME_INVENTORY_SOURCE: ${{ steps.recovery-source.outputs.sha }}
@@ -383,6 +391,12 @@ jobs:
         run: go run ./scripts/migrate-longhorn-v2
       - name: Reclaim the verified disposable V2 restoration
         if: ${{ inputs.operation == 'reclaim-native-v2-seed' || inputs.operation == 'resume-native-v2-reclaim' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Recover the confirmed Umami standby claim name
+        if: ${{ inputs.operation == 'recover-umami-standby-name' }}
         env:
           GH_TOKEN: ${{ github.token }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

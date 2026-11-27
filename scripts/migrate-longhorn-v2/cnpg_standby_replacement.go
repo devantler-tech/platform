@@ -11,6 +11,13 @@ const umamiStandbyReplacementOperation = "replace-umami-v2-standby"
 
 func executeUmamiStandbyReplacement(ctx context.Context, c client, operation string) error {
 	executor := umamiReplacementOwner{Source: os.Getenv("GITHUB_SHA"), Run: os.Getenv("GITHUB_RUN_ID")}
+	if operation == recoverUmamiStandbyNameOperation {
+		input, err := authorizeUmamiStandbyNameRecovery(os.Getenv)
+		if err != nil {
+			return err
+		}
+		return runUmamiNameRecovery(ctx, c, input, executor)
+	}
 	if operation == resumeUmamiStandbyOperation {
 		prior, err := authorizeUmamiStandbyResume(os.Getenv)
 		if err != nil {
@@ -76,9 +83,22 @@ func observeUmamiStandbyRebuild(ctx context.Context, journal *umamiStandbyReplac
 	if err := journal.transition(ctx, next); err != nil {
 		return err
 	}
+	return observeUmamiReplacementReady(ctx, journal)
+}
+
+func observeUmamiReplacementReady(ctx context.Context, journal *umamiStandbyReplacementJournal) error {
+	if journal.record.Phase != umamiReplacementOriginalDetached {
+		return errors.New("the original Umami storage is not verified as detached")
+	}
 	var replacement cnpgRecoveredStorage
 	if err := waitReadyWithin(ctx, 12*time.Minute, func(ctx context.Context) error {
-		if err := observeUmamiOriginalDetached(ctx, journal); err != nil {
+		original := observeUmamiOriginalDetached
+		if journal.record.NameRelease != nil {
+			original = func(ctx context.Context, j *umamiStandbyReplacementJournal) error {
+				return observeUmamiReleasedOriginal(ctx, j, false)
+			}
+		}
+		if err := original(ctx, journal); err != nil {
 			return err
 		}
 		candidate, err := readUmamiReplacementStorage(ctx, journal)
@@ -89,7 +109,7 @@ func observeUmamiStandbyRebuild(ctx context.Context, journal *umamiStandbyReplac
 	}); err != nil {
 		return err
 	}
-	next = journal.record
+	next := journal.record
 	next.Phase, next.Replacement = umamiReplacementStandbyRebuilt, &replacement
 	return journal.transition(ctx, next)
 }
@@ -152,13 +172,20 @@ func readUmamiReplacementStorage(ctx context.Context, journal *umamiStandbyRepla
 		if original, ok := record.OtherPods[identity.Name]; ok && identity == original {
 			continue
 		}
-		if replacement != "" || identity.Name == record.Original.Consumer.Name || record.OtherPods[identity.Name].UID != "" {
+		if replacement != "" || identity.UID == record.Original.Consumer.UID ||
+			(identity.Name == record.Original.Consumer.Name && record.NameRelease == nil) ||
+			record.OtherPods[identity.Name].UID != "" {
 			return cnpgRecoveredStorage{}, errors.Join(errReadinessTerminal, errors.New("the database did not add exactly one new standby"))
 		}
 		replacement = identity.Name
 	}
 	if replacement == "" || len(observation.Pods) != 4 {
 		return cnpgRecoveredStorage{}, errors.New("the new Umami standby is not ready")
+	}
+	if record.NameRelease != nil && replacement != record.Original.Consumer.Name {
+		if err = observeUmamiReleasedOriginal(ctx, journal, true); err != nil {
+			return cnpgRecoveredStorage{}, err
+		}
 	}
 	archive, err := rebindUmamiArchiveProof(ctx, c, observation)
 	if err != nil {
