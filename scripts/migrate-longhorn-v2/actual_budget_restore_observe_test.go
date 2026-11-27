@@ -37,7 +37,7 @@ func TestActualBudgetRestoreRequiresASeparateConfirmedBackup(t *testing.T) {
 
 func TestActualBudgetRestoreContentReaderUsesOnlyItsReadOnlyClaim(t *testing.T) {
 	const namespace = "actual-budget-recovery-1234"
-	for _, fault := range []string{"", "other reader", "other image", "mutating mount", "attached credentials", "added sidecar"} {
+	for _, fault := range []string{"", "admitted security defaults", "unconfined reader", "other reader", "other image", "mutating mount", "attached credentials", "added sidecar"} {
 		t.Run(fault, func(t *testing.T) {
 			desired := actualBudgetProofPod(namespace, "1234")
 			pod := actualBudgetProofPod(namespace, "1234")
@@ -53,6 +53,13 @@ func TestActualBudgetRestoreContentReaderUsesOnlyItsReadOnlyClaim(t *testing.T) 
 			containers := value(spec, "containers").([]any)
 			container := containers[0].(object)
 			switch fault {
+			case "admitted security defaults":
+				security := valueObject(container, "securityContext")
+				security["runAsNonRoot"] = true
+				security["seccompProfile"] = object{"type": "RuntimeDefault"}
+				security["seLinuxOptions"] = object{}
+			case "unconfined reader":
+				valueObject(container, "securityContext")["seccompProfile"] = object{"type": "Unconfined"}
 			case "other reader":
 				container["command"] = []any{"node", "server.js"}
 			case "other image":
@@ -64,7 +71,7 @@ func TestActualBudgetRestoreContentReaderUsesOnlyItsReadOnlyClaim(t *testing.T) 
 			case "added sidecar":
 				spec["containers"] = append(containers, object{"name": "application"})
 			}
-			if valid := actualBudgetProbeReady(pod, initial, desired); valid != (fault == "") {
+			if valid := actualBudgetProbeReady(pod, initial, desired); valid != (fault == "" || fault == "admitted security defaults") {
 				t.Fatalf("unexpected content verifier verdict: %t", valid)
 			}
 		})
