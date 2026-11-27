@@ -234,7 +234,7 @@ func independentUmamiReplacementAfterRelease(original cnpgStandbyCutover, replac
 		replacement.PV.Namespace != "" || replacement.PV.Name != pvName ||
 		replacement.Volume.Namespace != "longhorn-system" || replacement.Volume.Name != pvName ||
 		replacement.Engine.Namespace != "longhorn-system" || replacement.Engine.UID == original.Spare.Engine.UID ||
-		replacement.Pod.UID == original.Consumer.UID || (replacement.Pod.Name == original.Consumer.Name) != released ||
+		replacement.Pod.UID == original.Consumer.UID || (replacement.Pod.Name == original.Consumer.Name && !released) ||
 		replacement.Pod.UID == original.Spare.Pod.UID || replacement.Pod.Name == original.Spare.Pod.Name ||
 		replacement.Claim.UID == original.Claim.UID || replacement.Claim.UID == original.Spare.Claim.UID ||
 		replacement.PV.UID == original.PV.UID || replacement.PV.UID == original.Spare.PV.UID ||

@@ -37,8 +37,18 @@ func TestUmamiReplacementCanReuseOnlyAReleasedOrdinalWithNewIdentities(t *testin
 	if !independentUmamiReplacementAfterRelease(witness, fresh, true) {
 		t.Fatal("a fresh V2 member on the released ordinal was rejected")
 	}
+	record := umamiStandbyReplacementRecord{
+		Original: witness, Phase: umamiReplacementStandbyRebuilt, NameRelease: &umamiStandbyNameRelease{}, Replacement: &fresh,
+	}
+	if !umamiNameReleaseCanResume(record) {
+		t.Fatal("a committed exact completion cannot be verified by a later read-only attempt")
+	}
+	fresh.Pod.Name, fresh.Claim.Name = "umami-db-3", "umami-db-3"
+	if !independentUmamiReplacementAfterRelease(witness, fresh, true) {
+		t.Fatal("a fresh V2 member with a different controller-selected ordinal was rejected")
+	}
 	fresh.Pod.UID = witness.Consumer.UID
-	if independentUmamiReplacementAfterRelease(witness, fresh, true) {
+	if independentUmamiReplacementAfterRelease(witness, fresh, true) || umamiNameReleaseCanResume(record) {
 		t.Fatal("the original pod was accepted as its own replacement")
 	}
 }

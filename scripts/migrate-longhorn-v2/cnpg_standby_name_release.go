@@ -75,7 +75,7 @@ func bindUmamiNameRecovery(cm object, input umamiStandbyNameRecovery, owner umam
 	refused := errors.New("the exact interrupted Umami eviction journal is unverified")
 	if len(raw) > 65536 || json.Unmarshal([]byte(raw), &record) != nil ||
 		!validUmamiOriginalReplacement(record) || record.Original.Consumer.Name != prior.target ||
-		record.Run != prior.run || record.Source != prior.source || record.Replacement != nil ||
+		record.Run != prior.run || record.Source != prior.source ||
 		!validBenchmarkOwner(owner.Run, owner.Source) || owner.Run == prior.run || owner.Run == input.eviction.Run ||
 		owner.Source == prior.source || owner.Source == input.eviction.Source {
 		return record, refused
@@ -88,7 +88,7 @@ func bindUmamiNameRecovery(cm object, input umamiStandbyNameRecovery, owner umam
 		return record, refused
 	}
 	if input.previous == "" {
-		if record.Phase != umamiReplacementEvictionPending || record.NameRelease != nil {
+		if record.Phase != umamiReplacementEvictionPending || record.NameRelease != nil || record.Replacement != nil {
 			return record, refused
 		}
 	} else if !umamiNameReleaseCanResume(record) || record.NameRelease.Join.UID != input.joinUID ||
@@ -104,7 +104,9 @@ func umamiNameReleaseCanResume(record umamiStandbyReplacementRecord) bool {
 	}
 	switch record.Phase {
 	case umamiNameFencePending, umamiNameFenced, umamiJoinDeletePending, umamiClaimDeletePending, umamiNameOriginalPreserved, umamiReplacementOriginalDetached:
-		return true
+		return record.Replacement == nil
+	case umamiReplacementStandbyRebuilt:
+		return record.Replacement != nil && validUmamiReplacementStorage(record, *record.Replacement)
 	default:
 		return false
 	}
@@ -183,7 +185,8 @@ func runUmamiNameRecovery(ctx context.Context, c client, input umamiStandbyNameR
 			return errors.New("previous Umami eviction workflow is not a verified terminal attempt")
 		}
 	}
-	if record.Phase != umamiNameOriginalPreserved && record.Phase != umamiReplacementOriginalDetached {
+	if record.Phase != umamiNameOriginalPreserved && record.Phase != umamiReplacementOriginalDetached &&
+		record.Phase != umamiReplacementStandbyRebuilt {
 		if err = verifyUmamiNameReleaseArchive(ctx, &journal); err != nil {
 			return err
 		}
@@ -191,8 +194,12 @@ func runUmamiNameRecovery(ctx context.Context, c client, input umamiStandbyNameR
 	if record.NameRelease != nil {
 		prior := record.NameRelease.executor()
 		run, readErr := readFinishedMigrationRun(ctx, c, prior.Run, prior.Source)
-		if readErr != nil || run.Attempt != 1 || run.Conclusion == "success" {
+		if readErr != nil || run.Attempt != 1 ||
+			(run.Conclusion == "success" && record.Phase != umamiReplacementStandbyRebuilt) {
 			return errors.New("the interrupted name recovery is not a verified terminal attempt")
+		}
+		if record.Phase == umamiReplacementStandbyRebuilt {
+			return verifyCompletedUmamiNameRecovery(ctx, &journal)
 		}
 		next := journal.record
 		release := *next.NameRelease
@@ -215,6 +222,21 @@ func runUmamiNameRecovery(ctx context.Context, c client, input umamiStandbyNameR
 		return err
 	}
 	return finishUmamiNameRecovery(ctx, &journal)
+}
+
+func verifyCompletedUmamiNameRecovery(ctx context.Context, j *umamiStandbyReplacementJournal) error {
+	if j.record.Phase != umamiReplacementStandbyRebuilt || !umamiNameReleaseCanResume(j.record) {
+		return errors.New("the Umami name recovery has no recorded completed replacement")
+	}
+	if err := observeUmamiReleasedOriginal(ctx, j, false); err != nil {
+		return err
+	}
+	replacement, err := readUmamiReplacementStorage(ctx, j)
+	if err != nil || !recoveryJSONEqual(replacement, *j.record.Replacement) {
+		return errors.New("the completed Umami replacement differs from the original V2 receipt")
+	}
+	_, err = j.read(ctx)
+	return err
 }
 
 func advanceUmamiNameRelease(ctx context.Context, j *umamiStandbyReplacementJournal, phase string) error {

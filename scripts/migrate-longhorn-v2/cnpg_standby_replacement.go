@@ -173,7 +173,7 @@ func readUmamiReplacementStorage(ctx context.Context, journal *umamiStandbyRepla
 			continue
 		}
 		if replacement != "" || identity.UID == record.Original.Consumer.UID ||
-			(identity.Name == record.Original.Consumer.Name) != (record.NameRelease != nil) ||
+			(identity.Name == record.Original.Consumer.Name && record.NameRelease == nil) ||
 			record.OtherPods[identity.Name].UID != "" {
 			return cnpgRecoveredStorage{}, errors.Join(errReadinessTerminal, errors.New("the database did not add exactly one new standby"))
 		}
@@ -181,6 +181,11 @@ func readUmamiReplacementStorage(ctx context.Context, journal *umamiStandbyRepla
 	}
 	if replacement == "" || len(observation.Pods) != 4 {
 		return cnpgRecoveredStorage{}, errors.New("the new Umami standby is not ready")
+	}
+	if record.NameRelease != nil && replacement != record.Original.Consumer.Name {
+		if err = observeUmamiReleasedOriginal(ctx, journal, true); err != nil {
+			return cnpgRecoveredStorage{}, err
+		}
 	}
 	archive, err := rebindUmamiArchiveProof(ctx, c, observation)
 	if err != nil {
