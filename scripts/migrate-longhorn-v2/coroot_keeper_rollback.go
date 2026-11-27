@@ -52,6 +52,36 @@ func (j *corootKeeperJournal) observeRetainedKeeperStaging(ctx context.Context, 
 	return corootKeeperRetainedStage{benchmarkIdentity(pv), benchmarkIdentity(volume)}, nil
 }
 
+func (j *corootKeeperJournal) observeKeeperStagingBeforeArchive(ctx context.Context, r corootKeeperCutoverRecord) (corootKeeperRetainedStage, error) {
+	staging, err := j.observeRetainedKeeperStaging(ctx, r)
+	if err != nil || r.StagedClaim.UID == "" || staging != (corootKeeperRetainedStage{}) {
+		return staging, err
+	}
+	// A staging claim can be left Pending when the wait-for-consumer class
+	// never got a scheduled consumer. The archive already records its UID.
+	if err := verifyLonghornV2RetainClass(ctx, j.c); err != nil {
+		return staging, err
+	}
+	claim, err := j.c.get(ctx, "persistentvolumeclaim", corootKeeperNamespace, r.StagedClaim.Name, false)
+	if err != nil || !matchCorootKeeperStageClaim(claim, corootKeeperStagingClaim(r.Run, r.Source)) ||
+		benchmarkIdentity(claim) != r.StagedClaim || text(claim, "status", "phase") != "Pending" ||
+		text(claim, "spec", "volumeName") != "" ||
+		value(claim, "metadata", "annotations", "volume.kubernetes.io/selected-node") != nil ||
+		value(claim, "metadata", "annotations", "pv.kubernetes.io/bind-completed") != nil {
+		return staging, errCorootKeeperStaging
+	}
+	name := "pvc-" + r.StagedClaim.UID
+	for _, item := range []struct{ kind, namespace string }{
+		{"persistentvolume", ""}, {"volumes.longhorn.io", "longhorn-system"},
+	} {
+		current, err := j.c.get(ctx, item.kind, item.namespace, name, true)
+		if err != nil || current != nil {
+			return staging, errCorootKeeperStaging
+		}
+	}
+	return staging, j.requireNoClaimConsumers(ctx, r.StagedClaim.Name)
+}
+
 func bindCorootKeeperRollback(c client, cm object, input corootKeeperCutoverInput) (corootKeeperJournal, error) {
 	journal, err := bindCorootKeeperResumeJournal(c, cm, input)
 	if err != nil {
@@ -138,9 +168,8 @@ func (j *corootKeeperJournal) archivePreservedKeeperAttempt(ctx context.Context,
 		restored.Digest != original.Digest || current.V2Claims[r.Input.Ordinal].UID != "" {
 		return errCorootKeeperQuorum
 	}
-	staging, err := j.observeRetainedKeeperStaging(ctx, r)
-	if err != nil || (r.StagedClaim.UID != "" && staging == (corootKeeperRetainedStage{})) ||
-		(r.RollbackStaging != (corootKeeperRetainedStage{}) && r.RollbackStaging != staging) {
+	staging, err := j.observeKeeperStagingBeforeArchive(ctx, r)
+	if err != nil || (r.RollbackStaging != (corootKeeperRetainedStage{}) && r.RollbackStaging != staging) {
 		return errCorootKeeperStaging
 	}
 	r.RollbackStaging = staging
@@ -174,7 +203,7 @@ func (j *corootKeeperJournal) archivePreservedKeeperAttempt(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	confirmed, err := j.observeRetainedKeeperStaging(ctx, r)
+	confirmed, err := j.observeKeeperStagingBeforeArchive(ctx, r)
 	if err != nil || confirmed != staging {
 		return errCorootKeeperStaging
 	}
