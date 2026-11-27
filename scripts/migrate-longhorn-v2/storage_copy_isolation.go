@@ -19,6 +19,21 @@ type storageCopyIsolationScope struct {
 	Namespace, Label, Prefix string
 }
 
+func (s storageCopyIsolationScope) denyPolicy(run, source, ownerAnnotation string) object {
+	return object{
+		"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy",
+		"metadata": object{
+			"name": s.Prefix + run, "namespace": s.Namespace,
+			"annotations": object{ownerAnnotation: run + ":" + source},
+		},
+		"spec": object{
+			"endpointSelector": object{"matchLabels": object{s.Label: run}},
+			"ingressDeny":      []any{object{"fromEntities": []any{"all"}}},
+			"egressDeny":       []any{object{"toEntities": []any{"all"}}},
+		},
+	}
+}
+
 func (s storageCopyIsolationScope) verifyNativeDeny(raw []byte, policy object, run string) (uint64, error) {
 	refused := errors.New("the copy Pod's ingress and egress denial is unverified")
 	revision, repo, err := decodeRecoveryPolicyRepository(raw)

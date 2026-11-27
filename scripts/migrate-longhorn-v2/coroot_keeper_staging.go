@@ -90,12 +90,16 @@ func matchCorootKeeperStageClaim(current, desired object) bool {
 }
 
 func matchCorootKeeperVolumePod(observed, created, desired object) bool {
-	if !recoveredNativeObject(observed, "v1", "Pod", corootKeeperNamespace) ||
+	return matchStorageCopyVolumePod(observed, created, desired, corootKeeperNamespace, corootKeeperFenceOwner)
+}
+
+func matchStorageCopyVolumePod(observed, created, desired object, namespace, ownershipAnnotation string) bool {
+	if !recoveredNativeObject(observed, "v1", "Pod", namespace) ||
 		benchmarkIdentity(observed) != benchmarkIdentity(created) ||
 		text(observed, "metadata", "name") != text(desired, "metadata", "name") ||
 		value(observed, "metadata", "ownerReferences") != nil ||
 		!reflect.DeepEqual(value(observed, "metadata", "labels"), value(desired, "metadata", "labels")) ||
-		text(observed, "metadata", "annotations", corootKeeperFenceOwner) != text(desired, "metadata", "annotations", corootKeeperFenceOwner) ||
+		text(observed, "metadata", "annotations", ownershipAnnotation) != text(desired, "metadata", "annotations", ownershipAnnotation) ||
 		value(observed, "spec", "hostNetwork") == true || value(observed, "spec", "hostPID") == true ||
 		value(observed, "spec", "hostIPC") == true || value(observed, "spec", "ephemeralContainers") != nil {
 		return false
@@ -125,11 +129,16 @@ func matchCorootKeeperVolumePod(observed, created, desired object) bool {
 }
 
 func readCorootKeeperV2Attachment(ctx context.Context, c client, claim object, node string, disks []cnpgRecoveryDiskBinding) (benchmarkResource, benchmarkResource, error) {
+	return readQualifiedV2Attachment(ctx, c, claim, node, corootKeeperNamespace, corootKeeperDataSize, corootKeeperDataBytes, disks, errCorootKeeperStaging)
+}
+
+func readQualifiedV2Attachment(ctx context.Context, c client, claim object, node, namespace, size, bytes string,
+	disks []cnpgRecoveryDiskBinding, refused error) (benchmarkResource, benchmarkResource, error) {
 	var zero benchmarkResource
-	if !recoveredNativeObject(claim, "v1", "PersistentVolumeClaim", corootKeeperNamespace) || node == "" ||
-		text(claim, "status", "phase") != "Bound" || text(claim, "status", "capacity", "storage") != corootKeeperDataSize ||
+	if !recoveredNativeObject(claim, "v1", "PersistentVolumeClaim", namespace) || node == "" ||
+		text(claim, "status", "phase") != "Bound" || text(claim, "status", "capacity", "storage") != size ||
 		text(claim, "spec", "storageClassName") != "longhorn-v2" || !providerRWOFilesystem(claim) {
-		return zero, zero, errCorootKeeperStaging
+		return zero, zero, refused
 	}
 	name := text(claim, "spec", "volumeName")
 	pv, err := c.get(ctx, "persistentvolume", "", name, false)
@@ -142,25 +151,25 @@ func readCorootKeeperV2Attachment(ctx context.Context, c client, claim object, n
 	}
 	engines, err := c.list(ctx, "engines.longhorn.io", "longhorn-system")
 	if err != nil || !recoveredStorageInventory(engines, "longhorn.io/v1beta2", "Engine", "longhorn-system") {
-		return zero, zero, errCorootKeeperStaging
+		return zero, zero, refused
 	}
 	var engine object
 	for _, item := range engines {
 		if recoveredVolumeAssociated(item, volume) {
 			if engine != nil {
-				return zero, zero, errCorootKeeperStaging
+				return zero, zero, refused
 			}
 			engine = item
 		}
 	}
-	if !recoveredPVBackend(claim, pv, volume, engine, corootKeeperNamespace, name, corootKeeperDataSize, corootKeeperDataBytes, node) {
-		return zero, zero, errCorootKeeperStaging
+	if !recoveredPVBackend(claim, pv, volume, engine, namespace, name, size, bytes, node) {
+		return zero, zero, refused
 	}
 	replicas, err := c.list(ctx, "replicas.longhorn.io", "longhorn-system")
 	if err != nil || !recoveredStorageInventory(replicas, "longhorn.io/v1beta2", "Replica", "longhorn-system") {
-		return zero, zero, errCorootKeeperStaging
+		return zero, zero, refused
 	}
-	if _, err := recoveredNativeCopies(disks, volume, engine, replicas, corootKeeperDataBytes); err != nil {
+	if _, err := recoveredNativeCopies(disks, volume, engine, replicas, bytes); err != nil {
 		return zero, zero, err
 	}
 	return benchmarkIdentity(pv), benchmarkIdentity(volume), nil

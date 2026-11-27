@@ -117,16 +117,5 @@ var corootKeeperCopyIsolation = storageCopyIsolationScope{
 }
 
 func corootKeeperCopyNetworkPolicy(run, source string) object {
-	return object{
-		"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy",
-		"metadata": object{
-			"name": corootKeeperCopyIsolation.Prefix + run, "namespace": corootKeeperNamespace,
-			"annotations": object{corootKeeperFenceOwner: run + ":" + source},
-		},
-		"spec": object{
-			"endpointSelector": object{"matchLabels": object{corootKeeperCopyLabel: run}},
-			"ingressDeny":      []any{object{"fromEntities": []any{"all"}}},
-			"egressDeny":       []any{object{"toEntities": []any{"all"}}},
-		},
-	}
+	return corootKeeperCopyIsolation.denyPolicy(run, source, corootKeeperFenceOwner)
 }
