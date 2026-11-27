@@ -68,6 +68,7 @@ func verifyCorootKeeperSurvivors(ctx context.Context, c client, input corootKeep
 	if len(members) != 2 || members[corootKeeperName+"-"+strconv.Itoa(target)] != nil {
 		return errCorootKeeperQuorum
 	}
+	var survivors [3]corootKeeperMember
 	for ordinal, expected := range input.Members {
 		if ordinal == target {
 			continue
@@ -77,10 +78,27 @@ func verifyCorootKeeperSurvivors(ctx context.Context, c client, input corootKeep
 			member.ContainerID != expected.ContainerID || member.Node != expected.Node {
 			return errCorootKeeperQuorum
 		}
-		leader, err := probeCorootKeeperMember(ctx, c, member, stateful, ordinal, 1)
-		if err != nil || leader != expected.Leader {
+		survivors[ordinal] = member
+	}
+	leader := -1
+	for round := range 2 {
+		observed := -1
+		for ordinal, member := range survivors {
+			if ordinal == target {
+				continue
+			}
+			isLeader, err := probeCorootKeeperMember(ctx, c, member, stateful, ordinal, 1)
+			if err != nil || (isLeader && observed != -1) {
+				return errCorootKeeperQuorum
+			}
+			if isLeader {
+				observed = ordinal
+			}
+		}
+		if observed == -1 || (round > 0 && observed != leader) {
 			return errCorootKeeperQuorum
 		}
+		leader = observed
 	}
 	return nil
 }

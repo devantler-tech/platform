@@ -37,7 +37,8 @@ func (j *corootKeeperJournal) copyVolume(ctx context.Context, disks []cnpgRecove
 	if err := j.advance(ctx, r); err != nil {
 		return err
 	}
-	err = waitReadyWithin(ctx, 4*time.Minute, func(ctx context.Context) error {
+	// The projected gate and the verified copy both need time after the API patch.
+	err = waitReadyWithin(ctx, 6*time.Minute, func(ctx context.Context) error {
 		pod, err := j.c.get(ctx, "pod", corootKeeperNamespace, r.CopyPod.Name, false)
 		if err != nil || !matchCorootKeeperVolumePod(pod, created, desiredPod) {
 			return errors.Join(errReadinessTerminal, errCorootKeeperCopy)

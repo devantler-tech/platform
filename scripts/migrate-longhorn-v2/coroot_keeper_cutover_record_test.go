@@ -29,9 +29,14 @@ func TestKeeperMigrationRequiresFencedProgressAndPreservesBoundIdentities(t *tes
 		t.Fatal("the original prepared claim was replaced")
 	}
 	next = plan
-	next.Phase = "original-claim-preserved"
+	next.Phase = keeperOriginalResuming
 	if !validCorootKeeperProgress(plan, next) {
 		t.Fatal("rollback of a staged original claim was blocked")
+	}
+	active := next
+	next.Phase = keeperOriginalPreserved
+	if validCorootKeeperProgress(plan, next) || !validCorootKeeperProgress(active, next) {
+		t.Fatal("rollback completion must follow the recorded restoration intent")
 	}
 	plan.Phase = "claim-release-requested"
 	if validCorootKeeperProgress(plan, next) {

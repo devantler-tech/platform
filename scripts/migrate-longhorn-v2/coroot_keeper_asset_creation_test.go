@@ -52,6 +52,20 @@ func TestKeeperCreationIntentReconcilesOnlyOwnedNativeAssets(t *testing.T) {
 			if err != nil || receipt.Creating != "" || receipt.Phase != phase || !validCorootKeeperProgress(pending, receipt) {
 				t.Fatalf("the exact unreceipted object could not be reconciled: %v", err)
 			}
+			recordedUID := map[string]string{
+				"staging-claim-created":  receipt.StagedClaim.UID,
+				"staging-pod-created":    receipt.StagePod.UID,
+				"member-fenced-policy":   receipt.PodFence.PolicyUID,
+				"member-fenced":          receipt.PodFence.BindingUID,
+				"claim-fenced-policy":    receipt.ClaimFence.PolicyUID,
+				"claim-fenced":           receipt.ClaimFence.BindingUID,
+				"copy-isolation-created": receipt.CopyIsolation.UID,
+				"copy-gate-created":      receipt.CopyGate.UID,
+				"copy-pod-created":       receipt.CopyPod.UID,
+			}[phase]
+			if recordedUID != resourceUID {
+				t.Fatal("creation reconciliation did not capture the observed UID")
+			}
 			if !validCorootKeeperProgress(pending, base) {
 				t.Fatal("a prior stopped run cannot clear an absent asset")
 			}

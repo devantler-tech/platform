@@ -399,7 +399,7 @@ func (j *corootKeeperJournal) verifyRejoined(ctx context.Context, r corootKeeper
 			if err != nil || pv != r.Rebind.StagedPV || volume != r.Rebind.StagedVolume {
 				return errCorootKeeperRebind
 			}
-		} else if member.UID != expected.UID || member.ContainerID != expected.ContainerID || member.Node != expected.Node {
+		} else if member.UID != expected.UID || member.Node != expected.Node {
 			return errCorootKeeperQuorum
 		}
 	}

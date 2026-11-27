@@ -51,9 +51,12 @@ func (j *corootKeeperJournal) prepareVolume(ctx context.Context, diskBindings []
 			return err
 		}
 		out, err := j.c.kubectl(ctx, nil, "logs", r.StagePod.Name, "--namespace="+corootKeeperNamespace, "--container=verify")
-		if err != nil || strings.TrimSpace(string(out)) != "COROOT_KEEPER_DESTINATION=READY" {
+		count, matched := strings.CutPrefix(strings.TrimSpace(string(out)), "COROOT_KEEPER_DESTINATION=READY bytes=")
+		free, parseErr := strconv.ParseInt(count, 10, 64)
+		if err != nil || !matched || parseErr != nil || free <= 64<<20 || free > 2<<30 {
 			return errCorootKeeperStaging
 		}
+		r.StagedFreeBytes = free
 		r.Rebind = corootKeeperRebind{
 			Coroot: r.Coroot, Original: r.Before.Disks[r.Input.Ordinal],
 			StagedClaim: r.StagedClaim, StagedPV: pv, StagedVolume: volume,

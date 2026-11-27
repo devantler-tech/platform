@@ -30,7 +30,8 @@ func corootKeeperStagingClaim(run, source string) object {
 func corootKeeperCopyPod(run, source, original, hostname string) object {
 	const wait = `set -eu
 printf '%s\n' 'COROOT_KEEPER_OFFLINE_COPY=WAITING_FOR_ISOLATION'
-for ((n=0; n<240; n++)); do
+# Allow for the controller's release window and kubelet projection delay.
+for ((n=0; n<420; n++)); do
     if [[ $(< /gate/state) == "$1" ]]; then break; fi
     sleep 1
 done
@@ -38,6 +39,7 @@ done
 `
 	pod := corootKeeperVolumePod(run, source, corootKeeperCopyPrefix+run, hostname)
 	spec := valueObject(pod, "spec")
+	spec["activeDeadlineSeconds"] = float64(900)
 	security := valueObject(spec, "securityContext")
 	// Keep the namespace's policy default without requesting a group ownership change.
 	delete(security, "fsGroup")
@@ -61,7 +63,9 @@ func corootKeeperVolumePod(run, source, name, hostname string) object {
 	const inspect = `set -euo pipefail
 test -w /destination
 test -d /destination
-printf '%s\n' 'COROOT_KEEPER_DESTINATION=READY'
+free=$(df -PB1 -- /destination | awk 'NR==2 {print $4}')
+[[ "$free" =~ ^[0-9]+$ ]]
+printf 'COROOT_KEEPER_DESTINATION=READY bytes=%s\n' "$free"
 sleep 300
 `
 	return object{

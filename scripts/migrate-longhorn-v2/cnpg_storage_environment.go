@@ -134,6 +134,13 @@ func (a temporaryV2Activation) observeRecoveryStorage(ctx context.Context, newCl
 			}
 		}
 	}
+	for _, disk := range result.Disks {
+		current := valueObject(storage[disk.Node], "status", "diskStatus", "longhorn-v2")
+		if disk.DiskUUID == "" || disk.InstanceManager == "" ||
+			text(current, "diskUUID") != disk.DiskUUID || text(current, "instanceManagerName") != disk.InstanceManager {
+			return result, refused
+		}
+	}
 	if newClaimSize != nil {
 		phase = "complete-allocations"
 		if err = a.verifyRecoveryAllocation(ctx, *newClaimSize, s, result.Disks); err != nil {

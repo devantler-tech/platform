@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -120,9 +121,6 @@ func (j *corootKeeperJournal) evictFollower(ctx context.Context, fences corootKe
 	if err != nil || ready != r.Before || target.Leader {
 		return errCorootKeeperQuorum
 	}
-	if err := j.verifyKeeperSourceCopyLayout(ctx, target); err != nil {
-		return err
-	}
 	if err := j.proveFences(ctx, fences); err != nil {
 		return err
 	}
@@ -150,6 +148,9 @@ func (j *corootKeeperJournal) evictFollower(ctx context.Context, fences corootKe
 			return err
 		}
 		if !dry {
+			if err := j.verifyKeeperSourceCopyLayout(ctx, target); err != nil {
+				return err
+			}
 			stateful, err := j.c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
 			if err != nil || benchmarkIdentity(stateful) != r.Before.Controller {
 				return errCorootKeeperQuorum
@@ -183,6 +184,7 @@ foreign=$(find "$root" -xdev -mindepth 1 -maxdepth 1 ! -name lost+found ! -name 
 test -z "$foreign"
 foreign=$(find "$root/coordination" -xdev \( ! -type f ! -type d -o ! -uid 65534 -o ! -gid 65534 -o -type f -links +1 \) -printf x -quit)
 test -z "$foreign"
+du -sx --apparent-size --block-size=1 -- "$root/coordination" | cut -f1
 `
 	stateful, err := j.c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
 	if err != nil || benchmarkIdentity(stateful) != j.record.Before.Controller {
@@ -217,7 +219,8 @@ test -z "$foreign"
 	}
 	raw, err := j.c.kubectl(ctx, nil, "exec", member.Pod, "--namespace="+corootKeeperNamespace,
 		"--container="+corootKeeperContainer, "--pod-running-timeout=10s", "--", "bash", "-ec", check, "keeper-layout", path)
-	if err != nil || len(raw) != 0 {
+	need, parseErr := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil || parseErr != nil || need < 1 || need > 10<<30 || need+(64<<20) > j.record.StagedFreeBytes {
 		return errCorootKeeperCopy
 	}
 	pod, err = j.c.get(ctx, "pod", corootKeeperNamespace, member.Pod, false)

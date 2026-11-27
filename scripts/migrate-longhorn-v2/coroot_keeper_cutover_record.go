@@ -30,6 +30,7 @@ type corootKeeperCutoverRecord struct {
 	Creating           string `json:",omitempty"`
 	StagedClaim        benchmarkResource
 	StagePod           benchmarkResource
+	StagedFreeBytes    int64 `json:",omitempty"`
 	Rebind             corootKeeperRebind
 	RollbackStaging    corootKeeperRetainedStage `json:",omitzero"`
 	CopyPod            benchmarkResource
@@ -166,6 +167,20 @@ func validCorootKeeperProgress(previous, next corootKeeperCutoverRecord) bool {
 	if next.FenceUser != previous.FenceUser || next.ResumeRun != previous.ResumeRun || next.ResumeSource != previous.ResumeSource {
 		return false
 	}
+	if next.Phase == keeperOriginalResuming {
+		recovering := previous
+		recovering.Phase, recovering.RollbackStaging = keeperOriginalResuming, next.RollbackStaging
+		return previous.Phase != keeperOriginalResuming && mayRestoreOriginalKeeper(previous.Phase) &&
+			previous.Creating == "" && next == recovering
+	}
+	if previous.Phase == keeperOriginalResuming {
+		preserved := previous
+		preserved.Phase = keeperOriginalPreserved
+		if previous.RollbackStaging == (corootKeeperRetainedStage{}) {
+			preserved.RollbackStaging = next.RollbackStaging
+		}
+		return next == preserved
+	}
 	phase := slices.Index(keeperCutoverPhases, previous.Phase)
 	if phase < 0 || phase+1 >= len(keeperCutoverPhases) {
 		return false
@@ -183,10 +198,10 @@ func validCorootKeeperProgress(previous, next corootKeeperCutoverRecord) bool {
 		onlyClear.Creating = ""
 		return next == onlyClear || (next.Phase == previous.Creating && validCorootKeeperProgress(onlyClear, next))
 	}
-	if next.Phase != keeperCutoverPhases[phase+1] && (next.Phase != "original-claim-preserved" || !mayRestoreOriginalKeeper(previous.Phase)) {
+	if next.Phase != keeperCutoverPhases[phase+1] {
 		return false
 	}
-	if next.Phase != keeperOriginalPreserved && next.RollbackStaging != previous.RollbackStaging {
+	if next.RollbackStaging != previous.RollbackStaging {
 		return false
 	}
 	for _, resources := range [][2]benchmarkResource{
@@ -199,6 +214,10 @@ func validCorootKeeperProgress(previous, next corootKeeperCutoverRecord) bool {
 		}
 	}
 	if previous.Rebind.StagedVolume.UID != "" && next.Rebind != previous.Rebind {
+		return false
+	}
+	if previous.StagedFreeBytes != 0 && next.StagedFreeBytes != previous.StagedFreeBytes ||
+		previous.StagedFreeBytes == 0 && next.StagedFreeBytes != 0 && next.Phase != "staging-volume-verified" {
 		return false
 	}
 	for _, fences := range [][2]benchmarkFenceReceipt{{previous.PodFence, next.PodFence}, {previous.ClaimFence, next.ClaimFence}} {

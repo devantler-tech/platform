@@ -7,7 +7,10 @@ import (
 	"time"
 )
 
-const keeperOriginalPreserved = "original-claim-preserved"
+const (
+	keeperOriginalResuming  = "original-member-resuming"
+	keeperOriginalPreserved = "original-claim-preserved"
+)
 
 type corootKeeperRetainedStage struct {
 	PV, Volume benchmarkResource

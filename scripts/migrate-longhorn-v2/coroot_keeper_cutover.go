@@ -116,7 +116,7 @@ func mayRestoreOriginalKeeper(phase string) bool {
 	case "planned", "staging-claim-created", "staging-pod-created", "staging-volume-verified",
 		"member-fenced-policy", "member-fenced", "claim-fenced-policy", "claim-fenced", "eviction-requested",
 		"copy-isolation-created", "copy-gate-created", "copy-pod-created", "copy-permitted",
-		"copy-bytes-verified", "copied-volumes-detached":
+		"copy-bytes-verified", "copied-volumes-detached", keeperOriginalResuming:
 		return true
 	default:
 		return false
@@ -173,7 +173,9 @@ func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Cont
 	if err != nil {
 		return err
 	}
-	r.RollbackStaging = staging
+	if r.RollbackStaging != (corootKeeperRetainedStage{}) && r.RollbackStaging != staging {
+		return errCorootKeeperStaging
+	}
 	for _, asset := range []struct {
 		id           benchmarkResource
 		kind, prefix string
@@ -182,6 +184,14 @@ func (j *corootKeeperJournal) restoreOriginalBeforeClaimRelease(ctx context.Cont
 		{r.CopyIsolation, "ciliumnetworkpolicy.cilium.io", "/apis/cilium.io/v2/namespaces/" + corootKeeperNamespace + "/ciliumnetworkpolicies/"},
 	} {
 		if err := j.removeRollbackAsset(ctx, asset.id, asset.kind, asset.prefix); err != nil {
+			return err
+		}
+	}
+	r.RollbackStaging = staging
+	if r.Phase != keeperOriginalResuming {
+		// Commit to restoring the original claim before either fence can disappear.
+		r.Phase = keeperOriginalResuming
+		if err := j.advance(ctx, r); err != nil {
 			return err
 		}
 	}
