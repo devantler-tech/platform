@@ -57,3 +57,43 @@ func verifyUmamiStandbyClaimRetention(original, retained object) error {
 	}
 	return nil
 }
+
+// verifyUmamiStandbyDetached accepts the old backend only when its original
+// claim still protects it and neither a Pod nor a CSI attachment can use it.
+func verifyUmamiStandbyDetached(witness cnpgStandbyCutover, claim, pv, volume object, pods, attachments []object) error {
+	refused := errors.New("the retained standby storage is not demonstrably detached")
+	name := witness.Consumer.Name
+	owners := value(claim, "metadata", "ownerReferences")
+	robustness := text(volume, "status", "robustness")
+	if pods == nil || attachments == nil ||
+		benchmarkIdentity(claim) != witness.Claim || benchmarkIdentity(pv) != witness.PV ||
+		benchmarkIdentity(volume) != witness.Volume || !verifyUmamiOriginalClaimBinding(claim, pv, volume) ||
+		text(claim, "metadata", "labels", "cnpg.io/instanceName") != name ||
+		text(claim, "metadata", "annotations", "cnpg.io/pvcStatus") != "detached" ||
+		(owners != nil && !reflect.DeepEqual(owners, []any{})) ||
+		text(volume, "status", "state") != "detached" || text(volume, "status", "currentNodeID") != "" ||
+		text(volume, "spec", "nodeID") != "" || (robustness != "unknown" && robustness != "healthy") {
+		return refused
+	}
+	for _, pod := range pods {
+		if text(pod, "metadata", "namespace") != witness.Consumer.Namespace {
+			return refused
+		}
+		if text(pod, "metadata", "name") == name {
+			return refused
+		}
+		mounts, _ := value(pod, "spec", "volumes").([]any)
+		for _, raw := range mounts {
+			mount, _ := raw.(object)
+			if text(mount, "persistentVolumeClaim", "claimName") == witness.Claim.Name {
+				return refused
+			}
+		}
+	}
+	for _, attachment := range attachments {
+		if text(attachment, "spec", "source", "persistentVolumeName") == witness.PV.Name {
+			return refused
+		}
+	}
+	return nil
+}

@@ -80,3 +80,43 @@ func TestUmamiStandbyRetentionChangesOnlyControllerOwnership(t *testing.T) {
 		})
 	}
 }
+
+func TestUmamiStandbyDetachedKeepsOriginalVolumeBoundAndUnused(t *testing.T) {
+	for _, fault := range []string{"", "unretained", "claim deletion", "faulted", "unknown pods", "same pod name", "foreign consumer", "CSI attachment"} {
+		t.Run(fault, func(t *testing.T) {
+			observation, pod, claim, pv, volume, pdb := umamiStandbyCutoverFixture(t)
+			target := text(pod, "metadata", "name")
+			witness, err := bindUmamiStandbyCutover(observation, observation.Pods, target, claim, pv, volume, pdb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			delete(valueObject(claim, "metadata"), "ownerReferences")
+			valueObject(claim, "metadata")["annotations"] = object{"cnpg.io/pvcStatus": "detached"}
+			valueObject(claim, "metadata", "labels")["cnpg.io/instanceName"] = target
+			status := valueObject(volume, "status")
+			status["state"], status["robustness"], status["currentNodeID"] = "detached", "unknown", ""
+			pods, attachments := []object{}, []object{}
+			switch fault {
+			case "unretained":
+				valueObject(pv, "spec")["persistentVolumeReclaimPolicy"] = "Delete"
+			case "claim deletion":
+				valueObject(claim, "metadata")["deletionTimestamp"] = "2026-11-27T05:00:00Z"
+			case "faulted":
+				status["robustness"] = "faulted"
+			case "unknown pods":
+				pods = nil
+			case "same pod name":
+				valueObject(pod, "metadata")["uid"] = "new"
+				pods = []object{pod}
+			case "foreign consumer":
+				valueObject(pod, "metadata")["name"] = "foreign"
+				pods = []object{pod}
+			case "CSI attachment":
+				attachments = []object{{"spec": object{"source": object{"persistentVolumeName": witness.PV.Name}}}}
+			}
+			if err := verifyUmamiStandbyDetached(witness, claim, pv, volume, pods, attachments); (err == nil) != (fault == "") {
+				t.Fatalf("retained original attachment result: %v", err)
+			}
+		})
+	}
+}

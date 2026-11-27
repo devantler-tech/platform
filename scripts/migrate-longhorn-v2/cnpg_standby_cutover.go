@@ -74,15 +74,22 @@ func umamiStandbyDisruptionAllowed(budget, cluster object) bool {
 }
 
 func umamiV1StorageRetained(cluster, pod, claim, pv, volume object) bool {
+	node := text(pod, "spec", "nodeName")
+	return cnpgOwned(claim, cluster) && text(claim, "metadata", "name") == text(pod, "metadata", "name") &&
+		verifyUmamiOriginalClaimBinding(claim, pv, volume) &&
+		node != "" && text(volume, "status", "currentNodeID") == node && text(volume, "status", "state") == "attached" &&
+		text(volume, "status", "robustness") == "healthy"
+}
+
+func verifyUmamiOriginalClaimBinding(claim, pv, volume object) bool {
 	const namespace, class, size = "umami", "longhorn-wffc", "5Gi"
-	name := text(pod, "metadata", "name")
+	name := text(claim, "metadata", "name")
 	uid := text(claim, "metadata", "uid")
 	backend := "pvc-" + uid
-	node := text(pod, "spec", "nodeName")
 	finalizers, _ := value(claim, "metadata", "finalizers").([]any)
 	return recoveredNativeObject(claim, "v1", "PersistentVolumeClaim", namespace) &&
 		slices.Contains(finalizers, "kubernetes.io/pvc-protection") &&
-		cnpgOwned(claim, cluster) && text(claim, "metadata", "name") == name && text(claim, "status", "phase") == "Bound" &&
+		text(claim, "status", "phase") == "Bound" &&
 		text(claim, "spec", "storageClassName") == class && text(claim, "spec", "volumeName") == backend &&
 		text(claim, "spec", "resources", "requests", "storage") == size && text(claim, "status", "capacity", "storage") == size &&
 		providerRWOFilesystem(claim) &&
@@ -95,7 +102,6 @@ func umamiV1StorageRetained(cluster, pod, claim, pv, volume object) bool {
 		recoveredNativeObject(volume, "longhorn.io/v1beta2", "Volume", "longhorn-system") &&
 		text(volume, "metadata", "name") == backend && text(volume, "spec", "dataEngine") == "v1" &&
 		text(volume, "spec", "size") == "5368709120" && value(volume, "spec", "numberOfReplicas") == float64(3) &&
-		node != "" && text(volume, "status", "currentNodeID") == node && text(volume, "status", "state") == "attached" &&
-		text(volume, "status", "robustness") == "healthy" && text(volume, "status", "kubernetesStatus", "pvName") == backend &&
+		text(volume, "status", "kubernetesStatus", "pvName") == backend &&
 		text(volume, "status", "kubernetesStatus", "pvcName") == name && text(volume, "status", "kubernetesStatus", "namespace") == namespace
 }
