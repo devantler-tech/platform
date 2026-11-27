@@ -79,6 +79,7 @@ assert_workload_headroom() {
     workload("HelmRelease";"cert-manager";"cert-manager").spec.values as $certificates |
     workload("Deployment";"data-product-controller";"data-product-controller-contract-probe") as $probe |
     workload("PodDisruptionBudget";"data-product-controller";"data-product-controller-contract-probe") as $probeBudget |
+    workload("Deployment";"data-product-controller";"data-product-controller-publisher-review") as $publisherReview |
     $kubescape.spec.values.kubevuln.nodeSelector["kubernetes.io/hostname"] as $scannerHost |
     $kubescape.spec.values.kubevuln.affinity as $scannerAffinity |
     $exporter.spec.template.spec.nodeSelector["kubernetes.io/hostname"] as $exporterHost |
@@ -138,6 +139,16 @@ assert_workload_headroom() {
         .strategy.rollingUpdate == {maxSurge:0,maxUnavailable:1})
     end) and
     $secrets.webhook.affinity == null and $secrets.webhook.strategy == null and
+    $publisherReview.spec.replicas == 2 and
+    all($publisherReview.spec.template.spec.volumes[]?; has("persistentVolumeClaim") | not) and
+    (if $probe_enabled then
+      $publisherReview.spec.strategy == rolling_strategy and
+      $publisherReview.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms ==
+        [{matchExpressions:[{key:"kubernetes.io/hostname",operator:"NotIn",values:["prod-worker-2"]}]}] and
+      $publisherReview.spec.template.spec.containers[0].readinessProbe.httpGet.path == "/healthz"
+    else
+      $publisherReview.spec.template.spec.affinity == null
+    end) and
     $probe.spec.replicas == 2 and $probeBudget.spec.maxUnavailable == 1 and
     (if $probe_enabled then
       $probe.spec.strategy == rolling_strategy and
