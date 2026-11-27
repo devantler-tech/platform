@@ -50,6 +50,45 @@ func TestRecoveryCapacityReservesFullDatabaseSizeOnEveryReplicaDisk(t *testing.T
 	}
 }
 
+func TestRecoveryCapacityIncludesOnlyTheBoundTemporaryReserve(t *testing.T) {
+	nodes, replicas, bindings := recoveryCapacityFixture()
+	for i, primary := range bindings {
+		if primary.Selection != "temporary-v2-1" {
+			continue
+		}
+		extra := primary
+		extra.DiskName, extra.DiskUUID = "longhorn-v2-retained", "retained-disk"
+		bindings = append(bindings, extra)
+		disks := valueObject(nodes[i], "spec", "disks")
+		disks[extra.DiskName] = blockDisksFor("r-longhorn")["longhorn-v2"]
+		status := object{
+			"diskUUID": extra.DiskUUID, "diskPath": text(disks, extra.DiskName, "path"),
+			"diskType": "block", "diskDriver": "aio", "instanceManagerName": extra.InstanceManager,
+			"storageMaximum": float64(95 * recoveryGiB), "storageAvailable": float64(70 * recoveryGiB),
+			"storageScheduled": float64(0), "scheduledReplica": object{},
+			"conditions": []any{object{"type": "Ready", "status": "True"}, object{"type": "Schedulable", "status": "True"}},
+		}
+		valueObject(nodes[i], "status", "diskStatus")[extra.DiskName] = status
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
+			t.Fatalf("known reserve on the verified temporary host was rejected: %v", err)
+		}
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings[:len(bindings)-1]); err == nil {
+			t.Fatal("an enabled raw disk outside the native inventory was accepted")
+		}
+		status["storageAvailable"] = float64(35 * recoveryGiB)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
+			t.Fatal("an enabled reserve with inadequate physical capacity was accepted")
+		}
+		status["storageAvailable"] = float64(70 * recoveryGiB)
+		bindings[len(bindings)-1].NodeUID = "foreign-node"
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
+			t.Fatal("a supplemental disk with a different host identity was accepted")
+		}
+		return
+	}
+	t.Fatal("missing the reviewed temporary reserve host")
+}
+
 func TestRecoveryCapacityRejectsStaleOrIncompleteDiskAccounting(t *testing.T) {
 	for name, change := range map[string]func([]object, []object, []cnpgRecoveryDiskBinding){
 		"quoted native free bytes": func(n []object, _ []object, _ []cnpgRecoveryDiskBinding) {
