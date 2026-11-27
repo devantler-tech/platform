@@ -70,7 +70,6 @@ func claimCNPGProofResume(ctx context.Context, c client, cm object, record cnpgP
 	if !validBenchmarkOwner(run, source) || c.context != "admin@prod" || record.Run == run || !cnpgResumeCheckpointEligible(record) {
 		return nil, refused
 	}
-	target := record.Target
 	want := cnpgProofExecutor{Source: source, Run: run, JournalUID: text(cm, "metadata", "uid")}
 	if err := qualifyCNPGResumeOwners(ctx, c, record, want); err != nil {
 		return nil, err
@@ -87,10 +86,15 @@ func claimCNPGProofResume(ctx context.Context, c client, cm object, record cnpgP
 	if err := qualifyCNPGResumeOwners(ctx, c, record, want); err != nil {
 		return nil, err
 	}
-	if err := sourceCurrent(ctx, c.run, source); err != nil {
+	return claimCNPGProofExecutor(ctx, c, cm, record, want)
+}
+
+func claimCNPGProofExecutor(ctx context.Context, c client, cm object, record cnpgProofRecord, want cnpgProofExecutor) (*cnpgProofRun, error) {
+	refused := errors.New("database proof continuation is not qualified")
+	if err := sourceCurrent(ctx, c.run, want.Source); err != nil {
 		return nil, err
 	}
-	currentCM, current, err := readCNPGProof(ctx, c, target)
+	currentCM, current, err := readCNPGProof(ctx, c, record.Target)
 	if err != nil || benchmarkIdentity(currentCM) != benchmarkIdentity(cm) || text(currentCM, "metadata", "resourceVersion") != text(cm, "metadata", "resourceVersion") || !reflect.DeepEqual(current, record) {
 		return nil, refused
 	}
@@ -104,11 +108,11 @@ func claimCNPGProofResume(ctx context.Context, c client, cm object, record cnpgP
 			return nil, errors.New("database executor claim is unconfirmed; preserve its journal")
 		}
 	}
-	checkedCM, checked, err := readCNPGProof(ctx, c, target)
+	checkedCM, checked, err := readCNPGProof(ctx, c, record.Target)
 	if err != nil || text(checkedCM, "metadata", "uid") != want.JournalUID || !reflect.DeepEqual(checked, record) {
 		return nil, refused
 	}
-	return &cnpgProofRun{c: c, record: checked, journalUID: want.JournalUID, executing: want, storage: temporaryV2Activation{c: c, source: source, owner: run, pools: c.inventoryPools}}, nil
+	return &cnpgProofRun{c: c, record: checked, journalUID: want.JournalUID, executing: want, storage: temporaryV2Activation{c: c, source: want.Source, owner: want.Run, pools: c.inventoryPools}}, nil
 }
 
 func cnpgResumeCheckpointEligible(record cnpgProofRecord) bool {

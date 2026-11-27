@@ -119,7 +119,8 @@ func freshRecoveryWindow(raw []byte, now time.Time) (time.Time, time.Time, error
 	volumes, mirrors := 0, 0
 	for _, v := range pod.Volumes {
 		if v.Name == "snapshots" {
-			if v.Claim == nil || v.Claim.Name != "vault-snapshots-recovery" {
+			if v.Claim == nil || (v.Claim.Name != "vault-snapshots-recovery" &&
+				v.Claim.Name != "vault-snapshots-recovery-v2") {
 				return refuse()
 			}
 			volumes++

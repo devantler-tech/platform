@@ -13,7 +13,6 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
-readonly hetzner_dir="${root_dir}/k8s/providers/hetzner"
 readonly bootstrap_dir="${root_dir}/k8s/providers/hetzner/bootstrap"
 readonly controllers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
 readonly infrastructure_dir="${root_dir}/k8s/providers/hetzner/infrastructure"
@@ -232,6 +231,7 @@ assert_generated_policy_contract() {
   generator_output_dir="${case_dir}/generated"
   mutation_dir="${case_dir}/mutations"
   mutation_output_dir="${case_dir}/mutated"
+  mkdir "${generator_dir}" "${mutation_dir}"
   printf '%s\n' "${candidate_render}" >"${policy_bundle}"
 
   # Every policies.kyverno.io version counts, not only v1: the shipped report-prune
@@ -348,10 +348,11 @@ assert_generated_policy_contract() {
   # Ask Kyverno itself which generators apply to the real Crossplane Namespace.
   # This preserves names, selectors, expressions, any/all blocks, exclusions,
   # and future matcher semantics instead of reimplementing them in yq.
-  # shellcheck disable=SC2016 # $index is a yq variable.
-  CROSSPLANE_GENERATOR_DIR="${generator_dir}" yq e -N \
-    -s 'strenv(CROSSPLANE_GENERATOR_DIR) + "/" + ($index | tostring) + "-" + .metadata.name + ".yaml"' \
-    'select(
+  (
+    cd "${generator_dir}"
+    # shellcheck disable=SC2016 # $index is a yq variable.
+    yq e -N -s '($index | tostring) + "-" + .metadata.name + ".yaml"' \
+      'select(
       ((.apiVersion // "") | test("^kyverno\\.io/")) and
       (.kind == "ClusterPolicy" or .kind == "Policy") and
       ([.spec.rules[] |
@@ -393,6 +394,7 @@ assert_generated_policy_contract() {
             ))
         )] | length > 0)
     )' "${policy_bundle}"
+  )
 
   if ! kyverno_result="$(
     kyverno apply "${generator_dir}" \
@@ -498,14 +500,16 @@ assert_generated_policy_contract() {
   # allow-crossplane must remain byte-for-byte equivalent at the spec level.
   # Kyverno 1.19 also loads --resource inputs into its offline target store;
   # repeating the same object as --target-resource causes a duplicate panic.
-  # shellcheck disable=SC2016 # $index is a yq variable.
-  CROSSPLANE_MUTATION_DIR="${mutation_dir}" yq e -N \
-    -s 'strenv(CROSSPLANE_MUTATION_DIR) + "/" + ($index | tostring) + "-" + .metadata.name + ".yaml"' \
-    'select(
+  (
+    cd "${mutation_dir}"
+    # shellcheck disable=SC2016 # $index is a yq variable.
+    yq e -N -s '($index | tostring) + "-" + .metadata.name + ".yaml"' \
+      'select(
       ((.apiVersion // "") | test("^kyverno\\.io/")) and
       (.kind == "ClusterPolicy" or .kind == "Policy") and
       ([.spec.rules[] | select(.mutate != null)] | length > 0)
     )' "${policy_bundle}"
+  )
 
   if ! kyverno_result="$(
     kyverno apply "${mutation_dir}" \
@@ -562,13 +566,13 @@ static_crossplane_policies="$(static_crossplane_policy_inventory "${effective_po
 # the effective additive allow-set is covered too.
 assert_generated_policy_contract "${effective_policy_render}"
 
-# kubectl kustomize intentionally stops at HelmRelease CRs. KSail walks every
-# deployed Hetzner layer, renders the declared charts in-process, then applies
-# these CEL rules to every chart child. Require a chart-only Deployment marker
-# so a skipped Helm pass cannot look indistinguishable from a clean inventory.
+# kubectl kustomize stops at HelmRelease CRs. Validate from the production
+# source root so KSail sees Flux's transforms and requester identity when it
+# renders the Helm children and evaluates admission. Require a chart-only
+# Deployment marker to establish that it inspected the Crossplane chart.
 if ! helm_validation="$(
-  ksail workload validate "${hetzner_dir}" \
-    --rules "${helm_policy_rules}" 2>&1
+  cd "${root_dir}" &&
+    ksail --config ksail.prod.yaml workload validate --rules "${helm_policy_rules}" 2>&1
 )"; then
   printf '%s\n' "${helm_validation}" >&2
   fail 'Helm-rendered Crossplane resources must satisfy the egress-policy contract'

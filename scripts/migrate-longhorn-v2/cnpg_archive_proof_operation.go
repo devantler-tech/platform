@@ -91,9 +91,13 @@ func finishCNPGArchiveProof(ctx context.Context, p *cnpgProofRun) error {
 	}); err != nil {
 		return errors.New("database archive proof held at recovered V2 storage")
 	}
+	return certifyCNPGRecoveredArchive(ctx, p)
+}
+
+func certifyCNPGRecoveredArchive(ctx context.Context, p *cnpgProofRun) error {
 	data, err := p.observeRecoveredDatabaseData(ctx)
 	if err != nil {
-		return errors.New("database archive proof held at recovered physical history, filesystem or isolation")
+		return err
 	}
 	if err := p.recordVerifiedArchive(ctx, data); err != nil {
 		return err

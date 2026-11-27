@@ -1320,9 +1320,9 @@ jobs:
           tool_dir="$(mktemp -d "$RUNNER_TEMP/flux-profile.XXXXXX")"
           archive="$tool_dir/flux-operator.tar.gz"
           curl --fail --silent --show-error --location --retry 3 --retry-all-errors --retry-delay 5 --retry-max-time 120 --connect-timeout 10 --max-time 120 \
-            https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.63.1/flux-operator_0.63.1_linux_amd64.tar.gz \
+            https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.64.0/flux-operator_0.64.0_linux_amd64.tar.gz \
             --output "$archive"
-          printf '%s  %s\n' 7b714410401138cc1e7ceee34656f9b740b8347827870692d5bf5bac0cea6585 "$archive" | sha256sum --check
+          printf '%s  %s\n' 003ea10201e5151f9e8df42bf78738bf3ef14f9afaa1e357417b024d0b6cc8ae "$archive" | sha256sum --check
           tar -xzf "$archive" -C "$tool_dir" flux-operator
           FLUX_OPERATOR_BIN="$tool_dir/flux-operator" bash scripts/tests/test-controller-helm-profile.sh
 
@@ -1809,7 +1809,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.213.0"
+          KSAIL_VERSION: "7.216.43"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -3116,7 +3116,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.213.0"
+          KSAIL_VERSION: "7.216.43"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3550,7 +3550,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.213.0"
+          KSAIL_VERSION: "7.216.43"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -4625,7 +4625,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.213.0"
+          KSAIL_VERSION: "7.216.43"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

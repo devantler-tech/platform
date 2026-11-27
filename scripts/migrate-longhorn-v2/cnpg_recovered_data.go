@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -15,18 +16,27 @@ type cnpgRecoveredDataObservation struct {
 
 // Correlate physical recovery and filesystem placement with the same primary,
 // durable V2 graph and realized Cilium policy across a live network probe.
-func (p *cnpgProofRun) observeRecoveredDatabaseData(ctx context.Context) (cnpgRecoveredDataObservation, error) {
+func (p *cnpgProofRun) observeRecoveredDatabaseData(ctx context.Context) (result cnpgRecoveredDataObservation, err error) {
 	var empty cnpgRecoveredDataObservation
+	phase := "deadline"
+	defer func() {
+		if err != nil {
+			result = empty
+			err = fmt.Errorf("recovered database data observation held: phase=%s", phase)
+		}
+	}()
 	if !commandContextActive(ctx) {
 		return empty, errors.New("recovered database data observation deadline is inactive")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 9*time.Minute)
 	defer cancel()
 
+	phase = "storage-before"
 	before, err := p.observeRecoveredStorage(ctx)
 	if err != nil {
 		return empty, err
 	}
+	phase = "cilium-before"
 	datapath, err := p.observeRecoveredDataCilium(ctx, before.pod)
 	if err != nil {
 		return empty, err
@@ -40,17 +50,25 @@ func (p *cnpgProofRun) observeRecoveredDatabaseData(ctx context.Context) (cnpgRe
 		return parsePostgresState(raw)
 	}
 
+	phase = "history-before"
 	first, err := readHistory()
 	if err != nil {
 		return empty, err
 	}
+	phase = "filesystem"
 	filesystem, err := p.c.readRecoveredFilesystem(ctx, before.cluster, before.pod)
 	if err != nil {
 		return empty, err
 	}
+	phase = "network-denial"
 	if err := p.observeRecoveredNetworkDenial(ctx, before.cluster, before.pod, datapath); err != nil {
+		var stage recoveredNetworkDenialStage
+		if errors.As(err, &stage) {
+			phase += "/" + string(stage)
+		}
 		return empty, err
 	}
+	phase = "history-after"
 	last, err := readHistory()
 	if err != nil {
 		return empty, err
@@ -62,6 +80,7 @@ func (p *cnpgProofRun) observeRecoveredDatabaseData(ctx context.Context) (cnpgRe
 		return empty, errors.New("recovered PostgreSQL history changed during the filesystem observation")
 	}
 
+	phase = "storage-after"
 	after, err := p.observeRecoveredStorage(ctx)
 	if err != nil {
 		return empty, err
@@ -69,6 +88,7 @@ func (p *cnpgProofRun) observeRecoveredDatabaseData(ctx context.Context) (cnpgRe
 	if !commandContextActive(ctx) || !sameRecoveredStorageObservation(before, after) {
 		return empty, errors.New("recovered V2 storage changed during the data observation")
 	}
+	phase = "cilium-after"
 	currentDatapath, err := p.observeRecoveredDataCilium(ctx, after.pod)
 	if err != nil || !commandContextActive(ctx) || currentDatapath != datapath {
 		return empty, errors.New("realized recovery isolation changed during the data observation")

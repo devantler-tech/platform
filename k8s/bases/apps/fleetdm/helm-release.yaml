@@ -45,6 +45,28 @@ spec:
                     labelSelector:
                       matchLabels:
                         app: fleet
+          - target:
+              kind: Deployment
+              name: fleetdm-valkey
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: fleetdm-valkey
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      seccompProfile:
+                        type: RuntimeDefault
+                    initContainers:
+                      - name: fleetdm-valkey-init
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                    containers:
+                      - name: fleetdm-valkey
+                        securityContext:
+                          allowPrivilegeEscalation: false
           # The Fleet binary writes ~/.goquery/history on every invocation, but
           # the chart enables readOnlyRootFilesystem and runs as uid 3333 which
           # has no /etc/passwd entry. Mount an emptyDir at /home/fleet and run
@@ -75,6 +97,8 @@ spec:
                       runAsUser: 1001
                       runAsGroup: 1001
                       fsGroupChangePolicy: OnRootMismatch
+                      seccompProfile:
+                        type: RuntimeDefault
                     volumes:
                       - name: tmp
                         emptyDir: {}
@@ -109,6 +133,9 @@ spec:
                 backoffLimit: 20
                 template:
                   spec:
+                    securityContext:
+                      seccompProfile:
+                        type: RuntimeDefault
                     volumes:
                       - name: fleet-home
                         emptyDir: {}
@@ -148,6 +175,9 @@ spec:
                   spec:
                     template:
                       spec:
+                        securityContext:
+                          seccompProfile:
+                            type: RuntimeDefault
                         containers:
                           - name: fleet-vulnprocessing
                             env:
@@ -167,6 +197,9 @@ spec:
               spec:
                 template:
                   spec:
+                    securityContext:
+                      seccompProfile:
+                        type: RuntimeDefault
                     volumes:
                       - name: fleet-home
                         emptyDir: {}
@@ -179,6 +212,11 @@ spec:
                         image: fleetdm/fleet:v4.95.0
                         command: ["fleet", "prepare", "db"]
                         securityContext:
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop:
+                              - ALL
+                          runAsNonRoot: true
                           runAsUser: 100
                           runAsGroup: 101
                         volumeMounts:

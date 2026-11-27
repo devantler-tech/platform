@@ -25,6 +25,12 @@ type Denial struct {
 	RequireEgress                 bool
 }
 
+// DenialFailure describes an unmatched part of a native flow without including
+// addresses, resource names, or the observer output.
+type DenialFailure string
+
+func (f DenialFailure) Error() string { return string(f) }
+
 type flow struct {
 	Verdict     string   `json:"verdict"`
 	Reason      string   `json:"drop_reason_desc"`
@@ -63,6 +69,8 @@ func VerifyTCPDenial(input io.Reader, expected Denial) error {
 	bounded := &io.LimitedReader{R: input, N: 4 << 20}
 	decoder := json.NewDecoder(bounded)
 	matched := false
+	closest := -1
+	failure := DenialFailure("no-observed-flow")
 	for {
 		var document json.RawMessage
 		if err := decoder.Decode(&document); err != nil {
@@ -91,23 +99,41 @@ func VerifyTCPDenial(input io.Reader, expected Denial) error {
 		if err := json.Unmarshal(raw, &observed); err != nil {
 			return errors.New("malformed flow")
 		}
-		when, err := time.Parse(time.RFC3339Nano, observed.Time)
-		if err != nil || when.Before(expected.Since) || when.After(expected.Until) {
-			continue
-		}
-		if observed.Verdict == "DROPPED" && observed.Reason == "POLICY_DENIED" &&
-			(observed.Direction == "EGRESS" || !expected.RequireEgress && observed.Direction == "INGRESS") &&
-			observed.Source == expected.Source && observed.Destination == expected.Destination &&
-			observed.IP.Source == expected.SourceIP && observed.IP.Destination == expected.DestinationIP &&
-			observed.L4.TCP.Port == expected.Port && observed.L4.TCP.Flags.SYN && observed.Node == expected.Node {
+		rank, mismatch := compareDenial(observed, expected)
+		if mismatch == "" {
 			matched = true
+		} else if rank > closest {
+			closest, failure = rank, mismatch
 		}
 	}
 	if bounded.N <= 0 {
 		return errors.New("observer response exceeds bound")
 	}
 	if !matched {
-		return errors.New("no correlated policy denial")
+		return failure
 	}
 	return nil
+}
+
+func compareDenial(observed flow, expected Denial) (int, DenialFailure) {
+	when, err := time.Parse(time.RFC3339Nano, observed.Time)
+	switch {
+	case observed.IP.Source != expected.SourceIP || observed.IP.Destination != expected.DestinationIP ||
+		observed.L4.TCP.Port != expected.Port:
+		return 0, "connection-address"
+	case err != nil || when.Before(expected.Since) || when.After(expected.Until):
+		return 1, "connection-window"
+	case observed.Source != expected.Source || observed.Destination != expected.Destination:
+		return 2, "pod-identity"
+	case observed.Node != expected.Node:
+		return 3, "observer-node"
+	case observed.Verdict != "DROPPED" || observed.Reason != "POLICY_DENIED":
+		return 4, "policy-verdict"
+	case observed.Direction != "EGRESS" && (expected.RequireEgress || observed.Direction != "INGRESS"):
+		return 5, "traffic-direction"
+	case !observed.L4.TCP.Flags.SYN:
+		return 6, "tcp-syn"
+	default:
+		return 7, ""
+	}
 }

@@ -6,9 +6,205 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
+
+func routedStorageFixture(t *testing.T, v2 bool) []byte {
+	t.Helper()
+	const routedImage = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:c00cd848d47cab10f60301facba02387cf34832f7d560cfaf206a008ed9e0ff9"
+	raw, err := os.ReadFile("../../k8s/providers/hetzner/apps/private-mail/patches/select-mail-store.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var patch []struct{ Value map[string]any }
+	if err := yaml.Unmarshal(raw, &patch); err != nil || len(patch) != 1 {
+		t.Fatal("invalid reviewed route selector")
+	}
+	if !v2 {
+		old, err := os.ReadFile("testdata/retained-storage-selector.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		patch[0].Value["args"] = []string{string(old)}
+		patch[0].Value["volumeMounts"] = append(patch[0].Value["volumeMounts"].([]any),
+			map[string]any{"name": "data", "mountPath": "/var/lib/stalwart"})
+	}
+	return changePod(t, fixturePod(t), func(p map[string]any) {
+		spec := p["spec"].(map[string]any)
+		main := spec["containers"].([]any)[0].(map[string]any)
+		main["image"] = routedImage
+		main["volumeMounts"].([]any)[0].(map[string]any)["name"] = "serving-storage"
+		main["volumeMounts"] = append(main["volumeMounts"].([]any),
+			map[string]any{"name": "v2-data", "mountPath": "/var/lib/stalwart-v2"})
+		spec["volumes"] = append(spec["volumes"].([]any), map[string]any{
+			"name": "serving-storage", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "1Mi"},
+		}, map[string]any{"name": "v2-data", "persistentVolumeClaim": map[string]any{"claimName": "email-data-encrypted-v2"}})
+		if !v2 {
+			main["volumeMounts"] = append(main["volumeMounts"].([]any),
+				map[string]any{"name": "data", "mountPath": "/var/lib/stalwart"})
+			spec["volumes"] = append(spec["volumes"].([]any),
+				map[string]any{"name": "data", "persistentVolumeClaim": map[string]any{"claimName": "email-data-encrypted"}})
+		}
+		patch[0].Value["image"] = routedImage
+		spec["initContainers"] = []any{patch[0].Value}
+		p["status"].(map[string]any)["initContainerStatuses"] = []any{map[string]any{
+			"name": "select-mail-store", "imageID": "sha256:selector", "containerID": "containerd://selector",
+			"state": map[string]any{"terminated": map[string]any{"exitCode": 0}},
+		}}
+	})
+}
+
+func TestBindPodRecognizesOnlyReviewedFencedStorageProducer(t *testing.T) {
+	routed := routedStorageFixture(t, true)
+	if _, running, ready, err := bindPod(routed); err != nil || !running || !ready {
+		t.Fatalf("reviewed fenced route refused: running=%t ready=%t err=%v", running, ready, err)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{"foreign template", func(p map[string]any) {
+			p["spec"].(map[string]any)["volumes"].([]any)[0].(map[string]any)["configMap"].(map[string]any)["name"] = "foreign-template"
+		}},
+		{"changed selector", func(p map[string]any) {
+			p["spec"].(map[string]any)["initContainers"].([]any)[0].(map[string]any)["args"] = []string{"unexpected"}
+		}},
+		{"unfinished selector", func(p map[string]any) {
+			delete(p["status"].(map[string]any), "initContainerStatuses")
+		}},
+		{"other initializer can write the route", func(p map[string]any) {
+			spec := p["spec"].(map[string]any)
+			spec["initContainers"] = append(spec["initContainers"].([]any), map[string]any{
+				"name": "other", "volumeMounts": []any{map[string]any{"name": "serving-storage", "mountPath": "/other"}},
+			})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, _, err := bindPod(changePod(t, routed, tc.change)); err == nil {
+				t.Fatal("unqualified route producer was accepted")
+			}
+		})
+	}
+}
+
+func TestObserveStartupBindsTheOriginalRoutedMailbox(t *testing.T) {
+	for _, scenario := range []string{"original store", "foreign claim", "shadowed lock", "changed selector identity", "V2 config"} {
+		t.Run(scenario, func(t *testing.T) {
+			current := routedStorageFixture(t, false)
+			switch scenario {
+			case "foreign claim":
+				current = bytes.Replace(current, []byte(`"claimName":"email-data-encrypted"`), []byte(`"claimName":"foreign"`), 1)
+			case "shadowed lock":
+				current = changePod(t, current, func(p map[string]any) {
+					main := p["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+					main["volumeMounts"] = append(main["volumeMounts"].([]any), map[string]any{"name": "v2-data", "mountPath": "/var/lib/stalwart/data"})
+				})
+			}
+			execs := 0
+			run := func(_ context.Context, args ...string) ([]byte, error) {
+				switch {
+				case args[3] == "exec":
+					execs++
+					m := goodMeasurement()
+					m.ConfigSHA256 = hashBytes([]byte(publicConfig))
+					if scenario == "V2 config" {
+						m.ConfigSHA256 = hashBytes([]byte(strings.Replace(publicConfig, "/var/lib/stalwart/data", "/var/lib/stalwart-v2/data", 1)))
+					}
+					if args[len(args)-1] != podProbe {
+						t.Fatal("routed startup selected an unexpected command")
+					}
+					return json.Marshal(m)
+				case args[4] == "pod":
+					if scenario == "changed selector identity" && execs > 0 {
+						return bytes.Replace(current, []byte("containerd://selector"), []byte("containerd://replacement"), 1), nil
+					}
+					return current, nil
+				case args[4] == "configmap" && args[5] == "private-mail-datastore":
+					return fixtureMap(t), nil
+				}
+				t.Fatal("unexpected startup read")
+				return nil, nil
+			}
+			verdict, code := collect(t.Context(), run, func(context.Context) error { t.Fatal("unexpected wait"); return nil })
+			want, wantCode, wantExecs := "INCONCLUSIVE", 3, 0
+			switch scenario {
+			case "original store":
+				want, wantCode, wantExecs = "OBSERVED_HEALTHY_SAMPLE", 0, 1
+			case "changed selector identity":
+				wantExecs = 1
+			case "V2 config":
+				want, wantCode, wantExecs = "MOUNTED_CONFIGURATION_DIFFERS", 1, 1
+			}
+			if verdict != want || code != wantCode || execs != wantExecs {
+				t.Fatalf("routed startup verdict=%s code=%d execs=%d, want %s/%d/%d", verdict, code, execs, want, wantCode, wantExecs)
+			}
+		})
+	}
+}
+
+func TestObserveStartupBindsTheVerifiedV2Mailbox(t *testing.T) {
+	for _, tc := range []struct {
+		name, mountedPath, want string
+		change                  func([]byte) []byte
+		wantCode, wantExecs     int
+	}{
+		{name: "healthy", mountedPath: "/var/lib/stalwart-v2/data", want: "OBSERVED_HEALTHY_SAMPLE", wantExecs: 1},
+		{name: "wrong config", mountedPath: "/var/lib/stalwart/data", want: "MOUNTED_CONFIGURATION_DIFFERS", wantCode: 1, wantExecs: 1},
+		{name: "foreign claim", want: "INCONCLUSIVE", wantCode: 3, change: func(p []byte) []byte {
+			return bytes.Replace(p, []byte(`"email-data-encrypted-v2"`), []byte(`"foreign"`), 1)
+		}},
+		{name: "original claim still declared", want: "INCONCLUSIVE", wantCode: 3, change: func(p []byte) []byte {
+			return changePod(t, p, func(p map[string]any) {
+				spec := p["spec"].(map[string]any)
+				spec["volumes"] = append(spec["volumes"].([]any), map[string]any{
+					"name": "data", "persistentVolumeClaim": map[string]any{"claimName": "email-data-encrypted"},
+				})
+			})
+		}},
+		{name: "shadowed lock", want: "INCONCLUSIVE", wantCode: 3, change: func(p []byte) []byte {
+			return changePod(t, p, func(p map[string]any) {
+				main := p["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+				main["volumeMounts"] = append(main["volumeMounts"].([]any), map[string]any{
+					"name": "datastore", "mountPath": "/var/lib/stalwart-v2/data",
+				})
+			})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := routedStorageFixture(t, true)
+			if tc.change != nil {
+				current = tc.change(current)
+			}
+			execs := 0
+			run := func(_ context.Context, args ...string) ([]byte, error) {
+				switch {
+				case args[3] == "exec":
+					execs++
+					m := goodMeasurement()
+					m.ConfigSHA256 = hashBytes([]byte(strings.Replace(publicConfig, "/var/lib/stalwart/data", tc.mountedPath, 1)))
+					if got := args[len(args)-1]; got != strings.ReplaceAll(podProbe, "/var/lib/stalwart/data", "/var/lib/stalwart-v2/data") {
+						t.Fatal("the V2 probe must read only the approved storage path")
+					}
+					return json.Marshal(m)
+				case args[4] == "pod":
+					return current, nil
+				case args[4] == "configmap" && args[5] == "private-mail-datastore":
+					return fixtureMap(t), nil
+				}
+				t.Fatal("unexpected startup read")
+				return nil, nil
+			}
+			verdict, code := collect(t.Context(), run, func(context.Context) error { t.Fatal("unexpected wait"); return nil })
+			if verdict != tc.want || code != tc.wantCode || execs != tc.wantExecs {
+				t.Fatalf("startup verdict=%s code=%d execs=%d, want %s/%d/%d", verdict, code, execs, tc.want, tc.wantCode, tc.wantExecs)
+			}
+		})
+	}
+}
 
 // goodMeasurement supplies one complete synthetic healthy observation.
 func goodMeasurement() measurement {

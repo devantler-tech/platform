@@ -3,10 +3,45 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 )
+
+func TestRecoveredPortProbeDiscardsInheritedConnectionSettings(t *testing.T) {
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "pg_isready")
+	const fixture = `#!/bin/sh
+if [ "${PGHOSTADDR+x}${PGSERVICE+x}${PGPORT+x}" != "" ] ||
+   [ "$*" != "-q -h 192.0.2.23 -p 5432 -t 3" ]; then
+  exit 2
+fi
+`
+	if err := os.WriteFile(executable, []byte(fixture), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := client{context: "synthetic", run: func(ctx context.Context, _ []byte, program string, args ...string) ([]byte, error) {
+		start := slices.Index(args, "--") + 1
+		script := slices.Index(args, cnpgRecoveryPortCheck)
+		if program != "kubectl" || start == 0 || script <= start {
+			t.Fatal("port probe did not use the fixed client command")
+		}
+		command := slices.Clone(args[start:])
+		command[script-start] = strings.Replace(command[script-start], "/usr/lib/postgresql/18/bin/pg_isready", strconv.Quote(executable), 1)
+		process := exec.CommandContext(ctx, command[0], command[1:]...)
+		process.Env = []string{"PATH=" + dir, "PGHOSTADDR=192.0.2.99", "PGSERVICE=other-server", "PGPORT=5433"}
+		return process.Output()
+	}}
+	_, pods, _, _ := cnpgFixture("longhorn-wffc", "longhorn-wffc", "longhorn-wffc")
+	result, err := c.probeRecoveryPostgresPort(t.Context(), pods[1], "192.0.2.23")
+	if err != nil || string(result) != "POSTGRES_PROBE=0\n" {
+		t.Fatalf("connection environment could change the destination: %q, %v", result, err)
+	}
+}
 
 func recoveredDataCiliumFixture(t *testing.T, p *cnpgProofRun, pod object, scenario string) {
 	t.Helper()
@@ -68,7 +103,8 @@ func recoveredDataCiliumFixture(t *testing.T, p *cnpgProofRun, pod object, scena
 
 func TestRecoveredDataBracketsTheFilesystemWithHistoryAndThreeV2Copies(t *testing.T) {
 	for _, scenario := range []string{"original", "postmaster restarted", "different lineage", "copy replaced", "wrong filesystem",
-		"policy changed during data check", "database port reachable", "missing egress denial", "source address changed"} {
+		"policy changed during data check", "database port reachable", "missing egress denial", "source address changed",
+		"reachable control", "control address changed", "contradictory Hubble"} {
 		t.Run(scenario, func(t *testing.T) {
 			p, reads := recoveredStorageObservationFixture(t, "")
 			pod := newRecoveredStorageFixture(t).pod
@@ -83,13 +119,14 @@ func TestRecoveredDataBracketsTheFilesystemWithHistoryAndThreeV2Copies(t *testin
 			}
 			const destinationIP = "10.201.2.210"
 			valueObject(peers[0], "status")["podIP"] = destinationIP
+			valueObject(peers[1], "status")["podIP"] = "10.201.2.212"
 			barrier := p.record.Plan.Barrier
 			timeline, err := strconv.Atoi(barrier.Timeline)
 			if err != nil {
 				t.Fatal(err)
 			}
 			postmaster := "2026-11-22 22:14:00.000000+00"
-			var historyReads, probes, observers int
+			var historyReads, probes, observers, controls int
 			delegate := p.c.run
 			p.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
 				if program == "kubectl" && args[2] == "get" && slices.Contains(args, "--namespace="+archive.Namespace) {
@@ -103,12 +140,31 @@ func TestRecoveredDataBracketsTheFilesystemWithHistoryAndThreeV2Copies(t *testin
 						if observers > 0 && scenario == "source address changed" {
 							valueObject(peers[0], "status")["podIP"] = "10.201.2.211"
 						}
+						if controls > 0 && scenario == "control address changed" {
+							valueObject(peers[1], "status")["podIP"] = "10.201.2.213"
+						}
 						return json.Marshal(object{"items": peers})
+					case "pod":
+						if args[4] != text(peers[1], "metadata", "name") {
+							t.Fatal("control read selected a different standby")
+						}
+						return json.Marshal(peers[1])
 					}
 				}
 				if program == "kubectl" && args[2] == "exec" && !slices.Contains(args, "cilium-dbg") {
 					switch {
 					case slices.Contains(args, cnpgRecoveryPortCheck):
+						if observers > 0 {
+							controls++
+							if args[3] != text(peers[1], "metadata", "name") || !slices.Contains(args, "--namespace="+archive.Namespace) ||
+								args[len(args)-1] != destinationIP || probes != 1 {
+								t.Fatal("positive control did not use the healthy source standby and the same primary")
+							}
+							if scenario == "missing egress denial" {
+								return []byte("POSTGRES_PROBE=2\n"), nil
+							}
+							return []byte("POSTGRES_PROBE=0\n"), nil
+						}
 						probes++
 						if args[3] != "restore-1" || !slices.Contains(args, "--namespace="+benchmarkIdentity(pod).Namespace) ||
 							args[len(args)-1] != destinationIP {
@@ -125,7 +181,7 @@ func TestRecoveredDataBracketsTheFilesystemWithHistoryAndThreeV2Copies(t *testin
 							!slices.Contains(args, "unix:///var/run/cilium/hubble.sock") || !slices.Contains(args, "jsonpb") {
 							t.Fatal("the proof did not use the bounded native observer after the probe")
 						}
-						if scenario == "missing egress denial" {
+						if slices.Contains([]string{"missing egress denial", "reachable control", "control address changed"}, scenario) {
 							return []byte{}, nil
 						}
 						event := object{"verdict": "DROPPED", "drop_reason_desc": "POLICY_DENIED", "traffic_direction": "EGRESS",
@@ -134,6 +190,9 @@ func TestRecoveredDataBracketsTheFilesystemWithHistoryAndThreeV2Copies(t *testin
 							"destination": object{"namespace": archive.Namespace, "pod_name": text(peers[0], "metadata", "name")},
 							"IP":          object{"source": text(pod, "status", "podIP"), "destination": destinationIP},
 							"l4":          object{"TCP": object{"destination_port": 5432, "flags": object{"SYN": true}}}}
+						if scenario == "contradictory Hubble" {
+							event["traffic_direction"] = "INGRESS"
+						}
 						return json.Marshal(object{"flow": event})
 					case slices.Contains(args, "--command="+postgresRecoverySQL):
 						historyReads++
@@ -174,17 +233,34 @@ func TestRecoveredDataBracketsTheFilesystemWithHistoryAndThreeV2Copies(t *testin
 				return raw, err
 			}
 			got, err := p.observeRecoveredDatabaseData(t.Context())
-			if scenario == "original" {
+			if scenario == "original" || scenario == "reachable control" {
+				wantControls := 0
+				if scenario == "reachable control" {
+					wantControls = 1
+				}
 				if err != nil || historyReads != 2 || probes != 1 || observers != 1 || reads["replicas.longhorn.io"] != 4 || len(got.storage.Replicas) != 3 ||
-					got.filesystem.Entries != 4 || got.history.PostmasterStart != postmaster ||
+					controls != wantControls || got.filesystem.Entries != 4 || got.history.PostmasterStart != postmaster ||
 					got.datapath.PolicyRevision != 817 || got.datapath.Endpoint.PodUID != got.storage.Pod.UID {
 					t.Fatalf("native data observation did not bind: %+v %v", got, err)
 				}
 			} else if err == nil || len(got.storage.Replicas) > 0 || got.history.SystemID != "" || got.filesystem.Device != 0 {
 				t.Fatalf("unstable data observation escaped: %+v %v", got, err)
 			}
-			if scenario == "policy changed during data check" && (historyReads != 2 || err == nil || err.Error() != "realized recovery isolation changed during the data observation") {
+			if scenario == "policy changed during data check" && (historyReads != 2 || err == nil ||
+				err.Error() != "recovered database data observation held: phase=cilium-after") {
 				t.Fatalf("realized policy drift was not detected across the completed data check: %v", err)
+			}
+			denialStage := map[string]string{
+				"database port reachable": "probe-reachable",
+				"missing egress denial":   "control-unreachable",
+				"source address changed":  "source-after",
+				"control address changed": "control-after",
+			}[scenario]
+			if denialStage != "" && (err == nil || err.Error() != "recovered database data observation held: phase=network-denial/"+denialStage) {
+				t.Fatalf("unexpected network evidence failure: %v", err)
+			}
+			if scenario == "contradictory Hubble" && (controls != 0 || err == nil) {
+				t.Fatalf("a contradictory Hubble response selected the fallback: %v", err)
 			}
 			if p.record.RestoreVerified || p.record.Cleaned || p.record.Phase != "cluster-created" {
 				t.Fatal("read-only evidence changed recovery acceptance")

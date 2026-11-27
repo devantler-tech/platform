@@ -52,7 +52,7 @@ func TestFreshSnapshotRequiresCompletedReplacementJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, test := range []string{"complete", "old-volume", "incomplete", "old-success", "missing-time", "automatic-token"} {
+	for _, test := range []string{"complete", "complete-v2", "old-volume", "foreign-v2", "incomplete", "old-success", "missing-time", "automatic-token"} {
 		t.Run(test, func(t *testing.T) {
 			var v map[string]any
 			if json.Unmarshal(b, &v) != nil {
@@ -60,9 +60,14 @@ func TestFreshSnapshotRequiresCompletedReplacementJob(t *testing.T) {
 			}
 			status := v["status"].(map[string]any)
 			pod := v["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+			claim := pod["volumes"].([]any)[0].(map[string]any)["persistentVolumeClaim"].(map[string]any)
 			switch test {
+			case "complete-v2":
+				claim["claimName"] = "vault-snapshots-recovery-v2"
 			case "old-volume":
-				pod["volumes"].([]any)[0].(map[string]any)["persistentVolumeClaim"].(map[string]any)["claimName"] = "vault-snapshots"
+				claim["claimName"] = "vault-snapshots"
+			case "foreign-v2":
+				claim["claimName"] = "vault-snapshots-foreign-v2"
 			case "incomplete":
 				delete(status, "conditions")
 			case "old-success":
@@ -78,7 +83,7 @@ func TestFreshSnapshotRequiresCompletedReplacementJob(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, _, err = freshRecoveryWindow(encoded, now)
-			if (err == nil) != (test == "complete") {
+			if (err == nil) != (test == "complete" || test == "complete-v2") {
 				t.Fatal("incorrect fresh-job verdict")
 			}
 		})

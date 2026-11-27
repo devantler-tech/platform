@@ -26,7 +26,7 @@ patches:
   - path: patches/disable-admin-credential-seeding.yaml
   - path: patches/disable-maintainer-credential-seeding.yaml
   - path: patches/disable-agent-credential-seeding.yaml
-  # Both encrypted claims use the same serving route across subsequent rollbacks.
+  # Serve from the verified encrypted V2 claim while retaining the original PVC.
   - path: patches/serve-from-encrypted-storage.yaml
   # The server now consumes the encrypted claim, so deployment must wait for it
   # to bind instead of treating it as prepared storage.

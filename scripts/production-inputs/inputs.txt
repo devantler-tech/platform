@@ -74,6 +74,7 @@ scripts/report-cilium-rollout-gate-suppression.sh
 scripts/retire-arc-pool.sh
 scripts/run-ksail-prod.sh
 scripts/select-velero-rebuild-backups.jq
+scripts/tests/kyverno-api-responses.yaml
 scripts/tests/production-authorization-rules.yaml
 scripts/tests/test-flux-force-safety.sh
 scripts/tests/test-pvc-prune-safety.sh
