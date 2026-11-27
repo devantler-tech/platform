@@ -3,7 +3,10 @@ set -euo pipefail
 export LC_ALL=C
 umask 077
 
-fail() { printf '%s\n' 'OPENBAO_OFFLINE_COPY=UNVERIFIED' >&2; exit 1; }
+fail() {
+  printf '%s\n' 'OPENBAO_OFFLINE_COPY=UNVERIFIED' >&2
+  exit 1
+}
 
 owns_mount() {
   local path=$1 access=$2

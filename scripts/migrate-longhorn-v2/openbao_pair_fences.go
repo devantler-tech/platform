@@ -122,8 +122,8 @@ func probeOpenBaoFence(ctx context.Context, c *http.Client, endpoint *url.URL, i
 		}
 	}
 	if index == 0 {
-		copy := openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node)
-		code, _, err := benchmarkAdmissionRequest(ctx, c, endpoint, api+"pods", http.MethodPost, "application/json", copy)
+		copyPod := openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node)
+		code, _, err := benchmarkAdmissionRequest(ctx, c, endpoint, api+"pods", http.MethodPost, "application/json", copyPod)
 		if err != nil || code != http.StatusCreated {
 			return fmt.Errorf("the serving API did not admit the isolated OpenBao copy in dry-run (HTTP %d)", code)
 		}

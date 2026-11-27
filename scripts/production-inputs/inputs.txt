@@ -47,8 +47,11 @@ internal/namespaceinventory/
 internal/strictjson/
 
 # Programs the deploy runs.
+scripts/capture-openbao-replacement/
 scripts/gateway-receiver-binding/
 scripts/guard-arc-recovery/
+scripts/judge-openbao-health/
+scripts/judge-openbao-quorum/
 scripts/migrate-longhorn-v2/
 scripts/production-inputs/
 scripts/recover-private-mail-probes/
@@ -67,6 +70,7 @@ scripts/guard-cilium-homogeneous-device-rollout.sh
 scripts/guard-coroot-baseline-context.sh
 scripts/guard-github-bootstrap-isolation.sh
 scripts/guard-longhorn-ui-baseline-context.sh
+scripts/judge-openbao-replacement.lib.sh
 scripts/reassert-flux-root-verify.sh
 scripts/reconcile-flux-workloads.sh
 scripts/register-talos-factory-schematic.sh
