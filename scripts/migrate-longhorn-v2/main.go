@@ -61,6 +61,8 @@ func main() {
 		authorization = authorizeHostReboot(os.Getenv, target)
 	case "observe-database":
 		authorization = authorizeCNPGObservation(os.Getenv)
+	case observeCorootKeeperOperation:
+		authorization = authorizeCorootKeeperObservation(os.Getenv)
 	case cnpgArchiveProofOperation:
 		authorization = authorizeCNPGArchiveProof(os.Getenv)
 	case umamiArchiveIsolationResumeOperation:
@@ -106,6 +108,14 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == observeCorootKeeperOperation {
+		if err := observeCorootKeeperQuorum(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
+			fmt.Fprintln(os.Stderr, "Coroot Keeper observation held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("COROOT_KEEPER_QUORUM=VERIFIED members=3 syncedFollowers=2 disruptionBudget=VERIFIED writes=0")
+		return
+	}
 	if operation == prepareActualBudgetScratch || operation == retireActualBudgetScratch {
 		confirmation, err := authorizeActualBudgetScratch(os.Getenv)
 		if err == nil {

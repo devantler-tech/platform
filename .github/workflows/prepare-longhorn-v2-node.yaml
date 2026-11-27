@@ -45,6 +45,7 @@ name: Prepare Longhorn V2 Migration
             inspect-host-memory,
             reboot-host-for-hugepages,
             observe-database,
+            observe-coroot-v2-keeper,
             prove-database-v2-archive,
             resume-umami-archive-isolation,
             resume-umami-archive-data,
@@ -182,6 +183,9 @@ jobs:
               ;;
             observe-database)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db|customer-identity-db|business-site-portal-db|portal-preview-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
+              ;;
+            observe-coroot-v2-keeper)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == observe-coroot-v2-keeper ]]
               ;;
             prove-database-v2-archive)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|customer-identity-db|business-site-portal-db)$ &&
