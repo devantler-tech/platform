@@ -21,11 +21,22 @@ type umamiV2Promotion struct {
 	OriginalVolume       benchmarkResource
 	Standbys             map[string]cnpgRecoveredStorage
 	PreviousState        postgresState
+	Generation           uint64
+	PreviousTargetSince  string
 }
 
 type umamiV2PromotionRecord struct {
 	Source, Run, Target string
 	Witness             umamiV2Promotion
+	RetrySource         string `json:",omitempty"`
+	RetryRun            string `json:",omitempty"`
+}
+
+func (r umamiV2PromotionRecord) executor() (run, source string) {
+	if r.RetryRun != "" {
+		return r.RetryRun, r.RetrySource
+	}
+	return r.Run, r.Source
 }
 
 func readUmamiRetainedV1Storage(ctx context.Context, c client, cluster, pod object, name string) (benchmarkResource, benchmarkResource, benchmarkResource, error) {
@@ -50,8 +61,12 @@ func readUmamiRetainedV1Storage(ctx context.Context, c client, cluster, pod obje
 func observeUmamiV2Promotion(ctx context.Context, c client, observation cnpgObservation, previous, target string, disks []cnpgRecoveryDiskBinding) (umamiV2Promotion, error) {
 	refused := errors.New("the original primary and three V2 standbys are unverified")
 	cluster := observation.Cluster
+	generation, ok := nativeObservationUint(value(cluster, "metadata", "generation"))
+	targetSince := text(cluster, "status", "targetPrimaryTimestamp")
+	_, stampErr := time.Parse(time.RFC3339Nano, targetSince)
 	if !umamiV2Transition(cluster) || len(observation.Pods) != 4 || len(observation.States) != 4 ||
-		text(cluster, "status", "currentPrimary") != previous || text(cluster, "status", "targetPrimary") != previous {
+		text(cluster, "status", "currentPrimary") != previous || text(cluster, "status", "targetPrimary") != previous ||
+		!ok || generation == 0 || stampErr != nil {
 		return umamiV2Promotion{}, refused
 	}
 	pods, err := indexed(observation.Pods)
@@ -67,6 +82,7 @@ func observeUmamiV2Promotion(ctx context.Context, c client, observation cnpgObse
 		Database: benchmarkIdentity(cluster), Previous: benchmarkIdentity(primary),
 		OriginalClaim: claim, OldPV: pv, OriginalVolume: volume,
 		Standbys: map[string]cnpgRecoveredStorage{}, PreviousState: observation.States[previous],
+		Generation: generation, PreviousTargetSince: targetSince,
 	}
 	for name := range pods {
 		if name == previous {
@@ -82,6 +98,18 @@ func observeUmamiV2Promotion(ctx context.Context, c client, observation cnpgObse
 		return umamiV2Promotion{}, refused
 	}
 	return witness, nil
+}
+
+func sameUmamiPromotionWitness(first, latest umamiV2Promotion) bool {
+	oldFlush, oldErr := walPosition(first.PreviousState.FlushLSN)
+	newFlush, newErr := walPosition(latest.PreviousState.FlushLSN)
+	return oldErr == nil && newErr == nil && newFlush >= oldFlush &&
+		first.PreviousState.SystemID == latest.PreviousState.SystemID && first.PreviousState.Timeline == latest.PreviousState.Timeline &&
+		first.PreviousState.PostmasterStart == latest.PreviousState.PostmasterStart && first.PreviousState.PostmasterStart != "" &&
+		first.Database == latest.Database && first.Previous == latest.Previous &&
+		first.OriginalClaim == latest.OriginalClaim && first.OldPV == latest.OldPV && first.OriginalVolume == latest.OriginalVolume &&
+		first.Generation == latest.Generation && first.PreviousTargetSince == latest.PreviousTargetSince &&
+		reflect.DeepEqual(first.Standbys, latest.Standbys)
 }
 
 func verifyUmamiPromotionHistory(before postgresState, after cnpgObservation, target string) error {
@@ -110,17 +138,40 @@ func verifyUmamiPromotionHistory(before postgresState, after cnpgObservation, ta
 	return nil
 }
 
-func requestUmamiV2Promotion(ctx context.Context, c client, source string, cluster object, previous, target string) error {
+func promoteRecordedUmamiWriter(ctx context.Context, c client, source string, journal object, record umamiV2PromotionRecord, disks []cnpgRecoveryDiskBinding) error {
+	witness, target := record.Witness, record.Target
+	current, err := observeCNPGMigration(ctx, c, "umami-db", source)
+	if err != nil || !umamiOriginalWriterCurrent(current.Cluster, witness) {
+		return errors.New("the witnessed Umami cluster changed before the promotion request")
+	}
+	observed := witness
+	observed.Previous = benchmarkIdentity(cnpgRecoveryPodByName(current.Pods, witness.Previous.Name))
+	observed.PreviousState = current.States[witness.Previous.Name]
+	if observed.PreviousState.InRecovery || !sameUmamiPromotionWitness(witness, observed) {
+		return errors.New("the original Umami writer changed before promotion")
+	}
+	record.Witness = observed
+	journal, err = writeUmamiPromotionIntent(ctx, c, source, journal, record)
+	if err != nil {
+		return err
+	}
+	fresh, err := c.readCNPGObservation(ctx, cnpgSource{Namespace: "umami", Name: "umami-db"})
+	if err != nil || !umamiOriginalWriterCurrent(fresh.Cluster, witness) {
+		return errors.New("the witnessed Umami members changed before promotion")
+	}
+	fresh.States = current.States
+	targetStorage, err := readUmamiV2Standby(ctx, c, fresh, target, disks)
+	if err != nil || !reflect.DeepEqual(targetStorage, witness.Standbys[target]) {
+		return errors.New("the selected Umami writer's V2 storage changed before promotion")
+	}
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
-	current, err := c.get(ctx, "clusters.postgresql.cnpg.io", "umami", "umami-db", false)
-	if err != nil || benchmarkIdentity(current) != benchmarkIdentity(cluster) || !umamiV2Transition(current) ||
-		value(current, "metadata", "generation") != value(cluster, "metadata", "generation") ||
-		text(current, "status", "targetPrimaryTimestamp") != text(cluster, "status", "targetPrimaryTimestamp") {
+	cluster, err := c.get(ctx, "clusters.postgresql.cnpg.io", "umami", "umami-db", false)
+	if err != nil || !umamiOriginalWriterCurrent(cluster, witness) {
 		return errors.New("the witnessed Umami cluster changed before the promotion request")
 	}
-	updates, err := umamiV2SwitchoverPatch(current, previous, target, time.Now())
+	updates, err := umamiV2SwitchoverPatch(cluster, witness.Previous.Name, target, time.Now())
 	if err != nil {
 		return err
 	}
@@ -131,11 +182,18 @@ func requestUmamiV2Promotion(ctx context.Context, c client, source string, clust
 	output, err := c.kubectl(ctx, nil, "-n", "umami", "patch", "clusters.postgresql.cnpg.io", "umami-db",
 		"--subresource=status", "--type=json", "--patch="+string(body), "-o", "json")
 	var confirmation object
-	if err != nil || json.Unmarshal(output, &confirmation) != nil || benchmarkIdentity(confirmation) != benchmarkIdentity(current) ||
+	if err != nil || json.Unmarshal(output, &confirmation) != nil || benchmarkIdentity(confirmation) != benchmarkIdentity(cluster) ||
 		text(confirmation, "status", "targetPrimary") != target {
 		return errors.New("switchover acknowledgement is unverified, preserve its journal")
 	}
-	return nil
+	return verifyAndRecordUmamiV2Promotion(ctx, c, source, target, journal, observed, disks)
+}
+
+func umamiOriginalWriterCurrent(cluster object, witness umamiV2Promotion) bool {
+	generation, ok := nativeObservationUint(value(cluster, "metadata", "generation"))
+	return ok && generation == witness.Generation && benchmarkIdentity(cluster) == witness.Database && umamiV2Transition(cluster) &&
+		text(cluster, "status", "currentPrimary") == witness.Previous.Name && text(cluster, "status", "targetPrimary") == witness.Previous.Name &&
+		text(cluster, "status", "targetPrimaryTimestamp") == witness.PreviousTargetSince
 }
 
 func waitForUmamiV2Primary(ctx context.Context, c client, source, target string, witness umamiV2Promotion, disks []cnpgRecoveryDiskBinding) error {
@@ -198,6 +256,9 @@ func waitForUmamiV2Primary(ctx context.Context, c client, source, target string,
 		if err != nil || !reflect.DeepEqual(copies, newPrimary.Replicas) {
 			return errors.New("the new primary has not retained the three witnessed V2 replicas")
 		}
+		if err := verifyUmamiTimeline(ctx, c, current.Cluster, pods[target], witness.PreviousState, current.States[target]); err != nil {
+			return err
+		}
 		return verifyUmamiWriterService(ctx, c, current.Cluster, pods[target])
 	})
 }
@@ -224,7 +285,7 @@ func runUmamiV2Switchover(ctx context.Context, c client, source, run, previous, 
 		return err
 	}
 	if prior != nil {
-		return resumeUmamiV2Promotion(ctx, c, source, run, previous, target, before.Cluster, prior, storage.Disks)
+		return resumeUmamiV2Promotion(ctx, c, source, run, previous, target, before, prior, storage.Disks)
 	}
 	first, err := observeUmamiV2Promotion(ctx, c, before, previous, target, storage.Disks)
 	if err != nil {
@@ -238,12 +299,11 @@ func runUmamiV2Switchover(ctx context.Context, c client, source, run, previous, 
 		return err
 	}
 	retained, err := observeUmamiV2Promotion(ctx, c, latest, previous, target, storage.Disks)
-	if err != nil || first.Database != retained.Database || first.Previous != retained.Previous ||
-		first.OriginalClaim != retained.OriginalClaim || first.OldPV != retained.OldPV ||
-		first.OriginalVolume != retained.OriginalVolume || !reflect.DeepEqual(first.Standbys, retained.Standbys) {
+	if err != nil || !sameUmamiPromotionWitness(first, retained) {
 		return errors.New("the witnessed source or standby storage changed before promotion")
 	}
-	intent, err := json.Marshal(umamiV2PromotionRecord{Source: source, Run: run, Target: target, Witness: retained})
+	record := umamiV2PromotionRecord{Source: source, Run: run, Target: target, Witness: retained}
+	intent, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}
@@ -254,8 +314,5 @@ func runUmamiV2Switchover(ctx context.Context, c client, source, run, previous, 
 	if err != nil || text(journal, "data", "record") != string(intent) || text(journal, "data", "verified") != "" {
 		return errors.New("the Umami switchover intent is unconfirmed")
 	}
-	if err = requestUmamiV2Promotion(ctx, c, source, latest.Cluster, previous, target); err != nil {
-		return err
-	}
-	return verifyAndRecordUmamiV2Promotion(ctx, c, source, target, journal, retained, storage.Disks)
+	return promoteRecordedUmamiWriter(ctx, c, source, journal, record, storage.Disks)
 }

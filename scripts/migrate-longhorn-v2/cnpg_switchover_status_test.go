@@ -14,8 +14,9 @@ func TestUmamiSwitchoverReadbackBindsTheRecordedPromotion(t *testing.T) {
 			record := umamiV2PromotionRecord{
 				Source: "45f385ab8aaff40c04aaa2b6c0bba23ac55706d4", Run: "42", Target: target,
 				Witness: umamiV2Promotion{
-					Database: benchmarkResource{Name: "umami-db", Namespace: "umami"},
-					Previous: benchmarkResource{Name: old, Namespace: "umami"},
+					Database:   benchmarkResource{Name: "umami-db", Namespace: "umami"},
+					Previous:   benchmarkResource{Name: old, Namespace: "umami"},
+					Generation: 17, PreviousTargetSince: "2026-11-27T06:00:00Z",
 					Standbys: map[string]cnpgRecoveredStorage{
 						target:       {Pod: benchmarkResource{Name: target, Namespace: "umami"}},
 						"umami-db-2": {Pod: benchmarkResource{Name: "umami-db-2", Namespace: "umami"}},
@@ -52,16 +53,56 @@ func TestUmamiSwitchoverReadbackBindsTheRecordedPromotion(t *testing.T) {
 	}
 }
 
+func TestUmamiSwitchoverRetryRequiresAnUntouchedWriter(t *testing.T) {
+	for _, fault := range []string{"", "new writer requested", "controller rolled back", "new spec", "old writer restarted", "lost WAL"} {
+		t.Run(fault, func(t *testing.T) {
+			obs := umamiV2TransitionObservation(t)
+			status := valueObject(obs.Cluster, "status")
+			const since = "2026-11-27T06:00:00Z"
+			status["targetPrimaryTimestamp"] = since
+			old := text(obs.Cluster, "status", "currentPrimary")
+			generation, ok := nativeObservationUint(value(obs.Cluster, "metadata", "generation"))
+			if !ok || generation == 0 {
+				t.Fatal("invalid observation fixture generation")
+			}
+			witness := umamiV2Promotion{Database: benchmarkIdentity(obs.Cluster), Generation: generation, PreviousTargetSince: since,
+				Previous: benchmarkResource{Name: old}, PreviousState: postgresState{
+					SystemID: "7560127483245078101", Timeline: "7", FlushLSN: "0/400", PostmasterStart: "2026-11-27 06:00:00+00",
+				}}
+			latest := witness
+			latest.PreviousState.FlushLSN = "0/480"
+			switch fault {
+			case "new writer requested":
+				status["targetPrimary"] = "umami-db-4"
+			case "controller rolled back":
+				status["targetPrimaryTimestamp"] = "2026-11-27T06:00:01Z"
+			case "new spec":
+				valueObject(obs.Cluster, "metadata")["generation"] = float64(generation + 1)
+			case "old writer restarted":
+				latest.PreviousState.PostmasterStart = "2026-11-27 06:00:01+00"
+			case "lost WAL":
+				latest.PreviousState.FlushLSN = "0/3F0"
+			}
+			allowed := umamiOriginalWriterCurrent(obs.Cluster, witness) && sameUmamiPromotionWitness(witness, latest)
+			if allowed != (fault == "") {
+				t.Fatal("retry did not protect the original control state and WAL barrier")
+			}
+		})
+	}
+}
+
 func TestUmamiSwitchoverWriterRouteRejectsTheOldWriter(t *testing.T) {
 	const serviceUID = "c6339ec2-6239-4e3f-85fd-fa778d6d761d"
 	const writerUID = "4d48bfc9-7352-4fc4-a982-086078e144c9"
 	const writerName = "umami-db-12"
-	for _, fault := range []string{"", "stale writer", "stale slice owner", "draining endpoint", "missing route", "both writers"} {
+	for _, fault := range []string{"", "stale writer", "stale slice owner", "draining endpoint", "missing route", "both writers", "wrong address", "wrong port"} {
 		t.Run(fault, func(t *testing.T) {
 			controller := object{"apiVersion": "v1", "kind": "Service", "name": "umami-db-rw", "uid": serviceUID, "controller": true}
 			target := object{"kind": "Pod", "name": writerName, "uid": writerUID, "namespace": "umami"}
 			state := object{"ready": true, "serving": true, "terminating": false}
-			endpoints := []any{object{"conditions": state, "targetRef": target}}
+			addr := []any{"10.0.0.41"}
+			slicePort := object{"name": "postgres", "protocol": "TCP", "port": float64(5432)}
+			endpoints := []any{object{"conditions": state, "targetRef": target, "addresses": addr}}
 			switch fault {
 			case "stale writer":
 				target["uid"] = "1aa817ea-b284-4aa9-a9b8-cbcadf4c9c2e"
@@ -74,12 +115,18 @@ func TestUmamiSwitchoverWriterRouteRejectsTheOldWriter(t *testing.T) {
 			case "both writers":
 				endpoints = append(endpoints, object{"conditions": state, "targetRef": object{
 					"kind": "Pod", "namespace": "umami", "name": "umami-db-11", "uid": "1aa817ea-b284-4aa9-a9b8-cbcadf4c9c2e"}})
+			case "wrong address":
+				addr[0] = "10.0.0.42"
+			case "wrong port":
+				slicePort["port"] = float64(5433)
 			}
 			slice := object{"apiVersion": "discovery.k8s.io/v1", "kind": "EndpointSlice", "metadata": object{
 				"name": "umami-db-rw-q8kvt", "namespace": "umami", "uid": "5010f302-ded4-48cb-8ce3-2dcfdf37055b", "resourceVersion": "17",
-				"labels": object{"kubernetes.io/service-name": "umami-db-rw"}, "ownerReferences": []any{controller}}, "endpoints": endpoints}
-			service := object{"metadata": object{"uid": serviceUID}}
-			writer := object{"metadata": object{"name": writerName, "uid": writerUID}}
+				"labels": object{"kubernetes.io/service-name": "umami-db-rw"}, "ownerReferences": []any{controller}}, "endpoints": endpoints,
+				"addressType": "IPv4", "ports": []any{slicePort}}
+			service := object{"metadata": object{"uid": serviceUID}, "spec": object{"ipFamilies": []any{"IPv4"},
+				"ports": []any{object{"name": "postgres", "protocol": "TCP", "port": float64(5432), "targetPort": float64(5432)}}}}
+			writer := object{"metadata": object{"name": writerName, "uid": writerUID}, "status": object{"podIPs": []any{object{"ip": "10.0.0.41"}}}}
 			if err := bindUmamiWriterEndpoints(service, writer, []object{slice}); (err == nil) != (fault == "") {
 				t.Fatalf("unexpected writer route proof: %v", err)
 			}
@@ -171,6 +218,28 @@ func TestUmamiSwitchoverRequiresAnAdvancedTimelineWithoutLosingTheOldBarrier(t *
 			}}
 			if err := verifyUmamiPromotionHistory(previous, after, target); (err == nil) != (fault == "") {
 				t.Fatalf("unexpected promotion readback: %v", err)
+			}
+		})
+	}
+}
+
+func TestUmamiSwitchoverRequiresTheOriginalTimelineParentAndWALFork(t *testing.T) {
+	previous := postgresState{SystemID: "7560127483245078101", Timeline: "7", FlushLSN: "0/430"}
+	promoted := postgresState{SystemID: previous.SystemID, Timeline: "9", FlushLSN: "0/500"}
+	for _, input := range []struct {
+		name, history string
+		want          bool
+	}{
+		{"native ancestry", "1\t0/100\tno recovery target specified\n7\t0/440\tno recovery target specified\n", true},
+		{"fork before witnessed flush", "1\t0/100\trecovery\n7\t0/400\trecovery\n", false},
+		{"unrelated branch despite higher WAL", "1\t0/100\trecovery\n8\t0/440\trecovery\n", false},
+		{"unwitnessed fork beyond new flush", "1\t0/100\trecovery\n7\t0/510\trecovery\n", false},
+		{"malformed history", "1\t0/100\trecovery\n7\t0/440", false},
+		{"missing history", "", false},
+	} {
+		t.Run(input.name, func(t *testing.T) {
+			if err := verifyUmamiTimelineParent(input.history, previous, promoted); (err == nil) != input.want {
+				t.Fatalf("unexpected timeline ancestry decision: %v", err)
 			}
 		})
 	}
