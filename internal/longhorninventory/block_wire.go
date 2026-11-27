@@ -26,8 +26,8 @@ type BlockListAPI interface {
 	List(context.Context, *v1alpha1.ListRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[v1alpha1.ListResponse], error)
 }
 
-// BoundedBlocks limits reads to the block namespace's volume statuses,
-// configurations and discovered volumes on the one node named by Target.
+// BoundedBlocks limits reads to the block namespace's volume metadata,
+// physical disks and system-disk identity on the one node named by Target.
 type BoundedBlocks struct {
 	API    BlockListAPI
 	Target string
@@ -50,6 +50,9 @@ func (r BoundedBlocks) List(ctx context.Context, kind resource.Kind, options ...
 	switch kind.Type() {
 	case block.VolumeStatusType:
 	case block.VolumeConfigType:
+	case block.DiskType:
+	case block.SystemDiskType:
+		limit = 1
 	case block.DiscoveredVolumeType:
 		limit = 512
 	default:
@@ -81,6 +84,9 @@ func (r BoundedBlocks) List(ctx context.Context, kind resource.Kind, options ...
 		}
 		item, decodeErr := protobuf.UnmarshalResource(raw)
 		if decodeErr != nil || item == nil || item.Metadata().Namespace() != block.NamespaceName || item.Metadata().Type() != kind.Type() || item.Metadata().Phase() != resource.PhaseRunning || item.Metadata().ID() == "" || len(item.Metadata().ID()) > 256 || seen[item.Metadata().ID()] {
+			return resource.List{}, invalid
+		}
+		if kind.Type() == block.SystemDiskType && item.Metadata().ID() != block.SystemDiskID {
 			return resource.List{}, invalid
 		}
 		seen[item.Metadata().ID()] = true

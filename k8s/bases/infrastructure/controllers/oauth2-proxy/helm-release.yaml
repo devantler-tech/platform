@@ -19,6 +19,9 @@ spec:
         name: oauth2-proxy
   # https://github.com/oauth2-proxy/manifests/blob/main/helm/oauth2-proxy/values.yaml
   values:
+    podSecurityContext:
+      seccompProfile:
+        type: RuntimeDefault
     deploymentAnnotations:
       # oauth2-proxy reads its config and its error template only at startup.
       configmap.reloader.stakater.com/reload: oauth2-proxy,oauth2-proxy-templates

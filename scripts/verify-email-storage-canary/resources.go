@@ -26,14 +26,20 @@ func policyManifest(ns, run string) object {
 	o["spec"] = object{"podSelector": object{}, "policyTypes": []any{"Ingress", "Egress"}}
 	return o
 }
-func storageClassManifest(name, ns, run string) object {
+func storageClassManifest(name, ns, run, engine string) object {
 	o := manifest("StorageClass", name, "", run)
 	o["apiVersion"] = "storage.k8s.io/v1"
 	o["provisioner"] = "driver.longhorn.io"
 	o["reclaimPolicy"] = "Delete"
 	o["volumeBindingMode"] = "WaitForFirstConsumer"
 	o["allowVolumeExpansion"] = true
-	p := object{"encrypted": "true", "numberOfReplicas": "3", "staleReplicaTimeout": "30", "fromBackup": "", "fsType": "ext4", "dataLocality": "disabled", "unmapMarkSnapChainRemoved": "ignored", "disableRevisionCounter": "true", "dataEngine": "v1", "backupTargetName": "default"}
+	p := object{"encrypted": "true", "numberOfReplicas": "3", "staleReplicaTimeout": "30", "fromBackup": "", "fsType": "ext4", "dataLocality": "disabled", "dataEngine": engine, "backupTargetName": "default"}
+	if engine == "v1" {
+		p["unmapMarkSnapChainRemoved"] = "ignored"
+		p["disableRevisionCounter"] = "true"
+	} else {
+		p["unmapMarkSnapChainRemoved"] = "disabled"
+	}
 	for _, stage := range []string{"stage", "publish", "expand"} {
 		p["csi.storage.k8s.io/node-"+stage+"-secret-name"] = "encryption-key"
 		p["csi.storage.k8s.io/node-"+stage+"-secret-namespace"] = ns

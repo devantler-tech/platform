@@ -1,0 +1,43 @@
+{
+  "kind": "CiliumEndpoint",
+  "apiVersion": "cilium.io/v2",
+  "metadata": {
+    "name": "restore-1",
+    "namespace": "longhorn-db-proof-umami-db-1234",
+    "uid": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    "resourceVersion": "100001",
+    "creationTimestamp": "2026-11-01T00:00:00Z",
+    "annotations": {
+      "example.com/synthetic-fixture": "true"
+    },
+    "ownerReferences": [
+      {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "name": "restore-1",
+        "uid": "11111111-2222-4333-8444-555555555555"
+      }
+    ]
+  },
+  "status": {
+    "id": 2718,
+    "identity": {
+      "id": 1234,
+      "labels": [
+        "k8s:cnpg.io/cluster=restore",
+        "k8s:io.cilium.k8s.policy.cluster=default",
+        "k8s:io.kubernetes.pod.namespace=longhorn-db-proof-umami-db-1234"
+      ]
+    },
+    "networking": {
+      "addressing": [
+        {
+          "ipv4": "192.0.2.17"
+        }
+      ],
+      "node": "192.0.2.10"
+    },
+    "encryption": {},
+    "state": "ready"
+  }
+}

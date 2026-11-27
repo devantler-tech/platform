@@ -327,6 +327,17 @@ func render(v inputs) ([]byte, error) {
 		}),
 		update("Imap", map[string]any{"allowPlainTextAuth": false}),
 	}...)
+	// The spam filter imports the image's copy of the pinned rules, not the
+	// unpinned upstream release that egress blocks. The copy is in the 0.16
+	// rule format, so the 1.x candidate declares its own upstream default
+	// instead. This only keeps an update-rules task on a migrated store from
+	// reading the 0.16 copy again. Rules it already stores stay until the
+	// candidate pins spam-filter v3.0.4 and runs that task.
+	spamRulesURL := "file://" + spamRulesPath
+	if profile.v1 {
+		spamRulesURL = upstreamSpamRulesURL
+	}
+	operations = append(operations, update("SpamSettings", map[string]any{"spamFilterRulesUrl": spamRulesURL}))
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
 	encoder.SetEscapeHTML(false)

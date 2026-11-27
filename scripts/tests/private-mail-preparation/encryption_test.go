@@ -9,31 +9,33 @@ import (
 // boundary rather than inferring encryption from a claim or class name.
 func TestEncryptedReplacementKeepsKeysOutsideTheWorkload(t *testing.T) {
 	objects := render(t, "k8s/bases/apps/email-encrypted-storage")
-	if len(objects) != 4 {
-		t.Fatal("storage preparation must contain only its scoped store, key binding, class and replacement claim")
+	if len(objects) != 6 {
+		t.Fatal("storage preparation must contain its scoped store, key binding, two classes and their claims")
 	}
-	class := object(t, objects, "StorageClass", "email-encrypted")
-	if class["provisioner"] != "driver.longhorn.io" || class["reclaimPolicy"] != "Retain" || class["volumeBindingMode"] != "WaitForFirstConsumer" || class["allowVolumeExpansion"] != true {
-		t.Fatal("replacement storage must retain data and keep the existing CSI scheduling/expansion model")
-	}
-	annotations, _ := mapping(t, class["metadata"])["annotations"].(map[string]any)
-	if annotations["storageclass.kubernetes.io/is-default-class"] == "true" {
-		t.Fatal("Email encryption must not change unrelated volumes' default class")
-	}
-	parameters := mapping(t, class["parameters"])
-	for key, want := range map[string]any{"encrypted": "true", "dataEngine": "v1", "fsType": "ext4", "numberOfReplicas": "3"} {
-		if parameters[key] != want {
-			t.Fatalf("encrypted CSI parameter %s = %v, want %v", key, parameters[key], want)
+	for name, engine := range map[string]string{"email-encrypted": "v1", "email-encrypted-v2": "v2"} {
+		class := object(t, objects, "StorageClass", name)
+		if class["provisioner"] != "driver.longhorn.io" || class["reclaimPolicy"] != "Retain" || class["volumeBindingMode"] != "WaitForFirstConsumer" || class["allowVolumeExpansion"] != true {
+			t.Fatalf("%s must retain data and keep the CSI scheduling and expansion model", name)
 		}
-	}
-	for _, phase := range []string{"node-stage", "node-publish", "node-expand"} {
-		if parameters["csi.storage.k8s.io/"+phase+"-secret-name"] != "email-storage-key" || parameters["csi.storage.k8s.io/"+phase+"-secret-namespace"] != "private-mail" {
-			t.Fatalf("%s must retain the exact operational key reference", phase)
+		annotations, _ := mapping(t, class["metadata"])["annotations"].(map[string]any)
+		if annotations["storageclass.kubernetes.io/is-default-class"] == "true" {
+			t.Fatalf("%s must remain opt-in", name)
 		}
-	}
-	for _, phase := range []string{"provisioner", "controller-publish", "controller-expand"} {
-		if parameters["csi.storage.k8s.io/"+phase+"-secret-name"] != nil {
-			t.Fatal("this node-only encryption path must not add controller-side secret references")
+		parameters := mapping(t, class["parameters"])
+		for key, want := range map[string]any{"encrypted": "true", "dataEngine": engine, "fsType": "ext4", "numberOfReplicas": "3"} {
+			if parameters[key] != want {
+				t.Fatalf("%s CSI parameter %s = %v, want %v", name, key, parameters[key], want)
+			}
+		}
+		for _, phase := range []string{"node-stage", "node-publish", "node-expand"} {
+			if parameters["csi.storage.k8s.io/"+phase+"-secret-name"] != "email-storage-key" || parameters["csi.storage.k8s.io/"+phase+"-secret-namespace"] != "private-mail" {
+				t.Fatalf("%s %s must retain the exact operational key reference", name, phase)
+			}
+		}
+		for _, phase := range []string{"provisioner", "controller-publish", "controller-expand"} {
+			if parameters["csi.storage.k8s.io/"+phase+"-secret-name"] != nil || parameters["csi.storage.k8s.io/"+phase+"-secret-namespace"] != nil {
+				t.Fatalf("%s must keep secret references on the node path", name)
+			}
 		}
 	}
 
@@ -86,7 +88,7 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 	for _, path := range []string{"k8s/bases/apps", "k8s/providers/docker/apps"} {
 		for _, o := range render(t, path) {
 			metadata := mapping(t, o["metadata"])
-			for _, name := range []string{"email-storage", "email-storage-key", "email-encrypted", "email-data-encrypted"} {
+			for _, name := range []string{"email-storage", "email-storage-key", "email-encrypted", "email-encrypted-v2", "email-data-encrypted", "email-data-encrypted-v2"} {
 				if metadata["name"] == name {
 					t.Fatalf("only production holds the storage key, so only production selects encrypted storage: %s", path)
 				}
@@ -109,6 +111,22 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 	if mapping(t, object(t, production, "StorageClass", "email-encrypted")["parameters"])["encrypted"] != "true" {
 		t.Fatal("the serving class must encrypt at rest")
 	}
+	if mapping(t, object(t, production, "StorageClass", "email-encrypted-v2")["parameters"])["encrypted"] != "true" {
+		t.Fatal("the V2 migration destination must encrypt at rest")
+	}
+	destination := object(t, production, "PersistentVolumeClaim", "email-data-encrypted-v2")
+	metadata := mapping(t, destination["metadata"])
+	spec := mapping(t, destination["spec"])
+	labels, _ := metadata["labels"].(map[string]any)
+	if metadata["namespace"] != "private-mail" ||
+		mapping(t, metadata["annotations"])["kustomize.toolkit.fluxcd.io/prune"] != "disabled" ||
+		labels["platform.devantler.tech/storage-stage"] != nil ||
+		spec["storageClassName"] != "email-encrypted-v2" || spec["volumeMode"] != "Filesystem" ||
+		!reflect.DeepEqual(spec["accessModes"], []any{"ReadWriteOnce"}) ||
+		mapping(t, mapping(t, spec["resources"])["requests"])["storage"] != "2Gi" ||
+		spec["volumeName"] != nil || spec["dataSource"] != nil || spec["dataSourceRef"] != nil {
+		t.Fatal("the V2 destination must be a distinct, retained 2 GiB filesystem claim that waits for binding")
+	}
 	pod := mapping(t, mapping(t, mapping(t, object(t, production, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
 	volumes := map[string]map[string]any{}
 	for _, item := range sequence(t, pod["volumes"]) {
@@ -117,9 +135,8 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 			volumes[stringField(t, volume, "name")] = claim
 		}
 	}
-	if len(volumes) != 2 || volumes["data"]["claimName"] != "email-data-encrypted" || volumes["data"]["readOnly"] == true ||
-		volumes["legacy-data"]["claimName"] != "private-mail-data" || volumes["legacy-data"]["readOnly"] != true {
-		t.Fatal("the server must store data on the encrypted claim and see the original only read-only")
+	if len(volumes) != 1 || volumes["v2-data"]["claimName"] != "email-data-encrypted-v2" || volumes["v2-data"]["readOnly"] == true {
+		t.Fatal("the server must mount only the verified V2 claim")
 	}
 	server := ""
 	for _, item := range sequence(t, pod["containers"]) {
@@ -128,30 +145,49 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 			server = stringField(t, container, "image")
 		}
 	}
-	copySteps, sourceMounts := 0, 0
+	expected := map[string]bool{"select-mail-store": true, "configure": true, "private-mail": true}
 	for index, group := range []string{"initContainers", "containers"} {
 		for position, item := range sequence(t, pod[group]) {
 			container := mapping(t, item)
 			name := stringField(t, container, "name")
+			if !expected[name] {
+				continue
+			}
+			delete(expected, name)
+			mounts := map[string]map[string]any{}
 			for _, mountItem := range sequence(t, container["volumeMounts"]) {
 				mount := mapping(t, mountItem)
-				if mount["name"] != "legacy-data" {
-					continue
+				mounts[stringField(t, mount, "mountPath")] = mount
+				if mount["name"] == "legacy-data" || mount["name"] == "data" {
+					t.Fatal("the retained original claims must not mount")
 				}
-				if index != 0 || position != 0 || name != "migrate-storage" || mount["readOnly"] != true {
-					t.Fatal("only the first initializer, the copy step, may mount the original claim, and only read-only")
-				}
-				sourceMounts++
 			}
-			if name == "migrate-storage" {
-				copySteps++
-				if index != 0 || position != 0 || container["image"] != server {
-					t.Fatal("the copy must run first, before setup, with the server's signed image")
+			lockMount, hasLockMount := mounts["/var/lib/stalwart"]
+			if name == "configure" {
+				if lockMount["name"] != "v2-data" || lockMount["readOnly"] == true ||
+					lockMount["subPath"] != nil || lockMount["subPathExpr"] != nil {
+					t.Fatal("the signed bootstrap image must lock the same V2 filesystem it configures")
 				}
+			} else if hasLockMount {
+				t.Fatalf("%s unexpectedly mounts the bootstrap lock path", name)
+			}
+			selecting := name == "select-mail-store"
+			routeMount := "/etc/stalwart/config.json"
+			if selecting {
+				routeMount = "/store-selection"
+			}
+			route, data := mounts[routeMount], mounts["/var/lib/stalwart-v2"]
+			if route["name"] != "serving-storage" || (route["readOnly"] == true) == selecting ||
+				!selecting && route["subPath"] != "config.json" ||
+				data["name"] != "v2-data" || (data["readOnly"] == true) != selecting {
+				t.Fatalf("%s does not use the shared fenced storage route", name)
+			}
+			if selecting && (index != 0 || position != 0 || container["image"] != server) {
+				t.Fatal("the selector must run before setup with the server's signed image")
 			}
 		}
 	}
-	if copySteps != 1 || sourceMounts != 1 {
-		t.Fatal("exactly one copy step must mount the original claim exactly once")
+	if len(expected) != 0 {
+		t.Fatalf("missing storage consumers: %v", expected)
 	}
 }

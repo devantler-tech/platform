@@ -75,6 +75,24 @@ spec:
                   rollingUpdate:
                     maxSurge: 0
                     maxUnavailable: 1
+          - target:
+              kind: Deployment
+              name: umami-umami
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: umami-umami
+              spec:
+                template:
+                  spec:
+                    initContainers:
+                      - name: wait-for-db
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          runAsNonRoot: true
+                          capabilities:
+                            drop: [ALL]
   # https://github.com/helmforgedev/charts/blob/main/charts/umami/values.yaml
   values:
     # replicaCount intentionally omitted — replicas are owned by the KEDA

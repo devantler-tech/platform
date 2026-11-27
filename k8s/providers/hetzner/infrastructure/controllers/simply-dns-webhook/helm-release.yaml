@@ -89,6 +89,7 @@ spec:
                       - name: simply-dns-webhook
                         securityContext:
                           privileged: false
+                          runAsNonRoot: true
                           allowPrivilegeEscalation: false
                           readOnlyRootFilesystem: true
                           seLinuxOptions: {}

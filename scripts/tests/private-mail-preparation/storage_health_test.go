@@ -133,12 +133,24 @@ func TestMailStorageHealthAcrossActivation(t *testing.T) {
 func TestEncryptedMailStorageHealthAcrossServing(t *testing.T) {
 	health := appsClaimHealth(t)
 	tests := []struct {
-		name, phase, path string
-		mutate            func(map[string]any, map[string]any)
-		want              bool
-		wantFailed        bool
+		name, phase, path, claim string
+		mutate                   func(map[string]any, map[string]any)
+		want                     bool
+		wantFailed               bool
 	}{
 		{name: "prepared encrypted storage", phase: "Pending", want: true},
+		{name: "prepared encrypted V2 claim", phase: "Pending", claim: "email-data-encrypted-v2", want: true},
+		{name: "production mounts the V2 claim and waits for binding", phase: "Pending", path: "k8s/providers/hetzner/apps", claim: "email-data-encrypted-v2"},
+		{name: "production V2 claim is bound", phase: "Bound", path: "k8s/providers/hetzner/apps", claim: "email-data-encrypted-v2", want: true},
+		{name: "encrypted V2 with the older class", phase: "Pending", claim: "email-data-encrypted-v2",
+			mutate: func(_, s map[string]any) { s["storageClassName"] = "email-encrypted" }},
+		{name: "encrypted V1 with the V2 class", phase: "Pending",
+			mutate: func(_, s map[string]any) { s["storageClassName"] = "email-encrypted-v2" }},
+		{name: "V2 provisioning has started", phase: "Pending", claim: "email-data-encrypted-v2", mutate: func(m, _ map[string]any) {
+			mapping(t, m["annotations"])["volume.kubernetes.io/selected-node"] = "worker"
+		}},
+		{name: "V2 binding has started", phase: "Pending", claim: "email-data-encrypted-v2",
+			mutate: func(_, s map[string]any) { s["volumeName"] = "mail-v2-volume" }},
 		{name: "production serving must bind", phase: "Pending", path: "k8s/providers/hetzner/apps"},
 		{name: "production serving bound", phase: "Bound", path: "k8s/providers/hetzner/apps", want: true},
 		{name: "retained bound storage", phase: "Bound", want: true},
@@ -166,7 +178,11 @@ func TestEncryptedMailStorageHealthAcrossServing(t *testing.T) {
 			if path == "" {
 				path = "k8s/bases/apps/email-encrypted-storage"
 			}
-			claim := object(t, render(t, path), "PersistentVolumeClaim", "email-data-encrypted")
+			name := tt.claim
+			if name == "" {
+				name = "email-data-encrypted"
+			}
+			claim := object(t, render(t, path), "PersistentVolumeClaim", name)
 			metadata, claimSpec := mapping(t, claim["metadata"]), mapping(t, claim["spec"])
 			if tt.mutate != nil {
 				tt.mutate(metadata, claimSpec)

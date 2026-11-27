@@ -9,6 +9,10 @@ import (
 // Native kubectl raw DELETE accepts DeleteOptions. Unlike name-only deletion,
 // the API atomically refuses changed or replaced objects through preconditions.
 func (c client) deleteObserved(ctx context.Context, source, path string, o object) error {
+	return c.deleteObservedWithPropagation(ctx, source, path, o, "Foreground")
+}
+
+func (c client) deleteObservedWithPropagation(ctx context.Context, source, path string, o object, propagation string) error {
 	uid, version := text(o, "metadata", "uid"), text(o, "metadata", "resourceVersion")
 	if uid == "" || version == "" {
 		return errors.New("deletion requires the observed resource identity")
@@ -16,7 +20,7 @@ func (c client) deleteObserved(ctx context.Context, source, path string, o objec
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
-	body, err := json.Marshal(object{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground",
+	body, err := json.Marshal(object{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": propagation,
 		"preconditions": object{"uid": uid, "resourceVersion": version}})
 	if err != nil {
 		return err

@@ -80,9 +80,12 @@ func examineFolder(c *client.Client, name string) (*imap.MailboxStatus, examineR
 	return mailbox, examineReply{readWrite: handler.readWrite || status.Code == imap.CodeReadWrite, confirmed: status.Code == imap.CodeReadOnly}, nil
 }
 
-// The source, iCloud, omits the [READ-ONLY] code on EXAMINE, so a missing code
-// is accepted there. The destination is this deployment's own server, which
-// sends the code, so it must confirm every read-only open.
+// The source, iCloud, does not confirm EXAMINE with [READ-ONLY]; production
+// copies stopped first on a missing code and then on a [READ-WRITE] one. Its
+// code is therefore not checked: the observer sends only read commands, and
+// the copy keeps the source unchanged by its own options and final check. The
+// destination is this deployment's own server, which sends the code, so it
+// must confirm every read-only open.
 func observeHistory(ctx context.Context, side string, v historyConfig) (historySnapshot, error) {
 	switch side {
 	case "source":
@@ -101,9 +104,9 @@ func readHistorySnapshot(ctx context.Context, address, serverName, username, pas
 
 // readHistorySnapshotWith fails with one of the fixed step names in
 // historyObservationSteps, so an operator can tell which step refused without
-// any server reply, folder name or credential reaching the log. Without
-// requireConfirmation, an EXAMINE reply without the [READ-ONLY] code is
-// accepted; a reply claiming [READ-WRITE] is refused either way.
+// any server reply, folder name or credential reaching the log. With
+// requireConfirmation, every EXAMINE reply must carry [READ-ONLY] and none
+// may claim [READ-WRITE]; without it, the reply code is not checked.
 func readHistorySnapshotWith(ctx context.Context, address, serverName, username, password string, roots *x509.CertPool, requireConfirmation bool) (historySnapshot, error) {
 	fail := func(step string) (historySnapshot, error) { return nil, errors.New(step) }
 	deadline := time.Now().Add(60 * time.Second)
@@ -180,11 +183,13 @@ func readHistorySnapshotWith(ctx context.Context, address, serverName, username,
 		if err != nil {
 			return fail("examine")
 		}
-		// EXAMINE never permits changes, whatever the reply says. RFC 3501
-		// asks servers to confirm it with [READ-ONLY]; iCloud omits the code.
-		// A server that explicitly claims [READ-WRITE] for an EXAMINE is
-		// always refused.
-		if reply.readWrite || requireConfirmation && !reply.confirmed {
+		// EXAMINE never permits changes, whatever the reply says, and the
+		// observer sends no command that could make one. RFC 3501 asks servers
+		// to confirm it with [READ-ONLY]. The destination, this deployment's
+		// own server, does, so anything else there means something between
+		// is not that server. iCloud's reply code is not checked: production
+		// shows it answering EXAMINE with a code other than [READ-ONLY].
+		if requireConfirmation && (reply.readWrite || !reply.confirmed) {
 			return fail("read-only")
 		}
 		if status.UidNext == 0 || status.UidValidity == 0 {

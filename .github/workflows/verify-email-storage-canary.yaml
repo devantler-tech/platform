@@ -5,7 +5,7 @@ name: Verify Email Storage Canary
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type exactly: verify-email-storage-canary"
+        description: "Type verify-email-storage-canary for V1 or verify-email-storage-v2-canary for V2"
         required: true
         type: string
 
@@ -29,7 +29,8 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted || "$CONFIRM" != verify-email-storage-canary ]]; then
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted ||
+                ( "$CONFIRM" != verify-email-storage-canary && "$CONFIRM" != verify-email-storage-v2-canary ) ]]; then
             printf '%s\n' 'EMAIL_STORAGE_CANARY=UNVERIFIED stage=dispatch cleanup=NOT_STARTED' >&2
             exit 2
           fi
@@ -48,7 +49,15 @@ jobs:
 
       - name: Build the reviewed canary driver before restoring credentials
         shell: bash
-        run: go build -o "$RUNNER_TEMP/verify-email-storage-canary" ./scripts/verify-email-storage-canary
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          go build -o "$RUNNER_TEMP/verify-email-storage-canary" ./scripts/verify-email-storage-canary
+          if [[ "$CONFIRM" == verify-email-storage-v2-canary ]]; then
+            ./scripts/verify-prod-recovery-source.sh "$GITHUB_SHA"
+          fi
 
       - name: Install the repository-approved Kubernetes client
         shell: bash

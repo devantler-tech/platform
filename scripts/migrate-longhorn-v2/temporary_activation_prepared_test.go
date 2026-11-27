@@ -127,7 +127,7 @@ func TestTemporaryActivationRequiresIndependentEvidenceForOlderPreparation(t *te
 		t.Fatal("protected readback failed to bind older preparation", err)
 	}
 	a.legacyReceipts = nil
-	if err := a.accepted(ctx); err != nil {
+	if _, err := a.accepted(ctx); err != nil {
 		t.Fatal("the accepted journal failed to preserve the earlier disk binding", err)
 	}
 }

@@ -47,7 +47,7 @@ func TestIngressFlowRequiresBoundWireEvidence(t *testing.T) {
 		{"oversized", strings.Repeat(" ", maxAPIOutput+1) + ingressFlowSample, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			addresses, err := decodeIngressFlows([]byte(test.raw), destination, "prod/worker-1", start, start.Add(10*time.Second))
+			addresses, err := decodeIngressFlows([]byte(test.raw), destination, ingressManagementPort, "prod/worker-1", start, start.Add(10*time.Second))
 			if (err == nil) != test.valid {
 				t.Fatal("unbound or incomplete flow evidence was accepted, or real wire evidence refused")
 			}
@@ -66,12 +66,12 @@ func TestIngressFlowRequiresBoundWireEvidence(t *testing.T) {
 func TestIngressFlowUsesPostTranslationSource(t *testing.T) {
 	start := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
 	raw := strings.Replace(ingressFlowSample, `"source":"10.244.1.1"`, `"source":"10.244.1.1","source_xlated":"10.0.1.1"`, 1)
-	addresses, err := decodeIngressFlows([]byte(raw), netip.MustParseAddr("10.244.2.2"), "prod/worker-1", start, start.Add(10*time.Second))
+	addresses, err := decodeIngressFlows([]byte(raw), netip.MustParseAddr("10.244.2.2"), ingressManagementPort, "prod/worker-1", start, start.Add(10*time.Second))
 	if err != nil || len(addresses) != 1 || addresses[0] != netip.MustParseAddr("10.0.1.1") {
 		t.Fatal("post-translation wire address was replaced by the original source")
 	}
 	invalid := strings.Replace(raw, `"source_xlated":"10.0.1.1"`, `"source_xlated":"not-an-address"`, 1)
-	if addresses, err := decodeIngressFlows([]byte(invalid), netip.MustParseAddr("10.244.2.2"), "prod/worker-1", start, start.Add(10*time.Second)); err == nil || len(addresses) != 0 {
+	if addresses, err := decodeIngressFlows([]byte(invalid), netip.MustParseAddr("10.244.2.2"), ingressManagementPort, "prod/worker-1", start, start.Add(10*time.Second)); err == nil || len(addresses) != 0 {
 		t.Fatal("an invalid translated address fell back to a different peer")
 	}
 }

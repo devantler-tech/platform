@@ -202,7 +202,7 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 	raw := fixtureConfig(server)
 	raw.Clusters["prod"].TLSServerName = "old-dns-name.invalid"
 	direct := netip.MustParseAddr("203.0.113.10")
-	client, endpoint, err := newProductionClientAt(raw, direct)
+	client, endpoint, err := newProductionClientAt(raw, direct, false)
 	if err != nil || endpoint.String() != "https://203.0.113.10:6443" {
 		t.Fatalf("direct endpoint is not pinned: %v", err)
 	}
@@ -236,6 +236,44 @@ func TestBenchmarkDirectClientPinsAddressAndNeverFollowsRedirect(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "only observations and server dry-runs") {
 			t.Fatal("direct API client did not reject a write-capable request locally")
 		}
+	}
+}
+
+func TestDirectAPIAllowsOnlyScopedReclaimAliasDryRuns(t *testing.T) {
+	const pv = "/api/v1/persistentvolumes"
+	const pvc = "/api/v1/namespaces/longhorn-benchmark/persistentvolumeclaims"
+	const dryRun = "?dryRun=All"
+	for _, test := range []struct {
+		name, path, query, contentType string
+		granted, want                  bool
+	}{
+		{"PV alias", pv, dryRun, "application/json", true, true},
+		{"PVC alias", pvc, dryRun, "application/json", true, true},
+		{"other operation", pv, dryRun, "application/json", false, false},
+		{"persisted create", pv, "", "application/json", true, false},
+		{"ambiguous dry-run", pv, "?dryRun=All&dryRun=", "application/json", true, false},
+		{"named PV", pv + "/alias", dryRun, "application/json", true, false},
+		{"other PVC namespace", "/api/v1/namespaces/other/persistentvolumeclaims", dryRun, "application/json", true, false},
+		{"encoded collection", "/api/v1/%70ersistentvolumes", dryRun, "application/json", true, false},
+		{"non-JSON request", pvc, dryRun, "application/yaml", true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const host = "203.0.113.10:6443"
+			calls := 0
+			peer := directAPIPeer{host: host, reclaimAliasDryRun: test.granted, transport: transportFunc(func(*http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: http.StatusForbidden}, nil
+			})}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://"+host+test.path+test.query, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", test.contentType)
+			_, err = peer.RoundTrip(req)
+			if (err == nil) != test.want || (calls == 1) != test.want {
+				t.Fatalf("transport calls=%d, error=%v", calls, err)
+			}
+		})
 	}
 }
 
@@ -337,6 +375,8 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 		{operation: "benchmark-v1", confirmation: "benchmark-longhorn-storage"},
 		{operation: "prepare-native-v1-seed", confirmation: "prepare-longhorn-native-v1-seed"},
 		{operation: "recover-bound-v1-benchmark", confirmation: "recover-bound-longhorn-v1-benchmark:99", originalRun: "99"},
+		{operation: "reclaim-native-v2-seed", confirmation: "reclaim-longhorn-native-v2-seed:99", originalRun: "99"},
+		{operation: "resume-native-v2-reclaim", confirmation: "resume-longhorn-native-v2-reclaim:99:98", originalRun: "99"},
 	} {
 		valid := nativeSeedAdmissionDispatch()
 		valid["LONGHORN_V2_OPERATION"], valid["LONGHORN_V2_CONFIRM"] = dispatch.operation, dispatch.confirmation

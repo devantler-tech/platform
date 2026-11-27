@@ -233,11 +233,10 @@ Completion requires three independent ready raw disks and all qualified clients;
 it grants no application cutover or original-disk reset authority.
 
 The two rebuilt workers retain their original `migration-pool=v1` allocation
-label. The shared publication and replica-exclusion checks recognize their raw
-disks and the third worker's distinct staging mapper only with the completed
-activation journal, its matching ownership UID, and the unchanged Kubernetes,
-provider, hardware and Longhorn node identities.
-An ordinary later reboot or OS upgrade does not revoke this registration.
+label. Production's replica-exclusion policy keeps other autoscaled workers
+fenced. Before the V2 restore canary, the protected migration check verifies
+the three raw disks against the completed activation journal, its ownership UID
+and the current Kubernetes, provider, hardware and Longhorn node identities.
 
 The journal retains the original boot and OS observations for audit. Later
 registration recovery and acceptance compare its durable worker, partition and
@@ -480,11 +479,66 @@ runtime, serving-API fences and physical retirement proof, then removes the run'
 replica tags. It leaves the remote backup and workspace intact. An interrupted
 run preserves its journal and assets for a separately reviewed recovery path.
 
-`SOURCE_CLEANED` accepts no V2 restore, reattachment, benchmark measurement or
-application migration. A separate V2 phase must restore the original snapshot to
-new storage, verify the original bytes, persist a new write, reattach on another
-qualified worker and verify both again. Encrypted storage and application-specific
-recovery still require their own proofs.
+`SOURCE_CLEANED` confirms the retained V1 backup and retirement of its source.
+After temporary V2 registration completes, run `restore-native-v2-seed` with
+the confirmation `restore-longhorn-native-v2-seed`. Leave `node` and
+`database` empty. The first-attempt main workflow binds the three registered
+raw disks to their original preparation and activation records and provisions
+a fresh V2 claim.
+
+Velero restores the original Kopia filesystem snapshot to that claim. The
+workflow verifies the original payload checksum, writes a fresh token, and
+detaches the first consumer. It reattaches the same claim on a second qualified
+worker and verifies both payloads. It retains the backup, journal and canary
+resources for readback. An uncertain write holds the run for explicit recovery.
+Application cutover and performance measurement have their own acceptance steps.
+
+When a restore stops at `restore-owned` after a complete Velero transfer, use
+`resume-native-v2-seed-restore` with `resume-longhorn-native-v2-seed:<original run ID>`
+and leave `node` and `database` empty. The protected main workflow requires the
+original failed first attempt, the retained backup, and the same healthy V2 claim
+and first consumer. It records one continuation on the original journal, then
+verifies the payload and reattachment. Preserve both journals and the canary
+if the continuation stops.
+
+If the original Pod reached its deadline after the completed transfer, the
+same continuation can replace that disposable Pod after proving the original
+V2 volume is detached. It retains the original Velero transfer and Pod
+identities and verifies the recovered bytes on the replacement before moving
+the same claim to a different worker.
+
+The workflow checks memory headroom when choosing the reattachment worker.
+If the recorded second Pod remains unassigned because of insufficient memory
+and its first workflow attempt fails, use `resume-native-v2-reattach` with
+`resume-longhorn-native-v2-reattach:<original run ID>:<failed continuation run ID>`.
+Leave `node` and `database` empty. The protected operation verifies the failed
+executor and the never-started Pod, replaces that test Pod and checks the
+original payload and previously written marker on the remaining qualified worker.
+
+After independently verifying the successful restore and reattachment, select
+`reclaim-native-v2-seed` and confirm it with
+`reclaim-longhorn-native-v2-seed:<original restore run ID>`. Leave the node and
+database fields empty. The operation binds the original off-cluster seed and
+the successful first attempt of the restore or its recorded continuation. It
+waits for the canary consumer to leave and for the backend to detach. It verifies
+admission on every serving API before changing the bound disposable PV's reclaim
+policy.
+
+The original claim is removed only after the CSI provisioner has installed its
+deletion finalizer. Verify the PV, backend, replicas and attachment references
+have retired. The operation removes the canary's policies, class and workload
+tags and verifies the seed backup again. The restore and reclaim journals and
+the object-store restore logs provide the audit record. If any action cannot be
+confirmed, inspect the reclaim journal and the exact recorded resources before
+recovering it.
+
+If cleanup stopped after binding both admission policies, confirm the previous
+run failed on its first attempt and the original claim remains detached and
+Retain-protected. Select `resume-native-v2-reclaim` with
+`resume-longhorn-native-v2-reclaim:<original restore run ID>:<failed cleanup run ID>`.
+The continuation retains the two recorded policies and bindings. It verifies
+fresh admission on each serving API before taking ownership of the existing
+journal. It can proceed only from the recorded two-fence checkpoint.
 
 ## Prepare a permanent worker
 

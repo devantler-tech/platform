@@ -76,6 +76,11 @@ DNS and to the Amazon SES relay on port 587 ([the relay decision](email-outbound
 the preparation base alone keeps its all-egress denial. The route registers an Email Homepage entry in the Email section at its
 authenticated administration path. Inclusion prepares browser evaluation; it does not prove
 the Homepage entry, authentication or any production behavior until observed.
+The route serves both `mail.${domain}` and `stalwart.${domain}`, DNS-only, and the Homepage entry
+links to `stalwart.${domain}/admin`: Stalwart's web side moves there so that the Bulwark webmail
+can take `mail.${domain}` ([#6662](https://github.com/devantler-tech/platform/issues/6662)). The
+route adds CORS response headers that allow only Bulwark's origin, `https://mail.${domain}`,
+without credentials; Stalwart's own permissive CORS stays off.
 Public mail, DNS migration, credential custody, history import and restoration
 remain separate activation requirements below.
 

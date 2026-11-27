@@ -32,6 +32,11 @@ name: Prepare Longhorn V2 Migration
             recover-unstarted-v1-benchmark,
             recover-bound-v1-benchmark,
             prepare-native-v1-seed,
+            restore-native-v2-seed,
+            resume-native-v2-seed-restore,
+            resume-native-v2-reattach,
+            reclaim-native-v2-seed,
+            resume-native-v2-reclaim,
             inventory-replicas,
             inventory-storage-root,
             inventory-storage-layout,
@@ -40,10 +45,16 @@ name: Prepare Longhorn V2 Migration
             inspect-host-memory,
             reboot-host-for-hugepages,
             observe-database,
+            prove-database-v2-archive,
+            resume-umami-archive-isolation,
+            resume-umami-archive-data,
             register-temporary-v2-storage,
             repair-v1-reservation,
             reserve-v1-scratch,
             reserve-v1-backup-scratch,
+            prepare-actual-budget-backup-scratch,
+            retire-actual-budget-backup-scratch,
+            backup-actual-budget-v1,
             retain-v1-source,
             retain-provider-source,
           ]
@@ -113,7 +124,8 @@ jobs:
       - name: Test queued read-only source selection
         run: bash scripts/tests/test-longhorn-runtime-inventory-source.sh
       - name: Test complete observations and interrupted recovery
-        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory
+        # The native admission and database restore fixtures share this bounded test job.
+        run: go test -race -count=1 -timeout=7m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory ./internal/namespaceinventory
 
   prepare:
     name: Run the selected guarded migration step
@@ -143,11 +155,40 @@ jobs:
             prepare-native-v1-seed)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == prepare-longhorn-native-v1-seed ]]
               ;;
+            restore-native-v2-seed)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == restore-longhorn-native-v2-seed ]]
+              ;;
+            resume-native-v2-seed-restore)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-longhorn-native-v2-seed:[1-9][0-9]{0,18}$ ]]
+              ;;
+            resume-native-v2-reattach)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-longhorn-native-v2-reattach:[1-9][0-9]{0,18}:[1-9][0-9]{0,18}$ ]]
+              ;;
+            reclaim-native-v2-seed)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" =~ ^reclaim-longhorn-native-v2-seed:[1-9][0-9]{0,18}$ ]]
+              ;;
+            resume-native-v2-reclaim)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" =~ ^resume-longhorn-native-v2-reclaim:[1-9][0-9]{0,18}:[1-9][0-9]{0,18}$ ]]
+              ;;
             inventory-v1-runtime)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == inventory-v1-runtime ]]
               ;;
             observe-database)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|substrate-db|kagent-db|customer-identity-db|business-site-portal-db|portal-preview-db)$ && "${LONGHORN_V2_CONFIRM}" == "observe-longhorn-v2-database-${LONGHORN_V2_DATABASE}" ]]
+              ;;
+            prove-database-v2-archive)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|customer-identity-db|business-site-portal-db)$ &&
+                 "${LONGHORN_V2_CONFIRM}" == "prove-longhorn-v2-database-archive-${LONGHORN_V2_DATABASE}" ]]
+              ;;
+            resume-umami-archive-isolation)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-umami-archive-isolation:[1-9][0-9]{0,18}$ ]]
+              ;;
+            resume-umami-archive-data)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-umami-archive-data:[1-9][0-9]{0,18}:[0-9a-f]{64}$ ]]
               ;;
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
@@ -175,6 +216,18 @@ jobs:
               ;;
             reserve-v1-backup-scratch)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" && "${LONGHORN_V2_CONFIRM}" == reserve-longhorn-v1-backup-scratch ]]
+              ;;
+            prepare-actual-budget-backup-scratch)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^prepare-actual-budget-backup-scratch:[0-9a-f]{64}$ ]]
+              ;;
+            retire-actual-budget-backup-scratch)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^retire-actual-budget-backup-scratch:[1-9][0-9]{0,18}$ ]]
+              ;;
+            backup-actual-budget-v1)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^backup-actual-budget-v1:[0-9a-f]{64}$ ]]
               ;;
             retain-v1-source)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-longhorn-v1-source:[a-z0-9][-a-z0-9]*/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
@@ -268,7 +321,7 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh
       - name: Run the confirmed migration preparation
-        if: ${{ inputs.operation != 'benchmark-v1' && inputs.operation != 'recover-bound-v1-benchmark' && inputs.operation != 'prepare-native-v1-seed' }}
+        if: ${{ inputs.operation != 'benchmark-v1' && inputs.operation != 'recover-bound-v1-benchmark' && inputs.operation != 'prepare-native-v1-seed' && inputs.operation != 'reclaim-native-v2-seed' && inputs.operation != 'resume-native-v2-reclaim' }}
         env:
           GH_TOKEN: ${{ github.token }}
           LONGHORN_RUNTIME_INVENTORY_SOURCE: ${{ steps.recovery-source.outputs.sha }}
@@ -281,6 +334,12 @@ jobs:
         run: go run ./scripts/migrate-longhorn-v2
       - name: Recover the confirmed bound V1 benchmark scratch
         if: ${{ inputs.operation == 'recover-bound-v1-benchmark' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Reclaim the verified disposable V2 restoration
+        if: ${{ inputs.operation == 'reclaim-native-v2-seed' || inputs.operation == 'resume-native-v2-reclaim' }}
         env:
           GH_TOKEN: ${{ github.token }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

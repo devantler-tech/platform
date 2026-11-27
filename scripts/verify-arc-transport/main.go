@@ -10,38 +10,14 @@ import (
 	"net/netip"
 	"os"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/hubblepolicy"
 )
 
 type target struct {
 	pod, source, destination, node string
 	port                           uint16
 	since, until                   time.Time
-}
-
-type endpoint struct {
-	Namespace string `json:"namespace"`
-	Pod       string `json:"pod_name"`
-}
-type flow struct {
-	Verdict     string   `json:"verdict"`
-	Reason      string   `json:"drop_reason_desc"`
-	Direction   string   `json:"traffic_direction"`
-	Source      endpoint `json:"source"`
-	Destination endpoint `json:"destination"`
-	IP          struct {
-		Source      string `json:"source"`
-		Destination string `json:"destination"`
-	} `json:"IP"`
-	L4 struct {
-		TCP struct {
-			Port  uint16 `json:"destination_port"`
-			Flags struct {
-				SYN bool `json:"SYN"`
-			} `json:"flags"`
-		} `json:"TCP"`
-	} `json:"l4"`
-	Node string `json:"node_name"`
-	Time string `json:"time"`
 }
 
 func verifyHealth(input io.Reader) error {
@@ -51,7 +27,7 @@ func verifyHealth(input io.Reader) error {
 	if err := decoder.Decode(&raw); err != nil {
 		return errors.New("invalid health response")
 	}
-	if err := requireTransportJSON(raw, true); err != nil {
+	if err := requireHealthJSON(raw); err != nil {
 		return err
 	}
 	var health struct {
@@ -74,59 +50,12 @@ func verifyHealth(input io.Reader) error {
 }
 
 func verifyDenial(input io.Reader, expected target) error {
-	bounded := &io.LimitedReader{R: input, N: 4 << 20}
-	decoder := json.NewDecoder(bounded)
-	matched := false
-	for {
-		var document json.RawMessage
-		if err := decoder.Decode(&document); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return errors.New("malformed observer response")
-		}
-		if err := requireTransportJSON(document, false); err != nil {
-			return err
-		}
-		var response map[string]json.RawMessage
-		if err := json.Unmarshal(document, &response); err != nil {
-			return errors.New("malformed observer response")
-		}
-		for _, field := range []string{"lost_events", "lostEvents", "node_status", "nodeStatus"} {
-			if _, ok := response[field]; ok {
-				return errors.New("incomplete observer response")
-			}
-		}
-		raw, ok := response["flow"]
-		if !ok {
-			return errors.New("unknown observer response")
-		}
-		var observed flow
-		if err := json.Unmarshal(raw, &observed); err != nil {
-			return errors.New("malformed flow")
-		}
-		when, err := time.Parse(time.RFC3339Nano, observed.Time)
-		if err != nil || when.Before(expected.since) || when.After(expected.until) {
-			continue
-		}
-		// Source default-deny or destination ingress denial both prove interception.
-		// UNKNOWN, missing and other directions never qualify.
-		if observed.Verdict == "DROPPED" && observed.Reason == "POLICY_DENIED" &&
-			(observed.Direction == "EGRESS" || observed.Direction == "INGRESS") &&
-			observed.Source.Namespace == "arc-runners" && observed.Source.Pod == expected.pod &&
-			observed.Destination.Namespace == "openbao" && observed.Destination.Pod == "openbao-2" &&
-			observed.IP.Source == expected.source && observed.IP.Destination == expected.destination &&
-			observed.L4.TCP.Port == expected.port && observed.L4.TCP.Flags.SYN && observed.Node == expected.node {
-			matched = true
-		}
-	}
-	if bounded.N <= 0 {
-		return errors.New("observer response exceeds bound")
-	}
-	if !matched {
-		return errors.New("no correlated policy denial")
-	}
-	return nil
+	return hubblepolicy.VerifyTCPDenial(input, hubblepolicy.Denial{
+		Source:      hubblepolicy.Endpoint{Namespace: "arc-runners", Pod: expected.pod},
+		Destination: hubblepolicy.Endpoint{Namespace: "openbao", Pod: "openbao-2"},
+		SourceIP:    expected.source, DestinationIP: expected.destination, Node: expected.node,
+		Port: expected.port, Since: expected.since, Until: expected.until,
+	})
 }
 
 func run(args []string) error {

@@ -51,29 +51,37 @@ func validBenchmarkOwner(run, source string) bool {
 // Read the latest attempt, rather than attempt 1 alone: a completed first
 // attempt does not establish that a later retry has stopped using its objects.
 func benchmarkOwnerFinished(ctx context.Context, c client, run, source string) error {
+	_, err := readFinishedMigrationRun(ctx, c, run, source)
+	return err
+}
+
+type finishedMigrationRun struct {
+	ID         int64  `json:"id"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	Source     string `json:"head_sha"`
+	Branch     string `json:"head_branch"`
+	Event      string `json:"event"`
+	Attempt    uint64 `json:"run_attempt"`
+	Path       string `json:"path"`
+}
+
+func readFinishedMigrationRun(ctx context.Context, c client, run, source string) (finishedMigrationRun, error) {
 	if !validBenchmarkOwner(run, source) {
-		return errors.New("benchmark owner identity is invalid")
+		return finishedMigrationRun{}, errors.New("migration owner identity is invalid")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	raw, err := c.run(ctx, nil, "gh", "api", "repos/devantler-tech/platform/actions/runs/"+run)
-	if err != nil || ctx.Err() != nil || len(raw) > 1024*1024 || strictjson.Validate(raw, map[string][]string{"": {"id", "status", "head_sha", "head_branch", "event", "run_attempt", "path"}}) != nil {
-		return errors.New("latest benchmark owner attempt is unverified")
+	if err != nil || ctx.Err() != nil || len(raw) > 1024*1024 || strictjson.Validate(raw, map[string][]string{"": {"id", "status", "conclusion", "head_sha", "head_branch", "event", "run_attempt", "path"}}) != nil {
+		return finishedMigrationRun{}, errors.New("latest migration owner attempt is unverified")
 	}
-	var actual struct {
-		ID      int64  `json:"id"`
-		Status  string `json:"status"`
-		Source  string `json:"head_sha"`
-		Branch  string `json:"head_branch"`
-		Event   string `json:"event"`
-		Attempt uint64 `json:"run_attempt"`
-		Path    string `json:"path"`
-	}
+	var actual finishedMigrationRun
 	wantID, _ := strconv.ParseInt(run, 10, 64)
 	if json.Unmarshal(raw, &actual) != nil || actual.ID != wantID || actual.Status != "completed" || actual.Source != source || actual.Branch != "main" || actual.Event != "workflow_dispatch" || actual.Attempt == 0 || !reviewedWorkflowPath(actual.Path) {
-		return errors.New("benchmark owner is live, changed or outside the reviewed workflow")
+		return finishedMigrationRun{}, errors.New("migration owner is live, changed or outside the reviewed workflow")
 	}
-	return nil
+	return actual, nil
 }
 
 func claimBenchmarkRecovery(ctx context.Context, c client, phase, source, run string) (benchmarkRecord, error) {

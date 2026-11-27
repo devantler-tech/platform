@@ -27,7 +27,7 @@ Mount these files read-only in one private input directory:
 | --- | --- |
 | `source-username` | The existing provider's account login. |
 | `source-password` | A temporary, app-specific source password. |
-| `destination-password` | The existing destination mailbox password. |
+| `destination-password` | An app password for the destination mailbox. The account has two-factor sign-in, so its own password cannot sign in over IMAP. |
 | `addresses` | The complete approved domain-address inventory, separated by commas. |
 
 The driver rejects missing, empty, multiline or publicly readable credentials,
@@ -49,9 +49,12 @@ The maintainer keeps the existing provider's `username` and app-specific
 in `private-mail` projects them as `source-username` and `source-password`.
 The domain's address inventory is not a provider credential: it is the
 SOPS-encrypted `email-history-import-addresses` Secret, removed with the
-importer. The server's own aliases stay declared in the encrypted mail
-settings. The destination password comes from the existing
-`private-mail-maintainer` Secret.
+importer. The server's own aliases come from OpenBao
+`infrastructure/email/aliases`. The destination sign-in is an app password the
+maintainer created for this copy and keeps at
+`infrastructure/email/history-import` (key `password`). The same role reads it,
+and the ExternalSecret projects it as `destination-password`. Revoke the app
+password once the copy after the MX move is complete.
 
 The suspended `private-mail/email-history-import` CronJob holds the reviewed
 pod template: the signed importer digest, those inputs mounted read-only, and a
@@ -82,7 +85,7 @@ list, and no server reply, folder name or credential ever appears:
 | `delimiter` | A folder uses a hierarchy separator other than `/`. |
 | `folders` | An empty, oversized, duplicate or malformed folder list. |
 | `examine` | A read-only folder open failed, or its reply gave no message count (`* N EXISTS`), which would otherwise count the folder as empty. |
-| `read-only` | The server claimed a read-only open (EXAMINE) was read-write, in the tagged or an untagged reply, or the destination did not confirm the open with `[READ-ONLY]`. The source may omit that code, because iCloud does; the destination is this deployment's own server, which sends it. |
+| `read-only` | Destination only: the read-only open (EXAMINE) was not confirmed with `[READ-ONLY]`, or was claimed read-write in a tagged or untagged reply. The destination is this deployment's own server, which sends the code. The source's code is not checked: iCloud answers EXAMINE with a code other than `[READ-ONLY]`, and the observer sends only read commands. |
 | `uids` | A folder lacks UIDNEXT or UIDVALIDITY. |
 | `inbox` | No INBOX was listed. |
 
@@ -100,7 +103,9 @@ files and are never placed in subprocess arguments.
 The operation proceeds in this order:
 
 1. Independently read every selectable folder's message count, UID validity and
-   next UID on the source and destination, using read-only `EXAMINE` commands.
+   next UID on the source and destination, using `EXAMINE`, the read-only open.
+   The destination must confirm each open as read-only; the source's reply code
+   is not checked (iCloud does not confirm it).
 2. Copy all folders and messages with imapsync. Source and destination expunges,
    deletion, ACL changes and updates of existing destination flags are disabled.
    A copied message's pending-deletion flag is removed so it remains readable.
@@ -141,6 +146,9 @@ receives the mailbox data.
 
 The independent inventory client is the MIT-licensed
 [`go-imap` v1.2.1](https://github.com/emersion/go-imap/tree/v1.2.1). It sends only
-login, folder listing, read-only selection and logout; it neither fetches bodies
-nor sends mailbox mutation commands. Its connections have an absolute deadline,
-including while waiting for a server greeting.
+`CAPABILITY`, `LOGIN`, `LIST`, `EXAMINE` and `LOGOUT`; it neither fetches bodies
+nor sends mailbox mutation commands, and the tests refuse any other command.
+iCloud answers `EXAMINE` with `[READ-WRITE]`, so the observer's opens of the
+source may clear its session `\Recent` flags; the copy's source checks cover
+folders, message counts, UID validity and next UID, not flags. Its connections
+have an absolute deadline, including while waiting for a server greeting.
