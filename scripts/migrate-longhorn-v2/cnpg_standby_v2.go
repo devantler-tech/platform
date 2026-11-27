@@ -5,13 +5,6 @@ import (
 	"errors"
 )
 
-func readUmamiV2Standby(ctx context.Context, c client, observation cnpgObservation, name string, disks []cnpgRecoveryDiskBinding) (cnpgRecoveredStorage, error) {
-	if !umamiV2Transition(observation.Cluster) {
-		return cnpgRecoveredStorage{}, errors.New("the selected Umami transition is unverified")
-	}
-	return readCNPGV2Standby(ctx, c, observation, name, disks)
-}
-
 func readCNPGV2Standby(ctx context.Context, c client, observation cnpgObservation, name string, disks []cnpgRecoveryDiskBinding) (cnpgRecoveredStorage, error) {
 	refused := errors.New("the live V2 standby storage inventory is incomplete")
 	profile, ok := cnpgStandbyTransition(observation.Cluster)

@@ -9,12 +9,13 @@ import (
 // Match the CloudNativePG v1.30.2 promote status transaction and keep every
 // unrelated condition. Bind the write to precisely the observed status
 // revision, so a concurrent failover or fence stops the request.
-func umamiV2SwitchoverPatch(cluster object, previous, target string, now time.Time) ([]object, error) {
-	refused := errors.New("the witnessed Umami primary or promotion target is unverified")
-	_, previousErr := cnpgInstanceID(previous, "umami-db")
-	_, targetErr := cnpgInstanceID(target, "umami-db")
-	if !recoveredNativeObject(cluster, "postgresql.cnpg.io/v1", "Cluster", "umami") ||
-		text(cluster, "metadata", "name") != "umami-db" || previousErr != nil ||
+func cnpgV2SwitchoverPatch(database cnpgSource, cluster object, previous, target string, now time.Time) ([]object, error) {
+	refused := errors.New("the witnessed database primary or promotion target is unverified")
+	_, admitted := cnpgStandbyProfileForSource(database)
+	_, previousErr := cnpgInstanceID(previous, database.Name)
+	_, targetErr := cnpgInstanceID(target, database.Name)
+	if !admitted || !recoveredNativeObject(cluster, "postgresql.cnpg.io/v1", "Cluster", database.Namespace) ||
+		text(cluster, "metadata", "name") != database.Name || previousErr != nil ||
 		targetErr != nil || previous == target || now.IsZero() ||
 		text(cluster, "status", "phase") != "Cluster in healthy state" ||
 		text(cluster, "status", "currentPrimary") != previous || text(cluster, "status", "targetPrimary") != previous {

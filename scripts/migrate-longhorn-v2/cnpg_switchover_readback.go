@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-func bindUmamiPromotionRecord(journal object, previous, target string) (umamiV2PromotionRecord, error) {
+func bindCNPGPromotionRecord(database cnpgSource, journal object, previous, target string) (umamiV2PromotionRecord, error) {
 	var record umamiV2PromotionRecord
 	refused := errors.New("the previous Umami promotion record is unverified")
 	raw := text(journal, "data", "record")
 	if !recoveredNativeObject(journal, "v1", "ConfigMap", umamiV2SwitchoverNamespace) ||
-		text(journal, "metadata", "name") != umamiV2SwitchoverJournal ||
+		text(journal, "metadata", "name") != cnpgSwitchoverJournalName(database) ||
 		text(journal, "metadata", "labels", "app.kubernetes.io/managed-by") != "github-actions" ||
 		len(raw) > 65536 || json.Unmarshal([]byte(raw), &record) != nil || !validBenchmarkOwner(record.Run, record.Source) ||
 		text(journal, "metadata", "labels", "storage.platform.devantler.tech/recovery-run") != record.Run {
@@ -24,7 +24,7 @@ func bindUmamiPromotionRecord(journal object, previous, target string) (umamiV2P
 	_, stampErr := time.Parse(time.RFC3339Nano, witness.PreviousTargetSince)
 	executor, source := record.executor()
 	if err != nil || string(encoded) != raw || record.Target != target || witness.Previous.Name != previous ||
-		witness.Database.Name != "umami-db" || witness.Database.Namespace != "umami" ||
+		cnpgPromotionSource(witness.Database) != database ||
 		witness.Previous == witness.Standbys[target].Pod || witness.Standbys[target].Pod.Name != target || len(witness.Standbys) != 3 ||
 		witness.Generation == 0 || stampErr != nil || !validBenchmarkOwner(executor, source) ||
 		(record.RetryRun == "") != (record.RetrySource == "") ||
@@ -34,8 +34,8 @@ func bindUmamiPromotionRecord(journal object, previous, target string) (umamiV2P
 	return record, nil
 }
 
-func resumeUmamiV2Promotion(ctx context.Context, c client, source, run, previous, target string, observation cnpgObservation, journal object, disks []cnpgRecoveryDiskBinding) error {
-	record, err := bindUmamiPromotionRecord(journal, previous, target)
+func resumeCNPGV2Promotion(ctx context.Context, c client, database cnpgSource, source, run, previous, target string, observation cnpgObservation, journal object, disks []cnpgRecoveryDiskBinding) error {
+	record, err := bindCNPGPromotionRecord(database, journal, previous, target)
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func writeUmamiPromotionIntent(ctx context.Context, c client, source string, jou
 		object{"op": "replace", "path": "/data/record", "value": string(next)}); err != nil {
 		return nil, err
 	}
-	confirmed, err := c.get(ctx, "configmap", umamiV2SwitchoverNamespace, umamiV2SwitchoverJournal, false)
+	confirmed, err := c.get(ctx, "configmap", umamiV2SwitchoverNamespace, cnpgSwitchoverJournalName(cnpgPromotionSource(record.Witness.Database)), false)
 	if err != nil || benchmarkIdentity(confirmed) != benchmarkIdentity(journal) || text(confirmed, "data", "record") != string(next) {
 		return nil, errors.New("the exact Umami promotion intent was not confirmed")
 	}
@@ -92,7 +92,8 @@ func verifyAndRecordUmamiV2Promotion(ctx context.Context, c client, source, targ
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
-	observed, err := c.get(ctx, "configmap", umamiV2SwitchoverNamespace, umamiV2SwitchoverJournal, false)
+	journalName := cnpgSwitchoverJournalName(cnpgPromotionSource(witness.Database))
+	observed, err := c.get(ctx, "configmap", umamiV2SwitchoverNamespace, journalName, false)
 	if err != nil || benchmarkIdentity(observed) != benchmarkIdentity(journal) ||
 		text(observed, "data", "record") != text(journal, "data", "record") {
 		return errors.New("the Umami switchover journal has changed")
@@ -107,7 +108,7 @@ func verifyAndRecordUmamiV2Promotion(ctx context.Context, c client, source, targ
 	if err := c.patch(ctx, "configmap", umamiV2SwitchoverNamespace, observed, object{"op": "add", "path": "/data/verified", "value": "v2-primary"}); err != nil {
 		return err
 	}
-	receipt, err := c.get(ctx, "configmap", umamiV2SwitchoverNamespace, umamiV2SwitchoverJournal, false)
+	receipt, err := c.get(ctx, "configmap", umamiV2SwitchoverNamespace, journalName, false)
 	if err != nil || benchmarkIdentity(receipt) != benchmarkIdentity(journal) ||
 		text(receipt, "data", "record") != text(journal, "data", "record") || text(receipt, "data", "verified") != "v2-primary" {
 		return errors.New("the Umami switchover verification receipt has not been confirmed")
@@ -116,12 +117,16 @@ func verifyAndRecordUmamiV2Promotion(ctx context.Context, c client, source, targ
 }
 
 func verifyUmamiWriterService(ctx context.Context, c client, cluster, writer object) error {
-	refused := errors.New("the Umami writer service has not moved to the witnessed V2 writer")
-	service, err := c.get(ctx, "service", "umami", "umami-db-rw", false)
-	if err != nil || !recoveredNativeObject(service, "v1", "Service", "umami") || !cnpgOwnerReference(service, cluster) {
+	database := cnpgSource{Namespace: text(cluster, "metadata", "namespace"), Name: text(cluster, "metadata", "name")}
+	refused := errors.New("the database writer service has not moved to the witnessed V2 writer")
+	if _, ok := cnpgStandbyProfileForSource(database); !ok {
 		return refused
 	}
-	slices, err := c.list(ctx, "endpointslices.discovery.k8s.io", "umami")
+	service, err := c.get(ctx, "service", database.Namespace, database.Name+"-rw", false)
+	if err != nil || !recoveredNativeObject(service, "v1", "Service", database.Namespace) || !cnpgOwnerReference(service, cluster) {
+		return refused
+	}
+	slices, err := c.list(ctx, "endpointslices.discovery.k8s.io", database.Namespace)
 	if err != nil {
 		return err
 	}
@@ -129,7 +134,11 @@ func verifyUmamiWriterService(ctx context.Context, c client, cluster, writer obj
 }
 
 func bindUmamiWriterEndpoints(service, writer object, slices []object) error {
-	refused := errors.New("the Umami writer service has an unknown or stale route")
+	refused := errors.New("the database writer service has an unknown or stale route")
+	name, namespace := text(service, "metadata", "name"), text(service, "metadata", "namespace")
+	if name == "" || namespace == "" {
+		return refused
+	}
 	ports, _ := value(service, "spec", "ports").([]any)
 	if len(ports) != 1 {
 		return refused
@@ -161,10 +170,10 @@ func bindUmamiWriterEndpoints(service, writer object, slices []object) error {
 	}
 	routed := map[string]bool{}
 	for _, slice := range slices {
-		if text(slice, "metadata", "labels", "kubernetes.io/service-name") != "umami-db-rw" {
+		if text(slice, "metadata", "labels", "kubernetes.io/service-name") != name {
 			continue
 		}
-		if !recoveredNativeObject(slice, "discovery.k8s.io/v1", "EndpointSlice", "umami") {
+		if !recoveredNativeObject(slice, "discovery.k8s.io/v1", "EndpointSlice", namespace) {
 			return refused
 		}
 		family := text(slice, "addressType")
@@ -182,7 +191,7 @@ func bindUmamiWriterEndpoints(service, writer object, slices []object) error {
 		}
 		owner, _ := refs[0].(object)
 		if text(owner, "apiVersion") != "v1" || text(owner, "kind") != "Service" ||
-			text(owner, "name") != "umami-db-rw" || text(owner, "uid") != text(service, "metadata", "uid") || value(owner, "controller") != true {
+			text(owner, "name") != name || text(owner, "uid") != text(service, "metadata", "uid") || value(owner, "controller") != true {
 			return refused
 		}
 		endpoints, ok := value(slice, "endpoints").([]any)
@@ -193,7 +202,7 @@ func bindUmamiWriterEndpoints(service, writer object, slices []object) error {
 			endpoint, ok := raw.(object)
 			if !ok || value(endpoint, "conditions", "ready") != true || value(endpoint, "conditions", "serving") != true ||
 				value(endpoint, "conditions", "terminating") != false ||
-				text(endpoint, "targetRef", "kind") != "Pod" || text(endpoint, "targetRef", "namespace") != "umami" ||
+				text(endpoint, "targetRef", "kind") != "Pod" || text(endpoint, "targetRef", "namespace") != namespace ||
 				text(endpoint, "targetRef", "name") != text(writer, "metadata", "name") ||
 				text(endpoint, "targetRef", "uid") != text(writer, "metadata", "uid") {
 				return refused
