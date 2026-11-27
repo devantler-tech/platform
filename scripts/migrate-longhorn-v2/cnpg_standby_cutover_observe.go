@@ -108,10 +108,20 @@ func observeUmamiStandbyCutover(ctx context.Context, c client, source, target, s
 }
 
 func rebindUmamiArchiveProof(ctx context.Context, c client, observation cnpgObservation) (cnpgProofRecord, error) {
-	refused := errors.New("the completed V2 backup recovery for this Umami database is unverified")
-	_, proof, err := readCNPGProof(ctx, c, "umami-db")
+	return rebindCNPGStandbyArchiveProof(ctx, c, cnpgSource{Namespace: "umami", Name: "umami-db"}, observation)
+}
+
+func rebindCNPGStandbyArchiveProof(ctx context.Context, c client, database cnpgSource, observation cnpgObservation) (cnpgProofRecord, error) {
+	refused := errors.New("the completed V2 backup recovery for this database is unverified")
+	if !knownCNPGArchiveSource(database.Namespace, database.Name) ||
+		text(observation.Cluster, "metadata", "namespace") != database.Namespace ||
+		text(observation.Cluster, "metadata", "name") != database.Name {
+		return cnpgProofRecord{}, refused
+	}
+	_, proof, err := readCNPGProof(ctx, c, database.Name)
 	primary := observation.States[text(observation.Cluster, "status", "currentPrimary")]
 	if err != nil || proof.Phase != cnpgArchiveCredentialRetired || !proof.RestoreVerified || validateCNPGRestoreReceipt(proof) != nil ||
+		proof.Plan.Source.Namespace != database.Namespace || proof.Plan.Source.Cluster != database.Name ||
 		proof.Plan.Source.ClusterUID != text(observation.Cluster, "metadata", "uid") ||
 		proof.Plan.Barrier.SystemID != primary.SystemID {
 		return cnpgProofRecord{}, refused
@@ -127,7 +137,7 @@ func rebindUmamiArchiveProof(ctx context.Context, c client, observation cnpgObse
 	// Independently verify that the same restored V2 copy still exists. A
 	// completed run alone cannot prove that backup retention still applies.
 	if _, err := readRecoveredStorageSnapshot(ctx, c, proof); err != nil {
-		return cnpgProofRecord{}, errors.New("the verified retained Umami archive copy is no longer proven")
+		return cnpgProofRecord{}, errors.New("the verified retained database archive copy is no longer proven")
 	}
 	return proof, nil
 }

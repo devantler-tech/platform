@@ -61,15 +61,21 @@ func onlyCNPGStandbyUsesClaim(pods []object, pod object, claim, namespace string
 }
 
 func umamiStandbyDisruptionAllowed(budget, cluster object) bool {
-	labels := object{"cnpg.io/cluster": "umami-db", "cnpg.io/instanceRole": "replica"}
+	profile, ok := cnpgStandbyTransition(cluster)
+	return ok && profile.Source == (cnpgSource{Namespace: "umami", Name: "umami-db"}) && cnpgTransitionDisruptionAllowed(budget, cluster, profile)
+}
+
+func cnpgTransitionDisruptionAllowed(budget, cluster object, profile cnpgStandbyProfile) bool {
+	labels := object{"cnpg.io/cluster": profile.Source.Name, "cnpg.io/instanceRole": "replica"}
 	generation, ok := nativeObservationUint(value(budget, "metadata", "generation"))
-	return recoveredNativeObject(budget, "policy/v1", "PodDisruptionBudget", "umami") &&
-		text(budget, "metadata", "name") == "umami-db" && cnpgOwnerReference(budget, cluster) && ok && generation > 0 &&
+	minimum, followers := float64(profile.Instances-2), float64(profile.Instances-1)
+	return recoveredNativeObject(budget, "policy/v1", "PodDisruptionBudget", profile.Source.Namespace) &&
+		text(budget, "metadata", "name") == profile.Source.Name && cnpgOwnerReference(budget, cluster) && ok && generation > 0 &&
 		reflect.DeepEqual(valueObject(budget, "spec", "selector"), object{"matchLabels": labels}) &&
-		value(budget, "spec", "minAvailable") == float64(2) && value(budget, "spec", "maxUnavailable") == nil &&
+		value(budget, "spec", "minAvailable") == minimum && value(budget, "spec", "maxUnavailable") == nil &&
 		value(budget, "metadata", "generation") == value(budget, "status", "observedGeneration") &&
-		value(budget, "status", "currentHealthy") == float64(3) && value(budget, "status", "expectedPods") == float64(3) &&
-		value(budget, "status", "desiredHealthy") == float64(2) && value(budget, "status", "disruptionsAllowed") == float64(1) &&
+		value(budget, "status", "currentHealthy") == followers && value(budget, "status", "expectedPods") == followers &&
+		value(budget, "status", "desiredHealthy") == minimum && value(budget, "status", "disruptionsAllowed") == float64(1) &&
 		len(valueObject(budget, "status", "disruptedPods")) == 0
 }
 

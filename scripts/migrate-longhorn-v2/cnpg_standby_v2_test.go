@@ -64,7 +64,7 @@ func TestUmamiV2StandbyBindsLivePhysicalReplayAndCopies(t *testing.T) {
 			case "wrong mount":
 				value(pod, "spec", "volumes").([]any)[0].(object)["persistentVolumeClaim"] = object{"claimName": "another-claim"}
 			}
-			got, err := bindUmamiV2Standby(obs, f.claim, f.pv, f.volume, f.engine, f.replicas, f.p.record.Storage.Disks)
+			got, err := bindCNPGV2Standby(obs, f.claim, f.pv, f.volume, f.engine, f.replicas, f.p.record.Storage.Disks)
 			if fault == "" || fault == "retained peer" || fault == "recovery roster" {
 				if err != nil || got.Pod != benchmarkIdentity(pod) || got.Claim != benchmarkIdentity(f.claim) || len(got.Replicas) != 3 {
 					t.Fatalf("V2 standby did not qualify: %+v, %v", got, err)

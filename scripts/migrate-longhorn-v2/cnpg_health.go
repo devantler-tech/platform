@@ -62,8 +62,9 @@ func healthyCNPGPodsWithRetention(cluster object, allPods []object, retainedStan
 	primary := text(cluster, "status", "currentPrimary")
 	name, ns := text(cluster, "metadata", "name"), text(cluster, "metadata", "namespace")
 	expectedInstances := hostDatabases[ns+"/"+name].instances
-	if umamiV2Transition(cluster) {
-		expectedInstances = 4
+	profile, transitioning := cnpgStandbyTransition(cluster)
+	if transitioning {
+		expectedInstances = float64(profile.Instances)
 	}
 	expectedClaimCount := expectedInstances
 	if retainedStandby != "" {
@@ -170,10 +171,6 @@ func umamiHealthyClaimsExcludeOnly(cluster object, instances map[string]bool, re
 // Requiring the four-instance V2 shape lets the physical observer verify the
 // spare during migration. Host maintenance still uses the steady-state roster.
 func umamiV2Transition(cluster object) bool {
-	return text(cluster, "metadata", "namespace") == "umami" && text(cluster, "metadata", "name") == "umami-db" &&
-		value(cluster, "spec", "instances") == float64(4) &&
-		text(cluster, "spec", "storage", "storageClass") == "longhorn-v2" &&
-		text(cluster, "spec", "storage", "size") == "5Gi" &&
-		value(cluster, "spec", "storage", "resizeInUseVolumes") == false &&
-		value(cluster, "spec", "walStorage") == nil && value(cluster, "spec", "tablespaces") == nil
+	profile, ok := cnpgStandbyTransition(cluster)
+	return ok && profile.Source == (cnpgSource{Namespace: "umami", Name: "umami-db"})
 }
