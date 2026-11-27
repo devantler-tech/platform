@@ -213,6 +213,8 @@ spec:
     persistence:
       enabled: true
       size: 10Gi
+      annotations:
+        helm.sh/resource-policy: keep
     # `login.method` renders ACTUAL_LOGIN_METHOD=openid (unconditional). The
     # `login.openid` block is SCHEMA-ONLY: the chart's values schema validates a
     # `login.openid` oneOf and rejects the empty default when method=openid, so
