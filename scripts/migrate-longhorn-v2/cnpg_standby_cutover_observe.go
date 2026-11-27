@@ -120,5 +120,10 @@ func rebindUmamiArchiveProof(ctx context.Context, c client, observation cnpgObse
 	if err != nil || result.Attempt != 1 || result.Conclusion != "success" {
 		return cnpgProofRecord{}, refused
 	}
+	// Independently verify that the same restored V2 copy still exists. A
+	// completed run alone cannot prove that backup retention still applies.
+	if _, err := readRecoveredStorageSnapshot(ctx, c, proof); err != nil {
+		return cnpgProofRecord{}, errors.New("the verified retained Umami archive copy is no longer proven")
+	}
 	return proof, nil
 }

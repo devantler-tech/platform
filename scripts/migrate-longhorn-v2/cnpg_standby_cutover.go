@@ -8,7 +8,7 @@ import (
 
 type cnpgStandbyCutover struct {
 	Database, Consumer, Claim, PV, Volume, Budget benchmarkResource
-	ConsumerVersion                               string
+	ConsumerVersion, BudgetVersion                string
 	Spare                                         cnpgRecoveredStorage
 }
 
@@ -36,7 +36,8 @@ func bindUmamiStandbyCutover(observation cnpgObservation, pods []object, target 
 	}
 	return cnpgStandbyCutover{Database: benchmarkIdentity(cluster), Consumer: benchmarkIdentity(pod),
 		ConsumerVersion: text(pod, "metadata", "resourceVersion"), Claim: benchmarkIdentity(claim),
-		PV: benchmarkIdentity(pv), Volume: benchmarkIdentity(volume), Budget: benchmarkIdentity(budget)}, nil
+		PV: benchmarkIdentity(pv), Volume: benchmarkIdentity(volume), Budget: benchmarkIdentity(budget),
+		BudgetVersion: text(budget, "metadata", "resourceVersion")}, nil
 }
 
 func onlyCNPGStandbyUsesClaim(pods []object, pod object, claim, namespace string) bool {
