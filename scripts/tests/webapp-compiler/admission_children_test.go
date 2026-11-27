@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func verifyWebAppAdmissionExport(t *testing.T, ctx context.Context, api client.Client, engine *gecompiler.Compiler, definition *kroapi.ResourceGraphDefinition, app *unstructured.Unstructured) {
+func verifyWebAppAdmissionExport(ctx context.Context, t *testing.T, api client.Client, engine *gecompiler.Compiler, definition *kroapi.ResourceGraphDefinition, app *unstructured.Unstructured) {
 	t.Helper()
 	directory := t.TempDir()
 	source, output := filepath.Join(directory, "webapp.json"), filepath.Join(directory, "children.json")
@@ -29,7 +29,7 @@ func verifyWebAppAdmissionExport(t *testing.T, ctx context.Context, api client.C
 	if err := os.WriteFile(source, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	renderWebAppAdmissionChildren(t, ctx, api, engine, definition, source, output)
+	renderWebAppAdmissionChildren(ctx, t, api, engine, definition, source, output)
 	data, err = os.ReadFile(output)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func verifyWebAppAdmissionExport(t *testing.T, ctx context.Context, api client.C
 	}
 }
 
-func renderWebAppAdmissionChildren(t *testing.T, ctx context.Context, api client.Client, engine *gecompiler.Compiler, definition *kroapi.ResourceGraphDefinition, source, output string) {
+func renderWebAppAdmissionChildren(ctx context.Context, t *testing.T, api client.Client, engine *gecompiler.Compiler, definition *kroapi.ResourceGraphDefinition, source, output string) {
 	t.Helper()
 	const maxInput = 1 << 20
 	input, err := os.Open(source)

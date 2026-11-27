@@ -223,7 +223,7 @@ func TestCommittedWebApp(t *testing.T) {
 			t.Fatal(err)
 		}
 		if source := os.Getenv("WEBAPP_ADMISSION_INPUT"); source != "" {
-			renderWebAppAdmissionChildren(t, ctx, apiClient, engine, definition, source, os.Getenv("WEBAPP_ADMISSION_OUTPUT"))
+			renderWebAppAdmissionChildren(ctx, t, apiClient, engine, definition, source, os.Getenv("WEBAPP_ADMISSION_OUTPUT"))
 		}
 		instance := &unstructured.Unstructured{Object: map[string]interface{}{
 			"apiVersion": "kro.run/v1alpha1", "kind": "WebApp",
@@ -248,7 +248,7 @@ func TestCommittedWebApp(t *testing.T) {
 			if err := unstructured.SetNestedField(input.Object, "admission-fixture", "spec", "name"); err != nil {
 				t.Fatal(err)
 			}
-			verifyWebAppAdmissionExport(t, ctx, apiClient, engine, definition, input)
+			verifyWebAppAdmissionExport(ctx, t, apiClient, engine, definition, input)
 		})
 		deployment := desiredDeployment(t, engine, definition, instance)
 		writeDesiredFixture(t, "enabled", deployment)
