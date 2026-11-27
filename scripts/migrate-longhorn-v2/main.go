@@ -65,6 +65,8 @@ func main() {
 		authorization = authorizeCorootKeeperObservation(os.Getenv)
 	case corootKeeperCutoverOperation:
 		_, authorization = authorizeCorootKeeperCutover(os.Getenv)
+	case transferCorootKeeperOperation:
+		_, authorization = authorizeCorootKeeperOperation(os.Getenv, operation)
 	case openBaoPairOperation:
 		_, authorization = authorizeOpenBaoPair(os.Getenv)
 	case openBaoPairResumeOperation:
@@ -330,6 +332,19 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("COROOT_KEEPER_REPLACEMENT=VERIFIED originalStorage=RETAINED engine=v2 replicas=3 raft=SYNCED")
+		return
+	}
+	if operation == transferCorootKeeperOperation {
+		input, err := authorizeCorootKeeperOperation(os.Getenv, operation)
+		if err == nil {
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			err = runCorootKeeperLeadershipTransfer(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), input)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Coroot Keeper leadership held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("COROOT_KEEPER_V2_LEADER=VERIFIED quorum=HEALTHY providerMember=FOLLOWER")
 		return
 	}
 	if operation == openBaoPairOperation {

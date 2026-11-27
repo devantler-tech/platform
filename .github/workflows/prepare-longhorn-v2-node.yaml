@@ -47,6 +47,7 @@ name: Prepare Longhorn V2 Migration
             observe-database,
             observe-coroot-v2-keeper,
             migrate-coroot-keeper-v2,
+            transfer-coroot-keeper-leadership-to-v2,
             migrate-openbao-v2-pair,
             resume-openbao-v2-pair,
             prove-database-v2-archive,
@@ -203,6 +204,10 @@ jobs:
             migrate-coroot-keeper-v2)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^migrate-coroot-keeper-v2:[0-2]:[a-f0-9]{64}$ ]]
+              ;;
+            transfer-coroot-keeper-leadership-to-v2)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^transfer-coroot-keeper-leadership-to-v2:[0-2]:[a-f0-9]{64}$ ]]
               ;;
             migrate-openbao-v2-pair)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
