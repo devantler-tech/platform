@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -39,6 +43,106 @@ func TestCNPGStreamSourcePinsTheReplicaAndItsTLSNames(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestCNPGStreamSourceRejectsASwitchoverDuringTheFinalProbe(t *testing.T) {
+	for _, switchover := range []bool{false, true} {
+		t.Run(strconv.FormatBool(switchover), func(t *testing.T) {
+			fixture := cnpgStreamObservationFixture(t, 2)
+			source := strings.Repeat("a", 40)
+			namespace, name := "ate-system", "substrate-db"
+			member := fixture.Pods[1]
+			claimName := text(member, "metadata", "name")
+			const claimUID = "d827f800-8471-40c6-815a-7e59617ee620"
+			pvName := "pvc-" + claimUID
+			valueObject(member, "spec")["volumes"] = []any{object{"name": "pgdata", "persistentVolumeClaim": object{"claimName": claimName}}}
+			for _, raw := range value(member, "spec", "containers").([]any) {
+				container := raw.(object)
+				if text(container, "name") == "postgres" {
+					container["volumeMounts"] = []any{object{"name": "pgdata", "mountPath": "/var/lib/postgresql/data"}}
+				}
+			}
+			claim := object{"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+				"metadata": object{"name": claimName, "namespace": namespace, "uid": claimUID, "resourceVersion": "51"},
+				"spec":     object{"volumeName": pvName, "storageClassName": "longhorn-wffc", "accessModes": []any{"ReadWriteOnce"}, "volumeMode": "Filesystem"},
+				"status":   object{"phase": "Bound", "capacity": object{"storage": "5Gi"}}}
+			pv := object{"apiVersion": "v1", "kind": "PersistentVolume",
+				"metadata": object{"name": pvName, "uid": "a4f66240-e801-4624-a98a-af06d7fbfb2f", "resourceVersion": "52"},
+				"spec": object{"storageClassName": "longhorn-wffc", "accessModes": []any{"ReadWriteOnce"}, "volumeMode": "Filesystem",
+					"capacity": object{"storage": "5Gi"}, "claimRef": object{"name": claimName, "namespace": namespace, "uid": claimUID},
+					"csi": object{"driver": "driver.longhorn.io", "volumeHandle": pvName}},
+				"status": object{"phase": "Bound"}}
+			volume := object{"apiVersion": "longhorn.io/v1beta2", "kind": "Volume",
+				"metadata": object{"name": pvName, "namespace": "longhorn-system", "uid": "7860ea13-bc1d-4e4c-9a12-ed34c67dbbed", "resourceVersion": "53"},
+				"spec":     object{"dataEngine": "v1"},
+				"status": object{"state": "attached", "robustness": "healthy", "currentNodeID": text(member, "spec", "nodeName"),
+					"kubernetesStatus": object{"pvName": pvName, "namespace": namespace, "pvcName": claimName}}}
+			roleChanged := false
+			physicalReads := 0
+			c := client{context: "admin@prod", run: func(_ context.Context, input []byte, program string, args ...string) ([]byte, error) {
+				if len(input) != 0 {
+					t.Fatal("the source observation attempted a write")
+				}
+				if program == "git" {
+					return []byte(source + "\trefs/heads/main\n"), nil
+				}
+				if program != "kubectl" || len(args) < 4 {
+					t.Fatal("unexpected command")
+				}
+				if args[2] == "exec" {
+					if args[len(args)-1] == "--command="+postgresStateSQL {
+						physicalReads++
+						if physicalReads == 6 && switchover {
+							roleChanged = true
+						}
+						return json.Marshal(fixture.States[args[3]])
+					}
+					if strings.Contains(args[len(args)-1], "max_wal_senders") {
+						return []byte(`{"version":180007,"senders":2,"slots":1}`), nil
+					}
+					t.Fatal("unexpected SQL")
+				}
+				if args[2] != "get" {
+					t.Fatal("unexpected Kubernetes operation")
+				}
+				switch args[3] {
+				case "cluster.postgresql.cnpg.io":
+					if roleChanged {
+						next := cloneCNPGObservation(t, fixture)
+						valueObject(next.Cluster, "status")["targetPrimary"] = claimName
+						return json.Marshal(next.Cluster)
+					}
+					return json.Marshal(fixture.Cluster)
+				case "pods":
+					return json.Marshal(object{"metadata": object{"resourceVersion": "10"}, "items": fixture.Pods})
+				case "pod":
+					for _, pod := range fixture.Pods {
+						if text(pod, "metadata", "name") == args[4] {
+							return json.Marshal(pod)
+						}
+					}
+				case "persistentvolumeclaim":
+					return json.Marshal(claim)
+				case "persistentvolume":
+					return json.Marshal(pv)
+				case "volumes.longhorn.io":
+					return json.Marshal(volume)
+				}
+				return nil, errors.New("unexpected read")
+			}}
+			binding, err := resolveCNPGStreamSource(t.Context(), c, name, source)
+			if physicalReads != 6 {
+				t.Fatalf("did not reach the final SQL probe: probes=%d error=%v", physicalReads, err)
+			}
+			if switchover {
+				if err == nil {
+					t.Fatal("accepted an obsolete standby after the final probe")
+				}
+			} else if err != nil || binding.Claim.Name != claimName {
+				t.Fatalf("the stable source was not verified: %v", err)
+			}
+		})
 	}
 }
 

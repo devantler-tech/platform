@@ -62,11 +62,8 @@ func resolveCNPGStreamSource(ctx context.Context, c client, target, source strin
 	if err != nil || json.Unmarshal(raw, &limits) != nil || limits.Version != 180007 || limits.Senders < 2 || limits.Slots < 1 {
 		return unverified, errCNPGStreamSource
 	}
-	fresh, err := c.readCNPGObservation(ctx, cnpgSource{Namespace: initial.Cluster.Namespace, Name: initial.Cluster.Name})
+	fresh, err := c.readCNPGPhysicalSnapshot(ctx, cnpgSource{Namespace: initial.Cluster.Namespace, Name: initial.Cluster.Name}, "")
 	if err != nil {
-		return unverified, err
-	}
-	if err := c.readCNPGPhysicalState(ctx, &fresh); err != nil {
 		return unverified, err
 	}
 	current, err := bindCNPGStreamSource(fresh)

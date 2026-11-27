@@ -30,26 +30,34 @@ func observeCNPGMigrationWithRetention(ctx context.Context, c client, target, so
 	if err = c.readCNPGPhysicalState(ctx, &before); err != nil {
 		return cnpgObservation{}, err
 	}
-	after, err := c.readCNPGObservationWithRetention(ctx, selected, retainedStandby)
+	final, err := c.readCNPGPhysicalSnapshot(ctx, selected, retainedStandby)
 	if err != nil {
 		return cnpgObservation{}, err
 	}
-	if err = c.readCNPGPhysicalState(ctx, &after); err != nil {
-		return cnpgObservation{}, err
-	}
-	// The final whole-cluster read follows the final SQL process bracket. A
-	// switchover during the last command must not escape through an older read.
-	final, err := c.readCNPGObservationWithRetention(ctx, selected, retainedStandby)
-	if err != nil {
-		return cnpgObservation{}, err
-	}
-	final.States = after.States
 	if err = validateCNPGObservation(before, final); err != nil {
 		return cnpgObservation{}, err
 	}
 	if err = sourceCurrent(ctx, c.run, source); err != nil {
 		return cnpgObservation{}, err
 	}
+	return final, nil
+}
+
+// Read roles and pod identities after the last physical-state probe so a
+// promotion started during that probe is visible to snapshot validation.
+func (c client) readCNPGPhysicalSnapshot(ctx context.Context, selected cnpgSource, retainedStandby string) (cnpgObservation, error) {
+	observation, err := c.readCNPGObservationWithRetention(ctx, selected, retainedStandby)
+	if err != nil {
+		return cnpgObservation{}, err
+	}
+	if err = c.readCNPGPhysicalState(ctx, &observation); err != nil {
+		return cnpgObservation{}, err
+	}
+	final, err := c.readCNPGObservationWithRetention(ctx, selected, retainedStandby)
+	if err != nil {
+		return cnpgObservation{}, err
+	}
+	final.States = observation.States
 	return final, nil
 }
 
