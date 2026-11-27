@@ -154,5 +154,12 @@ func verifyActualBudgetRestoredPayload(ctx context.Context, c client, source, ru
 	if _, uid, err := observeActualBudgetBackupSource(ctx, c, digest); err != nil || uid != originalClaimUID {
 		return errors.New("the serving claim changed during the restore")
 	}
-	return removeScratch(ctx, c, source, "pod", ns, "/api/v1/namespaces/"+ns+"/pods/"+name, created)
+	if err = removeScratch(ctx, c, source, "pod", ns, "/api/v1/namespaces/"+ns+"/pods/"+name, created); err != nil {
+		return err
+	}
+	retained, err := actualBudgetRestoredClaim(ctx, c, restore, originalClaimUID)
+	if err != nil || benchmarkIdentity(retained) != benchmarkIdentity(claim) || text(retained, "spec", "volumeName") != text(claim, "spec", "volumeName") {
+		return errors.New("the verified V2 claim was not retained after retiring the reader")
+	}
+	return nil
 }
