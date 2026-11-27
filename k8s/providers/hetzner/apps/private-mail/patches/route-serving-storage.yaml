@@ -28,6 +28,13 @@
   value:
     name: v2-data
     mountPath: /var/lib/stalwart-v2
+# The signed bootstrap image acquires its lock at the original mount path.
+# Both paths must reference the V2 filesystem so recovery and routing agree.
+- op: add
+  path: /spec/template/spec/initContainers/0/volumeMounts/-
+  value:
+    name: v2-data
+    mountPath: /var/lib/stalwart
 - op: test
   path: /spec/template/spec/containers/0/volumeMounts/1/name
   value: data

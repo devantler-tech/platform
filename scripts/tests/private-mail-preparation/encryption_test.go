@@ -157,20 +157,29 @@ func TestProductionServesTheMailStoreFromEncryptedStorage(t *testing.T) {
 			mounts := map[string]map[string]any{}
 			for _, mountItem := range sequence(t, container["volumeMounts"]) {
 				mount := mapping(t, mountItem)
-				mounts[stringField(t, mount, "name")] = mount
+				mounts[stringField(t, mount, "mountPath")] = mount
 				if mount["name"] == "legacy-data" || mount["name"] == "data" {
 					t.Fatal("the retained original claims must not mount")
 				}
+			}
+			lockMount, hasLockMount := mounts["/var/lib/stalwart"]
+			if name == "configure" {
+				if lockMount["name"] != "v2-data" || lockMount["readOnly"] == true ||
+					lockMount["subPath"] != nil || lockMount["subPathExpr"] != nil {
+					t.Fatal("the signed bootstrap image must lock the same V2 filesystem it configures")
+				}
+			} else if hasLockMount {
+				t.Fatalf("%s unexpectedly mounts the bootstrap lock path", name)
 			}
 			selecting := name == "select-mail-store"
 			routeMount := "/etc/stalwart/config.json"
 			if selecting {
 				routeMount = "/store-selection"
 			}
-			if mounts["serving-storage"]["mountPath"] != routeMount || (mounts["serving-storage"]["readOnly"] == true) == selecting ||
-				!selecting && mounts["serving-storage"]["subPath"] != "config.json" ||
-				mounts["v2-data"]["mountPath"] != "/var/lib/stalwart-v2" ||
-				(mounts["v2-data"]["readOnly"] == true) != selecting {
+			route, data := mounts[routeMount], mounts["/var/lib/stalwart-v2"]
+			if route["name"] != "serving-storage" || (route["readOnly"] == true) == selecting ||
+				!selecting && route["subPath"] != "config.json" ||
+				data["name"] != "v2-data" || (data["readOnly"] == true) != selecting {
 				t.Fatalf("%s does not use the shared fenced storage route", name)
 			}
 			if selecting && (index != 0 || position != 0 || container["image"] != server) {
