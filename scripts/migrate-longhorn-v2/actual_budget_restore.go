@@ -11,6 +11,7 @@ import (
 
 const (
 	actualBudgetRestoreOperation = "restore-actual-budget-v2"
+	actualBudgetRestoreResume    = "resume-unstarted-actual-budget-v2"
 	actualBudgetRestoreSize      = "10Gi"
 	actualBudgetRestoreBytes     = "10737418240"
 	actualBudgetRestorePrefix    = "actual-budget-recovery-"
@@ -18,17 +19,34 @@ const (
 
 type actualBudgetRestoreConfirmation struct {
 	backupRun, backupSource, sourceClaimDigest string
+	prior                                      *actualBudgetPriorRestore
 }
 
 func authorizeActualBudgetRestore(getenv func(string) string) (actualBudgetRestoreConfirmation, error) {
 	confirm := getenv("LONGHORN_V2_CONFIRM")
 	fields := strings.Split(confirm, ":")
-	if getenv("LONGHORN_V2_OPERATION") != actualBudgetRestoreOperation || getenv("LONGHORN_V2_NODE") != "" ||
-		getenv("LONGHORN_V2_DATABASE") != "" || len(fields) != 4 || fields[0] != actualBudgetRestoreOperation ||
+	operation := getenv("LONGHORN_V2_OPERATION")
+	if getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != "" ||
+		len(fields) < 4 || fields[0] != operation ||
 		!validBenchmarkOwner(fields[1], fields[2]) || fields[1] == getenv("GITHUB_RUN_ID") || !retentionDigest.MatchString(fields[3]) {
 		return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
 	}
-	return actualBudgetRestoreConfirmation{fields[1], fields[2], fields[3]}, authorizeWorkflow(getenv, confirm)
+	opts := actualBudgetRestoreConfirmation{backupRun: fields[1], backupSource: fields[2], sourceClaimDigest: fields[3]}
+	switch operation {
+	case actualBudgetRestoreOperation:
+		if len(fields) != 4 {
+			return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
+		}
+	case actualBudgetRestoreResume:
+		if len(fields) != 7 || !validBenchmarkOwner(fields[4], fields[5]) || !nativeRestoreUID(fields[6]) ||
+			fields[4] == fields[1] || fields[4] == getenv("GITHUB_RUN_ID") {
+			return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
+		}
+		opts.prior = &actualBudgetPriorRestore{run: fields[4], source: fields[5], namespaceUID: fields[6]}
+	default:
+		return actualBudgetRestoreConfirmation{}, errActualBudgetBackup
+	}
+	return opts, authorizeWorkflow(getenv, confirm)
 }
 
 // Match the source claim and the completed native upload. Only the immutable
@@ -62,15 +80,26 @@ func readActualBudgetRestoreSeed(ctx context.Context, c client, backupRun, claim
 	return backup, upload, nil
 }
 
-func actualBudgetRestoreScopeClear(ctx context.Context, c client) bool {
+func actualBudgetRestoreScopeClear(ctx context.Context, c client, permitted benchmarkResource) bool {
 	namespaces, err := c.list(ctx, "namespace", "")
 	if err != nil || len(namespaces) == 0 {
 		return false
 	}
+	matched := false
 	for _, namespace := range namespaces {
-		if text(namespace, "metadata", "name") == "" || strings.HasPrefix(text(namespace, "metadata", "name"), actualBudgetRestorePrefix) {
+		name := text(namespace, "metadata", "name")
+		if name == "" {
 			return false
 		}
+		if strings.HasPrefix(name, actualBudgetRestorePrefix) {
+			if matched || benchmarkIdentity(namespace) != permitted {
+				return false
+			}
+			matched = true
+		}
+	}
+	if (permitted.Name != "") != matched {
+		return false
 	}
 	volumes, err := c.list(ctx, "persistentvolumes", "")
 	if err != nil || len(volumes) == 0 {
@@ -111,7 +140,10 @@ func waitActualBudgetRestore(ctx context.Context, c client, created, desired, ba
 	id := benchmarkIdentity(created)
 	return waitReadyWithin(ctx, 24*time.Minute, func(ctx context.Context) error {
 		actual, err := c.get(ctx, "restores.velero.io", id.Namespace, id.Name, false)
-		if err != nil || !actualBudgetRestoreMatches(actual, desired, id) {
+		if err != nil {
+			return errActualBudgetBackup
+		}
+		if !actualBudgetRestoreMatches(actual, desired, id) {
 			return errors.Join(errActualBudgetBackup, errReadinessTerminal)
 		}
 		switch text(actual, "status", "phase") {
@@ -130,8 +162,7 @@ func waitActualBudgetRestore(ctx context.Context, c client, created, desired, ba
 }
 
 func runActualBudgetRestore(ctx context.Context, c client, source, run string, opts actualBudgetRestoreConfirmation) error {
-	assets, err := actualBudgetRestoreAssets(run, opts.backupRun)
-	if err != nil || c.context != "admin@prod" || !validBenchmarkOwner(run, source) ||
+	if c.context != "admin@prod" || !validBenchmarkOwner(run, source) || run == opts.backupRun ||
 		!validBenchmarkOwner(opts.backupRun, opts.backupSource) || !retentionDigest.MatchString(opts.sourceClaimDigest) {
 		return errActualBudgetBackup
 	}
@@ -152,21 +183,50 @@ func runActualBudgetRestore(ctx context.Context, c client, source, run string, o
 	if err != nil {
 		return err
 	}
-	if err = verifyActualBudgetRestoreClass(ctx, c); err != nil || !actualBudgetRestoreScopeClear(ctx, c) {
+	if err = verifyActualBudgetRestoreClass(ctx, c); err != nil {
 		return errors.New("the V2 storage class or isolated restore scope is unverified")
 	}
-	var restore object
-	for _, asset := range assets {
-		restore, err = c.create(ctx, source, asset)
-		if err != nil {
-			return errors.New("restore asset creation is unconfirmed, preserve the existing restore scope for recovery")
+	scopeRun := run
+	if opts.prior != nil {
+		if err := verifyUnstartedActualBudgetOwner(ctx, c, opts, run); err != nil {
+			return err
 		}
-		if text(asset, "kind") == "NetworkPolicy" && !reflect.DeepEqual(value(restore, "spec"), value(asset, "spec")) {
-			return errors.New("restore namespace isolation is unverified")
-		}
+		scopeRun = opts.prior.run
+	} else if !actualBudgetRestoreScopeClear(ctx, c, benchmarkResource{}) {
+		return errors.New("an isolated restore scope is already active")
+	}
+	assets, err := actualBudgetRestoreAssets(scopeRun, opts.backupRun, storage.Disks[0].Node)
+	if err != nil {
+		return err
+	}
+	creatorSource := source
+	if opts.prior != nil {
+		creatorSource = opts.prior.source
+	}
+	valueObject(assets[0], "metadata")["annotations"] = object{
+		"storage.platform.devantler.tech/recovery-source": creatorSource,
+		"storage.platform.devantler.tech/backup-uid":      text(backup, "metadata", "uid"),
+	}
+	namespace, err := prepareActualBudgetRestoreScope(ctx, c, source, opts.prior, assets)
+	if err != nil {
+		return err
+	}
+	current, err := activation.recoveryClaimStorage(ctx, actualBudgetRestoreSize)
+	if err != nil || !recoveryJSONEqual(storage, current) {
+		return errors.New("the qualified V2 copy capacity changed before allocation")
+	}
+	if err = verifyUnstartedActualBudgetRestore(ctx, c, namespace); err != nil {
+		return err
+	}
+	if err = verifyActualBudgetPreparationAssets(ctx, c, source, assets[1], assets[2], false); err != nil {
+		return err
+	}
+	restore, err := c.create(ctx, source, assets[len(assets)-1])
+	if err != nil {
+		return errors.New("the restore request is unconfirmed, preserve the existing scope for diagnosis")
 	}
 	if err = waitActualBudgetRestore(ctx, c, restore, assets[len(assets)-1], backup, upload); err != nil {
 		return fmt.Errorf("the isolated data transfer is unverified: %w", err)
 	}
-	return verifyActualBudgetRestoredPayload(ctx, c, source, run, opts.sourceClaimDigest, originalClaimUID, restore, storage.Disks)
+	return verifyActualBudgetRestoredPayload(ctx, c, source, scopeRun, opts.sourceClaimDigest, originalClaimUID, restore, storage.Disks)
 }

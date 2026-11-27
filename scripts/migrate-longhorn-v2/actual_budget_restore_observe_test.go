@@ -28,7 +28,7 @@ func TestActualBudgetRestoreRequiresASeparateConfirmedBackup(t *testing.T) {
 				env["GITHUB_RUN_ID"] = backup
 			}
 			got, err := authorizeActualBudgetRestore(func(key string) string { return env[key] })
-			if fault == "" && (err != nil || got != (actualBudgetRestoreConfirmation{backup, source, digest})) || fault != "" && err == nil {
+			if fault == "" && (err != nil || got != (actualBudgetRestoreConfirmation{backupRun: backup, backupSource: source, sourceClaimDigest: digest})) || fault != "" && err == nil {
 				t.Fatalf("unexpected restore authorization %v", err)
 			}
 		})

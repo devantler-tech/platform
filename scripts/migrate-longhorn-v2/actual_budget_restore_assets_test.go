@@ -7,7 +7,7 @@ import (
 )
 
 func TestActualBudgetRestoreCopiesOnlyTheArchivedClaim(t *testing.T) {
-	assets, err := actualBudgetRestoreAssets("91022", "90718")
+	assets, err := actualBudgetRestoreAssets("91022", "90718", "restore-worker")
 	if err != nil || len(assets) != 4 {
 		t.Fatalf("the isolated restore assets were not built: %v", err)
 	}
@@ -45,15 +45,17 @@ func TestActualBudgetRestoreCopiesOnlyTheArchivedClaim(t *testing.T) {
 		t.Fatal("the modifier must select only the backed up claim")
 	}
 	patches := rules[0].Patches
-	if len(patches) != 1 || text(patches[0], "op") != "replace" ||
-		text(patches[0], "path") != "/spec/storageClassName" || text(patches[0], "value") != "longhorn-v2" {
-		t.Fatal("the modifier must preserve Velero's binding selector and only replace the StorageClass")
+	if len(patches) != 2 || text(patches[0], "op") != "replace" ||
+		text(patches[0], "path") != "/spec/storageClassName" || text(patches[0], "value") != "longhorn-v2" ||
+		text(patches[1], "op") != "add" || text(patches[1], "path") != "/metadata/annotations/volume.kubernetes.io~1selected-node" ||
+		text(patches[1], "value") != "restore-worker" {
+		t.Fatal("the modifier must keep Velero's binding selector and select the verified WFFC restore node")
 	}
 }
 
 func TestActualBudgetRestoreRefusesInvalidOrAliasedRuns(t *testing.T) {
 	for _, pair := range [][2]string{{"", "21"}, {"22", "22"}, {"22", ""}, {"22", "../21"}, {"production", "21"}} {
-		if result, err := actualBudgetRestoreAssets(pair[0], pair[1]); err == nil || result != nil {
+		if result, err := actualBudgetRestoreAssets(pair[0], pair[1], "restore-worker"); err == nil || result != nil {
 			t.Fatalf("invalid source or restore run admitted: %q", pair)
 		}
 	}

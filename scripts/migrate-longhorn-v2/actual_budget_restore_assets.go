@@ -5,8 +5,8 @@ import "encoding/json"
 // Restore only the archived claim. Velero v1.18 creates the DataDownload
 // before applying the claim modifier, and that selector then binds the claim
 // to the volume prepared by the data mover. Never run an archived app Pod.
-func actualBudgetRestoreAssets(run, backupRun string) ([]object, error) {
-	if !benchmarkRunPattern.MatchString(run) || !benchmarkRunPattern.MatchString(backupRun) || run == backupRun {
+func actualBudgetRestoreAssets(run, backupRun, node string) ([]object, error) {
+	if !benchmarkRunPattern.MatchString(run) || !benchmarkRunPattern.MatchString(backupRun) || run == backupRun || !kubeName.MatchString(node) {
 		return nil, errActualBudgetBackup
 	}
 	name := "actual-budget-recovery-" + run
@@ -22,7 +22,13 @@ func actualBudgetRestoreAssets(run, backupRun string) ([]object, error) {
 			"groupResource": "persistentvolumeclaims", "resourceNameRegex": "^" + actualBudgetClaim + "$",
 			"namespaces": []any{actualBudgetNamespace}, "labelSelector": claimSelector,
 		},
-		"patches": []any{object{"op": "replace", "path": "/spec/storageClassName", "value": "longhorn-v2"}},
+		// The protected caller qualifies this node for the restore helper.
+		// Velero's WFFC exposer reads selected-node before it creates its
+		// scratch claim. The target's Velero binding selector remains intact.
+		"patches": []any{
+			object{"op": "replace", "path": "/spec/storageClassName", "value": "longhorn-v2"},
+			object{"op": "add", "path": "/metadata/annotations/volume.kubernetes.io~1selected-node", "value": node},
+		},
 	}}})
 	if err != nil {
 		return nil, err
