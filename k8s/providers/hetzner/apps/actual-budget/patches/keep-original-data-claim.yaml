@@ -1,0 +1,11 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: actual-budget
+  namespace: actual-budget
+spec:
+  values:
+    persistence:
+      annotations:
+        helm.sh/resource-policy: keep
