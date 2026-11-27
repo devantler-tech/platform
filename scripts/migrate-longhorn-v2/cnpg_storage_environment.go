@@ -15,16 +15,29 @@ type cnpgStorageEnvironment struct {
 }
 
 // recoveryStorage qualifies registered disks while healthy V2 volumes coexist with retained V1 data.
-func (a temporaryV2Activation) recoveryStorage(ctx context.Context, source cnpgRecoverySource) (result cnpgStorageEnvironment, err error) {
+func (a temporaryV2Activation) recoveryStorage(ctx context.Context, source cnpgRecoverySource) (cnpgStorageEnvironment, error) {
+	if !knownCNPGArchiveSource(source.Namespace, source.Cluster) {
+		return cnpgStorageEnvironment{}, errors.New("database recovery source is unreviewed")
+	}
+	return a.recoveryClaimStorage(ctx, source.Size)
+}
+
+func (a temporaryV2Activation) recoveryClaimStorage(ctx context.Context, size string) (cnpgStorageEnvironment, error) {
+	return a.observeRecoveryStorage(ctx, &size)
+}
+
+// A resume that consumes an already provisioned volume still needs the exact
+// registered disks. Only a new allocation needs additional free capacity.
+func (a temporaryV2Activation) observeRecoveryStorage(ctx context.Context, newClaimSize *string) (result cnpgStorageEnvironment, err error) {
 	phase := "input"
 	defer func() {
 		if err != nil {
 			result = cnpgStorageEnvironment{}
-			err = fmt.Errorf("database recovery storage held: phase=%s", phase)
+			err = fmt.Errorf("recovery storage held: phase=%s", phase)
 		}
 	}()
 	refused := errors.New("registered recovery storage is incomplete or changed")
-	if a.c.context != "admin@prod" || !knownCNPGArchiveSource(source.Namespace, source.Cluster) || !commandContextActive(ctx) {
+	if a.c.context != "admin@prod" || !commandContextActive(ctx) {
 		return result, refused
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -121,25 +134,18 @@ func (a temporaryV2Activation) recoveryStorage(ctx context.Context, source cnpgR
 			}
 		}
 	}
-	phase = "complete-allocations"
-	backing, err := a.c.list(ctx, "backingimages.longhorn.io", "longhorn-system")
-	if err != nil {
-		return result, err
+	for _, disk := range result.Disks {
+		current := valueObject(storage[disk.Node], "status", "diskStatus", "longhorn-v2")
+		if disk.DiskUUID == "" || disk.InstanceManager == "" ||
+			text(current, "diskUUID") != disk.DiskUUID || text(current, "instanceManagerName") != disk.InstanceManager {
+			return result, refused
+		}
 	}
-	dataSources, err := a.c.list(ctx, "backingimagedatasources.longhorn.io", "longhorn-system")
-	if err != nil || len(dataSources) != 0 {
-		return result, refused
-	}
-	shards, err := a.c.list(ctx, "shards.longhorn.io", "longhorn-system")
-	if err != nil {
-		return result, err
-	}
-	groups, err := a.c.list(ctx, "shardgroups.longhorn.io", "longhorn-system")
-	if err != nil || len(groups) != 0 {
-		return result, refused
-	}
-	if err = verifyCNPGRecoveryCapacity(source, s.storageNodes, s.replicas, backing, shards, result.Disks); err != nil {
-		return result, err
+	if newClaimSize != nil {
+		phase = "complete-allocations"
+		if err = a.verifyRecoveryAllocation(ctx, *newClaimSize, s, result.Disks); err != nil {
+			return result, err
+		}
 	}
 	phase = "continuity"
 	after, current, err := a.read(ctx)
@@ -150,4 +156,25 @@ func (a temporaryV2Activation) recoveryStorage(ctx context.Context, source cnpgR
 		return result, refused
 	}
 	return result, nil
+}
+
+func (a temporaryV2Activation) verifyRecoveryAllocation(ctx context.Context, size string, s inventory, disks []cnpgRecoveryDiskBinding) error {
+	refused := errors.New("registered recovery storage allocation is incomplete")
+	backing, err := a.c.list(ctx, "backingimages.longhorn.io", "longhorn-system")
+	if err != nil {
+		return err
+	}
+	dataSources, err := a.c.list(ctx, "backingimagedatasources.longhorn.io", "longhorn-system")
+	if err != nil || len(dataSources) != 0 {
+		return refused
+	}
+	shards, err := a.c.list(ctx, "shards.longhorn.io", "longhorn-system")
+	if err != nil {
+		return err
+	}
+	groups, err := a.c.list(ctx, "shardgroups.longhorn.io", "longhorn-system")
+	if err != nil || len(groups) != 0 {
+		return refused
+	}
+	return verifyRecoveryClaimCapacity(size, s.storageNodes, s.replicas, backing, shards, disks)
 }

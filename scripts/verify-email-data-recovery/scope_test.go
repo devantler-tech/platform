@@ -28,6 +28,25 @@ func TestConfirmedMainRecoveryGetsASeparateScope(t *testing.T) {
 	}
 }
 
+func TestRecoveryPreflightHasNoMutationScope(t *testing.T) {
+	env := confirmedInvocation()
+	env["EMAIL_DATA_RECOVERY_CONFIRM"] = recoveryPreflightConfirm
+	i, err := authorizeDataRecovery(func(key string) string { return env[key] })
+	if err != nil || !i.readOnly {
+		t.Fatalf("the qualified preflight did not get a read-only scope: %v", err)
+	}
+	for _, resource := range [][3]string{
+		{"Namespace", "", i.namespace},
+		{"Secret", i.namespace, "storage-key"},
+		{"Backup", "velero", i.namespace + "-backup"},
+		{"DataDownload", "velero", i.namespace + "-download"},
+	} {
+		if i.permitsMutation(resource[0], resource[1], resource[2]) {
+			t.Fatalf("preflight can change %s", resource[0])
+		}
+	}
+}
+
 func TestOtherDispatchContextsCannotGetARecoveryScope(t *testing.T) {
 	for key, value := range map[string]string{
 		"GITHUB_EVENT_NAME":           "pull_request",
@@ -77,6 +96,7 @@ func TestRecoveryWritesAreLimitedToTheirOwnResources(t *testing.T) {
 	}
 	for _, ref := range [][3]string{
 		{"PersistentVolumeClaim", "private-mail", "private-mail-data"},
+		{"PersistentVolumeClaim", "private-mail", servingClaim},
 		{"Pod", "private-mail", "private-mail-0"},
 		{"Secret", "private-mail", "private-mail-admin"},
 		{"Secret", "velero", "velero-repo-credentials"},

@@ -3,12 +3,32 @@
 The confirmed `Verify Email Mailbox Data Recovery` workflow runs only from an
 immutable main revision, on its first attempt, in the protected production
 environment. It shares the production deployment lock. It does not move the
-serving claim or activate encrypted production storage.
+serving claim.
 
+Use `verify-email-data-recovery-preflight` to verify the serving claim, backup
+configuration, private inventory credential, and read-only mailbox session.
+This confirmation cannot create a mailbox marker or a restore. A failed check
+reports its named stage without request details or credentials.
+
+The server uses the encrypted V2 claim `email-data-encrypted-v2`
+(storage class `email-encrypted-v2`). The previous claim is retained separately
+from the serving pod.
 The driver verifies the serving pod, claim and backend identity, then imports one
 uniquely identified diagnostic message into an unsubscribed test mailbox. JMAP
 import does not submit an outgoing message. The current account credential stays
 in runner memory and is never installed in the restored pod.
+
+The driver also takes a census of the account's store before and after the
+backup and again from the restored copy: mailboxes, messages, calendars with
+their events, tasks, and account settings (sending identities, Sieve filter
+scripts and the vacation response). It reads identities, counts and object
+types only, never content, and keeps the counts in memory. An unchanged source
+requires equal restored counts; a source that changed while the backup ran
+bounds each restored count by its two readings. Calendar and identity counts
+require the state from a preceding changes query to match the list response.
+The census leaves an untouched collection empty and refuses a change during
+listing. The receipt names each category `VERIFIED`, or `EMPTY` where
+the source held none (for example, no tasks), and never a count.
 
 A fresh Velero filesystem backup selects the Email pod and includes its related
 claim, which the controller needs to capture persistent data. Scratch-volume
@@ -17,7 +37,9 @@ the backup's overall Completed phase. Velero reads explicitly select its API
 group so another installed Backup resource cannot shadow the recovery object.
 The restore uses the completed, source-bound Kopia snapshot as bytes;
 backed-up pods, hooks, routes and credentials are not replayed. A fixed recovery
-server reads a separate, three-replica encrypted volume with a new diagnostic key.
+server reads a separate encrypted Longhorn V2 volume with a new diagnostic
+key. The proof checks the volume's live key binding and three running replicas
+on separate nodes and disks.
 A single reviewed administration declaration supplies the exact runtime digest
 for both source validation and the recovery reader. The declared binary base must
 remain compatible with the native datastore proof; missing or changed facts stop
@@ -42,6 +64,25 @@ Cleanup recognizes only the four platform-generated network policies whose
 specs match this checkout and whose Kyverno labels name the created namespace
 UID and expected rule. Standard and Cilium policies are both inventoried;
 unknown policies or changed specs retain the namespace and recovery key.
+It also recognizes what the platform adds to every namespace: Kyverno's
+`default-limitrange` and `default-resourcequota`, bound by their generate
+labels to the created namespace UID and to the `add-default-limitrange` and
+`add-ns-quota` rules, and trust-manager's `cloudflare-origin-ca` ConfigMap,
+bound to its controlling Bundle's UID with its single CA key.
+
+Before every disposal step that could remove the namespace, the driver also
+reads its complete inventory: every namespaced, deletable resource of every
+served API version, metadata only, through the dispatch's private credential.
+Each object must be one this invocation created, with its created UID, or one
+of the platform objects above. Runtime records about those objects are
+accepted by exact kind and served resource: Events, Kyverno policy and
+ephemeral reports named after a known object's UID, and Cilium's endpoint for
+the created reader. Kubescape's storage is a remote aggregated API; only its
+exact `v1beta1.spdx.softwarecomposition.kubescape.io` registration, backed by
+`kubescape/storage`, and its workload scan-record kinds are accepted, and only
+for this invocation's namespace. Any other object, kind, registration or failed
+read retains the namespace and its key. Without the private credential no
+recovery starts.
 
 Any failed, ambiguous or interrupted operation is unverified. The driver retains
 uncertain resources and keys for inspection instead of retrying, adopting a
@@ -76,16 +117,24 @@ encrypted scratch claim. The observer compares the one diagnostic from the
 protected run's creation window on both copies. Its receipt reports message
 parity.
 
-The pass receipt covers message recovery, encrypted disposable storage, source
-retention and disposal of the restored copy. It does not establish an independent
-cluster rebuild, archive migration, transport delivery, OIDC, or production
-storage activation. Those retain their separate acceptance gates.
+The pass receipt covers message recovery, the store census, encrypted disposable
+storage, source retention and disposal of the restored copy. It does not
+establish an independent cluster rebuild, archive migration, transport delivery
+or OIDC. Those retain their separate acceptance gates.
+
+The backup is file level: Velero's node agent reads the mounted, already
+decrypted store and Kopia encrypts it into the backup bucket under the Velero
+repository password. Restoring it needs that password and read access to the
+bucket, not the serving volume's Longhorn key (`email-storage-key`); the copy is
+written to a new volume encrypted with a new diagnostic key. The in-cluster
+restore uses the running cluster's repository credential, so this workflow does
+not show that an independently held copy of that password opens the backup.
 
 Local validation is `go test -race ./scripts/verify-email-data-recovery`, `go vet`
 and the package's normal lint check. The native Email configuration fixture also
 runs the real driver client against the pinned server to exercise message
-import, content validation and safe cleanup. Production recovery remains
-unverified until the confirmed protected workflow itself passes.
+import, content validation, the store census and safe cleanup. Production
+recovery remains unverified until the confirmed protected workflow itself passes.
 The native restored server also uses the reader's generated capability settings,
 proving that the pinned executable can start with its required file capability.
 

@@ -81,31 +81,18 @@ func TestFixedLonghornCalibrationReadsMetadataWithoutRetirementAuthority(t *test
 	}
 }
 
-func TestRetainedEmailInventoryCoversAllServedKinds(t *testing.T) {
-	result, err := observeFixtureInNamespace(t, "", "email-data-recovery-41561215415")
+const testEmailNamespace = "email-data-recovery-45123456789"
+
+func TestEmailInventoryCoversAllServedKinds(t *testing.T) {
+	result, err := observeFixtureInNamespace(t, "", testEmailNamespace)
 	if err != nil || len(result.Bindings()) != 2 {
-		t.Fatalf("fixed Email inventory failed: %v", err)
+		t.Fatalf("Email inventory failed: %v", err)
 	}
-	for _, failure := range []string{"continued list", "changed discovery", "namespace replaced", "full Secret response", "duplicate UID"} {
-		result, err = observeFixtureInNamespace(t, failure, "email-data-recovery-41561215415")
+	for _, failure := range []string{"continued list", "changed discovery", "namespace replaced", "full Secret response", "duplicate UID", "remote deletable API"} {
+		result, err = observeFixtureInNamespace(t, failure, testEmailNamespace)
 		if err == nil || len(result.Bindings()) != 0 {
 			t.Fatalf("incomplete Email inventory accepted: %s", failure)
 		}
-	}
-	if result, err = Observe(context.Background(), nil, nil, "email-data-recovery-41561215416", "uid"); err == nil || len(result.Bindings()) != 0 {
-		t.Fatal("arbitrary Email namespace admitted by general benchmark API")
-	}
-}
-
-func TestFreshRetainedEmailInventoryHasItsOwnFixedNamespace(t *testing.T) {
-	const namespace = "email-data-recovery-42818236850"
-	result, err := observeFixtureInNamespace(t, "", namespace)
-	if err != nil || len(result.Bindings()) != 2 {
-		t.Fatalf("fixed fresh Email inventory failed: %v", err)
-	}
-	result, err = observeFixtureInNamespace(t, "namespace replaced", namespace)
-	if err == nil || len(result.Bindings()) != 0 {
-		t.Fatal("a replaced fresh namespace was accepted")
 	}
 	requests := 0
 	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
@@ -113,18 +100,55 @@ func TestFreshRetainedEmailInventoryHasItsOwnFixedNamespace(t *testing.T) {
 		return nil, errors.New("unexpected request")
 	})}
 	endpoint := &url.URL{Scheme: "https", Host: "reviewed.invalid"}
-	if namespacePattern.MatchString(namespace) {
-		t.Fatal("fresh recovery namespace overlaps the benchmark namespace grammar")
+	for _, namespace := range []string{"email-data-recovery-123456", "email-data-recovery-0123456789", "email-data-recovery-1234567x", "longhorn-system", testNamespace} {
+		if result, err = ObserveEmailRecovery(context.Background(), client, endpoint, namespace, "uid"); err == nil || requests != 0 || len(result.Bindings()) != 0 {
+			t.Fatalf("a namespace outside the Email recovery grammar was admitted: %s", namespace)
+		}
 	}
-	if result, err = Observe(context.Background(), client, endpoint, namespace, "uid"); err == nil || requests != 0 || len(result.Bindings()) != 0 {
-		t.Fatal("fresh namespace admitted by the benchmark API")
+	if namespacePattern.MatchString(testEmailNamespace) {
+		t.Fatal("Email recovery namespace overlaps the benchmark namespace grammar")
+	}
+	if result, err = Observe(context.Background(), client, endpoint, testEmailNamespace, "uid"); err == nil || requests != 0 || len(result.Bindings()) != 0 {
+		t.Fatal("Email namespace admitted by the benchmark API")
+	}
+}
+
+// Kubescape's storage is a remote API backend. Only an Email recovery
+// inventory accepts its exact registration and record kinds; its profile
+// records carry no UID and its computed views no version.
+func TestEmailInventoryAcceptsOnlyKubescapeScanRecords(t *testing.T) {
+	result, err := observeFixtureInNamespace(t, "scan records", testEmailNamespace)
+	if err != nil || len(result.Bindings()) != 2 || len(result.scanRecords) != 3 {
+		t.Fatalf("Kubescape scan records prevented a complete Email inventory: bindings=%d records=%d error=%v", len(result.Bindings()), len(result.scanRecords), err)
+	}
+	for _, failure := range []string{"scan records from another service", "scan records under another version", "scan missing service", "scan local registration", "scan image record", "scan record of a mislabelled kind", "scan continued list", "scan foreign namespace", "scan record without version", "scan duplicate record", "scan view without source"} {
+		t.Run(failure, func(t *testing.T) {
+			result, err := observeFixtureInNamespace(t, failure, testEmailNamespace)
+			if err == nil || len(result.Bindings()) != 0 || len(result.scanRecords) != 0 {
+				t.Fatal("an unaccepted scan record or registration was admitted")
+			}
+		})
+	}
+	if result, err = observeFixture(t, "scan records"); err == nil || len(result.Bindings()) != 0 {
+		t.Fatal("the benchmark inventory admitted a remote API backend")
+	}
+}
+
+// productionCollections makes one fixture inventory need about 614 reads,
+// above the 576 production needed on 2026-11-25 (see requestLimit).
+const productionCollections = 600
+
+func TestInventoryCompletesOnAProductionSizedAPI(t *testing.T) {
+	result, err := observeFixtureInNamespace(t, "production-sized discovery", testEmailNamespace)
+	if err != nil || len(result.Bindings()) != 2 {
+		t.Fatalf("a production-sized API exceeded the inventory bounds: %v", err)
 	}
 }
 
 // One stored Event is served by core v1 and events.k8s.io under the same UID.
 // That alias is one object; any other identity difference stays a conflict.
 func TestEventAliasesAreOneObject(t *testing.T) {
-	result, err := observeFixtureInNamespace(t, "event alias", "email-data-recovery-41561215415")
+	result, err := observeFixtureInNamespace(t, "event alias", testEmailNamespace)
 	if err != nil {
 		t.Fatalf("Event aliases were read as conflicting identities: %v", err)
 	}
@@ -137,7 +161,7 @@ func TestEventAliasesAreOneObject(t *testing.T) {
 	if len(result.Bindings()) != 3 || events != 1 {
 		t.Fatalf("want secret, widget and one Event, got %d bindings with %d Events", len(result.Bindings()), events)
 	}
-	if result, err = observeFixtureInNamespace(t, "event alias renamed", "email-data-recovery-41561215415"); err == nil || len(result.Bindings()) != 0 {
+	if result, err = observeFixtureInNamespace(t, "event alias renamed", testEmailNamespace); err == nil || len(result.Bindings()) != 0 {
 		t.Fatal("two different Events with one UID were accepted")
 	}
 }
@@ -164,6 +188,10 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 	expires := &atomic.Int64{}
 	expires.Store(time.Now().Add(time.Minute).UnixNano())
 	seen := map[string]int{}
+	scanFixture, scanVersion := strings.HasPrefix(failure, "scan"), "v1beta1"
+	if failure == "scan records under another version" {
+		scanVersion = "v1beta2"
+	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		respond := func(body string) {
 			if _, err := fmt.Fprint(w, body); err != nil && failure == "" {
@@ -189,7 +217,75 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			if failure == "remote deletable API" {
 				service = `,"service":{"name":"remote","namespace":"system"}`
 			}
-			respond(fmt.Sprintf(`{"apiVersion":"apiregistration.k8s.io/v1","kind":"APIServiceList","metadata":{"resourceVersion":"1","continue":%q},"items":[{"metadata":{"name":"v1.example.io","uid":"api-service","resourceVersion":%q},"spec":{"group":"example.io","version":"v1"%s}}]}`, continuation, rv, service))
+			scan := ""
+			if scanFixture && failure != "scan missing service" {
+				scanService := `,"service":{"name":"storage","namespace":"kubescape"}`
+				switch failure {
+				case "scan records from another service":
+					scanService = `,"service":{"name":"other","namespace":"kubescape"}`
+				case "scan local registration":
+					scanService = ""
+				}
+				scan = fmt.Sprintf(`,{"metadata":{"name":"%s.spdx.softwarecomposition.kubescape.io","uid":"scan-service","resourceVersion":"3"},"spec":{"group":"spdx.softwarecomposition.kubescape.io","version":%q%s}}`, scanVersion, scanVersion, scanService)
+			}
+			respond(fmt.Sprintf(`{"apiVersion":"apiregistration.k8s.io/v1","kind":"APIServiceList","metadata":{"resourceVersion":"1","continue":%q},"items":[{"metadata":{"name":"v1.example.io","uid":"api-service","resourceVersion":%q},"spec":{"group":"example.io","version":"v1"%s}}%s]}`, continuation, rv, service, scan))
+			return
+		}
+		scanPrefix := "/apis/spdx.softwarecomposition.kubescape.io/" + scanVersion
+		if scanFixture && r.URL.Path == scanPrefix {
+			profileKind := "ContainerProfile"
+			if failure == "scan record of a mislabelled kind" {
+				profileKind = "SBOMSyft"
+			}
+			respond(fmt.Sprintf(`{"apiVersion":"v1","kind":"APIResourceList","groupVersion":"spdx.softwarecomposition.kubescape.io/%s","resources":[{"name":"containerprofiles","kind":%q,"namespaced":true,"verbs":["get","list","delete"]},{"name":"networkneighborhoods","kind":"NetworkNeighborhood","namespaced":true,"verbs":["get","list","delete"]},{"name":"generatednetworkpolicies","kind":"GeneratedNetworkPolicy","namespaced":true,"verbs":["get","list","delete"]},{"name":"sbomsyfts","kind":"SBOMSyft","namespaced":true,"verbs":["get","list","delete"]}]}`, scanVersion, profileKind))
+			return
+		}
+		if scanFixture && strings.HasPrefix(r.URL.Path, scanPrefix+"/namespaces/"+testNamespace+"/") {
+			if r.Header.Get("Accept") != metadataListAccept || r.URL.RawQuery != "limit=256" {
+				t.Error("scan record read was not fixed, complete and metadata-only")
+			}
+			// Hand-checked shapes from the production storage: no list version,
+			// no UID on profile records, neither UID nor version on a computed view.
+			resource := strings.TrimPrefix(r.URL.Path, scanPrefix+"/namespaces/"+testNamespace+"/")
+			item := func(name, namespace, version string) string {
+				if version != "" {
+					version = fmt.Sprintf(`,"resourceVersion":%q`, version)
+				}
+				return fmt.Sprintf(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"name":%q,"namespace":%q%s,"labels":{"kubescape.io/workload-name":"reader"}}}`, name, namespace, version)
+			}
+			listMetadata, items := "{}", []string{}
+			switch resource {
+			case "containerprofiles":
+				namespace, version := testNamespace, "5"
+				if failure == "scan foreign namespace" {
+					namespace = "another"
+				}
+				if failure == "scan record without version" {
+					version = ""
+				}
+				items = append(items, item("pod-reader-reader", namespace, version))
+				if failure == "scan duplicate record" {
+					items = append(items, item("pod-reader-reader", namespace, version))
+				}
+				if failure == "scan continued list" {
+					listMetadata = `{"continue":"2165703"}`
+				}
+			case "networkneighborhoods":
+				items = append(items, item("pod-reader", testNamespace, "6"))
+			case "generatednetworkpolicies":
+				name := "pod-reader"
+				if failure == "scan view without source" {
+					name = "pod-other"
+				}
+				items = append(items, item(name, testNamespace, ""))
+			case "sbomsyfts":
+				if failure == "scan image record" {
+					items = append(items, item("image-digest", testNamespace, "7"))
+				}
+			default:
+				t.Errorf("unapproved scan record target: %s", r.URL.Path)
+			}
+			respond(fmt.Sprintf(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":%s,"items":[%s]}`, listMetadata, strings.Join(items, ",")))
 			return
 		}
 		if r.URL.Path == "/api/v1/namespaces/"+testNamespace {
@@ -224,6 +320,9 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			events := ""
 			if strings.HasPrefix(failure, "event alias") {
 				events = `,{"name":"events.k8s.io","versions":[{"groupVersion":"events.k8s.io/v1","version":"v1"}]}`
+			}
+			if scanFixture {
+				events += fmt.Sprintf(`,{"name":"spdx.softwarecomposition.kubescape.io","versions":[{"groupVersion":"spdx.softwarecomposition.kubescape.io/%s","version":%q}]}`, scanVersion, scanVersion)
 			}
 			respond(`{"apiVersion":"v1","kind":"APIGroupList","groups":[{"name":"example.io","versions":[{"groupVersion":"example.io/v1","version":"v1"},{"groupVersion":"example.io/v2","version":"v2"}]}` + events + `]}`)
 			return
@@ -261,6 +360,13 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 			if strings.HasPrefix(failure, "event alias") && gv == "v1" {
 				body = strings.Replace(body, `"resources":[`, `"resources":[{"name":"events","kind":"Event","namespaced":true,"verbs":["get","list","delete"]},`, 1)
 			}
+			if failure == "production-sized discovery" && gv == "v1" {
+				var many strings.Builder
+				for index := range productionCollections {
+					fmt.Fprintf(&many, `{"name":"things%d","kind":"Thing%d","namespaced":true,"verbs":["get","list","delete"]},`, index, index)
+				}
+				body = strings.Replace(body, `"resources":[`, `"resources":[`+many.String(), 1)
+			}
 			respond(body)
 			return
 		}
@@ -280,7 +386,7 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 				respond(`{"apiVersion":"v1","kind":"SecretList","metadata":{"resourceVersion":"8"},"items":[]}`)
 				return
 			}
-			if failure == "native empty list" {
+			if failure == "native empty list" || (failure == "production-sized discovery" && strings.Contains(r.URL.Path, "/things")) {
 				respond(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"8"},"items":null}`)
 				return
 			}
@@ -337,10 +443,8 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 	switch namespace {
 	case "longhorn-system":
 		result, err = CalibrateLonghornSystem(ctx, server.Client(), endpoint, "namespace-uid")
-	case "email-data-recovery-41561215415":
-		result, err = ObserveRetainedEmailRecovery(ctx, server.Client(), endpoint, "namespace-uid")
-	case "email-data-recovery-42818236850":
-		result, err = ObserveFreshRetainedEmailRecovery(ctx, server.Client(), endpoint, "namespace-uid")
+	case testEmailNamespace:
+		result, err = ObserveEmailRecovery(ctx, server.Client(), endpoint, namespace, "namespace-uid")
 	default:
 		result, err = Observe(ctx, server.Client(), endpoint, testNamespace, "namespace-uid")
 	}

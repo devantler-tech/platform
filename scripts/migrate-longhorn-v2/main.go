@@ -61,6 +61,10 @@ func main() {
 		authorization = authorizeHostReboot(os.Getenv, target)
 	case "observe-database":
 		authorization = authorizeCNPGObservation(os.Getenv)
+	case observeCorootKeeperOperation:
+		authorization = authorizeCorootKeeperObservation(os.Getenv)
+	case corootKeeperCutoverOperation:
+		_, authorization = authorizeCorootKeeperCutover(os.Getenv)
 	case cnpgArchiveProofOperation:
 		authorization = authorizeCNPGArchiveProof(os.Getenv)
 	case umamiArchiveIsolationResumeOperation:
@@ -69,8 +73,16 @@ func main() {
 		_, authorization = authorizeUmamiArchiveDataResume(os.Getenv)
 	case umamiStandbyObservationOperation:
 		_, _, authorization = authorizeUmamiStandbyObservation(os.Getenv)
-	case umamiStandbyReplacementOperation:
-		_, _, authorization = authorizeUmamiStandbyTarget(os.Getenv, umamiStandbyReplacementOperation)
+	case umamiStandbyReplacementOperation, umamiV2SwitchoverOperation:
+		_, _, authorization = authorizeUmamiStandbyTarget(os.Getenv, operation)
+	case weddingV2SwitchoverOperation:
+		_, _, authorization = authorizeCNPGStandbyTarget(os.Getenv, operation, weddingStandbySource.Name)
+	case resumeUmamiStandbyOperation:
+		_, authorization = authorizeUmamiStandbyResume(os.Getenv)
+	case recoverUmamiStandbyNameOperation:
+		_, authorization = authorizeUmamiStandbyNameRecovery(os.Getenv)
+	case replaceWeddingStandbyOperation, resumeWeddingStandbyOperation, recoverWeddingStandbyOperation:
+		_, authorization = authorizeWeddingStandbyOperation(os.Getenv, operation)
 	case "repair-v1-reservation":
 		authorization = authorizeV1ReservationRepair(os.Getenv, target)
 	case "reserve-v1-scratch":
@@ -81,6 +93,8 @@ func main() {
 		_, authorization = authorizeActualBudgetScratch(os.Getenv)
 	case actualBudgetBackupOperation:
 		authorization = authorizeActualBudgetBackup(os.Getenv)
+	case actualBudgetRestoreOperation, actualBudgetRestoreResume:
+		_, authorization = authorizeActualBudgetRestore(os.Getenv)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
 	case retainProviderSourceOperation:
@@ -286,6 +300,47 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if operation == observeCorootKeeperOperation {
+		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		receipt, err := observeCorootKeeperQuorum(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Coroot Keeper observation held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("COROOT_KEEPER_QUORUM=VERIFIED members=3 syncedFollowers=2 disruptionBudget=VERIFIED writes=0")
+		for i, member := range receipt.Members {
+			if !member.Leader && receipt.Disks[i].Digest != "" {
+				fmt.Printf("COROOT_KEEPER_FOLLOWER=QUALIFIED ordinal=%d digest=%s\n", i, receipt.Disks[i].Digest)
+			}
+		}
+		return
+	}
+	if operation == corootKeeperCutoverOperation {
+		input, err := authorizeCorootKeeperCutover(os.Getenv)
+		if err == nil {
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			err = runCorootKeeperCutover(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), input)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("COROOT_KEEPER_REPLACEMENT=VERIFIED originalStorage=RETAINED engine=v2 replicas=3 raft=SYNCED")
+		return
+	}
+	if operation == actualBudgetRestoreOperation || operation == actualBudgetRestoreResume {
+		confirmation, err := authorizeActualBudgetRestore(os.Getenv)
+		if err == nil {
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			err = runActualBudgetRestore(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), confirmation)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Actual Budget isolated restore held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("ACTUAL_BUDGET_V2_RESTORE=VERIFIED transfer=KOPIA replicas=3 source=RETAINED reader=RETIRED")
+		return
+	}
 	if operation == cnpgArchiveProofOperation || operation == umamiArchiveIsolationResumeOperation || operation == umamiArchiveDataResumeOperation {
 		runProof := runCNPGArchiveProof
 		switch operation {
@@ -301,20 +356,50 @@ func main() {
 		fmt.Println("CNPG_ARCHIVE_PROOF=RESTORED engine=v2 physicalHistory=VERIFIED networkIsolation=VERIFIED archiveCredential=RETIRED storageCleanup=REQUIRED migration=UNVERIFIED")
 		return
 	}
-	if operation == umamiStandbyReplacementOperation {
-		target, spare, err := authorizeUmamiStandbyTarget(os.Getenv, operation)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+	if operation == umamiStandbyReplacementOperation || operation == resumeUmamiStandbyOperation || operation == recoverUmamiStandbyNameOperation {
 		replacementContext, stop := context.WithTimeout(ctx, 40*time.Minute)
 		defer stop()
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
-		if err := runUmamiStandbyReplacement(replacementContext, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), target, spare); err != nil {
+		if err := executeUmamiStandbyReplacement(replacementContext, c, operation); err != nil {
 			fmt.Fprintln(os.Stderr, "Umami standby replacement held:", err)
 			os.Exit(1)
 		}
 		fmt.Println("UMAMI_V2_STANDBY_REPLACEMENT=VERIFIED originalStorage=RETAINED replicas=3 physicalReplay=VERIFIED")
+		return
+	}
+	if operation == replaceWeddingStandbyOperation || operation == resumeWeddingStandbyOperation || operation == recoverWeddingStandbyOperation {
+		replacementContext, stop := context.WithTimeout(ctx, 30*time.Minute)
+		defer stop()
+		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		if err := runWeddingStandbyOperation(replacementContext, c, os.Getenv, operation); err != nil {
+			fmt.Fprintln(os.Stderr, "Wedding standby replacement held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("WEDDING_V2_STANDBY_REPLACEMENT=VERIFIED originalStorage=RETAINED replicas=3 physicalReplay=VERIFIED")
+		return
+	}
+	if operation == umamiV2SwitchoverOperation || operation == weddingV2SwitchoverOperation {
+		database := cnpgSource{Namespace: "umami", Name: "umami-db"}
+		if operation == weddingV2SwitchoverOperation {
+			database = weddingStandbySource
+		}
+		previous, target, err := authorizeCNPGStandbyTarget(os.Getenv, operation, database.Name)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		switchoverContext, stop := context.WithTimeout(ctx, 30*time.Minute)
+		defer stop()
+		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		if err := runCNPGV2Switchover(switchoverContext, c, database, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), previous, target); err != nil {
+			fmt.Fprintln(os.Stderr, "Database V2 switchover held:", err)
+			os.Exit(1)
+		}
+		if operation == weddingV2SwitchoverOperation {
+			fmt.Println("WEDDING_V2_PRIMARY=VERIFIED originalPrimary=RETAINED physicalHistory=VERIFIED")
+		} else {
+			fmt.Println("UMAMI_V2_PRIMARY=VERIFIED originalPrimary=RETAINED physicalHistory=VERIFIED")
+		}
 		return
 	}
 	if operation == umamiStandbyObservationOperation {

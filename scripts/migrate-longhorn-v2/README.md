@@ -7,6 +7,20 @@ All boundary tests still run before production credentials
 are restored. The original dispatch source must remain current: the production
 lock does not lock Git refs, and a stale source still refuses the operation.
 
+## Actual Budget backup restore
+
+`restore-actual-budget-v2` restores the independently uploaded backup to an isolated
+Longhorn V2 claim. It leaves the serving claim in place and retires the diagnostic
+reader only after verifying the budget payload and three native replicas.
+
+If a first attempt fails while preparing the namespace, use
+`resume-unstarted-actual-budget-v2:<backup-run>:<backup-source>:<source-claim-digest>:<failed-restore-run>:<failed-restore-source>:<namespace-uid>`.
+Leave `node` and `database` empty. The new run checks the original namespace,
+backup, isolation policy and claim modifier and creates only missing preparation
+objects. It refuses an existing Velero restore request, download, claim, bound
+volume or reader. Preserve that scope and diagnose its exact Velero and storage
+records before any further request.
+
 `inventory-v1-runtime` is a protected, target-free read-only inventory. Its exact
 confirmation is `inventory-v1-runtime`, with empty `node` and `database`.
 It observes the complete runtime inventory twice between current-main checks.

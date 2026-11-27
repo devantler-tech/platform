@@ -59,10 +59,26 @@ func (c *mailboxClient) request(ctx context.Context, method, path, contentType s
 	}
 	return data, nil
 }
+
+// mailboxMethods names the JMAP capability of each permitted method. Census
+// reads that can initialize defaults require an unchanged collection state.
+var mailboxMethods = map[string]string{
+	"Email/get": jmapMail, "Email/query": jmapMail, "Email/import": jmapMail, "Email/set": jmapMail,
+	"Mailbox/get": jmapMail, "Mailbox/set": jmapMail, "Mailbox/query": jmapMail,
+	"Calendar/get": "urn:ietf:params:jmap:calendars", "CalendarEvent/query": "urn:ietf:params:jmap:calendars", "CalendarEvent/get": "urn:ietf:params:jmap:calendars",
+	"Calendar/changes":      "urn:ietf:params:jmap:calendars",
+	"CalendarEvent/changes": "urn:ietf:params:jmap:calendars",
+	"Identity/get":          "urn:ietf:params:jmap:submission",
+	"Identity/changes":      "urn:ietf:params:jmap:submission",
+	"VacationResponse/get":  "urn:ietf:params:jmap:vacationresponse",
+	"SieveScript/query":     "urn:ietf:params:jmap:sieve",
+}
+
+const jmapMail = "urn:ietf:params:jmap:mail"
+
 func (c *mailboxClient) call(ctx context.Context, method string, args object) (object, error) {
-	switch method {
-	case "Email/get", "Email/query", "Email/import", "Email/set", "Mailbox/get", "Mailbox/set":
-	default:
+	capability, ok := mailboxMethods[method]
+	if !ok {
 		return nil, errors.New("mailbox-method")
 	}
 	if !mailboxIDPattern.MatchString(c.account) {
@@ -75,7 +91,7 @@ func (c *mailboxClient) call(ctx context.Context, method string, args object) (o
 		}
 		bound[key] = value
 	}
-	body, err := json.Marshal(object{"using": []any{"urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"}, "methodCalls": []any{[]any{method, bound, "proof"}}})
+	body, err := json.Marshal(object{"using": []any{"urn:ietf:params:jmap:core", capability}, "methodCalls": []any{[]any{method, bound, "proof"}}})
 	if err != nil {
 		return nil, errors.New("mailbox-input")
 	}
