@@ -232,6 +232,9 @@ func (j *corootKeeperJournal) releaseClaims(ctx context.Context, fences corootKe
 			}
 			if value(claim, "metadata", "deletionTimestamp") == nil {
 				path := "/api/v1/namespaces/" + corootKeeperNamespace + "/persistentvolumeclaims/" + row.claim.Name
+				if err := verifyCorootKeeperSurvivors(ctx, j.c, r.Before, r.Input.Ordinal); err != nil {
+					return err
+				}
 				if err := j.c.deleteObserved(ctx, j.source(), path, claim); err != nil {
 					return err
 				}
@@ -375,6 +378,7 @@ func (j *corootKeeperJournal) verifyRejoined(ctx context.Context, r corootKeeper
 		return errCorootKeeperRebind
 	}
 	leaders := 0
+	var probed [3]corootKeeperMember
 	for ordinal, expected := range r.Before.Members {
 		pod, err := j.c.get(ctx, "pod", corootKeeperNamespace, expected.Pod, false)
 		if err != nil {
@@ -388,6 +392,7 @@ func (j *corootKeeperJournal) verifyRejoined(ctx context.Context, r corootKeeper
 		if err != nil {
 			return errCorootKeeperQuorum
 		}
+		probed[ordinal] = member
 		if leader {
 			leaders++
 		}
@@ -405,6 +410,9 @@ func (j *corootKeeperJournal) verifyRejoined(ctx context.Context, r corootKeeper
 	}
 	if leaders != 1 {
 		return errCorootKeeperQuorum
+	}
+	if err := verifyKeeperProbedMembers(ctx, j.c, stateful, probed); err != nil {
+		return err
 	}
 	return sourceCurrent(ctx, j.c.run, source)
 }

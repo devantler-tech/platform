@@ -74,9 +74,8 @@ func rollbackInterruptedCorootKeeper(ctx context.Context, j corootKeeperJournal,
 	if run == previousRun || run == j.record.Run {
 		return errCorootKeeperReceipt
 	}
-	finished, err := readFinishedMigrationRun(ctx, j.c, previousRun, previousSource)
-	if err != nil || finished.Attempt != 1 ||
-		(finished.Conclusion != "failure" && finished.Conclusion != "cancelled" && finished.Conclusion != "timed_out") {
+	conclusion, err := readFinishedKeeperFirstAttempt(ctx, j.c, previousRun, previousSource)
+	if err != nil || (conclusion != "failure" && conclusion != "cancelled" && conclusion != "timed_out") {
 		return errCorootKeeperReceipt
 	}
 	next := j.record
@@ -90,6 +89,23 @@ func rollbackInterruptedCorootKeeper(ctx context.Context, j corootKeeperJournal,
 		}
 	}
 	return j.archivePreservedKeeperAttempt(ctx, disks)
+}
+
+func readFinishedKeeperFirstAttempt(ctx context.Context, c client, run, source string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	latest, err := readFinishedMigrationRun(ctx, c, run, source)
+	if err != nil {
+		return "", err
+	}
+	if latest.Attempt == 1 {
+		return latest.Conclusion, nil
+	}
+	first, err := readFinishedMigrationRunAttempt(ctx, c, run, source, true)
+	if err != nil || first.Path != latest.Path {
+		return "", errCorootKeeperReceipt
+	}
+	return first.Conclusion, nil
 }
 
 func (j *corootKeeperJournal) verifyRolledBackFencesAbsent(ctx context.Context) error {
@@ -122,6 +138,12 @@ func (j *corootKeeperJournal) archivePreservedKeeperAttempt(ctx context.Context,
 		restored.Digest != original.Digest || current.V2Claims[r.Input.Ordinal].UID != "" {
 		return errCorootKeeperQuorum
 	}
+	staging, err := j.observeRetainedKeeperStaging(ctx, r)
+	if err != nil || (r.StagedClaim.UID != "" && staging == (corootKeeperRetainedStage{})) ||
+		(r.RollbackStaging != (corootKeeperRetainedStage{}) && r.RollbackStaging != staging) {
+		return errCorootKeeperStaging
+	}
+	r.RollbackStaging = staging
 	// Preserve the stopped attempt and its retained staged storage identities
 	// irrespective of which protected attempt completes the archive.
 	r.ResumeRun, r.ResumeSource = "", ""
@@ -151,6 +173,10 @@ func (j *corootKeeperJournal) archivePreservedKeeperAttempt(ctx context.Context,
 	journal, err := j.read(ctx)
 	if err != nil {
 		return err
+	}
+	confirmed, err := j.observeRetainedKeeperStaging(ctx, r)
+	if err != nil || confirmed != staging {
+		return errCorootKeeperStaging
 	}
 	if err := j.c.deleteObserved(ctx, j.source(), "/api/v1/namespaces/longhorn-system/configmaps/"+j.identity.Name, journal); err != nil {
 		return err

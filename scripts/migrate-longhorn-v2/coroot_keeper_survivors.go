@@ -75,7 +75,7 @@ func verifyCorootKeeperSurvivors(ctx context.Context, c client, input corootKeep
 		}
 		member, err := bindCorootKeeperMember(members[expected.Pod], stateful, ordinal)
 		if err != nil || member.Pod != expected.Pod || member.UID != expected.UID ||
-			member.ContainerID != expected.ContainerID || member.Node != expected.Node {
+			member.Node != expected.Node {
 			return errCorootKeeperQuorum
 		}
 		survivors[ordinal] = member
@@ -99,6 +99,24 @@ func verifyCorootKeeperSurvivors(ctx context.Context, c client, input corootKeep
 			return errCorootKeeperQuorum
 		}
 		leader = observed
+	}
+	return verifyKeeperProbedMembers(ctx, c, stateful, survivors)
+}
+
+func verifyKeeperProbedMembers(ctx context.Context, c client, stateful object, members [3]corootKeeperMember) error {
+	for ordinal, member := range members {
+		if member.Pod == "" {
+			continue
+		}
+		pod, err := c.get(ctx, "pod", corootKeeperNamespace, member.Pod, false)
+		if err != nil {
+			return err
+		}
+		current, err := bindCorootKeeperMember(pod, stateful, ordinal)
+		member.Leader = false
+		if err != nil || current != member {
+			return errCorootKeeperQuorum
+		}
 	}
 	return nil
 }

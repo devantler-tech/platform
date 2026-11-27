@@ -40,7 +40,10 @@ func (j *corootKeeperJournal) copyVolume(ctx context.Context, disks []cnpgRecove
 	// The projected gate and the verified copy both need time after the API patch.
 	err = waitReadyWithin(ctx, 6*time.Minute, func(ctx context.Context) error {
 		pod, err := j.c.get(ctx, "pod", corootKeeperNamespace, r.CopyPod.Name, false)
-		if err != nil || !matchCorootKeeperVolumePod(pod, created, desiredPod) {
+		if err != nil {
+			return errCorootKeeperCopy
+		}
+		if !matchCorootKeeperVolumePod(pod, created, desiredPod) {
 			return errors.Join(errReadinessTerminal, errCorootKeeperCopy)
 		}
 		if text(pod, "status", "phase") == "Failed" {
@@ -91,7 +94,10 @@ func (j *corootKeeperJournal) releaseCopyGate(ctx context.Context, r corootKeepe
 	var proof recoveryCiliumDatapath
 	err := waitReadyWithin(ctx, 3*time.Minute, func(ctx context.Context) error {
 		pod, err := j.c.get(ctx, "pod", corootKeeperNamespace, r.CopyPod.Name, false)
-		if err != nil || !matchCorootKeeperVolumePod(pod, created, desired) {
+		if err != nil {
+			return errCorootKeeperCopy
+		}
+		if !matchCorootKeeperVolumePod(pod, created, desired) {
 			return errors.Join(errReadinessTerminal, errCorootKeeperCopy)
 		}
 		if text(pod, "status", "phase") != "Pending" ||

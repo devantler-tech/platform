@@ -33,8 +33,13 @@ func TestKeeperCreationIntentReconcilesOnlyOwnedNativeAssets(t *testing.T) {
 			if !validCorootKeeperProgress(base, pending) || !validKeeperCreationIntent(pending) {
 				t.Fatal("the intended creation could not be durably recorded")
 			}
+			resuming := base
+			resuming.Phase = keeperOriginalResuming
+			if !validCorootKeeperProgress(base, resuming) {
+				t.Fatal("rollback should be admitted before CREATE is recorded")
+			}
 			unsafe := pending
-			unsafe.Phase, unsafe.Creating = keeperOriginalPreserved, ""
+			unsafe.Phase = keeperOriginalResuming
 			if validCorootKeeperProgress(pending, unsafe) {
 				t.Fatal("rollback could skip the unresolved CREATE")
 			}

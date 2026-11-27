@@ -261,6 +261,9 @@ func readCorootKeeperQuorum(ctx context.Context, c client, source string, qualif
 		if leaders != 1 || pass == 1 && (previous != current || previousDisks != disks || previousV2 != v2) {
 			return corootKeeperQuorumReceipt{}, errCorootKeeperQuorum
 		}
+		if err := verifyKeeperProbedMembers(ctx, c, stateful, current); err != nil {
+			return corootKeeperQuorumReceipt{}, err
+		}
 		previous, previousDisks, previousV2 = current, disks, v2
 	}
 	if err := sourceCurrent(ctx, c.run, source); err != nil {

@@ -58,14 +58,14 @@ func resumeCorootKeeperRebind(ctx context.Context, c client, source, run string,
 	if run == prior || run == journal.record.Run {
 		return errCorootKeeperReceipt
 	}
-	finished, err := readFinishedMigrationRun(ctx, c, prior, priorSource)
-	if err != nil || finished.Attempt != 1 {
+	conclusion, err := readFinishedKeeperFirstAttempt(ctx, c, prior, priorSource)
+	if err != nil {
 		return errCorootKeeperReceipt
 	}
 	if journal.record.Phase == "replacement-verified" {
 		return journal.verifyRejoined(ctx, journal.record, disks, source)
 	}
-	if finished.Conclusion != "failure" && finished.Conclusion != "cancelled" && finished.Conclusion != "timed_out" {
+	if conclusion != "failure" && conclusion != "cancelled" && conclusion != "timed_out" {
 		return errCorootKeeperReceipt
 	}
 	next := journal.record

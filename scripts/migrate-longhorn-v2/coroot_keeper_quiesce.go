@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -128,15 +129,30 @@ func (j *corootKeeperJournal) evictFollower(ctx context.Context, fences corootKe
 	if err := j.advance(ctx, r); err != nil {
 		return err
 	}
-	pod, err := j.c.get(ctx, "pod", corootKeeperNamespace, target.Pod, false)
-	if err != nil || !recoveredNativeObject(pod, "v1", "Pod", corootKeeperNamespace) ||
-		text(pod, "metadata", "uid") != target.UID || text(pod, "spec", "nodeName") != target.Node {
-		return errCorootKeeperQuorum
-	}
 	path := "/api/v1/namespaces/" + corootKeeperNamespace + "/pods/" + target.Pod + "/eviction"
 	for _, dry := range []bool{true, false} {
+		if !dry {
+			if err := j.verifyKeeperSourceCopyLayout(ctx, target); err != nil {
+				return err
+			}
+			fresh, err := readCorootKeeperQuorum(ctx, j.c, r.Source, disks)
+			if err != nil || fresh != r.Before {
+				return errCorootKeeperQuorum
+			}
+		}
 		if err := sourceCurrent(ctx, j.c.run, r.Source); err != nil {
 			return err
+		}
+		stateful, err := j.c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
+		if err != nil || benchmarkIdentity(stateful) != r.Before.Controller {
+			return errCorootKeeperQuorum
+		}
+		pod, err := j.c.get(ctx, "pod", corootKeeperNamespace, target.Pod, false)
+		if err != nil {
+			return errCorootKeeperQuorum
+		}
+		if current, err := bindCorootKeeperMember(pod, stateful, r.Input.Ordinal); err != nil || current != target {
+			return errCorootKeeperQuorum
 		}
 		deleteOptions := object{"preconditions": object{"uid": target.UID, "resourceVersion": text(pod, "metadata", "resourceVersion")}}
 		if dry {
@@ -146,19 +162,6 @@ func (j *corootKeeperJournal) evictFollower(ctx context.Context, fences corootKe
 			"metadata": object{"name": target.Pod, "namespace": corootKeeperNamespace}, "deleteOptions": deleteOptions})
 		if err != nil {
 			return err
-		}
-		if !dry {
-			if err := j.verifyKeeperSourceCopyLayout(ctx, target); err != nil {
-				return err
-			}
-			stateful, err := j.c.get(ctx, "statefulset", corootKeeperNamespace, corootKeeperName, false)
-			if err != nil || benchmarkIdentity(stateful) != r.Before.Controller {
-				return errCorootKeeperQuorum
-			}
-			leader, err := probeCorootKeeperMember(ctx, j.c, target, stateful, r.Input.Ordinal, 2)
-			if err != nil || leader {
-				return errCorootKeeperQuorum
-			}
 		}
 		if _, err := j.c.kubectl(ctx, body, "create", "--raw="+path, "--filename=/dev/stdin"); err != nil {
 			return err
@@ -173,7 +176,6 @@ func (j *corootKeeperJournal) evictFollower(ctx context.Context, fences corootKe
 }
 
 func (j *corootKeeperJournal) verifyKeeperSourceCopyLayout(ctx context.Context, member corootKeeperMember) error {
-	const path = "/var/lib/clickhouse-keeper"
 	const check = `set -euo pipefail
 test "$(id -u)" = 65534
 test "$(id -g)" = 65534
@@ -198,27 +200,11 @@ du -sx --apparent-size --block-size=1 -- "$root/coordination" | cut -f1
 	if err != nil || bound != member {
 		return errCorootKeeperCopy
 	}
-	found := 0
-	containers, _ := value(pod, "spec", "containers").([]any)
-	for _, raw := range containers {
-		c, _ := raw.(object)
-		if text(c, "name") != corootKeeperContainer {
-			continue
-		}
-		mounts, _ := value(c, "volumeMounts").([]any)
-		for _, rawMount := range mounts {
-			mount, _ := rawMount.(object)
-			if text(mount, "name") == "data" && text(mount, "mountPath") == path &&
-				absentOrEmptyString(value(mount, "subPath")) && absentOrEmptyString(value(mount, "subPathExpr")) {
-				found++
-			}
-		}
-	}
-	if found != 1 {
+	if !corootKeeperSourceDataMount(pod) {
 		return errCorootKeeperCopy
 	}
 	raw, err := j.c.kubectl(ctx, nil, "exec", member.Pod, "--namespace="+corootKeeperNamespace,
-		"--container="+corootKeeperContainer, "--pod-running-timeout=10s", "--", "bash", "-ec", check, "keeper-layout", path)
+		"--container="+corootKeeperContainer, "--pod-running-timeout=10s", "--", "bash", "-ec", check, "keeper-layout", corootKeeperDataRoot)
 	need, parseErr := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
 	if err != nil || parseErr != nil || need < 1 || need > 10<<30 || need+(64<<20) > j.record.StagedFreeBytes {
 		return errCorootKeeperCopy
@@ -229,4 +215,35 @@ du -sx --apparent-size --block-size=1 -- "$root/coordination" | cut -f1
 		return errCorootKeeperCopy
 	}
 	return nil
+}
+
+const corootKeeperDataRoot = "/var/lib/clickhouse-keeper"
+
+func corootKeeperSourceDataMount(pod object) bool {
+	found := false
+	containers, _ := value(pod, "spec", "containers").([]any)
+	for _, raw := range containers {
+		container, _ := raw.(object)
+		if text(container, "name") != corootKeeperContainer {
+			continue
+		}
+		mounts, _ := value(container, "volumeMounts").([]any)
+		for _, rawMount := range mounts {
+			mount, _ := rawMount.(object)
+			mountPath := path.Clean(text(mount, "mountPath"))
+			switch {
+			case mountPath == corootKeeperDataRoot:
+				if found || text(mount, "name") != "data" ||
+					!absentOrEmptyString(value(mount, "subPath")) || !absentOrEmptyString(value(mount, "subPathExpr")) {
+					return false
+				}
+				found = true
+			case !path.IsAbs(mountPath), mountPath == "/",
+				strings.HasPrefix(mountPath, corootKeeperDataRoot+"/"),
+				strings.HasPrefix(corootKeeperDataRoot, mountPath+"/"):
+				return false
+			}
+		}
+	}
+	return found
 }
