@@ -22,6 +22,7 @@ var credentialPath = regexp.MustCompile(`^/dev/shm/longhorn-namespace-inventory\
 var benchmarkCredentialPath = regexp.MustCompile(`^/dev/shm/longhorn-v2\.[A-Za-z0-9]+/kubeconfig$`)
 var sourcePattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var runPattern = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
+var umamiNameRecoveryPattern = regexp.MustCompile(`^recover-umami-standby-name:umami-db-[1-9][0-9]*:([1-9][0-9]{0,18}):[0-9a-f]{40}:[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}(:[1-9][0-9]{0,18})?$`)
 
 // Dispatch is the verified source commit and run of a protected observation.
 type Dispatch struct{ Source, Run string }
@@ -105,9 +106,9 @@ func LoadEmailRecoveryClient(getenv func(string) string) (*http.Client, *url.URL
 	return newProductionClient(config)
 }
 
-// LoadBenchmarkAdmissionClient admits the protected V1 benchmark, native seed,
-// or the explicitly confirmed recovery of originalRun. The caller must first
-// join the selected address to its serving process and verified Hetzner server.
+// LoadBenchmarkAdmissionClient admits the protected benchmark, restore or
+// explicitly confirmed Umami name recovery. The caller must first join the
+// selected address to its serving process and verified Hetzner server.
 func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Addr, originalRun string) (*http.Client, *url.URL, error) {
 	operation, confirmation := "benchmark-v1", "benchmark-longhorn-storage"
 	switch {
@@ -126,11 +127,19 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 				return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
 			}
 			operation, confirmation = "resume-native-v2-reclaim", prefix+prior
+		case "recover-umami-standby-name":
+			confirmation = getenv("LONGHORN_V2_CONFIRM")
+			fields := umamiNameRecoveryPattern.FindStringSubmatch(confirmation)
+			if fields == nil || fields[1] != originalRun || getenv("LONGHORN_V2_DATABASE") != "umami-db" {
+				return nil, nil, errors.New("protected Umami name recovery dispatch is unverified")
+			}
+			operation = "recover-umami-standby-name"
 		}
 	case getenv("LONGHORN_V2_OPERATION") == "prepare-native-v1-seed":
 		operation, confirmation = "prepare-native-v1-seed", "prepare-longhorn-native-v1-seed"
 	}
-	if operation != "benchmark-v1" && (getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != "") {
+	if operation != "benchmark-v1" && (getenv("LONGHORN_V2_NODE") != "" ||
+		(operation != "recover-umami-standby-name" && getenv("LONGHORN_V2_DATABASE") != "")) {
 		return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
 	}
 	for key, want := range map[string]string{
@@ -158,7 +167,7 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 	if err != nil {
 		return nil, nil, errors.New("protected benchmark kubeconfig could not be decoded")
 	}
-	reclaimAliases := operation == "reclaim-native-v2-seed" || operation == "resume-native-v2-reclaim"
+	reclaimAliases := operation == "reclaim-native-v2-seed" || operation == "resume-native-v2-reclaim" || operation == "recover-umami-standby-name"
 	return newProductionClientAt(config, directIP, reclaimAliases)
 }
 

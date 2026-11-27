@@ -86,7 +86,7 @@ func bindRetainedUmamiStandby(cm object, name string, prior umamiStandbyResume) 
 		text(cm, "metadata", "labels", "storage.platform.devantler.tech/recovery-run") != prior.run ||
 		len(raw) > 65536 || json.Unmarshal([]byte(raw), &record) != nil ||
 		record.Run != prior.run || record.Source != prior.source || record.Original.Consumer.Name != prior.target ||
-		record.Continuation != nil || record.Replacement != nil || record.Phase != umamiReplacementClaimRetained ||
+		record.Continuation != nil || record.Replacement != nil || record.NameRelease != nil || record.Phase != umamiReplacementClaimRetained ||
 		!validUmamiOriginalReplacement(record) {
 		return umamiStandbyReplacementRecord{}, refused
 	}
