@@ -23,18 +23,15 @@ type cnpgRecoveryDiskBinding struct {
 // re-read immediately before creation and verify all three actual replicas.
 // Physical free space already includes snapshots and orphans: subtracting
 // Volume.status.actualSize here would count existing storage twice.
-func verifyCNPGRecoveryCapacity(source cnpgRecoverySource, nodes, replicas, backingImages, shards []object, bindings []cnpgRecoveryDiskBinding) error {
-	refused := errors.New("isolated database recovery lacks current capacity on three bound raw disks")
-	if !knownCNPGArchiveSource(source.Namespace, source.Cluster) {
-		return refused
-	}
-	// The reviewed databases use whole GiB claims. This strict subset is already
+func verifyRecoveryClaimCapacity(claimSize string, nodes, replicas, backingImages, shards []object, bindings []cnpgRecoveryDiskBinding) error {
+	refused := errors.New("isolated recovery lacks current capacity on three bound raw disks")
+	// The reviewed recoveries use whole GiB claims. This strict subset is already
 	// above Longhorn's CSI minimum and aligned to its 2 MiB allocation boundary.
 	// Other Kubernetes quantity forms require a reviewed sizing change.
-	if !strings.HasSuffix(source.Size, "Gi") {
+	if !strings.HasSuffix(claimSize, "Gi") {
 		return refused
 	}
-	units := strings.TrimSuffix(source.Size, "Gi")
+	units := strings.TrimSuffix(claimSize, "Gi")
 	size, err := strconv.ParseUint(units, 10, 64)
 	if err != nil || size == 0 || size > 96 || units != strconv.FormatUint(size, 10) || len(bindings) != 3 || len(backingImages) != 0 || len(shards) != 0 {
 		return refused

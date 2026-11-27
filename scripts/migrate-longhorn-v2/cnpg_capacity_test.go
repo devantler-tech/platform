@@ -37,32 +37,15 @@ func recoveryDisk(n object) object {
 	return value(n, "status", "diskStatus", "longhorn-v2").(object)
 }
 
-func TestRecoveryCapacityMatchesProtectedArchiveSources(t *testing.T) {
-	nodes, replicas, bindings := recoveryCapacityFixture()
-	for _, selected := range cnpgArchiveSources() {
-		t.Run(selected.Name, func(t *testing.T) {
-			source := cnpgRecoverySource{Namespace: selected.Namespace, Cluster: selected.Name, Size: "10Gi"}
-			if err := verifyCNPGRecoveryCapacity(source, nodes, replicas, nil, nil, bindings); err != nil {
-				t.Fatal(err)
-			}
-			source.Namespace = "unreviewed"
-			if verifyCNPGRecoveryCapacity(source, nodes, replicas, nil, nil, bindings) == nil {
-				t.Fatal("an archive in the wrong namespace was accepted")
-			}
-		})
-	}
-}
-
 func TestRecoveryCapacityReservesFullDatabaseSizeOnEveryReplicaDisk(t *testing.T) {
 	nodes, replicas, bindings := recoveryCapacityFixture()
-	source := cnpgRecoverySource{Namespace: "observability", Cluster: "coroot-db", Size: "10Gi"}
-	if err := verifyCNPGRecoveryCapacity(source, nodes, replicas, nil, nil, bindings); err != nil {
+	if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
 		t.Fatal(err)
 	}
 	// 4 GiB canary space fits here; the actual 10 GiB restore plus reviewed
 	// reserves and the strict 25% physical free floor does not.
 	recoveryDisk(nodes[2])["storageAvailable"] = float64(39 * recoveryGiB)
-	if err := verifyCNPGRecoveryCapacity(source, nodes, replicas, nil, nil, bindings); err == nil {
+	if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
 		t.Fatal("one insufficient replica disk accepted for the full database restore")
 	}
 }
@@ -117,7 +100,7 @@ func TestRecoveryCapacityRejectsStaleOrIncompleteDiskAccounting(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			n, r, b := recoveryCapacityFixture()
 			change(n, r, b)
-			if err := verifyCNPGRecoveryCapacity(cnpgRecoverySource{Namespace: "observability", Cluster: "coroot-db", Size: "10Gi"}, n, r, nil, nil, b); err == nil {
+			if err := verifyRecoveryClaimCapacity("10Gi", n, r, nil, nil, b); err == nil {
 				t.Fatal("incomplete recovery capacity accepted")
 			}
 		})
@@ -130,7 +113,7 @@ func TestRecoveryCapacityRequiresStrictPhysicalFreeFloor(t *testing.T) {
 	floor := uint64(95*recoveryGiB) / 4
 	for _, delta := range []uint64{0, 1} {
 		recoveryDisk(n[0])["storageAvailable"] = float64(floor + q + 6*recoveryGiB + delta)
-		err := verifyCNPGRecoveryCapacity(cnpgRecoverySource{Namespace: "observability", Cluster: "coroot-db", Size: "10Gi"}, n, r, nil, nil, b)
+		err := verifyRecoveryClaimCapacity("10Gi", n, r, nil, nil, b)
 		if (err == nil) != (delta == 1) {
 			t.Fatalf("strict physical floor with delta %d: %v", delta, err)
 		}
@@ -144,7 +127,7 @@ func TestRecoveryCapacityPreservesLogicalReserveAtTheNativeBoundary(t *testing.T
 		recoveryDisk(n[0])["storageScheduled"] = float64(bytes)
 		recoveryDisk(n[0])["scheduledReplica"] = object{"replica-0": float64(bytes)}
 		r[0]["spec"].(object)["volumeSize"] = strconv.FormatUint(bytes, 10)
-		err := verifyCNPGRecoveryCapacity(cnpgRecoverySource{Namespace: "observability", Cluster: "coroot-db", Size: "10Gi"}, n, r, nil, nil, b)
+		err := verifyRecoveryClaimCapacity("10Gi", n, r, nil, nil, b)
 		if (err == nil) != (delta == 0) {
 			t.Fatalf("logical boundary with delta %d: %v", delta, err)
 		}
@@ -154,12 +137,11 @@ func TestRecoveryCapacityPreservesLogicalReserveAtTheNativeBoundary(t *testing.T
 func TestRecoveryCapacityRefusesUnsupportedOrConcurrentAllocations(t *testing.T) {
 	n, r, b := recoveryCapacityFixture()
 	for _, size := range []string{"", "0Gi", "10G", "10240Mi", "1Ti", "97Gi", "18446744073709551615Gi"} {
-		if err := verifyCNPGRecoveryCapacity(cnpgRecoverySource{Namespace: "observability", Cluster: "coroot-db", Size: size}, n, r, nil, nil, b); err == nil {
+		if err := verifyRecoveryClaimCapacity(size, n, r, nil, nil, b); err == nil {
 			t.Fatalf("unreviewed size %q accepted", size)
 		}
 	}
-	s := cnpgRecoverySource{Namespace: "observability", Cluster: "coroot-db", Size: "10Gi"}
-	if verifyCNPGRecoveryCapacity(s, n, r, []object{resource("backing")}, nil, b) == nil || verifyCNPGRecoveryCapacity(s, n, r, nil, []object{resource("shard")}, b) == nil || verifyCNPGRecoveryCapacity(s, n, r, nil, nil, b[:2]) == nil {
+	if verifyRecoveryClaimCapacity("10Gi", n, r, []object{resource("backing")}, nil, b) == nil || verifyRecoveryClaimCapacity("10Gi", n, r, nil, []object{resource("shard")}, b) == nil || verifyRecoveryClaimCapacity("10Gi", n, r, nil, nil, b[:2]) == nil {
 		t.Fatal("unreviewed backing image, shard, or incomplete replica roster accepted")
 	}
 }

@@ -79,6 +79,8 @@ func main() {
 		_, authorization = authorizeActualBudgetScratch(os.Getenv)
 	case actualBudgetBackupOperation:
 		authorization = authorizeActualBudgetBackup(os.Getenv)
+	case actualBudgetRestoreOperation:
+		_, authorization = authorizeActualBudgetRestore(os.Getenv)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
 	case retainProviderSourceOperation:
@@ -283,6 +285,19 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == actualBudgetRestoreOperation {
+		confirmation, err := authorizeActualBudgetRestore(os.Getenv)
+		if err == nil {
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			err = runActualBudgetRestore(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"), confirmation)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Actual Budget isolated restore held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("ACTUAL_BUDGET_V2_RESTORE=VERIFIED transfer=KOPIA replicas=3 source=RETAINED reader=RETIRED")
+		return
 	}
 	if operation == cnpgArchiveProofOperation || operation == umamiArchiveIsolationResumeOperation || operation == umamiArchiveDataResumeOperation {
 		runProof := runCNPGArchiveProof
