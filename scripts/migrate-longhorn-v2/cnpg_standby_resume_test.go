@@ -116,7 +116,7 @@ func TestUmamiStandbyResumeRequiresTheOriginalTerminalAttempt(t *testing.T) {
 					return nil, errors.New("unexpected command")
 				}
 			}}
-			journal, err := readResumableUmamiStandby(t.Context(), c, owner, prior)
+			journal, err := readResumableCNPGStandby(t.Context(), c, owner, prior, "umami-db")
 			if scenario != "success" {
 				if err == nil {
 					t.Fatal("an unsafe continuation passed")

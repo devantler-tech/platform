@@ -18,11 +18,12 @@ func umamiStandbyClaimRetentionChanges(witness cnpgStandbyCutover, cluster, pod,
 	)
 	name := witness.Consumer.Name
 	owners, _ := value(claim, "metadata", "ownerReferences").([]any)
-	if benchmarkIdentity(cluster) != witness.Database || !umamiV2Transition(cluster) ||
+	profile, admitted := cnpgStandbyTransition(cluster)
+	if !admitted || benchmarkIdentity(cluster) != witness.Database ||
 		text(cluster, "status", "currentPrimary") == name || text(pod, "metadata", "labels", "cnpg.io/instanceRole") != "replica" ||
 		benchmarkIdentity(pod) != witness.Consumer || text(pod, "metadata", "resourceVersion") != witness.ConsumerVersion ||
 		benchmarkIdentity(claim) != witness.Claim || benchmarkIdentity(pv) != witness.PV ||
-		benchmarkIdentity(volume) != witness.Volume || !umamiV1StorageRetained(cluster, pod, claim, pv, volume) ||
+		benchmarkIdentity(volume) != witness.Volume || !cnpgV1StorageRetained(profile, cluster, pod, claim, pv, volume) ||
 		len(owners) != 1 || text(claim, "metadata", "annotations", statusAnnotation) != "ready" ||
 		text(claim, "metadata", "labels", instanceLabel) != name {
 		return nil, errors.New("the original standby claim changed before retention")
@@ -45,7 +46,7 @@ func verifyUmamiStandbyClaimRetention(original, retained object) error {
 	if owners != nil && !reflect.DeepEqual(owners, []any{}) {
 		return errors.New("retained standby claim still has an owner")
 	}
-	if !recoveredNativeObject(retained, "v1", "PersistentVolumeClaim", "umami") ||
+	if !recoveredNativeObject(retained, "v1", "PersistentVolumeClaim", text(original, "metadata", "namespace")) ||
 		benchmarkIdentity(retained) != benchmarkIdentity(original) ||
 		text(retained, "metadata", "resourceVersion") == text(original, "metadata", "resourceVersion") ||
 		!reflect.DeepEqual(wantAnnotations, value(retained, "metadata", "annotations")) ||
@@ -70,10 +71,11 @@ func umamiRetainedClaimMetadata(claim object, name string) bool {
 func verifyUmamiStandbyDetached(witness cnpgStandbyCutover, claim, pv, volume object, pods, attachments []object) error {
 	refused := errors.New("the retained standby storage is not demonstrably detached")
 	name := witness.Consumer.Name
+	profile, admitted := cnpgStandbyProfileForSource(cnpgSource{Namespace: witness.Database.Namespace, Name: witness.Database.Name})
 	robustness := text(volume, "status", "robustness")
-	if pods == nil || attachments == nil ||
+	if !admitted || pods == nil || attachments == nil ||
 		benchmarkIdentity(claim) != witness.Claim || benchmarkIdentity(pv) != witness.PV ||
-		benchmarkIdentity(volume) != witness.Volume || !verifyUmamiOriginalClaimBinding(claim, pv, volume) ||
+		benchmarkIdentity(volume) != witness.Volume || !verifyOriginalV1ClaimBinding(profile, claim, pv, volume) ||
 		!umamiRetainedClaimMetadata(claim, name) ||
 		text(volume, "status", "state") != "detached" || text(volume, "status", "currentNodeID") != "" ||
 		text(volume, "spec", "nodeID") != "" || (robustness != "unknown" && robustness != "healthy") {

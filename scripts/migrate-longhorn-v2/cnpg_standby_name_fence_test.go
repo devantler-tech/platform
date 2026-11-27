@@ -19,8 +19,9 @@ func TestUmamiFenceResumesExactBindingAfterAmbiguousCreation(t *testing.T) {
 	original := umamiStandbyReplacementRecord{
 		Version: 1, Run: "123", Source: source, Phase: umamiNameFencePending,
 		Original: cnpgStandbyCutover{
-			Consumer: benchmarkResource{Name: "umami-db-1"},
-			Claim:    benchmarkResource{Name: "umami-db-1", UID: freshTestUID},
+			Database: benchmarkResource{Name: "umami-db", Namespace: "umami"},
+			Consumer: benchmarkResource{Name: "umami-db-1", Namespace: "umami"},
+			Claim:    benchmarkResource{Name: "umami-db-1", Namespace: "umami", UID: freshTestUID},
 		},
 		NameRelease: &umamiStandbyNameRelease{Owner: owner, Join: benchmarkResource{"umami-db-1-join", "umami", freshTestUID}},
 	}
