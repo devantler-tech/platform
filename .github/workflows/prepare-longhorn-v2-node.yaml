@@ -47,6 +47,7 @@ name: Prepare Longhorn V2 Migration
             observe-database,
             observe-coroot-v2-keeper,
             migrate-coroot-keeper-v2,
+            transfer-coroot-keeper-leadership-to-v2,
             prove-database-v2-archive,
             resume-umami-archive-isolation,
             resume-umami-archive-data,
@@ -202,6 +203,10 @@ jobs:
             migrate-coroot-keeper-v2)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^migrate-coroot-keeper-v2:[0-2]:[a-f0-9]{64}$ ]]
+              ;;
+            transfer-coroot-keeper-leadership-to-v2)
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^transfer-coroot-keeper-leadership-to-v2:[0-2]:[a-f0-9]{64}$ ]]
               ;;
             prove-database-v2-archive)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(coroot-db|umami-db|wedding-db|customer-identity-db|business-site-portal-db)$ &&
