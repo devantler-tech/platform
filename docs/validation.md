@@ -76,6 +76,21 @@ After real OpenAPI publication, the KRO library compiles the repository's graph.
 The check requires its Deployment, Service, HTTPRoute and namespaced WebApp schema.
 Unknown references, wrong output types and disabled conditional omission are
 rejected. Empty or partial compiled graphs cannot count as complete coverage.
+
+Application release checks can pass a rendered WebApp to the same compiler.
+Run from a checkout of the signed Platform revision and select exactly one
+namespaced production WebApp from the application's package as JSON.
+
+```bash
+KRO_API_BASE=HEAD bash scripts/tests/test-webapp-compiler.sh \
+  --render-admission-children /absolute/webapp.json /absolute/new-children.json
+```
+
+Use the command's successful exit before reading the new file. The JSON array
+contains the Deployment, Service and HTTPRoute with KRO and ApplySet labels
+derived from the isolated API server's WebApp identity. Application CI can
+then evaluate the corresponding admission policies against those objects.
+
 Execution is bound to all three verified binary paths, including when ambient
 `TEST_ASSET_*` overrides are present. API processes and temporary state are
 removed on completion, including a CRD-admission failure after process startup.

@@ -3,6 +3,16 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture="${root}/scripts/tests/webapp-compiler"
+admission_input=''
+admission_output=''
+if [[ $# != 0 ]]; then
+  if [[ $# != 3 || "$1" != --render-admission-children || "$2" != /* || "$3" != /* || ! -f "$2" || -L "$2" || -e "$3" || -L "$3" ]]; then
+    echo 'Usage: test-webapp-compiler.sh [--render-admission-children /absolute/webapp.json /absolute/new-children.json]' >&2
+    exit 2
+  fi
+  admission_input="$2"
+  admission_output="$3"
+fi
 work="$(mktemp -d "${TMPDIR:-/tmp}/webapp-compiler.XXXXXX")"
 trap 'rm -rf -- "${work}"' EXIT
 
@@ -116,4 +126,6 @@ PLATFORM_TEST_ROOT="${root}" \
   FLUX_OCI_CRD="${work}/oci.yaml" \
   FLUX_KUSTOMIZATION_CRD="${work}/kustomization.yaml" \
   EXTERNAL_SECRET_CRD="${work}/external-secret.json" \
+  WEBAPP_ADMISSION_INPUT="${admission_input}" \
+  WEBAPP_ADMISSION_OUTPUT="${admission_output}" \
   go -C "${fixture}" test -mod=readonly -race -count=1 -timeout=4m -v .
