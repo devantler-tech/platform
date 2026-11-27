@@ -112,14 +112,6 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
-	if operation == observeCorootKeeperOperation {
-		if err := observeCorootKeeperQuorum(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA")); err != nil {
-			fmt.Fprintln(os.Stderr, "Coroot Keeper observation held:", err)
-			os.Exit(1)
-		}
-		fmt.Println("COROOT_KEEPER_QUORUM=VERIFIED members=3 syncedFollowers=2 disruptionBudget=VERIFIED writes=0")
-		return
-	}
 	if operation == prepareActualBudgetScratch || operation == retireActualBudgetScratch {
 		confirmation, err := authorizeActualBudgetScratch(os.Getenv)
 		if err == nil {
@@ -303,6 +295,21 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == observeCorootKeeperOperation {
+		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		receipt, err := observeCorootKeeperQuorum(ctx, c, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Coroot Keeper observation held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("COROOT_KEEPER_QUORUM=VERIFIED members=3 syncedFollowers=2 disruptionBudget=VERIFIED writes=0")
+		for i, member := range receipt.Members {
+			if !member.Leader && receipt.Disks[i].Digest != "" {
+				fmt.Printf("COROOT_KEEPER_FOLLOWER=QUALIFIED ordinal=%d digest=%s\n", i, receipt.Disks[i].Digest)
+			}
+		}
+		return
 	}
 	if operation == corootKeeperCutoverOperation {
 		input, err := authorizeCorootKeeperCutover(os.Getenv)

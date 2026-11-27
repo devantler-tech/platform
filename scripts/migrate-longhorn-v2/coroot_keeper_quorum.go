@@ -157,9 +157,13 @@ type corootKeeperQuorumReceipt struct {
 	V2Claims           [3]benchmarkResource
 }
 
-func observeCorootKeeperQuorum(ctx context.Context, c client, source string) error {
-	_, err := readCorootKeeperQuorum(ctx, c, source, nil)
-	return err
+func observeCorootKeeperQuorum(ctx context.Context, c client, source, run string) (corootKeeperQuorumReceipt, error) {
+	activation := temporaryV2Activation{c: c, source: source, owner: run, pools: c.inventoryPools}
+	capacity, err := activation.recoveryClaimStorage(ctx, corootKeeperDataSize)
+	if err != nil {
+		return corootKeeperQuorumReceipt{}, err
+	}
+	return readCorootKeeperQuorum(ctx, c, source, capacity.Disks)
 }
 
 func readCorootKeeperQuorum(ctx context.Context, c client, source string, qualified []cnpgRecoveryDiskBinding) (corootKeeperQuorumReceipt, error) {
