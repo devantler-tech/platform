@@ -41,32 +41,38 @@ func (c *mailboxClient) count(ctx context.Context, method string) (int, error) {
 	return queryTotal(result)
 }
 
-func (c *mailboxClient) collectionState(ctx context.Context, collection string) (string, error) {
+type collectionChanges struct {
+	state       string
+	liveChanges bool
+}
+
+func (c *mailboxClient) collectionChanges(ctx context.Context, collection string) (collectionChanges, error) {
 	changes, err := c.call(ctx, collection+"/changes", object{"sinceState": "n"})
 	if err != nil {
-		return "", err
+		return collectionChanges{}, err
 	}
-	state := text(changes, "newState")
-	if text(changes, "oldState") != "n" || state == "" || changes["hasMoreChanges"] != false {
-		return "", fmt.Errorf("census %s: incomplete change state", collection)
+	result := collectionChanges{state: text(changes, "newState")}
+	if text(changes, "oldState") != "n" || result.state == "" || changes["hasMoreChanges"] != false {
+		return collectionChanges{}, fmt.Errorf("census %s: incomplete change state", collection)
 	}
-	if state == "n" {
-		for _, field := range []string{"created", "updated", "destroyed"} {
-			rows, ok := changes[field].([]any)
-			if !ok || len(rows) != 0 {
-				return "", fmt.Errorf("census %s: ambiguous initial state", collection)
-			}
+	for _, field := range []string{"created", "updated", "destroyed"} {
+		rows, ok := changes[field].([]any)
+		if !ok || (result.state == "n" && len(rows) != 0) {
+			return collectionChanges{}, fmt.Errorf("census %s: inconsistent changes", collection)
+		}
+		if field != "destroyed" && len(rows) != 0 {
+			result.liveChanges = true
 		}
 	}
-	return state, nil
+	return result, nil
 }
 
 // listAll avoids initializing an untouched collection. An initialized
 // collection must retain its state while listed, so regenerated entries
 // cannot pass as restored data.
 func (c *mailboxClient) listAll(ctx context.Context, collection string) (int, error) {
-	state, err := c.collectionState(ctx, collection)
-	if err != nil || state == "n" {
+	changes, err := c.collectionChanges(ctx, collection)
+	if err != nil || changes.state == "n" {
 		return 0, err
 	}
 	result, err := c.call(ctx, collection+"/get", object{"ids": nil, "properties": []any{"id"}})
@@ -74,7 +80,7 @@ func (c *mailboxClient) listAll(ctx context.Context, collection string) (int, er
 		return 0, err
 	}
 	list, ok := result["list"].([]any)
-	if text(result, "state") != state {
+	if text(result, "state") != changes.state {
 		return 0, fmt.Errorf("census %s: collection changed during listing", collection)
 	}
 	if !ok || len(items(result, "list")) != len(list) || !noneMissing(result) {
@@ -175,8 +181,15 @@ func (c *mailboxClient) census(ctx context.Context) (storeCensus, error) {
 		if s.events, s.tasks, err = c.calendarObjects(ctx); err != nil {
 			return s, err
 		}
-	} else if state, err := c.collectionState(ctx, "CalendarEvent"); err != nil || state != "n" {
-		return s, errors.New("census-calendar-objects-without-calendar")
+	} else {
+		// Calendar/get established that no calendar exists. A calendar event
+		// query can create a default calendar when the server rebuilds its
+		// cache. Use the owner's change feed here to reject surviving events
+		// or tasks while allowing a collection whose last objects were deleted.
+		changes, err := c.collectionChanges(ctx, "CalendarEvent")
+		if err != nil || changes.liveChanges {
+			return s, errors.New("census-calendar-objects-without-calendar")
+		}
 	}
 	if s.identities, err = c.listAll(ctx, "Identity"); err != nil {
 		return s, err

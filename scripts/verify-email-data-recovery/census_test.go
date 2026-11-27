@@ -118,6 +118,46 @@ func TestCensusLeavesUninitializedCollectionsUntouched(t *testing.T) {
 	}
 }
 
+func TestCensusChecksInitializedEventsAfterLastCalendarRemoved(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		liveField string
+	}{
+		{name: "empty after deletion"},
+		{name: "created item without calendar", liveField: "created"},
+		{name: "updated item without calendar", liveField: "updated"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := censusFixture()
+			store.calendars = 0
+			store.objects = nil
+			store.mutate = func(method string, _, result object) {
+				if method == "CalendarEvent/changes" {
+					result["destroyed"] = []any{"deleted-item"}
+					if test.liveField != "" {
+						result[test.liveField] = []any{"surviving-item"}
+					}
+				}
+			}
+			census, err := store.serve(t).census(context.Background())
+			for _, method := range store.methods {
+				if method == "CalendarEvent/query" || method == "CalendarEvent/get" {
+					t.Fatalf("%s can initialize a default calendar", method)
+				}
+			}
+			if test.liveField == "" {
+				if err != nil || census.calendars != 0 || census.events != 0 || census.tasks != 0 {
+					t.Fatalf("census of an initialized empty event collection: %+v, %v", census, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "census-calendar-objects-without-calendar") {
+				t.Fatalf("orphaned calendar content did not fail the census: %v", err)
+			}
+		})
+	}
+}
+
 func TestCensusRechecksAnEmptyCalendarEventQuery(t *testing.T) {
 	store := censusFixture()
 	store.objects = nil
