@@ -5,6 +5,11 @@ immutable main revision, on its first attempt, in the protected production
 environment. It shares the production deployment lock. It does not move the
 serving claim.
 
+Use `verify-email-data-recovery-preflight` to verify the serving claim, backup
+configuration, private inventory credential, and read-only mailbox session.
+This confirmation cannot create a mailbox marker or a restore. A failed check
+reports its named stage without request details or credentials.
+
 The server uses the encrypted V2 claim `email-data-encrypted-v2`
 (storage class `email-encrypted-v2`). The previous claim is retained separately
 from the serving pod.
