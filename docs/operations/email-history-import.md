@@ -94,7 +94,7 @@ list, and no server reply, folder name or credential ever appears:
 Each of the two copy passes also writes one line, whether it succeeded or not.
 The first pass copies and the second, `--dry`, only verifies:
 
-`MAIL_HISTORY_IMPORT_PASS pass=<copy|verify> exit=<n> observed=<n> identified=<n> errors=<n> transferred=<n> would_transfer=<n> skipped=<n> h1_duplicates=<n> h2_duplicates=<n> h2_crossduplicates=<n> h1_noheader=<n> h2_noheader=<n> in1_not_in2=<n> in2_not_in1=<n> folders_synced=<n> folders_wanted=<n>`
+`MAIL_HISTORY_IMPORT_PASS pass=<copy|verify> exit=<n> observed=<n> observed_folders=<n> identified=<n> errors=<n> transferred=<n> would_transfer=<n> skipped=<n> h1_duplicates=<n> h2_duplicates=<n> h2_crossduplicates=<n> h1_noheader=<n> h2_noheader=<n> in1_not_in2=<n> in2_not_in1=<n> folders_synced=<n> folders_wanted=<n>`
 
 The line holds numbers only.
 - **Source of the counts.** The labelled counts come from a fixed list of labels, read only from imapsync's closing statistics, the block that starts with `++++ Statistics`. The first value of each label there is kept.
@@ -103,7 +103,10 @@ The line holds numbers only.
 - **`?`** is a value the tool did not print.
 - **`observed`** is the source total that the pass is judged against.
 - **`identified`** is the number of distinct message identities across all folders. Within one folder every message counts, because `--syncduplicates` keys each repeat separately. The same message filed in two folders counts once. A pass is accepted when `identified` lies between the largest source folder and `observed`. Attempt 12 confirmed the within-folder rule on the real mailbox: 20,234 identified for 20,234 observed, with 2 source duplicates.
-- **`folders_synced` / `folders_wanted`** come from the closing statistics' `Folders synced : X/Y synced` line. A pass is accepted only when the line was printed and every wanted folder was synced. Otherwise a folder left out without an error could pass, as long as the destination already held as many messages as that source folder.
+- **`folders_synced` / `folders_wanted`** come from the closing statistics' `Folders synced : X/Y synced` line. **`observed_folders`** is the number of folders the importer's own observation found.
+  - A pass is accepted only when the line was printed, every wanted folder was synced, and the tool wanted at least `observed_folders` folders.
+  - Otherwise a folder left out without an error could pass, as long as the destination already held as many messages as that source folder.
+  - Both sides leave out `\Noselect` folders: the observer skips them, and imapsync's `checkselectable` drops them. So wanting fewer folders than were observed means one was missed, while wanting more is harmless.
 - **`exit`** is imapsync's exit status, with two special values:
   - `signal`: the process ended by a signal. That includes the import's 3-hour deadline, and also a SIGTERM or SIGINT that imapsync caught, because it then kills itself with the same signal.
   - `?`: the tool never ran or left no exit status, for example when the deadline had already passed.
@@ -157,8 +160,12 @@ reconcile, and the import would report a copy it never made.
 
 If a run shows `h1_noheader` above 0, repeating cannot help. In that case:
 1. Stop, and record the count on #5481. The run copied nothing without an identity.
-2. Decide with the maintainer how those messages reach the destination. Options are copying them by hand from a mail client, or adding a `Message-Id` to them at the source.
-3. Run the import again. It completes once no source message lacks a `Message-Id`.
+2. Decide with the maintainer how those messages reach the destination. There are two paths:
+   - **Copy them by hand from a mail client.** The importer cannot confirm this copy, so it needs its own acceptance, recorded on #5481. The import itself still cannot complete while those messages lack a `Message-Id`.
+   - **Repair the source.** Give each of them a `Message-Id` at the source, in a way that keeps the message otherwise unchanged and deletes nothing.
+3. After a source repair, run the import again. It completes once no source message lacks a `Message-Id`.
+
+The identity rule stays fail-closed in both paths.
 
 Messages that share a `Message-Id` are all copied:
 - within a folder, because `--syncduplicates` keys each repeat separately;

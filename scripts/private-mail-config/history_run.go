@@ -134,15 +134,19 @@ func (r *historyReport) count(key, digits string, first bool) {
 }
 
 // allFoldersSynced reports whether the tool's closing statistics name every
-// folder it wanted as synced. A folder left out without an error would
+// folder it wanted as synced, and whether it wanted at least as many folders
+// as the source observation found. A folder left out without an error would
 // otherwise pass as long as the destination already held as many messages as
-// the source folder. A pass that printed no such line has not shown it.
-func (r *historyReport) allFoldersSynced() bool {
+// the source folder. Both sides leave out \Noselect folders (the observer
+// skips them, imapsync's checkselectable drops them), so a tool that wants
+// fewer folders than were observed has missed one; wanting more is harmless.
+// A pass that printed no such line has not shown any of this.
+func (r *historyReport) allFoldersSynced(observedFolders int) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	synced, okSynced := r.counts["folders_synced"]
 	wanted, okWanted := r.counts["folders_wanted"]
-	return okSynced && okWanted && wanted > 0 && synced == wanted
+	return okSynced && okWanted && wanted > 0 && synced == wanted && observedFolders >= 0 && wanted >= uint64(observedFolders)
 }
 
 // statistics reads the fixed-vocabulary counts from one complete line.
@@ -183,7 +187,7 @@ func (r *historyReport) statistics(line string) {
 // status and the fixed counts, each a number or "?" when the tool printed none.
 // observed is the source total the pass is judged against. It is written for
 // every pass, successful or not, and carries numbers only.
-func historyPassLine(pass string, runErr error, r *historyReport, observed uint64) string {
+func historyPassLine(pass string, runErr error, r *historyReport, observed uint64, observedFolders int) string {
 	exit := "?"
 	var exitErr *exec.ExitError
 	switch {
@@ -198,7 +202,7 @@ func historyPassLine(pass string, runErr error, r *historyReport, observed uint6
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var b strings.Builder
-	fmt.Fprintf(&b, "MAIL_HISTORY_IMPORT_PASS pass=%s exit=%s observed=%d", pass, exit, observed)
+	fmt.Fprintf(&b, "MAIL_HISTORY_IMPORT_PASS pass=%s exit=%s observed=%d observed_folders=%d", pass, exit, observed, observedFolders)
 	for _, key := range historyStatisticOrder {
 		value := "?"
 		if n, ok := r.counts[key]; ok {
@@ -312,8 +316,8 @@ func importHistory(ctx context.Context, v historyConfig, observe historyObserver
 		if dry {
 			pass = "verify"
 		}
-		_, _ = io.WriteString(receipt, historyPassLine(pass, runErr, &result, total))
-		if runErr != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || !result.allFoldersSynced() || result.messages < largest || result.messages > total) {
+		_, _ = io.WriteString(receipt, historyPassLine(pass, runErr, &result, total, len(source)))
+		if runErr != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || !result.allFoldersSynced(len(source)) || result.messages < largest || result.messages > total) {
 			if dry {
 				return fail("verification")
 			}

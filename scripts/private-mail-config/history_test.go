@@ -166,8 +166,8 @@ func TestHistoryCopiesThenVerifiesWithoutLeakingToolOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	unknown := " transferred=? would_transfer=? skipped=? h1_duplicates=? h2_duplicates=? h2_crossduplicates=? h1_noheader=? h2_noheader=? in1_not_in2=? in2_not_in1=? folders_synced=2 folders_wanted=2\n"
-	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=5 identified=5 errors=0" + unknown +
-		"MAIL_HISTORY_IMPORT_PASS pass=verify exit=0 observed=5 identified=5 errors=0" + unknown +
+	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=5 observed_folders=2 identified=5 errors=0" + unknown +
+		"MAIL_HISTORY_IMPORT_PASS pass=verify exit=0 observed=5 observed_folders=2 identified=5 errors=0" + unknown +
 		"MAIL_HISTORY_IMPORT=COMPLETE folders=2 messages=5 source=PRESERVED routing=UNCHANGED\n"
 	if calls != 2 || observations != 4 || receipt.String() != want {
 		t.Fatalf("copy/reconciliation incomplete: calls=%d observations=%d receipt=%q", calls, observations, &receipt)
@@ -192,6 +192,7 @@ func TestHistoryIdentifiedCountLiesBetweenLargestFolderAndTotal(t *testing.T) {
 		{"more than the source holds", 6, "2/2", false},
 		{"a folder left unsynced", 4, "1/2", false},
 		{"no folder count printed", 4, "", false},
+		{"fewer folders wanted than observed", 4, "1/1", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v, err := loadHistoryInputs(historyInputs(t))
@@ -276,7 +277,7 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	if err := importHistory(context.Background(), v, observe, execute, &receipt); err == nil || err.Error() != "copy" {
 		t.Fatalf("a pass reporting an error must fail at copy, got %v", err)
 	}
-	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=7 identified=7 errors=1 transferred=3 would_transfer=? skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=0 in2_not_in1=0 folders_synced=1 folders_wanted=1\n"
+	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=7 observed_folders=1 identified=7 errors=1 transferred=3 would_transfer=? skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=0 in2_not_in1=0 folders_synced=1 folders_wanted=1\n"
 	if receipt.String() != want {
 		t.Fatalf("copy pass line:\n got %q\nwant %q", &receipt, want)
 	}
@@ -285,16 +286,16 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	calls = 1
 	result := historyReport{}
 	runErr := execute(context.Background(), nil, &result)
-	got := historyPassLine("verify", runErr, &result, 7)
-	want = "MAIL_HISTORY_IMPORT_PASS pass=verify exit=111 observed=7 identified=7 errors=1 transferred=0 would_transfer=2 skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=2 in2_not_in1=3 folders_synced=1 folders_wanted=1\n"
+	got := historyPassLine("verify", runErr, &result, 7, 1)
+	want = "MAIL_HISTORY_IMPORT_PASS pass=verify exit=111 observed=7 observed_folders=1 identified=7 errors=1 transferred=0 would_transfer=2 skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=2 in2_not_in1=3 folders_synced=1 folders_wanted=1\n"
 	if got != want {
 		t.Fatalf("verify pass line:\n got %q\nwant %q", got, want)
 	}
-	if got := historyPassLine("verify", errors.New("private-tool-error-canary"), &historyReport{}, 0); strings.Contains(got, "private") || !strings.Contains(got, " exit=? ") {
+	if got := historyPassLine("verify", errors.New("private-tool-error-canary"), &historyReport{}, 0, 0); strings.Contains(got, "private") || !strings.Contains(got, " exit=? ") {
 		t.Fatalf("an error without an exit status must read as unknown: %q", got)
 	}
 	killed := exec.Command("sh", "-c", "kill -KILL $$").Run()
-	if got := historyPassLine("copy", killed, &historyReport{}, 0); !strings.Contains(got, " exit=signal ") {
+	if got := historyPassLine("copy", killed, &historyReport{}, 0, 0); !strings.Contains(got, " exit=signal ") {
 		t.Fatalf("a killed tool must read as signal, not a negative status: %q", got)
 	}
 
@@ -316,12 +317,12 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	if !drained.bad || !drained.zero {
 		t.Fatalf("the over-bound line must fail the pass while later lines are still read: bad=%v zero=%v", drained.bad, drained.zero)
 	}
-	if got := historyPassLine("copy", overlongErr, &drained, 0); !strings.Contains(got, " exit=114 ") || strings.Contains(got, "canary") {
+	if got := historyPassLine("copy", overlongErr, &drained, 0, 0); !strings.Contains(got, " exit=114 ") || strings.Contains(got, "canary") {
 		t.Fatalf("a drained over-bound run must keep the tool's exit status and nothing else: %q", got)
 	}
 	var recovered historyReport
 	_, _ = io.WriteString(&recovered, "Detected 3 errors\nDetected 0 errors\n")
-	if got := historyPassLine("copy", nil, &recovered, 0); !strings.Contains(got, " errors=3 ") || !recovered.bad {
+	if got := historyPassLine("copy", nil, &recovered, 0, 0); !strings.Contains(got, " errors=3 ") || !recovered.bad {
 		t.Fatalf("a later zero count must not hide the errors that failed the pass: bad=%v %q", recovered.bad, got)
 	}
 	// The total bound is crossed across many writes, as a pipe delivers it,

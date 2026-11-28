@@ -78,10 +78,11 @@ for ((pass = 1; pass <= 2; pass++)); do
   # identified and none missing from the destination. The real tool prints its
   # whole closing statistics block, so every other count must be digits, in this
   # order: a parser that stopped reading the block would turn them into "?".
-  # Only the dry pass reports would_transfer, and it transfers nothing.
-  counts='skipped=[0-9]+ h1_duplicates=[0-9]+ h2_duplicates=[0-9]+ h2_crossduplicates=[0-9]+ h1_noheader=[0-9]+ h2_noheader=[0-9]+ in1_not_in2=0 in2_not_in1=[0-9]+ folders_synced=[0-9]+ folders_wanted=[0-9]+$'
-  copy_line="^MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=4 identified=4 errors=0 transferred=[0-9]+ would_transfer=[?] $counts"
-  verify_line="^MAIL_HISTORY_IMPORT_PASS pass=verify exit=0 observed=4 identified=4 errors=0 transferred=0 would_transfer=[0-9]+ $counts"
+  # Only the dry pass reports would_transfer, and it transfers nothing. Every
+  # wanted folder must be synced, and the tool must want all 3 observed folders.
+  counts='skipped=[0-9]+ h1_duplicates=[0-9]+ h2_duplicates=[0-9]+ h2_crossduplicates=[0-9]+ h1_noheader=[0-9]+ h2_noheader=[0-9]+ in1_not_in2=0 in2_not_in1=[0-9]+ folders_synced=3 folders_wanted=3$'
+  copy_line="^MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=4 observed_folders=3 identified=4 errors=0 transferred=[0-9]+ would_transfer=[?] $counts"
+  verify_line="^MAIL_HISTORY_IMPORT_PASS pass=verify exit=0 observed=4 observed_folders=3 identified=4 errors=0 transferred=0 would_transfer=[0-9]+ $counts"
   if [[ $(wc -l <<<"$receipt") -ne 3 ]] ||
     ! [[ $(sed -n 1p <<<"$receipt") =~ $copy_line ]] ||
     ! [[ $(sed -n 2p <<<"$receipt") =~ $verify_line ]] ||
