@@ -26,8 +26,8 @@ func actualBudgetRestoreAssets(run, backupRun, node string) ([]object, error) {
 		// Velero's WFFC exposer reads selected-node before it creates its
 		// scratch claim. The target's Velero binding selector remains intact.
 		"patches": []any{
-			object{"op": "replace", "path": "/spec/storageClassName", "value": "longhorn-v2"},
-			object{"op": "add", "path": "/metadata/annotations/volume.kubernetes.io~1selected-node", "value": node},
+			object{"operation": "replace", "path": "/spec/storageClassName", "value": "longhorn-v2"},
+			object{"operation": "add", "path": "/metadata/annotations/volume.kubernetes.io~1selected-node", "value": node},
 		},
 	}}})
 	if err != nil {
