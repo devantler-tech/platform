@@ -738,7 +738,7 @@ jobs:
               - 'scripts/tests/test-substrate-bucket-init-hook.sh'
               - 'scripts/build-controller-helm.sh'
               - 'scripts/prepare-helm-render-input-capture.sh'
-              # The rendering library both chart-rendering guards source (#4465).
+              # The chart-rendering and image guards share the Flux source checks.
               - 'scripts/flux-render.lib.sh'
               - 'scripts/render-helm-chart/**'
               # Both halves and the reviewed exception list, for the same reasons. The
@@ -3979,7 +3979,7 @@ jobs:
 
       - name: 🏷️ Validate no rendered workload runs a floating image tag
         run: |
-          shellcheck scripts/guard-floating-image-tags.sh scripts/tests/test-guard-floating-image-tags.sh
+          shellcheck -x scripts/flux-render.lib.sh scripts/guard-floating-image-tags.sh scripts/tests/test-guard-floating-image-tags.sh
           bash scripts/guard-floating-image-tags.sh k8s
           bash scripts/tests/test-guard-floating-image-tags.sh
 
