@@ -115,8 +115,8 @@ success: only the `COMPLETE` receipt does. To read a failure:
 | `pass=copy` with `errors` above 0 | One message could not be fetched or appended. `--errorsmax 1` stops the pass at the first one. |
 | `pass=verify` with `identified` above `observed`, and `in1_not_in2` equal to the difference | Mail reached the source during the run. Repeat at a quieter time. |
 | `in2_not_in1` above 0 | Either mail the destination held before the copy, which the importer keeps, or copies stored with a different identity (`Message-Id` and `Received` headers). Compare runs before deciding. |
-| `in2_not_in1` and `h2_duplicates` both rising between runs, with `in1_not_in2` above 0 in each verify pass | Copies were stored with a different identity, so each run appends them again. Stop repeating the operation, because every repeat adds duplicates, and look at what the destination changed. |
-| `pass=verify` with `in1_not_in2` above 0, `in2_not_in1` unchanged between runs, and the source unchanged | Messages left the destination after they were copied, for example through its retention of old Trash or Junk messages. |
+| `h2_duplicates` rising between runs, with `in1_not_in2` above 0 in each verify pass | Copies were stored with a different identity, so each run appends them again. Stop repeating the operation, because every repeat adds duplicates, and look at what the destination changed. `in2_not_in1` counts distinct identities, so it can stay the same while the copies pile up, and a stable value does not rule this out. |
+| `pass=verify` with `in1_not_in2` above 0, `h2_duplicates` unchanged between runs, and the source unchanged | Messages left the destination after they were copied, for example through its retention of old Trash or Junk messages. |
 
 A Job created this way is outside the Flux inventory, so a long copy never holds
 a deploy and a reconciliation cannot prune it. Repeat the operation to continue
