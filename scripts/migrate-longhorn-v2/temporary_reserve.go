@@ -105,6 +105,9 @@ func (a temporaryV2Activation) observeUnusedReserve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(registered.Disks) != len(temporaryV2Selections) {
+		return errTemporaryActivation
+	}
 	current := registered.Targets[temporaryReserveSelection]
 	config, err := a.c.get(ctx, "configmap", "longhorn-system", "longhorn-v2-prepare-"+temporaryReserveSelection, false)
 	if err != nil || text(config, "metadata", "uid") != current.PreparationUID {

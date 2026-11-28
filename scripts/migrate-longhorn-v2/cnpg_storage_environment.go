@@ -110,7 +110,7 @@ func (a temporaryV2Activation) observeRecoveryStorage(ctx context.Context, newCl
 			return result, refused
 		}
 		node, lh := nodes[name], storage[name]
-		registered, e := temporaryRegistrationState(lh, text(cm, "metadata", "uid"), selection)
+		registered, e := temporaryRecoveryRegistrationState(lh, text(cm, "metadata", "uid"), selection, s.reserve)
 		if e != nil || !registered {
 			return result, refused
 		}
@@ -137,12 +137,16 @@ func (a temporaryV2Activation) observeRecoveryStorage(ctx context.Context, newCl
 		result.Targets[selection] = binding
 		result.Disks = append(result.Disks, cnpgRecoveryDiskBinding{Selection: selection, Node: name, NodeUID: binding.LonghornUID, DiskUUID: text(d, "diskUUID"), InstanceManager: text(d, "instanceManagerName")})
 	}
+	reserve := s.reserve
+	if reserve != nil {
+		result.Disks = append(result.Disks, *reserve)
+	}
 	// The native reads may take time. Rebind the complete runtime and allocation
 	// graph afterwards rather than charging capacity against the earlier snapshot.
 	phase = "runtime-continuity"
 	s, err = v2Environment(ctx, a.c, a.pools)
-	if err != nil {
-		return result, err
+	if err != nil || !recoveryJSONEqual(reserve, s.reserve) {
+		return result, refused
 	}
 	nodes, err = indexed(s.nodes)
 	if err != nil {
@@ -154,7 +158,7 @@ func (a temporaryV2Activation) observeRecoveryStorage(ctx context.Context, newCl
 	}
 	for _, binding := range result.Targets {
 		node, lh := nodes[binding.Name], storage[binding.Name]
-		registered, e := temporaryRegistrationState(lh, result.Activation.UID, binding.Selection)
+		registered, e := temporaryRecoveryRegistrationState(lh, result.Activation.UID, binding.Selection, s.reserve)
 		if e != nil || !registered || text(node, "metadata", "uid") != binding.NodeUID || text(node, "spec", "providerID") != binding.ProviderID || text(node, "status", "nodeInfo", "systemUUID") != binding.MachineUUID || text(node, "status", "nodeInfo", "bootID") != binding.BootID || text(node, "status", "nodeInfo", "osImage") != binding.OSImage || text(lh, "metadata", "uid") != binding.LonghornUID || text(node, "metadata", "annotations", fenceAnnotation) != "" {
 			return result, refused
 		}
@@ -165,7 +169,11 @@ func (a temporaryV2Activation) observeRecoveryStorage(ctx context.Context, newCl
 		}
 	}
 	for _, disk := range result.Disks {
-		current := valueObject(storage[disk.Node], "status", "diskStatus", "longhorn-v2")
+		diskName := disk.DiskName
+		if diskName == "" {
+			diskName = "longhorn-v2"
+		}
+		current := valueObject(storage[disk.Node], "status", "diskStatus", diskName)
 		if disk.DiskUUID == "" || disk.InstanceManager == "" ||
 			text(current, "diskUUID") != disk.DiskUUID || text(current, "instanceManagerName") != disk.InstanceManager {
 			return result, refused

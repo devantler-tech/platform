@@ -71,6 +71,57 @@ func TestV2RuntimeRejectsTheEarlierRebuiltPermanentWorkerRoute(t *testing.T) {
 	}
 }
 
+func TestV2RuntimeRequiresAnExactBindingForTheRetainedReserve(t *testing.T) {
+	pools, err := configuredMigrationPools(poolConfigFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, managers := v2ReadinessFixture()
+	var owner object
+	for _, node := range s.nodes {
+		if text(node, "metadata", "labels", migrationPoolLabel) == "v2" {
+			owner = node
+			break
+		}
+	}
+	node := text(owner, "metadata", "name")
+	storage, err := indexed(s.storageNodes)
+	if err != nil || node == "" {
+		t.Fatal("the fixture needs the retained-layout storage worker")
+	}
+	lh := storage[node]
+	spec := valueObject(lh, "spec", "disks")
+	statuses := valueObject(lh, "status", "diskStatus")
+	disk := blockDisks()["longhorn-v2"].(object)
+	spec["longhorn-v2-retained"] = disk
+	primary := valueObject(lh, "status", "diskStatus", "longhorn-v2")
+	primary["instanceManagerName"] = "manager-for-retained-worker"
+	statuses["longhorn-v2-retained"] = object{
+		"diskUUID": "retained-disk", "diskPath": text(disk, "path"), "diskType": "block", "diskDriver": "aio",
+		"instanceManagerName": "manager-for-retained-worker",
+		"conditions":          []any{object{"type": "Ready", "status": "True"}, object{"type": "Schedulable", "status": "True"}},
+	}
+	if verifyV2Runtime(s, managers, pools, runtimeStockImage) == nil {
+		t.Fatal("an additional disk was accepted without a verified binding")
+	}
+	binding := cnpgRecoveryDiskBinding{Selection: temporaryReserveSelection, Node: node, NodeUID: text(lh, "metadata", "uid"),
+		DiskUUID: "retained-disk", InstanceManager: "manager-for-retained-worker", DiskName: "longhorn-v2-retained"}
+	s.reserve = &binding
+	if err := verifyV2Runtime(s, managers, pools, runtimeStockImage); err != nil {
+		t.Fatal("the exact bound reserve was rejected", err)
+	}
+	status := statuses["longhorn-v2-retained"].(object)
+	status["diskUUID"] = primary["diskUUID"]
+	if verifyV2Runtime(s, managers, pools, runtimeStockImage) == nil {
+		t.Fatal("the reserve reused the primary disk identity")
+	}
+	status["diskUUID"] = binding.DiskUUID
+	status["diskPath"] = "/dev/another-path"
+	if verifyV2Runtime(s, managers, pools, runtimeStockImage) == nil {
+		t.Fatal("a different raw mapper was accepted")
+	}
+}
+
 // Ready disk identities, original redundancy and effective SPDK ownership,
 // executable arguments and reservations are all required for storage readiness.
 func TestV2RuntimeRequiresRealRawDisksAndReservedReactors(t *testing.T) {
