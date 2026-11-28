@@ -46,7 +46,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.116.0
 	github.com/emersion/go-imap v1.2.1
-	github.com/google/cel-go v0.31.0
+	github.com/google/cel-go v0.32.0
 	github.com/google/go-github/v88 v88.0.0
 	k8s.io/apimachinery v0.37.2
 	k8s.io/client-go v0.37.2
