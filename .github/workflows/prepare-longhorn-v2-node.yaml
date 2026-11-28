@@ -54,6 +54,7 @@ name: Prepare Longhorn V2 Migration
             resume-umami-archive-isolation,
             resume-umami-archive-data,
             observe-umami-v2-standby,
+            observe-provider-cnpg-v2-standby,
             replace-umami-v2-standby,
             resume-retained-umami-v2-standby,
             switch-umami-primary-to-v2,
@@ -232,6 +233,10 @@ jobs:
             observe-umami-v2-standby)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^observe-umami-v2-standby:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
+              ;;
+            observe-provider-cnpg-v2-standby)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(customer-identity-db|business-site-portal-db)$ &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^observe-provider-cnpg-v2-standby:${LONGHORN_V2_DATABASE}-[1-9][0-9]*$ ]]
               ;;
             replace-umami-v2-standby)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
