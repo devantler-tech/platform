@@ -56,7 +56,7 @@ func verifyRuntimeTools(ctx context.Context, runtime bootstrapRuntime, serverVer
 // httpSettings keeps transport identity explicit in both native representations.
 func httpSettings(v inputs, profile runtimeSchema) map[string]any {
 	value := map[string]any{
-		"allowedEndpoints":  map[string]any{"match": map[string]any{"0": map[string]any{"if": "starts_with(path, '/jmap/upload/')", "then": "403"}}, "else": "200"},
+		"allowedEndpoints":  uploadRule(v.accountIDs[v.Maintainer]),
 		"usePermissiveCors": false,
 	}
 	if profile.v1 {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -54,7 +55,9 @@ func TestPlanPreservesIdentitiesAndRestrictsLocalRecipients(t *testing.T) {
 		if err = json.Unmarshal([]byte(line), &op); err != nil {
 			t.Fatal(err)
 		}
-		if op["@type"] == "destroy" {
+		// The one removal the plan may hold is the implicit-TLS submission
+		// listener, by its unique name, when the deployment does not serve it.
+		if op["@type"] == "destroy" && !reflect.DeepEqual(op, map[string]any{"@type": "destroy", "object": "NetworkListener", "value": map[string]any{"name": "submissions"}}) {
 			t.Fatal("configuration destroys existing mail")
 		}
 		operations = append(operations, op)

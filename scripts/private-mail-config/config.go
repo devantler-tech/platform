@@ -34,6 +34,15 @@ type inputs struct {
 	// mailProxySource is the mail load balancer's private IPv4 address, given
 	// only by the deployment's --mail-proxy-source flag, never by private input.
 	mailProxySource string
+	// webHostname is the server's public web host, given only by the
+	// deployment's --web-hostname flag. The documents that set up mail apps
+	// name it for JMAP and the DAV services. Without it they name the default
+	// hostname for every service, as upstream does.
+	webHostname string
+	// implicitSubmission serves submission with implicit TLS on 465. Only the
+	// deployment's --hostname flag sets it; without it a stored listener is
+	// removed (implicitSubmissionRemoval).
+	implicitSubmission bool
 }
 
 // senderAuth declares the inbound sender checks. SPF and reverse-IP judge the
@@ -92,7 +101,12 @@ func render(v inputs) ([]byte, error) {
 	if v.mailProxySource != "" && !validMailProxySource(v.mailProxySource) {
 		return nil, errConfiguration
 	}
-	if !domainPattern.MatchString(v.Domain) || strings.HasSuffix(v.Domain, ".invalid") || len(v.Domain) > 200 || !domainPattern.MatchString(v.Hostname) || !strings.HasSuffix(v.Hostname, "."+v.Domain) || len(v.Hostname) > 253 {
+	// The default hostname comes from the settings or, taking precedence, from
+	// the deployment's --hostname flag; both pass the same check.
+	if !domainPattern.MatchString(v.Domain) || strings.HasSuffix(v.Domain, ".invalid") || len(v.Domain) > 200 || !hostnameUnder(v.Hostname, v.Domain) {
+		return nil, errConfiguration
+	}
+	if v.webHostname != "" && !hostnameUnder(v.webHostname, v.Domain) {
 		return nil, errConfiguration
 	}
 	seen := map[string]bool{}
@@ -207,6 +221,17 @@ func render(v inputs) ([]byte, error) {
 	update := func(object string, value any) map[string]any {
 		return map[string]any{"@type": "update", "object": object, "value": value}
 	}
+	listeners := map[string]any{
+		"client-proxy": clientProxy,
+		"management":   listener("management", "http", "0.0.0.0:8080", false, false),
+		"inbound":      mailListener("smtp-inbound", "smtp", "0.0.0.0:1025", false),
+		"submission":   mailListener("submission", "smtp", "0.0.0.0:1587", false),
+		"imap":         mailListener("imaps", "imap", "0.0.0.0:1993", true),
+	}
+	if v.implicitSubmission {
+		// Implicit-TLS submission (RFC 8314), served on 465.
+		listeners["submissions"] = mailListener(implicitSubmissionListener, "smtp", "0.0.0.0:1465", true)
+	}
 	operations := []map[string]any{
 		// Match the tagged variant so replay keeps the same console tracer. A
 		// second matching tracer is refused by the native CLI, never chosen by age.
@@ -233,6 +258,11 @@ func render(v inputs) ([]byte, error) {
 		operations = append(operations, map[string]any{"@type": "create", "object": "Account", "value": newAccounts})
 	}
 	operations = append(operations, accountUpdates...)
+	if !v.implicitSubmission {
+		// Without --hostname no implicit-TLS listener is declared, and one a
+		// flagged setup stored is removed. The native CLI runs removals first.
+		operations = append(operations, implicitSubmissionRemoval())
+	}
 	operations = append(operations, []map[string]any{
 		// Address the exact ID returned by the upsert and replace the whole
 		// tagged permission object; a second upsert can reuse a stale lookup.
@@ -241,22 +271,17 @@ func render(v inputs) ([]byte, error) {
 			"certificate": map[string]any{"@type": "File", "filePath": "/etc/stalwart/tls/tls.crt"},
 			"privateKey":  map[string]any{"@type": "File", "filePath": "/etc/stalwart/tls/tls.key"},
 		}}),
-		update("SystemSettings", map[string]any{"defaultHostname": v.Hostname, "defaultDomainId": "#domain", "defaultCertificateId": "#mail-tls", "proxyTrustedNetworks": map[string]bool{}}),
+		update("SystemSettings", map[string]any{"defaultHostname": v.Hostname, "defaultDomainId": "#domain", "defaultCertificateId": "#mail-tls", "proxyTrustedNetworks": map[string]bool{}, "services": advertisedServices(v.webHostname)}),
 		// Named listeners are prepared while the recovery-only process ignores them.
 		// Public activation separately removes recovery mode and supplies TLS files.
-		upsert("NetworkListener", []string{"name"}, map[string]any{
-			"client-proxy": clientProxy,
-			"management":   listener("management", "http", "0.0.0.0:8080", false, false),
-			"inbound":      mailListener("smtp-inbound", "smtp", "0.0.0.0:1025", false),
-			"submission":   mailListener("submission", "smtp", "0.0.0.0:1587", false),
-			"imap":         mailListener("imaps", "imap", "0.0.0.0:1993", true),
-		}),
+		upsert("NetworkListener", []string{"name"}, listeners),
+		// Sign-in and sender checks cover every submission listener alike.
 		update("MtaStageAuth", map[string]any{
-			"saslMechanisms": map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'submission' && is_tls", "then": "[plain, login]"}}, "else": "false"},
-			"require":        expression("listener == 'submission'"), "mustMatchSender": expression("true"),
+			"saslMechanisms": map[string]any{"match": map[string]any{"0": map[string]any{"if": onSubmission() + " && is_tls", "then": "[plain, login]"}}, "else": "false"},
+			"require":        expression(onSubmission()), "mustMatchSender": expression("true"),
 		}),
 		update("MtaStageMail", map[string]any{
-			"isSenderAllowed": expression("listener != 'submission' || authenticated_as != ''"),
+			"isSenderAllowed": expression(offSubmission() + " || authenticated_as != ''"),
 			"rewrite":         expression("false"), "script": expression("false"),
 		}),
 		update("MtaStageRcpt", map[string]any{
@@ -268,7 +293,8 @@ func render(v inputs) ([]byte, error) {
 			"script":        expression("false"),
 		}),
 		// The server's upload endpoint does not honor the JMAP mutation permission
-		// list. This dedicated IMAP/SMTP service denies it for every account.
+		// list. It is refused everywhere except the maintainer's own upload URL,
+		// so webmail can attach files and save filters (uploadRule).
 		update("Http", httpSettings(v, profile)),
 		upsert("Application", []string{"description"}, map[string]any{"webadmin": map[string]any{
 			"description": "Stalwart Web Interface", profile.applicationEnabled: true,
@@ -303,7 +329,7 @@ func render(v inputs) ([]byte, error) {
 			"sender-ip":        throttle("Sender IP throttle", map[string]bool{"remoteIp": true}, expression("true"), 5, 1000),
 			"sender-recipient": throttle("Sender address to recipient throttle", map[string]bool{"senderDomain": true, "rcpt": true}, expression("true"), 25, 60*60*1000),
 			"submission-account": throttle("Submission per account", map[string]bool{"authenticatedAs": true},
-				map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'submission'", "then": "true"}}, "else": "false"}, 100, 60*60*1000),
+				map[string]any{"match": map[string]any{"0": map[string]any{"if": onSubmission(), "then": "true"}}, "else": "false"}, 100, 60*60*1000),
 		}),
 		// Every remote delivery leaves through the SES relay on 587 with required,
 		// verified STARTTLS. Name both explicitly: the server falls back to direct

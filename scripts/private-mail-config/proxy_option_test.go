@@ -61,7 +61,7 @@ func TestProxyCLIOverrideKeepsPrivateSettingsIntact(t *testing.T) {
 			}
 			seen := false
 			for _, op := range ops {
-				if op.Object != "NetworkListener" {
+				if op.Object != "NetworkListener" || op.Type != "upsert" {
 					continue
 				}
 				listener, ok := op.Value["client-proxy"].(map[string]any)

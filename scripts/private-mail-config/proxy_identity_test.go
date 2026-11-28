@@ -51,7 +51,7 @@ func TestProxyIdentityUsesOnlyDedicatedLoopbackListenerAndRollsBack(t *testing.T
 					t.Fatal("global proxy exemptions must stay explicitly empty, including rollback")
 				}
 			}
-			if op.Object != "NetworkListener" {
+			if op.Object != "NetworkListener" || op.Type != "upsert" {
 				continue
 			}
 			listener, ok := op.Value["client-proxy"].(map[string]any)
@@ -123,7 +123,7 @@ func TestProxyListenerInventoryAcceptsOnlyItsManagedLoopbackTrust(t *testing.T) 
 	}
 }
 
-func TestCompleteFiveListenerProfileReplaysInBothTransportStates(t *testing.T) {
+func TestCompleteSixListenerProfileReplaysInBothTransportStates(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		v := inventoryFixture()
 		var ids []string
@@ -136,6 +136,7 @@ func TestCompleteFiveListenerProfileReplaysInBothTransportStates(t *testing.T) {
 			{"client-proxy", "http", "127.0.0.1:18081", false, false},
 			{"smtp-inbound", "smtp", "0.0.0.0:1025", true, false},
 			{"submission", "smtp", "0.0.0.0:1587", true, false},
+			{"submissions", "smtp", "0.0.0.0:1465", true, true},
 			{"imaps", "imap", "0.0.0.0:1993", true, true},
 		} {
 			trust := map[string]bool{}
@@ -161,10 +162,10 @@ func TestCompleteFiveListenerProfileReplaysInBothTransportStates(t *testing.T) {
 		if validateInventory(encode()) != nil {
 			t.Fatal("complete managed profile cannot replay")
 		}
-		methods[0].([]any)[1] = map[string]any{"ids": append(ids, "unexpected"), "total": 6, "position": 0}
+		methods[0].([]any)[1] = map[string]any{"ids": append(ids, "unexpected"), "total": 7, "position": 0}
 		methods[1].([]any)[1] = map[string]any{"list": append(listeners, map[string]any{"id": "unexpected", "name": "unexpected", "protocol": "http", "bind": map[string]bool{"127.0.0.1:18082": true}, "useTls": false, "tlsImplicit": false, "overrideProxyTrustedNetworks": map[string]bool{}, "tlsDisableProtocols": map[string]bool{}}), "notFound": []string{}}
 		if validateInventory(encode()) == nil {
-			t.Fatal("sixth unowned listener accepted")
+			t.Fatal("seventh unowned listener accepted")
 		}
 	}
 }

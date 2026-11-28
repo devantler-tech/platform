@@ -49,6 +49,9 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 					}
 					found["domain"] = true
 				case "NetworkListener":
+					if op.Type == "destroy" {
+						continue
+					}
 					l := op.Value["imap"].(map[string]any)
 					// Without a mail load balancer address the listener trusts no PROXY source, explicitly.
 					trust, ok := l["overrideProxyTrustedNetworks"].(map[string]any)

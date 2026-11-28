@@ -11,10 +11,12 @@ import (
 )
 
 // productionFixture is the fixture as production deploys it: the inbound
-// listener trusts its load balancer's PROXY header for the client address.
+// listener trusts its load balancer's PROXY header for the client address,
+// and --hostname serves implicit-TLS submission.
 func productionFixture() inputs {
 	v := fixture()
 	v.mailProxySource = "10.0.1.250"
+	v.implicitSubmission = true
 	return v
 }
 
@@ -37,6 +39,10 @@ func planObjectsFor(t *testing.T, v inputs) map[string]operation {
 	}
 	byObject := map[string]operation{}
 	for _, op := range ops {
+		// A removal is keyed apart from the object's declaration.
+		if op.Type == "destroy" {
+			op.Object = "destroy " + op.Object
+		}
 		if op.Object != "Account" {
 			if _, seen := byObject[op.Object]; seen {
 				t.Fatalf("%s is declared twice", op.Object)
@@ -270,7 +276,7 @@ func TestInboundThrottlesAreDeclared(t *testing.T) {
 		"sender-ip":        map[string]any{"description": "Sender IP throttle", "enable": true, "key": map[string]any{"remoteIp": true}, "match": always, "rate": map[string]any{"count": float64(5), "period": float64(1000)}},
 		"sender-recipient": map[string]any{"description": "Sender address to recipient throttle", "enable": true, "key": map[string]any{"senderDomain": true, "rcpt": true}, "match": always, "rate": map[string]any{"count": float64(25), "period": float64(3600000)}},
 		"submission-account": map[string]any{"description": "Submission per account", "enable": true, "key": map[string]any{"authenticatedAs": true},
-			"match": map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'submission'", "then": "true"}}, "else": "false"}, "rate": map[string]any{"count": float64(100), "period": float64(3600000)}},
+			"match": map[string]any{"match": map[string]any{"0": map[string]any{"if": "(listener == 'submission' || listener == 'submissions')", "then": "true"}}, "else": "false"}, "rate": map[string]any{"count": float64(100), "period": float64(3600000)}},
 	}
 	if op.Type != "upsert" || !reflect.DeepEqual(op.Value, want) {
 		t.Fatalf("inbound throttles differ: %v", op.Value)

@@ -92,8 +92,9 @@ func policyMatches(want, actual any, key string) bool {
 	}
 	switch key {
 	// A listener's PROXY trust is compared exactly: an expected empty trust
-	// must not accept a trust that an earlier plan left in place.
-	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events", "roleIds", "defaultUserRoleIds", "defaultAdminRoleIds", "redirectUris", "requireScopes", "key", "overrideProxyTrustedNetworks":
+	// must not accept a trust that an earlier plan left in place. So are the
+	// advertised services: a stored POP3 entry must not survive.
+	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events", "roleIds", "defaultUserRoleIds", "defaultAdminRoleIds", "redirectUris", "requireScopes", "key", "overrideProxyTrustedNetworks", "services":
 		return reflect.DeepEqual(want, actual)
 	}
 	if wm, ok := want.(map[string]any); ok {
@@ -246,6 +247,36 @@ func publicPolicyFields(value map[string]any) map[string]any {
 	return fields
 }
 
+// verifyRemoved requires that no stored object matches a removal's filter.
+// The plan removes only by string properties; any other filter is refused.
+func (m management) verifyRemoved(ctx context.Context, op operation) error {
+	if len(op.Value) == 0 {
+		return errConfiguration
+	}
+	properties := []string{"id"}
+	for key, value := range op.Value {
+		if _, ok := value.(string); !ok {
+			return errConfiguration
+		}
+		properties = append(properties, key)
+	}
+	sort.Strings(properties)
+	objects, err := m.objects(ctx, op.Object, properties, false)
+	if err != nil {
+		return err
+	}
+	for _, object := range objects {
+		matches := true
+		for key, value := range op.Value {
+			matches = matches && object[key] == value
+		}
+		if matches {
+			return errConfiguration
+		}
+	}
+	return nil
+}
+
 func (m management) verify(ctx context.Context, plan []byte) error {
 	ops, err := planOperations(plan)
 	if err != nil {
@@ -263,6 +294,9 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 
 // verifyOperation reads one planned operation back and records created IDs.
 func (m management) verifyOperation(ctx context.Context, op operation, ids map[string]string) error {
+	if op.Type == "destroy" {
+		return m.verifyRemoved(ctx, op)
+	}
 	if op.Type == "upsert" || op.Type == "create" {
 		properties := map[string]bool{"id": true}
 		for _, value := range op.Value {

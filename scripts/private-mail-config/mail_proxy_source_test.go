@@ -16,6 +16,8 @@ func mailListenerTrust(t *testing.T, source string) map[string]map[string]any {
 		t.Fatal(err)
 	}
 	v.mailProxySource = source
+	// As production deploys it, with implicit-TLS submission (--hostname).
+	v.implicitSubmission = true
 	plan, err := render(v)
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +28,7 @@ func mailListenerTrust(t *testing.T, source string) map[string]map[string]any {
 	}
 	trust := map[string]map[string]any{}
 	for _, op := range ops {
-		if op.Object != "NetworkListener" {
+		if op.Object != "NetworkListener" || op.Type != "upsert" {
 			continue
 		}
 		for _, raw := range op.Value {
@@ -42,7 +44,7 @@ func mailListenerTrust(t *testing.T, source string) map[string]map[string]any {
 
 func TestMailListenersTrustOnlyTheirLoadBalancer(t *testing.T) {
 	trust := mailListenerTrust(t, "10.0.0.250")
-	for _, name := range []string{"smtp-inbound", "submission", "imaps"} {
+	for _, name := range []string{"smtp-inbound", "submission", "submissions", "imaps"} {
 		if len(trust[name]) != 1 || trust[name]["10.0.0.250"] != true {
 			t.Fatalf("%s must trust exactly the mail load balancer, got %v", name, trust[name])
 		}
@@ -59,7 +61,7 @@ func TestMailListenersTrustOnlyTheirLoadBalancer(t *testing.T) {
 // Removing the address must remove the trust, so the empty trust is written.
 func TestMailListenersTrustNothingWithoutAnAddress(t *testing.T) {
 	trust := mailListenerTrust(t, "")
-	for _, name := range []string{"smtp-inbound", "submission", "imaps"} {
+	for _, name := range []string{"smtp-inbound", "submission", "submissions", "imaps"} {
 		networks, ok := trust[name]
 		if !ok || len(networks) != 0 {
 			t.Fatalf("%s must carry an explicit empty trust, got %v (present=%v)", name, networks, ok)
@@ -128,6 +130,8 @@ func TestMailListenerInventoryAcceptsOnlyOnePrivateLoadBalancerTrust(t *testing.
 		{"load balancer", "imaps", map[string]bool{"10.0.0.250": true}, true},
 		{"load balancer as /32", "smtp-inbound", map[string]bool{"10.0.0.250/32": true}, true},
 		{"submission", "submission", map[string]bool{"10.0.0.250": true}, true},
+		{"implicit-TLS submission", "submissions", map[string]bool{"10.0.0.250": true}, true},
+		{"implicit-TLS submission wider network", "submissions", map[string]bool{"10.0.0.0/16": true}, false},
 		{"public address", "imaps", map[string]bool{"5.75.215.250": true}, false},
 		{"wider network", "imaps", map[string]bool{"10.0.0.0/16": true}, false},
 		{"loopback", "imaps", map[string]bool{"127.0.0.1": true}, false},
@@ -142,6 +146,7 @@ func TestMailListenerInventoryAcceptsOnlyOnePrivateLoadBalancerTrust(t *testing.
 				"imaps":        {"imap", "0.0.0.0:1993", true, true},
 				"smtp-inbound": {"smtp", "0.0.0.0:1025", true, false},
 				"submission":   {"smtp", "0.0.0.0:1587", true, false},
+				"submissions":  {"smtp", "0.0.0.0:1465", true, true},
 				"management":   {"http", "0.0.0.0:8080", false, false},
 			}
 			p := profiles[tc.listener]
