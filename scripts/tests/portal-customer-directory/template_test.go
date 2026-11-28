@@ -80,6 +80,8 @@ func TestRuntimeSettingsEnableTheCustomerDirectory(t *testing.T) {
 		"PORTAL_ZITADEL_URL=https://accounts.devantler.tech\n",
 		"PORTAL_ZITADEL_ORG_ID=123456789\n",
 		"PORTAL_ZITADEL_TOKEN_PROJECTION_FILE=/run/webapp-inputs/portal-zitadel-token\n",
+		"PORTAL_SMTP_USERNAME_FILE=/run/webapp-inputs/smtp-username\n",
+		"PORTAL_SMTP_PASSWORD_FILE=/run/webapp-inputs/smtp-password\n",
 		"PORTAL_CLIENT_PREVIEW_DATABASE_CA=" + base64.StdEncoding.EncodeToString([]byte(previewFixtureCA)) + "\n",
 	} {
 		if !strings.Contains(settings, expected) {

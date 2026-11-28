@@ -716,3 +716,45 @@ spec:
       containers:
         - name: coroot
           image: ghcr.io/coroot/coroot:1.13.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lh-openbao-copy-991
+  namespace: openbao
+  labels:
+    storage.platform.devantler.tech/openbao-copy-run: "991"
+  annotations:
+    storage.platform.devantler.tech/openbao-copy-owner: "991:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+spec:
+  containers:
+    - name: verify
+      image: busybox:1.37
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lh-openbao-copy-992
+  namespace: openbao
+  labels:
+    storage.platform.devantler.tech/openbao-copy-run: "991"
+  annotations:
+    storage.platform.devantler.tech/openbao-copy-owner: "991:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+spec:
+  containers:
+    - name: verify
+      image: busybox:1.37
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lh-openbao-stage-991
+  namespace: openbao
+  labels:
+    storage.platform.devantler.tech/openbao-copy-run: "991"
+  annotations:
+    storage.platform.devantler.tech/openbao-copy-owner: "991:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+spec:
+  containers:
+    - name: verify
+      image: busybox:1.37

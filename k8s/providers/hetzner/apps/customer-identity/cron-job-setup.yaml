@@ -107,7 +107,7 @@ spec:
               type: RuntimeDefault
           initContainers:
             - name: sign-token
-              image: docker.io/alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b
+              image: docker.io/alpine/openssl:3.5.9@sha256:9698e7956c08e713265da24c4587205beba3eaa6af2b319d73575d30a6ff033e
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

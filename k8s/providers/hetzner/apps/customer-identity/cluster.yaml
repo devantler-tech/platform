@@ -16,7 +16,7 @@ metadata:
 spec:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie
-  instances: 2
+  instances: 3
   # The platform's storage tier for database pods (as every production
   # database declares). CNPG ignores a priorityClassName change, so the
   # matching env var is what rolls the instances when it changes.
@@ -24,17 +24,12 @@ spec:
   env:
     - name: PLATFORM_DATABASE_PRIORITY_CLASS
       value: hcloud-volume-workload
-  # Hetzner Cloud volumes, as OpenBao and Coroot use, not Longhorn: CNPG
-  # already keeps a second copy, so Longhorn's three replicas per instance
-  # would triple storage the shared pool cannot spare (the first rollout's
-  # volume was refused for insufficient Longhorn storage). An hcloud volume is
-  # not force-detached when its node leaves, so the instances stay on the
-  # static baseline workers (require-baseline-workers-for-hcloud-volumes).
-  # Temporary: every platform volume finishes on Longhorn V2, and this
-  # cluster's two claims move there with the database migration (#5842).
+  # Allocate replacement members on V2. Retain the existing Hetzner claims
+  # and baseline worker placement during the database migration.
   storage:
     size: 10Gi
-    storageClass: hcloud
+    storageClass: longhorn-v2
+    resizeInUseVolumes: false
   affinity:
     nodeSelector:
       platform.devantler.tech/baseline-worker: "true"
