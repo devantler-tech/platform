@@ -89,6 +89,30 @@ list, and no server reply, folder name or credential ever appears:
 | `uids` | A folder lacks UIDNEXT or UIDVALIDITY. |
 | `inbox` | No INBOX was listed. |
 
+### Pass lines
+
+Each of the two copy passes also writes one line, whether it succeeded or not.
+The first pass copies and the second, `--dry`, only verifies:
+
+`MAIL_HISTORY_IMPORT_PASS pass=<copy|verify> exit=<n> observed=<n> identified=<n> errors=<n> transferred=<n> would_transfer=<n> skipped=<n> h1_duplicates=<n> h2_duplicates=<n> h2_crossduplicates=<n> h1_noheader=<n> h2_noheader=<n> in1_not_in2=<n> in2_not_in1=<n>`
+
+The line holds numbers only. They come from a fixed list of labels in imapsync's
+closing statistics; no folder name, header, subject or server reply is read into
+it. A value the tool did not print reads `?`. `observed` is the source total
+that the pass is judged against. `exit` is imapsync's exit status (imapsync
+2.314): 10 for a connection failure, 111 for errors, 112 when it stops at
+`--errorsmax`, 113 over quota, 114 for an append error and 115 for a fetch
+error. A pass line never means
+success: only the `COMPLETE` receipt does. To read a failure:
+
+| What the line shows | Likely cause |
+| --- | --- |
+| `pass=copy` with `errors` above 0 | One message could not be fetched or appended. `--errorsmax 1` stops the pass at the first one. |
+| `pass=verify` with `identified` above `observed`, and `in1_not_in2` equal to the difference | Mail reached the source during the run. Repeat at a quieter time. |
+| `pass=verify` with `in1_not_in2` above 0 while `in2_not_in1` is also above 0 | Copies were stored with a different identity (`Message-Id` and `Received` headers), so each run copies them again. Stop repeating the operation, because every repeat adds duplicates, and look at what the destination changed. |
+| `pass=verify` with `in1_not_in2` above 0 and `in2_not_in1` at 0, and the source unchanged | Messages left the destination after they were copied, for example through its retention of old Trash or Junk messages. |
+| `h2_duplicates` rising between runs | Repeated runs are adding copies. |
+
 A Job created this way is outside the Flux inventory, so a long copy never holds
 a deploy and a reconciliation cannot prune it. Repeat the operation to continue
 an incomplete copy; it refuses while an earlier copy is still running.

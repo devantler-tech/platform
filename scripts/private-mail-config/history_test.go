@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -149,8 +151,87 @@ func TestHistoryCopiesThenVerifiesWithoutLeakingToolOutput(t *testing.T) {
 	if err := importHistory(context.Background(), v, observe, execute, &receipt); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 2 || observations != 4 || receipt.String() != "MAIL_HISTORY_IMPORT=COMPLETE folders=2 messages=5 source=PRESERVED routing=UNCHANGED\n" {
+	unknown := " transferred=? would_transfer=? skipped=? h1_duplicates=? h2_duplicates=? h2_crossduplicates=? h1_noheader=? h2_noheader=? in1_not_in2=? in2_not_in1=?\n"
+	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=5 identified=5 errors=0" + unknown +
+		"MAIL_HISTORY_IMPORT_PASS pass=verify exit=0 observed=5 identified=5 errors=0" + unknown +
+		"MAIL_HISTORY_IMPORT=COMPLETE folders=2 messages=5 source=PRESERVED routing=UNCHANGED\n"
+	if calls != 2 || observations != 4 || receipt.String() != want {
 		t.Fatalf("copy/reconciliation incomplete: calls=%d observations=%d receipt=%q", calls, observations, &receipt)
+	}
+}
+
+// TestHistoryPassLinesCarryOnlyTheToolsCounts feeds the copy passes the tool's
+// real closing statistics, wrapped in lines that name private folders and a
+// subject. Each pass line must hold exactly the fixed counts, the exit status
+// and nothing else, whether the import succeeds or fails.
+func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
+	v, err := loadHistoryInputs(historyInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observe := func(_ context.Context, side string, _ historyConfig) (historySnapshot, error) {
+		return historySnapshot{"INBOX": {messages: 7, uidNext: 9, uidValidity: 1}}, nil
+	}
+	exitStatus := exec.Command("sh", "-c", "exit 111").Run()
+	if exitStatus == nil {
+		t.Fatal("could not produce a tool exit status")
+	}
+	statistics := func(transferred string, inOneNotTwo, inTwoNotOne int) string {
+		return fmt.Sprintf("Host1: folder [Client secret project] selected 7 messages, duplicates 1\n"+
+			"msg Client secret project/12 {420} copied to Client secret project/30 1.00 msgs/s\n"+
+			"- msg INBOX/5 {9} could not append ( Subject:[private-message-subject] ) to folder INBOX: NO private-server-reply\n"+
+			"Messages found in host1 not in host2    : 99 messages\n"+
+			"Messages transferred                    : %s\n"+
+			"Messages skipped                        : 4\n"+
+			"Messages found duplicate on host1       : 1\n"+
+			"Messages found duplicate on host2       : 2\n"+
+			"Messages found crossduplicate on host2  : 0\n"+
+			"Messages void (noheader) on host1       : 0  \n"+
+			"Messages void (noheader) on host2       : 0\n"+
+			"Messages found in host1 not in host2    : %d messages\n"+
+			"Messages found in host2 not in host1    : %d messages\n"+
+			"Messages found in private-folder-canary : 5 messages\n"+
+			"The sync is not finished, there are %d among 7 identified messages in host1 that are not on host2.\n"+
+			"There is no unidentified message on host1.\n"+
+			"Detected 1 errors\n", transferred, inOneNotTwo, inTwoNotOne, inOneNotTwo)
+	}
+	calls := 0
+	execute := func(_ context.Context, _ []string, output io.Writer) error {
+		calls++
+		if calls == 1 {
+			_, _ = io.WriteString(output, statistics("3 ", 0, 0))
+			return nil
+		}
+		_, _ = io.WriteString(output, statistics("0 \t(could be 2 without --dry mode)", 2, 3))
+		return exitStatus
+	}
+	var receipt bytes.Buffer
+	if err := importHistory(context.Background(), v, observe, execute, &receipt); err == nil || err.Error() != "copy" {
+		t.Fatalf("a pass reporting an error must fail at copy, got %v", err)
+	}
+	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=7 identified=7 errors=1 transferred=3 would_transfer=? skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=0 in2_not_in1=0\n"
+	if receipt.String() != want {
+		t.Fatalf("copy pass line:\n got %q\nwant %q", &receipt, want)
+	}
+
+	// The verification pass reports the dry transfers and the tool's exit status.
+	calls = 1
+	result := historyReport{}
+	runErr := execute(context.Background(), nil, &result)
+	got := historyPassLine("verify", runErr, &result, 7)
+	want = "MAIL_HISTORY_IMPORT_PASS pass=verify exit=111 observed=7 identified=7 errors=1 transferred=0 would_transfer=2 skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=2 in2_not_in1=3\n"
+	if got != want {
+		t.Fatalf("verify pass line:\n got %q\nwant %q", got, want)
+	}
+	if got := historyPassLine("verify", errors.New("private-tool-error-canary"), &historyReport{}, 0); strings.Contains(got, "private") || !strings.Contains(got, " exit=? ") {
+		t.Fatalf("an error without an exit status must read as unknown: %q", got)
+	}
+	for _, line := range []string{receipt.String(), got} {
+		for _, private := range []string{"Client", "secret", "private", "subject", "reply", "INBOX", "canary"} {
+			if strings.Contains(line, private) {
+				t.Fatalf("pass line leaked %q: %q", private, line)
+			}
+		}
 	}
 }
 
@@ -219,8 +300,13 @@ func TestHistoryNeverCompletesAnIncompleteCopy(t *testing.T) {
 			if err := importHistory(context.Background(), v, observe, execute, &receipt); err == nil {
 				t.Fatal("incomplete copy reported success")
 			}
-			if receipt.Len() != 0 {
+			if strings.Contains(receipt.String(), "MAIL_HISTORY_IMPORT=COMPLETE") {
 				t.Fatalf("failure wrote a completion receipt: %q", &receipt)
+			}
+			for _, line := range strings.SplitAfter(receipt.String(), "\n") {
+				if line != "" && !strings.HasPrefix(line, "MAIL_HISTORY_IMPORT_PASS ") || strings.Contains(line, "canary") || strings.Contains(line, "private") {
+					t.Fatalf("failure receipt holds more than pass lines: %q", &receipt)
+				}
 			}
 		})
 	}

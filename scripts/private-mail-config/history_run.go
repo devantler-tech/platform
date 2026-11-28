@@ -57,9 +57,99 @@ type historyReport struct {
 	good, identified, zero bool
 	bad                    bool
 	messages               uint64
+	// counts holds the integers of the tool's closing statistics, keyed by a
+	// fixed name, for the per-pass diagnostic line. It never decides success.
+	counts map[string]uint64
 }
 
 var historyGood = regexp.MustCompile(`^The sync looks good, all ([0-9]+) identified messages in host1 are on host2\.$`)
+
+// The closing statistics the per-pass diagnostic line reports. Only these
+// labels are read, and only the integer after each, so no folder name, header,
+// subject or server reply can reach the receipt. A label seen twice keeps its
+// last value, which is the tool's closing summary.
+var (
+	historyStatisticKeys = map[string]string{
+		"Messages transferred":                   "transferred",
+		"Messages skipped":                       "skipped",
+		"Messages found duplicate on host1":      "h1_duplicates",
+		"Messages found duplicate on host2":      "h2_duplicates",
+		"Messages found crossduplicate on host2": "h2_crossduplicates",
+		"Messages void (noheader) on host1":      "h1_noheader",
+		"Messages void (noheader) on host2":      "h2_noheader",
+		"Messages found in host1 not in host2":   "in1_not_in2",
+		"Messages found in host2 not in host1":   "in2_not_in1",
+	}
+	historyStatisticOrder = []string{"identified", "errors", "transferred", "would_transfer", "skipped", "h1_duplicates", "h2_duplicates", "h2_crossduplicates", "h1_noheader", "h2_noheader", "in1_not_in2", "in2_not_in1"}
+	historyStatistic      = regexp.MustCompile(`^(Messages [a-z0-9() ]+?) +: ([0-9]+)\b`)
+	historyDryTransfers   = regexp.MustCompile(`\(could be ([0-9]+) without --dry mode\)`)
+	historyErrorCount     = regexp.MustCompile(`^Detected ([0-9]+) errors$`)
+	historyNotFinished    = regexp.MustCompile(`^The sync is not finished, there are [0-9]+ among ([0-9]+) identified messages in host1 that are not on host2\.$`)
+)
+
+// count records one parsed integer for the diagnostic line; a value that does
+// not parse is left out rather than guessed.
+func (r *historyReport) count(key, digits string) {
+	n, err := strconv.ParseUint(digits, 10, 64)
+	if err != nil {
+		return
+	}
+	if r.counts == nil {
+		r.counts = map[string]uint64{}
+	}
+	r.counts[key] = n
+}
+
+// statistics reads the fixed-vocabulary counts from one complete line.
+func (r *historyReport) statistics(line string) {
+	if m := historyStatistic.FindStringSubmatch(line); m != nil {
+		if key, known := historyStatisticKeys[m[1]]; known {
+			r.count(key, m[2])
+			if key == "transferred" {
+				if dry := historyDryTransfers.FindStringSubmatch(line); dry != nil {
+					r.count("would_transfer", dry[1])
+				}
+			}
+		}
+	}
+	if m := historyErrorCount.FindStringSubmatch(line); m != nil {
+		r.count("errors", m[1])
+	}
+	if m := historyGood.FindStringSubmatch(line); m != nil {
+		r.count("identified", m[1])
+	}
+	if m := historyNotFinished.FindStringSubmatch(line); m != nil {
+		r.count("identified", m[1])
+	}
+}
+
+// historyPassLine is the per-pass diagnostic line: the pass, the tool's exit
+// status and the fixed counts, each a number or "?" when the tool printed none.
+// observed is the source total the pass is judged against. It is written for
+// every pass, successful or not, and carries numbers only.
+func historyPassLine(pass string, runErr error, r *historyReport, observed uint64) string {
+	exit := "?"
+	var exitErr *exec.ExitError
+	switch {
+	case runErr == nil:
+		exit = "0"
+	case errors.As(runErr, &exitErr):
+		exit = strconv.Itoa(exitErr.ExitCode())
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var b strings.Builder
+	fmt.Fprintf(&b, "MAIL_HISTORY_IMPORT_PASS pass=%s exit=%s observed=%d", pass, exit, observed)
+	for _, key := range historyStatisticOrder {
+		value := "?"
+		if n, ok := r.counts[key]; ok {
+			value = strconv.FormatUint(n, 10)
+		}
+		fmt.Fprintf(&b, " %s=%s", key, value)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
 
 func (r *historyReport) Write(data []byte) (int, error) {
 	r.mu.Lock()
@@ -73,6 +163,7 @@ func (r *historyReport) Write(data []byte) (int, error) {
 		if b == '\n' {
 			line := strings.TrimSuffix(string(r.line), "\r")
 			r.line = r.line[:0]
+			r.statistics(line)
 			switch {
 			case historyGood.MatchString(line):
 				r.good = true
@@ -131,7 +222,16 @@ func importHistory(ctx context.Context, v historyConfig, observe historyObserver
 	}
 	for _, dry := range []bool{false, true} {
 		var result historyReport
-		if execute(ctx, historyArgs(v, dry), &result) != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || result.messages != total) {
+		runErr := execute(ctx, historyArgs(v, dry), &result)
+		// The diagnostic line is written for every pass, before it is judged, so
+		// a failed import still shows what the tool counted. It is best effort:
+		// the completion line below remains the only success signal.
+		pass := "copy"
+		if dry {
+			pass = "verify"
+		}
+		_, _ = io.WriteString(receipt, historyPassLine(pass, runErr, &result, total))
+		if runErr != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || result.messages != total) {
 			if dry {
 				return fail("verification")
 			}
