@@ -280,7 +280,7 @@ cmp -s "$work/download.sh" "$work/offline-download.sh" || fail 'offline and prod
   fail 'offline and production builds differ'
 # The writer job rebuilds from the same immutable source with the same commands.
 [[ "$(yq -r '.jobs.publish.steps[2].run' "$workflow")" == "$(cat "$work/download.sh")" &&
-  "$(yq -r '.jobs.publish.steps[4].run' "$workflow")" == "$(yq -r '.jobs.inspect.steps[4].run' "$workflow")" ]] ||
+"$(yq -r '.jobs.publish.steps[4].run' "$workflow")" == "$(yq -r '.jobs.inspect.steps[4].run' "$workflow")" ]] ||
   fail 'the publish job does not rebuild the inspected source'
 source_dir="$work/archive/catalogue/.github/scripts/inspect-release-recovery"
 mkdir -p "$work/bin" "$source_dir/cmd/publish-release-recovery"
