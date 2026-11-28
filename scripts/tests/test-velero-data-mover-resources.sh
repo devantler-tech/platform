@@ -6,7 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly node_agent_config="${root_dir}/k8s/bases/infrastructure/controllers/velero/config-map.yaml"
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/velero/helm-release.yaml"
-readonly volume_policy="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/velero/config-map-daily-volume-policies.yaml"
+readonly volume_policy="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/velero/config-maps/config-map-daily-volumes.yaml"
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../flux-render.lib.sh
