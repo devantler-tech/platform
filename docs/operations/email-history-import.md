@@ -89,6 +89,38 @@ list, and no server reply, folder name or credential ever appears:
 | `uids` | A folder lacks UIDNEXT or UIDVALIDITY. |
 | `inbox` | No INBOX was listed. |
 
+### Pass lines
+
+Each of the two copy passes also writes one line, whether it succeeded or not.
+The first pass copies and the second, `--dry`, only verifies:
+
+`MAIL_HISTORY_IMPORT_PASS pass=<copy|verify> exit=<n> observed=<n> identified=<n> errors=<n> transferred=<n> would_transfer=<n> skipped=<n> h1_duplicates=<n> h2_duplicates=<n> h2_crossduplicates=<n> h1_noheader=<n> h2_noheader=<n> in1_not_in2=<n> in2_not_in1=<n>`
+
+The line holds numbers only.
+- **Source of the counts.** They come from a fixed list of labels, read only from imapsync's closing statistics, the block that starts with `++++ Statistics`. The first value of each label there is kept. No folder name, header, subject or server reply is read into the line.
+- **`?`** is a value the tool did not print.
+- **`observed`** is the source total that the pass is judged against.
+- **`identified`** is the number of distinct message identities. A message filed in two folders counts once.
+- **`exit`** is imapsync's exit status. It is `signal` when the process was killed, for example by the import's 3-hour deadline. It is `?` when the tool never ran or left no exit status, for example when the deadline had already passed.
+
+Exit statuses in imapsync 2.314:
+- **Connection and sign-in:** 10 (connection), 101 and 102 (connection to the source or the destination), 12 (TLS), 16, 161 and 162 (authentication; 161 and 162 are the source and destination users).
+- **When it stops at `--errorsmax`:** the code of the most common error type, such as 113 (over quota), 114 (append), 115 (fetch), 116 (create), 117 (select), 120 (flags) or 121 (search). 112 is defined for this case but this path does not use it.
+- **Other stops:** 6 when imapsync caught a signal such as SIGTERM, which differs from `signal`, where it was killed outright; 8 for a pid file error; 1 for any other failure.
+- **Otherwise:** 111 for errors.
+
+A pass line never means
+success: only the `COMPLETE` receipt does. To read a failure:
+
+| What the line shows | Likely cause |
+| --- | --- |
+| `pass=copy` with `errors` above 0 | One message could not be fetched or appended. `--errorsmax 1` stops the pass at the first one. |
+| `pass=verify` with `identified` above `observed`, and `in1_not_in2` equal to the difference | Mail reached the source during the run. Repeat at a quieter time. |
+| `identified` below `observed`, with `in1_not_in2` at 0 | The source holds the same message in more than one folder, or a folder holds duplicates. imapsync counts each identity once, so a pass that copied everything still cannot meet `identified = observed`, and repeating cannot change it. This needs a change to the importer's success rule, not another run. |
+| `in2_not_in1` above 0 | Either mail the destination held before the copy, which the importer keeps, or copies stored with a different identity (`Message-Id` and `Received` headers). Compare runs before deciding. |
+| `h2_duplicates` rising between runs, with `in1_not_in2` above 0 in each verify pass | Copies were stored with a different identity, so each run appends them again. Stop repeating the operation, because every repeat adds duplicates, and look at what the destination changed. `in2_not_in1` counts distinct identities, so it can stay the same while the copies pile up, and a stable value does not rule this out. |
+| `pass=verify` with `in1_not_in2` above 0, `h2_duplicates` unchanged between runs, and the source unchanged | Messages left the destination after they were copied, for example through its retention of old Trash or Junk messages. |
+
 A Job created this way is outside the Flux inventory, so a long copy never holds
 a deploy and a reconciliation cannot prune it. Repeat the operation to continue
 an incomplete copy; it refuses while an earlier copy is still running.

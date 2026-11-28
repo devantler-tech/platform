@@ -73,7 +73,15 @@ for ((pass = 1; pass <= 2; pass++)); do
     printf 'Synthetic importer did not complete: %s\n' "$receipt" >&2
     exit 1
   fi
-  if [[ "$receipt" != 'MAIL_HISTORY_IMPORT=COMPLETE folders=3 messages=4 source=PRESERVED routing=UNCHANGED' ]]; then
+  # The receipt is one numbers-only line per copy pass, then the completion
+  # line. A successful pass implies exit 0, no errors and every observed
+  # message identified; the other counts must be digits or "?" and nothing else.
+  copy_line='^MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=4 identified=4 errors=0( [a-z0-9_]+=([0-9]+|[?]))+$'
+  verify_line='^MAIL_HISTORY_IMPORT_PASS pass=verify exit=0 observed=4 identified=4 errors=0( [a-z0-9_]+=([0-9]+|[?]))+$'
+  if [[ $(wc -l <<<"$receipt") -ne 3 ]] ||
+    ! [[ $(sed -n 1p <<<"$receipt") =~ $copy_line ]] ||
+    ! [[ $(sed -n 2p <<<"$receipt") =~ $verify_line ]] ||
+    [[ $(sed -n 3p <<<"$receipt") != 'MAIL_HISTORY_IMPORT=COMPLETE folders=3 messages=4 source=PRESERVED routing=UNCHANGED' ]]; then
     printf 'Unexpected synthetic receipt: %s\n' "$receipt" >&2
     exit 1
   fi
