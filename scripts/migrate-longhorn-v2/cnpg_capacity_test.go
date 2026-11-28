@@ -37,6 +37,47 @@ func recoveryDisk(n object) object {
 	return value(n, "status", "diskStatus", "longhorn-v2").(object)
 }
 
+func TestQualifiedRetainedReservePreservesArchiveDiskBindings(t *testing.T) {
+	_, _, bindings := recoveryCapacityFixture()
+	archived := cnpgStorageEnvironment{
+		Activation: benchmarkResource{Name: temporaryActivationJournal, Namespace: "longhorn-system", UID: "activation"},
+		Targets:    make(map[string]temporaryV2Binding),
+		Disks:      bindings,
+	}
+	var extra cnpgRecoveryDiskBinding
+	for _, disk := range bindings {
+		archived.Targets[disk.Selection] = temporaryV2Binding{Selection: disk.Selection, Name: disk.Node}
+		if disk.Selection == temporaryReserveSelection {
+			extra = disk
+		}
+	}
+	extra.DiskName, extra.DiskUUID = "longhorn-v2-retained", "retained-disk"
+	qualified := archived
+	qualified.Disks = append(append([]cnpgRecoveryDiskBinding{}, bindings...), extra)
+	if !recoveryStoragePreservesArchive(qualified, archived) || !recoveryStoragePreservesArchive(archived, archived) {
+		t.Fatal("the current storage should preserve the original archive bindings")
+	}
+	if recoveryStoragePreservesArchive(archived, qualified) {
+		t.Fatal("the archived reserve disk disappeared")
+	}
+	for name, mutate := range map[string]func(*cnpgStorageEnvironment){
+		"replaced primary disk": func(s *cnpgStorageEnvironment) { s.Disks[0].DiskUUID = "replacement" },
+		"duplicate disk UUID":   func(s *cnpgStorageEnvironment) { s.Disks[3].DiskUUID = s.Disks[0].DiskUUID },
+		"wrong reserve host":    func(s *cnpgStorageEnvironment) { s.Disks[3].Node = "other-host" },
+		"changed activation":    func(s *cnpgStorageEnvironment) { s.Activation.UID = "replacement" },
+		"different reserve":     func(s *cnpgStorageEnvironment) { s.Disks[3].DiskName = "different" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := qualified
+			candidate.Disks = append([]cnpgRecoveryDiskBinding{}, qualified.Disks...)
+			mutate(&candidate)
+			if recoveryStoragePreservesArchive(candidate, archived) {
+				t.Fatal("a changed storage identity was treated as continuous")
+			}
+		})
+	}
+}
+
 func TestRecoveryCapacityReservesFullDatabaseSizeOnEveryReplicaDisk(t *testing.T) {
 	nodes, replicas, bindings := recoveryCapacityFixture()
 	if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
@@ -48,6 +89,75 @@ func TestRecoveryCapacityReservesFullDatabaseSizeOnEveryReplicaDisk(t *testing.T
 	if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
 		t.Fatal("one insufficient replica disk accepted for the full database restore")
 	}
+}
+
+func TestRecoveryCapacityIncludesOnlyTheBoundTemporaryReserve(t *testing.T) {
+	nodes, replicas, bindings := recoveryCapacityFixture()
+	for i, primary := range bindings {
+		if primary.Selection != "temporary-v2-1" {
+			continue
+		}
+		extra := primary
+		extra.DiskName, extra.DiskUUID = "longhorn-v2-retained", "retained-disk"
+		bindings = append(bindings, extra)
+		disks := valueObject(nodes[i], "spec", "disks")
+		disks[extra.DiskName] = blockDisksFor("r-longhorn")["longhorn-v2"]
+		status := object{
+			"diskUUID": extra.DiskUUID, "diskPath": text(disks, extra.DiskName, "path"),
+			"diskType": "block", "diskDriver": "aio", "instanceManagerName": extra.InstanceManager,
+			"storageMaximum": float64(95 * recoveryGiB), "storageAvailable": float64(70 * recoveryGiB),
+			"storageScheduled": float64(0), "scheduledReplica": object{},
+			"conditions": []any{object{"type": "Ready", "status": "True"}, object{"type": "Schedulable", "status": "True"}},
+		}
+		valueObject(nodes[i], "status", "diskStatus")[extra.DiskName] = status
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
+			t.Fatalf("known reserve on the verified temporary host was rejected: %v", err)
+		}
+		disks[extra.DiskName] = retainedReserveDiskSpec(false)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
+			t.Fatalf("an owned disabled reserve prevented using the original disks: %v", err)
+		}
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings[:len(bindings)-1]); err == nil {
+			t.Fatal("an enabled raw disk outside the native inventory was accepted")
+		}
+		ledger := recoveryDisk(nodes[i])
+		conditions := ledger["conditions"]
+		free := ledger["storageAvailable"]
+		ledger["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "Schedulable", "status": "False", "reason": "DiskPressure"}}
+		ledger["storageAvailable"] = float64((95 * recoveryGiB) / 4)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
+			t.Fatal("a disabled reserve was counted as available for new placements")
+		}
+		disks[extra.DiskName] = retainedReserveDiskSpec(true)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
+			t.Fatalf("the scheduler excludes the pressured primary, and the reserve covers that host: %v", err)
+		}
+		ledger["conditions"], ledger["storageAvailable"] = conditions, free
+		name := text(replicas[i], "metadata", "name")
+		ledger["storageScheduled"] = float64(87 * recoveryGiB)
+		ledger["scheduledReplica"] = object{name: float64(87 * recoveryGiB)}
+		valueObject(replicas[i], "spec")["volumeSize"] = strconv.FormatUint(87*recoveryGiB, 10)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
+			t.Fatalf("the verified reserve should satisfy the original host's placement: %v", err)
+		}
+		status["storageAvailable"] = float64(35 * recoveryGiB)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
+			t.Fatal("a host without a disk that preserves the physical reserve was accepted")
+		}
+		status["storageAvailable"] = float64(70 * recoveryGiB)
+		other := (i + 1) % len(nodes)
+		recoveryDisk(nodes[other])["storageAvailable"] = float64(20 * recoveryGiB)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
+			t.Fatal("another disk on the same host cannot replace the missing third host")
+		}
+		recoveryDisk(nodes[other])["storageAvailable"] = float64(70 * recoveryGiB)
+		bindings[len(bindings)-1].NodeUID = "foreign-node"
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
+			t.Fatal("a supplemental disk with a different host identity was accepted")
+		}
+		return
+	}
+	t.Fatal("missing the reviewed temporary reserve host")
 }
 
 func TestRecoveryCapacityRejectsStaleOrIncompleteDiskAccounting(t *testing.T) {

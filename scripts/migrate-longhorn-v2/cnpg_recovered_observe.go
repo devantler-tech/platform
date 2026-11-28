@@ -37,12 +37,12 @@ func (p *cnpgProofRun) observeRecoveredStorage(ctx context.Context) (result cnpg
 		return result, err
 	}
 	phase = "inventory-before"
-	before, err := readRecoveredStorageSnapshot(ctx, p.c, r)
+	before, err := readRecoveredStorageSnapshot(ctx, p.c, r, nil)
 	if err != nil {
 		return result, err
 	}
 	phase = "inventory-after"
-	after, err := readRecoveredStorageSnapshot(ctx, p.c, r)
+	after, err := readRecoveredStorageSnapshot(ctx, p.c, r, nil)
 	if err != nil || !sameRecoveredStorageObservation(before, after) {
 		return result, errors.New("recovered storage changed between complete observations")
 	}
@@ -58,7 +58,7 @@ func (p *cnpgProofRun) observeRecoveredStorage(ctx context.Context) (result cnpg
 // neither a completed Job nor its retry Pods may be hidden by a selector.
 // Disk/runtime qualification, generated credentials, SQL, filesystem placement
 // and realized isolation remain separate required inputs to restore acceptance.
-func readRecoveredStorageSnapshot(ctx context.Context, c client, r cnpgProofRecord) (cnpgRecoveredStorageObservation, error) {
+func readRecoveredStorageSnapshot(ctx context.Context, c client, r cnpgProofRecord, qualified *cnpgStorageEnvironment) (cnpgRecoveredStorageObservation, error) {
 	refused := errors.New("recovered storage inventories are incomplete or contradictory")
 	var zero cnpgRecoveredStorageObservation
 	identity := r.Resources["Namespace"]
@@ -148,7 +148,7 @@ func readRecoveredStorageSnapshot(ctx context.Context, c client, r cnpgProofReco
 	slices.SortFunc(s.replicas, func(a, b object) int {
 		return strings.Compare(text(a, "metadata", "name"), text(b, "metadata", "name"))
 	})
-	s.binding, err = bindCNPGRecoveredStorage(r, s.cluster, s.pod, s.claim, s.pv, s.volume, s.engine, s.replicas)
+	s.binding, err = bindCNPGRecoveredStorage(r, s.cluster, s.pod, s.claim, s.pv, s.volume, s.engine, s.replicas, qualified)
 	if err != nil {
 		return zero, refused
 	}

@@ -69,8 +69,11 @@ func reviewedBlockDisksFor(raw any, rawID string) bool {
 	if !ok || len(disks) != 1 {
 		return false
 	}
-	d, ok := disks["longhorn-v2"].(map[string]any)
-	expected := blockDisksFor(rawID)["longhorn-v2"].(object)
+	return reviewedBlockDisk(disks["longhorn-v2"], blockDisksFor(rawID)["longhorn-v2"].(object))
+}
+
+func reviewedBlockDisk(raw any, expected object) bool {
+	d, ok := raw.(map[string]any)
 	if !ok || len(d) != len(expected) {
 		return false
 	}

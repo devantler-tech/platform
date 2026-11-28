@@ -108,6 +108,12 @@ func (a temporaryV2Activation) readBinding(ctx context.Context, selection string
 // temporaryRegistrationState accepts an empty fence or this journal's exact
 // partial activation. A matching disk path without the journal UID is not owned.
 func temporaryRegistrationState(storage object, journalUID, selection string) (bool, error) {
+	return temporaryRecoveryRegistrationState(storage, journalUID, selection, nil)
+}
+
+// Recovery has already verified the optional disk receipt and native runtime.
+// Activation callers still require the original single-disk registration.
+func temporaryRecoveryRegistrationState(storage object, journalUID, selection string, reserve *cnpgRecoveryDiskBinding) (bool, error) {
 	if value(storage, "metadata", "deletionTimestamp") != nil || !noInstanceManagerCPUOverride(storage) {
 		return false, errTemporaryActivation
 	}
@@ -116,8 +122,21 @@ func temporaryRegistrationState(storage object, journalUID, selection string) (b
 		return false, nil
 	}
 	if journalUID == "" || owner != journalUID || text(storage, "metadata", "labels", migrationEnabledLabel) != "true" ||
-		value(storage, "spec", "allowScheduling") != true || value(storage, "spec", "evictionRequested") != false ||
-		!reviewedBlockDisksFor(value(storage, "spec", "disks"), temporaryRawID(selection)) {
+		value(storage, "spec", "allowScheduling") != true || value(storage, "spec", "evictionRequested") != false {
+		return false, errTemporaryActivation
+	}
+	disks := valueObject(storage, "spec", "disks")
+	if reserve == nil || reserve.Selection != selection {
+		if reviewedBlockDisksFor(disks, temporaryRawID(selection)) {
+			return true, nil
+		}
+		return false, errTemporaryActivation
+	}
+	if selection != temporaryReserveSelection || reserve.DiskName != temporaryReserveDiskName ||
+		reserve.Node != text(storage, "metadata", "name") || reserve.NodeUID != text(storage, "metadata", "uid") ||
+		text(storage, "metadata", "annotations", temporaryReserveOwner) == "" || len(disks) != 2 ||
+		!reviewedBlockDisk(disks["longhorn-v2"], blockDisksFor(temporaryRawID(selection))["longhorn-v2"].(object)) ||
+		!reviewedReserveDisk(disks[temporaryReserveDiskName]) {
 		return false, errTemporaryActivation
 	}
 	return true, nil

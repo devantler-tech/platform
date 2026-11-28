@@ -208,14 +208,10 @@ func readUmamiReplacementStorage(ctx context.Context, journal *umamiStandbyRepla
 			return cnpgRecoveredStorage{}, err
 		}
 	}
-	archive, err := rebindCNPGStandbyArchiveProof(ctx, c, database, observation)
+	activation := temporaryV2Activation{c: c, source: executor.Source, owner: executor.Run, pools: c.inventoryPools}
+	qualified, err := activation.rebindCNPGStandbyArchiveStorage(ctx, database, observation, true)
 	if err != nil {
 		return cnpgRecoveredStorage{}, err
-	}
-	activation := temporaryV2Activation{c: c, source: executor.Source, owner: executor.Run, pools: c.inventoryPools}
-	qualified, err := activation.recoveryStorage(ctx, archive.Plan.Source)
-	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
-		return cnpgRecoveredStorage{}, errors.New("the new standby raw storage is unverified")
 	}
 	return readCNPGV2Standby(ctx, c, observation, replacement, qualified.Disks)
 }

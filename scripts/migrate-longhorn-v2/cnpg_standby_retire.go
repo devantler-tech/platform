@@ -125,14 +125,10 @@ func verifyUmamiSpareBeforeRetirement(ctx context.Context, journal *umamiStandby
 	if err = verifyUmamiReplacementPrimary(ctx, journal.c, observation.Cluster, journal.record.Primary); err != nil {
 		return err
 	}
-	archive, err := rebindCNPGStandbyArchiveProof(ctx, journal.c, database, observation)
+	activation := temporaryV2Activation{c: journal.c, source: executor.Source, owner: executor.Run, pools: journal.c.inventoryPools}
+	qualified, err := activation.rebindCNPGStandbyArchiveStorage(ctx, database, observation, true)
 	if err != nil {
 		return err
-	}
-	activation := temporaryV2Activation{c: journal.c, source: executor.Source, owner: executor.Run, pools: journal.c.inventoryPools}
-	qualified, err := activation.recoveryStorage(ctx, archive.Plan.Source)
-	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
-		return errors.New("the Umami recovery storage changed before eviction")
 	}
 	spare := journal.record.Original.Spare
 	current, err := readCNPGV2Standby(ctx, journal.c, observation, spare.Pod.Name, qualified.Disks)

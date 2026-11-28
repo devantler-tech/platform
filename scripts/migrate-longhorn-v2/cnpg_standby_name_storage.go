@@ -48,14 +48,10 @@ func verifyUmamiNameReleaseArchive(ctx context.Context, j *umamiStandbyReplaceme
 		}
 	}
 	database := cnpgSource{Namespace: j.record.Original.Database.Namespace, Name: j.record.Original.Database.Name}
-	archive, err := rebindCNPGStandbyArchiveProof(ctx, c, database, observation)
+	activation := temporaryV2Activation{c: c, source: j.executor().Source, owner: j.executor().Run, pools: c.inventoryPools}
+	qualified, err := activation.rebindCNPGStandbyArchiveStorage(ctx, database, observation, true)
 	if err != nil {
 		return err
-	}
-	activation := temporaryV2Activation{c: c, source: j.executor().Source, owner: j.executor().Run, pools: c.inventoryPools}
-	qualified, err := activation.recoveryStorage(ctx, archive.Plan.Source)
-	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
-		return errors.New("the independently restored Umami V2 archive capacity is unverified")
 	}
 	spare, err := readCNPGV2Standby(ctx, c, observation, j.record.Original.Spare.Pod.Name, qualified.Disks)
 	if err != nil || !recoveryJSONEqual(spare, j.record.Original.Spare) {

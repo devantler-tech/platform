@@ -47,6 +47,10 @@ func v2Environment(ctx context.Context, c client, pools map[string]migrationPool
 	if err != nil {
 		return inventory{}, err
 	}
+	s.reserve, err = observedTemporaryReserve(ctx, c, s)
+	if err != nil {
+		return inventory{}, err
+	}
 	managers, err := c.list(ctx, "instancemanagers.longhorn.io", "longhorn-system")
 	if err != nil {
 		return inventory{}, err

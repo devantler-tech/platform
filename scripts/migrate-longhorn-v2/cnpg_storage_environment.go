@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -12,6 +13,35 @@ type cnpgStorageEnvironment struct {
 	Activation benchmarkResource
 	Targets    map[string]temporaryV2Binding
 	Disks      []cnpgRecoveryDiskBinding
+}
+
+// Confirm the archived identity against an already qualified live environment.
+// The original pool bindings stay in place when the proven reserve is added.
+func recoveryStoragePreservesArchive(qualified, archived cnpgStorageEnvironment) bool {
+	if recoveryJSONEqual(qualified, archived) {
+		return true
+	}
+	if qualified.Activation != archived.Activation || !recoveryJSONEqual(qualified.Targets, archived.Targets) ||
+		len(archived.Disks) != 3 || len(qualified.Disks) != 4 {
+		return false
+	}
+	for _, disk := range archived.Disks {
+		if disk.DiskName != "" || !slices.Contains(qualified.Disks, disk) {
+			return false
+		}
+	}
+	for _, reserve := range qualified.Disks {
+		if reserve.DiskName != "longhorn-v2-retained" {
+			continue
+		}
+		return reserve.Selection == temporaryReserveSelection && reserve.DiskUUID != "" &&
+			!slices.ContainsFunc(archived.Disks, func(disk cnpgRecoveryDiskBinding) bool { return disk.DiskUUID == reserve.DiskUUID }) &&
+			slices.ContainsFunc(archived.Disks, func(disk cnpgRecoveryDiskBinding) bool {
+				return disk.Selection == reserve.Selection && disk.Node == reserve.Node &&
+					disk.NodeUID == reserve.NodeUID && disk.InstanceManager == reserve.InstanceManager
+			})
+	}
+	return false
 }
 
 // recoveryStorage qualifies registered disks while healthy V2 volumes coexist with retained V1 data.
@@ -80,7 +110,7 @@ func (a temporaryV2Activation) observeRecoveryStorage(ctx context.Context, newCl
 			return result, refused
 		}
 		node, lh := nodes[name], storage[name]
-		registered, e := temporaryRegistrationState(lh, text(cm, "metadata", "uid"), selection)
+		registered, e := temporaryRecoveryRegistrationState(lh, text(cm, "metadata", "uid"), selection, s.reserve)
 		if e != nil || !registered {
 			return result, refused
 		}
@@ -107,12 +137,16 @@ func (a temporaryV2Activation) observeRecoveryStorage(ctx context.Context, newCl
 		result.Targets[selection] = binding
 		result.Disks = append(result.Disks, cnpgRecoveryDiskBinding{Selection: selection, Node: name, NodeUID: binding.LonghornUID, DiskUUID: text(d, "diskUUID"), InstanceManager: text(d, "instanceManagerName")})
 	}
+	reserve := s.reserve
+	if reserve != nil {
+		result.Disks = append(result.Disks, *reserve)
+	}
 	// The native reads may take time. Rebind the complete runtime and allocation
 	// graph afterwards rather than charging capacity against the earlier snapshot.
 	phase = "runtime-continuity"
 	s, err = v2Environment(ctx, a.c, a.pools)
-	if err != nil {
-		return result, err
+	if err != nil || !recoveryJSONEqual(reserve, s.reserve) {
+		return result, refused
 	}
 	nodes, err = indexed(s.nodes)
 	if err != nil {
@@ -124,7 +158,7 @@ func (a temporaryV2Activation) observeRecoveryStorage(ctx context.Context, newCl
 	}
 	for _, binding := range result.Targets {
 		node, lh := nodes[binding.Name], storage[binding.Name]
-		registered, e := temporaryRegistrationState(lh, result.Activation.UID, binding.Selection)
+		registered, e := temporaryRecoveryRegistrationState(lh, result.Activation.UID, binding.Selection, s.reserve)
 		if e != nil || !registered || text(node, "metadata", "uid") != binding.NodeUID || text(node, "spec", "providerID") != binding.ProviderID || text(node, "status", "nodeInfo", "systemUUID") != binding.MachineUUID || text(node, "status", "nodeInfo", "bootID") != binding.BootID || text(node, "status", "nodeInfo", "osImage") != binding.OSImage || text(lh, "metadata", "uid") != binding.LonghornUID || text(node, "metadata", "annotations", fenceAnnotation) != "" {
 			return result, refused
 		}
@@ -135,7 +169,11 @@ func (a temporaryV2Activation) observeRecoveryStorage(ctx context.Context, newCl
 		}
 	}
 	for _, disk := range result.Disks {
-		current := valueObject(storage[disk.Node], "status", "diskStatus", "longhorn-v2")
+		diskName := disk.DiskName
+		if diskName == "" {
+			diskName = "longhorn-v2"
+		}
+		current := valueObject(storage[disk.Node], "status", "diskStatus", diskName)
 		if disk.DiskUUID == "" || disk.InstanceManager == "" ||
 			text(current, "diskUUID") != disk.DiskUUID || text(current, "instanceManagerName") != disk.InstanceManager {
 			return result, refused

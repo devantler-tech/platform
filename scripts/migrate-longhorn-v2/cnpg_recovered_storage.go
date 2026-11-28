@@ -18,12 +18,13 @@ type cnpgRecoveredStorage struct {
 // Callers must separately collect complete inventories and bracket SQL with
 // native execution, operator, isolation and storage-environment observations.
 // This pure join never advances the journal or grants deletion authority.
-func bindCNPGRecoveredStorage(r cnpgProofRecord, cluster, pod, claim, pv, volume, engine object, replicas []object) (cnpgRecoveredStorage, error) {
+func bindCNPGRecoveredStorage(r cnpgProofRecord, cluster, pod, claim, pv, volume, engine object, replicas []object, qualified *cnpgStorageEnvironment) (cnpgRecoveredStorage, error) {
 	refused := errors.New("recovered database storage is not qualified")
 	var zero cnpgRecoveredStorage
 	initial := r.Phase == "cluster-created" && !r.RestoreVerified && r.RestoreReceipt == nil
 	retained := r.Phase == cnpgArchiveCredentialRetired && r.RestoreVerified && validateCNPGRestoreReceipt(r) == nil
-	if r.Version != 1 || (!initial && !retained) || r.Cleaned || r.Plan == nil || len(r.Plan.Resources) != 4 || r.Admission == nil || r.Storage == nil || len(r.Storage.Disks) != 3 || !validBenchmarkOwner(r.Run, r.Source) {
+	if r.Version != 1 || (!initial && !retained) || r.Cleaned || r.Plan == nil || len(r.Plan.Resources) != 4 ||
+		r.Admission == nil || r.Storage == nil || (len(r.Storage.Disks) != 3 && len(r.Storage.Disks) != 4) || !validBenchmarkOwner(r.Run, r.Source) {
 		return zero, refused
 	}
 	ns := "longhorn-db-proof-" + r.Target + "-" + r.Run
@@ -56,7 +57,14 @@ func bindCNPGRecoveredStorage(r cnpgProofRecord, cluster, pod, claim, pv, volume
 	if !recoveredPVBackend(claim, pv, volume, engine, ns, name, size, bytes, hostname) {
 		return zero, refused
 	}
-	copies, err := recoveredNativeCopies(r.Storage.Disks, volume, engine, replicas, bytes)
+	disks := r.Storage.Disks
+	if qualified != nil {
+		if !retained || !recoveryStoragePreservesArchive(*qualified, *r.Storage) {
+			return zero, refused
+		}
+		disks = qualified.Disks
+	}
+	copies, err := recoveredNativeCopies(disks, volume, engine, replicas, bytes)
 	if err != nil {
 		return zero, refused
 	}
@@ -148,28 +156,43 @@ func recoveredPVBackend(claim, pv, volume, engine object, ns, name, size, bytes,
 
 func recoveredNativeCopies(disks []cnpgRecoveryDiskBinding, volume, engine object, replicas []object, size string) (map[string]benchmarkResource, error) {
 	refused := errors.New("restored copies do not join three independently qualified raw disks")
-	bindings, nodes := map[string]cnpgRecoveryDiskBinding{}, map[string]bool{}
+	bindings := map[string]cnpgRecoveryDiskBinding{}
+	nodes := map[string]cnpgRecoveryDiskBinding{}
+	nodeNames := map[string]string{}
 	for _, disk := range disks {
-		if disk.Node == "" || disk.NodeUID == "" || disk.DiskUUID == "" || disk.InstanceManager == "" || bindings[disk.DiskUUID].Node != "" || nodes[disk.Node] {
+		if disk.Node == "" || disk.NodeUID == "" || disk.DiskUUID == "" || disk.InstanceManager == "" || bindings[disk.DiskUUID].Node != "" {
 			return nil, refused
 		}
-		bindings[disk.DiskUUID], nodes[disk.Node] = disk, true
+		if previous, ok := nodes[disk.Node]; ok && (previous.NodeUID != disk.NodeUID || previous.InstanceManager != disk.InstanceManager) {
+			return nil, refused
+		}
+		if previous := nodeNames[disk.NodeUID]; previous != "" && previous != disk.Node {
+			return nil, refused
+		}
+		bindings[disk.DiskUUID], nodes[disk.Node], nodeNames[disk.NodeUID] = disk, disk, disk.Node
 	}
 	modes, ok := value(engine, "status", "replicaModeMap").(object)
 	if !ok || len(modes) != 3 {
 		return nil, refused
 	}
-	copies, seenDisks, seenUIDs := map[string]benchmarkResource{}, map[string]bool{}, map[string]bool{}
+	copies, seenNodes, seenUIDs := map[string]benchmarkResource{}, map[string]bool{}, map[string]bool{}
 	for _, replica := range replicas {
 		if !recoveredCopyAssociated(replica, volume, engine) {
 			continue
 		}
 		disk := bindings[text(replica, "spec", "diskID")]
 		name, uid := text(replica, "metadata", "name"), text(replica, "metadata", "uid")
-		if !recoveredNativeObject(replica, "longhorn.io/v1beta2", "Replica", "longhorn-system") || text(replica, "spec", "volumeName") != text(volume, "metadata", "name") || !recoveredVolumeOwner(replica, volume) || name == "" || copies[name].UID != "" || seenUIDs[uid] || disk.Node == "" || seenDisks[disk.DiskUUID] || text(replica, "spec", "nodeID") != disk.Node || text(replica, "spec", "dataEngine") != "v2" || text(replica, "spec", "engineName") != text(engine, "metadata", "name") || value(replica, "spec", "active") != true || text(replica, "spec", "healthyAt") == "" || !absentOrEmptyString(value(replica, "spec", "failedAt")) || text(replica, "spec", "volumeSize") != size || text(replica, "status", "currentState") != "running" || text(replica, "status", "instanceManagerName") != disk.InstanceManager || modes[name] != "RW" {
+		if !recoveredNativeObject(replica, "longhorn.io/v1beta2", "Replica", "longhorn-system") ||
+			text(replica, "spec", "volumeName") != text(volume, "metadata", "name") || !recoveredVolumeOwner(replica, volume) ||
+			name == "" || copies[name].UID != "" || seenUIDs[uid] || disk.Node == "" || seenNodes[disk.Node] ||
+			text(replica, "spec", "nodeID") != disk.Node || text(replica, "spec", "dataEngine") != "v2" ||
+			text(replica, "spec", "engineName") != text(engine, "metadata", "name") || value(replica, "spec", "active") != true ||
+			text(replica, "spec", "healthyAt") == "" || !absentOrEmptyString(value(replica, "spec", "failedAt")) ||
+			text(replica, "spec", "volumeSize") != size || text(replica, "status", "currentState") != "running" ||
+			text(replica, "status", "instanceManagerName") != disk.InstanceManager || modes[name] != "RW" {
 			return nil, refused
 		}
-		copies[name], seenDisks[disk.DiskUUID], seenUIDs[uid] = benchmarkIdentity(replica), true, true
+		copies[name], seenNodes[disk.Node], seenUIDs[uid] = benchmarkIdentity(replica), true, true
 	}
 	if len(copies) != 3 {
 		return nil, refused

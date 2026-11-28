@@ -9,6 +9,7 @@ type object = map[string]any
 
 type inventory struct {
 	nodes, storageNodes, volumes, replicas, engines, pods, orphans []object
+	reserve                                                        *cnpgRecoveryDiskBinding
 }
 
 func value(o object, path ...string) any {

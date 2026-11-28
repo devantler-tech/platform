@@ -46,6 +46,9 @@ func verifyV2Runtime(s inventory, managers []object, pools map[string]migrationP
 	if len(workers) != 6 || len(raw) != 3 {
 		return errors.New("V2 canary storage and client roster is incomplete")
 	}
+	if s.reserve != nil && raw[s.reserve.Node] != temporaryRawID(temporaryReserveSelection) {
+		return errors.New("the bound reserve is outside the retained-layout worker")
+	}
 	diskIDs := map[string]bool{}
 	for name, rawID := range raw {
 		lh := storage[name]
@@ -53,16 +56,46 @@ func verifyV2Runtime(s inventory, managers []object, pools map[string]migrationP
 		diskStatus, _ := value(lh, "status", "diskStatus").(object)
 		disk, _ := diskStatus["longhorn-v2"].(object)
 		id := text(disk, "diskUUID")
-		if !reviewedBlockDisksFor(value(lh, "spec", "disks"), rawID) || value(lh, "spec", "allowScheduling") != true || value(lh, "spec", "evictionRequested") != false ||
-			!ready(status) || len(diskStatus) != 1 || !ready(disk) || id == "" || diskIDs[id] {
+		spec := valueObject(lh, "spec", "disks")
+		if !reviewedBlockDisk(spec["longhorn-v2"], blockDisksFor(rawID)["longhorn-v2"].(object)) ||
+			value(lh, "spec", "allowScheduling") != true || value(lh, "spec", "evictionRequested") != false ||
+			!ready(status) || !ready(disk) || id == "" || diskIDs[id] {
 			return errors.New("three distinct ready canonical raw disks are not proven")
 		}
 		if !noInstanceManagerCPUOverride(lh) {
 			return errors.New("a node CPU override supersedes the reviewed V2 reservation")
 		}
 		diskIDs[id] = true
+		if s.reserve != nil && s.reserve.Node == name {
+			if err := verifyRetainedRuntimeDisk(*s.reserve, lh, disk, spec, diskStatus, diskIDs); err != nil {
+				return err
+			}
+			if value(spec, temporaryReserveDiskName, "allowScheduling") == false &&
+				!disabledReserveReplicasMatch(*s.reserve, valueObject(diskStatus, temporaryReserveDiskName), s.replicas) {
+				return errors.New("the disabled retained reserve has unverified replica accounting")
+			}
+			diskIDs[s.reserve.DiskUUID] = true
+			continue
+		}
+		if len(spec) != 1 || len(diskStatus) != 1 {
+			return errors.New("an additional raw disk lacks a verified binding")
+		}
 	}
 	return verifyV2ClientPods(s, managers, workers, expectedManagerImage)
+}
+
+func verifyRetainedRuntimeDisk(binding cnpgRecoveryDiskBinding, storage, primary, specs, statuses object, diskIDs map[string]bool) error {
+	status := valueObject(statuses, temporaryReserveDiskName)
+	expected := blockDisks()["longhorn-v2"].(object)
+	if binding.Selection != temporaryReserveSelection || binding.DiskName != temporaryReserveDiskName || binding.NodeUID != text(storage, "metadata", "uid") ||
+		len(specs) != 2 || len(statuses) != 2 || !reviewedReserveDisk(specs[temporaryReserveDiskName]) || binding.DiskUUID == "" || diskIDs[binding.DiskUUID] ||
+		text(status, "diskUUID") != binding.DiskUUID || text(status, "diskPath") != text(expected, "path") ||
+		text(status, "diskType") != "block" || text(status, "diskDriver") != "aio" ||
+		binding.InstanceManager == "" || text(primary, "instanceManagerName") != binding.InstanceManager ||
+		text(status, "instanceManagerName") != binding.InstanceManager || !ready(status) {
+		return errors.New("the retained reserve disk or its native identity changed")
+	}
+	return nil
 }
 
 func noInstanceManagerCPUOverride(node object) bool {

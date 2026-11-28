@@ -71,6 +71,7 @@ name: Prepare Longhorn V2 Migration
             switch-wedding-primary-to-v2,
             register-temporary-v2-storage,
             observe-retained-v2-capacity,
+            register-retained-v2-capacity,
             repair-v1-reservation,
             reserve-v1-scratch,
             reserve-v1-backup-scratch,
@@ -396,9 +397,9 @@ jobs:
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
                  "${LONGHORN_V2_CONFIRM}" == register-longhorn-v2-temporary-storage ]]
               ;;
-            observe-retained-v2-capacity)
+            observe-retained-v2-capacity|register-retained-v2-capacity)
               [[ "${LONGHORN_V2_NODE}" == temporary-v2-1 && -z "${LONGHORN_V2_DATABASE}" &&
-                 "${LONGHORN_V2_CONFIRM}" == observe-retained-v2-capacity:temporary-v2-1 ]]
+                 "${LONGHORN_V2_CONFIRM}" == "${LONGHORN_V2_OPERATION}:temporary-v2-1" ]]
               ;;
             *) exit 1 ;;
           esac

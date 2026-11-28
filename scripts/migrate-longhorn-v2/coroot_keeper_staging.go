@@ -201,9 +201,6 @@ func verifyCorootKeeperDetach(ctx context.Context, c client, binding corootKeepe
 }
 
 func verifyExistingKeeperV2Member(ctx context.Context, c client, disks []cnpgRecoveryDiskBinding, ordinal int, member corootKeeperMember, claim object) error {
-	if len(disks) != 3 {
-		return errCorootKeeperStaging
-	}
 	cm, err := c.get(ctx, "configmap", "longhorn-system", "longhorn-v2-coroot-keeper-"+strconv.Itoa(ordinal), false)
 	var record corootKeeperCutoverRecord
 	if err != nil || !recoveredNativeObject(cm, "v1", "ConfigMap", "longhorn-system") ||
