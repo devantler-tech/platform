@@ -42,10 +42,14 @@ type corootKeeperCutoverRecord struct {
 }
 
 func authorizeCorootKeeperCutover(getenv func(string) string) (corootKeeperCutoverInput, error) {
+	return authorizeCorootKeeperOperation(getenv, corootKeeperCutoverOperation)
+}
+
+func authorizeCorootKeeperOperation(getenv func(string) string, operation string) (corootKeeperCutoverInput, error) {
 	confirmation := getenv("LONGHORN_V2_CONFIRM")
 	items := strings.Split(confirmation, ":")
-	if getenv("LONGHORN_V2_OPERATION") != corootKeeperCutoverOperation || len(items) != 3 ||
-		items[0] != corootKeeperCutoverOperation || !retentionDigest.MatchString(items[2]) ||
+	if getenv("LONGHORN_V2_OPERATION") != operation || len(items) != 3 ||
+		items[0] != operation || !retentionDigest.MatchString(items[2]) ||
 		getenv("LONGHORN_V2_NODE") != "" || getenv("LONGHORN_V2_DATABASE") != "" {
 		return corootKeeperCutoverInput{}, errCorootKeeperReceipt
 	}
