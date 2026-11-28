@@ -146,7 +146,11 @@ func (r *historyReport) statistics(line string) {
 		}
 	}
 	if m := historyErrorCount.FindStringSubmatch(line); m != nil {
-		r.count("errors", m[1], false)
+		// The largest count is kept: any nonzero one already fails the pass,
+		// so a later "Detected 0 errors" must not make the line read errors=0.
+		if n, err := strconv.ParseUint(m[1], 10, 64); err == nil && n >= r.counts["errors"] {
+			r.count("errors", m[1], false)
+		}
 	}
 	if m := historyGood.FindStringSubmatch(line); m != nil {
 		r.count("identified", m[1], false)
@@ -266,9 +270,17 @@ func importHistory(ctx context.Context, v historyConfig, observe historyObserver
 	if err != nil {
 		return observed("destination", err)
 	}
-	var total uint64
+	// identified counts distinct identities across all folders, so it lies
+	// between the largest folder and the total: within one folder every message
+	// has its own identity (--syncduplicates keys each repeat separately), while
+	// the same message filed in several folders counts once. Below the largest
+	// folder the tool examined only part of the mailbox; above the total the
+	// source changed during the pass. Each folder's completeness is then proved
+	// by the reconciliation below.
+	var total, largest uint64
 	for _, box := range source {
 		total += uint64(box.messages)
+		largest = max(largest, uint64(box.messages))
 	}
 	for _, dry := range []bool{false, true} {
 		var result historyReport
@@ -281,7 +293,7 @@ func importHistory(ctx context.Context, v historyConfig, observe historyObserver
 			pass = "verify"
 		}
 		_, _ = io.WriteString(receipt, historyPassLine(pass, runErr, &result, total))
-		if runErr != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || result.messages != total) {
+		if runErr != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || result.messages < largest || result.messages > total) {
 			if dry {
 				return fail("verification")
 			}

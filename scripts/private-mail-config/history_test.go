@@ -174,6 +174,48 @@ func TestHistoryCopiesThenVerifiesWithoutLeakingToolOutput(t *testing.T) {
 	}
 }
 
+// TestHistoryIdentifiedCountLiesBetweenLargestFolderAndTotal pins the success
+// rule for imapsync's identified count: it counts distinct identities, so a
+// message filed in two folders counts once and the import still completes,
+// while a count below the largest folder (part of the mailbox unexamined) or
+// above the total (the source changed) refuses.
+func TestHistoryIdentifiedCountLiesBetweenLargestFolderAndTotal(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		identified int
+		complete   bool
+	}{
+		{"same message in two folders", 4, true},
+		{"every message distinct", 5, true},
+		{"part of a folder unexamined", 2, false},
+		{"more than the source holds", 6, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := loadHistoryInputs(historyInputs(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := historySnapshot{"INBOX": {messages: 3, uidNext: 9, uidValidity: 1}, "Sent": {messages: 2, uidNext: 5, uidValidity: 2}}
+			observe := func(_ context.Context, side string, _ historyConfig) (historySnapshot, error) {
+				if side == "source" {
+					return source, nil
+				}
+				return historySnapshot{"INBOX": {messages: 3}, "Sent": {messages: 2}}, nil
+			}
+			execute := func(_ context.Context, _ []string, output io.Writer) error {
+				_, err := fmt.Fprintf(output, "The sync looks good, all %d identified messages in host1 are on host2.\nThere is no unidentified message on host1.\nDetected 0 errors\n", tc.identified)
+				return err
+			}
+			var receipt bytes.Buffer
+			err = importHistory(context.Background(), v, observe, execute, &receipt)
+			completed := strings.Contains(receipt.String(), "MAIL_HISTORY_IMPORT=COMPLETE folders=2 messages=5 ")
+			if tc.complete != (err == nil && completed) {
+				t.Fatalf("identified=%d of 5 (largest folder 3): complete=%v err=%v receipt=%q", tc.identified, completed, err, &receipt)
+			}
+		})
+	}
+}
+
 // TestHistoryPassLinesCarryOnlyTheToolsCounts feeds the copy passes the tool's
 // real closing statistics, wrapped in lines that name private folders and a
 // subject. Each pass line must hold exactly the fixed counts, the exit status
@@ -268,6 +310,11 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	}
 	if got := historyPassLine("copy", overlongErr, &drained, 0); !strings.Contains(got, " exit=114 ") || strings.Contains(got, "canary") {
 		t.Fatalf("a drained over-bound run must keep the tool's exit status and nothing else: %q", got)
+	}
+	var recovered historyReport
+	_, _ = io.WriteString(&recovered, "Detected 3 errors\nDetected 0 errors\n")
+	if got := historyPassLine("copy", nil, &recovered, 0); !strings.Contains(got, " errors=3 ") || !recovered.bad {
+		t.Fatalf("a later zero count must not hide the errors that failed the pass: bad=%v %q", recovered.bad, got)
 	}
 	var flood historyReport
 	if n, err := flood.Write(make([]byte, 129<<20)); err != nil || n != 129<<20 || !flood.bad {

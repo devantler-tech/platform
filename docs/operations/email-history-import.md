@@ -98,11 +98,11 @@ The first pass copies and the second, `--dry`, only verifies:
 
 The line holds numbers only.
 - **Source of the counts.** The labelled counts come from a fixed list of labels, read only from imapsync's closing statistics, the block that starts with `++++ Statistics`. The first value of each label there is kept.
-- **`errors` and `identified`** come from the result lines the success check already reads (`Detected N errors`, `The sync looks good …`, `The sync is not finished …`), wherever they appear. The last one wins.
+- **`errors` and `identified`** come from the result lines the success check already reads (`Detected N errors`, `The sync looks good …`, `The sync is not finished …`), wherever they appear. `identified` keeps the last value, and `errors` keeps the largest, so a pass that failed on errors never reads `errors=0`.
 - **Privacy:** no folder name, header, subject or server reply is read into the line.
 - **`?`** is a value the tool did not print.
 - **`observed`** is the source total that the pass is judged against.
-- **`identified`** is the number of distinct message identities. A message filed in two folders counts once.
+- **`identified`** is the number of distinct message identities across all folders. Within one folder every message counts, because `--syncduplicates` keys each repeat separately. The same message filed in two folders counts once. A pass is accepted when `identified` lies between the largest source folder and `observed`.
 - **`exit`** is imapsync's exit status, with two special values:
   - `signal`: the process ended by a signal. That includes the import's 3-hour deadline, and also a SIGTERM or SIGINT that imapsync caught, because it then kills itself with the same signal.
   - `?`: the tool never ran or left no exit status, for example when the deadline had already passed.
@@ -124,7 +124,7 @@ success: only the `COMPLETE` receipt does. To read a failure:
 | --- | --- |
 | `pass=copy` with `errors` above 0 | An error stopped the pass, and `--errorsmax 1` stops it at the first one. `errors` counts every type of error, including fetch, append, create, select, flags, quota, TLS and connection errors. `exit` names the type; see the list above. |
 | `pass=verify` with `identified` above `observed`, and `in1_not_in2` equal to the difference | Mail reached the source during the run. Repeat at a quieter time. |
-| `identified` below `observed`, with `in1_not_in2` at 0 | The source holds the same message in more than one folder, or a folder holds duplicates. imapsync counts each identity once, so a pass that copied everything still cannot meet `identified = observed`, and repeating cannot change it. This needs a change to the importer's success rule, not another run. |
+| `identified` below `observed`, with `in1_not_in2` at 0 | Expected when the same message, with the same `Message-Id`, is filed in more than one folder, such as a message you sent that also arrived in INBOX. It is not a failure: each folder still gets its own copy, because cross-duplicates are not skipped, and the per-folder reconciliation proves each folder. Only `identified` below the largest source folder fails, because the tool then examined only part of the mailbox. |
 | `in2_not_in1` above 0 | Either mail the destination held before the copy, which the importer keeps, or copies stored with a different identity (see Identity below). Compare runs before deciding. |
 | `h2_duplicates` rising between runs, with `in1_not_in2` above 0 in each verify pass | Copies were stored with a different identity, so each run appends them again. Stop repeating the operation, because every repeat adds duplicates, and look at what the destination changed. `in2_not_in1` counts distinct identities, so it can stay the same while the copies pile up, and a stable value does not rule this out. |
 | `pass=verify` with `in1_not_in2` above 0, `h2_duplicates` unchanged between runs, and the source unchanged | Messages left the destination after they were copied, for example through its retention of old Trash or Junk messages. |
@@ -155,9 +155,11 @@ and the import stops instead of reporting success. A weaker identity, such as
 reconcile, and the import would report a copy it never made.
 
 If a run shows `h1_noheader` above 0, those messages need a separate decision,
-not another run. Messages that share a `Message-Id` are still all copied,
-because `--syncduplicates` keys each repeat separately, and `identified` counts
-them.
+not another run. Messages that share a `Message-Id` are all copied:
+- within a folder, because `--syncduplicates` keys each repeat separately;
+- across folders, because cross-duplicate skipping (`--skipcrossduplicates`, off by default outside Gmail mode) is not used.
+
+Across folders they count once in `identified`; see the pass-line fields above.
 
 ## Copy and reconciliation
 
