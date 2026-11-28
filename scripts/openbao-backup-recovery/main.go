@@ -24,11 +24,10 @@ import (
 	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
-// This is the actual server release and digest observed on all three servers,
-// rather than the older CLI-only image used by the snapshot client. A changed
-// running release must be explicitly rebound before a production proof runs.
-const serverVersion = "2.7.2"
-const serverImage = "quay.io/openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f"
+// The production proof requires live health to report the pinned server
+// release and restores the snapshot in the published image for that release.
+const serverVersion = "2.7.3"
+const serverImage = "quay.io/openbao/openbao:" + serverVersion + "@sha256:ba4b133eb9586630024e71a617e66f37f29cc3534cdd46a6233e098ceded8dc9"
 const localAPI = "http://127.0.0.1:8200"
 
 type stageError string

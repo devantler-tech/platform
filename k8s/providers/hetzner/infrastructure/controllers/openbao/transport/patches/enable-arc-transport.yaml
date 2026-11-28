@@ -96,7 +96,7 @@ spec:
       shareProcessNamespace: true
       extraContainers:
         - name: arc-tls-reload
-          image: quay.io/openbao/openbao:2.7.2
+          image: quay.io/openbao/openbao:2.7.3
           command: ["/bin/sh", "-ec"]
           args:
             - |

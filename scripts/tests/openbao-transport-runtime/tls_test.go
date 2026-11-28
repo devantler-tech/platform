@@ -34,8 +34,8 @@ func TestNativeTLSAndCertificateReload(t *testing.T) {
 		t.Skip("native binary is supplied by the mandatory chart regression")
 	}
 	version, err := exec.Command(binary, "version").Output()
-	if err != nil || !strings.HasPrefix(string(version), "OpenBao v2.7.2 ") {
-		t.Fatal("expected the verified OpenBao 2.7.2 binary")
+	if err != nil || !strings.HasPrefix(string(version), "OpenBao v2.7.3 ") {
+		t.Fatal("expected the verified OpenBao 2.7.3 binary")
 	}
 	root := t.TempDir()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
