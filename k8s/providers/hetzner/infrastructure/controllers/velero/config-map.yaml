@@ -1,12 +1,5 @@
-# Velero Volume Policy (prod/hetzner only) — routes each PVC to the right backup
-# method by explicit storage attributes. Referenced by name from the daily-full schedule's
-# spec.resourcePolicy (see patches/enable-csi-snapshots.yaml).
-#
-# Why a policy instead of per-pod annotations: it is declarative (by
-# storage contract, not volume name), and fail-safe — any volume that does NOT match
-# a rule falls back to the legacy behaviour, which here is
-# defaultVolumesToFsBackup: true (Kopia FSB). So new/unmatched PVCs are always
-# backed up; nothing is silently skipped.
+# The protected Actual Budget backup uses this policy for its consistent CSI
+# snapshot. Keep its name and rules for existing backup and restore evidence.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -34,15 +27,16 @@ data:
             backup.platform.devantler.tech/volume-data: independently-mirrored
         action:
           type: skip
-      # Back up mounted legacy Longhorn PVCs through Kopia. CSI snapshot uploads
-      # provision V1 scratch volumes that can exhaust the space needed for the
-      # remaining migration. The node-agent reads the mounted volume for this
-      # route and stores the backup in the existing R2 BackupStorageLocation.
+      # Longhorn PVCs → CSI snapshot. The base schedule's snapshotMoveData:true
+      # makes Velero's data mover (Kopia, via the node-agent) copy the snapshot
+      # to the R2 BackupStorageLocation, so it is restorable on another cluster/
+      # provider. The longhorn-snapshot-vsc VolumeSnapshotClass (labelled
+      # velero.io/csi-volumesnapshot-class) is auto-selected for this driver.
       - conditions:
           storageClass:
             - longhorn
         action:
-          type: fs-backup
+          type: snapshot
       # emptyDir pod volumes → skip. emptyDir never survives pod recreation, so
       # backing it up has zero restore value — yet defaultVolumesToFsBackup was
       # spawning a VGDP micro-pod for every agent scratch dir (kubescape

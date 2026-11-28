@@ -16,7 +16,7 @@ spec:
           # backs up any other mounted PVC that has no matching rule.
           resourcePolicy:
             kind: configmap
-            name: velero-volume-policies
+            name: velero-daily-volume-policies
       # OpenBao needs its recovery keys even when a volume upload makes the
       # full backup incomplete. This schedule uses the existing R2 destination.
       openbao-recovery-keys:
