@@ -32,19 +32,28 @@ func TestCorootClickHouseStorageEvidenceJoinsBothReplicas(t *testing.T) {
 	if err != nil || got != (corootClickHouseStorageSummary{Tables: 3, Replicated: 1, Local: 1, Views: 1, MaxReplicaDelaySeconds: 62}) {
 		t.Fatalf("matched data: got %+v, %v", got, err)
 	}
-	for _, change := range []func(*corootClickHouseReplica){
-		func(r *corootClickHouseReplica) { r.KeeperPath = "/different/table" },
-		func(r *corootClickHouseReplica) { r.Replica = replica.Replica },
-		func(r *corootClickHouseReplica) { r.ActiveReplicas = 1 },
-		func(r *corootClickHouseReplica) { r.SessionExpired = "1" },
-		func(r *corootClickHouseReplica) { r.PartsToCheck = "" },
-		func(r *corootClickHouseReplica) { r.QueueErrorAbsent = 0 },
+	for _, test := range []struct {
+		reason string
+		change func(*corootClickHouseReplica)
+	}{
+		{"Keeper paths", func(r *corootClickHouseReplica) { r.KeeperPath = "/different/table" }},
+		{"replica identity", func(r *corootClickHouseReplica) { r.Replica = replica.Replica }},
+		{"active replicas", func(r *corootClickHouseReplica) { r.ActiveReplicas = 1 }},
+		{"total replicas", func(r *corootClickHouseReplica) { r.TotalReplicas = 3 }},
+		{"read-only replica", func(r *corootClickHouseReplica) { r.ReadOnly = "1" }},
+		{"Keeper session", func(r *corootClickHouseReplica) { r.SessionExpired = "1" }},
+		{"parts pending verification", func(r *corootClickHouseReplica) { r.PartsToCheck = "" }},
+		{"replica delay observation", func(r *corootClickHouseReplica) { r.DelaySeconds = "unknown" }},
+		{"replication queue exception", func(r *corootClickHouseReplica) { r.QueueErrorAbsent = 0 }},
+		{"Keeper exception", func(r *corootClickHouseReplica) { r.KeeperErrorAbsent = 0 }},
 	} {
 		candidate := other
-		change(&candidate)
+		test.change(&candidate)
 		reports[1] = []corootClickHouseReplica{candidate}
-		if _, err := classifyCorootClickHouseStorage(members, before, reports); err == nil {
-			t.Fatal("unverified replica evidence was accepted")
+		_, err := classifyCorootClickHouseStorage(members, before, reports)
+		if !errors.Is(err, errCorootClickHouseStorage) || !strings.Contains(err.Error(), test.reason) ||
+			strings.Contains(err.Error(), candidate.Name) || strings.Contains(err.Error(), candidate.KeeperPath) {
+			t.Fatalf("expected the sanitized %q signal: %v", test.reason, err)
 		}
 	}
 	reports[1] = []corootClickHouseReplica{other}

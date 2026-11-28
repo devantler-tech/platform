@@ -113,9 +113,27 @@ func classifyCorootClickHouseStorage(members [2]string, tables [2][]corootClickH
 				!strings.HasPrefix(row.KeeperPath, "/") || paths[member][key] != "" {
 				return none, fmt.Errorf("replica identity did not match the table catalog for member %d: %w", member, errCorootClickHouseStorage)
 			}
-			if row.ActiveReplicas != 2 || row.TotalReplicas != 2 || row.ReadOnly != "0" || row.SessionExpired != "0" ||
-				row.PartsToCheck != "0" || err != nil || row.QueueErrorAbsent != 1 || row.KeeperErrorAbsent != 1 {
-				return none, fmt.Errorf("replication health was unverified for member %d: %w", member, errCorootClickHouseStorage)
+			var signals []string
+			for _, check := range []struct {
+				signal string
+				ok     bool
+			}{
+				{"active replicas", row.ActiveReplicas == 2},
+				{"total replicas", row.TotalReplicas == 2},
+				{"read-only replica", row.ReadOnly == "0"},
+				{"Keeper session", row.SessionExpired == "0"},
+				{"parts pending verification", row.PartsToCheck == "0"},
+				{"replica delay observation", err == nil},
+				{"replication queue exception", row.QueueErrorAbsent == 1},
+				{"Keeper exception", row.KeeperErrorAbsent == 1},
+			} {
+				if !check.ok {
+					signals = append(signals, check.signal)
+				}
+			}
+			if len(signals) != 0 {
+				return none, fmt.Errorf("replication health was unverified for member %d (%s): %w",
+					member, strings.Join(signals, ", "), errCorootClickHouseStorage)
 			}
 			paths[member][key] = row.KeeperPath
 			counts.MaxReplicaDelaySeconds = max(counts.MaxReplicaDelaySeconds, delay)
