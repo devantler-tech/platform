@@ -25,6 +25,7 @@ func main() {
 		return
 	}
 	target := os.Getenv("LONGHORN_V2_NODE")
+	var detachedVolume string
 	var authorization error
 	switch operation {
 	case "prepare-worker":
@@ -107,6 +108,8 @@ func main() {
 		authorization = authorizeActualBudgetBackup(os.Getenv)
 	case actualBudgetRestoreOperation, actualBudgetRestoreResume, actualBudgetRestoreRetry:
 		_, authorization = authorizeActualBudgetRestore(os.Getenv)
+	case detachedV1SourceOperation:
+		detachedVolume, authorization = authorizeDetachedV1Source(os.Getenv)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
 	case retainProviderSourceOperation:
@@ -128,6 +131,16 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == detachedV1SourceOperation {
+		c := client{run: detachedV1SourceReadCommand, context: "admin@prod"}
+		receipt, err := c.observeDetachedV1Source(ctx, os.Getenv("GITHUB_SHA"), detachedVolume)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Detached V1 source qualification held")
+			os.Exit(1)
+		}
+		fmt.Printf("DETACHED_V1_SOURCE=VERIFIED phase=%s bytes=%d digest=%s writes=0\n", receipt.Phase, receipt.Bytes, receipt.Digest)
+		return
+	}
 	if operation == prepareActualBudgetScratch || operation == retireActualBudgetScratch {
 		confirmation, err := authorizeActualBudgetScratch(os.Getenv)
 		if err == nil {
