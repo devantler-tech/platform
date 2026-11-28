@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -47,8 +49,9 @@ func TestCorootClickHouseStorageEvidenceJoinsBothReplicas(t *testing.T) {
 	}
 	reports[1] = []corootClickHouseReplica{other}
 	before[1] = tableRows[:2]
-	if _, err := classifyCorootClickHouseStorage(members, before, reports); err == nil {
-		t.Fatal("changed table inventory was accepted")
+	if _, err := classifyCorootClickHouseStorage(members, before, reports); !errors.Is(err, errCorootClickHouseStorage) ||
+		!strings.Contains(err.Error(), "table catalogs differ") || strings.Contains(err.Error(), "local_history") {
+		t.Fatalf("the rejection should identify only the catalog mismatch: %v", err)
 	}
 }
 
