@@ -1,5 +1,5 @@
-# Business Site v3.21.0 preview overlay (source bdbb0d3fc52de0491ca53462a607a794717a17c3).
-# Verified manifests package: sha256:892773128c6a2d18aded9f0cd8997790362b7567d1ba7839fc60c2d8d737cf14.
+# Business Site v3.29.0 practice migration (source 26a49c9bced65814ad20d1e79bf0aa7fcd6b201b).
+# Verified manifests package: sha256:f78a705ae700ed5b3624f207a576b0b94a9d3c11a1ac6222bb3fdbae528961dc.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -23,7 +23,7 @@ spec:
             - /run/portal-migration/database-url
             - --runtime-role
             - portal_preview_web
-          image: ghcr.io/devantler-tech/business-site@sha256:213e54051c764b86e5feeffdc919d6d427af758add01f9c94e137708a9b15f4e
+          image: ghcr.io/devantler-tech/business-site@sha256:99890e993b361ec904931afeefe8646838f3c549dee0d8bec15d618c75f80bd8
           name: migrate
           resources:
             limits:
