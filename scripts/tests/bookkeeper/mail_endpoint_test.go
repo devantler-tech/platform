@@ -13,15 +13,16 @@ import (
 // The collector reads mail over JMAP with basic authentication, and refuses a
 // JMAP session whose URLs name another host than its --mail-url. Stalwart
 // serves JMAP only behind the Gateway route private-mail/private-mail and names
-// that route's host in its session. The mail server's own load balancer
+// its STALWART_PUBLIC_URL host in every session, whichever route host the
+// request used (#6662). The mail server's own load balancer
 // (private-mail/mail-server) carries SMTP, submission and IMAPS, never HTTPS.
 // The collector's URL and egress grant must name the pinned JMAP host even
-// when the route also serves an alias.
+// when the route also serves another name.
 func TestCollectorReadsMailThroughTheGatewayRoute(t *testing.T) {
 	apps := render(t)
 	route := object(t, apps, "HTTPRoute", "private-mail", "private-mail")
 	hostnames, _ := field(t, route, "spec", "hostnames").([]any)
-	const jmapHost = "mail.platform.devantler.tech"
+	const jmapHost = "stalwart.platform.devantler.tech"
 	domain := productionDomain(t)
 	host := ""
 	for _, name := range hostnames {
@@ -33,6 +34,26 @@ func TestCollectorReadsMailThroughTheGatewayRoute(t *testing.T) {
 	}
 	if host == "" {
 		t.Fatalf("the mail route must serve the pinned JMAP host %s, got %v", jmapHost, hostnames)
+	}
+	// The session names Stalwart's public URL, so that URL must be this host.
+	stalwart := object(t, apps, "StatefulSet", "private-mail", "private-mail")
+	publicURL := ""
+	containers, _ := field(t, stalwart, "spec", "template", "spec", "containers").([]any)
+	for _, item := range containers {
+		container, _ := item.(map[string]any)
+		if container["name"] != "private-mail" {
+			continue
+		}
+		env, _ := container["env"].([]any)
+		for _, entry := range env {
+			variable, _ := entry.(map[string]any)
+			if variable["name"] == "STALWART_PUBLIC_URL" {
+				publicURL, _ = variable["value"].(string)
+			}
+		}
+	}
+	if publicURL != "https://"+host {
+		t.Fatalf("JMAP sessions name %q, not the collector's host https://%s, so the collector would refuse them", publicURL, host)
 	}
 	if !reflect.DeepEqual(field(t, route, "spec", "parentRefs"), []any{map[string]any{
 		"name": "platform", "namespace": "kube-system", "sectionName": "https",

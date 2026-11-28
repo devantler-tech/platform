@@ -9,7 +9,8 @@ resources:
   # dispatched operation starts, and the only endpoints it may reach.
   - cron-job-history-import.yaml
   - cilium-network-policy-history-import.yaml
-  # The mail server's own load balancer for SMTP, submission and IMAPS (#5481).
+  # The mail server's own load balancer for SMTP, submission and IMAPS (#5481);
+  # submission is served on 587 and, with implicit TLS, on 465.
   - service.yaml
   # Its DNS-only host, mail.devantler.tech.
   - dns-endpoint.yaml
@@ -68,7 +69,16 @@ patches:
       name: private-mail
       namespace: private-mail
     path: patches/trust-mail-load-balancer.yaml
-  # SMTP, submission and IMAPS are reachable from their own load balancer only.
+  # The server's public names: mail.devantler.tech for mail, and its web host.
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+    path: patches/name-mail-server.yaml
+  # SMTP, both submission ports and IMAPS are reachable from their own load
+  # balancer only.
   - target:
       group: cilium.io
       version: v2

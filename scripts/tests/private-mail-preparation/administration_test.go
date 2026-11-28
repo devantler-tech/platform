@@ -28,8 +28,14 @@ func TestAdministrationSeparatesInitializationAuthority(t *testing.T) {
 	if !reflect.DeepEqual(server["command"], []any{"/usr/local/bin/stalwart"}) || !reflect.DeepEqual(server["args"], []any{"--config", "/etc/stalwart/config.json"}) {
 		t.Fatal("normal serving must run Stalwart directly after initialization succeeds")
 	}
+	// The server's one environment variable is its public web address, a
+	// non-secret value; the initializer has none.
+	publicURL := []any{map[string]any{"name": "STALWART_PUBLIC_URL", "value": "https://stalwart.${domain}"}}
+	if init["env"] != nil || !reflect.DeepEqual(server["env"], publicURL) {
+		t.Fatal("the workload must not inject recovery authority or private passwords through environment variables")
+	}
 	for _, c := range []map[string]any{init, server} {
-		if c["env"] != nil || c["envFrom"] != nil {
+		if c["envFrom"] != nil {
 			t.Fatal("the workload must not inject recovery authority or private passwords through environment variables")
 		}
 		sc := mapping(t, c["securityContext"])
@@ -167,7 +173,7 @@ func TestAdministrationExposesOnlyNormalManagement(t *testing.T) {
 			denied[stringField(t, p, "port")] = true
 		}
 	}
-	if !reflect.DeepEqual(denied, map[string]bool{"18080": true, "1025": true, "1587": true, "1993": true}) {
+	if !reflect.DeepEqual(denied, map[string]bool{"18080": true, "1025": true, "1587": true, "1465": true, "1993": true}) {
 		t.Fatal("recovery and all prepared mail listeners must remain inaccessible")
 	}
 	// Outbound mail leaves only through the SES relay. The grants must be exactly

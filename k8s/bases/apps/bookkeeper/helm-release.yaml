@@ -30,7 +30,7 @@ spec:
     timeZone: Europe/Copenhagen
     suspend: true
     mail:
-      url: https://mail.${domain}
+      url: https://stalwart.${domain}
     numina:
       url: https://api.numina.app
     existingSecret:

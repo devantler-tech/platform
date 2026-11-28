@@ -71,6 +71,13 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["/usr/local/bin/stalwart"]
           args: ["--config", "/etc/stalwart/config.json"]
+          env:
+            # The server's public web address: the OAuth issuer and the URLs in
+            # JMAP sessions. Without it the server builds them from its default
+            # hostname, which production sets to the mail host, and that host
+            # serves no HTTPS. Not a secret; it must name the HTTPRoute's host.
+            - name: STALWART_PUBLIC_URL
+              value: https://stalwart.${domain}
           ports:
             - name: management
               containerPort: 8080

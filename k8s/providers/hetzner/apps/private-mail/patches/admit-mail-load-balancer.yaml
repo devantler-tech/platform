@@ -1,8 +1,8 @@
-# Open SMTP, submission and IMAPS to the mail server's own load balancer only
-# (#5481). Its pinned private address must equal the private-ipv4 annotation on
-# the private-mail-public Service and the --mail-proxy-source the server trusts.
-# externalTrafficPolicy Local keeps that address as the source. Management and
-# the recovery and adapter listeners stay denied from every source.
+# Open SMTP, both submission ports and IMAPS to the mail server's own load
+# balancer only (#5481). Its pinned private address must equal the private-ipv4
+# annotation on the private-mail-public Service and the --mail-proxy-source the
+# server trusts. externalTrafficPolicy Local keeps that address as the source.
+# Management and the recovery and adapter listeners stay denied from every source.
 - op: test
   path: /spec/ingressDeny/0/toPorts/0/ports
   value:
@@ -15,6 +15,8 @@
     - port: "1025"
       protocol: TCP
     - port: "1587"
+      protocol: TCP
+    - port: "1465"
       protocol: TCP
     - port: "1993"
       protocol: TCP
@@ -37,6 +39,9 @@
           - port: "1025"
             protocol: TCP
           - port: "1587"
+            protocol: TCP
+          # Implicit-TLS submission (RFC 8314), the Service's port 465.
+          - port: "1465"
             protocol: TCP
           - port: "1993"
             protocol: TCP

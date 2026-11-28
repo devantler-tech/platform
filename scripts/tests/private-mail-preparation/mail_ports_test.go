@@ -5,16 +5,29 @@ import (
 	"testing"
 )
 
-// Production opens SMTP, submission and IMAPS to the mail server's own load
-// balancer alone, at exactly the private address it is pinned to and that the
-// server trusts for PROXY headers. Management and the recovery and adapter
-// listeners stay denied from every source.
+// Production opens SMTP, both submission ports and IMAPS to the mail server's
+// own load balancer alone, at exactly the private address it is pinned to and
+// that the server trusts for PROXY headers. Management and the recovery and
+// adapter listeners stay denied from every source.
 func TestProductionAdmitsMailPortsFromItsLoadBalancerOnly(t *testing.T) {
 	objects := render(t, "k8s/providers/hetzner/apps")
 	service := object(t, objects, "Service", "private-mail-public")
 	address, ok := mapping(t, mapping(t, service["metadata"])["annotations"])["load-balancer.hetzner.cloud/private-ipv4"].(string)
 	if !ok || address == "" || mapping(t, service["spec"])["externalTrafficPolicy"] != "Local" {
 		t.Fatal("the mail load balancer must keep a pinned private address as the source")
+	}
+	// Each public port reaches its own listener: 465 is implicit-TLS
+	// submission (RFC 8314), which the server's autoconfig offers.
+	published := map[any]any{}
+	for _, item := range sequence(t, mapping(t, service["spec"])["ports"]) {
+		port := mapping(t, item)
+		if port["protocol"] != nil && port["protocol"] != "TCP" {
+			t.Fatalf("unexpected protocol on public port %v", port["port"])
+		}
+		published[port["port"]] = port["targetPort"]
+	}
+	if !reflect.DeepEqual(published, map[any]any{25: 1025, 587: 1587, 465: 1465, 993: 1993}) {
+		t.Fatalf("the mail load balancer must publish SMTP, both submission ports and IMAPS only, got %v", published)
 	}
 	policy := mapping(t, object(t, objects, "CiliumNetworkPolicy", "private-mail")["spec"])
 
@@ -54,8 +67,8 @@ func TestProductionAdmitsMailPortsFromItsLoadBalancerOnly(t *testing.T) {
 			if !reflect.DeepEqual(rule["fromCIDR"], []any{address + "/32"}) {
 				t.Fatalf("mail ports must be admitted from the load balancer's %s/32 only, got %v", address, rule["fromCIDR"])
 			}
-			if !reflect.DeepEqual(ports(rule), map[any]bool{"1025": true, "1587": true, "1993": true}) {
-				t.Fatal("the load balancer may reach the three mail listeners only")
+			if !reflect.DeepEqual(ports(rule), map[any]bool{"1025": true, "1587": true, "1465": true, "1993": true}) {
+				t.Fatal("the load balancer may reach the four mail listeners only")
 			}
 		default:
 			t.Fatalf("unexpected ingress source: %v", rule)
