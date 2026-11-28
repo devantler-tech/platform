@@ -22,11 +22,14 @@ patches:
   - path: patches/isolate-administration.yaml
 images:
   - name: ghcr.io/devantler-tech/platform-private-mail-bootstrap
-    # Signed main publication cec94ffd08af (Stalwart 0.16.27). Since the
-    # serving b4253e8d38dc image it reads the maintainer's receiving aliases
-    # from their OpenBao source (#6635); verifies SPF and reverse IP and
-    # enforces DMARC on inbound SMTP behind the named load balancer (#6647);
-    # and imports the pinned spam filter rules from the image, without the
-    # shortened-link check (#6651). It also carries the inert history
-    # importer subcommand (#6435) and Caddy 2.11.9 for the client proxy (#6565).
-    digest: sha256:c00cd848d47cab10f60301facba02387cf34832f7d560cfaf206a008ed9e0ff9
+    # The Stalwart 0.16.27 bootstrap published and signed from 4bfd0e6e (the
+    # merge of #6769) by Publish Email Bootstrap run 46155779256.
+    #
+    # That publication adds, to cec94ffd08af before it
+    # (OpenBao aliases #6635, inbound checks #6647, pinned spam rules #6651,
+    # the inert history importer #6435, Caddy 2.11.9 #6565): the --hostname
+    # and --web-hostname flags, implicit-TLS submission with --hostname only,
+    # uploads at the maintainer's own upload URL, and no POP3 or ManageSieve
+    # in autoconfig. Adopted without flags, so it stores nothing the earlier
+    # image refuses and a heal back to that image starts.
+    digest: sha256:13bc123718ae246b5987e02a936228341bf8a511910df2b062bf289ec4be0e7a
