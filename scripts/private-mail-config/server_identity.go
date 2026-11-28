@@ -47,8 +47,11 @@ func (n *deploymentNames) register(f *flag.FlagSet) {
 // precedence over the settings' hostname: when it is given, it becomes the
 // server's default hostname (SMTP greeting and EHLO name, Message-ID domain,
 // and the host autoconfig gives IMAP and SMTP) and the settings' value is not
-// used. When it is absent, the settings' hostname is used unchanged, so
-// removing the flag is the rollback. render validates both names.
+// written. When it is absent, the settings' hostname is used unchanged, so
+// removing the flag is the rollback. That is why the settings' hostname is
+// still validated when the settings load, even while the flag replaces it: an
+// invalid stored name would only surface when the flag is removed, at the
+// moment of rollback. render validates the effective names.
 //
 // --hostname also serves implicit-TLS submission on 465: the public name and
 // the port its autoconfig offers ship together. Without the flag the setup
