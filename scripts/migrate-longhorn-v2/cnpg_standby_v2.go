@@ -54,7 +54,7 @@ func bindCNPGV2Standby(observation cnpgObservation, claim, pv, volume, engine ob
 	name := text(claim, "metadata", "name")
 	primary := text(cluster, "status", "currentPrimary")
 	refused := errors.New("the live V2 standby or physical replay is unverified")
-	if !admitted || name == primary || len(disks) != 3 ||
+	if !admitted || name == primary ||
 		verifyPostgresStandby(observation.States[primary], observation.States[name]) != nil {
 		return cnpgRecoveredStorage{}, refused
 	}

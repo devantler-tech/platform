@@ -70,6 +70,10 @@ func verifyV2Runtime(s inventory, managers []object, pools map[string]migrationP
 			if err := verifyRetainedRuntimeDisk(*s.reserve, lh, disk, spec, diskStatus, diskIDs); err != nil {
 				return err
 			}
+			if value(spec, temporaryReserveDiskName, "allowScheduling") == false &&
+				!disabledReserveReplicasMatch(*s.reserve, valueObject(diskStatus, temporaryReserveDiskName), s.replicas) {
+				return errors.New("the disabled retained reserve has unverified replica accounting")
+			}
 			diskIDs[s.reserve.DiskUUID] = true
 			continue
 		}
@@ -84,7 +88,7 @@ func verifyRetainedRuntimeDisk(binding cnpgRecoveryDiskBinding, storage, primary
 	status := valueObject(statuses, temporaryReserveDiskName)
 	expected := blockDisks()["longhorn-v2"].(object)
 	if binding.Selection != temporaryReserveSelection || binding.DiskName != temporaryReserveDiskName || binding.NodeUID != text(storage, "metadata", "uid") ||
-		len(specs) != 2 || len(statuses) != 2 || !reviewedBlockDisk(specs[temporaryReserveDiskName], expected) || binding.DiskUUID == "" || diskIDs[binding.DiskUUID] ||
+		len(specs) != 2 || len(statuses) != 2 || !reviewedReserveDisk(specs[temporaryReserveDiskName]) || binding.DiskUUID == "" || diskIDs[binding.DiskUUID] ||
 		text(status, "diskUUID") != binding.DiskUUID || text(status, "diskPath") != text(expected, "path") ||
 		text(status, "diskType") != "block" || text(status, "diskDriver") != "aio" ||
 		binding.InstanceManager == "" || text(primary, "instanceManagerName") != binding.InstanceManager ||

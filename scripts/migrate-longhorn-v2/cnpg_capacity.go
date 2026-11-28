@@ -97,7 +97,11 @@ func verifyRecoveryClaimCapacity(claimSize string, nodes, replicas, backingImage
 			return refused
 		}
 		for diskName, spec := range expected {
-			if !reviewedBlockDisk(disks[diskName], spec) {
+			valid := reviewedBlockDisk(disks[diskName], spec)
+			if diskName == temporaryReserveDiskName {
+				valid = reviewedReserveDisk(disks[diskName])
+			}
+			if !valid {
 				return refused
 			}
 		}
@@ -154,6 +158,9 @@ func verifyRecoveryClaimCapacity(claimSize string, nodes, replicas, backingImage
 		const reserve, margin = 4 * recoveryGiB, 2 * recoveryGiB
 		if total != scheduled || maximum < reserve {
 			return refused
+		}
+		if value(n, "spec", "disks", b.name, "allowScheduling") == false {
+			continue
 		}
 		if !cnpgCondition(object{"status": d}, "Schedulable") {
 			conditions, _ := value(d, "conditions").([]any)

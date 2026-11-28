@@ -136,7 +136,7 @@ func temporaryRecoveryRegistrationState(storage object, journalUID, selection st
 		reserve.Node != text(storage, "metadata", "name") || reserve.NodeUID != text(storage, "metadata", "uid") ||
 		text(storage, "metadata", "annotations", temporaryReserveOwner) == "" || len(disks) != 2 ||
 		!reviewedBlockDisk(disks["longhorn-v2"], blockDisksFor(temporaryRawID(selection))["longhorn-v2"].(object)) ||
-		!reviewedBlockDisk(disks[temporaryReserveDiskName], blockDisks()["longhorn-v2"].(object)) {
+		!reviewedReserveDisk(disks[temporaryReserveDiskName]) {
 		return false, errTemporaryActivation
 	}
 	return true, nil

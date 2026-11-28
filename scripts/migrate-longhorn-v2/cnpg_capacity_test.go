@@ -113,6 +113,10 @@ func TestRecoveryCapacityIncludesOnlyTheBoundTemporaryReserve(t *testing.T) {
 		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
 			t.Fatalf("known reserve on the verified temporary host was rejected: %v", err)
 		}
+		disks[extra.DiskName] = retainedReserveDiskSpec(false)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
+			t.Fatalf("an owned disabled reserve prevented using the original disks: %v", err)
+		}
 		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings[:len(bindings)-1]); err == nil {
 			t.Fatal("an enabled raw disk outside the native inventory was accepted")
 		}
@@ -121,6 +125,10 @@ func TestRecoveryCapacityIncludesOnlyTheBoundTemporaryReserve(t *testing.T) {
 		free := ledger["storageAvailable"]
 		ledger["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "Schedulable", "status": "False", "reason": "DiskPressure"}}
 		ledger["storageAvailable"] = float64((95 * recoveryGiB) / 4)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
+			t.Fatal("a disabled reserve was counted as available for new placements")
+		}
+		disks[extra.DiskName] = retainedReserveDiskSpec(true)
 		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
 			t.Fatalf("the scheduler excludes the pressured primary, and the reserve covers that host: %v", err)
 		}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,6 +25,12 @@ func retainedReserveDiskSpec(schedulable bool) object {
 	spec := blockDisks()["longhorn-v2"].(object)
 	spec["allowScheduling"] = schedulable
 	return spec
+}
+
+func reviewedReserveDisk(raw any) bool {
+	disk, ok := raw.(object)
+	enabled, hasFlag := disk["allowScheduling"].(bool)
+	return ok && hasFlag && reviewedBlockDisk(raw, retainedReserveDiskSpec(enabled))
 }
 
 func retainedReserveRegistrationChanges(storage object, receiptUID string) []object {
@@ -59,9 +66,8 @@ func (a temporaryV2Activation) reserveRegistrationSnapshot(ctx context.Context, 
 	return storage, nil
 }
 
-// Only the registration operation may qualify the original pool with its
-// exact owned, scheduling-disabled addition. An enabled disk is always
-// validated as part of the full runtime.
+// The unsealed addition must stay empty and scheduling-disabled. A sealed
+// disk stays part of the runtime even when its scheduling flag is off.
 func projectReserveRegistration(s *inventory, receipt object, record temporaryReserveRegistration) (object, error) {
 	var storage object
 	for i, item := range s.storageNodes {
@@ -87,15 +93,18 @@ func projectReserveRegistration(s *inventory, receipt object, record temporaryRe
 			continue
 		}
 		schedulable, ok := value(valueObject(spec, temporaryReserveDiskName), "allowScheduling").(bool)
-		if !ok || owner == "" || owner != text(receipt, "metadata", "uid") || !reviewedBlockDisk(disk, retainedReserveDiskSpec(schedulable)) {
+		if !ok || owner == "" || owner != text(receipt, "metadata", "uid") || !reviewedReserveDisk(disk) {
 			return nil, errTemporaryActivation
 		}
-		if schedulable {
-			if value(receipt, "immutable") != true || record.Disk.DiskUUID == "" {
+		if value(receipt, "immutable") == true {
+			if record.Disk.DiskUUID == "" {
 				return nil, errTemporaryActivation
 			}
 			s.reserve = &record.Disk
 			continue
+		}
+		if schedulable || record.Disk.DiskUUID != "" {
+			return nil, errTemporaryActivation
 		}
 		diskUUID := text(item, "status", "diskStatus", temporaryReserveDiskName, "diskUUID")
 		diskPath := text(retainedReserveDiskSpec(false), "path")
@@ -144,12 +153,47 @@ func inactiveReserveDisk(storage object, planned cnpgRecoveryDiskBinding) (cnpgR
 		text(status, "diskType") != "block" || text(status, "diskDriver") != "aio" || !ready(status) ||
 		!cnpgCondition(object{"status": status}, "Schedulable") ||
 		!maxOK || !availableOK || !scheduledOK || maximum > permanentRawDiskGiB*recoveryGiB ||
-		maximum < (permanentRawDiskGiB-1)*recoveryGiB || available > maximum || maximum-available > 2*recoveryGiB ||
-		scheduled != 0 || !replicasOK || len(replicas) != 0 || (status["scheduledBackingImage"] != nil && !backingOK) || len(backing) != 0 {
+		maximum < (permanentRawDiskGiB-1)*recoveryGiB || available > maximum || scheduled > maximum ||
+		!replicasOK || (status["scheduledBackingImage"] != nil && !backingOK) || len(backing) != 0 {
+		return cnpgRecoveryDiskBinding{}, errTemporaryActivation
+	}
+	// Only an unsealed disk must be empty. A resume has already matched the
+	// sealed identity and every retained replica in the runtime snapshot.
+	if planned.DiskUUID == "" && (maximum-available > 2*recoveryGiB || scheduled != 0 || len(replicas) != 0) {
 		return cnpgRecoveryDiskBinding{}, errTemporaryActivation
 	}
 	planned.DiskUUID = uuid
 	return planned, nil
+}
+
+func disabledReserveReplicasMatch(binding cnpgRecoveryDiskBinding, status object, replicas []object) bool {
+	ledger, ok := status["scheduledReplica"].(object)
+	maximum, maxOK := nativeObservationUint(status["storageMaximum"])
+	scheduled, scheduledOK := nativeObservationUint(status["storageScheduled"])
+	if !ok || !maxOK || !scheduledOK || maximum == 0 || maximum > permanentRawDiskGiB*recoveryGiB || scheduled > maximum {
+		return false
+	}
+	path := text(status, "diskPath")
+	seen := map[string]bool{}
+	var total uint64
+	for _, replica := range replicas {
+		diskID := text(replica, "spec", "diskID")
+		sameLocation := text(replica, "spec", "nodeID") == binding.Node && text(replica, "spec", "diskPath") == path
+		if diskID != binding.DiskUUID && !sameLocation {
+			continue
+		}
+		name := text(replica, "metadata", "name")
+		size, err := strconv.ParseUint(text(replica, "spec", "volumeSize"), 10, 64)
+		assigned, known := nativeObservationUint(ledger[name])
+		if !recoveredNativeObject(replica, "longhorn.io/v1beta2", "Replica", "longhorn-system") ||
+			diskID != binding.DiskUUID || !sameLocation || text(replica, "spec", "dataEngine") != "v2" ||
+			name == "" || seen[name] || err != nil || size == 0 || size > maximum-total || !known || assigned != size {
+			return false
+		}
+		seen[name] = true
+		total += size
+	}
+	return len(seen) == len(ledger) && total == scheduled
 }
 
 func (a temporaryV2Activation) requireReserveRegistration(ctx context.Context, receipt object, record temporaryReserveRegistration) error {
@@ -267,8 +311,10 @@ func (a temporaryV2Activation) registerRetainedReserve(ctx context.Context) (err
 	if err := a.requireReserveRegistration(ctx, receipt, record); err != nil {
 		return err
 	}
+	path := "/spec/disks/" + temporaryReserveDiskName + "/allowScheduling"
 	if err := a.c.patch(ctx, "nodes.longhorn.io", "longhorn-system", storage,
-		object{"op": "replace", "path": "/spec/disks/" + temporaryReserveDiskName + "/allowScheduling", "value": true}); err != nil {
+		object{"op": "test", "path": path, "value": false},
+		object{"op": "replace", "path": path, "value": true}); err != nil {
 		return a.disableUnprovenReserve(ctx, receipt, record, err)
 	}
 	phase = "readback"

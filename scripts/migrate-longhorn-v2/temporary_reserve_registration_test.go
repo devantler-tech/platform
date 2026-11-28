@@ -78,6 +78,15 @@ func TestPendingRetainedReserveCannotHideAnAssignedReplica(t *testing.T) {
 	if _, err := projectReserveRegistration(&occupied, receipt, planned); err == nil {
 		t.Fatal("a Replica already assigned to the pending disk was hidden")
 	}
+	sealed := planned
+	sealed.Disk.DiskUUID = "retained-disk-uuid"
+	receipt["immutable"] = true
+	if _, err := projectReserveRegistration(&occupied, receipt, sealed); err != nil ||
+		occupied.reserve == nil || *occupied.reserve != sealed.Disk ||
+		value(occupied.storageNodes[0], "spec", "disks", temporaryReserveDiskName, "allowScheduling") != false {
+		t.Fatalf("the sealed disabled disk and its retained replica were omitted: %v", err)
+	}
+	delete(receipt, "immutable")
 	empty := inventory{storageNodes: []object{worker}}
 	if _, err := projectReserveRegistration(&empty, receipt, planned); err != nil {
 		t.Fatal(err)
@@ -85,6 +94,34 @@ func TestPendingRetainedReserveCannotHideAnAssignedReplica(t *testing.T) {
 	if value(empty.storageNodes[0], "spec", "disks", temporaryReserveDiskName) != nil ||
 		value(worker, "spec", "disks", temporaryReserveDiskName) == nil {
 		t.Fatal("the pending disk was not isolated from the original scheduler read")
+	}
+}
+
+func TestDisabledReserveRequiresExactRetainedReplicaLedger(t *testing.T) {
+	binding := cnpgRecoveryDiskBinding{Node: "qualified-worker", DiskUUID: "verified-disk"}
+	const path = "/dev/mapper/luks2-r-longhorn"
+	status := object{"diskPath": path, "storageMaximum": float64(96 * recoveryGiB),
+		"storageScheduled": float64(recoveryGiB), "scheduledReplica": object{"retained-replica": float64(recoveryGiB)}}
+	replica := object{"apiVersion": "longhorn.io/v1beta2", "kind": "Replica",
+		"metadata": object{"name": "retained-replica", "namespace": "longhorn-system",
+			"uid": "12345678-1234-4234-8234-000000000001", "resourceVersion": "1"},
+		"spec": object{"nodeID": binding.Node, "diskID": binding.DiskUUID, "diskPath": path,
+			"dataEngine": "v2", "volumeSize": "1073741824"}}
+	if !disabledReserveReplicasMatch(binding, status, []object{replica}) {
+		t.Fatal("the retained replica was not verified")
+	}
+	if disabledReserveReplicasMatch(binding, status, nil) || disabledReserveReplicasMatch(binding, status, []object{replica, replica}) {
+		t.Fatal("a missing or duplicate replica satisfied the ledger")
+	}
+	for key, wrong := range map[string]string{"nodeID": "other-worker", "diskID": "other-disk",
+		"diskPath": "/dev/other", "dataEngine": "v1", "volumeSize": "2147483648"} {
+		spec := valueObject(replica, "spec")
+		original := spec[key]
+		spec[key] = wrong
+		if disabledReserveReplicasMatch(binding, status, []object{replica}) {
+			t.Fatalf("a replica contradicting the sealed device was counted despite changed %s", key)
+		}
+		spec[key] = original
 	}
 }
 
@@ -190,5 +227,11 @@ func TestDisabledReserveUsesLonghornDiskPressureReadback(t *testing.T) {
 	disk["scheduledReplica"] = object{"existing-replica": float64(recoveryGiB)}
 	if _, err := inactiveReserveDisk(worker, planned); err == nil {
 		t.Fatal("a populated scheduling ledger was accepted as unused")
+	}
+	planned.DiskUUID = uuid
+	disk["storageScheduled"] = float64(recoveryGiB)
+	disk["storageAvailable"] = float64(85 * recoveryGiB)
+	if resumed, err := inactiveReserveDisk(worker, planned); err != nil || resumed != planned {
+		t.Fatalf("an already bound reserve with retained replicas could not resume: %v", err)
 	}
 }

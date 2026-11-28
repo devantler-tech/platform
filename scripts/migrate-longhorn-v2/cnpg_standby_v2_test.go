@@ -5,7 +5,7 @@ import "testing"
 func TestUmamiV2StandbyBindsLivePhysicalReplayAndCopies(t *testing.T) {
 	const standby = "umami-db-4"
 	storage := newRecoveredStorageFixture(t)
-	for _, fault := range []string{"", "retained peer", "recovery roster", "recovery replaced peer", "unwitnessed recovery roster",
+	for _, fault := range []string{"", "reserve disk", "retained peer", "recovery roster", "recovery replaced peer", "unwitnessed recovery roster",
 		"missing healthy peer", "missing retention witness", "retained peer behind", "old engine", "incomplete copies", "behind", "primary", "wrong mount"} {
 		t.Run(fault, func(t *testing.T) {
 			f := storage.copyBindingObjects(t)
@@ -64,8 +64,15 @@ func TestUmamiV2StandbyBindsLivePhysicalReplayAndCopies(t *testing.T) {
 			case "wrong mount":
 				value(pod, "spec", "volumes").([]any)[0].(object)["persistentVolumeClaim"] = object{"claimName": "another-claim"}
 			}
-			got, err := bindCNPGV2Standby(obs, f.claim, f.pv, f.volume, f.engine, f.replicas, f.p.record.Storage.Disks)
-			if fault == "" || fault == "retained peer" || fault == "recovery roster" {
+			disks := f.p.record.Storage.Disks
+			if fault == "reserve disk" {
+				reserve := disks[0]
+				reserve.DiskName, reserve.DiskUUID = temporaryReserveDiskName, "qualified-reserve"
+				disks = append(disks, reserve)
+				valueObject(f.replicas[0], "spec")["diskID"] = reserve.DiskUUID
+			}
+			got, err := bindCNPGV2Standby(obs, f.claim, f.pv, f.volume, f.engine, f.replicas, disks)
+			if fault == "" || fault == "reserve disk" || fault == "retained peer" || fault == "recovery roster" {
 				if err != nil || got.Pod != benchmarkIdentity(pod) || got.Claim != benchmarkIdentity(f.claim) || len(got.Replicas) != 3 {
 					t.Fatalf("V2 standby did not qualify: %+v, %v", got, err)
 				}
