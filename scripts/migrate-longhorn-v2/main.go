@@ -67,6 +67,10 @@ func main() {
 		_, authorization = authorizeCorootKeeperCutover(os.Getenv)
 	case transferCorootKeeperOperation:
 		_, authorization = authorizeCorootKeeperOperation(os.Getenv, operation)
+	case openBaoPairOperation:
+		_, authorization = authorizeOpenBaoPair(os.Getenv)
+	case openBaoPairResumeOperation:
+		_, _, authorization = authorizeOpenBaoPairResume(os.Getenv)
 	case cnpgArchiveProofOperation:
 		authorization = authorizeCNPGArchiveProof(os.Getenv)
 	case umamiArchiveIsolationResumeOperation:
@@ -341,6 +345,39 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("COROOT_KEEPER_V2_LEADER=VERIFIED quorum=HEALTHY providerMember=FOLLOWER")
+		return
+	}
+	if operation == openBaoPairOperation {
+		input, err := authorizeOpenBaoPair(os.Getenv)
+		if err == nil {
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			err = runOpenBaoPairCutover(ctx, c, input, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"),
+				os.Getenv("HCLOUD_TOKEN"), os.Getenv("OPENBAO_VERSION"))
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("OPENBAO_V2_PAIR=VERIFIED volumes=2 replicas=3 originalStorage=RETAINED raft=VERIFIED secrets=VERIFIED")
+		return
+	}
+	if operation == openBaoPairResumeOperation {
+		input, prior, err := authorizeOpenBaoPairResume(os.Getenv)
+		var migrated bool
+		if err == nil {
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			migrated, err = runOpenBaoPairResume(ctx, c, input, prior, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"),
+				os.Getenv("HCLOUD_TOKEN"), os.Getenv("OPENBAO_VERSION"))
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if migrated {
+			fmt.Println("OPENBAO_V2_PAIR=VERIFIED volumes=2 replicas=3 originalStorage=RETAINED raft=VERIFIED secrets=VERIFIED")
+		} else {
+			fmt.Println("OPENBAO_ORIGINAL_PAIR=RESTORED volumes=2 raft=VERIFIED")
+		}
 		return
 	}
 	if operation == actualBudgetRestoreOperation || operation == actualBudgetRestoreResume {

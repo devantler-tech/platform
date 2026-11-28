@@ -54,9 +54,10 @@ var canonicalFields = map[string][]string{
 }
 
 type expectation struct {
-	servers []string
-	replace string
-	maxAge  time.Duration
+	servers         []string
+	replace         string
+	maxAge          time.Duration
+	requireFollower bool
 }
 
 type finding struct {
@@ -173,6 +174,9 @@ func judge(input io.Reader, want expectation, now time.Time) report {
 	// Taking a voter out leaves voters-1 of the configured voters available;
 	// the cluster stays writable only while those are still a majority.
 	if target, ok := byName[want.replace]; ok && *target.Voter {
+		if want.requireFollower && *target.Leader {
+			result.Findings = append(result.Findings, hold(want.replace, "server is the Raft leader"))
+		}
 		quorum := voters/2 + 1
 		if voters-1 < quorum {
 			result.Findings = append(result.Findings, hold(want.replace, fmt.Sprintf("replacing it leaves %d of %d voters, below quorum %d", voters-1, voters, quorum)))
@@ -276,6 +280,11 @@ type onceValue struct {
 	set  bool
 }
 
+func (v *onceValue) IsBoolFlag() bool {
+	boolean, ok := v.Value.(interface{ IsBoolFlag() bool })
+	return ok && boolean.IsBoolFlag()
+}
+
 func (v *onceValue) Set(value string) error {
 	if v.set {
 		return fmt.Errorf("--%s was given more than once", v.name)
@@ -307,11 +316,13 @@ func main() {
 	input := flag.String("input", "", "captured configuration document, or - for stdin")
 	servers := flag.String("expect-servers", "", "comma-separated server names the reviewed render declares")
 	replace := flag.String("replace", "", "the one expected server the next step would replace")
+	requireFollower := flag.Bool("require-follower", false, "require the replacement target to be a Raft follower")
 	maxAge := flag.Duration("max-age", 5*time.Minute, "oldest acceptable capture")
 	err := parseArgs(flag.CommandLine, os.Args[1:])
 	var want expectation
 	if err == nil {
 		want, err = parseExpectation(*servers, *replace, *maxAge)
+		want.requireFollower = *requireFollower
 	}
 	if err == nil && (*input == "" || flag.NArg() != 0) {
 		err = errors.New("--input is required and no positional arguments are accepted")
