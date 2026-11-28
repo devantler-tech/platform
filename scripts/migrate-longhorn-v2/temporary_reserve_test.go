@@ -64,3 +64,40 @@ func TestReservedCapacityMatchesTheUnusedPreparedExtent(t *testing.T) {
 		})
 	}
 }
+func TestTemporaryReserveObservationUsesOnlyTheReviewedReadScope(t *testing.T) {
+	for _, scenario := range []struct {
+		program string
+		args    []string
+		allowed bool
+	}{
+		{"gh", []string{"api", "repos/devantler-tech/platform/actions/runs/123/attempts/1"}, true},
+		{"gh", []string{"api", "repos/devantler-tech/platform/actions/runs/123/attempts/2"}, false},
+		{"kubectl", []string{"--context=admin@prod", "--request-timeout=20s", "get", "pods", "--output=json", "--all-namespaces"}, true},
+		{"kubectl", []string{"--context=admin@prod", "--request-timeout=20s", "get", "secrets", "--output=json", "--all-namespaces"}, false},
+		{"kubectl", []string{"--context=admin@prod", "--request-timeout=20s", "patch", "nodes.longhorn.io", "worker"}, false},
+		{"kubectl", []string{"--context=admin@prod", "--request-timeout=20s", "get", "configmap",
+			"longhorn-v2-prepare-temporary-v2-1", "--output=json", "--namespace=longhorn-system"}, true},
+		{"kubectl", []string{"--context=admin@prod", "--request-timeout=20s", "get", "configmap",
+			"other", "--output=json", "--namespace=longhorn-system"}, false},
+		{"talosctl", []string{"--nodes=10.0.3.1", "get", "discoveredvolume", "--output=json"}, true},
+		{"talosctl", []string{"--nodes=192.0.2.12", "get", "discoveredvolume", "--output=json"}, false},
+		{"talosctl", []string{"--nodes=10.0.3.1", "get", "machineconfig", "--output=json"}, false},
+	} {
+		if got := temporaryReserveReadAllowed(scenario.program, scenario.args); got != scenario.allowed {
+			t.Fatalf("observer read scope %s %v: allowed=%t", scenario.program, scenario.args, got)
+		}
+	}
+	env := dispatchFixture()
+	env["LONGHORN_V2_OPERATION"] = temporaryReserveObservation
+	env["LONGHORN_V2_NODE"] = temporaryReserveSelection
+	env["LONGHORN_V2_DATABASE"] = ""
+	env["LONGHORN_V2_CONFIRM"] = temporaryReserveObservation + ":" + temporaryReserveSelection
+	getenv := func(key string) string { return env[key] }
+	if err := authorizeTemporaryReserveObservation(getenv); err != nil {
+		t.Fatal(err)
+	}
+	env["LONGHORN_V2_NODE"] = "temporary-v1-1"
+	if err := authorizeTemporaryReserveObservation(getenv); err == nil {
+		t.Fatal("a different retained extent was admitted")
+	}
+}
