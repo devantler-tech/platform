@@ -129,6 +129,7 @@ type client struct {
 	inventoryPools       map[string]migrationPool
 	inventoryPreparation *journal
 	nativeSeed           bool
+	readProviderVolume   func(context.Context, string) (object, error)
 }
 
 var kubeName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)

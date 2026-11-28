@@ -10,20 +10,21 @@ import (
 // CloudNativePG's keep-PVC operation. The caller must apply it through the
 // existing UID and resource-version patch fence, then verify the retained
 // claim before asking the eviction API to stop the original consumer.
-func umamiStandbyClaimRetentionChanges(witness cnpgStandbyCutover, cluster, pod, claim, pv, volume object) ([]object, error) {
+func umamiStandbyClaimRetentionChanges(witness cnpgStandbyCutover, actual umamiStandbyAdmission) ([]object, error) {
 	const (
 		statusAnnotation = "cnpg.io/pvcStatus"
 		statusPath       = "/metadata/annotations/cnpg.io~1pvcStatus"
 		instanceLabel    = "cnpg.io/instanceName"
 	)
+	cluster, pod, claim := actual.cluster, actual.pod, actual.claim
 	name := witness.Consumer.Name
 	owners, _ := value(claim, "metadata", "ownerReferences").([]any)
 	profile, admitted := cnpgStandbyTransition(cluster)
 	if !admitted || benchmarkIdentity(cluster) != witness.Database ||
 		text(cluster, "status", "currentPrimary") == name || text(pod, "metadata", "labels", "cnpg.io/instanceRole") != "replica" ||
 		benchmarkIdentity(pod) != witness.Consumer || text(pod, "metadata", "resourceVersion") != witness.ConsumerVersion ||
-		benchmarkIdentity(claim) != witness.Claim || benchmarkIdentity(pv) != witness.PV ||
-		benchmarkIdentity(volume) != witness.Volume || !cnpgV1StorageRetained(profile, cluster, pod, claim, pv, volume) ||
+		benchmarkIdentity(claim) != witness.Claim || benchmarkIdentity(actual.pv) != witness.PV ||
+		benchmarkIdentity(actual.volume) != witness.Volume || !cnpgOwned(claim, cluster) || !actual.originalAttached(profile, witness) ||
 		len(owners) != 1 || text(claim, "metadata", "annotations", statusAnnotation) != "ready" ||
 		text(claim, "metadata", "labels", instanceLabel) != name {
 		return nil, errors.New("the original standby claim changed before retention")

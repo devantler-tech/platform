@@ -99,12 +99,18 @@ func readUmamiNameReleaseState(ctx context.Context, j *umamiStandbyReplacementJo
 	if err != nil {
 		return nil, nil, err
 	}
-	pv, backend, err := readDetachedUmamiBackend(ctx, c, original)
+	pv, backend, err := readDetachedUmamiBackend(ctx, c, original, "Bound")
 	if err != nil {
 		return nil, nil, err
 	}
 	profile, admitted := cnpgStandbyTransition(observation.Cluster)
-	if !admitted || benchmarkIdentity(claim) != original.Claim || !verifyOriginalV1ClaimBinding(profile, claim, pv, backend) ||
+	retained := false
+	if original.Provider != nil {
+		retained = providerCNPGOriginalClaimMatches(*original.Provider, claim, pv)
+	} else {
+		retained = verifyOriginalV1ClaimBinding(profile, claim, pv, backend)
+	}
+	if !admitted || benchmarkIdentity(claim) != original.Claim || !retained ||
 		!umamiRetainedClaimMetadata(claim, original.Consumer.Name) {
 		return nil, nil, errors.New("the original ownerless Umami claim is not bound to the witnessed Retain PV")
 	}
@@ -154,7 +160,11 @@ func podUsesUmamiClaim(pod object, claim string) bool {
 	return false
 }
 
-func readDetachedUmamiBackend(ctx context.Context, c client, original cnpgStandbyCutover) (object, object, error) {
+func readDetachedUmamiBackend(ctx context.Context, c client, original cnpgStandbyCutover, phase string) (object, object, error) {
+	if original.Provider != nil {
+		pv, err := readDetachedProviderCNPGOriginal(ctx, c, *original.Provider, phase)
+		return pv, nil, err
+	}
 	pv, err := c.get(ctx, "persistentvolume", "", original.PV.Name, false)
 	if err != nil {
 		return nil, nil, err
@@ -223,11 +233,11 @@ func observeUmamiReleasedOriginal(ctx context.Context, j *umamiStandbyReplacemen
 		text(claim, "spec", "volumeName") == original.PV.Name || text(claim, "spec", "storageClassName") != "longhorn-v2") {
 		return errors.New("the released Umami name is not empty or bound exclusively to fresh V2 storage")
 	}
-	pv, backend, err := readDetachedUmamiBackend(ctx, c, original)
+	pv, backend, err := readDetachedUmamiBackend(ctx, c, original, "Released")
 	if err != nil {
 		return err
 	}
-	if !umamiReleasedVolumeMatches(original, pv, backend) {
+	if original.Provider == nil && !umamiReleasedVolumeMatches(original, pv, backend) {
 		return errors.New("the old Umami PV is not a demonstrably released Retain volume")
 	}
 	_, err = j.read(ctx)

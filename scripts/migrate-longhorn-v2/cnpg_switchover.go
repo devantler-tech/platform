@@ -10,16 +10,18 @@ import (
 )
 
 const (
-	umamiV2SwitchoverOperation   = "switch-umami-primary-to-v2"
-	weddingV2SwitchoverOperation = "switch-wedding-primary-to-v2"
-	umamiV2SwitchoverJournal     = "longhorn-v2-umami-primary-switchover"
-	umamiV2SwitchoverNamespace   = "longhorn-system"
+	umamiV2SwitchoverOperation    = "switch-umami-primary-to-v2"
+	weddingV2SwitchoverOperation  = "switch-wedding-primary-to-v2"
+	providerV2SwitchoverOperation = "switch-provider-cnpg-primary-to-v2"
+	umamiV2SwitchoverJournal      = "longhorn-v2-umami-primary-switchover"
+	umamiV2SwitchoverNamespace    = "longhorn-system"
 )
 
 type umamiV2Promotion struct {
 	Database, Previous   benchmarkResource
 	OriginalClaim, OldPV benchmarkResource
 	OriginalVolume       benchmarkResource
+	OriginalProvider     *providerCNPGOriginal `json:",omitempty"`
 	Standbys             map[string]cnpgRecoveredStorage
 	PreviousState        postgresState
 	Generation           uint64
@@ -43,6 +45,8 @@ func cnpgSwitchoverJournalName(database cnpgSource) string {
 		return umamiV2SwitchoverJournal
 	case weddingStandbySource:
 		return "longhorn-v2-wedding-primary-switchover"
+	case providerCNPGStandbySource("customer-identity-db"), providerCNPGStandbySource("business-site-portal-db"):
+		return "longhorn-v2-" + database.Name + "-primary-switchover"
 	default:
 		return ""
 	}
@@ -55,27 +59,42 @@ func (r umamiV2PromotionRecord) executor() (run, source string) {
 	return r.Run, r.Source
 }
 
-func readUmamiRetainedV1Storage(ctx context.Context, c client, cluster, pod object, name string) (benchmarkResource, benchmarkResource, benchmarkResource, error) {
-	var empty benchmarkResource
-	refused := errors.New("the retained database V1 storage is unverified")
+type cnpgPromotionStorage struct {
+	Claim, PV, Volume benchmarkResource
+	Provider          *providerCNPGOriginal
+}
+
+func readCNPGPromotionStorage(ctx context.Context, c client, cluster, pod object, name string) (cnpgPromotionStorage, error) {
+	refused := errors.New("the original retained database storage is unverified")
 	profile, admitted := cnpgStandbyTransition(cluster)
 	if !admitted {
-		return empty, empty, empty, refused
+		return cnpgPromotionStorage{}, refused
 	}
 	claim, err := c.get(ctx, "persistentvolumeclaim", profile.Source.Namespace, name, false)
 	backend := "pvc-" + text(claim, "metadata", "uid")
-	if err != nil || !nativeRestoreUID(text(claim, "metadata", "uid")) || !recoveredPostgresMount(pod, claim) {
-		return empty, empty, empty, refused
+	if err != nil || !nativeRestoreUID(text(claim, "metadata", "uid")) || !recoveredPostgresMount(pod, claim) ||
+		!cnpgOwned(claim, cluster) || name != text(claim, "metadata", "name") {
+		return cnpgPromotionStorage{}, refused
 	}
 	pv, err := c.get(ctx, "persistentvolume", "", backend, false)
 	if err != nil {
-		return empty, empty, empty, refused
+		return cnpgPromotionStorage{}, refused
+	}
+	storage := cnpgPromotionStorage{Claim: benchmarkIdentity(claim), PV: benchmarkIdentity(pv)}
+	if providerCNPGStandbySource(profile.Source.Name) == profile.Source {
+		original, err := readAttachedProviderCNPGOriginal(ctx, c, pod, claim, pv)
+		if err != nil {
+			return cnpgPromotionStorage{}, err
+		}
+		storage.Provider = &original
+		return storage, nil
 	}
 	volume, err := c.get(ctx, "volumes.longhorn.io", umamiV2SwitchoverNamespace, backend, false)
 	if err != nil || !cnpgV1StorageRetained(profile, cluster, pod, claim, pv, volume) {
-		return empty, empty, empty, refused
+		return cnpgPromotionStorage{}, refused
 	}
-	return benchmarkIdentity(claim), benchmarkIdentity(pv), benchmarkIdentity(volume), nil
+	storage.Volume = benchmarkIdentity(volume)
+	return storage, nil
 }
 
 func observeUmamiV2Promotion(ctx context.Context, c client, observation cnpgObservation, previous, target string, disks []cnpgRecoveryDiskBinding) (umamiV2Promotion, error) {
@@ -95,13 +114,13 @@ func observeUmamiV2Promotion(ctx context.Context, c client, observation cnpgObse
 		return umamiV2Promotion{}, refused
 	}
 	primary := pods[previous]
-	claim, pv, volume, err := readUmamiRetainedV1Storage(ctx, c, cluster, primary, previous)
+	storage, err := readCNPGPromotionStorage(ctx, c, cluster, primary, previous)
 	if err != nil || text(primary, "metadata", "labels", "cnpg.io/instanceRole") != "primary" {
 		return umamiV2Promotion{}, refused
 	}
 	witness := umamiV2Promotion{
 		Database: benchmarkIdentity(cluster), Previous: benchmarkIdentity(primary),
-		OriginalClaim: claim, OldPV: pv, OriginalVolume: volume,
+		OriginalClaim: storage.Claim, OldPV: storage.PV, OriginalVolume: storage.Volume, OriginalProvider: storage.Provider,
 		Standbys: map[string]cnpgRecoveredStorage{}, PreviousState: observation.States[previous],
 		Generation: generation, PreviousTargetSince: targetSince,
 	}
@@ -129,14 +148,15 @@ func sameUmamiPromotionWitness(first, latest umamiV2Promotion) bool {
 		first.PreviousState.PostmasterStart == latest.PreviousState.PostmasterStart && first.PreviousState.PostmasterStart != "" &&
 		first.Database == latest.Database && first.Previous == latest.Previous &&
 		first.OriginalClaim == latest.OriginalClaim && first.OldPV == latest.OldPV && first.OriginalVolume == latest.OriginalVolume &&
+		sameProviderCNPGOriginal(first.OriginalProvider, latest.OriginalProvider) &&
 		first.Generation == latest.Generation && first.PreviousTargetSince == latest.PreviousTargetSince &&
 		reflect.DeepEqual(first.Standbys, latest.Standbys)
 }
 
-func verifyUmamiPromotionHistory(before postgresState, after cnpgObservation, target string) error {
+func verifyUmamiPromotionHistory(before postgresState, after cnpgObservation, target string, expectedMembers int) error {
 	refused := errors.New("the new primary has not proven continuity with the old write history")
 	if text(after.Cluster, "status", "currentPrimary") != target || text(after.Cluster, "status", "targetPrimary") != target ||
-		len(after.States) != 4 {
+		expectedMembers < 3 || len(after.States) != expectedMembers {
 		return refused
 	}
 	primary := after.States[target]
@@ -233,7 +253,7 @@ func waitForUmamiV2Primary(ctx context.Context, c client, source, target string,
 		if benchmarkIdentity(current.Cluster) != witness.Database {
 			return errors.Join(errReadinessTerminal, errors.New("the witnessed Umami cluster was replaced"))
 		}
-		if err = verifyUmamiPromotionHistory(witness.PreviousState, current, target); err != nil {
+		if err = verifyUmamiPromotionHistory(witness.PreviousState, current, target, profile.Instances); err != nil {
 			return err
 		}
 		pods, err := indexed(current.Pods)
@@ -241,8 +261,9 @@ func waitForUmamiV2Primary(ctx context.Context, c client, source, target string,
 			return errors.New("the original primary has not returned as the retained standby")
 		}
 		oldPod := pods[witness.Previous.Name]
-		oldClaim, oldPV, oldVolume, err := readUmamiRetainedV1Storage(ctx, c, current.Cluster, oldPod, witness.Previous.Name)
-		if err != nil || oldClaim != witness.OriginalClaim || oldPV != witness.OldPV || oldVolume != witness.OriginalVolume {
+		original, err := readCNPGPromotionStorage(ctx, c, current.Cluster, oldPod, witness.Previous.Name)
+		if err != nil || original.Claim != witness.OriginalClaim || original.PV != witness.OldPV || original.Volume != witness.OriginalVolume ||
+			!sameProviderCNPGOriginal(original.Provider, witness.OriginalProvider) {
 			return errors.New("the original primary storage was not retained by the demoted standby")
 		}
 		for name, peer := range witness.Standbys {

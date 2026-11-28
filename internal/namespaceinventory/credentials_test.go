@@ -348,6 +348,30 @@ func TestNativeSeedReachesTheExistingAdmissionCredentialBoundary(t *testing.T) {
 	}
 }
 
+func TestProviderCNPGNameRecoveryBindsTheDatabaseAndOriginalRun(t *testing.T) {
+	const operation = "recover-provider-cnpg-standby-name"
+	for _, test := range []struct {
+		database, target, originalRun string
+		allowed                       bool
+	}{
+		{"customer-identity-db", "customer-identity-db-2", "99", true},
+		{"business-site-portal-db", "business-site-portal-db-1", "99", true},
+		{"business-site-portal-db", "customer-identity-db-2", "99", false},
+		{"umami-db", "umami-db-1", "99", false},
+		{"customer-identity-db", "customer-identity-db-2", "98", false},
+		{"customer-identity-db", "customer-identity-db-2", "", false},
+	} {
+		env := nativeSeedAdmissionDispatch()
+		env["LONGHORN_V2_OPERATION"], env["LONGHORN_V2_DATABASE"] = operation, test.database
+		env["LONGHORN_V2_CONFIRM"] = operation + ":" + test.target + ":99:" + strings.Repeat("1", 40) +
+			":b286e4f7-51db-4bc1-aa4d-000000000001:98:" + strings.Repeat("2", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000002"
+		_, _, err := LoadBenchmarkAdmissionClient(func(key string) string { return env[key] }, netip.MustParseAddr("203.0.113.10"), test.originalRun)
+		if err == nil || (err.Error() == "fixed benchmark admission credentials and direct IPv4 peer are required") != test.allowed {
+			t.Fatalf("%s with original run %q, expected allowed=%t: %v", test.target, test.originalRun, test.allowed, err)
+		}
+	}
+}
+
 func TestOpenBaoAdmissionDispatchReachesOnlyTheFixedCredentialBoundary(t *testing.T) {
 	const first = "migrate-openbao-v2-pair"
 	const resume = "resume-openbao-v2-pair"
@@ -424,6 +448,12 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000001:99:" +
 			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000002:98", originalRun: "99", database: "wedding-db", createScope: directWeddingCreate},
 		{operation: "migrate-coroot-keeper-v2", confirmation: "migrate-coroot-keeper-v2:1:" + strings.Repeat("1", 64), createScope: directKeeperCreate},
+		{operation: "recover-provider-cnpg-standby-name", confirmation: "recover-provider-cnpg-standby-name:customer-identity-db-1:99:" +
+			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000001:98:" +
+			strings.Repeat("2", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000002", originalRun: "99", database: "customer-identity-db", createScope: directIdentityCreate},
+		{operation: "recover-provider-cnpg-standby-name", confirmation: "recover-provider-cnpg-standby-name:business-site-portal-db-2:99:" +
+			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000001:98:" +
+			strings.Repeat("2", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000002", originalRun: "99", database: "business-site-portal-db", createScope: directPortalCreate},
 		{operation: "migrate-openbao-v2-pair", confirmation: "migrate-openbao-v2-pair:openbao-1:" + strings.Repeat("1", 64), createScope: directOpenBaoCreate},
 		{operation: "resume-openbao-v2-pair", confirmation: "resume-openbao-v2-pair:openbao-1:" + strings.Repeat("1", 64) + ":99", originalRun: "99", createScope: directOpenBaoCreate},
 	} {
@@ -460,6 +490,16 @@ func TestDirectAPIAllowsOnlyScopedCreateDryRuns(t *testing.T) {
 		want                             bool
 	}{
 		{http.MethodPost, pods, dry, "application/json", directUmamiCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/customer-identity/pods", dry, "application/json", directIdentityCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/customer-identity/persistentvolumeclaims", dry, "application/json", directIdentityCreate, true},
+		{http.MethodPost, "/apis/batch/v1/namespaces/customer-identity/jobs", dry, "application/json", directIdentityCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/business-site/pods", dry, "application/json", directPortalCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/business-site/persistentvolumeclaims", dry, "application/json", directPortalCreate, true},
+		{http.MethodPost, "/apis/batch/v1/namespaces/business-site/jobs", dry, "application/json", directPortalCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/customer-identity/pods", dry, "application/json", directPortalCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/business-site/pods", dry, "application/json", directIdentityCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/customer-identity/persistentvolumeclaims", "", "application/json", directIdentityCreate, false},
+		{http.MethodPatch, "/api/v1/namespaces/business-site/persistentvolumeclaims/portal", dry, "application/json-patch+json", directPortalCreate, false},
 		{http.MethodPost, "/api/v1/namespaces/openbao/pods", dry, "application/json", directOpenBaoCreate, true},
 		{http.MethodPost, "/api/v1/namespaces/openbao/persistentvolumeclaims", dry, "application/json", directOpenBaoCreate, true},
 		{http.MethodPost, "/api/v1/namespaces/openbao/pods", "", "application/json", directOpenBaoCreate, false},

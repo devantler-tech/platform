@@ -141,7 +141,6 @@ func validUmamiOriginalReplacement(record umamiStandbyReplacementRecord) bool {
 		witness.Consumer.Namespace != namespace || record.Primary.Namespace != namespace ||
 		witness.Claim.Name != name || witness.Claim.Namespace != namespace ||
 		witness.PV.Name != "pvc-"+witness.Claim.UID || witness.PV.Namespace != "" ||
-		witness.Volume.Name != witness.PV.Name || witness.Volume.Namespace != "longhorn-system" ||
 		witness.Budget.Name != database || witness.Budget.Namespace != namespace ||
 		witness.ConsumerVersion == "" || witness.BudgetVersion == "" ||
 		len(record.OtherPods) != profile.Instances-1 || record.OtherPods[record.Primary.Name] != record.Primary ||
@@ -149,12 +148,20 @@ func validUmamiOriginalReplacement(record umamiStandbyReplacementRecord) bool {
 		witness.Spare.Cluster != witness.Database || witness.Spare.Pod.Namespace != namespace || witness.Spare.Pod.Name == name {
 		return false
 	}
+	if providerCNPGStandbySource(database) == profile.Source {
+		if !validProviderCNPGOriginal(witness) {
+			return false
+		}
+	} else if witness.Provider != nil || witness.Volume.Name != witness.PV.Name || witness.Volume.Namespace != "longhorn-system" ||
+		!isolationUID.MatchString(witness.Volume.UID) {
+		return false
+	}
 	for _, instance := range []string{name, record.Primary.Name, witness.Spare.Pod.Name} {
 		if _, err := cnpgInstanceID(instance, database); err != nil {
 			return false
 		}
 	}
-	for _, resource := range []benchmarkResource{record.Primary, witness.Database, witness.Consumer, witness.Claim, witness.PV, witness.Volume, witness.Budget, witness.Spare.Pod} {
+	for _, resource := range []benchmarkResource{record.Primary, witness.Database, witness.Consumer, witness.Claim, witness.PV, witness.Budget, witness.Spare.Pod} {
 		if !isolationUID.MatchString(resource.UID) {
 			return false
 		}

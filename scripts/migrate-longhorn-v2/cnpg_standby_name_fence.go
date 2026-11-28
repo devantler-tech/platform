@@ -52,10 +52,14 @@ func umamiNameFencePolicy(record umamiStandbyReplacementRecord) object {
 }
 
 func cnpgNameFenceMessage(namespace string) string {
-	if namespace == "wedding-app" {
+	switch namespace {
+	case "wedding-app":
 		return "The retained Wedding claim name is being released"
+	case "customer-identity", "business-site":
+		return "The retained database claim name is being released"
+	default:
+		return umamiNameFenceMessage
 	}
-	return umamiNameFenceMessage
 }
 
 func installUmamiNameFence(ctx context.Context, j *umamiStandbyReplacementJournal) error {

@@ -10,6 +10,7 @@ type cnpgStandbyCutover struct {
 	Database, Consumer, Claim, PV, Volume, Budget benchmarkResource
 	ConsumerVersion, BudgetVersion                string
 	Spare                                         cnpgRecoveredStorage
+	Provider                                      *providerCNPGOriginal `json:",omitempty"`
 }
 
 // Bind the current database and its sole volume consumer before recording a
@@ -19,10 +20,10 @@ func bindUmamiStandbyCutover(observation cnpgObservation, pods []object, target 
 	if !umamiV2Transition(observation.Cluster) {
 		return cnpgStandbyCutover{}, errors.New("the Umami storage transition is unverified")
 	}
-	return bindCNPGStandbyCutover(observation, pods, target, claim, pv, volume, budget)
+	return bindCNPGStandbyCutover(observation, pods, target, claim, pv, volume, budget, nil)
 }
 
-func bindCNPGStandbyCutover(observation cnpgObservation, pods []object, target string, claim, pv, volume, budget object) (cnpgStandbyCutover, error) {
+func bindCNPGStandbyCutover(observation cnpgObservation, pods []object, target string, claim, pv, volume, budget object, provider *providerCNPGOriginal) (cnpgStandbyCutover, error) {
 	cluster := observation.Cluster
 	profile, admitted := cnpgStandbyTransition(cluster)
 	primary := text(cluster, "status", "currentPrimary")
@@ -38,13 +39,14 @@ func bindCNPGStandbyCutover(observation cnpgObservation, pods []object, target s
 	pod := byName[target]
 	if verifyPostgresPod(pod, pod, cluster) != nil || text(pod, "metadata", "labels", "cnpg.io/instanceRole") != "replica" ||
 		!recoveredPostgresMount(pod, claim) || !onlyCNPGStandbyUsesClaim(pods, pod, target, profile.Source.Namespace) ||
-		!cnpgTransitionDisruptionAllowed(budget, cluster, profile) || !cnpgV1StorageRetained(profile, cluster, pod, claim, pv, volume) {
+		!cnpgTransitionDisruptionAllowed(budget, cluster, profile) || !cnpgOwned(claim, cluster) ||
+		!cnpgAttachedOriginalMatches(profile, pod, claim, pv, volume, provider) {
 		return cnpgStandbyCutover{}, unqualified
 	}
 	return cnpgStandbyCutover{Database: benchmarkIdentity(cluster), Consumer: benchmarkIdentity(pod),
 		ConsumerVersion: text(pod, "metadata", "resourceVersion"), Claim: benchmarkIdentity(claim),
 		PV: benchmarkIdentity(pv), Volume: benchmarkIdentity(volume), Budget: benchmarkIdentity(budget),
-		BudgetVersion: text(budget, "metadata", "resourceVersion")}, nil
+		BudgetVersion: text(budget, "metadata", "resourceVersion"), Provider: provider}, nil
 }
 
 func onlyCNPGStandbyUsesClaim(pods []object, pod object, claim, namespace string) bool {
@@ -84,6 +86,18 @@ func cnpgTransitionDisruptionAllowed(budget, cluster object, profile cnpgStandby
 func cnpgV1StorageRetained(profile cnpgStandbyProfile, cluster, pod, claim, pv, volume object) bool {
 	return cnpgOwned(claim, cluster) && text(claim, "metadata", "name") == text(pod, "metadata", "name") &&
 		verifyOriginalV1ClaimBinding(profile, claim, pv, volume) && umamiOriginalVolumeAttached(pod, volume)
+}
+
+func cnpgAttachedOriginalMatches(profile cnpgStandbyProfile, pod, claim, pv, volume object, provider *providerCNPGOriginal) bool {
+	if text(claim, "metadata", "name") != text(pod, "metadata", "name") {
+		return false
+	}
+	if providerCNPGStandbySource(profile.Source.Name) == profile.Source {
+		return provider != nil && volume == nil && provider.Claim == benchmarkIdentity(claim) &&
+			provider.PV == benchmarkIdentity(pv) && provider.Node == text(pod, "spec", "nodeName") &&
+			providerCNPGOriginalPVMatches(*provider, pv, "Bound")
+	}
+	return provider == nil && verifyOriginalV1ClaimBinding(profile, claim, pv, volume) && umamiOriginalVolumeAttached(pod, volume)
 }
 
 func umamiOriginalVolumeAttached(pod, volume object) bool {

@@ -28,7 +28,7 @@ func retainUmamiOriginalStandby(ctx context.Context, journal *umamiStandbyReplac
 	if err = verifyUmamiReplacementPrimary(ctx, journal.c, actual.cluster, journal.record.Primary); err != nil {
 		return err
 	}
-	changes, err := umamiStandbyClaimRetentionChanges(witness, actual.cluster, actual.pod, actual.claim, actual.pv, actual.volume)
+	changes, err := umamiStandbyClaimRetentionChanges(witness, actual)
 	if err != nil {
 		return err
 	}
@@ -49,8 +49,7 @@ func retainUmamiOriginalStandby(ctx context.Context, journal *umamiStandbyReplac
 		return err
 	}
 	profile, admitted := cnpgStandbyTransition(retained.cluster)
-	if !admitted || !verifyOriginalV1ClaimBinding(profile, retained.claim, retained.pv, retained.volume) ||
-		!umamiOriginalVolumeAttached(retained.pod, retained.volume) {
+	if !admitted || !retained.originalAttached(profile, witness) {
 		return errors.New("the retained Umami PVC or its attached backend changed")
 	}
 	if err = verifyUmamiReplacementPrimary(ctx, journal.c, retained.cluster, journal.record.Primary); err != nil {
@@ -167,8 +166,7 @@ func recheckUmamiRetainedAdmission(ctx context.Context, journal *umamiStandbyRep
 	}
 	profile, admitted := cnpgStandbyTransition(actual.cluster)
 	if !admitted || !umamiRetainedClaimMetadata(actual.claim, journal.record.Original.Consumer.Name) ||
-		!verifyOriginalV1ClaimBinding(profile, actual.claim, actual.pv, actual.volume) ||
-		!umamiOriginalVolumeAttached(actual.pod, actual.volume) {
+		!actual.originalAttached(profile, journal.record.Original) {
 		return errors.New("the retained Umami backend was not stable at eviction")
 	}
 	return verifyUmamiReplacementPrimary(ctx, journal.c, actual.cluster, journal.record.Primary)
