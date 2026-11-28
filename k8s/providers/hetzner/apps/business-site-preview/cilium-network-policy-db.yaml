@@ -14,6 +14,9 @@ spec:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: business-site
             app.kubernetes.io/name: business-site
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: business-site
+            app.kubernetes.io/name: business-site-practice-migration
       toPorts:
         - ports:
             - port: "5432"
