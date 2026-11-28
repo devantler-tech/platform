@@ -21,6 +21,11 @@ objects. It refuses an existing Velero restore request, download, claim, bound
 volume or reader. Preserve that scope and diagnose its exact Velero and storage
 records before any further request.
 
+If the interrupted attempt was itself a retry of a rejected restore, append
+`:<rejected-restore-run>:<rejected-restore-source>:<rejected-namespace-uid>:<rejected-restore-uid>`
+to the resume confirmation. The workflow verifies the original rejection and
+checks that its scope has no allocation before reusing the newer namespace.
+
 `inventory-v1-runtime` is a protected, target-free read-only inventory. Its exact
 confirmation is `inventory-v1-runtime`, with empty `node` and `database`.
 It observes the complete runtime inventory twice between current-main checks.

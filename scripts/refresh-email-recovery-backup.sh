@@ -48,7 +48,7 @@ jq -e '
     $p.containers[0].name=="mirror" and
     $p.containers[0].image=="quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f" and
     ([$p.containers[0].env[]|select(.name=="REQUIRE_REMOTE_SNAPSHOT")|.value]==["true"]) and
-    ([$p.volumes[]|select(.persistentVolumeClaim)|{name,claim:.persistentVolumeClaim.claimName}]==[{name:"snapshots",claim:"vault-snapshots-recovery"}]))
+    ([$p.volumes[]|select(.persistentVolumeClaim)|{name,claim:.persistentVolumeClaim.claimName}]==[{name:"snapshots",claim:"vault-snapshots-recovery-v2"}]))
 ' "$work/source.json" >/dev/null 2>"$work/admission.log" || fail
 # Construct exactly the observed template and retain its CronJob controller owner.
 # Native history cleanup retains that ownership; a manual create still needs

@@ -1,12 +1,12 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: business-site-dev-migration-network
-  namespace: business-site-dev
+  name: business-site-practice-migration
+  namespace: business-site
 spec:
   endpointSelector:
     matchLabels:
-      app.kubernetes.io/name: business-site-dev-migration
+      app.kubernetes.io/name: business-site-practice-migration
   egress:
     - toEndpoints:
         - matchLabels:

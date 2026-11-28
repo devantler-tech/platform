@@ -69,6 +69,7 @@ name: Prepare Longhorn V2 Migration
             recover-wedding-standby-name,
             switch-wedding-primary-to-v2,
             register-temporary-v2-storage,
+            observe-retained-v2-capacity,
             repair-v1-reservation,
             reserve-v1-scratch,
             reserve-v1-backup-scratch,
@@ -77,6 +78,7 @@ name: Prepare Longhorn V2 Migration
             backup-actual-budget-v1,
             restore-actual-budget-v2,
             resume-unstarted-actual-budget-v2,
+            retry-rejected-actual-budget-v2,
             retain-v1-source,
             retain-provider-source,
           ]
@@ -338,8 +340,17 @@ jobs:
                  "${LONGHORN_V2_CONFIRM}" =~ ^restore-actual-budget-v2:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{64}$ ]]
               ;;
             resume-unstarted-actual-budget-v2)
+              run_re='[1-9][0-9]{0,18}'
+              sha_re='[0-9a-f]{40}'
+              uid_re='[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}'
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
-                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-unstarted-actual-budget-v2:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{64}:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+                 "${LONGHORN_V2_CONFIRM}" =~ ^resume-unstarted-actual-budget-v2:${run_re}:${sha_re}:[0-9a-f]{64}:${run_re}:${sha_re}:${uid_re}(:${run_re}:${sha_re}:${uid_re}:${uid_re})?$ ]]
+              ;;
+            retry-rejected-actual-budget-v2)
+              run_re='[1-9][0-9]{0,18}'
+              uid_re='[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+              [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^retry-rejected-actual-budget-v2:${run_re}:[0-9a-f]{40}:[0-9a-f]{64}:${run_re}:[0-9a-f]{40}:${uid_re}:${uid_re}$ ]]
               ;;
             retain-v1-source)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_CONFIRM}" =~ ^retain-longhorn-v1-source:[a-z0-9][-a-z0-9]*/[a-z0-9][-a-z0-9.]*:[0-9a-f]{64}$ ]]
@@ -373,6 +384,10 @@ jobs:
             register-temporary-v2-storage)
               [[ -z "${LONGHORN_V2_NODE}" && -z "${LONGHORN_V2_DATABASE}" &&
                  "${LONGHORN_V2_CONFIRM}" == register-longhorn-v2-temporary-storage ]]
+              ;;
+            observe-retained-v2-capacity)
+              [[ "${LONGHORN_V2_NODE}" == temporary-v2-1 && -z "${LONGHORN_V2_DATABASE}" &&
+                 "${LONGHORN_V2_CONFIRM}" == observe-retained-v2-capacity:temporary-v2-1 ]]
               ;;
             *) exit 1 ;;
           esac

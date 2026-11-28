@@ -106,13 +106,24 @@ func LoadEmailRecoveryClient(getenv func(string) string) (*http.Client, *url.URL
 	return newProductionClient(config)
 }
 
-// LoadBenchmarkAdmissionClient admits the protected benchmark, restore or
-// explicitly confirmed CNPG name recovery. The caller must first join the
+// LoadBenchmarkAdmissionClient admits verified storage admission dry-runs for
+// the protected workflow. The caller must first join the
 // selected address to its serving process and verified Hetzner server.
 func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Addr, originalRun string) (*http.Client, *url.URL, error) {
 	operation, confirmation := "benchmark-v1", "benchmark-longhorn-storage"
 	database := ""
 	switch {
+	case getenv("LONGHORN_V2_OPERATION") == "migrate-openbao-v2-pair":
+		operation, confirmation = "migrate-openbao-v2-pair", getenv("LONGHORN_V2_CONFIRM")
+		if originalRun != "" || !openBaoPairCutoverConfirm.MatchString(confirmation) {
+			return nil, nil, errors.New("protected OpenBao admission dispatch is unverified")
+		}
+	case getenv("LONGHORN_V2_OPERATION") == "resume-openbao-v2-pair":
+		operation, confirmation = "resume-openbao-v2-pair", getenv("LONGHORN_V2_CONFIRM")
+		fields := openBaoPairResumeConfirm.FindStringSubmatch(confirmation)
+		if fields == nil || fields[1] != originalRun || originalRun == getenv("GITHUB_RUN_ID") {
+			return nil, nil, errors.New("protected OpenBao admission dispatch is unverified")
+		}
 	case originalRun != "":
 		if !runPattern.MatchString(originalRun) || originalRun == getenv("GITHUB_RUN_ID") {
 			return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
@@ -194,6 +205,8 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 		}
 	case "migrate-coroot-keeper-v2":
 		scope = directKeeperCreate
+	case "migrate-openbao-v2-pair", "resume-openbao-v2-pair":
+		scope = directOpenBaoCreate
 	}
 	return newProductionClientAt(config, directIP, scope)
 }
@@ -248,9 +261,12 @@ const (
 	directKeeperCreate   directCreateScope = "keeper"
 	directIdentityCreate directCreateScope = "customer-identity"
 	directPortalCreate   directCreateScope = "business-site"
+	directOpenBaoCreate  directCreateScope = "openbao"
 )
 
 var corootKeeperCutoverConfirm = regexp.MustCompile(`^migrate-coroot-keeper-v2:[0-2]:[a-f0-9]{64}$`)
+var openBaoPairCutoverConfirm = regexp.MustCompile(`^migrate-openbao-v2-pair:openbao-[0-2]:[a-f0-9]{64}$`)
+var openBaoPairResumeConfirm = regexp.MustCompile(`^resume-openbao-v2-pair:openbao-[0-2]:[a-f0-9]{64}:([1-9][0-9]{0,18})$`)
 
 func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr, scope directCreateScope) (*http.Client, *url.URL, error) {
 	if raw == nil || raw.Contexts["admin@prod"] == nil {
@@ -331,6 +347,8 @@ func (scope directCreateScope) permits(path string) bool {
 		return path == base+"/pods" || path == base+"/persistentvolumeclaims" || path == "/apis/batch/v1/namespaces/"+string(scope)+"/jobs"
 	case directKeeperCreate:
 		return path == "/api/v1/namespaces/observability/pods" || path == "/api/v1/namespaces/observability/persistentvolumeclaims"
+	case directOpenBaoCreate:
+		return path == "/api/v1/namespaces/openbao/pods" || path == "/api/v1/namespaces/openbao/persistentvolumeclaims"
 	default:
 		return false
 	}

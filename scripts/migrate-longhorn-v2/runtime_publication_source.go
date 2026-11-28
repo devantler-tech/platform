@@ -10,8 +10,7 @@ func runtimePublicationRoots() map[string]string {
 		"bootstrap": "clusters/prod/bootstrap", "flux-instance": "providers/hetzner/infrastructure/controllers/flux-instance",
 		"infrastructure-controllers": "providers/hetzner/infrastructure/controllers", "infrastructure": "providers/hetzner/infrastructure",
 		"apps": "providers/hetzner/apps", "platform-health": "providers/hetzner/health",
-		"github-broker":         "providers/hetzner/apps/github-broker/server",
-		"business-site-preview": "providers/hetzner/business-site-preview-workload",
+		"github-broker": "providers/hetzner/apps/github-broker/server",
 	}
 }
 

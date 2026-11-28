@@ -35,6 +35,8 @@ func main() {
 		authorization = authorizeRetainedTemporaryPreparation(os.Getenv, target)
 	case observeTemporaryRecoveryOperation:
 		authorization = authorizeTemporaryRecoveryObservation(os.Getenv, target)
+	case temporaryReserveObservation:
+		authorization = authorizeTemporaryReserveObservation(os.Getenv)
 	case "benchmark-v1", "benchmark-v2":
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
 	case recoverUnstartedV1Operation:
@@ -105,7 +107,7 @@ func main() {
 		_, authorization = authorizeActualBudgetScratch(os.Getenv)
 	case actualBudgetBackupOperation:
 		authorization = authorizeActualBudgetBackup(os.Getenv)
-	case actualBudgetRestoreOperation, actualBudgetRestoreResume:
+	case actualBudgetRestoreOperation, actualBudgetRestoreResume, actualBudgetRestoreRetry:
 		_, authorization = authorizeActualBudgetRestore(os.Getenv)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
@@ -397,7 +399,21 @@ func main() {
 		}
 		return
 	}
-	if operation == actualBudgetRestoreOperation || operation == actualBudgetRestoreResume {
+	if operation == temporaryReserveObservation {
+		observing, stop := context.WithTimeout(ctx, 20*time.Minute)
+		defer stop()
+		activation := temporaryV2Activation{
+			c:      client{run: temporaryReserveReadCommand, context: "admin@prod", inventoryPools: pools},
+			source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools,
+		}
+		if err := activation.observeUnusedReserve(observing); err != nil {
+			fmt.Fprintln(os.Stderr, "Retained V2 capacity observation held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("LONGHORN_V2_RETAINED_CAPACITY=VERIFIED usableExtentGiB=96 additionalFailureDomains=0 writes=0")
+		return
+	}
+	if operation == actualBudgetRestoreOperation || operation == actualBudgetRestoreResume || operation == actualBudgetRestoreRetry {
 		confirmation, err := authorizeActualBudgetRestore(os.Getenv)
 		if err == nil {
 			c := client{run: execute, context: "admin@prod", inventoryPools: pools}

@@ -15,6 +15,12 @@ def volume_snapshot_content: "volumesnapshotcontents.snapshot.storage.k8s.io";
 def only_excludes($approved): ((. // []) - $approved) == [];
 def includes_all: (. // []) | . == [] or . == ["*"];
 
+def reviewed_volume_policy:
+  .spec.resourcePolicy == null or
+  .spec.resourcePolicy == {kind: "configmap", name: "velero-volume-policies"} or
+  (.spec.resourcePolicy == {kind: "configmap", name: "velero-daily-volume-policies"} and
+   .spec.defaultVolumesToFsBackup == true);
+
 def full:
   (.spec.excludedNamespaces // []) as $excluded |
   .metadata.labels["velero.io/schedule-name"] == "velero-daily-full" and
@@ -28,7 +34,7 @@ def full:
   (.spec.excludedResources | only_excludes([volume_snapshot, volume_snapshot_content])) and
   (.spec.excludedNamespaceScopedResources | only_excludes([volume_snapshot])) and
   (.spec.excludedClusterScopedResources | only_excludes([volume_snapshot_content])) and
-  (.spec.resourcePolicy == null or .spec.resourcePolicy == {kind: "configmap", name: "velero-volume-policies"});
+  reviewed_volume_policy;
 
 def execution_time:
   if type == "string" then

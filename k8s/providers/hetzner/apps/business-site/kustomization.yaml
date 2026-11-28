@@ -29,5 +29,9 @@ resources:
   - cilium-network-policy-portal-db-coroot.yaml
   - cilium-network-policy-portal-egress.yaml
   - cilium-network-policy-portal-migration.yaml
+  # The signed site release migrates the isolated practice database with its
+  # own projection and network policy.
+  - external-secret-practice-migration.yaml
+  - cilium-network-policy-practice-migration.yaml
   # The WebApp's one projected Secret: disclosure and the portal's inputs.
   - external-secret-runtime.yaml

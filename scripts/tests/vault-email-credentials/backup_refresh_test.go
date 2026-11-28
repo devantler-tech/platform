@@ -49,7 +49,7 @@ printf 'BACKUP_CLEANUP_OWNER=PASS child=REFUSED parent=VERIFIED\n'
 }
 
 func TestBackupRefreshRequiresTheOwnedCompletedSnapshotAndMirror(t *testing.T) {
-	for _, scenario := range []string{"complete", "owned-unfinished", "owned-complete", "foreign-unfinished", "jobs-read-failed", "jobs-partial", "active", "image", "pvc", "changed", "create-unknown", "failed", "replacement", "pod-missing"} {
+	for _, scenario := range []string{"complete", "owned-unfinished", "owned-complete", "foreign-unfinished", "jobs-read-failed", "jobs-partial", "active", "image", "pvc", "legacy-pvc", "changed", "create-unknown", "failed", "replacement", "pod-missing"} {
 		t.Run(scenario, func(t *testing.T) {
 			work := t.TempDir()
 			if err := os.Chmod(work, 0700); err != nil {
@@ -71,7 +71,8 @@ func TestBackupRefreshRequiresTheOwnedCompletedSnapshotAndMirror(t *testing.T) {
 			spec["jobTemplate"].(map[string]any)["metadata"] = map[string]any{"labels": map[string]any{"example.invalid/retain": "yes"}, "annotations": map[string]any{"example.invalid/retain": "yes"}}
 			template := spec["jobTemplate"].(map[string]any)["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
 			volumes := template["volumes"].([]any)
-			volumes[0].(map[string]any)["persistentVolumeClaim"].(map[string]any)["claimName"] = "vault-snapshots-recovery"
+			snapshots := volumes[0].(map[string]any)["persistentVolumeClaim"].(map[string]any)
+			snapshots["claimName"] = "vault-snapshots-recovery-v2"
 			mirror := template["containers"].([]any)[0].(map[string]any)
 			mirror["env"].([]any)[1].(map[string]any)["value"] = "true"
 			if scenario == "active" {
@@ -81,7 +82,10 @@ func TestBackupRefreshRequiresTheOwnedCompletedSnapshotAndMirror(t *testing.T) {
 				mirror["image"] = "unreviewed.invalid/image:latest"
 			}
 			if scenario == "pvc" {
-				volumes[0].(map[string]any)["persistentVolumeClaim"].(map[string]any)["claimName"] = "other"
+				snapshots["claimName"] = "other"
+			}
+			if scenario == "legacy-pvc" {
+				snapshots["claimName"] = "vault-snapshots-recovery"
 			}
 			data, err := json.Marshal(cron)
 			if err != nil {
@@ -144,7 +148,7 @@ esac
 			if strings.Contains(string(calls), " delete ") {
 				t.Fatal("unknown resource was deleted")
 			}
-			early := scenario == "owned-unfinished" || scenario == "jobs-read-failed" || scenario == "jobs-partial" || scenario == "active" || scenario == "image" || scenario == "pvc" || scenario == "changed"
+			early := scenario == "owned-unfinished" || scenario == "jobs-read-failed" || scenario == "jobs-partial" || scenario == "active" || scenario == "image" || scenario == "pvc" || scenario == "legacy-pvc" || scenario == "changed"
 			if early && strings.Contains(string(calls), " create ") {
 				t.Fatal("unsafe source created a job")
 			}

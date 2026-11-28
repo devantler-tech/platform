@@ -56,7 +56,7 @@ func actualBudgetPreparationMatches(current, desired object) bool {
 	}
 }
 
-func prepareActualBudgetRestoreScope(ctx context.Context, c client, source string, prior *actualBudgetPriorRestore, assets []object) (object, error) {
+func prepareActualBudgetRestoreScope(ctx context.Context, c client, source string, prior *actualBudgetPriorRestore, assets []object, permitted ...benchmarkResource) (object, error) {
 	const refused = "the original isolated Actual Budget preparation could not be verified"
 	namespace, policy, modifier := assets[0], assets[1], assets[2]
 	name := text(namespace, "metadata", "name")
@@ -76,7 +76,7 @@ func prepareActualBudgetRestoreScope(ctx context.Context, c client, source strin
 	if !actualBudgetPreparationMatches(current, namespace) {
 		return nil, errors.New(refused)
 	}
-	if err = verifyUnstartedActualBudgetRestore(ctx, c, current); err != nil {
+	if err = verifyUnstartedActualBudgetRestore(ctx, c, current, permitted...); err != nil {
 		return nil, err
 	}
 	if err = verifyActualBudgetPreparationAssets(ctx, c, source, policy, modifier, true); err != nil {
@@ -118,7 +118,7 @@ func verifyActualBudgetPreparationAssets(ctx context.Context, c client, source s
 
 // A prior accepted Restore or storage transfer may still own data after its
 // workflow exits. Recovery of that state requires its own exact review.
-func verifyUnstartedActualBudgetRestore(ctx context.Context, c client, namespace object) error {
+func verifyUnstartedActualBudgetRestore(ctx context.Context, c client, namespace object, permitted ...benchmarkResource) error {
 	refused := errors.New("the Actual Budget restore already has a request, workload or storage; preserve the isolated scope")
 	identity := benchmarkIdentity(namespace)
 	name := identity.Name
@@ -127,13 +127,18 @@ func verifyUnstartedActualBudgetRestore(ctx context.Context, c client, namespace
 		text(renewed, "status", "phase") != "Active" ||
 		!reflect.DeepEqual(value(renewed, "metadata", "labels"), value(namespace, "metadata", "labels")) ||
 		!reflect.DeepEqual(value(renewed, "metadata", "annotations"), value(namespace, "metadata", "annotations")) ||
-		!actualBudgetRestoreScopeClear(ctx, c, identity) {
+		!actualBudgetRestoreScopeClear(ctx, c, append(permitted, identity)...) {
 		return refused
 	}
 	restore, err := c.get(ctx, "restores.velero.io", "velero", name, true)
 	if err != nil || restore != nil {
 		return refused
 	}
+	return verifyEmptyActualBudgetRestoreAllocation(ctx, c, name, "")
+}
+
+func verifyEmptyActualBudgetRestoreAllocation(ctx context.Context, c client, name, restoreUID string) error {
+	refused := errors.New("the Actual Budget restore scope already has a workload or storage activity")
 	for _, kind := range []string{"pods", "persistentvolumeclaims"} {
 		items, err := c.list(ctx, kind, name)
 		if err != nil || len(items) != 0 {
@@ -148,6 +153,18 @@ func verifyUnstartedActualBudgetRestore(ctx context.Context, c client, namespace
 		if text(transfer, "metadata", "labels", "velero.io/restore-name") == name ||
 			text(transfer, "spec", "targetVolume", "namespace") == name {
 			return refused
+		}
+		if restoreUID != "" {
+			if text(transfer, "metadata", "labels", "velero.io/restore-uid") == restoreUID {
+				return refused
+			}
+			owners, _ := value(transfer, "metadata", "ownerReferences").([]any)
+			for _, raw := range owners {
+				owner, _ := raw.(object)
+				if text(owner, "uid") == restoreUID {
+					return refused
+				}
+			}
 		}
 	}
 	return nil

@@ -1,0 +1,35 @@
+# The daily schedule uses Kopia for mounted PVCs that have no matching rule.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: velero-daily-volume-policies
+  namespace: velero
+  labels:
+    velero.io/volume-policy: "true"
+data:
+  policy.yaml: |
+    version: v1
+    volumePolicies:
+      # The OpenBao snapshot CronJob mirrors data from this labelled claim to R2.
+      - conditions:
+          storageClass:
+            - hcloud
+          pvcLabels:
+            backup.platform.devantler.tech/volume-data: independently-mirrored
+        action:
+          type: skip
+      # Back up mounted legacy Longhorn PVCs through Kopia. CSI snapshot uploads
+      # provision V1 scratch volumes that can exhaust the space needed for the
+      # remaining migration. The node-agent reads the mounted volume for this
+      # route and stores the backup in the existing R2 BackupStorageLocation.
+      - conditions:
+          storageClass:
+            - longhorn
+        action:
+          type: fs-backup
+      # Skip ephemeral volumes to avoid spending mover memory on scratch data.
+      - conditions:
+          volumeTypes:
+            - emptyDir
+        action:
+          type: skip

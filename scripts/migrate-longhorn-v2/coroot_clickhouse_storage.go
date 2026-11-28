@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"strconv"
@@ -36,10 +37,14 @@ type corootClickHouseStorageSummary struct {
 }
 
 func readClickHouseStorageRows[T any](raw []byte) ([]T, error) {
-	if len(raw) == 0 || len(raw) > corootClickHouseMaxBytes {
+	if len(raw) > corootClickHouseMaxBytes {
 		return nil, errCorootClickHouseStorage
 	}
-	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("query returned no rows: %w", errCorootClickHouseStorage)
+	}
+	lines := bytes.Split(trimmed, []byte("\n"))
 	if len(lines) > corootClickHouseMaxRows {
 		return nil, errCorootClickHouseStorage
 	}
@@ -80,7 +85,7 @@ func classifyCorootClickHouseStorage(members [2]string, tables [2][]corootClickH
 		}
 	}
 	if len(catalogs[0]) == 0 || !maps.Equal(catalogs[0], catalogs[1]) {
-		return none, errCorootClickHouseStorage
+		return none, fmt.Errorf("table catalogs differ or are empty: %w", errCorootClickHouseStorage)
 	}
 	replicated := make(map[tableName]string)
 	counts.Tables = len(catalogs[0])
@@ -96,7 +101,7 @@ func classifyCorootClickHouseStorage(members [2]string, tables [2][]corootClickH
 		}
 	}
 	if counts.Replicated == 0 {
-		return none, errCorootClickHouseStorage
+		return none, fmt.Errorf("neither table catalog identifies replicated storage: %w", errCorootClickHouseStorage)
 	}
 	var paths [2]map[tableName]string
 	for member, rows := range replicas {
@@ -105,17 +110,19 @@ func classifyCorootClickHouseStorage(members [2]string, tables [2][]corootClickH
 			key := tableName{row.Database, row.Name}
 			delay, err := strconv.ParseUint(row.DelaySeconds, 10, 64)
 			if want, ok := replicated[key]; !ok || want != row.Engine || row.Replica != members[member] ||
-				!strings.HasPrefix(row.KeeperPath, "/") || paths[member][key] != "" ||
-				row.ActiveReplicas != 2 || row.TotalReplicas != 2 || row.ReadOnly != "0" || row.SessionExpired != "0" ||
+				!strings.HasPrefix(row.KeeperPath, "/") || paths[member][key] != "" {
+				return none, fmt.Errorf("replica identity did not match the table catalog for member %d: %w", member, errCorootClickHouseStorage)
+			}
+			if row.ActiveReplicas != 2 || row.TotalReplicas != 2 || row.ReadOnly != "0" || row.SessionExpired != "0" ||
 				row.PartsToCheck != "0" || err != nil || row.QueueErrorAbsent != 1 || row.KeeperErrorAbsent != 1 {
-				return none, errCorootClickHouseStorage
+				return none, fmt.Errorf("replication health was unverified for member %d: %w", member, errCorootClickHouseStorage)
 			}
 			paths[member][key] = row.KeeperPath
 			counts.MaxReplicaDelaySeconds = max(counts.MaxReplicaDelaySeconds, delay)
 		}
 	}
 	if len(paths[0]) != counts.Replicated || !maps.Equal(paths[0], paths[1]) {
-		return none, errCorootClickHouseStorage
+		return none, fmt.Errorf("replicated tables do not have matching Keeper paths: %w", errCorootClickHouseStorage)
 	}
 	return counts, nil
 }
