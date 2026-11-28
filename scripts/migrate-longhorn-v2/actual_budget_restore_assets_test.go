@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -35,11 +36,16 @@ func TestActualBudgetRestoreCopiesOnlyTheArchivedClaim(t *testing.T) {
 	}
 	var document struct {
 		Rules []struct {
-			Conditions object   `json:"conditions"`
-			Patches    []object `json:"patches"`
+			Conditions object `json:"conditions"`
+			Patches    []struct {
+				Operation, Path, Value string
+			} `json:"patches"`
 		} `json:"resourceModifierRules"`
+		Version string `json:"version"`
 	}
-	if err := json.Unmarshal([]byte(text(modifiers, "data", "modifiers.json")), &document); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(text(modifiers, "data", "modifiers.json")))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&document); err != nil {
 		t.Fatal("invalid claim modifier", err)
 	}
 	rules := document.Rules
@@ -48,10 +54,10 @@ func TestActualBudgetRestoreCopiesOnlyTheArchivedClaim(t *testing.T) {
 		t.Fatal("the modifier must select only the backed up claim")
 	}
 	patches := rules[0].Patches
-	if len(patches) != 2 || text(patches[0], "op") != "replace" ||
-		text(patches[0], "path") != "/spec/storageClassName" || text(patches[0], "value") != "longhorn-v2" ||
-		text(patches[1], "op") != "add" || text(patches[1], "path") != "/metadata/annotations/volume.kubernetes.io~1selected-node" ||
-		text(patches[1], "value") != "restore-worker" {
+	if len(patches) != 2 || patches[0].Operation != "replace" ||
+		patches[0].Path != "/spec/storageClassName" || patches[0].Value != "longhorn-v2" ||
+		patches[1].Operation != "add" || patches[1].Path != "/metadata/annotations/volume.kubernetes.io~1selected-node" ||
+		patches[1].Value != "restore-worker" {
 		t.Fatal("the modifier must keep Velero's binding selector and select the verified WFFC restore node")
 	}
 }

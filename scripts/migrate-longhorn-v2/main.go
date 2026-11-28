@@ -107,7 +107,7 @@ func main() {
 		_, authorization = authorizeActualBudgetScratch(os.Getenv)
 	case actualBudgetBackupOperation:
 		authorization = authorizeActualBudgetBackup(os.Getenv)
-	case actualBudgetRestoreOperation, actualBudgetRestoreResume:
+	case actualBudgetRestoreOperation, actualBudgetRestoreResume, actualBudgetRestoreRetry:
 		_, authorization = authorizeActualBudgetRestore(os.Getenv)
 	case retainV1SourceOperation:
 		authorization = authorizeV1SourceRetention(os.Getenv)
@@ -427,7 +427,7 @@ func main() {
 		fmt.Println("LONGHORN_V2_RETAINED_CAPACITY=REGISTERED additionalDisks=1 additionalFailureDomains=0")
 		return
 	}
-	if operation == actualBudgetRestoreOperation || operation == actualBudgetRestoreResume {
+	if operation == actualBudgetRestoreOperation || operation == actualBudgetRestoreResume || operation == actualBudgetRestoreRetry {
 		confirmation, err := authorizeActualBudgetRestore(os.Getenv)
 		if err == nil {
 			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
