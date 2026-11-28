@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/devantler-tech/platform/internal/strictjson"
@@ -88,17 +89,24 @@ func (j openBaoPairJournal) proveAdmissionFences(ctx context.Context) error {
 	if err != nil || !r.valid() || r.FencePending != "" || r.FenceAssets[3].UID == "" {
 		return errors.Join(err, errOpenBaoProviderStorage)
 	}
+	var originalRun string
+	if os.Getenv("LONGHORN_V2_OPERATION") == openBaoPairResumeOperation {
+		originalRun = r.Plan.Run
+	}
 	for index, policy := range policies {
 		name := text(policy, "metadata", "name")
 		receipt := benchmarkFenceReceipt{PolicyUID: r.FenceAssets[index*2].UID, BindingUID: r.FenceAssets[index*2+1].UID}
+		var lastProof error
 		err := waitReadyWithin(ctx, 75*time.Second, func(ctx context.Context) error {
-			return proveReferenceFenceOnServingAPIs(ctx, j.client, r.Plan.Source, "", policy, receipt,
+			lastProof = proveReferenceFenceOnServingAPIs(ctx, j.client, r.Plan.Source, originalRun, policy, receipt,
 				func(ctx context.Context, c *http.Client, endpoint *url.URL) error {
 					return probeOpenBaoFence(ctx, c, endpoint, index, name, r.Plan)
 				})
+			return lastProof
 		})
 		if err != nil {
-			return err
+			resource := [2]string{"pod", "claim"}[index]
+			return fmt.Errorf("OpenBao %s fence proof: %w", resource, errors.Join(err, lastProof))
 		}
 	}
 	return nil
