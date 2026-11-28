@@ -75,7 +75,7 @@ func recheckUmamiStandbyAdmission(ctx context.Context, c client, witness cnpgSta
 		return err
 	}
 	profile, admitted := cnpgStandbyTransition(actual.cluster)
-	if !admitted || !cnpgV1StorageRetained(profile, actual.cluster, actual.pod, actual.claim, actual.pv, actual.volume) {
+	if !admitted || !cnpgOwned(actual.claim, actual.cluster) || !actual.originalAttached(profile, witness) {
 		return errors.New("the original standby storage changed during admission")
 	}
 	return nil
@@ -83,6 +83,12 @@ func recheckUmamiStandbyAdmission(ctx context.Context, c client, witness cnpgSta
 
 type umamiStandbyAdmission struct {
 	cluster, pod, claim, pv, volume, budget object
+	provider                                *providerCNPGOriginal
+}
+
+func (a umamiStandbyAdmission) originalAttached(profile cnpgStandbyProfile, witness cnpgStandbyCutover) bool {
+	return sameProviderCNPGOriginal(a.provider, witness.Provider) &&
+		cnpgAttachedOriginalMatches(profile, a.pod, a.claim, a.pv, a.volume, a.provider)
 }
 
 func readUmamiStandbyAdmission(ctx context.Context, c client, witness cnpgStandbyCutover) (umamiStandbyAdmission, error) {
@@ -96,7 +102,6 @@ func readUmamiStandbyAdmission(ctx context.Context, c client, witness cnpgStandb
 		{"clusters.postgresql.cnpg.io", witness.Database, &actual.cluster},
 		{"persistentvolumeclaim", witness.Claim, &actual.claim},
 		{"persistentvolume", witness.PV, &actual.pv},
-		{"volumes.longhorn.io", witness.Volume, &actual.volume},
 		{"poddisruptionbudget", witness.Budget, &actual.budget},
 	} {
 		current, err := c.get(ctx, resource.kind, resource.identity.Namespace, resource.identity.Name, false)
@@ -117,6 +122,19 @@ func readUmamiStandbyAdmission(ctx context.Context, c client, witness cnpgStandb
 		!recoveredPostgresMount(pod, actual.claim) || !onlyCNPGStandbyUsesClaim(pods, pod, witness.Claim.Name, witness.Consumer.Namespace) ||
 		!cnpgTransitionDisruptionAllowed(budget, cluster, profile) {
 		return umamiStandbyAdmission{}, refused
+	}
+	if witness.Provider != nil {
+		current, err := readAttachedProviderCNPGOriginal(ctx, c, pod, actual.claim, actual.pv)
+		if err != nil || current != *witness.Provider {
+			return umamiStandbyAdmission{}, refused
+		}
+		actual.provider = &current
+	} else {
+		volume, err := c.get(ctx, "volumes.longhorn.io", witness.Volume.Namespace, witness.Volume.Name, false)
+		if err != nil || benchmarkIdentity(volume) != witness.Volume {
+			return umamiStandbyAdmission{}, refused
+		}
+		actual.volume = volume
 	}
 	return actual, nil
 }

@@ -56,6 +56,9 @@ name: Prepare Longhorn V2 Migration
             resume-umami-archive-data,
             observe-umami-v2-standby,
             observe-provider-cnpg-v2-standby,
+            replace-provider-cnpg-v2-standby,
+            resume-retained-provider-cnpg-v2-standby,
+            recover-provider-cnpg-standby-name,
             replace-umami-v2-standby,
             resume-retained-umami-v2-standby,
             switch-umami-primary-to-v2,
@@ -239,6 +242,21 @@ jobs:
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(customer-identity-db|business-site-portal-db)$ &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^observe-provider-cnpg-v2-standby:${LONGHORN_V2_DATABASE}-[1-9][0-9]*$ ]]
               ;;
+            replace-provider-cnpg-v2-standby)
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(customer-identity-db|business-site-portal-db)$ &&
+                 "${LONGHORN_V2_CONFIRM}" =~ ^replace-provider-cnpg-v2-standby:${LONGHORN_V2_DATABASE}-[1-9][0-9]*:${LONGHORN_V2_DATABASE}-[1-9][0-9]*$ ]]
+              ;;
+            resume-retained-provider-cnpg-v2-standby|recover-provider-cnpg-standby-name)
+              run_re='[1-9][0-9]{0,18}'
+              uid_re='[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+              standby_ref="${LONGHORN_V2_DATABASE}-[1-9][0-9]*:${run_re}:[0-9a-f]{40}:${uid_re}"
+              [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(customer-identity-db|business-site-portal-db)$ ]]
+              if [[ "${LONGHORN_V2_OPERATION}" == resume-retained-provider-cnpg-v2-standby ]]; then
+                [[ "${LONGHORN_V2_CONFIRM}" =~ ^resume-retained-provider-cnpg-v2-standby:${standby_ref}$ ]]
+              else
+                [[ "${LONGHORN_V2_CONFIRM}" =~ ^recover-provider-cnpg-standby-name:${standby_ref}:${run_re}:[0-9a-f]{40}:${uid_re}(:${run_re})?$ ]]
+              fi
+              ;;
             replace-umami-v2-standby)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" == umami-db &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^replace-umami-v2-standby:umami-db-[1-9][0-9]*:umami-db-[1-9][0-9]*$ ]]
@@ -419,6 +437,8 @@ jobs:
               inputs.operation != 'prepare-native-v1-seed' && inputs.operation != 'reclaim-native-v2-seed' &&
               inputs.operation != 'resume-native-v2-reclaim' && inputs.operation != 'recover-umami-standby-name' &&
               inputs.operation != 'recover-wedding-standby-name' && inputs.operation != 'migrate-coroot-keeper-v2' &&
+              inputs.operation != 'replace-provider-cnpg-v2-standby' && inputs.operation != 'resume-retained-provider-cnpg-v2-standby' &&
+              inputs.operation != 'recover-provider-cnpg-standby-name' &&
               inputs.operation != 'migrate-openbao-v2-pair' && inputs.operation != 'resume-openbao-v2-pair' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -469,6 +489,14 @@ jobs:
         run: go run ./scripts/migrate-longhorn-v2
       - name: Recover the confirmed database standby claim name
         if: ${{ inputs.operation == 'recover-umami-standby-name' || inputs.operation == 'recover-wedding-standby-name' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Run the confirmed provider database standby replacement
+        if: >-
+          ${{ inputs.operation == 'replace-provider-cnpg-v2-standby' || inputs.operation == 'resume-retained-provider-cnpg-v2-standby' ||
+              inputs.operation == 'recover-provider-cnpg-standby-name' }}
         env:
           GH_TOKEN: ${{ github.token }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

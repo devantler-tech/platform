@@ -35,7 +35,7 @@ func TestUmamiStandbyRetentionChangesOnlyControllerOwnership(t *testing.T) {
 			case "lost Retain":
 				valueObject(pv, "spec")["persistentVolumeReclaimPolicy"] = "Delete"
 			}
-			changes, err := umamiStandbyClaimRetentionChanges(witness, cluster, pod, claim, pv, volume)
+			changes, err := umamiStandbyClaimRetentionChanges(witness, umamiStandbyAdmission{cluster: cluster, pod: pod, claim: claim, pv: pv, volume: volume})
 			if fault != "" {
 				if err == nil || len(changes) != 0 {
 					t.Fatal("changed original storage accepted")

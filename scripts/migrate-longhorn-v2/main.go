@@ -83,6 +83,8 @@ func main() {
 		_, _, authorization = authorizeUmamiStandbyObservation(os.Getenv)
 	case providerCNPGStandbyObservation:
 		_, authorization = authorizeProviderCNPGStandby(os.Getenv)
+	case replaceProviderCNPGStandbyOperation, resumeProviderCNPGStandbyOperation, recoverProviderCNPGStandbyOperation:
+		_, authorization = authorizeProviderCNPGReplacement(os.Getenv, operation)
 	case umamiStandbyReplacementOperation, umamiV2SwitchoverOperation:
 		_, _, authorization = authorizeUmamiStandbyTarget(os.Getenv, operation)
 	case weddingV2SwitchoverOperation:
@@ -443,6 +445,17 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("WEDDING_V2_STANDBY_REPLACEMENT=VERIFIED originalStorage=RETAINED replicas=3 physicalReplay=VERIFIED")
+		return
+	}
+	if operation == replaceProviderCNPGStandbyOperation || operation == resumeProviderCNPGStandbyOperation || operation == recoverProviderCNPGStandbyOperation {
+		replacementContext, stop := context.WithTimeout(ctx, 30*time.Minute)
+		defer stop()
+		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		if err := runProviderCNPGReplacement(replacementContext, c, os.Getenv, operation); err != nil {
+			fmt.Fprintln(os.Stderr, "Provider database standby replacement held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("PROVIDER_CNPG_V2_STANDBY_REPLACEMENT=VERIFIED originalStorage=RETAINED replicas=3 physicalReplay=VERIFIED")
 		return
 	}
 	if operation == umamiV2SwitchoverOperation || operation == weddingV2SwitchoverOperation {

@@ -142,6 +142,21 @@ func observeUmamiOriginalDetached(ctx context.Context, journal *umamiStandbyRepl
 	if err != nil {
 		return err
 	}
+	if witness.Provider != nil {
+		for _, pod := range pods {
+			if text(pod, "metadata", "name") == witness.Consumer.Name || podUsesUmamiClaim(pod, witness.Claim.Name) {
+				return errProviderCNPGStandby
+			}
+		}
+		pv, err := readDetachedProviderCNPGOriginal(ctx, c, *witness.Provider, "Bound")
+		if err != nil {
+			return err
+		}
+		if !providerCNPGOriginalClaimMatches(*witness.Provider, claim, pv) || !umamiRetainedClaimMetadata(claim, witness.Consumer.Name) {
+			return errProviderCNPGStandby
+		}
+		return nil
+	}
 	pv, err := c.get(ctx, "persistentvolume", "", witness.PV.Name, false)
 	if err != nil {
 		return err

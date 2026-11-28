@@ -80,10 +80,6 @@ func observeCNPGStandbyCutover(ctx context.Context, c client, source string, dat
 	if err != nil {
 		return cnpgStandbyCutover{}, err
 	}
-	volume, err := c.get(ctx, "volumes.longhorn.io", "longhorn-system", pvName, false)
-	if err != nil {
-		return cnpgStandbyCutover{}, err
-	}
 	budget, err := c.get(ctx, "poddisruptionbudget", namespace, name, false)
 	if err != nil {
 		return cnpgStandbyCutover{}, err
@@ -103,7 +99,21 @@ func observeCNPGStandbyCutover(ctx context.Context, c client, source string, dat
 	if err != nil || !reflect.DeepEqual(spareBefore, spareAfter) {
 		return cnpgStandbyCutover{}, errors.New("the qualified V2 spare changed during observation")
 	}
-	result, err := bindCNPGStandbyCutover(after, pods, target, claim, pv, volume, budget)
+	var volume object
+	var provider *providerCNPGOriginal
+	if providerCNPGStandbySource(database.Name) == database {
+		original, err := readAttachedProviderCNPGOriginal(ctx, c, cnpgRecoveryPodByName(pods, target), claim, pv)
+		if err != nil {
+			return cnpgStandbyCutover{}, err
+		}
+		provider = &original
+	} else {
+		volume, err = c.get(ctx, "volumes.longhorn.io", "longhorn-system", pvName, false)
+		if err != nil {
+			return cnpgStandbyCutover{}, err
+		}
+	}
+	result, err := bindCNPGStandbyCutover(after, pods, target, claim, pv, volume, budget, provider)
 	if err != nil {
 		return cnpgStandbyCutover{}, err
 	}
