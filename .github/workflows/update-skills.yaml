@@ -31,7 +31,7 @@ jobs:
       contents: write
       pull-requests: write
       id-token: write # lets update-agent-skills-action's skill updater prove its identity to the GitHub token broker (ADR 0020)
-    uses: devantler-tech/update-agent-skills-action/.github/workflows/update-agent-skills.yaml@ef115f991d843885b69a33ca955e966b1108084a # v1.1.3
+    uses: devantler-tech/update-agent-skills-action/.github/workflows/update-agent-skills.yaml@b69a4e3169b679f08ff04cead3c96c4b89aa8809 # v1.2.0
     with:
       dir: .agents/skills
       # These are development skills our own agents use, not skills the platform publishes.
@@ -48,5 +48,3 @@ jobs:
       # repo's required CI (a PR opened with GITHUB_TOKEN does not), instead
       # of landing permanently blocked on missing required checks.
       use-app-token: true
-    secrets:
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
