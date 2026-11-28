@@ -7,6 +7,26 @@ import (
 	"github.com/devantler-tech/platform/internal/longhorninventory"
 )
 
+func TestTemporaryReserveDecodesNativeDiscoveredVolumeIdentity(t *testing.T) {
+	const first = `{"metadata":{"namespace":"runtime","type":"DiscoveredVolumes.block.talos.dev","id":"dm-1"},"spec":{"type":"disk"}}`
+	const second = `{"metadata":{"namespace":"runtime","type":"DiscoveredVolumes.block.talos.dev","id":"sda1"},"spec":{"type":"partition"}}`
+	stream := first + "\n" + second + "\n"
+	rows, err := decodeTemporaryReserveDevices([]byte(stream))
+	if err != nil || len(rows) != 2 || text(rows[0], "metadata", "id") != "dm-1" || text(rows[1], "metadata", "id") != "sda1" {
+		t.Fatalf("valid Talos device stream was refused: %v", err)
+	}
+	for _, invalid := range []string{
+		strings.Replace(stream, `"runtime"`, `"block"`, 1),
+		strings.Replace(stream, "DiscoveredVolumes", "VolumeStatuses", 1),
+		strings.Replace(stream, "sda1", "dm-1", 1),
+		stream + "{",
+	} {
+		if rows, err := decodeTemporaryReserveDevices([]byte(invalid)); err == nil || rows != nil {
+			t.Fatal("an invalid or incomplete device stream was accepted")
+		}
+	}
+}
+
 func TestReservedCapacityMatchesTheUnusedPreparedExtent(t *testing.T) {
 	const oldUUID = "12345678-1234-4234-8234-000000000009"
 	for _, fault := range []string{"", "changed extent", "filesystem identity differs", "wrong temporary pool", "previously registered",
