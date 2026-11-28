@@ -348,6 +348,41 @@ func TestNativeSeedReachesTheExistingAdmissionCredentialBoundary(t *testing.T) {
 	}
 }
 
+func TestOpenBaoAdmissionDispatchReachesOnlyTheFixedCredentialBoundary(t *testing.T) {
+	const first = "migrate-openbao-v2-pair"
+	const resume = "resume-openbao-v2-pair"
+	digest := strings.Repeat("b", 64)
+	validFirst := first + ":openbao-2:" + digest
+	validResume := resume + ":openbao-2:" + digest + ":99"
+	for _, test := range []struct {
+		name, operation, confirmation, originalRun, node, database string
+		admitted                                                   bool
+	}{
+		{name: "first", operation: first, confirmation: validFirst, admitted: true},
+		{name: "resume", operation: resume, confirmation: validResume, originalRun: "99", admitted: true},
+		{name: "foreign member", operation: first, confirmation: first + ":openbao-3:" + digest},
+		{name: "invalid digest", operation: first, confirmation: first + ":openbao-2:" + digest[:63]},
+		{name: "foreign operation", operation: "read-only", confirmation: validFirst},
+		{name: "first with prior run", operation: first, confirmation: validFirst, originalRun: "99"},
+		{name: "resume without prior run", operation: resume, confirmation: validResume},
+		{name: "wrong prior run", operation: resume, confirmation: validResume, originalRun: "98"},
+		{name: "current run", operation: resume, confirmation: resume + ":openbao-2:" + digest + ":100", originalRun: "100"},
+		{name: "node target", operation: first, confirmation: validFirst, node: "worker"},
+		{name: "database target", operation: resume, confirmation: validResume, originalRun: "99", database: "openbao"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env := nativeSeedAdmissionDispatch()
+			env["LONGHORN_V2_OPERATION"], env["LONGHORN_V2_CONFIRM"] = test.operation, test.confirmation
+			env["LONGHORN_V2_NODE"], env["LONGHORN_V2_DATABASE"] = test.node, test.database
+			env["GITHUB_RUN_ID"] = "100"
+			client, endpoint, err := LoadBenchmarkAdmissionClient(func(key string) string { return env[key] }, netip.MustParseAddr("203.0.113.10"), test.originalRun)
+			if client != nil || endpoint != nil || err == nil || (err.Error() == "fixed benchmark admission credentials and direct IPv4 peer are required") != test.admitted {
+				t.Fatalf("admitted=%t: %v", test.admitted, err)
+			}
+		})
+	}
+}
+
 func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the protected credential directory is Linux memory-backed storage")
@@ -387,6 +422,8 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000001:99:" +
 			strings.Repeat("1", 40) + ":b286e4f7-51db-4bc1-aa4d-000000000002:98", originalRun: "99", database: "wedding-db", createScope: directWeddingCreate},
 		{operation: "migrate-coroot-keeper-v2", confirmation: "migrate-coroot-keeper-v2:1:" + strings.Repeat("1", 64), createScope: directKeeperCreate},
+		{operation: "migrate-openbao-v2-pair", confirmation: "migrate-openbao-v2-pair:openbao-1:" + strings.Repeat("1", 64), createScope: directOpenBaoCreate},
+		{operation: "resume-openbao-v2-pair", confirmation: "resume-openbao-v2-pair:openbao-1:" + strings.Repeat("1", 64) + ":99", originalRun: "99", createScope: directOpenBaoCreate},
 	} {
 		valid := nativeSeedAdmissionDispatch()
 		valid["LONGHORN_V2_OPERATION"], valid["LONGHORN_V2_CONFIRM"] = dispatch.operation, dispatch.confirmation
@@ -410,7 +447,7 @@ func TestAdmissionLoaderBuildsConfirmedClientsFromPrivateMemoryCredentials(t *te
 	}
 }
 
-func TestDirectAPIAllowsOnlyScopedCNPGCreateDryRuns(t *testing.T) {
+func TestDirectAPIAllowsOnlyScopedCreateDryRuns(t *testing.T) {
 	const dry = "?dryRun=All"
 	const pods = "/api/v1/namespaces/umami/pods"
 	const claims = "/api/v1/namespaces/umami/persistentvolumeclaims"
@@ -421,6 +458,14 @@ func TestDirectAPIAllowsOnlyScopedCNPGCreateDryRuns(t *testing.T) {
 		want                             bool
 	}{
 		{http.MethodPost, pods, dry, "application/json", directUmamiCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/openbao/pods", dry, "application/json", directOpenBaoCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/openbao/persistentvolumeclaims", dry, "application/json", directOpenBaoCreate, true},
+		{http.MethodPost, "/api/v1/namespaces/openbao/pods", "", "application/json", directOpenBaoCreate, false},
+		{http.MethodPost, "/api/v1/namespaces/openbao/persistentvolumeclaims", "?dryRun=All&dryRun=", "application/json", directOpenBaoCreate, false},
+		{http.MethodPost, "/apis/batch/v1/namespaces/openbao/jobs", dry, "application/json", directOpenBaoCreate, false},
+		{http.MethodPost, pods, dry, "application/json", directOpenBaoCreate, false},
+		{http.MethodPost, "/api/v1/persistentvolumes", dry, "application/json", directOpenBaoCreate, false},
+		{http.MethodPatch, "/api/v1/namespaces/openbao/pods/openbao-1", dry, "application/json-patch+json", directOpenBaoCreate, false},
 		{http.MethodPost, "/api/v1/namespaces/observability/pods", dry, "application/json", directKeeperCreate, true},
 		{http.MethodPost, "/api/v1/namespaces/observability/persistentvolumeclaims", dry, "application/json", directKeeperCreate, true},
 		{http.MethodPost, "/api/v1/namespaces/observability/pods", "", "application/json", directKeeperCreate, false},
