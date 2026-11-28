@@ -166,7 +166,7 @@ func TestCollectorEgressIsLimitedToMailNuminaAndDNS(t *testing.T) {
 			t.Fatal("collector must have exactly HTTPS destinations and restricted DNS")
 		}
 		https := rules[0].(map[string]any)
-		wantNames := []any{map[string]any{"matchName": "mail.${domain}"}, map[string]any{"matchName": "api.numina.app"}}
+		wantNames := []any{map[string]any{"matchName": "stalwart.${domain}"}, map[string]any{"matchName": "api.numina.app"}}
 		if len(https) != 2 || !reflect.DeepEqual(https["toFQDNs"], wantNames) ||
 			!reflect.DeepEqual(https["toPorts"], []any{map[string]any{"ports": []any{map[string]any{"port": "443", "protocol": "TCP"}}}}) {
 			t.Fatal("HTTPS egress must admit only the mail service and Numina on 443")

@@ -9,7 +9,7 @@ spec:
       app.kubernetes.io/name: bookkeeper
   egress:
     - toFQDNs:
-        - matchName: mail.${domain}
+        - matchName: stalwart.${domain}
         - matchName: api.numina.app
       toPorts:
         - ports:
@@ -27,5 +27,5 @@ spec:
               protocol: TCP
           rules:
             dns:
-              - matchName: mail.${domain}
+              - matchName: stalwart.${domain}
               - matchName: api.numina.app

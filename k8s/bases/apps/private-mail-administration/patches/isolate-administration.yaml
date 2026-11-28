@@ -24,6 +24,8 @@ spec:
               protocol: TCP
             - port: "1587"
               protocol: TCP
+            - port: "1465"
+              protocol: TCP
             - port: "1993"
               protocol: TCP
   # The served setup relays every remote recipient through Amazon SES

@@ -58,7 +58,7 @@ func TestProxyIdentityKeepsNativeBackendFencedAndProxyCredentialless(t *testing.
 			}
 		}
 	}
-	for _, port := range []string{"8080", "18080", "18081", "1025", "1587", "1993"} {
+	for _, port := range []string{"8080", "18080", "18081", "1025", "1587", "1465", "1993"} {
 		if !denied[port] {
 			t.Fatalf("native/recovery listener %s is not fenced", port)
 		}
@@ -73,8 +73,9 @@ func TestMaintainedProxyIsActiveInProduction(t *testing.T) {
 	if len(initializers) != 2 || mapping(t, initializers[1])["name"] != "configure" {
 		t.Fatal("active transport must retain the managed initializer")
 	}
+	// Production also names the server (TestProductionNamesTheMailServer).
 	args := sequence(t, mapping(t, initializers[1])["args"])
-	if len(args) != 2 || args[0] != "--proxy-client-ip=true" {
+	if len(args) != 4 || args[0] != "--proxy-client-ip=true" {
 		t.Fatal("activation must explicitly override a retained encrypted transport setting")
 	}
 	// The mail listeners trust PROXY headers only from the mail server's own

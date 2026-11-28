@@ -34,6 +34,10 @@ spec:
     - name: submission
       port: 587
       targetPort: 1587
+    # Implicit-TLS submission (RFC 8314), which the server's autoconfig offers.
+    - name: submissions
+      port: 465
+      targetPort: 1465
     - name: imaps
       port: 993
       targetPort: 1993

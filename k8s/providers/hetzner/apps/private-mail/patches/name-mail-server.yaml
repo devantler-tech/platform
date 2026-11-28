@@ -1,0 +1,18 @@
+# The mail server's public names (#6662). --hostname is its default hostname:
+# the SMTP greeting and EHLO name, the Message-ID domain and the host its
+# autoconfig gives mail apps for IMAP and SMTP. It must equal the DNSEndpoint
+# and be in the certificate. It overrides the hostname in the encrypted
+# settings, which stays the rollback, and it serves implicit-TLS submission on
+# 465; without it the setup removes that listener again. --web-hostname is
+# where autoconfig sends JMAP, CalDAV, CardDAV and WebDAV clients; it must
+# equal the host of the serving container's STALWART_PUBLIC_URL. Neither name
+# is secret. The setup runs after storage selection.
+- op: test
+  path: /spec/template/spec/initContainers/1/name
+  value: configure
+- op: add
+  path: /spec/template/spec/initContainers/1/args/-
+  value: --hostname=mail.devantler.tech
+- op: add
+  path: /spec/template/spec/initContainers/1/args/-
+  value: --web-hostname=stalwart.${domain}

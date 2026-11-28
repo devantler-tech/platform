@@ -37,7 +37,7 @@ platform's public HTTPS JMAP endpoint. Egress allows those two destinations on 4
 lookups only. The chart and container are pinned to their verified v1.0.0 publication digests.
 
 The owner creates the app password signed in as that mailbox on the mail server's account page,
-`https://mail.platform.devantler.tech/account/`, names it after the collector and its environment,
+`https://stalwart.platform.devantler.tech/account/`, names it after the collector and its environment,
 and gives it an expiry he will renew. The collector calls only `Mailbox/get`, `Email/query`,
 `Email/get`, `Email/set` for its two keywords, and attachment downloads. Leave the password's
 allowed addresses empty: the server sees the address of the node that runs the Job, not a fixed
@@ -45,16 +45,17 @@ one, and autoscaled nodes change it. `mail-user` is the login the owner signs in
 
 ## Mail endpoint
 
-The collector reads JMAP at `https://mail.${domain}`, which is `mail.platform.devantler.tech` in
-production: the Gateway route `private-mail/private-mail`. The route sends requests straight to the
-mail server's client adapter, not through single sign-on, so basic authentication reaches Stalwart.
-`mail.devantler.tech` is the mail server's own load balancer. It carries SMTP, submission and IMAPS,
-never HTTPS, so it cannot serve the collector.
+The collector reads JMAP at `https://stalwart.${domain}`, which is
+`stalwart.platform.devantler.tech` in production: the Gateway route `private-mail/private-mail`,
+which also serves `mail.${domain}` until the webmail takes that name (#6662). The route sends
+requests straight to the mail server's client adapter, not through single sign-on, so basic
+authentication reaches Stalwart. `mail.devantler.tech` is the mail server's own load balancer. It
+carries SMTP, submission and IMAPS, never HTTPS, so it cannot serve the collector.
 
 The collector refuses a JMAP session whose URLs name another host than its mail URL. Stalwart builds
-those URLs from `STALWART_PUBLIC_URL`, or else from its configured hostname, which is the route
-host today. A change to that hostname must keep the session on the route host, for example by
-setting `STALWART_PUBLIC_URL`, or collection stops with a refused session.
+those URLs from `STALWART_PUBLIC_URL`, which production sets to `https://stalwart.${domain}`,
+whichever route host a request used. The collector's mail URL and egress therefore name that host,
+and a change to the public URL must move them with it, or collection stops with a refused session.
 
 Inside the cluster the connection still leaves through the Gateway's public load balancer. The
 Gateway accepts only PROXY traffic and its Service addresses report `ipMode: Proxy`, so Cilium does
