@@ -70,7 +70,7 @@ func TestNativeRecoveryMarkerLifecycle(t *testing.T) {
 		if marker != nil && marker.identity.email != "" {
 			logNativeMessageShape(ctx, t, client, marker.identity)
 		}
-		t.Fatalf("native marker import: %s", err)
+		t.Fatalf("native marker creation: %s", err)
 	}
 	window.before = time.Now().UTC().Truncate(time.Second).Add(time.Second)
 	if _, err = client.verifyMessage(ctx, marker.identity); err != nil {
@@ -105,7 +105,7 @@ func TestNativeRecoveryMarkerLifecycle(t *testing.T) {
 	if err = client.cleanupMarker(ctx, marker); err != nil {
 		t.Fatalf("native marker cleanup: %s", err)
 	}
-	t.Log("EMAIL_RECOVERY_NATIVE_MARKER=PASS import=VERIFIED read=VERIFIED cleanup=VERIFIED")
+	t.Log("EMAIL_RECOVERY_NATIVE_MARKER=PASS draft=VERIFIED read=VERIFIED cleanup=VERIFIED")
 }
 
 // Failure diagnostics reveal only comparisons and types from synthetic data.

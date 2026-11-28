@@ -100,14 +100,10 @@ func TestRecoveryMarkerCleanupCannotDeleteOtherMessages(t *testing.T) {
 	const nonce = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	for _, foreign := range []bool{false, true} {
 		t.Run(map[bool]string{false: "owned", true: "foreign-message"}[foreign], func(t *testing.T) {
-			imported, mailDeleted, boxDeleted := false, false, false
+			markerCreated, mailDeleted, boxDeleted := false, false, false
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/jmap/upload/company-account/" {
-					data, _ := io.ReadAll(r.Body)
-					if !strings.Contains(string(data), "Message-ID: <email-recovery-"+nonce+"@example.invalid>") {
-						t.Error("uploaded message lost its unique identity")
-					}
-					_, _ = io.WriteString(w, `{"accountId":"company-account","blobId":"upload-blob"}`)
+				if r.URL.Path != "/jmap" {
+					http.Error(w, "forbidden route", http.StatusForbidden)
 					return
 				}
 				var envelope object
@@ -137,18 +133,11 @@ func TestRecoveryMarkerCleanupCannotDeleteOtherMessages(t *testing.T) {
 						boxDeleted = true
 						result["destroyed"] = []any{"owned-box"}
 					}
-				case "Email/import":
-					imported = true
-					email := child(child(args, "emails"), "proof")
-					if text(email, "blobId") != "upload-blob" || child(email, "mailboxIds")["owned-box"] != true {
-						t.Error("import escaped its own mailbox")
-					}
-					result["created"] = object{"proof": object{"id": "owned-email", "blobId": "owned-blob"}}
 				case "Email/get":
 					result["list"] = []any{object{"id": "owned-email", "blobId": "owned-blob", "messageId": []any{"email-recovery-" + nonce + "@example.invalid"}, "mailboxIds": object{"owned-box": true}, "textBody": []any{object{"partId": "1"}}, "bodyValues": object{"1": object{"value": "Email recovery verification " + nonce + "\r\n", "isTruncated": false}}}}
 				case "Email/query":
 					ids := []any{}
-					if imported && !mailDeleted {
+					if markerCreated && !mailDeleted {
 						ids = append(ids, "owned-email")
 					}
 					if foreign {
@@ -157,6 +146,22 @@ func TestRecoveryMarkerCleanupCannotDeleteOtherMessages(t *testing.T) {
 					result["ids"] = ids
 					result["total"] = len(ids)
 				case "Email/set":
+					if args["create"] != nil {
+						email := child(child(args, "create"), "proof")
+						ids, _ := email["header:Message-ID:asMessageIds"].([]any)
+						mailboxes := child(email, "mailboxIds")
+						body := items(email, "textBody")
+						if len(mailboxes) != 1 || mailboxes["owned-box"] != true ||
+							child(email, "keywords")["$draft"] != true || email["to"] != nil ||
+							len(ids) != 1 || ids[0] != "email-recovery-"+nonce+"@example.invalid" ||
+							len(body) != 1 || text(body[0], "type") != "text/plain" ||
+							text(child(child(email, "bodyValues"), text(body[0], "partId")), "value") != "Email recovery verification "+nonce {
+							t.Error("recovery draft lost its identity, body or isolated mailbox")
+						}
+						markerCreated = true
+						result["created"] = object{"proof": object{"id": "owned-email", "blobId": "owned-blob"}}
+						break
+					}
 					ids, _ := args["destroy"].([]any)
 					if len(ids) != 1 || ids[0] != "owned-email" || args["ifInState"] != "s1" {
 						t.Error("message cleanup lost its identity/state fence")
@@ -174,8 +179,8 @@ func TestRecoveryMarkerCleanupCannotDeleteOtherMessages(t *testing.T) {
 			client, _ := newMailboxClient(server.URL, "fixture-only")
 			client.account = "company-account"
 			marker, err := client.createMarker(context.Background(), nonce)
-			if err != nil || !imported {
-				t.Fatal("own recovery marker was not imported")
+			if err != nil || !markerCreated {
+				t.Fatal("own recovery marker was not created while uploads were blocked")
 			}
 			err = client.cleanupMarker(context.Background(), marker)
 			if foreign {
