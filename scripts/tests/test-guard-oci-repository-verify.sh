@@ -426,6 +426,48 @@ expect_descriptor_discovered kustomization.yaml
 expect_descriptor_discovered kustomization.yml
 expect_descriptor_discovered Kustomization
 
+# The practice path belongs to the portal artifact. Its consumer is allowed
+# only with the exact production source, dependencies and constrained identity.
+k8s="$WORK/k8s-practice-source"
+write_discovery_overlay "$k8s" prod kustomization.yaml good "$(good_verify)"
+cat >>"$k8s/clusters/prod/flux-kustomization-apps.yaml" <<'EOF'
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: business-site-preview
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./practice
+  sourceRef:
+    kind: OCIRepository
+    name: business-site
+    namespace: business-site
+  serviceAccountName: business-site-practice
+  dependsOn:
+    - name: apps
+    - name: business-site-practice-permissions
+  wait: true
+  prune: true
+  force: false
+EOF
+if out="$(OCI_VERIFY_K8S_DIR="$k8s" OCI_VERIFY_EXPECTED_MIN=1 "$GUARD" 2>&1)"; then
+  pass 'the production practice overlay is resolved by the portal publisher'
+else
+  fail "the portal practice overlay is refused: $out"
+fi
+yq -i '(select(.metadata.name == "business-site-preview") | .spec.serviceAccountName) = "different-actor"' \
+  "$k8s/clusters/prod/flux-kustomization-apps.yaml"
+if out="$(OCI_VERIFY_K8S_DIR="$k8s" OCI_VERIFY_EXPECTED_MIN=1 "$GUARD" 2>&1)"; then
+  fail "the changed practice service account was accepted: $out"
+else
+  case "$out" in
+    *"could not bind the Flux source for './practice'"*) pass 'a changed practice service account is refused' ;;
+    *) fail "the changed practice service account was refused for the wrong reason: $out" ;;
+  esac
+fi
+
 # Keep one valid overlay in the fixture: if the guard regresses to `continue` for the
 # descriptor-less one, the good root satisfies the floor and the guard would pass.
 k8s="$WORK/k8s-missing-descriptor"

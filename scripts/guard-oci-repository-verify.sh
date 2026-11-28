@@ -84,6 +84,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 # shellcheck source=scripts/tenant-source-constructors.lib.sh
 source "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh"
+# shellcheck source=scripts/flux-render.lib.sh
+source "$REPO_ROOT/scripts/flux-render.lib.sh"
 readonly REQUIRED_URL_PREFIX='oci://ghcr.io/devantler-tech/'
 # The identity every devantler-tech artifact is signed under: GitHub Actions keyless
 # signing, with a subject regex anchored on a devantler-tech GitHub path. Compared as
@@ -136,6 +138,7 @@ refuse() {
 }
 
 command -v yq >/dev/null 2>&1 || refuse 'yq is required and was not found on PATH'
+command -v jq >/dev/null 2>&1 || refuse 'jq is required to classify Flux sources'
 command -v kubectl >/dev/null 2>&1 || refuse 'kubectl is required to render the kustomize roots'
 
 case "$EXPECTED_MIN" in
@@ -200,8 +203,11 @@ normalise_url() {
   esac
 }
 
-# The roots Flux applies: every `spec.path` of every Flux Kustomization each cluster
-# overlay renders. Read from the render, never listed by hand.
+# Read each Flux root and its source from the cluster render. The portal release
+# verifies its own practice overlay. Its OCIRepository is still checked where
+# the Platform renders that source.
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
 roots=""
 if [ -n "${OCI_VERIFY_ROOTS:-}" ]; then
   roots="$OCI_VERIFY_ROOTS"
@@ -219,17 +225,22 @@ else
     if [ ! -f "$overlay/kustomization.yaml" ] && [ ! -f "$overlay/kustomization.yml" ] && [ ! -f "$overlay/Kustomization" ]; then
       refuse "cluster overlay $overlay carries no kustomization descriptor; cannot discover its Flux roots"
     fi
-    if ! paths="$(kubectl kustomize "$overlay" 2>/dev/null |
-      yq -N -r 'select(.kind == "Kustomization" and (.apiVersion | test("^kustomize\\.toolkit\\.fluxcd\\.io/"))) | .spec.path // ""')"; then
+    if ! kubectl kustomize "$overlay" >"$work/overlay.yaml" 2>"$work/render.err" ||
+      ! yq -o=json -I=0 'select(.kind == "Kustomization" and ((.apiVersion // "") | test("^kustomize[.]toolkit[.]fluxcd[.]io/")))' \
+      "$work/overlay.yaml" >"$work/flux.jsonl"; then
       refuse "could not render the cluster overlay $overlay to discover its Flux roots"
     fi
-    while IFS= read -r p; do
-      [ -n "$p" ] || continue
+    cluster="${overlay%/}"
+    while IFS= read -r manifest; do
+      printf '%s\n' "$manifest" >"$work/flux.json"
+      p="$(jq -r '.spec.path // ""' "$work/flux.json")" || refuse "could not read a Flux path from $overlay"
+      [ -n "$p" ] || refuse "a Flux Kustomization rendered by $overlay has no spec.path"
+      source_scope="$(flux_render_source_scope "$work/flux.json" "${cluster##*/}")" ||
+        refuse "could not bind the Flux source for '$p' rendered by $overlay"
+      [ "$source_scope" = platform ] || continue
       roots="$roots$K8S_DIR/${p#./}
 "
-    done <<EOF
-$paths
-EOF
+    done <"$work/flux.jsonl"
   done
 fi
 [ -n "$roots" ] || refuse 'no Flux Kustomization roots were discovered; nothing would be judged'
@@ -284,8 +295,6 @@ fail() {
 }
 decode() { [ "$1" = "-" ] && printf '' || printf '%s' "$1"; }
 
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
 
 while IFS= read -r root; do
   [ -n "$root" ] || continue
