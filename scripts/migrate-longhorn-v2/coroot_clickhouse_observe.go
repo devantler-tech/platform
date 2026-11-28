@@ -178,7 +178,8 @@ func readCorootClickHouseSource(ctx context.Context, c client, controller benchm
 		return none, errCorootClickHouseStorage
 	}
 	pv, err := c.get(ctx, "persistentvolume", "", text(claim, "spec", "volumeName"), false)
-	if err != nil || !recoveredNativeObject(pv, "v1", "PersistentVolume", "") {
+	if err != nil || !recoveredNativeObject(pv, "v1", "PersistentVolume", "") ||
+		text(pv, "spec", "persistentVolumeReclaimPolicy") != "Retain" {
 		return none, errCorootClickHouseStorage
 	}
 	volumes, err := selectProviderVolumeClaims([]object{pv}, []object{claim})

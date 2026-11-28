@@ -129,3 +129,57 @@ func TestCorootClickHouseSnapshotBindsTheRunningProcess(t *testing.T) {
 		t.Fatal("a source without its running container identity was accepted")
 	}
 }
+
+func TestCorootClickHouseSourceRequiresRetainedPV(t *testing.T) {
+	const (
+		podUID   = "11111111-1111-4111-8111-111111111111"
+		claimUID = "22222222-2222-4222-8222-222222222222"
+		pvUID    = "33333333-3333-4333-8333-333333333333"
+		node     = "storage-worker"
+		revision = "rendered-revision"
+	)
+	controller := benchmarkResource{Name: corootClickHouseController, Namespace: corootClickHouseNamespace, UID: "44444444-4444-4444-8444-444444444444"}
+	member, pvName := controller.Name+"-0", "pvc-"+claimUID
+	claimName := "data-" + member
+	pod := object{"apiVersion": "v1", "kind": "Pod",
+		"metadata": object{"name": member, "namespace": controller.Namespace, "uid": podUID, "resourceVersion": "1",
+			"labels": object{"controller-revision-hash": revision}, "ownerReferences": []any{
+				object{"apiVersion": "apps/v1", "kind": "StatefulSet", "name": controller.Name, "uid": controller.UID, "controller": true},
+			}},
+		"spec": object{"nodeName": node, "volumes": []any{object{"name": "data", "persistentVolumeClaim": object{"claimName": claimName}}},
+			"containers": []any{object{"name": corootClickHouseContainer, "volumeMounts": []any{object{"name": "data", "mountPath": "/var/lib/clickhouse"}}}}},
+		"status": object{"phase": "Running", "conditions": []any{object{"type": "Ready", "status": "True"}},
+			"containerStatuses": []any{object{"name": corootClickHouseContainer, "ready": true, "imageID": corootClickHouseImage,
+				"containerID": "containerd://1111111111111111111111111111111111111111111111111111111111111111", "restartCount": float64(0),
+				"state": object{"running": object{"startedAt": "2026-11-28T01:05:00Z"}}}}},
+	}
+	claim := object{"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+		"metadata": object{"name": claimName, "namespace": controller.Namespace, "uid": claimUID, "resourceVersion": "1"},
+		"spec": object{"volumeName": pvName, "storageClassName": "hcloud", "volumeMode": "Filesystem", "accessModes": []any{"ReadWriteOnce"},
+			"resources": object{"requests": object{"storage": "20Gi"}}},
+		"status": object{"phase": "Bound", "capacity": object{"storage": "35Gi"}}}
+	pv := object{"apiVersion": "v1", "kind": "PersistentVolume",
+		"metadata": object{"name": pvName, "uid": pvUID, "resourceVersion": "1"},
+		"spec": object{"storageClassName": "hcloud", "volumeMode": "Filesystem", "accessModes": []any{"ReadWriteOnce"},
+			"capacity": object{"storage": "35Gi"}, "csi": object{"driver": hetznerCSIDriver, "volumeHandle": "1234"},
+			"claimRef": object{"namespace": controller.Namespace, "name": claimName, "uid": claimUID}},
+		"status": object{"phase": "Bound"}}
+	attachment := object{"apiVersion": "storage.k8s.io/v1", "kind": "VolumeAttachment",
+		"metadata": object{"name": "csi-attached-1234", "uid": "55555555-5555-4555-8555-555555555555", "resourceVersion": "1"},
+		"spec":     object{"source": object{"persistentVolumeName": pvName}, "attacher": hetznerCSIDriver, "nodeName": node},
+		"status":   object{"attached": true}}
+	resources := map[string]object{"pod": pod, "persistentvolumeclaim": claim, "persistentvolume": pv}
+	c := client{context: "admin@prod", run: func(_ context.Context, input []byte, program string, args ...string) ([]byte, error) {
+		if input != nil || program != "kubectl" || len(args) < 5 || args[2] != "get" || resources[args[3]] == nil {
+			t.Fatalf("unexpected native read: %s %v", program, args)
+		}
+		return json.Marshal(resources[args[3]])
+	}}
+	for _, policy := range []string{"Retain", "Delete", ""} {
+		valueObject(pv, "spec")["persistentVolumeReclaimPolicy"] = policy
+		_, err := readCorootClickHouseSource(t.Context(), c, controller, revision, 0, []object{attachment})
+		if (err == nil) != (policy == "Retain") {
+			t.Errorf("policy %q: got %v, want success only for Retain", policy, err)
+		}
+	}
+}
