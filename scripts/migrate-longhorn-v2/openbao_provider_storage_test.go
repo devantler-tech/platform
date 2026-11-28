@@ -93,12 +93,18 @@ func TestOpenBaoPairConfirmationBindsBothDisksAndProtectedRun(t *testing.T) {
 	if err != nil || changed == digest {
 		t.Fatal("the confirmation did not bind the second provider disk")
 	}
-	for _, fault := range []string{"", "unknown member", "malformed digest", "later attempt", "worker selected", "database selected", "feature branch"} {
+	for _, fault := range []string{"", "reused stage", "invalid prior", "same run", "unknown member", "malformed digest", "later attempt", "worker selected", "database selected", "feature branch"} {
 		t.Run(fault, func(t *testing.T) {
 			env := dispatchFixture()
 			env["LONGHORN_V2_OPERATION"], env["LONGHORN_V2_NODE"] = openBaoPairOperation, ""
 			env["LONGHORN_V2_CONFIRM"] = openBaoPairOperation + ":openbao-1:" + digest
 			switch fault {
+			case "reused stage":
+				env["LONGHORN_V2_CONFIRM"] += ":99"
+			case "invalid prior":
+				env["LONGHORN_V2_CONFIRM"] += ":099"
+			case "same run":
+				env["LONGHORN_V2_CONFIRM"] += ":" + env["GITHUB_RUN_ID"]
 			case "unknown member":
 				env["LONGHORN_V2_CONFIRM"] = openBaoPairOperation + ":openbao-5:" + digest
 			case "malformed digest":
@@ -112,9 +118,9 @@ func TestOpenBaoPairConfirmationBindsBothDisksAndProtectedRun(t *testing.T) {
 			case "feature branch":
 				env["GITHUB_REF"] = "refs/heads/test"
 			}
-			got, err := authorizeOpenBaoPair(func(key string) string { return env[key] })
-			if fault == "" {
-				if err != nil || got.Member != "openbao-1" || got.Digest != digest {
+			got, prior, err := authorizeOpenBaoPair(func(key string) string { return env[key] })
+			if fault == "" || fault == "reused stage" {
+				if err != nil || got.Member != "openbao-1" || got.Digest != digest || (prior == "99") != (fault == "reused stage") {
 					t.Fatalf("the protected pair request was not recognized: %v", err)
 				}
 			} else if err == nil {

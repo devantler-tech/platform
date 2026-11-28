@@ -23,8 +23,8 @@ func (j *openBaoPairJournal) resumeOriginalPair(ctx context.Context, token, rele
 		id      benchmarkResource
 		desired object
 	}{
-		{r.StageAssets[2], openBaoStagePod(plan.Run, plan.Source, plan.Original.Node)},
-		{r.CopyAssets[2], openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node)},
+		{r.StageAssets[2], plan.stagePod()},
+		{r.CopyAssets[2], plan.copyPod()},
 	} {
 		if candidate.id.UID == "" {
 			continue

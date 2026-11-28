@@ -133,7 +133,7 @@ func probeOpenBaoFence(ctx context.Context, c *http.Client, endpoint *url.URL, i
 		}
 	}
 	if index == 0 {
-		copyPod := openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node)
+		copyPod := plan.copyPod()
 		code, body, err := benchmarkAdmissionRequest(ctx, c, endpoint, api+"pods", http.MethodPost, "application/json", copyPod)
 		var admitted object
 		if err != nil || code != http.StatusCreated || strictjson.Validate(body, nil) != nil ||

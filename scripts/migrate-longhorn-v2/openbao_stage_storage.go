@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-func (j *openBaoPairJournal) stageDestinations(ctx context.Context, qualified []cnpgRecoveryDiskBinding) error {
+func (j *openBaoPairJournal) stageDestinations(ctx context.Context, qualified []cnpgRecoveryDiskBinding, reused [2]openBaoStorageRebind) error {
 	record := j.record
 	if j.client.context != "admin@prod" || record.Phase != openBaoPairPlanned || record.StagePending != "" {
 		return errOpenBaoProviderStorage
 	}
 	plan := record.Plan
-	claims := openBaoStagingClaims(plan.Run, plan.Source)
-	desired := [3]object{claims[0], claims[1], openBaoStagePod(plan.Run, plan.Source, plan.Original.Node)}
+	claims := openBaoStagingClaims(plan.stagingOwner())
+	desired := [3]object{claims[0], claims[1], plan.stagePod()}
 	kinds := [3]string{"persistentvolumeclaim", "persistentvolumeclaim", "pod"}
 	var assets [3]object
 	for i, asset := range desired {
@@ -32,6 +32,14 @@ func (j *openBaoPairJournal) stageDestinations(ctx context.Context, qualified []
 		return err
 	}); err != nil {
 		return err
+	}
+	if plan.StagingRun != "" {
+		for i, destination := range destinations {
+			if destination.StagingClaim != reused[i].StagingClaim || destination.DestinationPV != reused[i].DestinationPV ||
+				destination.DestinationVolume != reused[i].DestinationVolume {
+				return errOpenBaoProviderStorage
+			}
+		}
 	}
 	next := j.record
 	next.Phase, next.Destinations = openBaoPairStaged, destinations
@@ -116,7 +124,7 @@ func readOpenBaoStagedPair(ctx context.Context, c client, plan openBaoPairPlan, 
 	}
 	podName := text(stagedPod, "metadata", "name")
 	pod, err := c.get(ctx, "pod", openBaoNamespace, podName, false)
-	desiredPod := openBaoStagePod(plan.Run, plan.Source, plan.Original.Node)
+	desiredPod := plan.stagePod()
 	if err != nil || !c.matchBoundOpenBaoVolumePod(ctx, pod, stagedPod, desiredPod, plan.Original.Node) ||
 		text(pod, "spec", "nodeName") != plan.Original.Node ||
 		text(pod, "status", "phase") != "Running" || !ready(valueObject(pod, "status")) {
@@ -126,7 +134,7 @@ func readOpenBaoStagedPair(ctx context.Context, c client, plan openBaoPairPlan, 
 	if err != nil || !verifyOpenBaoStagedFilesystemReceipt(string(raw), plan.Original.Disks) {
 		return intents, errOpenBaoProviderStorage
 	}
-	desired := openBaoStagingClaims(plan.Run, plan.Source)
+	desired := openBaoStagingClaims(plan.stagingOwner())
 	for i, disk := range plan.Original.Disks {
 		identity := benchmarkIdentity(stagedClaims[i])
 		claim, err := c.get(ctx, "persistentvolumeclaim", openBaoNamespace, identity.Name, false)
@@ -141,7 +149,7 @@ func readOpenBaoStagedPair(ctx context.Context, c client, plan openBaoPairPlan, 
 			return [2]openBaoStorageRebind{}, err
 		}
 		intents[i] = openBaoStorageRebind{Source: disk, StagingClaim: identity, DestinationPV: pv,
-			DestinationVolume: volume, Run: plan.Run, SourceSHA: plan.Source}
+			DestinationVolume: volume, Run: plan.Run, SourceSHA: plan.Source, StagingRun: plan.StagingRun}
 	}
 	if !openBaoRebindPairMatches(plan.Input.Member, intents) {
 		return [2]openBaoStorageRebind{}, errOpenBaoProviderStorage

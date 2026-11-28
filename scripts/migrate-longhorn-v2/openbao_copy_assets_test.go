@@ -21,7 +21,7 @@ func TestOpenBaoStagePreparesOnlyTheTwoDestinations(t *testing.T) {
 		}
 	}
 
-	pod := openBaoStagePod(first.Run, first.SourceSHA, "worker-1")
+	pod := (openBaoPairPlan{Run: first.Run, Source: first.SourceSHA, Original: openBaoProviderStorage{Node: "worker-1"}}).stagePod()
 	spec := valueObject(pod, "spec")
 	if value(spec, "securityContext", "fsGroup") != float64(1000) ||
 		text(spec, "securityContext", "fsGroupChangePolicy") != "OnRootMismatch" ||
@@ -42,7 +42,7 @@ func TestOpenBaoStagePreparesOnlyTheTwoDestinations(t *testing.T) {
 func TestOpenBaoCopyNeverChangesOriginalVolumeOwnership(t *testing.T) {
 	pair := openBaoReboundPairFixture(t)
 	first := pair[0].Intent
-	pod := openBaoCopyPod(first.Run, first.SourceSHA, "openbao-1", "worker-1")
+	pod := (openBaoPairPlan{Run: first.Run, Source: first.SourceSHA, Input: openBaoPairInput{Member: "openbao-1"}, Original: openBaoProviderStorage{Node: "worker-1"}}).copyPod()
 	spec := valueObject(pod, "spec")
 	security := valueObject(spec, "securityContext")
 	if security["fsGroup"] != nil || security["fsGroupChangePolicy"] != nil ||
@@ -80,7 +80,7 @@ func TestOpenBaoCopyNeverChangesOriginalVolumeOwnership(t *testing.T) {
 
 func TestOpenBaoCopyUsesTheRunScopedDenyPolicyAndStartsHeld(t *testing.T) {
 	plan := openBaoPairPlanFixture(t)
-	pod := openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node)
+	pod := plan.copyPod()
 	policy := openBaoCopyIsolation.denyPolicy(plan.Run, plan.Source, openBaoCopyFenceOwner)
 	selector := value(policy, "spec", "endpointSelector", "matchLabels")
 	if !reflect.DeepEqual(selector, value(pod, "metadata", "labels")) ||

@@ -80,7 +80,7 @@ func desiredOpenBaoCopyAssets(plan openBaoPairPlan) [3]object {
 	return [3]object{
 		openBaoCopyIsolation.denyPolicy(plan.Run, plan.Source, openBaoCopyFenceOwner),
 		openBaoCopyGate(plan.Run, plan.Source),
-		openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node),
+		plan.copyPod(),
 	}
 }
 

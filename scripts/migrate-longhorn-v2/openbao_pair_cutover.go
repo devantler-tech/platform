@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func runOpenBaoPairCutover(ctx context.Context, c client, input openBaoPairInput, source, run, token, release string) error {
+func runOpenBaoPairCutover(ctx context.Context, c client, input openBaoPairInput, prior, source, run, token, release string) error {
 	if c.context != "admin@prod" || token == "" || !openBaoReleaseVersion.MatchString(release) {
 		return errOpenBaoProviderStorage
 	}
@@ -29,14 +29,36 @@ func runOpenBaoPairCutover(ctx context.Context, c client, input openBaoPairInput
 		return err
 	}
 	activation := temporaryV2Activation{c: c, source: source, owner: run, pools: c.inventoryPools}
-	capacity, err := activation.recoveryClaimStorage(ctx, "50Gi")
+	var previous openBaoPairRecord
+	var expectedArchive string
+	var reuse [3]benchmarkResource
+	var requestedSize *string
+	if prior == "" {
+		size := "50Gi"
+		requestedSize = &size
+	} else {
+		previous, expectedArchive, err = observeReusableOpenBaoStage(ctx, c, plan, prior, token)
+		if err != nil {
+			return fmt.Errorf("OpenBao retained staging proof: %w", err)
+		}
+		plan, reuse, err = bindOpenBaoStageReuse(previous, plan, prior)
+		if err != nil {
+			return err
+		}
+	}
+	capacity, err := activation.observeRecoveryStorage(ctx, requestedSize)
 	if err != nil {
 		return err
 	}
-	if err := archiveRestoredOpenBaoAttempt(ctx, c, plan, token); err != nil {
+	if err := archiveRestoredOpenBaoAttempt(ctx, c, plan, token, expectedArchive); err != nil {
 		return err
 	}
-	j, err := beginOpenBaoPairJournal(ctx, c, plan)
+	if prior != "" {
+		if err := writeRestoredOpenBaoArchive(ctx, c, source, previous, expectedArchive); err != nil {
+			return err
+		}
+	}
+	j, err := beginOpenBaoPairJournal(ctx, c, plan, reuse)
 	if err != nil {
 		return err
 	}
@@ -52,7 +74,7 @@ func runOpenBaoPairCutover(ctx context.Context, c client, input openBaoPairInput
 		}
 		return errors.Join(verdict, errors.New("the original member and both retained claims are serving"))
 	}
-	if err := j.stageDestinations(ctx, capacity.Disks); err != nil {
+	if err := j.stageDestinations(ctx, capacity.Disks, previous.Destinations); err != nil {
 		return heldBeforeRelease("destination staging", err)
 	}
 	if err := j.installAdmissionFences(ctx); err != nil {

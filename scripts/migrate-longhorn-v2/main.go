@@ -72,7 +72,7 @@ func main() {
 	case transferCorootKeeperOperation:
 		_, authorization = authorizeCorootKeeperOperation(os.Getenv, operation)
 	case openBaoPairOperation:
-		_, authorization = authorizeOpenBaoPair(os.Getenv)
+		_, _, authorization = authorizeOpenBaoPair(os.Getenv)
 	case openBaoPairResumeOperation:
 		_, _, authorization = authorizeOpenBaoPairResume(os.Getenv)
 	case cnpgArchiveProofOperation:
@@ -365,10 +365,10 @@ func main() {
 		return
 	}
 	if operation == openBaoPairOperation {
-		input, err := authorizeOpenBaoPair(os.Getenv)
+		input, prior, err := authorizeOpenBaoPair(os.Getenv)
 		if err == nil {
 			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
-			err = runOpenBaoPairCutover(ctx, c, input, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"),
+			err = runOpenBaoPairCutover(ctx, c, input, prior, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"),
 				os.Getenv("HCLOUD_TOKEN"), os.Getenv("OPENBAO_VERSION"))
 		}
 		if err != nil {

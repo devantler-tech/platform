@@ -9,7 +9,7 @@ func TestOpenBaoCopyRequiresBothExactProviderAssignments(t *testing.T) {
 		t.Run(fault, func(t *testing.T) {
 			plan := openBaoPairPlanFixture(t)
 			_, originalPods, claims, pvs, attachments := openBaoProviderStorageFixture()
-			copyPod := openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node)
+			copyPod := plan.copyPod()
 			meta := valueObject(copyPod, "metadata")
 			meta["uid"], meta["resourceVersion"] = "bd879525-004e-400a-be89-719605db0f95", "51"
 			valueObject(meta, "labels")["topology.kubernetes.io/zone"] = "zone-1"

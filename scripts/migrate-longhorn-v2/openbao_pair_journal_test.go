@@ -323,7 +323,7 @@ func TestOpenBaoJournalBindsReadbackAndCompareAndSwap(t *testing.T) {
 				}
 				return json.Marshal(stored)
 			}
-			journal, err := beginOpenBaoPairJournal(ctx, client{run: runner, context: "admin@prod"}, plan)
+			journal, err := beginOpenBaoPairJournal(ctx, client{run: runner, context: "admin@prod"}, plan, [3]benchmarkResource{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -346,6 +346,63 @@ func TestOpenBaoJournalBindsReadbackAndCompareAndSwap(t *testing.T) {
 			case "stale readback":
 				if err == nil || journal.record != previous || patches != 1 {
 					t.Fatal("an unconfirmed journal write advanced in memory")
+				}
+			}
+		})
+	}
+}
+
+func TestOpenBaoRetryOnlyUsesAnOwnedPairFromBeforeEviction(t *testing.T) {
+	plan := openBaoPairPlanFixture(t)
+	pair := openBaoReboundPairFixture(t)
+	previous := openBaoPairRecord{
+		Plan: plan, Phase: openBaoPairStaged, RolledBack: true,
+		Destinations: [2]openBaoStorageRebind{pair[0].Intent, pair[1].Intent},
+		StageAssets: [3]benchmarkResource{
+			pair[0].Intent.StagingClaim, pair[1].Intent.StagingClaim,
+			{Name: "lh-openbao-stage-" + plan.Run, Namespace: openBaoNamespace, UID: "fc291be3-5675-44e4-a5bf-45c3a1fa3a50"},
+		},
+	}
+	if !previous.valid() {
+		t.Fatal("invalid previous attempt fixture")
+	}
+	for _, problem := range []string{"", "unrolled", "evicted", "uncertain copy", "wrong dispatch", "same run", "foreign original"} {
+		t.Run(problem, func(t *testing.T) {
+			old, next, confirmed := previous, plan, plan.Run
+			next.Run = "987654321"
+			switch problem {
+			case "unrolled":
+				old.RolledBack = false
+			case "evicted":
+				old.Evicting = true
+			case "uncertain copy":
+				old.CopyPending = "pod"
+			case "wrong dispatch":
+				confirmed = "986"
+			case "same run":
+				next.Run = old.Plan.Run
+			case "foreign original":
+				next.Original.Disks[0].PVC.UID = "ea7ae5dd-dc8b-4207-a89b-a2e6ba5d3412"
+			}
+			bound, assets, err := bindOpenBaoStageReuse(old, next, confirmed)
+			if (err == nil) != (problem == "") {
+				t.Fatalf("bound=%t: %v", problem == "", err)
+			}
+			if err == nil && (!(openBaoPairRecord{Plan: bound, Phase: openBaoPairPlanned, StageAssets: assets}).valid() ||
+				assets[0] != pair[0].Intent.StagingClaim || assets[1] != pair[1].Intent.StagingClaim || assets[2] != (benchmarkResource{})) {
+				t.Fatal("retry did not carry the exact retained claims while starting a fresh verification pod")
+			}
+			if err == nil {
+				for _, pod := range []object{bound.stagePod(), bound.copyPod()} {
+					if text(pod, "metadata", "annotations", openBaoCopyFenceOwner) != next.Run+":"+next.Source {
+						t.Fatal("a retry pod retained the previous run's authority")
+					}
+					volumes := value(pod, "spec", "volumes").([]any)
+					for i := range 2 {
+						if text(volumes[i].(object), "persistentVolumeClaim", "claimName") != assets[i].Name {
+							t.Fatal("a retry pod did not reference the journaled staging claim")
+						}
+					}
 				}
 			}
 		})

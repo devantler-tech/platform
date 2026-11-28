@@ -32,18 +32,25 @@ type openBaoProviderStorage struct {
 
 type openBaoPairInput struct{ Member, Digest string }
 
-func authorizeOpenBaoPair(getenv func(string) string) (openBaoPairInput, error) {
+func authorizeOpenBaoPair(getenv func(string) string) (openBaoPairInput, string, error) {
 	confirmation := getenv("LONGHORN_V2_CONFIRM")
 	fields := strings.Split(confirmation, ":")
 	if getenv("LONGHORN_V2_OPERATION") != openBaoPairOperation || getenv("LONGHORN_V2_NODE") != "" ||
-		getenv("LONGHORN_V2_DATABASE") != "" || len(fields) != 3 || fields[0] != openBaoPairOperation ||
+		getenv("LONGHORN_V2_DATABASE") != "" || (len(fields) != 3 && len(fields) != 4) || fields[0] != openBaoPairOperation ||
 		!knownOpenBaoMember(fields[1]) || !retentionDigest.MatchString(fields[2]) {
-		return openBaoPairInput{}, errOpenBaoProviderStorage
+		return openBaoPairInput{}, "", errOpenBaoProviderStorage
+	}
+	var priorRun string
+	if len(fields) == 4 {
+		priorRun = fields[3]
+		if !validBenchmarkOwner(priorRun, getenv("GITHUB_SHA")) || priorRun == getenv("GITHUB_RUN_ID") {
+			return openBaoPairInput{}, "", errOpenBaoProviderStorage
+		}
 	}
 	if err := authorizeWorkflow(getenv, confirmation); err != nil {
-		return openBaoPairInput{}, err
+		return openBaoPairInput{}, "", err
 	}
-	return openBaoPairInput{Member: fields[1], Digest: fields[2]}, nil
+	return openBaoPairInput{Member: fields[1], Digest: fields[2]}, priorRun, nil
 }
 
 func knownOpenBaoMember(name string) bool {

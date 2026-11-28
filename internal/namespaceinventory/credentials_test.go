@@ -359,6 +359,8 @@ func TestOpenBaoAdmissionDispatchReachesOnlyTheFixedCredentialBoundary(t *testin
 		admitted                                                   bool
 	}{
 		{name: "first", operation: first, confirmation: validFirst, admitted: true},
+		{name: "first using retained staging", operation: first, confirmation: validFirst + ":99", admitted: true},
+		{name: "first reuses its own run", operation: first, confirmation: validFirst + ":100"},
 		{name: "resume", operation: resume, confirmation: validResume, originalRun: "99", admitted: true},
 		{name: "foreign member", operation: first, confirmation: first + ":openbao-3:" + digest},
 		{name: "invalid digest", operation: first, confirmation: first + ":openbao-2:" + digest[:63]},

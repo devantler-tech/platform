@@ -23,7 +23,7 @@ func (j openBaoPairJournal) waitAndReleaseCopyGate(ctx context.Context, copyPod,
 		return proof, errOpenBaoProviderStorage
 	}
 	plan := r.Plan
-	desired := openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node)
+	desired := plan.copyPod()
 	name := text(desired, "metadata", "name")
 	err := waitReadyWithin(ctx, 3*time.Minute, func(ctx context.Context) error {
 		pod, err := j.client.get(ctx, "pod", openBaoNamespace, name, false)
@@ -103,7 +103,7 @@ func (j *openBaoPairJournal) recordVerifiedCopy(ctx context.Context, copyPod, po
 		return errOpenBaoProviderStorage
 	}
 	plan := r.Plan
-	desired := openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node)
+	desired := plan.copyPod()
 	name := text(desired, "metadata", "name")
 	if err := waitReadyWithin(ctx, 12*time.Minute, func(ctx context.Context) error {
 		pod, err := j.client.get(ctx, "pod", openBaoNamespace, name, false)
