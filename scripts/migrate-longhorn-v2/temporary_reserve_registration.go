@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -74,6 +75,7 @@ func projectReserveRegistration(s *inventory, receipt object, record temporaryRe
 			continue
 		}
 		if storage != nil || text(item, "metadata", "uid") != record.Disk.NodeUID || value(item, "metadata", "deletionTimestamp") != nil ||
+			record.ActivationUID == "" || text(item, "metadata", "annotations", temporaryActivationOwner) != record.ActivationUID ||
 			text(item, "status", "diskStatus", "longhorn-v2", "instanceManagerName") != record.Disk.InstanceManager {
 			return nil, errTemporaryActivation
 		}
@@ -217,6 +219,9 @@ func (a temporaryV2Activation) registerRetainedReserve(ctx context.Context) (err
 	phase = "storage-runtime"
 	storage, err := a.reserveRegistrationSnapshot(ctx, receipt, record)
 	if err != nil {
+		if value(receipt, "immutable") == true {
+			return a.disableUnprovenReserve(ctx, receipt, record, err)
+		}
 		return err
 	}
 	if value(storage, "spec", "disks", temporaryReserveDiskName) == nil {
@@ -254,21 +259,80 @@ func (a temporaryV2Activation) registerRetainedReserve(ctx context.Context) (err
 		}
 	}
 	phase = "enable-scheduling"
+	storage, err = a.reserveRegistrationSnapshot(ctx, receipt, record)
+	fresh, diskErr := inactiveReserveDisk(storage, record.Disk)
+	if err != nil || diskErr != nil || fresh != record.Disk {
+		return errTemporaryActivation
+	}
 	if err := a.requireReserveRegistration(ctx, receipt, record); err != nil {
 		return err
 	}
 	if err := a.c.patch(ctx, "nodes.longhorn.io", "longhorn-system", storage,
 		object{"op": "replace", "path": "/spec/disks/" + temporaryReserveDiskName + "/allowScheduling", "value": true}); err != nil {
-		return err
+		return a.disableUnprovenReserve(ctx, receipt, record, err)
 	}
 	phase = "readback"
-	return waitReadyWithin(ctx, 4*time.Minute, func(ctx context.Context) error {
+	err = waitReadyWithin(ctx, 4*time.Minute, func(ctx context.Context) error {
 		current, err := a.reserveRegistrationSnapshot(ctx, receipt, record)
 		if err != nil || value(current, "spec", "disks", temporaryReserveDiskName, "allowScheduling") != true {
 			return errTemporaryActivation
 		}
 		return a.requireReserveRegistration(ctx, receipt, record)
 	})
+	if err != nil {
+		return a.disableUnprovenReserve(ctx, receipt, record, err)
+	}
+	return nil
+}
+
+// Stop new placements if the post-enable native proof fails. Leave the disk,
+// its identity receipt and any replicas in place for a protected retry.
+func (a temporaryV2Activation) disableUnprovenReserve(ctx context.Context, receipt object, record temporaryReserveRegistration, cause error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 75*time.Second)
+	defer cancel()
+	held := errors.New("the reserve scheduling rollback is unverified")
+	if value(receipt, "immutable") != true || record.Disk.DiskUUID == "" || a.requireReserveRegistration(ctx, receipt, record) != nil {
+		return errors.Join(cause, held)
+	}
+	read := func(ctx context.Context) (object, bool, error) {
+		storage, err := a.c.get(ctx, "nodes.longhorn.io", "longhorn-system", record.Disk.Node, false)
+		if err != nil {
+			return nil, false, err
+		}
+		spec := valueObject(storage, "spec", "disks", temporaryReserveDiskName)
+		enabled, ok := value(spec, "allowScheduling").(bool)
+		if !recoveredNativeObject(storage, "longhorn.io/v1beta2", "Node", "longhorn-system") ||
+			text(storage, "metadata", "uid") != record.Disk.NodeUID || text(storage, "metadata", "annotations", temporaryActivationOwner) != record.ActivationUID ||
+			text(storage, "metadata", "annotations", temporaryReserveOwner) != text(receipt, "metadata", "uid") ||
+			!ok || !reviewedBlockDisk(spec, retainedReserveDiskSpec(enabled)) {
+			return nil, false, errors.Join(errReadinessTerminal, held)
+		}
+		return storage, enabled, nil
+	}
+	path := "/spec/disks/" + temporaryReserveDiskName + "/allowScheduling"
+	err := waitReadyWithin(ctx, 60*time.Second, func(ctx context.Context) error {
+		storage, enabled, err := read(ctx)
+		if err != nil || !enabled {
+			return err
+		}
+		if err := a.requireReserveRegistration(ctx, receipt, record); err != nil {
+			return errors.Join(errReadinessTerminal, err)
+		}
+		if err := a.c.patch(ctx, "nodes.longhorn.io", "longhorn-system", storage,
+			object{"op": "test", "path": path, "value": true},
+			object{"op": "replace", "path": path, "value": false}); err != nil {
+			return err
+		}
+		_, enabled, err = read(ctx)
+		if err != nil || enabled {
+			return held
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Join(cause, held, err)
+	}
+	return errors.Join(cause, errors.New("reserve scheduling is disabled"))
 }
 
 func (a temporaryV2Activation) sealReserveRegistration(ctx context.Context, receipt object, record temporaryReserveRegistration, disk cnpgRecoveryDiskBinding) (object, temporaryReserveRegistration, error) {

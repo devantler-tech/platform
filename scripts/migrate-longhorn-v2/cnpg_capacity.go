@@ -132,7 +132,7 @@ func verifyRecoveryClaimCapacity(claimSize string, nodes, replicas, backingImage
 		status, _ := value(n, "status").(object)
 		d := valueObject(n, "status", "diskStatus", b.name)
 		if text(n, "metadata", "uid") != b.NodeUID || value(n, "spec", "allowScheduling") != true || value(n, "spec", "evictionRequested") == true || !ready(status) || !ready(d) ||
-			!cnpgCondition(object{"status": d}, "Schedulable") || text(d, "diskUUID") != b.DiskUUID || text(d, "diskPath") != b.path || text(d, "diskType") != "block" || text(d, "diskDriver") != "aio" || text(d, "instanceManagerName") != b.InstanceManager {
+			text(d, "diskUUID") != b.DiskUUID || text(d, "diskPath") != b.path || text(d, "diskType") != "block" || text(d, "diskDriver") != "aio" || text(d, "instanceManagerName") != b.InstanceManager {
 			return refused
 		}
 		maximum, maxOK := nativeObservationUint(d["storageMaximum"])
@@ -154,6 +154,20 @@ func verifyRecoveryClaimCapacity(claimSize string, nodes, replicas, backingImage
 		const reserve, margin = 4 * recoveryGiB, 2 * recoveryGiB
 		if total != scheduled || maximum < reserve {
 			return refused
+		}
+		if !cnpgCondition(object{"status": d}, "Schedulable") {
+			conditions, _ := value(d, "conditions").([]any)
+			pressure := false
+			for _, raw := range conditions {
+				condition, _ := raw.(object)
+				if text(condition, "type") == "Schedulable" && text(condition, "status") == "False" && text(condition, "reason") == "DiskPressure" {
+					pressure = true
+				}
+			}
+			if !pressure {
+				return refused
+			}
+			continue
 		}
 		// Longhorn excludes disks below its native limit before choosing a
 		// placement. Another disk on this host can cover the allocation.

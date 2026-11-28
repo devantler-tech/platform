@@ -55,14 +55,10 @@ func observeCNPGStandbyCutover(ctx context.Context, c client, source string, dat
 	if err != nil {
 		return cnpgStandbyCutover{}, err
 	}
-	archive, err := rebindCNPGStandbyArchiveProof(ctx, c, database, before)
+	activation := temporaryV2Activation{c: c, source: source, owner: os.Getenv("GITHUB_RUN_ID"), pools: c.inventoryPools}
+	qualified, err := activation.rebindCNPGStandbyArchiveStorage(ctx, database, before, true)
 	if err != nil {
 		return cnpgStandbyCutover{}, err
-	}
-	activation := temporaryV2Activation{c: c, source: source, owner: os.Getenv("GITHUB_RUN_ID"), pools: c.inventoryPools}
-	qualified, err := activation.recoveryStorage(ctx, archive.Plan.Source)
-	if err != nil || !recoveryStoragePreservesArchive(qualified, *archive.Storage) {
-		return cnpgStandbyCutover{}, errors.New("the raw storage qualified during backup recovery is unverified")
 	}
 	spareBefore, err := readCNPGV2Standby(ctx, c, before, spare, qualified.Disks)
 	if err != nil {
@@ -114,12 +110,13 @@ func observeCNPGStandbyCutover(ctx context.Context, c client, source string, dat
 	return result, nil
 }
 
-func rebindCNPGStandbyArchiveProof(ctx context.Context, c client, database cnpgSource, observation cnpgObservation) (cnpgProofRecord, error) {
+func (a temporaryV2Activation) rebindCNPGStandbyArchiveStorage(ctx context.Context, database cnpgSource, observation cnpgObservation, needsCapacity bool) (cnpgStorageEnvironment, error) {
+	c := a.c
 	refused := errors.New("the completed V2 backup recovery for this database is unverified")
 	if !knownCNPGArchiveSource(database.Namespace, database.Name) ||
 		text(observation.Cluster, "metadata", "namespace") != database.Namespace ||
 		text(observation.Cluster, "metadata", "name") != database.Name {
-		return cnpgProofRecord{}, refused
+		return cnpgStorageEnvironment{}, refused
 	}
 	_, proof, err := readCNPGProof(ctx, c, database.Name)
 	primary := observation.States[text(observation.Cluster, "status", "currentPrimary")]
@@ -127,7 +124,7 @@ func rebindCNPGStandbyArchiveProof(ctx context.Context, c client, database cnpgS
 		proof.Plan.Source.Namespace != database.Namespace || proof.Plan.Source.Cluster != database.Name ||
 		proof.Plan.Source.ClusterUID != text(observation.Cluster, "metadata", "uid") ||
 		proof.Plan.Barrier.SystemID != primary.SystemID {
-		return cnpgProofRecord{}, refused
+		return cnpgStorageEnvironment{}, refused
 	}
 	run, source := proof.Run, proof.Source
 	if proof.Executor != nil {
@@ -135,12 +132,20 @@ func rebindCNPGStandbyArchiveProof(ctx context.Context, c client, database cnpgS
 	}
 	result, err := readFinishedMigrationRun(ctx, c, run, source)
 	if err != nil || result.Attempt != 1 || result.Conclusion != "success" {
-		return cnpgProofRecord{}, refused
+		return cnpgStorageEnvironment{}, refused
+	}
+	var size *string
+	if needsCapacity {
+		size = &proof.Plan.Source.Size
+	}
+	qualified, err := a.observeRecoveryStorage(ctx, size)
+	if err != nil || proof.Storage == nil || !recoveryStoragePreservesArchive(qualified, *proof.Storage) {
+		return cnpgStorageEnvironment{}, errors.New("the raw storage qualified during backup recovery is unverified")
 	}
 	// Independently verify that the same restored V2 copy still exists. A
 	// completed run alone cannot prove that backup retention still applies.
-	if _, err := readRecoveredStorageSnapshot(ctx, c, proof); err != nil {
-		return cnpgProofRecord{}, errors.New("the verified retained database archive copy is no longer proven")
+	if _, err := readRecoveredStorageSnapshot(ctx, c, proof, &qualified); err != nil {
+		return cnpgStorageEnvironment{}, errors.New("the retained database archive copy is unverified on the qualified disks")
 	}
-	return proof, nil
+	return qualified, nil
 }

@@ -18,7 +18,7 @@ type cnpgRecoveredStorage struct {
 // Callers must separately collect complete inventories and bracket SQL with
 // native execution, operator, isolation and storage-environment observations.
 // This pure join never advances the journal or grants deletion authority.
-func bindCNPGRecoveredStorage(r cnpgProofRecord, cluster, pod, claim, pv, volume, engine object, replicas []object) (cnpgRecoveredStorage, error) {
+func bindCNPGRecoveredStorage(r cnpgProofRecord, cluster, pod, claim, pv, volume, engine object, replicas []object, qualified *cnpgStorageEnvironment) (cnpgRecoveredStorage, error) {
 	refused := errors.New("recovered database storage is not qualified")
 	var zero cnpgRecoveredStorage
 	initial := r.Phase == "cluster-created" && !r.RestoreVerified && r.RestoreReceipt == nil
@@ -57,7 +57,14 @@ func bindCNPGRecoveredStorage(r cnpgProofRecord, cluster, pod, claim, pv, volume
 	if !recoveredPVBackend(claim, pv, volume, engine, ns, name, size, bytes, hostname) {
 		return zero, refused
 	}
-	copies, err := recoveredNativeCopies(r.Storage.Disks, volume, engine, replicas, bytes)
+	disks := r.Storage.Disks
+	if qualified != nil {
+		if !retained || !recoveryStoragePreservesArchive(*qualified, *r.Storage) {
+			return zero, refused
+		}
+		disks = qualified.Disks
+	}
+	copies, err := recoveredNativeCopies(disks, volume, engine, replicas, bytes)
 	if err != nil {
 		return zero, refused
 	}

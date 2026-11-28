@@ -117,6 +117,14 @@ func TestRecoveryCapacityIncludesOnlyTheBoundTemporaryReserve(t *testing.T) {
 			t.Fatal("an enabled raw disk outside the native inventory was accepted")
 		}
 		ledger := recoveryDisk(nodes[i])
+		conditions := ledger["conditions"]
+		free := ledger["storageAvailable"]
+		ledger["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "Schedulable", "status": "False", "reason": "DiskPressure"}}
+		ledger["storageAvailable"] = float64((95 * recoveryGiB) / 4)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
+			t.Fatalf("the scheduler excludes the pressured primary, and the reserve covers that host: %v", err)
+		}
+		ledger["conditions"], ledger["storageAvailable"] = conditions, free
 		name := text(replicas[i], "metadata", "name")
 		ledger["storageScheduled"] = float64(87 * recoveryGiB)
 		ledger["scheduledReplica"] = object{name: float64(87 * recoveryGiB)}

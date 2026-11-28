@@ -111,6 +111,10 @@ func TestV2RuntimeRequiresAnExactBindingForTheRetainedReserve(t *testing.T) {
 		t.Fatal("the exact bound reserve was rejected", err)
 	}
 	status := statuses["longhorn-v2-retained"].(object)
+	status["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "Schedulable", "status": "False", "reason": "DiskPressure"}}
+	if err := verifyV2Runtime(s, managers, pools, runtimeStockImage); err != nil {
+		t.Fatal("a healthy reserve carrying existing copies was rejected under disk pressure", err)
+	}
 	status["diskUUID"] = primary["diskUUID"]
 	if verifyV2Runtime(s, managers, pools, runtimeStockImage) == nil {
 		t.Fatal("the reserve reused the primary disk identity")

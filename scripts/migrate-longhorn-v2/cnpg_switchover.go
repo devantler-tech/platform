@@ -303,14 +303,10 @@ func runCNPGV2Switchover(ctx context.Context, c client, database cnpgSource, sou
 	if err != nil {
 		return err
 	}
-	archive, err := rebindCNPGStandbyArchiveProof(ctx, c, database, before)
+	activation := temporaryV2Activation{c: c, source: source, owner: run, pools: c.inventoryPools}
+	storage, err := activation.rebindCNPGStandbyArchiveStorage(ctx, database, before, true)
 	if err != nil {
 		return err
-	}
-	activation := temporaryV2Activation{c: c, source: source, owner: run, pools: c.inventoryPools}
-	storage, err := activation.recoveryStorage(ctx, archive.Plan.Source)
-	if err != nil || !recoveryStoragePreservesArchive(storage, *archive.Storage) {
-		return errors.New("the recovered and qualified storage identity changed")
 	}
 	prior, err := c.get(ctx, "configmap", umamiV2SwitchoverNamespace, journalName, true)
 	if err != nil {

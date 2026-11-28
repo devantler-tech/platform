@@ -88,7 +88,7 @@ func verifyRetainedRuntimeDisk(binding cnpgRecoveryDiskBinding, storage, primary
 		text(status, "diskUUID") != binding.DiskUUID || text(status, "diskPath") != text(expected, "path") ||
 		text(status, "diskType") != "block" || text(status, "diskDriver") != "aio" ||
 		binding.InstanceManager == "" || text(primary, "instanceManagerName") != binding.InstanceManager ||
-		text(status, "instanceManagerName") != binding.InstanceManager || !ready(status) || !cnpgCondition(object{"status": status}, "Schedulable") {
+		text(status, "instanceManagerName") != binding.InstanceManager || !ready(status) {
 		return errors.New("the retained reserve disk or its native identity changed")
 	}
 	return nil

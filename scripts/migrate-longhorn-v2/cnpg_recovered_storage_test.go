@@ -62,7 +62,7 @@ func newRecoveredStorageFixture(t *testing.T) recoveredStorageFixture {
 }
 
 func (f recoveredStorageFixture) bind() (cnpgRecoveredStorage, error) {
-	return bindCNPGRecoveredStorage(f.p.record, f.cluster, f.pod, f.claim, f.pv, f.volume, f.engine, f.replicas)
+	return bindCNPGRecoveredStorage(f.p.record, f.cluster, f.pod, f.claim, f.pv, f.volume, f.engine, f.replicas, nil)
 }
 
 func (f recoveredStorageFixture) copyBindingObjects(t *testing.T) recoveredStorageFixture {
@@ -140,6 +140,38 @@ func TestRecoveredDatabaseStorageRechecksTheRetainedArchiveCopy(t *testing.T) {
 	if _, err := f.bind(); err == nil {
 		t.Fatal("a different restore Pod must not stand in for the verified archive copy")
 	}
+}
+
+func TestRetainedArchiveCanRebindAReplicaToItsQualifiedReserve(t *testing.T) {
+	f := newRecoveredStorageFixture(t)
+	f.p.record = recoveredArchiveReceiptFixture(t)
+	f.p.record.Phase = cnpgArchiveCredentialRetired
+	archive := f.p.record.Storage
+	qualified := *archive
+	for i, disk := range archive.Disks {
+		if disk.Selection != temporaryReserveSelection {
+			continue
+		}
+		reserve := disk
+		reserve.DiskName, reserve.DiskUUID = temporaryReserveDiskName, "verified-retained-disk"
+		qualified.Disks = append(append([]cnpgRecoveryDiskBinding(nil), archive.Disks...), reserve)
+		valueObject(f.replicas[i], "spec")["diskID"] = reserve.DiskUUID
+		if _, err := f.bind(); err == nil {
+			t.Fatal("the immutable archive alone qualified a replica on an unknown disk")
+		}
+		if _, err := bindCNPGRecoveredStorage(f.p.record, f.cluster, f.pod, f.claim, f.pv, f.volume, f.engine, f.replicas, &qualified); err != nil {
+			t.Fatalf("a healthy replica on the exact live reserve did not qualify: %v", err)
+		}
+		if len(archive.Disks) != 3 {
+			t.Fatal("the live disk was written to the immutable archive")
+		}
+		qualified.Disks[3].InstanceManager = "changed-instance-manager"
+		if _, err := bindCNPGRecoveredStorage(f.p.record, f.cluster, f.pod, f.claim, f.pv, f.volume, f.engine, f.replicas, &qualified); err == nil {
+			t.Fatal("the archive accepted a different reserve instance manager")
+		}
+		return
+	}
+	t.Fatal("the fixture did not contain the permanent identity of the reserve worker")
 }
 
 func TestRecoveredDatabaseStorageRefusesSubstitutionAndPartialCopies(t *testing.T) {

@@ -83,7 +83,7 @@ func resumeUmamiArchiveData(ctx context.Context, c client) error {
 	if err := pending.rebindOriginalArchive(ctx); err != nil {
 		return errors.New("the original archive no longer matches the restored checkpoint")
 	}
-	if _, err := readRecoveredStorageSnapshot(ctx, c, record); err != nil {
+	if _, err := readRecoveredStorageSnapshot(ctx, c, record, nil); err != nil {
 		return errors.New("the retained restore and its three V2 copies are unverified")
 	}
 	if err := pending.verifyDatabaseCreationPolicy(ctx); err != nil {
