@@ -63,6 +63,8 @@ func main() {
 		authorization = authorizeHostReboot(os.Getenv, target)
 	case "observe-database":
 		authorization = authorizeCNPGObservation(os.Getenv)
+	case observeCNPGStreamOperation:
+		authorization = authorizeCNPGStreamObservation(os.Getenv)
 	case observeCorootKeeperOperation:
 		authorization = authorizeCorootKeeperObservation(os.Getenv)
 	case observeCorootClickHouseOperation:
@@ -311,6 +313,20 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == observeCNPGStreamOperation {
+		c := client{run: execute, context: "admin@prod"}
+		binding, err := resolveCNPGStreamSource(ctx, c, os.Getenv("LONGHORN_V2_DATABASE"), os.Getenv("GITHUB_SHA"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		role := "primary"
+		if binding.State.InRecovery {
+			role = "standby"
+		}
+		fmt.Printf("CNPG_STREAM_SOURCE=VERIFIED role=%s tlsRefs=BOUND tlsHandshake=UNVERIFIED walSenders=AVAILABLE storage=BOUND writes=0\n", role)
+		return
 	}
 	if operation == observeCorootKeeperOperation {
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
