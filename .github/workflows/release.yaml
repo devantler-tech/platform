@@ -10,11 +10,9 @@ permissions: {}
 
 jobs:
   release:
-    uses: devantler-tech/.github/.github/workflows/create-release.yaml@61d8f70f25d7d5deb8bd914136b329b5a59ff43b # v22.7.4
+    uses: devantler-tech/.github/.github/workflows/create-release.yaml@832e6d37bfd0c0b39c855496efc128d2fdc2be2c # v22.9.0
     with:
       disable-issue-side-effects: true
     permissions:
       contents: write # create releases and tags
       id-token: write # provenance signing
-    secrets:
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
