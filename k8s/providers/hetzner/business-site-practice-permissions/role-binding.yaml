@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: business-site-practice
+  namespace: business-site-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: business-site-practice
+subjects:
+  - kind: ServiceAccount
+    name: business-site-practice
+    namespace: flux-system

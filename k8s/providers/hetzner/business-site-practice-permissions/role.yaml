@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: business-site-practice
+  namespace: business-site-dev
+rules:
+  # The admission policy confines Job creation to the migration name.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    resourceNames: ["business-site-dev-migration"]
+    verbs: ["get", "patch", "update", "delete"]

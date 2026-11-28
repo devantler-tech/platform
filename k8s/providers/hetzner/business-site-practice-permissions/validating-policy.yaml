@@ -1,0 +1,28 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: business-site-practice-create
+  annotations:
+    policies.kyverno.io/title: Restrict Practice Migration Job Creation
+    policies.kyverno.io/category: Security, Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Job
+    policies.kyverno.io/minversion: 1.19.1
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["jobs"]
+  matchConditions:
+    - name: practice-reconciler
+      expression: "request.?userInfo.?username.orValue('') == 'system:serviceaccount:flux-system:business-site-practice'"
+  validations:
+    - expression: "request.namespace == 'business-site-dev' && object.metadata.name == 'business-site-dev-migration'"
+      message: The practice reconciler can create only the practice database migration Job.

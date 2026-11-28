@@ -183,7 +183,7 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/business-site-practice-perm
       .failurePolicy=="Fail" and .validationActions==["Deny"] and .evaluation.background.enabled==false and
       .matchConstraints.resourceRules==[{apiGroups:["batch"],apiVersions:["v1"],operations:["CREATE"],
         resources:["jobs"]}] and
-      [.matchConditions[].expression]==["request.userInfo.username == \u0027system:serviceaccount:flux-system:business-site-practice\u0027"] and
+      [.matchConditions[].expression]==["request.?userInfo.?username.orValue(\u0027\u0027) == \u0027system:serviceaccount:flux-system:business-site-practice\u0027"] and
       [.validations[].expression]==["request.namespace == \u0027business-site-dev\u0027 && object.metadata.name == \u0027business-site-dev-migration\u0027"])
   ' >/dev/null || fail 'practice reconciliation permissions must be limited to the migration Job'
 

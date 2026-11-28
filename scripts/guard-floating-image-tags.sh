@@ -26,8 +26,9 @@
 # not be read and its images would report clean. The guard renders every cluster
 # overlay under `<root>/clusters` and follows the paths its Flux Kustomizations name,
 # so a new layer or cluster is covered without editing the guard. `clusters/base` is
-# the template the overlays share: its paths still carry placeholders, so it is not
-# a cluster and is skipped.
+# the template the overlays share and is excluded. The practice migration has a
+# dedicated path in the independently verified Business Site artifact. That release
+# checks the exact overlay and its pinned Job before it becomes available to Flux.
 #
 # 🔴 WHY EACH PATH IS RENDERED THROUGH ITS FLUX KUSTOMIZATION, NOT ON ITS OWN.
 #
@@ -42,7 +43,8 @@
 #
 # ⚠️ WHAT THIS DOES NOT SEE. A HelmRelease is rendered by Flux, not by Kustomize, so
 # an image a chart chooses is invisible here, and so are workloads delivered by a
-# nested Flux Kustomization or an OCI artifact from another repository. `postBuild`
+# nested Flux Kustomization or an OCI artifact from another repository. The one
+# accepted cross-source root must match the scoped practice release handoff. `postBuild`
 # substitution is not performed: an image still carrying `${...}` is cannot-check.
 # Only the core workload kinds (Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet,
 # ReplicationController, Job, CronJob) are read.
@@ -78,7 +80,11 @@ root="${1%/}"
 [ -d "$root/clusters" ] || die "'$root/clusters' is not a directory"
 command -v kubectl >/dev/null 2>&1 || die "kubectl is required but not installed"
 command -v yq >/dev/null 2>&1 || die "yq is required but not installed"
+command -v jq >/dev/null 2>&1 || die "jq is required but not installed"
 root_real="$(cd "$root" && pwd -P)" || die "cannot resolve '$root'"
+
+# shellcheck source=scripts/flux-render.lib.sh
+. "$(dirname "$0")/flux-render.lib.sh"
 
 exceptions_file="${FLOATING_IMAGE_TAG_EXCEPTIONS:-$(dirname "$0")/floating-image-tag-exceptions.tsv}"
 [ -f "$exceptions_file" ] ||
@@ -218,6 +224,9 @@ for overlay in "$root"/clusters/*/; do
     [ -f "$doc" ] || continue
     path="$(yq '.spec.path // ""' "$doc")" || die "cannot read spec.path from a Flux Kustomization rendered by '$overlay'"
     [ -n "$path" ] || die "a Flux Kustomization rendered by '$overlay' has no spec.path"
+    source_scope="$(flux_render_source_scope "$doc" "$cluster")" ||
+      die "cannot bind the Flux source for '$path' rendered by '$overlay'"
+    [ "$source_scope" = platform ] || continue
     path="${path#./}"
     case $path in
       /* | .. | ../* | */.. | */../*) die "Flux path '$path' named by '$overlay' leaves '$root'" ;;

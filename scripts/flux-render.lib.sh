@@ -20,7 +20,7 @@
 #
 # The caller defines `die` (print its own prefix and the message, exit 2), sets `controller_helm`
 # (empty to build one), and calls `flux_render_init` with a private scratch
-# directory before any other function here. Functions that `die` are meant to run in the guard's
+# directory before rendering or pulling charts. Functions that `die` are meant to run in the guard's
 # own shell, or in a subshell whose exit status the guard checks.
 
 flux_render_tab="$(printf '\t')"
@@ -163,6 +163,30 @@ flux_render_is_cluster() { # <overlay without its trailing slash>
   fi
 }
 
+# The portal publisher binds the practice overlay and its one pinned Job to the
+# signed release. Local Platform guards only resolve paths in the Platform artifact.
+flux_render_source_scope() { # <Flux Kustomization document> <cluster>
+  local doc="$1" cluster="$2" local_source
+  local_source="$(yq '(.spec.sourceRef == null) or
+    (.spec.sourceRef.kind == "OCIRepository" and .spec.sourceRef.name == "flux-system" and
+     (.spec.sourceRef.namespace // .metadata.namespace) == "flux-system")' "$doc")" || return 1
+  if [ "$local_source" = true ]; then
+    printf 'platform\n'
+    return
+  fi
+  [ "$cluster" = prod ] || return 1
+  yq -o=json -I=0 '.' "$doc" | jq -e '
+    .metadata.name == "business-site-preview" and .metadata.namespace == "flux-system" and
+    (.spec | del(.interval,.retryInterval,.timeout)) == {
+      path:"./practice", sourceRef:{kind:"OCIRepository",name:"business-site",namespace:"business-site"},
+      serviceAccountName:"business-site-practice",
+      dependsOn:[{name:"apps"},{name:"business-site-practice-permissions"}],
+      wait:true,prune:true,force:false
+    }
+  ' >/dev/null || return 1
+  printf 'practice-release\n'
+}
+
 # Renders one cluster overlay of <tree> the way Flux applies it: every Flux Kustomization it names
 # is built from its `spec.path` with its `images`, `patches`, `components`, `targetNamespace`,
 # `namePrefix` and `nameSuffix`, and its `postBuild` substitution is applied. Leaves in <work>:
@@ -172,7 +196,7 @@ flux_render_is_cluster() { # <overlay without its trailing slash>
 # and <stem>.resolved.yaml per layer.
 flux_render_cluster() { # <tree> <overlay> <work>
   local tree="$1" overlay="$2" work="$3" tree_real cluster doc path layers rendered wrap resource component
-  local component_dir component_real deprecated flux_json
+  local component_dir component_real deprecated flux_json source_scope
   cluster="${overlay##*/}"
   tree_real="$(cd "$tree" && pwd -P)" || die "cannot resolve '$tree'"
   mkdir -p "$work/flux" || die "cannot create a scratch directory for '$cluster'"
@@ -193,6 +217,9 @@ flux_render_cluster() { # <tree> <overlay> <work>
     [ -f "$doc" ] || continue
     path="$(yq '.spec.path // ""' "$doc")" || die "cannot read spec.path from a Flux Kustomization rendered by '$overlay'"
     [ -n "$path" ] || die "a Flux Kustomization rendered by '$overlay' has no spec.path"
+    source_scope="$(flux_render_source_scope "$doc" "$cluster")" ||
+      die "cannot bind the Flux source for '$path' rendered by '$overlay'"
+    [ "$source_scope" = platform ] || continue
     path="${path#./}"
     case $path in
       /* | .. | ../* | */.. | */../*) die "Flux path '$path' named by '$overlay' leaves '$tree'" ;;

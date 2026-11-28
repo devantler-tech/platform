@@ -458,6 +458,28 @@ mv "$root/clusters/test/flux.tmp" "$root/clusters/test/flux-kustomization.yaml"
 run_guard "$root"
 assert_rc "a Flux path that leaves the root" 2
 
+echo "== The external practice release has one scoped source =="
+root="$(tree)"
+deployment "$root" 'nginx:1.27.0'
+mv "$root/clusters/test" "$root/clusters/prod"
+printf '  - practice.yaml\n' >>"$root/clusters/prod/kustomization.yaml"
+practice="$root/clusters/prod/practice.yaml"
+cp "$repo_root/k8s/clusters/prod/flux-kustomization-business-site-preview.yaml" "$practice"
+run_guard "$root"
+assert_rc "the declared practice handoff keeps the local image coverage" 0
+assert_contains "the local image remains in scope" "1 rendered image(s)"
+yq -i '.spec.path = "./dev"' "$practice"
+run_guard "$root"
+assert_rc "the external source cannot select the old separate dev application" 2
+cp "$repo_root/k8s/clusters/prod/flux-kustomization-business-site-preview.yaml" "$practice"
+yq -i '.spec.sourceRef.namespace = "other"' "$practice"
+run_guard "$root"
+assert_rc "the external source cannot move to another namespace" 2
+cp "$repo_root/k8s/clusters/prod/flux-kustomization-business-site-preview.yaml" "$practice"
+yq -i '.spec.images = [{"name":"unused","newTag":"latest"}]' "$practice"
+run_guard "$root"
+assert_rc "the external source cannot acquire unverified image overrides" 2
+
 echo
 if [ "$assertions" -eq 0 ]; then
   echo "no assertions ran" >&2
