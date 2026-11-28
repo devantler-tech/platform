@@ -24,6 +24,10 @@ was checked against the Stalwart v0.16.27 source.
 | Reports | DMARC, DKIM and SPF failure reports | off | They carry message content to whoever a sender's domain names. Aggregate DMARC and TLS reports stay on. |
 | Retention | Trash and Junk expunge | 30 days | Pins the upstream default. |
 | Throttles | Sender IP, sender-to-recipient, and submission per account | 5 per second, 25 per hour, 100 per hour | The server seeds the first two only into an empty collection, so all three are declared. |
+| Submission | Sign-in required and offered over TLS, sender checked, submission throttle | on both `submission` (587, STARTTLS) and `submissions` (465, implicit TLS, served only with `--hostname`) | Each rule is built from one list of the submission listeners, whether or not 465 is served. A rule that named only one would let the other accept mail without sign-in. Without `--hostname` the setup removes a stored `submissions` listener, so the previous setup image can start on the store. |
+| Server names | Default hostname; web host | `--hostname` (production: `mail.devantler.tech`), else the settings' `hostname`; `--web-hostname` (production: `stalwart.platform.devantler.tech`) | The default hostname is the SMTP greeting and EHLO name and the host mail apps are given for IMAP and SMTP. The serving process's `STALWART_PUBLIC_URL` names the same web host for OAuth and JMAP. |
+| Advertised services | What autoconfig, autodiscover and the PACC document offer | IMAP and SMTP at the default hostname with implicit TLS only (993, 465); JMAP, CalDAV, CardDAV and WebDAV at the web host; no POP3 or ManageSieve | Upstream also advertises POP3 and ManageSieve, which this server does not serve. Upstream always offers 465 for SMTP, so without `--hostname` it is offered but not served, as before. Read back exactly, so a stored POP3 entry is drift. |
+| HTTP | Upload endpoint | refused except at the maintainer's own upload URL | The endpoint ignores the JMAP permission list, and the access rule runs before sign-in, so it can only name the maintainer's account in the path. Another signed-in account can still store an unusable temporary upload there, counted against the maintainer's upload quota. On the first start of an empty store, before the account exists, uploads stay refused for everyone. |
 
 ## Drift check
 
@@ -32,7 +36,9 @@ configuration back as the managed administrator and compares it with the
 declared plan, without writing. It exits 0 when they match, 1 on drift (a
 setting changed by hand, an unexpected listener or account, or a setting it
 could not read) and 2 when it could not run. A scheduled Job runs it so a change
-made in the web interface is reported before the next start reverts it.
+made in the web interface is reported before the next start reverts it. Give it
+the same `--mail-proxy-source`, `--hostname` and `--web-hostname` as the setup:
+without them it declares the settings' hostname and reports drift.
 
 ## Spam filter rules
 

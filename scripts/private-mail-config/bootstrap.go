@@ -27,6 +27,7 @@ type bootstrapRuntime struct {
 	startup, shutdown                  time.Duration
 	proxyClientIP                      *bool
 	mailProxySource                    string
+	names                              deploymentNames
 }
 
 // bootstrapCommand runs the bounded bootstrap lifecycle using private file inputs.
@@ -38,6 +39,8 @@ func bootstrapCommand(args []string, log io.Writer) int {
 	f.Var(&proxy, "proxy-client-ip", "explicit deployment transport override")
 	var mailProxy mailProxySourceOption
 	f.Var(&mailProxy, "mail-proxy-source", "private IPv4 address of the mail load balancer")
+	var names deploymentNames
+	names.register(f)
 	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) {
 		_, _ = fmt.Fprintln(log, "Email bootstrap refused invalid arguments.")
 		return 2
@@ -50,7 +53,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 		server: "/usr/local/bin/stalwart", cli: "/usr/local/bin/stalwart-cli", url: "http://127.0.0.1:" + bootstrapRecoveryPort,
 		dataDir: "/var/lib/stalwart", serverArgs: []string{"--config", "/etc/stalwart/config.json"},
 		startup: time.Minute, shutdown: 30 * time.Second,
-		proxyClientIP: proxy.value, mailProxySource: mailProxy.value,
+		proxyClientIP: proxy.value, mailProxySource: mailProxy.value, names: names,
 	}
 	if err := bootstrap(ctx, *dir, runtime); err != nil {
 		_, _ = fmt.Fprintln(log, "Email bootstrap failed; serving must remain stopped.", err)
@@ -83,6 +86,7 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 		v.UseProxyClientIP = *runtime.proxyClientIP
 	}
 	v.mailProxySource = runtime.mailProxySource
+	runtime.names.apply(&v)
 	profile, err := schemaFor(v.RuntimeVersion)
 	if err != nil || (profile.v1 && verifyRuntimeTools(ctx, runtime, profile.version) != nil) {
 		return errConfiguration

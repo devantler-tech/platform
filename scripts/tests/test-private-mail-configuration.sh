@@ -275,11 +275,20 @@ verify_receiving_aliases() {
         then .[0]|{id,messageId,mailboxIds} else error("alias message is not uniquely retained") end' "$scratch/receiving-result.json" >"$scratch/$alias-receiving-metadata.json"
   done
 }
+# --hostname serves implicit-TLS submission on 465. The main flow passes the
+# settings' own name, so 465 is served without renaming the fixture server.
+identity_flags=(--hostname=mail.example.test)
 prepare_plan() {
   local output=$1
+  shift
   inventory
-  go -C "$root" run ./scripts/private-mail-config --input-dir "$scratch/inputs" --output-file "$output"
+  go -C "$root" run ./scripts/private-mail-config --input-dir "$scratch/inputs" --output-file "$output" "$@"
 }
+# The listener names a fixture inventory holds, sorted.
+listener_names() {
+  jq -ce '.methodResponses[0][1].total as $total | [.methodResponses[1][1].list[].name] | sort | if length == $total then . else error("incomplete listener census") end' "$1"
+}
+previous_listeners='["client-proxy","imaps","management","smtp-inbound","submission"]'
 apply_plan() {
   native_cli apply --file /proof/plan.ndjson --json >"$scratch/apply.jsonl" 2>"$scratch/apply.err"
   jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/apply.jsonl" >/dev/null
@@ -334,6 +343,14 @@ echo 'PASS: native recovery management is separate from normal administration'
 docker stop "$name" >/dev/null
 docker rm "$name" >/dev/null
 start_server preparation
+# Setup without --hostname on a fresh store stores only the listeners the
+# previous setup image accepts, so a deployment can be healed back to it.
+inventory
+[ "$(listener_names "$scratch/inputs/listener-inventory.json")" = "$previous_listeners" ] || {
+  echo 'FAIL: setup without --hostname stored a listener the previous setup refuses' >&2
+  exit 1
+}
+echo 'PASS: setup without --hostname on a fresh store serves no implicit-TLS submission'
 prepare_plan "$scratch/plan.ndjson"
 apply_plan
 native_cli query Account --fields id --json >"$scratch/accounts-before.jsonl"
@@ -488,7 +505,7 @@ printf '%s\n' '{"@type":"upsert","object":"Domain","matchOn":["name"],"value":{"
   '{"@type":"upsert","object":"Account","matchOn":["name","domainId"],"value":{"administrator":{"@type":"User","name":"operator","domainId":"#domain","permissions":{"@type":"Replace","enabledPermissions":{},"disabledPermissions":{}}}}}' \
   '{"@type":"update","object":"MtaStageRcpt","value":{"rewrite":{"match":{"9":{"if":"true","then":"'"'"'operator@example.test'"'"'"}}}}}' >"$scratch/wider.ndjson"
 native_cli apply --file /proof/wider.ndjson --json >"$scratch/wider-apply.jsonl" 2>"$scratch/wider-apply.err"
-prepare_plan "$scratch/replay.ndjson"
+prepare_plan "$scratch/replay.ndjson" "${identity_flags[@]}"
 mv "$scratch/replay.ndjson" "$scratch/plan.ndjson"
 apply_plan
 native_cli get MtaStageRcpt --json >"$scratch/rcpt.json"
@@ -503,7 +520,7 @@ for object in accounts certificates applications tracers; do
   cmp "$scratch/before.ids" "$scratch/after.ids"
 done
 inventory
-jq -e '.methodResponses[0][1].total==5 and ([.methodResponses[1][1].list[].name]|sort)==["client-proxy","imaps","management","smtp-inbound","submission"]' "$scratch/inputs/listener-inventory.json" >/dev/null
+jq -e '.methodResponses[0][1].total==6 and ([.methodResponses[1][1].list[].name]|sort)==["client-proxy","imaps","management","smtp-inbound","submission","submissions"]' "$scratch/inputs/listener-inventory.json" >/dev/null
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 start_server serving
@@ -577,7 +594,7 @@ run_check() {
     --cap-drop ALL --security-opt no-new-privileges:true \
     --mount "type=bind,source=$scratch/inputs,target=/etc/private-mail,readonly" \
     --entrypoint /usr/local/bin/private-mail-bootstrap "$name-bootstrap-image" \
-    check --url "http://$name:8080" >"$scratch/check.log" 2>&1 || check_status=$?
+    check --url "http://$name:8080" "${identity_flags[@]}" >"$scratch/check.log" 2>&1 || check_status=$?
   # The check prints one fixed line that names at most a registry object.
   grep -E '^Email configuration (matches|drift in [A-Za-z ]+:|check could not run: [a-z ]+$)' "$scratch/check.log" | head -1 | cut -c1-160 >&2 || true
   return "$check_status"
@@ -627,7 +644,7 @@ printf 'user = "maintainer@example.test:%s"\n' "$human_password" >"$scratch/huma
 cp "$root/scripts/private-mail-config/inventory-request.json" "$scratch/client-inventory-request.json"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
   --header 'Content-Type: application/json' --data-binary @/proof/client-inventory-request.json "http://$name:8080/jmap" >"$scratch/inputs/listener-inventory.json"
-go -C "$root" run ./scripts/private-mail-config --input-dir "$scratch/inputs" --output-file "$scratch/client-replay.ndjson"
+go -C "$root" run ./scripts/private-mail-config --input-dir "$scratch/inputs" --output-file "$scratch/client-replay.ndjson" "${identity_flags[@]}"
 administration_cli apply --file /proof/client-replay.ndjson --json >"$scratch/client-replay-result.jsonl" 2>"$scratch/client-replay.err"
 jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/client-replay-result.jsonl" >/dev/null
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/client.curl "http://$name:8080/jmap/session" >"$scratch/client-after-replay.json"
@@ -679,6 +696,29 @@ if protocol_curl --silent --show-error --max-time 10 --url "smtp://$name:1025" -
   exit 1
 fi
 grep -q '550' "$scratch/relay.err"
+# Implicit-TLS submission (RFC 8314), served on 465, takes every submission
+# rule: sign-in is required and offered, and the agent keeps its one recipient.
+# A rule that named only the STARTTLS listener would leave this port accepting
+# mail without sign-in.
+smtps=(--silent --show-error --max-time 15 --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1465:$name:1465" --url smtps://mail.example.test:1465 --mail-from agents@example.test --upload-file /proof/known.eml)
+protocol_curl --fail "${smtps[@]}" --config /proof/agent.curl --mail-rcpt maintainer@example.test >"$scratch/implicit-allowed.out" 2>"$scratch/implicit-allowed.err"
+for recipient in operator@example.test someone@remote.example.test; do
+  if protocol_curl "${smtps[@]}" --config /proof/agent.curl --mail-rcpt "$recipient" >"$scratch/implicit-denied.out" 2>"$scratch/implicit-denied.err"; then
+    echo 'FAIL: agent recipient restriction was bypassed on implicit-TLS submission' >&2
+    exit 1
+  fi
+  grep -q '550' "$scratch/implicit-denied.err"
+done
+if protocol_curl --verbose "${smtps[@]}" --mail-rcpt maintainer@example.test >"$scratch/implicit-no-auth.out" 2>"$scratch/implicit-no-auth.err"; then
+  echo 'FAIL: implicit-TLS submission accepted an unauthenticated envelope' >&2
+  exit 1
+fi
+grep -q '503' "$scratch/implicit-no-auth.err"
+auth_advertised "$scratch/implicit-no-auth.err" || {
+  echo 'FAIL: implicit-TLS submission did not offer sign-in' >&2
+  exit 1
+}
+echo 'PASS: implicit-TLS submission requires sign-in and keeps the agent restriction'
 # Human submission retains normal external sending. The isolated .test
 # destination cannot leave this private fixture network.
 printf 'From: maintainer@example.test\r\nTo: someone@remote.example.test\r\nSubject: Human submission proof\r\n\r\nDisposable fixture.\r\n' >"$scratch/human.eml"
@@ -723,6 +763,37 @@ protocol_curl --fail --silent --show-error --max-time 10 --config /proof/agent.c
 jq -e '.methodResponses[0][0]=="Email/query" and .methodResponses[1][0]=="error" and .methodResponses[1][1].type=="forbidden" and .methodResponses[2][0]=="error" and .methodResponses[2][1].type=="forbidden"' "$scratch/write-result.json" >/dev/null
 upload_status=$(protocol_curl --silent --max-time 10 --config /proof/agent.curl --data-binary @/proof/known.eml --output /dev/null --write-out '%{http_code}' "http://$name:8080/jmap/upload/$account_id/")
 [ "$upload_status" = 403 ]
+# The maintainer may upload to their own account, the URL webmail uses to
+# attach files and save filters. The rule names that account by the ID the
+# setup reads from the registry, so it must be the session's account ID.
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl "http://$name:8080/jmap/session" >"$scratch/maintainer-session.json"
+maintainer_account=$(jq -er '.primaryAccounts."urn:ietf:params:jmap:mail"' "$scratch/maintainer-session.json")
+[ "$maintainer_account" = "$maintainer_id" ] || {
+  echo 'FAIL: the registry account ID is not the JMAP account ID the upload rule names' >&2
+  exit 1
+}
+[ "$maintainer_account" != "$account_id" ]
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --header 'Content-Type: message/rfc822' \
+  --data-binary @/proof/known.eml "http://$name:8080/jmap/upload/$maintainer_account/" >"$scratch/maintainer-upload.json"
+jq -e --arg account "$maintainer_account" '.accountId==$account and (.blobId|type)=="string" and .blobId!="" and .size>0' \
+  "$scratch/maintainer-upload.json" >/dev/null || {
+  echo 'FAIL: the maintainer could not upload to their own account' >&2
+  exit 1
+}
+# Only that exact URL is open. The maintainer's sign-in does not open another
+# account's URL, and the agent's and administrator's stay refused above.
+for path in "jmap/upload/$account_id/" "jmap/upload/$maintainer_account" "jmap/upload/a$maintainer_account/"; do
+  upload_status=$(protocol_curl --silent --max-time 10 --config /proof/human.curl --data-binary @/proof/known.eml --output /dev/null --write-out '%{http_code}' "http://$name:8080/$path")
+  [ "$upload_status" = 403 ] || {
+    echo 'FAIL: an upload URL other than the maintainer'"'"'s own was not refused' >&2
+    exit 1
+  }
+done
+administrator_account=$(jq -er '.primaryAccounts."urn:ietf:params:jmap:mail"' "$scratch/administrator-session.json")
+[ "$administrator_account" != "$maintainer_account" ]
+upload_status=$(protocol_curl --silent --max-time 10 --config /proof/administrator.curl --data-binary @/proof/known.eml --output /dev/null --write-out '%{http_code}' "http://$name:8080/jmap/upload/$administrator_account/")
+[ "$upload_status" = 403 ]
+echo 'PASS: uploads are open at the maintainer'"'"'s own upload URL only'
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" 'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/known-read.eml"
 grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
 # Exercise the recovery driver's real JMAP lifecycle before taking the copy.
@@ -1018,9 +1089,11 @@ done
 # above names none, so prove here that the real server stores the production
 # checks and that the bootstrap's policy readback accepts them. 10.255.255.250 is
 # a private address no fixture container holds, so no connection is trusted.
+# Production also names the server and its web host, so pass both, each
+# differing from the settings' mail.example.test, which the flag overrides.
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
-run_bootstrap --mail-proxy-source=10.255.255.250
+run_bootstrap --mail-proxy-source=10.255.255.250 --hostname=smtp.example.test --web-hostname=web.example.test
 start_server serving
 jq -cn '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[
   ["x:SenderAuth/get",{ids:["singleton"],properties:["dkimVerify","dmarcVerify","arcVerify","spfEhloVerify","spfFromVerify","reverseIpVerify"]},"sender-auth"]]}' >"$scratch/sender-auth-request.json"
@@ -1039,4 +1112,90 @@ jq -e '
   exit 1
 }
 echo 'PASS: the production inbound sender checks are stored and read back'
+# The --hostname flag, not the settings, names the server, and only the
+# services the server serves are advertised: no POP3 or ManageSieve, IMAP and
+# SMTP at the mail host with implicit TLS, the HTTP services at the web host.
+jq -cn '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[
+  ["x:SystemSettings/get",{ids:["singleton"],properties:["defaultHostname","services"]},"system"]]}' >"$scratch/system-request.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/system-request.json "http://$name:8080/jmap" >"$scratch/system.json"
+jq -e '
+  {hostname: null, cleartext: false} as $mail | {hostname: "web.example.test", cleartext: false} as $web |
+  .methodResponses[0][1].list as $system | ($system|length)==1 and $system[0].defaultHostname=="smtp.example.test" and
+  $system[0].services=={imap: $mail, smtp: $mail, jmap: $web, caldav: $web, carddav: $web, webdav: $web}
+' "$scratch/system.json" >/dev/null || {
+  echo 'FAIL: the server name or the advertised services were not stored' >&2
+  exit 1
+}
+# The documents mail apps read: every server entry as "type host port socket",
+# and every DAV address. An empty or partial parse cannot equal the expectation.
+protocol_curl --fail --silent --show-error --max-time 10 \
+  "http://$name:8080/.well-known/autoconfig/mail/config-v1.1.xml?emailaddress=maintainer@example.test" >"$scratch/autoconfig.xml"
+autoconfig_servers=$(tr -d '\t\r' <"$scratch/autoconfig.xml" | awk '
+  /^<(incoming|outgoing)Server type="/ { split($0, attribute, "\""); type = attribute[2]; host = ""; port = ""; socket = ""; next }
+  /^<hostname>/ { gsub(/<\/?hostname>/, ""); host = $0; next }
+  /^<port>/ { gsub(/<\/?port>/, ""); port = $0; next }
+  /^<socketType>/ { gsub(/<\/?socketType>/, ""); socket = $0; next }
+  /^<\/(incoming|outgoing)Server>/ { print type, host, port, socket }' | LC_ALL=C sort)
+autoconfig_dav=$(grep -o '<serverURL>[^<]*</serverURL>' "$scratch/autoconfig.xml" | LC_ALL=C sort)
+if [ "$autoconfig_servers" != $'imap smtp.example.test 993 SSL\nsmtp smtp.example.test 465 SSL' ] ||
+  [ "$autoconfig_dav" != $'<serverURL>https://web.example.test/dav/cal</serverURL>\n<serverURL>https://web.example.test/dav/card</serverURL>\n<serverURL>https://web.example.test/dav/file</serverURL>' ] ||
+  grep -Eqi 'pop3|<port>(110|143|587|995)</port>' "$scratch/autoconfig.xml"; then
+  echo 'FAIL: autoconfig does not advertise exactly the served mail services' >&2
+  exit 1
+fi
+printf '%s' '<?xml version="1.0" encoding="utf-8"?><Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/requestschema/2006"><Request><EMailAddress>maintainer@example.test</EMailAddress><AcceptableResponseSchema>http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a</AcceptableResponseSchema></Request></Autodiscover>' >"$scratch/autodiscover-request.xml"
+protocol_curl --fail --silent --show-error --max-time 10 --header 'Content-Type: text/xml' \
+  --data-binary @/proof/autodiscover-request.xml "http://$name:8080/autodiscover/autodiscover.xml" >"$scratch/autodiscover.xml"
+autodiscover_servers=$(tr -d '\t\r' <"$scratch/autodiscover.xml" | awk '
+  /^<Protocol>/ { type = ""; host = ""; port = ""; ssl = ""; next }
+  /^<Type>/ { gsub(/<\/?Type>/, ""); type = $0; next }
+  /^<Server>/ { gsub(/<\/?Server>/, ""); host = $0; next }
+  /^<Port>/ { gsub(/<\/?Port>/, ""); port = $0; next }
+  /^<SSL>/ { gsub(/<\/?SSL>/, ""); ssl = $0; next }
+  /^<\/Protocol>/ { print type, host, port, ssl }' | LC_ALL=C sort)
+if [ "$autodiscover_servers" != $'IMAP smtp.example.test 993 on\nSMTP smtp.example.test 465 on' ]; then
+  echo 'FAIL: autodiscover does not advertise exactly the served mail services' >&2
+  exit 1
+fi
+# Mail clients see the name in the SMTP greeting, here on implicit-TLS
+# submission. The probe signs in as nobody, so it delivers nothing.
+if protocol_curl --verbose --silent --max-time 15 --cacert /proof/etc/tls/tls.crt \
+  --connect-to "mail.example.test:1465:$name:1465" --url smtps://mail.example.test:1465 \
+  --mail-from agents@example.test --mail-rcpt maintainer@example.test --upload-file /proof/known.eml \
+  >"$scratch/greeting.out" 2>"$scratch/greeting.err"; then
+  echo 'FAIL: implicit-TLS submission accepted an unauthenticated envelope' >&2
+  exit 1
+fi
+grep -Eq '^< 220 smtp\.example\.test ' "$scratch/greeting.err" || {
+  echo 'FAIL: the SMTP greeting does not name the server' >&2
+  exit 1
+}
+echo 'PASS: the deployment names the server, and autoconfig and autodiscover advertise only the served services'
+# A failed deployment is healed by restoring the previous manifests, which run
+# the setup without --hostname. That setup must start on the store the flagged
+# setup just wrote, remove its implicit-TLS listener so the previous setup image
+# accepts the store again, and return to the settings' name. Run it twice: the
+# second start finds nothing to remove.
+for pass in removes unchanged; do
+  docker stop --time 30 "$name" >/dev/null
+  docker rm "$name" >/dev/null
+  run_bootstrap --mail-proxy-source=10.255.255.250
+  start_server serving
+  protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+    --header 'Content-Type: application/json' --data-binary @/proof/client-inventory-request.json "http://$name:8080/jmap" >"$scratch/unflagged-inventory.json"
+  protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+    --header 'Content-Type: application/json' --data-binary @/proof/system-request.json "http://$name:8080/jmap" >"$scratch/unflagged-system.json"
+  implicit_status=0
+  protocol_curl --silent --max-time 10 --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1465:$name:1465" \
+    --url smtps://mail.example.test:1465 --mail-from agents@example.test --mail-rcpt maintainer@example.test \
+    --upload-file /proof/known.eml >"$scratch/unflagged-implicit.out" 2>"$scratch/unflagged-implicit.err" || implicit_status=$?
+  if [ "$(listener_names "$scratch/unflagged-inventory.json")" != "$previous_listeners" ] ||
+    ! jq -e '.methodResponses[0][1].list[0].defaultHostname=="mail.example.test"' "$scratch/unflagged-system.json" >/dev/null ||
+    [ "$implicit_status" != 7 ]; then
+    echo "FAIL: setup without --hostname did not return to the previous listeners and name ($pass)" >&2
+    exit 1
+  fi
+done
+echo 'PASS: setup without --hostname removes the implicit-TLS listener, starts, and repeats idempotently'
 echo 'PASS: native mail configuration, receiving continuity, ownership refusal, cached UI upgrade, replay, TLS, account restrictions, per-client proxy bans and explicit rollback'

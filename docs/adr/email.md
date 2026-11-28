@@ -200,6 +200,77 @@ opens a new connection from Envoy. Each mail listener trusts PROXY headers from
 the load balancer's one pinned private address only
 ([PROXY identity](../operations/email-proxy-identity.md#mail-listeners-behind-their-own-load-balancer)).
 
+### Amendment, 25 November 2026: the server's public identity
+
+The mail server's public name is `mail.devantler.tech`: the host mail apps use
+for IMAP and submission, and the host the domain's MX record will name. Until
+now the server's default hostname was the web host of its administration,
+`mail.platform.devantler.tech`. Its SMTP greeting, EHLO name and Message-ID
+domain named that web host, and its autoconfig sent mail apps there, to ports
+it does not serve (#6662). Two announced restarts change the following.
+
+- The deployment names the server with the setup's `--hostname` flag. The flag
+  takes precedence over the `hostname` in the encrypted settings, which applies
+  only without it, so removing the flag is the rollback. The settings also hold
+  the account names; the public name is a reviewed, non-secret flag instead.
+  The same flag serves implicit-TLS submission (below): the name and the port
+  its autoconfig offers ship together.
+- The serving process's `STALWART_PUBLIC_URL` is
+  `https://stalwart.platform.devantler.tech`, the web route's host. Stalwart
+  0.16.27 builds its OAuth issuer and metadata and the URLs in JMAP sessions
+  from it; without it, from the default hostname, which now serves no HTTPS.
+  The setup's `--web-hostname` gives autoconfig and autodiscover the same host
+  for JMAP, CalDAV, CardDAV and WebDAV.
+- With `--hostname`, submission is also served with implicit TLS on 465
+  (RFC 8314), from the mail load balancer with PROXY protocol, like 587. Every
+  rule that requires sign-in, offers it, checks the sender or throttles
+  submission is built from one list of both listeners, whether or not 465 is
+  served, and a test fails if any names only one. Without the flag the setup
+  removes a stored `submissions` listener by its unique name. Leaving it would
+  keep a listener the plan no longer declares, so the readback could not be
+  exact, and the previous setup image, which refuses any listener it does not
+  know, could never start on that store again. The removal is idempotent.
+- The services the server advertises are declared: IMAP and SMTP at the mail
+  host with implicit TLS only, so autoconfig offers 993 and 465, and no POP3 or
+  ManageSieve, which the server never served. Submission on 587 stays served
+  for clients set up by hand. Upstream always lists 465 for SMTP, so without
+  `--hostname` autoconfig offers it unserved, as it did before.
+- The upload endpoint is open at the maintainer's own upload URL only, on the
+  maintainer's decision of 25 November 2026, so webmail can attach files, save
+  filters and set a vacation reply. Stalwart's HTTP access rule runs before
+  sign-in and sees only the request, so it names the maintainer's account in
+  the path. The upload itself does not check that the signed-in account owns
+  that account: another signed-in account can store a temporary upload there,
+  counted against the maintainer's upload quota, but cannot read or use it. The
+  agent's and the administrator's own upload URLs stay refused. Until the
+  maintainer's account exists, on the first start of an empty store, uploads
+  stay refused for every account.
+
+A failed merge-group deployment is healed by republishing `main`, so every
+step must be safe to heal back from. The change lands in three units:
+
+1. **Code.** The setup program, its tests and these documents. No manifest
+   changes and nothing restarts. The published image is signed from `main`.
+2. **Adopt the image** (first announced restart). Only the image digest
+   changes; no flag is passed. The new setup writes nothing the previous setup
+   image refuses: it stores no `submissions` listener, and the previous setup
+   rewrites the services, upload rule and submission rules it declares (its
+   readback compares only what it declares). It does change the upload rule
+   and stops advertising POP3. A heal or a rollback restores the previous
+   digest, and its setup starts on that store.
+3. **Enable** (second announced restart). `--hostname=mail.devantler.tech`,
+   `--web-hostname`, `STALWART_PUBLIC_URL`, port 465 on the mail load balancer
+   and its network admission. The web route's `stalwart.platform.devantler.tech`
+   host must be live first, because the public URL names it. The voucher
+   collector moves its JMAP URL and egress to that host in the same unit: it
+   refuses a session whose URLs name another host. A heal or a
+   rollback returns to unit 2's manifests: the same image without the flags,
+   whose setup removes the `submissions` listener and returns the server to the
+   settings' name, from which it again builds its public web address.
+
+To roll back further than unit 2, roll back unit 3 first, so that the
+`submissions` listener is gone before the previous image starts.
+
 ## Prepared account configuration
 
 The default-off command `go run ./scripts/private-mail-config` prepares a native
@@ -219,15 +290,22 @@ is the send-only SES SMTP username, an access key ID, and its SES SMTP password,
 read from OpenBao `infrastructure/email/ses-smtp`. Unknown or
 duplicate settings, invalid names, broad file permissions and an existing output
 are refused. Exact production addresses stay in private operator configuration.
+The server's public names are not private, so the deployment gives them as
+flags rather than in the encrypted settings: `--hostname` takes precedence over
+the settings' `hostname`, which applies only without it, and `--web-hostname`
+names the web host (see the
+[25 November amendment](#amendment-25-november-2026-the-servers-public-identity)).
 
 Obtain the listener inventory with the committed
 `scripts/private-mail-config/inventory-request.json` through the authenticated
 management API in the same exclusive recovery session. Its bounded query/get
 checks totals, returned IDs, missing objects and every listener's bind, protocol,
 TLS and proxy settings. Preparation permits an empty fresh store or an exact
-subset of the four prepared profiles. Unknown listeners, old default listeners,
+subset of the six prepared profiles. Unknown listeners, old default listeners,
 incomplete reads and enabled hooks, milters or webhooks require reconciliation;
-they are never silently removed. After apply, require all four exact profiles.
+they are never silently removed. After apply, require exactly the declared
+profiles: all six when `--hostname` serves implicit-TLS submission, otherwise
+the other five, the `submissions` listener being the one declared removal.
 An empty CLI query is not this completeness proof.
 
 The declared mailbox receives the pinned runtime's normal-user permissions as
@@ -278,18 +356,23 @@ Inbox history has no digest expiry policy. The separate agent account has only
 the reviewed authentication, send/receive and JMAP read permissions. Its exact
 approved recipient is enforced before local recipient resolution; other local,
 remote and subaddress recipients are refused. MX offers no authentication;
-submission requires TLS and authentication before accepting MAIL and enforces
-the sender identity. Post-RCPT scripts are disabled. The HTTP upload endpoint is
-denied because its native path does not honor the JMAP mutation permission list.
-This supports IMAP/SMTP mail apps; full human JMAP attachment upload is not part
-of this configuration.
+submission, with STARTTLS on 587 and implicit TLS on 465, requires TLS and
+authentication before accepting MAIL and enforces the sender identity. Every
+rule that requires sign-in or checks the sender is built from one list of the
+submission listeners, so 465 cannot accept mail that 587 refuses. Post-RCPT
+scripts are disabled. The HTTP upload endpoint does not honor the JMAP mutation
+permission list, so it is refused except at the maintainer's own upload URL
+(see the [25 November amendment](#amendment-25-november-2026-the-servers-public-identity)).
 
 The native fixture `scripts/tests/test-private-mail-configuration.sh` starts its
 own pinned server in explicit recovery, applies and reapplies the real plan,
 exercises wider-policy and unexpected-listener negatives, and tests allowed
-delivery, denied recipients/relay/writes/upload and human IMAP/TLS. It repeats
-configuration after real fixture mail exists and reads that message again.
-These are disposable `.test` accounts, not proof of public mail delivery.
+delivery, denied recipients/relay/writes, the upload rule, submission on both
+ports and human IMAP/TLS. It repeats configuration after real fixture mail
+exists and reads that message again. Its last bootstrap takes production's
+flags and reads back the server name, the advertised services, autoconfig,
+autodiscover and the SMTP greeting. These are disposable `.test` accounts, not
+proof of public mail delivery.
 
 The explicit `bootstrap` subcommand owns an exclusive recovery child and the
 datastore-volume lock. It reads mounted inputs, queries the real inventory,

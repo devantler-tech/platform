@@ -82,7 +82,7 @@ func validateInventoryFor(raw []byte, version string) error {
 			return errConfiguration
 		}
 	}
-	if json.Unmarshal(response.Methods[0][1], &query) != nil || json.Unmarshal(response.Methods[1][1], &get) != nil || query.Total == nil || query.Position == nil || *query.Position != 0 || query.IDs == nil || *query.Total != len(query.IDs) || len(query.IDs) > 5 || get.List == nil || get.Missing == nil || len(get.Missing) != 0 || len(get.List) != len(query.IDs) {
+	if json.Unmarshal(response.Methods[0][1], &query) != nil || json.Unmarshal(response.Methods[1][1], &get) != nil || query.Total == nil || query.Position == nil || *query.Position != 0 || query.IDs == nil || *query.Total != len(query.IDs) || len(query.IDs) > 6 || get.List == nil || get.Missing == nil || len(get.Missing) != 0 || len(get.List) != len(query.IDs) {
 		return errConfiguration
 	}
 	ids, names := map[string]bool{}, map[string]bool{}
@@ -107,7 +107,7 @@ func validateInventoryFor(raw []byte, version string) error {
 		localProxyTrust := item.Name == "client-proxy" && len(item.ProxyNetworks) == 1 && (item.ProxyNetworks["127.0.0.1"] || item.ProxyNetworks["127.0.0.1/32"])
 		// A public mail listener may trust one private load-balancer address;
 		// the plan readback requires the exact address that was configured.
-		mailListener := item.Name == "smtp-inbound" || item.Name == "submission" || item.Name == "imaps"
+		mailListener := item.Name == "smtp-inbound" || isSubmissionListener(item.Name) || item.Name == "imaps"
 		mailProxyTrust := mailListener && mailProxySourceTrust(item.ProxyNetworks)
 		if len(item.ProxyNetworks) != 0 && !localProxyTrust && !mailProxyTrust {
 			return errConfiguration
@@ -125,6 +125,8 @@ func validateInventoryFor(raw []byte, version string) error {
 			protocol, bind = "smtp", "0.0.0.0:1025"
 		case "submission":
 			protocol, bind = "smtp", "0.0.0.0:1587"
+		case "submissions":
+			protocol, bind, implicit = "smtp", "0.0.0.0:1465", true
 		case "imaps":
 			protocol, bind, implicit = "imap", "0.0.0.0:1993", true
 		default:

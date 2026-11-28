@@ -34,7 +34,7 @@ func (o *proxyOption) Set(value string) error {
 func (*proxyOption) IsBoolFlag() bool { return true }
 
 // mailProxySourceOption names the private IPv4 address of the mail server's
-// own load balancer. Only the three public mail listeners trust PROXY headers,
+// own load balancer. Only the four public mail listeners trust PROXY headers,
 // and only from this address. Without it they trust none.
 type mailProxySourceOption struct{ value string }
 
