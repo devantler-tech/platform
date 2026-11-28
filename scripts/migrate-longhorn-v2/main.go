@@ -63,6 +63,8 @@ func main() {
 		authorization = authorizeCNPGObservation(os.Getenv)
 	case observeCorootKeeperOperation:
 		authorization = authorizeCorootKeeperObservation(os.Getenv)
+	case observeCorootClickHouseOperation:
+		authorization = authorizeCorootClickHouseObservation(os.Getenv)
 	case corootKeeperCutoverOperation:
 		_, authorization = authorizeCorootKeeperCutover(os.Getenv)
 	case transferCorootKeeperOperation:
@@ -315,6 +317,17 @@ func main() {
 				fmt.Printf("COROOT_KEEPER_FOLLOWER=QUALIFIED ordinal=%d digest=%s\n", i, receipt.Disks[i].Digest)
 			}
 		}
+		return
+	}
+	if operation == observeCorootClickHouseOperation {
+		c := client{run: execute, context: "admin@prod"}
+		receipt, err := observeCorootClickHouse(ctx, c, os.Getenv("GITHUB_SHA"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Coroot ClickHouse observation held:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("COROOT_CLICKHOUSE_STORAGE=VERIFIED members=2 providerVolumes=2 tables=%d replicated=%d local=%d views=%d maxReplicaDelaySeconds=%d writes=0\n",
+			receipt.Tables, receipt.Replicated, receipt.Local, receipt.Views, receipt.MaxReplicaDelaySeconds)
 		return
 	}
 	if operation == corootKeeperCutoverOperation {
