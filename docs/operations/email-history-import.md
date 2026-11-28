@@ -97,24 +97,32 @@ The first pass copies and the second, `--dry`, only verifies:
 `MAIL_HISTORY_IMPORT_PASS pass=<copy|verify> exit=<n> observed=<n> identified=<n> errors=<n> transferred=<n> would_transfer=<n> skipped=<n> h1_duplicates=<n> h2_duplicates=<n> h2_crossduplicates=<n> h1_noheader=<n> h2_noheader=<n> in1_not_in2=<n> in2_not_in1=<n>`
 
 The line holds numbers only.
-- **Source of the counts.** They come from a fixed list of labels, read only from imapsync's closing statistics, the block that starts with `++++ Statistics`. The first value of each label there is kept. No folder name, header, subject or server reply is read into the line.
+- **Source of the counts.** The labelled counts come from a fixed list of labels, read only from imapsync's closing statistics, the block that starts with `++++ Statistics`. The first value of each label there is kept.
+- **`errors` and `identified`** come from the result lines the success check already reads (`Detected N errors`, `The sync looks good …`, `The sync is not finished …`), wherever they appear. The last one wins.
+- **Privacy:** no folder name, header, subject or server reply is read into the line.
 - **`?`** is a value the tool did not print.
 - **`observed`** is the source total that the pass is judged against.
 - **`identified`** is the number of distinct message identities. A message filed in two folders counts once.
-- **`exit`** is imapsync's exit status. It is `signal` when the process was killed, for example by the import's 3-hour deadline. It is `?` when the tool never ran or left no exit status, for example when the deadline had already passed.
+- **`exit`** is imapsync's exit status, with two special values:
+  - `signal`: the process ended by a signal. That includes the import's 3-hour deadline, and also a SIGTERM or SIGINT that imapsync caught, because it then kills itself with the same signal.
+  - `?`: the tool never ran or left no exit status, for example when the deadline had already passed.
+- **A pass can fail with `exit=0`** when its output broke the importer's bounds of 128 MiB in total or 64 KiB per line. The status is kept even then.
 
 Exit statuses in imapsync 2.314:
+- **A run with errors**, whether it stops at `--errorsmax` or reaches its end, exits with the code of its most common error type:
+  - 113 over quota, 114 append, 115 fetch, 116 create, 117 select;
+  - 118 transfer limit, 119 append refused as a virus, 120 flags, 121 search;
+  - 111 when the type is unclassified.
+  112 is defined but neither path uses it.
 - **Connection and sign-in:** 10 (connection), 101 and 102 (connection to the source or the destination), 12 (TLS), 16, 161 and 162 (authentication; 161 and 162 are the source and destination users).
-- **When it stops at `--errorsmax`:** the code of the most common error type, such as 113 (over quota), 114 (append), 115 (fetch), 116 (create), 117 (select), 120 (flags) or 121 (search). 112 is defined for this case but this path does not use it.
-- **Other stops:** 6 when imapsync caught a signal such as SIGTERM, which differs from `signal`, where it was killed outright; 8 for a pid file error; 1 for any other failure.
-- **Otherwise:** 111 for errors.
+- **Other stops:** 6 when imapsync caught a signal and was still running after killing itself (normally it reads `signal`), 7 for an abort file, 8 for a pid file error, 1 for any other failure.
 
 A pass line never means
 success: only the `COMPLETE` receipt does. To read a failure:
 
 | What the line shows | Likely cause |
 | --- | --- |
-| `pass=copy` with `errors` above 0 | One message could not be fetched or appended. `--errorsmax 1` stops the pass at the first one. |
+| `pass=copy` with `errors` above 0 | An error stopped the pass, and `--errorsmax 1` stops it at the first one. `errors` counts every type of error, including fetch, append, create, select, flags, quota, TLS and connection errors. `exit` names the type; see the list above. |
 | `pass=verify` with `identified` above `observed`, and `in1_not_in2` equal to the difference | Mail reached the source during the run. Repeat at a quieter time. |
 | `identified` below `observed`, with `in1_not_in2` at 0 | The source holds the same message in more than one folder, or a folder holds duplicates. imapsync counts each identity once, so a pass that copied everything still cannot meet `identified = observed`, and repeating cannot change it. This needs a change to the importer's success rule, not another run. |
 | `in2_not_in1` above 0 | Either mail the destination held before the copy, which the importer keeps, or copies stored with a different identity (`Message-Id` and `Received` headers). Compare runs before deciding. |

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -76,6 +77,9 @@ const historyStatisticsHeader = "++++ Statistics"
 // after each, so no folder name, header, subject or server reply can reach the
 // receipt. Within the block the first value of a label is kept, so a later line
 // with the same label cannot replace what the closing summary printed.
+// errors and identified are different: they come from the result lines the
+// success check already reads ("Detected N errors", "The sync looks good" and
+// "The sync is not finished"), wherever those appear, and the last one wins.
 var (
 	historyStatisticKeys = map[string]string{
 		"Messages transferred":                   "transferred",
@@ -213,7 +217,20 @@ func executeHistory(ctx context.Context, args []string, output io.Writer) error 
 	cmd.Env = []string{"HOME=/tmp", "PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C", "LC_ALL=C"}
 	cmd.Dir = "/tmp"
 	cmd.Stdout, cmd.Stderr = output, output
-	return cmd.Run()
+	return withExitStatus(cmd.Run(), cmd.ProcessState)
+}
+
+// withExitStatus keeps the tool's exit status visible when its run failed for
+// another reason, such as the output writer refusing an oversized report:
+// Run then returns that copy error rather than an *exec.ExitError, and the
+// pass line would read exit=?. A run that failed only by its status is
+// returned unchanged.
+func withExitStatus(runErr error, state *os.ProcessState) error {
+	var exitErr *exec.ExitError
+	if runErr == nil || state == nil || errors.As(runErr, &exitErr) {
+		return runErr
+	}
+	return errors.Join(runErr, &exec.ExitError{ProcessState: state})
 }
 
 func importHistory(ctx context.Context, v historyConfig, observe historyObserver, execute historyExecutor, receipt io.Writer) error {

@@ -233,6 +233,24 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	if got := historyPassLine("copy", killed, &historyReport{}, 0); !strings.Contains(got, " exit=signal ") {
 		t.Fatalf("a killed tool must read as signal, not a negative status: %q", got)
 	}
+
+	// When the output writer refuses the report, Run returns that copy error,
+	// not the tool's status; the status must still reach the line.
+	appendFailure := exec.Command("sh", "-c", "exit 114")
+	_ = appendFailure.Run()
+	bounded := withExitStatus(errors.New("history-output-bound"), appendFailure.ProcessState)
+	if got := historyPassLine("copy", bounded, &historyReport{}, 0); !strings.Contains(got, " exit=114 ") {
+		t.Fatalf("a writer failure must keep the tool's exit status: %q", got)
+	}
+	if bounded == nil || !strings.Contains(bounded.Error(), "history-output-bound") {
+		t.Fatalf("the copy error must survive alongside the status: %v", bounded)
+	}
+	if got := withExitStatus(nil, appendFailure.ProcessState); got != nil {
+		t.Fatalf("a successful run must stay successful: %v", got)
+	}
+	if plain := errors.New("history-output-bound"); withExitStatus(plain, nil) != plain {
+		t.Fatal("without a process state the error must be returned unchanged")
+	}
 	for _, line := range []string{receipt.String(), got} {
 		for _, private := range []string{"Client", "secret", "private", "subject", "reply", "INBOX", "canary"} {
 			if strings.Contains(line, private) {
