@@ -31,14 +31,19 @@ func historyArgs(v historyConfig, dry bool) []string {
 		"--sep1", "/", "--sep2", "/", "--prefix1", "", "--prefix2", "",
 		"--noexpunge1", "--noexpunge2", "--nouidexpunge2", "--noexpungeaftereach",
 		"--noresyncflags", "--nosyncacls", "--syncduplicates", "--noskipemptyfolders",
-		// Identify a message by its Message-Id and Date headers, not imapsync's
-		// default Message-Id and Received. The destination returned a few
-		// messages' Received headers differently from the source (#5481,
-		// attempt 12: the same 2 messages copied again on every run), and a copy
-		// whose identity does not round-trip is appended again each run. Date is
-		// a short header no server rewrites; it also identifies the messages that
-		// have no Message-Id, which would otherwise stop the import.
-		"--useheader", "Message-Id", "--useheader", "Date",
+		// Identify a message by its Message-Id alone, not imapsync's default
+		// Message-Id and Received. The destination returned a few messages'
+		// Received headers differently from the source (#5481, attempt 12: the
+		// same 2 messages copied again on every run), and a copy whose identity
+		// does not round-trip is appended again each run.
+		//
+		// No fallback header is added on purpose. A message without a
+		// Message-Id is then unidentified, and the pass refuses it (h1_noheader
+		// above 0) instead of matching it by a weaker header: a Date-only
+		// identity could match an unrelated destination message with the same
+		// Date, leave the source message uncopied and still let the counts
+		// reconcile to COMPLETE.
+		"--useheader", "Message-Id",
 		"--noreleasecheck", "--nolog", "--noemailreport1", "--noemailreport2", "--noid",
 		"--timeout1", "60", "--timeout2", "60", "--errorsmax", "1",
 		"--pidfile", "/tmp/email-history-import.pid", "--tmpdir", "/tmp",

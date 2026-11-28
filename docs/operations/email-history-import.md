@@ -137,8 +137,7 @@ an incomplete copy; it refuses while an earlier copy is still running.
 
 imapsync recognises a message already on the destination by an md5 of selected
 headers. Size is not part of it, because `--skipsize` is on by default. The
-importer uses the `Message-Id` and `Date` headers
-(`--useheader Message-Id --useheader Date`).
+importer uses the `Message-Id` header alone (`--useheader Message-Id`).
 
 imapsync's default hashes `Message-Id` and the `Received` headers. On 2026-11-28
 (#5481, attempt 12), the destination returned a few messages' `Received` headers
@@ -148,11 +147,17 @@ looks missing on every run and is appended again:
 - the destination's `h2_duplicates` rose by 2 per run;
 - verification failed.
 
-`Date` is a short header no server rewrites. It also identifies a message that
-has no `Message-Id`. A message with neither header is unidentified: the pass
-line shows it as `h1_noheader` above 0, imapsync skips it, and the import stops.
-Messages that share a `Message-Id` and `Date` are still all copied, because
-`--syncduplicates` keys each repeat separately, and `identified` counts them.
+There is deliberately no fallback header. A message without a `Message-Id` is
+unidentified: the pass line shows it as `h1_noheader` above 0, imapsync skips it,
+and the import stops instead of reporting success. A weaker identity, such as
+`Date`, could match an unrelated message already on the destination with the same
+`Date`. The source message would then stay uncopied while the folder counts still
+reconcile, and the import would report a copy it never made.
+
+If a run shows `h1_noheader` above 0, those messages need a separate decision,
+not another run. Messages that share a `Message-Id` are still all copied,
+because `--syncduplicates` keys each repeat separately, and `identified` counts
+them.
 
 ## Copy and reconciliation
 

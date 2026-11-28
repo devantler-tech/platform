@@ -141,16 +141,17 @@ func TestHistoryCopiesThenVerifiesWithoutLeakingToolOutput(t *testing.T) {
 				t.Fatalf("unsafe copy option %s", forbidden)
 			}
 		}
-		// Identity is Message-Id and Date, on both passes, and never Received:
-		// hashing those made a few copies look missing on every run (#5481).
+		// Identity is Message-Id alone, on both passes: never Received, which
+		// made a few copies look missing on every run (#5481), and no weaker
+		// fallback such as Date, which could match an unrelated message.
 		var identity []string
 		for i, arg := range args {
 			if arg == "--useheader" && i+1 < len(args) {
 				identity = append(identity, args[i+1])
 			}
 		}
-		if !reflect.DeepEqual(identity, []string{"Message-Id", "Date"}) {
-			t.Fatalf("messages must be identified by Message-Id and Date only, got %q", identity)
+		if !reflect.DeepEqual(identity, []string{"Message-Id"}) {
+			t.Fatalf("messages must be identified by Message-Id alone, got %q", identity)
 		}
 		for _, peer := range []string{"SSL_verifycn_name=imap.mail.me.com", "SSL_verifycn_name=mail.devantler.tech", "SSL_verify_mode=1", "SSL_verifycn_scheme=imap"} {
 			if !containsHistoryArg(args, peer) {
