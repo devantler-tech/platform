@@ -79,6 +79,8 @@ func main() {
 		_, authorization = authorizeUmamiArchiveDataResume(os.Getenv)
 	case umamiStandbyObservationOperation:
 		_, _, authorization = authorizeUmamiStandbyObservation(os.Getenv)
+	case providerCNPGStandbyObservation:
+		_, authorization = authorizeProviderCNPGStandby(os.Getenv)
 	case umamiStandbyReplacementOperation, umamiV2SwitchoverOperation:
 		_, _, authorization = authorizeUmamiStandbyTarget(os.Getenv, operation)
 	case weddingV2SwitchoverOperation:
@@ -474,6 +476,21 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("UMAMI_V2_STANDBY=VERIFIED replicas=3 originalStorage=RETAINED physicalReplay=VERIFIED evictionAdmission=VERIFIED writes=0")
+		return
+	}
+	if operation == providerCNPGStandbyObservation {
+		grant, err := authorizeProviderCNPGStandby(os.Getenv)
+		if err == nil {
+			observationContext, stop := context.WithTimeout(ctx, 10*time.Minute)
+			defer stop()
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			err = observeProviderCNPGStandby(observationContext, c, grant)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Provider database V2 standby held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("PROVIDER_CNPG_V2_STANDBY=VERIFIED replicas=3 sources=ATTACHED physicalReplay=VERIFIED writes=0")
 		return
 	}
 	if operation == "register-temporary-v2-storage" {
