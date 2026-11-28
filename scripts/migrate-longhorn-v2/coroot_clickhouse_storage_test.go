@@ -102,3 +102,30 @@ func TestCorootClickHouseCatalogUsesOnlyFixedReadOnlyQueries(t *testing.T) {
 		t.Fatalf("the command runner observed %d calls, want two fixed queries", calls)
 	}
 }
+
+func TestCorootClickHouseSnapshotBindsTheRunningProcess(t *testing.T) {
+	status := object{
+		"name": corootClickHouseContainer, "ready": true, "imageID": corootClickHouseImage,
+		"containerID":  "containerd://1111111111111111111111111111111111111111111111111111111111111111",
+		"restartCount": float64(2),
+		"state":        object{"running": object{"startedAt": "2026-11-28T01:05:00Z"}},
+	}
+	pod := object{"status": object{"containerStatuses": []any{status}}}
+	original, ok := corootClickHouseContainerProcess(pod)
+	if !ok || original.Restarts != 2 {
+		t.Fatal("the current ready process was not bound")
+	}
+	before := corootClickHouseSourceSet{Members: [2]corootClickHouseSource{{Process: original}}}
+	status["containerID"] = "containerd://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	status["restartCount"] = float64(3)
+	valueObject(status, "state", "running")["startedAt"] = "2026-11-28T01:05:43Z"
+	restarted, ok := corootClickHouseContainerProcess(pod)
+	after := corootClickHouseSourceSet{Members: [2]corootClickHouseSource{{Process: restarted}}}
+	if !ok || before == after {
+		t.Fatal("a replacement process could satisfy the original source snapshot")
+	}
+	delete(status, "containerID")
+	if _, ok := corootClickHouseContainerProcess(pod); ok {
+		t.Fatal("a source without its running container identity was accepted")
+	}
+}

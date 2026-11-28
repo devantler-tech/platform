@@ -38,9 +38,15 @@ LIMIT 2049
 FORMAT JSONEachRow`
 
 type corootClickHouseSource struct {
-	Pod    benchmarkResource
-	Node   string
-	Volume providerVolumeClaim
+	Pod     benchmarkResource
+	Node    string
+	Volume  providerVolumeClaim
+	Process corootClickHouseProcess
+}
+
+type corootClickHouseProcess struct {
+	Container, StartedAt string
+	Restarts             uint64
 }
 
 type corootClickHouseSourceSet struct {
@@ -162,6 +168,10 @@ func readCorootClickHouseSource(ctx context.Context, c client, controller benchm
 	if err != nil || !corootClickHousePodUsesSource(pod, controller, revision, name, claimName) {
 		return none, errCorootClickHouseStorage
 	}
+	process, running := corootClickHouseContainerProcess(pod)
+	if !running {
+		return none, errCorootClickHouseStorage
+	}
 	claim, err := c.get(ctx, "persistentvolumeclaim", corootClickHouseNamespace, claimName, false)
 	if err != nil || !recoveredNativeObject(claim, "v1", "PersistentVolumeClaim", corootClickHouseNamespace) ||
 		text(claim, "metadata", "name") != claimName {
@@ -191,7 +201,27 @@ func readCorootClickHouseSource(ctx context.Context, c client, controller benchm
 	if count != 1 {
 		return none, errCorootClickHouseStorage
 	}
-	return corootClickHouseSource{Pod: benchmarkIdentity(pod), Node: node, Volume: volumes[0]}, nil
+	return corootClickHouseSource{Pod: benchmarkIdentity(pod), Node: node, Volume: volumes[0], Process: process}, nil
+}
+
+// Both SQL samples must describe the same running server, including across
+// an in-place container restart that leaves the Pod and its PVC unchanged.
+func corootClickHouseContainerProcess(pod object) (corootClickHouseProcess, bool) {
+	statuses, _ := value(pod, "status", "containerStatuses").([]any)
+	if len(statuses) != 1 {
+		return corootClickHouseProcess{}, false
+	}
+	status, _ := statuses[0].(object)
+	container := text(status, "containerID")
+	startedAt := text(status, "state", "running", "startedAt")
+	started, timeErr := time.Parse(time.RFC3339Nano, startedAt)
+	restarts, countKnown := nativeObservationUint(value(status, "restartCount"))
+	if text(status, "name") != corootClickHouseContainer || value(status, "ready") != true ||
+		text(status, "imageID") != corootClickHouseImage || !postgresContainerID.MatchString(container) ||
+		timeErr != nil || started.IsZero() || !countKnown {
+		return corootClickHouseProcess{}, false
+	}
+	return corootClickHouseProcess{Container: container, StartedAt: startedAt, Restarts: restarts}, true
 }
 
 func corootClickHousePodUsesSource(pod object, controller benchmarkResource, revision, name, claim string) bool {
@@ -224,17 +254,6 @@ func corootClickHousePodUsesSource(pod object, controller benchmarkResource, rev
 		matches++
 	}
 	if matches != 1 {
-		return false
-	}
-	// The pinned container resolves the loopback client and its prepared
-	// credentials. Bind the data mount to that container as well.
-	statuses, _ := value(pod, "status", "containerStatuses").([]any)
-	if len(statuses) != 1 {
-		return false
-	}
-	status, _ := statuses[0].(object)
-	if text(status, "name") != corootClickHouseContainer || value(status, "ready") != true ||
-		text(status, "imageID") != corootClickHouseImage {
 		return false
 	}
 	containers, _ := value(pod, "spec", "containers").([]any)
