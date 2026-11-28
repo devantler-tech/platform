@@ -158,14 +158,14 @@ func TestHistoryCopiesThenVerifiesWithoutLeakingToolOutput(t *testing.T) {
 				t.Fatalf("missing verified TLS property %s", peer)
 			}
 		}
-		_, err := io.WriteString(output, "private-source-canary Private folder private-message-subject\nThe sync looks good, all 5 identified messages in host1 are on host2.\nThere is no unidentified message on host1.\nDetected 0 errors\n")
+		_, err := io.WriteString(output, "private-source-canary Private folder private-message-subject\n++++ Statistics\nFolders synced                          : 2/2 synced\nThe sync looks good, all 5 identified messages in host1 are on host2.\nThere is no unidentified message on host1.\nDetected 0 errors\n")
 		return err
 	}
 	var receipt bytes.Buffer
 	if err := importHistory(context.Background(), v, observe, execute, &receipt); err != nil {
 		t.Fatal(err)
 	}
-	unknown := " transferred=? would_transfer=? skipped=? h1_duplicates=? h2_duplicates=? h2_crossduplicates=? h1_noheader=? h2_noheader=? in1_not_in2=? in2_not_in1=?\n"
+	unknown := " transferred=? would_transfer=? skipped=? h1_duplicates=? h2_duplicates=? h2_crossduplicates=? h1_noheader=? h2_noheader=? in1_not_in2=? in2_not_in1=? folders_synced=2 folders_wanted=2\n"
 	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=5 identified=5 errors=0" + unknown +
 		"MAIL_HISTORY_IMPORT_PASS pass=verify exit=0 observed=5 identified=5 errors=0" + unknown +
 		"MAIL_HISTORY_IMPORT=COMPLETE folders=2 messages=5 source=PRESERVED routing=UNCHANGED\n"
@@ -183,12 +183,15 @@ func TestHistoryIdentifiedCountLiesBetweenLargestFolderAndTotal(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		identified int
+		folders    string
 		complete   bool
 	}{
-		{"same message in two folders", 4, true},
-		{"every message distinct", 5, true},
-		{"part of a folder unexamined", 2, false},
-		{"more than the source holds", 6, false},
+		{"same message in two folders", 4, "2/2", true},
+		{"every message distinct", 5, "2/2", true},
+		{"part of a folder unexamined", 2, "2/2", false},
+		{"more than the source holds", 6, "2/2", false},
+		{"a folder left unsynced", 4, "1/2", false},
+		{"no folder count printed", 4, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v, err := loadHistoryInputs(historyInputs(t))
@@ -203,7 +206,11 @@ func TestHistoryIdentifiedCountLiesBetweenLargestFolderAndTotal(t *testing.T) {
 				return historySnapshot{"INBOX": {messages: 3}, "Sent": {messages: 2}}, nil
 			}
 			execute := func(_ context.Context, _ []string, output io.Writer) error {
-				_, err := fmt.Fprintf(output, "The sync looks good, all %d identified messages in host1 are on host2.\nThere is no unidentified message on host1.\nDetected 0 errors\n", tc.identified)
+				folders := ""
+				if tc.folders != "" {
+					folders = "Folders synced                          : " + tc.folders + " synced\n"
+				}
+				_, err := fmt.Fprintf(output, "++++ Statistics\n%sThe sync looks good, all %d identified messages in host1 are on host2.\nThere is no unidentified message on host1.\nDetected 0 errors\n", folders, tc.identified)
 				return err
 			}
 			var receipt bytes.Buffer
@@ -239,6 +246,7 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 			"Messages found in host1 not in host2    : 99 messages\n"+
 			"++++ Statistics\n"+
 			"Transfer started on                     : private-date-canary\n"+
+			"Folders synced                          : 1/1 synced\n"+
 			"Messages transferred                    : %s\n"+
 			"Messages skipped                        : 4\n"+
 			"Messages found duplicate on host1       : 1\n"+
@@ -268,7 +276,7 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	if err := importHistory(context.Background(), v, observe, execute, &receipt); err == nil || err.Error() != "copy" {
 		t.Fatalf("a pass reporting an error must fail at copy, got %v", err)
 	}
-	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=7 identified=7 errors=1 transferred=3 would_transfer=? skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=0 in2_not_in1=0\n"
+	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=7 identified=7 errors=1 transferred=3 would_transfer=? skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=0 in2_not_in1=0 folders_synced=1 folders_wanted=1\n"
 	if receipt.String() != want {
 		t.Fatalf("copy pass line:\n got %q\nwant %q", &receipt, want)
 	}
@@ -278,7 +286,7 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	result := historyReport{}
 	runErr := execute(context.Background(), nil, &result)
 	got := historyPassLine("verify", runErr, &result, 7)
-	want = "MAIL_HISTORY_IMPORT_PASS pass=verify exit=111 observed=7 identified=7 errors=1 transferred=0 would_transfer=2 skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=2 in2_not_in1=3\n"
+	want = "MAIL_HISTORY_IMPORT_PASS pass=verify exit=111 observed=7 identified=7 errors=1 transferred=0 would_transfer=2 skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=2 in2_not_in1=3 folders_synced=1 folders_wanted=1\n"
 	if got != want {
 		t.Fatalf("verify pass line:\n got %q\nwant %q", got, want)
 	}
@@ -316,9 +324,17 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	if got := historyPassLine("copy", nil, &recovered, 0); !strings.Contains(got, " errors=3 ") || !recovered.bad {
 		t.Fatalf("a later zero count must not hide the errors that failed the pass: bad=%v %q", recovered.bad, got)
 	}
+	// The total bound is crossed across many writes, as a pipe delivers it,
+	// without holding 129 MiB at once.
 	var flood historyReport
-	if n, err := flood.Write(make([]byte, 129<<20)); err != nil || n != 129<<20 || !flood.bad {
-		t.Fatalf("output past the total bound must be discarded and fail the pass, not refused: n=%d err=%v bad=%v", n, err, flood.bad)
+	chunk := bytes.Repeat([]byte("x\n"), 1<<20)
+	for written := 0; written <= 128<<20; written += len(chunk) {
+		if n, err := flood.Write(chunk); err != nil || n != len(chunk) {
+			t.Fatalf("output past the total bound must be discarded, not refused: n=%d err=%v after %d bytes", n, err, written)
+		}
+	}
+	if !flood.bad {
+		t.Fatal("output past the total bound must fail the pass")
 	}
 	for _, line := range []string{receipt.String(), got} {
 		for _, private := range []string{"Client", "secret", "private", "subject", "reply", "INBOX", "canary"} {

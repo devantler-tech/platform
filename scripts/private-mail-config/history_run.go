@@ -93,7 +93,9 @@ const historyStatisticsHeader = "++++ Statistics"
 // with the same label cannot replace what the closing summary printed.
 // errors and identified are different: they come from the result lines the
 // success check already reads ("Detected N errors", "The sync looks good" and
-// "The sync is not finished"), wherever those appear, and the last one wins.
+// "The sync is not finished"), wherever those appear. identified keeps the
+// last value and errors the largest. folders_synced and folders_wanted come
+// from the block's "Folders synced : X/Y synced" line.
 var (
 	historyStatisticKeys = map[string]string{
 		"Messages transferred":                   "transferred",
@@ -106,8 +108,9 @@ var (
 		"Messages found in host1 not in host2":   "in1_not_in2",
 		"Messages found in host2 not in host1":   "in2_not_in1",
 	}
-	historyStatisticOrder = []string{"identified", "errors", "transferred", "would_transfer", "skipped", "h1_duplicates", "h2_duplicates", "h2_crossduplicates", "h1_noheader", "h2_noheader", "in1_not_in2", "in2_not_in1"}
+	historyStatisticOrder = []string{"identified", "errors", "transferred", "would_transfer", "skipped", "h1_duplicates", "h2_duplicates", "h2_crossduplicates", "h1_noheader", "h2_noheader", "in1_not_in2", "in2_not_in1", "folders_synced", "folders_wanted"}
 	historyStatistic      = regexp.MustCompile(`^(Messages [a-z0-9() ]+?) +: ([0-9]+)\b`)
+	historyFoldersSynced  = regexp.MustCompile(`^Folders synced +: ([0-9]+)/([0-9]+) synced$`)
 	historyDryTransfers   = regexp.MustCompile(`\(could be ([0-9]+) without --dry mode\)`)
 	historyErrorCount     = regexp.MustCompile(`^Detected ([0-9]+) errors$`)
 	historyNotFinished    = regexp.MustCompile(`^The sync is not finished, there are [0-9]+ among ([0-9]+) identified messages in host1 that are not on host2\.$`)
@@ -130,10 +133,26 @@ func (r *historyReport) count(key, digits string, first bool) {
 	r.counts[key] = n
 }
 
+// allFoldersSynced reports whether the tool's closing statistics name every
+// folder it wanted as synced. A folder left out without an error would
+// otherwise pass as long as the destination already held as many messages as
+// the source folder. A pass that printed no such line has not shown it.
+func (r *historyReport) allFoldersSynced() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	synced, okSynced := r.counts["folders_synced"]
+	wanted, okWanted := r.counts["folders_wanted"]
+	return okSynced && okWanted && wanted > 0 && synced == wanted
+}
+
 // statistics reads the fixed-vocabulary counts from one complete line.
 func (r *historyReport) statistics(line string) {
 	if line == historyStatisticsHeader {
 		r.inStatistics = true
+	}
+	if m := historyFoldersSynced.FindStringSubmatch(line); m != nil && r.inStatistics {
+		r.count("folders_synced", m[1], true)
+		r.count("folders_wanted", m[2], true)
 	}
 	if m := historyStatistic.FindStringSubmatch(line); m != nil && r.inStatistics {
 		if key, known := historyStatisticKeys[m[1]]; known {
@@ -276,7 +295,8 @@ func importHistory(ctx context.Context, v historyConfig, observe historyObserver
 	// the same message filed in several folders counts once. Below the largest
 	// folder the tool examined only part of the mailbox; above the total the
 	// source changed during the pass. Each folder's completeness is then proved
-	// by the reconciliation below.
+	// by the reconciliation below, once the tool reported every folder it
+	// wanted as synced, so that no folder escaped it unexamined.
 	var total, largest uint64
 	for _, box := range source {
 		total += uint64(box.messages)
@@ -293,7 +313,7 @@ func importHistory(ctx context.Context, v historyConfig, observe historyObserver
 			pass = "verify"
 		}
 		_, _ = io.WriteString(receipt, historyPassLine(pass, runErr, &result, total))
-		if runErr != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || result.messages < largest || result.messages > total) {
+		if runErr != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || !result.allFoldersSynced() || result.messages < largest || result.messages > total) {
 			if dry {
 				return fail("verification")
 			}
