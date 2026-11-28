@@ -9,8 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func historyInputs(t *testing.T) string {
@@ -139,24 +141,86 @@ func TestHistoryCopiesThenVerifiesWithoutLeakingToolOutput(t *testing.T) {
 				t.Fatalf("unsafe copy option %s", forbidden)
 			}
 		}
+		// Identity is Message-Id alone, on both passes: never Received, which
+		// made a few copies look missing on every run (#5481), and no weaker
+		// fallback such as Date, which could match an unrelated message.
+		var identity []string
+		for i, arg := range args {
+			if arg == "--useheader" && i+1 < len(args) {
+				identity = append(identity, args[i+1])
+			}
+		}
+		if !reflect.DeepEqual(identity, []string{"Message-Id"}) {
+			t.Fatalf("messages must be identified by Message-Id alone, got %q", identity)
+		}
 		for _, peer := range []string{"SSL_verifycn_name=imap.mail.me.com", "SSL_verifycn_name=mail.devantler.tech", "SSL_verify_mode=1", "SSL_verifycn_scheme=imap"} {
 			if !containsHistoryArg(args, peer) {
 				t.Fatalf("missing verified TLS property %s", peer)
 			}
 		}
-		_, err := io.WriteString(output, "private-source-canary Private folder private-message-subject\nThe sync looks good, all 5 identified messages in host1 are on host2.\nThere is no unidentified message on host1.\nDetected 0 errors\n")
+		_, err := io.WriteString(output, "private-source-canary Private folder private-message-subject\n++++ Statistics\nFolders synced                          : 2/2 synced\nThe sync looks good, all 5 identified messages in host1 are on host2.\nThere is no unidentified message on host1.\nDetected 0 errors\n")
 		return err
 	}
 	var receipt bytes.Buffer
 	if err := importHistory(context.Background(), v, observe, execute, &receipt); err != nil {
 		t.Fatal(err)
 	}
-	unknown := " transferred=? would_transfer=? skipped=? h1_duplicates=? h2_duplicates=? h2_crossduplicates=? h1_noheader=? h2_noheader=? in1_not_in2=? in2_not_in1=?\n"
-	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=5 identified=5 errors=0" + unknown +
-		"MAIL_HISTORY_IMPORT_PASS pass=verify exit=0 observed=5 identified=5 errors=0" + unknown +
+	unknown := " transferred=? would_transfer=? skipped=? h1_duplicates=? h2_duplicates=? h2_crossduplicates=? h1_noheader=? h2_noheader=? in1_not_in2=? in2_not_in1=? folders_synced=2 folders_wanted=2\n"
+	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=5 observed_folders=2 identified=5 errors=0" + unknown +
+		"MAIL_HISTORY_IMPORT_PASS pass=verify exit=0 observed=5 observed_folders=2 identified=5 errors=0" + unknown +
 		"MAIL_HISTORY_IMPORT=COMPLETE folders=2 messages=5 source=PRESERVED routing=UNCHANGED\n"
 	if calls != 2 || observations != 4 || receipt.String() != want {
 		t.Fatalf("copy/reconciliation incomplete: calls=%d observations=%d receipt=%q", calls, observations, &receipt)
+	}
+}
+
+// TestHistoryIdentifiedCountLiesBetweenLargestFolderAndTotal pins the success
+// rule for imapsync's identified count: it counts distinct identities, so a
+// message filed in two folders counts once and the import still completes,
+// while a count below the largest folder (part of the mailbox unexamined) or
+// above the total (the source changed) refuses.
+func TestHistoryIdentifiedCountLiesBetweenLargestFolderAndTotal(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		identified int
+		folders    string
+		complete   bool
+	}{
+		{"same message in two folders", 4, "2/2", true},
+		{"every message distinct", 5, "2/2", true},
+		{"part of a folder unexamined", 2, "2/2", false},
+		{"more than the source holds", 6, "2/2", false},
+		{"a folder left unsynced", 4, "1/2", false},
+		{"no folder count printed", 4, "", false},
+		{"fewer folders wanted than observed", 4, "1/1", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := loadHistoryInputs(historyInputs(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := historySnapshot{"INBOX": {messages: 3, uidNext: 9, uidValidity: 1}, "Sent": {messages: 2, uidNext: 5, uidValidity: 2}}
+			observe := func(_ context.Context, side string, _ historyConfig) (historySnapshot, error) {
+				if side == "source" {
+					return source, nil
+				}
+				return historySnapshot{"INBOX": {messages: 3}, "Sent": {messages: 2}}, nil
+			}
+			execute := func(_ context.Context, _ []string, output io.Writer) error {
+				folders := ""
+				if tc.folders != "" {
+					folders = "Folders synced                          : " + tc.folders + " synced\n"
+				}
+				_, err := fmt.Fprintf(output, "++++ Statistics\n%sThe sync looks good, all %d identified messages in host1 are on host2.\nThere is no unidentified message on host1.\nDetected 0 errors\n", folders, tc.identified)
+				return err
+			}
+			var receipt bytes.Buffer
+			err = importHistory(context.Background(), v, observe, execute, &receipt)
+			completed := strings.Contains(receipt.String(), "MAIL_HISTORY_IMPORT=COMPLETE folders=2 messages=5 ")
+			if tc.complete != (err == nil && completed) {
+				t.Fatalf("identified=%d of 5 (largest folder 3): complete=%v err=%v receipt=%q", tc.identified, completed, err, &receipt)
+			}
+		})
 	}
 }
 
@@ -183,6 +247,7 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 			"Messages found in host1 not in host2    : 99 messages\n"+
 			"++++ Statistics\n"+
 			"Transfer started on                     : private-date-canary\n"+
+			"Folders synced                          : 1/1 synced\n"+
 			"Messages transferred                    : %s\n"+
 			"Messages skipped                        : 4\n"+
 			"Messages found duplicate on host1       : 1\n"+
@@ -212,7 +277,7 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	if err := importHistory(context.Background(), v, observe, execute, &receipt); err == nil || err.Error() != "copy" {
 		t.Fatalf("a pass reporting an error must fail at copy, got %v", err)
 	}
-	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=7 identified=7 errors=1 transferred=3 would_transfer=? skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=0 in2_not_in1=0\n"
+	want := "MAIL_HISTORY_IMPORT_PASS pass=copy exit=0 observed=7 observed_folders=1 identified=7 errors=1 transferred=3 would_transfer=? skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=0 in2_not_in1=0 folders_synced=1 folders_wanted=1\n"
 	if receipt.String() != want {
 		t.Fatalf("copy pass line:\n got %q\nwant %q", &receipt, want)
 	}
@@ -221,17 +286,56 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	calls = 1
 	result := historyReport{}
 	runErr := execute(context.Background(), nil, &result)
-	got := historyPassLine("verify", runErr, &result, 7)
-	want = "MAIL_HISTORY_IMPORT_PASS pass=verify exit=111 observed=7 identified=7 errors=1 transferred=0 would_transfer=2 skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=2 in2_not_in1=3\n"
+	got := historyPassLine("verify", runErr, &result, 7, 1)
+	want = "MAIL_HISTORY_IMPORT_PASS pass=verify exit=111 observed=7 observed_folders=1 identified=7 errors=1 transferred=0 would_transfer=2 skipped=4 h1_duplicates=1 h2_duplicates=2 h2_crossduplicates=0 h1_noheader=0 h2_noheader=0 in1_not_in2=2 in2_not_in1=3 folders_synced=1 folders_wanted=1\n"
 	if got != want {
 		t.Fatalf("verify pass line:\n got %q\nwant %q", got, want)
 	}
-	if got := historyPassLine("verify", errors.New("private-tool-error-canary"), &historyReport{}, 0); strings.Contains(got, "private") || !strings.Contains(got, " exit=? ") {
+	if got := historyPassLine("verify", errors.New("private-tool-error-canary"), &historyReport{}, 0, 0); strings.Contains(got, "private") || !strings.Contains(got, " exit=? ") {
 		t.Fatalf("an error without an exit status must read as unknown: %q", got)
 	}
 	killed := exec.Command("sh", "-c", "kill -KILL $$").Run()
-	if got := historyPassLine("copy", killed, &historyReport{}, 0); !strings.Contains(got, " exit=signal ") {
+	if got := historyPassLine("copy", killed, &historyReport{}, 0, 0); !strings.Contains(got, " exit=signal ") {
 		t.Fatalf("a killed tool must read as signal, not a negative status: %q", got)
+	}
+
+	// A tool whose output breaks the line bound must still run to its end:
+	// the report keeps draining, so the tool is never blocked on a full pipe,
+	// exits with its own status, and the pass is judged a failure.
+	overlong := exec.Command("sh", "-c", `i=0; while [ $i -lt 3000 ]; do printf 'private-overlong-canary-%050d' $i; i=$((i+1)); done; printf '\nDetected 0 errors\n'; exit 114`)
+	var drained historyReport
+	overlong.Stdout, overlong.Stderr = &drained, &drained
+	done := make(chan error, 1)
+	go func() { done <- overlong.Run() }()
+	var overlongErr error
+	select {
+	case overlongErr = <-done:
+	case <-time.After(30 * time.Second):
+		_ = overlong.Process.Kill()
+		t.Fatal("a tool printing an over-bound line was blocked instead of drained")
+	}
+	if !drained.bad || !drained.zero {
+		t.Fatalf("the over-bound line must fail the pass while later lines are still read: bad=%v zero=%v", drained.bad, drained.zero)
+	}
+	if got := historyPassLine("copy", overlongErr, &drained, 0, 0); !strings.Contains(got, " exit=114 ") || strings.Contains(got, "canary") {
+		t.Fatalf("a drained over-bound run must keep the tool's exit status and nothing else: %q", got)
+	}
+	var recovered historyReport
+	_, _ = io.WriteString(&recovered, "Detected 3 errors\nDetected 0 errors\n")
+	if got := historyPassLine("copy", nil, &recovered, 0, 0); !strings.Contains(got, " errors=3 ") || !recovered.bad {
+		t.Fatalf("a later zero count must not hide the errors that failed the pass: bad=%v %q", recovered.bad, got)
+	}
+	// The total bound is crossed across many writes, as a pipe delivers it,
+	// without holding 129 MiB at once.
+	var flood historyReport
+	chunk := bytes.Repeat([]byte("x\n"), 1<<20)
+	for written := 0; written <= 128<<20; written += len(chunk) {
+		if n, err := flood.Write(chunk); err != nil || n != len(chunk) {
+			t.Fatalf("output past the total bound must be discarded, not refused: n=%d err=%v after %d bytes", n, err, written)
+		}
+	}
+	if !flood.bad {
+		t.Fatal("output past the total bound must fail the pass")
 	}
 	for _, line := range []string{receipt.String(), got} {
 		for _, private := range []string{"Client", "secret", "private", "subject", "reply", "INBOX", "canary"} {

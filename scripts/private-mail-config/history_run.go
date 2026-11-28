@@ -31,6 +31,19 @@ func historyArgs(v historyConfig, dry bool) []string {
 		"--sep1", "/", "--sep2", "/", "--prefix1", "", "--prefix2", "",
 		"--noexpunge1", "--noexpunge2", "--nouidexpunge2", "--noexpungeaftereach",
 		"--noresyncflags", "--nosyncacls", "--syncduplicates", "--noskipemptyfolders",
+		// Identify a message by its Message-Id alone, not imapsync's default
+		// Message-Id and Received. The destination returned a few messages'
+		// Received headers differently from the source (#5481, attempt 12: the
+		// same 2 messages copied again on every run), and a copy whose identity
+		// does not round-trip is appended again each run.
+		//
+		// No fallback header is added on purpose. A message without a
+		// Message-Id is then unidentified, and the pass refuses it (h1_noheader
+		// above 0) instead of matching it by a weaker header: a Date-only
+		// identity could match an unrelated destination message with the same
+		// Date, leave the source message uncopied and still let the counts
+		// reconcile to COMPLETE.
+		"--useheader", "Message-Id",
 		"--noreleasecheck", "--nolog", "--noemailreport1", "--noemailreport2", "--noid",
 		"--timeout1", "60", "--timeout2", "60", "--errorsmax", "1",
 		"--pidfile", "/tmp/email-history-import.pid", "--tmpdir", "/tmp",
@@ -63,6 +76,8 @@ type historyReport struct {
 	// inStatistics is set once the tool prints its closing statistics header;
 	// the labelled counts are read only after it.
 	inStatistics bool
+	// overlong is set while the rest of an over-bound line is being dropped.
+	overlong bool
 }
 
 var historyGood = regexp.MustCompile(`^The sync looks good, all ([0-9]+) identified messages in host1 are on host2\.$`)
@@ -76,6 +91,11 @@ const historyStatisticsHeader = "++++ Statistics"
 // after each, so no folder name, header, subject or server reply can reach the
 // receipt. Within the block the first value of a label is kept, so a later line
 // with the same label cannot replace what the closing summary printed.
+// errors and identified are different: they come from the result lines the
+// success check already reads ("Detected N errors", "The sync looks good" and
+// "The sync is not finished"), wherever those appear. identified keeps the
+// last value and errors the largest. folders_synced and folders_wanted come
+// from the block's "Folders synced : X/Y synced" line.
 var (
 	historyStatisticKeys = map[string]string{
 		"Messages transferred":                   "transferred",
@@ -88,8 +108,9 @@ var (
 		"Messages found in host1 not in host2":   "in1_not_in2",
 		"Messages found in host2 not in host1":   "in2_not_in1",
 	}
-	historyStatisticOrder = []string{"identified", "errors", "transferred", "would_transfer", "skipped", "h1_duplicates", "h2_duplicates", "h2_crossduplicates", "h1_noheader", "h2_noheader", "in1_not_in2", "in2_not_in1"}
+	historyStatisticOrder = []string{"identified", "errors", "transferred", "would_transfer", "skipped", "h1_duplicates", "h2_duplicates", "h2_crossduplicates", "h1_noheader", "h2_noheader", "in1_not_in2", "in2_not_in1", "folders_synced", "folders_wanted"}
 	historyStatistic      = regexp.MustCompile(`^(Messages [a-z0-9() ]+?) +: ([0-9]+)\b`)
+	historyFoldersSynced  = regexp.MustCompile(`^Folders synced +: ([0-9]+)/([0-9]+) synced$`)
 	historyDryTransfers   = regexp.MustCompile(`\(could be ([0-9]+) without --dry mode\)`)
 	historyErrorCount     = regexp.MustCompile(`^Detected ([0-9]+) errors$`)
 	historyNotFinished    = regexp.MustCompile(`^The sync is not finished, there are [0-9]+ among ([0-9]+) identified messages in host1 that are not on host2\.$`)
@@ -112,10 +133,30 @@ func (r *historyReport) count(key, digits string, first bool) {
 	r.counts[key] = n
 }
 
+// allFoldersSynced reports whether the tool's closing statistics name every
+// folder it wanted as synced, and whether it wanted at least as many folders
+// as the source observation found. A folder left out without an error would
+// otherwise pass as long as the destination already held as many messages as
+// the source folder. Both sides leave out \Noselect folders (the observer
+// skips them, imapsync's checkselectable drops them), so a tool that wants
+// fewer folders than were observed has missed one; wanting more is harmless.
+// A pass that printed no such line has not shown any of this.
+func (r *historyReport) allFoldersSynced(observedFolders int) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	synced, okSynced := r.counts["folders_synced"]
+	wanted, okWanted := r.counts["folders_wanted"]
+	return okSynced && okWanted && wanted > 0 && synced == wanted && observedFolders >= 0 && wanted >= uint64(observedFolders)
+}
+
 // statistics reads the fixed-vocabulary counts from one complete line.
 func (r *historyReport) statistics(line string) {
 	if line == historyStatisticsHeader {
 		r.inStatistics = true
+	}
+	if m := historyFoldersSynced.FindStringSubmatch(line); m != nil && r.inStatistics {
+		r.count("folders_synced", m[1], true)
+		r.count("folders_wanted", m[2], true)
 	}
 	if m := historyStatistic.FindStringSubmatch(line); m != nil && r.inStatistics {
 		if key, known := historyStatisticKeys[m[1]]; known {
@@ -128,7 +169,11 @@ func (r *historyReport) statistics(line string) {
 		}
 	}
 	if m := historyErrorCount.FindStringSubmatch(line); m != nil {
-		r.count("errors", m[1], false)
+		// The largest count is kept: any nonzero one already fails the pass,
+		// so a later "Detected 0 errors" must not make the line read errors=0.
+		if n, err := strconv.ParseUint(m[1], 10, 64); err == nil && n >= r.counts["errors"] {
+			r.count("errors", m[1], false)
+		}
 	}
 	if m := historyGood.FindStringSubmatch(line); m != nil {
 		r.count("identified", m[1], false)
@@ -142,7 +187,7 @@ func (r *historyReport) statistics(line string) {
 // status and the fixed counts, each a number or "?" when the tool printed none.
 // observed is the source total the pass is judged against. It is written for
 // every pass, successful or not, and carries numbers only.
-func historyPassLine(pass string, runErr error, r *historyReport, observed uint64) string {
+func historyPassLine(pass string, runErr error, r *historyReport, observed uint64, observedFolders int) string {
 	exit := "?"
 	var exitErr *exec.ExitError
 	switch {
@@ -157,7 +202,7 @@ func historyPassLine(pass string, runErr error, r *historyReport, observed uint6
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var b strings.Builder
-	fmt.Fprintf(&b, "MAIL_HISTORY_IMPORT_PASS pass=%s exit=%s observed=%d", pass, exit, observed)
+	fmt.Fprintf(&b, "MAIL_HISTORY_IMPORT_PASS pass=%s exit=%s observed=%d observed_folders=%d", pass, exit, observed, observedFolders)
 	for _, key := range historyStatisticOrder {
 		value := "?"
 		if n, ok := r.counts[key]; ok {
@@ -172,12 +217,23 @@ func historyPassLine(pass string, runErr error, r *historyReport, observed uint6
 func (r *historyReport) Write(data []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Past either bound the report can no longer be judged, so the pass fails.
+	// The rest is still read and discarded, never refused: a refusal would stop
+	// the pipe from draining, block the tool until the import's deadline and
+	// lose its exit status.
 	r.bytes += len(data)
 	if r.bytes > 128<<20 {
 		r.bad = true
-		return 0, errors.New("history-output-bound")
+		return len(data), nil
 	}
 	for _, b := range data {
+		if b == '\n' && r.overlong {
+			r.overlong = false
+			continue
+		}
+		if r.overlong {
+			continue
+		}
 		if b == '\n' {
 			line := strings.TrimSuffix(string(r.line), "\r")
 			r.line = r.line[:0]
@@ -200,8 +256,11 @@ func (r *historyReport) Write(data []byte) (int, error) {
 			continue
 		}
 		if len(r.line) >= 64<<10 {
+			// An overlong line is dropped up to its newline; it is never judged.
 			r.bad = true
-			return 0, errors.New("history-line-bound")
+			r.overlong = true
+			r.line = r.line[:0]
+			continue
 		}
 		r.line = append(r.line, b)
 	}
@@ -234,9 +293,18 @@ func importHistory(ctx context.Context, v historyConfig, observe historyObserver
 	if err != nil {
 		return observed("destination", err)
 	}
-	var total uint64
+	// identified counts distinct identities across all folders, so it lies
+	// between the largest folder and the total: within one folder every message
+	// has its own identity (--syncduplicates keys each repeat separately), while
+	// the same message filed in several folders counts once. Below the largest
+	// folder the tool examined only part of the mailbox; above the total the
+	// source changed during the pass. Each folder's completeness is then proved
+	// by the reconciliation below, once the tool reported every folder it
+	// wanted as synced, so that no folder escaped it unexamined.
+	var total, largest uint64
 	for _, box := range source {
 		total += uint64(box.messages)
+		largest = max(largest, uint64(box.messages))
 	}
 	for _, dry := range []bool{false, true} {
 		var result historyReport
@@ -248,8 +316,8 @@ func importHistory(ctx context.Context, v historyConfig, observe historyObserver
 		if dry {
 			pass = "verify"
 		}
-		_, _ = io.WriteString(receipt, historyPassLine(pass, runErr, &result, total))
-		if runErr != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || result.messages != total) {
+		_, _ = io.WriteString(receipt, historyPassLine(pass, runErr, &result, total, len(source)))
+		if runErr != nil || result.bad || !result.zero || total > 0 && (!result.good || !result.identified || !result.allFoldersSynced(len(source)) || result.messages < largest || result.messages > total) {
 			if dry {
 				return fail("verification")
 			}
