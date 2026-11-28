@@ -1,0 +1,46 @@
+# Bulwark's server reaches exactly one place: Stalwart's web side at
+# stalwart.${domain} on 443, for its readiness check, the OAuth token exchange
+# and server-side JMAP. Browsers call Stalwart directly; this policy is about
+# the pod. Everything else, including the telemetry, update check and other
+# outside hosts that NO_THIRD_PARTY_TRAFFIC already turns off, stays blocked.
+#
+# No ingress is admitted yet: nothing routes to Bulwark until #6662's swap
+# step. That step serves it behind GitHub SSO, so its requests will come from
+# the oauth2-proxy namespace's auth-proxy pods, not straight from the Gateway,
+# and the ingress rule added then must name those pods.
+#
+# DNS carries an L7 rule so the toFQDNs rule can learn Stalwart's addresses.
+# The image resolves names with musl, which stops at the first refused answer,
+# so the cluster search-domain lookups tried before the public name are
+# allowed too, as for the mail server itself.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-bulwark
+  namespace: bulwark
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/name: bulwark
+      k8s:app.kubernetes.io/instance: bulwark
+  egress:
+    - toFQDNs:
+        - matchName: stalwart.${domain}
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchName: stalwart.${domain}
+              - matchPattern: "*.cluster.local"

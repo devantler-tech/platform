@@ -1,0 +1,185 @@
+# Bulwark 1.22.0, the webmail for the company mailbox (#6662), launched dark:
+# no route reaches it until #6662's swap step puts it at mail.${domain} behind
+# GitHub SSO. See docs/operations/bulwark.md.
+#
+# Settings, verified against the Bulwark source at 1.22.0 (lib/admin/types.ts,
+# lib/admin/paths.ts, lib/admin/stalwart-admin-access.ts):
+# - JMAP_SERVER_URL: Stalwart's web side. Browsers call it directly; the
+#   route there allows Bulwark's origin.
+# - OAUTH_ENABLED, OAUTH_ONLY, OAUTH_CLIENT_ID: the mailbox sign-in is only
+#   Stalwart's own OAuth login (a PKCE public client, no client secret), so the
+#   mail password and two-factor code are typed on Stalwart's page.
+# - NO_THIRD_PARTY_TRAFFIC: every built-in outside host is off (telemetry,
+#   update check, push relay, extension directory, connector, sender favicons,
+#   translation, maps links, WKD) and plugins that need the network don't run.
+# - STALWART_FEATURES=false: none of the Stalwart-specific account screens.
+# - STALWART_ADMIN_ACCESS=off, and no ADMIN_PASSWORD: a Stalwart administrator
+#   gets no Bulwark admin rights, and with no admin password Bulwark's own
+#   admin dashboard stays disabled (lib/admin/password.ts). Bulwark asks for a
+#   password only when the dashboard itself restricts admin access.
+# - SESSION_SECRET_FILE: the generated session secret, read from a file so it
+#   never enters the environment (external-secret.yaml).
+# - ADMIN_CONFIG_READONLY, ADMIN_CONFIG_DIR, ADMIN_STATE_DIR: the admin config
+#   is the read-only ConfigMap; runtime state goes to the scratch volume. The
+#   state directory is named explicitly because, with only the config
+#   directory set, Bulwark would put it inside that read-only mount.
+# - LOGIN_SHOW_REMEMBER_ME, BROWSER_SESSION_SIGN_IN: "remember me" is offered
+#   and off unless ticked; an unticked sign-in lasts until the browser closes.
+#   The idle and maximum session limits are in the ConfigMap's policy.json.
+# - TRUSTED_PROXY_DEPTH=1: sign-in limits key on the address one proxy back.
+# - HOSTNAME: Next.js listens on this address; Kubernetes otherwise sets it to
+#   the pod's name.
+#
+# One replica: without a shared store (Valkey), sessions, sign-in limits and
+# admin state are per pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bulwark
+  namespace: bulwark
+  labels:
+    app.kubernetes.io/name: bulwark
+    app.kubernetes.io/instance: bulwark
+    platform.devantler.tech/replica-floor: exempt
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bulwark
+      app.kubernetes.io/instance: bulwark
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bulwark
+        app.kubernetes.io/instance: bulwark
+    spec:
+      serviceAccountName: bulwark
+      automountServiceAccountToken: false
+      # The image's own user is 1001, but it runs as any user: the app files
+      # are root's and read-only, and everything it writes is on the volumes
+      # below. A UID above 10000 keeps clear of host accounts.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bulwark
+          image: ghcr.io/bulwarkmail/webmail:1.22.0@sha256:d02b77b4dea0607dafcd2592a6d89d481b8dd400e4b2b72f5a4466972dc4c5a8
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOSTNAME
+              value: 0.0.0.0
+            - name: JMAP_SERVER_URL
+              value: https://stalwart.${domain}
+            - name: OAUTH_ENABLED
+              value: "true"
+            - name: OAUTH_ONLY
+              value: "true"
+            - name: OAUTH_CLIENT_ID
+              value: bulwark
+            - name: NO_THIRD_PARTY_TRAFFIC
+              value: "true"
+            - name: STALWART_FEATURES
+              value: "false"
+            - name: STALWART_ADMIN_ACCESS
+              value: "off"
+            - name: ADMIN_CONFIG_READONLY
+              value: "true"
+            - name: ADMIN_CONFIG_DIR
+              value: /app/data/admin
+            - name: ADMIN_STATE_DIR
+              value: /app/data/admin-state
+            - name: LOGIN_SHOW_REMEMBER_ME
+              value: "true"
+            - name: BROWSER_SESSION_SIGN_IN
+              value: "true"
+            - name: TRUSTED_PROXY_DEPTH
+              value: "1"
+            - name: SESSION_SECRET_FILE
+              value: /etc/bulwark/session/session-secret
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          # Live only says the process answers. Ready also needs the config,
+          # writable data directories and an answer from Stalwart's session
+          # resource within 2 seconds, so the probe allows longer than that.
+          startupProbe:
+            httpGet:
+              path: /api/health/live
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health/live
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: http
+            timeoutSeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          # Without its own CPU limit the namespace's default LimitRange would
+          # cap the container at 500m.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 768Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            # Scratch space only; nothing here needs to survive the pod.
+            - name: data
+              mountPath: /app/data
+            - name: admin-config
+              mountPath: /app/data/admin
+              readOnly: true
+            - name: next-cache
+              mountPath: /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+            - name: session
+              mountPath: /etc/bulwark/session
+              readOnly: true
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: admin-config
+          configMap:
+            name: bulwark-admin-config
+        - name: session
+          secret:
+            secretName: bulwark
+            defaultMode: 0440
+            items:
+              - key: session-secret
+                path: session-secret
+        - name: next-cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
