@@ -32,6 +32,12 @@ func historyArgs(v historyConfig, dry bool) []string {
 		"--sep1", "/", "--sep2", "/", "--prefix1", "", "--prefix2", "",
 		"--noexpunge1", "--noexpunge2", "--nouidexpunge2", "--noexpungeaftereach",
 		"--noresyncflags", "--nosyncacls", "--syncduplicates", "--noskipemptyfolders",
+		// Identify a message by its Message-Id alone. imapsync's default also
+		// hashes the Received headers, and the destination returned a few of
+		// those differently from the source (#5481, attempt 12: the same 2
+		// messages copied again on every run). A copy whose identity does not
+		// round-trip is appended again each run, so it is a duplicate source.
+		"--useheader", "Message-Id",
 		"--noreleasecheck", "--nolog", "--noemailreport1", "--noemailreport2", "--noid",
 		"--timeout1", "60", "--timeout2", "60", "--errorsmax", "1",
 		"--pidfile", "/tmp/email-history-import.pid", "--tmpdir", "/tmp",

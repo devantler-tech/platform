@@ -125,13 +125,30 @@ success: only the `COMPLETE` receipt does. To read a failure:
 | `pass=copy` with `errors` above 0 | An error stopped the pass, and `--errorsmax 1` stops it at the first one. `errors` counts every type of error, including fetch, append, create, select, flags, quota, TLS and connection errors. `exit` names the type; see the list above. |
 | `pass=verify` with `identified` above `observed`, and `in1_not_in2` equal to the difference | Mail reached the source during the run. Repeat at a quieter time. |
 | `identified` below `observed`, with `in1_not_in2` at 0 | The source holds the same message in more than one folder, or a folder holds duplicates. imapsync counts each identity once, so a pass that copied everything still cannot meet `identified = observed`, and repeating cannot change it. This needs a change to the importer's success rule, not another run. |
-| `in2_not_in1` above 0 | Either mail the destination held before the copy, which the importer keeps, or copies stored with a different identity (`Message-Id` and `Received` headers). Compare runs before deciding. |
+| `in2_not_in1` above 0 | Either mail the destination held before the copy, which the importer keeps, or copies stored with a different identity (the `Message-Id` header; see Identity below). Compare runs before deciding. |
 | `h2_duplicates` rising between runs, with `in1_not_in2` above 0 in each verify pass | Copies were stored with a different identity, so each run appends them again. Stop repeating the operation, because every repeat adds duplicates, and look at what the destination changed. `in2_not_in1` counts distinct identities, so it can stay the same while the copies pile up, and a stable value does not rule this out. |
 | `pass=verify` with `in1_not_in2` above 0, `h2_duplicates` unchanged between runs, and the source unchanged | Messages left the destination after they were copied, for example through its retention of old Trash or Junk messages. |
 
 A Job created this way is outside the Flux inventory, so a long copy never holds
 a deploy and a reconciliation cannot prune it. Repeat the operation to continue
 an incomplete copy; it refuses while an earlier copy is still running.
+
+### Identity
+
+imapsync recognises a message already on the destination by an md5 of selected
+headers. Size is not part of it, because `--skipsize` is on by default. The
+importer uses the `Message-Id` header alone (`--useheader Message-Id`).
+
+imapsync's default also hashes the `Received` headers. On 2026-11-28 (#5481,
+attempt 12), the destination returned those headers differently for a few
+messages. With an identity that does not round-trip, a copy looks missing on
+every run and is appended again:
+- the same 2 messages were copied on each pass;
+- the destination's `h2_duplicates` rose by 2 per run;
+- verification failed.
+
+A message without a `Message-Id` is then unidentified. The pass line shows it as
+`h1_noheader` above 0, and the import stops rather than copying it blindly.
 
 ## Copy and reconciliation
 
