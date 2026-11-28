@@ -65,6 +65,26 @@ func TestRuntimePublicationUsesActualProducerAndFluxLayers(t *testing.T) {
 	}
 }
 
+func TestRuntimePublicationRefusesTheRetiredPracticeRoot(t *testing.T) {
+	config, wrappers := runtimePublicationSourceFixture(t)
+	wrappers = append(wrappers, []byte(`
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: business-site-preview
+  namespace: flux-system
+spec:
+  path: providers/hetzner/business-site-preview-workload
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+`)...)
+	if runtimePublicationSource(config, wrappers) == nil {
+		t.Fatal("the retired Platform pin for the practice migration was accepted")
+	}
+}
+
 func TestRuntimePublicationRootSourceCannotBeRedirected(t *testing.T) {
 	instance := object{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "FluxInstance", "metadata": object{"name": "flux", "namespace": "flux-system"},
 		"spec": object{"kustomize": object{"patches": []any{object{"target": object{"kind": "OCIRepository", "name": "flux-system", "namespace": "flux-system"}, "patch": "- op: add\n  path: /spec/verify\n  value: {provider: cosign}\n"}}}}}

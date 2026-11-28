@@ -3,7 +3,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../base
-  - flux-kustomization-business-site-preview.yaml
   # Production-only leaf health signal; nothing depends on it (platform#6269).
   - flux-kustomization-platform-health.yaml
   # Production-only leaf that applies the GitHub token broker's pods, so a

@@ -146,28 +146,12 @@ kubectl kustomize "${root_dir}/k8s/clusters/prod" |
     def root($name):
       [.[]|select(.metadata.name==$name and .metadata.namespace=="flux-system")] |
       if length==1 then .[0].spec else error("expected exactly one Platform root") end;
-    (root("business-site-preview") |
-      .path=="providers/hetzner/business-site-preview-workload" and
-      .sourceRef=={kind:"OCIRepository",name:"flux-system"} and
-      .dependsOn==[{name:"apps"}] and .wait and .prune and (.force|not) and
-      .serviceAccountName==null) and
+    all(.[]; .metadata.name!="business-site-preview") and
     (root("apps") | .wait and .sourceRef=={kind:"OCIRepository",name:"flux-system"} and
       any(.healthCheckExprs[];
         .apiVersion=="postgresql.cnpg.io/v1" and .kind=="Cluster" and
         .current==$cnpg_ready))
-  ' >/dev/null || fail 'the preview migration must wait for the Platform apps readiness gate'
-
-kubectl kustomize "${root_dir}/k8s/providers/hetzner/business-site-preview-workload" |
-  yq -o=json -I=0 '.' |
-  jq -es '
-    length==1 and (.[0] | .kind=="Job" and .metadata.namespace=="business-site-dev" and
-      .metadata.name=="business-site-dev-migration" and (.spec.template.spec |
-        .automountServiceAccountToken==false and .serviceAccountName==null and
-        (.containers|length)==1 and .containers[0].name=="migrate" and
-        (.containers[0].image|test("^ghcr[.]io/devantler-tech/business-site@sha256:[0-9a-f]{64}$")) and
-        any(.containers[0].args[]; .=="portal_preview_web") and
-        ([.volumes[].secret.secretName | select(.!=null)])==["business-site-dev-migration"]))
-  ' >/dev/null || fail 'the isolated preview workload must contain only the pinned database migration'
+  ' >/dev/null || fail 'the production apps layer must verify CNPG readiness and the retired migration root must be absent'
 
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
   yq -o=json -I=0 'select(.metadata.namespace == "business-site-dev")' |
@@ -175,7 +159,6 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
     def spec($kind; $name):
       [.[]|select(.kind==$kind and .metadata.name==$name)] |
       if length==1 then .[0].spec else error("expected exactly one preview resource") end;
-    def paths: [.data[].remoteRef.key] | sort;
     (any(.[]; .kind=="Kustomization" or .kind=="HTTPRoute" or .kind=="Ingress" or .kind=="Deployment" or .kind=="Job" or .kind=="WebApp"
       or .metadata.name=="business-site-preview-deployer")|not) and
     (spec("Cluster";"portal-preview-db")|
@@ -191,11 +174,8 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
     (spec("PushSecret";"portal-preview-db-ca")|
       .selector.secret.name=="portal-preview-db-ca" and
       .data==[{match:{secretKey:"ca.crt",remoteRef:{remoteKey:"apps/business-site-dev/portal-db-ca",property:"ca"}}}]) and
-    (spec("ExternalSecret";"business-site-dev-migration")|
-      paths==["apps/business-site-dev/portal-db-ca","apps/business-site-dev/portal-migrator"] and
-      (.target.template.data["database-url"]|startswith("postgres://portal_preview_migrator:") and
-        endswith("@portal-preview-db-rw.business-site-dev.svc.cluster.local:5432/portal_preview?sslmode=verify-full&sslrootcert=/run/portal-migration/ca.crt"))) and
-    all(.[];.metadata.name!="business-site-dev-runtime" and .metadata.name!="business-site-dev-portal")
+    all(.[];.metadata.name!="business-site-dev-runtime" and .metadata.name!="business-site-dev-portal"
+      and .metadata.name!="business-site-dev-migration" and .metadata.name!="business-site-dev-migration-network")
   ' >/dev/null || fail 'the preview database and projected inputs must stay isolated'
 
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
@@ -242,8 +222,7 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
     (resource("business-site-dev";"CiliumNetworkPolicy";"portal-preview-db")|.spec|
       .endpointSelector.matchLabels=={"cnpg.io/cluster":"portal-preview-db"} and
       [.ingress[]|select(any(.fromEndpoints[]?;.matchLabels["k8s:io.kubernetes.pod.namespace"]=="business-site"))]==[
-        {fromEndpoints:[{matchLabels:{"app.kubernetes.io/name":"business-site-dev-migration"}},
-                        {matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site","app.kubernetes.io/name":"business-site"}},
+        {fromEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site","app.kubernetes.io/name":"business-site"}},
                         {matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site","app.kubernetes.io/name":"business-site-practice-migration"}}],
          toPorts:[{ports:[{port:"5432",protocol:"TCP"}]}]}
       ]) and
