@@ -69,7 +69,7 @@ func observeProviderCNPGStandby(ctx context.Context, c client, grant providerCNP
 	}
 	activation := temporaryV2Activation{c: c, source: grant.Source, owner: grant.Run, pools: c.inventoryPools}
 	disks, err := activation.observeRecoveryStorage(ctx, nil)
-	if err != nil || archive.Storage == nil || !recoveryJSONEqual(disks, *archive.Storage) {
+	if err != nil || archive.Storage == nil || !recoveryStoragePreservesArchive(disks, *archive.Storage) {
 		return errProviderCNPGStandby
 	}
 	before, err := c.readProviderCNPGStandby(ctx, grant, first, disks.Disks)

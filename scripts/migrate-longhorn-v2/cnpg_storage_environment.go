@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -12,6 +13,35 @@ type cnpgStorageEnvironment struct {
 	Activation benchmarkResource
 	Targets    map[string]temporaryV2Binding
 	Disks      []cnpgRecoveryDiskBinding
+}
+
+// Confirm the archived identity against an already qualified live environment.
+// The original pool bindings stay in place when the proven reserve is added.
+func recoveryStoragePreservesArchive(qualified, archived cnpgStorageEnvironment) bool {
+	if recoveryJSONEqual(qualified, archived) {
+		return true
+	}
+	if qualified.Activation != archived.Activation || !recoveryJSONEqual(qualified.Targets, archived.Targets) ||
+		len(archived.Disks) != 3 || len(qualified.Disks) != 4 {
+		return false
+	}
+	for _, disk := range archived.Disks {
+		if disk.DiskName != "" || !slices.Contains(qualified.Disks, disk) {
+			return false
+		}
+	}
+	for _, reserve := range qualified.Disks {
+		if reserve.DiskName != "longhorn-v2-retained" {
+			continue
+		}
+		return reserve.Selection == temporaryReserveSelection && reserve.DiskUUID != "" &&
+			!slices.ContainsFunc(archived.Disks, func(disk cnpgRecoveryDiskBinding) bool { return disk.DiskUUID == reserve.DiskUUID }) &&
+			slices.ContainsFunc(archived.Disks, func(disk cnpgRecoveryDiskBinding) bool {
+				return disk.Selection == reserve.Selection && disk.Node == reserve.Node &&
+					disk.NodeUID == reserve.NodeUID && disk.InstanceManager == reserve.InstanceManager
+			})
+	}
+	return false
 }
 
 // recoveryStorage qualifies registered disks while healthy V2 volumes coexist with retained V1 data.

@@ -132,7 +132,7 @@ func verifyUmamiSpareBeforeRetirement(ctx context.Context, journal *umamiStandby
 	}
 	activation := temporaryV2Activation{c: journal.c, source: executor.Source, owner: executor.Run, pools: journal.c.inventoryPools}
 	qualified, err := activation.recoveryStorage(ctx, archive.Plan.Source)
-	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
+	if err != nil || !recoveryStoragePreservesArchive(qualified, *archive.Storage) {
 		return errors.New("the Umami recovery storage changed before eviction")
 	}
 	spare := journal.record.Original.Spare

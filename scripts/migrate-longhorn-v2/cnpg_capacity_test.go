@@ -37,6 +37,47 @@ func recoveryDisk(n object) object {
 	return value(n, "status", "diskStatus", "longhorn-v2").(object)
 }
 
+func TestQualifiedRetainedReservePreservesArchiveDiskBindings(t *testing.T) {
+	_, _, bindings := recoveryCapacityFixture()
+	archived := cnpgStorageEnvironment{
+		Activation: benchmarkResource{Name: temporaryActivationJournal, Namespace: "longhorn-system", UID: "activation"},
+		Targets:    make(map[string]temporaryV2Binding),
+		Disks:      bindings,
+	}
+	var extra cnpgRecoveryDiskBinding
+	for _, disk := range bindings {
+		archived.Targets[disk.Selection] = temporaryV2Binding{Selection: disk.Selection, Name: disk.Node}
+		if disk.Selection == temporaryReserveSelection {
+			extra = disk
+		}
+	}
+	extra.DiskName, extra.DiskUUID = "longhorn-v2-retained", "retained-disk"
+	qualified := archived
+	qualified.Disks = append(append([]cnpgRecoveryDiskBinding{}, bindings...), extra)
+	if !recoveryStoragePreservesArchive(qualified, archived) || !recoveryStoragePreservesArchive(archived, archived) {
+		t.Fatal("the current storage should preserve the original archive bindings")
+	}
+	if recoveryStoragePreservesArchive(archived, qualified) {
+		t.Fatal("the archived reserve disk disappeared")
+	}
+	for name, mutate := range map[string]func(*cnpgStorageEnvironment){
+		"replaced primary disk": func(s *cnpgStorageEnvironment) { s.Disks[0].DiskUUID = "replacement" },
+		"duplicate disk UUID":   func(s *cnpgStorageEnvironment) { s.Disks[3].DiskUUID = s.Disks[0].DiskUUID },
+		"wrong reserve host":    func(s *cnpgStorageEnvironment) { s.Disks[3].Node = "other-host" },
+		"changed activation":    func(s *cnpgStorageEnvironment) { s.Activation.UID = "replacement" },
+		"different reserve":     func(s *cnpgStorageEnvironment) { s.Disks[3].DiskName = "different" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := qualified
+			candidate.Disks = append([]cnpgRecoveryDiskBinding{}, qualified.Disks...)
+			mutate(&candidate)
+			if recoveryStoragePreservesArchive(candidate, archived) {
+				t.Fatal("a changed storage identity was treated as continuous")
+			}
+		})
+	}
+}
+
 func TestRecoveryCapacityReservesFullDatabaseSizeOnEveryReplicaDisk(t *testing.T) {
 	nodes, replicas, bindings := recoveryCapacityFixture()
 	if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {

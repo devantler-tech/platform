@@ -199,7 +199,7 @@ func readUmamiReplacementStorage(ctx context.Context, journal *umamiStandbyRepla
 	}
 	activation := temporaryV2Activation{c: c, source: executor.Source, owner: executor.Run, pools: c.inventoryPools}
 	qualified, err := activation.recoveryStorage(ctx, archive.Plan.Source)
-	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
+	if err != nil || !recoveryStoragePreservesArchive(qualified, *archive.Storage) {
 		return cnpgRecoveredStorage{}, errors.New("the new standby raw storage is unverified")
 	}
 	return readCNPGV2Standby(ctx, c, observation, replacement, qualified.Disks)

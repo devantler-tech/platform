@@ -54,7 +54,7 @@ func verifyUmamiNameReleaseArchive(ctx context.Context, j *umamiStandbyReplaceme
 	}
 	activation := temporaryV2Activation{c: c, source: j.executor().Source, owner: j.executor().Run, pools: c.inventoryPools}
 	qualified, err := activation.recoveryStorage(ctx, archive.Plan.Source)
-	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
+	if err != nil || !recoveryStoragePreservesArchive(qualified, *archive.Storage) {
 		return errors.New("the independently restored Umami V2 archive capacity is unverified")
 	}
 	spare, err := readCNPGV2Standby(ctx, c, observation, j.record.Original.Spare.Pod.Name, qualified.Disks)

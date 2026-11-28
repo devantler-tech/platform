@@ -23,7 +23,8 @@ func bindCNPGRecoveredStorage(r cnpgProofRecord, cluster, pod, claim, pv, volume
 	var zero cnpgRecoveredStorage
 	initial := r.Phase == "cluster-created" && !r.RestoreVerified && r.RestoreReceipt == nil
 	retained := r.Phase == cnpgArchiveCredentialRetired && r.RestoreVerified && validateCNPGRestoreReceipt(r) == nil
-	if r.Version != 1 || (!initial && !retained) || r.Cleaned || r.Plan == nil || len(r.Plan.Resources) != 4 || r.Admission == nil || r.Storage == nil || len(r.Storage.Disks) != 3 || !validBenchmarkOwner(r.Run, r.Source) {
+	if r.Version != 1 || (!initial && !retained) || r.Cleaned || r.Plan == nil || len(r.Plan.Resources) != 4 ||
+		r.Admission == nil || r.Storage == nil || (len(r.Storage.Disks) != 3 && len(r.Storage.Disks) != 4) || !validBenchmarkOwner(r.Run, r.Source) {
 		return zero, refused
 	}
 	ns := "longhorn-db-proof-" + r.Target + "-" + r.Run

@@ -61,7 +61,7 @@ func observeCNPGStandbyCutover(ctx context.Context, c client, source string, dat
 	}
 	activation := temporaryV2Activation{c: c, source: source, owner: os.Getenv("GITHUB_RUN_ID"), pools: c.inventoryPools}
 	qualified, err := activation.recoveryStorage(ctx, archive.Plan.Source)
-	if err != nil || !recoveryJSONEqual(qualified, *archive.Storage) {
+	if err != nil || !recoveryStoragePreservesArchive(qualified, *archive.Storage) {
 		return cnpgStandbyCutover{}, errors.New("the raw storage qualified during backup recovery is unverified")
 	}
 	spareBefore, err := readCNPGV2Standby(ctx, c, before, spare, qualified.Disks)
