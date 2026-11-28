@@ -6,7 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly node_agent_config="${root_dir}/k8s/bases/infrastructure/controllers/velero/config-map.yaml"
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/velero/helm-release.yaml"
-readonly volume_policy="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/velero/config-map.yaml"
+readonly volume_policy="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/velero/config-maps/config-map-daily-volumes.yaml"
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../flux-render.lib.sh
@@ -108,6 +108,13 @@ readonly unsafe_hcloud_skip_rules
 [[ "${unsafe_hcloud_skip_rules}" == '0' ]] ||
   fail "every hcloud skip rule must require the independently mirrored PVC label; found ${unsafe_hcloud_skip_rules} unsafe rule(s)"
 
+if ! yq -o=json '.data["policy.yaml"] | from_yaml' "${volume_policy}" | jq -e '
+  [.volumePolicies[] | select((.conditions.storageClass // []) | index("longhorn"))] ==
+    [{conditions: {storageClass: ["longhorn"]}, action: {type: "fs-backup"}}]
+' >/dev/null; then
+  fail 'daily backups of the legacy Longhorn class must use Kopia without provisioning snapshot scratch volumes'
+fi
+
 rendered_infrastructure="$(mktemp)"
 readonly rendered_infrastructure
 rendered_controllers="$(mktemp)"
@@ -121,6 +128,19 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure" >"${rendere
   fail 'the production infrastructure overlay did not render'
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers" >"${rendered_controllers}" ||
   fail 'the production infrastructure controllers overlay did not render'
+
+if ! yq -N -o=json -I0 '
+  select(.kind == "HelmRelease" and .metadata.namespace == "velero" and .metadata.name == "velero") |
+  .spec.values.schedules."daily-full".template | .resourcePolicy
+' "${rendered_controllers}" | jq -e -s '. == [{kind: "configmap", name: "velero-daily-volume-policies"}]' >/dev/null; then
+  fail 'the rendered nightly backup must select the dedicated daily volume policy'
+fi
+if ! yq -N -o=json -I0 '
+  select(.kind == "ConfigMap" and .metadata.namespace == "velero" and .metadata.name == "velero-daily-volume-policies") |
+  .data["policy.yaml"] | from_yaml
+' "${rendered_controllers}" | jq -e -s 'length == 1 and .[0].version == "v1"' >/dev/null; then
+  fail 'the rendered nightly volume policy must exist in Velero'
+fi
 
 if ! yq -N -o=json -I0 '
   select(.kind == "HelmRelease" and .metadata.namespace == "velero" and .metadata.name == "velero") |
@@ -203,6 +223,17 @@ if ! jq 'del(.items[0]) | .items[0].spec.resourcePolicy.name = "different-policy
   jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" |
   jq -e '. == {full: null}' >/dev/null; then
   fail 'rebuild must reject a different full volume policy'
+fi
+daily_rebuild_backup="$(jq 'del(.items[0]) | .items[0].spec.resourcePolicy.name = "velero-daily-volume-policies" |
+  .items[0].spec.defaultVolumesToFsBackup = true' <<<"${rebuild_backups}")"
+if ! jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" <<<"${daily_rebuild_backup}" |
+  jq -e '. == {full: "full-1"}' >/dev/null; then
+  fail 'rebuild must admit a complete archive using the dedicated daily volume policy'
+fi
+if ! jq '.items[0].spec.defaultVolumesToFsBackup = false' <<<"${daily_rebuild_backup}" |
+  jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" |
+  jq -e '. == {full: null}' >/dev/null; then
+  fail 'rebuild must reject a daily volume policy without filesystem backup coverage for other classes'
 fi
 if ! jq 'del(.items[0]) | .items[0].status.completionTimestamp = "2026-11-22T07:31:00Z"' <<<"${rebuild_backups}" |
   jq -e --arg cutoff "${rebuild_cutoff}" -f "${rebuild_selector}" |
@@ -376,21 +407,6 @@ readonly controller_opt_outs
 
 [[ -z "${controller_opt_outs}" ]] ||
   fail 'a controller-created hcloud PVC declaration must not opt out of Velero volume-data backup'
-
-longhorn_snapshot_rules="$(yq -er '
-  .data["policy.yaml"] | from_yaml |
-  [.volumePolicies[] |
-    select(
-      .conditions.storageClass[0] == "longhorn" and
-      (.conditions.storageClass | length) == 1 and
-      .action.type == "snapshot"
-    )
-  ] | length
-' "${volume_policy}")" || fail 'the production Velero volume policy is invalid'
-readonly longhorn_snapshot_rules
-
-[[ "${longhorn_snapshot_rules}" == '1' ]] ||
-  fail "the production Velero policy must retain exactly one Longhorn snapshot rule; found ${longhorn_snapshot_rules}"
 
 empty_dir_skip_rules="$(yq -er '
   .data["policy.yaml"] | from_yaml |

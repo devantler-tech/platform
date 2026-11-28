@@ -16,6 +16,9 @@ func cnpgStandbyProfileForSource(source cnpgSource) (cnpgStandbyProfile, bool) {
 		profile.Size, profile.SizeBytes = "5Gi", "5368709120"
 	case cnpgSource{Namespace: "wedding-app", Name: "wedding-db"}:
 		profile.Size, profile.SizeBytes = "2Gi", "2147483648"
+	case cnpgSource{Namespace: "customer-identity", Name: "customer-identity-db"},
+		cnpgSource{Namespace: "business-site", Name: "business-site-portal-db"}:
+		profile.Instances, profile.Size, profile.SizeBytes = 3, "10Gi", "10737418240"
 	default:
 		return cnpgStandbyProfile{}, false
 	}

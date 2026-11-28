@@ -88,6 +88,20 @@ check unlabelled-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
 check unlabelled-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions' \
   null "unlabelled namespace had seLinuxOptions injected"
 
+# The offline copy mounts the retained OpenBao claims read-only. Applying an
+# fsGroup can change filesystem ownership during mounting. The staging pod
+# and a copy-shaped pod with the wrong run still receive the normal defaults.
+check lh-openbao-copy-991-mutated.yaml '.spec.securityContext.fsGroup' \
+  null "offline OpenBao copy received an fsGroup"
+check lh-openbao-copy-991-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
+  null "offline OpenBao copy received an fsGroupChangePolicy"
+check lh-openbao-copy-991-mutated.yaml '.spec.securityContext.seccompProfile.type' \
+  RuntimeDefault "offline OpenBao copy lost the ordinary seccomp default"
+check lh-openbao-copy-992-mutated.yaml '.spec.securityContext.fsGroup' \
+  1000 "copy-shaped pod outside the recorded run lost its fsGroup default"
+check lh-openbao-stage-991-mutated.yaml '.spec.securityContext.fsGroup' \
+  1000 "ordinary OpenBao staging pod lost its fsGroup default"
+
 # A pod whose POD-level securityContext already declares SELinux options, with a
 # container carrying none. A container-level seLinuxOptions REPLACES the pod-level
 # struct wholesale, so injecting `level` would override the operator's level AND

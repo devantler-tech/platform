@@ -156,16 +156,42 @@ spec:
                 matchLabels:
                   app.kubernetes.io/created-by: tofu-controller
       mutate:
-        patchStrategicMerge:
-          spec:
-            securityContext:
-              +(seccompProfile):
-                type: RuntimeDefault
-              +(runAsNonRoot): true
-              +(runAsUser): 1000
-              +(runAsGroup): 1000
-              +(fsGroup): 1000
-              +(fsGroupChangePolicy): OnRootMismatch
+        foreach:
+          - list: "[request.object]"
+            patchStrategicMerge:
+              spec:
+                securityContext:
+                  +(seccompProfile):
+                    type: RuntimeDefault
+                  +(runAsNonRoot): true
+                  +(runAsUser): 1000
+                  +(runAsGroup): 1000
+          - list: "[request.object]"
+            # The offline OpenBao storage copy must keep ownership of the
+            # retained source files. Preserve the other security defaults.
+            preconditions:
+              any:
+                - key: "{{ request.object.metadata.namespace || '' }}"
+                  operator: NotEquals
+                  value: openbao
+                - key: "{{ request.object.metadata.name || '' }}"
+                  operator: NotEquals
+                  value: >-
+                    lh-openbao-copy-{{ request.object.metadata.labels."storage.platform.devantler.tech/openbao-copy-run" || '' }}
+                - key: >-
+                    {{ regex_match('^[1-9][0-9]{0,18}:[a-f0-9]{40}$', request.object.metadata.annotations."storage.platform.devantler.tech/openbao-copy-owner" || '') }}
+                  operator: Equals
+                  value: false
+                - key: >-
+                    {{ split(request.object.metadata.annotations."storage.platform.devantler.tech/openbao-copy-owner" || ':', ':')[0] }}
+                  operator: NotEquals
+                  value: >-
+                    {{ request.object.metadata.labels."storage.platform.devantler.tech/openbao-copy-run" || '' }}
+            patchStrategicMerge:
+              spec:
+                securityContext:
+                  +(fsGroup): 1000
+                  +(fsGroupChangePolicy): OnRootMismatch
     - name: add-container-security-context
       match:
         any:

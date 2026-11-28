@@ -121,3 +121,14 @@ func TestPodUIDComesFromExactlyOneServerEntry(t *testing.T) {
 		}
 	}
 }
+
+func TestFollowerProofReachesTheQuorumJudge(t *testing.T) {
+	_, calls, code := judgeLibrary(t, nil, `judge_openbao_replacement "$PRIVATE" "" follower`)
+	if code != 0 || !strings.Contains(calls, "--replace openbao-2 --max-age 5m --require-follower") {
+		t.Fatalf("the follower requirement did not reach the quorum judge: %d %q", code, calls)
+	}
+	_, calls, code = judgeLibrary(t, nil, `judge_openbao_replacement "$PRIVATE" "" unexpected`)
+	if code != 2 || calls != "" {
+		t.Fatalf("an unknown role reached the evidence capture: %d %q", code, calls)
+	}
+}

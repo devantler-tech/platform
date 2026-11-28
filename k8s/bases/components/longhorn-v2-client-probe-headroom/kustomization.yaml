@@ -49,3 +49,31 @@ patches:
                         app.kubernetes.io/name: data-product-controller
                         app.kubernetes.io/instance: data-product-controller
                         app.kubernetes.io/component: contract-probe
+  # Reserve memory on the third Keeper member's eligible worker.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: data-product-controller-publisher-review
+      namespace: data-product-controller
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: data-product-controller-publisher-review
+      spec:
+        strategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 1
+            maxUnavailable: 0
+        template:
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: kubernetes.io/hostname
+                          operator: NotIn
+                          values: [prod-worker-2]

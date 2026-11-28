@@ -63,10 +63,16 @@ func main() {
 		authorization = authorizeCNPGObservation(os.Getenv)
 	case observeCorootKeeperOperation:
 		authorization = authorizeCorootKeeperObservation(os.Getenv)
+	case observeCorootClickHouseOperation:
+		authorization = authorizeCorootClickHouseObservation(os.Getenv)
 	case corootKeeperCutoverOperation:
 		_, authorization = authorizeCorootKeeperCutover(os.Getenv)
 	case transferCorootKeeperOperation:
 		_, authorization = authorizeCorootKeeperOperation(os.Getenv, operation)
+	case openBaoPairOperation:
+		_, authorization = authorizeOpenBaoPair(os.Getenv)
+	case openBaoPairResumeOperation:
+		_, _, authorization = authorizeOpenBaoPairResume(os.Getenv)
 	case cnpgArchiveProofOperation:
 		authorization = authorizeCNPGArchiveProof(os.Getenv)
 	case umamiArchiveIsolationResumeOperation:
@@ -75,6 +81,8 @@ func main() {
 		_, authorization = authorizeUmamiArchiveDataResume(os.Getenv)
 	case umamiStandbyObservationOperation:
 		_, _, authorization = authorizeUmamiStandbyObservation(os.Getenv)
+	case providerCNPGStandbyObservation:
+		_, authorization = authorizeProviderCNPGStandby(os.Getenv)
 	case umamiStandbyReplacementOperation, umamiV2SwitchoverOperation:
 		_, _, authorization = authorizeUmamiStandbyTarget(os.Getenv, operation)
 	case weddingV2SwitchoverOperation:
@@ -317,6 +325,17 @@ func main() {
 		}
 		return
 	}
+	if operation == observeCorootClickHouseOperation {
+		c := client{run: execute, context: "admin@prod"}
+		receipt, err := observeCorootClickHouse(ctx, c, os.Getenv("GITHUB_SHA"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Coroot ClickHouse observation held:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("COROOT_CLICKHOUSE_STORAGE=VERIFIED members=2 providerVolumes=2 tables=%d replicated=%d local=%d views=%d maxReplicaDelaySeconds=%d writes=0\n",
+			receipt.Tables, receipt.Replicated, receipt.Local, receipt.Views, receipt.MaxReplicaDelaySeconds)
+		return
+	}
 	if operation == corootKeeperCutoverOperation {
 		input, err := authorizeCorootKeeperCutover(os.Getenv)
 		if err == nil {
@@ -341,6 +360,39 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("COROOT_KEEPER_V2_LEADER=VERIFIED quorum=HEALTHY providerMember=FOLLOWER")
+		return
+	}
+	if operation == openBaoPairOperation {
+		input, err := authorizeOpenBaoPair(os.Getenv)
+		if err == nil {
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			err = runOpenBaoPairCutover(ctx, c, input, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"),
+				os.Getenv("HCLOUD_TOKEN"), os.Getenv("OPENBAO_VERSION"))
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("OPENBAO_V2_PAIR=VERIFIED volumes=2 replicas=3 originalStorage=RETAINED raft=VERIFIED secrets=VERIFIED")
+		return
+	}
+	if operation == openBaoPairResumeOperation {
+		input, prior, err := authorizeOpenBaoPairResume(os.Getenv)
+		var migrated bool
+		if err == nil {
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			migrated, err = runOpenBaoPairResume(ctx, c, input, prior, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID"),
+				os.Getenv("HCLOUD_TOKEN"), os.Getenv("OPENBAO_VERSION"))
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if migrated {
+			fmt.Println("OPENBAO_V2_PAIR=VERIFIED volumes=2 replicas=3 originalStorage=RETAINED raft=VERIFIED secrets=VERIFIED")
+		} else {
+			fmt.Println("OPENBAO_ORIGINAL_PAIR=RESTORED volumes=2 raft=VERIFIED")
+		}
 		return
 	}
 	if operation == actualBudgetRestoreOperation || operation == actualBudgetRestoreResume || operation == actualBudgetRestoreRetry {
@@ -437,6 +489,21 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("UMAMI_V2_STANDBY=VERIFIED replicas=3 originalStorage=RETAINED physicalReplay=VERIFIED evictionAdmission=VERIFIED writes=0")
+		return
+	}
+	if operation == providerCNPGStandbyObservation {
+		grant, err := authorizeProviderCNPGStandby(os.Getenv)
+		if err == nil {
+			observationContext, stop := context.WithTimeout(ctx, 10*time.Minute)
+			defer stop()
+			c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+			err = observeProviderCNPGStandby(observationContext, c, grant)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Provider database V2 standby held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("PROVIDER_CNPG_V2_STANDBY=VERIFIED replicas=3 sources=ATTACHED physicalReplay=VERIFIED writes=0")
 		return
 	}
 	if operation == "register-temporary-v2-storage" {
