@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func historyInputs(t *testing.T) string {
@@ -140,16 +141,16 @@ func TestHistoryCopiesThenVerifiesWithoutLeakingToolOutput(t *testing.T) {
 				t.Fatalf("unsafe copy option %s", forbidden)
 			}
 		}
-		// Identity is the Message-Id alone, on both passes: hashing the
-		// Received headers made a few copies look missing on every run (#5481).
+		// Identity is Message-Id and Date, on both passes, and never Received:
+		// hashing those made a few copies look missing on every run (#5481).
 		var identity []string
 		for i, arg := range args {
 			if arg == "--useheader" && i+1 < len(args) {
 				identity = append(identity, args[i+1])
 			}
 		}
-		if !reflect.DeepEqual(identity, []string{"Message-Id"}) {
-			t.Fatalf("messages must be identified by Message-Id alone, got %q", identity)
+		if !reflect.DeepEqual(identity, []string{"Message-Id", "Date"}) {
+			t.Fatalf("messages must be identified by Message-Id and Date only, got %q", identity)
 		}
 		for _, peer := range []string{"SSL_verifycn_name=imap.mail.me.com", "SSL_verifycn_name=mail.devantler.tech", "SSL_verify_mode=1", "SSL_verifycn_scheme=imap"} {
 			if !containsHistoryArg(args, peer) {
@@ -246,22 +247,30 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 		t.Fatalf("a killed tool must read as signal, not a negative status: %q", got)
 	}
 
-	// When the output writer refuses the report, Run returns that copy error,
-	// not the tool's status; the status must still reach the line.
-	appendFailure := exec.Command("sh", "-c", "exit 114")
-	_ = appendFailure.Run()
-	bounded := withExitStatus(errors.New("history-output-bound"), appendFailure.ProcessState)
-	if got := historyPassLine("copy", bounded, &historyReport{}, 0); !strings.Contains(got, " exit=114 ") {
-		t.Fatalf("a writer failure must keep the tool's exit status: %q", got)
+	// A tool whose output breaks the line bound must still run to its end:
+	// the report keeps draining, so the tool is never blocked on a full pipe,
+	// exits with its own status, and the pass is judged a failure.
+	overlong := exec.Command("sh", "-c", `i=0; while [ $i -lt 3000 ]; do printf 'private-overlong-canary-%050d' $i; i=$((i+1)); done; printf '\nDetected 0 errors\n'; exit 114`)
+	var drained historyReport
+	overlong.Stdout, overlong.Stderr = &drained, &drained
+	done := make(chan error, 1)
+	go func() { done <- overlong.Run() }()
+	var overlongErr error
+	select {
+	case overlongErr = <-done:
+	case <-time.After(30 * time.Second):
+		_ = overlong.Process.Kill()
+		t.Fatal("a tool printing an over-bound line was blocked instead of drained")
 	}
-	if bounded == nil || !strings.Contains(bounded.Error(), "history-output-bound") {
-		t.Fatalf("the copy error must survive alongside the status: %v", bounded)
+	if !drained.bad || !drained.zero {
+		t.Fatalf("the over-bound line must fail the pass while later lines are still read: bad=%v zero=%v", drained.bad, drained.zero)
 	}
-	if got := withExitStatus(nil, appendFailure.ProcessState); got != nil {
-		t.Fatalf("a successful run must stay successful: %v", got)
+	if got := historyPassLine("copy", overlongErr, &drained, 0); !strings.Contains(got, " exit=114 ") || strings.Contains(got, "canary") {
+		t.Fatalf("a drained over-bound run must keep the tool's exit status and nothing else: %q", got)
 	}
-	if plain := errors.New("history-output-bound"); withExitStatus(plain, nil) != plain {
-		t.Fatal("without a process state the error must be returned unchanged")
+	var flood historyReport
+	if n, err := flood.Write(make([]byte, 129<<20)); err != nil || n != 129<<20 || !flood.bad {
+		t.Fatalf("output past the total bound must be discarded and fail the pass, not refused: n=%d err=%v bad=%v", n, err, flood.bad)
 	}
 	for _, line := range []string{receipt.String(), got} {
 		for _, private := range []string{"Client", "secret", "private", "subject", "reply", "INBOX", "canary"} {

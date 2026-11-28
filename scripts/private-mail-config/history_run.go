@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -32,12 +31,14 @@ func historyArgs(v historyConfig, dry bool) []string {
 		"--sep1", "/", "--sep2", "/", "--prefix1", "", "--prefix2", "",
 		"--noexpunge1", "--noexpunge2", "--nouidexpunge2", "--noexpungeaftereach",
 		"--noresyncflags", "--nosyncacls", "--syncduplicates", "--noskipemptyfolders",
-		// Identify a message by its Message-Id alone. imapsync's default also
-		// hashes the Received headers, and the destination returned a few of
-		// those differently from the source (#5481, attempt 12: the same 2
-		// messages copied again on every run). A copy whose identity does not
-		// round-trip is appended again each run, so it is a duplicate source.
-		"--useheader", "Message-Id",
+		// Identify a message by its Message-Id and Date headers, not imapsync's
+		// default Message-Id and Received. The destination returned a few
+		// messages' Received headers differently from the source (#5481,
+		// attempt 12: the same 2 messages copied again on every run), and a copy
+		// whose identity does not round-trip is appended again each run. Date is
+		// a short header no server rewrites; it also identifies the messages that
+		// have no Message-Id, which would otherwise stop the import.
+		"--useheader", "Message-Id", "--useheader", "Date",
 		"--noreleasecheck", "--nolog", "--noemailreport1", "--noemailreport2", "--noid",
 		"--timeout1", "60", "--timeout2", "60", "--errorsmax", "1",
 		"--pidfile", "/tmp/email-history-import.pid", "--tmpdir", "/tmp",
@@ -70,6 +71,8 @@ type historyReport struct {
 	// inStatistics is set once the tool prints its closing statistics header;
 	// the labelled counts are read only after it.
 	inStatistics bool
+	// overlong is set while the rest of an over-bound line is being dropped.
+	overlong bool
 }
 
 var historyGood = regexp.MustCompile(`^The sync looks good, all ([0-9]+) identified messages in host1 are on host2\.$`)
@@ -182,12 +185,23 @@ func historyPassLine(pass string, runErr error, r *historyReport, observed uint6
 func (r *historyReport) Write(data []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Past either bound the report can no longer be judged, so the pass fails.
+	// The rest is still read and discarded, never refused: a refusal would stop
+	// the pipe from draining, block the tool until the import's deadline and
+	// lose its exit status.
 	r.bytes += len(data)
 	if r.bytes > 128<<20 {
 		r.bad = true
-		return 0, errors.New("history-output-bound")
+		return len(data), nil
 	}
 	for _, b := range data {
+		if b == '\n' && r.overlong {
+			r.overlong = false
+			continue
+		}
+		if r.overlong {
+			continue
+		}
 		if b == '\n' {
 			line := strings.TrimSuffix(string(r.line), "\r")
 			r.line = r.line[:0]
@@ -210,8 +224,11 @@ func (r *historyReport) Write(data []byte) (int, error) {
 			continue
 		}
 		if len(r.line) >= 64<<10 {
+			// An overlong line is dropped up to its newline; it is never judged.
 			r.bad = true
-			return 0, errors.New("history-line-bound")
+			r.overlong = true
+			r.line = r.line[:0]
+			continue
 		}
 		r.line = append(r.line, b)
 	}
@@ -223,20 +240,7 @@ func executeHistory(ctx context.Context, args []string, output io.Writer) error 
 	cmd.Env = []string{"HOME=/tmp", "PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C", "LC_ALL=C"}
 	cmd.Dir = "/tmp"
 	cmd.Stdout, cmd.Stderr = output, output
-	return withExitStatus(cmd.Run(), cmd.ProcessState)
-}
-
-// withExitStatus keeps the tool's exit status visible when its run failed for
-// another reason, such as the output writer refusing an oversized report:
-// Run then returns that copy error rather than an *exec.ExitError, and the
-// pass line would read exit=?. A run that failed only by its status is
-// returned unchanged.
-func withExitStatus(runErr error, state *os.ProcessState) error {
-	var exitErr *exec.ExitError
-	if runErr == nil || state == nil || errors.As(runErr, &exitErr) {
-		return runErr
-	}
-	return errors.Join(runErr, &exec.ExitError{ProcessState: state})
+	return cmd.Run()
 }
 
 func importHistory(ctx context.Context, v historyConfig, observe historyObserver, execute historyExecutor, receipt io.Writer) error {
