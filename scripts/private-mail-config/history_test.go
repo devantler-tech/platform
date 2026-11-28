@@ -181,6 +181,8 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 			"msg Client secret project/12 {420} copied to Client secret project/30 1.00 msgs/s\n"+
 			"- msg INBOX/5 {9} could not append ( Subject:[private-message-subject] ) to folder INBOX: NO private-server-reply\n"+
 			"Messages found in host1 not in host2    : 99 messages\n"+
+			"++++ Statistics\n"+
+			"Transfer started on                     : private-date-canary\n"+
 			"Messages transferred                    : %s\n"+
 			"Messages skipped                        : 4\n"+
 			"Messages found duplicate on host1       : 1\n"+
@@ -190,6 +192,7 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 			"Messages void (noheader) on host2       : 0\n"+
 			"Messages found in host1 not in host2    : %d messages\n"+
 			"Messages found in host2 not in host1    : %d messages\n"+
+			"Messages found in host1 not in host2    : 77 messages\n"+
 			"Messages found in private-folder-canary : 5 messages\n"+
 			"The sync is not finished, there are %d among 7 identified messages in host1 that are not on host2.\n"+
 			"There is no unidentified message on host1.\n"+

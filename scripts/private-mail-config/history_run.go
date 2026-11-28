@@ -60,14 +60,22 @@ type historyReport struct {
 	// counts holds the integers of the tool's closing statistics, keyed by a
 	// fixed name, for the per-pass diagnostic line. It never decides success.
 	counts map[string]uint64
+	// inStatistics is set once the tool prints its closing statistics header;
+	// the labelled counts are read only after it.
+	inStatistics bool
 }
 
 var historyGood = regexp.MustCompile(`^The sync looks good, all ([0-9]+) identified messages in host1 are on host2\.$`)
 
+// historyStatisticsHeader starts imapsync's closing statistics, printed once
+// at the end of a pass.
+const historyStatisticsHeader = "++++ Statistics"
+
 // The closing statistics the per-pass diagnostic line reports. Only these
-// labels are read, and only the integer after each, so no folder name, header,
-// subject or server reply can reach the receipt. A label seen twice keeps its
-// last value, which is the tool's closing summary.
+// labels are read, only after the statistics header, and only the integer
+// after each, so no folder name, header, subject or server reply can reach the
+// receipt. Within the block the first value of a label is kept, so a later line
+// with the same label cannot replace what the closing summary printed.
 var (
 	historyStatisticKeys = map[string]string{
 		"Messages transferred":                   "transferred",
@@ -88,8 +96,9 @@ var (
 )
 
 // count records one parsed integer for the diagnostic line; a value that does
-// not parse is left out rather than guessed.
-func (r *historyReport) count(key, digits string) {
+// not parse is left out rather than guessed. With first set, a value already
+// recorded is kept.
+func (r *historyReport) count(key, digits string, first bool) {
 	n, err := strconv.ParseUint(digits, 10, 64)
 	if err != nil {
 		return
@@ -97,29 +106,35 @@ func (r *historyReport) count(key, digits string) {
 	if r.counts == nil {
 		r.counts = map[string]uint64{}
 	}
+	if _, seen := r.counts[key]; first && seen {
+		return
+	}
 	r.counts[key] = n
 }
 
 // statistics reads the fixed-vocabulary counts from one complete line.
 func (r *historyReport) statistics(line string) {
-	if m := historyStatistic.FindStringSubmatch(line); m != nil {
+	if line == historyStatisticsHeader {
+		r.inStatistics = true
+	}
+	if m := historyStatistic.FindStringSubmatch(line); m != nil && r.inStatistics {
 		if key, known := historyStatisticKeys[m[1]]; known {
-			r.count(key, m[2])
+			r.count(key, m[2], true)
 			if key == "transferred" {
 				if dry := historyDryTransfers.FindStringSubmatch(line); dry != nil {
-					r.count("would_transfer", dry[1])
+					r.count("would_transfer", dry[1], true)
 				}
 			}
 		}
 	}
 	if m := historyErrorCount.FindStringSubmatch(line); m != nil {
-		r.count("errors", m[1])
+		r.count("errors", m[1], false)
 	}
 	if m := historyGood.FindStringSubmatch(line); m != nil {
-		r.count("identified", m[1])
+		r.count("identified", m[1], false)
 	}
 	if m := historyNotFinished.FindStringSubmatch(line); m != nil {
-		r.count("identified", m[1])
+		r.count("identified", m[1], false)
 	}
 }
 
