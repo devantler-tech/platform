@@ -226,6 +226,10 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	if got := historyPassLine("verify", errors.New("private-tool-error-canary"), &historyReport{}, 0); strings.Contains(got, "private") || !strings.Contains(got, " exit=? ") {
 		t.Fatalf("an error without an exit status must read as unknown: %q", got)
 	}
+	killed := exec.Command("sh", "-c", "kill -KILL $$").Run()
+	if got := historyPassLine("copy", killed, &historyReport{}, 0); !strings.Contains(got, " exit=signal ") {
+		t.Fatalf("a killed tool must read as signal, not a negative status: %q", got)
+	}
 	for _, line := range []string{receipt.String(), got} {
 		for _, private := range []string{"Client", "secret", "private", "subject", "reply", "INBOX", "canary"} {
 			if strings.Contains(line, private) {

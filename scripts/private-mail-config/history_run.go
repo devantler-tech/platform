@@ -133,6 +133,9 @@ func historyPassLine(pass string, runErr error, r *historyReport, observed uint6
 	switch {
 	case runErr == nil:
 		exit = "0"
+	case errors.As(runErr, &exitErr) && exitErr.ExitCode() < 0:
+		// The process was killed, for example by the import's deadline.
+		exit = "signal"
 	case errors.As(runErr, &exitErr):
 		exit = strconv.Itoa(exitErr.ExitCode())
 	}

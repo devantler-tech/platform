@@ -99,19 +99,24 @@ The first pass copies and the second, `--dry`, only verifies:
 The line holds numbers only. They come from a fixed list of labels in imapsync's
 closing statistics; no folder name, header, subject or server reply is read into
 it. A value the tool did not print reads `?`. `observed` is the source total
-that the pass is judged against. `exit` is imapsync's exit status (imapsync
-2.314): 10 for a connection failure, 111 for errors, 112 when it stops at
-`--errorsmax`, 113 over quota, 114 for an append error and 115 for a fetch
-error. A pass line never means
+that the pass is judged against. `exit` is imapsync's exit status, or `signal`
+when the process was killed, for example by the import's 3-hour deadline.
+
+Exit statuses in imapsync 2.314:
+- **Connection and sign-in:** 10 (connection), 101 and 102 (connection to the source or the destination), 12 (TLS), 16, 161 and 162 (authentication; 161 and 162 are the source and destination users).
+- **When it stops at `--errorsmax`:** the code of the most common error type, such as 113 (over quota), 114 (append), 115 (fetch), 116 (create), 117 (select), 120 (flags) or 121 (search).
+- **Otherwise:** 111 for errors.
+
+A pass line never means
 success: only the `COMPLETE` receipt does. To read a failure:
 
 | What the line shows | Likely cause |
 | --- | --- |
 | `pass=copy` with `errors` above 0 | One message could not be fetched or appended. `--errorsmax 1` stops the pass at the first one. |
 | `pass=verify` with `identified` above `observed`, and `in1_not_in2` equal to the difference | Mail reached the source during the run. Repeat at a quieter time. |
-| `pass=verify` with `in1_not_in2` above 0 while `in2_not_in1` is also above 0 | Copies were stored with a different identity (`Message-Id` and `Received` headers), so each run copies them again. Stop repeating the operation, because every repeat adds duplicates, and look at what the destination changed. |
-| `pass=verify` with `in1_not_in2` above 0 and `in2_not_in1` at 0, and the source unchanged | Messages left the destination after they were copied, for example through its retention of old Trash or Junk messages. |
-| `h2_duplicates` rising between runs | Repeated runs are adding copies. |
+| `in2_not_in1` above 0 | Either mail the destination held before the copy, which the importer keeps, or copies stored with a different identity (`Message-Id` and `Received` headers). Compare runs before deciding. |
+| `in2_not_in1` and `h2_duplicates` both rising between runs, with `in1_not_in2` above 0 in each verify pass | Copies were stored with a different identity, so each run appends them again. Stop repeating the operation, because every repeat adds duplicates, and look at what the destination changed. |
+| `pass=verify` with `in1_not_in2` above 0, `in2_not_in1` unchanged between runs, and the source unchanged | Messages left the destination after they were copied, for example through its retention of old Trash or Junk messages. |
 
 A Job created this way is outside the Flux inventory, so a long copy never holds
 a deploy and a reconciliation cannot prune it. Repeat the operation to continue
