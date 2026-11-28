@@ -126,6 +126,7 @@ func verifyRecoveryClaimCapacity(claimSize string, nodes, replicas, backingImage
 		}
 		assigned[disk][text(r, "metadata", "name")] = float64(bytes)
 	}
+	eligibleHosts := map[string]bool{}
 	for _, b := range byDisk {
 		n := nodeIndex[b.Node]
 		status, _ := value(n, "status").(object)
@@ -151,13 +152,25 @@ func verifyRecoveryClaimCapacity(claimSize string, nodes, replicas, backingImage
 			total += bytes
 		}
 		const reserve, margin = 4 * recoveryGiB, 2 * recoveryGiB
+		if total != scheduled || maximum < reserve {
+			return refused
+		}
+		// Longhorn excludes disks below its native limit before choosing a
+		// placement. Another disk on this host can cover the allocation.
+		if scheduled+request > maximum-reserve || available <= maximum/4 {
+			continue
+		}
 		// Stronger than the native scheduler: retain both reviewed reserves in
 		// physical headroom as well as logical commitments. Strict > matches
 		// Longhorn's physical free-space rule; SPDK usable maximum may be less
 		// than the independently measured raw partition.
-		if total != scheduled || maximum < reserve || scheduled+request+margin > maximum-reserve || available <= request+reserve+margin || available-request-reserve-margin <= maximum/4 {
+		if scheduled+request+margin > maximum-reserve || available <= request+reserve+margin || available-request-reserve-margin <= maximum/4 {
 			return refused
 		}
+		eligibleHosts[b.Node] = true
+	}
+	if len(eligibleHosts) != len(temporaryV2Selections) {
+		return refused
 	}
 	return nil
 }

@@ -75,11 +75,25 @@ func TestRecoveryCapacityIncludesOnlyTheBoundTemporaryReserve(t *testing.T) {
 		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings[:len(bindings)-1]); err == nil {
 			t.Fatal("an enabled raw disk outside the native inventory was accepted")
 		}
+		ledger := recoveryDisk(nodes[i])
+		name := text(replicas[i], "metadata", "name")
+		ledger["storageScheduled"] = float64(87 * recoveryGiB)
+		ledger["scheduledReplica"] = object{name: float64(87 * recoveryGiB)}
+		valueObject(replicas[i], "spec")["volumeSize"] = strconv.FormatUint(87*recoveryGiB, 10)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err != nil {
+			t.Fatalf("the verified reserve should satisfy the original host's placement: %v", err)
+		}
 		status["storageAvailable"] = float64(35 * recoveryGiB)
 		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
-			t.Fatal("an enabled reserve with inadequate physical capacity was accepted")
+			t.Fatal("a host without a disk that preserves the physical reserve was accepted")
 		}
 		status["storageAvailable"] = float64(70 * recoveryGiB)
+		other := (i + 1) % len(nodes)
+		recoveryDisk(nodes[other])["storageAvailable"] = float64(20 * recoveryGiB)
+		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
+			t.Fatal("another disk on the same host cannot replace the missing third host")
+		}
+		recoveryDisk(nodes[other])["storageAvailable"] = float64(70 * recoveryGiB)
 		bindings[len(bindings)-1].NodeUID = "foreign-node"
 		if err := verifyRecoveryClaimCapacity("10Gi", nodes, replicas, nil, nil, bindings); err == nil {
 			t.Fatal("a supplemental disk with a different host identity was accepted")
