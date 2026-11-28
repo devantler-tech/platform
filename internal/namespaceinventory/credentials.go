@@ -115,7 +115,8 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 	switch {
 	case getenv("LONGHORN_V2_OPERATION") == "migrate-openbao-v2-pair":
 		operation, confirmation = "migrate-openbao-v2-pair", getenv("LONGHORN_V2_CONFIRM")
-		if originalRun != "" || !openBaoPairCutoverConfirm.MatchString(confirmation) {
+		fields := openBaoPairCutoverConfirm.FindStringSubmatch(confirmation)
+		if originalRun != "" || fields == nil || (fields[1] != "" && fields[1] == getenv("GITHUB_RUN_ID")) {
 			return nil, nil, errors.New("protected OpenBao admission dispatch is unverified")
 		}
 	case getenv("LONGHORN_V2_OPERATION") == "resume-openbao-v2-pair":
@@ -252,7 +253,7 @@ const (
 )
 
 var corootKeeperCutoverConfirm = regexp.MustCompile(`^migrate-coroot-keeper-v2:[0-2]:[a-f0-9]{64}$`)
-var openBaoPairCutoverConfirm = regexp.MustCompile(`^migrate-openbao-v2-pair:openbao-[0-2]:[a-f0-9]{64}$`)
+var openBaoPairCutoverConfirm = regexp.MustCompile(`^migrate-openbao-v2-pair:openbao-[0-2]:[a-f0-9]{64}(?::([1-9][0-9]{0,18}))?$`)
 var openBaoPairResumeConfirm = regexp.MustCompile(`^resume-openbao-v2-pair:openbao-[0-2]:[a-f0-9]{64}:([1-9][0-9]{0,18})$`)
 
 func newProductionClientAt(raw *clientcmdapi.Config, directIP netip.Addr, scope directCreateScope) (*http.Client, *url.URL, error) {

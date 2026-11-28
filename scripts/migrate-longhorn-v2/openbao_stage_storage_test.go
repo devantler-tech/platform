@@ -9,7 +9,7 @@ import (
 
 func TestOpenBaoStageRejectsAChangedPodBeforeReadingDestinations(t *testing.T) {
 	plan := openBaoPairPlanFixture(t)
-	stage := openBaoStagePod(plan.Run, plan.Source, plan.Original.Node)
+	stage := plan.stagePod()
 	metadata := valueObject(stage, "metadata")
 	metadata["uid"], metadata["resourceVersion"] = "bd879525-004e-400a-be89-719605db0f95", "51"
 	changed, err := cloneRecoverySpec(stage)
@@ -97,10 +97,10 @@ func TestOpenBaoStagePreservesAnUncertainCreate(t *testing.T) {
 		return json.Marshal(journal)
 	}}
 	run := openBaoPairJournal{client: c, id: benchmarkIdentity(journal), record: initial}
-	if err := run.stageDestinations(t.Context(), nil); err == nil || run.record.StagePending != "data" || creates != 1 {
+	if err := run.stageDestinations(t.Context(), nil, [2]openBaoStorageRebind{}); err == nil || run.record.StagePending != "data" || creates != 1 {
 		t.Fatalf("uncertain destination creation did not hold exactly one intent: %v", err)
 	}
-	if err := run.stageDestinations(t.Context(), nil); err == nil || creates != 1 {
+	if err := run.stageDestinations(t.Context(), nil, [2]openBaoStorageRebind{}); err == nil || creates != 1 {
 		t.Fatal("an unresolved creation was replayed")
 	}
 }

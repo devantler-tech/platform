@@ -20,10 +20,19 @@ const (
 )
 
 type openBaoPairPlan struct {
-	Run, Source string
-	Input       openBaoPairInput
-	Original    openBaoProviderStorage
-	Survivors   [2]openBaoSurvivingMember
+	Run, Source   string
+	Input         openBaoPairInput
+	Original      openBaoProviderStorage
+	Survivors     [2]openBaoSurvivingMember
+	StagingRun    string `json:",omitempty"`
+	StagingSource string `json:",omitempty"`
+}
+
+func (p openBaoPairPlan) stagingOwner() (string, string) {
+	if p.StagingRun != "" {
+		return p.StagingRun, p.StagingSource
+	}
+	return p.Run, p.Source
 }
 
 type openBaoPairRecord struct {
@@ -59,6 +68,10 @@ func verifyOpenBaoPairPlan(plan openBaoPairPlan, run, source string) error {
 		!kubeNamespace.MatchString(plan.Original.Node) {
 		return errOpenBaoProviderStorage
 	}
+	if (plan.StagingRun != "" || plan.StagingSource != "") &&
+		(plan.StagingRun == run || !validBenchmarkOwner(plan.StagingRun, plan.StagingSource)) {
+		return errOpenBaoProviderStorage
+	}
 	digest, err := openBaoProviderStorageDigest(plan.Original)
 	if err != nil || digest != plan.Input.Digest {
 		return errOpenBaoProviderStorage
@@ -89,7 +102,7 @@ func (r openBaoPairRecord) valid() bool {
 		return false
 	}
 	staged, valid := r.stageProgress()
-	if !valid {
+	if !valid || (r.Plan.StagingRun != "" && staged < 2) {
 		return false
 	}
 	copyAssets, valid := r.copyProgress()
@@ -117,7 +130,7 @@ func (r openBaoPairRecord) valid() bool {
 	}
 	for i, destination := range r.Destinations {
 		if destination.Source != r.Plan.Original.Disks[i] || destination.Run != r.Plan.Run ||
-			destination.SourceSHA != r.Plan.Source || destination.StagingClaim != r.StageAssets[i] ||
+			destination.SourceSHA != r.Plan.Source || destination.StagingRun != r.Plan.StagingRun || destination.StagingClaim != r.StageAssets[i] ||
 			!openBaoPairIdentity(destination.StagingClaim, openBaoNamespace, destination.StagingClaim.Name) ||
 			!openBaoPairIdentity(destination.DestinationPV, "", destination.DestinationPV.Name) ||
 			!openBaoPairIdentity(destination.DestinationVolume, "longhorn-system", destination.DestinationPV.Name) {
@@ -252,8 +265,9 @@ var openBaoCopyAssetKinds = [3]string{"policy", "gate", "pod"}
 var openBaoFenceAssetKinds = [4]string{"pod-policy", "pod-binding", "claim-policy", "claim-binding"}
 
 func (r openBaoPairRecord) stageProgress() (int, bool) {
+	stageRun, _ := r.Plan.stagingOwner()
 	stageNames := [3]string{
-		"lh-openbao-staging-data-" + r.Plan.Run, "lh-openbao-staging-audit-" + r.Plan.Run, "lh-openbao-stage-" + r.Plan.Run,
+		"lh-openbao-staging-data-" + stageRun, "lh-openbao-staging-audit-" + stageRun, "lh-openbao-stage-" + r.Plan.Run,
 	}
 	return openBaoAssetProgress(r.StageAssets[:], r.StagePending, openBaoNamespace, stageNames[:], openBaoStageAssetKinds[:])
 }
@@ -299,9 +313,10 @@ func advanceOpenBaoAssetCreation(expected, next []benchmarkResource, pending *st
 	return expected[index] != (benchmarkResource{})
 }
 
-func beginOpenBaoPairJournal(ctx context.Context, c client, plan openBaoPairPlan) (openBaoPairJournal, error) {
-	initial := openBaoPairRecord{Plan: plan, Phase: openBaoPairPlanned}
-	if c.context != "admin@prod" || !initial.valid() {
+func beginOpenBaoPairJournal(ctx context.Context, c client, plan openBaoPairPlan, reused [3]benchmarkResource) (openBaoPairJournal, error) {
+	initial := openBaoPairRecord{Plan: plan, Phase: openBaoPairPlanned, StageAssets: reused}
+	if c.context != "admin@prod" || !initial.valid() || reused[2] != (benchmarkResource{}) ||
+		(plan.StagingRun == "" && reused != [3]benchmarkResource{}) {
 		return openBaoPairJournal{}, errOpenBaoProviderStorage
 	}
 	data, err := json.Marshal(initial)

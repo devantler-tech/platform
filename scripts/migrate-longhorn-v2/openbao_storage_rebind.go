@@ -14,6 +14,7 @@ type openBaoStorageRebind struct {
 	Source                                         openBaoProviderDisk
 	StagingClaim, DestinationPV, DestinationVolume benchmarkResource
 	Run, SourceSHA                                 string
+	StagingRun                                     string `json:",omitempty"`
 }
 
 type openBaoReboundStorage struct {
@@ -78,8 +79,15 @@ func (r openBaoStorageRebind) valid() bool {
 	if name[1] == "audit" {
 		size = 40 << 30
 	}
+	stageRun := r.Run
+	if r.StagingRun != "" {
+		if r.StagingRun == r.Run || !validBenchmarkOwner(r.StagingRun, r.SourceSHA) {
+			return false
+		}
+		stageRun = r.StagingRun
+	}
 	return r.Source.Bytes == size && validBenchmarkOwner(r.Run, r.SourceSHA) && r.Source.PVC != r.StagingClaim &&
-		r.Source.PV != r.DestinationPV && r.StagingClaim.Name == "lh-openbao-staging-"+name[1]+"-"+r.Run &&
+		r.Source.PV != r.DestinationPV && r.StagingClaim.Name == "lh-openbao-staging-"+name[1]+"-"+stageRun &&
 		r.StagingClaim.Namespace == openBaoNamespace && isolationUID.MatchString(r.StagingClaim.UID) &&
 		r.DestinationPV.Name == "pvc-"+r.StagingClaim.UID && r.DestinationVolume.Name == r.DestinationPV.Name
 }

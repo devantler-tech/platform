@@ -11,7 +11,7 @@ func verifyOpenBaoCopySources(plan openBaoPairPlan, copyPod, node object, pods, 
 		!ready(valueObject(node, "status")) || value(node, "spec", "unschedulable") == true {
 		return errOpenBaoProviderStorage
 	}
-	desired := openBaoCopyPod(plan.Run, plan.Source, plan.Input.Member, plan.Original.Node)
+	desired := plan.copyPod()
 	expected, err := copyPodDesiredTopology(copyPod, desired, node, plan.Original.Node)
 	if err != nil || !matchStorageCopyVolumePod(copyPod, copyPod, expected, openBaoNamespace, openBaoCopyFenceOwner) ||
 		text(copyPod, "spec", "nodeName") != plan.Original.Node {

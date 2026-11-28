@@ -37,7 +37,7 @@ func openBaoStagingClaims(run, source string) [2]object {
 	return claims
 }
 
-func openBaoStagePod(run, source, hostname string) object {
+func (p openBaoPairPlan) stagePod() object {
 	const inspect = `set -euo pipefail
 for path in /destination-data /destination-audit; do
     test -w "$path"
@@ -52,7 +52,7 @@ free_audit=$(df -PB1 -- /destination-audit | awk 'NR==2 {print $4}')
 printf 'OPENBAO_DESTINATIONS=READY data=%s audit=%s\n' "$free_data" "$free_audit"
 sleep 300
 `
-	pod, mounts := openBaoVolumePod(run, source, "lh-openbao-stage-"+run, hostname)
+	pod, mounts := p.volumePod("lh-openbao-stage-" + p.Run)
 	spec := valueObject(pod, "spec")
 	security := valueObject(spec, "securityContext")
 	security["fsGroup"], security["fsGroupChangePolicy"] = float64(1000), "OnRootMismatch"
@@ -60,7 +60,7 @@ sleep 300
 	return pod
 }
 
-func openBaoCopyPod(run, source, member, hostname string) object {
+func (p openBaoPairPlan) copyPod() object {
 	const wait = `set -euo pipefail
 printf '%s\n' 'OPENBAO_OFFLINE_COPY=WAITING_FOR_ISOLATION'
 for ((n=0; n<420; n++)); do
@@ -69,28 +69,28 @@ for ((n=0; n<420; n++)); do
 done
 [[ $(< /gate/state) == "$1" ]]
 `
-	pod, mounts := openBaoVolumePod(run, source, "lh-openbao-copy-"+run, hostname)
+	pod, mounts := p.volumePod("lh-openbao-copy-" + p.Run)
 	spec := valueObject(pod, "spec")
 	spec["activeDeadlineSeconds"] = float64(1200)
 	volumes := value(spec, "volumes").([]any)
 	for _, kind := range [2]string{"data", "audit"} {
 		name := "source-" + kind
 		volumes = append(volumes, object{"name": name,
-			"persistentVolumeClaim": object{"claimName": kind + "-" + member, "readOnly": true}})
+			"persistentVolumeClaim": object{"claimName": kind + "-" + p.Input.Member, "readOnly": true}})
 		mounts = append(mounts, object{"name": name, "mountPath": "/" + name, "readOnly": true})
 	}
 	spec["volumes"] = append(volumes, object{"name": "gate", "configMap": object{
-		"name": openBaoCopyGatePrefix + run, "defaultMode": float64(292),
+		"name": openBaoCopyGatePrefix + p.Run, "defaultMode": float64(292),
 	}})
 	mounts = append(mounts, object{"name": "gate", "mountPath": "/gate", "readOnly": true})
 	spec["initContainers"] = []any{openBaoVolumeContainer("copy",
-		[]any{"bash", "-c", wait + openBaoCopyPayload, "openbao-copy", run + ":" + source}, mounts)}
+		[]any{"bash", "-c", wait + openBaoCopyPayload, "openbao-copy", p.Run + ":" + p.Source}, mounts)}
 	spec["containers"] = []any{openBaoVolumeContainer("verify", []any{"sleep", "300"}, nil)}
 	return pod
 }
 
-func openBaoVolumePod(run, source, name, hostname string) (object, []any) {
-	claims := openBaoStagingClaims(run, source)
+func (p openBaoPairPlan) volumePod(name string) (object, []any) {
+	claims := openBaoStagingClaims(p.stagingOwner())
 	volumes, mounts := make([]any, len(claims)), make([]any, len(claims))
 	for i, kind := range [2]string{"data", "audit"} {
 		name := "destination-" + kind
@@ -101,8 +101,8 @@ func openBaoVolumePod(run, source, name, hostname string) (object, []any) {
 		"apiVersion": "v1", "kind": "Pod",
 		"metadata": object{
 			"name": name, "namespace": openBaoNamespace,
-			"labels":      object{openBaoCopyLabel: run},
-			"annotations": object{openBaoCopyFenceOwner: run + ":" + source},
+			"labels":      object{openBaoCopyLabel: p.Run},
+			"annotations": object{openBaoCopyFenceOwner: p.Run + ":" + p.Source},
 		},
 		"spec": object{
 			"restartPolicy": "Never", "automountServiceAccountToken": false,
@@ -113,7 +113,7 @@ func openBaoVolumePod(run, source, name, hostname string) (object, []any) {
 			},
 			"affinity": object{"nodeAffinity": object{"requiredDuringSchedulingIgnoredDuringExecution": object{
 				"nodeSelectorTerms": []any{object{"matchExpressions": []any{object{
-					"key": "kubernetes.io/hostname", "operator": "In", "values": []any{hostname},
+					"key": "kubernetes.io/hostname", "operator": "In", "values": []any{p.Original.Node},
 				}}}},
 			}}},
 			"volumes": volumes,
