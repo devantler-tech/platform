@@ -5,13 +5,15 @@ import (
 	"reflect"
 )
 
+const runtimePublicationPracticeRoot = "business-site-preview"
+
 func runtimePublicationRoots() map[string]string {
 	return map[string]string{
 		"bootstrap": "clusters/prod/bootstrap", "flux-instance": "providers/hetzner/infrastructure/controllers/flux-instance",
 		"infrastructure-controllers": "providers/hetzner/infrastructure/controllers", "infrastructure": "providers/hetzner/infrastructure",
 		"apps": "providers/hetzner/apps", "platform-health": "providers/hetzner/health",
-		"github-broker":         "providers/hetzner/apps/github-broker/server",
-		"business-site-preview": "providers/hetzner/business-site-preview-workload",
+		"github-broker":                      "providers/hetzner/apps/github-broker/server",
+		"business-site-practice-permissions": "providers/hetzner/business-site-practice-permissions",
 	}
 }
 
@@ -32,9 +34,19 @@ func runtimePublicationSource(config, wrappers []byte) error {
 	expected, seen := runtimePublicationRoots(), map[string]bool{}
 	for _, o := range documents {
 		name := text(o, "metadata", "name")
+		if seen[name] || text(o, "apiVersion") != "kustomize.toolkit.fluxcd.io/v1" ||
+			text(o, "kind") != "Kustomization" || text(o, "metadata", "namespace") != "flux-system" {
+			return errRuntimePublication
+		}
+		seen[name] = true
+		if name == runtimePublicationPracticeRoot {
+			if !runtimePublicationPracticeSource(o) {
+				return errRuntimePublication
+			}
+			continue
+		}
 		path, known := expected[name]
-		if !known || seen[name] || text(o, "apiVersion") != "kustomize.toolkit.fluxcd.io/v1" || text(o, "kind") != "Kustomization" ||
-			text(o, "metadata", "namespace") != "flux-system" || text(o, "spec", "path") != path ||
+		if !known || text(o, "spec", "path") != path ||
 			text(o, "spec", "sourceRef", "kind") != "OCIRepository" || text(o, "spec", "sourceRef", "name") != "flux-system" {
 			return errRuntimePublication
 		}
@@ -46,12 +58,20 @@ func runtimePublicationSource(config, wrappers []byte) error {
 				return errRuntimePublication
 			}
 		}
-		seen[name] = true
 	}
-	if len(seen) != len(expected) {
+	if len(seen) != len(expected)+1 || !seen[runtimePublicationPracticeRoot] {
 		return errRuntimePublication
 	}
 	return nil
+}
+
+func runtimePublicationPracticeSource(o object) bool {
+	spec, ok := value(o, "spec").(object)
+	return ok && runtimeOnlyKeys(spec, "interval", "retryInterval", "timeout", "path", "sourceRef", "serviceAccountName", "dependsOn", "wait", "prune", "force") &&
+		text(spec, "path") == "./practice" && text(spec, "serviceAccountName") == "business-site-practice" &&
+		reflect.DeepEqual(value(spec, "sourceRef"), object{"kind": "OCIRepository", "name": "business-site", "namespace": "business-site"}) &&
+		reflect.DeepEqual(value(spec, "dependsOn"), []any{object{"name": "apps"}, object{"name": "business-site-practice-permissions"}}) &&
+		value(spec, "wait") == true && value(spec, "prune") == true && value(spec, "force") == false
 }
 
 func runtimePublicationFluxSource(render []byte) error {

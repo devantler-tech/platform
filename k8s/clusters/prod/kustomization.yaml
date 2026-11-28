@@ -3,6 +3,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../base
+  - flux-kustomization-business-site-practice-permissions.yaml
   - flux-kustomization-business-site-preview.yaml
   # Production-only leaf health signal; nothing depends on it (platform#6269).
   - flux-kustomization-platform-health.yaml
@@ -88,6 +89,8 @@ replacements:
           # bootstrap uses a __CLUSTER__ path (rewritten by cluster_name below),
           # not a __PROVIDER__ path, so exclude it from the provider rewrite.
           - name: bootstrap
+          # The practice Job comes from the standalone portal release.
+          - name: business-site-preview
         fieldPaths:
           - spec.path
         options:

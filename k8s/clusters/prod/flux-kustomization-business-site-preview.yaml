@@ -8,14 +8,17 @@ spec:
   interval: 5m
   retryInterval: 1m
   timeout: 10m
-  path: providers/__PROVIDER__/business-site-preview-workload
+  path: ./practice
   sourceRef:
     kind: OCIRepository
-    name: flux-system
+    name: business-site
+    namespace: business-site
+  serviceAccountName: business-site-practice
   # Apps waits for the database primary and its ExternalSecret projections.
-  # Keep the Job out of that inventory so a rebuild waits before creating it.
+  # Keep the Job in its own inventory so that rebuilds wait for the database.
   dependsOn:
     - name: apps
+    - name: business-site-practice-permissions
   wait: true
   prune: true
   force: false

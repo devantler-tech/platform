@@ -24,6 +24,20 @@ func runtimePublicationSourceFixture(t *testing.T) ([]byte, []byte) {
 		}
 		stream = append(stream, encoded...)
 	}
+	stream = append(stream, []byte(`
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: business-site-preview, namespace: flux-system}
+spec:
+  path: ./practice
+  sourceRef: {kind: OCIRepository, name: business-site, namespace: business-site}
+  serviceAccountName: business-site-practice
+  dependsOn: [{name: apps}, {name: business-site-practice-permissions}]
+  wait: true
+  prune: true
+  force: false
+`)...)
 	return config, stream
 }
 
@@ -57,6 +71,11 @@ func TestRuntimePublicationUsesActualProducerAndFluxLayers(t *testing.T) {
 		{config, []byte(strings.ReplaceAll(string(wrappers), `"path":"providers/hetzner/infrastructure/controllers"`, `"patches":[{"patch":"indirect"}],"path":"providers/hetzner/infrastructure/controllers"`))},
 		{config, []byte(strings.ReplaceAll(string(wrappers), `"path":"providers/hetzner/infrastructure/controllers"`, `"components":["indirect"],"path":"providers/hetzner/infrastructure/controllers"`))},
 		{config, []byte(strings.ReplaceAll(string(wrappers), `"name":"flux-system"`, `"name":"other-source"`))},
+		{config, []byte(strings.ReplaceAll(string(wrappers), "path: ./practice", "path: ./dev"))},
+		{config, []byte(strings.ReplaceAll(string(wrappers), "serviceAccountName: business-site-practice", "serviceAccountName: flux-system"))},
+		{config, []byte(strings.ReplaceAll(string(wrappers), "name: business-site, namespace: business-site", "name: business-site, namespace: other"))},
+		{config, []byte(strings.ReplaceAll(string(wrappers), ", {name: business-site-practice-permissions}", ""))},
+		{config, []byte(strings.ReplaceAll(string(wrappers), "force: false", "force: true"))},
 		{config, append(append([]byte{}, wrappers...), append([]byte("\n---\n"), wrappers...)...)},
 	} {
 		if runtimePublicationSource(pair[0], pair[1]) == nil {

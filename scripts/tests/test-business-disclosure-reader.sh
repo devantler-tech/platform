@@ -147,27 +147,45 @@ kubectl kustomize "${root_dir}/k8s/clusters/prod" |
       [.[]|select(.metadata.name==$name and .metadata.namespace=="flux-system")] |
       if length==1 then .[0].spec else error("expected exactly one Platform root") end;
     (root("business-site-preview") |
-      .path=="providers/hetzner/business-site-preview-workload" and
+      .path=="./practice" and
+      .sourceRef=={kind:"OCIRepository",name:"business-site",namespace:"business-site"} and
+      .dependsOn==[{name:"apps"},{name:"business-site-practice-permissions"}] and
+      .wait and .prune and (.force|not) and .serviceAccountName=="business-site-practice") and
+    (root("business-site-practice-permissions") |
+      .path=="providers/hetzner/business-site-practice-permissions" and
       .sourceRef=={kind:"OCIRepository",name:"flux-system"} and
-      .dependsOn==[{name:"apps"}] and .wait and .prune and (.force|not) and
-      .serviceAccountName==null) and
+      .dependsOn==[{name:"apps"}] and .wait and .prune) and
     (root("apps") | .wait and .sourceRef=={kind:"OCIRepository",name:"flux-system"} and
       any(.healthCheckExprs[];
         .apiVersion=="postgresql.cnpg.io/v1" and .kind=="Cluster" and
         .current==$cnpg_ready))
-  ' >/dev/null || fail 'the preview migration must wait for the Platform apps readiness gate'
+  ' >/dev/null || fail 'the practice migration must wait for the database and scoped permissions'
 
-kubectl kustomize "${root_dir}/k8s/providers/hetzner/business-site-preview-workload" |
+kubectl kustomize "${root_dir}/k8s/providers/hetzner/business-site-practice-permissions" |
   yq -o=json -I=0 '.' |
   jq -es '
-    length==1 and (.[0] | .kind=="Job" and .metadata.namespace=="business-site-dev" and
-      .metadata.name=="business-site-dev-migration" and (.spec.template.spec |
-        .automountServiceAccountToken==false and .serviceAccountName==null and
-        (.containers|length)==1 and .containers[0].name=="migrate" and
-        (.containers[0].image|test("^ghcr[.]io/devantler-tech/business-site@sha256:[0-9a-f]{64}$")) and
-        any(.containers[0].args[]; .=="portal_preview_web") and
-        ([.volumes[].secret.secretName | select(.!=null)])==["business-site-dev-migration"]))
-  ' >/dev/null || fail 'the isolated preview workload must contain only the pinned database migration'
+    def resource($kind; $name):
+      [.[]|select(.kind==$kind and .metadata.name==$name)] |
+      if length==1 then .[0] else error("expected exactly one practice permission resource") end;
+    length==4 and
+    (resource("ServiceAccount";"business-site-practice") |
+      .metadata.namespace=="flux-system" and .automountServiceAccountToken==false) and
+    (resource("Role";"business-site-practice") |
+      .metadata.namespace=="business-site-dev" and .rules==[
+        {apiGroups:["batch"],resources:["jobs"],verbs:["create","list","watch"]},
+        {apiGroups:["batch"],resources:["jobs"],resourceNames:["business-site-dev-migration"],
+         verbs:["get","patch","update","delete"]}]) and
+    (resource("RoleBinding";"business-site-practice") |
+      .metadata.namespace=="business-site-dev" and
+      .roleRef=={apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"business-site-practice"} and
+      .subjects==[{kind:"ServiceAccount",name:"business-site-practice",namespace:"flux-system"}]) and
+    (resource("ValidatingPolicy";"business-site-practice-create") | .spec |
+      .failurePolicy=="Fail" and .validationActions==["Deny"] and .evaluation.background.enabled==false and
+      .matchConstraints.resourceRules==[{apiGroups:["batch"],apiVersions:["v1"],operations:["CREATE"],
+        resources:["jobs"]}] and
+      [.matchConditions[].expression]==["request.userInfo.username == \u0027system:serviceaccount:flux-system:business-site-practice\u0027"] and
+      [.validations[].expression]==["request.namespace == \u0027business-site-dev\u0027 && object.metadata.name == \u0027business-site-dev-migration\u0027"])
+  ' >/dev/null || fail 'practice reconciliation permissions must be limited to the migration Job'
 
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
   yq -o=json -I=0 'select(.metadata.namespace == "business-site-dev")' |
