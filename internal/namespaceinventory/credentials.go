@@ -22,7 +22,7 @@ var credentialPath = regexp.MustCompile(`^/dev/shm/longhorn-namespace-inventory\
 var benchmarkCredentialPath = regexp.MustCompile(`^/dev/shm/longhorn-v2\.[A-Za-z0-9]+/kubeconfig$`)
 var sourcePattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var runPattern = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
-var cnpgNameRecoveryPattern = regexp.MustCompile(`^(recover-(?:umami|wedding)-standby-name):((?:umami|wedding)-db)-[1-9][0-9]*:([1-9][0-9]{0,18}):[0-9a-f]{40}:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?::[1-9][0-9]{0,18})?$`)
+var cnpgNameRecoveryPattern = regexp.MustCompile(`^(recover-(?:umami|wedding|provider-cnpg)-standby-name):((?:umami|wedding|customer-identity|business-site-portal)-db)-[1-9][0-9]*:([1-9][0-9]{0,18}):[0-9a-f]{40}:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}:[1-9][0-9]{0,18}:[0-9a-f]{40}:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?::[1-9][0-9]{0,18})?$`)
 
 // Dispatch is the verified source commit and run of a protected observation.
 type Dispatch struct{ Source, Run string }
@@ -128,9 +128,15 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 				return nil, nil, errors.New("protected benchmark admission dispatch is unverified")
 			}
 			operation, confirmation = "resume-native-v2-reclaim", prefix+prior
-		case "recover-umami-standby-name", "recover-wedding-standby-name":
+		case "recover-umami-standby-name", "recover-wedding-standby-name", "recover-provider-cnpg-standby-name":
 			operation = getenv("LONGHORN_V2_OPERATION")
 			database = strings.TrimSuffix(strings.TrimPrefix(operation, "recover-"), "-standby-name") + "-db"
+			if operation == "recover-provider-cnpg-standby-name" {
+				database = getenv("LONGHORN_V2_DATABASE")
+				if database != "customer-identity-db" && database != "business-site-portal-db" {
+					return nil, nil, errors.New("protected provider CNPG database is unverified")
+				}
+			}
 			confirmation = getenv("LONGHORN_V2_CONFIRM")
 			fields := cnpgNameRecoveryPattern.FindStringSubmatch(confirmation)
 			if fields == nil || fields[1] != operation || fields[2] != database || fields[3] != originalRun {
@@ -181,6 +187,11 @@ func LoadBenchmarkAdmissionClient(getenv func(string) string, directIP netip.Add
 		scope = directUmamiCreate
 	case "recover-wedding-standby-name":
 		scope = directWeddingCreate
+	case "recover-provider-cnpg-standby-name":
+		scope = directIdentityCreate
+		if database == "business-site-portal-db" {
+			scope = directPortalCreate
+		}
 	case "migrate-coroot-keeper-v2":
 		scope = directKeeperCreate
 	}
@@ -231,10 +242,12 @@ func newProductionClient(raw *clientcmdapi.Config) (*http.Client, *url.URL, erro
 type directCreateScope string
 
 const (
-	directReclaimCreate directCreateScope = "reclaim"
-	directUmamiCreate   directCreateScope = "umami"
-	directWeddingCreate directCreateScope = "wedding-app"
-	directKeeperCreate  directCreateScope = "keeper"
+	directReclaimCreate  directCreateScope = "reclaim"
+	directUmamiCreate    directCreateScope = "umami"
+	directWeddingCreate  directCreateScope = "wedding-app"
+	directKeeperCreate   directCreateScope = "keeper"
+	directIdentityCreate directCreateScope = "customer-identity"
+	directPortalCreate   directCreateScope = "business-site"
 )
 
 var corootKeeperCutoverConfirm = regexp.MustCompile(`^migrate-coroot-keeper-v2:[0-2]:[a-f0-9]{64}$`)
@@ -302,7 +315,7 @@ func (peer directAPIPeer) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	create := req.Method == http.MethodPost && req.URL.RawPath == "" &&
 		req.Header.Get("Content-Type") == "application/json" && peer.createScope.permits(req.URL.Path)
-	patch := req.Method == http.MethodPatch && peer.createScope != directUmamiCreate && peer.createScope != directWeddingCreate && peer.createScope != directKeeperCreate
+	patch := req.Method == http.MethodPatch && (peer.createScope == "" || peer.createScope == directReclaimCreate)
 	if req.Method != http.MethodGet && (req.URL.RawQuery != "dryRun=All" || (!patch && !create)) {
 		return nil, errors.New("direct API client permits only observations and server dry-runs")
 	}
@@ -313,7 +326,7 @@ func (scope directCreateScope) permits(path string) bool {
 	switch scope {
 	case directReclaimCreate:
 		return path == "/api/v1/persistentvolumes" || path == "/api/v1/namespaces/longhorn-benchmark/persistentvolumeclaims"
-	case directUmamiCreate, directWeddingCreate:
+	case directUmamiCreate, directWeddingCreate, directIdentityCreate, directPortalCreate:
 		base := "/api/v1/namespaces/" + string(scope)
 		return path == base+"/pods" || path == base+"/persistentvolumeclaims" || path == "/apis/batch/v1/namespaces/"+string(scope)+"/jobs"
 	case directKeeperCreate:
