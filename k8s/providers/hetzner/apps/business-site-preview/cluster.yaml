@@ -7,7 +7,7 @@ metadata:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
-  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-system-trixie
+  imageName: ghcr.io/cloudnative-pg/postgresql:19.0-system-trixie
   instances: 1
   priorityClassName: hcloud-volume-workload
   env:
