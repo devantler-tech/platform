@@ -72,11 +72,11 @@ func observeCorootClickHouse(ctx context.Context, c client, source string) (coro
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
-		return none, errCorootClickHouseStorage
+		return none, fmt.Errorf("could not verify current main before the read: %w", errCorootClickHouseStorage)
 	}
 	before, err := readCorootClickHouseSources(ctx, c)
 	if err != nil {
-		return none, err
+		return none, fmt.Errorf("could not verify both provider-backed members before the read: %w", errCorootClickHouseStorage)
 	}
 	var names [2]string
 	var tables [2][]corootClickHouseTable
@@ -85,24 +85,27 @@ func observeCorootClickHouse(ctx context.Context, c client, source string) (coro
 		names[i] = member.Pod.Name
 		rawTables, err := c.readCorootClickHouseCatalog(ctx, member, corootClickHouseTablesQuery)
 		if err != nil {
-			return none, err
+			return none, fmt.Errorf("table query failed for member %d: %w", i, errCorootClickHouseStorage)
 		}
 		tables[i], err = readClickHouseStorageRows[corootClickHouseTable](rawTables)
 		if err != nil {
-			return none, err
+			return none, fmt.Errorf("invalid table response for member %d: %w", i, err)
 		}
 		rawReplicas, err := c.readCorootClickHouseCatalog(ctx, member, corootClickHouseReplicasQuery)
 		if err != nil {
-			return none, err
+			return none, fmt.Errorf("replica query failed for member %d: %w", i, errCorootClickHouseStorage)
 		}
 		replicas[i], err = readClickHouseStorageRows[corootClickHouseReplica](rawReplicas)
 		if err != nil {
-			return none, err
+			return none, fmt.Errorf("invalid replica response for member %d: %w", i, err)
 		}
 	}
 	after, err := readCorootClickHouseSources(ctx, c)
-	if err != nil || before != after || sourceCurrent(ctx, c.run, source) != nil || !commandContextActive(ctx) {
-		return none, errCorootClickHouseStorage
+	if err != nil || before != after {
+		return none, fmt.Errorf("could not verify unchanged provider-backed members after the read: %w", errCorootClickHouseStorage)
+	}
+	if sourceCurrent(ctx, c.run, source) != nil || !commandContextActive(ctx) {
+		return none, fmt.Errorf("could not verify current main after the read: %w", errCorootClickHouseStorage)
 	}
 	return classifyCorootClickHouseStorage(names, tables, replicas)
 }
