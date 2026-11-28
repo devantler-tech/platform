@@ -225,7 +225,7 @@ func TestUmamiSwitchoverRequiresAnAdvancedTimelineWithoutLosingTheOldBarrier(t *
 			after := cnpgObservation{Cluster: object{"status": status}, States: map[string]postgresState{
 				old: standby, target: primary, "umami-db-2": standby, "umami-db-3": standby,
 			}}
-			if err := verifyUmamiPromotionHistory(previous, after, target); (err == nil) != (fault == "") {
+			if err := verifyUmamiPromotionHistory(previous, after, target, 4); (err == nil) != (fault == "") {
 				t.Fatalf("unexpected promotion readback: %v", err)
 			}
 		})

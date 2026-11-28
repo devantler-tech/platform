@@ -21,14 +21,24 @@ func bindCNPGPromotionRecord(database cnpgSource, journal object, previous, targ
 	}
 	encoded, err := json.Marshal(record)
 	witness := record.Witness
+	profile, known := cnpgStandbyProfileForSource(database)
 	_, stampErr := time.Parse(time.RFC3339Nano, witness.PreviousTargetSince)
 	executor, source := record.executor()
-	if err != nil || string(encoded) != raw || record.Target != target || witness.Previous.Name != previous ||
+	if err != nil || !known || string(encoded) != raw || record.Target != target || witness.Previous.Name != previous ||
 		cnpgPromotionSource(witness.Database) != database ||
-		witness.Previous == witness.Standbys[target].Pod || witness.Standbys[target].Pod.Name != target || len(witness.Standbys) != 3 ||
+		witness.Previous == witness.Standbys[target].Pod || witness.Standbys[target].Pod.Name != target || len(witness.Standbys) != profile.Instances-1 ||
 		witness.Generation == 0 || stampErr != nil || !validBenchmarkOwner(executor, source) ||
 		(record.RetryRun == "") != (record.RetrySource == "") ||
 		witness.PreviousState.InRecovery || validPostgresState(witness.PreviousState) != nil {
+		return record, refused
+	}
+	if providerCNPGStandbySource(database.Name) == database {
+		if witness.OriginalClaim.Name != previous || witness.OriginalClaim.Namespace != database.Namespace ||
+			!validProviderCNPGOriginal(cnpgStandbyCutover{Claim: witness.OriginalClaim, PV: witness.OldPV,
+				Volume: witness.OriginalVolume, Provider: witness.OriginalProvider}) {
+			return record, refused
+		}
+	} else if witness.OriginalProvider != nil {
 		return record, refused
 	}
 	return record, nil

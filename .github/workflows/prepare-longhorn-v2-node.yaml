@@ -59,6 +59,7 @@ name: Prepare Longhorn V2 Migration
             replace-provider-cnpg-v2-standby,
             resume-retained-provider-cnpg-v2-standby,
             recover-provider-cnpg-standby-name,
+            switch-provider-cnpg-primary-to-v2,
             replace-umami-v2-standby,
             resume-retained-umami-v2-standby,
             switch-umami-primary-to-v2,
@@ -242,9 +243,9 @@ jobs:
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(customer-identity-db|business-site-portal-db)$ &&
                  "${LONGHORN_V2_CONFIRM}" =~ ^observe-provider-cnpg-v2-standby:${LONGHORN_V2_DATABASE}-[1-9][0-9]*$ ]]
               ;;
-            replace-provider-cnpg-v2-standby)
+            replace-provider-cnpg-v2-standby|switch-provider-cnpg-primary-to-v2)
               [[ -z "${LONGHORN_V2_NODE}" && "${LONGHORN_V2_DATABASE}" =~ ^(customer-identity-db|business-site-portal-db)$ &&
-                 "${LONGHORN_V2_CONFIRM}" =~ ^replace-provider-cnpg-v2-standby:${LONGHORN_V2_DATABASE}-[1-9][0-9]*:${LONGHORN_V2_DATABASE}-[1-9][0-9]*$ ]]
+                 "${LONGHORN_V2_CONFIRM}" =~ ^${LONGHORN_V2_OPERATION}:${LONGHORN_V2_DATABASE}-[1-9][0-9]*:${LONGHORN_V2_DATABASE}-[1-9][0-9]*$ ]]
               ;;
             resume-retained-provider-cnpg-v2-standby|recover-provider-cnpg-standby-name)
               run_re='[1-9][0-9]{0,18}'
@@ -438,7 +439,7 @@ jobs:
               inputs.operation != 'resume-native-v2-reclaim' && inputs.operation != 'recover-umami-standby-name' &&
               inputs.operation != 'recover-wedding-standby-name' && inputs.operation != 'migrate-coroot-keeper-v2' &&
               inputs.operation != 'replace-provider-cnpg-v2-standby' && inputs.operation != 'resume-retained-provider-cnpg-v2-standby' &&
-              inputs.operation != 'recover-provider-cnpg-standby-name' &&
+              inputs.operation != 'recover-provider-cnpg-standby-name' && inputs.operation != 'switch-provider-cnpg-primary-to-v2' &&
               inputs.operation != 'migrate-openbao-v2-pair' && inputs.operation != 'resume-openbao-v2-pair' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -493,10 +494,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: go run ./scripts/migrate-longhorn-v2
-      - name: Run the confirmed provider database standby replacement
+      - name: Run the confirmed provider database storage operation
         if: >-
           ${{ inputs.operation == 'replace-provider-cnpg-v2-standby' || inputs.operation == 'resume-retained-provider-cnpg-v2-standby' ||
-              inputs.operation == 'recover-provider-cnpg-standby-name' }}
+              inputs.operation == 'recover-provider-cnpg-standby-name' || inputs.operation == 'switch-provider-cnpg-primary-to-v2' }}
         env:
           GH_TOKEN: ${{ github.token }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

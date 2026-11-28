@@ -83,7 +83,7 @@ func main() {
 		_, _, authorization = authorizeUmamiStandbyObservation(os.Getenv)
 	case providerCNPGStandbyObservation:
 		_, authorization = authorizeProviderCNPGStandby(os.Getenv)
-	case replaceProviderCNPGStandbyOperation, resumeProviderCNPGStandbyOperation, recoverProviderCNPGStandbyOperation:
+	case replaceProviderCNPGStandbyOperation, resumeProviderCNPGStandbyOperation, recoverProviderCNPGStandbyOperation, providerV2SwitchoverOperation:
 		_, authorization = authorizeProviderCNPGReplacement(os.Getenv, operation)
 	case umamiStandbyReplacementOperation, umamiV2SwitchoverOperation:
 		_, _, authorization = authorizeUmamiStandbyTarget(os.Getenv, operation)
@@ -447,13 +447,18 @@ func main() {
 		fmt.Println("WEDDING_V2_STANDBY_REPLACEMENT=VERIFIED originalStorage=RETAINED replicas=3 physicalReplay=VERIFIED")
 		return
 	}
-	if operation == replaceProviderCNPGStandbyOperation || operation == resumeProviderCNPGStandbyOperation || operation == recoverProviderCNPGStandbyOperation {
+	if operation == replaceProviderCNPGStandbyOperation || operation == resumeProviderCNPGStandbyOperation ||
+		operation == recoverProviderCNPGStandbyOperation || operation == providerV2SwitchoverOperation {
 		replacementContext, stop := context.WithTimeout(ctx, 30*time.Minute)
 		defer stop()
 		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
 		if err := runProviderCNPGReplacement(replacementContext, c, os.Getenv, operation); err != nil {
-			fmt.Fprintln(os.Stderr, "Provider database standby replacement held:", err)
+			fmt.Fprintln(os.Stderr, "Provider database storage operation held:", err)
 			os.Exit(1)
+		}
+		if operation == providerV2SwitchoverOperation {
+			fmt.Println("PROVIDER_CNPG_V2_PRIMARY=VERIFIED originalStorage=RETAINED replicas=3 writerRoute=VERIFIED physicalHistory=VERIFIED")
+			return
 		}
 		fmt.Println("PROVIDER_CNPG_V2_STANDBY_REPLACEMENT=VERIFIED originalStorage=RETAINED replicas=3 physicalReplay=VERIFIED")
 		return

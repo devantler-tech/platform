@@ -24,7 +24,7 @@ func authorizeProviderCNPGReplacement(getenv func(string) string, operation stri
 		return providerCNPGReplacementGrant{}, errProviderCNPGStandby
 	}
 	switch operation {
-	case replaceProviderCNPGStandbyOperation:
+	case replaceProviderCNPGStandbyOperation, providerV2SwitchoverOperation:
 		original, spare, err := authorizeCNPGStandbyTarget(getenv, operation, database.Name)
 		return providerCNPGReplacementGrant{Database: database, Original: original, Spare: spare}, err
 	case resumeProviderCNPGStandbyOperation:
@@ -58,6 +58,8 @@ func runProviderCNPGReplacement(ctx context.Context, c client, getenv func(strin
 		return resumeCNPGStandbyReplacement(ctx, c, owner, grant.Resume, grant.Database.Name)
 	case recoverProviderCNPGStandbyOperation:
 		return runUmamiNameRecovery(ctx, c, grant.Recovery, owner)
+	case providerV2SwitchoverOperation:
+		return runCNPGV2Switchover(ctx, c, grant.Database, owner.Source, owner.Run, grant.Original, grant.Spare)
 	default:
 		return errProviderCNPGStandby
 	}
