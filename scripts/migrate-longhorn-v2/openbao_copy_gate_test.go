@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 )
 
 func TestOpenBaoCopyGateIsBoundToItsRecordedIdentity(t *testing.T) {
@@ -40,5 +43,42 @@ func TestOpenBaoCopyReleaseAndReceiptRequireTheProtectedExecutor(t *testing.T) {
 	}
 	if err := j.recordVerifiedCopy(t.Context(), nil, nil, recoveryCiliumDatapath{PolicyUID: "synthetic"}, "", nil); err == nil {
 		t.Fatal("read-only access advanced the copy journal")
+	}
+}
+
+func testOpenBaoCopyGateWaitsForScheduling(t *testing.T, record openBaoPairRecord) {
+	t.Helper()
+	originalPoll := readinessPoll
+	readinessPoll = time.Millisecond
+	t.Cleanup(func() { readinessPoll = originalPoll })
+
+	assets := desiredOpenBaoCopyAssets(record.Plan)
+	for index, asset := range assets {
+		metadata := valueObject(asset, "metadata")
+		metadata["uid"], metadata["resourceVersion"] = record.CopyAssets[index].UID, "76"
+	}
+	pod := assets[2]
+	previous, err := cloneRecoverySpec(pod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	c := client{context: "admin@prod", run: func(_ context.Context, _ []byte, program string, args ...string) ([]byte, error) {
+		if program != "kubectl" || len(args) < 5 || args[2] != "get" || args[3] != "pod" ||
+			args[4] != record.CopyAssets[2].Name {
+			t.Fatalf("the unqualified copy reached %s %v", program, args)
+		}
+		requests++
+		if requests > 1 {
+			valueObject(pod, "spec")["nodeName"] = "unexpected-worker"
+		}
+		return json.Marshal(pod)
+	}}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	j := openBaoPairJournal{client: c, record: record}
+	_, err = j.waitAndReleaseCopyGate(ctx, previous, assets[0], assets[1], "", nil)
+	if requests != 2 || !errors.Is(err, errReadinessTerminal) {
+		t.Fatalf("want a retry for the unscheduled pod and a terminal refusal on another node, got reads=%d, err=%v", requests, err)
 	}
 }

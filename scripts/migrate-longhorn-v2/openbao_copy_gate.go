@@ -30,9 +30,11 @@ func (j openBaoPairJournal) waitAndReleaseCopyGate(ctx context.Context, copyPod,
 		if err != nil {
 			return err
 		}
-		if !j.client.matchBoundOpenBaoVolumePod(ctx, pod, copyPod, desired, plan.Original.Node) ||
-			text(pod, "spec", "nodeName") != plan.Original.Node {
+		if !j.client.matchBoundOpenBaoVolumePod(ctx, pod, copyPod, desired, plan.Original.Node) {
 			return errors.Join(errReadinessTerminal, errOpenBaoProviderStorage)
+		}
+		if text(pod, "spec", "nodeName") == "" {
+			return errOpenBaoProviderStorage
 		}
 		raw, err := j.client.kubectl(ctx, nil, "logs", name, "--namespace="+openBaoNamespace, "--container=copy")
 		if err != nil || text(pod, "status", "phase") != "Pending" ||

@@ -132,6 +132,9 @@ func TestOpenBaoJournalDoesNotAllowItsCopyOrReleaseToSkipAPhase(t *testing.T) {
 		}
 		staged = created
 	}
+	t.Run("copy scheduling", func(t *testing.T) {
+		testOpenBaoCopyGateWaitsForScheduling(t, staged)
+	})
 	next = staged
 	next.Phase = openBaoPairSourcesReleased
 	if err := verifyOpenBaoPairTransition(staged, next); err == nil {
