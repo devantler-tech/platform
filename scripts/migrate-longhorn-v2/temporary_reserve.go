@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/devantler-tech/platform/internal/longhorninventory"
+	"github.com/siderolabs/talos/pkg/machinery/resources/block"
 )
 
 const (
@@ -164,6 +165,14 @@ func (a temporaryV2Activation) readUnusedReserve(ctx context.Context, address st
 	if err != nil || len(payload) == 0 || len(payload) > 2<<20 {
 		return errTemporaryActivation
 	}
+	discovered, err := decodeTemporaryReserveDevices(payload)
+	if err != nil {
+		return err
+	}
+	return verifyUnusedTemporaryReserve(current, record, layout, raw, stage, ephemeral, discovered)
+}
+
+func decodeTemporaryReserveDevices(payload []byte) ([]object, error) {
 	reader := json.NewDecoder(bytes.NewReader(payload))
 	discovered := []object{}
 	seen := map[string]bool{}
@@ -175,13 +184,13 @@ func (a temporaryV2Activation) readUnusedReserve(ctx context.Context, address st
 		}
 		id := text(row, "metadata", "id")
 		if err != nil || len(discovered) == 512 || id == "" || seen[id] ||
-			text(row, "metadata", "namespace") != "block" || text(row, "metadata", "type") != "DiscoveredVolumes.block.talos.dev" {
-			return errTemporaryActivation
+			text(row, "metadata", "namespace") != string(block.NamespaceName) || text(row, "metadata", "type") != string(block.DiscoveredVolumeType) {
+			return nil, errTemporaryActivation
 		}
 		discovered = append(discovered, row)
 		seen[id] = true
 	}
-	return verifyUnusedTemporaryReserve(current, record, layout, raw, stage, ephemeral, discovered)
+	return discovered, nil
 }
 
 // Verify the original extent on the single prepared staging worker. This
@@ -216,7 +225,7 @@ func verifyUnusedTemporaryReserve(current temporaryV2Binding, prepared journal, 
 		if text(device, "spec", "dev_path") != rawMapper {
 			continue
 		}
-		if text(device, "metadata", "type") != "DiscoveredVolumes.block.talos.dev" || text(device, "spec", "type") != "disk" ||
+		if text(device, "metadata", "type") != string(block.DiscoveredVolumeType) || text(device, "spec", "type") != "disk" ||
 			!absentOrEmptyString(value(device, "spec", "name")) || !absentOrEmptyString(value(device, "spec", "label")) ||
 			!absentOrEmptyString(value(device, "spec", "uuid")) {
 			return unverified
