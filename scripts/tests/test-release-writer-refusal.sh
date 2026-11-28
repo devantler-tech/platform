@@ -10,9 +10,9 @@ fail() {
   exit 1
 }
 yq -o=json '.' "$workflow" >"$work/workflow.json"
-jq -e '.jobs.recover.steps | map(select(.id == "read-only-refusal")) | length == 1' "$work/workflow.json" >/dev/null ||
+jq -e '.jobs.inspect.steps | map(select(.id == "read-only-refusal")) | length == 1' "$work/workflow.json" >/dev/null ||
   fail 'required read-only capability control is missing'
-jq -er '.jobs.recover.steps[] | select(.id == "read-only-refusal") | .run' "$work/workflow.json" >"$work/probe.sh"
+jq -er '.jobs.inspect.steps[] | select(.id == "read-only-refusal") | .run' "$work/workflow.json" >"$work/probe.sh"
 mkdir -p "$work/bin" "$work/runner"
 cat >"$work/bin/curl" <<'CURL'
 #!/usr/bin/env bash

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Guard the default-off release-recovery workflow: consent, scope, immutable source, read token
-# before writer token, and required CI coverage of consent/offline routing. Executes shipped steps.
+# Guard the default-off release-recovery workflow: consent, scope, immutable source, the read-only
+# job before the writer job, the built-in token only (no App key, no broker), and required CI
+# coverage of consent/offline routing. Executes shipped steps.
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 workflow="${1:-$root/.github/workflows/publish-release-recovery.yaml}"
@@ -17,10 +18,15 @@ yq -o=json '.' "$workflow" >"$work/workflow.json"
 yq -o=json '.' "$ci" >"$work/ci.json"
 jq -n --slurpfile w "$work/workflow.json" --slurpfile c "$work/ci.json" '{w:$w[0],c:$c[0]}' >"$work/bundle.json"
 cat >"$work/guard.jq" <<'JQ'
-  .w as $w | .c as $c | $w.jobs.recover as $j | $j.steps as $s | $w.jobs["offline-test"] as $o |
+  .w as $w | .c as $c | $w.jobs.inspect as $i | $i.steps as $s | $w.jobs.publish as $p | $p.steps as $t |
+  $w.jobs["offline-test"] as $o |
   def ordinary: .if == null and .["continue-on-error"] == null;
   def recoveryContractRun: .run == "shellcheck scripts/generate-release-recovery-fixture.sh scripts/tests/test-release-recovery.sh\nbash scripts/tests/test-release-recovery.sh\n";
-  def writer: .if == "steps.read-admission.outputs.missing == 'true'" and .["continue-on-error"] == null;
+  def onlyIfMissing: .if == "steps.read-admission.outputs.missing == 'true'" and .["continue-on-error"] == null;
+  def harden: (.uses | test("^step-security/harden-runner@[a-f0-9]{40}$")) and .with == {"egress-policy":"audit"};
+  # setup-go defaults its token input to github.token; the toolchain step must override it empty.
+  def setupGo: (.uses | test("^actions/setup-go@[a-f0-9]{40}$")) and (.with | keys) == ["cache","go-version","token"] and
+    .with.cache == false and .with.token == "";
   def source: .env == {CATALOGUE_REPOSITORY:"devantler-tech/.github",CATALOGUE_SHA:"8e2dfbd3f9249b76b58234189ccbbae98d11b32b"} and
     (.run | contains("[[ \"$CATALOGUE_REPOSITORY\" == devantler-tech/.github && \"$CATALOGUE_SHA\" =~ ^[0-9a-f]{40}$ ]]")) and
     (.run | contains("env -i PATH=\"$PATH\" curl --disable")) and
@@ -29,34 +35,43 @@ cat >"$work/guard.jq" <<'JQ'
   def build: .env == {GOWORK:"off",GOFLAGS:"",GOTOOLCHAIN:"local",CGO_ENABLED:"0"} and
     (.run | contains("build -trimpath -o \"$PWD/.devantler-tech-recovery/publish-release-recovery\" ./cmd/publish-release-recovery"));
   def incident: {REPOSITORY:"${{ github.repository }}",TAG:"${{ inputs.tag }}",SOURCE_SHA:"${{ inputs.source-sha }}",RUN_ID:"${{ inputs.run-id }}",RUN_ATTEMPT:"${{ inputs.run-attempt }}",PRODUCER_REF:"${{ inputs.producer-ref }}"};
-  def token($contents): {"client-id":"${{ vars.APP_CLIENT_ID }}","private-key":"${{ secrets.APP_PRIVATE_KEY }}",owner:"devantler-tech",repositories:"${{ steps.admit.outputs.name }}","permission-contents":$contents,"permission-actions":"read"};
+  def builtInToken: "${{ github.token }}";
   ($w.on | keys) == ["workflow_dispatch"] and $w.permissions == {} and
   ($w.on.workflow_dispatch.inputs | has("enable-recovery") | not) and
   $w.on.workflow_dispatch.inputs["confirm-publication"].type == "boolean" and $w.on.workflow_dispatch.inputs["confirm-publication"].default == false and
   $w.on.workflow_dispatch.inputs["offline-test"].type == "boolean" and $w.on.workflow_dispatch.inputs["offline-test"].default == false and
   ($w.on.workflow_dispatch.inputs | has("repository") | not) and
   $w.on.workflow_dispatch.secrets == null and
-  ($w.jobs | keys) == ["offline-test","recover"] and
-  $j.if == "inputs.confirm-publication && !inputs.offline-test" and $j.permissions == {} and $j.needs == null and
-  $j.concurrency == {group:"create-release-${{ github.repository }}-${{ github.ref }}","cancel-in-progress":false,queue:"max"} and
-  ($s | length == 10) and ($s[0:7] | all(ordinary)) and ($s[7:10] | all(writer)) and
-  ($s[0].uses | test("^step-security/harden-runner@[a-f0-9]{40}$")) and $s[0].with["egress-policy"] == "audit" and
+  ($w.jobs | keys) == ["inspect","offline-test","publish"] and
+  # The read job: admission, immutable source and build, then the only two token-bearing steps.
+  $i.if == "inputs.confirm-publication && !inputs.offline-test" and $i.needs == null and $i["continue-on-error"] == null and
+  $i.permissions == {contents:"read",actions:"read"} and
+  $i.outputs == {missing:"${{ steps.read-admission.outputs.missing }}"} and
+  ($s | length == 7) and ($s[0:6] | all(ordinary)) and ($s[6] | onlyIfMissing) and
+  ($s[0] | harden) and
   $s[1].id == "admit" and
   $s[1].env == {EVENT_NAME:"${{ github.event_name }}",CONFIRMATION:"${{ inputs.confirm-publication }}",REPOSITORY:"${{ github.repository }}",PRIVATE:"${{ github.event.repository.private }}",CURRENT_REF:"${{ github.ref }}",DEFAULT_BRANCH:"${{ github.event.repository.default_branch }}"} and
-  ($s[2] | source) and
-  ($s[3].uses | test("^actions/setup-go@[a-f0-9]{40}$")) and $s[3].with.cache == false and
-  ($s[4] | build) and
-  ($s[5].uses | test("^actions/create-github-app-token@[a-f0-9]{40}$")) and $s[5].id == "read-token" and $s[5].with == token("read") and
-  $s[6].id == "read-admission" and $s[6].env == ({GH_TOKEN:"${{ steps.read-token.outputs.token }}"} + incident) and
-  ($s[6].run | contains("\"./.devantler-tech-recovery/inspect-release-recovery\"")) and
-  $s[7].id == "read-only-refusal" and $s[7].uses == null and $s[7].with == null and $s[7].shell == "bash" and
-  $s[7].env == {GH_TOKEN:"${{ steps.read-token.outputs.token }}",REPOSITORY:"${{ github.repository }}",DEFAULT_BRANCH:"${{ github.event.repository.default_branch }}"} and
-  ($s[7].run | contains("env -i PATH=\"$PATH\" curl --disable")) and
-  ($s[7].run | contains("https://api.github.com/repos/$REPOSITORY/releases/generate-notes")) and
-  ($s[8].uses | test("^actions/create-github-app-token@[a-f0-9]{40}$")) and $s[8].id == "write-token" and $s[8].with == token("write") and
-  $s[9].id == "publish" and $s[9].env == ({GH_TOKEN:"${{ steps.write-token.outputs.token }}"} + incident) and
-  ($s[9].run | contains("\"./.devantler-tech-recovery/publish-release-recovery\"")) and
-  ([$s[] | select(.env.GH_TOKEN != null) | .id] == ["read-admission","read-only-refusal","publish"]) and
+  ($s[2] | source) and ($s[3] | setupGo) and ($s[4] | build) and
+  $s[5].id == "read-admission" and $s[5].uses == null and $s[5].env == ({GH_TOKEN:builtInToken} + incident) and
+  ($s[5].run | contains("\"./.devantler-tech-recovery/inspect-release-recovery\"")) and
+  $s[6].id == "read-only-refusal" and $s[6].uses == null and $s[6].with == null and $s[6].shell == "bash" and
+  $s[6].env == {GH_TOKEN:builtInToken,REPOSITORY:"${{ github.repository }}",DEFAULT_BRANCH:"${{ github.event.repository.default_branch }}"} and
+  ($s[6].run | contains("env -i PATH=\"$PATH\" curl --disable")) and
+  ($s[6].run | contains("https://api.github.com/repos/$REPOSITORY/releases/generate-notes")) and
+  ([$s[] | select(.env.GH_TOKEN != null) | .id] == ["read-admission","read-only-refusal"]) and
+  # The writer job: only after the read job proved a missing release and a refused read-only token.
+  ($p.needs == "inspect" or $p.needs == ["inspect"]) and $p["continue-on-error"] == null and $p.outputs == null and
+  $p.if == "inputs.confirm-publication && !inputs.offline-test && needs.inspect.outputs.missing == 'true'" and
+  $p.permissions == {contents:"write",actions:"read"} and
+  $p.concurrency == {group:"create-release-${{ github.repository }}-${{ github.ref }}","cancel-in-progress":false,queue:"max"} and
+  ($t | length == 6 and all(ordinary)) and
+  ($t[0] | harden) and $t[1] == $s[1] and $t[2] == $s[2] and $t[3] == $s[3] and $t[4] == $s[4] and
+  $t[5].id == "publish" and $t[5].uses == null and $t[5].env == ({GH_TOKEN:builtInToken} + incident) and
+  ($t[5].run | contains("\"./.devantler-tech-recovery/publish-release-recovery\"")) and
+  ([$t[] | select(.env.GH_TOKEN != null) | .id] == ["publish"]) and
+  # The built-in token reaches exactly those three steps; no stored key, App token or broker.
+  ([$w | .. | strings | select(contains("github.token"))] | length == 3) and
+  ([$w | .. | strings | select(test("secrets\\.|vars\\.|outputs\\.token|create-github-app-token|octo-sts"; "i"))] | length == 0) and
   $o.if == "inputs.offline-test" and $o.permissions == {} and
   ($o.steps | length == 5 and all(ordinary)) and
   ($o.steps[0].uses | test("^step-security/harden-runner@[a-f0-9]{40}$")) and
@@ -84,29 +99,39 @@ bash "$root/scripts/generate-release-recovery-fixture.sh" "$workflow" "$work/reg
 yq -o=json '.' "$work/regenerated.yaml" | jq -S . >"$work/regenerated.json"
 jq -S . "$work/ci.json" >"$work/checked.json"
 cmp -s "$work/regenerated.json" "$work/checked.json" || fail 'internal recovery fixture needs regeneration'
-# The exact predicates admitted above bind this closed four-state routing table.
-# Never execute an expression read from YAML as shell code.
+# The exact job predicates admitted above bind this closed routing table: inspect runs on a
+# confirmed non-offline dispatch, publish only after inspect reports a missing release, and
+# offline excludes both. Never execute an expression read from YAML as shell code.
 routing_state() {
-  local confirmation="$1" offline="$2" selected=none
-  if [[ "$confirmation" == true && "$offline" == false ]]; then selected=recover; fi
+  local confirmation="$1" offline="$2" missing="$3" selected=none
+  if [[ "$confirmation" == true && "$offline" == false ]]; then
+    selected=inspect
+    [[ "$missing" != true ]] || selected=inspect+publish
+  fi
   if [[ "$offline" == true ]]; then
     [[ "$selected" == none ]] || fail 'offline and publication selected together'
     selected=offline
   fi
   printf '%s' "$selected"
 }
-while read -r confirmation offline expected; do
-  [[ "$(routing_state "$confirmation" "$offline")" == "$expected" ]] || fail 'confirmation/offline routing changed'
-  printf 'PASS: confirmation=%s offline=%s selects %s\n' "$confirmation" "$offline" "$expected"
+while read -r confirmation offline missing expected; do
+  [[ "$(routing_state "$confirmation" "$offline" "$missing")" == "$expected" ]] || fail 'confirmation/offline routing changed'
+  printf 'PASS: confirmation=%s offline=%s missing=%s selects %s\n' "$confirmation" "$offline" "$missing" "$expected"
 done <<'ROUTING'
-false false none
-false true offline
-true false recover
-true true offline
+false false false none
+false false true none
+false true false offline
+false true true offline
+true false false inspect
+true false true inspect+publish
+true true false offline
+true true true offline
 ROUTING
 confirmation_default="$(yq -r '.on.workflow_dispatch.inputs["confirm-publication"].default' "$workflow")"
 offline_default="$(yq -r '.on.workflow_dispatch.inputs["offline-test"].default' "$workflow")"
-[[ "$(routing_state "$confirmation_default" "$offline_default")" == none ]] || fail 'default inputs started a job'
+for missing in false true; do
+  [[ "$(routing_state "$confirmation_default" "$offline_default" "$missing")" == none ]] || fail 'default inputs started a job'
+done
 # shellcheck disable=SC2016 # Keep GitHub expressions literal in refusal controls.
 for mutation in \
   '.w.on.workflow_call={}' \
@@ -114,34 +139,59 @@ for mutation in \
   '.w.on.workflow_dispatch.inputs["confirm-publication"].default=true' \
   '.w.on.workflow_dispatch.inputs.repository={type:"string"}' \
   '.w.on.workflow_dispatch.inputs["offline-test"].default=true' \
-  '.w.jobs.recover.if="inputs.confirm-publication"' \
-  '.w.jobs.recover.if="!inputs.offline-test"' \
-  '.w.jobs.recover.permissions.contents="write"' \
-  '.w.jobs.recover.concurrency["cancel-in-progress"]=true' \
-  '.w.jobs.recover.concurrency.group="recovery-${{ github.repository }}"' \
-  '.w.jobs.recover.steps[1].if="false"' \
-  '.w.jobs.recover.steps[1].env.CONFIRMATION="true"' \
-  '.w.jobs.recover.steps[2].env.CATALOGUE_SHA="main"' \
-  '.w.jobs.recover.steps[3].with.cache=true' \
-  '.w.jobs.recover.steps[4].env.GOFLAGS="-toolexec=untrusted"' \
-  '.w.jobs.recover.steps |= [.[0],.[1],.[2],.[3],.[5],.[4],.[6],.[7],.[8],.[9]]' \
-  '.w.jobs.recover.steps |= [.[0],.[1],.[2],.[3],.[4],.[8],.[6],.[7],.[5],.[9]]' \
-  '.w.jobs.recover.steps[5].with["permission-contents"]="write"' \
-  '.w.jobs.recover.steps[5].with.repositories=null' \
-  '.w.jobs.recover.steps[6].env.GH_TOKEN="${{ steps.write-token.outputs.token }}"' \
-  '.w.jobs.recover.steps[7].if=null' \
-  '.w.jobs.recover.steps[7].env.GH_TOKEN="${{ steps.write-token.outputs.token }}"' \
-  '.w.jobs.recover.steps[7].env.DEFAULT_BRANCH="${{ inputs.tag }}"' \
-  '.w.jobs.recover.steps[7].if="false"' \
-  '.w.jobs.recover.steps[7]["continue-on-error"]=true' \
-  '.w.jobs.recover.steps |= map(select(.id != "read-only-refusal"))' \
-  '.w.jobs.recover.steps[8].if=null' \
-  '.w.jobs.recover.steps[8].with["permission-issues"]="write"' \
-  '.w.jobs.recover.steps[8].with.repositories=null' \
-  '.w.jobs.recover.steps[9].env.GH_TOKEN="${{ github.token }}"' \
-  '.w.jobs.recover.steps[9].env.REPOSITORY="${{ inputs.tag }}"' \
+  '.w.permissions={contents:"write"}' \
+  '.w.jobs.extra={"runs-on":"ubuntu-latest",permissions:{contents:"write"},steps:[]}' \
+  '.w.jobs.inspect.if="inputs.confirm-publication"' \
+  '.w.jobs.inspect.if="!inputs.offline-test"' \
+  '.w.jobs.inspect.permissions.contents="write"' \
+  '.w.jobs.inspect.permissions["id-token"]="write"' \
+  '.w.jobs.inspect["continue-on-error"]=true' \
+  '.w.jobs.inspect.outputs.missing="true"' \
+  '.w.jobs.inspect.steps[0].with.token="${{ github.token }}"' \
+  '.w.jobs.inspect.steps[1].if="false"' \
+  '.w.jobs.inspect.steps[1].env.CONFIRMATION="true"' \
+  '.w.jobs.inspect.steps[2].env.CATALOGUE_SHA="main"' \
+  '.w.jobs.inspect.steps[2].env.GH_TOKEN="${{ github.token }}"' \
+  '.w.jobs.inspect.steps[3].with.cache=true' \
+  '.w.jobs.inspect.steps[3].with |= del(.token)' \
+  '.w.jobs.inspect.steps[3].with.token="${{ github.token }}"' \
+  '.w.jobs.inspect.steps[4].env.GOFLAGS="-toolexec=untrusted"' \
+  '.w.jobs.inspect.steps[4].env.GH_TOKEN="${{ github.token }}"' \
+  '.w.jobs.inspect.steps |= [.[0],.[1],.[2],.[3],.[5],.[4],.[6]]' \
+  '.w.jobs.inspect.steps |= [.[0],.[1],.[2],.[3],.[4],.[6],.[5]]' \
+  '.w.jobs.inspect.steps[5].env.GH_TOKEN="${{ secrets.APP_PRIVATE_KEY }}"' \
+  '.w.jobs.inspect.steps[6].if=null' \
+  '.w.jobs.inspect.steps[6].env.DEFAULT_BRANCH="${{ inputs.tag }}"' \
+  '.w.jobs.inspect.steps[6].if="false"' \
+  '.w.jobs.inspect.steps[6]["continue-on-error"]=true' \
+  '.w.jobs.inspect.steps |= map(select(.id != "read-only-refusal"))' \
+  '.w.jobs.publish.needs=null' \
+  '.w.jobs.publish.if="inputs.confirm-publication && !inputs.offline-test"' \
+  '.w.jobs.publish.if="needs.inspect.outputs.missing == '\''true'\''"' \
+  '.w.jobs.publish.if="always() && inputs.confirm-publication && !inputs.offline-test && needs.inspect.outputs.missing == '\''true'\''"' \
+  '.w.jobs.publish["continue-on-error"]=true' \
+  '.w.jobs.publish.permissions="write-all"' \
+  '.w.jobs.publish.permissions.issues="write"' \
+  '.w.jobs.publish.permissions["id-token"]="write"' \
+  '.w.jobs.publish.concurrency=null' \
+  '.w.jobs.publish.concurrency["cancel-in-progress"]=true' \
+  '.w.jobs.publish.concurrency.group="recovery-${{ github.repository }}"' \
+  '.w.jobs.publish.steps |= map(select(.id != "admit"))' \
+  '.w.jobs.publish.steps[1].env.CONFIRMATION="true"' \
+  '.w.jobs.publish.steps[2].env.CATALOGUE_SHA="main"' \
+  '.w.jobs.publish.steps[3].with |= del(.token)' \
+  '.w.jobs.publish.steps[4].env.GH_TOKEN="${{ github.token }}"' \
+  '.w.jobs.publish.steps |= [.[0],.[1],.[2],.[3],.[5],.[4]]' \
+  '.w.jobs.publish.steps[5].if="false"' \
+  '.w.jobs.publish.steps[5]["continue-on-error"]=true' \
+  '.w.jobs.publish.steps[5].env.REPOSITORY="${{ inputs.tag }}"' \
+  '.w.jobs.publish.steps |= .[0:5] + [{id:"write-token",uses:"actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",with:{"client-id":"${{ vars.APP_CLIENT_ID }}","private-key":"${{ secrets.APP_PRIVATE_KEY }}"}}] + .[5:]' \
+  '.w.jobs.publish.steps[5].env.GH_TOKEN="${{ steps.write-token.outputs.token }}"' \
+  '.w.jobs.publish.steps |= .[0:5] + [{id:"broker",uses:"octo-sts/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",with:{scope:"devantler-tech/platform",identity:"recovery"}}] + .[5:]' \
   '.w.jobs["offline-test"].if="inputs.offline-test || inputs.confirm-publication"' \
+  '.w.jobs["offline-test"].permissions={contents:"read"}' \
   '.w.jobs["offline-test"].steps[4].env={GH_TOKEN:"${{ secrets.APP_PRIVATE_KEY }}"}' \
+  '.w.jobs["offline-test"].steps[4].env={GH_TOKEN:"${{ github.token }}"}' \
   '.c.jobs["test-publish-release-recovery"].if="false"' \
   '.c.jobs["test-publish-release-recovery-disabled"].if="false"' \
   '.c.jobs["deploy-prod"].needs |= map(select(. != "test-publish-release-recovery"))' \
@@ -166,9 +216,9 @@ for mutation in \
   jq "$mutation" "$work/bundle.json" >"$work/mutated.json"
   if jq -e -f "$work/guard.jq" "$work/mutated.json" >/dev/null; then fail "accepted mutation: $mutation"; fi
 done
-# Run the shipped admission block: only a confirmed manual dispatch on the default branch of one
-# public portfolio repository may continue.
-yq -r '.jobs.recover.steps[1].run' "$workflow" >"$work/admit.sh"
+# Run the shipped admission block (both jobs carry it byte for byte): only a confirmed manual
+# dispatch on the default branch of one public portfolio repository may continue.
+yq -r '.jobs.inspect.steps[1].run' "$workflow" >"$work/admit.sh"
 admit() {
   local confirmation="$2" private="$4"
   [[ "$confirmation" != EMPTY ]] || confirmation=""
@@ -178,12 +228,12 @@ admit() {
     GITHUB_OUTPUT="$work/output" bash -euo pipefail "$work/admit.sh" >/dev/null 2>&1
 }
 admit workflow_dispatch true devantler-tech/platform false refs/heads/main || fail 'confirmed recovery refused'
-[[ "$(cat "$work/output")" == name=platform ]] || fail 'repository scope was not derived exactly'
+[[ ! -e "$work/output" ]] || fail 'admission emitted an output'
 while read -r event confirmation repository private ref; do
   if admit "$event" "$confirmation" "$repository" "$private" "$ref"; then
     fail "unsafe invocation admitted: $event $confirmation $repository $private $ref"
   fi
-  [[ ! -e "$work/output" ]] || fail 'rejected admission emitted a repository scope'
+  [[ ! -e "$work/output" ]] || fail 'rejected admission emitted an output'
 done <<'CASES'
 workflow_dispatch false devantler-tech/platform false refs/heads/main
 workflow_dispatch EMPTY devantler-tech/platform false refs/heads/main
@@ -198,9 +248,9 @@ workflow_dispatch true devantler-tech/ksail false refs/heads/main
 workflow_dispatch true devantler-tech/.. false refs/heads/main
 workflow_dispatch true devantler-tech/../platform false refs/heads/main
 CASES
-# Run the shipped read admission against a stand-in inspector: only a missing release asks for
-# the writer token; a present release is a verified no-op; anything else fails.
-yq -r '.jobs.recover.steps[6].run' "$workflow" >"$work/read-admission.sh"
+# Run the shipped read admission against a stand-in inspector: only a missing release starts
+# the publish job; a present release is a verified no-op; anything else fails.
+yq -r '.jobs.inspect.steps[5].run' "$workflow" >"$work/read-admission.sh"
 read_admission() {
   mkdir -p "$work/admission/.devantler-tech-recovery"
   printf '#!/usr/bin/env bash\nprintf %%s %q\nexit %s\n' "$1" "$2" >"$work/admission/.devantler-tech-recovery/inspect-release-recovery"
@@ -216,18 +266,22 @@ mkdir -p "$work/runner"
 read_admission '{"diagnosis":"missing-github-release"}' 0 || fail 'missing release was not admitted'
 grep -qx 'missing=true' "$work/output" || fail 'missing release did not request publication'
 read_admission '{"diagnosis":"github-release-present"}' 0 || fail 'present release was not a no-op'
-grep -qx 'missing=false' "$work/output" || fail 'present release requested a writer token'
+grep -qx 'missing=false' "$work/output" || fail 'present release requested publication'
 for refused in '{"diagnosis":"other"}:0' '{}:0' 'not json:0' '{"diagnosis":"missing-github-release"}:1'; do
   if read_admission "${refused%:*}" "${refused##*:}"; then fail "unsafe read admission accepted: $refused"; fi
   if [[ -e "$work/output" ]] && grep -q '^missing=true$' "$work/output"; then fail "refused admission requested publication: $refused"; fi
 done
 # Execute the shipped source retrieval with only the HTTP transport replaced. Ambient
 # credentials must not cross the anonymous immutable-source boundary.
-yq -r '.jobs.recover.steps[2].run' "$workflow" >"$work/download.sh"
+yq -r '.jobs.inspect.steps[2].run' "$workflow" >"$work/download.sh"
 yq -r '.jobs["offline-test"].steps[1].run' "$workflow" >"$work/offline-download.sh"
 cmp -s "$work/download.sh" "$work/offline-download.sh" || fail 'offline and production source retrieval differ'
-[[ "$(yq -r '.jobs.recover.steps[4].run' "$workflow")" == "$(yq -r '.jobs["offline-test"].steps[3].run' "$workflow")" ]] ||
+[[ "$(yq -r '.jobs.inspect.steps[4].run' "$workflow")" == "$(yq -r '.jobs["offline-test"].steps[3].run' "$workflow")" ]] ||
   fail 'offline and production builds differ'
+# The writer job rebuilds from the same immutable source with the same commands.
+[[ "$(yq -r '.jobs.publish.steps[2].run' "$workflow")" == "$(cat "$work/download.sh")" &&
+"$(yq -r '.jobs.publish.steps[4].run' "$workflow")" == "$(yq -r '.jobs.inspect.steps[4].run' "$workflow")" ]] ||
+  fail 'the publish job does not rebuild the inspected source'
 source_dir="$work/archive/catalogue/.github/scripts/inspect-release-recovery"
 mkdir -p "$work/bin" "$source_dir/cmd/publish-release-recovery"
 printf 'module fixture\n\ngo 1.23.0\n' >"$source_dir/go.mod"
