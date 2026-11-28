@@ -1,0 +1,29 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: business-site-practice-migration
+  namespace: business-site
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: business-site-practice-migration
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: business-site-dev
+            cnpg.io/cluster: portal-preview-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchName: portal-preview-db-rw.business-site-dev.svc.cluster.local

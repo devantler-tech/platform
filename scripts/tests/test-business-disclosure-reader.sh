@@ -204,6 +204,25 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
     def resource($namespace; $kind; $name):
       [.[]|select(.kind==$kind and .metadata.name==$name and .metadata.namespace==$namespace)] |
       if length==1 then .[0] else error("expected exactly one preview application resource") end;
+    (resource("business-site";"ExternalSecret";"business-site-practice-migration")|.spec|
+      .secretStoreRef=={name:"openbao",kind:"ClusterSecretStore"} and
+      .data==[
+        {secretKey:"password",remoteRef:{key:"apps/business-site-dev/portal-migrator",property:"password"}},
+        {secretKey:"ca",remoteRef:{key:"apps/business-site-dev/portal-db-ca",property:"ca"}}
+      ] and
+      .target=={name:"business-site-practice-migration",creationPolicy:"Owner",template:{engineVersion:"v2",data:{
+        "database-url":"postgres://portal_preview_migrator:{{ .password | urlquery }}@portal-preview-db-rw.business-site-dev.svc.cluster.local:5432/portal_preview?sslmode=verify-full&sslrootcert=/run/portal-migration/ca.crt",
+        "ca.crt":"{{ .ca }}"
+      }}}) and
+    (resource("business-site";"CiliumNetworkPolicy";"business-site-practice-migration")|.spec=={
+      endpointSelector:{matchLabels:{"app.kubernetes.io/name":"business-site-practice-migration"}},
+      egress:[
+        {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site-dev","cnpg.io/cluster":"portal-preview-db"}}],
+         toPorts:[{ports:[{port:"5432",protocol:"TCP"}]}]},
+        {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],
+         toPorts:[{ports:[{port:"53",protocol:"ANY"}],rules:{dns:[{matchName:"portal-preview-db-rw.business-site-dev.svc.cluster.local"}]}}]}
+      ]
+    }) and
     (resource("business-site";"ExternalSecret";"business-site-runtime")|.spec|
       ([.data[]|select((.remoteRef.key//"")|startswith("apps/business-site-dev/"))])==[
         {secretKey:"portal_preview_web_password",sourceRef:{storeRef:{name:"openbao",kind:"ClusterSecretStore"}},remoteRef:{key:"apps/business-site-dev/portal-web",property:"password"}},
@@ -224,14 +243,15 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps" |
       .endpointSelector.matchLabels=={"cnpg.io/cluster":"portal-preview-db"} and
       [.ingress[]|select(any(.fromEndpoints[]?;.matchLabels["k8s:io.kubernetes.pod.namespace"]=="business-site"))]==[
         {fromEndpoints:[{matchLabels:{"app.kubernetes.io/name":"business-site-dev-migration"}},
-                        {matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site","app.kubernetes.io/name":"business-site"}}],
+                        {matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site","app.kubernetes.io/name":"business-site"}},
+                        {matchLabels:{"k8s:io.kubernetes.pod.namespace":"business-site","app.kubernetes.io/name":"business-site-practice-migration"}}],
          toPorts:[{ports:[{port:"5432",protocol:"TCP"}]}]}
       ]) and
     (resource("customer-identity";"HelmRelease";"customer-dex")|.spec.values|
       all(.envVars[]; .name!="CUSTOMER_PREVIEW_CLIENT_SECRET") and
       all(.config.staticClients[]; .id!="business-site-preview") and
       ([.config.staticClients[]|select(.id=="business-portal")|.redirectURIs]==[["https://portal.devantler.tech/callback"]]))
-  ' >/dev/null || fail 'only the regular portal may use the preview database and sign-in'
+  ' >/dev/null || fail 'the portal and practice migrator must use separate verified preview database projections'
 
 grep -Fq "'scripts/tests/test-business-disclosure-reader.sh'" "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must select changes to this contract'
