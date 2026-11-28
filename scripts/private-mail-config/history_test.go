@@ -169,7 +169,7 @@ func TestHistoryPassLinesCarryOnlyTheToolsCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observe := func(_ context.Context, side string, _ historyConfig) (historySnapshot, error) {
+	observe := func(_ context.Context, _ string, _ historyConfig) (historySnapshot, error) {
 		return historySnapshot{"INBOX": {messages: 7, uidNext: 9, uidValidity: 1}}, nil
 	}
 	exitStatus := exec.Command("sh", "-c", "exit 111").Run()
