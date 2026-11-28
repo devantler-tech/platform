@@ -174,8 +174,58 @@ for provider in "${providers[@]}"; do
     grep -Eq 'redirect[-_]url' <<<"$(yq eval -N '.extraArgs // ""' - <<<"${o2p}")"; then
     fail "${provider}: oauth2-proxy sets a fixed redirect_url, so every login finishes on one host and returns the user to a path on a host that serves no app. Remove it from k8s/bases/infrastructure/controllers/oauth2-proxy/helm-release.yaml; oauth2-proxy then finishes each login on the host it started from"
   fi
-  grep -Eq '^[[:space:]]*cookie_secure[[:space:]]*=[[:space:]]*true[[:space:]]*$' <<<"${o2p_config}" ||
+  value_end='[[:space:]]*(#.*)?$'
+  grep -Eq "^[[:space:]]*cookie_secure[[:space:]]*=[[:space:]]*true${value_end}" <<<"${o2p_config}" ||
     fail "${provider}: oauth2-proxy must set cookie_secure = true: it is what makes the login callback it derives https, the only scheme Dex has registered"
+
+  # The SSO cookies stay host-only, and the __Host- prefix makes the browser
+  # enforce it: no other host under the same site can plant one. The browser
+  # refuses a __Host- cookie unless it is Secure (above), has Path=/ and has
+  # no Domain. oauth2-proxy also reads cookie settings from the chart's
+  # config.cookieName value (rendered as a flag), from extraArgs flags and from
+  # OAUTH2_PROXY_COOKIE_* variables, all of which win over the config file, so
+  # none of them may set one.
+  grep -Eq "^[[:space:]]*cookie_name[[:space:]]*=[[:space:]]*(\"__Host-[^\"]+\"|'__Host-[^']+')${value_end}" <<<"${o2p_config}" ||
+    fail "${provider}: oauth2-proxy's cookie_name must start with __Host-, so the browser keeps the SSO cookies to the host that set them and refuses one planted by another host under the same site"
+  if grep -Eq '^[[:space:]]*cookie_path[[:space:]]*=' <<<"${o2p_config}" &&
+    ! grep -Eq "^[[:space:]]*cookie_path[[:space:]]*=[[:space:]]*(\"/\"|'/')${value_end}" <<<"${o2p_config}"; then
+    fail "${provider}: oauth2-proxy sets a cookie_path other than /; the browser drops a __Host- cookie with any other path, so nobody could stay signed in"
+  fi
+  if grep -Eq '^[[:space:]]*cookie_domains?[[:space:]]*=' <<<"${o2p_config}" &&
+    ! grep -Eq "^[[:space:]]*cookie_domains[[:space:]]*=[[:space:]]*\[[[:space:]]*\]${value_end}" <<<"${o2p_config}"; then
+    fail "${provider}: oauth2-proxy sets a cookie domain; the browser drops a __Host- cookie that carries a Domain, so nobody could stay signed in"
+  fi
+  # The reads fail the test when they fail; a grep that finds nothing is the
+  # expected case, so only the greps may come back empty.
+  # These checks hold the cookie to the HelmRelease's own spec.values, so
+  # everything else that could change what the pod reads is refused: the chart
+  # ignores config.configFile when config.existingConfig is set, alphaConfig is
+  # enabled or a --config/--alpha-config flag names another file; envFrom can
+  # bring OAUTH2_PROXY_COOKIE_* in from a ConfigMap or Secret; and Flux merges
+  # spec.valuesFrom over the values and applies spec.postRenderers to the
+  # rendered Deployment.
+  o2p_release="$(yq eval -N 'select(.kind == "HelmRelease" and .metadata.name == "oauth2-proxy" and .metadata.namespace == "oauth2-proxy") | .spec' "${rendered}")"
+  o2p_values_from_count="$(yq eval -N '(.valuesFrom // []) | length' - <<<"${o2p_release}")"
+  o2p_post_renderer_count="$(yq eval -N '(.postRenderers // []) | length' - <<<"${o2p_release}")"
+  o2p_cookie_name_value="$(yq eval -N '.config.cookieName // ""' - <<<"${o2p}")"
+  o2p_existing_config="$(yq eval -N '.config.existingConfig // ""' - <<<"${o2p}")"
+  o2p_alpha_config="$(yq eval -N '.alphaConfig.enabled // false' - <<<"${o2p}")"
+  o2p_env_from_count="$(yq eval -N '(.envFrom // []) | length' - <<<"${o2p}")"
+  o2p_args="$(yq eval -N '.extraArgs // ""' - <<<"${o2p}")"
+  o2p_env_names="$(yq eval -N '.extraEnv[]?.name // ""' - <<<"${o2p}")"
+  cookie_overrides="$(
+    [[ -z "${o2p_cookie_name_value}" ]] || echo config.cookieName
+    [[ -z "${o2p_existing_config}" ]] || echo config.existingConfig
+    [[ "${o2p_alpha_config}" == false ]] || echo alphaConfig.enabled
+    [[ "${o2p_env_from_count}" == 0 ]] || echo envFrom
+    [[ "${o2p_values_from_count}" == 0 ]] || echo spec.valuesFrom
+    [[ "${o2p_post_renderer_count}" == 0 ]] || echo spec.postRenderers
+    { grep -Eo '(^|[^[:alnum:]_])(alpha-)?config([[:space:]]*:|=)' <<<"${o2p_args}" || true; } | sed 's/.*/extraArgs --config or --alpha-config/'
+    { grep -Eo 'cookie[-_](name|secure|domains?|path)' <<<"${o2p_args}" || true; } | sed 's/^/extraArgs /'
+    { grep -E '^OAUTH2_PROXY_COOKIE_(NAME|SECURE|DOMAINS?|PATH)$' <<<"${o2p_env_names}" || true; } | sed 's/^/extraEnv /'
+  )"
+  [[ -z "${cookie_overrides}" ]] ||
+    fail "${provider}: oauth2-proxy's cookie settings are overridden outside its config file, where this test cannot hold them to the __Host- rules: ${cookie_overrides//$'\n'/, }"
 
   registered="$(yq eval -N 'select(.kind == "HelmRelease" and .metadata.name == "dex" and .metadata.namespace == "dex") | .spec.values.config.staticClients[] | select(.id == "public-client") | .redirectURIs[]' "${rendered}")"
   [[ -n "${registered}" ]] ||
